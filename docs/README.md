@@ -5,6 +5,8 @@ Documentacao tecnica e operacional do projeto KyberRock.
 ## Estrutura
 
 - `phase-0/`: preparacao, spikes e validacoes tecnicas iniciais.
+- `phase-1/`: design tecnico, modelo de dados, contratos e estrategias de sincronizacao.
+- `ARCHITECTURE.md`: visao tecnica consolidada do sistema.
 
 ## Regra De Segredos
 
