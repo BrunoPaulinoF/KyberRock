@@ -239,23 +239,23 @@ Origem:
 
 Campos mínimos recomendados:
 
-| Campo | Obrigatório | Origem | Observação |
-| --- | --- | --- | --- |
-| Código interno | Sim | KyberRock | Gerado localmente |
-| Código OMIE | Não | OMIE | Preenchido após sincronização |
-| Nome/Razão social | Sim | OMIE ou KyberRock | Campo do OMIE fica bloqueado após vínculo |
-| Nome fantasia | Não | OMIE ou KyberRock | Quando disponível |
-| CPF/CNPJ | Sim | OMIE ou KyberRock | Validar formato |
-| Telefone/celular | Não | OMIE ou KyberRock | Usado no cupom quando houver |
-| E-mail | Não | OMIE ou KyberRock | Usado em relatórios se necessário |
-| Endereço | Não | OMIE ou KyberRock | Inclui cidade/UF/CEP |
-| Tabela de preço | Sim | KyberRock | Vinculada localmente |
-| Forma/condição de recebimento | Sim | OMIE | Sincronizada do OMIE |
-| Limite de crédito | Não | OMIE | Zero ou vazio desconsidera bloqueio |
-| Valor em aberto no contas a receber | Não | OMIE | Usado no bloqueio |
-| Status financeiro/bloqueio | Não | OMIE | Usado para liberar ou bloquear carga |
-| Origem do cadastro | Sim | KyberRock | OMIE ou KyberRock |
-| Status de sincronização | Sim | KyberRock | Sincronizado, pendente ou erro |
+| Campo                               | Obrigatório | Origem            | Observação                                |
+| ----------------------------------- | ----------- | ----------------- | ----------------------------------------- |
+| Código interno                      | Sim         | KyberRock         | Gerado localmente                         |
+| Código OMIE                         | Não         | OMIE              | Preenchido após sincronização             |
+| Nome/Razão social                   | Sim         | OMIE ou KyberRock | Campo do OMIE fica bloqueado após vínculo |
+| Nome fantasia                       | Não         | OMIE ou KyberRock | Quando disponível                         |
+| CPF/CNPJ                            | Sim         | OMIE ou KyberRock | Validar formato                           |
+| Telefone/celular                    | Não         | OMIE ou KyberRock | Usado no cupom quando houver              |
+| E-mail                              | Não         | OMIE ou KyberRock | Usado em relatórios se necessário         |
+| Endereço                            | Não         | OMIE ou KyberRock | Inclui cidade/UF/CEP                      |
+| Tabela de preço                     | Sim         | KyberRock         | Vinculada localmente                      |
+| Forma/condição de recebimento       | Sim         | OMIE              | Sincronizada do OMIE                      |
+| Limite de crédito                   | Não         | OMIE              | Zero ou vazio desconsidera bloqueio       |
+| Valor em aberto no contas a receber | Não         | OMIE              | Usado no bloqueio                         |
+| Status financeiro/bloqueio          | Não         | OMIE              | Usado para liberar ou bloquear carga      |
+| Origem do cadastro                  | Sim         | KyberRock         | OMIE ou KyberRock                         |
+| Status de sincronização             | Sim         | KyberRock         | Sincronizado, pendente ou erro            |
 
 ### 10.2 Produto
 
@@ -267,14 +267,14 @@ Origem:
 
 Campos mínimos recomendados:
 
-| Campo | Obrigatório | Origem | Observação |
-| --- | --- | --- | --- |
-| Código OMIE | Sim | OMIE | Identificador principal para integração |
-| Código interno | Sim | KyberRock | Espelho local |
-| Descrição | Sim | OMIE | Exemplo: pedra 2, brita 1, pó de pedra |
-| Unidade de medida | Sim | OMIE | Exemplo: tonelada, m³, unidade |
-| Ativo/inativo | Sim | OMIE | Apenas ativos aparecem na operação |
-| Dados fiscais | Conforme OMIE | OMIE | Usados pelo ERP |
+| Campo             | Obrigatório   | Origem    | Observação                              |
+| ----------------- | ------------- | --------- | --------------------------------------- |
+| Código OMIE       | Sim           | OMIE      | Identificador principal para integração |
+| Código interno    | Sim           | KyberRock | Espelho local                           |
+| Descrição         | Sim           | OMIE      | Exemplo: pedra 2, brita 1, pó de pedra  |
+| Unidade de medida | Sim           | OMIE      | Exemplo: tonelada, m³, unidade          |
+| Ativo/inativo     | Sim           | OMIE      | Apenas ativos aparecem na operação      |
+| Dados fiscais     | Conforme OMIE | OMIE      | Usados pelo ERP                         |
 
 ### 10.3 Tabela De Preço
 
@@ -291,14 +291,14 @@ Regras:
 
 Campos mínimos recomendados:
 
-| Campo | Obrigatório | Observação |
-| --- | --- | --- |
-| Nome da tabela | Sim | Exemplo: Tabela Cliente A |
-| Produto | Sim | Produto vindo do OMIE |
-| Preço unitário | Sim | Valor por unidade do produto |
-| Vigência inicial | Não | Para histórico de preço |
-| Vigência final | Não | Para histórico de preço |
-| Ativa | Sim | Controla uso na operação |
+| Campo            | Obrigatório | Observação                   |
+| ---------------- | ----------- | ---------------------------- |
+| Nome da tabela   | Sim         | Exemplo: Tabela Cliente A    |
+| Produto          | Sim         | Produto vindo do OMIE        |
+| Preço unitário   | Sim         | Valor por unidade do produto |
+| Vigência inicial | Não         | Para histórico de preço      |
+| Vigência final   | Não         | Para histórico de preço      |
+| Ativa            | Sim         | Controla uso na operação     |
 
 ### 10.4 Veículo
 
@@ -311,40 +311,40 @@ Regras:
 
 Campos mínimos recomendados:
 
-| Campo | Obrigatório | Observação |
-| --- | --- | --- |
-| Placa | Sim | Identificação principal |
-| Tipo de veículo | Não | Caminhão, carreta, etc. |
-| Transportadora | Não | Quando houver |
-| Clientes vinculados | Não | Pode ter mais de um |
-| Ativo/inativo | Sim | Controla uso operacional |
-| Origem do cadastro | Sim | OMIE ou KyberRock quando aplicável |
-| Status de sincronização | Sim | Local, pendente, sincronizado ou erro |
+| Campo                   | Obrigatório | Observação                            |
+| ----------------------- | ----------- | ------------------------------------- |
+| Placa                   | Sim         | Identificação principal               |
+| Tipo de veículo         | Não         | Caminhão, carreta, etc.               |
+| Transportadora          | Não         | Quando houver                         |
+| Clientes vinculados     | Não         | Pode ter mais de um                   |
+| Ativo/inativo           | Sim         | Controla uso operacional              |
+| Origem do cadastro      | Sim         | OMIE ou KyberRock quando aplicável    |
+| Status de sincronização | Sim         | Local, pendente, sincronizado ou erro |
 
 ### 10.5 Motorista
 
 Campos mínimos recomendados:
 
-| Campo | Obrigatório | Observação |
-| --- | --- | --- |
-| Nome | Sim | Usado no cupom |
-| CPF | Não | Recomendado quando disponível |
-| Telefone | Não | Opcional |
-| CNH | Não | Opcional |
-| Ativo/inativo | Sim | Controla uso operacional |
-| Veículos vinculados | Não | Facilita seleção |
+| Campo               | Obrigatório | Observação                    |
+| ------------------- | ----------- | ----------------------------- |
+| Nome                | Sim         | Usado no cupom                |
+| CPF                 | Não         | Recomendado quando disponível |
+| Telefone            | Não         | Opcional                      |
+| CNH                 | Não         | Opcional                      |
+| Ativo/inativo       | Sim         | Controla uso operacional      |
+| Veículos vinculados | Não         | Facilita seleção              |
 
 ### 10.6 Transportadora
 
 Campos mínimos recomendados:
 
-| Campo | Obrigatório | Observação |
-| --- | --- | --- |
-| Nome/Razão social | Sim | Identificação da transportadora |
-| CPF/CNPJ | Não | Quando aplicável |
-| Telefone | Não | Opcional |
-| Veículos vinculados | Não | Pode atender vários clientes |
-| Ativo/inativo | Sim | Controla uso operacional |
+| Campo               | Obrigatório | Observação                      |
+| ------------------- | ----------- | ------------------------------- |
+| Nome/Razão social   | Sim         | Identificação da transportadora |
+| CPF/CNPJ            | Não         | Quando aplicável                |
+| Telefone            | Não         | Opcional                        |
+| Veículos vinculados | Não         | Pode atender vários clientes    |
+| Ativo/inativo       | Sim         | Controla uso operacional        |
 
 ### 10.7 Forma E Condição De Recebimento
 
@@ -366,11 +366,11 @@ Regras:
 
 Campos mínimos recomendados:
 
-| Campo | Obrigatório | Observação |
-| --- | --- | --- |
-| Nome | Sim | Dono ou responsável |
-| E-mail | Sim | Recebe fechamento diário |
-| Ativo/inativo | Sim | Controla envio |
+| Campo         | Obrigatório | Observação               |
+| ------------- | ----------- | ------------------------ |
+| Nome          | Sim         | Dono ou responsável      |
+| E-mail        | Sim         | Recebe fechamento diário |
+| Ativo/inativo | Sim         | Controla envio           |
 
 ## 11. Integração Com OMIE
 
@@ -650,27 +650,27 @@ Regras:
 
 Exemplo de regra suportada:
 
-| Período de venda | Vencimento |
-| --- | --- |
-| Dia 1 ao dia 15 | Dia 30 do mesmo mês |
+| Período de venda            | Vencimento             |
+| --------------------------- | ---------------------- |
+| Dia 1 ao dia 15             | Dia 30 do mesmo mês    |
 | Dia 16 ao último dia do mês | Dia 15 do mês seguinte |
 
 ## 18. Status Das Operações
 
 Status recomendados:
 
-| Status | Significado |
-| --- | --- |
-| Rascunho | Operação iniciada antes da captura de entrada |
-| Entrada registrada | Peso de entrada capturado |
+| Status                  | Significado                                     |
+| ----------------------- | ----------------------------------------------- |
+| Rascunho                | Operação iniciada antes da captura de entrada   |
+| Entrada registrada      | Peso de entrada capturado                       |
 | Aguardando carregamento | Solicitação aberta para o carregador visualizar |
-| Aguardando saída | Caminhão carregado deve retornar à balança |
-| Fechada localmente | Peso de saída capturado e venda calculada |
-| Pendente Firebase | Ainda não sincronizada com Firebase |
-| Pendente OMIE | Ainda não enviada ao OMIE |
-| Sincronizada | Enviada e confirmada nos sistemas necessários |
-| Erro de sincronização | Falha no envio ao Firebase ou OMIE |
-| Cancelada | Cancelada no desktop com motivo obrigatório |
+| Aguardando saída        | Caminhão carregado deve retornar à balança      |
+| Fechada localmente      | Peso de saída capturado e venda calculada       |
+| Pendente Firebase       | Ainda não sincronizada com Firebase             |
+| Pendente OMIE           | Ainda não enviada ao OMIE                       |
+| Sincronizada            | Enviada e confirmada nos sistemas necessários   |
+| Erro de sincronização   | Falha no envio ao Firebase ou OMIE              |
+| Cancelada               | Cancelada no desktop com motivo obrigatório     |
 
 ## 19. Auditoria
 
@@ -760,15 +760,15 @@ Arquitetura recomendada:
 
 Stack recomendada:
 
-| Camada | Tecnologia Recomendada | Motivo |
-| --- | --- | --- |
-| Aplicativo desktop | Electron + TypeScript | Bom suporte a Windows, impressão, Node.js e integrações locais |
-| Interface | React + TypeScript | Produtividade e manutenção |
-| Banco local | SQLite | Offline-first, simples, confiável e local |
-| Acesso SQLite | better-sqlite3 ou Prisma | Consistência de queries e migrations |
-| Comunicação com balança | Node.js com adapters configuráveis Serial/TCP/USB/API/arquivo | Flexível para diferentes modelos e protocolos de balança |
-| Impressão térmica | Impressão nativa Windows ou biblioteca ESC/POS | Compatível com impressoras instaladas e perfil 80 mm configurável |
-| Build/instalador | electron-builder | Geração de instalador Windows |
+| Camada                  | Tecnologia Recomendada                                        | Motivo                                                            |
+| ----------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Aplicativo desktop      | Electron + TypeScript                                         | Bom suporte a Windows, impressão, Node.js e integrações locais    |
+| Interface               | React + TypeScript                                            | Produtividade e manutenção                                        |
+| Banco local             | SQLite                                                        | Offline-first, simples, confiável e local                         |
+| Acesso SQLite           | better-sqlite3 ou Prisma                                      | Consistência de queries e migrations                              |
+| Comunicação com balança | Node.js com adapters configuráveis Serial/TCP/USB/API/arquivo | Flexível para diferentes modelos e protocolos de balança          |
+| Impressão térmica       | Impressão nativa Windows ou biblioteca ESC/POS                | Compatível com impressoras instaladas e perfil 80 mm configurável |
+| Build/instalador        | electron-builder                                              | Geração de instalador Windows                                     |
 
 Justificativa:
 
@@ -780,13 +780,13 @@ Justificativa:
 
 Stack recomendada:
 
-| Camada | Tecnologia Recomendada | Motivo |
-| --- | --- | --- |
-| Front-end web | React + TypeScript | Interface simples e consistente com desktop |
-| Build web | Vite ou Next.js | Vite se for SPA simples, Next.js se precisar SSR no futuro |
-| Autenticação | Firebase Authentication | Login próprio do carregador |
-| Banco cloud | Cloud Firestore | Atualização quase em tempo real |
-| Hospedagem | Firebase Hosting | Integração direta com Firebase |
+| Camada        | Tecnologia Recomendada  | Motivo                                                     |
+| ------------- | ----------------------- | ---------------------------------------------------------- |
+| Front-end web | React + TypeScript      | Interface simples e consistente com desktop                |
+| Build web     | Vite ou Next.js         | Vite se for SPA simples, Next.js se precisar SSR no futuro |
+| Autenticação  | Firebase Authentication | Login próprio do carregador                                |
+| Banco cloud   | Cloud Firestore         | Atualização quase em tempo real                            |
+| Hospedagem    | Firebase Hosting        | Integração direta com Firebase                             |
 
 Recomendação prática:
 
@@ -797,13 +797,13 @@ Recomendação prática:
 
 Stack recomendada:
 
-| Camada | Tecnologia Recomendada | Motivo |
-| --- | --- | --- |
-| Backend serverless | Firebase Cloud Functions em TypeScript | Integração nativa com Firebase e jobs agendados |
-| Agendamentos | Cloud Scheduler ou funções agendadas | Envio do fechamento diário e rotinas de sync |
-| Segredos | Google Secret Manager | Proteger credenciais OMIE |
-| E-mail | SendGrid, Resend ou provedor SMTP transacional | Envio confiável do fechamento diário |
-| Logs cloud | Firebase/Google Cloud Logging | Diagnóstico de sync e integrações |
+| Camada             | Tecnologia Recomendada                         | Motivo                                          |
+| ------------------ | ---------------------------------------------- | ----------------------------------------------- |
+| Backend serverless | Firebase Cloud Functions em TypeScript         | Integração nativa com Firebase e jobs agendados |
+| Agendamentos       | Cloud Scheduler ou funções agendadas           | Envio do fechamento diário e rotinas de sync    |
+| Segredos           | Google Secret Manager                          | Proteger credenciais OMIE                       |
+| E-mail             | SendGrid, Resend ou provedor SMTP transacional | Envio confiável do fechamento diário            |
+| Logs cloud         | Firebase/Google Cloud Logging                  | Diagnóstico de sync e integrações               |
 
 Recomendação de segurança:
 
@@ -850,24 +850,24 @@ Objetivo:
 
 Entidades principais:
 
-| Entidade | Descrição |
-| --- | --- |
-| Empresa | Organização proprietária das pedreiras |
-| Unidade/Pedreira | Local físico de operação |
-| Dispositivo | Computador instalado na balança |
-| Cliente | Comprador do material |
-| Produto | Produto sincronizado do OMIE |
-| TabelaPreco | Preços por produto usados por cliente |
-| Veiculo | Caminhão identificado por placa |
-| Motorista | Pessoa que conduz o veículo |
-| Transportadora | Empresa ou terceiro vinculado ao transporte |
-| FormaRecebimento | Forma/condição sincronizada do OMIE |
-| PesagemOperacao | Registro completo da entrada, saída e venda |
-| SolicitacaoCarregamento | Visão em aberto para o carregador |
-| Cupom | Dados de impressão e reimpressão |
-| SyncQueue | Fila local de sincronização |
-| AuditLog | Histórico de ações críticas |
-| RelatorioFechamento | Consolidação diária/mensal/anual |
+| Entidade                | Descrição                                   |
+| ----------------------- | ------------------------------------------- |
+| Empresa                 | Organização proprietária das pedreiras      |
+| Unidade/Pedreira        | Local físico de operação                    |
+| Dispositivo             | Computador instalado na balança             |
+| Cliente                 | Comprador do material                       |
+| Produto                 | Produto sincronizado do OMIE                |
+| TabelaPreco             | Preços por produto usados por cliente       |
+| Veiculo                 | Caminhão identificado por placa             |
+| Motorista               | Pessoa que conduz o veículo                 |
+| Transportadora          | Empresa ou terceiro vinculado ao transporte |
+| FormaRecebimento        | Forma/condição sincronizada do OMIE         |
+| PesagemOperacao         | Registro completo da entrada, saída e venda |
+| SolicitacaoCarregamento | Visão em aberto para o carregador           |
+| Cupom                   | Dados de impressão e reimpressão            |
+| SyncQueue               | Fila local de sincronização                 |
+| AuditLog                | Histórico de ações críticas                 |
+| RelatorioFechamento     | Consolidação diária/mensal/anual            |
 
 ## 23. Telas Principais
 
@@ -970,15 +970,15 @@ As pendências abaixo não bloqueiam o PRD, mas precisam ser resolvidas antes ou
 
 ## 26. Riscos E Mitigações
 
-| Risco | Impacto | Mitigação |
-| --- | --- | --- |
-| Protocolo da balança desconhecido | Pode atrasar integração | Criar camada de adapter e validar com equipamento real cedo |
-| OMIE retornar erros inesperados | Pode atrasar pedidos | Implementar fila, logs e tela de correção |
-| Internet instável | Pode afetar site e OMIE | Desktop offline-first com SQLite e filas |
-| Duplicidade no OMIE | Pode gerar faturamento errado | Idempotência por identificador único |
-| Frete sem regra definida | Pode afetar valor total | Modelagem flexível e parametrização antes de ativar cálculo final |
-| Operador cancelar operação incorretamente | Pode afetar auditoria | Motivo obrigatório e histórico imutável |
-| Site do carregador alterar dados indevidamente | Pode afetar operação | Regras Firebase read-only para carregador |
+| Risco                                          | Impacto                       | Mitigação                                                         |
+| ---------------------------------------------- | ----------------------------- | ----------------------------------------------------------------- |
+| Protocolo da balança desconhecido              | Pode atrasar integração       | Criar camada de adapter e validar com equipamento real cedo       |
+| OMIE retornar erros inesperados                | Pode atrasar pedidos          | Implementar fila, logs e tela de correção                         |
+| Internet instável                              | Pode afetar site e OMIE       | Desktop offline-first com SQLite e filas                          |
+| Duplicidade no OMIE                            | Pode gerar faturamento errado | Idempotência por identificador único                              |
+| Frete sem regra definida                       | Pode afetar valor total       | Modelagem flexível e parametrização antes de ativar cálculo final |
+| Operador cancelar operação incorretamente      | Pode afetar auditoria         | Motivo obrigatório e histórico imutável                           |
+| Site do carregador alterar dados indevidamente | Pode afetar operação          | Regras Firebase read-only para carregador                         |
 
 ## 27. Decisões Confirmadas
 

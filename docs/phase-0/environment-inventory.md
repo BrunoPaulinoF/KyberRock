@@ -6,15 +6,15 @@ Data: 2026-06-06
 
 Este inventario foi coletado na maquina onde o projeto esta aberto. Esta maquina nao e o PC real da balanca.
 
-| Item | Valor |
-| --- | --- |
-| Sistema operacional | Microsoft Windows 11 Pro |
-| Versao Windows | 10.0.26200 |
-| Build Windows | 26200 |
-| Node.js | v24.13.0 |
-| npm | 11.8.0 |
-| Git | Repositorio inicializado em `main` |
-| Conectividade OMIE | `api.omie.com.br:443` OK |
+| Item                | Valor                              |
+| ------------------- | ---------------------------------- |
+| Sistema operacional | Microsoft Windows 11 Pro           |
+| Versao Windows      | 10.0.26200                         |
+| Build Windows       | 26200                              |
+| Node.js             | v24.13.0                           |
+| npm                 | 11.8.0                             |
+| Git                 | Repositorio inicializado em `main` |
+| Conectividade OMIE  | `api.omie.com.br:443` OK           |
 
 ## Portas Seriais Detectadas
 
@@ -33,14 +33,14 @@ Validar no PC real da balanca:
 
 ## Impressoras Instaladas No Ambiente Atual
 
-| Nome | Driver | Porta | Compartilhada |
-| --- | --- | --- | --- |
-| OneNote (Desktop) | Send to Microsoft OneNote 16 Driver | `nul:` | Nao |
-| Microsoft Print to PDF | Microsoft Print To PDF | `PORTPROMPT:` | Nao |
-| HP LaserJet Professional P 1102w | HP LaserJet Professional P 1102w | `IP_192.168.0.240_2` | Sim |
-| ELGIN L42PRO FULL | ELGIN L42PRO FULL | `192.168.0.35` | Sim |
-| Brother HL-L3240CDW series | Brother HL-L3240CDW series | `BRW44FA66E52A21` | Nao |
-| Brother DCP-L2540DW series Printer | Microsoft IPP Class Driver | `WSD-3654d2bc-cf3a-4818-86b5-2414225c36b5` | Nao |
+| Nome                               | Driver                              | Porta                                      | Compartilhada |
+| ---------------------------------- | ----------------------------------- | ------------------------------------------ | ------------- |
+| OneNote (Desktop)                  | Send to Microsoft OneNote 16 Driver | `nul:`                                     | Nao           |
+| Microsoft Print to PDF             | Microsoft Print To PDF              | `PORTPROMPT:`                              | Nao           |
+| HP LaserJet Professional P 1102w   | HP LaserJet Professional P 1102w    | `IP_192.168.0.240_2`                       | Sim           |
+| ELGIN L42PRO FULL                  | ELGIN L42PRO FULL                   | `192.168.0.35`                             | Sim           |
+| Brother HL-L3240CDW series         | Brother HL-L3240CDW series          | `BRW44FA66E52A21`                          | Nao           |
+| Brother DCP-L2540DW series Printer | Microsoft IPP Class Driver          | `WSD-3654d2bc-cf3a-4818-86b5-2414225c36b5` | Nao           |
 
 Observacao: `ELGIN L42PRO FULL` parece ser candidata a impressora termica no ambiente atual, mas o sistema deve aceitar qualquer impressora instalada no Windows que seja configurada para o perfil de cupom.
 
@@ -48,12 +48,12 @@ Observacao: `ELGIN L42PRO FULL` parece ser candidata a impressora termica no amb
 
 Diretorios iniciais propostos para producao local:
 
-| Finalidade | Caminho |
-| --- | --- |
-| Banco SQLite | `%ProgramData%\\KyberRock\\data\\kyberrock.sqlite3` |
-| Backups locais | `%ProgramData%\\KyberRock\\backups` |
-| Logs | `%ProgramData%\\KyberRock\\logs` |
-| Configuracao local sem segredo sensivel | `%ProgramData%\\KyberRock\\config` |
+| Finalidade                              | Caminho                                             |
+| --------------------------------------- | --------------------------------------------------- |
+| Banco SQLite                            | `%ProgramData%\\KyberRock\\data\\kyberrock.sqlite3` |
+| Backups locais                          | `%ProgramData%\\KyberRock\\backups`                 |
+| Logs                                    | `%ProgramData%\\KyberRock\\logs`                    |
+| Configuracao local sem segredo sensivel | `%ProgramData%\\KyberRock\\config`                  |
 
 Credenciais sensiveis nao devem ficar nesses caminhos em texto puro.
 

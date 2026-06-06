@@ -25,16 +25,16 @@ Nenhum segredo real deve ser commitado no repositorio.
 
 ## Nomes Iniciais De Variaveis
 
-| Variavel | Uso |
-| --- | --- |
-| `OMIE_APP_KEY` | App key OMIE |
-| `OMIE_APP_SECRET` | App secret OMIE |
-| `FIREBASE_PROJECT_ID` | Projeto Firebase |
+| Variavel                | Uso                               |
+| ----------------------- | --------------------------------- |
+| `OMIE_APP_KEY`          | App key OMIE                      |
+| `OMIE_APP_SECRET`       | App secret OMIE                   |
+| `FIREBASE_PROJECT_ID`   | Projeto Firebase                  |
 | `FIREBASE_CLIENT_EMAIL` | Service account, quando aplicavel |
-| `FIREBASE_PRIVATE_KEY` | Chave privada, quando aplicavel |
-| `SMTP_HOST` | Servidor de e-mail |
-| `SMTP_USER` | Usuario de e-mail |
-| `SMTP_PASSWORD` | Senha de e-mail |
+| `FIREBASE_PRIVATE_KEY`  | Chave privada, quando aplicavel   |
+| `SMTP_HOST`             | Servidor de e-mail                |
+| `SMTP_USER`             | Usuario de e-mail                 |
+| `SMTP_PASSWORD`         | Senha de e-mail                   |
 
 ## Arquivos Ignorados
 

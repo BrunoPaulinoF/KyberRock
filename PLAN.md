@@ -69,19 +69,19 @@ KyberRock/
 
 Stack planejada:
 
-| Area | Tecnologia | Observacao |
-| --- | --- | --- |
-| Package manager | npm workspaces | Confirmado para o projeto |
-| Desktop | Electron + React + TypeScript | Aplicativo Windows offline-first |
-| Banco local | SQLite | Operacao mesmo sem internet |
-| Site carregador | React + TypeScript | Web, online, somente leitura |
-| Cloud | Firebase | Auth, Firestore, Hosting e Functions |
-| Backend serverless | Firebase Functions | OMIE, e-mails e tarefas agendadas |
-| Integracao OMIE | TypeScript client proprio | Com fila, logs e idempotencia |
-| Balanca | Adapters locais configuraveis | Serial, USB serial, TCP/IP, HTTP/API local, arquivo/driver ou adapter especifico |
-| Impressao | Impressoras Windows instaladas | Perfis configuraveis para cupom 80 mm e relatorios A4 |
-| Testes | Vitest | Recomendado para pacotes TypeScript e regras de dominio |
-| Build desktop | electron-builder | Instalador Windows |
+| Area               | Tecnologia                     | Observacao                                                                       |
+| ------------------ | ------------------------------ | -------------------------------------------------------------------------------- |
+| Package manager    | npm workspaces                 | Confirmado para o projeto                                                        |
+| Desktop            | Electron + React + TypeScript  | Aplicativo Windows offline-first                                                 |
+| Banco local        | SQLite                         | Operacao mesmo sem internet                                                      |
+| Site carregador    | React + TypeScript             | Web, online, somente leitura                                                     |
+| Cloud              | Firebase                       | Auth, Firestore, Hosting e Functions                                             |
+| Backend serverless | Firebase Functions             | OMIE, e-mails e tarefas agendadas                                                |
+| Integracao OMIE    | TypeScript client proprio      | Com fila, logs e idempotencia                                                    |
+| Balanca            | Adapters locais configuraveis  | Serial, USB serial, TCP/IP, HTTP/API local, arquivo/driver ou adapter especifico |
+| Impressao          | Impressoras Windows instaladas | Perfis configuraveis para cupom 80 mm e relatorios A4                            |
+| Testes             | Vitest                         | Recomendado para pacotes TypeScript e regras de dominio                          |
+| Build desktop      | electron-builder               | Instalador Windows                                                               |
 
 ## 4. Fase 0 - Preparacao, Spikes E Validacoes Tecnicas
 
@@ -856,8 +856,8 @@ Substituir totalmente o sistema antigo pelo KyberRock.
 ## 24. Checklist De Execucao Por Fase
 
 - [ ] Fase 0 - Preparacao, Spikes E Validacoes Tecnicas
-- [ ] Fase 1 - Design Tecnico E Modelo De Dados
-- [ ] Fase 2 - Fundacao Do Monorepo
+- [x] Fase 1 - Design Tecnico E Modelo De Dados
+- [x] Fase 2 - Fundacao Do Monorepo
 - [ ] Fase 3 - Desktop Base Offline-First
 - [ ] Fase 4 - Fluxo De Pesagem Com Balanca Simulada
 - [ ] Fase 5 - Impressao Local No Windows

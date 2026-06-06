@@ -16,19 +16,19 @@ Conectividade HTTPS com `api.omie.com.br:443` foi validada com sucesso no ambien
 
 Servicos relevantes identificados na lista publica:
 
-| Area KyberRock | API OMIE Candidata | URL |
-| --- | --- | --- |
-| Clientes, fornecedores e transportadoras | Clientes, Fornecedores, Transportadoras, etc | https://app.omie.com.br/api/v1/geral/clientes/ |
-| Produtos | Produtos | https://app.omie.com.br/api/v1/geral/produtos/ |
-| Formas de pagamento de vendas | Formas de Pagamento | https://app.omie.com.br/api/v1/produtos/formaspagvendas/ |
-| Meios de pagamento | Meios de Pagamento | https://app.omie.com.br/api/v1/geral/meiospagamento/ |
-| Tabela de precos | Tabela de Precos | https://app.omie.com.br/api/v1/produtos/tabelaprecos/ |
-| Contas a receber | Contas a Receber - Lancamentos | https://app.omie.com.br/api/v1/financas/contareceber/ |
-| Pesquisa de titulos | Pesquisar Titulos | https://app.omie.com.br/api/v1/financas/pesquisartitulos/ |
-| Pedido de venda | Pedidos de Venda | https://app.omie.com.br/api/v1/produtos/pedido/ |
-| Pedido de venda resumido | Pedidos de Venda - Resumido | https://app.omie.com.br/api/v1/produtos/pedidovenda/ |
-| Ordem de servico | Ordens de Servico | https://app.omie.com.br/api/v1/servicos/os/ |
-| Servicos | Servicos | https://app.omie.com.br/api/v1/servicos/servico/ |
+| Area KyberRock                           | API OMIE Candidata                           | URL                                                       |
+| ---------------------------------------- | -------------------------------------------- | --------------------------------------------------------- |
+| Clientes, fornecedores e transportadoras | Clientes, Fornecedores, Transportadoras, etc | https://app.omie.com.br/api/v1/geral/clientes/            |
+| Produtos                                 | Produtos                                     | https://app.omie.com.br/api/v1/geral/produtos/            |
+| Formas de pagamento de vendas            | Formas de Pagamento                          | https://app.omie.com.br/api/v1/produtos/formaspagvendas/  |
+| Meios de pagamento                       | Meios de Pagamento                           | https://app.omie.com.br/api/v1/geral/meiospagamento/      |
+| Tabela de precos                         | Tabela de Precos                             | https://app.omie.com.br/api/v1/produtos/tabelaprecos/     |
+| Contas a receber                         | Contas a Receber - Lancamentos               | https://app.omie.com.br/api/v1/financas/contareceber/     |
+| Pesquisa de titulos                      | Pesquisar Titulos                            | https://app.omie.com.br/api/v1/financas/pesquisartitulos/ |
+| Pedido de venda                          | Pedidos de Venda                             | https://app.omie.com.br/api/v1/produtos/pedido/           |
+| Pedido de venda resumido                 | Pedidos de Venda - Resumido                  | https://app.omie.com.br/api/v1/produtos/pedidovenda/      |
+| Ordem de servico                         | Ordens de Servico                            | https://app.omie.com.br/api/v1/servicos/os/               |
+| Servicos                                 | Servicos                                     | https://app.omie.com.br/api/v1/servicos/servico/          |
 
 ## Regra Para Credenciais
 
@@ -50,15 +50,15 @@ Nao criar arquivos com credenciais reais dentro do repositorio.
 
 ## Chamadas A Validar
 
-| Area | Objetivo | Status | Observacao |
-| --- | --- | --- | --- |
-| Autenticacao | Validar `app_key` e `app_secret` | Pendente | Usar credenciais reais em ambiente seguro |
-| Clientes | Consultar cliente existente | Pendente | Levantar campos obrigatorios usados no KyberRock |
-| Produtos | Consultar produto existente | Pendente | Confirmar identificadores e unidade |
-| Forma/condicao | Consultar forma e condicao de recebimento | Pendente | Endpoint exato a confirmar |
-| Financeiro | Consultar limite/bloqueio/contas a receber | Pendente | Definir regra de bloqueio com dados reais |
-| Pedido de venda | Simular ou criar em ambiente seguro | Pendente | Evitar duplicidade em producao |
-| Ordem de servico | Simular ou criar em ambiente seguro | Pendente | Confirmar campos obrigatorios |
+| Area             | Objetivo                                   | Status   | Observacao                                       |
+| ---------------- | ------------------------------------------ | -------- | ------------------------------------------------ |
+| Autenticacao     | Validar `app_key` e `app_secret`           | Pendente | Usar credenciais reais em ambiente seguro        |
+| Clientes         | Consultar cliente existente                | Pendente | Levantar campos obrigatorios usados no KyberRock |
+| Produtos         | Consultar produto existente                | Pendente | Confirmar identificadores e unidade              |
+| Forma/condicao   | Consultar forma e condicao de recebimento  | Pendente | Endpoint exato a confirmar                       |
+| Financeiro       | Consultar limite/bloqueio/contas a receber | Pendente | Definir regra de bloqueio com dados reais        |
+| Pedido de venda  | Simular ou criar em ambiente seguro        | Pendente | Evitar duplicidade em producao                   |
+| Ordem de servico | Simular ou criar em ambiente seguro        | Pendente | Confirmar campos obrigatorios                    |
 
 ## Dados Obrigatorios A Levantar
 

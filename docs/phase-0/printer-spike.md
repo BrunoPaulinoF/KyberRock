@@ -12,13 +12,13 @@ Impressoras foram listadas no ambiente atual. O cupom teste ainda precisa ser im
 
 ## Impressora Candidata No Ambiente Atual
 
-| Campo | Valor |
-| --- | --- |
-| Nome no Windows | ELGIN L42PRO FULL |
-| Porta | `192.168.0.35` |
-| Compartilhada | Sim |
-| Confirmada como termica 80 mm | Pendente |
-| Teste de impressao | Pendente |
+| Campo                         | Valor             |
+| ----------------------------- | ----------------- |
+| Nome no Windows               | ELGIN L42PRO FULL |
+| Porta                         | `192.168.0.35`    |
+| Compartilhada                 | Sim               |
+| Confirmada como termica 80 mm | Pendente          |
+| Teste de impressao            | Pendente          |
 
 ## Decisoes De Produto
 

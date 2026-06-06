@@ -17,10 +17,10 @@ Garantir que o desktop opere offline, preserve dados localmente e sincronize com
 
 ## Alvos De Sync
 
-| Target | Responsabilidade | Frequencia |
-| --- | --- | --- |
+| Target   | Responsabilidade                                        | Frequencia                     |
+| -------- | ------------------------------------------------------- | ------------------------------ |
 | Firebase | Operacoes abertas/fechadas/canceladas para cloud e site | A cada poucos minutos e manual |
-| OMIE | Cadastros, pedidos, OS e financeiro | A cada 30 minutos e manual |
+| OMIE     | Cadastros, pedidos, OS e financeiro                     | A cada 30 minutos e manual     |
 
 ## Ciclo Da Fila
 
@@ -147,26 +147,26 @@ Financeiro:
 
 ## Conflitos
 
-| Caso | Resolucao |
-| --- | --- |
-| Campo OMIE alterado localmente | OMIE vence; campo local bloqueado |
-| Campo KyberRock alterado em dois lugares | Versao mais recente vence, com auditoria |
-| Operacao fechada alterada | Exige motivo e auditoria |
-| Operacao enviada ao OMIE alterada | Exige fluxo especifico de cancelamento/alteracao |
-| Firebase fora do ar | Mantem fila local pendente |
-| OMIE fora do ar | Mantem fila local pendente |
+| Caso                                     | Resolucao                                        |
+| ---------------------------------------- | ------------------------------------------------ |
+| Campo OMIE alterado localmente           | OMIE vence; campo local bloqueado                |
+| Campo KyberRock alterado em dois lugares | Versao mais recente vence, com auditoria         |
+| Operacao fechada alterada                | Exige motivo e auditoria                         |
+| Operacao enviada ao OMIE alterada        | Exige fluxo especifico de cancelamento/alteracao |
+| Firebase fora do ar                      | Mantem fila local pendente                       |
+| OMIE fora do ar                          | Mantem fila local pendente                       |
 
 ## Retry
 
 Backoff inicial recomendado:
 
-| Tentativa | Proximo retry |
-| --- | --- |
-| 1 | 1 minuto |
-| 2 | 5 minutos |
-| 3 | 15 minutos |
-| 4 | 1 hora |
-| 5+ | 4 horas ou manual |
+| Tentativa | Proximo retry     |
+| --------- | ----------------- |
+| 1         | 1 minuto          |
+| 2         | 5 minutos         |
+| 3         | 15 minutos        |
+| 4         | 1 hora            |
+| 5+        | 4 horas ou manual |
 
 Erros de validacao de payload devem ir para `dead_letter` mais cedo para correcao humana.
 

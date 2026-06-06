@@ -16,28 +16,32 @@ Definir contratos, entidades, status, sincronizacao, multiunidade e regras de co
 
 ## Status Dos Entregaveis
 
-| Entregavel | Status |
-| --- | --- |
-| Documento tecnico em `docs/ARCHITECTURE.md` | Criado |
-| Modelo de dados SQLite | Draft criado |
-| Modelo de dados Firestore | Draft criado |
-| Contratos TypeScript compartilhados | Draft criado |
-| Identificadores globais e locais | Definido |
-| Empresa, unidade e dispositivo desde o inicio | Definido |
-| Status de operacao | Definido |
-| Fila local de sincronizacao | Definida |
-| Idempotencia Firebase e OMIE | Definida |
-| Estrategia de conflito | Definida |
-| Cancelamento antes/depois do OMIE | Definido |
-| Backup e restauracao local | Definido |
-| Logs locais e cloud | Definido |
-| Estrategia de seguranca | Draft criado |
-| Frete no modelo | Draft criado |
+| Entregavel                                    | Status       |
+| --------------------------------------------- | ------------ |
+| Documento tecnico em `docs/ARCHITECTURE.md`   | Criado       |
+| Modelo de dados SQLite                        | Draft criado |
+| Modelo de dados Firestore                     | Draft criado |
+| Contratos TypeScript compartilhados           | Draft criado |
+| Identificadores globais e locais              | Definido     |
+| Empresa, unidade e dispositivo desde o inicio | Definido     |
+| Status de operacao                            | Definido     |
+| Fila local de sincronizacao                   | Definida     |
+| Idempotencia Firebase e OMIE                  | Definida     |
+| Estrategia de conflito                        | Definida     |
+| Cancelamento antes/depois do OMIE             | Definido     |
+| Backup e restauracao local                    | Definido     |
+| Logs locais e cloud                           | Definido     |
+| Estrategia de seguranca                       | Draft criado |
+| Frete no modelo                               | Draft criado |
 
-## Pendencias Antes Da Fase 2
+## Decisoes Para A Fase 2
+
+- SQLite desktop: `better-sqlite3`.
+- Site do carregador: Vite + React + TypeScript, com deploy inicial via Docker no EasyPanel.
+
+## Pendencias Antes Da Fase 3
 
 - Revisar estes documentos com o usuario.
 - Confirmar se o modelo inicial atende a expansao multiunidade.
 - Confirmar formula exata de frete.
-- Confirmar se `better-sqlite3` ou Prisma sera usado no SQLite.
-- Confirmar se o primeiro app web sera Vite ou Next.js; recomendacao atual: Vite.
+- Definir migrations SQLite iniciais.

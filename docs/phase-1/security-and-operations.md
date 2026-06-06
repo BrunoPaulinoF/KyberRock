@@ -29,12 +29,12 @@ O desktop precisa armazenar configuracoes locais sem expor segredos.
 
 Caminhos planejados:
 
-| Uso | Caminho |
-| --- | --- |
-| Banco | `%ProgramData%\\KyberRock\\data\\kyberrock.sqlite3` |
-| Backups | `%ProgramData%\\KyberRock\\backups` |
-| Logs | `%ProgramData%\\KyberRock\\logs` |
-| Config local nao sensivel | `%ProgramData%\\KyberRock\\config` |
+| Uso                       | Caminho                                             |
+| ------------------------- | --------------------------------------------------- |
+| Banco                     | `%ProgramData%\\KyberRock\\data\\kyberrock.sqlite3` |
+| Backups                   | `%ProgramData%\\KyberRock\\backups`                 |
+| Logs                      | `%ProgramData%\\KyberRock\\logs`                    |
+| Config local nao sensivel | `%ProgramData%\\KyberRock\\config`                  |
 
 Credenciais sensiveis devem ir para mecanismo seguro, nao para JSON puro nesses diretorios.
 
@@ -60,23 +60,23 @@ Modelo de claims esperado:
 
 Roles iniciais:
 
-| Role | Uso |
-| --- | --- |
-| `loader` | Site do carregador, somente leitura |
-| `desktop_device` | Escrita controlada do desktop |
-| `admin` | Configuracao e suporte futuro |
+| Role             | Uso                                 |
+| ---------------- | ----------------------------------- |
+| `loader`         | Site do carregador, somente leitura |
+| `desktop_device` | Escrita controlada do desktop       |
+| `admin`          | Configuracao e suporte futuro       |
 
 ## Dados Sensiveis
 
 Classificacao inicial:
 
-| Tipo | Tratamento |
-| --- | --- |
-| Credenciais OMIE/Firebase/e-mail | Nunca logar; Secret Manager/ambiente seguro |
-| Dados financeiros cliente | Restringir no Firebase e UI do carregador |
-| CPF/CNPJ | Evitar no site do carregador se nao necessario |
-| Pesos e valores | Exibir apenas a quem precisa |
-| Logs tecnicos | Sanitizar payloads |
+| Tipo                             | Tratamento                                     |
+| -------------------------------- | ---------------------------------------------- |
+| Credenciais OMIE/Firebase/e-mail | Nunca logar; Secret Manager/ambiente seguro    |
+| Dados financeiros cliente        | Restringir no Firebase e UI do carregador      |
+| CPF/CNPJ                         | Evitar no site do carregador se nao necessario |
+| Pesos e valores                  | Exibir apenas a quem precisa                   |
+| Logs tecnicos                    | Sanitizar payloads                             |
 
 ## Backup Local
 

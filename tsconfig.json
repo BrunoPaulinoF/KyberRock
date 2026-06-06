@@ -1,0 +1,12 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/shared" },
+    { "path": "packages/scale-adapters" },
+    { "path": "packages/omie-client" },
+    { "path": "packages/print-templates" },
+    { "path": "apps/desktop" },
+    { "path": "apps/loader-web" },
+    { "path": "functions" }
+  ]
+}

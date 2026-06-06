@@ -21,14 +21,14 @@ Motivo: o ambiente atual nao e o PC da balanca. Ainda falta executar teste no PC
 
 ## Tipos De Conexao A Suportar No Desenho
 
-| Tipo | Uso Esperado | Status |
-| --- | --- | --- |
-| Serial RS-232 | Muito comum em indicadores de balanca | Planejado |
-| USB serial | Adaptador USB/COM no Windows | Planejado |
-| TCP/IP socket | Indicadores ou conversores seriais em rede | Planejado |
-| HTTP/API local | Gateway/driver de fabricante, quando existir | Planejado |
+| Tipo                         | Uso Esperado                                      | Status                          |
+| ---------------------------- | ------------------------------------------------- | ------------------------------- |
+| Serial RS-232                | Muito comum em indicadores de balanca             | Planejado                       |
+| USB serial                   | Adaptador USB/COM no Windows                      | Planejado                       |
+| TCP/IP socket                | Indicadores ou conversores seriais em rede        | Planejado                       |
+| HTTP/API local               | Gateway/driver de fabricante, quando existir      | Planejado                       |
 | Arquivo/driver intermediario | Integracoes legadas que gravam leitura em arquivo | Planejado como fallback tecnico |
-| Outro adapter especifico | Conforme modelo encontrado em campo | Permitido pela arquitetura |
+| Outro adapter especifico     | Conforme modelo encontrado em campo               | Permitido pela arquitetura      |
 
 ## Contrato Funcional Do Adapter
 
@@ -62,22 +62,22 @@ Campos minimos previstos:
 
 ## Dados A Coletar
 
-| Campo | Valor |
-| --- | --- |
-| Local/unidade | Pendente |
-| Fabricante/modelo do indicador | Pendente; primeiro alvo conhecido: Toledo 950 IDLCG 2 |
-| Tipo de conexao | Pendente |
-| Porta/host | Pendente |
-| Baud rate | Pendente |
-| Data bits | Pendente |
-| Stop bits | Pendente |
-| Parity | Pendente |
-| Handshake | Pendente |
-| Modo de envio | Pendente: continuo, por comando, tecla, estabilidade ou outro |
-| Formato bruto da mensagem | Pendente |
-| Formato normalizado do peso | Pendente |
-| Como identificar peso estavel | Pendente |
-| Como identificar zero/tara/erro | Pendente |
+| Campo                           | Valor                                                         |
+| ------------------------------- | ------------------------------------------------------------- |
+| Local/unidade                   | Pendente                                                      |
+| Fabricante/modelo do indicador  | Pendente; primeiro alvo conhecido: Toledo 950 IDLCG 2         |
+| Tipo de conexao                 | Pendente                                                      |
+| Porta/host                      | Pendente                                                      |
+| Baud rate                       | Pendente                                                      |
+| Data bits                       | Pendente                                                      |
+| Stop bits                       | Pendente                                                      |
+| Parity                          | Pendente                                                      |
+| Handshake                       | Pendente                                                      |
+| Modo de envio                   | Pendente: continuo, por comando, tecla, estabilidade ou outro |
+| Formato bruto da mensagem       | Pendente                                                      |
+| Formato normalizado do peso     | Pendente                                                      |
+| Como identificar peso estavel   | Pendente                                                      |
+| Como identificar zero/tara/erro | Pendente                                                      |
 
 ## Amostras Reais
 

@@ -12,12 +12,7 @@ export type WeightKg = number;
 
 export type DataSource = "kyberrock" | "omie" | "local" | "hybrid";
 
-export type SyncStatus =
-  | "pending"
-  | "running"
-  | "done"
-  | "failed"
-  | "dead_letter";
+export type SyncStatus = "pending" | "running" | "done" | "failed" | "dead_letter";
 ```
 
 ## Multiunidade
@@ -52,13 +47,7 @@ export interface Device {
 ## Balanca
 
 ```ts
-export type ScaleAdapterType =
-  | "serial"
-  | "usb_serial"
-  | "tcp"
-  | "http"
-  | "file"
-  | "custom";
+export type ScaleAdapterType = "serial" | "usb_serial" | "tcp" | "http" | "file" | "custom";
 
 export interface ScaleConfig {
   id: UUID;
@@ -238,13 +227,13 @@ export interface OmieError {
 
 Chamadas candidatas por area:
 
-| Area | Endpoint | Calls |
-| --- | --- | --- |
-| Clientes | `/api/v1/geral/clientes/` | `ListarClientes`, `ConsultarCliente`, `UpsertCliente` |
-| Produtos | `/api/v1/geral/produtos/` | `ListarProdutos`, `ConsultarProduto` |
-| Pedido | `/api/v1/produtos/pedido/` | `IncluirPedido`, `StatusPedido`, `ConsultarPedido`, `ExcluirPedido` |
-| OS | `/api/v1/servicos/os/` | `IncluirOS`, `StatusOS`, `ConsultarOS`, `ExcluirOS` |
-| Contas a receber | `/api/v1/financas/contareceber/` | `ListarContasReceber`, `ConsultarContaReceber` |
+| Area             | Endpoint                         | Calls                                                               |
+| ---------------- | -------------------------------- | ------------------------------------------------------------------- |
+| Clientes         | `/api/v1/geral/clientes/`        | `ListarClientes`, `ConsultarCliente`, `UpsertCliente`               |
+| Produtos         | `/api/v1/geral/produtos/`        | `ListarProdutos`, `ConsultarProduto`                                |
+| Pedido           | `/api/v1/produtos/pedido/`       | `IncluirPedido`, `StatusPedido`, `ConsultarPedido`, `ExcluirPedido` |
+| OS               | `/api/v1/servicos/os/`           | `IncluirOS`, `StatusOS`, `ConsultarOS`, `ExcluirOS`                 |
+| Contas a receber | `/api/v1/financas/contareceber/` | `ListarContasReceber`, `ConsultarContaReceber`                      |
 
 ## Auditoria
 

@@ -4,18 +4,18 @@ Objetivo: validar cedo os pontos que podem inviabilizar ou alterar a arquitetura
 
 ## Status Atual
 
-| Item | Status | Observacao |
-| --- | --- | --- |
-| Node.js | OK | `v24.13.0` no ambiente atual |
-| npm | OK | `11.8.0` no ambiente atual |
-| Git | OK | Repositorio inicializado em `main` |
-| Inventario do PC da balanca | Parcial | Inventario atual registrado; este ambiente nao e o PC real da balanca |
-| Spike da balanca | Parcial | Estrategia de adapters configuraveis iniciada; leitura real pendente |
-| Spike de impressao | Parcial | Estrategia de impressoras Windows configuraveis iniciada; cupom 80 mm ainda precisa ser testado |
-| Spike OMIE | Parcial | Documentacao publica mapeada; autenticacao real pendente |
-| Politica de segredos | Inicial | `.gitignore` criado e politica documentada |
-| Pendencias de frete | Parcial | Respostas iniciais registradas; formula exata ainda pendente |
-| Riscos restantes | Inicial | Lista inicial registrada |
+| Item                        | Status  | Observacao                                                                                      |
+| --------------------------- | ------- | ----------------------------------------------------------------------------------------------- |
+| Node.js                     | OK      | `v24.13.0` no ambiente atual                                                                    |
+| npm                         | OK      | `11.8.0` no ambiente atual                                                                      |
+| Git                         | OK      | Repositorio inicializado em `main`                                                              |
+| Inventario do PC da balanca | Parcial | Inventario atual registrado; este ambiente nao e o PC real da balanca                           |
+| Spike da balanca            | Parcial | Estrategia de adapters configuraveis iniciada; leitura real pendente                            |
+| Spike de impressao          | Parcial | Estrategia de impressoras Windows configuraveis iniciada; cupom 80 mm ainda precisa ser testado |
+| Spike OMIE                  | Parcial | Documentacao publica mapeada; autenticacao real pendente                                        |
+| Politica de segredos        | Inicial | `.gitignore` criado e politica documentada                                                      |
+| Pendencias de frete         | Parcial | Respostas iniciais registradas; formula exata ainda pendente                                    |
+| Riscos restantes            | Inicial | Lista inicial registrada                                                                        |
 
 ## Arquivos Da Fase
 

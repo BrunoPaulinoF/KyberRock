@@ -23,13 +23,13 @@ Definir a arquitetura tecnica antes de criar migrations, colecoes Firebase, paco
 
 ## Superficies
 
-| Superficie | Responsabilidade | Estado |
-| --- | --- | --- |
-| Desktop Windows | Operacao principal, leitura de balanca, SQLite, impressao, sync | Offline-first |
-| Loader web | Visualizacao de carregamentos em aberto pelo carregador | Online |
-| Firebase Functions | Integracoes sensiveis, tarefas agendadas, e-mail | Online |
-| Firestore | Visao cloud multiunidade e dados do site do carregador | Online |
-| OMIE | ERP para cadastros, financeiro, pedidos e OS | Online externo |
+| Superficie         | Responsabilidade                                                | Estado         |
+| ------------------ | --------------------------------------------------------------- | -------------- |
+| Desktop Windows    | Operacao principal, leitura de balanca, SQLite, impressao, sync | Offline-first  |
+| Loader web         | Visualizacao de carregamentos em aberto pelo carregador         | Online         |
+| Firebase Functions | Integracoes sensiveis, tarefas agendadas, e-mail                | Online         |
+| Firestore          | Visao cloud multiunidade e dados do site do carregador          | Online         |
+| OMIE               | ERP para cadastros, financeiro, pedidos e OS                    | Online externo |
 
 ## Topologia
 
@@ -62,32 +62,32 @@ Loader web
 
 ## Modulos Planejados
 
-| Modulo | Futuro caminho | Responsabilidade |
-| --- | --- | --- |
-| Shared | `packages/shared` | Tipos, enums, validacoes de dominio |
-| Scale adapters | `packages/scale-adapters` | Contrato e adapters de balanca |
-| Print templates | `packages/print-templates` | Cupom 80 mm e relatorios A4 |
-| OMIE client | `packages/omie-client` | Cliente tipado, payloads, erros e idempotencia |
-| Desktop | `apps/desktop` | Operacao local e integracoes de hardware |
-| Loader web | `apps/loader-web` | Consulta do carregador |
-| Functions | `functions` | Integracoes cloud, e-mails e jobs |
+| Modulo          | Futuro caminho             | Responsabilidade                               |
+| --------------- | -------------------------- | ---------------------------------------------- |
+| Shared          | `packages/shared`          | Tipos, enums, validacoes de dominio            |
+| Scale adapters  | `packages/scale-adapters`  | Contrato e adapters de balanca                 |
+| Print templates | `packages/print-templates` | Cupom 80 mm e relatorios A4                    |
+| OMIE client     | `packages/omie-client`     | Cliente tipado, payloads, erros e idempotencia |
+| Desktop         | `apps/desktop`             | Operacao local e integracoes de hardware       |
+| Loader web      | `apps/loader-web`          | Consulta do carregador                         |
+| Functions       | `functions`                | Integracoes cloud, e-mails e jobs              |
 
 ## Ownership De Dados
 
-| Dado | Fonte de verdade | Escrita local | Observacao |
-| --- | --- | --- | --- |
-| Empresa/unidade/dispositivo | KyberRock | Sim | Criado/configurado no KyberRock |
-| Cliente OMIE | OMIE | Parcial | Campos OMIE bloqueados localmente |
-| Cliente local pendente | KyberRock | Sim | Enviado ao OMIE depois |
-| Produto | OMIE | Nao em campos OMIE | Sincronizado para operacao |
-| Forma/condicao de pagamento | OMIE | Nao em campos OMIE | Usado em regras financeiras |
-| Tabela de preco | KyberRock | Sim | Vinculada ao cliente/produto |
-| Veiculo/motorista | KyberRock | Sim | Pode ter vinculos com cliente/transportadora |
-| Transportadora | OMIE | Parcial | OMIE usa cadastro de clientes/fornecedores/transportadoras |
-| Operacao de pesagem | KyberRock local | Sim | Sincronizada para Firebase/OMIE |
-| Cupom | KyberRock local | Sim | Reimpressao gera auditoria |
-| Solicitacao carregamento | KyberRock/Firebase | Sim local, cloud via sync | Site le somente abertas |
-| Logs/auditoria | KyberRock | Sim | Nao expor segredos |
+| Dado                        | Fonte de verdade   | Escrita local             | Observacao                                                 |
+| --------------------------- | ------------------ | ------------------------- | ---------------------------------------------------------- |
+| Empresa/unidade/dispositivo | KyberRock          | Sim                       | Criado/configurado no KyberRock                            |
+| Cliente OMIE                | OMIE               | Parcial                   | Campos OMIE bloqueados localmente                          |
+| Cliente local pendente      | KyberRock          | Sim                       | Enviado ao OMIE depois                                     |
+| Produto                     | OMIE               | Nao em campos OMIE        | Sincronizado para operacao                                 |
+| Forma/condicao de pagamento | OMIE               | Nao em campos OMIE        | Usado em regras financeiras                                |
+| Tabela de preco             | KyberRock          | Sim                       | Vinculada ao cliente/produto                               |
+| Veiculo/motorista           | KyberRock          | Sim                       | Pode ter vinculos com cliente/transportadora               |
+| Transportadora              | OMIE               | Parcial                   | OMIE usa cadastro de clientes/fornecedores/transportadoras |
+| Operacao de pesagem         | KyberRock local    | Sim                       | Sincronizada para Firebase/OMIE                            |
+| Cupom                       | KyberRock local    | Sim                       | Reimpressao gera auditoria                                 |
+| Solicitacao carregamento    | KyberRock/Firebase | Sim local, cloud via sync | Site le somente abertas                                    |
+| Logs/auditoria              | KyberRock          | Sim                       | Nao expor segredos                                         |
 
 ## Identificadores
 
@@ -114,18 +114,18 @@ Exemplos:
 
 ## Status Da Operacao
 
-| Status | Significado |
-| --- | --- |
-| `draft` | Operacao iniciada antes de captura de entrada |
-| `entry_registered` | Peso de entrada capturado |
-| `loading_requested` | Solicitacao aberta para o carregador |
-| `awaiting_exit` | Caminhao deve retornar a balanca |
-| `closed_local` | Saida capturada e valores calculados |
-| `pending_firebase` | Ainda nao sincronizada ao Firebase |
-| `pending_omie` | Ainda nao enviada ao OMIE |
-| `synced` | Sincronizacoes obrigatorias confirmadas |
-| `sync_error` | Existe erro de sincronizacao pendente |
-| `cancelled` | Cancelada com motivo obrigatorio |
+| Status              | Significado                                   |
+| ------------------- | --------------------------------------------- |
+| `draft`             | Operacao iniciada antes de captura de entrada |
+| `entry_registered`  | Peso de entrada capturado                     |
+| `loading_requested` | Solicitacao aberta para o carregador          |
+| `awaiting_exit`     | Caminhao deve retornar a balanca              |
+| `closed_local`      | Saida capturada e valores calculados          |
+| `pending_firebase`  | Ainda nao sincronizada ao Firebase            |
+| `pending_omie`      | Ainda nao enviada ao OMIE                     |
+| `synced`            | Sincronizacoes obrigatorias confirmadas       |
+| `sync_error`        | Existe erro de sincronizacao pendente         |
+| `cancelled`         | Cancelada com motivo obrigatorio              |
 
 ## Fluxo Operacional Local
 
@@ -163,13 +163,13 @@ A integracao deve usar a documentacao publica enquanto as credenciais reais nao 
 
 Endpoints candidatos iniciais:
 
-| Area | Endpoint | Chamadas relevantes |
-| --- | --- | --- |
-| Clientes/transportadoras | `/api/v1/geral/clientes/` | `ListarClientes`, `ConsultarCliente`, `UpsertCliente` |
-| Produtos | `/api/v1/geral/produtos/` | `ListarProdutos`, `ConsultarProduto` |
-| Pedido de venda | `/api/v1/produtos/pedido/` | `IncluirPedido`, `ConsultarPedido`, `StatusPedido`, `ExcluirPedido` |
-| Ordem de servico | `/api/v1/servicos/os/` | `IncluirOS`, `ConsultarOS`, `StatusOS`, `ExcluirOS` |
-| Contas a receber | `/api/v1/financas/contareceber/` | `ListarContasReceber`, `ConsultarContaReceber` |
+| Area                     | Endpoint                         | Chamadas relevantes                                                 |
+| ------------------------ | -------------------------------- | ------------------------------------------------------------------- |
+| Clientes/transportadoras | `/api/v1/geral/clientes/`        | `ListarClientes`, `ConsultarCliente`, `UpsertCliente`               |
+| Produtos                 | `/api/v1/geral/produtos/`        | `ListarProdutos`, `ConsultarProduto`                                |
+| Pedido de venda          | `/api/v1/produtos/pedido/`       | `IncluirPedido`, `ConsultarPedido`, `StatusPedido`, `ExcluirPedido` |
+| Ordem de servico         | `/api/v1/servicos/os/`           | `IncluirOS`, `ConsultarOS`, `StatusOS`, `ExcluirOS`                 |
+| Contas a receber         | `/api/v1/financas/contareceber/` | `ListarContasReceber`, `ConsultarContaReceber`                      |
 
 Campos OMIE observados na documentacao publica que afetam o modelo:
 
