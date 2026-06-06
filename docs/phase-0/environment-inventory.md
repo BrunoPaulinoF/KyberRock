@@ -4,7 +4,7 @@ Data: 2026-06-06
 
 ## Ambiente Atual Do Projeto
 
-Este inventario foi coletado na maquina onde o projeto esta aberto. Ainda precisa ser confirmado se esta maquina e o PC real da balanca.
+Este inventario foi coletado na maquina onde o projeto esta aberto. Esta maquina nao e o PC real da balanca.
 
 | Item | Valor |
 | --- | --- |
@@ -18,9 +18,9 @@ Este inventario foi coletado na maquina onde o projeto esta aberto. Ainda precis
 
 ## Portas Seriais Detectadas
 
-Nenhuma porta serial foi retornada por `[System.IO.Ports.SerialPort]::GetPortNames()` no ambiente atual.
+Nenhuma porta serial foi retornada por `[System.IO.Ports.SerialPort]::GetPortNames()` no ambiente atual. Como esta nao e a maquina da balanca, este resultado nao valida nem invalida a conexao real da Toledo 950 IDLCG 2.
 
-Validar no PC da balanca:
+Validar no PC real da balanca:
 
 - se a Toledo esta conectada por serial RS-232, USB serial, TCP/IP ou outro adaptador;
 - nome da porta, por exemplo `COM1`, `COM3`, `COM4`;
@@ -59,6 +59,7 @@ Credenciais sensiveis nao devem ficar nesses caminhos em texto puro.
 
 ## Dados Ainda Pendentes Do PC Real Da Balanca
 
+- Coletar inventario diretamente no PC da balanca.
 - Confirmar versao do Windows no PC da balanca.
 - Confirmar usuario Windows usado na operacao e permissoes.
 - Confirmar portas seriais/USB/TCP disponiveis.

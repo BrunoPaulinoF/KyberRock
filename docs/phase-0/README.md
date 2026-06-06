@@ -9,7 +9,7 @@ Objetivo: validar cedo os pontos que podem inviabilizar ou alterar a arquitetura
 | Node.js | OK | `v24.13.0` no ambiente atual |
 | npm | OK | `11.8.0` no ambiente atual |
 | Git | OK | Repositorio inicializado em `main` |
-| Inventario do PC da balanca | Parcial | Inventario atual registrado; validar se este e o PC real da balanca |
+| Inventario do PC da balanca | Parcial | Inventario atual registrado; este ambiente nao e o PC real da balanca |
 | Spike da balanca | Pendente | Requer acesso fisico/logico a Toledo 950 IDLCG 2 |
 | Spike de impressao | Parcial | Impressoras listadas; cupom 80 mm ainda precisa ser testado |
 | Spike OMIE | Parcial | Conectividade HTTPS com `api.omie.com.br:443` OK; autenticacao real pendente |
@@ -30,7 +30,7 @@ Objetivo: validar cedo os pontos que podem inviabilizar ou alterar a arquitetura
 
 ## Proximo Passo Pratico
 
-Executar os spikes no computador real da balanca com acesso a:
+Executar os spikes no computador real da balanca, diferente do ambiente atual, com acesso a:
 
 - Toledo 950 IDLCG 2 conectada;
 - impressora termica instalada no Windows;

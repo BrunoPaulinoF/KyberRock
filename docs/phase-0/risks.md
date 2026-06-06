@@ -3,7 +3,7 @@
 | Risco | Impacto | Status | Mitigacao Inicial |
 | --- | --- | --- | --- |
 | Protocolo da balanca desconhecido | Alto | Aberto | Executar spike no PC real da balanca |
-| Nenhuma porta serial detectada no ambiente atual | Medio | Aberto | Confirmar conexao fisica no PC da balanca |
+| Ambiente atual nao e o PC da balanca | Medio | Confirmado | Coletar inventario e executar spikes no PC real da balanca |
 | Impressora termica nao confirmada | Medio | Parcial | Testar `ELGIN L42PRO FULL` ou identificar impressora real |
 | Credenciais OMIE nao configuradas no ambiente | Alto | Aberto | Usar variaveis locais seguras para spike |
 | Dados obrigatorios OMIE desconhecidos | Alto | Aberto | Consultar endpoints reais e registrar campos |

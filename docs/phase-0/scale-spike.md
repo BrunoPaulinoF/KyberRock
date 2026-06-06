@@ -8,7 +8,7 @@ Identificar e validar a comunicacao real com a balanca Toledo 950 IDLCG 2, garan
 
 Status: pendente.
 
-Motivo: nenhuma porta serial foi detectada no ambiente atual e ainda falta executar o teste no PC conectado a balanca.
+Motivo: o ambiente atual nao e o PC da balanca. Ainda falta executar o teste no PC conectado a Toledo 950 IDLCG 2.
 
 ## Dados A Coletar
 

@@ -9,7 +9,7 @@
 
 ## PC Da Balanca
 
-- [ ] Confirmar se o ambiente atual e o PC real da balanca.
+- [x] Confirmar se o ambiente atual e o PC real da balanca. Resultado: nao e o PC da balanca.
 - [ ] Registrar versao do Windows do PC da balanca.
 - [ ] Registrar usuario/permissoes.
 - [ ] Registrar portas disponiveis.
