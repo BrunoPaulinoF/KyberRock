@@ -10,18 +10,18 @@ Objetivo: validar cedo os pontos que podem inviabilizar ou alterar a arquitetura
 | npm | OK | `11.8.0` no ambiente atual |
 | Git | OK | Repositorio inicializado em `main` |
 | Inventario do PC da balanca | Parcial | Inventario atual registrado; este ambiente nao e o PC real da balanca |
-| Spike da balanca | Pendente | Requer acesso fisico/logico a Toledo 950 IDLCG 2 |
-| Spike de impressao | Parcial | Impressoras listadas; cupom 80 mm ainda precisa ser testado |
-| Spike OMIE | Parcial | Conectividade HTTPS com `api.omie.com.br:443` OK; autenticacao real pendente |
+| Spike da balanca | Parcial | Estrategia de adapters configuraveis iniciada; leitura real pendente |
+| Spike de impressao | Parcial | Estrategia de impressoras Windows configuraveis iniciada; cupom 80 mm ainda precisa ser testado |
+| Spike OMIE | Parcial | Documentacao publica mapeada; autenticacao real pendente |
 | Politica de segredos | Inicial | `.gitignore` criado e politica documentada |
-| Pendencias de frete | Inicial | Perguntas comerciais registradas |
+| Pendencias de frete | Parcial | Respostas iniciais registradas; formula exata ainda pendente |
 | Riscos restantes | Inicial | Lista inicial registrada |
 
 ## Arquivos Da Fase
 
 - `environment-inventory.md`: inventario do ambiente atual e dados pendentes do PC da balanca.
-- `scale-spike.md`: plano e registro do spike da balanca Toledo 950 IDLCG 2.
-- `printer-spike.md`: plano e registro do spike de impressao no Windows.
+- `scale-spike.md`: plano e registro do spike de balancas configuraveis por adapter.
+- `printer-spike.md`: plano e registro do spike de impressao configuravel no Windows.
 - `omie-spike.md`: plano e registro do spike OMIE.
 - `secrets-policy.md`: regra inicial para armazenamento de credenciais.
 - `freight-pending-questions.md`: pendencias comerciais de frete.
@@ -32,7 +32,7 @@ Objetivo: validar cedo os pontos que podem inviabilizar ou alterar a arquitetura
 
 Executar os spikes no computador real da balanca, diferente do ambiente atual, com acesso a:
 
-- Toledo 950 IDLCG 2 conectada;
+- uma balanca real conectada, sendo Toledo 950 IDLCG 2 o primeiro modelo conhecido;
 - impressora termica instalada no Windows;
 - credenciais OMIE reais em ambiente seguro;
 - permissao para testar leitura, impressao e chamadas controladas ao OMIE.

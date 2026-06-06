@@ -18,11 +18,11 @@ Este inventario foi coletado na maquina onde o projeto esta aberto. Esta maquina
 
 ## Portas Seriais Detectadas
 
-Nenhuma porta serial foi retornada por `[System.IO.Ports.SerialPort]::GetPortNames()` no ambiente atual. Como esta nao e a maquina da balanca, este resultado nao valida nem invalida a conexao real da Toledo 950 IDLCG 2.
+Nenhuma porta serial foi retornada por `[System.IO.Ports.SerialPort]::GetPortNames()` no ambiente atual. Como esta nao e a maquina da balanca, este resultado nao valida nem invalida a conexao real de qualquer balanca instalada.
 
 Validar no PC real da balanca:
 
-- se a Toledo esta conectada por serial RS-232, USB serial, TCP/IP ou outro adaptador;
+- se a balanca esta conectada por serial RS-232, USB serial, TCP/IP, HTTP/API local, arquivo/driver intermediario ou outro adaptador;
 - nome da porta, por exemplo `COM1`, `COM3`, `COM4`;
 - baud rate;
 - data bits;
@@ -42,7 +42,7 @@ Validar no PC real da balanca:
 | Brother HL-L3240CDW series | Brother HL-L3240CDW series | `BRW44FA66E52A21` | Nao |
 | Brother DCP-L2540DW series Printer | Microsoft IPP Class Driver | `WSD-3654d2bc-cf3a-4818-86b5-2414225c36b5` | Nao |
 
-Observacao: `ELGIN L42PRO FULL` parece ser candidata a impressora termica, mas ainda precisa de teste de cupom 80 mm.
+Observacao: `ELGIN L42PRO FULL` parece ser candidata a impressora termica no ambiente atual, mas o sistema deve aceitar qualquer impressora instalada no Windows que seja configurada para o perfil de cupom.
 
 ## Caminhos Recomendados No Windows
 
@@ -63,7 +63,7 @@ Credenciais sensiveis nao devem ficar nesses caminhos em texto puro.
 - Confirmar versao do Windows no PC da balanca.
 - Confirmar usuario Windows usado na operacao e permissoes.
 - Confirmar portas seriais/USB/TCP disponiveis.
-- Confirmar como a Toledo 950 IDLCG 2 esta fisicamente conectada.
+- Confirmar fabricante/modelo e como a balanca esta fisicamente conectada.
 - Confirmar impressora termica real e nome exato no Windows.
 - Confirmar conectividade com internet no local da balanca.
 - Confirmar se firewall/antivirus bloqueia porta serial, impressao ou HTTPS externo.

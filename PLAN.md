@@ -9,10 +9,12 @@ Objetivo: organizar a construcao do KyberRock por fases executaveis, cobrindo o 
 
 - O gerenciador de pacotes sera `npm`.
 - O projeto Firebase ainda nao existe e sera criado em fase propria.
-- As credenciais do OMIE ja existem.
-- Existe acesso ao computador da balanca para testes quando necessario.
+- As credenciais do OMIE ainda nao estao configuradas no projeto; serao informadas depois em local seguro.
+- Nao ha acesso ao computador real da balanca neste momento; o spike fisico fica pendente.
+- A Toledo 950 IDLCG 2 e o primeiro modelo conhecido, mas o sistema deve aceitar diferentes balancas por adapter configuravel.
 - A impressora termica ja existe, mas o modelo ainda nao foi identificado.
-- A impressao deve usar a impressora instalada no Windows, sem configuracoes complexas especificas do modelo.
+- A impressao deve usar impressoras instaladas no Windows, com selecao e perfil configuravel por unidade/dispositivo.
+- A integracao OMIE pode ser desenhada pela documentacao publica enquanto as credenciais reais ficam pendentes.
 - O sistema principal sera desktop Windows.
 - O desktop deve funcionar offline.
 - O site do carregador sera web, online, com login proprio e somente leitura.
@@ -26,12 +28,12 @@ O projeto deve ser construido de forma incremental, com validacoes tecnicas ante
 
 Riscos que devem ser atacados cedo:
 
-- leitura automatica da balanca Toledo 950 IDLCG 2;
+- leitura automatica de balancas por adapters configuraveis, com Toledo 950 IDLCG 2 como primeiro alvo conhecido;
 - operacao offline com banco local;
 - fila de sincronizacao confiavel;
 - integracao OMIE sem duplicidade;
 - bloqueio financeiro baseado em OMIE;
-- impressao no Windows em impressora termica 80 mm;
+- impressao no Windows usando impressoras instaladas e perfis configuraveis, incluindo cupom termico 80 mm;
 - sincronizacao Firebase para o site do carregador;
 - seguranca de credenciais, dados financeiros e segregacao multiunidade;
 - backup/restauracao do banco local.
@@ -76,8 +78,8 @@ Stack planejada:
 | Cloud | Firebase | Auth, Firestore, Hosting e Functions |
 | Backend serverless | Firebase Functions | OMIE, e-mails e tarefas agendadas |
 | Integracao OMIE | TypeScript client proprio | Com fila, logs e idempotencia |
-| Balanca | Adapter local | Protocolo real validado cedo no PC da balanca |
-| Impressao | Impressora Windows instalada | Cupom 80 mm e relatorios A4 |
+| Balanca | Adapters locais configuraveis | Serial, USB serial, TCP/IP, HTTP/API local, arquivo/driver ou adapter especifico |
+| Impressao | Impressoras Windows instaladas | Perfis configuraveis para cupom 80 mm e relatorios A4 |
 | Testes | Vitest | Recomendado para pacotes TypeScript e regras de dominio |
 | Build desktop | electron-builder | Instalador Windows |
 
@@ -99,18 +101,24 @@ Validar cedo os pontos que podem inviabilizar ou alterar a arquitetura: balanca,
 - impressoras instaladas;
 - conexao de rede/internet;
 - caminho recomendado para banco local e logs.
-- Spike da balanca Toledo 950 IDLCG 2:
-- identificar protocolo de comunicacao;
-- identificar porta, baud rate ou configuracao TCP/USB/serial quando aplicavel;
+- Spike de balancas configuraveis:
+- definir contrato de adapter de balanca;
+- mapear tipos de conexao suportados: serial RS-232, USB serial, TCP/IP, HTTP/API local, arquivo/driver intermediario ou adapter especifico;
+- tratar Toledo 950 IDLCG 2 como primeiro modelo conhecido, nao como unica opcao;
+- identificar protocolo de comunicacao quando houver acesso ao equipamento real;
+- identificar porta, baud rate ou configuracao TCP/USB/API/arquivo quando aplicavel;
 - capturar amostra real de leitura;
 - registrar formato da mensagem de peso;
 - validar como identificar peso estavel.
-- Spike da impressao Windows:
+- Spike da impressao Windows configuravel:
 - listar impressoras instaladas;
+- definir selecao de impressora por unidade/dispositivo;
+- definir perfis de impressao para cupom 80 mm e relatorio A4;
 - imprimir cupom teste em 80 mm;
 - validar corte, margem, fonte e legibilidade.
 - Spike OMIE:
-- validar autenticacao com credenciais reais;
+- mapear APIs pela documentacao publica `https://developer.omie.com.br/service-list/` enquanto as credenciais ficam pendentes;
+- validar autenticacao com credenciais reais quando disponiveis;
 - consultar cliente;
 - consultar produto;
 - consultar forma/condicao de recebimento;
@@ -124,18 +132,18 @@ Validar cedo os pontos que podem inviabilizar ou alterar a arquitetura: balanca,
 
 - Node.js e npm funcionando.
 - PC da balanca inventariado.
-- Balanca com protocolo identificado ou plano tecnico claro para identificacao final.
+- Estrategia de adapters de balanca documentada e protocolo real identificado quando houver acesso ao equipamento.
 - Pelo menos uma leitura real ou diagnostico tecnico documentado da balanca.
-- Impressora termica visivel no Windows e cupom teste impresso ou impedimento registrado.
-- OMIE autenticado com sucesso ou erro real documentado.
+- Estrategia de impressoras Windows configuraveis documentada e cupom teste impresso quando houver acesso a impressora real, ou impedimento registrado.
+- OMIE mapeado pela documentacao publica e autenticado com sucesso quando as credenciais estiverem disponiveis, ou erro real documentado.
 - Credenciais OMIE disponiveis em local seguro, sem serem commitadas.
 - Riscos restantes documentados antes de iniciar implementacao principal.
 
 ### Dependencias
 
-- Acesso ao PC da balanca.
-- Acesso ao Windows onde a impressora esta instalada.
-- Credenciais OMIE.
+- Acesso ao PC da balanca para validacao fisica final.
+- Acesso ao Windows onde a impressora real esta instalada.
+- Credenciais OMIE para validacao real.
 
 ## 5. Fase 1 - Design Tecnico E Modelo De Dados
 
@@ -199,7 +207,7 @@ Criar a base tecnica do projeto para desenvolvimento organizado do desktop, site
 - Configuracao de formatacao.
 - Configuracao de testes com Vitest.
 - Pacote `packages/shared` para tipos e regras comuns.
-- Pacote `packages/scale-adapters` para balancas.
+- Pacote `packages/scale-adapters` para contrato e adapters de balancas.
 - Pacote `packages/omie-client` para OMIE.
 - Pacote `packages/print-templates` para cupom e relatorios.
 - Scripts raiz:
@@ -333,7 +341,7 @@ Implementar e validar a impressao do cupom termico de 80 mm usando impressora in
 ### Entregaveis
 
 - Listagem ou selecao da impressora instalada no Windows.
-- Configuracao de impressora padrao no desktop.
+- Configuracao de impressora por perfil no desktop.
 - Template inicial do cupom 80 mm.
 - Impressao do cupom apos fechamento da pesagem.
 - Reimpressao com marcacao de segunda via.
@@ -342,7 +350,7 @@ Implementar e validar a impressao do cupom termico de 80 mm usando impressora in
 
 ### Criterios De Aceite
 
-- Cupom imprime na impressora instalada no Windows.
+- Cupom imprime na impressora selecionada entre as instaladas no Windows.
 - Cupom contem dados da pedreira, cliente, produto, pesos, valor, veiculo e motorista.
 - Cupom tem espaco para assinatura.
 - Reimpressao gera segunda via.
@@ -358,12 +366,12 @@ Implementar e validar a impressao do cupom termico de 80 mm usando impressora in
 
 ### Objetivo
 
-Substituir a balanca simulada pela leitura real da Toledo 950 IDLCG 2.
+Substituir a balanca simulada por um adapter real configuravel. A Toledo 950 IDLCG 2 e o primeiro alvo conhecido, mas a implementacao deve preservar suporte a outros modelos e conexoes.
 
 ### Entregaveis
 
-- Adapter real para comunicacao com a balanca.
-- Configuracao local da conexao da balanca.
+- Adapter real para comunicacao com a balanca instalada.
+- Configuracao local da conexao da balanca por unidade/dispositivo.
 - Leitura automatica do peso.
 - Validacao de peso estavel.
 - Tratamento de falha de comunicacao.
@@ -377,12 +385,12 @@ Substituir a balanca simulada pela leitura real da Toledo 950 IDLCG 2.
 - Sistema so permite capturar peso estavel.
 - Sistema bloqueia pesagem quando a balanca esta indisponivel.
 - Sistema continua sem permitir peso manual.
-- Teste real no PC da balanca aprovado.
+- Teste real no PC da balanca aprovado para o adapter configurado.
 - Logs permitem diagnosticar falha de comunicacao.
 
 ### Dependencias
 
-- Fase 0 com spike da balanca concluido.
+- Fase 0 com estrategia de adapters concluida e spike fisico da balanca executado quando houver acesso.
 - Fase 4 concluida.
 - Acesso ao PC da balanca.
 
@@ -608,18 +616,21 @@ Implementar relatorios operacionais e gerenciais conforme PRD.
 
 ### Objetivo
 
-Implementar o modulo de fretes apos definicao das regras comerciais finais, mantendo a estrutura ja prevista desde o modelo inicial.
+Implementar o modulo de fretes com base nas decisoes comerciais iniciais, mantendo pontos pendentes parametrizaveis.
 
 ### Entregaveis Planejados
 
-- Definicao final das modalidades de frete.
+- Frete por conta do cliente, da pedreira ou de terceiro.
 - Cadastro de modalidades de frete.
-- Configuracao de frete por cliente, destino, transportadora ou produto, conforme definicao final.
+- Transportadoras vindas do OMIE.
+- Configuracao de frete por cliente, destino, transportadora ou regra futura.
 - Calculo de frete separado do produto.
+- Calculo de frete considerando distancia e peso.
 - Exibicao de produto, frete e total.
 - Cupom incluindo frete quando aplicavel.
 - Relatorios separando faturamento de produto, frete e total.
 - Integracao OMIE conforme regra fiscal definida.
+- Permitir alteracao de frete depois da saida com auditoria padrao da operacao.
 
 ### Criterios De Aceite
 
@@ -631,7 +642,8 @@ Implementar o modulo de fretes apos definicao das regras comerciais finais, mant
 
 ### Dependencias
 
-- Definicao final das regras de frete.
+- Formula exata de calculo de frete definida.
+- Formato OMIE para envio de frete confirmado.
 - Fase 11 concluida.
 
 ## 18. Fase 14 - Seguranca, Backup, Observabilidade E Hardening
@@ -684,8 +696,8 @@ Preparar o desktop para instalacao real no Windows da pedreira, com configuracao
 - Definicao da pasta de logs local.
 - Configuracao inicial guiada.
 - Configuracao de unidade/dispositivo.
-- Configuracao da balanca.
-- Configuracao da impressora.
+- Configuracao da balanca por adapter.
+- Configuracao da impressora por perfil Windows.
 - Configuracao de Firebase.
 - Configuracao de OMIE sem expor segredo no repositorio.
 - Plano de atualizacao de versao.
@@ -697,7 +709,7 @@ Preparar o desktop para instalacao real no Windows da pedreira, com configuracao
 - Instalador gera app funcional no Windows.
 - App instalado encontra banco local e configuracoes.
 - App instalado imprime usando impressora Windows.
-- App instalado le balanca no PC real quando configurado.
+- App instalado le balanca no PC real por adapter configurado.
 - Atualizacao de versao nao perde banco local.
 - Checklist de instalacao pode ser seguido por suporte/desenvolvedor.
 
@@ -796,10 +808,12 @@ Substituir totalmente o sistema antigo pelo KyberRock.
 
 ### Marco 0 - Riscos Tecnicos Validados
 
-- PC da balanca inventariado.
-- Balanca com protocolo identificado ou diagnostico documentado.
-- Impressora testada no Windows.
-- OMIE autenticado e endpoints principais validados.
+- Estrategia de adapters de balanca documentada.
+- PC da balanca inventariado quando houver acesso.
+- Balanca com protocolo identificado ou diagnostico documentado quando houver acesso ao equipamento.
+- Estrategia de impressoras Windows configuraveis documentada.
+- Impressora testada no Windows quando houver acesso ao equipamento real.
+- OMIE mapeado pela documentacao publica e autenticado quando credenciais estiverem disponiveis.
 - Riscos restantes documentados.
 
 ### Marco 1 - Espinha Dorsal Local
@@ -877,7 +891,7 @@ Uma fase so deve ser considerada concluida quando:
 ## 26. Observacoes Importantes
 
 - Credenciais OMIE, Firebase e qualquer segredo devem ficar fora do Git.
-- A integracao com balanca deve ser isolada em adapter para facilitar troca de protocolo.
+- A integracao com balanca deve ser isolada em adapters configuraveis para facilitar troca de protocolo, modelo e tipo de conexao.
 - O desktop deve sempre salvar localmente antes de tentar sincronizar.
 - Operacoes enviadas ao OMIE precisam de idempotencia para evitar duplicidade.
 - O site do carregador deve ser somente leitura desde a primeira versao.

@@ -28,7 +28,7 @@ Principais dores:
 ## 3. Objetivos Do Produto
 
 - Substituir totalmente o sistema atual da pedreira.
-- Capturar automaticamente os pesos da balança rodoviária.
+- Capturar automaticamente os pesos da balança rodoviária por adapter configurável.
 - Impedir lançamento manual de peso.
 - Controlar o fluxo completo de entrada, carregamento, saída e fechamento da venda.
 - Sincronizar cadastros, pedidos, operações e status com Firebase.
@@ -48,7 +48,7 @@ Tudo que foi discutido na transcrição é considerado obrigatório para a prime
 Escopo obrigatório:
 
 - Aplicativo desktop Windows para operação principal.
-- Leitura automática da balança Toledo 950 IDLCG 2.
+- Leitura automática de balança rodoviária por adapter configurável, tendo a Toledo 950 IDLCG 2 como primeiro modelo conhecido.
 - Registro de entrada e saída do caminhão na mesma balança.
 - Cálculo automático do peso líquido.
 - Cadastro rápido local quando necessário.
@@ -62,7 +62,7 @@ Escopo obrigatório:
 - Tabelas de preço vinculadas a clientes.
 - Cadastros de veículos, motoristas, transportadoras, produtos, clientes, formas de recebimento, tabelas de preço e configurações.
 - Site do carregador com login próprio e visualização das solicitações em aberto.
-- Impressão de cupom térmico de 80 mm no fechamento da pesagem.
+- Impressão de cupom térmico de 80 mm no fechamento da pesagem, usando impressora configurada entre as instaladas no Windows.
 - Relatórios com exportação PDF/Excel e impressão A4.
 - Fechamento diário por e-mail às 20h.
 - Auditoria de alterações e cancelamentos.
@@ -88,7 +88,7 @@ Regras:
 
 - Não haverá divisão por perfis no desktop.
 - O desktop deve operar mesmo sem internet.
-- O desktop deve se comunicar diretamente com a balança.
+- O desktop deve se comunicar diretamente com a balança por adapter configurado por unidade/dispositivo.
 - O desktop deve manter banco local para operação offline.
 - O desktop deve sincronizar com Firebase a cada poucos minutos.
 - O desktop deve integrar com OMIE quando houver internet.
@@ -161,7 +161,10 @@ Regras:
 
 ## 8. Regras De Pesagem
 
-- A balança da primeira versão é uma balança rodoviária Toledo 950 IDLCG 2.
+- O primeiro modelo conhecido é uma balança rodoviária Toledo 950 IDLCG 2, mas o sistema não pode ficar hard-coded para apenas esse modelo.
+- A leitura de balança deve ser configurável por adapter.
+- A configuração da balança deve ser por unidade/dispositivo.
+- O desenho deve suportar conexões diferentes, como serial RS-232, USB serial, TCP/IP, HTTP/API local, arquivo/driver intermediário ou adapter específico.
 - A mesma balança é usada para entrada e saída.
 - A captura de peso deve ser automática.
 - Não pode existir campo para lançamento manual de peso.
@@ -547,7 +550,9 @@ O cupom será impresso em impressora térmica de 80 mm para o motorista assinar 
 
 ### 14.4 Regras De Impressão
 
-- A impressão deve usar impressora térmica de 80 mm instalada no Windows.
+- A impressão deve usar impressora instalada no Windows e selecionada na configuração do KyberRock.
+- O cupom operacional deve usar perfil térmico de 80 mm, mas o modelo da impressora não deve ser hard-coded.
+- Relatórios A4 devem usar perfil de impressão separado, também baseado em impressora instalada no Windows.
 - O layout deve ser compacto e legível.
 - O número do cupom deve ser sequencial por unidade.
 - O sistema deve permitir reimpressão com marcação de segunda via.
@@ -599,29 +604,35 @@ Relatório por forma de pagamento não é obrigatório na primeira versão.
 - Exportar PDF.
 - Exportar Excel.
 - Botão de impressão rápida em A4.
-- Impressão em impressora instalada no Windows.
+- Impressão em impressora instalada no Windows, com seleção e perfil configurável.
 
 ## 16. Fretes
 
-A parte de fretes foi discutida na reunião, mas as regras finais ainda serão definidas. O sistema deve ser preparado para suportar o módulo de frete sem hard-code e sem travar a evolução.
+A parte de fretes deve ser modelada desde o início, separada do valor do produto e sem hard-code para permitir ajustes comerciais futuros.
 
 Requisitos já identificados:
 
 - Deve existir estrutura para indicar se a operação tem frete ou não.
-- Deve existir estrutura para modalidades como FOB, CIF, frete próprio e frete de terceiro, caso confirmadas.
+- Deve existir estrutura para frete por conta do cliente, da pedreira ou de terceiro.
 - Deve existir estrutura para valor de frete separado do valor do produto.
 - Relatórios devem conseguir separar faturamento de produto, frete e total.
+- Transportadoras devem vir do OMIE.
 - Deve ser possível associar frete a cliente, transportadora, destino ou regra futura.
-- Deve ser possível calcular frete por tonelagem quando essa regra for confirmada.
-- A integração com OMIE deve permitir enviar valor de frete no formato definido futuramente.
+- Deve ser possível calcular frete considerando distância e peso.
+- O frete deve aparecer no cupom térmico.
+- O frete deve aparecer no pedido de venda OMIE quando aplicável.
+- O frete deve aparecer nos relatórios financeiros.
+- Em operação interna sem nota, o frete deve ser tratado da mesma forma.
+- Frete pode ser alterado depois da saída do caminhão, com auditoria padrão da operação.
+- Cancelamento de frete não exige auditoria específica além da auditoria padrão da operação.
+- Não existe comissão, desconto ou repasse específico relacionado ao frete na regra atual.
 
 Pendências de definição:
 
-- Modalidades finais de frete.
-- Se o frete entra no mesmo pedido do produto ou em documento separado.
-- Se haverá empresa terceira responsável por nota/fechamento de frete.
-- Se o valor será sempre calculado por tonelada.
-- Se haverá tabela de frete por cliente, destino, transportadora ou produto.
+- Se motorista e transportadora sempre precisam estar vinculados.
+- Fórmula exata de cálculo por distância e peso.
+- Origem da distância usada no cálculo.
+- Formato correto de envio do frete no OMIE.
 
 ## 17. Regras De Pagamento E Fechamento Financeiro
 
@@ -755,8 +766,8 @@ Stack recomendada:
 | Interface | React + TypeScript | Produtividade e manutenção |
 | Banco local | SQLite | Offline-first, simples, confiável e local |
 | Acesso SQLite | better-sqlite3 ou Prisma | Consistência de queries e migrations |
-| Comunicação com balança | Node.js com adapters Serial/TCP/USB | Flexível enquanto protocolo final não estiver confirmado |
-| Impressão térmica | Impressão nativa Windows ou biblioteca ESC/POS | Compatível com impressora 80 mm instalada |
+| Comunicação com balança | Node.js com adapters configuráveis Serial/TCP/USB/API/arquivo | Flexível para diferentes modelos e protocolos de balança |
+| Impressão térmica | Impressão nativa Windows ou biblioteca ESC/POS | Compatível com impressoras instaladas e perfil 80 mm configurável |
 | Build/instalador | electron-builder | Geração de instalador Windows |
 
 Justificativa:
@@ -948,12 +959,12 @@ Telas obrigatórias:
 
 As pendências abaixo não bloqueiam o PRD, mas precisam ser resolvidas antes ou durante a implementação técnica.
 
-- Confirmar protocolo de comunicação da balança Toledo 950 IDLCG 2.
-- Confirmar se a balança será acessada por serial, USB, TCP/rede, arquivo ou outro método.
-- Definir regras finais de frete.
+- Confirmar protocolo de comunicação da balança instalada no primeiro cliente, sendo Toledo 950 IDLCG 2 o primeiro modelo conhecido.
+- Confirmar se a balança será acessada por serial, USB serial, TCP/rede, HTTP/API local, arquivo/driver intermediário ou outro método.
+- Fechar formula de frete por distancia/peso e detalhes restantes de vinculo motorista/transportadora.
 - Confirmar provedor de e-mail transacional.
 - Confirmar dados fiscais mínimos exigidos pelo OMIE para pedido de venda e ordem de serviço.
-- Confirmar modelo exato da impressora térmica de 80 mm.
+- Confirmar modelo exato da impressora térmica de 80 mm no primeiro cliente e garantir configuração por impressoras instaladas no Windows.
 - Confirmar layout final do cupom com a pedreira.
 - Confirmar periodicidade exata de sincronização com Firebase, caso “poucos minutos” precise virar valor fixo.
 
@@ -981,7 +992,7 @@ As pendências abaixo não bloqueiam o PRD, mas precisam ser resolvidas antes ou
 - O carregador não confirma carregamento.
 - A balança deve ser lida automaticamente.
 - Peso manual não será permitido.
-- A balança é Toledo 950 IDLCG 2.
+- A primeira balança conhecida é Toledo 950 IDLCG 2, mas a arquitetura deve aceitar outros modelos por adapter configurável.
 - Haverá apenas uma balança na primeira versão.
 - O cupom será impresso em impressora térmica de 80 mm na saída.
 - Produtos vêm do OMIE.

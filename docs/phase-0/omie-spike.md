@@ -8,7 +8,27 @@ Validar autenticacao e chamadas essenciais ao OMIE antes da implementacao princi
 
 Status: parcial.
 
-Conectividade HTTPS com `api.omie.com.br:443` foi validada com sucesso no ambiente atual. Autenticacao real ainda nao foi executada porque as credenciais nao foram configuradas no projeto, e nao devem ser commitadas.
+Conectividade HTTPS com `api.omie.com.br:443` foi validada com sucesso no ambiente atual. Autenticacao real ainda nao foi executada porque as credenciais nao foram configuradas no projeto, e nao devem ser commitadas. Enquanto as credenciais ficam pendentes, a integracao deve ser desenhada e parcialmente implementada com base na documentacao publica do OMIE.
+
+## Fonte De Documentacao
+
+- Lista oficial de APIs: https://developer.omie.com.br/service-list/
+
+Servicos relevantes identificados na lista publica:
+
+| Area KyberRock | API OMIE Candidata | URL |
+| --- | --- | --- |
+| Clientes, fornecedores e transportadoras | Clientes, Fornecedores, Transportadoras, etc | https://app.omie.com.br/api/v1/geral/clientes/ |
+| Produtos | Produtos | https://app.omie.com.br/api/v1/geral/produtos/ |
+| Formas de pagamento de vendas | Formas de Pagamento | https://app.omie.com.br/api/v1/produtos/formaspagvendas/ |
+| Meios de pagamento | Meios de Pagamento | https://app.omie.com.br/api/v1/geral/meiospagamento/ |
+| Tabela de precos | Tabela de Precos | https://app.omie.com.br/api/v1/produtos/tabelaprecos/ |
+| Contas a receber | Contas a Receber - Lancamentos | https://app.omie.com.br/api/v1/financas/contareceber/ |
+| Pesquisa de titulos | Pesquisar Titulos | https://app.omie.com.br/api/v1/financas/pesquisartitulos/ |
+| Pedido de venda | Pedidos de Venda | https://app.omie.com.br/api/v1/produtos/pedido/ |
+| Pedido de venda resumido | Pedidos de Venda - Resumido | https://app.omie.com.br/api/v1/produtos/pedidovenda/ |
+| Ordem de servico | Ordens de Servico | https://app.omie.com.br/api/v1/servicos/os/ |
+| Servicos | Servicos | https://app.omie.com.br/api/v1/servicos/servico/ |
 
 ## Regra Para Credenciais
 
@@ -18,6 +38,15 @@ Usar variaveis de ambiente locais ou cofre do sistema operacional:
 - `OMIE_APP_SECRET`
 
 Nao criar arquivos com credenciais reais dentro do repositorio.
+
+## Estrategia Sem Credenciais Reais
+
+- Criar client OMIE com transporte isolado e testavel.
+- Modelar chamadas por endpoint, `call` e `param`, conforme cada pagina da documentacao especifica.
+- Criar fixtures anonimas para testes de contrato interno.
+- Nao simular sucesso real de autenticacao sem credenciais.
+- Nao commitar payloads reais contendo dados sensiveis de clientes.
+- Deixar testes reais de integracao atras de variaveis de ambiente locais.
 
 ## Chamadas A Validar
 

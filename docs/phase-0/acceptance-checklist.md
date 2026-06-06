@@ -17,8 +17,10 @@
 - [ ] Registrar conexao com internet.
 - [ ] Confirmar caminho local para banco e logs.
 
-## Balanca Toledo 950 IDLCG 2
+## Balancas E Adapters De Leitura
 
+- [x] Definir que a leitura de balanca sera configuravel por adapter.
+- [x] Definir tipos de conexao previstos: serial, USB serial, TCP/IP, HTTP/API local, arquivo/driver e adapter especifico.
 - [ ] Identificar tipo de conexao.
 - [ ] Identificar porta/host.
 - [ ] Identificar parametros de comunicacao.
@@ -30,6 +32,8 @@
 ## Impressao Windows
 
 - [x] Listar impressoras instaladas no ambiente atual.
+- [x] Definir que a impressora sera selecionada entre impressoras instaladas no Windows.
+- [x] Definir perfil configuravel para cupom 80 mm e relatorio A4.
 - [ ] Confirmar impressora termica real.
 - [ ] Imprimir cupom teste 80 mm.
 - [ ] Validar corte, margem, fonte e legibilidade.
@@ -38,6 +42,7 @@
 ## OMIE
 
 - [x] Validar conectividade HTTPS com OMIE.
+- [x] Registrar documentacao publica OMIE como base temporaria da integracao.
 - [ ] Configurar credenciais OMIE em local seguro.
 - [ ] Validar autenticacao real.
 - [ ] Consultar cliente.
@@ -51,6 +56,6 @@
 ## Seguranca E Pendencias
 
 - [x] Definir politica inicial de segredos.
-- [x] Criar lista objetiva de pendencias de frete.
+- [x] Registrar respostas iniciais sobre frete.
 - [x] Criar lista inicial de riscos.
 - [ ] Fechar riscos restantes antes da implementacao principal.
