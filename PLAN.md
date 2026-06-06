@@ -232,6 +232,8 @@ Criar a base tecnica do projeto para desenvolvimento organizado do desktop, site
 
 ## 7. Fase 3 - Desktop Base Offline-First
 
+Status: em andamento. Primeira entrega criada com SQLite local, migrations, bootstrap de identidade local, fila de sincronizacao e backup/exportacao/restauracao testados.
+
 ### Objetivo
 
 Criar o aplicativo desktop Windows com banco local, migrations, backup e capacidade real de operar sem internet.

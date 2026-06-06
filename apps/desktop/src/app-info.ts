@@ -5,5 +5,12 @@ export const desktopAppInfo = {
 } as const;
 
 export function getDesktopFoundationCapabilities(): string[] {
-  return ["sqlite-local-data", "scale-adapters", "windows-printing", "sync-queue"];
+  return [
+    "sqlite-local-data",
+    "sqlite-migrations",
+    "local-backup",
+    "scale-adapters",
+    "windows-printing",
+    "sync-queue"
+  ];
 }
