@@ -5,5 +5,8 @@ export * from "./database/migrations";
 export * from "./database/paths";
 export * from "./database/sqlite";
 export * from "./services/backup";
+export * from "./services/backup-scheduler";
 export * from "./services/bootstrap";
+export * from "./services/runtime";
+export * from "./services/status";
 export * from "./services/sync-queue";

@@ -232,7 +232,7 @@ Criar a base tecnica do projeto para desenvolvimento organizado do desktop, site
 
 ## 7. Fase 3 - Desktop Base Offline-First
 
-Status: em andamento. Primeira entrega criada com SQLite local, migrations, bootstrap de identidade local, fila de sincronizacao e backup/exportacao/restauracao testados.
+Status: concluida. Desktop base offline-first criado com SQLite local, migrations, bootstrap de identidade local, fila de sincronizacao, backup/exportacao/restauracao, shell Electron, interface React inicial e indicadores visuais.
 
 ### Objetivo
 
