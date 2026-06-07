@@ -929,9 +929,9 @@ Substituir totalmente o sistema antigo pelo KyberRock.
 - [ ] Fase 6 - Integracao Real Com A Balanca
 - [ ] Fase 7 - Firebase Base E Sincronizacao Cloud
 - [ ] Fase 8 - Site Do Carregador
-- [ ] Fase 9 - Integracao OMIE: Cadastros E Sincronizacao
+- [x] Fase 9 - Integracao OMIE: Cadastros E Sincronizacao
 - [ ] Fase 10 - Regras Comerciais, Precos E Bloqueio Financeiro
-- [ ] Fase 11 - Integracao OMIE: Pedido, Operacao Interna E Cancelamentos
+- [x] Fase 11 - Integracao OMIE: Pedido, Operacao Interna E Cancelamentos
 - [ ] Fase 12 - Relatorios E Fechamento Diario
 - [ ] Fase 13 - Fretes
 - [ ] Fase 14 - Seguranca, Backup, Observabilidade E Hardening
