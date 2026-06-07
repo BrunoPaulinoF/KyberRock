@@ -30,14 +30,18 @@ import {
   closeWeighingOperation,
   createSimulatedWeighingOperation,
   listOpenWeighingOperations,
+  type OperationType,
   type WeighingOperationSummary
 } from "./weighing-operations.js";
 
 export interface StartSimulatedWeighingInput {
+  operationType: OperationType;
   customerName: string;
   plate: string;
   driverName: string;
   productDescription: string;
+  paymentTermName?: string;
+  unitPriceCents?: number;
 }
 
 export class DesktopRuntime {
@@ -114,10 +118,13 @@ export class DesktopRuntime {
 
     return createSimulatedWeighingOperation(this.database, {
       identity: this.ensureIdentity(),
+      operationType: input.operationType,
       customerName: input.customerName,
       plate: input.plate,
       driverName: input.driverName,
       productDescription: input.productDescription,
+      paymentTermName: input.paymentTermName,
+      unitPriceCents: input.unitPriceCents,
       entryWeightKg
     });
   }

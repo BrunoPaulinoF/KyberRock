@@ -41,6 +41,37 @@ describe("weighing operations", () => {
     }
   });
 
+  it("stores operation type, payment term and simulated price table", () => {
+    const database = createDatabase();
+
+    try {
+      const operation = createSimulatedWeighingOperation(database, {
+        identity: createIdentity(database),
+        operationType: "internal",
+        customerName: "Cliente Teste",
+        plate: "ABC1D23",
+        driverName: "Motorista Teste",
+        productDescription: "Brita 1",
+        paymentTermName: "Quinzenal",
+        unitPriceCents: 12,
+        entryWeightKg: 12_000
+      });
+
+      expect(operation).toMatchObject({
+        operationType: "internal",
+        paymentTermName: "Quinzenal",
+        unitPriceCents: 12,
+        productTotalCents: null,
+        totalCents: null
+      });
+      expect(database.prepare("SELECT COUNT(*) FROM payment_terms").pluck().get()).toBe(1);
+      expect(database.prepare("SELECT COUNT(*) FROM price_tables").pluck().get()).toBe(1);
+      expect(database.prepare("SELECT COUNT(*) FROM price_table_items").pluck().get()).toBe(1);
+    } finally {
+      database.close();
+    }
+  });
+
   it("closes a simulated weighing and calculates net weight", () => {
     const database = createDatabase();
 
@@ -69,6 +100,70 @@ describe("weighing operations", () => {
         netWeightKg: 6_500
       });
       expect(listOpenWeighingOperations(database)).toHaveLength(0);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("calculates product total from the simulated price table on close", () => {
+    const database = createDatabase();
+
+    try {
+      const operation = createSimulatedWeighingOperation(database, {
+        identity: createIdentity(database),
+        customerName: "Cliente Teste",
+        plate: "ABC1D23",
+        driverName: "Motorista Teste",
+        productDescription: "Brita 1",
+        paymentTermName: "A vista",
+        unitPriceCents: 12,
+        entryWeightKg: 12_000
+      });
+
+      const closed = closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500
+      });
+
+      expect(closed).toMatchObject({
+        netWeightKg: 6_500,
+        unitPriceCents: 12,
+        productTotalCents: 78_000,
+        totalCents: 78_000,
+        paymentTermName: "A vista"
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("rejects invalid operation type and negative price", () => {
+    const database = createDatabase();
+
+    try {
+      expect(() =>
+        createSimulatedWeighingOperation(database, {
+          identity: createIdentity(database),
+          operationType: "invalid" as "invoice",
+          customerName: "Cliente Teste",
+          plate: "ABC1D23",
+          driverName: "Motorista Teste",
+          productDescription: "Brita 1",
+          entryWeightKg: 12_000
+        })
+      ).toThrow("Operation type must be invoice or internal");
+
+      expect(() =>
+        createSimulatedWeighingOperation(database, {
+          identity: createIdentity(database),
+          customerName: "Cliente Teste",
+          plate: "ABC1D23",
+          driverName: "Motorista Teste",
+          productDescription: "Brita 1",
+          unitPriceCents: -1,
+          entryWeightKg: 12_000
+        })
+      ).toThrow("Unit price cannot be negative");
     } finally {
       database.close();
     }

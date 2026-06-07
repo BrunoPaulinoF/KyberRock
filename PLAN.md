@@ -320,7 +320,7 @@ Permitir instalar o desktop no Windows e preparar atualizacoes acionadas pelo op
 
 ## 8. Fase 4 - Fluxo De Pesagem Com Balanca Simulada
 
-Status: em andamento. Primeira entrega criada com adapter mock, abertura de pesagem simulada, fechamento com peso simulado, calculo de peso liquido, cancelamento com motivo, loading request local, auditoria e testes.
+Status: concluida. Fluxo de pesagem com balanca simulada criado com telas internas, entrada/saida simuladas, tipo de operacao, condicao de recebimento, tabela de preco simulada, calculo financeiro, cancelamento com motivo, loading request local, auditoria e testes.
 
 ### Objetivo
 
