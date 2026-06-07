@@ -1,84 +1,80 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Empresas
+    // Funcao helper para verificar se e admin
+    function isAdmin() {
+      return request.auth != null 
+        && request.auth.token.email == "kybernantech@gmail.com";
+    }
+
+    // Funcao helper para verificar se e um usuario autenticado
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Funcao helper para obter unit_id do usuario
+    function getUserUnitId() {
+      return request.auth.token.unitId;
+    }
+
+    // Funcao helper para obter company_id do usuario
+    function getUserCompanyId() {
+      return request.auth.token.companyId;
+    }
+
+    // Coleção admin_config - apenas admin
+    match /admin_config/{document} {
+      allow read, write: if isAdmin();
+    }
+
+    // Coleção companies - admin tem acesso total, carregador le apenas a sua
     match /companies/{companyId} {
-      allow read: if request.auth != null;
-      allow write: if false; // Apenas via Admin SDK no desktop
+      allow read: if isAdmin() || (isAuthenticated() && getUserCompanyId() == companyId);
+      allow write: if isAdmin();
     }
 
-    // Unidades
+    // Coleção units - admin tem acesso total, carregador le apenas a sua
     match /units/{unitId} {
-      allow read: if request.auth != null 
-                  && request.auth.token.unitId == unitId;
-      allow write: if false;
+      allow read: if isAdmin() || (isAuthenticated() && getUserUnitId() == unitId);
+      allow write: if isAdmin();
     }
 
-    // Operações de pesagem
-    match /weighing_operations/{operationId} {
-      allow read: if request.auth != null 
-                  && request.auth.token.companyId == resource.data.companyId;
-      allow create: if request.auth != null 
-                     && request.auth.token.companyId == request.resource.data.companyId;
-      allow update: if request.auth != null 
-                     && request.auth.token.companyId == resource.data.companyId;
-      allow delete: if false;
-    }
-
-    // Solicitações de carregamento
-    match /loading_requests/{requestId} {
-      allow read: if request.auth != null 
-                  && request.auth.token.companyId == resource.data.companyId;
-      allow write: if request.auth != null 
-                   && request.auth.token.companyId == request.resource.data.companyId;
-    }
-
-    // Clientes
-    match /customers/{customerId} {
-      allow read: if request.auth != null 
-                  && request.auth.token.companyId == resource.data.companyId;
-      allow write: if false;
-    }
-
-    // Produtos
-    match /products/{productId} {
-      allow read: if request.auth != null 
-                  && request.auth.token.companyId == resource.data.companyId;
-      allow write: if false;
-    }
-
-    // Motoristas
-    match /drivers/{driverId} {
-      allow read: if request.auth != null 
-                  && request.auth.token.companyId == resource.data.companyId;
-      allow write: if false;
-    }
-
-    // Veículos
-    match /vehicles/{vehicleId} {
-      allow read: if request.auth != null 
-                  && request.auth.token.companyId == resource.data.companyId;
-      allow write: if false;
-    }
-
-    // Cupons
-    match /print_receipts/{receiptId} {
-      allow read: if request.auth != null 
-                  && request.auth.token.companyId == resource.data.companyId;
-      allow write: if false;
-    }
-
-    // Usuários (carregadores)
+    // Coleção users - admin tem acesso total, carregador le apenas o proprio
     match /users/{userId} {
-      allow read: if request.auth != null && request.auth.uid == userId;
-      allow write: if false;
+      allow read: if isAdmin() || (isAuthenticated() && request.auth.uid == userId);
+      allow write: if isAdmin();
     }
 
-    // Configurações do dispositivo
-    match /devices/{deviceId} {
-      allow read: if request.auth != null 
-                  && request.auth.token.deviceId == deviceId;
-      allow write: if false;
+    // Coleção weighing_operations - admin ve todas, carregador ve apenas abertas da sua unidade
+    match /weighing_operations/{operationId} {
+      allow read: if isAdmin() || 
+        (isAuthenticated() 
+          && getUserUnitId() == resource.data.unitId
+          && resource.data.status == 'open');
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Coleção loading_requests - admin ve todas, carregador ve apenas da sua unidade
+    match /loading_requests/{requestId} {
+      allow read: if isAdmin() || 
+        (isAuthenticated() && getUserUnitId() == resource.data.unitId);
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Coleção customers - admin ve todas, carregador ve apenas da sua empresa
+    match /customers/{customerId} {
+      allow read: if isAdmin() || 
+        (isAuthenticated() && getUserCompanyId() == resource.data.companyId);
+      allow write: if isAdmin();
+    }
+
+    // Coleção products - admin ve todas, carregador ve apenas da sua empresa
+    match /products/{productId} {
+      allow read: if isAdmin() || 
+        (isAuthenticated() && getUserCompanyId() == resource.data.companyId);
+      allow write: if isAdmin();
     }
   }
 }

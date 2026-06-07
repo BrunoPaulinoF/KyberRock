@@ -426,6 +426,39 @@ Substituir a balanca simulada por um adapter real configuravel. A Toledo 950 IDL
 - Fase 4 concluida.
 - Acesso ao PC da balanca.
 
+## 10. Fase 7.1 - Portal De Administracao
+
+Status: implementada. Portal admin em `/admin` no mesmo site do carregador. Login exclusivo com Google para `kybernantech@gmail.com`. Admin consegue criar, editar e excluir pedreiras e usuarios carregadores. Carregadores nao podem se cadastrar sozinhos.
+
+### Objetivo
+
+Criar um portal de administracao escalavel para gerenciar multiplas pedreiras/unidades e seus usuarios carregadores, com controle de acesso rigido e separacao de dados.
+
+### Entregaveis
+
+- Portal admin em `/admin` separado do site do carregador.
+- Login com Google restrito ao email admin.
+- Dashboard com lista de empresas/pedreiras.
+- Formulario para criar/editar empresa.
+- Formulario para criar/editar unidade.
+- Formulario para criar/editar usuario carregador.
+- Ativar/desativar acesso de usuarios.
+- Regras Firestore com separacao admin/carregador.
+- Escalavel para novas pedreiras.
+
+### Criterios De Aceite
+
+- Somente o email admin consegue acessar `/admin`.
+- Admin pode criar novas pedreiras.
+- Admin pode criar usuarios carregadores vinculados a uma unidade.
+- Carregadores nao podem criar conta propria.
+- Dados de uma pedreira sao inacessiveis para outra.
+- Existe separacao clara entre admin e carregador no Firestore.
+
+### Dependencias
+
+- Fase 7 concluida.
+
 ## 11. Fase 7 - Firebase Base E Sincronizacao Cloud
 
 ### Objetivo
