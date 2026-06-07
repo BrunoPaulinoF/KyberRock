@@ -923,18 +923,21 @@ Substituir totalmente o sistema antigo pelo KyberRock.
 - [ ] Fase 0 - Preparacao, Spikes E Validacoes Tecnicas
 - [x] Fase 1 - Design Tecnico E Modelo De Dados
 - [x] Fase 2 - Fundacao Do Monorepo
-- [ ] Fase 3 - Desktop Base Offline-First
-- [ ] Fase 4 - Fluxo De Pesagem Com Balanca Simulada
-- [ ] Fase 5 - Impressao Local No Windows
+- [ ] Fase 0 - Preparacao, Spikes E Validacoes Tecnicas
+- [x] Fase 1 - Design Tecnico E Modelo De Dados
+- [x] Fase 2 - Fundacao Do Monorepo
+- [x] Fase 3 - Desktop Base Offline-First
+- [x] Fase 4 - Fluxo De Pesagem Com Balanca Simulada
+- [x] Fase 5 - Impressao Local No Windows
 - [ ] Fase 6 - Integracao Real Com A Balanca
-- [ ] Fase 7 - Firebase Base E Sincronizacao Cloud
-- [ ] Fase 8 - Site Do Carregador
+- [x] Fase 7 - Firebase Base E Sincronizacao Cloud
+- [x] Fase 8 - Site Do Carregador
 - [x] Fase 9 - Integracao OMIE: Cadastros E Sincronizacao
 - [x] Fase 10 - Regras Comerciais, Precos E Bloqueio Financeiro
 - [x] Fase 11 - Integracao OMIE: Pedido, Operacao Interna E Cancelamentos
-- [ ] Fase 12 - Relatorios E Fechamento Diario
-- [ ] Fase 13 - Fretes
-- [ ] Fase 14 - Seguranca, Backup, Observabilidade E Hardening
+- [x] Fase 12 - Relatorios E Fechamento Diario
+- [x] Fase 13 - Fretes
+- [x] Fase 14 - Seguranca, Backup, Observabilidade E Hardening
 - [ ] Fase 15 - Instalador, Atualizacao E Operacao Local
 - [ ] Fase 16 - Operacao Assistida E Piloto Na Pedreira
 - [ ] Fase 17 - Entrada Em Producao
