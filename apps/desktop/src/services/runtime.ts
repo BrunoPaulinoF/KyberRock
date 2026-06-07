@@ -33,6 +33,17 @@ import {
   type OperationType,
   type WeighingOperationSummary
 } from "./weighing-operations.js";
+import {
+  configureReceiptPrintProfile,
+  listPrintProfiles,
+  listPrintReceipts,
+  printWeighingReceipt,
+  reprintWeighingReceipt,
+  type ConfigureReceiptPrintProfileInput,
+  type PrintProfileSummary,
+  type PrintReceiptSummary,
+  type ReceiptPrinter
+} from "./printing.js";
 
 export interface StartSimulatedWeighingInput {
   operationType: OperationType;
@@ -48,6 +59,7 @@ export class DesktopRuntime {
   private database: DesktopDatabase;
   private readonly paths: InitializedDesktopDatabase["paths"];
   private backupScheduler: BackupSchedulerHandle | null = null;
+  private receiptPrinter: ReceiptPrinter = { printReceipt: async () => undefined };
   private simulatedScaleCursor = 0;
   private readonly simulatedScaleReadings = [12_000, 18_500, 12_250, 19_000];
 
@@ -111,6 +123,10 @@ export class DesktopRuntime {
     return this.backupScheduler;
   }
 
+  setReceiptPrinter(receiptPrinter: ReceiptPrinter): void {
+    this.receiptPrinter = receiptPrinter;
+  }
+
   async startSimulatedWeighing(
     input: StartSimulatedWeighingInput
   ): Promise<WeighingOperationSummary> {
@@ -144,6 +160,39 @@ export class DesktopRuntime {
 
   listOpenWeighingOperations(): WeighingOperationSummary[] {
     return listOpenWeighingOperations(this.database);
+  }
+
+  configureReceiptPrintProfile(
+    input: Omit<ConfigureReceiptPrintProfileInput, "identity">
+  ): PrintProfileSummary {
+    return configureReceiptPrintProfile(this.database, {
+      ...input,
+      identity: this.ensureIdentity()
+    });
+  }
+
+  listPrintProfiles(): PrintProfileSummary[] {
+    return listPrintProfiles(this.database);
+  }
+
+  listPrintReceipts(): PrintReceiptSummary[] {
+    return listPrintReceipts(this.database);
+  }
+
+  printReceipt(operationId: string): Promise<PrintReceiptSummary> {
+    return printWeighingReceipt(
+      this.database,
+      { operationId, identity: this.ensureIdentity() },
+      this.receiptPrinter
+    );
+  }
+
+  reprintReceipt(receiptId: string): Promise<PrintReceiptSummary> {
+    return reprintWeighingReceipt(
+      this.database,
+      { receiptId, identity: this.ensureIdentity() },
+      this.receiptPrinter
+    );
   }
 
   close(): void {

@@ -364,6 +364,8 @@ Construir o fluxo operacional principal usando balanca simulada antes da integra
 
 ## 9. Fase 5 - Impressao Local No Windows
 
+Status: implementada com validacao fisica pendente. O desktop lista impressoras do Windows, salva perfil de cupom 80 mm, imprime automaticamente apos fechamento, registra falhas sem perder a operacao e permite reimpressao auditada como segunda via. Teste fisico depende do PC com impressora instalada.
+
 ### Objetivo
 
 Implementar e validar a impressao do cupom termico de 80 mm usando impressora instalada no Windows.

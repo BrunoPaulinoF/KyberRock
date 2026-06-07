@@ -4,6 +4,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { DesktopRuntime, type StartSimulatedWeighingInput } from "../services/runtime.js";
+import type {
+  ConfigureReceiptPrintProfileInput,
+  ReceiptPrintPayload,
+  ReceiptPrinter,
+  WindowsPrinterSummary
+} from "../services/printing.js";
 import { createInitialUpdateState, type UpdateState } from "../services/update-flow.js";
 
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -28,6 +34,7 @@ async function createMainWindow(): Promise<void> {
       preload: path.join(currentDirectory, "../preload/preload.js")
     }
   });
+  runtime.setReceiptPrinter(createElectronReceiptPrinter(mainWindow));
 
   const devServerUrl = process.env.KYBERROCK_DESKTOP_DEV_SERVER_URL;
 
@@ -172,6 +179,128 @@ function registerIpcHandlers(): void {
 
     return runtime.cancelWeighing(operationId, reason);
   });
+
+  ipcMain.handle("desktop:list-windows-printers", async () => {
+    if (!mainWindow) {
+      throw new Error("Desktop window is not ready.");
+    }
+
+    const printers = await mainWindow.webContents.getPrintersAsync();
+    return printers.map(
+      (printer): WindowsPrinterSummary => ({
+        name: printer.name,
+        isDefault: Boolean((printer as { isDefault?: boolean }).isDefault)
+      })
+    );
+  });
+
+  ipcMain.handle(
+    "desktop:configure-receipt-print-profile",
+    (_event, input: Omit<ConfigureReceiptPrintProfileInput, "identity">) => {
+      if (!runtime) {
+        throw new Error("Desktop runtime is not ready.");
+      }
+
+      return runtime.configureReceiptPrintProfile(input);
+    }
+  );
+
+  ipcMain.handle("desktop:list-print-profiles", () => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.listPrintProfiles();
+  });
+
+  ipcMain.handle("desktop:list-print-receipts", () => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.listPrintReceipts();
+  });
+
+  ipcMain.handle("desktop:print-receipt", (_event, operationId: string) => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.printReceipt(operationId);
+  });
+
+  ipcMain.handle("desktop:reprint-receipt", (_event, receiptId: string) => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.reprintReceipt(receiptId);
+  });
+}
+
+function createElectronReceiptPrinter(parentWindow: BrowserWindow): ReceiptPrinter {
+  return {
+    async printReceipt(payload) {
+      const printWindow = new BrowserWindow({
+        show: false,
+        parent: parentWindow,
+        webPreferences: {
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true
+        }
+      });
+
+      try {
+        await printWindow.loadURL(
+          `data:text/html;charset=utf-8,${encodeURIComponent(buildReceiptHtml(payload))}`
+        );
+        await new Promise<void>((resolve, reject) => {
+          printWindow.webContents.print(
+            {
+              silent: true,
+              printBackground: false,
+              deviceName: payload.printerName
+            },
+            (success, failureReason) => {
+              if (success) {
+                resolve();
+                return;
+              }
+
+              reject(new Error(failureReason || "Falha ao imprimir cupom."));
+            }
+          );
+        });
+      } finally {
+        printWindow.close();
+      }
+    }
+  };
+}
+
+function buildReceiptHtml(payload: ReceiptPrintPayload): string {
+  return `<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      @page { size: ${payload.paperWidthMm}mm auto; margin: 4mm; }
+      body { margin: 0; font-family: Consolas, monospace; font-size: 11px; color: #000; }
+      pre { white-space: pre-wrap; margin: 0; }
+    </style>
+  </head>
+  <body><pre>${escapeHtml(payload.contentText)}</pre></body>
+</html>`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function configureAutoUpdater(): void {

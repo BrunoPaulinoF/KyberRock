@@ -1,6 +1,12 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 import type { BackupResult } from "../services/backup";
+import type {
+  ConfigureReceiptPrintProfileInput,
+  PrintProfileSummary,
+  PrintReceiptSummary,
+  WindowsPrinterSummary
+} from "../services/printing";
 import type { StartSimulatedWeighingInput } from "../services/runtime";
 import type { DesktopStatusSnapshot } from "../services/status";
 import type { UpdateState } from "../services/update-flow";
@@ -17,6 +23,14 @@ export interface KyberRockDesktopApi {
   startSimulatedWeighing: (input: StartSimulatedWeighingInput) => Promise<WeighingOperationSummary>;
   closeSimulatedWeighing: (operationId: string) => Promise<WeighingOperationSummary>;
   cancelWeighing: (operationId: string, reason: string) => Promise<WeighingOperationSummary>;
+  listWindowsPrinters: () => Promise<WindowsPrinterSummary[]>;
+  configureReceiptPrintProfile: (
+    input: Omit<ConfigureReceiptPrintProfileInput, "identity">
+  ) => Promise<PrintProfileSummary>;
+  listPrintProfiles: () => Promise<PrintProfileSummary[]>;
+  listPrintReceipts: () => Promise<PrintReceiptSummary[]>;
+  printReceipt: (operationId: string) => Promise<PrintReceiptSummary>;
+  reprintReceipt: (receiptId: string) => Promise<PrintReceiptSummary>;
 }
 
 const desktopApi: KyberRockDesktopApi = {
@@ -47,7 +61,22 @@ const desktopApi: KyberRockDesktopApi = {
       "desktop:cancel-weighing",
       operationId,
       reason
-    ) as Promise<WeighingOperationSummary>
+    ) as Promise<WeighingOperationSummary>,
+  listWindowsPrinters: () =>
+    ipcRenderer.invoke("desktop:list-windows-printers") as Promise<WindowsPrinterSummary[]>,
+  configureReceiptPrintProfile: (input) =>
+    ipcRenderer.invoke(
+      "desktop:configure-receipt-print-profile",
+      input
+    ) as Promise<PrintProfileSummary>,
+  listPrintProfiles: () =>
+    ipcRenderer.invoke("desktop:list-print-profiles") as Promise<PrintProfileSummary[]>,
+  listPrintReceipts: () =>
+    ipcRenderer.invoke("desktop:list-print-receipts") as Promise<PrintReceiptSummary[]>,
+  printReceipt: (operationId) =>
+    ipcRenderer.invoke("desktop:print-receipt", operationId) as Promise<PrintReceiptSummary>,
+  reprintReceipt: (receiptId) =>
+    ipcRenderer.invoke("desktop:reprint-receipt", receiptId) as Promise<PrintReceiptSummary>
 };
 
 contextBridge.exposeInMainWorld("kyberrockDesktop", desktopApi);

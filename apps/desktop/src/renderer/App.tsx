@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 
 import { desktopAppInfo } from "../app-info";
+import type {
+  PrintProfileSummary,
+  PrintReceiptSummary,
+  WindowsPrinterSummary
+} from "../services/printing";
 import type { DesktopStatusSnapshot } from "../services/status";
 import {
   createInitialUpdateState,
@@ -26,7 +31,7 @@ interface WeighingFormState {
   unitPriceReais: string;
 }
 
-type ActiveView = "dashboard" | "new-weighing" | "open-operations";
+type ActiveView = "dashboard" | "new-weighing" | "open-operations" | "printing";
 
 const initialWeighingForm: WeighingFormState = {
   operationType: "invoice",
@@ -42,6 +47,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [status, setStatus] = useState<DesktopStatusSnapshot | null>(initialStatus);
   const [updateState, setUpdateState] = useState<UpdateState>(createInitialUpdateState());
   const [openOperations, setOpenOperations] = useState<WeighingOperationSummary[]>([]);
+  const [printers, setPrinters] = useState<WindowsPrinterSummary[]>([]);
+  const [printProfiles, setPrintProfiles] = useState<PrintProfileSummary[]>([]);
+  const [printReceipts, setPrintReceipts] = useState<PrintReceiptSummary[]>([]);
+  const [selectedPrinterName, setSelectedPrinterName] = useState("");
   const [form, setForm] = useState<WeighingFormState>(initialWeighingForm);
   const [activeView, setActiveView] = useState<ActiveView>("dashboard");
   const [formError, setFormError] = useState<string | null>(null);
@@ -56,16 +65,36 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         return;
       }
 
-      const [nextStatus, nextUpdateState, nextOpenOperations] = await Promise.all([
+      const [
+        nextStatus,
+        nextUpdateState,
+        nextOpenOperations,
+        nextPrinters,
+        nextProfiles,
+        nextReceipts
+      ] = await Promise.all([
         desktopApi.getStatus(navigator.onLine),
         desktopApi.getUpdateState(),
-        desktopApi.listOpenWeighingOperations()
+        desktopApi.listOpenWeighingOperations(),
+        desktopApi.listWindowsPrinters(),
+        desktopApi.listPrintProfiles(),
+        desktopApi.listPrintReceipts()
       ]);
 
       if (active) {
         setStatus(nextStatus);
         setUpdateState(nextUpdateState);
         setOpenOperations(nextOpenOperations);
+        setPrinters(nextPrinters);
+        setPrintProfiles(nextProfiles);
+        setPrintReceipts(nextReceipts);
+        setSelectedPrinterName(
+          (current) =>
+            current ||
+            nextPrinters.find((printer) => printer.isDefault)?.name ||
+            nextPrinters[0]?.name ||
+            ""
+        );
         setMessage("Desktop pronto para operacao local offline-first.");
       }
     }
@@ -86,6 +115,19 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
     setOpenOperations(await desktopApi.listOpenWeighingOperations());
     setStatus(await desktopApi.getStatus(navigator.onLine));
+  }
+
+  async function refreshPrintData(): Promise<void> {
+    if (!desktopApi) {
+      return;
+    }
+
+    const [nextProfiles, nextReceipts] = await Promise.all([
+      desktopApi.listPrintProfiles(),
+      desktopApi.listPrintReceipts()
+    ]);
+    setPrintProfiles(nextProfiles);
+    setPrintReceipts(nextReceipts);
   }
 
   async function handleExportBackup(): Promise<void> {
@@ -154,10 +196,56 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
     try {
       const operation = await desktopApi.closeSimulatedWeighing(operationId);
-      setMessage(
-        `Operacao fechada. Peso liquido: ${operation.netWeightKg} kg. Total: ${formatMoney(operation.totalCents)}.`
-      );
+      const receipt = await desktopApi.printReceipt(operation.id);
+      const receiptStatus =
+        receipt.status === "printed"
+          ? `Cupom ${receipt.receiptNumber} impresso.`
+          : `Falha ao imprimir cupom: ${receipt.errorMessage}.`;
+      setMessage(`Operacao fechada. Peso liquido: ${operation.netWeightKg} kg. ${receiptStatus}`);
       await refreshOpenOperations();
+      await refreshPrintData();
+    } catch (error) {
+      setMessage(getErrorMessage(error));
+    }
+  }
+
+  async function handleConfigureReceiptPrinter(): Promise<void> {
+    if (!desktopApi) {
+      return;
+    }
+
+    const printerName = selectedPrinterName.trim();
+
+    if (!printerName) {
+      setMessage("Selecione uma impressora do Windows antes de salvar o perfil.");
+      return;
+    }
+
+    try {
+      const profile = await desktopApi.configureReceiptPrintProfile({
+        windowsPrinterName: printerName,
+        paperWidthMm: 80
+      });
+      setMessage(`Impressora de cupom configurada: ${profile.windowsPrinterName}.`);
+      await refreshPrintData();
+    } catch (error) {
+      setMessage(getErrorMessage(error));
+    }
+  }
+
+  async function handleReprintReceipt(receiptId: string): Promise<void> {
+    if (!desktopApi) {
+      return;
+    }
+
+    try {
+      const receipt = await desktopApi.reprintReceipt(receiptId);
+      setMessage(
+        receipt.status === "printed"
+          ? `Segunda via impressa: cupom ${receipt.receiptNumber}, via ${receipt.copyNumber}.`
+          : `Falha ao reimprimir: ${receipt.errorMessage}.`
+      );
+      await refreshPrintData();
     } catch (error) {
       setMessage(getErrorMessage(error));
     }
@@ -185,7 +273,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     <main style={styles.page}>
       <section style={styles.hero}>
         <div>
-          <p style={styles.kicker}>Fase 4 - Pesagem simulada</p>
+          <p style={styles.kicker}>Fase 5 - Impressao local</p>
           <h1 style={styles.title}>{desktopAppInfo.name}</h1>
           <p style={styles.subtitle}>{message}</p>
         </div>
@@ -236,6 +324,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         >
           Operacoes abertas
         </button>
+        <button
+          type="button"
+          onClick={() => setActiveView("printing")}
+          style={viewButtonStyle(activeView === "printing")}
+        >
+          Impressao
+        </button>
       </nav>
 
       {activeView === "dashboard" ? (
@@ -254,6 +349,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
           <article style={styles.panel}>
             <h2 style={styles.panelTitle}>Resumo operacional</h2>
             <p>Operacoes abertas: {openOperations.length}</p>
+            <p>Cupons emitidos: {printReceipts.length}</p>
             <p>Banco local: {status?.databasePath ?? "carregando..."}</p>
           </article>
         </section>
@@ -374,6 +470,82 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
               </div>
             </article>
           ))}
+        </section>
+      ) : null}
+
+      {activeView === "printing" ? (
+        <section style={styles.twoColumns}>
+          <article style={styles.panel}>
+            <h2 style={styles.panelTitle}>Perfil de cupom 80 mm</h2>
+            <p style={styles.muted}>
+              Selecione uma impressora instalada no Windows. O cupom e impresso sem depender de
+              campo manual.
+            </p>
+            <label style={styles.fieldLabel}>
+              Impressora Windows
+              <select
+                value={selectedPrinterName}
+                onChange={(event) => setSelectedPrinterName(event.target.value)}
+                style={styles.input}
+              >
+                <option value="">Selecione...</option>
+                {printers.map((printer) => (
+                  <option key={printer.name} value={printer.name}>
+                    {printer.name}
+                    {printer.isDefault ? " (padrao)" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {printers.length === 0 ? (
+              <p style={styles.errorMessage}>Nenhuma impressora instalada foi encontrada.</p>
+            ) : null}
+            <button
+              type="button"
+              onClick={handleConfigureReceiptPrinter}
+              style={styles.primaryButton}
+            >
+              Salvar perfil 80 mm
+            </button>
+
+            <h3>Perfil ativo</h3>
+            {printProfiles.length === 0 ? (
+              <p style={styles.muted}>Nenhum perfil de impressao configurado.</p>
+            ) : (
+              <p>
+                {printProfiles[0].windowsPrinterName} - {printProfiles[0].paperWidthMm} mm
+              </p>
+            )}
+          </article>
+
+          <article style={styles.panel}>
+            <h2 style={styles.panelTitle}>Cupons emitidos</h2>
+            {printReceipts.length === 0 ? (
+              <p style={styles.muted}>Nenhum cupom emitido ainda.</p>
+            ) : null}
+            {printReceipts.map((receipt) => (
+              <div key={receipt.id} style={styles.receiptRow}>
+                <div>
+                  <strong>
+                    Cupom {receipt.receiptNumber} - via {receipt.copyNumber}
+                  </strong>
+                  <p style={styles.muted}>
+                    {receipt.status === "printed" ? "Impresso" : "Falhou"} em {receipt.printerName}
+                  </p>
+                  {receipt.errorMessage ? (
+                    <p style={styles.errorMessage}>{receipt.errorMessage}</p>
+                  ) : null}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void handleReprintReceipt(receipt.id)}
+                  style={styles.secondaryButton}
+                >
+                  Reimprimir segunda via
+                </button>
+              </div>
+            ))}
+          </article>
         </section>
       ) : null}
     </main>
@@ -605,6 +777,14 @@ const styles = {
     justifyContent: "space-between",
     gap: "16px",
     padding: "16px 0",
+    borderTop: "1px solid #e2e8f0"
+  },
+  receiptRow: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "16px",
+    padding: "14px 0",
     borderTop: "1px solid #e2e8f0"
   }
 };
