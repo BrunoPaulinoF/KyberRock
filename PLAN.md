@@ -930,7 +930,7 @@ Substituir totalmente o sistema antigo pelo KyberRock.
 - [ ] Fase 7 - Firebase Base E Sincronizacao Cloud
 - [ ] Fase 8 - Site Do Carregador
 - [x] Fase 9 - Integracao OMIE: Cadastros E Sincronizacao
-- [ ] Fase 10 - Regras Comerciais, Precos E Bloqueio Financeiro
+- [x] Fase 10 - Regras Comerciais, Precos E Bloqueio Financeiro
 - [x] Fase 11 - Integracao OMIE: Pedido, Operacao Interna E Cancelamentos
 - [ ] Fase 12 - Relatorios E Fechamento Diario
 - [ ] Fase 13 - Fretes
