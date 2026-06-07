@@ -11,6 +11,7 @@ import type { StartSimulatedWeighingInput } from "../services/runtime";
 import type { DesktopStatusSnapshot } from "../services/status";
 import type { UpdateState } from "../services/update-flow";
 import type { WeighingOperationSummary } from "../services/weighing-operations";
+import type { SyncResult } from "../services/firebase-sync";
 
 export interface KyberRockDesktopApi {
   getStatus: (internetOnline?: boolean) => Promise<DesktopStatusSnapshot>;
@@ -31,6 +32,9 @@ export interface KyberRockDesktopApi {
   listPrintReceipts: () => Promise<PrintReceiptSummary[]>;
   printReceipt: (operationId: string) => Promise<PrintReceiptSummary>;
   reprintReceipt: (receiptId: string) => Promise<PrintReceiptSummary>;
+  syncToFirebase: () => Promise<SyncResult>;
+  getFirebaseStatus: () => Promise<{ totalOperations: number; lastSync: string | null }>;
+  isFirebaseConnected: () => Promise<boolean>;
 }
 
 const desktopApi: KyberRockDesktopApi = {
@@ -76,7 +80,15 @@ const desktopApi: KyberRockDesktopApi = {
   printReceipt: (operationId) =>
     ipcRenderer.invoke("desktop:print-receipt", operationId) as Promise<PrintReceiptSummary>,
   reprintReceipt: (receiptId) =>
-    ipcRenderer.invoke("desktop:reprint-receipt", receiptId) as Promise<PrintReceiptSummary>
+    ipcRenderer.invoke("desktop:reprint-receipt", receiptId) as Promise<PrintReceiptSummary>,
+  syncToFirebase: () => ipcRenderer.invoke("desktop:sync-to-firebase") as Promise<SyncResult>,
+  getFirebaseStatus: () =>
+    ipcRenderer.invoke("desktop:get-firebase-status") as Promise<{
+      totalOperations: number;
+      lastSync: string | null;
+    }>,
+  isFirebaseConnected: () =>
+    ipcRenderer.invoke("desktop:is-firebase-connected") as Promise<boolean>
 };
 
 contextBridge.exposeInMainWorld("kyberrockDesktop", desktopApi);

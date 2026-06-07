@@ -31,7 +31,7 @@ interface WeighingFormState {
   unitPriceReais: string;
 }
 
-type ActiveView = "dashboard" | "new-weighing" | "open-operations" | "printing";
+type ActiveView = "dashboard" | "new-weighing" | "open-operations" | "printing" | "firebase";
 
 const initialWeighingForm: WeighingFormState = {
   operationType: "invoice",
@@ -55,6 +55,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [activeView, setActiveView] = useState<ActiveView>("dashboard");
   const [formError, setFormError] = useState<string | null>(null);
   const [message, setMessage] = useState("Inicializando desktop offline-first...");
+  const [firebaseConnected, setFirebaseConnected] = useState(false);
+  const [firebaseSyncing, setFirebaseSyncing] = useState(false);
+  const [firebaseStatus, setFirebaseStatus] = useState<{ totalOperations: number; lastSync: string | null } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -95,6 +98,19 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
             nextPrinters[0]?.name ||
             ""
         );
+
+        // Check Firebase status
+        try {
+          const connected = await desktopApi.isFirebaseConnected();
+          setFirebaseConnected(connected);
+          if (connected) {
+            const fbStatus = await desktopApi.getFirebaseStatus();
+            setFirebaseStatus(fbStatus);
+          }
+        } catch {
+          setFirebaseConnected(false);
+        }
+
         setMessage("Desktop pronto para operacao local offline-first.");
       }
     }
@@ -154,6 +170,33 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
     setUpdateState(nextState);
     setMessage(nextState.errorMessage ?? describeUpdateState(nextState));
+  }
+
+  async function handleSyncToFirebase(): Promise<void> {
+    if (!desktopApi) {
+      return;
+    }
+
+    setFirebaseSyncing(true);
+    try {
+      const result = await desktopApi.syncToFirebase();
+      setFirebaseConnected(true);
+      const fbStatus = await desktopApi.getFirebaseStatus();
+      setFirebaseStatus(fbStatus);
+
+      if (result.success) {
+        setMessage(`Sincronizado com sucesso! ${result.synced} registros enviados.`);
+      } else {
+        setMessage(`Sincronizacao concluida com erros. ${result.synced} enviados, ${result.failed} falhas.`);
+        if (result.errors.length > 0) {
+          console.error("Firebase sync errors:", result.errors);
+        }
+      }
+    } catch (error) {
+      setMessage(`Falha na sincronizacao: ${error instanceof Error ? error.message : "Erro desconhecido"}`);
+    } finally {
+      setFirebaseSyncing(false);
+    }
   }
 
   async function handleStartWeighing(): Promise<void> {
@@ -330,6 +373,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
           style={viewButtonStyle(activeView === "printing")}
         >
           Impressao
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveView("firebase")}
+          style={viewButtonStyle(activeView === "firebase")}
+        >
+          Firebase
         </button>
       </nav>
 
@@ -545,6 +595,65 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 </button>
               </div>
             ))}
+          </article>
+        </section>
+      ) : null}
+
+      {activeView === "firebase" ? (
+        <section style={styles.twoColumns}>
+          <article style={styles.panel}>
+            <h2 style={styles.panelTitle}>Sincronizacao Firebase</h2>
+            <p style={styles.muted}>
+              Sincronize os dados locais com a nuvem. O desktop funciona offline e sincroniza
+              quando voce clicar no botao.
+            </p>
+
+            <div style={{ marginBottom: "16px" }}>
+              <p>
+                <strong>Status:</strong>{" "}
+                {firebaseConnected ? "Conectado ao Firebase" : "Nao conectado"}
+              </p>
+              {firebaseStatus && (
+                <>
+                  <p>Operacoes sincronizadas: {firebaseStatus.totalOperations}</p>
+                  <p>
+                    Ultima sincronizacao:{" "}
+                    {firebaseStatus.lastSync
+                      ? new Date(firebaseStatus.lastSync).toLocaleString("pt-BR")
+                      : "Nunca"}
+                  </p>
+                </>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={handleSyncToFirebase}
+              disabled={firebaseSyncing}
+              style={{
+                ...styles.primaryButton,
+                opacity: firebaseSyncing ? 0.6 : 1,
+                cursor: firebaseSyncing ? "not-allowed" : "pointer"
+              }}
+            >
+              {firebaseSyncing ? "Sincronizando..." : "Sincronizar agora"}
+            </button>
+          </article>
+
+          <article style={styles.panel}>
+            <h2 style={styles.panelTitle}>Informacoes</h2>
+            <p style={styles.muted}>
+              A sincronizacao envia para o Firebase:
+            </p>
+            <ul style={{ color: "#64748b", paddingLeft: "20px" }}>
+              <li>Operacoes de pesagem abertas</li>
+              <li>Solicitacoes de carregamento</li>
+              <li>Clientes e produtos</li>
+              <li>Status da operacao</li>
+            </ul>
+            <p style={styles.muted}>
+              Dados sensiveis como precos e limites de credito nao sao sincronizados.
+            </p>
           </article>
         </section>
       ) : null}

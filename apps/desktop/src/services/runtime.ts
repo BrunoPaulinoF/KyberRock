@@ -44,6 +44,14 @@ import {
   type PrintReceiptSummary,
   type ReceiptPrinter
 } from "./printing.js";
+import {
+  initializeFirebase,
+  syncOperationToFirebase,
+  syncLoadingRequestToFirebase,
+  getFirebaseSyncStatus,
+  isFirebaseInitialized,
+  type SyncResult
+} from "./firebase-sync.js";
 
 export interface StartSimulatedWeighingInput {
   operationType: OperationType;
@@ -193,6 +201,62 @@ export class DesktopRuntime {
       { receiptId, identity: this.ensureIdentity() },
       this.receiptPrinter
     );
+  }
+
+  async syncToFirebase(): Promise<SyncResult> {
+    const identity = this.ensureIdentity();
+    const errors: string[] = [];
+    let synced = 0;
+    let failed = 0;
+
+    try {
+      initializeFirebase();
+
+      // Sync open operations
+      const openOperations = listOpenWeighingOperations(this.database);
+      for (const operation of openOperations) {
+        try {
+          await syncOperationToFirebase(this.database, operation.id, identity);
+          synced++;
+        } catch (error) {
+          failed++;
+          errors.push(`Operation ${operation.id}: ${error instanceof Error ? error.message : "Unknown error"}`);
+        }
+      }
+
+      // Sync loading requests
+      const loadingRequests = this.database
+        .prepare("SELECT id FROM loading_requests WHERE status = 'open'")
+        .all() as Array<{ id: string }>;
+
+      for (const request of loadingRequests) {
+        try {
+          await syncLoadingRequestToFirebase(this.database, request.id, identity);
+          synced++;
+        } catch (error) {
+          failed++;
+          errors.push(`Loading request ${request.id}: ${error instanceof Error ? error.message : "Unknown error"}`);
+        }
+      }
+
+      return { success: failed === 0, synced, failed, errors };
+    } catch (error) {
+      return {
+        success: false,
+        synced,
+        failed,
+        errors: [...errors, error instanceof Error ? error.message : "Firebase initialization failed"]
+      };
+    }
+  }
+
+  async getFirebaseStatus(): Promise<{ totalOperations: number; lastSync: string | null }> {
+    const identity = this.ensureIdentity();
+    return getFirebaseSyncStatus(identity.companyId);
+  }
+
+  isFirebaseConnected(): boolean {
+    return isFirebaseInitialized();
   }
 
   close(): void {

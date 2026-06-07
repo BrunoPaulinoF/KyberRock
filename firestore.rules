@@ -1,0 +1,84 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Empresas
+    match /companies/{companyId} {
+      allow read: if request.auth != null;
+      allow write: if false; // Apenas via Admin SDK no desktop
+    }
+
+    // Unidades
+    match /units/{unitId} {
+      allow read: if request.auth != null 
+                  && request.auth.token.unitId == unitId;
+      allow write: if false;
+    }
+
+    // Operações de pesagem
+    match /weighing_operations/{operationId} {
+      allow read: if request.auth != null 
+                  && request.auth.token.companyId == resource.data.companyId;
+      allow create: if request.auth != null 
+                     && request.auth.token.companyId == request.resource.data.companyId;
+      allow update: if request.auth != null 
+                     && request.auth.token.companyId == resource.data.companyId;
+      allow delete: if false;
+    }
+
+    // Solicitações de carregamento
+    match /loading_requests/{requestId} {
+      allow read: if request.auth != null 
+                  && request.auth.token.companyId == resource.data.companyId;
+      allow write: if request.auth != null 
+                   && request.auth.token.companyId == request.resource.data.companyId;
+    }
+
+    // Clientes
+    match /customers/{customerId} {
+      allow read: if request.auth != null 
+                  && request.auth.token.companyId == resource.data.companyId;
+      allow write: if false;
+    }
+
+    // Produtos
+    match /products/{productId} {
+      allow read: if request.auth != null 
+                  && request.auth.token.companyId == resource.data.companyId;
+      allow write: if false;
+    }
+
+    // Motoristas
+    match /drivers/{driverId} {
+      allow read: if request.auth != null 
+                  && request.auth.token.companyId == resource.data.companyId;
+      allow write: if false;
+    }
+
+    // Veículos
+    match /vehicles/{vehicleId} {
+      allow read: if request.auth != null 
+                  && request.auth.token.companyId == resource.data.companyId;
+      allow write: if false;
+    }
+
+    // Cupons
+    match /print_receipts/{receiptId} {
+      allow read: if request.auth != null 
+                  && request.auth.token.companyId == resource.data.companyId;
+      allow write: if false;
+    }
+
+    // Usuários (carregadores)
+    match /users/{userId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow write: if false;
+    }
+
+    // Configurações do dispositivo
+    match /devices/{deviceId} {
+      allow read: if request.auth != null 
+                  && request.auth.token.deviceId == deviceId;
+      allow write: if false;
+    }
+  }
+}
