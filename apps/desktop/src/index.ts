@@ -10,3 +10,5 @@ export * from "./services/bootstrap.js";
 export * from "./services/runtime.js";
 export * from "./services/status.js";
 export * from "./services/sync-queue.js";
+export * from "./services/update-flow.js";
+export * from "./services/weighing-operations.js";

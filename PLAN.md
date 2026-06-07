@@ -292,7 +292,35 @@ Criar o aplicativo desktop Windows com banco local, migrations, backup e capacid
 
 - Fase 2 concluida.
 
+## 7.1. Fase 3.1 - Instalador E Atualizacoes Do Desktop
+
+Status: base implementada. O app tem configuracao de instalador Windows e fluxo de update manual com botao. A publicacao real de updates depende de definir a URL HTTPS final na VPS/EasyPanel e publicar os artefatos nesse endpoint.
+
+### Objetivo
+
+Permitir instalar o desktop no Windows e preparar atualizacoes acionadas pelo operador, sem update automatico silencioso.
+
+### Entregaveis
+
+- Configuracao `electron-builder` para instalador Windows NSIS.
+- Script `npm run dist:win --workspace @kyberrock/desktop`.
+- Configuracao `electron-updater` com `autoDownload = false`.
+- Botao no desktop para verificar atualizacao.
+- Botao para baixar e instalar somente quando houver update disponivel.
+- Provider generico HTTPS para publicar updates fora do app, sem token embutido.
+- Documentacao do fluxo de publicacao e atualizacao.
+
+### Criterios De Aceite
+
+- Build do desktop continua funcionando.
+- Instalador Windows pode ser gerado localmente.
+- O app nao instala atualizacao sozinho.
+- O operador precisa clicar para baixar/instalar.
+- Nenhum token do GitHub privado fica dentro do app.
+
 ## 8. Fase 4 - Fluxo De Pesagem Com Balanca Simulada
+
+Status: em andamento. Primeira entrega criada com adapter mock, abertura de pesagem simulada, fechamento com peso simulado, calculo de peso liquido, cancelamento com motivo, loading request local, auditoria e testes.
 
 ### Objetivo
 

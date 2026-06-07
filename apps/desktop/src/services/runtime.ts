@@ -25,11 +25,27 @@ import {
   recordLastBackupAt,
   type DesktopStatusSnapshot
 } from "./status.js";
+import {
+  cancelWeighingOperation,
+  closeWeighingOperation,
+  createSimulatedWeighingOperation,
+  listOpenWeighingOperations,
+  type WeighingOperationSummary
+} from "./weighing-operations.js";
+
+export interface StartSimulatedWeighingInput {
+  customerName: string;
+  plate: string;
+  driverName: string;
+  productDescription: string;
+}
 
 export class DesktopRuntime {
   private database: DesktopDatabase;
   private readonly paths: InitializedDesktopDatabase["paths"];
   private backupScheduler: BackupSchedulerHandle | null = null;
+  private simulatedScaleCursor = 0;
+  private readonly simulatedScaleReadings = [12_000, 18_500, 12_250, 19_000];
 
   private constructor(initialized: InitializedDesktopDatabase) {
     this.database = initialized.database;
@@ -91,6 +107,38 @@ export class DesktopRuntime {
     return this.backupScheduler;
   }
 
+  async startSimulatedWeighing(
+    input: StartSimulatedWeighingInput
+  ): Promise<WeighingOperationSummary> {
+    const entryWeightKg = this.readNextSimulatedScaleWeightKg();
+
+    return createSimulatedWeighingOperation(this.database, {
+      identity: this.ensureIdentity(),
+      customerName: input.customerName,
+      plate: input.plate,
+      driverName: input.driverName,
+      productDescription: input.productDescription,
+      entryWeightKg
+    });
+  }
+
+  async closeSimulatedWeighing(operationId: string): Promise<WeighingOperationSummary> {
+    const exitWeightKg = this.readNextSimulatedScaleWeightKg();
+
+    return closeWeighingOperation(this.database, {
+      operationId,
+      exitWeightKg
+    });
+  }
+
+  cancelWeighing(operationId: string, reason: string): WeighingOperationSummary {
+    return cancelWeighingOperation(this.database, { operationId, reason });
+  }
+
+  listOpenWeighingOperations(): WeighingOperationSummary[] {
+    return listOpenWeighingOperations(this.database);
+  }
+
   close(): void {
     this.backupScheduler?.stop();
     this.backupScheduler = null;
@@ -110,5 +158,12 @@ export class DesktopRuntime {
         deviceName: "Desktop balanca"
       })
     );
+  }
+
+  private readNextSimulatedScaleWeightKg(): number {
+    const index = Math.min(this.simulatedScaleCursor, this.simulatedScaleReadings.length - 1);
+    this.simulatedScaleCursor += 1;
+
+    return this.simulatedScaleReadings[index];
   }
 }

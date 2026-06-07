@@ -20,6 +20,15 @@ export interface NormalizedScaleReading {
   unit: "kg";
 }
 
+export interface ScaleReading extends NormalizedScaleReading {
+  stable: boolean;
+  capturedAt: string;
+}
+
+export interface ScaleAdapter {
+  read: () => Promise<ScaleReading>;
+}
+
 export function isSupportedScaleConnection(value: string): value is ScaleConnectionType {
   return SCALE_CONNECTION_TYPES.includes(value as ScaleConnectionType);
 }
@@ -42,4 +51,29 @@ export function normalizeScaleReading(input: ScaleReadingInput): NormalizedScale
   }
 
   return { weightKg: input.value * input.kgFactor, unit: "kg" };
+}
+
+export class MockScaleAdapter implements ScaleAdapter {
+  private cursor = 0;
+  private readonly readings: number[];
+
+  constructor(readings: number[] = [12_000, 18_500, 12_250, 19_000]) {
+    if (readings.length === 0) {
+      throw new Error("Mock scale requires at least one reading.");
+    }
+
+    this.readings = readings;
+  }
+
+  async read(now: Date = new Date()): Promise<ScaleReading> {
+    const index = Math.min(this.cursor, this.readings.length - 1);
+    this.cursor += 1;
+
+    return {
+      weightKg: this.readings[index],
+      unit: "kg",
+      stable: true,
+      capturedAt: now.toISOString()
+    };
+  }
 }

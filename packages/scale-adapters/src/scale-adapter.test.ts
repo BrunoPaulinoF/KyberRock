@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { isSupportedScaleConnection, normalizeScaleReading } from "./scale-adapter";
+import {
+  MockScaleAdapter,
+  isSupportedScaleConnection,
+  normalizeScaleReading
+} from "./scale-adapter";
 
 describe("isSupportedScaleConnection", () => {
   it("accepts planned connection types", () => {
@@ -23,5 +27,22 @@ describe("normalizeScaleReading", () => {
 
   it("requires a kg factor for raw readings", () => {
     expect(() => normalizeScaleReading({ value: 100, unit: "raw" })).toThrow("kgFactor");
+  });
+});
+
+describe("MockScaleAdapter", () => {
+  it("returns stable simulated readings in sequence", async () => {
+    const adapter = new MockScaleAdapter([12_000, 18_500]);
+
+    expect(await adapter.read()).toMatchObject({ weightKg: 12_000, stable: true });
+    expect(await adapter.read()).toMatchObject({ weightKg: 18_500, stable: true });
+  });
+
+  it("keeps returning the latest reading after the sequence ends", async () => {
+    const adapter = new MockScaleAdapter([12_000]);
+
+    await adapter.read();
+
+    expect(await adapter.read()).toMatchObject({ weightKg: 12_000, stable: true });
   });
 });

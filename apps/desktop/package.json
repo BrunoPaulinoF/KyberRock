@@ -7,16 +7,44 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json && vite build --config vite.config.ts",
+    "dist:win": "npm run build && electron-builder --win --publish never && npm rebuild better-sqlite3",
     "dev": "vite --config vite.config.ts --host 0.0.0.0 --port 5174",
     "start": "npm run build && electron ."
   },
   "dependencies": {
     "better-sqlite3": "^12.10.0",
+    "electron-updater": "^6.8.9",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
-    "electron": "^42.3.3"
+    "electron": "40.10.2",
+    "electron-builder": "^26.15.0"
+  },
+  "build": {
+    "appId": "br.com.kyberrock.desktop",
+    "productName": "KyberRock Desktop",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://updates.kyberrock.com/desktop/win"
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    }
   }
 }
