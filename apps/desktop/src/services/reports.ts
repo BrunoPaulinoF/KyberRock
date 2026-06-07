@@ -1,0 +1,237 @@
+import type { DesktopDatabase } from "../database/sqlite.js";
+
+export interface DailyReport {
+  date: string;
+  totalOperations: number;
+  totalNetWeightKg: number;
+  totalProductCents: number;
+  totalFreightCents: number;
+  totalCents: number;
+  operations: Array<{
+    id: string;
+    customerName: string;
+    productDescription: string;
+    netWeightKg: number;
+    productTotalCents: number;
+    freightTotalCents: number;
+    totalCents: number;
+  }>;
+}
+
+export interface MonthlyReport {
+  year: number;
+  month: number;
+  totalOperations: number;
+  totalNetWeightKg: number;
+  totalProductCents: number;
+  totalFreightCents: number;
+  totalCents: number;
+}
+
+export interface ProductReport {
+  productCode: string;
+  productDescription: string;
+  totalOperations: number;
+  totalWeightKg: number;
+  totalValueCents: number;
+}
+
+export interface CustomerReport {
+  customerName: string;
+  totalOperations: number;
+  totalWeightKg: number;
+  totalValueCents: number;
+}
+
+export class ReportService {
+  constructor(private readonly db: DesktopDatabase) {}
+
+  getDailyReport(date: string, unitId: string): DailyReport {
+    const stmt = this.db.prepare(`
+      SELECT
+        wo.id,
+        c.legal_name as customer_name,
+        p.description as product_description,
+        wo.net_weight_kg,
+        wo.product_total_cents,
+        wo.freight_total_cents,
+        wo.total_cents
+      FROM weighing_operations wo
+      LEFT JOIN customers c ON c.id = wo.customer_id
+      LEFT JOIN products p ON p.id = wo.product_id
+      WHERE wo.unit_id = ?
+        AND wo.status = 'closed_local'
+        AND date(wo.created_at) = date(?)
+      ORDER BY wo.created_at ASC
+    `);
+
+    const rows = stmt.all(unitId, date) as Array<{
+      id: string;
+      customer_name: string;
+      product_description: string;
+      net_weight_kg: number;
+      product_total_cents: number;
+      freight_total_cents: number;
+      total_cents: number;
+    }>;
+
+    const operations = rows.map((row) => ({
+      id: row.id,
+      customerName: row.customer_name || "N/A",
+      productDescription: row.product_description || "N/A",
+      netWeightKg: row.net_weight_kg || 0,
+      productTotalCents: row.product_total_cents || 0,
+      freightTotalCents: row.freight_total_cents || 0,
+      totalCents: row.total_cents || 0
+    }));
+
+    return {
+      date,
+      totalOperations: operations.length,
+      totalNetWeightKg: operations.reduce((sum, op) => sum + op.netWeightKg, 0),
+      totalProductCents: operations.reduce((sum, op) => sum + op.productTotalCents, 0),
+      totalFreightCents: operations.reduce((sum, op) => sum + op.freightTotalCents, 0),
+      totalCents: operations.reduce((sum, op) => sum + op.totalCents, 0),
+      operations
+    };
+  }
+
+  getMonthlyReport(year: number, month: number, unitId: string): MonthlyReport {
+    const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
+    const endDate = month === 12
+      ? `${year + 1}-01-01`
+      : `${year}-${String(month + 1).padStart(2, "0")}-01`;
+
+    const stmt = this.db.prepare(`
+      SELECT
+        COUNT(*) as total_operations,
+        COALESCE(SUM(net_weight_kg), 0) as total_net_weight,
+        COALESCE(SUM(product_total_cents), 0) as total_product,
+        COALESCE(SUM(freight_total_cents), 0) as total_freight,
+        COALESCE(SUM(total_cents), 0) as total
+      FROM weighing_operations
+      WHERE unit_id = ?
+        AND status = 'closed_local'
+        AND date(created_at) >= date(?)
+        AND date(created_at) < date(?)
+    `);
+
+    const row = stmt.get(unitId, startDate, endDate) as {
+      total_operations: number;
+      total_net_weight: number;
+      total_product: number;
+      total_freight: number;
+      total: number;
+    };
+
+    return {
+      year,
+      month,
+      totalOperations: row.total_operations,
+      totalNetWeightKg: row.total_net_weight,
+      totalProductCents: row.total_product,
+      totalFreightCents: row.total_freight,
+      totalCents: row.total
+    };
+  }
+
+  getReportByProduct(
+    startDate: string,
+    endDate: string,
+    unitId: string
+  ): ProductReport[] {
+    const stmt = this.db.prepare(`
+      SELECT
+        p.code as product_code,
+        p.description as product_description,
+        COUNT(*) as total_operations,
+        COALESCE(SUM(wo.net_weight_kg), 0) as total_weight,
+        COALESCE(SUM(wo.product_total_cents), 0) as total_value
+      FROM weighing_operations wo
+      LEFT JOIN products p ON p.id = wo.product_id
+      WHERE wo.unit_id = ?
+        AND wo.status = 'closed_local'
+        AND date(wo.created_at) >= date(?)
+        AND date(wo.created_at) <= date(?)
+      GROUP BY p.id
+      ORDER BY total_weight DESC
+    `);
+
+    const rows = stmt.all(unitId, startDate, endDate) as Array<{
+      product_code: string;
+      product_description: string;
+      total_operations: number;
+      total_weight: number;
+      total_value: number;
+    }>;
+
+    return rows.map((row) => ({
+      productCode: row.product_code || "N/A",
+      productDescription: row.product_description || "N/A",
+      totalOperations: row.total_operations,
+      totalWeightKg: row.total_weight,
+      totalValueCents: row.total_value
+    }));
+  }
+
+  getReportByCustomer(
+    startDate: string,
+    endDate: string,
+    unitId: string
+  ): CustomerReport[] {
+    const stmt = this.db.prepare(`
+      SELECT
+        c.legal_name as customer_name,
+        COUNT(*) as total_operations,
+        COALESCE(SUM(wo.net_weight_kg), 0) as total_weight,
+        COALESCE(SUM(wo.product_total_cents), 0) as total_value
+      FROM weighing_operations wo
+      LEFT JOIN customers c ON c.id = wo.customer_id
+      WHERE wo.unit_id = ?
+        AND wo.status = 'closed_local'
+        AND date(wo.created_at) >= date(?)
+        AND date(wo.created_at) <= date(?)
+      GROUP BY c.id
+      ORDER BY total_value DESC
+    `);
+
+    const rows = stmt.all(unitId, startDate, endDate) as Array<{
+      customer_name: string;
+      total_operations: number;
+      total_weight: number;
+      total_value: number;
+    }>;
+
+    return rows.map((row) => ({
+      customerName: row.customer_name || "N/A",
+      totalOperations: row.total_operations,
+      totalWeightKg: row.total_weight,
+      totalValueCents: row.total_value
+    }));
+  }
+
+  exportDailyToCSV(date: string, unitId: string): string {
+    const report = this.getDailyReport(date, unitId);
+
+    const lines: string[] = [
+      "Data,Cliente,Produto,Peso Liquido (kg),Valor Produto,Frete,Total"
+    ];
+
+    for (const op of report.operations) {
+      lines.push(
+        `${report.date},"${op.customerName}","${op.productDescription}",${op.netWeightKg},${this.formatCurrency(op.productTotalCents)},${this.formatCurrency(op.freightTotalCents)},${this.formatCurrency(op.totalCents)}`
+      );
+    }
+
+    lines.push(
+      `TOTAL,,,${report.totalNetWeightKg},${this.formatCurrency(report.totalProductCents)},${this.formatCurrency(report.totalFreightCents)},${this.formatCurrency(report.totalCents)}`
+    );
+
+    return lines.join("\n");
+  }
+
+  private formatCurrency(cents: number): string {
+    const value = (cents / 100).toFixed(2);
+    return `R$ ${value}`;
+  }
+}
