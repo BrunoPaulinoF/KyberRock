@@ -35,6 +35,9 @@ ui-debug.log
 logs/
 *.log
 
+# MCP temp files
+.playwright-mcp/
+
 # OS/editor
 .DS_Store
 Thumbs.db

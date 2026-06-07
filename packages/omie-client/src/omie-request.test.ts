@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { OMIE_ENDPOINTS, buildOmieIntegrationCode, createOmieRequestBody } from "./omie-request";
+import {
+  OMIE_ENDPOINTS,
+  buildOmieIntegrationCode,
+  createOmieRequestBody
+} from "./omie-request";
 
 describe("createOmieRequestBody", () => {
   it("wraps the OMIE call and param without credentials", () => {
