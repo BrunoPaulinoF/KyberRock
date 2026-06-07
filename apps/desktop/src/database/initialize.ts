@@ -1,6 +1,10 @@
-import { ensureDesktopDataDirectories, getDesktopDataPaths, type DesktopDataPaths } from "./paths";
-import { runDesktopMigrations, type AppliedMigration } from "./migrate";
-import { openDesktopDatabase, type DesktopDatabase } from "./sqlite";
+import {
+  ensureDesktopDataDirectories,
+  getDesktopDataPaths,
+  type DesktopDataPaths
+} from "./paths.js";
+import { runDesktopMigrations, type AppliedMigration } from "./migrate.js";
+import { openDesktopDatabase, type DesktopDatabase } from "./sqlite.js";
 
 export interface InitializedDesktopDatabase {
   database: DesktopDatabase;

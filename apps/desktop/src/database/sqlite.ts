@@ -3,7 +3,7 @@ import path from "node:path";
 
 import Database from "better-sqlite3";
 
-import { ensureDesktopDataDirectories, getDesktopDataPaths } from "./paths";
+import { ensureDesktopDataDirectories, getDesktopDataPaths } from "./paths.js";
 
 export type DesktopDatabase = Database.Database;
 

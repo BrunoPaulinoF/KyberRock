@@ -1,5 +1,5 @@
-import type { DesktopDatabase } from "../database/sqlite";
-import { getLocalDesktopIdentity, type LocalDesktopIdentity } from "./bootstrap";
+import type { DesktopDatabase } from "../database/sqlite.js";
+import { getLocalDesktopIdentity, type LocalDesktopIdentity } from "./bootstrap.js";
 
 export type InternetStatus = "online" | "offline";
 export type IntegrationStatus = "not_configured" | "unknown" | "online" | "offline";

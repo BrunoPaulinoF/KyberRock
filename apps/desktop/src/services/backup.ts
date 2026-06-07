@@ -3,8 +3,8 @@ import path from "node:path";
 
 import Database from "better-sqlite3";
 
-import { assertDesktopDatabaseHealthy } from "../database/migrate";
-import type { DesktopDatabase } from "../database/sqlite";
+import { assertDesktopDatabaseHealthy } from "../database/migrate.js";
+import type { DesktopDatabase } from "../database/sqlite.js";
 
 export interface CreateAutomaticBackupOptions {
   database: DesktopDatabase;

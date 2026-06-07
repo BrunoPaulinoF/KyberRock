@@ -1,23 +1,30 @@
-import { initializeDesktopDatabase, type InitializedDesktopDatabase } from "../database/initialize";
-import { runDesktopMigrations } from "../database/migrate";
-import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite";
+import {
+  initializeDesktopDatabase,
+  type InitializedDesktopDatabase
+} from "../database/initialize.js";
+import { runDesktopMigrations } from "../database/migrate.js";
+import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite.js";
 import {
   createAutomaticBackup,
   exportManualBackup,
   restoreBackup,
   type BackupResult
-} from "./backup";
+} from "./backup.js";
 import {
   ensureInitialDesktopIdentity,
   getLocalDesktopIdentity,
   type LocalDesktopIdentity
-} from "./bootstrap";
+} from "./bootstrap.js";
 import {
   startDailyBackupScheduler,
   type BackupSchedulerHandle,
   type StartDailyBackupSchedulerOptions
-} from "./backup-scheduler";
-import { getDesktopStatusSnapshot, recordLastBackupAt, type DesktopStatusSnapshot } from "./status";
+} from "./backup-scheduler.js";
+import {
+  getDesktopStatusSnapshot,
+  recordLastBackupAt,
+  type DesktopStatusSnapshot
+} from "./status.js";
 
 export class DesktopRuntime {
   private database: DesktopDatabase;

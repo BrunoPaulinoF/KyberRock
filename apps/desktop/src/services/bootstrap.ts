@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import type { DesktopDatabase } from "../database/sqlite";
+import type { DesktopDatabase } from "../database/sqlite.js";
 
 export interface InitialDesktopIdentityInput {
   companyId: string;

@@ -1,5 +1,5 @@
-import { DESKTOP_MIGRATIONS, type DesktopMigration } from "./migrations";
-import type { DesktopDatabase } from "./sqlite";
+import { DESKTOP_MIGRATIONS, type DesktopMigration } from "./migrations.js";
+import type { DesktopDatabase } from "./sqlite.js";
 
 export interface AppliedMigration {
   version: number;

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import type { DesktopDatabase } from "../database/sqlite";
+import type { DesktopDatabase } from "../database/sqlite.js";
 
 export const SYNC_QUEUE_STATUSES = ["pending", "running", "done", "failed", "dead_letter"] as const;
 export const SYNC_TARGETS = ["firebase", "omie"] as const;
