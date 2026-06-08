@@ -38,11 +38,11 @@ Caminhos planejados:
 
 Credenciais sensiveis devem ir para mecanismo seguro, nao para JSON puro nesses diretorios.
 
-## Firebase Security Draft
+## Supabase Security Draft
 
 Regras pretendidas:
 
-- carregador autentica via Firebase Auth;
+- carregador autentica via Supabase Auth;
 - carregador le somente `loadingRequests` da unidade vinculada;
 - carregador nao escreve nada operacional;
 - desktop/dispositivo tem permissao de escrita limitada a sua empresa/unidade;
@@ -72,8 +72,8 @@ Classificacao inicial:
 
 | Tipo                             | Tratamento                                     |
 | -------------------------------- | ---------------------------------------------- |
-| Credenciais OMIE/Firebase/e-mail | Nunca logar; Secret Manager/ambiente seguro    |
-| Dados financeiros cliente        | Restringir no Firebase e UI do carregador      |
+| Credenciais OMIE/Supabase/e-mail | Nunca logar; Secret Manager/ambiente seguro    |
+| Dados financeiros cliente        | Restringir no Supabase e UI do carregador      |
 | CPF/CNPJ                         | Evitar no site do carregador se nao necessario |
 | Pesos e valores                  | Exibir apenas a quem precisa                   |
 | Logs tecnicos                    | Sanitizar payloads                             |
@@ -119,7 +119,7 @@ Devem registrar:
 
 - falha de balanca;
 - falha de impressora;
-- falha Firebase;
+- falha Supabase;
 - falha OMIE;
 - migrations;
 - backup/restauracao.
@@ -128,7 +128,7 @@ Nao devem registrar:
 
 - app key;
 - app secret;
-- tokens Firebase;
+- tokens Supabase;
 - service accounts;
 - payloads completos com dados pessoais/financeiros sem sanitizacao.
 
@@ -139,12 +139,12 @@ Requisitos para instalacao futura:
 - Windows com permissao para instalar app;
 - permissao para acessar porta/conexao da balanca;
 - impressora instalada no Windows;
-- internet para sync Firebase/OMIE, mas operacao local deve continuar sem internet;
+- internet para sync cloud/OMIE, mas operacao local deve continuar sem internet;
 - pasta `%ProgramData%\\KyberRock` gravavel pelo usuario/app.
 
 ## Checklist De Hardening Futuro
 
-- Validar regras Firestore com testes.
+- Validar regras Supabase Postgres com testes.
 - Validar que carregador nao escreve dados.
 - Validar que dados de uma unidade nao aparecem em outra.
 - Validar que logs nao contem segredos.

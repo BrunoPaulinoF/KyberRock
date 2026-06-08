@@ -7,7 +7,7 @@ describe("buildStatusIndicatorViewModels", () => {
     const indicators = buildStatusIndicatorViewModels({
       internet: "offline",
       scale: "not_configured",
-      firebase: "not_configured",
+      cloud: "not_configured",
       omie: "not_configured",
       pendingSyncJobs: 2,
       lastBackupAt: "2026-06-06T12:00:00.000Z",
@@ -24,7 +24,7 @@ describe("buildStatusIndicatorViewModels", () => {
     expect(indicators.map((indicator) => indicator.label)).toEqual([
       "Internet",
       "Balanca",
-      "Firebase",
+      "Cloud",
       "OMIE",
       "Fila pendente",
       "Ultimo backup"

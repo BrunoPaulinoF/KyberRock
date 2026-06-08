@@ -10,6 +10,6 @@ describe("loaderWebAppInfo", () => {
 
 describe("getLoaderWebCapabilities", () => {
   it("is read-only for loading requests", () => {
-    expect(getLoaderWebCapabilities()).toContain("firestore-read-only");
+    expect(getLoaderWebCapabilities()).toContain("supabase-rls-read-only");
   });
 });

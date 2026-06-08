@@ -21,7 +21,7 @@ Status: concluida.
 - cancelamento com motivo obrigatorio;
 - criacao de `loading_requests` local;
 - auditoria local de entrada, saida e cancelamento;
-- enfileiramento local para futura sincronizacao Firebase;
+- enfileiramento local para futura sincronizacao Supabase;
 - tratamento visual inicial de erros de validacao.
 
 ## Limites Da Fase

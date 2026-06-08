@@ -31,7 +31,7 @@ interface WeighingFormState {
   unitPriceReais: string;
 }
 
-type ActiveView = "dashboard" | "new-weighing" | "open-operations" | "printing" | "firebase";
+type ActiveView = "dashboard" | "new-weighing" | "open-operations" | "printing" | "cloud";
 
 const initialWeighingForm: WeighingFormState = {
   operationType: "invoice",
@@ -55,9 +55,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [activeView, setActiveView] = useState<ActiveView>("dashboard");
   const [formError, setFormError] = useState<string | null>(null);
   const [message, setMessage] = useState("Inicializando desktop offline-first...");
-  const [firebaseConnected, setFirebaseConnected] = useState(false);
-  const [firebaseSyncing, setFirebaseSyncing] = useState(false);
-  const [firebaseStatus, setFirebaseStatus] = useState<{ totalOperations: number; lastSync: string | null } | null>(null);
+  const [cloudConnected, setCloudConnected] = useState(false);
+  const [cloudSyncing, setCloudSyncing] = useState(false);
+  const [cloudStatus, setCloudStatus] = useState<{ totalOperations: number; lastSync: string | null } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -99,16 +99,16 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
             ""
         );
 
-        // Check Firebase status
+        // Check cloud status
         try {
-          const connected = await desktopApi.isFirebaseConnected();
-          setFirebaseConnected(connected);
+          const connected = await desktopApi.isCloudConnected();
+          setCloudConnected(connected);
           if (connected) {
-            const fbStatus = await desktopApi.getFirebaseStatus();
-            setFirebaseStatus(fbStatus);
+            const nextCloudStatus = await desktopApi.getCloudStatus();
+            setCloudStatus(nextCloudStatus);
           }
         } catch {
-          setFirebaseConnected(false);
+          setCloudConnected(false);
         }
 
         setMessage("Desktop pronto para operacao local offline-first.");
@@ -172,30 +172,30 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     setMessage(nextState.errorMessage ?? describeUpdateState(nextState));
   }
 
-  async function handleSyncToFirebase(): Promise<void> {
+  async function handleSyncToCloud(): Promise<void> {
     if (!desktopApi) {
       return;
     }
 
-    setFirebaseSyncing(true);
+    setCloudSyncing(true);
     try {
-      const result = await desktopApi.syncToFirebase();
-      setFirebaseConnected(true);
-      const fbStatus = await desktopApi.getFirebaseStatus();
-      setFirebaseStatus(fbStatus);
+      const result = await desktopApi.syncToCloud();
+      setCloudConnected(true);
+      const nextCloudStatus = await desktopApi.getCloudStatus();
+      setCloudStatus(nextCloudStatus);
 
       if (result.success) {
         setMessage(`Sincronizado com sucesso! ${result.synced} registros enviados.`);
       } else {
         setMessage(`Sincronizacao concluida com erros. ${result.synced} enviados, ${result.failed} falhas.`);
         if (result.errors.length > 0) {
-          console.error("Firebase sync errors:", result.errors);
+          console.error("Cloud sync errors:", result.errors);
         }
       }
     } catch (error) {
       setMessage(`Falha na sincronizacao: ${error instanceof Error ? error.message : "Erro desconhecido"}`);
     } finally {
-      setFirebaseSyncing(false);
+      setCloudSyncing(false);
     }
   }
 
@@ -294,6 +294,24 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
   }
 
+  async function handlePrintTest(): Promise<void> {
+    if (!desktopApi) {
+      return;
+    }
+
+    try {
+      const receipt = await desktopApi.printTestReceipt();
+      setMessage(
+        receipt.status === "printed"
+          ? `Cupom de teste impresso com sucesso na ${receipt.printerName}.`
+          : `Falha ao imprimir teste: ${receipt.errorMessage}.`
+      );
+      await refreshPrintData();
+    } catch (error) {
+      setMessage(getErrorMessage(error));
+    }
+  }
+
   async function handleCancelOperation(operationId: string): Promise<void> {
     const reason = window.prompt("Motivo do cancelamento");
 
@@ -376,10 +394,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         </button>
         <button
           type="button"
-          onClick={() => setActiveView("firebase")}
-          style={viewButtonStyle(activeView === "firebase")}
+          onClick={() => setActiveView("cloud")}
+          style={viewButtonStyle(activeView === "cloud")}
         >
-          Firebase
+          Cloud
         </button>
       </nav>
 
@@ -558,6 +576,14 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
               Salvar perfil 80 mm
             </button>
 
+            <button
+              type="button"
+              onClick={() => void handlePrintTest()}
+              style={{ ...styles.secondaryButton, marginTop: "12px" }}
+            >
+              Testar impressora (cupom exemplo)
+            </button>
+
             <h3>Perfil ativo</h3>
             {printProfiles.length === 0 ? (
               <p style={styles.muted}>Nenhum perfil de impressao configurado.</p>
@@ -599,10 +625,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         </section>
       ) : null}
 
-      {activeView === "firebase" ? (
+      {activeView === "cloud" ? (
         <section style={styles.twoColumns}>
           <article style={styles.panel}>
-            <h2 style={styles.panelTitle}>Sincronizacao Firebase</h2>
+            <h2 style={styles.panelTitle}>Sincronizacao Supabase</h2>
             <p style={styles.muted}>
               Sincronize os dados locais com a nuvem. O desktop funciona offline e sincroniza
               quando voce clicar no botao.
@@ -611,15 +637,15 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
             <div style={{ marginBottom: "16px" }}>
               <p>
                 <strong>Status:</strong>{" "}
-                {firebaseConnected ? "Conectado ao Firebase" : "Nao conectado"}
+                {cloudConnected ? "Conectado ao Supabase" : "Nao conectado"}
               </p>
-              {firebaseStatus && (
+              {cloudStatus && (
                 <>
-                  <p>Operacoes sincronizadas: {firebaseStatus.totalOperations}</p>
+                  <p>Operacoes sincronizadas: {cloudStatus.totalOperations}</p>
                   <p>
                     Ultima sincronizacao:{" "}
-                    {firebaseStatus.lastSync
-                      ? new Date(firebaseStatus.lastSync).toLocaleString("pt-BR")
+                    {cloudStatus.lastSync
+                      ? new Date(cloudStatus.lastSync).toLocaleString("pt-BR")
                       : "Nunca"}
                   </p>
                 </>
@@ -628,22 +654,22 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
             <button
               type="button"
-              onClick={handleSyncToFirebase}
-              disabled={firebaseSyncing}
+              onClick={handleSyncToCloud}
+              disabled={cloudSyncing}
               style={{
                 ...styles.primaryButton,
-                opacity: firebaseSyncing ? 0.6 : 1,
-                cursor: firebaseSyncing ? "not-allowed" : "pointer"
+                opacity: cloudSyncing ? 0.6 : 1,
+                cursor: cloudSyncing ? "not-allowed" : "pointer"
               }}
             >
-              {firebaseSyncing ? "Sincronizando..." : "Sincronizar agora"}
+              {cloudSyncing ? "Sincronizando..." : "Sincronizar agora"}
             </button>
           </article>
 
           <article style={styles.panel}>
             <h2 style={styles.panelTitle}>Informacoes</h2>
             <p style={styles.muted}>
-              A sincronizacao envia para o Firebase:
+              A sincronizacao envia para o Supabase:
             </p>
             <ul style={{ color: "#64748b", paddingLeft: "20px" }}>
               <li>Operacoes de pesagem abertas</li>

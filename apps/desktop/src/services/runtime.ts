@@ -37,6 +37,7 @@ import {
   configureReceiptPrintProfile,
   listPrintProfiles,
   listPrintReceipts,
+  printTestReceipt,
   printWeighingReceipt,
   reprintWeighingReceipt,
   type ConfigureReceiptPrintProfileInput,
@@ -45,13 +46,13 @@ import {
   type ReceiptPrinter
 } from "./printing.js";
 import {
-  initializeFirebase,
-  syncOperationToFirebase,
-  syncLoadingRequestToFirebase,
-  getFirebaseSyncStatus,
-  isFirebaseInitialized,
+  initializeSupabase,
+  syncOperationToSupabase,
+  syncLoadingRequestToSupabase,
+  getSupabaseSyncStatus,
+  isSupabaseInitialized,
   type SyncResult
-} from "./firebase-sync.js";
+} from "./supabase-sync.js";
 
 export interface StartSimulatedWeighingInput {
   operationType: OperationType;
@@ -203,20 +204,28 @@ export class DesktopRuntime {
     );
   }
 
-  async syncToFirebase(): Promise<SyncResult> {
+  printTestReceipt(): Promise<PrintReceiptSummary> {
+    return printTestReceipt(
+      this.database,
+      { identity: this.ensureIdentity() },
+      this.receiptPrinter
+    );
+  }
+
+  async syncToCloud(): Promise<SyncResult> {
     const identity = this.ensureIdentity();
     const errors: string[] = [];
     let synced = 0;
     let failed = 0;
 
     try {
-      initializeFirebase();
+      initializeSupabase();
 
       // Sync open operations
       const openOperations = listOpenWeighingOperations(this.database);
       for (const operation of openOperations) {
         try {
-          await syncOperationToFirebase(this.database, operation.id, identity);
+          await syncOperationToSupabase(this.database, operation.id, identity);
           synced++;
         } catch (error) {
           failed++;
@@ -231,7 +240,7 @@ export class DesktopRuntime {
 
       for (const request of loadingRequests) {
         try {
-          await syncLoadingRequestToFirebase(this.database, request.id, identity);
+          await syncLoadingRequestToSupabase(this.database, request.id, identity);
           synced++;
         } catch (error) {
           failed++;
@@ -245,18 +254,18 @@ export class DesktopRuntime {
         success: false,
         synced,
         failed,
-        errors: [...errors, error instanceof Error ? error.message : "Firebase initialization failed"]
+        errors: [...errors, error instanceof Error ? error.message : "Cloud synchronization failed"]
       };
     }
   }
 
-  async getFirebaseStatus(): Promise<{ totalOperations: number; lastSync: string | null }> {
+  async getCloudStatus(): Promise<{ totalOperations: number; lastSync: string | null }> {
     const identity = this.ensureIdentity();
-    return getFirebaseSyncStatus(identity.companyId);
+    return getSupabaseSyncStatus(identity.companyId);
   }
 
-  isFirebaseConnected(): boolean {
-    return isFirebaseInitialized();
+  isCloudConnected(): boolean {
+    return isSupabaseInitialized();
   }
 
   close(): void {

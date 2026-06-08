@@ -6,7 +6,7 @@ Base: `PRD.md`, `PLAN.md`, `docs/phase-0/*`
 
 ## Objetivo
 
-Definir a arquitetura tecnica antes de criar migrations, colecoes Firebase, pacotes compartilhados e aplicativos. Este documento e a referencia principal da Fase 1.
+Definir a arquitetura tecnica antes de criar migrations, tabelas Supabase, pacotes compartilhados e aplicativos. Este documento e a referencia principal da Fase 1.
 
 ## Principios
 
@@ -16,7 +16,7 @@ Definir a arquitetura tecnica antes de criar migrations, colecoes Firebase, paco
 - Balancas sao integradas por adapters configuraveis por unidade/dispositivo.
 - Impressoras sao selecionadas entre as instaladas no Windows, com perfis configuraveis.
 - OMIE e fonte de cadastros/financeiro e destino de pedidos/operacoes internas.
-- Firebase e camada cloud para site do carregador, sincronizacao e multiunidade.
+- Supabase e camada cloud para site do carregador, sincronizacao e multiunidade.
 - Segredos nunca entram no Git, docs, logs ou banco local em texto puro.
 - Toda operacao critica gera auditoria.
 - Toda integracao externa usa idempotencia.
@@ -27,8 +27,8 @@ Definir a arquitetura tecnica antes de criar migrations, colecoes Firebase, paco
 | ------------------ | --------------------------------------------------------------- | -------------- |
 | Desktop Windows    | Operacao principal, leitura de balanca, SQLite, impressao, sync | Offline-first  |
 | Loader web         | Visualizacao de carregamentos em aberto pelo carregador         | Online         |
-| Firebase Functions | Integracoes sensiveis, tarefas agendadas, e-mail                | Online         |
-| Firestore          | Visao cloud multiunidade e dados do site do carregador          | Online         |
+| Supabase Edge Functions | Integracoes sensiveis, tarefas agendadas, e-mail                | Online         |
+| Supabase Postgres          | Visao cloud multiunidade e dados do site do carregador          | Online         |
 | OMIE               | ERP para cadastros, financeiro, pedidos e OS                    | Online externo |
 
 ## Topologia
@@ -44,11 +44,11 @@ Desktop Windows
      |
      | HTTPS quando online
      v
-Firebase
-  Firestore
+Supabase
+  Supabase Postgres
   Auth
   Functions
-  Hosting
+  Edge Functions
      |
      | HTTPS server-side
      v
@@ -56,8 +56,8 @@ OMIE API
 
 Loader web
   React UI
-  Firebase Auth
-  Firestore read-only access
+  Supabase Auth
+  Supabase Postgres read-only access
 ```
 
 ## Modulos Planejados
@@ -84,22 +84,22 @@ Loader web
 | Tabela de preco             | KyberRock          | Sim                       | Vinculada ao cliente/produto                               |
 | Veiculo/motorista           | KyberRock          | Sim                       | Pode ter vinculos com cliente/transportadora               |
 | Transportadora              | OMIE               | Parcial                   | OMIE usa cadastro de clientes/fornecedores/transportadoras |
-| Operacao de pesagem         | KyberRock local    | Sim                       | Sincronizada para Firebase/OMIE                            |
+| Operacao de pesagem         | KyberRock local    | Sim                       | Sincronizada para cloud/OMIE                            |
 | Cupom                       | KyberRock local    | Sim                       | Reimpressao gera auditoria                                 |
-| Solicitacao carregamento    | KyberRock/Firebase | Sim local, cloud via sync | Site le somente abertas                                    |
+| Solicitacao carregamento    | KyberRock/Supabase | Sim local, cloud via sync | Site le somente abertas                                    |
 | Logs/auditoria              | KyberRock          | Sim                       | Nao expor segredos                                         |
 
 ## Identificadores
 
 Usar dois identificadores por entidade operacional:
 
-- `id`: UUID global, gerado pelo KyberRock, usado entre SQLite, Firestore e filas.
+- `id`: UUID global, gerado pelo KyberRock, usado entre SQLite, Supabase Postgres e filas.
 - `localId`: inteiro SQLite opcional para performance interna, nunca usado como identificador externo.
 
 IDs externos ficam em campos especificos:
 
 - `omieCustomerId`, `omieProductId`, `omieSalesOrderId`, `omieServiceOrderId`.
-- `firebasePath` ou `firestoreDocId` quando necessario.
+- IDs externos do Supabase devem usar os mesmos UUIDs globais sempre que possivel.
 
 Formato recomendado para chaves idempotentes enviadas ao OMIE:
 
@@ -121,7 +121,7 @@ Exemplos:
 | `loading_requested` | Solicitacao aberta para o carregador          |
 | `awaiting_exit`     | Caminhao deve retornar a balanca              |
 | `closed_local`      | Saida capturada e valores calculados          |
-| `pending_firebase`  | Ainda nao sincronizada ao Firebase            |
+| `pending_cloud`     | Ainda nao sincronizada ao cloud            |
 | `pending_omie`      | Ainda nao enviada ao OMIE                     |
 | `synced`            | Sincronizacoes obrigatorias confirmadas       |
 | `sync_error`        | Existe erro de sincronizacao pendente         |
@@ -133,12 +133,12 @@ Exemplos:
 2. Sistema valida bloqueios financeiros com dados OMIE em cache local.
 3. Adapter de balanca informa peso estavel.
 4. Desktop registra peso de entrada no SQLite.
-5. Desktop cria solicitacao de carregamento local e evento para Firebase.
-6. Carregador ve a solicitacao quando ela chegar ao Firestore.
+5. Desktop cria solicitacao de carregamento local e evento para Supabase.
+6. Carregador ve a solicitacao quando ela chegar ao Supabase Postgres.
 7. Na saida, adapter informa novo peso estavel.
 8. Desktop calcula peso liquido, produto, frete e total.
 9. Desktop fecha operacao localmente e gera cupom.
-10. Desktop enfileira sync Firebase e OMIE.
+10. Desktop enfileira sync Supabase e OMIE.
 11. Sync envia quando houver conectividade.
 
 ## Hardware
@@ -180,9 +180,9 @@ Campos OMIE observados na documentacao publica que afetam o modelo:
 - OS: `cCodIntOS`, `nCodOS`, `nCodCli`, `cCodParc`, `ServicosPrestados`;
 - contas a receber: `codigo_cliente_fornecedor`, `valor_documento`, `data_vencimento`, `status_titulo`.
 
-## Firebase
+## Supabase
 
-Firestore deve ser uma projecao cloud, nao a fonte primaria da operacao local.
+Supabase Postgres deve ser uma projecao cloud, nao a fonte primaria da operacao local.
 
 Objetivos:
 
@@ -205,4 +205,4 @@ Objetivos:
 - Validar impressora real 80 mm.
 - Receber/configurar credenciais OMIE fora do Git.
 - Confirmar formula exata de frete por distancia e peso.
-- Confirmar projeto Firebase e ambientes.
+- Confirmar projeto Supabase e ambientes.

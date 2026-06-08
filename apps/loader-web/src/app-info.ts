@@ -5,5 +5,5 @@ export const loaderWebAppInfo = {
 } as const;
 
 export function getLoaderWebCapabilities(): string[] {
-  return ["firebase-auth", "firestore-read-only", "open-loading-requests"];
+  return ["supabase-auth", "supabase-rls-read-only", "open-loading-requests"];
 }

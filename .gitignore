@@ -18,12 +18,6 @@ coverage/
 *.p12
 *.pfx
 service-account*.json
-firebase-service-account*.json
-
-# Firebase local files
-.firebase/
-firebase-debug.log
-firestore-debug.log
 ui-debug.log
 
 # Local databases and runtime files

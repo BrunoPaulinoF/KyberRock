@@ -23,11 +23,11 @@ describe("getDesktopStatusSnapshot", () => {
       });
       enqueueSyncJob(database, {
         id: "job-1",
-        target: "firebase",
+        target: "cloud",
         action: "upsert_operation",
         entityType: "operation",
         entityId: "operation-1",
-        idempotencyKey: "firebase:operation-1",
+        idempotencyKey: "cloud:operation-1",
         payload: {}
       });
 
@@ -40,7 +40,7 @@ describe("getDesktopStatusSnapshot", () => {
       expect(snapshot).toMatchObject({
         internet: "offline",
         scale: "not_configured",
-        firebase: "not_configured",
+        cloud: "not_configured",
         omie: "not_configured",
         pendingSyncJobs: 1,
         lastBackupAt: null,

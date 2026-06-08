@@ -9,9 +9,9 @@ Definir contratos, entidades, status, sincronizacao, multiunidade e regras de co
 ## Arquivos
 
 - `../ARCHITECTURE.md`: visao tecnica consolidada.
-- `data-model.md`: modelo SQLite e Firestore.
+- `data-model.md`: modelo SQLite e Supabase Postgres.
 - `contracts.md`: contratos TypeScript planejados.
-- `sync-strategy.md`: filas, idempotencia, conflitos, cancelamentos e OMIE/Firebase.
+- `sync-strategy.md`: filas, idempotencia, conflitos, cancelamentos e OMIE/Supabase.
 - `security-and-operations.md`: segredos, seguranca, backup, logs e operacao.
 
 ## Status Dos Entregaveis
@@ -20,13 +20,13 @@ Definir contratos, entidades, status, sincronizacao, multiunidade e regras de co
 | --------------------------------------------- | ------------ |
 | Documento tecnico em `docs/ARCHITECTURE.md`   | Criado       |
 | Modelo de dados SQLite                        | Draft criado |
-| Modelo de dados Firestore                     | Draft criado |
+| Modelo de dados Supabase Postgres                     | Draft criado |
 | Contratos TypeScript compartilhados           | Draft criado |
 | Identificadores globais e locais              | Definido     |
 | Empresa, unidade e dispositivo desde o inicio | Definido     |
 | Status de operacao                            | Definido     |
 | Fila local de sincronizacao                   | Definida     |
-| Idempotencia Firebase e OMIE                  | Definida     |
+| Idempotencia Supabase e OMIE                  | Definida     |
 | Estrategia de conflito                        | Definida     |
 | Cancelamento antes/depois do OMIE             | Definido     |
 | Backup e restauracao local                    | Definido     |

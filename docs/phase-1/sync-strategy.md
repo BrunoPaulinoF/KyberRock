@@ -4,13 +4,13 @@ Status: draft inicial.
 
 ## Objetivo
 
-Garantir que o desktop opere offline, preserve dados localmente e sincronize com Firebase e OMIE sem duplicidade.
+Garantir que o desktop opere offline, preserve dados localmente e sincronize com Supabase e OMIE sem duplicidade.
 
 ## Regras Base
 
 - SQLite local e a primeira gravacao de toda operacao.
 - Toda escrita externa nasce como item em `sync_queue`.
-- Firebase e OMIE recebem snapshots idempotentes.
+- Supabase e OMIE recebem snapshots idempotentes.
 - Falhas externas nunca apagam dados locais.
 - Reenvio automatico usa backoff.
 - Erros ficam visiveis ao operador sem expor segredos.
@@ -19,7 +19,7 @@ Garantir que o desktop opere offline, preserve dados localmente e sincronize com
 
 | Target   | Responsabilidade                                        | Frequencia                     |
 | -------- | ------------------------------------------------------- | ------------------------------ |
-| Firebase | Operacoes abertas/fechadas/canceladas para cloud e site | A cada poucos minutos e manual |
+| Supabase | Operacoes abertas/fechadas/canceladas para cloud e site | A cada poucos minutos e manual |
 | OMIE     | Cadastros, pedidos, OS e financeiro                     | A cada 30 minutos e manual     |
 
 ## Ciclo Da Fila
@@ -43,7 +43,7 @@ Formato:
 kyberrock:{unitId}:{entityId}:{action}
 ```
 
-### Firebase
+### Supabase
 
 - Usar `operationId` como ID do documento.
 - `set`/upsert deve ser seguro para repeticao.
@@ -61,7 +61,7 @@ Usar campos de integracao quando disponiveis:
 
 Antes de reenviar uma criacao apos erro desconhecido, tentar consulta por codigo de integracao quando a API permitir.
 
-## Firebase Flow
+## Supabase Flow
 
 ### Abrir Carregamento
 
@@ -134,7 +134,7 @@ Financeiro:
 
 - Cancelar localmente com motivo obrigatorio.
 - Marcar itens de fila OMIE relacionados como cancelados/ignorados.
-- Sincronizar status cancelado ao Firebase.
+- Sincronizar status cancelado ao Supabase.
 
 ### Depois Do OMIE
 
@@ -153,7 +153,7 @@ Financeiro:
 | Campo KyberRock alterado em dois lugares | Versao mais recente vence, com auditoria         |
 | Operacao fechada alterada                | Exige motivo e auditoria                         |
 | Operacao enviada ao OMIE alterada        | Exige fluxo especifico de cancelamento/alteracao |
-| Firebase fora do ar                      | Mantem fila local pendente                       |
+| Supabase fora do ar                      | Mantem fila local pendente                       |
 | OMIE fora do ar                          | Mantem fila local pendente                       |
 
 ## Retry
@@ -173,5 +173,5 @@ Erros de validacao de payload devem ir para `dead_letter` mais cedo para correca
 ## Observabilidade
 
 - Cada item de fila deve exibir status e ultima mensagem sanitizada.
-- Tela desktop deve mostrar pendencias Firebase e OMIE separadas.
+- Tela desktop deve mostrar pendencias Supabase e OMIE separadas.
 - Logs nao podem conter app secret, tokens ou payloads com dados sensiveis completos.

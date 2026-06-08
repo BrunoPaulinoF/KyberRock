@@ -1,14 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "../contexts/AuthContext";
-import {
-  getFirestore,
-  collection,
-  query,
-  where,
-  getDocs
-} from "firebase/firestore";
-import { initializeApp } from "firebase/app";
-import { firebaseWebConfig } from "../config/firebase-config";
+import { supabase } from "../lib/supabase";
 
 interface WeighingOperation {
   id: string;
@@ -35,19 +27,23 @@ export function LoaderDashboard() {
 
     setIsLoading(true);
     try {
-      const app = initializeApp(firebaseWebConfig);
-      const db = getFirestore(app);
+      const { data, error } = await supabase
+        .from("loading_requests")
+        .select("id,plate,customer_name,driver_name,product_description,entry_weight_kg,status,created_at")
+        .eq("unit_id", user.unitId)
+        .eq("status", "open")
+        .order("created_at", { ascending: true });
 
-      const q = query(
-        collection(db, "weighing_operations"),
-        where("unitId", "==", user.unitId),
-        where("status", "==", "open")
-      );
-
-      const snapshot = await getDocs(q);
-      const ops = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
+      if (error) throw error;
+      const ops = (data ?? []).map((row) => ({
+        id: row.id,
+        plate: row.plate,
+        customerName: row.customer_name,
+        driverName: row.driver_name,
+        productDescription: row.product_description,
+        entryWeightKg: Number(row.entry_weight_kg ?? 0),
+        status: row.status,
+        createdAt: row.created_at
       })) as WeighingOperation[];
 
       setOperations(ops);

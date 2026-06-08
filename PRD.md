@@ -3,11 +3,11 @@
 Versão: 1.0  
 Data: 2026-06-05  
 Produto: KyberRock  
-Tipo: Sistema operacional para pedreiras com integração de balança rodoviária, OMIE, Firebase, impressão e portal do carregador.
+Tipo: Sistema operacional para pedreiras com integração de balança rodoviária, OMIE, Supabase, impressão e portal do carregador.
 
 ## 1. Visão Geral
 
-O KyberRock é um sistema para substituir totalmente o sistema atual usado na operação da pedreira. O objetivo é controlar a entrada e saída de caminhões na balança, registrar vendas por pesagem, integrar com o OMIE, sincronizar dados com Firebase, permitir operação mesmo sem internet e disponibilizar para o carregador uma tela online de consulta dos carregamentos em aberto.
+O KyberRock é um sistema para substituir totalmente o sistema atual usado na operação da pedreira. O objetivo é controlar a entrada e saída de caminhões na balança, registrar vendas por pesagem, integrar com o OMIE, sincronizar dados com Supabase, permitir operação mesmo sem internet e disponibilizar para o carregador uma tela online de consulta dos carregamentos em aberto.
 
 O sistema nasce para uma pedreira, mas precisa ser desenhado desde a primeira versão para suportar crescimento para outras pedreiras, unidades e empresas. A arquitetura, os cadastros, as integrações e os relatórios devem ser multiunidade e escaláveis.
 
@@ -31,7 +31,7 @@ Principais dores:
 - Capturar automaticamente os pesos da balança rodoviária por adapter configurável.
 - Impedir lançamento manual de peso.
 - Controlar o fluxo completo de entrada, carregamento, saída e fechamento da venda.
-- Sincronizar cadastros, pedidos, operações e status com Firebase.
+- Sincronizar cadastros, pedidos, operações e status com Supabase.
 - Integrar obrigatoriamente com OMIE na primeira versão.
 - Funcionar com ou sem internet no computador instalado na balança.
 - Enviar pedidos e cadastros pendentes ao OMIE quando a internet voltar.
@@ -52,7 +52,7 @@ Escopo obrigatório:
 - Registro de entrada e saída do caminhão na mesma balança.
 - Cálculo automático do peso líquido.
 - Cadastro rápido local quando necessário.
-- Sincronização com Firebase a cada poucos minutos.
+- Sincronização com Supabase a cada poucos minutos.
 - Integração com OMIE a cada 30 minutos e por botão manual.
 - Geração de pedido de venda no OMIE para operação com nota.
 - Geração de ordem de serviço no OMIE para operação interna.
@@ -90,11 +90,11 @@ Regras:
 - O desktop deve operar mesmo sem internet.
 - O desktop deve se comunicar diretamente com a balança por adapter configurado por unidade/dispositivo.
 - O desktop deve manter banco local para operação offline.
-- O desktop deve sincronizar com Firebase a cada poucos minutos.
+- O desktop deve sincronizar com Supabase a cada poucos minutos.
 - O desktop deve integrar com OMIE quando houver internet.
 - O desktop deve permitir alteração e cancelamento de pesagens, sempre com auditoria.
 - O desktop deve permitir sincronização manual com OMIE por botão.
-- O desktop deve exibir status de conexão com balança, Firebase e OMIE.
+- O desktop deve exibir status de conexão com balança, Supabase e OMIE.
 
 ### 6.2 Site Do Carregador
 
@@ -108,7 +108,7 @@ Regras:
 - A tela deve listar solicitações de carregamento em aberto.
 - Cada solicitação deve exibir placa, cliente, motorista, veículo, produto e dados necessários para saber o que carregar.
 - Não precisa exibir quantidade prevista.
-- A atualização deve ser em tempo quase real, usando dados sincronizados no Firebase.
+- A atualização deve ser em tempo quase real, usando dados sincronizados no Supabase.
 
 ### 6.3 Dono/Responsável
 
@@ -156,7 +156,7 @@ Regras:
 6. O sistema calcula valor de produto, frete quando aplicável e total da venda.
 7. O sistema fecha a operação localmente.
 8. O sistema imprime cupom térmico de 80 mm para assinatura do motorista.
-9. O sistema sincroniza a operação com Firebase.
+9. O sistema sincroniza a operação com Supabase.
 10. O sistema envia a operação ao OMIE ou deixa em fila para envio quando houver internet.
 
 ## 8. Regras De Pesagem
@@ -202,7 +202,7 @@ Comportamento esperado:
 - Pesagens continuam sendo abertas e fechadas.
 - Cadastros rápidos continuam funcionando.
 - Operações ficam em fila de sincronização.
-- O site do carregador só mostra dados que já chegaram ao Firebase antes da queda.
+- O site do carregador só mostra dados que já chegaram ao Supabase antes da queda.
 - O OMIE não recebe novos dados até a internet voltar.
 - Quando a internet voltar, o sistema sincroniza automaticamente pendências.
 
@@ -424,7 +424,7 @@ Regras:
 - Sincronização automática com OMIE a cada 30 minutos.
 - Botão de sincronização manual no desktop.
 - Reenvio automático de pendências quando houver internet.
-- Sincronização com Firebase a cada poucos minutos.
+- Sincronização com Supabase a cada poucos minutos.
 
 ### 11.7 Regra De Bloqueio Financeiro
 
@@ -455,23 +455,23 @@ Regras:
 - O sistema deve registrar tentativa, sucesso, erro e próxima tentativa.
 - O operador deve ver pendências de sincronização.
 
-## 12. Integração Com Firebase
+## 12. Integração Com Supabase
 
 ### 12.1 Objetivo
 
-O Firebase será usado como banco em nuvem para sincronização, consulta pelo site do carregador, backup operacional em nuvem e suporte a crescimento multiunidade.
+O Supabase será usado como banco em nuvem para sincronização, consulta pelo site do carregador, backup operacional em nuvem e suporte a crescimento multiunidade.
 
 ### 12.2 Regras Gerais
 
-- O desktop deve sincronizar com Firebase a cada poucos minutos.
+- O desktop deve sincronizar com Supabase a cada poucos minutos.
 - O desktop deve operar com banco local mesmo sem internet.
-- O site do carregador lê dados do Firebase.
+- O site do carregador lê dados do Supabase.
 - A sincronização deve ser incremental.
-- O sistema deve enviar para Firebase operações abertas, fechadas, canceladas e pendentes.
-- O sistema deve receber do Firebase atualizações relevantes quando aplicável.
+- O sistema deve enviar para Supabase operações abertas, fechadas, canceladas e pendentes.
+- O sistema deve receber do Supabase atualizações relevantes quando aplicável.
 - Dados devem ser segregados por empresa/pedreira/unidade.
 
-### 12.3 Dados Necessários No Firebase
+### 12.3 Dados Necessários No Supabase
 
 - Empresas/pedreiras/unidades.
 - Usuários do site do carregador.
@@ -481,7 +481,7 @@ O Firebase será usado como banco em nuvem para sincronização, consulta pelo s
 - Logs resumidos de sincronização.
 - Relatórios ou dados consolidados quando necessário.
 
-### 12.4 Site Do Carregador No Firebase
+### 12.4 Site Do Carregador No Supabase
 
 Regras:
 
@@ -489,7 +489,7 @@ Regras:
 - O carregador acessa somente dados da unidade vinculada.
 - O carregador só lê carregamentos em aberto.
 - O carregador não escreve dados operacionais.
-- Regras de segurança do Firebase devem impedir alteração pelo carregador.
+- Regras de segurança do Supabase devem impedir alteração pelo carregador.
 
 ## 13. Operação Offline-First
 
@@ -498,7 +498,7 @@ O desktop precisa funcionar com ou sem internet. A internet não pode ser pré-r
 Arquitetura funcional:
 
 - Banco local no computador da balança.
-- Fila local de sincronização com Firebase.
+- Fila local de sincronização com Supabase.
 - Fila local de sincronização com OMIE.
 - Status visual de online/offline.
 - Reenvio automático quando a conexão voltar.
@@ -507,7 +507,7 @@ Arquitetura funcional:
 Regras:
 
 - Cadastros rápidos feitos offline ficam marcados como pendentes.
-- Operações feitas offline ficam marcadas como pendentes de Firebase e OMIE.
+- Operações feitas offline ficam marcadas como pendentes de Supabase e OMIE.
 - A operação local deve sempre preservar dados antes de tentar sincronizar.
 - Nenhuma venda pode ser perdida por falha de internet.
 - Ao reconectar, o sistema deve sincronizar em ordem segura.
@@ -666,10 +666,10 @@ Status recomendados:
 | Aguardando carregamento | Solicitação aberta para o carregador visualizar |
 | Aguardando saída        | Caminhão carregado deve retornar à balança      |
 | Fechada localmente      | Peso de saída capturado e venda calculada       |
-| Pendente Firebase       | Ainda não sincronizada com Firebase             |
+| Pendente Cloud       | Ainda não sincronizada com cloud             |
 | Pendente OMIE           | Ainda não enviada ao OMIE                       |
 | Sincronizada            | Enviada e confirmada nos sistemas necessários   |
-| Erro de sincronização   | Falha no envio ao Firebase ou OMIE              |
+| Erro de sincronização   | Falha no envio ao Supabase ou OMIE              |
 | Cancelada               | Cancelada no desktop com motivo obrigatório     |
 
 ## 19. Auditoria
@@ -706,7 +706,7 @@ Dados mínimos de auditoria:
 - O desktop deve continuar operando sem internet.
 - A falha de internet não pode parar pesagem.
 - A falha de OMIE não pode perder venda.
-- A falha de Firebase não pode perder venda.
+- A falha de Supabase não pode perder venda.
 - A falha de balança deve bloquear pesagem por não haver peso manual.
 
 ### 20.2 Performance
@@ -723,7 +723,7 @@ Dados mínimos de auditoria:
 - O site do carregador deve ter autenticação.
 - O carregador deve ter permissão somente leitura.
 - Dados devem ser segregados por empresa/pedreira/unidade.
-- A comunicação com Firebase e serviços cloud deve usar HTTPS/TLS.
+- A comunicação com Supabase e serviços cloud deve usar HTTPS/TLS.
 - O banco local deve proteger dados sensíveis conforme viabilidade técnica.
 
 ### 20.4 Confiabilidade De Dados
@@ -750,7 +750,7 @@ Arquitetura recomendada:
 
 - Aplicativo desktop Windows offline-first.
 - Banco local no desktop.
-- Firebase como sincronização cloud e base para o site do carregador.
+- Supabase como sincronização cloud e base para o site do carregador.
 - Backend serverless para integrações sensíveis e automações.
 - Site web separado para carregador.
 - Integração por adaptador com balança.
@@ -784,9 +784,9 @@ Stack recomendada:
 | ------------- | ----------------------- | ---------------------------------------------------------- |
 | Front-end web | React + TypeScript      | Interface simples e consistente com desktop                |
 | Build web     | Vite ou Next.js         | Vite se for SPA simples, Next.js se precisar SSR no futuro |
-| Autenticação  | Firebase Authentication | Login próprio do carregador                                |
-| Banco cloud   | Cloud Firestore         | Atualização quase em tempo real                            |
-| Hospedagem    | Firebase Hosting        | Integração direta com Firebase                             |
+| Autenticação  | Supabase Auth | Login próprio do carregador                                |
+| Banco cloud   | Supabase Postgres         | Atualização quase em tempo real                            |
+| Hospedagem    | EasyPanel/nginx        | Integração direta com Supabase                             |
 
 Recomendação prática:
 
@@ -799,26 +799,26 @@ Stack recomendada:
 
 | Camada             | Tecnologia Recomendada                         | Motivo                                          |
 | ------------------ | ---------------------------------------------- | ----------------------------------------------- |
-| Backend serverless | Firebase Cloud Functions em TypeScript         | Integração nativa com Firebase e jobs agendados |
+| Backend serverless | Supabase Edge Functions em TypeScript         | Integração nativa com Supabase e jobs agendados |
 | Agendamentos       | Cloud Scheduler ou funções agendadas           | Envio do fechamento diário e rotinas de sync    |
-| Segredos           | Google Secret Manager                          | Proteger credenciais OMIE                       |
+| Segredos           | Supabase secrets / variaveis de ambiente       | Proteger credenciais OMIE                       |
 | E-mail             | SendGrid, Resend ou provedor SMTP transacional | Envio confiável do fechamento diário            |
-| Logs cloud         | Firebase/Google Cloud Logging                  | Diagnóstico de sync e integrações               |
+| Logs cloud         | Supabase Logs/EasyPanel logs                  | Diagnóstico de sync e integrações               |
 
 Recomendação de segurança:
 
 - Evitar expor credenciais do OMIE no site do carregador.
-- Preferir que chamadas sensíveis ao OMIE passem por Cloud Functions.
+- Preferir que chamadas sensíveis ao OMIE passem por Supabase Edge Functions.
 - O desktop pode enfileirar dados localmente e enviá-los para uma função segura quando estiver online.
 
-### 21.5 Firebase
+### 21.5 Supabase
 
 Serviços recomendados:
 
-- Firebase Authentication para login do carregador e autenticação do desktop/dispositivo.
-- Cloud Firestore para dados sincronizados e leitura do site do carregador.
-- Firebase Hosting para site do carregador.
-- Cloud Functions para OMIE, envio de e-mail e regras server-side.
+- Supabase Auth para login do carregador e autenticação do desktop/dispositivo.
+- Supabase Postgres para dados sincronizados e leitura do site do carregador.
+- EasyPanel/nginx para site do carregador.
+- Supabase Edge Functions para OMIE, envio de e-mail e regras server-side.
 - Cloud Storage somente se futuramente houver arquivos, PDFs ou anexos.
 
 ### 21.6 Estrutura De Repositório Recomendada
@@ -889,7 +889,7 @@ Telas obrigatórias:
 - Formas/condições de recebimento.
 - Produtos sincronizados.
 - Sincronização OMIE.
-- Sincronização Firebase.
+- Sincronização Supabase.
 - Relatórios.
 - Configurações da balança.
 - Configurações de impressora.
@@ -933,9 +933,9 @@ Telas obrigatórias:
 - O sistema não duplica pedidos em reenvios.
 - O sistema bloqueia cliente sem limite disponível quando houver limite configurado.
 
-### 24.4 Firebase E Site Do Carregador
+### 24.4 Supabase E Site Do Carregador
 
-- O desktop sincroniza solicitações em aberto com Firebase.
+- O desktop sincroniza solicitações em aberto com Supabase.
 - O carregador faz login no site.
 - O carregador vê apenas solicitações em aberto da unidade.
 - O carregador não consegue alterar dados.
@@ -966,7 +966,7 @@ As pendências abaixo não bloqueiam o PRD, mas precisam ser resolvidas antes ou
 - Confirmar dados fiscais mínimos exigidos pelo OMIE para pedido de venda e ordem de serviço.
 - Confirmar modelo exato da impressora térmica de 80 mm no primeiro cliente e garantir configuração por impressoras instaladas no Windows.
 - Confirmar layout final do cupom com a pedreira.
-- Confirmar periodicidade exata de sincronização com Firebase, caso “poucos minutos” precise virar valor fixo.
+- Confirmar periodicidade exata de sincronização com Supabase, caso “poucos minutos” precise virar valor fixo.
 
 ## 26. Riscos E Mitigações
 
@@ -978,7 +978,7 @@ As pendências abaixo não bloqueiam o PRD, mas precisam ser resolvidas antes ou
 | Duplicidade no OMIE                            | Pode gerar faturamento errado | Idempotência por identificador único                              |
 | Frete sem regra definida                       | Pode afetar valor total       | Modelagem flexível e parametrização antes de ativar cálculo final |
 | Operador cancelar operação incorretamente      | Pode afetar auditoria         | Motivo obrigatório e histórico imutável                           |
-| Site do carregador alterar dados indevidamente | Pode afetar operação          | Regras Firebase read-only para carregador                         |
+| Site do carregador alterar dados indevidamente | Pode afetar operação          | Regras Supabase read-only para carregador                         |
 
 ## 27. Decisões Confirmadas
 
@@ -1011,7 +1011,7 @@ As pendências abaixo não bloqueiam o PRD, mas precisam ser resolvidas antes ou
 - Não haverá liberação manual de exceção.
 - Sincronização OMIE automática a cada 30 minutos.
 - Sincronização manual com OMIE por botão.
-- Sincronização com Firebase a cada poucos minutos.
+- Sincronização com Supabase a cada poucos minutos.
 - Fechamento diário por e-mail às 20h.
 - Relatórios exportam PDF e Excel e imprimem A4.
 - Câmera/OCR não entra no PRD atual.

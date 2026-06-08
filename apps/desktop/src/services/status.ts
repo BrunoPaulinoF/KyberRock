@@ -8,7 +8,7 @@ export type ScaleRuntimeStatus = "not_configured" | "unknown" | "connected" | "d
 export interface DesktopStatusSnapshot {
   internet: InternetStatus;
   scale: ScaleRuntimeStatus;
-  firebase: IntegrationStatus;
+  cloud: IntegrationStatus;
   omie: IntegrationStatus;
   pendingSyncJobs: number;
   lastBackupAt: string | null;
@@ -34,7 +34,7 @@ export function getDesktopStatusSnapshot(
   return {
     internet: options.internetOnline === false ? "offline" : "online",
     scale: getScaleRuntimeStatus(database),
-    firebase: getIntegrationStatus(database, "firebase_configured"),
+    cloud: getIntegrationStatus(database, "cloud_configured"),
     omie: getIntegrationStatus(database, "omie_configured"),
     pendingSyncJobs: countPendingSyncJobs(database),
     lastBackupAt: readStringLocalSetting(database, "last_backup_at"),

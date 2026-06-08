@@ -7,6 +7,7 @@ import { closeWeighingOperation, createSimulatedWeighingOperation } from "./weig
 import {
   configureReceiptPrintProfile,
   listPrintReceipts,
+  printTestReceipt,
   printWeighingReceipt,
   reprintWeighingReceipt,
   type ReceiptPrinter,
@@ -157,6 +158,62 @@ describe("printing", () => {
         printWeighingReceipt(database, { operationId: operation.id, identity }, printer)
       ).rejects.toThrow("Only closed operations can be printed");
       expect(listPrintReceipts(database)).toHaveLength(0);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("prints a test receipt without creating a real operation", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createIdentity(database);
+      configureReceiptPrintProfile(database, { identity, windowsPrinterName: "TERMICA-80" });
+
+      const receipt = await printTestReceipt(
+        database,
+        { identity },
+        printer,
+        new Date("2026-06-07T12:00:00.000Z")
+      );
+
+      expect(receipt.status).toBe("printed");
+      expect(receipt.receiptNumber).toBe(0);
+      expect(receipt.copyNumber).toBe(0);
+      expect(receipt.printerName).toBe("TERMICA-80");
+      expect(printer.calls).toHaveLength(1);
+      expect(printer.calls[0].lines).toContain("=== CUPOM DE TESTE ===");
+      expect(printer.calls[0].lines).toContain("Cliente: Cliente Exemplo");
+      expect(printer.calls[0].lines).toContain("Placa: ABC1D23");
+      expect(printer.calls[0].lines).toContain("Motorista: Motorista Teste");
+      expect(printer.calls[0].lines).toContain("Produto: Brita 1 (Teste)");
+      expect(printer.calls[0].lines).toContain("Entrada: 12.000 kg");
+      expect(printer.calls[0].lines).toContain("Saida: 18.500 kg");
+      expect(printer.calls[0].lines).toContain("Liquido: 6.500 kg");
+      expect(printer.calls[0].lines.some(line => line.includes("R$") && line.includes("780,00"))).toBe(true);
+
+      // Nao deve criar operacao real
+      expect(listPrintReceipts(database)).toHaveLength(1);
+      const printReceipt = listPrintReceipts(database)[0];
+      expect(printReceipt.operationId).toBe("test");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("records test receipt failures without crashing", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter(new Error("Printer offline"));
+
+    try {
+      const identity = createIdentity(database);
+      configureReceiptPrintProfile(database, { identity, windowsPrinterName: "TERMICA-80" });
+
+      const receipt = await printTestReceipt(database, { identity }, printer);
+
+      expect(receipt.status).toBe("failed");
+      expect(receipt.errorMessage).toBe("Printer offline");
     } finally {
       database.close();
     }

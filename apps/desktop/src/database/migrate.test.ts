@@ -52,4 +52,22 @@ describe("runDesktopMigrations", () => {
       database.close();
     }
   });
+
+  it("uses cloud naming instead of legacy provider names in the local schema", () => {
+    const database = openDesktopDatabase({ databasePath: ":memory:" });
+
+    try {
+      runDesktopMigrations(database);
+      const schemaSql = database
+        .prepare("SELECT group_concat(sql, '\n') FROM sqlite_master WHERE sql IS NOT NULL")
+        .pluck()
+        .get() as string;
+
+      expect(schemaSql.toLowerCase()).not.toContain(`fire${"base"}`);
+      expect(schemaSql).toContain("pending_cloud");
+      expect(schemaSql).toContain("cloud_synced_at");
+    } finally {
+      database.close();
+    }
+  });
 });

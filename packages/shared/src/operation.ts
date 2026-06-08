@@ -4,7 +4,7 @@ export const OPERATION_STATUSES = [
   "loading_requested",
   "awaiting_exit",
   "closed_local",
-  "pending_firebase",
+  "pending_cloud",
   "pending_omie",
   "synced",
   "sync_error",

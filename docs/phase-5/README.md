@@ -12,7 +12,7 @@ Status: implementada com validacao fisica pendente.
 - persistencia de cada tentativa em `print_receipts`;
 - sequencial de cupom por unidade;
 - auditoria local de impressao e reimpressao;
-- enfileiramento local para futura sincronizacao Firebase;
+- enfileiramento local para futura sincronizacao Supabase;
 - tratamento de falha de impressora sem alterar nem perder a operacao fechada;
 - adapter de impressao testavel e impressao real por `webContents.print` no Electron.
 
@@ -20,7 +20,7 @@ Status: implementada com validacao fisica pendente.
 
 - A validacao fisica em impressora termica 80 mm ainda depende do PC real da balanca/impressora.
 - Ajustes finos de margem, corte de papel e densidade podem mudar apos o teste fisico.
-- A sincronizacao remota dos cupons ainda sera implementada nas fases de Firebase.
+- A sincronizacao remota dos cupons ainda sera implementada nas fases de Supabase.
 
 ## Validacao
 

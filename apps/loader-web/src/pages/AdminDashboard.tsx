@@ -1,19 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "../contexts/AuthContext";
-import {
-  getFirestore,
-  collection,
-  query,
-  getDocs,
-  addDoc,
-  updateDoc,
-  doc,
-  setDoc,
-  getDoc
-} from "firebase/firestore";
-import { createUserWithEmailAndPassword, getAuth } from "firebase/auth";
-import { initializeApp } from "firebase/app";
-import { firebaseWebConfig } from "../config/firebase-config";
+import { callAdminFunction } from "../lib/admin-api";
 
 interface Company {
   id: string;
@@ -49,9 +36,6 @@ export function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<"companies" | "users">("companies");
   const [isLoading, setIsLoading] = useState(true);
 
-  const app = initializeApp(firebaseWebConfig);
-  const db = getFirestore(app);
-
   useEffect(() => {
     loadData();
   }, []);
@@ -59,29 +43,35 @@ export function AdminDashboard() {
   async function loadData() {
     setIsLoading(true);
     try {
-      // Load companies
-      const companiesSnapshot = await getDocs(query(collection(db, "companies")));
-      const companiesData = companiesSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Company[];
-      setCompanies(companiesData);
+      const data = await callAdminFunction<{
+        companies: Array<{ id: string; name: string; legal_name: string; document: string | null; is_active: boolean; created_at: string }>;
+        units: Array<{ id: string; company_id: string; name: string; timezone: string; is_active: boolean }>;
+        users: Array<{ id: string; email: string; name: string; company_id: string; unit_id: string; is_active: boolean }>;
+      }>("admin-api", { action: "list" });
 
-      // Load units
-      const unitsSnapshot = await getDocs(query(collection(db, "units")));
-      const unitsData = unitsSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Unit[];
-      setUnits(unitsData);
-
-      // Load users
-      const usersSnapshot = await getDocs(query(collection(db, "users")));
-      const usersData = usersSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as LoaderUser[];
-      setUsers(usersData);
+      setCompanies(data.companies.map((company) => ({
+        id: company.id,
+        name: company.name,
+        legalName: company.legal_name,
+        document: company.document ?? "",
+        isActive: company.is_active,
+        createdAt: company.created_at
+      })));
+      setUnits(data.units.map((unit) => ({
+        id: unit.id,
+        companyId: unit.company_id,
+        name: unit.name,
+        timezone: unit.timezone,
+        isActive: unit.is_active
+      })));
+      setUsers(data.users.map((user) => ({
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        companyId: user.company_id,
+        unitId: user.unit_id,
+        isActive: user.is_active
+      })));
     } catch (error) {
       console.error("Error loading data:", error);
     } finally {
@@ -94,13 +84,13 @@ export function AdminDashboard() {
     const formData = new FormData(event.currentTarget);
     
     try {
-      await addDoc(collection(db, "companies"), {
-        name: formData.get("name"),
-        legalName: formData.get("legalName"),
-        document: formData.get("document"),
-        isActive: true,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+      await callAdminFunction("admin-api", {
+        action: "create_company",
+        payload: {
+          name: formData.get("name"),
+          legalName: formData.get("legalName"),
+          document: formData.get("document")
+        }
       });
       event.currentTarget.reset();
       await loadData();
@@ -112,9 +102,9 @@ export function AdminDashboard() {
 
   async function handleToggleCompany(companyId: string, currentStatus: boolean) {
     try {
-      await updateDoc(doc(db, "companies", companyId), {
-        isActive: !currentStatus,
-        updatedAt: new Date().toISOString()
+      await callAdminFunction("admin-api", {
+        action: "toggle_company",
+        payload: { companyId, isActive: !currentStatus }
       });
       await loadData();
     } catch (error) {
@@ -127,13 +117,12 @@ export function AdminDashboard() {
     const formData = new FormData(event.currentTarget);
     
     try {
-      await addDoc(collection(db, "units"), {
-        companyId: formData.get("companyId"),
-        name: formData.get("name"),
-        timezone: "America/Sao_Paulo",
-        isActive: true,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+      await callAdminFunction("admin-api", {
+        action: "create_unit",
+        payload: {
+          companyId: formData.get("companyId"),
+          name: formData.get("name")
+        }
       });
       event.currentTarget.reset();
       await loadData();
@@ -148,27 +137,16 @@ export function AdminDashboard() {
     const formData = new FormData(event.currentTarget);
     const email = formData.get("email") as string;
     const password = formData.get("password") as string;
-    const unitId = formData.get("unitId") as string;
     
     try {
-      // Create Firebase Auth user
-      const auth = getAuth(app);
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      
-      // Get unit info
-      const unitDoc = await getDoc(doc(db, "units", unitId));
-      const unitData = unitDoc.data();
-      
-      // Create user document
-      await setDoc(doc(db, "users", userCredential.user.uid), {
-        email,
-        name: formData.get("name"),
-        companyId: unitData?.companyId,
-        unitId,
-        role: "loader",
-        isActive: true,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+      await callAdminFunction("admin-api", {
+        action: "create_loader",
+        payload: {
+          email,
+          password,
+          name: formData.get("name"),
+          unitId: formData.get("unitId")
+        }
       });
       
       event.currentTarget.reset();
@@ -181,9 +159,9 @@ export function AdminDashboard() {
 
   async function handleToggleUser(userId: string, currentStatus: boolean) {
     try {
-      await updateDoc(doc(db, "users", userId), {
-        isActive: !currentStatus,
-        updatedAt: new Date().toISOString()
+      await callAdminFunction("admin-api", {
+        action: "toggle_loader",
+        payload: { userId, isActive: !currentStatus }
       });
       await loadData();
     } catch (error) {

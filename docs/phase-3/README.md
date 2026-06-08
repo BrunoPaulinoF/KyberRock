@@ -11,7 +11,7 @@ Fundacao local offline-first do desktop:
 - runner de migrations versionadas;
 - schema inicial com empresas, unidades, dispositivos, cadastros operacionais, operacoes de pesagem, carregamentos, cupons, fila de sincronizacao, auditoria, logs tecnicos e configuracoes locais;
 - bootstrap de empresa, unidade, dispositivo e `installation_id`;
-- fila local idempotente para Firebase/OMIE;
+- fila local idempotente para cloud/OMIE;
 - backup automatico do SQLite;
 - exportacao manual de backup;
 - restauracao controlada com `integrity_check`;
@@ -19,7 +19,7 @@ Fundacao local offline-first do desktop:
 - app Electron inicial abrindo a interface local;
 - preload seguro com `contextIsolation`, `nodeIntegration` desativado e IPC controlado;
 - interface React inicial;
-- indicadores visuais de internet, balanca, Firebase, OMIE, fila pendente e ultimo backup;
+- indicadores visuais de internet, balanca, Supabase, OMIE, fila pendente e ultimo backup;
 - rotina agendada de backup automatico dentro do runtime Electron;
 - fluxo controlado de exportacao manual de backup;
 - fluxo controlado de restauracao local com confirmacao.
@@ -28,7 +28,7 @@ Fundacao local offline-first do desktop:
 
 - A balanca real ainda nao e testada nesta fase; a validacao fisica continua pendente na Fase 0 e a balanca simulada entra na Fase 4.
 - O instalador Windows com `electron-builder` fica para fase posterior de empacotamento.
-- Firebase e OMIE aparecem como indicadores/configuracoes pendentes porque as credenciais reais seguem fora do Git.
+- Supabase e OMIE aparecem como indicadores/configuracoes pendentes porque as credenciais reais seguem fora do Git.
 
 ## Execucao Local Do Desktop
 

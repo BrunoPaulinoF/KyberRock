@@ -9,8 +9,8 @@
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.107.0",
     "@vitejs/plugin-react": "^5.1.1",
-    "firebase": "^12.14.0",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
     "react-router-dom": "^7.17.0",

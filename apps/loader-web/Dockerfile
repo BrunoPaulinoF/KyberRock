@@ -16,6 +16,11 @@ RUN npm install
 
 COPY apps/loader-web apps/loader-web
 
+ARG VITE_SUPABASE_URL
+ARG VITE_SUPABASE_PUBLISHABLE_KEY
+ENV VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
+ENV VITE_SUPABASE_PUBLISHABLE_KEY=${VITE_SUPABASE_PUBLISHABLE_KEY}
+
 RUN npm run build --workspace @kyberrock/loader-web
 
 FROM nginx:1.27-alpine

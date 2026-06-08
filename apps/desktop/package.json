@@ -6,17 +6,16 @@
   "main": "dist/main/main.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.json && vite build --config vite.config.ts",
+    "build": "node -e \"const fs=require('node:fs'); fs.rmSync('dist',{recursive:true,force:true}); fs.rmSync('tsconfig.tsbuildinfo',{force:true})\" && tsc -b tsconfig.json && vite build --config vite.config.ts",
     "dist:win": "npm run build && electron-builder --win --publish never && npm rebuild better-sqlite3",
     "dev": "vite --config vite.config.ts --host 0.0.0.0 --port 5174",
     "start": "npm run build && electron ."
   },
   "dependencies": {
     "@kyberrock/print-templates": "0.1.0",
+    "@supabase/supabase-js": "^2.107.0",
     "better-sqlite3": "^12.10.0",
     "electron-updater": "^6.8.9",
-    "firebase": "^12.14.0",
-    "firebase-admin": "^13.10.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },
@@ -33,7 +32,9 @@
     },
     "files": [
       "dist/**/*",
-      "package.json"
+      "package.json",
+      "../../packages/*/dist/**/*",
+      "../../packages/*/package.json"
     ],
     "publish": [
       {

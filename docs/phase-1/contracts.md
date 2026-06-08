@@ -129,7 +129,7 @@ export type OperationStatus =
   | "loading_requested"
   | "awaiting_exit"
   | "closed_local"
-  | "pending_firebase"
+  | "pending_cloud"
   | "pending_omie"
   | "synced"
   | "sync_error"
@@ -180,7 +180,7 @@ export interface WeighingOperation {
 ## Sync Queue
 
 ```ts
-export type SyncTarget = "firebase" | "omie";
+export type SyncTarget = "cloud" | "omie";
 
 export interface SyncQueueItem<TPayload = unknown> {
   id: UUID;

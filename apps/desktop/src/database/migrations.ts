@@ -213,7 +213,7 @@ CREATE TABLE IF NOT EXISTS weighing_operations (
   company_id TEXT NOT NULL REFERENCES companies(id),
   unit_id TEXT NOT NULL REFERENCES units(id),
   device_id TEXT NOT NULL REFERENCES devices(id),
-  status TEXT NOT NULL CHECK (status IN ('draft', 'entry_registered', 'loading_requested', 'awaiting_exit', 'closed_local', 'pending_firebase', 'pending_omie', 'synced', 'sync_error', 'cancelled')),
+  status TEXT NOT NULL CHECK (status IN ('draft', 'entry_registered', 'loading_requested', 'awaiting_exit', 'closed_local', 'pending_cloud', 'pending_omie', 'synced', 'sync_error', 'cancelled')),
   operation_type TEXT NOT NULL CHECK (operation_type IN ('invoice', 'internal')),
   customer_id TEXT REFERENCES customers(id),
   vehicle_id TEXT REFERENCES vehicles(id),
@@ -233,7 +233,7 @@ CREATE TABLE IF NOT EXISTS weighing_operations (
   freight_json TEXT,
   omie_sales_order_id INTEGER,
   omie_service_order_id INTEGER,
-  firebase_synced_at TEXT,
+  cloud_synced_at TEXT,
   omie_synced_at TEXT,
   cancel_reason TEXT,
   created_at TEXT NOT NULL,
@@ -276,7 +276,7 @@ CREATE TABLE IF NOT EXISTS print_receipts (
 
 CREATE TABLE IF NOT EXISTS sync_queue (
   id TEXT PRIMARY KEY,
-  target TEXT NOT NULL CHECK (target IN ('firebase', 'omie')),
+  target TEXT NOT NULL CHECK (target IN ('cloud', 'omie')),
   action TEXT NOT NULL,
   entity_type TEXT NOT NULL,
   entity_id TEXT NOT NULL,

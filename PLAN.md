@@ -8,7 +8,7 @@ Objetivo: organizar a construcao do KyberRock por fases executaveis, cobrindo o 
 ## 1. Decisoes Iniciais Confirmadas
 
 - O gerenciador de pacotes sera `npm`.
-- O projeto Firebase ainda nao existe e sera criado em fase propria.
+- O projeto Supabase KyberRock sera usado como cloud principal.
 - As credenciais do OMIE ainda nao estao configuradas no projeto; serao informadas depois em local seguro.
 - Nao ha acesso ao computador real da balanca neste momento; o spike fisico fica pendente.
 - A Toledo 950 IDLCG 2 e o primeiro modelo conhecido, mas o sistema deve aceitar diferentes balancas por adapter configuravel.
@@ -34,7 +34,7 @@ Riscos que devem ser atacados cedo:
 - integracao OMIE sem duplicidade;
 - bloqueio financeiro baseado em OMIE;
 - impressao no Windows usando impressoras instaladas e perfis configuraveis, incluindo cupom termico 80 mm;
-- sincronizacao Firebase para o site do carregador;
+- sincronizacao Supabase para o site do carregador;
 - seguranca de credenciais, dados financeiros e segregacao multiunidade;
 - backup/restauracao do banco local.
 
@@ -75,8 +75,8 @@ Stack planejada:
 | Desktop            | Electron + React + TypeScript  | Aplicativo Windows offline-first                                                 |
 | Banco local        | SQLite                         | Operacao mesmo sem internet                                                      |
 | Site carregador    | React + TypeScript             | Web, online, somente leitura                                                     |
-| Cloud              | Firebase                       | Auth, Firestore, Hosting e Functions                                             |
-| Backend serverless | Firebase Functions             | OMIE, e-mails e tarefas agendadas                                                |
+| Cloud              | Supabase                       | Auth, Postgres, RLS e Edge Functions                                             |
+| Backend serverless | Supabase Edge Functions        | Admin API, sync desktop, OMIE, e-mails e tarefas agendadas                       |
 | Integracao OMIE    | TypeScript client proprio      | Com fila, logs e idempotencia                                                    |
 | Balanca            | Adapters locais configuraveis  | Serial, USB serial, TCP/IP, HTTP/API local, arquivo/driver ou adapter especifico |
 | Impressao          | Impressoras Windows instaladas | Perfis configuraveis para cupom 80 mm e relatorios A4                            |
@@ -155,13 +155,13 @@ Definir contratos, entidades, status, sincronizacao, multiunidade e regras de co
 
 - Documento tecnico em `docs/ARCHITECTURE.md`.
 - Modelo de dados SQLite.
-- Modelo de dados Firestore.
+- Modelo de dados Supabase/Postgres.
 - Contratos TypeScript compartilhados.
 - Definicao de identificadores globais e locais.
 - Definicao de empresa, pedreira, unidade e dispositivo desde o inicio.
 - Definicao dos status de operacao.
 - Definicao da fila local de sincronizacao.
-- Definicao de idempotencia para Firebase e OMIE.
+- Definicao de idempotencia para Supabase e OMIE.
 - Definicao da estrategia de conflito:
 - campos do OMIE vencem em dados de origem OMIE;
 - campos do KyberRock vencem quando forem exclusivos locais;
@@ -171,7 +171,7 @@ Definir contratos, entidades, status, sincronizacao, multiunidade e regras de co
 - Definicao da estrategia de logs locais e logs cloud.
 - Definicao da estrategia de seguranca:
 - segredos fora do Git;
-- regras Firestore;
+- politicas RLS Supabase;
 - permissao somente leitura do carregador;
 - autenticacao do desktop/dispositivo;
 - segregacao por unidade.
@@ -267,7 +267,7 @@ Criar o aplicativo desktop Windows com banco local, migrations, backup e capacid
 - Indicadores visuais de status:
 - internet;
 - balanca;
-- Firebase;
+- Supabase;
 - OMIE;
 - fila pendente;
 - ultimo backup.
@@ -443,7 +443,7 @@ Criar um portal de administracao escalavel para gerenciar multiplas pedreiras/un
 - Formulario para criar/editar unidade.
 - Formulario para criar/editar usuario carregador.
 - Ativar/desativar acesso de usuarios.
-- Regras Firestore com separacao admin/carregador.
+- Politicas RLS Supabase com separacao admin/carregador.
 - Escalavel para novas pedreiras.
 
 ### Criterios De Aceite
@@ -453,50 +453,50 @@ Criar um portal de administracao escalavel para gerenciar multiplas pedreiras/un
 - Admin pode criar usuarios carregadores vinculados a uma unidade.
 - Carregadores nao podem criar conta propria.
 - Dados de uma pedreira sao inacessiveis para outra.
-- Existe separacao clara entre admin e carregador no Firestore.
+- Existe separacao clara entre admin e carregador no Supabase.
 
 ### Dependencias
 
 - Fase 7 concluida.
 
-## 11. Fase 7 - Firebase Base E Sincronizacao Cloud
+## 11. Fase 7 - Supabase Base E Sincronizacao Cloud
 
 ### Objetivo
 
-Criar o projeto Firebase e implementar a sincronizacao cloud necessaria para o site do carregador, backup operacional cloud e crescimento multiunidade.
+Criar/configurar o projeto Supabase e implementar a sincronizacao cloud necessaria para o site do carregador, backup operacional cloud e crescimento multiunidade.
 
 ### Entregaveis
 
-- Projeto Firebase criado.
+- Projeto Supabase criado.
 - Ambientes definidos, no minimo desenvolvimento e producao.
-- Firebase Auth configurado.
-- Firestore configurado.
-- Firebase Hosting preparado.
-- Firebase Functions preparado.
+- Supabase Auth configurado.
+- Supabase Postgres configurado.
+- Deploy via EasyPanel preparado.
+- Supabase Edge Functions preparadas.
 - Regras de seguranca iniciais.
 - Autenticacao do desktop/dispositivo para sincronizacao.
-- Sincronizacao desktop -> Firebase para operacoes em aberto.
-- Sincronizacao desktop -> Firebase para operacoes fechadas/canceladas.
+- Sincronizacao desktop -> Supabase para operacoes em aberto.
+- Sincronizacao desktop -> Supabase para operacoes fechadas/canceladas.
 - Sincronizacao incremental.
 - Status de sincronizacao no desktop.
 - Fila de reenvio em caso de queda de internet.
 - Logs resumidos de sincronizacao.
-- Testes ou validacao das regras Firestore.
+- Testes ou validacao das politicas RLS Supabase.
 
 ### Criterios De Aceite
 
 - Desktop opera offline e sincroniza quando volta a internet.
-- Operacoes em aberto aparecem no Firestore.
+- Operacoes em aberto aparecem no Supabase.
 - Operacoes fechadas deixam de aparecer como abertas.
 - Reenvio nao duplica operacoes.
 - Dados ficam segregados por empresa/unidade.
-- Regras do Firebase impedem escrita indevida por usuarios do carregador.
+- RLS do Supabase impede escrita indevida por usuarios do carregador.
 - Existem testes para fila, idempotencia local e regras criticas de seguranca.
 
 ### Dependencias
 
 - Fase 3 concluida.
-- Projeto Firebase criado nesta fase.
+- Projeto Supabase criado/configurado nesta fase.
 
 ## 12. Fase 8 - Site Do Carregador
 
@@ -507,14 +507,14 @@ Criar o site online para o carregador visualizar solicitacoes de carregamento em
 ### Entregaveis
 
 - App web `loader-web`.
-- Login do carregador via Firebase Auth.
+- Login do carregador via Supabase Auth.
 - Vinculo do carregador com empresa/unidade.
 - Tela de lista de carregamentos em aberto.
 - Tela ou painel de detalhe do carregamento.
 - Visualizacao de placa, cliente, motorista, veiculo e produto.
 - Filtro por unidade/pedreira.
 - Permissao somente leitura.
-- Deploy no Firebase Hosting.
+- Deploy no EasyPanel.
 
 ### Criterios De Aceite
 
@@ -720,8 +720,8 @@ Reforcar seguranca, confiabilidade, diagnostico e suporte antes do piloto real.
 ### Entregaveis
 
 - Revisao de segredos e variaveis de ambiente.
-- Validacao de que credenciais OMIE/Firebase nao estao no Git.
-- Regras Firestore revisadas.
+- Validacao de que credenciais OMIE/Supabase nao estao no Git.
+- Politicas RLS Supabase revisadas.
 - Permissao do carregador somente leitura validada.
 - Segregacao completa por empresa/unidade validada.
 - Backup local revisado.
@@ -763,7 +763,7 @@ Preparar o desktop para instalacao real no Windows da pedreira, com configuracao
 - Configuracao de unidade/dispositivo.
 - Configuracao da balanca por adapter.
 - Configuracao da impressora por perfil Windows.
-- Configuracao de Firebase.
+- Configuracao de Supabase.
 - Configuracao de OMIE sem expor segredo no repositorio.
 - Plano de atualizacao de versao.
 - Plano de rollback manual.
@@ -792,7 +792,7 @@ Rodar o KyberRock em ambiente real controlado antes da substituicao total do sis
 
 - Instalacao no PC da balanca.
 - Configuracao da impressora.
-- Configuracao Firebase.
+- Configuracao Supabase.
 - Configuracao OMIE.
 - Usuarios do site do carregador.
 - Testes reais de entrada, carregamento, saida e impressao.
@@ -831,7 +831,7 @@ Substituir totalmente o sistema antigo pelo KyberRock.
 - Rotina de suporte inicial.
 - Checklist de contingencia.
 - Monitoramento dos primeiros dias.
-- Validacao diaria de sincronizacao OMIE e Firebase.
+- Validacao diaria de sincronizacao OMIE e Supabase.
 - Validacao diaria de backups.
 
 ### Criterios De Aceite
@@ -857,7 +857,7 @@ Substituir totalmente o sistema antigo pelo KyberRock.
 5. Fase 4 - Fluxo De Pesagem Com Balanca Simulada.
 6. Fase 5 - Impressao Local No Windows.
 7. Fase 6 - Integracao Real Com A Balanca.
-8. Fase 7 - Firebase Base E Sincronizacao Cloud.
+8. Fase 7 - Supabase Base E Sincronizacao Cloud.
 9. Fase 8 - Site Do Carregador.
 10. Fase 9 - Integracao OMIE: Cadastros E Sincronizacao.
 11. Fase 10 - Regras Comerciais, Precos E Bloqueio Financeiro.
@@ -898,7 +898,7 @@ Substituir totalmente o sistema antigo pelo KyberRock.
 
 - Balanca real lendo peso estavel.
 - Cupom termico imprimindo.
-- Firebase sincronizando operacoes em aberto.
+- Supabase sincronizando operacoes em aberto.
 - Site do carregador exibindo fila real.
 - OMIE sincronizando cadastros.
 
@@ -930,7 +930,7 @@ Substituir totalmente o sistema antigo pelo KyberRock.
 - [x] Fase 4 - Fluxo De Pesagem Com Balanca Simulada
 - [x] Fase 5 - Impressao Local No Windows
 - [ ] Fase 6 - Integracao Real Com A Balanca
-- [x] Fase 7 - Firebase Base E Sincronizacao Cloud
+- [x] Fase 7 - Supabase Base E Sincronizacao Cloud
 - [x] Fase 8 - Site Do Carregador
 - [x] Fase 9 - Integracao OMIE: Cadastros E Sincronizacao
 - [x] Fase 10 - Regras Comerciais, Precos E Bloqueio Financeiro
@@ -958,7 +958,7 @@ Uma fase so deve ser considerada concluida quando:
 
 ## 26. Observacoes Importantes
 
-- Credenciais OMIE, Firebase e qualquer segredo devem ficar fora do Git.
+- Credenciais OMIE, Supabase e qualquer segredo devem ficar fora do Git.
 - A integracao com balanca deve ser isolada em adapters configuraveis para facilitar troca de protocolo, modelo e tipo de conexao.
 - O desktop deve sempre salvar localmente antes de tentar sincronizar.
 - Operacoes enviadas ao OMIE precisam de idempotencia para evitar duplicidade.

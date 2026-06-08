@@ -27,7 +27,7 @@ export function buildStatusIndicatorViewModels(
           : "Operacao local continua disponivel"
     },
     buildScaleIndicator(snapshot.scale),
-    buildIntegrationIndicator("Firebase", snapshot.firebase),
+    buildIntegrationIndicator("Cloud", snapshot.cloud),
     buildIntegrationIndicator("OMIE", snapshot.omie),
     {
       label: "Fila pendente",
@@ -79,7 +79,7 @@ function buildScaleIndicator(status: ScaleRuntimeStatus): StatusIndicatorViewMod
 }
 
 function buildIntegrationIndicator(
-  label: "Firebase" | "OMIE",
+  label: "Cloud" | "OMIE",
   status: IntegrationStatus
 ): StatusIndicatorViewModel {
   const values: Record<IntegrationStatus, Omit<StatusIndicatorViewModel, "label">> = {

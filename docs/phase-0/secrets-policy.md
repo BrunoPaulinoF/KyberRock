@@ -2,7 +2,7 @@
 
 ## Objetivo
 
-Evitar vazamento de credenciais do OMIE, Firebase, e-mail, certificados, chaves privadas e qualquer segredo usado pelo KyberRock.
+Evitar vazamento de credenciais do OMIE, Supabase, e-mail, certificados, chaves privadas e qualquer segredo usado pelo KyberRock.
 
 ## Regra Geral
 
@@ -29,9 +29,9 @@ Nenhum segredo real deve ser commitado no repositorio.
 | ----------------------- | --------------------------------- |
 | `OMIE_APP_KEY`          | App key OMIE                      |
 | `OMIE_APP_SECRET`       | App secret OMIE                   |
-| `FIREBASE_PROJECT_ID`   | Projeto Firebase                  |
-| `FIREBASE_CLIENT_EMAIL` | Service account, quando aplicavel |
-| `FIREBASE_PRIVATE_KEY`  | Chave privada, quando aplicavel   |
+| `SUPABASE_URL`          | URL do projeto Supabase           |
+| `SUPABASE_PUBLISHABLE_KEY` | Chave publica do projeto Supabase |
+| `KYBERROCK_ADMIN_SESSION_SECRET` | Assinatura das sessoes admin |
 | `SMTP_HOST`             | Servidor de e-mail                |
 | `SMTP_USER`             | Usuario de e-mail                 |
 | `SMTP_PASSWORD`         | Senha de e-mail                   |
@@ -42,7 +42,7 @@ O `.gitignore` inicial bloqueia:
 
 - `.env` e `.env.*`, exceto `.env.example`;
 - chaves e certificados comuns;
-- service accounts Firebase;
+- service accounts Supabase;
 - bancos SQLite locais;
 - logs;
 - `node_modules` e saidas de build.
@@ -52,7 +52,7 @@ O `.gitignore` inicial bloqueia:
 Definir o mecanismo final de segredos para:
 
 - aplicativo desktop instalado no Windows;
-- Firebase Functions;
+- Supabase Edge Functions;
 - ambiente de desenvolvimento;
 - ambiente de producao;
 - rotacao de credenciais.

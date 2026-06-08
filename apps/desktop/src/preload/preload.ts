@@ -11,7 +11,7 @@ import type { StartSimulatedWeighingInput } from "../services/runtime";
 import type { DesktopStatusSnapshot } from "../services/status";
 import type { UpdateState } from "../services/update-flow";
 import type { WeighingOperationSummary } from "../services/weighing-operations";
-import type { SyncResult } from "../services/firebase-sync";
+import type { SyncResult } from "../services/supabase-sync";
 
 export interface KyberRockDesktopApi {
   getStatus: (internetOnline?: boolean) => Promise<DesktopStatusSnapshot>;
@@ -32,9 +32,10 @@ export interface KyberRockDesktopApi {
   listPrintReceipts: () => Promise<PrintReceiptSummary[]>;
   printReceipt: (operationId: string) => Promise<PrintReceiptSummary>;
   reprintReceipt: (receiptId: string) => Promise<PrintReceiptSummary>;
-  syncToFirebase: () => Promise<SyncResult>;
-  getFirebaseStatus: () => Promise<{ totalOperations: number; lastSync: string | null }>;
-  isFirebaseConnected: () => Promise<boolean>;
+  printTestReceipt: () => Promise<PrintReceiptSummary>;
+  syncToCloud: () => Promise<SyncResult>;
+  getCloudStatus: () => Promise<{ totalOperations: number; lastSync: string | null }>;
+  isCloudConnected: () => Promise<boolean>;
 }
 
 const desktopApi: KyberRockDesktopApi = {
@@ -81,14 +82,16 @@ const desktopApi: KyberRockDesktopApi = {
     ipcRenderer.invoke("desktop:print-receipt", operationId) as Promise<PrintReceiptSummary>,
   reprintReceipt: (receiptId) =>
     ipcRenderer.invoke("desktop:reprint-receipt", receiptId) as Promise<PrintReceiptSummary>,
-  syncToFirebase: () => ipcRenderer.invoke("desktop:sync-to-firebase") as Promise<SyncResult>,
-  getFirebaseStatus: () =>
-    ipcRenderer.invoke("desktop:get-firebase-status") as Promise<{
+  printTestReceipt: () =>
+    ipcRenderer.invoke("desktop:print-test-receipt") as Promise<PrintReceiptSummary>,
+  syncToCloud: () => ipcRenderer.invoke("desktop:sync-to-cloud") as Promise<SyncResult>,
+  getCloudStatus: () =>
+    ipcRenderer.invoke("desktop:get-cloud-status") as Promise<{
       totalOperations: number;
       lastSync: string | null;
     }>,
-  isFirebaseConnected: () =>
-    ipcRenderer.invoke("desktop:is-firebase-connected") as Promise<boolean>
+  isCloudConnected: () =>
+    ipcRenderer.invoke("desktop:is-cloud-connected") as Promise<boolean>
 };
 
 contextBridge.exposeInMainWorld("kyberrockDesktop", desktopApi);

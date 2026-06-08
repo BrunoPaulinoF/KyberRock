@@ -4,7 +4,6 @@ dist
 **/dist
 coverage
 .git
-.firebase
 *.log
 .env
 .env.*

@@ -237,28 +237,36 @@ function registerIpcHandlers(): void {
     return runtime.reprintReceipt(receiptId);
   });
 
-  ipcMain.handle("desktop:sync-to-firebase", async () => {
+  ipcMain.handle("desktop:print-test-receipt", () => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");
     }
 
-    return runtime.syncToFirebase();
+    return runtime.printTestReceipt();
   });
 
-  ipcMain.handle("desktop:get-firebase-status", async () => {
+  ipcMain.handle("desktop:sync-to-cloud", async () => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");
     }
 
-    return runtime.getFirebaseStatus();
+    return runtime.syncToCloud();
   });
 
-  ipcMain.handle("desktop:is-firebase-connected", () => {
+  ipcMain.handle("desktop:get-cloud-status", async () => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");
     }
 
-    return runtime.isFirebaseConnected();
+    return runtime.getCloudStatus();
+  });
+
+  ipcMain.handle("desktop:is-cloud-connected", () => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.isCloudConnected();
   });
 }
 

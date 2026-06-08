@@ -14,20 +14,20 @@ Status: draft inicial.
 
 ## Entidades Centrais
 
-| Entidade            | SQLite                              | Firestore                                                       | Observacao                  |
-| ------------------- | ----------------------------------- | --------------------------------------------------------------- | --------------------------- |
-| Empresa             | `companies`                         | `companies/{companyId}`                                         | Multiempresa desde o inicio |
-| Unidade             | `units`                             | `companies/{companyId}/units/{unitId}`                          | Pedreira/local operacional  |
-| Dispositivo         | `devices`                           | `companies/{companyId}/devices/{deviceId}`                      | PC da balanca               |
-| Cliente             | `customers`                         | `companies/{companyId}/customers/{customerId}`                  | OMIE ou local pendente      |
-| Produto             | `products`                          | `companies/{companyId}/products/{productId}`                    | Origem OMIE                 |
-| Transportadora      | `carriers`                          | `companies/{companyId}/carriers/{carrierId}`                    | Origem OMIE quando possivel |
-| Veiculo             | `vehicles`                          | Opcional na fase inicial                                        | Local operacional           |
-| Motorista           | `drivers`                           | Opcional na fase inicial                                        | Local operacional           |
-| Tabela de preco     | `price_tables`, `price_table_items` | Opcional                                                        | Fonte KyberRock             |
-| Forma/condicao      | `payment_terms`                     | Opcional                                                        | Origem OMIE                 |
-| Operacao            | `weighing_operations`               | `companies/{companyId}/units/{unitId}/operations/{operationId}` | Registro principal          |
-| Carregamento aberto | derivado de operacao                | `loading_requests/{operationId}` ou subcolecao                  | Projecao para carregador    |
+| Entidade            | SQLite                              | Supabase Postgres                         | Observacao                  |
+| ------------------- | ----------------------------------- | ----------------------------------------- | --------------------------- |
+| Empresa             | `companies`                         | `companies`                               | Multiempresa desde o inicio |
+| Unidade             | `units`                             | `units`                                   | Pedreira/local operacional  |
+| Dispositivo         | `devices`                           | `device_registrations`                    | PC da balanca               |
+| Cliente             | `customers`                         | `customers`                               | OMIE ou local pendente      |
+| Produto             | `products`                          | `products`                                | Origem OMIE                 |
+| Transportadora      | `carriers`                          | Opcional                                  | Origem OMIE quando possivel |
+| Veiculo             | `vehicles`                          | Opcional na fase inicial                  | Local operacional           |
+| Motorista           | `drivers`                           | Opcional na fase inicial                  | Local operacional           |
+| Tabela de preco     | `price_tables`, `price_table_items` | Opcional                                  | Fonte KyberRock             |
+| Forma/condicao      | `payment_terms`                     | Opcional                                  | Origem OMIE                 |
+| Operacao            | `weighing_operations`               | `weighing_operations`                     | Registro principal          |
+| Carregamento aberto | derivado de operacao                | `loading_requests`                        | Projecao para carregador    |
 | Cupom               | `print_receipts`                    | Opcional                                                        | Reimpressao auditada        |
 | Fila sync           | `sync_queue`                        | Nao                                                             | Local-only                  |
 | Auditoria           | `audit_logs`                        | Resumo opcional                                                 | Historico imutavel          |
@@ -220,7 +220,7 @@ Vincula cliente a tabela: `id`, `customer_id`, `price_table_id`, `valid_from`, `
 | `freight_json`             | text nullable    | Regra aplicada, distancia, peso, modalidade |
 | `omie_sales_order_id`      | integer nullable | Pedido OMIE                                 |
 | `omie_service_order_id`    | integer nullable | OS OMIE                                     |
-| `firebase_synced_at`       | text nullable    | UTC                                         |
+| `cloud_synced_at`          | text nullable    | UTC                                         |
 | `omie_synced_at`           | text nullable    | UTC                                         |
 | `cancel_reason`            | text nullable    | Obrigatorio no cancelamento                 |
 | `created_at`               | text             | UTC                                         |
@@ -239,7 +239,7 @@ Projecao local da fila do carregador: `id`, `operation_id`, `company_id`, `unit_
 | Campo             | Tipo          | Observacao                                            |
 | ----------------- | ------------- | ----------------------------------------------------- |
 | `id`              | text pk       | UUID global                                           |
-| `target`          | text          | `firebase`, `omie`                                    |
+| `target`          | text          | `cloud`, `omie`                                    |
 | `action`          | text          | Ex.: `upsert_operation`, `create_sales_order`         |
 | `entity_type`     | text          | Ex.: `operation`                                      |
 | `entity_id`       | text          | UUID                                                  |
@@ -260,42 +260,42 @@ Projecao local da fila do carregador: `id`, `operation_id`, `company_id`, `unit_
 
 `id`, `level`, `source`, `message`, `context_json`, `created_at`. Nao salvar segredos nem payloads OMIE completos com dados sensiveis.
 
-## Firestore Draft
+## Supabase Postgres Draft
 
 ```text
-companies/{companyId}
-  units/{unitId}
-  devices/{deviceId}
-  customers/{customerId}
-  products/{productId}
-  carriers/{carrierId}
-  units/{unitId}/operations/{operationId}
-  units/{unitId}/loadingRequests/{operationId}
-  units/{unitId}/syncSummaries/{summaryId}
-  users/{userId}
+companies
+units
+device_registrations
+user_profiles
+customers
+products
+weighing_operations
+loading_requests
+print_receipts
+audit_logs
 ```
 
-## Firestore Documentos Principais
+## Supabase Postgres Tabelas Principais
 
-### `loadingRequests`
+### `loading_requests`
 
 Campos minimos para carregador:
 
-- `companyId`
-- `unitId`
-- `operationId`
+- `company_id`
+- `unit_id`
+- `operation_id`
 - `status`
 - `plate`
-- `customerName`
-- `driverName`
-- `vehicleDescription`
-- `productDescription`
-- `createdAt`
-- `updatedAt`
+- `customer_name`
+- `driver_name`
+- `product_description`
+- `entry_weight_kg`
+- `created_at`
+- `updated_at`
 
 Nao incluir dados financeiros sensiveis se o carregador nao precisa deles.
 
-### `operations`
+### `weighing_operations`
 
 Versao cloud resumida da operacao para suporte, auditoria e dashboards. Deve conter pesos, status, valores principais e ids externos, mas regras de acesso precisam restringir quem pode ler.
 
@@ -311,11 +311,11 @@ SQLite:
 - `sync_queue(status, target, next_attempt_at)`
 - `audit_logs(entity_type, entity_id, created_at)`
 
-Firestore:
+Supabase Postgres:
 
-- `loadingRequests`: `unitId + status + updatedAt`
-- `operations`: `unitId + status + updatedAt`
-- `operations`: `unitId + omieSyncStatus + updatedAt`
+- `loading_requests`: `unit_id + status + updated_at`
+- `weighing_operations`: `unit_id + status + updated_at`
+- `weighing_operations`: `company_id + unit_id + created_at`
 
 ## Regras De Conflito
 

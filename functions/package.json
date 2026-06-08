@@ -7,8 +7,5 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json"
-  },
-  "dependencies": {
-    "firebase-admin": "^13.10.0"
   }
 }

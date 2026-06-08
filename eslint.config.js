@@ -11,7 +11,6 @@ export default [
       "**/build/**",
       "coverage/**",
       "**/coverage/**",
-      ".firebase/**",
       "release/**"
     ]
   },

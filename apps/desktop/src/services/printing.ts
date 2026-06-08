@@ -44,6 +44,10 @@ export interface ReprintWeighingReceiptInput {
   identity: LocalDesktopIdentity;
 }
 
+export interface PrintTestReceiptInput {
+  identity: LocalDesktopIdentity;
+}
+
 export interface ReceiptPrintPayload {
   printerName: string;
   paperWidthMm: number;
@@ -211,6 +215,99 @@ export async function reprintWeighingReceipt(
   );
 }
 
+export async function printTestReceipt(
+  database: DesktopDatabase,
+  input: PrintTestReceiptInput,
+  printer: ReceiptPrinter,
+  now: Date = new Date()
+): Promise<PrintReceiptSummary> {
+  const profile = getActiveReceiptPrintProfile(database, input.identity.deviceId);
+
+  if (!profile) {
+    throw new Error("No active receipt printer profile is configured.");
+  }
+
+  const timestamp = now.toISOString();
+  const receiptId = randomUUID();
+  const testSnapshot = buildTestReceiptSnapshot(timestamp);
+  const payload: ReceiptPrintPayload = {
+    printerName: profile.windowsPrinterName,
+    paperWidthMm: profile.paperWidthMm,
+    lines: testSnapshot.lines,
+    contentText: testSnapshot.lines.join("\n"),
+    snapshot: testSnapshot
+  };
+
+  let status: PrintReceiptStatus = "printed";
+  let errorMessage: string | null = null;
+
+  try {
+    await printer.printReceipt(payload);
+  } catch (error) {
+    status = "failed";
+    errorMessage = sanitizeErrorMessage(error);
+  }
+
+  // Insert a placeholder test operation to satisfy FK
+  const testOperationId = "test";
+  // Delete any previous test operation first to avoid PK conflict
+  database.prepare("DELETE FROM weighing_operations WHERE id = ?").run(testOperationId);
+  database
+    .prepare(
+      `INSERT INTO weighing_operations (
+        id, company_id, unit_id, device_id, status, operation_type,
+        entry_weight_kg, exit_weight_kg, net_weight_kg,
+        product_total_cents, freight_total_cents, total_cents,
+        unit_price_cents, cancel_reason, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      testOperationId,
+      input.identity.companyId,
+      input.identity.unitId,
+      input.identity.deviceId,
+      "cancelled",
+      "invoice",
+      12_000,
+      18_500,
+      6_500,
+      78_000,
+      0,
+      78_000,
+      12,
+      "Teste de impressora",
+      timestamp,
+      timestamp
+    );
+
+  // Delete any previous test receipt first to avoid PK conflict on repeated tests
+  database.prepare("DELETE FROM print_receipts WHERE operation_id = ?").run(testOperationId);
+
+  database
+    .prepare(
+      `INSERT INTO print_receipts (
+        id, operation_id, unit_id, receipt_number, copy_number, content_snapshot_json,
+        printed_at, printer_name, status, error_message, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      receiptId,
+      testOperationId,
+      input.identity.unitId,
+      0,
+      0,
+      JSON.stringify(testSnapshot),
+      timestamp,
+      profile.windowsPrinterName,
+      status,
+      errorMessage,
+      timestamp,
+      timestamp
+    );
+
+  return getRequiredPrintReceipt(database, receiptId);
+}
+
 async function writeReceiptAttempt(
   database: DesktopDatabase,
   identity: LocalDesktopIdentity,
@@ -289,11 +386,11 @@ async function writeReceiptAttempt(
     enqueueSyncJob(
       database,
       {
-        target: "firebase",
+        target: "cloud",
         action: "upsert_print_receipt",
         entityType: "print_receipt",
         entityId: receiptId,
-        idempotencyKey: `firebase:print_receipt:${receiptId}`,
+        idempotencyKey: `cloud:print_receipt:${receiptId}`,
         payload: { operationId: operation.id, receiptId, receiptNumber, copyNumber, status }
       },
       now
@@ -437,6 +534,33 @@ function buildReceiptSnapshot(
     totalCents: operation.total_cents ?? 0
   };
   const lines = buildReceiptLines(templateInput);
+
+  return { ...templateInput, lines };
+}
+
+function buildTestReceiptSnapshot(printedAt: string): ReceiptContentSnapshot {
+  const templateInput: ReceiptTemplateInput = {
+    unitName: "Pedreira Teste",
+    receiptNumber: 0,
+    copyNumber: 0,
+    printedAt,
+    operationId: "test",
+    operationType: "invoice",
+    customerName: "Cliente Exemplo",
+    productDescription: "Brita 1 (Teste)",
+    plate: "ABC1D23",
+    driverName: "Motorista Teste",
+    paymentTermName: "A vista",
+    entryWeightKg: 12_000,
+    exitWeightKg: 18_500,
+    netWeightKg: 6_500,
+    productTotalCents: 78_000,
+    freightTotalCents: 0,
+    totalCents: 78_000
+  };
+  const lines = buildReceiptLines(templateInput);
+  lines.unshift("=== CUPOM DE TESTE ===");
+  lines.push("", "Esta e uma impressao de teste.");
 
   return { ...templateInput, lines };
 }

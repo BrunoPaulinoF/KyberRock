@@ -17,20 +17,20 @@ describe("sync queue", () => {
     try {
       const firstJob = enqueueSyncJob(database, {
         id: "job-1",
-        target: "firebase",
+        target: "cloud",
         action: "upsert_operation",
         entityType: "operation",
         entityId: "operation-1",
-        idempotencyKey: "firebase:operation-1",
+        idempotencyKey: "cloud:operation-1",
         payload: { operationId: "operation-1" }
       });
       const duplicateJob = enqueueSyncJob(database, {
         id: "job-2",
-        target: "firebase",
+        target: "cloud",
         action: "upsert_operation",
         entityType: "operation",
         entityId: "operation-1",
-        idempotencyKey: "firebase:operation-1",
+        idempotencyKey: "cloud:operation-1",
         payload: { operationId: "operation-1" }
       });
 
@@ -49,11 +49,11 @@ describe("sync queue", () => {
         database,
         {
           id: "job-1",
-          target: "firebase",
+          target: "cloud",
           action: "upsert_operation",
           entityType: "operation",
           entityId: "operation-1",
-          idempotencyKey: "firebase:operation-1",
+          idempotencyKey: "cloud:operation-1",
           payload: {},
           nextAttemptAt: new Date("2026-06-06T12:00:00.000Z")
         },
@@ -77,7 +77,7 @@ describe("sync queue", () => {
       expect(
         listRunnableSyncJobs(database, {
           now: new Date("2026-06-06T12:30:00.000Z"),
-          target: "firebase"
+          target: "cloud"
         }).map((job) => job.id)
       ).toEqual(["job-1"]);
     } finally {

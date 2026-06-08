@@ -10,7 +10,7 @@ type OperationStatus =
   | "loading_requested"
   | "awaiting_exit"
   | "closed_local"
-  | "pending_firebase"
+  | "pending_cloud"
   | "pending_omie"
   | "synced"
   | "sync_error"
@@ -271,11 +271,11 @@ export function createSimulatedWeighingOperation(
     enqueueSyncJob(
       database,
       {
-        target: "firebase",
+        target: "cloud",
         action: "upsert_loading_request",
         entityType: "loading_request",
         entityId: ids.loadingRequestId,
-        idempotencyKey: `firebase:loading_request:${ids.loadingRequestId}`,
+        idempotencyKey: `cloud:loading_request:${ids.loadingRequestId}`,
         payload: { operationId: ids.operationId }
       },
       now
@@ -340,11 +340,11 @@ export function closeWeighingOperation(
     enqueueSyncJob(
       database,
       {
-        target: "firebase",
+        target: "cloud",
         action: "upsert_operation",
         entityType: "operation",
         entityId: input.operationId,
-        idempotencyKey: `firebase:operation:${input.operationId}`,
+        idempotencyKey: `cloud:operation:${input.operationId}`,
         payload: { operationId: input.operationId }
       },
       now

@@ -13,7 +13,7 @@ Motivos:
 - melhor controle do banco local offline-first;
 - menor complexidade de empacotamento no Electron do que Prisma engines;
 - backup, restore e migrations SQL ficam mais explicitos;
-- escala do produto vem de multiunidade + Firebase, nao de um ORM pesado no desktop;
+- escala do produto vem de multiunidade + Supabase, nao de um ORM pesado no desktop;
 - bom desempenho para workload local da balanca.
 
 ### Site Do Carregador
@@ -66,5 +66,5 @@ docker run --rm -p 8080:80 kyberrock-loader-web
 ## Observacoes
 
 - Electron sera adicionado na Fase 3, quando o desktop real com SQLite comecar.
-- Firebase Functions sera configurado em fase propria.
-- Credenciais OMIE/Firebase continuam fora do Git.
+- Supabase Edge Functions sera configurado em fase propria.
+- Credenciais OMIE/Supabase continuam fora do Git.
