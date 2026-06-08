@@ -1,4 +1,4 @@
-import type { KyberRockDesktopApi } from "../preload/preload";
+import type { KyberRockDesktopApi } from "../preload/api-types";
 
 declare global {
   interface Window {

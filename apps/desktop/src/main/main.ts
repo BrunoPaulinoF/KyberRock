@@ -43,6 +43,18 @@ async function createMainWindow(): Promise<void> {
     }
   });
   writeStartupLog("browserWindow:created");
+  mainWindow.webContents.on("did-finish-load", () => {
+    writeStartupLog("renderer:did-finish-load", mainWindow?.webContents.getURL());
+  });
+  mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
+    writeStartupLog("renderer:did-fail-load", { errorCode, errorDescription, validatedURL });
+  });
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    writeStartupLog("renderer:process-gone", details);
+  });
+  mainWindow.webContents.on("console-message", (_event, level, message, line, sourceId) => {
+    writeStartupLog("renderer:console-message", { level, message, line, sourceId });
+  });
   runtime.setReceiptPrinter(createElectronReceiptPrinter(mainWindow));
 
   const devServerUrl = process.env.KYBERROCK_DESKTOP_DEV_SERVER_URL;

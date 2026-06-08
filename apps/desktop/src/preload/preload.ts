@@ -1,97 +1,56 @@
-import { contextBridge, ipcRenderer } from "electron";
+// Sandboxed Electron preload scripts run as CommonJS, even when the app uses ESM.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { contextBridge, ipcRenderer } = require("electron");
 
-import type { BackupResult } from "../services/backup";
-import type {
-  ConfigureReceiptPrintProfileInput,
-  PrintProfileSummary,
-  PrintReceiptSummary,
-  WindowsPrinterSummary
-} from "../services/printing";
-import type { StartSimulatedWeighingInput } from "../services/runtime";
-import type { DesktopStatusSnapshot } from "../services/status";
-import type { UpdateState } from "../services/update-flow";
-import type { WeighingOperationSummary } from "../services/weighing-operations";
-import type { SyncResult } from "../services/supabase-sync";
-
-export interface KyberRockDesktopApi {
-  getStatus: (internetOnline?: boolean) => Promise<DesktopStatusSnapshot>;
-  exportBackup: () => Promise<BackupResult | null>;
-  restoreBackup: () => Promise<boolean>;
-  getUpdateState: () => Promise<UpdateState>;
-  checkForUpdates: () => Promise<UpdateState>;
-  downloadAndInstallUpdate: () => Promise<UpdateState>;
-  listOpenWeighingOperations: () => Promise<WeighingOperationSummary[]>;
-  startSimulatedWeighing: (input: StartSimulatedWeighingInput) => Promise<WeighingOperationSummary>;
-  closeSimulatedWeighing: (operationId: string) => Promise<WeighingOperationSummary>;
-  cancelWeighing: (operationId: string, reason: string) => Promise<WeighingOperationSummary>;
-  listWindowsPrinters: () => Promise<WindowsPrinterSummary[]>;
-  configureReceiptPrintProfile: (
-    input: Omit<ConfigureReceiptPrintProfileInput, "identity">
-  ) => Promise<PrintProfileSummary>;
-  listPrintProfiles: () => Promise<PrintProfileSummary[]>;
-  listPrintReceipts: () => Promise<PrintReceiptSummary[]>;
-  printReceipt: (operationId: string) => Promise<PrintReceiptSummary>;
-  reprintReceipt: (receiptId: string) => Promise<PrintReceiptSummary>;
-  printTestReceipt: () => Promise<PrintReceiptSummary>;
-  syncToCloud: () => Promise<SyncResult>;
-  getCloudStatus: () => Promise<{ totalOperations: number; lastSync: string | null }>;
-  isCloudConnected: () => Promise<boolean>;
-}
-
-const desktopApi: KyberRockDesktopApi = {
-  getStatus: (internetOnline) =>
-    ipcRenderer.invoke("desktop:get-status", internetOnline) as Promise<DesktopStatusSnapshot>,
-  exportBackup: () => ipcRenderer.invoke("desktop:export-backup") as Promise<BackupResult | null>,
-  restoreBackup: () => ipcRenderer.invoke("desktop:restore-backup") as Promise<boolean>,
-  getUpdateState: () => ipcRenderer.invoke("desktop:get-update-state") as Promise<UpdateState>,
-  checkForUpdates: () => ipcRenderer.invoke("desktop:check-for-updates") as Promise<UpdateState>,
+const desktopApi = {
+  getStatus: (internetOnline?: boolean) =>
+    ipcRenderer.invoke("desktop:get-status", internetOnline),
+  exportBackup: () => ipcRenderer.invoke("desktop:export-backup"),
+  restoreBackup: () => ipcRenderer.invoke("desktop:restore-backup"),
+  getUpdateState: () => ipcRenderer.invoke("desktop:get-update-state"),
+  checkForUpdates: () => ipcRenderer.invoke("desktop:check-for-updates"),
   downloadAndInstallUpdate: () =>
-    ipcRenderer.invoke("desktop:download-and-install-update") as Promise<UpdateState>,
+    ipcRenderer.invoke("desktop:download-and-install-update"),
   listOpenWeighingOperations: () =>
-    ipcRenderer.invoke("desktop:list-open-weighing-operations") as Promise<
-      WeighingOperationSummary[]
-    >,
-  startSimulatedWeighing: (input) =>
+    ipcRenderer.invoke("desktop:list-open-weighing-operations"),
+  startSimulatedWeighing: (input: unknown) =>
     ipcRenderer.invoke(
       "desktop:start-simulated-weighing",
       input
-    ) as Promise<WeighingOperationSummary>,
-  closeSimulatedWeighing: (operationId) =>
+    ),
+  closeSimulatedWeighing: (operationId: string) =>
     ipcRenderer.invoke(
       "desktop:close-simulated-weighing",
       operationId
-    ) as Promise<WeighingOperationSummary>,
-  cancelWeighing: (operationId, reason) =>
+    ),
+  cancelWeighing: (operationId: string, reason: string) =>
     ipcRenderer.invoke(
       "desktop:cancel-weighing",
       operationId,
       reason
-    ) as Promise<WeighingOperationSummary>,
+    ),
   listWindowsPrinters: () =>
-    ipcRenderer.invoke("desktop:list-windows-printers") as Promise<WindowsPrinterSummary[]>,
-  configureReceiptPrintProfile: (input) =>
+    ipcRenderer.invoke("desktop:list-windows-printers"),
+  configureReceiptPrintProfile: (input: unknown) =>
     ipcRenderer.invoke(
       "desktop:configure-receipt-print-profile",
       input
-    ) as Promise<PrintProfileSummary>,
+    ),
   listPrintProfiles: () =>
-    ipcRenderer.invoke("desktop:list-print-profiles") as Promise<PrintProfileSummary[]>,
+    ipcRenderer.invoke("desktop:list-print-profiles"),
   listPrintReceipts: () =>
-    ipcRenderer.invoke("desktop:list-print-receipts") as Promise<PrintReceiptSummary[]>,
-  printReceipt: (operationId) =>
-    ipcRenderer.invoke("desktop:print-receipt", operationId) as Promise<PrintReceiptSummary>,
-  reprintReceipt: (receiptId) =>
-    ipcRenderer.invoke("desktop:reprint-receipt", receiptId) as Promise<PrintReceiptSummary>,
+    ipcRenderer.invoke("desktop:list-print-receipts"),
+  printReceipt: (operationId: string) =>
+    ipcRenderer.invoke("desktop:print-receipt", operationId),
+  reprintReceipt: (receiptId: string) =>
+    ipcRenderer.invoke("desktop:reprint-receipt", receiptId),
   printTestReceipt: () =>
-    ipcRenderer.invoke("desktop:print-test-receipt") as Promise<PrintReceiptSummary>,
-  syncToCloud: () => ipcRenderer.invoke("desktop:sync-to-cloud") as Promise<SyncResult>,
+    ipcRenderer.invoke("desktop:print-test-receipt"),
+  syncToCloud: () => ipcRenderer.invoke("desktop:sync-to-cloud"),
   getCloudStatus: () =>
-    ipcRenderer.invoke("desktop:get-cloud-status") as Promise<{
-      totalOperations: number;
-      lastSync: string | null;
-    }>,
+    ipcRenderer.invoke("desktop:get-cloud-status"),
   isCloudConnected: () =>
-    ipcRenderer.invoke("desktop:is-cloud-connected") as Promise<boolean>
+    ipcRenderer.invoke("desktop:is-cloud-connected")
 };
 
 contextBridge.exposeInMainWorld("kyberrockDesktop", desktopApi);
