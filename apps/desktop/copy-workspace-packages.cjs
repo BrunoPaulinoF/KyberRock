@@ -7,13 +7,14 @@ const desktopDistPath = path.resolve(__dirname, "dist");
 for (const pkg of workspacePackages) {
   const sourcePath = path.resolve(__dirname, "../../packages", pkg, "dist");
   const targetPath = path.resolve(desktopDistPath, "node_modules", "@kyberrock", pkg);
+  const targetDistPath = path.join(targetPath, "dist");
 
   if (!fs.existsSync(sourcePath)) {
     console.warn(`Warning: ${sourcePath} not found, skipping copy.`);
     continue;
   }
 
-  fs.mkdirSync(targetPath, { recursive: true });
+  fs.mkdirSync(targetDistPath, { recursive: true });
 
   function copyRecursive(src, dest) {
     const entries = fs.readdirSync(src, { withFileTypes: true });
@@ -29,7 +30,7 @@ for (const pkg of workspacePackages) {
     }
   }
 
-  copyRecursive(sourcePath, targetPath);
+  copyRecursive(sourcePath, targetDistPath);
 
   // Copy the original package.json from the workspace package
   const originalPkgJsonPath = path.resolve(__dirname, "../../packages", pkg, "package.json");
