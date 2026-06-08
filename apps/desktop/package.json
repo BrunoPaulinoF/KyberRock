@@ -7,7 +7,8 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "node -e \"const fs=require('node:fs'); fs.rmSync('dist',{recursive:true,force:true}); fs.rmSync('tsconfig.tsbuildinfo',{force:true})\" && tsc -b tsconfig.json && vite build --config vite.config.ts && node copy-workspace-packages.cjs",
-    "dist:win": "npm run build && electron-builder --win --publish never && npm rebuild better-sqlite3",
+    "rebuild:native:electron": "node rebuild-native-for-electron.cjs",
+    "dist:win": "npm run build && npm run rebuild:native:electron && electron-builder --win --publish never && npm rebuild better-sqlite3",
     "dev": "vite --config vite.config.ts --host 0.0.0.0 --port 5174",
     "start": "npm run build && electron ."
   },

@@ -1,8 +1,10 @@
 import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import type * as ElectronUpdater from "electron-updater";
+import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { inspect } from "node:util";
 
 import { DesktopRuntime, type StartSimulatedWeighingInput } from "../services/runtime.js";
 import type {
@@ -21,8 +23,11 @@ let runtime: DesktopRuntime | null = null;
 let updateState: UpdateState = createInitialUpdateState();
 
 async function createMainWindow(): Promise<void> {
+  writeStartupLog("createMainWindow:start");
   runtime = DesktopRuntime.initialize();
+  writeStartupLog("runtime:initialized");
   runtime.startAutomaticBackupScheduler();
+  writeStartupLog("backupScheduler:started");
 
   mainWindow = new BrowserWindow({
     width: 1180,
@@ -37,15 +42,21 @@ async function createMainWindow(): Promise<void> {
       preload: path.join(currentDirectory, "../preload/preload.js")
     }
   });
+  writeStartupLog("browserWindow:created");
   runtime.setReceiptPrinter(createElectronReceiptPrinter(mainWindow));
 
   const devServerUrl = process.env.KYBERROCK_DESKTOP_DEV_SERVER_URL;
 
   if (devServerUrl) {
+    writeStartupLog("browserWindow:loadURL", devServerUrl);
     await mainWindow.loadURL(devServerUrl);
   } else {
-    await mainWindow.loadFile(path.join(currentDirectory, "../renderer/index.html"));
+    const rendererPath = path.join(currentDirectory, "../renderer/index.html");
+    writeStartupLog("browserWindow:loadFile", rendererPath);
+    await mainWindow.loadFile(rendererPath);
   }
+
+  writeStartupLog("createMainWindow:done");
 }
 
 function registerIpcHandlers(): void {
@@ -356,11 +367,51 @@ function configureAutoUpdater(): void {
   });
 }
 
+function getStartupLogPath(): string {
+  const baseDirectory =
+    process.env.LOCALAPPDATA ?? process.env.TEMP ?? process.env.TMP ?? process.cwd();
+  return path.join(baseDirectory, "KyberRock Desktop", "startup.log");
+}
+
+function writeStartupLog(step: string, detail?: unknown): void {
+  try {
+    const logPath = getStartupLogPath();
+    mkdirSync(path.dirname(logPath), { recursive: true });
+    const serializedDetail = detail === undefined ? "" : ` ${inspect(detail, { depth: 4 })}`;
+    appendFileSync(logPath, `[${new Date().toISOString()}] ${step}${serializedDetail}\n`);
+  } catch {
+    // Startup logging must never prevent the app from opening.
+  }
+}
+
+process.on("uncaughtException", (error) => {
+  writeStartupLog("process:uncaughtException", error);
+});
+
+process.on("unhandledRejection", (reason) => {
+  writeStartupLog("process:unhandledRejection", reason);
+});
+
 configureAutoUpdater();
 registerIpcHandlers();
 
-await app.whenReady();
-await createMainWindow();
+async function bootstrap(): Promise<void> {
+  writeStartupLog("app:waitingReady", {
+    isPackaged: app.isPackaged,
+    currentDirectory,
+    argv: process.argv
+  });
+  await app.whenReady();
+  writeStartupLog("app:ready", { userData: app.getPath("userData") });
+  await createMainWindow();
+}
+
+void bootstrap().catch((error: unknown) => {
+  writeStartupLog("bootstrap:error", error);
+  const message = error instanceof Error ? error.stack ?? error.message : String(error);
+  dialog.showErrorBox("KyberRock Desktop", `Falha ao abrir o aplicativo.\n\n${message}`);
+  app.quit();
+});
 
 app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) {
