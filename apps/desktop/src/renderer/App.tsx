@@ -44,8 +44,10 @@ const initialWeighingForm: WeighingFormState = {
   unitPriceReais: "0,12"
 };
 
+type AppPhase = "checking_access" | "locked" | "unlocked";
+
 export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }: AppProps = {}) {
-  const [isUnlocked, setIsUnlocked] = useState(false);
+  const [phase, setPhase] = useState<AppPhase>("checking_access");
   const [status, setStatus] = useState<DesktopStatusSnapshot | null>(initialStatus);
   const [updateState, setUpdateState] = useState<UpdateState>(createInitialUpdateState());
   const [openOperations, setOpenOperations] = useState<WeighingOperationSummary[]>([]);
@@ -61,7 +63,24 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [cloudSyncing, setCloudSyncing] = useState(false);
   const [cloudStatus, setCloudStatus] = useState<{ totalOperations: number; lastSync: string | null } | null>(null);
 
-  const handleUnlocked = useCallback(() => setIsUnlocked(true), []);
+  useEffect(() => {
+    if (!desktopApi) {
+      setPhase("locked");
+      return;
+    }
+
+    desktopApi.getAccessStatus().then((access) => {
+      if (access.canOperate) {
+        setPhase("unlocked");
+      } else {
+        setPhase("locked");
+      }
+    }).catch(() => {
+      setPhase("locked");
+    });
+  }, [desktopApi]);
+
+  const handleUnlocked = useCallback(() => setPhase("unlocked"), []);
 
   useEffect(() => {
     let active = true;
@@ -332,7 +351,29 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
   }
 
-  if (desktopApi && !isUnlocked) {
+  if (phase === "checking_access") {
+    return (
+      <main style={styles.page}>
+        <div style={{ ...styles.card, maxWidth: "480px", margin: "auto", marginTop: "40px" }}>
+          <h1 style={styles.title}>KyberRock</h1>
+          <p style={styles.subtitle}>Verificando acesso...</p>
+        </div>
+      </main>
+    );
+  }
+
+  if (phase === "locked") {
+    if (!desktopApi) {
+      return (
+        <main style={styles.page}>
+          <div style={{ ...styles.card, maxWidth: "480px", margin: "auto", marginTop: "40px" }}>
+            <h1 style={styles.title}>API do desktop indisponivel</h1>
+            <p style={styles.subtitle}>Abra o aplicativo pelo Electron.</p>
+          </div>
+        </main>
+      );
+    }
+
     return <ActivationGate desktopApi={desktopApi} onUnlocked={handleUnlocked} />;
   }
 
