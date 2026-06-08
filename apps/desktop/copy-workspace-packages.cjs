@@ -31,15 +31,23 @@ for (const pkg of workspacePackages) {
 
   copyRecursive(sourcePath, targetPath);
 
-  // Create a minimal package.json for the copied module
-  const pkgJson = {
-    name: `@kyberrock/${pkg}`,
-    version: "0.1.0",
-    type: "module",
-    main: "dist/index.js",
-    types: "dist/index.d.ts"
-  };
-  fs.writeFileSync(path.join(targetPath, "package.json"), JSON.stringify(pkgJson, null, 2));
+  // Copy the original package.json from the workspace package
+  const originalPkgJsonPath = path.resolve(__dirname, "../../packages", pkg, "package.json");
+  const targetPkgJsonPath = path.join(targetPath, "package.json");
+
+  if (fs.existsSync(originalPkgJsonPath)) {
+    fs.copyFileSync(originalPkgJsonPath, targetPkgJsonPath);
+  } else {
+    // Fallback minimal package.json
+    const pkgJson = {
+      name: `@kyberrock/${pkg}`,
+      version: "0.1.0",
+      type: "module",
+      main: "dist/index.js",
+      types: "dist/index.d.ts"
+    };
+    fs.writeFileSync(targetPkgJsonPath, JSON.stringify(pkgJson, null, 2));
+  }
 
   console.log(`Copied ${pkg} to ${targetPath}`);
 }
