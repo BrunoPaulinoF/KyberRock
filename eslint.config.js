@@ -11,7 +11,8 @@ export default [
       "**/build/**",
       "coverage/**",
       "**/coverage/**",
-      "release/**"
+      "release/**",
+      "**/*.cjs"
     ]
   },
   js.configs.recommended,

@@ -1,10 +1,18 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 import { useAuth } from "../contexts/AuthContext";
 
 export function AdminLogin() {
-  const { loginAdmin, error } = useAuth();
+  const { loginAdmin, error, isAdmin } = useAuth();
+  const navigate = useNavigate();
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Se ja estiver logado como admin, redireciona para o dashboard
+  if (isAdmin) {
+    navigate("/admin", { replace: true });
+    return null;
+  }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -12,6 +20,8 @@ export function AdminLogin() {
     setIsSubmitting(true);
     try {
       await loginAdmin(String(formData.get("username") ?? ""), String(formData.get("password") ?? ""));
+      // Login bem-sucedido, navega para o admin dashboard
+      navigate("/admin", { replace: true });
     } finally {
       setIsSubmitting(false);
     }
