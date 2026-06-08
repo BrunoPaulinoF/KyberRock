@@ -84,11 +84,11 @@ export function ensureInitialDesktopIdentity(
       .prepare(
         `INSERT INTO devices (id, company_id, unit_id, name, device_type, installation_id, is_active, created_at, updated_at)
          VALUES (@id, @companyId, @unitId, @name, 'desktop_scale', @installationId, 1, @createdAt, @updatedAt)
-         ON CONFLICT(id) DO UPDATE SET
+         ON CONFLICT(installation_id) DO UPDATE SET
+           id = excluded.id,
            company_id = excluded.company_id,
            unit_id = excluded.unit_id,
            name = excluded.name,
-           installation_id = excluded.installation_id,
            is_active = 1,
            updated_at = excluded.updated_at`
       )
