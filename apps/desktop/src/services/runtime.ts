@@ -53,6 +53,13 @@ import {
   isSupabaseInitialized,
   type SyncResult
 } from "./supabase-sync.js";
+import {
+  activateDesktop,
+  getStoredDesktopAccessStatus,
+  validateDesktopAccess,
+  type ActivateDesktopInput,
+  type DesktopAccessStatus
+} from "./desktop-activation.js";
 
 export interface StartSimulatedWeighingInput {
   operationType: OperationType;
@@ -139,6 +146,7 @@ export class DesktopRuntime {
   async startSimulatedWeighing(
     input: StartSimulatedWeighingInput
   ): Promise<WeighingOperationSummary> {
+    this.assertDesktopAccess();
     const entryWeightKg = this.readNextSimulatedScaleWeightKg();
 
     return createSimulatedWeighingOperation(this.database, {
@@ -155,6 +163,7 @@ export class DesktopRuntime {
   }
 
   async closeSimulatedWeighing(operationId: string): Promise<WeighingOperationSummary> {
+    this.assertDesktopAccess();
     const exitWeightKg = this.readNextSimulatedScaleWeightKg();
 
     return closeWeighingOperation(this.database, {
@@ -164,16 +173,19 @@ export class DesktopRuntime {
   }
 
   cancelWeighing(operationId: string, reason: string): WeighingOperationSummary {
+    this.assertDesktopAccess();
     return cancelWeighingOperation(this.database, { operationId, reason });
   }
 
   listOpenWeighingOperations(): WeighingOperationSummary[] {
+    this.assertDesktopAccess();
     return listOpenWeighingOperations(this.database);
   }
 
   configureReceiptPrintProfile(
     input: Omit<ConfigureReceiptPrintProfileInput, "identity">
   ): PrintProfileSummary {
+    this.assertDesktopAccess();
     return configureReceiptPrintProfile(this.database, {
       ...input,
       identity: this.ensureIdentity()
@@ -181,14 +193,17 @@ export class DesktopRuntime {
   }
 
   listPrintProfiles(): PrintProfileSummary[] {
+    this.assertDesktopAccess();
     return listPrintProfiles(this.database);
   }
 
   listPrintReceipts(): PrintReceiptSummary[] {
+    this.assertDesktopAccess();
     return listPrintReceipts(this.database);
   }
 
   printReceipt(operationId: string): Promise<PrintReceiptSummary> {
+    this.assertDesktopAccess();
     return printWeighingReceipt(
       this.database,
       { operationId, identity: this.ensureIdentity() },
@@ -197,6 +212,7 @@ export class DesktopRuntime {
   }
 
   reprintReceipt(receiptId: string): Promise<PrintReceiptSummary> {
+    this.assertDesktopAccess();
     return reprintWeighingReceipt(
       this.database,
       { receiptId, identity: this.ensureIdentity() },
@@ -205,6 +221,7 @@ export class DesktopRuntime {
   }
 
   printTestReceipt(): Promise<PrintReceiptSummary> {
+    this.assertDesktopAccess();
     return printTestReceipt(
       this.database,
       { identity: this.ensureIdentity() },
@@ -213,6 +230,7 @@ export class DesktopRuntime {
   }
 
   async syncToCloud(): Promise<SyncResult> {
+    this.assertDesktopAccess();
     const identity = this.ensureIdentity();
     const errors: string[] = [];
     let synced = 0;
@@ -260,6 +278,7 @@ export class DesktopRuntime {
   }
 
   async getCloudStatus(): Promise<{ totalOperations: number; lastSync: string | null }> {
+    this.assertDesktopAccess();
     const identity = this.ensureIdentity();
     return getSupabaseSyncStatus(identity.companyId);
   }
@@ -272,6 +291,18 @@ export class DesktopRuntime {
     this.backupScheduler?.stop();
     this.backupScheduler = null;
     this.database.close();
+  }
+
+  getDesktopAccessStatus(): DesktopAccessStatus {
+    return getStoredDesktopAccessStatus(this.database);
+  }
+
+  validateDesktopAccess(internetOnline?: boolean, force?: boolean): Promise<DesktopAccessStatus> {
+    return validateDesktopAccess(this.database, { internetOnline, force });
+  }
+
+  activateDesktop(input: ActivateDesktopInput): Promise<DesktopAccessStatus> {
+    return activateDesktop(this.database, input);
   }
 
   private ensureIdentity(): LocalDesktopIdentity {
@@ -287,6 +318,13 @@ export class DesktopRuntime {
         deviceName: "Desktop balanca"
       })
     );
+  }
+
+  private assertDesktopAccess(): void {
+    const access = getStoredDesktopAccessStatus(this.database);
+    if (!access.canOperate) {
+      throw new Error(access.message);
+    }
   }
 
   private readNextSimulatedScaleWeightKg(): number {

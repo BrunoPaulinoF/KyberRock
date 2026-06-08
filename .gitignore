@@ -37,3 +37,6 @@ logs/
 Thumbs.db
 .vscode/
 .idea/
+
+# Debug screenshots
+ERROS/

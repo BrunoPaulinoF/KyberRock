@@ -10,12 +10,16 @@ import type { DesktopStatusSnapshot } from "../services/status";
 import type { UpdateState } from "../services/update-flow";
 import type { WeighingOperationSummary } from "../services/weighing-operations";
 import type { SyncResult } from "../services/supabase-sync";
+import type { ActivateDesktopInput, DesktopAccessStatus } from "../services/desktop-activation";
 
 export interface KyberRockDesktopApi {
   getStatus: (internetOnline?: boolean) => Promise<DesktopStatusSnapshot>;
   exportBackup: () => Promise<BackupResult | null>;
   restoreBackup: () => Promise<boolean>;
   getUpdateState: () => Promise<UpdateState>;
+  getAccessStatus: () => Promise<DesktopAccessStatus>;
+  validateDesktopAccess: (internetOnline?: boolean, force?: boolean) => Promise<DesktopAccessStatus>;
+  activateDesktop: (input: ActivateDesktopInput) => Promise<DesktopAccessStatus>;
   checkForUpdates: () => Promise<UpdateState>;
   downloadAndInstallUpdate: () => Promise<UpdateState>;
   listOpenWeighingOperations: () => Promise<WeighingOperationSummary[]>;

@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { inspect } from "node:util";
 
 import { DesktopRuntime, type StartSimulatedWeighingInput } from "../services/runtime.js";
+import type { ActivateDesktopInput } from "../services/desktop-activation.js";
 import type {
   ConfigureReceiptPrintProfileInput,
   ReceiptPrintPayload,
@@ -128,6 +129,30 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle("desktop:get-update-state", () => updateState);
+
+  ipcMain.handle("desktop:get-access-status", () => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.getDesktopAccessStatus();
+  });
+
+  ipcMain.handle("desktop:validate-access", (_event, internetOnline?: boolean, force?: boolean) => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.validateDesktopAccess(internetOnline, force);
+  });
+
+  ipcMain.handle("desktop:activate", (_event, input: ActivateDesktopInput) => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.activateDesktop(input);
+  });
 
   ipcMain.handle("desktop:check-for-updates", async () => {
     if (!app.isPackaged) {

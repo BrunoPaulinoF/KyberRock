@@ -17,6 +17,7 @@ interface Unit {
   name: string;
   timezone: string;
   isActive: boolean;
+  desktopActivationCodeRotatedAt?: string;
 }
 
 interface LoaderUser {
@@ -28,13 +29,26 @@ interface LoaderUser {
   isActive: boolean;
 }
 
+interface Device {
+  id: string;
+  companyId: string;
+  unitId: string;
+  name: string;
+  isActive: boolean;
+  lastSeenAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export function AdminDashboard() {
   const { logout } = useAuth();
   const [companies, setCompanies] = useState<Company[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
   const [users, setUsers] = useState<LoaderUser[]>([]);
-  const [activeTab, setActiveTab] = useState<"companies" | "users">("companies");
+  const [devices, setDevices] = useState<Device[]>([]);
+  const [activeTab, setActiveTab] = useState<"companies" | "users" | "devices">("companies");
   const [isLoading, setIsLoading] = useState(true);
+  const [generatedCode, setGeneratedCode] = useState<string | null>(null);
 
   useEffect(() => {
     loadData();
@@ -45,8 +59,9 @@ export function AdminDashboard() {
     try {
       const data = await callAdminFunction<{
         companies: Array<{ id: string; name: string; legal_name: string; document: string | null; is_active: boolean; created_at: string }>;
-        units: Array<{ id: string; company_id: string; name: string; timezone: string; is_active: boolean }>;
+        units: Array<{ id: string; company_id: string; name: string; timezone: string; is_active: boolean; desktop_activation_code_rotated_at?: string }>;
         users: Array<{ id: string; email: string; name: string; company_id: string; unit_id: string; is_active: boolean }>;
+        devices: Array<{ id: string; company_id: string; unit_id: string; name: string; is_active: boolean; last_seen_at: string | null; created_at: string; updated_at: string }>;
       }>("admin-api", { action: "list" });
 
       setCompanies(data.companies.map((company) => ({
@@ -62,7 +77,8 @@ export function AdminDashboard() {
         companyId: unit.company_id,
         name: unit.name,
         timezone: unit.timezone,
-        isActive: unit.is_active
+        isActive: unit.is_active,
+        desktopActivationCodeRotatedAt: unit.desktop_activation_code_rotated_at
       })));
       setUsers(data.users.map((user) => ({
         id: user.id,
@@ -71,6 +87,16 @@ export function AdminDashboard() {
         companyId: user.company_id,
         unitId: user.unit_id,
         isActive: user.is_active
+      })));
+      setDevices((data.devices ?? []).map((device) => ({
+        id: device.id,
+        companyId: device.company_id,
+        unitId: device.unit_id,
+        name: device.name,
+        isActive: device.is_active,
+        lastSeenAt: device.last_seen_at,
+        createdAt: device.created_at,
+        updatedAt: device.updated_at
       })));
     } catch (error) {
       console.error("Error loading data:", error);
@@ -169,6 +195,44 @@ export function AdminDashboard() {
     }
   }
 
+  async function handleGenerateActivationCode(unitId: string): Promise<void> {
+    try {
+      const result = await callAdminFunction<{ code: string }>("admin-api", {
+        action: "generate_desktop_activation_code",
+        payload: { unitId }
+      });
+      setGeneratedCode(result.code);
+      await loadData();
+    } catch (error) {
+      console.error("Error generating code:", error);
+      alert("Erro ao gerar codigo de ativacao");
+    }
+  }
+
+  async function handleToggleUnit(unitId: string, currentStatus: boolean): Promise<void> {
+    try {
+      await callAdminFunction("admin-api", {
+        action: "toggle_unit",
+        payload: { unitId, isActive: !currentStatus }
+      });
+      await loadData();
+    } catch (error) {
+      console.error("Error toggling unit:", error);
+    }
+  }
+
+  async function handleToggleDevice(deviceId: string, currentStatus: boolean): Promise<void> {
+    try {
+      await callAdminFunction("admin-api", {
+        action: "toggle_device",
+        payload: { deviceId, isActive: !currentStatus }
+      });
+      await loadData();
+    } catch (error) {
+      console.error("Error toggling device:", error);
+    }
+  }
+
   return (
     <main style={{ minHeight: "100vh", background: "#f8fafc", padding: "32px" }}>
       <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "32px" }}>
@@ -212,6 +276,20 @@ export function AdminDashboard() {
           }}
         >
           Usuarios Carregadores
+        </button>
+        <button
+          onClick={() => setActiveTab("devices")}
+          style={{
+            padding: "10px 20px",
+            borderRadius: "10px",
+            border: "none",
+            background: activeTab === "devices" ? "#0f172a" : "#e2e8f0",
+            color: activeTab === "devices" ? "#fff" : "#0f172a",
+            cursor: "pointer",
+            fontWeight: 700
+          }}
+        >
+          Dispositivos e Licencas
         </button>
       </nav>
 
@@ -344,6 +422,132 @@ export function AdminDashboard() {
                   </button>
                 </form>
               </article>
+            </section>
+          )}
+
+          {activeTab === "devices" && (
+            <section style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+              {generatedCode !== null ? (
+                <article style={{ background: "#dcfce7", padding: "24px", borderRadius: "16px", border: "2px solid #15803d" }}>
+                  <h2 style={{ margin: "0 0 12px 0", color: "#15803d" }}>Codigo Gerado</h2>
+                  <p style={{ fontSize: "32px", fontWeight: 700, letterSpacing: "8px", fontFamily: "monospace", margin: "12px 0" }}>
+                    {generatedCode}
+                  </p>
+                  <p style={{ color: "#166534", fontSize: "14px" }}>
+                    Copie este codigo e envie para o operador do desktop. Ele sera usado apenas como ativacao inicial.
+                  </p>
+                  <button
+                    onClick={() => setGeneratedCode(null)}
+                    style={{ padding: "8px 16px", borderRadius: "8px", border: "1px solid #15803d", background: "#fff", color: "#15803d", cursor: "pointer", fontWeight: 700, fontSize: "14px" }}
+                  >
+                    Fechar
+                  </button>
+                </article>
+              ) : null}
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
+                <article style={{ background: "#fff", padding: "24px", borderRadius: "16px" }}>
+                  <h2 style={{ margin: "0 0 16px 0" }}>Desktops Ativados</h2>
+                  {devices.length === 0 ? (
+                    <p style={{ color: "#64748b" }}>Nenhum desktop ativado ainda.</p>
+                  ) : (
+                    devices.map(device => {
+                      const unit = units.find(u => u.id === device.unitId);
+                      const company = companies.find(c => c.id === device.companyId);
+                      return (
+                        <div key={device.id} style={{ padding: "12px 0", borderBottom: "1px solid #e2e8f0" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                            <div>
+                              <strong>{device.name}</strong>
+                              <p style={{ margin: "2px 0 0 0", fontSize: "13px", color: "#64748b" }}>
+                                {company?.name} / {unit?.name}
+                              </p>
+                              <p style={{ margin: "2px 0 0 0", fontSize: "12px", color: "#94a3b8" }}>
+                                ID: {device.id.slice(0, 8)}... | Ativado em {new Date(device.createdAt).toLocaleDateString("pt-BR")}
+                              </p>
+                              {device.lastSeenAt ? (
+                                <p style={{ margin: "2px 0 0 0", fontSize: "12px", color: "#94a3b8" }}>
+                                  Ultimo visto: {new Date(device.lastSeenAt).toLocaleString("pt-BR")}
+                                </p>
+                              ) : null}
+                            </div>
+                            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                              <span style={{
+                                padding: "4px 8px",
+                                borderRadius: "6px",
+                                fontSize: "12px",
+                                background: device.isActive ? "#dcfce7" : "#fee2e2",
+                                color: device.isActive ? "#166534" : "#991b1b"
+                              }}>
+                                {device.isActive ? "Ativo" : "Bloqueado"}
+                              </span>
+                              <button
+                                onClick={() => handleToggleDevice(device.id, device.isActive)}
+                                style={{ padding: "6px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", background: "#fff", cursor: "pointer", fontSize: "12px" }}
+                              >
+                                {device.isActive ? "Bloquear" : "Liberar"}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </article>
+
+                <article style={{ background: "#fff", padding: "24px", borderRadius: "16px" }}>
+                  <h2 style={{ margin: "0 0 16px 0" }}>Gerar Codigo de Ativacao</h2>
+                  <p style={{ color: "#64748b", fontSize: "14px", marginBottom: "8px" }}>
+                    Selecione a pedreira/unidade para gerar um novo codigo de 6 digitos.
+                  </p>
+                  <p style={{ color: "#94a3b8", fontSize: "13px", marginBottom: "16px" }}>
+                    O codigo e exibido apenas uma vez. Ao gerar um novo, o anterior e invalidado.
+                  </p>
+                  {units.filter(u => u.isActive).length === 0 ? (
+                    <p style={{ color: "#b91c1c" }}>Nenhuma unidade ativa disponivel.</p>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                      {units.filter(u => u.isActive).map(unit => {
+                        const company = companies.find(c => c.id === unit.companyId);
+                        return (
+                          <div key={unit.id} style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            padding: "12px",
+                            borderRadius: "10px",
+                            background: "#f8fafc",
+                            border: "1px solid #e2e8f0"
+                          }}>
+                            <div>
+                              <strong style={{ fontSize: "14px" }}>{unit.name}</strong>
+                              <p style={{ margin: "2px 0 0 0", fontSize: "12px", color: "#94a3b8" }}>
+                                {company?.name} | {unit.desktopActivationCodeRotatedAt
+                                  ? `Ultimo codigo: ${new Date(unit.desktopActivationCodeRotatedAt).toLocaleDateString("pt-BR")}`
+                                  : "Nenhum codigo gerado"}
+                              </p>
+                            </div>
+                            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                              <button
+                                onClick={() => handleGenerateActivationCode(unit.id)}
+                                style={{ padding: "8px 14px", borderRadius: "8px", border: "none", background: "#0f172a", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: "13px" }}
+                              >
+                                Gerar codigo
+                              </button>
+                              <button
+                                onClick={() => handleToggleUnit(unit.id, unit.isActive)}
+                                style={{ padding: "8px 14px", borderRadius: "8px", border: "1px solid #cbd5e1", background: "#fff", cursor: "pointer", fontSize: "13px" }}
+                              >
+                                {unit.isActive ? "Desativar" : "Ativar"}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </article>
+              </div>
             </section>
           )}
         </>

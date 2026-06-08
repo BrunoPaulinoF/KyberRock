@@ -8,6 +8,10 @@ const desktopApi = {
   exportBackup: () => ipcRenderer.invoke("desktop:export-backup"),
   restoreBackup: () => ipcRenderer.invoke("desktop:restore-backup"),
   getUpdateState: () => ipcRenderer.invoke("desktop:get-update-state"),
+  getAccessStatus: () => ipcRenderer.invoke("desktop:get-access-status"),
+  validateDesktopAccess: (internetOnline?: boolean, force?: boolean) =>
+    ipcRenderer.invoke("desktop:validate-access", internetOnline, force),
+  activateDesktop: (input: unknown) => ipcRenderer.invoke("desktop:activate", input),
   checkForUpdates: () => ipcRenderer.invoke("desktop:check-for-updates"),
   downloadAndInstallUpdate: () =>
     ipcRenderer.invoke("desktop:download-and-install-update"),

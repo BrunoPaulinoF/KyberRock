@@ -1,14 +1,18 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { verifyAdminSession } from "../_shared/admin-session.ts";
+import { sha256Hex } from "../_shared/crypto.ts";
 
 type AdminAction =
   | "list"
   | "create_company"
   | "toggle_company"
   | "create_unit"
+  | "toggle_unit"
+  | "generate_desktop_activation_code"
   | "create_loader"
-  | "toggle_loader";
+  | "toggle_loader"
+  | "toggle_device";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -26,15 +30,23 @@ Deno.serve(async (req) => {
 
   try {
     if (body.action === "list") {
-      const [companies, units, users] = await Promise.all([
+      const [companies, units, users, devices] = await Promise.all([
         supabase.from("companies").select("*").order("created_at", { ascending: false }),
-        supabase.from("units").select("*").order("created_at", { ascending: false }),
-        supabase.from("user_profiles").select("*").order("created_at", { ascending: false })
+        supabase
+          .from("units")
+          .select("id, company_id, name, timezone, is_active, desktop_activation_code_rotated_at, created_at, updated_at")
+          .order("created_at", { ascending: false }),
+        supabase.from("user_profiles").select("*").order("created_at", { ascending: false }),
+        supabase
+          .from("device_registrations")
+          .select("id, company_id, unit_id, name, is_active, last_seen_at, created_at, updated_at")
+          .order("created_at", { ascending: false })
       ]);
       if (companies.error) throw companies.error;
       if (units.error) throw units.error;
       if (users.error) throw users.error;
-      return jsonResponse({ companies: companies.data, units: units.data, users: users.data });
+      if (devices.error) throw devices.error;
+      return jsonResponse({ companies: companies.data, units: units.data, users: users.data, devices: devices.data });
     }
 
     if (body.action === "create_company") {
@@ -68,6 +80,29 @@ Deno.serve(async (req) => {
       return jsonResponse({ unit: data });
     }
 
+    if (body.action === "toggle_unit") {
+      const { error } = await supabase.from("units").update({
+        is_active: Boolean(payload.isActive),
+        updated_at: new Date().toISOString()
+      }).eq("id", String(payload.unitId));
+      if (error) throw error;
+      return jsonResponse({ ok: true });
+    }
+
+    if (body.action === "generate_desktop_activation_code") {
+      const unitId = String(payload.unitId ?? "");
+      const code = generateSixDigitCode();
+      const codeHash = await sha256Hex(code);
+      const rotatedAt = new Date().toISOString();
+      const { data, error } = await supabase.from("units").update({
+        desktop_activation_code_hash: codeHash,
+        desktop_activation_code_rotated_at: rotatedAt,
+        updated_at: rotatedAt
+      }).eq("id", unitId).select("id, desktop_activation_code_rotated_at").single();
+      if (error) throw error;
+      return jsonResponse({ code, unit: data });
+    }
+
     if (body.action === "create_loader") {
       const email = String(payload.email ?? "").trim().toLowerCase();
       const password = String(payload.password ?? "");
@@ -99,8 +134,23 @@ Deno.serve(async (req) => {
       return jsonResponse({ ok: true });
     }
 
+    if (body.action === "toggle_device") {
+      const { error } = await supabase.from("device_registrations").update({
+        is_active: Boolean(payload.isActive),
+        updated_at: new Date().toISOString()
+      }).eq("id", String(payload.deviceId));
+      if (error) throw error;
+      return jsonResponse({ ok: true });
+    }
+
     return jsonResponse({ error: "Invalid action" }, 400);
   } catch (error) {
     return jsonResponse({ error: error instanceof Error ? error.message : "Erro inesperado" }, 400);
   }
 });
+
+function generateSixDigitCode(): string {
+  const value = new Uint32Array(1);
+  crypto.getRandomValues(value);
+  return String(value[0] % 1_000_000).padStart(6, "0");
+}

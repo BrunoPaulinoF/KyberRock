@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { desktopAppInfo } from "../app-info";
 import type {
@@ -13,6 +13,7 @@ import {
   type UpdateState
 } from "../services/update-flow";
 import type { OperationType, WeighingOperationSummary } from "../services/weighing-operations";
+import { ActivationGate } from "./ActivationGate";
 import type { KyberRockDesktopApi } from "./desktop-api";
 import { buildStatusIndicatorViewModels } from "./status-view-model";
 
@@ -44,6 +45,7 @@ const initialWeighingForm: WeighingFormState = {
 };
 
 export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }: AppProps = {}) {
+  const [isUnlocked, setIsUnlocked] = useState(false);
   const [status, setStatus] = useState<DesktopStatusSnapshot | null>(initialStatus);
   const [updateState, setUpdateState] = useState<UpdateState>(createInitialUpdateState());
   const [openOperations, setOpenOperations] = useState<WeighingOperationSummary[]>([]);
@@ -58,6 +60,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [cloudConnected, setCloudConnected] = useState(false);
   const [cloudSyncing, setCloudSyncing] = useState(false);
   const [cloudStatus, setCloudStatus] = useState<{ totalOperations: number; lastSync: string | null } | null>(null);
+
+  const handleUnlocked = useCallback(() => setIsUnlocked(true), []);
 
   useEffect(() => {
     let active = true;
@@ -326,6 +330,21 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     } catch (error) {
       setMessage(getErrorMessage(error));
     }
+  }
+
+  if (desktopApi && !isUnlocked) {
+    return <ActivationGate desktopApi={desktopApi} onUnlocked={handleUnlocked} />;
+  }
+
+  if (!desktopApi) {
+    return (
+      <main style={styles.page}>
+        <div style={{ ...styles.card, maxWidth: "480px", margin: "auto", marginTop: "40px" }}>
+          <h1 style={styles.title}>API do desktop indisponivel</h1>
+          <p style={styles.subtitle}>Abra o aplicativo pelo Electron.</p>
+        </div>
+      </main>
+    );
   }
 
   const indicators = status ? buildStatusIndicatorViewModels(status) : [];
