@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain } from "electron";
-import { autoUpdater } from "electron-updater";
+import type * as ElectronUpdater from "electron-updater";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 import { DesktopRuntime, type StartSimulatedWeighingInput } from "../services/runtime.js";
@@ -12,6 +13,8 @@ import type {
 } from "../services/printing.js";
 import { createInitialUpdateState, type UpdateState } from "../services/update-flow.js";
 
+const require = createRequire(import.meta.url);
+const { autoUpdater } = require("electron-updater") as typeof ElectronUpdater;
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 let mainWindow: BrowserWindow | null = null;
 let runtime: DesktopRuntime | null = null;

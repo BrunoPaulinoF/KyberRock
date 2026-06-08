@@ -1,4 +1,4 @@
-import type { OmieClient } from "./omie-client";
+import type { OmieClient } from "./omie-client.js";
 
 export interface Receivable {
   id: number;

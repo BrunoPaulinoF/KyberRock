@@ -1,1 +1,1 @@
-export * from "./scale-adapter";
+export * from "./scale-adapter.js";

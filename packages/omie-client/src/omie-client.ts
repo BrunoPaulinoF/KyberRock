@@ -1,5 +1,5 @@
-import { OMIE_BASE_URL } from "./constants";
-import { createOmieRequestBody, type OmieRequestBody } from "./omie-request";
+import { OMIE_BASE_URL } from "./constants.js";
+import { createOmieRequestBody, type OmieRequestBody } from "./omie-request.js";
 
 export interface OmieClientConfig {
   appKey: string;

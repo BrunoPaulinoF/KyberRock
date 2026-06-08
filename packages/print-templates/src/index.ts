@@ -1,1 +1,1 @@
-export * from "./receipt-template";
+export * from "./receipt-template.js";
