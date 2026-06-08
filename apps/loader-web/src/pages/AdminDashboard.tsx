@@ -107,7 +107,8 @@ export function AdminDashboard() {
 
   async function handleCreateCompany(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const formData = new FormData(event.currentTarget);
+    const form = event.currentTarget;
+    const formData = new FormData(form);
     
     try {
       await callAdminFunction("admin-api", {
@@ -118,7 +119,7 @@ export function AdminDashboard() {
           document: formData.get("document")
         }
       });
-      event.currentTarget.reset();
+      form.reset();
       await loadData();
     } catch (error) {
       console.error("Error creating company:", error);
@@ -140,7 +141,8 @@ export function AdminDashboard() {
 
   async function handleCreateUnit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const formData = new FormData(event.currentTarget);
+    const form = event.currentTarget;
+    const formData = new FormData(form);
     
     try {
       await callAdminFunction("admin-api", {
@@ -150,7 +152,7 @@ export function AdminDashboard() {
           name: formData.get("name")
         }
       });
-      event.currentTarget.reset();
+      form.reset();
       await loadData();
     } catch (error) {
       console.error("Error creating unit:", error);
@@ -160,7 +162,8 @@ export function AdminDashboard() {
 
   async function handleCreateUser(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const formData = new FormData(event.currentTarget);
+    const form = event.currentTarget;
+    const formData = new FormData(form);
     const email = formData.get("email") as string;
     const password = formData.get("password") as string;
     
@@ -175,7 +178,7 @@ export function AdminDashboard() {
         }
       });
       
-      event.currentTarget.reset();
+      form.reset();
       await loadData();
     } catch (error) {
       console.error("Error creating user:", error);
