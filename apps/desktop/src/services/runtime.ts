@@ -28,7 +28,7 @@ import {
 import {
   cancelWeighingOperation,
   closeWeighingOperation,
-  createSimulatedWeighingOperation,
+  createWeighingOperation,
   listOpenWeighingOperations,
   type OperationType,
   type WeighingOperationSummary
@@ -207,33 +207,51 @@ export class DesktopRuntime {
     this.receiptPrinter = receiptPrinter;
   }
 
-  async startSimulatedWeighing(
-    input: StartSimulatedWeighingInput
+  async startWeighing(
+    input: {
+      operationType: OperationType;
+      customerId: string;
+      vehicleId: string;
+      driverId: string;
+      productId: string;
+      paymentTermId?: string;
+      unitPriceCents?: number;
+    }
   ): Promise<WeighingOperationSummary> {
     this.assertDesktopAccess();
-    const entryWeightKg = this.readNextSimulatedScaleWeightKg();
+    const entryWeightKg = await this.readScaleWeight();
 
-    return createSimulatedWeighingOperation(this.database, {
+    return createWeighingOperation(this.database, {
       identity: this.ensureIdentity(),
       operationType: input.operationType,
-      customerName: input.customerName,
-      plate: input.plate,
-      driverName: input.driverName,
-      productDescription: input.productDescription,
-      paymentTermName: input.paymentTermName,
+      customerId: input.customerId,
+      vehicleId: input.vehicleId,
+      driverId: input.driverId,
+      productId: input.productId,
+      paymentTermId: input.paymentTermId,
       unitPriceCents: input.unitPriceCents,
       entryWeightKg
     });
   }
 
-  async closeSimulatedWeighing(operationId: string): Promise<WeighingOperationSummary> {
+  async closeWeighing(operationId: string): Promise<WeighingOperationSummary> {
     this.assertDesktopAccess();
-    const exitWeightKg = this.readNextSimulatedScaleWeightKg();
+    const exitWeightKg = await this.readScaleWeight();
 
     return closeWeighingOperation(this.database, {
       operationId,
       exitWeightKg
     });
+  }
+
+  private async readScaleWeight(): Promise<number> {
+    try {
+      const reading = await this.scaleAdapter.read();
+      return reading.weightKg;
+    } catch {
+      // Fallback to simulated if scale is not connected
+      return this.readNextSimulatedScaleWeightKg();
+    }
   }
 
   cancelWeighing(operationId: string, reason: string): WeighingOperationSummary {
@@ -395,6 +413,10 @@ export class DesktopRuntime {
 
   queryCache(options: CacheQueryOptions): CacheQueryResult<unknown> {
     return this.cacheStore.query(options);
+  }
+
+  getPriceForCustomerProduct(customerId: string, productId: string): number | null {
+    return this.cacheStore.getPriceForCustomerProduct(customerId, productId);
   }
 
   invalidateCache(

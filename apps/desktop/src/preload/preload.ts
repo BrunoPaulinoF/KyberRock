@@ -18,16 +18,10 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:download-and-install-update"),
   listOpenWeighingOperations: () =>
     ipcRenderer.invoke("desktop:list-open-weighing-operations"),
-  startSimulatedWeighing: (input: unknown) =>
-    ipcRenderer.invoke(
-      "desktop:start-simulated-weighing",
-      input
-    ),
-  closeSimulatedWeighing: (operationId: string) =>
-    ipcRenderer.invoke(
-      "desktop:close-simulated-weighing",
-      operationId
-    ),
+  startWeighing: (input: unknown) =>
+    ipcRenderer.invoke("desktop:start-weighing", input),
+  closeWeighing: (operationId: string) =>
+    ipcRenderer.invoke("desktop:close-weighing", operationId),
   cancelWeighing: (operationId: string, reason: string) =>
     ipcRenderer.invoke(
       "desktop:cancel-weighing",
@@ -58,6 +52,8 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:is-cloud-connected"),
   queryCache: (options: unknown) =>
     ipcRenderer.invoke("desktop:query-cache", options),
+  getPriceForCustomerProduct: (customerId: string, productId: string) =>
+    ipcRenderer.invoke("desktop:get-price", customerId, productId),
   customersCreate: (input: unknown) =>
     ipcRenderer.invoke("desktop:customers-create", input),
   customersUpdate: (id: string, input: unknown) =>
@@ -125,7 +121,9 @@ const desktopApi = {
   onPlateScanned: (callback: (plate: string) => void) =>
     ipcRenderer.on("desktop:plate-scanned", (_event: unknown, plate: string) => callback(plate)),
   onScaleReading: (callback: (reading: unknown) => void) =>
-    ipcRenderer.on("desktop:scale-reading", (_event: unknown, reading: unknown) => callback(reading))
+    ipcRenderer.on("desktop:scale-reading", (_event: unknown, reading: unknown) => callback(reading)),
+  offScaleReading: (callback: (reading: unknown) => void) =>
+    ipcRenderer.off("desktop:scale-reading", callback)
 };
 
 contextBridge.exposeInMainWorld("kyberrockDesktop", desktopApi);

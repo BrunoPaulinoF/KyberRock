@@ -30,6 +30,18 @@ export interface CreateSimulatedWeighingOperationInput {
   entryWeightKg: number;
 }
 
+export interface CreateWeighingOperationInput {
+  identity: LocalDesktopIdentity;
+  operationType?: OperationType;
+  customerId: string;
+  vehicleId: string;
+  driverId: string;
+  productId: string;
+  paymentTermId?: string;
+  unitPriceCents?: number;
+  entryWeightKg: number;
+}
+
 export interface CloseWeighingOperationInput {
   operationId: string;
   exitWeightKg: number;
@@ -285,6 +297,105 @@ export function createSimulatedWeighingOperation(
   createOperation();
 
   return getWeighingOperation(database, ids.operationId);
+}
+
+export function createWeighingOperation(
+  database: DesktopDatabase,
+  input: CreateWeighingOperationInput,
+  now: Date = new Date()
+): WeighingOperationSummary {
+  if (input.entryWeightKg <= 0) {
+    throw new Error("Peso de entrada deve ser maior que zero.");
+  }
+
+  const operationType = input.operationType ?? "invoice";
+  const timestamp = now.toISOString();
+
+  // Lookup entity names for the loading_request
+  const customer = database.prepare("SELECT trade_name FROM customers WHERE id = ?").get(input.customerId) as { trade_name: string } | undefined;
+  const vehicle = database.prepare("SELECT plate FROM vehicles WHERE id = ?").get(input.vehicleId) as { plate: string } | undefined;
+  const driver = database.prepare("SELECT name FROM drivers WHERE id = ?").get(input.driverId) as { name: string } | undefined;
+  const product = database.prepare("SELECT description FROM products WHERE id = ?").get(input.productId) as { description: string } | undefined;
+
+  const operationId = randomUUID();
+  const loadingRequestId = randomUUID();
+
+  const createOperation = database.transaction(() => {
+    database
+      .prepare(
+        `INSERT INTO weighing_operations (
+          id, company_id, unit_id, device_id, status, operation_type, customer_id, vehicle_id, driver_id, product_id,
+          payment_term_id, entry_weight_kg, entry_weight_captured_at, unit_price_cents, freight_total_cents, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'loading_requested', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`
+      )
+      .run(
+        operationId,
+        input.identity.companyId,
+        input.identity.unitId,
+        input.identity.deviceId,
+        operationType,
+        input.customerId,
+        input.vehicleId,
+        input.driverId,
+        input.productId,
+        input.paymentTermId ?? null,
+        input.entryWeightKg,
+        timestamp,
+        input.unitPriceCents ?? null,
+        timestamp,
+        timestamp
+      );
+
+    database
+      .prepare(
+        `INSERT INTO loading_requests (
+          id, operation_id, company_id, unit_id, status, plate, customer_name, driver_name, product_description, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        loadingRequestId,
+        operationId,
+        input.identity.companyId,
+        input.identity.unitId,
+        vehicle?.plate ?? "",
+        customer?.trade_name ?? "",
+        driver?.name ?? "",
+        product?.description ?? "",
+        timestamp,
+        timestamp
+      );
+
+    insertAuditLog(
+      database,
+      input.identity,
+      operationId,
+      "entry_weight_captured",
+      null,
+      {
+        entryWeightKg: input.entryWeightKg,
+        operationType,
+        unitPriceCents: input.unitPriceCents ?? null
+      },
+      timestamp
+    );
+
+    enqueueSyncJob(
+      database,
+      {
+        target: "cloud",
+        action: "upsert_loading_request",
+        entityType: "loading_request",
+        entityId: loadingRequestId,
+        idempotencyKey: `cloud:loading_request:${loadingRequestId}`,
+        payload: { operationId }
+      },
+      now
+    );
+  });
+
+  createOperation();
+
+  return getWeighingOperation(database, operationId);
 }
 
 export function closeWeighingOperation(

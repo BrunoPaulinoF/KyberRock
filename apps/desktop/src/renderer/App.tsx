@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { desktopAppInfo } from "../app-info";
 import type {
@@ -14,6 +14,7 @@ import {
   type UpdateState
 } from "../services/update-flow";
 import type { OperationType, WeighingOperationSummary } from "../services/weighing-operations";
+import type { CacheEntityType } from "../services/cache-store";
 import { ActivationGate } from "./ActivationGate";
 import { BlockedScreen } from "./BlockedScreen";
 import type { KyberRockDesktopApi } from "./desktop-api";
@@ -24,24 +25,24 @@ export interface AppProps {
 
 interface WeighingFormState {
   operationType: OperationType;
-  customerName: string;
-  plate: string;
-  driverName: string;
-  productDescription: string;
-  paymentTermName: string;
-  unitPriceReais: string;
+  customerId: string;
+  vehicleId: string;
+  driverId: string;
+  productId: string;
+  paymentTermId: string;
+  unitPriceCents: number | null;
 }
 
 type ActiveView = "dashboard" | "new-weighing" | "open-operations" | "scale" | "registrations" | "printing" | "cloud";
 
 const initialWeighingForm: WeighingFormState = {
   operationType: "invoice",
-  customerName: "Cliente Teste",
-  plate: "ABC1D23",
-  driverName: "Motorista Teste",
-  productDescription: "Brita 1",
-  paymentTermName: "A vista",
-  unitPriceReais: "0,12"
+  customerId: "",
+  vehicleId: "",
+  driverId: "",
+  productId: "",
+  paymentTermId: "",
+  unitPriceCents: null
 };
 
 type RegistrationsTab = "customers" | "price_tables" | "products" | "payment_terms" | "vehicles" | "drivers" | "carriers";
@@ -318,13 +319,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   }
 
   async function handleStartWeighing(): Promise<void> {
-    if (!desktopApi) {
-      return;
-    }
+    if (!desktopApi) return;
 
-    const unitPriceCents = parseCurrencyToCents(form.unitPriceReais);
-    const validationError = validateWeighingForm(form, unitPriceCents);
-
+    const validationError = validateWeighingForm(form);
     if (validationError) {
       setFormError(validationError);
       return;
@@ -333,16 +330,16 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     setFormError(null);
 
     try {
-      const operation = await desktopApi.startSimulatedWeighing({
+      const operation = await desktopApi.startWeighing({
         operationType: form.operationType,
-        customerName: form.customerName,
-        plate: form.plate,
-        driverName: form.driverName,
-        productDescription: form.productDescription,
-        paymentTermName: form.paymentTermName,
-        unitPriceCents: unitPriceCents ?? undefined
+        customerId: form.customerId,
+        vehicleId: form.vehicleId,
+        driverId: form.driverId,
+        productId: form.productId,
+        paymentTermId: form.paymentTermId || undefined,
+        unitPriceCents: form.unitPriceCents ?? undefined
       });
-      setMessage(`Entrada capturada pela balanca simulada: ${operation.entryWeightKg} kg.`);
+      setMessage(`Entrada capturada: ${operation.entryWeightKg} kg.`);
       setActiveView("open-operations");
       await refreshOpenOperations();
     } catch (error) {
@@ -351,12 +348,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   }
 
   async function handleCloseOperation(operationId: string): Promise<void> {
-    if (!desktopApi) {
-      return;
-    }
+    if (!desktopApi) return;
 
     try {
-      const operation = await desktopApi.closeSimulatedWeighing(operationId);
+      const operation = await desktopApi.closeWeighing(operationId);
       const receipt = await desktopApi.printReceipt(operation.id);
       const receiptStatus =
         receipt.status === "printed"
@@ -621,81 +616,14 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       ) : null}
 
       {activeView === "new-weighing" ? (
-        <section style={styles.panel}>
-          <h2 style={styles.panelTitle}>Nova pesagem simulada</h2>
-          <p style={styles.muted}>
-            Nao existe campo manual de peso. A entrada e a saida vem da balanca simulada.
-          </p>
-          {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
-          <label style={styles.fieldLabel}>
-            Tipo de operacao
-            <select
-              value={form.operationType}
-              onChange={(event) =>
-                setForm({ ...form, operationType: event.target.value as OperationType })
-              }
-              style={styles.input}
-            >
-              <option value="invoice">Com nota</option>
-              <option value="internal">Interna</option>
-            </select>
-          </label>
-          <label style={styles.fieldLabel}>
-            Cliente
-            <input
-              value={form.customerName}
-              onChange={(event) => setForm({ ...form, customerName: event.target.value })}
-              style={styles.input}
-            />
-          </label>
-          <label style={styles.fieldLabel}>
-            Placa
-            <input
-              value={form.plate}
-              onChange={(event) => setForm({ ...form, plate: event.target.value })}
-              style={styles.input}
-            />
-          </label>
-          <label style={styles.fieldLabel}>
-            Motorista
-            <input
-              value={form.driverName}
-              onChange={(event) => setForm({ ...form, driverName: event.target.value })}
-              style={styles.input}
-            />
-          </label>
-          <label style={styles.fieldLabel}>
-            Produto
-            <input
-              value={form.productDescription}
-              onChange={(event) => setForm({ ...form, productDescription: event.target.value })}
-              style={styles.input}
-            />
-          </label>
-          <label style={styles.fieldLabel}>
-            Forma/condicao de recebimento
-            <select
-              value={form.paymentTermName}
-              onChange={(event) => setForm({ ...form, paymentTermName: event.target.value })}
-              style={styles.input}
-            >
-              <option value="A vista">A vista</option>
-              <option value="Quinzenal">Quinzenal</option>
-              <option value="Mensal">Mensal</option>
-            </select>
-          </label>
-          <label style={styles.fieldLabel}>
-            Preco da tabela simulada por kg (R$)
-            <input
-              value={form.unitPriceReais}
-              onChange={(event) => setForm({ ...form, unitPriceReais: event.target.value })}
-              style={styles.input}
-            />
-          </label>
-          <button type="button" onClick={handleStartWeighing} style={styles.primaryButton}>
-            Capturar entrada simulada
-          </button>
-        </section>
+        <WeighingForm
+          desktopApi={desktopApi}
+          form={form}
+          setForm={setForm}
+          formError={formError}
+          onStart={handleStartWeighing}
+          onCancel={() => setActiveView("dashboard")}
+        />
       ) : null}
 
       {activeView === "open-operations" ? (
@@ -1029,30 +957,12 @@ function describeUpdateState(state: UpdateState): string {
   return "Sem atualizacao pendente.";
 }
 
-function validateWeighingForm(
-  form: WeighingFormState,
-  unitPriceCents: number | null | undefined
-): string | null {
-  if (!form.customerName.trim()) {
-    return "Informe o cliente.";
-  }
-
-  if (!form.plate.trim()) {
-    return "Informe a placa.";
-  }
-
-  if (!form.driverName.trim()) {
-    return "Informe o motorista.";
-  }
-
-  if (!form.productDescription.trim()) {
-    return "Informe o produto.";
-  }
-
-  if (unitPriceCents === null) {
-    return "Informe um preco valido para a tabela simulada.";
-  }
-
+function validateWeighingForm(form: WeighingFormState): string | null {
+  if (!form.customerId) return "Selecione o cliente.";
+  if (!form.vehicleId) return "Selecione a placa.";
+  if (!form.driverId) return "Selecione o motorista.";
+  if (!form.productId) return "Selecione o produto.";
+  if (form.unitPriceCents === null) return "Informe o preco.";
   return null;
 }
 
@@ -1071,6 +981,492 @@ function parseCurrencyToCents(value: string): number | null | undefined {
 
   return Math.round(parsed * 100);
 }
+
+interface CacheSelectOption {
+  id: string;
+  label: string;
+}
+
+function CacheSelect({
+  label,
+  entityType,
+  value,
+  onChange,
+  onCreateNew,
+  desktopApi,
+  disabled = false
+}: {
+  label: string;
+  entityType: CacheEntityType;
+  value: string;
+  onChange: (id: string) => void;
+  onCreateNew?: () => void;
+  desktopApi: KyberRockDesktopApi | null;
+  disabled?: boolean;
+}) {
+  const [search, setSearch] = useState("");
+  const [options, setOptions] = useState<CacheSelectOption[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const selectedLabel = useMemo(() => {
+    return options.find((o) => o.id === value)?.label ?? "";
+  }, [options, value]);
+
+  useEffect(() => {
+    async function load() {
+      if (!desktopApi) return;
+      setLoading(true);
+      try {
+        const result = await desktopApi.queryCache({
+          entityType,
+          search: search.trim(),
+          limit: 20
+        });
+        setOptions(
+          (result.rows as Array<Record<string, unknown>>).map((item) => ({
+            id: String(item.id ?? item.omieCode ?? ""),
+            label: String(
+              item.tradeName ?? item.plate ?? item.name ?? item.description ?? item.fullName ?? ""
+            )
+          }))
+        );
+      } catch {
+        setOptions([]);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    load();
+  }, [desktopApi, entityType, search]);
+
+  useEffect(() => {
+    function handleClick(event: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  return (
+    <div ref={containerRef} style={{ position: "relative", marginBottom: "12px" }}>
+      <label style={styles.fieldLabel}>
+        {label}
+        <input
+          type="text"
+          value={open ? search : selectedLabel}
+          onChange={(e) => {
+            setSearch(e.target.value);
+            if (!open) setOpen(true);
+          }}
+          onFocus={() => {
+            setOpen(true);
+            setSearch("");
+          }}
+          disabled={disabled}
+          placeholder={`Buscar ${label.toLowerCase()}...`}
+          style={styles.input}
+        />
+      </label>
+      {open ? (
+        <div
+          style={{
+            position: "absolute",
+            top: "100%",
+            left: 0,
+            right: 0,
+            background: "#fff",
+            border: "1px solid #e2e8f0",
+            borderRadius: "4px",
+            maxHeight: "200px",
+            overflowY: "auto",
+            zIndex: 100,
+            boxShadow: "0 4px 6px rgba(0,0,0,0.1)"
+          }}
+        >
+          {loading ? (
+            <div style={{ padding: "8px 12px", color: "#94a3b8", fontSize: "13px" }}>Carregando...</div>
+          ) : options.length === 0 ? (
+            <div style={{ padding: "8px 12px", color: "#94a3b8", fontSize: "13px" }}>
+              Nenhum resultado
+            </div>
+          ) : (
+            options.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                onClick={() => {
+                  onChange(option.id);
+                  setOpen(false);
+                  setSearch("");
+                }}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  textAlign: "left",
+                  padding: "8px 12px",
+                  border: "none",
+                  background: "transparent",
+                  cursor: "pointer",
+                  fontSize: "14px",
+                  color: "#0f172a"
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.background = "#f1f5f9";
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+                }}
+              >
+                {option.label}
+              </button>
+            ))
+          )}
+          {onCreateNew ? (
+            <button
+              type="button"
+              onClick={() => {
+                onCreateNew();
+                setOpen(false);
+              }}
+              style={{
+                display: "block",
+                width: "100%",
+                textAlign: "left",
+                padding: "8px 12px",
+                border: "none",
+                borderTop: "1px solid #e2e8f0",
+                background: "#f8fafc",
+                cursor: "pointer",
+                fontSize: "13px",
+                color: "#2563eb",
+                fontWeight: 600
+              }}
+            >
+              + Cadastrar novo
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+interface WeighingFormProps {
+  desktopApi: KyberRockDesktopApi | null;
+  form: WeighingFormState;
+  setForm: React.Dispatch<React.SetStateAction<WeighingFormState>>;
+  formError: string | null;
+  onStart: () => void;
+  onCancel: () => void;
+}
+
+function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel }: WeighingFormProps) {
+  const [liveWeight, setLiveWeight] = useState<number | null>(null);
+  const [showVehicleModal, setShowVehicleModal] = useState(false);
+  const [showDriverModal, setShowDriverModal] = useState(false);
+
+  useEffect(() => {
+    if (!desktopApi) return;
+    const handler = (reading: { weightKg: number }) => setLiveWeight(reading.weightKg);
+    desktopApi.onScaleReading(handler as (reading: unknown) => void);
+    return () => {
+      desktopApi.offScaleReading(handler as (reading: unknown) => void);
+    };
+  }, [desktopApi]);
+
+  useEffect(() => {
+    async function fetchPrice() {
+      if (!desktopApi || !form.customerId || !form.productId) return;
+      try {
+        const price = await desktopApi.getPriceForCustomerProduct(form.customerId, form.productId);
+        if (price !== null) {
+          setForm((prev) => ({ ...prev, unitPriceCents: price }));
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    fetchPrice();
+  }, [desktopApi, form.customerId, form.productId]);
+
+  const priceReais = useMemo(() => {
+    if (form.unitPriceCents === null) return "";
+    const reais = form.unitPriceCents / 100;
+    return reais.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }, [form.unitPriceCents]);
+
+  return (
+    <section style={styles.panel}>
+      <h2 style={styles.panelTitle}>Nova pesagem</h2>
+      <p style={styles.muted}>
+        Selecione as entidades do cadastro. O peso vem da balanca em tempo real.
+      </p>
+
+      {liveWeight !== null ? (
+        <div
+          style={{
+            background: "#f1f5f9",
+            borderRadius: "8px",
+            padding: "16px",
+            marginBottom: "16px",
+            textAlign: "center"
+          }}
+        >
+          <div style={{ fontSize: "12px", color: "#64748b", marginBottom: "4px" }}>Peso atual</div>
+          <div style={{ fontSize: "32px", fontWeight: 700, color: "#0f172a" }}>
+            {liveWeight.toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 0 })} kg
+          </div>
+        </div>
+      ) : null}
+
+      {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
+
+      <label style={styles.fieldLabel}>
+        Tipo de operacao
+        <select
+          value={form.operationType}
+          onChange={(event) =>
+            setForm({ ...form, operationType: event.target.value as OperationType })
+          }
+          style={styles.input}
+        >
+          <option value="invoice">Com nota</option>
+          <option value="internal">Interna</option>
+        </select>
+      </label>
+
+      <CacheSelect
+        label="Cliente"
+        entityType="customer"
+        value={form.customerId}
+        onChange={(id) => setForm({ ...form, customerId: id })}
+        desktopApi={desktopApi}
+      />
+
+      <CacheSelect
+        label="Placa"
+        entityType="vehicle"
+        value={form.vehicleId}
+        onChange={(id) => setForm({ ...form, vehicleId: id })}
+        onCreateNew={() => setShowVehicleModal(true)}
+        desktopApi={desktopApi}
+      />
+
+      <CacheSelect
+        label="Motorista"
+        entityType="driver"
+        value={form.driverId}
+        onChange={(id) => setForm({ ...form, driverId: id })}
+        onCreateNew={() => setShowDriverModal(true)}
+        desktopApi={desktopApi}
+      />
+
+      <CacheSelect
+        label="Produto"
+        entityType="product"
+        value={form.productId}
+        onChange={(id) => setForm({ ...form, productId: id })}
+        desktopApi={desktopApi}
+      />
+
+      <CacheSelect
+        label="Condicao de pagamento"
+        entityType="payment_term"
+        value={form.paymentTermId}
+        onChange={(id) => setForm({ ...form, paymentTermId: id })}
+        desktopApi={desktopApi}
+      />
+
+      <label style={styles.fieldLabel}>
+        Preco por kg (R$)
+        <input
+          type="text"
+          value={priceReais}
+          onChange={(event) => {
+            const cents = parseCurrencyToCents(event.target.value);
+            setForm({ ...form, unitPriceCents: cents ?? null });
+          }}
+          style={styles.input}
+        />
+        {form.unitPriceCents !== null ? (
+          <span style={{ fontSize: "12px", color: "#64748b" }}>
+            {formatMoney(form.unitPriceCents)}/kg
+          </span>
+        ) : null}
+      </label>
+
+      <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
+        <button type="button" onClick={onStart} style={styles.primaryButton}>
+          Capturar peso entrada
+        </button>
+        <button type="button" onClick={onCancel} style={styles.secondaryButton}>
+          Cancelar
+        </button>
+      </div>
+
+      {showVehicleModal ? (
+        <QuickVehicleModal
+          desktopApi={desktopApi}
+          onClose={() => setShowVehicleModal(false)}
+          onCreated={(id) => {
+            setForm((prev) => ({ ...prev, vehicleId: id }));
+            setShowVehicleModal(false);
+          }}
+        />
+      ) : null}
+
+      {showDriverModal ? (
+        <QuickDriverModal
+          desktopApi={desktopApi}
+          onClose={() => setShowDriverModal(false)}
+          onCreated={(id) => {
+            setForm((prev) => ({ ...prev, driverId: id }));
+            setShowDriverModal(false);
+          }}
+        />
+      ) : null}
+    </section>
+  );
+}
+
+interface QuickModalProps {
+  desktopApi: KyberRockDesktopApi | null;
+  onClose: () => void;
+  onCreated: (id: string) => void;
+}
+
+function QuickVehicleModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
+  const [plate, setPlate] = useState("");
+  const [description, setDescription] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  async function handleSave() {
+    if (!desktopApi) return;
+    if (!plate.trim()) {
+      setError("Informe a placa.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const result = await desktopApi.vehiclesCreate({
+        plate: plate.trim().toUpperCase(),
+        description: description.trim() || undefined
+      });
+      onCreated((result as { id: string }).id);
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div style={modalOverlayStyle}>
+      <div style={modalContentStyle}>
+        <h3 style={{ margin: "0 0 12px 0", color: "#0f172a" }}>Cadastrar veiculo</h3>
+        {error ? <p style={styles.errorMessage}>{error}</p> : null}
+        <label style={styles.fieldLabel}>
+          Placa
+          <input value={plate} onChange={(e) => setPlate(e.target.value)} style={styles.input} />
+        </label>
+        <label style={styles.fieldLabel}>
+          Descricao
+          <input value={description} onChange={(e) => setDescription(e.target.value)} style={styles.input} />
+        </label>
+        <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+          <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
+            {saving ? "Salvando..." : "Salvar"}
+          </button>
+          <button type="button" onClick={onClose} style={styles.secondaryButton}>
+            Cancelar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function QuickDriverModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
+  const [name, setName] = useState("");
+  const [document, setDocument] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  async function handleSave() {
+    if (!desktopApi) return;
+    if (!name.trim()) {
+      setError("Informe o nome.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const result = await desktopApi.driversCreate({
+        name: name.trim(),
+        document: document.trim() || undefined
+      });
+      onCreated((result as { id: string }).id);
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div style={modalOverlayStyle}>
+      <div style={modalContentStyle}>
+        <h3 style={{ margin: "0 0 12px 0", color: "#0f172a" }}>Cadastrar motorista</h3>
+        {error ? <p style={styles.errorMessage}>{error}</p> : null}
+        <label style={styles.fieldLabel}>
+          Nome completo
+          <input value={name} onChange={(e) => setName(e.target.value)} style={styles.input} />
+        </label>
+        <label style={styles.fieldLabel}>
+          CPF/CNH
+          <input value={document} onChange={(e) => setDocument(e.target.value)} style={styles.input} />
+        </label>
+        <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+          <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
+            {saving ? "Salvando..." : "Salvar"}
+          </button>
+          <button type="button" onClick={onClose} style={styles.secondaryButton}>
+            Cancelar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const modalOverlayStyle: React.CSSProperties = {
+  position: "fixed",
+  top: 0,
+  left: 0,
+  right: 0,
+  bottom: 0,
+  background: "rgba(0,0,0,0.4)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  zIndex: 1000
+};
+
+const modalContentStyle: React.CSSProperties = {
+  background: "#fff",
+  borderRadius: "8px",
+  padding: "24px",
+  width: "100%",
+  maxWidth: "400px",
+  boxShadow: "0 10px 25px rgba(0,0,0,0.15)"
+};
 
 function formatMoney(value: number | null | undefined): string {
   if (value === null || value === undefined) {

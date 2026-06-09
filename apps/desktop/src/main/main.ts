@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { inspect } from "node:util";
 
-import { DesktopRuntime, type StartSimulatedWeighingInput } from "../services/runtime.js";
+import { DesktopRuntime } from "../services/runtime.js";
 import type { ActivateDesktopInput } from "../services/desktop-activation.js";
 import type { CacheQueryOptions } from "../services/cache-store.js";
 import type {
@@ -239,22 +239,22 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle(
-    "desktop:start-simulated-weighing",
-    async (_event, input: StartSimulatedWeighingInput) => {
+    "desktop:start-weighing",
+    async (_event, input: unknown) => {
       if (!runtime) {
         throw new Error("Desktop runtime is not ready.");
       }
 
-      return runtime.startSimulatedWeighing(input);
+      return runtime.startWeighing(input as Parameters<DesktopRuntime["startWeighing"]>[0]);
     }
   );
 
-  ipcMain.handle("desktop:close-simulated-weighing", async (_event, operationId: string) => {
+  ipcMain.handle("desktop:close-weighing", async (_event, operationId: string) => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");
     }
 
-    return runtime.closeSimulatedWeighing(operationId);
+    return runtime.closeWeighing(operationId);
   });
 
   ipcMain.handle("desktop:cancel-weighing", (_event, operationId: string, reason: string) => {
@@ -360,6 +360,14 @@ function registerIpcHandlers(): void {
     }
 
     return runtime.queryCache(options);
+  });
+
+  ipcMain.handle("desktop:get-price", (_event, customerId: string, productId: string) => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.getPriceForCustomerProduct(customerId, productId);
   });
 
   ipcMain.handle("desktop:customers-create", (_event, input: Omit<CreateCustomerInput, "companyId">) => {

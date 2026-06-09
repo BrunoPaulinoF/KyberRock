@@ -5,10 +5,9 @@ import type {
   PrintReceiptSummary,
   WindowsPrinterSummary
 } from "../services/printing";
-import type { StartSimulatedWeighingInput } from "../services/runtime";
 import type { DesktopStatusSnapshot } from "../services/status";
 import type { UpdateState } from "../services/update-flow";
-import type { WeighingOperationSummary } from "../services/weighing-operations";
+import type { OperationType, WeighingOperationSummary } from "../services/weighing-operations";
 import type { SyncResult } from "../services/supabase-sync";
 import type { ActivateDesktopInput, DesktopAccessStatus } from "../services/desktop-activation";
 import type { CacheQueryOptions, CacheQueryResult } from "../services/cache-store";
@@ -52,8 +51,16 @@ export interface KyberRockDesktopApi {
   checkForUpdates: () => Promise<UpdateState>;
   downloadAndInstallUpdate: () => Promise<UpdateState>;
   listOpenWeighingOperations: () => Promise<WeighingOperationSummary[]>;
-  startSimulatedWeighing: (input: StartSimulatedWeighingInput) => Promise<WeighingOperationSummary>;
-  closeSimulatedWeighing: (operationId: string) => Promise<WeighingOperationSummary>;
+  startWeighing: (input: {
+    operationType: OperationType;
+    customerId: string;
+    vehicleId: string;
+    driverId: string;
+    productId: string;
+    paymentTermId?: string;
+    unitPriceCents?: number;
+  }) => Promise<WeighingOperationSummary>;
+  closeWeighing: (operationId: string) => Promise<WeighingOperationSummary>;
   cancelWeighing: (operationId: string, reason: string) => Promise<WeighingOperationSummary>;
   listWindowsPrinters: () => Promise<WindowsPrinterSummary[]>;
   configureReceiptPrintProfile: (
@@ -68,6 +75,7 @@ export interface KyberRockDesktopApi {
   getCloudStatus: () => Promise<{ totalOperations: number; lastSync: string | null }>;
   isCloudConnected: () => Promise<boolean>;
   queryCache: (options: CacheQueryOptions) => Promise<CacheQueryResult<unknown>>;
+  getPriceForCustomerProduct: (customerId: string, productId: string) => Promise<number | null>;
   customersCreate: (input: Omit<CreateCustomerInput, "companyId">) => Promise<unknown>;
   customersUpdate: (id: string, input: UpdateCustomerInput) => Promise<unknown>;
   customersDelete: (id: string) => Promise<void>;
@@ -109,4 +117,5 @@ export interface KyberRockDesktopApi {
   offUpdateAvailable: (callback: (event: unknown, version: string) => void) => void;
   onPlateScanned: (callback: (plate: string) => void) => void;
   onScaleReading: (callback: (reading: ParsedToledoReading) => void) => void;
+  offScaleReading: (callback: (reading: ParsedToledoReading) => void) => void;
 }
