@@ -108,6 +108,8 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:carriers-update", id, input),
   carriersDelete: (id: string) =>
     ipcRenderer.invoke("desktop:carriers-delete", id),
+  getOmieStatus: () =>
+    ipcRenderer.invoke("desktop:get-omie-status"),
   onUpdateAvailable: (callback: (event: unknown, version: string) => void) =>
     ipcRenderer.on("desktop:update-available", callback),
   offUpdateAvailable: (callback: (event: unknown, version: string) => void) =>

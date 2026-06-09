@@ -559,6 +559,46 @@ export class DesktopRuntime {
     this.cacheStore.invalidate("carrier", identity.companyId);
   }
 
+  getOmieSyncStatus(): {
+    configured: boolean;
+    totalCustomers: number;
+    totalProducts: number;
+    totalPaymentTerms: number;
+    pendingPushCustomers: number;
+    lastSyncAt: string | null;
+  } {
+    const identity = this.ensureIdentity();
+
+    const totalCustomers = this.database
+      .prepare("SELECT COUNT(*) FROM customers WHERE company_id = ? AND deleted_at IS NULL AND source = 'omie'")
+      .pluck().get(identity.companyId) as number;
+
+    const totalProducts = this.database
+      .prepare("SELECT COUNT(*) FROM products WHERE company_id = ? AND deleted_at IS NULL AND omie_product_id IS NOT NULL")
+      .pluck().get(identity.companyId) as number;
+
+    const totalPaymentTerms = this.database
+      .prepare("SELECT COUNT(*) FROM payment_terms WHERE company_id = ? AND deleted_at IS NULL AND omie_code IS NOT NULL")
+      .pluck().get(identity.companyId) as number;
+
+    const pendingPushCustomers = this.database
+      .prepare("SELECT COUNT(*) FROM customers WHERE company_id = ? AND deleted_at IS NULL AND needs_push = 1")
+      .pluck().get(identity.companyId) as number;
+
+    const lastSync = this.database
+      .prepare("SELECT MAX(last_synced_at) FROM customers WHERE company_id = ? AND deleted_at IS NULL")
+      .pluck().get(identity.companyId) as string | null;
+
+    return {
+      configured: totalCustomers > 0 || totalProducts > 0,
+      totalCustomers,
+      totalProducts,
+      totalPaymentTerms,
+      pendingPushCustomers,
+      lastSyncAt: lastSync
+    };
+  }
+
   private ensureIdentity(): LocalDesktopIdentity {
     return (
       getLocalDesktopIdentity(this.database) ??

@@ -88,6 +88,14 @@ export interface KyberRockDesktopApi {
   carriersCreate: (input: Omit<CreateCarrierInput, "companyId">) => Promise<unknown>;
   carriersUpdate: (id: string, input: UpdateCarrierInput) => Promise<unknown>;
   carriersDelete: (id: string) => Promise<void>;
+  getOmieStatus: () => Promise<{
+    configured: boolean;
+    totalCustomers: number;
+    totalProducts: number;
+    totalPaymentTerms: number;
+    pendingPushCustomers: number;
+    lastSyncAt: string | null;
+  }>;
   onUpdateAvailable: (callback: (event: unknown, version: string) => void) => void;
   offUpdateAvailable: (callback: (event: unknown, version: string) => void) => void;
   onPlateScanned: (callback: (plate: string) => void) => void;

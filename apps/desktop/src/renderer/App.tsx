@@ -69,6 +69,14 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [availableVersion, setAvailableVersion] = useState<string | null>(null);
   const [accessStatus, setAccessStatus] = useState<DesktopAccessStatus | null>(null);
+  const [omieStatus, setOmieStatus] = useState<{
+    configured: boolean;
+    totalCustomers: number;
+    totalProducts: number;
+    totalPaymentTerms: number;
+    pendingPushCustomers: number;
+    lastSyncAt: string | null;
+  } | null>(null);
   const [registrationsTab, setRegistrationsTab] = useState<RegistrationsTab>("customers");
 
   useEffect(() => {
@@ -193,6 +201,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
           }
         } catch {
           setCloudConnected(false);
+        }
+
+        try {
+          const omieStatusResult = await desktopApi.getOmieStatus();
+          setOmieStatus(omieStatusResult);
+        } catch {
+          // OMIE status is optional
         }
 
         setMessage("Desktop pronto para operacao local offline-first.");
@@ -951,19 +966,31 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
           </article>
 
           <article style={styles.panel}>
-            <h2 style={styles.panelTitle}>Informacoes</h2>
-            <p style={styles.muted}>
-              A sincronizacao envia para o Supabase:
-            </p>
-            <ul style={{ color: "#64748b", paddingLeft: "20px" }}>
-              <li>Operacoes de pesagem abertas</li>
-              <li>Solicitacoes de carregamento</li>
-              <li>Clientes e produtos</li>
-              <li>Status da operacao</li>
-            </ul>
-            <p style={styles.muted}>
-              Dados sensiveis como precos e limites de credito nao sao sincronizados.
-            </p>
+            <h2 style={styles.panelTitle}>Status OMIE</h2>
+            {omieStatus ? (
+              <>
+                <p>
+                  <strong>Status:</strong>{" "}
+                  {omieStatus.configured ? "Conectado" : "Nao configurado"}
+                </p>
+                {omieStatus.configured && (
+                  <>
+                    <p>Clientes sincronizados: {omieStatus.totalCustomers}</p>
+                    <p>Produtos sincronizados: {omieStatus.totalProducts}</p>
+                    <p>Condicoes sincronizadas: {omieStatus.totalPaymentTerms}</p>
+                    <p>Pendentes de envio: {omieStatus.pendingPushCustomers} clientes</p>
+                    <p>
+                      Ultima sincronizacao:{" "}
+                      {omieStatus.lastSyncAt
+                        ? new Date(omieStatus.lastSyncAt).toLocaleString("pt-BR")
+                        : "Nunca"}
+                    </p>
+                  </>
+                )}
+              </>
+            ) : (
+              <p style={{ color: "#64748b" }}>Carregando status OMIE...</p>
+            )}
           </article>
         </section>
       ) : null}
