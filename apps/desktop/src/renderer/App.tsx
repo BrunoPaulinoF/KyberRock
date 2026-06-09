@@ -6,6 +6,7 @@ import type {
   PrintReceiptSummary,
   WindowsPrinterSummary
 } from "../services/printing";
+import type { DesktopAccessStatus } from "../services/desktop-activation";
 import type { DesktopStatusSnapshot } from "../services/status";
 import {
   createInitialUpdateState,
@@ -14,6 +15,7 @@ import {
 } from "../services/update-flow";
 import type { OperationType, WeighingOperationSummary } from "../services/weighing-operations";
 import { ActivationGate } from "./ActivationGate";
+import { BlockedScreen } from "./BlockedScreen";
 import type { KyberRockDesktopApi } from "./desktop-api";
 export interface AppProps {
   desktopApi?: KyberRockDesktopApi;
@@ -64,6 +66,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [unitName, setUnitName] = useState<string | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [availableVersion, setAvailableVersion] = useState<string | null>(null);
+  const [accessStatus, setAccessStatus] = useState<DesktopAccessStatus | null>(null);
 
   useEffect(() => {
     if (!desktopApi) {
@@ -72,6 +75,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
 
     desktopApi.getAccessStatus().then((access) => {
+      setAccessStatus(access);
       setCompanyName(access.companyName);
       setUnitName(access.unitName);
       if (access.canOperate) {
@@ -126,11 +130,12 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         desktopApi.listWindowsPrinters(),
         desktopApi.listPrintProfiles(),
         desktopApi.listPrintReceipts(),
-        desktopApi.getAccessStatus()
+        desktopApi.validateDesktopAccess(navigator.onLine, false)
       ]);
 
       if (active) {
         setStatus(nextStatus);
+        setAccessStatus(nextAccess);
         setUpdateState(nextUpdateState);
         setOpenOperations(nextOpenOperations);
         setPrinters(nextPrinters);
@@ -168,7 +173,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
 
     void refresh();
-    const intervalId = window.setInterval(() => void refresh(), 15_000);
+    const intervalId = window.setInterval(() => void refresh(), 5_000);
 
     return () => {
       active = false;
@@ -420,6 +425,12 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
           </div>
         </main>
       );
+    }
+
+    // Se o desktop ja esta ativado mas foi bloqueado (ex: empresa desativada), mostra tela de bloqueio
+    // Se ainda nao esta ativado, mostra a tela de ativacao
+    if (accessStatus && !accessStatus.requiresActivation) {
+      return <BlockedScreen desktopApi={desktopApi} onUnlocked={handleUnlocked} />;
     }
 
     return <ActivationGate desktopApi={desktopApi} onUnlocked={handleUnlocked} />;

@@ -7,7 +7,7 @@ import { getSupabaseClient } from "./supabase-sync.js";
 import { readStringLocalSetting, writeLocalSetting } from "./local-settings.js";
 
 export const DESKTOP_ACCESS_GRACE_PERIOD_MS = 7 * 24 * 60 * 60 * 1000;
-export const DESKTOP_ACCESS_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+export const DESKTOP_ACCESS_CHECK_INTERVAL_MS = 30 * 1000; // 30 segundos quando online para detectar bloqueio em tempo real
 
 export type DesktopAccessStatusCode =
   | "not_activated"
