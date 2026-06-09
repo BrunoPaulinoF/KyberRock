@@ -26,6 +26,8 @@
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",
+    "app-builder-lib": "^26.15.0",
+    "electron-builder": "^23.6.0",
     "eslint": "^9.39.1",
     "prettier": "^3.7.3",
     "typescript": "^5.9.3",
