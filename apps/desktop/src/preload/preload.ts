@@ -55,7 +55,11 @@ const desktopApi = {
   getCloudStatus: () =>
     ipcRenderer.invoke("desktop:get-cloud-status"),
   isCloudConnected: () =>
-    ipcRenderer.invoke("desktop:is-cloud-connected")
+    ipcRenderer.invoke("desktop:is-cloud-connected"),
+  onUpdateAvailable: (callback: (event: unknown, version: string) => void) =>
+    ipcRenderer.on("desktop:update-available", callback),
+  offUpdateAvailable: (callback: (event: unknown, version: string) => void) =>
+    ipcRenderer.off("desktop:update-available", callback)
 };
 
 contextBridge.exposeInMainWorld("kyberrockDesktop", desktopApi);

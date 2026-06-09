@@ -22,6 +22,7 @@ const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 let mainWindow: BrowserWindow | null = null;
 let runtime: DesktopRuntime | null = null;
 let updateState: UpdateState = createInitialUpdateState();
+const UPDATE_CHECK_INTERVAL_MS = 30 * 60 * 1000; // 30 minutos
 
 async function createMainWindow(): Promise<void> {
   writeStartupLog("createMainWindow:start");
@@ -70,6 +71,7 @@ async function createMainWindow(): Promise<void> {
   }
 
   writeStartupLog("createMainWindow:done");
+  startAutomaticUpdateChecks();
 }
 
 function registerIpcHandlers(): void {
@@ -400,6 +402,7 @@ function configureAutoUpdater(): void {
 
   autoUpdater.on("update-available", (info) => {
     updateState = { status: "available", availableVersion: info.version, errorMessage: null };
+    mainWindow?.webContents.send("desktop:update-available", info.version);
   });
   autoUpdater.on("update-not-available", () => {
     updateState = createInitialUpdateState();
@@ -410,6 +413,19 @@ function configureAutoUpdater(): void {
   autoUpdater.on("error", (error) => {
     updateState = { status: "error", availableVersion: null, errorMessage: error.message };
   });
+}
+
+function startAutomaticUpdateChecks(): void {
+  if (!app.isPackaged) {
+    return;
+  }
+
+  void autoUpdater.checkForUpdates();
+  window.setInterval(() => {
+    if (updateState.status === "idle" || updateState.status === "error") {
+      void autoUpdater.checkForUpdates();
+    }
+  }, UPDATE_CHECK_INTERVAL_MS);
 }
 
 function getStartupLogPath(): string {

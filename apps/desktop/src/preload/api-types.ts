@@ -39,4 +39,6 @@ export interface KyberRockDesktopApi {
   syncToCloud: () => Promise<SyncResult>;
   getCloudStatus: () => Promise<{ totalOperations: number; lastSync: string | null }>;
   isCloudConnected: () => Promise<boolean>;
+  onUpdateAvailable: (callback: (event: unknown, version: string) => void) => void;
+  offUpdateAvailable: (callback: (event: unknown, version: string) => void) => void;
 }

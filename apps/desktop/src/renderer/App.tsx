@@ -62,6 +62,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [cloudStatus, setCloudStatus] = useState<{ totalOperations: number; lastSync: string | null } | null>(null);
   const [companyName, setCompanyName] = useState<string | null>(null);
   const [unitName, setUnitName] = useState<string | null>(null);
+  const [showUpdateModal, setShowUpdateModal] = useState(false);
+  const [availableVersion, setAvailableVersion] = useState<string | null>(null);
 
   useEffect(() => {
     if (!desktopApi) {
@@ -80,6 +82,22 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }).catch(() => {
       setPhase("locked");
     });
+  }, [desktopApi]);
+
+  useEffect(() => {
+    if (!desktopApi) {
+      return;
+    }
+
+    function handleUpdateAvailable(_event: unknown, version: string): void {
+      setAvailableVersion(version);
+      setShowUpdateModal(true);
+    }
+
+    desktopApi.onUpdateAvailable(handleUpdateAvailable);
+    return () => {
+      desktopApi.offUpdateAvailable(handleUpdateAvailable);
+    };
   }, [desktopApi]);
 
   const handleUnlocked = useCallback(() => setPhase("unlocked"), []);
@@ -477,12 +495,43 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         </button>
       </nav>
 
+      {showUpdateModal ? (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modal}>
+            <h2 style={styles.modalTitle}>Nova versão disponível</h2>
+            <p style={styles.modalText}>
+              A versão <strong>{availableVersion}</strong> do KyberRock Desktop está disponível.
+              Deseja atualizar agora?
+            </p>
+            <div style={styles.modalActions}>
+              <button
+                type="button"
+                onClick={() => {
+                  void handleUpdateAction();
+                  setShowUpdateModal(false);
+                }}
+                style={styles.primaryButton}
+              >
+                Atualizar agora
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowUpdateModal(false)}
+                style={styles.secondaryButton}
+              >
+                Mais tarde
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {activeView === "dashboard" ? (
         <section style={styles.twoColumns}>
           <article style={styles.panel}>
             <h2 style={styles.panelTitle}>Atualizacoes</h2>
             <p style={styles.muted}>
-              O app nao atualiza sozinho. Quando houver versao nova, clique para baixar e instalar.
+              O app checa automaticamente por novas versoes. Quando houver uma disponivel, voce sera notificado.
             </p>
             <p>Status: {describeUpdateState(updateState)}</p>
             <button type="button" onClick={handleUpdateAction} style={styles.primaryButton}>
@@ -967,5 +1016,37 @@ const styles = {
     gap: "16px",
     padding: "14px 0",
     borderTop: "1px solid #e2e8f0"
+  },
+  modalOverlay: {
+    position: "fixed" as const,
+    inset: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "rgba(15, 23, 42, 0.5)",
+    zIndex: 1000
+  },
+  modal: {
+    width: "100%",
+    maxWidth: "420px",
+    padding: "28px",
+    borderRadius: "20px",
+    background: "#ffffff",
+    boxShadow: "0 24px 80px rgba(15, 23, 42, 0.2)"
+  },
+  modalTitle: {
+    margin: "0 0 12px 0",
+    fontSize: "22px"
+  },
+  modalText: {
+    margin: "0 0 20px 0",
+    color: "#334155",
+    fontSize: "16px",
+    lineHeight: 1.5
+  },
+  modalActions: {
+    display: "flex",
+    gap: "12px",
+    flexWrap: "wrap" as const
   }
 };
