@@ -28,6 +28,10 @@ import type {
   UpdateDriverInput
 } from "../services/drivers.js";
 import type {
+  CreateCarrierInput,
+  UpdateCarrierInput
+} from "../services/carriers.js";
+import type {
   ConfigureReceiptPrintProfileInput,
   ReceiptPrintPayload,
   ReceiptPrinter,
@@ -480,6 +484,21 @@ function registerIpcHandlers(): void {
     if (mainWindow) {
       mainWindow.webContents.send("desktop:plate-scanned", plate);
     }
+  });
+
+  ipcMain.handle("desktop:carriers-create", (_event, input: Omit<CreateCarrierInput, "companyId">) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.createCarrier(input);
+  });
+
+  ipcMain.handle("desktop:carriers-update", (_event, id: string, input: UpdateCarrierInput) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.updateCarrier(id, input);
+  });
+
+  ipcMain.handle("desktop:carriers-delete", (_event, id: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    runtime.deleteCarrier(id);
   });
 }
 

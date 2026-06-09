@@ -778,10 +778,22 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
               <PriceTableListView desktopApi={desktopApi} />
             ) : null}
             {registrationsTab === "products" ? (
-              <RegistrationsPlaceholder title="Produtos (OMIE)" description="Produtos sincronizados do OMIE. Visualizacao apenas." />
+              <OmieViewer
+                desktopApi={desktopApi}
+                entityType="product"
+                title="Produtos (OMIE)"
+                displayField="description"
+                subField="code"
+              />
             ) : null}
             {registrationsTab === "payment_terms" ? (
-              <RegistrationsPlaceholder title="Condicoes de Pagamento (OMIE)" description="Condicoes de pagamento sincronizadas do OMIE." />
+              <OmieViewer
+                desktopApi={desktopApi}
+                entityType="payment_term"
+                title="Condicoes de Pagamento (OMIE)"
+                displayField="name"
+                subField="omieCode"
+              />
             ) : null}
             {registrationsTab === "vehicles" ? (
               <SimpleCrudList
@@ -1424,6 +1436,65 @@ function CustomerListView({
             </div>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+function OmieViewer({
+  desktopApi,
+  entityType,
+  title,
+  displayField,
+  subField
+}: {
+  desktopApi: KyberRockDesktopApi;
+  entityType: "product" | "payment_term";
+  title: string;
+  displayField: string;
+  subField: string;
+}) {
+  const [items, setItems] = useState<Array<Record<string, unknown>>>([]);
+  const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    loadItems();
+  }, [search]);
+
+  async function loadItems(): Promise<void> {
+    const result = await desktopApi.queryCache({
+      entityType: entityType as unknown as "product" | "payment_term",
+      search: search || undefined,
+      limit: 200
+    });
+    setItems(result.rows as Array<Record<string, unknown>>);
+  }
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: "12px", marginBottom: "16px", flexWrap: "wrap" }}>
+        <input
+          placeholder={`Buscar ${title.toLowerCase()}...`}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{ ...styles.input, flex: 1, minWidth: "200px" }}
+        />
+      </div>
+      {items.length === 0 ? (
+        <p style={{ color: "#64748b" }}>Nenhum registro encontrado. Execute a sincronizacao OMIE.</p>
+      ) : (
+        items.map((item) => (
+          <div key={String(item.id)} style={{ ...styles.operationRow, borderTop: "1px solid #e2e8f0" }}>
+            <div>
+              <strong>{String(item[displayField] ?? "")}</strong>
+              {subField && item[subField] ? (
+                <p style={{ ...styles.muted, margin: "2px 0 0 0", fontSize: "13px" }}>
+                  {String(item[subField])}
+                </p>
+              ) : null}
+            </div>
+          </div>
+        ))
       )}
     </div>
   );

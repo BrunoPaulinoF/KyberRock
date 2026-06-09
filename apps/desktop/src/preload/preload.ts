@@ -102,6 +102,12 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:drivers-delete", id),
   driversFindOrCreate: (name: string) =>
     ipcRenderer.invoke("desktop:drivers-find-or-create", name),
+  carriersCreate: (input: unknown) =>
+    ipcRenderer.invoke("desktop:carriers-create", input),
+  carriersUpdate: (id: string, input: unknown) =>
+    ipcRenderer.invoke("desktop:carriers-update", id, input),
+  carriersDelete: (id: string) =>
+    ipcRenderer.invoke("desktop:carriers-delete", id),
   onUpdateAvailable: (callback: (event: unknown, version: string) => void) =>
     ipcRenderer.on("desktop:update-available", callback),
   offUpdateAvailable: (callback: (event: unknown, version: string) => void) =>

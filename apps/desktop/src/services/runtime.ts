@@ -106,6 +106,13 @@ import {
   type CreateDriverInput,
   type UpdateDriverInput
 } from "./drivers.js";
+import {
+  createCarrier,
+  deleteCarrier,
+  updateCarrier,
+  type CreateCarrierInput,
+  type UpdateCarrierInput
+} from "./carriers.js";
 
 export interface StartSimulatedWeighingInput {
   operationType: OperationType;
@@ -527,6 +534,29 @@ export class DesktopRuntime {
     const result = findOrCreateDriver(this.database, identity.companyId, name);
     this.cacheStore.invalidate("driver", identity.companyId);
     return result;
+  }
+
+  createCarrier(input: Omit<CreateCarrierInput, "companyId">): unknown {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    const result = createCarrier(this.database, { ...input, companyId: identity.companyId });
+    this.cacheStore.invalidate("carrier", identity.companyId);
+    return result;
+  }
+
+  updateCarrier(id: string, input: UpdateCarrierInput): unknown {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    const result = updateCarrier(this.database, id, input);
+    this.cacheStore.invalidate("carrier", identity.companyId);
+    return result;
+  }
+
+  deleteCarrier(id: string): void {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    deleteCarrier(this.database, id);
+    this.cacheStore.invalidate("carrier", identity.companyId);
   }
 
   private ensureIdentity(): LocalDesktopIdentity {

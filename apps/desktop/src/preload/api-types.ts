@@ -30,6 +30,10 @@ import type {
   CreateDriverInput,
   UpdateDriverInput
 } from "../services/drivers";
+import type {
+  CreateCarrierInput,
+  UpdateCarrierInput
+} from "../services/carriers";
 
 export interface KyberRockDesktopApi {
   getStatus: (internetOnline?: boolean) => Promise<DesktopStatusSnapshot>;
@@ -81,6 +85,9 @@ export interface KyberRockDesktopApi {
   driversUpdate: (id: string, input: UpdateDriverInput) => Promise<unknown>;
   driversDelete: (id: string) => Promise<void>;
   driversFindOrCreate: (name: string) => Promise<unknown>;
+  carriersCreate: (input: Omit<CreateCarrierInput, "companyId">) => Promise<unknown>;
+  carriersUpdate: (id: string, input: UpdateCarrierInput) => Promise<unknown>;
+  carriersDelete: (id: string) => Promise<void>;
   onUpdateAvailable: (callback: (event: unknown, version: string) => void) => void;
   offUpdateAvailable: (callback: (event: unknown, version: string) => void) => void;
   onPlateScanned: (callback: (plate: string) => void) => void;
