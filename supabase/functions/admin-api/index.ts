@@ -45,7 +45,7 @@ Deno.serve(async (req) => {
         supabase.from("companies").select("*").order("created_at", { ascending: false }),
         supabase
           .from("units")
-          .select("id, company_id, name, timezone, is_active, desktop_activation_code_rotated_at, created_at, updated_at")
+          .select("id, company_id, name, timezone, is_active, desktop_activation_code, desktop_activation_code_rotated_at, created_at, updated_at")
           .order("created_at", { ascending: false }),
         supabase.from("user_profiles").select("*").order("created_at", { ascending: false }),
         supabase
@@ -106,10 +106,11 @@ Deno.serve(async (req) => {
       const codeHash = await sha256Hex(code);
       const rotatedAt = new Date().toISOString();
       const { data, error } = await supabase.from("units").update({
+        desktop_activation_code: code,
         desktop_activation_code_hash: codeHash,
         desktop_activation_code_rotated_at: rotatedAt,
         updated_at: rotatedAt
-      }).eq("id", unitId).select("id, desktop_activation_code_rotated_at").single();
+      }).eq("id", unitId).select("id, desktop_activation_code, desktop_activation_code_rotated_at").single();
       if (error) throw error;
       return jsonResponse({ code, unit: data });
     }

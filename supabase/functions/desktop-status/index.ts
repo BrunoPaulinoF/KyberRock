@@ -60,7 +60,7 @@ Deno.serve(async (req) => {
     .eq("id", typedDevice.company_id)
     .single();
   if (companyError || !company?.is_active) {
-    return jsonResponse({ status: "company_blocked", allowed: false, message: "Empresa bloqueada pelo administrador." });
+    return jsonResponse({ status: "company_blocked", allowed: false, message: "Não autorizado. Empresa bloqueada pelo administrador." });
   }
 
   const checkedAt = new Date().toISOString();

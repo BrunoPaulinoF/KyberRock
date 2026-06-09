@@ -195,10 +195,12 @@ export function ActivationGate({ desktopApi, onUnlocked }: ActivationGateProps) 
     );
   }
 
+  const isCompanyBlocked = status?.status === "company_blocked";
+
   return (
     <main style={styles.page}>
       <div style={{ ...styles.card, maxWidth: "480px" }}>
-        <h1 style={styles.title}>Acesso Bloqueado</h1>
+        <h1 style={styles.title}>{isCompanyBlocked ? "Não autorizado" : "Acesso Bloqueado"}</h1>
         <p style={styles.subtitle}>{message}</p>
         {status && (
           <div style={styles.statusBox}>

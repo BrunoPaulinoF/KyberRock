@@ -158,6 +158,11 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
           setCloudConnected(false);
         }
 
+        // Bloquear acesso em tempo real se a empresa for desativada
+        if (!nextAccess.canOperate) {
+          setPhase("locked");
+        }
+
         setMessage("Desktop pronto para operacao local offline-first.");
       }
     }

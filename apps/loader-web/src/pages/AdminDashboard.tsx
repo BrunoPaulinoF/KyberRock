@@ -17,6 +17,7 @@ interface Unit {
   name: string;
   timezone: string;
   isActive: boolean;
+  desktopActivationCode?: string;
   desktopActivationCodeRotatedAt?: string;
 }
 
@@ -63,7 +64,7 @@ export function AdminDashboard() {
     try {
       const data = await callAdminFunction<{
         companies: Array<{ id: string; name: string; legal_name: string; document: string | null; is_active: boolean; created_at: string }>;
-        units: Array<{ id: string; company_id: string; name: string; timezone: string; is_active: boolean; desktop_activation_code_rotated_at?: string }>;
+        units: Array<{ id: string; company_id: string; name: string; timezone: string; is_active: boolean; desktop_activation_code?: string; desktop_activation_code_rotated_at?: string }>;
         users: Array<{ id: string; email: string; name: string; company_id: string; unit_id: string; is_active: boolean }>;
         devices: Array<{ id: string; company_id: string; unit_id: string; name: string; is_active: boolean; last_seen_at: string | null; created_at: string; updated_at: string }>;
       }>("admin-api", { action: "list" });
@@ -82,6 +83,7 @@ export function AdminDashboard() {
         name: unit.name,
         timezone: unit.timezone,
         isActive: unit.is_active,
+        desktopActivationCode: unit.desktop_activation_code,
         desktopActivationCodeRotatedAt: unit.desktop_activation_code_rotated_at
       })));
       setUsers(data.users.map((user) => ({
@@ -436,6 +438,9 @@ export function AdminDashboard() {
                       <div>
                         <strong>{company.name}</strong>
                         <p style={{ margin: "2px 0 0 0", fontSize: "14px", color: "#64748b" }}>{company.legalName}</p>
+                        <p style={{ margin: "2px 0 0 0", fontSize: "12px", color: "#b91c1c" }}>
+                          {company.isActive ? "Desativar a empresa bloqueia o acesso de todos os desktops." : "Ativar a empresa libera o acesso de todos os desktops."}
+                        </p>
                       </div>
                       <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
                         <span style={{
@@ -665,12 +670,12 @@ export function AdminDashboard() {
                 </article>
 
                 <article style={{ background: "#fff", padding: "24px", borderRadius: "16px" }}>
-                  <h2 style={{ margin: "0 0 16px 0" }}>Gerar Codigo de Ativacao</h2>
+                  <h2 style={{ margin: "0 0 16px 0" }}>Codigos de Ativacao</h2>
                   <p style={{ color: "#64748b", fontSize: "14px", marginBottom: "8px" }}>
                     Selecione a pedreira/unidade para gerar um novo codigo de 6 digitos.
                   </p>
                   <p style={{ color: "#94a3b8", fontSize: "13px", marginBottom: "16px" }}>
-                    O codigo e exibido apenas uma vez. Ao gerar um novo, o anterior e invalidado.
+                    O codigo fica salvo e pode ser visualizado a qualquer momento. Ao gerar um novo, o anterior e invalidado.
                   </p>
                   {units.filter(u => u.isActive).length === 0 ? (
                     <p style={{ color: "#b91c1c" }}>Nenhuma unidade ativa disponivel.</p>
@@ -691,10 +696,27 @@ export function AdminDashboard() {
                             <div>
                               <strong style={{ fontSize: "14px" }}>{unit.name}</strong>
                               <p style={{ margin: "2px 0 0 0", fontSize: "12px", color: "#94a3b8" }}>
-                                {company?.name} | {unit.desktopActivationCodeRotatedAt
-                                  ? `Ultimo codigo: ${new Date(unit.desktopActivationCodeRotatedAt).toLocaleDateString("pt-BR")}`
-                                  : "Nenhum codigo gerado"}
+                                {company?.name}
                               </p>
+                              {unit.desktopActivationCode ? (
+                                <div style={{ marginTop: "8px", padding: "8px 12px", borderRadius: "8px", background: "#dcfce7", border: "1px solid #15803d", display: "inline-block" }}>
+                                  <p style={{ margin: "0 0 4px 0", fontSize: "11px", color: "#166534", fontWeight: 700 }}>
+                                    CODIGO ATIVO
+                                  </p>
+                                  <p style={{ margin: 0, fontSize: "20px", fontWeight: 700, letterSpacing: "6px", fontFamily: "monospace", color: "#15803d" }}>
+                                    {unit.desktopActivationCode}
+                                  </p>
+                                  <p style={{ margin: "4px 0 0 0", fontSize: "11px", color: "#166534" }}>
+                                    Gerado em: {unit.desktopActivationCodeRotatedAt
+                                      ? new Date(unit.desktopActivationCodeRotatedAt).toLocaleDateString("pt-BR")
+                                      : "N/A"}
+                                  </p>
+                                </div>
+                              ) : (
+                                <p style={{ margin: "8px 0 0 0", fontSize: "12px", color: "#b91c1c" }}>
+                                  Nenhum codigo gerado
+                                </p>
+                              )}
                             </div>
                             <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
                               <button

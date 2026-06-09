@@ -53,7 +53,7 @@ Deno.serve(async (req) => {
   const company = Array.isArray(typedUnit.companies) ? typedUnit.companies[0] : typedUnit.companies;
 
   if (!company?.is_active) {
-    return jsonResponse({ error: "Empresa bloqueada pelo administrador" }, 403);
+    return jsonResponse({ error: "Não autorizado. Empresa bloqueada pelo administrador." }, 403);
   }
 
   if (!typedUnit.is_active) {
