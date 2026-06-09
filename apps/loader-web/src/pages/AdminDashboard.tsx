@@ -51,6 +51,8 @@ export function AdminDashboard() {
   const [generatedCode, setGeneratedCode] = useState<string | null>(null);
   const [editingCompany, setEditingCompany] = useState<Company | null>(null);
   const [editingUnit, setEditingUnit] = useState<Unit | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<{ type: "company" | "unit"; id: string; name: string } | null>(null);
+  const [confirmPassword, setConfirmPassword] = useState("");
 
   useEffect(() => {
     loadData();
@@ -238,33 +240,37 @@ export function AdminDashboard() {
     }
   }
 
-  async function handleDeleteCompany(companyId: string) {
-    const confirmed = window.confirm("Tem certeza que deseja excluir esta empresa? Todas as unidades vinculadas serao excluidas tambem.");
-    if (!confirmed) return;
-    try {
-      await callAdminFunction("admin-api", {
-        action: "delete_company",
-        payload: { companyId }
-      });
-      await loadData();
-    } catch (error) {
-      console.error("Error deleting company:", error);
-      alert("Erro ao excluir empresa");
-    }
+  async function handleDeleteCompany(company: Company) {
+    setConfirmDelete({ type: "company", id: company.id, name: company.name });
+    setConfirmPassword("");
   }
 
-  async function handleDeleteUnit(unitId: string) {
-    const confirmed = window.confirm("Tem certeza que deseja excluir esta unidade?");
-    if (!confirmed) return;
+  async function handleDeleteUnit(unit: Unit) {
+    setConfirmDelete({ type: "unit", id: unit.id, name: unit.name });
+    setConfirmPassword("");
+  }
+
+  async function handleConfirmDelete(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!confirmDelete) return;
     try {
-      await callAdminFunction("admin-api", {
-        action: "delete_unit",
-        payload: { unitId }
-      });
+      if (confirmDelete.type === "company") {
+        await callAdminFunction("admin-api", {
+          action: "delete_company",
+          payload: { companyId: confirmDelete.id, adminPassword: confirmPassword }
+        });
+      } else {
+        await callAdminFunction("admin-api", {
+          action: "delete_unit",
+          payload: { unitId: confirmDelete.id, adminPassword: confirmPassword }
+        });
+      }
+      setConfirmDelete(null);
+      setConfirmPassword("");
       await loadData();
     } catch (error) {
-      console.error("Error deleting unit:", error);
-      alert("Erro ao excluir unidade");
+      console.error("Error deleting:", error);
+      alert("Erro ao excluir: " + (error instanceof Error ? error.message : "Erro desconhecido"));
     }
   }
 
@@ -375,6 +381,45 @@ export function AdminDashboard() {
         </button>
       </nav>
 
+      {confirmDelete && (
+        <div style={{
+          position: "fixed",
+          top: 0, left: 0, right: 0, bottom: 0,
+          background: "rgba(0,0,0,0.5)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 2000
+        }}>
+          <div style={{ background: "#fff", padding: "24px", borderRadius: "16px", width: "100%", maxWidth: "400px" }}>
+            <h3 style={{ margin: "0 0 12px 0", color: "#dc2626" }}>Confirmar exclusao</h3>
+            <p style={{ margin: "0 0 16px 0", fontSize: "14px", color: "#64748b" }}>
+              {confirmDelete.type === "company"
+                ? `Tem certeza que deseja excluir a empresa "${confirmDelete.name}"? Todas as unidades vinculadas serao excluidas tambem.`
+                : `Tem certeza que deseja excluir a unidade "${confirmDelete.name}"?`}
+            </p>
+            <form onSubmit={handleConfirmDelete} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+              <input
+                type="password"
+                placeholder="Senha do administrador"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                required
+                style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
+              />
+              <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
+                <button type="submit" style={{ flex: 1, padding: "10px", borderRadius: "8px", border: "none", background: "#dc2626", color: "#fff", cursor: "pointer", fontWeight: 700 }}>
+                  Confirmar exclusao
+                </button>
+                <button type="button" onClick={() => { setConfirmDelete(null); setConfirmPassword(""); }} style={{ flex: 1, padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1", background: "#fff", cursor: "pointer" }}>
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {isLoading ? (
         <p>Carregando...</p>
       ) : (
@@ -415,7 +460,7 @@ export function AdminDashboard() {
                           Editar
                         </button>
                         <button
-                          onClick={() => handleDeleteCompany(company.id)}
+                          onClick={() => handleDeleteCompany(company)}
                           style={{ padding: "6px 12px", borderRadius: "6px", border: "1px solid #fecaca", background: "#fef2f2", cursor: "pointer", fontSize: "12px", color: "#dc2626" }}
                         >
                           Excluir
@@ -671,7 +716,7 @@ export function AdminDashboard() {
                                 Editar
                               </button>
                               <button
-                                onClick={() => handleDeleteUnit(unit.id)}
+                                onClick={() => handleDeleteUnit(unit)}
                                 style={{ padding: "8px 14px", borderRadius: "8px", border: "1px solid #fecaca", background: "#fef2f2", cursor: "pointer", fontSize: "13px", color: "#dc2626" }}
                               >
                                 Excluir

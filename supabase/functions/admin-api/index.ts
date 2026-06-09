@@ -1,14 +1,18 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { verifyAdminSession } from "../_shared/admin-session.ts";
-import { sha256Hex } from "../_shared/crypto.ts";
+import { safeEqual, sha256Hex } from "../_shared/crypto.ts";
 
 type AdminAction =
   | "list"
   | "create_company"
   | "toggle_company"
+  | "update_company"
+  | "delete_company"
   | "create_unit"
   | "toggle_unit"
+  | "update_unit"
+  | "delete_unit"
   | "generate_desktop_activation_code"
   | "create_loader"
   | "toggle_loader"
@@ -150,11 +154,58 @@ Deno.serve(async (req) => {
       return jsonResponse({ ok: true });
     }
 
+    if (body.action === "update_company") {
+      const { error } = await supabase.from("companies").update({
+        name: String(payload.name ?? ""),
+        legal_name: String(payload.legalName ?? ""),
+        document: payload.document ? String(payload.document) : null,
+        updated_at: new Date().toISOString()
+      }).eq("id", String(payload.companyId));
+      if (error) throw error;
+      return jsonResponse({ ok: true });
+    }
+
+    if (body.action === "update_unit") {
+      const { error } = await supabase.from("units").update({
+        name: String(payload.name ?? ""),
+        updated_at: new Date().toISOString()
+      }).eq("id", String(payload.unitId));
+      if (error) throw error;
+      return jsonResponse({ ok: true });
+    }
+
+    if (body.action === "delete_company" || body.action === "delete_unit") {
+      const password = String(payload.adminPassword ?? "");
+      if (!await verifyAdminPassword(password)) {
+        return jsonResponse({ error: "Senha do administrador incorreta" }, 403);
+      }
+      if (body.action === "delete_company") {
+        const companyId = String(payload.companyId ?? "");
+        const { error } = await supabase.rpc("delete_company", { target_company_id: companyId });
+        if (error) throw error;
+        return jsonResponse({ ok: true });
+      }
+      if (body.action === "delete_unit") {
+        const unitId = String(payload.unitId ?? "");
+        const { error } = await supabase.rpc("delete_unit", { target_unit_id: unitId });
+        if (error) throw error;
+        return jsonResponse({ ok: true });
+      }
+    }
+
     return jsonResponse({ error: "Invalid action" }, 400);
   } catch (error) {
     return jsonResponse({ error: error instanceof Error ? error.message : "Erro inesperado" }, 400);
   }
 });
+
+async function verifyAdminPassword(password: string): Promise<boolean> {
+  const passwordHash = Deno.env.get("KYBERROCK_ADMIN_PASSWORD_HASH") ?? "";
+  const passwordSalt = Deno.env.get("KYBERROCK_ADMIN_PASSWORD_SALT") ?? "";
+  if (!passwordHash || !passwordSalt) return false;
+  const attemptedHash = await sha256Hex(`${passwordSalt}${password}`);
+  return safeEqual(attemptedHash, passwordHash);
+}
 
 function generateSixDigitCode(): string {
   const value = new Uint32Array(1);
