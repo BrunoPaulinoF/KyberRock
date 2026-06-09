@@ -671,75 +671,151 @@ export function AdminDashboard() {
 
                 <article style={{ background: "#fff", padding: "24px", borderRadius: "16px" }}>
                   <h2 style={{ margin: "0 0 16px 0" }}>Codigos de Ativacao</h2>
-                  <p style={{ color: "#64748b", fontSize: "14px", marginBottom: "8px" }}>
-                    Selecione a pedreira/unidade para gerar um novo codigo de 6 digitos.
+                  <p style={{ color: "#64748b", fontSize: "14px", marginBottom: "16px" }}>
+                    Cada unidade possui um unico codigo de ativacao. Ao gerar um novo, o anterior e invalidado.
                   </p>
-                  <p style={{ color: "#94a3b8", fontSize: "13px", marginBottom: "16px" }}>
-                    O codigo fica salvo e pode ser visualizado a qualquer momento. Ao gerar um novo, o anterior e invalidado.
-                  </p>
-                  {units.filter(u => u.isActive).length === 0 ? (
-                    <p style={{ color: "#b91c1c" }}>Nenhuma unidade ativa disponivel.</p>
+                  {units.length === 0 ? (
+                    <p style={{ color: "#b91c1c" }}>Nenhuma unidade cadastrada.</p>
                   ) : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                      {units.filter(u => u.isActive).map(unit => {
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                      {units.map(unit => {
                         const company = companies.find(c => c.id === unit.companyId);
                         return (
                           <div key={unit.id} style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                            padding: "12px",
-                            borderRadius: "10px",
+                            padding: "20px",
+                            borderRadius: "12px",
                             background: "#f8fafc",
-                            border: "1px solid #e2e8f0"
+                            border: "1px solid #e2e8f0",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: "12px"
                           }}>
                             <div>
-                              <strong style={{ fontSize: "14px" }}>{unit.name}</strong>
-                              <p style={{ margin: "2px 0 0 0", fontSize: "12px", color: "#94a3b8" }}>
-                                {company?.name}
+                              <strong style={{ fontSize: "16px", color: "#0f172a" }}>{unit.name}</strong>
+                              <p style={{ margin: "4px 0 0 0", fontSize: "13px", color: "#64748b" }}>
+                                {company?.name || "Empresa desconhecida"}
                               </p>
-                              {unit.desktopActivationCode ? (
-                                <div style={{ marginTop: "8px", padding: "8px 12px", borderRadius: "8px", background: "#dcfce7", border: "1px solid #15803d", display: "inline-block" }}>
-                                  <p style={{ margin: "0 0 4px 0", fontSize: "11px", color: "#166534", fontWeight: 700 }}>
+                            </div>
+
+                            {unit.desktopActivationCode ? (
+                              <div style={{
+                                padding: "12px",
+                                borderRadius: "10px",
+                                background: "#dcfce7",
+                                border: "1px solid #15803d",
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: "8px"
+                              }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                  <span style={{ fontSize: "11px", color: "#166534", fontWeight: 700 }}>
                                     CODIGO ATIVO
-                                  </p>
-                                  <p style={{ margin: 0, fontSize: "20px", fontWeight: 700, letterSpacing: "6px", fontFamily: "monospace", color: "#15803d" }}>
-                                    {unit.desktopActivationCode}
-                                  </p>
-                                  <p style={{ margin: "4px 0 0 0", fontSize: "11px", color: "#166534" }}>
-                                    Gerado em: {unit.desktopActivationCodeRotatedAt
+                                  </span>
+                                  <span style={{ fontSize: "11px", color: "#166534" }}>
+                                    {unit.desktopActivationCodeRotatedAt
                                       ? new Date(unit.desktopActivationCodeRotatedAt).toLocaleDateString("pt-BR")
-                                      : "N/A"}
-                                  </p>
+                                      : ""}
+                                  </span>
                                 </div>
-                              ) : (
-                                <p style={{ margin: "8px 0 0 0", fontSize: "12px", color: "#b91c1c" }}>
+                                <p style={{
+                                  margin: 0,
+                                  fontSize: "22px",
+                                  fontWeight: 700,
+                                  letterSpacing: "6px",
+                                  fontFamily: "monospace",
+                                  color: "#15803d",
+                                  textAlign: "center"
+                                }}>
+                                  {unit.desktopActivationCode}
+                                </p>
+                                <button
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(unit.desktopActivationCode!);
+                                    alert("Codigo copiado!");
+                                  }}
+                                  style={{
+                                    padding: "6px 12px",
+                                    borderRadius: "6px",
+                                    border: "1px solid #15803d",
+                                    background: "#fff",
+                                    color: "#15803d",
+                                    cursor: "pointer",
+                                    fontWeight: 700,
+                                    fontSize: "12px",
+                                    alignSelf: "center"
+                                  }}
+                                >
+                                  Copiar codigo
+                                </button>
+                              </div>
+                            ) : (
+                              <div style={{
+                                padding: "12px",
+                                borderRadius: "10px",
+                                background: "#fef2f2",
+                                border: "1px solid #fecaca",
+                                textAlign: "center"
+                              }}>
+                                <p style={{ margin: 0, fontSize: "13px", color: "#b91c1c" }}>
                                   Nenhum codigo gerado
                                 </p>
-                              )}
-                            </div>
-                            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                              </div>
+                            )}
+
+                            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
                               <button
                                 onClick={() => handleGenerateActivationCode(unit.id)}
-                                style={{ padding: "8px 14px", borderRadius: "8px", border: "none", background: "#0f172a", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: "13px" }}
+                                style={{
+                                  flex: 1,
+                                  padding: "8px 12px",
+                                  borderRadius: "8px",
+                                  border: "none",
+                                  background: "#0f172a",
+                                  color: "#fff",
+                                  cursor: "pointer",
+                                  fontWeight: 700,
+                                  fontSize: "12px"
+                                }}
                               >
-                                Gerar codigo
+                                Gerar novo
                               </button>
                               <button
                                 onClick={() => handleToggleUnit(unit.id, unit.isActive)}
-                                style={{ padding: "8px 14px", borderRadius: "8px", border: "1px solid #cbd5e1", background: "#fff", cursor: "pointer", fontSize: "13px" }}
+                                style={{
+                                  padding: "8px 12px",
+                                  borderRadius: "8px",
+                                  border: "1px solid #cbd5e1",
+                                  background: "#fff",
+                                  cursor: "pointer",
+                                  fontSize: "12px"
+                                }}
                               >
                                 {unit.isActive ? "Desativar" : "Ativar"}
                               </button>
                               <button
                                 onClick={() => setEditingUnit(unit)}
-                                style={{ padding: "8px 14px", borderRadius: "8px", border: "1px solid #e2e8f0", background: "#f8fafc", cursor: "pointer", fontSize: "13px" }}
+                                style={{
+                                  padding: "8px 12px",
+                                  borderRadius: "8px",
+                                  border: "1px solid #e2e8f0",
+                                  background: "#f8fafc",
+                                  cursor: "pointer",
+                                  fontSize: "12px"
+                                }}
                               >
                                 Editar
                               </button>
                               <button
                                 onClick={() => handleDeleteUnit(unit)}
-                                style={{ padding: "8px 14px", borderRadius: "8px", border: "1px solid #fecaca", background: "#fef2f2", cursor: "pointer", fontSize: "13px", color: "#dc2626" }}
+                                style={{
+                                  padding: "8px 12px",
+                                  borderRadius: "8px",
+                                  border: "1px solid #fecaca",
+                                  background: "#fef2f2",
+                                  cursor: "pointer",
+                                  fontSize: "12px",
+                                  color: "#dc2626"
+                                }}
                               >
                                 Excluir
                               </button>

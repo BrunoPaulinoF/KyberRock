@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 
 import { callAdminFunction, clearAdminSessionToken, getAdminSessionToken, setAdminSessionToken, getAdminSessionStatus } from "../lib/admin-api";
-import { supabase } from "../lib/supabase";
+import { supabase, auth } from "../lib/supabase";
 
 interface AuthUser {
   uid: string;
@@ -66,7 +66,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(null);
     }
 
-    supabase.auth.getSession().then(({ data }) => {
+    auth.getSession().then(({ data }) => {
       if (data.session?.user && !adminToken) {
         void loadLoaderProfile(data.session.user.id);
       } else {
@@ -74,7 +74,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     });
 
-    const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: subscription } = auth.onAuthStateChange((_event, session) => {
       const currentToken = getAdminSessionToken();
       if (session?.user && !currentToken) {
         void loadLoaderProfile(session.user.id);
@@ -96,7 +96,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .single<LoaderProfileRow>();
 
       if (profileError || !data || !data.is_active) {
-        await supabase.auth.signOut();
+        await auth.signOut();
         setUser(null);
         setError("Usuario inativo ou sem perfil de carregador.");
         return;
@@ -121,7 +121,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const response = await callAdminFunction<AdminAuthResponse>("admin-auth", { username, password }, null);
       setAdminSessionToken(response.token);
-      await supabase.auth.signOut();
+      await auth.signOut();
       setUser({
         uid: "admin",
         email: null,
@@ -140,7 +140,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function loginLoader(email: string, password: string): Promise<void> {
     setError(null);
     clearAdminSessionToken();
-    const { data, error: loginError } = await supabase.auth.signInWithPassword({ email, password });
+    const { data, error: loginError } = await auth.signInWithPassword({ email, password });
     if (loginError) {
       setError(loginError.message);
       throw loginError;
@@ -150,7 +150,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function logout(): Promise<void> {
     clearAdminSessionToken();
-    await supabase.auth.signOut();
+    await auth.signOut();
     setUser(null);
   }
 
