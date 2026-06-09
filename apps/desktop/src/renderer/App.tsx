@@ -15,8 +15,6 @@ import {
 import type { OperationType, WeighingOperationSummary } from "../services/weighing-operations";
 import { ActivationGate } from "./ActivationGate";
 import type { KyberRockDesktopApi } from "./desktop-api";
-import { buildStatusIndicatorViewModels } from "./status-view-model";
-
 export interface AppProps {
   desktopApi?: KyberRockDesktopApi;
   initialStatus?: DesktopStatusSnapshot | null;
@@ -388,8 +386,6 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     );
   }
 
-  const indicators = status ? buildStatusIndicatorViewModels(status) : [];
-
   return (
     <main style={styles.page}>
       <section style={styles.hero}>
@@ -406,21 +402,6 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
             Restaurar backup
           </button>
         </div>
-      </section>
-
-      <section aria-label="Indicadores de status" style={styles.grid}>
-        {indicators.map((indicator) => (
-          <article
-            key={indicator.label}
-            style={{ ...styles.card, borderColor: toneColor(indicator.tone) }}
-          >
-            <p style={styles.cardLabel}>{indicator.label}</p>
-            <strong style={{ ...styles.cardValue, color: toneColor(indicator.tone) }}>
-              {indicator.value}
-            </strong>
-            <span style={styles.cardDetail}>{indicator.detail}</span>
-          </article>
-        ))}
       </section>
 
       <nav aria-label="Fluxo operacional" style={styles.navigation}>
@@ -767,17 +748,6 @@ function describeUpdateState(state: UpdateState): string {
   return "Sem atualizacao pendente.";
 }
 
-function toneColor(tone: string): string {
-  const colors: Record<string, string> = {
-    success: "#15803d",
-    warning: "#b45309",
-    danger: "#b91c1c",
-    neutral: "#475569"
-  };
-
-  return colors[tone] ?? colors.neutral;
-}
-
 function validateWeighingForm(
   form: WeighingFormState,
   unitPriceCents: number | null | undefined
@@ -897,12 +867,6 @@ const styles = {
     cursor: "pointer",
     fontWeight: 700
   },
-  grid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-    gap: "16px",
-    marginTop: "20px"
-  },
   twoColumns: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
@@ -923,19 +887,6 @@ const styles = {
     border: "1px solid",
     borderRadius: "18px",
     background: "#ffffff"
-  },
-  cardLabel: {
-    margin: 0,
-    color: "#64748b",
-    fontSize: "14px",
-    fontWeight: 700
-  },
-  cardValue: {
-    fontSize: "24px"
-  },
-  cardDetail: {
-    color: "#475569",
-    fontSize: "14px"
   },
   panel: {
     marginTop: "20px",
