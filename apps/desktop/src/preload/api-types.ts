@@ -22,6 +22,14 @@ import type {
   LinkCustomerToPriceTableInput,
   UpdatePriceTableItemInput
 } from "../services/price-tables";
+import type {
+  CreateVehicleInput,
+  UpdateVehicleInput
+} from "../services/vehicles";
+import type {
+  CreateDriverInput,
+  UpdateDriverInput
+} from "../services/drivers";
 
 export interface KyberRockDesktopApi {
   getStatus: (internetOnline?: boolean) => Promise<DesktopStatusSnapshot>;
@@ -65,6 +73,15 @@ export interface KyberRockDesktopApi {
   priceTablesList: () => Promise<unknown[]>;
   priceTablesListItems: (priceTableId: string) => Promise<unknown[]>;
   priceTablesListCustomerLinks: (priceTableId: string) => Promise<unknown[]>;
+  vehiclesCreate: (input: Omit<CreateVehicleInput, "companyId">) => Promise<unknown>;
+  vehiclesUpdate: (id: string, input: UpdateVehicleInput) => Promise<unknown>;
+  vehiclesDelete: (id: string) => Promise<void>;
+  vehiclesFindOrCreate: (plate: string) => Promise<unknown>;
+  driversCreate: (input: Omit<CreateDriverInput, "companyId">) => Promise<unknown>;
+  driversUpdate: (id: string, input: UpdateDriverInput) => Promise<unknown>;
+  driversDelete: (id: string) => Promise<void>;
+  driversFindOrCreate: (name: string) => Promise<unknown>;
   onUpdateAvailable: (callback: (event: unknown, version: string) => void) => void;
   offUpdateAvailable: (callback: (event: unknown, version: string) => void) => void;
+  onPlateScanned: (callback: (plate: string) => void) => void;
 }

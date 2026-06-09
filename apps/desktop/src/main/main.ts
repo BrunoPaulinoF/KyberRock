@@ -20,6 +20,14 @@ import type {
   UpdatePriceTableItemInput
 } from "../services/price-tables.js";
 import type {
+  CreateVehicleInput,
+  UpdateVehicleInput
+} from "../services/vehicles.js";
+import type {
+  CreateDriverInput,
+  UpdateDriverInput
+} from "../services/drivers.js";
+import type {
   ConfigureReceiptPrintProfileInput,
   ReceiptPrintPayload,
   ReceiptPrinter,
@@ -426,6 +434,52 @@ function registerIpcHandlers(): void {
   ipcMain.handle("desktop:price-tables-list-customer-links", (_event, priceTableId: string) => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.listCustomerLinks(priceTableId);
+  });
+
+  ipcMain.handle("desktop:vehicles-create", (_event, input: Omit<CreateVehicleInput, "companyId">) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.createVehicle(input);
+  });
+
+  ipcMain.handle("desktop:vehicles-update", (_event, id: string, input: UpdateVehicleInput) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.updateVehicle(id, input);
+  });
+
+  ipcMain.handle("desktop:vehicles-delete", (_event, id: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    runtime.deleteVehicle(id);
+  });
+
+  ipcMain.handle("desktop:vehicles-find-or-create", (_event, plate: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.findOrCreateVehicle(plate);
+  });
+
+  ipcMain.handle("desktop:drivers-create", (_event, input: Omit<CreateDriverInput, "companyId">) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.createDriver(input);
+  });
+
+  ipcMain.handle("desktop:drivers-update", (_event, id: string, input: UpdateDriverInput) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.updateDriver(id, input);
+  });
+
+  ipcMain.handle("desktop:drivers-delete", (_event, id: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    runtime.deleteDriver(id);
+  });
+
+  ipcMain.handle("desktop:drivers-find-or-create", (_event, name: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.findOrCreateDriver(name);
+  });
+
+  ipcMain.handle("desktop:plate-scanned", (_event, plate: string) => {
+    if (mainWindow) {
+      mainWindow.webContents.send("desktop:plate-scanned", plate);
+    }
   });
 }
 

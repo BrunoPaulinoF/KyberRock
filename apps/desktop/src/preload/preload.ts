@@ -86,10 +86,28 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:price-tables-list-items", priceTableId),
   priceTablesListCustomerLinks: (priceTableId: string) =>
     ipcRenderer.invoke("desktop:price-tables-list-customer-links", priceTableId),
+  vehiclesCreate: (input: unknown) =>
+    ipcRenderer.invoke("desktop:vehicles-create", input),
+  vehiclesUpdate: (id: string, input: unknown) =>
+    ipcRenderer.invoke("desktop:vehicles-update", id, input),
+  vehiclesDelete: (id: string) =>
+    ipcRenderer.invoke("desktop:vehicles-delete", id),
+  vehiclesFindOrCreate: (plate: string) =>
+    ipcRenderer.invoke("desktop:vehicles-find-or-create", plate),
+  driversCreate: (input: unknown) =>
+    ipcRenderer.invoke("desktop:drivers-create", input),
+  driversUpdate: (id: string, input: unknown) =>
+    ipcRenderer.invoke("desktop:drivers-update", id, input),
+  driversDelete: (id: string) =>
+    ipcRenderer.invoke("desktop:drivers-delete", id),
+  driversFindOrCreate: (name: string) =>
+    ipcRenderer.invoke("desktop:drivers-find-or-create", name),
   onUpdateAvailable: (callback: (event: unknown, version: string) => void) =>
     ipcRenderer.on("desktop:update-available", callback),
   offUpdateAvailable: (callback: (event: unknown, version: string) => void) =>
-    ipcRenderer.off("desktop:update-available", callback)
+    ipcRenderer.off("desktop:update-available", callback),
+  onPlateScanned: (callback: (plate: string) => void) =>
+    ipcRenderer.on("desktop:plate-scanned", (_event: unknown, plate: string) => callback(plate))
 };
 
 contextBridge.exposeInMainWorld("kyberrockDesktop", desktopApi);

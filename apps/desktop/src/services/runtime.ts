@@ -90,6 +90,22 @@ import {
   type LinkCustomerToPriceTableInput,
   type UpdatePriceTableItemInput
 } from "./price-tables.js";
+import {
+  createVehicle,
+  deleteVehicle,
+  findOrCreateVehicle,
+  updateVehicle,
+  type CreateVehicleInput,
+  type UpdateVehicleInput
+} from "./vehicles.js";
+import {
+  createDriver,
+  deleteDriver,
+  findOrCreateDriver,
+  updateDriver,
+  type CreateDriverInput,
+  type UpdateDriverInput
+} from "./drivers.js";
 
 export interface StartSimulatedWeighingInput {
   operationType: OperationType;
@@ -449,6 +465,68 @@ export class DesktopRuntime {
   listCustomerLinks(priceTableId: string): unknown[] {
     this.assertDesktopAccess();
     return listCustomerLinks(this.database, priceTableId);
+  }
+
+  createVehicle(input: Omit<CreateVehicleInput, "companyId">): unknown {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    const result = createVehicle(this.database, { ...input, companyId: identity.companyId });
+    this.cacheStore.invalidate("vehicle", identity.companyId);
+    return result;
+  }
+
+  updateVehicle(id: string, input: UpdateVehicleInput): unknown {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    const result = updateVehicle(this.database, id, input);
+    this.cacheStore.invalidate("vehicle", identity.companyId);
+    return result;
+  }
+
+  deleteVehicle(id: string): void {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    deleteVehicle(this.database, id);
+    this.cacheStore.invalidate("vehicle", identity.companyId);
+  }
+
+  findOrCreateVehicle(plate: string): unknown {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    const result = findOrCreateVehicle(this.database, identity.companyId, plate);
+    this.cacheStore.invalidate("vehicle", identity.companyId);
+    return result;
+  }
+
+  createDriver(input: Omit<CreateDriverInput, "companyId">): unknown {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    const result = createDriver(this.database, { ...input, companyId: identity.companyId });
+    this.cacheStore.invalidate("driver", identity.companyId);
+    return result;
+  }
+
+  updateDriver(id: string, input: UpdateDriverInput): unknown {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    const result = updateDriver(this.database, id, input);
+    this.cacheStore.invalidate("driver", identity.companyId);
+    return result;
+  }
+
+  deleteDriver(id: string): void {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    deleteDriver(this.database, id);
+    this.cacheStore.invalidate("driver", identity.companyId);
+  }
+
+  findOrCreateDriver(name: string): unknown {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    const result = findOrCreateDriver(this.database, identity.companyId, name);
+    this.cacheStore.invalidate("driver", identity.companyId);
+    return result;
   }
 
   private ensureIdentity(): LocalDesktopIdentity {

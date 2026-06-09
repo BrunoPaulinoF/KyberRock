@@ -784,10 +784,27 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
               <RegistrationsPlaceholder title="Condicoes de Pagamento (OMIE)" description="Condicoes de pagamento sincronizadas do OMIE." />
             ) : null}
             {registrationsTab === "vehicles" ? (
-              <RegistrationsPlaceholder title="Veiculos" description="Cadastro de veiculos (placa) com suporte a cadastro rapido durante a pesagem." />
+              <SimpleCrudList
+                desktopApi={desktopApi}
+                entityType="vehicle"
+                title="Veiculos"
+                fields={[
+                  { key: "plate", label: "Placa", required: true },
+                  { key: "description", label: "Descricao", required: false }
+                ]}
+              />
             ) : null}
             {registrationsTab === "drivers" ? (
-              <RegistrationsPlaceholder title="Motoristas" description="Cadastro de motoristas com suporte a cadastro rapido durante a pesagem." />
+              <SimpleCrudList
+                desktopApi={desktopApi}
+                entityType="driver"
+                title="Motoristas"
+                fields={[
+                  { key: "name", label: "Nome", required: true },
+                  { key: "document", label: "CPF", required: false },
+                  { key: "phone", label: "Telefone", required: false }
+                ]}
+              />
             ) : null}
             {registrationsTab === "carriers" ? (
               <RegistrationsPlaceholder title="Transportadoras" description="Transportadoras do OMIE e cadastradas localmente." />
@@ -1407,6 +1424,172 @@ function CustomerListView({
             </div>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+function SimpleCrudList({
+  desktopApi,
+  entityType,
+  title,
+  fields
+}: {
+  desktopApi: KyberRockDesktopApi;
+  entityType: "vehicle" | "driver";
+  title: string;
+  fields: Array<{ key: string; label: string; required: boolean }>;
+}) {
+  const [items, setItems] = useState<Array<Record<string, string | null>>>([]);
+  const [search, setSearch] = useState("");
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [formData, setFormData] = useState<Record<string, string>>({});
+  const [msg, setMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    loadItems();
+  }, [search]);
+
+  async function loadItems(): Promise<void> {
+    const result = await desktopApi.queryCache({
+      entityType: entityType,
+      search: search || undefined,
+      limit: 200
+    });
+    setItems(result.rows as Array<Record<string, string | null>>);
+  }
+
+  function resetForm(): void {
+    const init: Record<string, string> = {};
+    for (const f of fields) init[f.key] = "";
+    setFormData(init);
+    setEditingId(null);
+  }
+
+  function openCreate(): void {
+    resetForm();
+    setShowForm(true);
+  }
+
+  function openEdit(item: Record<string, string | null>): void {
+    const data: Record<string, string> = {};
+    for (const f of fields) data[f.key] = item[f.key] ?? "";
+    setFormData(data);
+    setEditingId(item.id as string);
+    setShowForm(true);
+  }
+
+  async function handleSave(): Promise<void> {
+    const requiredField = fields.find((f) => f.required && !formData[f.key].trim());
+    if (requiredField) return;
+
+    try {
+      const input: Record<string, string> = {};
+      for (const f of fields) {
+        if (formData[f.key].trim()) input[f.key] = formData[f.key].trim();
+      }
+
+      if (editingId) {
+        if (entityType === "vehicle") {
+          await desktopApi.vehiclesUpdate(editingId, input as unknown as { plate?: string });
+        } else {
+          await desktopApi.driversUpdate(editingId, input as unknown as { name?: string });
+        }
+      } else {
+        if (entityType === "vehicle") {
+          await desktopApi.vehiclesCreate(input as unknown as { plate: string });
+        } else {
+          await desktopApi.driversCreate(input as unknown as { name: string });
+        }
+      }
+
+      setShowForm(false);
+      resetForm();
+      await loadItems();
+      setMsg(`${entityType === "vehicle" ? "Veiculo" : "Motorista"} salvo.`);
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : "Erro");
+    }
+  }
+
+  async function handleDelete(id: string): Promise<void> {
+    if (!window.confirm("Confirmar exclusao?")) return;
+    if (entityType === "vehicle") {
+      await desktopApi.vehiclesDelete(id);
+    } else {
+      await desktopApi.driversDelete(id);
+    }
+    await loadItems();
+    setMsg("Excluido.");
+  }
+
+  function displayLabel(item: Record<string, string | null>): string {
+    if (entityType === "vehicle") return item.plate ?? item.id ?? "";
+    return item.name ?? item.document ?? item.id ?? "";
+  }
+
+  function displaySub(item: Record<string, string | null>): string {
+    if (entityType === "vehicle") {
+      return item.description ? `Desc: ${item.description}` : "";
+    }
+    const parts: string[] = [];
+    if (item.document) parts.push(`CPF: ${item.document}`);
+    if (item.phone) parts.push(item.phone);
+    return parts.join(" | ");
+  }
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: "12px", marginBottom: "16px", flexWrap: "wrap" }}>
+        <input
+          placeholder={`Buscar ${title.toLowerCase()}...`}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{ ...styles.input, flex: 1, minWidth: "200px" }}
+        />
+        <button type="button" onClick={openCreate} style={styles.primaryButton}>
+          + Novo
+        </button>
+      </div>
+
+      {msg ? <p style={{ color: "#16a34a", fontWeight: 700, marginBottom: "8px" }}>{msg}</p> : null}
+
+      {showForm ? (
+        <div style={{ ...styles.card, marginBottom: "16px", padding: "20px" }}>
+          <h3 style={{ marginTop: 0 }}>{editingId ? "Editar" : "Novo"}</h3>
+          {fields.map((f) => (
+            <label key={f.key} style={styles.fieldLabel}>
+              {f.label}{f.required ? " *" : ""}
+              <input
+                value={formData[f.key] || ""}
+                onChange={(e) => setFormData({ ...formData, [f.key]: e.target.value })}
+                style={styles.input}
+              />
+            </label>
+          ))}
+          <div style={{ display: "flex", gap: "12px", marginTop: "16px" }}>
+            <button type="button" onClick={handleSave} style={styles.primaryButton}>Salvar</button>
+            <button type="button" onClick={() => setShowForm(false)} style={styles.secondaryButton}>Cancelar</button>
+          </div>
+        </div>
+      ) : null}
+
+      {items.length === 0 ? (
+        <p style={{ color: "#64748b" }}>Nenhum registro encontrado.</p>
+      ) : (
+        items.map((item) => (
+          <div key={item.id as string} style={styles.operationRow}>
+            <div>
+              <strong>{displayLabel(item)}</strong>
+              {displaySub(item) ? <p style={{ ...styles.muted, margin: "2px 0 0 0", fontSize: "13px" }}>{displaySub(item)}</p> : null}
+            </div>
+            <div style={{ display: "flex", gap: "8px" }}>
+              <button type="button" onClick={() => openEdit(item)} style={styles.secondaryButton}>Editar</button>
+              <button type="button" onClick={() => handleDelete(item.id as string)} style={{ ...styles.secondaryButton, color: "#b91c1c", borderColor: "#fecaca" }}>Excluir</button>
+            </div>
+          </div>
+        ))
       )}
     </div>
   );
