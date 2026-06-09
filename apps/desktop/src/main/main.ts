@@ -14,6 +14,12 @@ import type {
   UpdateCustomerInput
 } from "../services/customers.js";
 import type {
+  AddPriceTableItemInput,
+  CreatePriceTableInput,
+  LinkCustomerToPriceTableInput,
+  UpdatePriceTableItemInput
+} from "../services/price-tables.js";
+import type {
   ConfigureReceiptPrintProfileInput,
   ReceiptPrintPayload,
   ReceiptPrinter,
@@ -365,6 +371,61 @@ function registerIpcHandlers(): void {
     }
 
     runtime.deleteCustomer(id);
+  });
+
+  ipcMain.handle("desktop:price-tables-create", (_event, input: Omit<CreatePriceTableInput, "companyId">) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.createPriceTable(input);
+  });
+
+  ipcMain.handle("desktop:price-tables-update-name", (_event, id: string, name: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.updatePriceTableName(id, name);
+  });
+
+  ipcMain.handle("desktop:price-tables-delete", (_event, id: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    runtime.deletePriceTable(id);
+  });
+
+  ipcMain.handle("desktop:price-tables-add-item", (_event, input: AddPriceTableItemInput) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.addPriceTableItem(input);
+  });
+
+  ipcMain.handle("desktop:price-tables-update-item", (_event, id: string, input: UpdatePriceTableItemInput) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.updatePriceTableItem(id, input);
+  });
+
+  ipcMain.handle("desktop:price-tables-remove-item", (_event, id: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    runtime.removePriceTableItem(id);
+  });
+
+  ipcMain.handle("desktop:price-tables-link-customer", (_event, input: LinkCustomerToPriceTableInput) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.linkCustomerToPriceTable(input);
+  });
+
+  ipcMain.handle("desktop:price-tables-unlink-customer", (_event, linkId: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    runtime.unlinkCustomerFromPriceTable(linkId);
+  });
+
+  ipcMain.handle("desktop:price-tables-list", () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.listPriceTables();
+  });
+
+  ipcMain.handle("desktop:price-tables-list-items", (_event, priceTableId: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.listPriceTableItems(priceTableId);
+  });
+
+  ipcMain.handle("desktop:price-tables-list-customer-links", (_event, priceTableId: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.listCustomerLinks(priceTableId);
   });
 }
 

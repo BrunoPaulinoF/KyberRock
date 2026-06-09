@@ -16,6 +16,12 @@ import type {
   CreateCustomerInput,
   UpdateCustomerInput
 } from "../services/customers";
+import type {
+  AddPriceTableItemInput,
+  CreatePriceTableInput,
+  LinkCustomerToPriceTableInput,
+  UpdatePriceTableItemInput
+} from "../services/price-tables";
 
 export interface KyberRockDesktopApi {
   getStatus: (internetOnline?: boolean) => Promise<DesktopStatusSnapshot>;
@@ -48,6 +54,17 @@ export interface KyberRockDesktopApi {
   customersCreate: (input: Omit<CreateCustomerInput, "companyId">) => Promise<unknown>;
   customersUpdate: (id: string, input: UpdateCustomerInput) => Promise<unknown>;
   customersDelete: (id: string) => Promise<void>;
+  priceTablesCreate: (input: Omit<CreatePriceTableInput, "companyId">) => Promise<unknown>;
+  priceTablesUpdateName: (id: string, name: string) => Promise<unknown>;
+  priceTablesDelete: (id: string) => Promise<void>;
+  priceTablesAddItem: (input: AddPriceTableItemInput) => Promise<unknown>;
+  priceTablesUpdateItem: (id: string, input: UpdatePriceTableItemInput) => Promise<unknown>;
+  priceTablesRemoveItem: (id: string) => Promise<void>;
+  priceTablesLinkCustomer: (input: LinkCustomerToPriceTableInput) => Promise<unknown>;
+  priceTablesUnlinkCustomer: (linkId: string) => Promise<void>;
+  priceTablesList: () => Promise<unknown[]>;
+  priceTablesListItems: (priceTableId: string) => Promise<unknown[]>;
+  priceTablesListCustomerLinks: (priceTableId: string) => Promise<unknown[]>;
   onUpdateAvailable: (callback: (event: unknown, version: string) => void) => void;
   offUpdateAvailable: (callback: (event: unknown, version: string) => void) => void;
 }

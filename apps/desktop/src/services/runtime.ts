@@ -73,6 +73,23 @@ import {
   type CreateCustomerInput,
   type UpdateCustomerInput
 } from "./customers.js";
+import {
+  addPriceTableItem,
+  createPriceTable,
+  deletePriceTable,
+  linkCustomerToPriceTable,
+  listPriceTableItems,
+  listPriceTables,
+  listCustomerLinks,
+  removePriceTableItem,
+  unlinkCustomerFromPriceTable,
+  updatePriceTableItem,
+  updatePriceTableName,
+  type AddPriceTableItemInput,
+  type CreatePriceTableInput,
+  type LinkCustomerToPriceTableInput,
+  type UpdatePriceTableItemInput
+} from "./price-tables.js";
 
 export interface StartSimulatedWeighingInput {
   operationType: OperationType;
@@ -363,6 +380,75 @@ export class DesktopRuntime {
     const identity = this.ensureIdentity();
     deleteCustomer(this.database, id);
     this.cacheStore.invalidate("customer", identity.companyId);
+  }
+
+  createPriceTable(input: Omit<CreatePriceTableInput, "companyId">): unknown {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    const result = createPriceTable(this.database, { ...input, companyId: identity.companyId });
+    this.cacheStore.invalidate("price_table", identity.companyId);
+    return result;
+  }
+
+  updatePriceTableName(id: string, name: string): unknown {
+    this.assertDesktopAccess();
+    const result = updatePriceTableName(this.database, id, name);
+    this.cacheStore.invalidate("price_table", this.ensureIdentity().companyId);
+    return result;
+  }
+
+  deletePriceTable(id: string): void {
+    this.assertDesktopAccess();
+    deletePriceTable(this.database, id);
+    this.cacheStore.invalidate("price_table", this.ensureIdentity().companyId);
+  }
+
+  addPriceTableItem(input: AddPriceTableItemInput): unknown {
+    this.assertDesktopAccess();
+    const result = addPriceTableItem(this.database, input);
+    this.cacheStore.invalidate("price_table_item", this.ensureIdentity().companyId);
+    return result;
+  }
+
+  updatePriceTableItem(id: string, input: UpdatePriceTableItemInput): unknown {
+    this.assertDesktopAccess();
+    const result = updatePriceTableItem(this.database, id, input);
+    this.cacheStore.invalidate("price_table_item", this.ensureIdentity().companyId);
+    return result;
+  }
+
+  removePriceTableItem(id: string): void {
+    this.assertDesktopAccess();
+    removePriceTableItem(this.database, id);
+    this.cacheStore.invalidate("price_table_item", this.ensureIdentity().companyId);
+  }
+
+  linkCustomerToPriceTable(input: LinkCustomerToPriceTableInput): unknown {
+    this.assertDesktopAccess();
+    const result = linkCustomerToPriceTable(this.database, input);
+    this.cacheStore.invalidate("customer_price_table", this.ensureIdentity().companyId);
+    return result;
+  }
+
+  unlinkCustomerFromPriceTable(linkId: string): void {
+    this.assertDesktopAccess();
+    unlinkCustomerFromPriceTable(this.database, linkId);
+    this.cacheStore.invalidate("customer_price_table", this.ensureIdentity().companyId);
+  }
+
+  listPriceTables(): unknown[] {
+    this.assertDesktopAccess();
+    return listPriceTables(this.database, this.ensureIdentity().companyId);
+  }
+
+  listPriceTableItems(priceTableId: string): unknown[] {
+    this.assertDesktopAccess();
+    return listPriceTableItems(this.database, priceTableId);
+  }
+
+  listCustomerLinks(priceTableId: string): unknown[] {
+    this.assertDesktopAccess();
+    return listCustomerLinks(this.database, priceTableId);
   }
 
   private ensureIdentity(): LocalDesktopIdentity {

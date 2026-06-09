@@ -775,7 +775,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
               <CustomerListView desktopApi={desktopApi} />
             ) : null}
             {registrationsTab === "price_tables" ? (
-              <RegistrationsPlaceholder title="Tabelas de Preco" description="Cadastro de tabelas de preco vinculadas a clientes e produtos." />
+              <PriceTableListView desktopApi={desktopApi} />
             ) : null}
             {registrationsTab === "products" ? (
               <RegistrationsPlaceholder title="Produtos (OMIE)" description="Produtos sincronizados do OMIE. Visualizacao apenas." />
@@ -1408,6 +1408,308 @@ function CustomerListView({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function PriceTableListView({
+  desktopApi
+}: {
+  desktopApi: KyberRockDesktopApi;
+}) {
+  const [tables, setTables] = useState<Array<{ id: string; name: string; needsPush?: boolean }>>([]);
+  const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
+  const [items, setItems] = useState<Array<{ id: string; productId: string; productDesc?: string; unitPriceCents: number }>>([]);
+  const [linkedCustomers, setLinkedCustomers] = useState<Array<{ id: string; customerId: string; customerTradeName: string }>>([]);
+  const [customers, setCustomers] = useState<Array<{ id: string; tradeName: string }>>([]);
+  const [products, setProducts] = useState<Array<{ id: string; code: string; description: string }>>([]);
+  const [newTableName, setNewTableName] = useState("");
+  const [editingTableId, setEditingTableId] = useState<string | null>(null);
+  const [editingTableName, setEditingTableName] = useState("");
+  const [itemProductId, setItemProductId] = useState("");
+  const [itemPriceReais, setItemPriceReais] = useState("");
+  const [linkCustomerId, setLinkCustomerId] = useState("");
+  const [message, setPriceMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    loadTables();
+    loadProducts();
+  }, []);
+
+  useEffect(() => {
+    if (selectedTableId) {
+      loadTableDetails(selectedTableId);
+      loadCustomers();
+    }
+  }, [selectedTableId]);
+
+  async function loadTables(): Promise<void> {
+    const list = await desktopApi.priceTablesList() as Array<{ id: string; name: string }>;
+    setTables(list);
+  }
+
+  async function loadCustomers(): Promise<void> {
+    const result = await desktopApi.queryCache({ entityType: "customer", activeOnly: true, limit: 200 });
+    setCustomers(result.rows as Array<{ id: string; tradeName: string }>);
+  }
+
+  async function loadProducts(): Promise<void> {
+    const result = await desktopApi.queryCache({ entityType: "product", activeOnly: true, limit: 200 });
+    setProducts(result.rows as Array<{ id: string; code: string; description: string }>);
+  }
+
+  async function loadTableDetails(tableId: string): Promise<void> {
+    const [itemList, links] = await Promise.all([
+      desktopApi.priceTablesListItems(tableId) as Promise<Array<{ id: string; productId: string; unitPriceCents: number }>>,
+      desktopApi.priceTablesListCustomerLinks(tableId) as Promise<Array<{ id: string; customerId: string; customerTradeName: string }>>
+    ]);
+
+    const enriched = await Promise.all(
+      itemList.map(async (item) => {
+        try {
+          const productRows = (await desktopApi.queryCache({ entityType: "product" })).rows as Array<{ id: string; description: string }>;
+          const product = productRows.find((p) => p.id === item.productId);
+          return { ...item, productDesc: product?.description ?? item.productId };
+        } catch {
+          return { ...item, productDesc: item.productId };
+        }
+      })
+    );
+
+    setItems(enriched);
+    setLinkedCustomers(links);
+  }
+
+  async function handleCreateTable(): Promise<void> {
+    if (!newTableName.trim()) return;
+    await desktopApi.priceTablesCreate({ name: newTableName.trim() });
+    setNewTableName("");
+    setPriceMessage("Tabela criada.");
+    await loadTables();
+  }
+
+  async function handleRenameTable(): Promise<void> {
+    if (!editingTableId || !editingTableName.trim()) return;
+    await desktopApi.priceTablesUpdateName(editingTableId, editingTableName.trim());
+    setEditingTableId(null);
+    setEditingTableName("");
+    setPriceMessage("Tabela renomeada.");
+    await loadTables();
+  }
+
+  async function handleDeleteTable(id: string): Promise<void> {
+    if (!window.confirm("Excluir tabela e todos os seus itens?")) return;
+    await desktopApi.priceTablesDelete(id);
+    if (selectedTableId === id) setSelectedTableId(null);
+    setPriceMessage("Tabela excluida.");
+    await loadTables();
+  }
+
+  async function handleAddItem(): Promise<void> {
+    if (!selectedTableId || !itemProductId || !itemPriceReais.trim()) return;
+    const unitPriceCents = parseCurrencyToCents(itemPriceReais);
+    if (unitPriceCents === null || unitPriceCents === undefined) return;
+
+    await desktopApi.priceTablesAddItem({
+      priceTableId: selectedTableId,
+      productId: itemProductId,
+      unitPriceCents,
+      unit: "kg"
+    });
+    setItemProductId("");
+    setItemPriceReais("");
+    setPriceMessage("Item adicionado.");
+    await loadTableDetails(selectedTableId);
+  }
+
+  async function handleRemoveItem(itemId: string): Promise<void> {
+    await desktopApi.priceTablesRemoveItem(itemId);
+    setPriceMessage("Item removido.");
+    if (selectedTableId) await loadTableDetails(selectedTableId);
+  }
+
+  async function handleLinkCustomer(): Promise<void> {
+    if (!selectedTableId || !linkCustomerId) return;
+    await desktopApi.priceTablesLinkCustomer({
+      customerId: linkCustomerId,
+      priceTableId: selectedTableId
+    });
+    setLinkCustomerId("");
+    setPriceMessage("Cliente vinculado.");
+    await loadTableDetails(selectedTableId);
+  }
+
+  async function handleUnlinkCustomer(linkId: string): Promise<void> {
+    await desktopApi.priceTablesUnlinkCustomer(linkId);
+    setPriceMessage("Vinculo removido.");
+    if (selectedTableId) await loadTableDetails(selectedTableId);
+  }
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "250px 1fr", gap: "20px", minHeight: "400px" }}>
+      <div style={{ borderRight: "1px solid #e2e8f0", paddingRight: "16px" }}>
+        <h3 style={{ marginTop: 0 }}>Tabelas</h3>
+        <div style={{ display: "flex", gap: "6px", marginBottom: "12px" }}>
+          <input
+            placeholder="Nova tabela..."
+            value={newTableName}
+            onChange={(e) => setNewTableName(e.target.value)}
+            style={{ ...styles.input, flex: 1, padding: "6px 8px", fontSize: "13px" }}
+          />
+          <button type="button" onClick={handleCreateTable} style={{ ...styles.primaryButton, padding: "6px 10px", fontSize: "13px" }}>
+            +
+          </button>
+        </div>
+
+        {tables.map((table) => (
+          <div
+            key={table.id}
+            onClick={() => setSelectedTableId(table.id)}
+            style={{
+              padding: "8px 10px",
+              cursor: "pointer",
+              borderRadius: "8px",
+              marginBottom: "4px",
+              background: selectedTableId === table.id ? "#f1f5f9" : "transparent",
+              fontWeight: selectedTableId === table.id ? 700 : 400
+            }}
+          >
+            {editingTableId === table.id ? (
+              <div style={{ display: "flex", gap: "4px" }}>
+                <input
+                  value={editingTableName}
+                  onChange={(e) => setEditingTableName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleRenameTable(); }}
+                  style={{ ...styles.input, flex: 1, padding: "4px 6px", fontSize: "12px" }}
+                  autoFocus
+                />
+                <button type="button" onClick={handleRenameTable} style={{ ...styles.primaryButton, padding: "4px 6px", fontSize: "11px" }}>OK</button>
+              </div>
+            ) : (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: "14px" }}>{table.name}</span>
+                <div style={{ display: "flex", gap: "4px" }}>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setEditingTableId(table.id); setEditingTableName(table.name); }}
+                    style={{ border: "none", background: "none", cursor: "pointer", fontSize: "12px", color: "#64748b" }}
+                  >
+                    ✎
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); handleDeleteTable(table.id); }}
+                    style={{ border: "none", background: "none", cursor: "pointer", fontSize: "12px", color: "#b91c1c" }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <div>
+        {message ? <p style={{ color: "#16a34a", fontWeight: 700, marginBottom: "8px" }}>{message}</p> : null}
+
+        {!selectedTableId ? (
+          <p style={{ color: "#64748b" }}>Selecione uma tabela para ver seus itens.</p>
+        ) : (
+          <>
+            <h3 style={{ marginTop: 0 }}>Itens da Tabela</h3>
+
+            <div style={{ display: "flex", gap: "8px", marginBottom: "16px", alignItems: "flex-end" }}>
+              <label style={{ ...styles.fieldLabel, marginBottom: 0, flex: 1 }}>
+                Produto
+                <select
+                  value={itemProductId}
+                  onChange={(e) => setItemProductId(e.target.value)}
+                  style={styles.input}
+                >
+                  <option value="">Selecione...</option>
+                  {products.map((p) => (
+                    <option key={p.id} value={p.id}>{p.code} - {p.description}</option>
+                  ))}
+                </select>
+              </label>
+              <label style={{ ...styles.fieldLabel, marginBottom: 0, width: "120px" }}>
+                Preco/kg (R$)
+                <input
+                  value={itemPriceReais}
+                  onChange={(e) => setItemPriceReais(e.target.value)}
+                  placeholder="0,45"
+                  style={styles.input}
+                />
+              </label>
+              <button type="button" onClick={handleAddItem} style={{ ...styles.primaryButton, padding: "10px 14px" }}>
+                Adicionar
+              </button>
+            </div>
+
+            {items.length === 0 ? (
+              <p style={{ color: "#64748b", marginBottom: "24px" }}>
+                Nenhum item cadastrado.
+              </p>
+            ) : (
+              <div style={{ marginBottom: "24px" }}>
+                {items.map((item) => (
+                  <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderTop: "1px solid #e2e8f0" }}>
+                    <span>
+                      <strong>{item.productDesc}</strong> — {formatMoney(item.unitPriceCents)}/kg
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveItem(item.id)}
+                      style={{ border: "none", background: "none", cursor: "pointer", color: "#b91c1c", fontSize: "16px" }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <h3 style={{ marginTop: "24px" }}>Clientes Vinculados</h3>
+
+            <div style={{ display: "flex", gap: "8px", marginBottom: "12px", alignItems: "flex-end" }}>
+              <label style={{ ...styles.fieldLabel, marginBottom: 0, flex: 1 }}>
+                Cliente
+                <select
+                  value={linkCustomerId}
+                  onChange={(e) => setLinkCustomerId(e.target.value)}
+                  style={styles.input}
+                >
+                  <option value="">Selecione...</option>
+                  {customers.map((c) => (
+                    <option key={c.id} value={c.id}>{c.tradeName}</option>
+                  ))}
+                </select>
+              </label>
+              <button type="button" onClick={handleLinkCustomer} style={{ ...styles.primaryButton, padding: "10px 14px" }}>
+                Vincular
+              </button>
+            </div>
+
+            {linkedCustomers.length === 0 ? (
+              <p style={{ color: "#64748b" }}>Nenhum cliente vinculado.</p>
+            ) : (
+              linkedCustomers.map((link) => (
+                <div key={link.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderTop: "1px solid #e2e8f0" }}>
+                  <span>{link.customerTradeName}</span>
+                  <button
+                    type="button"
+                    onClick={() => handleUnlinkCustomer(link.id)}
+                    style={{ border: "none", background: "none", cursor: "pointer", color: "#b91c1c", fontSize: "16px" }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }

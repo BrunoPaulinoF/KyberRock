@@ -64,6 +64,28 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:customers-update", id, input),
   customersDelete: (id: string) =>
     ipcRenderer.invoke("desktop:customers-delete", id),
+  priceTablesCreate: (input: unknown) =>
+    ipcRenderer.invoke("desktop:price-tables-create", input),
+  priceTablesUpdateName: (id: string, name: string) =>
+    ipcRenderer.invoke("desktop:price-tables-update-name", id, name),
+  priceTablesDelete: (id: string) =>
+    ipcRenderer.invoke("desktop:price-tables-delete", id),
+  priceTablesAddItem: (input: unknown) =>
+    ipcRenderer.invoke("desktop:price-tables-add-item", input),
+  priceTablesUpdateItem: (id: string, input: unknown) =>
+    ipcRenderer.invoke("desktop:price-tables-update-item", id, input),
+  priceTablesRemoveItem: (id: string) =>
+    ipcRenderer.invoke("desktop:price-tables-remove-item", id),
+  priceTablesLinkCustomer: (input: unknown) =>
+    ipcRenderer.invoke("desktop:price-tables-link-customer", input),
+  priceTablesUnlinkCustomer: (linkId: string) =>
+    ipcRenderer.invoke("desktop:price-tables-unlink-customer", linkId),
+  priceTablesList: () =>
+    ipcRenderer.invoke("desktop:price-tables-list"),
+  priceTablesListItems: (priceTableId: string) =>
+    ipcRenderer.invoke("desktop:price-tables-list-items", priceTableId),
+  priceTablesListCustomerLinks: (priceTableId: string) =>
+    ipcRenderer.invoke("desktop:price-tables-list-customer-links", priceTableId),
   onUpdateAvailable: (callback: (event: unknown, version: string) => void) =>
     ipcRenderer.on("desktop:update-available", callback),
   offUpdateAvailable: (callback: (event: unknown, version: string) => void) =>
