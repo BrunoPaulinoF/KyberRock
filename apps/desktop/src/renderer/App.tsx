@@ -106,7 +106,41 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
   const handleUnlocked = useCallback(() => setPhase("unlocked"), []);
 
+  // Efeito para monitorar bloqueio em tempo real (quando unlocked)
   useEffect(() => {
+    if (!desktopApi || phase !== "unlocked") {
+      return;
+    }
+
+    let active = true;
+
+    async function checkAccess(): Promise<void> {
+      if (!active || !desktopApi) return;
+      try {
+        const access = await desktopApi.validateDesktopAccess(navigator.onLine, false);
+        setAccessStatus(access);
+        if (!access.canOperate) {
+          setPhase("locked");
+        }
+      } catch (error) {
+        console.error("Erro ao verificar acesso:", error);
+      }
+    }
+
+    void checkAccess();
+    const intervalId = window.setInterval(() => void checkAccess(), 5_000);
+
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
+    };
+  }, [desktopApi, phase]);
+
+  useEffect(() => {
+    if (!desktopApi) {
+      return;
+    }
+
     let active = true;
 
     async function refresh(): Promise<void> {
@@ -122,7 +156,6 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         nextPrinters,
         nextProfiles,
         nextReceipts,
-        nextAccess
       ] = await Promise.all([
         desktopApi.getStatus(navigator.onLine),
         desktopApi.getUpdateState(),
@@ -130,19 +163,15 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         desktopApi.listWindowsPrinters(),
         desktopApi.listPrintProfiles(),
         desktopApi.listPrintReceipts(),
-        desktopApi.validateDesktopAccess(navigator.onLine, false)
       ]);
 
       if (active) {
         setStatus(nextStatus);
-        setAccessStatus(nextAccess);
         setUpdateState(nextUpdateState);
         setOpenOperations(nextOpenOperations);
         setPrinters(nextPrinters);
         setPrintProfiles(nextProfiles);
         setPrintReceipts(nextReceipts);
-        setCompanyName(nextAccess.companyName);
-        setUnitName(nextAccess.unitName);
         setSelectedPrinterName(
           (current) =>
             current ||
@@ -163,17 +192,12 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
           setCloudConnected(false);
         }
 
-        // Bloquear acesso em tempo real se a empresa for desativada
-        if (!nextAccess.canOperate) {
-          setPhase("locked");
-        }
-
         setMessage("Desktop pronto para operacao local offline-first.");
       }
     }
 
     void refresh();
-    const intervalId = window.setInterval(() => void refresh(), 5_000);
+    const intervalId = window.setInterval(() => void refresh(), 15_000);
 
     return () => {
       active = false;
