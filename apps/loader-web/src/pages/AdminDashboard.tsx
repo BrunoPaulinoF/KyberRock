@@ -49,6 +49,8 @@ export function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<"companies" | "users" | "devices">("companies");
   const [isLoading, setIsLoading] = useState(true);
   const [generatedCode, setGeneratedCode] = useState<string | null>(null);
+  const [editingCompany, setEditingCompany] = useState<Company | null>(null);
+  const [editingUnit, setEditingUnit] = useState<Unit | null>(null);
 
   useEffect(() => {
     loadData();
@@ -236,12 +238,89 @@ export function AdminDashboard() {
     }
   }
 
+  async function handleDeleteCompany(companyId: string) {
+    const confirmed = window.confirm("Tem certeza que deseja excluir esta empresa? Todas as unidades vinculadas serao excluidas tambem.");
+    if (!confirmed) return;
+    try {
+      await callAdminFunction("admin-api", {
+        action: "delete_company",
+        payload: { companyId }
+      });
+      await loadData();
+    } catch (error) {
+      console.error("Error deleting company:", error);
+      alert("Erro ao excluir empresa");
+    }
+  }
+
+  async function handleDeleteUnit(unitId: string) {
+    const confirmed = window.confirm("Tem certeza que deseja excluir esta unidade?");
+    if (!confirmed) return;
+    try {
+      await callAdminFunction("admin-api", {
+        action: "delete_unit",
+        payload: { unitId }
+      });
+      await loadData();
+    } catch (error) {
+      console.error("Error deleting unit:", error);
+      alert("Erro ao excluir unidade");
+    }
+  }
+
+  async function handleUpdateCompany(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editingCompany) return;
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    try {
+      await callAdminFunction("admin-api", {
+        action: "update_company",
+        payload: {
+          companyId: editingCompany.id,
+          name: formData.get("name"),
+          legalName: formData.get("legalName"),
+          document: formData.get("document")
+        }
+      });
+      setEditingCompany(null);
+      await loadData();
+    } catch (error) {
+      console.error("Error updating company:", error);
+      alert("Erro ao atualizar empresa");
+    }
+  }
+
+  async function handleUpdateUnit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editingUnit) return;
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    try {
+      await callAdminFunction("admin-api", {
+        action: "update_unit",
+        payload: {
+          unitId: editingUnit.id,
+          name: formData.get("name")
+        }
+      });
+      setEditingUnit(null);
+      await loadData();
+    } catch (error) {
+      console.error("Error updating unit:", error);
+      alert("Erro ao atualizar unidade");
+    }
+  }
+
   return (
     <main style={{ minHeight: "100vh", background: "#f8fafc", padding: "32px" }}>
       <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "32px" }}>
-        <div>
-          <h1 style={{ margin: 0, fontSize: "28px" }}>KyberRock Admin</h1>
-          <p style={{ color: "#64748b", margin: "4px 0 0 0" }}>Gerenciamento de Pedreiras</p>
+        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+          <img src="/kyberrocklogo.png" alt="KyberRock" style={{ width: "48px", height: "48px", objectFit: "contain" }} />
+          <div>
+            <h1 style={{ margin: 0, fontSize: "28px" }}>KyberRock Admin</h1>
+            <p style={{ color: "#64748b", margin: "4px 0 0 0" }}>Gerenciamento de Pedreiras</p>
+          </div>
         </div>
         <button
           onClick={logout}
@@ -329,6 +408,18 @@ export function AdminDashboard() {
                         >
                           {company.isActive ? "Desativar" : "Ativar"}
                         </button>
+                        <button
+                          onClick={() => setEditingCompany(company)}
+                          style={{ padding: "6px 12px", borderRadius: "6px", border: "1px solid #e2e8f0", background: "#f8fafc", cursor: "pointer", fontSize: "12px" }}
+                        >
+                          Editar
+                        </button>
+                        <button
+                          onClick={() => handleDeleteCompany(company.id)}
+                          style={{ padding: "6px 12px", borderRadius: "6px", border: "1px solid #fecaca", background: "#fef2f2", cursor: "pointer", fontSize: "12px", color: "#dc2626" }}
+                        >
+                          Excluir
+                        </button>
                       </div>
                     </div>
                     <p style={{ margin: "8px 0 0 0", fontSize: "12px", color: "#64748b" }}>
@@ -336,6 +427,36 @@ export function AdminDashboard() {
                     </p>
                   </div>
                 ))}
+
+                {/* Edit Company Modal */}
+                {editingCompany && (
+                  <div style={{
+                    position: "fixed",
+                    top: 0, left: 0, right: 0, bottom: 0,
+                    background: "rgba(0,0,0,0.5)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    zIndex: 1000
+                  }}>
+                    <div style={{ background: "#fff", padding: "24px", borderRadius: "16px", width: "100%", maxWidth: "400px" }}>
+                      <h3 style={{ margin: "0 0 16px 0" }}>Editar Empresa</h3>
+                      <form onSubmit={handleUpdateCompany} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                        <input name="name" defaultValue={editingCompany.name} placeholder="Nome fantasia" required style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
+                        <input name="legalName" defaultValue={editingCompany.legalName} placeholder="Razao social" required style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
+                        <input name="document" defaultValue={editingCompany.document} placeholder="CNPJ" style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
+                        <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
+                          <button type="submit" style={{ flex: 1, padding: "10px", borderRadius: "8px", border: "none", background: "#0f172a", color: "#fff", cursor: "pointer", fontWeight: 700 }}>
+                            Salvar
+                          </button>
+                          <button type="button" onClick={() => setEditingCompany(null)} style={{ flex: 1, padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1", background: "#fff", cursor: "pointer" }}>
+                            Cancelar
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+                  </div>
+                )}
               </article>
 
               {/* Create Forms */}
@@ -543,10 +664,50 @@ export function AdminDashboard() {
                               >
                                 {unit.isActive ? "Desativar" : "Ativar"}
                               </button>
+                              <button
+                                onClick={() => setEditingUnit(unit)}
+                                style={{ padding: "8px 14px", borderRadius: "8px", border: "1px solid #e2e8f0", background: "#f8fafc", cursor: "pointer", fontSize: "13px" }}
+                              >
+                                Editar
+                              </button>
+                              <button
+                                onClick={() => handleDeleteUnit(unit.id)}
+                                style={{ padding: "8px 14px", borderRadius: "8px", border: "1px solid #fecaca", background: "#fef2f2", cursor: "pointer", fontSize: "13px", color: "#dc2626" }}
+                              >
+                                Excluir
+                              </button>
                             </div>
                           </div>
                         );
                       })}
+
+                      {/* Edit Unit Modal */}
+                      {editingUnit && (
+                        <div style={{
+                          position: "fixed",
+                          top: 0, left: 0, right: 0, bottom: 0,
+                          background: "rgba(0,0,0,0.5)",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          zIndex: 1000
+                        }}>
+                          <div style={{ background: "#fff", padding: "24px", borderRadius: "16px", width: "100%", maxWidth: "400px" }}>
+                            <h3 style={{ margin: "0 0 16px 0" }}>Editar Unidade</h3>
+                            <form onSubmit={handleUpdateUnit} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                              <input name="name" defaultValue={editingUnit.name} placeholder="Nome da unidade" required style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
+                              <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
+                                <button type="submit" style={{ flex: 1, padding: "10px", borderRadius: "8px", border: "none", background: "#0f172a", color: "#fff", cursor: "pointer", fontWeight: 700 }}>
+                                  Salvar
+                                </button>
+                                <button type="button" onClick={() => setEditingUnit(null)} style={{ flex: 1, padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1", background: "#fff", cursor: "pointer" }}>
+                                  Cancelar
+                                </button>
+                              </div>
+                            </form>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </article>
