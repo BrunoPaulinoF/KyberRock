@@ -32,7 +32,7 @@ interface WeighingFormState {
   unitPriceReais: string;
 }
 
-type ActiveView = "dashboard" | "new-weighing" | "open-operations" | "registrations" | "printing" | "cloud";
+type ActiveView = "dashboard" | "new-weighing" | "open-operations" | "scale" | "registrations" | "printing" | "cloud";
 
 const initialWeighingForm: WeighingFormState = {
   operationType: "invoice",
@@ -539,6 +539,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         </button>
         <button
           type="button"
+          onClick={() => setActiveView("scale")}
+          style={viewButtonStyle(activeView === "scale")}
+        >
+          Balanca
+        </button>
+        <button
+          type="button"
           onClick={() => setActiveView("registrations")}
           style={viewButtonStyle(activeView === "registrations")}
         >
@@ -729,6 +736,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
             </article>
           ))}
         </section>
+      ) : null}
+
+      {activeView === "scale" ? (
+        <ScaleView desktopApi={desktopApi} />
       ) : null}
 
       {activeView === "registrations" ? (
@@ -1464,6 +1475,155 @@ function CustomerListView({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function ScaleView({
+  desktopApi
+}: {
+  desktopApi: KyberRockDesktopApi;
+}) {
+  const [host, setHost] = useState("192.168.1.100");
+  const [port, setPort] = useState("4001");
+  const [connected, setConnected] = useState(false);
+  const [reading, setReading] = useState<{ weightKg: number; stable: boolean } | null>(null);
+  const [status, setStatus] = useState<string>("Disconectado");
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!desktopApi) return;
+
+    desktopApi.onScaleReading((r) => {
+      setReading(r);
+    });
+
+    return () => {
+      if (connected) {
+        void desktopApi.scaleDisconnect();
+        setConnected(false);
+      }
+    };
+  }, [desktopApi]);
+
+  useEffect(() => {
+    // Poll status every 3 seconds
+    if (!connected || !desktopApi) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const s = await desktopApi.scaleGetStatus();
+        if (s.state === "disconnected" || s.state === "error") {
+          setConnected(false);
+          setStatus(s.errorMessage ?? "Desconectado");
+        } else {
+          setStatus(s.state === "connected" ? "Conectado" : "Conectando...");
+        }
+        if (s.errorMessage) setError(s.errorMessage);
+      } catch {
+        // Ignore polling errors
+      }
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [connected, desktopApi]);
+
+  async function handleConnect(): Promise<void> {
+    setError(null);
+    try {
+      await desktopApi.scaleConnect({
+        host: host.trim(),
+        port: parseInt(port, 10) || 4001
+      });
+      setConnected(true);
+      setStatus("Conectado");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Falha ao conectar");
+      setConnected(false);
+    }
+  }
+
+  async function handleDisconnect(): Promise<void> {
+    await desktopApi.scaleDisconnect();
+    setConnected(false);
+    setStatus("Disconectado");
+    setReading(null);
+  }
+
+  return (
+    <div>
+      <section style={styles.twoColumns}>
+        <article style={styles.panel}>
+          <h2 style={styles.panelTitle}>Configuracao da Balanca Toledo</h2>
+          <label style={styles.fieldLabel}>
+            Host / IP
+            <input
+              value={host}
+              onChange={(e) => setHost(e.target.value)}
+              style={styles.input}
+              placeholder="192.168.1.100"
+            />
+          </label>
+          <label style={styles.fieldLabel}>
+            Porta TCP
+            <input
+              value={port}
+              onChange={(e) => setPort(e.target.value)}
+              style={styles.input}
+              placeholder="4001"
+            />
+          </label>
+          {error ? <p style={styles.errorMessage}>{error}</p> : null}
+          <div style={{ display: "flex", gap: "12px", marginTop: "16px" }}>
+            <button
+              type="button"
+              onClick={handleConnect}
+              disabled={connected}
+              style={{ ...styles.primaryButton, opacity: connected ? 0.5 : 1 }}
+            >
+              Conectar
+            </button>
+            <button
+              type="button"
+              onClick={handleDisconnect}
+              disabled={!connected}
+              style={{ ...styles.secondaryButton, opacity: connected ? 1 : 0.5 }}
+            >
+              Desconectar
+            </button>
+          </div>
+        </article>
+
+        <article style={styles.panel}>
+          <h2 style={styles.panelTitle}>Leitura ao Vivo</h2>
+          <p style={styles.muted}>Status: {status}</p>
+          <div style={{
+            marginTop: "16px",
+            padding: "40px 20px",
+            background: connected ? "#f0fdf4" : "#f8fafc",
+            borderRadius: "16px",
+            border: `3px solid ${connected && reading?.stable ? "#16a34a" : connected ? "#d97706" : "#e2e8f0"}`,
+            textAlign: "center"
+          }}>
+            <p style={{ fontSize: "48px", fontWeight: 700, margin: 0, color: connected ? "#0f172a" : "#94a3b8", fontFamily: "monospace" }}>
+              {reading ? new Intl.NumberFormat("pt-BR").format(reading.weightKg) : "----"}
+            </p>
+            <p style={{ fontSize: "20px", color: "#64748b", margin: "8px 0 0 0" }}>
+              {connected ? "kg" : ""}
+            </p>
+            {reading ? (
+              <p style={{
+                fontSize: "14px",
+                color: reading.stable ? "#16a34a" : "#d97706",
+                marginTop: "8px",
+                fontWeight: 700
+              }}>
+                {reading.stable ? "Estavel" : "Instavel"}
+              </p>
+            ) : null}
+          </div>
+        </article>
+      </section>
     </div>
   );
 }

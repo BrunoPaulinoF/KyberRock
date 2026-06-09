@@ -110,12 +110,22 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:carriers-delete", id),
   getOmieStatus: () =>
     ipcRenderer.invoke("desktop:get-omie-status"),
+  scaleConnect: (config: unknown) =>
+    ipcRenderer.invoke("desktop:scale-connect", config),
+  scaleDisconnect: () =>
+    ipcRenderer.invoke("desktop:scale-disconnect"),
+  scaleRead: () =>
+    ipcRenderer.invoke("desktop:scale-read"),
+  scaleGetStatus: () =>
+    ipcRenderer.invoke("desktop:scale-get-status"),
   onUpdateAvailable: (callback: (event: unknown, version: string) => void) =>
     ipcRenderer.on("desktop:update-available", callback),
   offUpdateAvailable: (callback: (event: unknown, version: string) => void) =>
     ipcRenderer.off("desktop:update-available", callback),
   onPlateScanned: (callback: (plate: string) => void) =>
-    ipcRenderer.on("desktop:plate-scanned", (_event: unknown, plate: string) => callback(plate))
+    ipcRenderer.on("desktop:plate-scanned", (_event: unknown, plate: string) => callback(plate)),
+  onScaleReading: (callback: (reading: unknown) => void) =>
+    ipcRenderer.on("desktop:scale-reading", (_event: unknown, reading: unknown) => callback(reading))
 };
 
 contextBridge.exposeInMainWorld("kyberrockDesktop", desktopApi);

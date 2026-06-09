@@ -67,6 +67,13 @@ import {
   type CacheQueryResult
 } from "./cache-store.js";
 import {
+  createToledoTcpAdapter,
+  type ToledoTcpAdapter,
+  type ToledoTcpConfig,
+  type ToledoTcpAdapterStatus,
+  type ParsedToledoReading
+} from "@kyberrock/scale-adapters";
+import {
   createCustomer,
   deleteCustomer,
   updateCustomer,
@@ -130,6 +137,7 @@ export class DesktopRuntime {
   private backupScheduler: BackupSchedulerHandle | null = null;
   private receiptPrinter: ReceiptPrinter = { printReceipt: async () => undefined };
   private cacheStore: CacheStore;
+  private scaleAdapter: ToledoTcpAdapter = createToledoTcpAdapter();
   private simulatedScaleCursor = 0;
   private readonly simulatedScaleReadings = [12_000, 18_500, 12_250, 19_000];
 
@@ -341,6 +349,26 @@ export class DesktopRuntime {
 
   isCloudConnected(): boolean {
     return isSupabaseInitialized();
+  }
+
+  async connectScale(config: ToledoTcpConfig): Promise<void> {
+    await this.scaleAdapter.connect(config);
+  }
+
+  disconnectScale(): void {
+    this.scaleAdapter.disconnect();
+  }
+
+  async readScale(): Promise<{ weightKg: number; stable: boolean }> {
+    return this.scaleAdapter.read();
+  }
+
+  getScaleStatus(): ToledoTcpAdapterStatus {
+    return this.scaleAdapter.getStatus();
+  }
+
+  onScaleReading(callback: (reading: ParsedToledoReading) => void): () => void {
+    return this.scaleAdapter.onReading(callback);
   }
 
   close(): void {

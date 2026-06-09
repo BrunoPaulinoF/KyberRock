@@ -31,6 +31,7 @@ import type {
   CreateCarrierInput,
   UpdateCarrierInput
 } from "../services/carriers.js";
+import type { ToledoTcpConfig } from "@kyberrock/scale-adapters";
 import type {
   ConfigureReceiptPrintProfileInput,
   ReceiptPrintPayload,
@@ -504,6 +505,30 @@ function registerIpcHandlers(): void {
   ipcMain.handle("desktop:get-omie-status", () => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.getOmieSyncStatus();
+  });
+
+  ipcMain.handle("desktop:scale-connect", async (_event, config: ToledoTcpConfig) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    await runtime.connectScale(config);
+    // Register live stream forwarding to renderer
+    runtime.onScaleReading((reading) => {
+      mainWindow?.webContents.send("desktop:scale-reading", reading);
+    });
+  });
+
+  ipcMain.handle("desktop:scale-disconnect", () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    runtime.disconnectScale();
+  });
+
+  ipcMain.handle("desktop:scale-read", async () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.readScale();
+  });
+
+  ipcMain.handle("desktop:scale-get-status", () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.getScaleStatus();
   });
 }
 

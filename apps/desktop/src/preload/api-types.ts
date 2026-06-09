@@ -34,6 +34,11 @@ import type {
   CreateCarrierInput,
   UpdateCarrierInput
 } from "../services/carriers";
+import type {
+  ToledoTcpConfig,
+  ToledoTcpAdapterStatus,
+  ParsedToledoReading
+} from "@kyberrock/scale-adapters";
 
 export interface KyberRockDesktopApi {
   getStatus: (internetOnline?: boolean) => Promise<DesktopStatusSnapshot>;
@@ -96,7 +101,12 @@ export interface KyberRockDesktopApi {
     pendingPushCustomers: number;
     lastSyncAt: string | null;
   }>;
+  scaleConnect: (config: ToledoTcpConfig) => Promise<void>;
+  scaleDisconnect: () => Promise<void>;
+  scaleRead: () => Promise<{ weightKg: number; stable: boolean }>;
+  scaleGetStatus: () => Promise<ToledoTcpAdapterStatus>;
   onUpdateAvailable: (callback: (event: unknown, version: string) => void) => void;
   offUpdateAvailable: (callback: (event: unknown, version: string) => void) => void;
   onPlateScanned: (callback: (plate: string) => void) => void;
+  onScaleReading: (callback: (reading: ParsedToledoReading) => void) => void;
 }
