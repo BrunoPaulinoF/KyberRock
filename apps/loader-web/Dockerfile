@@ -17,8 +17,8 @@ RUN npm install
 # Copy source code
 COPY . .
 
-# Build the app
-RUN npm run build
+# Build only the loader-web app (avoid building desktop and other workspaces in Docker)
+RUN npm run build -w @kyberrock/loader-web
 
 # Production stage
 FROM nginx:alpine

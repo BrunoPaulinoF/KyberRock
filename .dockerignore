@@ -8,3 +8,15 @@ coverage
 .env
 .env.*
 !.env.example
+
+# Exclude apps/packages not needed for loader-web Docker build
+apps/desktop
+functions
+supabase
+ERROS
+midia
+PLAN.md
+PRD.md
+prettier.config.js
+eslint.config.js
+vitest.config.ts
