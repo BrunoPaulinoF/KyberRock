@@ -18,11 +18,35 @@ export function clearAdminSessionToken(): void {
   localStorage.removeItem(ADMIN_SESSION_KEY);
 }
 
+function isTokenExpired(token: string | null): boolean {
+  if (!token) return true;
+  try {
+    const [encodedPayload] = token.split(".");
+    if (!encodedPayload) return true;
+    const payload = JSON.parse(atob(encodedPayload.replaceAll("-", "+").replaceAll("_", "/").padEnd(Math.ceil(encodedPayload.length / 4) * 4, "="))) as {
+      exp?: number;
+    };
+    return !payload.exp || payload.exp < Math.floor(Date.now() / 1000);
+  } catch {
+    return true;
+  }
+}
+
+export function getAdminSessionStatus(): { token: string | null; isExpired: boolean } {
+  const token = getAdminSessionToken();
+  return { token, isExpired: isTokenExpired(token) };
+}
+
 export async function callAdminFunction<TResponse>(
   functionName: "admin-auth" | "admin-api",
   body: unknown,
   sessionToken = getAdminSessionToken()
 ): Promise<TResponse> {
+  if (functionName === "admin-api" && isTokenExpired(sessionToken)) {
+    clearAdminSessionToken();
+    throw new Error("Sessao administrativa expirada. Faca login novamente.");
+  }
+
   const response = await fetch(`${supabaseConfig.url}/functions/v1/${functionName}`, {
     method: "POST",
     headers: {
@@ -35,6 +59,9 @@ export async function callAdminFunction<TResponse>(
 
   const data = (await response.json().catch(() => ({}))) as TResponse & { error?: string };
   if (!response.ok) {
+    if (response.status === 401) {
+      clearAdminSessionToken();
+    }
     throw new Error(data.error || "Erro na API administrativa.");
   }
   return data;

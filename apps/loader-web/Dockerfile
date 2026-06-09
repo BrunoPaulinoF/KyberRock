@@ -1,31 +1,35 @@
-FROM node:24-alpine AS build
+# Build stage
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-COPY package*.json ./
-COPY tsconfig.base.json ./
-COPY apps/loader-web/package.json apps/loader-web/package.json
-COPY apps/desktop/package.json apps/desktop/package.json
-COPY functions/package.json functions/package.json
-COPY packages/shared/package.json packages/shared/package.json
-COPY packages/scale-adapters/package.json packages/scale-adapters/package.json
-COPY packages/omie-client/package.json packages/omie-client/package.json
-COPY packages/print-templates/package.json packages/print-templates/package.json
+# Copy package files
+COPY package.json package-lock.json* ./
+COPY apps/loader-web/package.json ./apps/loader-web/
+COPY packages/shared/package.json ./packages/shared/
+COPY packages/scale-adapters/package.json ./packages/scale-adapters/
+COPY packages/omie-client/package.json ./packages/omie-client/
+COPY packages/print-templates/package.json ./packages/print-templates/
 
+# Install dependencies
 RUN npm install
 
-COPY apps/loader-web apps/loader-web
+# Copy source code
+COPY . .
 
-ARG VITE_SUPABASE_URL
-ARG VITE_SUPABASE_PUBLISHABLE_KEY
-ENV VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
-ENV VITE_SUPABASE_PUBLISHABLE_KEY=${VITE_SUPABASE_PUBLISHABLE_KEY}
+# Build the app
+RUN npm run build
 
-RUN npm run build --workspace @kyberrock/loader-web
+# Production stage
+FROM nginx:alpine
 
-FROM nginx:1.27-alpine
+# Copy built app from builder stage
+COPY --from=builder /app/apps/loader-web/dist /usr/share/nginx/html
 
+# Copy nginx config
 COPY apps/loader-web/nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=build /app/apps/loader-web/dist /usr/share/nginx/html
 
+# Expose port
 EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]

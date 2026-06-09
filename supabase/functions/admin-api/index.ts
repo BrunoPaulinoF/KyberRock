@@ -1,4 +1,4 @@
-import { createClient } from "jsr:@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { verifyAdminSession } from "../_shared/admin-session.ts";
 import { sha256Hex } from "../_shared/crypto.ts";
@@ -19,8 +19,15 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
 
   const sessionSecret = Deno.env.get("KYBERROCK_ADMIN_SESSION_SECRET") ?? "";
-  const session = await verifyAdminSession(req.headers.get("x-admin-session"), sessionSecret);
-  if (!session) return jsonResponse({ error: "Sessao administrativa invalida" }, 401);
+  const sessionToken = req.headers.get("x-admin-session");
+  console.log("[admin-api] sessionToken present:", !!sessionToken, "secret length:", sessionSecret.length);
+  
+  const session = await verifyAdminSession(sessionToken, sessionSecret);
+  if (!session) {
+    console.log("[admin-api] session verification failed");
+    return jsonResponse({ error: "Sessao administrativa invalida" }, 401);
+  }
+  console.log("[admin-api] session verified:", session.sub);
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";

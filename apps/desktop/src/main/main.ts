@@ -421,7 +421,7 @@ function startAutomaticUpdateChecks(): void {
   }
 
   void autoUpdater.checkForUpdates();
-  window.setInterval(() => {
+  setInterval(() => {
     if (updateState.status === "idle" || updateState.status === "error") {
       void autoUpdater.checkForUpdates();
     }

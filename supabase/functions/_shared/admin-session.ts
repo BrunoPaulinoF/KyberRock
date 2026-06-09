@@ -10,7 +10,7 @@ export async function createAdminSession(username: string, secret: string): Prom
   const payload: AdminSessionPayload = {
     sub: username,
     role: "platform_admin",
-    exp: Math.floor(Date.now() / 1000) + 8 * 60 * 60
+    exp: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60
   };
   const encodedPayload = base64UrlEncode(JSON.stringify(payload));
   const signature = await hmacSha256Hex(secret, encodedPayload);

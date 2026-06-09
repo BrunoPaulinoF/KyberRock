@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 
-import { callAdminFunction, clearAdminSessionToken, getAdminSessionToken, setAdminSessionToken } from "../lib/admin-api";
+import { callAdminFunction, clearAdminSessionToken, getAdminSessionToken, setAdminSessionToken, getAdminSessionStatus } from "../lib/admin-api";
 import { supabase } from "../lib/supabase";
 
 interface AuthUser {
@@ -50,8 +50,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isLoader = user?.role === "loader";
 
   useEffect(() => {
-    const adminToken = getAdminSessionToken();
-    if (adminToken) {
+    const { token: adminToken, isExpired } = getAdminSessionStatus();
+    if (adminToken && !isExpired) {
       setUser({
         uid: "admin",
         email: null,
@@ -61,6 +61,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         unitId: null,
         isActive: true
       });
+    } else if (isExpired) {
+      clearAdminSessionToken();
+      setUser(null);
     }
 
     supabase.auth.getSession().then(({ data }) => {
@@ -72,9 +75,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user && !getAdminSessionToken()) {
+      const currentToken = getAdminSessionToken();
+      if (session?.user && !currentToken) {
         void loadLoaderProfile(session.user.id);
-      } else if (!getAdminSessionToken()) {
+      } else if (!currentToken) {
         setUser(null);
       }
     });
