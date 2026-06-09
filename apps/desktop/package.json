@@ -1,6 +1,6 @@
 {
   "name": "@kyberrock/desktop",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "main": "dist/main/main.js",
@@ -42,12 +42,15 @@
       }
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "midia/icon.ico"
     },
     "nsis": {
       "oneClick": false,
       "perMachine": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "midia/icon.ico",
+      "uninstallerIcon": "midia/icon.ico"
     }
   }
 }
