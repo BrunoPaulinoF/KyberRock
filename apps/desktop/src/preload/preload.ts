@@ -12,6 +12,7 @@ const desktopApi = {
   validateDesktopAccess: (internetOnline?: boolean, force?: boolean) =>
     ipcRenderer.invoke("desktop:validate-access", internetOnline, force),
   activateDesktop: (input: unknown) => ipcRenderer.invoke("desktop:activate", input),
+  logoutDesktop: () => ipcRenderer.invoke("desktop:logout"),
   checkForUpdates: () => ipcRenderer.invoke("desktop:check-for-updates"),
   downloadAndInstallUpdate: () =>
     ipcRenderer.invoke("desktop:download-and-install-update"),

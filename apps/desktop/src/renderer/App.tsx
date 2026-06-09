@@ -60,6 +60,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [cloudConnected, setCloudConnected] = useState(false);
   const [cloudSyncing, setCloudSyncing] = useState(false);
   const [cloudStatus, setCloudStatus] = useState<{ totalOperations: number; lastSync: string | null } | null>(null);
+  const [companyName, setCompanyName] = useState<string | null>(null);
+  const [unitName, setUnitName] = useState<string | null>(null);
 
   useEffect(() => {
     if (!desktopApi) {
@@ -68,6 +70,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
 
     desktopApi.getAccessStatus().then((access) => {
+      setCompanyName(access.companyName);
+      setUnitName(access.unitName);
       if (access.canOperate) {
         setPhase("unlocked");
       } else {
@@ -95,14 +99,16 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         nextOpenOperations,
         nextPrinters,
         nextProfiles,
-        nextReceipts
+        nextReceipts,
+        nextAccess
       ] = await Promise.all([
         desktopApi.getStatus(navigator.onLine),
         desktopApi.getUpdateState(),
         desktopApi.listOpenWeighingOperations(),
         desktopApi.listWindowsPrinters(),
         desktopApi.listPrintProfiles(),
-        desktopApi.listPrintReceipts()
+        desktopApi.listPrintReceipts(),
+        desktopApi.getAccessStatus()
       ]);
 
       if (active) {
@@ -112,6 +118,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         setPrinters(nextPrinters);
         setPrintProfiles(nextProfiles);
         setPrintReceipts(nextReceipts);
+        setCompanyName(nextAccess.companyName);
+        setUnitName(nextAccess.unitName);
         setSelectedPrinterName(
           (current) =>
             current ||
@@ -177,6 +185,25 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   async function handleRestoreBackup(): Promise<void> {
     const restored = await desktopApi?.restoreBackup();
     setMessage(restored ? "Backup restaurado com sucesso." : "Restauracao cancelada.");
+  }
+
+  async function handleLogout(): Promise<void> {
+    if (!desktopApi) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Deseja realmente sair da conta?\n\nVocê precisará de um novo código de ativação para acessar novamente."
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    await desktopApi.logoutDesktop();
+    setCompanyName(null);
+    setUnitName(null);
+    setPhase("locked");
   }
 
   async function handleUpdateAction(): Promise<void> {
@@ -392,6 +419,11 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         <div>
           <p style={styles.kicker}>Fase 5 - Impressao local</p>
           <h1 style={styles.title}>{desktopAppInfo.name}</h1>
+          {companyName && unitName ? (
+            <p style={styles.subtitle}>
+              <strong>{companyName}</strong> — {unitName}
+            </p>
+          ) : null}
           <p style={styles.subtitle}>{message}</p>
         </div>
         <div style={styles.actions}>
@@ -400,6 +432,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
           </button>
           <button type="button" onClick={handleRestoreBackup} style={styles.secondaryButton}>
             Restaurar backup
+          </button>
+          <button type="button" onClick={() => void handleLogout()} style={styles.secondaryButton}>
+            Sair da conta
           </button>
         </div>
       </section>

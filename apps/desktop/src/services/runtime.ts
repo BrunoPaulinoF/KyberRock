@@ -56,6 +56,7 @@ import {
 import {
   activateDesktop,
   getStoredDesktopAccessStatus,
+  logoutDesktop,
   validateDesktopAccess,
   type ActivateDesktopInput,
   type DesktopAccessStatus
@@ -303,6 +304,10 @@ export class DesktopRuntime {
 
   activateDesktop(input: ActivateDesktopInput): Promise<DesktopAccessStatus> {
     return activateDesktop(this.database, input);
+  }
+
+  logoutDesktop(): void {
+    logoutDesktop(this.database);
   }
 
   private ensureIdentity(): LocalDesktopIdentity {

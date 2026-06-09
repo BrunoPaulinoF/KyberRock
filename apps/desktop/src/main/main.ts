@@ -154,6 +154,14 @@ function registerIpcHandlers(): void {
     return runtime.activateDesktop(input);
   });
 
+  ipcMain.handle("desktop:logout", () => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    runtime.logoutDesktop();
+  });
+
   ipcMain.handle("desktop:check-for-updates", async () => {
     if (!app.isPackaged) {
       updateState = {

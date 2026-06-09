@@ -20,6 +20,7 @@ export interface KyberRockDesktopApi {
   getAccessStatus: () => Promise<DesktopAccessStatus>;
   validateDesktopAccess: (internetOnline?: boolean, force?: boolean) => Promise<DesktopAccessStatus>;
   activateDesktop: (input: ActivateDesktopInput) => Promise<DesktopAccessStatus>;
+  logoutDesktop: () => Promise<void>;
   checkForUpdates: () => Promise<UpdateState>;
   downloadAndInstallUpdate: () => Promise<UpdateState>;
   listOpenWeighingOperations: () => Promise<WeighingOperationSummary[]>;

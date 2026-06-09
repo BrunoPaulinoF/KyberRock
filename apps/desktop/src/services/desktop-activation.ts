@@ -26,7 +26,9 @@ export interface DesktopAccessStatus {
   requiresActivation: boolean;
   message: string;
   companyId: string | null;
+  companyName: string | null;
   unitId: string | null;
+  unitName: string | null;
   deviceId: string | null;
   lastSuccessfulCheckAt: string | null;
   graceExpiresAt: string | null;
@@ -194,12 +196,13 @@ export function getStoredDesktopAccessStatus(
   now: Date = new Date()
 ): DesktopAccessStatus {
   const credentials = getCloudCredentials(database);
+  const storedMessage = readStringLocalSetting(database, "desktop_access_message");
   if (!credentials) {
     return buildAccessStatus(database, {
       status: "not_activated",
       canOperate: false,
       requiresActivation: true,
-      message: "Desktop ainda nao ativado.",
+      message: storedMessage ?? "Primeiro acesso exige internet e codigo de ativacao da pedreira.",
       checkedAt: now.toISOString()
     });
   }
@@ -306,15 +309,85 @@ function buildAccessStatus(
   const graceExpiresAt = lastSuccessfulCheckAt
     ? new Date(Date.parse(lastSuccessfulCheckAt) + DESKTOP_ACCESS_GRACE_PERIOD_MS).toISOString()
     : null;
+  const { companyName, unitName } = getCompanyAndUnitNames(database, credentials ?? undefined);
 
   return {
     ...input,
     companyId: credentials?.companyId ?? null,
+    companyName,
     unitId: credentials?.unitId ?? null,
+    unitName,
     deviceId: credentials?.deviceId ?? null,
     lastSuccessfulCheckAt,
     graceExpiresAt
   };
+}
+
+function getCompanyAndUnitNames(
+  database: DesktopDatabase,
+  credentials?: { companyId?: string; unitId?: string }
+): { companyName: string | null; unitName: string | null } {
+  if (!credentials?.companyId || !credentials?.unitId) {
+    return { companyName: null, unitName: null };
+  }
+
+  try {
+    const companyRow = database
+      .prepare("SELECT trade_name FROM companies WHERE id = ?")
+      .get(credentials.companyId) as { trade_name: string } | undefined;
+    const unitRow = database
+      .prepare("SELECT name FROM units WHERE id = ?")
+      .get(credentials.unitId) as { name: string } | undefined;
+
+    return {
+      companyName: companyRow?.trade_name ?? null,
+      unitName: unitRow?.name ?? null
+    };
+  } catch {
+    return { companyName: null, unitName: null };
+  }
+}
+
+export function logoutDesktop(database: DesktopDatabase, now: Date = new Date()): void {
+  const timestamp = now.toISOString();
+  const keysToRemove = [
+    "cloud_company_id",
+    "cloud_unit_id",
+    "cloud_device_id",
+    "cloud_device_token",
+    "cloud_configured",
+    "last_license_check_at",
+    "desktop_access_status",
+    "desktop_access_message"
+  ];
+
+  for (const key of keysToRemove) {
+    database.prepare("DELETE FROM local_settings WHERE key = ?").run(key);
+  }
+
+  database
+    .prepare(
+      `INSERT INTO local_settings (key, value_json, updated_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET
+         value_json = excluded.value_json,
+         updated_at = excluded.updated_at`
+    )
+    .run("desktop_access_status", JSON.stringify("not_activated"), timestamp);
+
+  database
+    .prepare(
+      `INSERT INTO local_settings (key, value_json, updated_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET
+         value_json = excluded.value_json,
+         updated_at = excluded.updated_at`
+    )
+    .run(
+      "desktop_access_message",
+      JSON.stringify("Faça o requerimento de um novo código de acesso."),
+      timestamp
+    );
 }
 
 function isBlockingStatus(status: DesktopAccessStatusCode): boolean {
