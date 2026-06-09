@@ -56,6 +56,14 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:get-cloud-status"),
   isCloudConnected: () =>
     ipcRenderer.invoke("desktop:is-cloud-connected"),
+  queryCache: (options: unknown) =>
+    ipcRenderer.invoke("desktop:query-cache", options),
+  customersCreate: (input: unknown) =>
+    ipcRenderer.invoke("desktop:customers-create", input),
+  customersUpdate: (id: string, input: unknown) =>
+    ipcRenderer.invoke("desktop:customers-update", id, input),
+  customersDelete: (id: string) =>
+    ipcRenderer.invoke("desktop:customers-delete", id),
   onUpdateAvailable: (callback: (event: unknown, version: string) => void) =>
     ipcRenderer.on("desktop:update-available", callback),
   offUpdateAvailable: (callback: (event: unknown, version: string) => void) =>

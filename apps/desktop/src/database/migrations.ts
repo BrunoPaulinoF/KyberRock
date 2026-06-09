@@ -327,5 +327,35 @@ CREATE INDEX IF NOT EXISTS idx_operations_unit_vehicle_status ON weighing_operat
 CREATE INDEX IF NOT EXISTS idx_sync_queue_status_target_next_attempt ON sync_queue(status, target, next_attempt_at);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_entity_created ON audit_logs(entity_type, entity_id, created_at);
 `
+  },
+  {
+    version: 2,
+    name: "sync_fields_and_search_indexes",
+    sql: `
+ALTER TABLE customers ADD COLUMN omie_updated_at TEXT;
+ALTER TABLE customers ADD COLUMN local_updated_at TEXT;
+ALTER TABLE customers ADD COLUMN last_synced_at TEXT;
+ALTER TABLE customers ADD COLUMN needs_push INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE customers ADD COLUMN observations TEXT;
+
+ALTER TABLE price_tables ADD COLUMN omie_table_id INTEGER;
+ALTER TABLE price_tables ADD COLUMN omie_updated_at TEXT;
+ALTER TABLE price_tables ADD COLUMN local_updated_at TEXT;
+ALTER TABLE price_tables ADD COLUMN last_synced_at TEXT;
+ALTER TABLE price_tables ADD COLUMN needs_push INTEGER NOT NULL DEFAULT 0;
+
+CREATE INDEX IF NOT EXISTS idx_customers_company_name ON customers(company_id, legal_name);
+CREATE INDEX IF NOT EXISTS idx_customers_company_trade ON customers(company_id, trade_name);
+CREATE INDEX IF NOT EXISTS idx_customers_company_omie ON customers(company_id, omie_customer_id);
+CREATE INDEX IF NOT EXISTS idx_drivers_company_name ON drivers(company_id, name);
+CREATE INDEX IF NOT EXISTS idx_drivers_company_document ON drivers(company_id, document);
+CREATE INDEX IF NOT EXISTS idx_carriers_company_name ON carriers(company_id, name);
+CREATE INDEX IF NOT EXISTS idx_price_items_product ON price_table_items(product_id);
+CREATE INDEX IF NOT EXISTS idx_customer_price_lookup ON customer_price_tables(customer_id, is_active);
+CREATE INDEX IF NOT EXISTS idx_products_company_code ON products(company_id, code);
+CREATE INDEX IF NOT EXISTS idx_payment_terms_active ON payment_terms(company_id, is_active);
+CREATE INDEX IF NOT EXISTS idx_customers_needs_push ON customers(company_id, needs_push);
+CREATE INDEX IF NOT EXISTS idx_price_tables_needs_push ON price_tables(company_id, needs_push);
+`
   }
 ];

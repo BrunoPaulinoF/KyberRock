@@ -11,6 +11,11 @@ import type { UpdateState } from "../services/update-flow";
 import type { WeighingOperationSummary } from "../services/weighing-operations";
 import type { SyncResult } from "../services/supabase-sync";
 import type { ActivateDesktopInput, DesktopAccessStatus } from "../services/desktop-activation";
+import type { CacheQueryOptions, CacheQueryResult } from "../services/cache-store";
+import type {
+  CreateCustomerInput,
+  UpdateCustomerInput
+} from "../services/customers";
 
 export interface KyberRockDesktopApi {
   getStatus: (internetOnline?: boolean) => Promise<DesktopStatusSnapshot>;
@@ -39,6 +44,10 @@ export interface KyberRockDesktopApi {
   syncToCloud: () => Promise<SyncResult>;
   getCloudStatus: () => Promise<{ totalOperations: number; lastSync: string | null }>;
   isCloudConnected: () => Promise<boolean>;
+  queryCache: (options: CacheQueryOptions) => Promise<CacheQueryResult<unknown>>;
+  customersCreate: (input: Omit<CreateCustomerInput, "companyId">) => Promise<unknown>;
+  customersUpdate: (id: string, input: UpdateCustomerInput) => Promise<unknown>;
+  customersDelete: (id: string) => Promise<void>;
   onUpdateAvailable: (callback: (event: unknown, version: string) => void) => void;
   offUpdateAvailable: (callback: (event: unknown, version: string) => void) => void;
 }

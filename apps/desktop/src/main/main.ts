@@ -8,6 +8,11 @@ import { inspect } from "node:util";
 
 import { DesktopRuntime, type StartSimulatedWeighingInput } from "../services/runtime.js";
 import type { ActivateDesktopInput } from "../services/desktop-activation.js";
+import type { CacheQueryOptions } from "../services/cache-store.js";
+import type {
+  CreateCustomerInput,
+  UpdateCustomerInput
+} from "../services/customers.js";
 import type {
   ConfigureReceiptPrintProfileInput,
   ReceiptPrintPayload,
@@ -328,6 +333,38 @@ function registerIpcHandlers(): void {
     }
 
     return runtime.isCloudConnected();
+  });
+
+  ipcMain.handle("desktop:query-cache", (_event, options: CacheQueryOptions) => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.queryCache(options);
+  });
+
+  ipcMain.handle("desktop:customers-create", (_event, input: Omit<CreateCustomerInput, "companyId">) => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.createCustomer(input);
+  });
+
+  ipcMain.handle("desktop:customers-update", (_event, id: string, input: UpdateCustomerInput) => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.updateCustomer(id, input);
+  });
+
+  ipcMain.handle("desktop:customers-delete", (_event, id: string) => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    runtime.deleteCustomer(id);
   });
 }
 

@@ -32,7 +32,7 @@ interface WeighingFormState {
   unitPriceReais: string;
 }
 
-type ActiveView = "dashboard" | "new-weighing" | "open-operations" | "printing" | "cloud";
+type ActiveView = "dashboard" | "new-weighing" | "open-operations" | "registrations" | "printing" | "cloud";
 
 const initialWeighingForm: WeighingFormState = {
   operationType: "invoice",
@@ -43,6 +43,8 @@ const initialWeighingForm: WeighingFormState = {
   paymentTermName: "A vista",
   unitPriceReais: "0,12"
 };
+
+type RegistrationsTab = "customers" | "price_tables" | "products" | "payment_terms" | "vehicles" | "drivers" | "carriers";
 
 type AppPhase = "checking_access" | "locked" | "unlocked";
 
@@ -67,6 +69,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [availableVersion, setAvailableVersion] = useState<string | null>(null);
   const [accessStatus, setAccessStatus] = useState<DesktopAccessStatus | null>(null);
+  const [registrationsTab, setRegistrationsTab] = useState<RegistrationsTab>("customers");
 
   useEffect(() => {
     if (!desktopApi) {
@@ -521,6 +524,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         </button>
         <button
           type="button"
+          onClick={() => setActiveView("registrations")}
+          style={viewButtonStyle(activeView === "registrations")}
+        >
+          Cadastros
+        </button>
+        <button
+          type="button"
           onClick={() => setActiveView("printing")}
           style={viewButtonStyle(activeView === "printing")}
         >
@@ -703,6 +713,86 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
               </div>
             </article>
           ))}
+        </section>
+      ) : null}
+
+      {activeView === "registrations" ? (
+        <section style={styles.panel}>
+          <h2 style={styles.panelTitle}>Cadastros</h2>
+          <nav style={styles.subTabs}>
+            <button
+              type="button"
+              onClick={() => setRegistrationsTab("customers")}
+              style={subTabStyle(registrationsTab === "customers")}
+            >
+              Clientes
+            </button>
+            <button
+              type="button"
+              onClick={() => setRegistrationsTab("price_tables")}
+              style={subTabStyle(registrationsTab === "price_tables")}
+            >
+              Tabelas de Preco
+            </button>
+            <button
+              type="button"
+              onClick={() => setRegistrationsTab("products")}
+              style={subTabStyle(registrationsTab === "products")}
+            >
+              Produtos
+            </button>
+            <button
+              type="button"
+              onClick={() => setRegistrationsTab("payment_terms")}
+              style={subTabStyle(registrationsTab === "payment_terms")}
+            >
+              Condicoes
+            </button>
+            <button
+              type="button"
+              onClick={() => setRegistrationsTab("vehicles")}
+              style={subTabStyle(registrationsTab === "vehicles")}
+            >
+              Veiculos
+            </button>
+            <button
+              type="button"
+              onClick={() => setRegistrationsTab("drivers")}
+              style={subTabStyle(registrationsTab === "drivers")}
+            >
+              Motoristas
+            </button>
+            <button
+              type="button"
+              onClick={() => setRegistrationsTab("carriers")}
+              style={subTabStyle(registrationsTab === "carriers")}
+            >
+              Transportadoras
+            </button>
+          </nav>
+          <div style={{ marginTop: "20px" }}>
+            {registrationsTab === "customers" ? (
+              <CustomerListView desktopApi={desktopApi} />
+            ) : null}
+            {registrationsTab === "price_tables" ? (
+              <RegistrationsPlaceholder title="Tabelas de Preco" description="Cadastro de tabelas de preco vinculadas a clientes e produtos." />
+            ) : null}
+            {registrationsTab === "products" ? (
+              <RegistrationsPlaceholder title="Produtos (OMIE)" description="Produtos sincronizados do OMIE. Visualizacao apenas." />
+            ) : null}
+            {registrationsTab === "payment_terms" ? (
+              <RegistrationsPlaceholder title="Condicoes de Pagamento (OMIE)" description="Condicoes de pagamento sincronizadas do OMIE." />
+            ) : null}
+            {registrationsTab === "vehicles" ? (
+              <RegistrationsPlaceholder title="Veiculos" description="Cadastro de veiculos (placa) com suporte a cadastro rapido durante a pesagem." />
+            ) : null}
+            {registrationsTab === "drivers" ? (
+              <RegistrationsPlaceholder title="Motoristas" description="Cadastro de motoristas com suporte a cadastro rapido durante a pesagem." />
+            ) : null}
+            {registrationsTab === "carriers" ? (
+              <RegistrationsPlaceholder title="Transportadoras" description="Transportadoras do OMIE e cadastradas localmente." />
+            ) : null}
+          </div>
         </section>
       ) : null}
 
@@ -931,6 +1021,397 @@ function viewButtonStyle(active: boolean) {
   return active ? styles.primaryButton : styles.secondaryButton;
 }
 
+function subTabStyle(active: boolean) {
+  return {
+    border: "none",
+    borderBottom: active ? "2px solid #0f172a" : "2px solid transparent",
+    borderRadius: "0",
+    padding: "8px 16px",
+    background: "transparent",
+    color: active ? "#0f172a" : "#64748b",
+    cursor: "pointer",
+    fontWeight: active ? 700 : 400,
+    fontSize: "14px"
+  };
+}
+
+function RegistrationsPlaceholder({
+  title,
+  description
+}: {
+  title: string;
+  description: string;
+}) {
+  return (
+    <div style={{ padding: "40px 20px", textAlign: "center" }}>
+      <h3 style={{ margin: "0 0 8px 0", color: "#0f172a" }}>{title}</h3>
+      <p style={{ color: "#64748b", margin: 0 }}>{description}</p>
+      <p style={{ color: "#94a3b8", fontSize: "13px", marginTop: "8px" }}>
+        Em desenvolvimento...
+      </p>
+    </div>
+  );
+}
+
+interface CustomerCacheEntry {
+  id: string;
+  tradeName: string;
+  legalName: string;
+  document: string | null;
+  phone: string | null;
+  email: string | null;
+  creditLimitCents: number | null;
+  openReceivablesCents: number;
+  omieBillingBlocked: boolean;
+  source: string;
+  syncStatus: string;
+  needsPush: boolean;
+  lastSyncedAt: string | null;
+  observations: string | null;
+  isActive: boolean;
+}
+
+interface CustomerFormData {
+  tradeName: string;
+  legalName: string;
+  document: string;
+  phone: string;
+  email: string;
+  creditLimitReais: string;
+  omieBillingBlocked: boolean;
+  observations: string;
+}
+
+function CustomerListView({
+  desktopApi
+}: {
+  desktopApi: KyberRockDesktopApi;
+}) {
+  const [customers, setCustomers] = useState<CustomerCacheEntry[]>([]);
+  const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState<CustomerFormData>({
+    tradeName: "",
+    legalName: "",
+    document: "",
+    phone: "",
+    email: "",
+    creditLimitReais: "",
+    omieBillingBlocked: false,
+    observations: ""
+  });
+  const [formError, setFormErrorState] = useState<string | null>(null);
+  const [message, setMessageState] = useState<string | null>(null);
+
+  useEffect(() => {
+    loadCustomers();
+  }, [search]);
+
+  async function loadCustomers(): Promise<void> {
+    try {
+      const result = await desktopApi.queryCache({
+        entityType: "customer",
+        search: search || undefined,
+        limit: 200
+      });
+      setCustomers(result.rows as CustomerCacheEntry[]);
+      setLoading(false);
+    } catch {
+      setLoading(false);
+    }
+  }
+
+  function resetForm(): void {
+    setForm({
+      tradeName: "",
+      legalName: "",
+      document: "",
+      phone: "",
+      email: "",
+      creditLimitReais: "",
+      omieBillingBlocked: false,
+      observations: ""
+    });
+    setEditingId(null);
+    setFormErrorState(null);
+  }
+
+  function openCreateForm(): void {
+    resetForm();
+    setShowForm(true);
+  }
+
+  function openEditForm(customer: CustomerCacheEntry): void {
+    setForm({
+      tradeName: customer.tradeName,
+      legalName: customer.legalName,
+      document: customer.document ?? "",
+      phone: customer.phone ?? "",
+      email: customer.email ?? "",
+      creditLimitReais: customer.creditLimitCents
+        ? (customer.creditLimitCents / 100).toFixed(2).replace(".", ",")
+        : "",
+      omieBillingBlocked: customer.omieBillingBlocked,
+      observations: customer.observations ?? ""
+    });
+    setEditingId(customer.id);
+    setFormErrorState(null);
+    setShowForm(true);
+  }
+
+  function validateForm(): string | null {
+    if (!form.tradeName.trim()) return "Nome fantasia e obrigatorio.";
+    if (!form.legalName.trim()) return "Razao social e obrigatoria.";
+    return null;
+  }
+
+  async function handleSave(): Promise<void> {
+    const error = validateForm();
+    if (error) {
+      setFormErrorState(error);
+      return;
+    }
+
+    const creditLimitCents = form.creditLimitReais.trim()
+      ? parseCurrencyToCents(form.creditLimitReais)
+      : undefined;
+
+    try {
+      if (editingId) {
+        await desktopApi.customersUpdate(editingId, {
+          tradeName: form.tradeName.trim(),
+          legalName: form.legalName.trim(),
+          document: form.document.trim() || undefined,
+          phone: form.phone.trim() || undefined,
+          email: form.email.trim() || undefined,
+          creditLimitCents: creditLimitCents ?? undefined,
+          omieBillingBlocked: form.omieBillingBlocked || undefined,
+          observations: form.observations.trim() || undefined
+        });
+        setMessageState("Cliente atualizado com sucesso.");
+      } else {
+        await desktopApi.customersCreate({
+          tradeName: form.tradeName.trim(),
+          legalName: form.legalName.trim(),
+          document: form.document.trim() || undefined,
+          phone: form.phone.trim() || undefined,
+          email: form.email.trim() || undefined,
+          creditLimitCents: creditLimitCents ?? undefined,
+          omieBillingBlocked: form.omieBillingBlocked,
+          observations: form.observations.trim() || undefined
+        });
+        setMessageState("Cliente criado com sucesso.");
+      }
+
+      setShowForm(false);
+      resetForm();
+      setLoading(true);
+      await loadCustomers();
+    } catch (err) {
+      setFormErrorState(err instanceof Error ? err.message : "Erro ao salvar cliente.");
+    }
+  }
+
+  async function handleDelete(id: string): Promise<void> {
+    if (!window.confirm("Deseja realmente excluir este cliente?")) return;
+
+    try {
+      await desktopApi.customersDelete(id);
+      setMessageState("Cliente excluido.");
+      await loadCustomers();
+    } catch (err) {
+      setMessageState(err instanceof Error ? err.message : "Erro ao excluir cliente.");
+    }
+  }
+
+  function syncIcon(customer: CustomerCacheEntry): string {
+    if (customer.syncStatus === "error") return "\u2715";
+    if (customer.needsPush) return "\u26A0";
+    return "\u2713";
+  }
+
+  function syncColor(customer: CustomerCacheEntry): string {
+    if (customer.syncStatus === "error") return "#b91c1c";
+    if (customer.needsPush) return "#d97706";
+    return "#16a34a";
+  }
+
+  if (loading) {
+    return <p style={{ color: "#64748b" }}>Carregando clientes...</p>;
+  }
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: "12px", marginBottom: "16px", flexWrap: "wrap" }}>
+        <input
+          placeholder="Buscar cliente..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{ ...styles.input, flex: 1, minWidth: "200px" }}
+        />
+        <button type="button" onClick={openCreateForm} style={styles.primaryButton}>
+          + Novo Cliente
+        </button>
+      </div>
+
+      {message ? (
+        <p style={{ color: "#16a34a", fontWeight: 700, marginBottom: "12px" }}>{message}</p>
+      ) : null}
+
+      {showForm ? (
+        <div style={{ ...styles.card, marginBottom: "16px", padding: "20px" }}>
+          <h3 style={{ marginTop: 0 }}>
+            {editingId ? "Editar Cliente" : "Novo Cliente"}
+          </h3>
+
+          {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+            <label style={styles.fieldLabel}>
+              Razao Social *
+              <input
+                value={form.legalName}
+                onChange={(e) => setForm({ ...form, legalName: e.target.value })}
+                style={styles.input}
+              />
+            </label>
+            <label style={styles.fieldLabel}>
+              Nome Fantasia *
+              <input
+                value={form.tradeName}
+                onChange={(e) => setForm({ ...form, tradeName: e.target.value })}
+                style={styles.input}
+              />
+            </label>
+            <label style={styles.fieldLabel}>
+              CNPJ/CPF
+              <input
+                value={form.document}
+                onChange={(e) => setForm({ ...form, document: e.target.value })}
+                placeholder="00.000.000/0000-00"
+                style={styles.input}
+              />
+            </label>
+            <label style={styles.fieldLabel}>
+              Telefone
+              <input
+                value={form.phone}
+                onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                style={styles.input}
+              />
+            </label>
+            <label style={styles.fieldLabel}>
+              Email
+              <input
+                value={form.email}
+                onChange={(e) => setForm({ ...form, email: e.target.value })}
+                style={styles.input}
+              />
+            </label>
+            <label style={styles.fieldLabel}>
+              Limite de Credito (R$)
+              <input
+                value={form.creditLimitReais}
+                onChange={(e) => setForm({ ...form, creditLimitReais: e.target.value })}
+                placeholder="50.000,00"
+                style={styles.input}
+              />
+            </label>
+          </div>
+
+          <label style={{ ...styles.fieldLabel, marginTop: "12px" }}>
+            <span style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <input
+                type="checkbox"
+                checked={form.omieBillingBlocked}
+                onChange={(e) => setForm({ ...form, omieBillingBlocked: e.target.checked })}
+              />
+              Cliente bloqueado
+            </span>
+          </label>
+
+          <label style={{ ...styles.fieldLabel, marginTop: "12px" }}>
+            Observacoes
+            <input
+              value={form.observations}
+              onChange={(e) => setForm({ ...form, observations: e.target.value })}
+              style={styles.input}
+            />
+          </label>
+
+          <div style={{ display: "flex", gap: "12px", marginTop: "16px" }}>
+            <button type="button" onClick={handleSave} style={styles.primaryButton}>
+              Salvar
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowForm(false)}
+              style={styles.secondaryButton}
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {customers.length === 0 ? (
+        <p style={{ color: "#64748b" }}>
+          {search ? "Nenhum cliente encontrado." : "Nenhum cliente cadastrado."}
+        </p>
+      ) : (
+        <div>
+          {customers.map((customer) => (
+            <div key={customer.id} style={styles.operationRow}>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <strong>{customer.tradeName}</strong>
+                  <span style={{ color: syncColor(customer), fontSize: "14px" }}>
+                    {syncIcon(customer)}
+                  </span>
+                  <span style={{ color: "#94a3b8", fontSize: "12px" }}>
+                    {customer.source === "omie" ? "OMIE" : "Local"}
+                  </span>
+                </div>
+                <p style={{ ...styles.muted, margin: "4px 0 0 0" }}>
+                  {customer.legalName}
+                  {customer.document ? ` \u2022 ${customer.document}` : ""}
+                </p>
+                <p style={{ ...styles.muted, margin: "2px 0 0 0", fontSize: "13px" }}>
+                  Limite: {formatMoney(customer.creditLimitCents)} | Em aberto: {formatMoney(customer.openReceivablesCents)}
+                  {customer.omieBillingBlocked ? " | \uD83D\uDD34 Bloqueado" : ""}
+                </p>
+                {customer.observations ? (
+                  <p style={{ ...styles.muted, margin: "2px 0 0 0", fontSize: "12px", fontStyle: "italic" }}>
+                    {customer.observations}
+                  </p>
+                ) : null}
+              </div>
+              <div style={{ display: "flex", gap: "8px" }}>
+                <button
+                  type="button"
+                  onClick={() => openEditForm(customer)}
+                  style={styles.secondaryButton}
+                >
+                  Editar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDelete(customer.id)}
+                  style={{ ...styles.secondaryButton, color: "#b91c1c", borderColor: "#fecaca" }}
+                >
+                  Excluir
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const styles = {
   page: {
     minHeight: "100vh",
@@ -1001,6 +1482,13 @@ const styles = {
     display: "flex",
     gap: "12px",
     marginTop: "20px",
+    flexWrap: "wrap" as const
+  },
+  subTabs: {
+    display: "flex",
+    gap: "4px",
+    marginTop: "16px",
+    borderBottom: "1px solid #e2e8f0",
     flexWrap: "wrap" as const
   },
   card: {

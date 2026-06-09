@@ -61,6 +61,18 @@ import {
   type ActivateDesktopInput,
   type DesktopAccessStatus
 } from "./desktop-activation.js";
+import {
+  CacheStore,
+  type CacheQueryOptions,
+  type CacheQueryResult
+} from "./cache-store.js";
+import {
+  createCustomer,
+  deleteCustomer,
+  updateCustomer,
+  type CreateCustomerInput,
+  type UpdateCustomerInput
+} from "./customers.js";
 
 export interface StartSimulatedWeighingInput {
   operationType: OperationType;
@@ -77,13 +89,16 @@ export class DesktopRuntime {
   private readonly paths: InitializedDesktopDatabase["paths"];
   private backupScheduler: BackupSchedulerHandle | null = null;
   private receiptPrinter: ReceiptPrinter = { printReceipt: async () => undefined };
+  private cacheStore: CacheStore;
   private simulatedScaleCursor = 0;
   private readonly simulatedScaleReadings = [12_000, 18_500, 12_250, 19_000];
 
   private constructor(initialized: InitializedDesktopDatabase) {
     this.database = initialized.database;
     this.paths = initialized.paths;
+    this.cacheStore = new CacheStore(this.database);
     this.ensureIdentity();
+    this.cacheStore.loadAll(this.ensureIdentity().companyId);
   }
 
   static initialize(baseDirectory?: string): DesktopRuntime {
@@ -308,6 +323,46 @@ export class DesktopRuntime {
 
   logoutDesktop(): void {
     logoutDesktop(this.database);
+  }
+
+  queryCache(options: CacheQueryOptions): CacheQueryResult<unknown> {
+    return this.cacheStore.query(options);
+  }
+
+  invalidateCache(
+    entityType: CacheQueryOptions["entityType"]
+  ): void {
+    const identity = this.ensureIdentity();
+    this.cacheStore.invalidate(entityType, identity.companyId);
+  }
+
+  createCustomer(input: Omit<CreateCustomerInput, "companyId">): unknown {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    const result = createCustomer(this.database, {
+      ...input,
+      companyId: identity.companyId
+    });
+    this.cacheStore.invalidate("customer", identity.companyId);
+    return result;
+  }
+
+  updateCustomer(
+    id: string,
+    input: UpdateCustomerInput
+  ): unknown {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    const result = updateCustomer(this.database, id, input);
+    this.cacheStore.invalidate("customer", identity.companyId);
+    return result;
+  }
+
+  deleteCustomer(id: string): void {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    deleteCustomer(this.database, id);
+    this.cacheStore.invalidate("customer", identity.companyId);
   }
 
   private ensureIdentity(): LocalDesktopIdentity {
