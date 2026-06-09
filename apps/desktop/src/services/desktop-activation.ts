@@ -154,7 +154,9 @@ export async function validateDesktopAccess(
     return buildOfflineStatus(database, stored, now);
   }
 
-  if (!options.force && lastSuccessfulCheckAt && now.getTime() - Date.parse(lastSuccessfulCheckAt) < DESKTOP_ACCESS_CHECK_INTERVAL_MS && stored.canOperate) {
+  // Se estiver online, SEMPRE valida na nuvem (nunca usa cache) para detectar bloqueio em tempo real
+  // Se estiver offline, usa o cache + grace period
+  if (!options.force && lastSuccessfulCheckAt && now.getTime() - Date.parse(lastSuccessfulCheckAt) < DESKTOP_ACCESS_CHECK_INTERVAL_MS && stored.canOperate && options.internetOnline !== true) {
     return stored;
   }
 
