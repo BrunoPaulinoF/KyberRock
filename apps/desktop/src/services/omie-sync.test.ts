@@ -26,13 +26,11 @@ describe("createOmieClient", () => {
 
 describe("OmieSyncService", () => {
   function createMockDb(): DesktopDatabase {
-    const runs: unknown[][] = [];
-
     return {
       prepare: vi.fn().mockReturnValue({
-        run: vi.fn().mockImplementation((...args: unknown[]) => {
-          runs.push(args);
-        })
+        run: vi.fn().mockImplementation(() => undefined),
+        get: vi.fn().mockReturnValue(undefined),
+        all: vi.fn().mockReturnValue([])
       })
     } as unknown as DesktopDatabase;
   }
@@ -64,7 +62,7 @@ describe("OmieSyncService", () => {
      
     vi.spyOn((service as unknown as Record<string, unknown>).receivablesService as unknown as { getTotalOpenAmountForClient: () => Promise<number> }, "getTotalOpenAmountForClient").mockResolvedValue(500);
 
-    const count = await service.syncCustomers("company-1");
+    const count = await service.pullCustomersFromOmie("company-1");
 
     expect(count).toBe(1);
     expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining("INSERT INTO customers"));
@@ -118,16 +116,17 @@ describe("OmieSyncService", () => {
 
     const service = new OmieSyncService(client, db);
 
-    vi.spyOn(service, "syncCustomers").mockResolvedValue(5);
+    vi.spyOn(service, "syncCustomersBidirectional").mockResolvedValue({ pulled: 5, pushed: 2 });
     vi.spyOn(service, "syncProducts").mockRejectedValue(new Error("API error"));
     vi.spyOn(service, "syncPaymentTerms").mockResolvedValue(3);
 
     const result = await service.syncAll("company-1");
 
-    expect(result.customersSynced).toBe(5);
+    expect(result.customersPulled).toBe(5);
+    expect(result.customersPushed).toBe(2);
     expect(result.productsSynced).toBe(0);
     expect(result.paymentTermsSynced).toBe(3);
     expect(result.errors).toHaveLength(1);
-    expect(result.errors[0]).toContain("Products sync failed");
+    expect(result.errors[0]).toContain("Produtos");
   });
 });

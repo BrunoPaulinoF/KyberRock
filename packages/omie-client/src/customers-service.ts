@@ -10,6 +10,25 @@ export interface Customer {
   address?: string;
 }
 
+export interface CreateCustomerInput {
+  razaoSocial: string;
+  nomeFantasia?: string;
+  cnpjCpf: string;
+  email?: string;
+  telefone1Ddd?: string;
+  telefone1Numero?: string;
+}
+
+export interface UpdateCustomerInput {
+  codigoClienteOmie: number;
+  razaoSocial?: string;
+  nomeFantasia?: string;
+  cnpjCpf?: string;
+  email?: string;
+  telefone1Ddd?: string;
+  telefone1Numero?: string;
+}
+
 export interface ListCustomersParam {
   pagina: number;
   registrosPorPagina?: number;
@@ -78,6 +97,32 @@ export async function getCustomer(
   };
 }
 
+export async function createCustomer(
+  client: OmieClient,
+  input: CreateCustomerInput
+): Promise<number> {
+  const response = (await client.call(
+    "/api/v1/geral/clientes/",
+    "IncluirCliente",
+    input
+  )) as {
+    codigoClienteOmie: number;
+  };
+
+  return response.codigoClienteOmie;
+}
+
+export async function updateCustomer(
+  client: OmieClient,
+  input: UpdateCustomerInput
+): Promise<void> {
+  await client.call(
+    "/api/v1/geral/clientes/",
+    "AlterarCliente",
+    input
+  );
+}
+
 export class OmieCustomersService {
   constructor(private readonly client: OmieClient) {}
 
@@ -104,5 +149,13 @@ export class OmieCustomersService {
 
   async getById(id: number): Promise<Customer | null> {
     return getCustomer(this.client, id);
+  }
+
+  async create(input: CreateCustomerInput): Promise<number> {
+    return createCustomer(this.client, input);
+  }
+
+  async update(input: UpdateCustomerInput): Promise<void> {
+    return updateCustomer(this.client, input);
   }
 }
