@@ -76,6 +76,8 @@ interface DesktopStatusResponse {
   companyId?: string;
   unitId?: string;
   deviceId?: string;
+  omieAppKey?: string | null;
+  omieAppSecret?: string | null;
   checkedAt?: string;
 }
 
@@ -192,6 +194,9 @@ export async function validateDesktopAccess(
     saveAccessStatus(database, status, message, checkedAt);
     if (data?.allowed) {
       writeLocalSetting(database, "last_license_check_at", checkedAt, checkedAt);
+    }
+    if (data?.allowed && data.omieAppKey && data.omieAppSecret) {
+      saveOmieCredentials(database, { appKey: data.omieAppKey, appSecret: data.omieAppSecret }, checkedAt);
     }
 
     return buildAccessStatus(database, {

@@ -201,10 +201,18 @@ function registerIpcHandlers(): void {
     }
 
     updateState = { status: "checking", availableVersion: null, errorMessage: null };
-    const result = await autoUpdater.checkForUpdates();
-    updateState = result?.updateInfo
-      ? { status: "available", availableVersion: result.updateInfo.version, errorMessage: null }
-      : createInitialUpdateState();
+    try {
+      const result = await autoUpdater.checkForUpdates();
+      updateState = result?.updateInfo
+        ? { status: "available", availableVersion: result.updateInfo.version, errorMessage: null }
+        : createInitialUpdateState();
+    } catch (err) {
+      updateState = {
+        status: "error",
+        availableVersion: null,
+        errorMessage: err instanceof Error ? err.message : "Falha ao verificar atualizacoes."
+      };
+    }
 
     return updateState;
   });
@@ -223,12 +231,20 @@ function registerIpcHandlers(): void {
       return updateState;
     }
 
-    if (updateState.status === "available") {
-      updateState = { ...updateState, status: "downloading" };
-      await autoUpdater.downloadUpdate();
+    try {
+      if (updateState.status === "available") {
+        updateState = { ...updateState, status: "downloading" };
+        await autoUpdater.downloadUpdate();
+      }
+      autoUpdater.quitAndInstall(false, true);
+    } catch (err) {
+      updateState = {
+        status: "error",
+        availableVersion: null,
+        errorMessage: err instanceof Error ? err.message : "Falha ao baixar atualizacao."
+      };
     }
 
-    autoUpdater.quitAndInstall(false, true);
     return updateState;
   });
 

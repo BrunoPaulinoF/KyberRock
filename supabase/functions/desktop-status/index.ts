@@ -56,7 +56,7 @@ Deno.serve(async (req) => {
 
   const { data: company, error: companyError } = await supabase
     .from("companies")
-    .select("id, name, is_active")
+    .select("id, name, is_active, omie_app_key, omie_app_secret")
     .eq("id", typedDevice.company_id)
     .single();
   if (companyError || !company?.is_active) {
@@ -76,6 +76,8 @@ Deno.serve(async (req) => {
     companyId: typedDevice.company_id,
     unitId: typedDevice.unit_id,
     deviceId: typedDevice.id,
+    omieAppKey: (company as Record<string, unknown>).omie_app_key ?? null,
+    omieAppSecret: (company as Record<string, unknown>).omie_app_secret ?? null,
     checkedAt
   });
 });

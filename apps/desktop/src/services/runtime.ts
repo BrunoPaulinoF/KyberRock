@@ -428,8 +428,12 @@ export class DesktopRuntime {
     return getStoredDesktopAccessStatus(this.database);
   }
 
-  validateDesktopAccess(internetOnline?: boolean, force?: boolean): Promise<DesktopAccessStatus> {
-    return validateDesktopAccess(this.database, { internetOnline, force });
+  async validateDesktopAccess(internetOnline?: boolean, force?: boolean): Promise<DesktopAccessStatus> {
+    const status = await validateDesktopAccess(this.database, { internetOnline, force });
+    if (status.canOperate) {
+      this.refreshOmieConfig();
+    }
+    return status;
   }
 
   async activateDesktop(input: ActivateDesktopInput): Promise<DesktopAccessStatus> {
