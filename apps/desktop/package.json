@@ -1,12 +1,12 @@
 {
   "name": "@kyberrock/desktop",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "private": true,
   "type": "module",
   "main": "dist/main/main.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "node -e \"const fs=require('node:fs'); fs.rmSync('dist',{recursive:true,force:true}); fs.rmSync('tsconfig.tsbuildinfo',{force:true})\" && tsc -b tsconfig.json && vite build --config vite.config.ts && node copy-workspace-packages.cjs",
+    "build": "node -e \"const fs=require('node:fs'); fs.rmSync('dist',{recursive:true,force:true}); fs.rmSync('tsconfig.tsbuildinfo',{force:true})\" && tsc -b tsconfig.json && vite build --config vite.config.ts && node -e \"require('node:fs').cpSync('midia','dist/renderer/midia',{recursive:true})\" && node copy-workspace-packages.cjs",
     "rebuild:native:electron": "node rebuild-native-for-electron.cjs",
     "dist:win": "npm run build && npm run rebuild:native:electron && node -e \"const fs=require('fs'); fs.rmSync('release/win-unpacked',{recursive:true,force:true}); fs.rmSync('release/builder-debug.yml',{force:true});\" && electron-builder --win --publish never && npm rebuild better-sqlite3",
     "dev": "vite --config vite.config.ts --host 0.0.0.0 --port 5174",

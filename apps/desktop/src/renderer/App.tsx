@@ -82,6 +82,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [availableVersion, setAvailableVersion] = useState<string | null>(null);
   const [showLogsModal, setShowLogsModal] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [errorLogs, setErrorLogs] = useState<Array<{ timestamp: string; level: string; source: string; message: string; details?: string }>>([]);
   const [accessStatus, setAccessStatus] = useState<DesktopAccessStatus | null>(null);
   const [omieStatus, setOmieStatus] = useState<{
@@ -563,89 +564,125 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
   return (
     <main style={styles.page}>
-      <header style={styles.topBar}>
-        <div style={styles.topBarLeft}>
-          <img src="midia/logodesk.png" alt="KyberRock" style={styles.topBarLogo} />
-          <span style={styles.topBarBrand}>{desktopAppInfo.name}</span>
+      <div style={styles.headerRow}>
+        <div style={styles.headerLeft}>
+          <img src="midia/logodesk.png" alt="KyberRock" style={styles.headerLogo} />
+          <span style={styles.headerBrand}>{desktopAppInfo.name}</span>
           {companyName && unitName ? (
-            <span style={styles.topBarMeta}>
-              {companyName} — {unitName}
-            </span>
+            <span style={styles.headerMeta}>{companyName} — {unitName}</span>
           ) : null}
-          <span style={styles.topBarMessage}>{message}</span>
+          <span style={styles.headerMessage}>{message}</span>
         </div>
-        <div style={styles.topBarActions}>
-          <button
-            type="button"
-            onClick={() => setShowLogsModal(true)}
-            style={errorLogs.some((l) => l.level === "error") ? styles.topBarButtonError : styles.topBarButton}
-            title="Ver logs do sistema"
-          >
-            Logs {errorLogs.length > 0 ? `(${errorLogs.length})` : ""}
-          </button>
-          <button type="button" onClick={handleExportBackup} style={styles.topBarButton}>
-            Exportar
-          </button>
-          <button type="button" onClick={handleRestoreBackup} style={styles.topBarButton}>
-            Restaurar
-          </button>
-          <button type="button" onClick={() => void handleLogout()} style={styles.topBarButtonDanger}>
-            Sair
-          </button>
+        <div style={styles.headerRight}>
+          <nav aria-label="Fluxo operacional" style={styles.navInline}>
+            <button
+              type="button"
+              onClick={() => setActiveView("dashboard")}
+              style={navBtnStyle(activeView === "dashboard")}
+            >
+              Painel
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveView("new-weighing")}
+              style={navBtnStyle(activeView === "new-weighing")}
+            >
+              Nova entrada
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveView("open-operations")}
+              style={navBtnStyle(activeView === "open-operations")}
+            >
+              Operacoes
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveView("registrations")}
+              style={navBtnStyle(activeView === "registrations")}
+            >
+              Cadastros
+            </button>
+          </nav>
+          <div style={styles.headerActions}>
+            <div style={{ position: "relative" }}>
+              <button
+                type="button"
+                onClick={() => setShowSettings((s) => !s)}
+                style={styles.headerBtn}
+                title="Configuracoes"
+              >
+                ⚙
+              </button>
+              {showSettings ? (
+                <div style={styles.settingsDropdown}>
+                  <button
+                    type="button"
+                    onClick={() => { setActiveView("scale"); setShowSettings(false); }}
+                    style={styles.settingsItem}
+                  >
+                    Balança
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setActiveView("printing"); setShowSettings(false); }}
+                    style={styles.settingsItem}
+                  >
+                    Impressão
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setActiveView("cloud"); setShowSettings(false); }}
+                    style={styles.settingsItem}
+                  >
+                    Cloud
+                  </button>
+                  <div style={{ height: "1px", background: "#e2e8f0", margin: "4px 0" }} />
+                  <button
+                    type="button"
+                    onClick={() => { setShowLogsModal(true); setShowSettings(false); }}
+                    style={{
+                      ...styles.settingsItem,
+                      color: errorLogs.some((l) => l.level === "error") ? "#b91c1c" : "#475569"
+                    }}
+                  >
+                    Logs {errorLogs.length > 0 ? `(${errorLogs.length})` : ""}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { void handleExportBackup(); setShowSettings(false); }}
+                    style={styles.settingsItem}
+                  >
+                    Exportar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { void handleRestoreBackup(); setShowSettings(false); }}
+                    style={styles.settingsItem}
+                  >
+                    Restaurar
+                  </button>
+                  <div style={{ height: "1px", background: "#e2e8f0", margin: "4px 0" }} />
+                  <button
+                    type="button"
+                    onClick={() => { void handleLogout(); setShowSettings(false); }}
+                    style={{ ...styles.settingsItem, color: "#b91c1c" }}
+                  >
+                    Sair
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          </div>
         </div>
-      </header>
+      </div>
 
-      <nav aria-label="Fluxo operacional" style={styles.navigation}>
-        <button
-          type="button"
-          onClick={() => setActiveView("dashboard")}
-          style={viewButtonStyle(activeView === "dashboard")}
-        >
-          Painel
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveView("new-weighing")}
-          style={viewButtonStyle(activeView === "new-weighing")}
-        >
-          Nova entrada
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveView("open-operations")}
-          style={viewButtonStyle(activeView === "open-operations")}
-        >
-          Operacoes abertas
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveView("scale")}
-          style={viewButtonStyle(activeView === "scale")}
-        >
-          Balanca
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveView("registrations")}
-          style={viewButtonStyle(activeView === "registrations")}
-        >
-          Cadastros
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveView("printing")}
-          style={viewButtonStyle(activeView === "printing")}
-        >
-          Impressao
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveView("cloud")}
-          style={viewButtonStyle(activeView === "cloud")}
-        >
-          Cloud
-        </button>
-      </nav>
+      {showSettings ? (
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 99 }}
+          onClick={() => setShowSettings(false)}
+        />
+      ) : null}
 
       {showUpdateModal ? (
         <div style={styles.modalOverlay}>
@@ -1943,8 +1980,18 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Falha inesperada.";
 }
 
-function viewButtonStyle(active: boolean) {
-  return active ? styles.primaryButton : styles.secondaryButton;
+function navBtnStyle(active: boolean) {
+  return {
+    border: "none",
+    borderRadius: "8px",
+    padding: "6px 12px",
+    background: active ? "#0f172a" : "transparent",
+    color: active ? "#ffffff" : "#475569",
+    cursor: "pointer",
+    fontWeight: active ? 700 : 500,
+    fontSize: "13px",
+    whiteSpace: "nowrap" as const
+  };
 }
 
 function subTabStyle(active: boolean) {
@@ -3558,74 +3605,99 @@ const styles = {
     color: "#0f172a",
     background: "#f8fafc"
   },
-  topBar: {
+  headerRow: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: "16px",
-    padding: "10px 20px",
+    gap: "12px",
+    padding: "8px 16px",
     borderRadius: "12px",
     background: "#ffffff",
     boxShadow: "0 2px 8px rgba(15, 23, 42, 0.06)",
     marginBottom: "16px"
   },
-  topBarLeft: {
+  headerLeft: {
     display: "flex",
     alignItems: "center",
-    gap: "12px",
-    flexWrap: "wrap" as const
+    gap: "8px"
   },
-  topBarLogo: {
-    height: "32px",
+  headerMessage: {
+    fontSize: "12px",
+    color: "#94a3b8",
+    maxWidth: "200px",
+    overflow: "hidden" as const,
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap" as const
+  },
+  headerLogo: {
+    height: "24px",
     width: "auto"
   },
-  topBarBrand: {
-    fontSize: "16px",
+  headerBrand: {
+    fontSize: "14px",
     fontWeight: 700,
     color: "#0f172a"
   },
-  topBarMeta: {
-    fontSize: "13px",
-    color: "#64748b"
+  headerMeta: {
+    fontSize: "12px",
+    color: "#64748b",
+    marginLeft: "4px"
   },
-  topBarMessage: {
-    fontSize: "13px",
-    color: "#94a3b8"
-  },
-  topBarActions: {
+  headerRight: {
     display: "flex",
-    gap: "6px",
-    flexWrap: "wrap" as const
+    alignItems: "center",
+    gap: "8px"
   },
-  topBarButton: {
-    border: "1px solid #e2e8f0",
+  navInline: {
+    display: "flex",
+    gap: "4px",
+    alignItems: "center"
+  },
+  headerActions: {
+    display: "flex",
+    alignItems: "center",
+    gap: "4px",
+    borderLeft: "1px solid #e2e8f0",
+    paddingLeft: "8px",
+    marginLeft: "4px"
+  },
+  headerBtn: {
+    border: "none",
     borderRadius: "8px",
-    padding: "6px 12px",
+    padding: "6px 10px",
+    background: "transparent",
+    color: "#475569",
+    cursor: "pointer",
+    fontSize: "16px",
+    lineHeight: 1
+  },
+  settingsDropdown: {
+    position: "absolute" as const,
+    right: 0,
+    top: "100%",
+    marginTop: "4px",
     background: "#ffffff",
+    border: "1px solid #e2e8f0",
+    borderRadius: "10px",
+    boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+    minWidth: "180px",
+    zIndex: 100,
+    padding: "6px",
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "2px"
+  },
+  settingsItem: {
+    border: "none",
+    borderRadius: "6px",
+    padding: "8px 12px",
+    background: "transparent",
     color: "#475569",
     cursor: "pointer",
     fontSize: "13px",
-    fontWeight: 500
-  },
-  topBarButtonError: {
-    border: "1px solid #fecaca",
-    borderRadius: "8px",
-    padding: "6px 12px",
-    background: "#fef2f2",
-    color: "#b91c1c",
-    cursor: "pointer",
-    fontSize: "13px",
-    fontWeight: 600
-  },
-  topBarButtonDanger: {
-    border: "1px solid #e2e8f0",
-    borderRadius: "8px",
-    padding: "6px 12px",
-    background: "#ffffff",
-    color: "#b91c1c",
-    cursor: "pointer",
-    fontSize: "13px",
-    fontWeight: 500
+    fontWeight: 500,
+    textAlign: "left" as const,
+    width: "100%"
   },
   modalOverlay: {
     position: "fixed" as const,
@@ -3716,12 +3788,6 @@ const styles = {
     gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
     gap: "16px",
     marginTop: "20px"
-  },
-  navigation: {
-    display: "flex",
-    gap: "12px",
-    marginTop: "20px",
-    flexWrap: "wrap" as const
   },
   subTabs: {
     display: "flex",
