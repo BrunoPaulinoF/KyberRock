@@ -45,7 +45,7 @@ const initialWeighingForm: WeighingFormState = {
   unitPriceCents: null
 };
 
-type RegistrationsTab = "customers" | "price_tables" | "products" | "payment_terms" | "vehicles" | "drivers" | "carriers";
+type RegistrationsTab = "customers" | "price_tables" | "products" | "payment_terms" | "transport";
 
 type AppPhase = "checking_access" | "locked" | "unlocked";
 
@@ -486,29 +486,28 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
   return (
     <main style={styles.page}>
-      <section style={styles.hero}>
-        <div>
-          <p style={styles.kicker}>Fase 5 - Impressao local</p>
-          <h1 style={styles.title}>{desktopAppInfo.name}</h1>
+      <header style={styles.topBar}>
+        <div style={styles.topBarLeft}>
+          <span style={styles.topBarBrand}>{desktopAppInfo.name}</span>
           {companyName && unitName ? (
-            <p style={styles.subtitle}>
-              <strong>{companyName}</strong> — {unitName}
-            </p>
+            <span style={styles.topBarMeta}>
+              {companyName} — {unitName}
+            </span>
           ) : null}
-          <p style={styles.subtitle}>{message}</p>
+          <span style={styles.topBarMessage}>{message}</span>
         </div>
-        <div style={styles.actions}>
-          <button type="button" onClick={handleExportBackup} style={styles.primaryButton}>
-            Exportar backup
+        <div style={styles.topBarActions}>
+          <button type="button" onClick={handleExportBackup} style={styles.topBarButton}>
+            Exportar
           </button>
-          <button type="button" onClick={handleRestoreBackup} style={styles.secondaryButton}>
-            Restaurar backup
+          <button type="button" onClick={handleRestoreBackup} style={styles.topBarButton}>
+            Restaurar
           </button>
-          <button type="button" onClick={() => void handleLogout()} style={styles.secondaryButton}>
-            Sair da conta
+          <button type="button" onClick={() => void handleLogout()} style={styles.topBarButtonDanger}>
+            Sair
           </button>
         </div>
-      </section>
+      </header>
 
       <nav aria-label="Fluxo operacional" style={styles.navigation}>
         <button
@@ -704,24 +703,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
             </button>
             <button
               type="button"
-              onClick={() => setRegistrationsTab("vehicles")}
-              style={subTabStyle(registrationsTab === "vehicles")}
+              onClick={() => setRegistrationsTab("transport")}
+              style={subTabStyle(registrationsTab === "transport")}
             >
-              Veiculos
-            </button>
-            <button
-              type="button"
-              onClick={() => setRegistrationsTab("drivers")}
-              style={subTabStyle(registrationsTab === "drivers")}
-            >
-              Motoristas
-            </button>
-            <button
-              type="button"
-              onClick={() => setRegistrationsTab("carriers")}
-              style={subTabStyle(registrationsTab === "carriers")}
-            >
-              Transportadoras
+              Transporte
             </button>
           </nav>
           <div style={{ marginTop: "20px" }}>
@@ -749,31 +734,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 subField="omieCode"
               />
             ) : null}
-            {registrationsTab === "vehicles" ? (
-              <SimpleCrudList
-                desktopApi={desktopApi}
-                entityType="vehicle"
-                title="Veiculos"
-                fields={[
-                  { key: "plate", label: "Placa", required: true },
-                  { key: "description", label: "Descricao", required: false }
-                ]}
-              />
-            ) : null}
-            {registrationsTab === "drivers" ? (
-              <SimpleCrudList
-                desktopApi={desktopApi}
-                entityType="driver"
-                title="Motoristas"
-                fields={[
-                  { key: "name", label: "Nome", required: true },
-                  { key: "document", label: "CPF", required: false },
-                  { key: "phone", label: "Telefone", required: false }
-                ]}
-              />
-            ) : null}
-            {registrationsTab === "carriers" ? (
-              <RegistrationsPlaceholder title="Transportadoras" description="Transportadoras do OMIE e cadastradas localmente." />
+            {registrationsTab === "transport" ? (
+              <TransportView desktopApi={desktopApi} />
             ) : null}
           </div>
         </section>
@@ -1496,6 +1458,69 @@ function subTabStyle(active: boolean) {
     fontWeight: active ? 700 : 400,
     fontSize: "14px"
   };
+}
+
+function TransportView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
+  const [transportTab, setTransportTab] = useState<"vehicles" | "drivers" | "carriers">("vehicles");
+
+  return (
+    <div>
+      <nav style={{ ...styles.subTabs, marginTop: 0 }}>
+        <button
+          type="button"
+          onClick={() => setTransportTab("vehicles")}
+          style={subTabStyle(transportTab === "vehicles")}
+        >
+          Veiculos
+        </button>
+        <button
+          type="button"
+          onClick={() => setTransportTab("drivers")}
+          style={subTabStyle(transportTab === "drivers")}
+        >
+          Motoristas
+        </button>
+        <button
+          type="button"
+          onClick={() => setTransportTab("carriers")}
+          style={subTabStyle(transportTab === "carriers")}
+        >
+          Transportadoras
+        </button>
+      </nav>
+      <div style={{ marginTop: "20px" }}>
+        {transportTab === "vehicles" ? (
+          <SimpleCrudList
+            desktopApi={desktopApi}
+            entityType="vehicle"
+            title="Veiculos"
+            fields={[
+              { key: "plate", label: "Placa", required: true },
+              { key: "description", label: "Descricao", required: false }
+            ]}
+          />
+        ) : null}
+        {transportTab === "drivers" ? (
+          <SimpleCrudList
+            desktopApi={desktopApi}
+            entityType="driver"
+            title="Motoristas"
+            fields={[
+              { key: "name", label: "Nome", required: true },
+              { key: "document", label: "CPF", required: false },
+              { key: "phone", label: "Telefone", required: false }
+            ]}
+          />
+        ) : null}
+        {transportTab === "carriers" ? (
+          <RegistrationsPlaceholder
+            title="Transportadoras"
+            description="Transportadoras do OMIE e cadastradas localmente."
+          />
+        ) : null}
+      </div>
+    </div>
+  );
 }
 
 function RegistrationsPlaceholder({
@@ -2559,6 +2584,61 @@ const styles = {
     fontFamily: "Segoe UI, Arial, sans-serif",
     color: "#0f172a",
     background: "#f8fafc"
+  },
+  topBar: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "16px",
+    padding: "10px 20px",
+    borderRadius: "12px",
+    background: "#ffffff",
+    boxShadow: "0 2px 8px rgba(15, 23, 42, 0.06)",
+    marginBottom: "16px"
+  },
+  topBarLeft: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
+    flexWrap: "wrap" as const
+  },
+  topBarBrand: {
+    fontSize: "16px",
+    fontWeight: 700,
+    color: "#0f172a"
+  },
+  topBarMeta: {
+    fontSize: "13px",
+    color: "#64748b"
+  },
+  topBarMessage: {
+    fontSize: "13px",
+    color: "#94a3b8"
+  },
+  topBarActions: {
+    display: "flex",
+    gap: "6px",
+    flexWrap: "wrap" as const
+  },
+  topBarButton: {
+    border: "1px solid #e2e8f0",
+    borderRadius: "8px",
+    padding: "6px 12px",
+    background: "#ffffff",
+    color: "#475569",
+    cursor: "pointer",
+    fontSize: "13px",
+    fontWeight: 500
+  },
+  topBarButtonDanger: {
+    border: "1px solid #e2e8f0",
+    borderRadius: "8px",
+    padding: "6px 12px",
+    background: "#ffffff",
+    color: "#b91c1c",
+    cursor: "pointer",
+    fontSize: "13px",
+    fontWeight: 500
   },
   hero: {
     display: "flex",
