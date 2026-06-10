@@ -2511,15 +2511,18 @@ function ScaleView({
   const [status, setStatus] = useState<string>("Disconectado");
   const [error, setError] = useState<string | null>(null);
 
+  const connectedRef = useRef(connected);
+  connectedRef.current = connected;
+
   useEffect(() => {
     if (!desktopApi) return;
 
-    desktopApi.onScaleReading((r) => {
-      setReading(r);
-    });
+    const handler = (r: { weightKg: number; stable: boolean }) => setReading(r);
+    desktopApi.onScaleReading(handler as (reading: unknown) => void);
 
     return () => {
-      if (connected) {
+      desktopApi.offScaleReading(handler as (reading: unknown) => void);
+      if (connectedRef.current) {
         void desktopApi.scaleDisconnect();
         setConnected(false);
       }
