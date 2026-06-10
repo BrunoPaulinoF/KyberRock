@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
 import type * as ElectronUpdater from "electron-updater";
 import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
@@ -68,6 +68,7 @@ async function createMainWindow(): Promise<void> {
       preload: path.join(currentDirectory, "../preload/preload.js")
     }
   });
+  Menu.setApplicationMenu(null);
   writeStartupLog("browserWindow:created");
   mainWindow.webContents.on("did-finish-load", () => {
     writeStartupLog("renderer:did-finish-load", mainWindow?.webContents.getURL());

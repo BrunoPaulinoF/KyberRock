@@ -71,6 +71,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [unitName, setUnitName] = useState<string | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [availableVersion, setAvailableVersion] = useState<string | null>(null);
+  const [showLogsModal, setShowLogsModal] = useState(false);
+  const [errorLogs, setErrorLogs] = useState<Array<{ timestamp: string; level: string; source: string; message: string; details?: string }>>([]);
   const [accessStatus, setAccessStatus] = useState<DesktopAccessStatus | null>(null);
   const [omieStatus, setOmieStatus] = useState<{
     configured: boolean;
@@ -81,6 +83,46 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     lastSyncAt: string | null;
   } | null>(null);
   const [registrationsTab, setRegistrationsTab] = useState<RegistrationsTab>("customers");
+
+  useEffect(() => {
+    const captureLog = (level: string, source: string) => (...args: unknown[]) => {
+      const message = args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ");
+      setErrorLogs((prev) => [
+        ...prev.slice(-99),
+        {
+          timestamp: new Date().toISOString(),
+          level,
+          source,
+          message: message.slice(0, 500),
+          details: args.length > 1 ? JSON.stringify(args.slice(1)).slice(0, 200) : undefined
+        }
+      ]);
+    };
+    const originalError = console.error;
+    const originalWarn = console.warn;
+    console.error = (...args: unknown[]) => {
+      captureLog("error", "renderer")(...args);
+      originalError.apply(console, args);
+    };
+    console.warn = (...args: unknown[]) => {
+      captureLog("warn", "renderer")(...args);
+      originalWarn.apply(console, args);
+    };
+    const onWindowError = (event: ErrorEvent) => {
+      captureLog("error", "window")(event.message ?? "Erro desconhecido", event.error?.stack ?? "");
+    };
+    const onUnhandledRejection = (event: PromiseRejectionEvent) => {
+      captureLog("error", "promise")(String(event.reason));
+    };
+    window.addEventListener("error", onWindowError);
+    window.addEventListener("unhandledrejection", onUnhandledRejection);
+    return () => {
+      console.error = originalError;
+      console.warn = originalWarn;
+      window.removeEventListener("error", onWindowError);
+      window.removeEventListener("unhandledrejection", onUnhandledRejection);
+    };
+  }, []);
 
   useEffect(() => {
     if (!desktopApi) {
@@ -491,6 +533,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     <main style={styles.page}>
       <header style={styles.topBar}>
         <div style={styles.topBarLeft}>
+          <img src="midia/logodesk.png" alt="KyberRock" style={styles.topBarLogo} />
           <span style={styles.topBarBrand}>{desktopAppInfo.name}</span>
           {companyName && unitName ? (
             <span style={styles.topBarMeta}>
@@ -500,6 +543,14 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
           <span style={styles.topBarMessage}>{message}</span>
         </div>
         <div style={styles.topBarActions}>
+          <button
+            type="button"
+            onClick={() => setShowLogsModal(true)}
+            style={errorLogs.some((l) => l.level === "error") ? styles.topBarButtonError : styles.topBarButton}
+            title="Ver logs do sistema"
+          >
+            Logs {errorLogs.length > 0 ? `(${errorLogs.length})` : ""}
+          </button>
           <button type="button" onClick={handleExportBackup} style={styles.topBarButton}>
             Exportar
           </button>
@@ -589,6 +640,61 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 style={styles.secondaryButton}
               >
                 Mais tarde
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showLogsModal ? (
+        <div style={styles.modalOverlay}>
+          <div style={{ ...styles.modal, maxWidth: "720px", maxHeight: "80vh" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+              <h2 style={{ ...styles.modalTitle, margin: 0 }}>Logs do sistema</h2>
+              <button type="button" onClick={() => setErrorLogs([])} style={styles.secondaryButton}>
+                Limpar
+              </button>
+            </div>
+            {errorLogs.length === 0 ? (
+              <p style={styles.muted}>Nenhum log capturado. Logs de erro aparecerao aqui automaticamente.</p>
+            ) : (
+              <div style={{ maxHeight: "60vh", overflowY: "auto", border: "1px solid #e2e8f0", borderRadius: "8px" }}>
+                {errorLogs.slice().reverse().map((log, index) => (
+                  <div
+                    key={`${log.timestamp}-${index}`}
+                    style={{
+                      padding: "8px 12px",
+                      borderBottom: "1px solid #f1f5f9",
+                      background: log.level === "error" ? "#fef2f2" : log.level === "warn" ? "#fffbeb" : "#fff"
+                    }}
+                  >
+                    <div style={{ display: "flex", gap: "8px", alignItems: "center", fontSize: "12px", color: "#64748b" }}>
+                      <span>{new Date(log.timestamp).toLocaleString("pt-BR")}</span>
+                      <span style={{
+                        padding: "1px 6px",
+                        borderRadius: "4px",
+                        background: log.level === "error" ? "#fee2e2" : log.level === "warn" ? "#fef3c7" : "#e2e8f0",
+                        color: log.level === "error" ? "#991b1b" : log.level === "warn" ? "#92400e" : "#475569",
+                        fontWeight: 700,
+                        fontSize: "10px"
+                      }}>{log.level.toUpperCase()}</span>
+                      <span>{log.source}</span>
+                    </div>
+                    <div style={{ marginTop: "4px", fontSize: "13px", color: "#0f172a", wordBreak: "break-word" }}>
+                      {log.message}
+                    </div>
+                    {log.details ? (
+                      <div style={{ marginTop: "4px", fontSize: "11px", color: "#94a3b8", wordBreak: "break-word" }}>
+                        {log.details}
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "12px" }}>
+              <button type="button" onClick={() => setShowLogsModal(false)} style={styles.secondaryButton}>
+                Fechar
               </button>
             </div>
           </div>
@@ -3095,6 +3201,10 @@ const styles = {
     gap: "12px",
     flexWrap: "wrap" as const
   },
+  topBarLogo: {
+    height: "32px",
+    width: "auto"
+  },
   topBarBrand: {
     fontSize: "16px",
     fontWeight: 700,
@@ -3123,6 +3233,16 @@ const styles = {
     fontSize: "13px",
     fontWeight: 500
   },
+  topBarButtonError: {
+    border: "1px solid #fecaca",
+    borderRadius: "8px",
+    padding: "6px 12px",
+    background: "#fef2f2",
+    color: "#b91c1c",
+    cursor: "pointer",
+    fontSize: "13px",
+    fontWeight: 600
+  },
   topBarButtonDanger: {
     border: "1px solid #e2e8f0",
     borderRadius: "8px",
@@ -3132,6 +3252,39 @@ const styles = {
     cursor: "pointer",
     fontSize: "13px",
     fontWeight: 500
+  },
+  modalOverlay: {
+    position: "fixed" as const,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    background: "rgba(0,0,0,0.5)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 1000
+  },
+  modal: {
+    background: "#ffffff",
+    padding: "24px",
+    borderRadius: "16px",
+    width: "100%",
+    maxWidth: "480px",
+    boxShadow: "0 10px 25px rgba(0,0,0,0.15)"
+  },
+  modalTitle: {
+    margin: "0 0 8px 0",
+    color: "#0f172a"
+  },
+  modalText: {
+    color: "#475569",
+    margin: "0 0 16px 0"
+  },
+  modalActions: {
+    display: "flex",
+    gap: "8px",
+    justifyContent: "flex-end"
   },
   hero: {
     display: "flex",
@@ -3256,37 +3409,5 @@ const styles = {
     gap: "16px",
     padding: "14px 0",
     borderTop: "1px solid #e2e8f0"
-  },
-  modalOverlay: {
-    position: "fixed" as const,
-    inset: 0,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    background: "rgba(15, 23, 42, 0.5)",
-    zIndex: 1000
-  },
-  modal: {
-    width: "100%",
-    maxWidth: "420px",
-    padding: "28px",
-    borderRadius: "20px",
-    background: "#ffffff",
-    boxShadow: "0 24px 80px rgba(15, 23, 42, 0.2)"
-  },
-  modalTitle: {
-    margin: "0 0 12px 0",
-    fontSize: "22px"
-  },
-  modalText: {
-    margin: "0 0 20px 0",
-    color: "#334155",
-    fontSize: "16px",
-    lineHeight: 1.5
-  },
-  modalActions: {
-    display: "flex",
-    gap: "12px",
-    flexWrap: "wrap" as const
   }
 };
