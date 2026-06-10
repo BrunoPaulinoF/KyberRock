@@ -324,6 +324,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     await desktopApi.logoutDesktop();
     setCompanyName(null);
     setUnitName(null);
+    setAccessStatus(null);
     setPhase("locked");
   }
 
