@@ -66,7 +66,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [printReceipts, setPrintReceipts] = useState<PrintReceiptSummary[]>([]);
   const [selectedPrinterName, setSelectedPrinterName] = useState("");
   const [form, setForm] = useState<WeighingFormState>(initialWeighingForm);
-  const [activeView, setActiveView] = useState<ActiveView>("dashboard");
+  const [activeView, setActiveView] = useState<ActiveView>("new-weighing");
   const [formError, setFormError] = useState<string | null>(null);
   const [message, setMessage] = useState("Inicializando desktop offline-first...");
   const [cloudConnected, setCloudConnected] = useState(false);
@@ -89,6 +89,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   } | null>(null);
   const [registrationsTab, setRegistrationsTab] = useState<RegistrationsTab>("customers");
   const [closingOperationId, setClosingOperationId] = useState<string | null>(null);
+  const [omieSyncing, setOmieSyncing] = useState(false);
 
   useEffect(() => {
     const captureLog = (level: string, source: string) => (...args: unknown[]) => {
@@ -366,6 +367,26 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       setMessage(`Falha na sincronizacao: ${error instanceof Error ? error.message : "Erro desconhecido"}`);
     } finally {
       setCloudSyncing(false);
+    }
+  }
+
+  async function handleSyncOmie(): Promise<void> {
+    if (!desktopApi) return;
+
+    setOmieSyncing(true);
+    setMessage("Sincronizando OMIE...");
+    try {
+      const result = await desktopApi.omieSync();
+      setMessage(
+        `OMIE: ${result.customersPulled} clientes puxados, ${result.customersPushed} enviados, ` +
+        `${result.productsSynced} produtos, ${result.paymentTermsSynced} condicoes.`
+      );
+      const omieStatusResult = await desktopApi.getOmieStatus();
+      setOmieStatus(omieStatusResult);
+    } catch (error) {
+      setMessage(`Falha no sync OMIE: ${getErrorMessage(error)}`);
+    } finally {
+      setOmieSyncing(false);
     }
   }
 
@@ -1002,23 +1023,36 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   {omieStatus.configured ? "Conectado" : "Nao configurado"}
                 </p>
                 {omieStatus.configured && (
-                  <>
-                    <p>Clientes sincronizados: {omieStatus.totalCustomers}</p>
-                    <p>Produtos sincronizados: {omieStatus.totalProducts}</p>
-                    <p>Condicoes sincronizadas: {omieStatus.totalPaymentTerms}</p>
-                    <p>Pendentes de envio: {omieStatus.pendingPushCustomers} clientes</p>
-                    <p>
-                      Ultima sincronizacao:{" "}
-                      {omieStatus.lastSyncAt
-                        ? new Date(omieStatus.lastSyncAt).toLocaleString("pt-BR")
-                        : "Nunca"}
-                    </p>
-                  </>
-                )}
+              <>
+                <p>Clientes sincronizados: {omieStatus.totalCustomers}</p>
+                <p>Produtos sincronizados: {omieStatus.totalProducts}</p>
+                <p>Condicoes sincronizadas: {omieStatus.totalPaymentTerms}</p>
+                <p>Pendentes de envio: {omieStatus.pendingPushCustomers} clientes</p>
+                <p>
+                  Ultima sincronizacao:{" "}
+                  {omieStatus.lastSyncAt
+                    ? new Date(omieStatus.lastSyncAt).toLocaleString("pt-BR")
+                    : "Nunca"}
+                </p>
+                <button
+                  type="button"
+                  onClick={handleSyncOmie}
+                  disabled={omieSyncing}
+                  style={{
+                    ...styles.primaryButton,
+                    marginTop: "16px",
+                    opacity: omieSyncing ? 0.6 : 1,
+                    cursor: omieSyncing ? "not-allowed" : "pointer"
+                  }}
+                >
+                  {omieSyncing ? "Sincronizando..." : "Sincronizar OMIE agora"}
+                </button>
               </>
-            ) : (
-              <p style={{ color: "#64748b" }}>Carregando status OMIE...</p>
             )}
+          </>
+        ) : (
+          <p style={{ color: "#64748b" }}>Carregando status OMIE...</p>
+        )}
           </article>
         </section>
       ) : null}
@@ -1319,66 +1353,98 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
 
       {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
 
-      <CacheSelect
-        label="Cliente"
-        entityType="customer"
-        value={form.customerId}
-        onChange={(id) => setForm((prev) => ({ ...prev, customerId: id }))}
-        onCreateNew={() => setShowCustomerModal(true)}
-        desktopApi={desktopApi}
-        refreshKey={customerRefreshKey}
-      />
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: "16px",
+          marginBottom: "16px"
+        }}
+      >
+        <div style={{ fontWeight: 700, fontSize: "14px", color: "#475569", borderBottom: "1px solid #e2e8f0", paddingBottom: "4px" }}>
+          Entidade
+        </div>
+        <div style={{ fontWeight: 700, fontSize: "14px", color: "#475569", borderBottom: "1px solid #e2e8f0", paddingBottom: "4px" }}>
+          Transporte
+        </div>
 
-      <CacheSelect
-        label="Placa"
-        entityType="vehicle"
-        value={form.vehicleId}
-        onChange={(id) => setForm((prev) => ({ ...prev, vehicleId: id, carrierId: "" }))}
-        onCreateNew={() => setShowVehicleModal(true)}
-        desktopApi={desktopApi}
-        refreshKey={vehicleRefreshKey}
-      />
+        <div>
+          <CacheSelect
+            label="Cliente"
+            entityType="customer"
+            value={form.customerId}
+            onChange={(id) => setForm((prev) => ({ ...prev, customerId: id }))}
+            onCreateNew={() => setShowCustomerModal(true)}
+            desktopApi={desktopApi}
+            refreshKey={customerRefreshKey}
+          />
+        </div>
 
-      <CacheSelect
-        label="Transportadora"
-        entityType="carrier"
-        value={form.carrierId}
-        onChange={(id) => setForm((prev) => ({ ...prev, carrierId: id }))}
-        onCreateNew={() => setShowCarrierModal(true)}
-        desktopApi={desktopApi}
-        refreshKey={carrierRefreshKey}
-      />
+        <div>
+          <CacheSelect
+            label="Placa"
+            entityType="vehicle"
+            value={form.vehicleId}
+            onChange={(id) => setForm((prev) => ({ ...prev, vehicleId: id, carrierId: "" }))}
+            onCreateNew={() => setShowVehicleModal(true)}
+            desktopApi={desktopApi}
+            refreshKey={vehicleRefreshKey}
+          />
+        </div>
 
-      <CacheSelect
-        label="Motorista"
-        entityType="driver"
-        value={form.driverId}
-        onChange={(id) => setForm({ ...form, driverId: id })}
-        onCreateNew={() => setShowDriverModal(true)}
-        desktopApi={desktopApi}
-        refreshKey={driverRefreshKey}
-      />
+        <div>
+          <CacheSelect
+            label="Produto"
+            entityType="product"
+            value={form.productId}
+            onChange={(id) => setForm({ ...form, productId: id })}
+            desktopApi={desktopApi}
+          />
+        </div>
 
-      <CacheSelect
-        label="Produto"
-        entityType="product"
-        value={form.productId}
-        onChange={(id) => setForm({ ...form, productId: id })}
-        desktopApi={desktopApi}
-      />
+        <div>
+          <CacheSelect
+            label="Transportadora"
+            entityType="carrier"
+            value={form.carrierId}
+            onChange={(id) => setForm((prev) => ({ ...prev, carrierId: id }))}
+            onCreateNew={() => setShowCarrierModal(true)}
+            desktopApi={desktopApi}
+            refreshKey={carrierRefreshKey}
+          />
+        </div>
 
-      <CacheSelect
-        label="Condicao de pagamento"
-        entityType="payment_term"
-        value={form.paymentTermId}
-        onChange={(id) => setForm({ ...form, paymentTermId: id })}
-        desktopApi={desktopApi}
-      />
+        <div>
+          <CacheSelect
+            label="Condicao de pagamento"
+            entityType="payment_term"
+            value={form.paymentTermId}
+            onChange={(id) => setForm({ ...form, paymentTermId: id })}
+            desktopApi={desktopApi}
+          />
+        </div>
 
-      <PriceInput
-        valueCents={form.unitPriceCents}
-        onChange={(cents) => setForm((prev) => ({ ...prev, unitPriceCents: cents }))}
-      />
+        <div>
+          <CacheSelect
+            label="Motorista"
+            entityType="driver"
+            value={form.driverId}
+            onChange={(id) => setForm({ ...form, driverId: id })}
+            onCreateNew={() => setShowDriverModal(true)}
+            desktopApi={desktopApi}
+            refreshKey={driverRefreshKey}
+          />
+        </div>
+
+        <div>
+          <PriceInput
+            valueCents={form.unitPriceCents}
+            onChange={(cents) => setForm((prev) => ({ ...prev, unitPriceCents: cents }))}
+          />
+        </div>
+
+        <div></div>
+      </div>
 
       <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
         <button type="button" onClick={onStart} style={styles.primaryButton}>

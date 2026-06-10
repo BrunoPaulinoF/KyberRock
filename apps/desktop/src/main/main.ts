@@ -71,6 +71,7 @@ async function createMainWindow(): Promise<void> {
   });
   Menu.setApplicationMenu(null);
   writeStartupLog("browserWindow:created");
+  mainWindow.maximize();
   mainWindow.webContents.on("did-finish-load", () => {
     writeStartupLog("renderer:did-finish-load", mainWindow?.webContents.getURL());
   });

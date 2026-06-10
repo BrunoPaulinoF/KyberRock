@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 
 import type { DesktopDatabase } from "../database/sqlite.js";
-import { ensureCustomerDefaultCarrier } from "./carriers.js";
 
 export interface CreateCustomerInput {
   companyId: string;
@@ -65,6 +64,36 @@ export function createCustomer(
   const id = randomUUID();
   const nowIso = now.toISOString();
 
+  let defaultCarrierId = input.defaultCarrierId ?? null;
+
+  if (!defaultCarrierId) {
+    const company = database
+      .prepare("SELECT trade_name FROM companies WHERE id = ?")
+      .get(input.companyId) as { trade_name: string } | undefined;
+
+    if (company) {
+      const carrierName = `${company.trade_name} (padrão)`;
+      const existing = database
+        .prepare(
+          "SELECT id FROM carriers WHERE company_id = ? AND name = ? AND deleted_at IS NULL"
+        )
+        .get(input.companyId, carrierName) as { id: string } | undefined;
+
+      if (existing) {
+        defaultCarrierId = existing.id;
+      } else {
+        const carrierId = randomUUID();
+        database
+          .prepare(
+            `INSERT INTO carriers (id, company_id, name, document, source, is_active, created_at, updated_at)
+             VALUES (?, ?, ?, NULL, 'local', 1, ?, ?)`
+          )
+          .run(carrierId, input.companyId, carrierName, nowIso, nowIso);
+        defaultCarrierId = carrierId;
+      }
+    }
+  }
+
   database
     .prepare(
       `INSERT INTO customers (
@@ -85,15 +114,11 @@ export function createCustomer(
       input.creditLimitCents ?? null,
       input.omieBillingBlocked ? 1 : 0,
       input.observations ?? null,
-      input.defaultCarrierId ?? null,
+      defaultCarrierId,
       nowIso,
       nowIso,
       nowIso
     );
-
-  if (input.defaultCarrierId === undefined) {
-    ensureCustomerDefaultCarrier(database, id, now);
-  }
 
   return database
     .prepare("SELECT * FROM customers WHERE id = ?")

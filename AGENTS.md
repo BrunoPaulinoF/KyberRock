@@ -5,8 +5,9 @@
 - **Monorepo**: `npm` workspaces. Root `tsconfig.json` is `references`-only; each workspace has `composite: true` and excludes `**/*.test.ts` from build — use `import type` for test-only symbols.
 - **Desktop** (`apps/desktop`, `@kyberrock/desktop`): Electron 40 + React 19 + Vite 7 + `better-sqlite3`. Hardware integration (scale, printer) lives in `src/services/`; the renderer never imports Node.
 - **Loader web** (`apps/loader-web`, `@kyberrock/loader-web`): React 19 + Vite 7 + Supabase JS, served via nginx (Docker / EasyPanel).
+- **Functions lib** (`functions`, `@kyberrock/functions`): TypeScript utils workspace (not to be confused with Deno Edge Functions in `supabase/functions/`).
 - **Shared packages** (`packages/`): `shared` (types), `scale-adapters` (balance), `omie-client` (OMIE), `print-templates` (80 mm / A4).
-- **Cloud**: Supabase Postgres + Edge Functions in `supabase/functions/` (Deno-style, with `_shared/`); SQL migrations in `supabase/migrations/`. Use the `supabase_kyberrock_*` MCP tools for DB / function work.
+- **Cloud**: Supabase Postgres + Deno Edge Functions in `supabase/functions/` (with `_shared/`); SQL migrations in `supabase/migrations/`. Use the `supabase_kyberrock_*` MCP tools for DB / function work.
 - Product / architecture docs: `PRD.md`, `PLAN.md`, `docs/ARCHITECTURE.md`, `docs/phase-*/`. Do not duplicate them here.
 
 ## Commands
@@ -15,7 +16,7 @@ Root:
 
 ```bash
 npm install
-npm run build   # tsc -b across all workspaces
+npm run build   # runs each workspace's build (tsc + vite as applicable)
 npm run lint    # eslint . (flat config)
 npm test        # vitest run
 npm run format  # prettier . --write

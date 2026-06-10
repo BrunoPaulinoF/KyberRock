@@ -734,7 +734,9 @@ export class DesktopRuntime {
       throw new Error("OMIE nao configurado. Configure o token OMIE no site administrativo.");
     }
     const identity = this.ensureIdentity();
-    return this.omieSync.syncAll(identity.companyId);
+    const result = await this.omieSync.syncAll(identity.companyId);
+    this.cacheStore.invalidateAll(identity.companyId);
+    return result;
   }
 
   private ensureIdentity(): LocalDesktopIdentity {
