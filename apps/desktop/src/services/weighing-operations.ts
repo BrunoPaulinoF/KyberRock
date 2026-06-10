@@ -35,6 +35,7 @@ export interface CreateWeighingOperationInput {
   operationType?: OperationType;
   customerId: string;
   vehicleId: string;
+  carrierId?: string;
   driverId: string;
   productId: string;
   paymentTermId?: string;
@@ -324,9 +325,9 @@ export function createWeighingOperation(
     database
       .prepare(
         `INSERT INTO weighing_operations (
-          id, company_id, unit_id, device_id, status, operation_type, customer_id, vehicle_id, driver_id, product_id,
+          id, company_id, unit_id, device_id, status, operation_type, customer_id, vehicle_id, carrier_id, driver_id, product_id,
           payment_term_id, entry_weight_kg, entry_weight_captured_at, unit_price_cents, freight_total_cents, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, 'loading_requested', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`
+        ) VALUES (?, ?, ?, ?, 'loading_requested', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`
       )
       .run(
         operationId,
@@ -336,6 +337,7 @@ export function createWeighingOperation(
         operationType,
         input.customerId,
         input.vehicleId,
+        input.carrierId ?? null,
         input.driverId,
         input.productId,
         input.paymentTermId ?? null,

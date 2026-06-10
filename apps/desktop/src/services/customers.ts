@@ -12,6 +12,7 @@ export interface CreateCustomerInput {
   creditLimitCents?: number;
   omieBillingBlocked?: boolean;
   observations?: string;
+  defaultCarrierId?: string;
 }
 
 export interface UpdateCustomerInput {
@@ -24,6 +25,7 @@ export interface UpdateCustomerInput {
   omieBillingBlocked?: boolean;
   observations?: string;
   isActive?: boolean;
+  defaultCarrierId?: string | null;
 }
 
 export interface CustomerRow {
@@ -66,9 +68,9 @@ export function createCustomer(
       `INSERT INTO customers (
         id, company_id, source, legal_name, trade_name, document, phone, email,
         credit_limit_cents, open_receivables_cents, omie_billing_blocked,
-        observations, sync_status, needs_push, local_updated_at, is_active,
+        observations, default_carrier_id, sync_status, needs_push, local_updated_at, is_active,
         created_at, updated_at
-      ) VALUES (?, ?, 'local', ?, ?, ?, ?, ?, ?, 0, ?, ?, 'pending', 1, ?, 1, ?, ?)`
+      ) VALUES (?, ?, 'local', ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 'pending', 1, ?, 1, ?, ?)`
     )
     .run(
       id,
@@ -81,6 +83,7 @@ export function createCustomer(
       input.creditLimitCents ?? null,
       input.omieBillingBlocked ? 1 : 0,
       input.observations ?? null,
+      input.defaultCarrierId ?? null,
       nowIso,
       nowIso,
       nowIso
@@ -141,6 +144,10 @@ export function updateCustomer(
     sets.push("observations = ?");
     values.push(input.observations);
   }
+  if (input.defaultCarrierId !== undefined) {
+    sets.push("default_carrier_id = ?");
+    values.push(input.defaultCarrierId);
+  }
   if (input.isActive !== undefined) {
     sets.push("is_active = ?");
     values.push(input.isActive ? 1 : 0);
@@ -200,4 +207,17 @@ export function listCustomers(
        ORDER BY trade_name ASC`
     )
     .all(companyId) as CustomerRow[];
+}
+
+export function getCustomersByCarrier(
+  database: DesktopDatabase,
+  carrierId: string
+): CustomerRow[] {
+  return database
+    .prepare(
+      `SELECT * FROM customers
+       WHERE default_carrier_id = ? AND deleted_at IS NULL AND is_active = 1
+       ORDER BY trade_name ASC`
+    )
+    .all(carrierId) as CustomerRow[];
 }

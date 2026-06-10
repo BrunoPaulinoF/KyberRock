@@ -103,6 +103,72 @@ export function findOrCreateVehicle(
   return createVehicle(database, { companyId, plate: normalized }, now);
 }
 
+export interface VehicleCarrierRow {
+  id: string;
+  vehicle_id: string;
+  carrier_id: string;
+  is_active: number;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+export function linkVehicleToCarrier(
+  database: DesktopDatabase,
+  vehicleId: string,
+  carrierId: string,
+  now: Date = new Date()
+): VehicleCarrierRow {
+  const nowIso = now.toISOString();
+  const id = randomUUID();
+
+  const existing = database
+    .prepare("SELECT * FROM vehicle_carriers WHERE vehicle_id = ? AND carrier_id = ? AND deleted_at IS NULL")
+    .get(vehicleId, carrierId) as VehicleCarrierRow | undefined;
+
+  if (existing) {
+    database
+      .prepare("UPDATE vehicle_carriers SET is_active = 1, updated_at = ? WHERE id = ?")
+      .run(nowIso, existing.id);
+    return { ...existing, is_active: 1, updated_at: nowIso };
+  }
+
+  database
+    .prepare(
+      `INSERT INTO vehicle_carriers (id, vehicle_id, carrier_id, is_active, created_at, updated_at)
+       VALUES (?, ?, ?, 1, ?, ?)`
+    )
+    .run(id, vehicleId, carrierId, nowIso, nowIso);
+
+  return database.prepare("SELECT * FROM vehicle_carriers WHERE id = ?").get(id) as VehicleCarrierRow;
+}
+
+export function unlinkVehicleFromCarrier(
+  database: DesktopDatabase,
+  vehicleId: string,
+  carrierId: string,
+  now: Date = new Date()
+): void {
+  database
+    .prepare("UPDATE vehicle_carriers SET deleted_at = ?, updated_at = ? WHERE vehicle_id = ? AND carrier_id = ? AND deleted_at IS NULL")
+    .run(now.toISOString(), now.toISOString(), vehicleId, carrierId);
+}
+
+export function getVehicleCarriers(
+  database: DesktopDatabase,
+  vehicleId: string
+): Array<{ carrierId: string; carrierName: string; carrierDocument: string | null }> {
+  return database
+    .prepare(
+      `SELECT c.id as carrier_id, c.name as carrier_name, c.document as carrier_document
+       FROM vehicle_carriers vc
+       JOIN carriers c ON vc.carrier_id = c.id
+       WHERE vc.vehicle_id = ? AND vc.deleted_at IS NULL AND vc.is_active = 1
+       ORDER BY c.name ASC`
+    )
+    .all(vehicleId) as Array<{ carrierId: string; carrierName: string; carrierDocument: string | null }>;
+}
+
 export function listVehicles(database: DesktopDatabase, companyId: string): VehicleRow[] {
   return database
     .prepare("SELECT * FROM vehicles WHERE company_id = ? AND deleted_at IS NULL ORDER BY plate ASC")

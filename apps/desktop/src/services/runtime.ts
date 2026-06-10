@@ -76,6 +76,7 @@ import {
 import {
   createCustomer,
   deleteCustomer,
+  getCustomersByCarrier,
   updateCustomer,
   type CreateCustomerInput,
   type UpdateCustomerInput
@@ -101,6 +102,8 @@ import {
   createVehicle,
   deleteVehicle,
   findOrCreateVehicle,
+  getVehicleCarriers,
+  linkVehicleToCarrier,
   updateVehicle,
   type CreateVehicleInput,
   type UpdateVehicleInput
@@ -212,6 +215,7 @@ export class DesktopRuntime {
       operationType: OperationType;
       customerId: string;
       vehicleId: string;
+      carrierId?: string;
       driverId: string;
       productId: string;
       paymentTermId?: string;
@@ -226,6 +230,7 @@ export class DesktopRuntime {
       operationType: input.operationType,
       customerId: input.customerId,
       vehicleId: input.vehicleId,
+      carrierId: input.carrierId,
       driverId: input.driverId,
       productId: input.productId,
       paymentTermId: input.paymentTermId,
@@ -553,6 +558,21 @@ export class DesktopRuntime {
     const result = findOrCreateVehicle(this.database, identity.companyId, plate);
     this.cacheStore.invalidate("vehicle", identity.companyId);
     return result;
+  }
+
+  getVehicleCarriers(vehicleId: string): Array<{ carrierId: string; carrierName: string; carrierDocument: string | null }> {
+    return getVehicleCarriers(this.database, vehicleId);
+  }
+
+  linkVehicleToCarrier(vehicleId: string, carrierId: string): unknown {
+    this.assertDesktopAccess();
+    const result = linkVehicleToCarrier(this.database, vehicleId, carrierId);
+    this.cacheStore.invalidate("vehicle", this.ensureIdentity().companyId);
+    return result;
+  }
+
+  getCustomersByCarrier(carrierId: string): unknown[] {
+    return getCustomersByCarrier(this.database, carrierId);
   }
 
   createDriver(input: Omit<CreateDriverInput, "companyId">): unknown {

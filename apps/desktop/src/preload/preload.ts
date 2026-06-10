@@ -90,6 +90,12 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:vehicles-delete", id),
   vehiclesFindOrCreate: (plate: string) =>
     ipcRenderer.invoke("desktop:vehicles-find-or-create", plate),
+  vehiclesGetCarriers: (vehicleId: string) =>
+    ipcRenderer.invoke("desktop:vehicles-get-carriers", vehicleId),
+  vehiclesLinkCarrier: (vehicleId: string, carrierId: string) =>
+    ipcRenderer.invoke("desktop:vehicles-link-carrier", vehicleId, carrierId),
+  customersByCarrier: (carrierId: string) =>
+    ipcRenderer.invoke("desktop:customers-by-carrier", carrierId),
   driversCreate: (input: unknown) =>
     ipcRenderer.invoke("desktop:drivers-create", input),
   driversUpdate: (id: string, input: unknown) =>

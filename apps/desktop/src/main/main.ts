@@ -469,6 +469,21 @@ function registerIpcHandlers(): void {
     return runtime.findOrCreateVehicle(plate);
   });
 
+  ipcMain.handle("desktop:vehicles-get-carriers", (_event, vehicleId: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.getVehicleCarriers(vehicleId);
+  });
+
+  ipcMain.handle("desktop:vehicles-link-carrier", (_event, vehicleId: string, carrierId: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.linkVehicleToCarrier(vehicleId, carrierId);
+  });
+
+  ipcMain.handle("desktop:customers-by-carrier", (_event, carrierId: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.getCustomersByCarrier(carrierId);
+  });
+
   ipcMain.handle("desktop:drivers-create", (_event, input: Omit<CreateDriverInput, "companyId">) => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.createDriver(input);

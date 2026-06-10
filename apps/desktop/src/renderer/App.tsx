@@ -25,8 +25,9 @@ export interface AppProps {
 
 interface WeighingFormState {
   operationType: OperationType;
-  customerId: string;
   vehicleId: string;
+  carrierId: string;
+  customerId: string;
   driverId: string;
   productId: string;
   paymentTermId: string;
@@ -37,8 +38,9 @@ type ActiveView = "dashboard" | "new-weighing" | "open-operations" | "scale" | "
 
 const initialWeighingForm: WeighingFormState = {
   operationType: "invoice",
-  customerId: "",
   vehicleId: "",
+  carrierId: "",
+  customerId: "",
   driverId: "",
   productId: "",
   paymentTermId: "",
@@ -334,6 +336,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         operationType: form.operationType,
         customerId: form.customerId,
         vehicleId: form.vehicleId,
+        carrierId: form.carrierId || undefined,
         driverId: form.driverId,
         productId: form.productId,
         paymentTermId: form.paymentTermId || undefined,
@@ -920,8 +923,9 @@ function describeUpdateState(state: UpdateState): string {
 }
 
 function validateWeighingForm(form: WeighingFormState): string | null {
-  if (!form.customerId) return "Selecione o cliente.";
   if (!form.vehicleId) return "Selecione a placa.";
+  if (!form.carrierId) return "Selecione a transportadora.";
+  if (!form.customerId) return "Selecione o cliente.";
   if (!form.driverId) return "Selecione o motorista.";
   if (!form.productId) return "Selecione o produto.";
   if (form.unitPriceCents === null) return "Informe o preco.";
@@ -1132,6 +1136,10 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
   const [liveWeight, setLiveWeight] = useState<number | null>(null);
   const [showVehicleModal, setShowVehicleModal] = useState(false);
   const [showDriverModal, setShowDriverModal] = useState(false);
+  const [vehicleCarriers, setVehicleCarriers] = useState<Array<{ carrierId: string; carrierName: string; carrierDocument: string | null }>>([]);
+  const [carrierCustomers, setCarrierCustomers] = useState<Array<{ id: string; tradeName: string }>>([]);
+  const [loadingCarriers, setLoadingCarriers] = useState(false);
+  const [loadingCustomers, setLoadingCustomers] = useState(false);
 
   useEffect(() => {
     if (!desktopApi) return;
@@ -1141,6 +1149,59 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
       desktopApi.offScaleReading(handler as (reading: unknown) => void);
     };
   }, [desktopApi]);
+
+  useEffect(() => {
+    async function fetchCarriers() {
+      if (!desktopApi || !form.vehicleId) {
+        setVehicleCarriers([]);
+        setForm((prev) => ({ ...prev, carrierId: "", customerId: "" }));
+        return;
+      }
+      setLoadingCarriers(true);
+      try {
+        const carriers = await desktopApi.vehiclesGetCarriers(form.vehicleId);
+        setVehicleCarriers(carriers);
+        if (carriers.length === 1) {
+          setForm((prev) => ({ ...prev, carrierId: carriers[0].carrierId, customerId: "" }));
+        } else {
+          setForm((prev) => ({ ...prev, carrierId: "", customerId: "" }));
+        }
+      } catch {
+        setVehicleCarriers([]);
+        setForm((prev) => ({ ...prev, carrierId: "", customerId: "" }));
+      } finally {
+        setLoadingCarriers(false);
+      }
+    }
+
+    fetchCarriers();
+  }, [desktopApi, form.vehicleId]);
+
+  useEffect(() => {
+    async function fetchCustomers() {
+      if (!desktopApi || !form.carrierId) {
+        setCarrierCustomers([]);
+        setForm((prev) => ({ ...prev, customerId: "" }));
+        return;
+      }
+      setLoadingCustomers(true);
+      try {
+        const customers = await desktopApi.customersByCarrier(form.carrierId);
+        setCarrierCustomers(
+          (customers as Array<Record<string, unknown>>).map((c) => ({
+            id: String(c.id),
+            tradeName: String(c.trade_name ?? c.tradeName ?? "")
+          }))
+        );
+      } catch {
+        setCarrierCustomers([]);
+      } finally {
+        setLoadingCustomers(false);
+      }
+    }
+
+    fetchCustomers();
+  }, [desktopApi, form.carrierId]);
 
   useEffect(() => {
     async function fetchPrice() {
@@ -1168,7 +1229,7 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
     <section style={styles.panel}>
       <h2 style={styles.panelTitle}>Nova pesagem</h2>
       <p style={styles.muted}>
-        Selecione as entidades do cadastro. O peso vem da balanca em tempo real.
+        Selecione a placa, transportadora, cliente e demais dados. O peso vem da balanca em tempo real.
       </p>
 
       {liveWeight !== null ? (
@@ -1205,21 +1266,51 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
       </label>
 
       <CacheSelect
-        label="Cliente"
-        entityType="customer"
-        value={form.customerId}
-        onChange={(id) => setForm({ ...form, customerId: id })}
-        desktopApi={desktopApi}
-      />
-
-      <CacheSelect
         label="Placa"
         entityType="vehicle"
         value={form.vehicleId}
-        onChange={(id) => setForm({ ...form, vehicleId: id })}
+        onChange={(id) => setForm({ ...form, vehicleId: id, carrierId: "", customerId: "" })}
         onCreateNew={() => setShowVehicleModal(true)}
         desktopApi={desktopApi}
       />
+
+      {form.vehicleId ? (
+        <label style={styles.fieldLabel}>
+          Transportadora
+          <select
+            value={form.carrierId}
+            onChange={(event) => setForm({ ...form, carrierId: event.target.value, customerId: "" })}
+            style={styles.input}
+            disabled={loadingCarriers || vehicleCarriers.length === 0}
+          >
+            <option value="">{loadingCarriers ? "Carregando..." : vehicleCarriers.length === 0 ? "Nenhuma transportadora vinculada" : "Selecione a transportadora"}</option>
+            {vehicleCarriers.map((carrier) => (
+              <option key={carrier.carrierId} value={carrier.carrierId}>
+                {carrier.carrierName}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+
+      {form.carrierId ? (
+        <label style={styles.fieldLabel}>
+          Cliente
+          <select
+            value={form.customerId}
+            onChange={(event) => setForm({ ...form, customerId: event.target.value })}
+            style={styles.input}
+            disabled={loadingCustomers || carrierCustomers.length === 0}
+          >
+            <option value="">{loadingCustomers ? "Carregando..." : carrierCustomers.length === 0 ? "Nenhum cliente vinculado" : "Selecione o cliente"}</option>
+            {carrierCustomers.map((customer) => (
+              <option key={customer.id} value={customer.id}>
+                {customer.tradeName}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
 
       <CacheSelect
         label="Motorista"

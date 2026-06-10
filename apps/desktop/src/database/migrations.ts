@@ -357,5 +357,26 @@ CREATE INDEX IF NOT EXISTS idx_payment_terms_active ON payment_terms(company_id,
 CREATE INDEX IF NOT EXISTS idx_customers_needs_push ON customers(company_id, needs_push);
 CREATE INDEX IF NOT EXISTS idx_price_tables_needs_push ON price_tables(company_id, needs_push);
 `
+  },
+  {
+    version: 3,
+    name: "vehicle_carrier_links_and_customer_default_carrier",
+    sql: `
+ALTER TABLE customers ADD COLUMN default_carrier_id TEXT;
+
+CREATE TABLE IF NOT EXISTS vehicle_carriers (
+  id TEXT PRIMARY KEY,
+  vehicle_id TEXT NOT NULL REFERENCES vehicles(id),
+  carrier_id TEXT NOT NULL REFERENCES carriers(id),
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_vehicle_carriers_vehicle ON vehicle_carriers(vehicle_id, is_active, deleted_at);
+CREATE INDEX IF NOT EXISTS idx_vehicle_carriers_carrier ON vehicle_carriers(carrier_id, is_active, deleted_at);
+CREATE INDEX IF NOT EXISTS idx_customers_default_carrier ON customers(company_id, default_carrier_id, is_active);
+`
   }
 ];

@@ -55,6 +55,7 @@ export interface KyberRockDesktopApi {
     operationType: OperationType;
     customerId: string;
     vehicleId: string;
+    carrierId?: string;
     driverId: string;
     productId: string;
     paymentTermId?: string;
@@ -94,6 +95,9 @@ export interface KyberRockDesktopApi {
   vehiclesUpdate: (id: string, input: UpdateVehicleInput) => Promise<unknown>;
   vehiclesDelete: (id: string) => Promise<void>;
   vehiclesFindOrCreate: (plate: string) => Promise<unknown>;
+  vehiclesGetCarriers: (vehicleId: string) => Promise<Array<{ carrierId: string; carrierName: string; carrierDocument: string | null }>>;
+  vehiclesLinkCarrier: (vehicleId: string, carrierId: string) => Promise<unknown>;
+  customersByCarrier: (carrierId: string) => Promise<unknown[]>;
   driversCreate: (input: Omit<CreateDriverInput, "companyId">) => Promise<unknown>;
   driversUpdate: (id: string, input: UpdateDriverInput) => Promise<unknown>;
   driversDelete: (id: string) => Promise<void>;
