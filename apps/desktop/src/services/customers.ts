@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type { DesktopDatabase } from "../database/sqlite.js";
+import { ensureCustomerDefaultCarrier } from "./carriers.js";
 
 export interface CreateCustomerInput {
   companyId: string;
@@ -89,6 +90,10 @@ export function createCustomer(
       nowIso,
       nowIso
     );
+
+  if (input.defaultCarrierId === undefined) {
+    ensureCustomerDefaultCarrier(database, id, now);
+  }
 
   return database
     .prepare("SELECT * FROM customers WHERE id = ?")

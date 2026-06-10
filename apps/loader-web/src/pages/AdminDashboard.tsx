@@ -291,18 +291,16 @@ export function AdminDashboard() {
     const formData = new FormData(form);
     const omieAppKey = String(formData.get("omieAppKey") ?? "").trim();
     const omieAppSecret = String(formData.get("omieAppSecret") ?? "").trim();
+    const payload: Record<string, unknown> = {
+      companyId: editingCompany.id,
+      name: formData.get("name"),
+      legalName: formData.get("legalName"),
+      document: formData.get("document")
+    };
+    if (omieAppKey) payload.omieAppKey = omieAppKey;
+    if (omieAppSecret) payload.omieAppSecret = omieAppSecret;
     try {
-      await callAdminFunction("admin-api", {
-        action: "update_company",
-        payload: {
-          companyId: editingCompany.id,
-          name: formData.get("name"),
-          legalName: formData.get("legalName"),
-          document: formData.get("document"),
-          omieAppKey: omieAppKey || null,
-          omieAppSecret: omieAppSecret || null
-        }
-      });
+      await callAdminFunction("admin-api", { action: "update_company", payload });
       setEditingCompany(null);
       await loadData();
     } catch (error) {

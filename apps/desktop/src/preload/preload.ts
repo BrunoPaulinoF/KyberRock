@@ -20,8 +20,8 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:list-open-weighing-operations"),
   startWeighing: (input: unknown) =>
     ipcRenderer.invoke("desktop:start-weighing", input),
-  closeWeighing: (operationId: string) =>
-    ipcRenderer.invoke("desktop:close-weighing", operationId),
+  closeWeighing: (operationId: string, operationType?: string) =>
+    ipcRenderer.invoke("desktop:close-weighing", operationId, operationType),
   cancelWeighing: (operationId: string, reason: string) =>
     ipcRenderer.invoke(
       "desktop:cancel-weighing",

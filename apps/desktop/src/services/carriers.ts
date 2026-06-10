@@ -104,3 +104,65 @@ export function getCarrierVehicles(
     )
     .all(carrierId) as Array<{ id: string; plate: string; description: string | null }>;
 }
+
+export const DEFAULT_CARRIER_NAME_SUFFIX = " (padrao)";
+
+export function buildDefaultCarrierName(tradeName: string, legalName: string): string {
+  const base = (tradeName || legalName || "").trim();
+  return `${base}${DEFAULT_CARRIER_NAME_SUFFIX}`;
+}
+
+export function findDefaultCarrierForCustomer(
+  database: DesktopDatabase,
+  companyId: string,
+  carrierName: string
+): CarrierRow | undefined {
+  return database
+    .prepare(
+      `SELECT * FROM carriers
+       WHERE company_id = ? AND name = ? AND deleted_at IS NULL
+       LIMIT 1`
+    )
+    .get(companyId, carrierName) as CarrierRow | undefined;
+}
+
+export function ensureCustomerDefaultCarrier(
+  database: DesktopDatabase,
+  customerId: string,
+  now: Date = new Date()
+): CarrierRow | null {
+  const customer = database
+    .prepare("SELECT * FROM customers WHERE id = ? AND deleted_at IS NULL")
+    .get(customerId) as
+    | { id: string; company_id: string; trade_name: string; legal_name: string; default_carrier_id: string | null }
+    | undefined;
+
+  if (!customer) return null;
+
+  if (customer.default_carrier_id) {
+    const existing = database
+      .prepare("SELECT * FROM carriers WHERE id = ? AND deleted_at IS NULL")
+      .get(customer.default_carrier_id) as CarrierRow | undefined;
+    if (existing) return existing;
+  }
+
+  const carrierName = buildDefaultCarrierName(customer.trade_name, customer.legal_name);
+  const reused = findDefaultCarrierForCustomer(database, customer.company_id, carrierName);
+  let carrier: CarrierRow;
+  if (reused) {
+    carrier = reused;
+  } else {
+    const created = createCarrier(
+      database,
+      { companyId: customer.company_id, name: carrierName },
+      now
+    );
+    carrier = created as CarrierRow;
+  }
+
+  database
+    .prepare("UPDATE customers SET default_carrier_id = ?, updated_at = ? WHERE id = ?")
+    .run(carrier.id, now.toISOString(), customerId);
+
+  return carrier;
+}

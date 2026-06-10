@@ -258,13 +258,18 @@ export class DesktopRuntime {
     });
   }
 
-  async closeWeighing(operationId: string): Promise<WeighingOperationSummary> {
+  async closeWeighing(operationId: string, operationType?: OperationType): Promise<WeighingOperationSummary> {
     this.assertDesktopAccess();
     const exitWeightKg = await this.readScaleWeight();
 
+    if (operationType !== undefined && operationType !== "invoice" && operationType !== "internal") {
+      throw new Error("Invalid operation type.");
+    }
+
     return closeWeighingOperation(this.database, {
       operationId,
-      exitWeightKg
+      exitWeightKg,
+      operationType
     });
   }
 

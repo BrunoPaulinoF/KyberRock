@@ -15,6 +15,13 @@ import {
 } from "../services/update-flow";
 import type { OperationType, WeighingOperationSummary } from "../services/weighing-operations";
 import type { CacheEntityType } from "../services/cache-store";
+import {
+  formatDocument,
+  isValidDocument,
+  isValidPlate,
+  normalizeDocument,
+  normalizePlate
+} from "@kyberrock/shared";
 import { ActivationGate } from "./ActivationGate";
 import { BlockedScreen } from "./BlockedScreen";
 import type { KyberRockDesktopApi } from "./desktop-api";
@@ -24,7 +31,6 @@ export interface AppProps {
 }
 
 interface WeighingFormState {
-  operationType: OperationType;
   vehicleId: string;
   carrierId: string;
   customerId: string;
@@ -37,7 +43,6 @@ interface WeighingFormState {
 type ActiveView = "dashboard" | "new-weighing" | "open-operations" | "scale" | "registrations" | "printing" | "cloud";
 
 const initialWeighingForm: WeighingFormState = {
-  operationType: "invoice",
   vehicleId: "",
   carrierId: "",
   customerId: "",
@@ -83,6 +88,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     lastSyncAt: string | null;
   } | null>(null);
   const [registrationsTab, setRegistrationsTab] = useState<RegistrationsTab>("customers");
+  const [closingOperationId, setClosingOperationId] = useState<string | null>(null);
 
   useEffect(() => {
     const captureLog = (level: string, source: string) => (...args: unknown[]) => {
@@ -375,7 +381,6 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
     try {
       const operation = await desktopApi.startWeighing({
-        operationType: form.operationType,
         customerId: form.customerId,
         vehicleId: form.vehicleId,
         carrierId: form.carrierId || undefined,
@@ -392,11 +397,11 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
   }
 
-  async function handleCloseOperation(operationId: string): Promise<void> {
+  async function handleCloseOperation(operationId: string, operationType: OperationType): Promise<void> {
     if (!desktopApi) return;
 
     try {
-      const operation = await desktopApi.closeWeighing(operationId);
+      const operation = await desktopApi.closeWeighing(operationId, operationType);
       const receipt = await desktopApi.printReceipt(operation.id);
       const receiptStatus =
         receipt.status === "printed"
@@ -756,10 +761,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
               <div style={styles.actions}>
                 <button
                   type="button"
-                  onClick={() => void handleCloseOperation(operation.id)}
+                  onClick={() => setClosingOperationId(operation.id)}
                   style={styles.primaryButton}
                 >
-                  Fechar saida simulada
+                  Fechar saida
                 </button>
                 <button
                   type="button"
@@ -772,6 +777,18 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
             </article>
           ))}
         </section>
+      ) : null}
+
+      {closingOperationId ? (
+        <CloseOperationTypeDialog
+          defaultOperationType="invoice"
+          onConfirm={(operationType) => {
+            const id = closingOperationId;
+            setClosingOperationId(null);
+            void handleCloseOperation(id, operationType);
+          }}
+          onCancel={() => setClosingOperationId(null)}
+        />
       ) : null}
 
       {activeView === "scale" ? (
@@ -1030,7 +1047,6 @@ function describeUpdateState(state: UpdateState): string {
 
 function validateWeighingForm(form: WeighingFormState): string | null {
   if (!form.vehicleId) return "Selecione a placa.";
-  if (!form.carrierId) return "Selecione a transportadora.";
   if (!form.customerId) return "Selecione o cliente.";
   if (!form.driverId) return "Selecione o motorista.";
   if (!form.productId) return "Selecione o produto.";
@@ -1066,7 +1082,8 @@ function CacheSelect({
   onChange,
   onCreateNew,
   desktopApi,
-  disabled = false
+  disabled = false,
+  refreshKey = 0
 }: {
   label: string;
   entityType: CacheEntityType;
@@ -1075,6 +1092,7 @@ function CacheSelect({
   onCreateNew?: () => void;
   desktopApi: KyberRockDesktopApi | null;
   disabled?: boolean;
+  refreshKey?: number;
 }) {
   const [search, setSearch] = useState("");
   const [options, setOptions] = useState<CacheSelectOption[]>([]);
@@ -1112,7 +1130,7 @@ function CacheSelect({
     }
 
     load();
-  }, [desktopApi, entityType, search]);
+  }, [desktopApi, entityType, search, refreshKey]);
 
   useEffect(() => {
     function handleClick(event: MouseEvent) {
@@ -1242,10 +1260,14 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
   const [liveWeight, setLiveWeight] = useState<number | null>(null);
   const [showVehicleModal, setShowVehicleModal] = useState(false);
   const [showDriverModal, setShowDriverModal] = useState(false);
+  const [showCustomerModal, setShowCustomerModal] = useState(false);
+  const [showCarrierModal, setShowCarrierModal] = useState(false);
   const [vehicleCarriers, setVehicleCarriers] = useState<Array<{ carrierId: string; carrierName: string; carrierDocument: string | null }>>([]);
-  const [carrierCustomers, setCarrierCustomers] = useState<Array<{ id: string; tradeName: string }>>([]);
   const [loadingCarriers, setLoadingCarriers] = useState(false);
-  const [loadingCustomers, setLoadingCustomers] = useState(false);
+  const [vehicleRefreshKey, setVehicleRefreshKey] = useState(0);
+  const [driverRefreshKey, setDriverRefreshKey] = useState(0);
+  const [customerRefreshKey, setCustomerRefreshKey] = useState(0);
+  const [priceLocked, setPriceLocked] = useState(false);
 
   useEffect(() => {
     if (!desktopApi) return;
@@ -1260,21 +1282,14 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
     async function fetchCarriers() {
       if (!desktopApi || !form.vehicleId) {
         setVehicleCarriers([]);
-        setForm((prev) => ({ ...prev, carrierId: "", customerId: "" }));
         return;
       }
       setLoadingCarriers(true);
       try {
         const carriers = await desktopApi.vehiclesGetCarriers(form.vehicleId);
         setVehicleCarriers(carriers);
-        if (carriers.length === 1) {
-          setForm((prev) => ({ ...prev, carrierId: carriers[0].carrierId, customerId: "" }));
-        } else {
-          setForm((prev) => ({ ...prev, carrierId: "", customerId: "" }));
-        }
       } catch {
         setVehicleCarriers([]);
-        setForm((prev) => ({ ...prev, carrierId: "", customerId: "" }));
       } finally {
         setLoadingCarriers(false);
       }
@@ -1282,32 +1297,6 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
 
     fetchCarriers();
   }, [desktopApi, form.vehicleId]);
-
-  useEffect(() => {
-    async function fetchCustomers() {
-      if (!desktopApi || !form.carrierId) {
-        setCarrierCustomers([]);
-        setForm((prev) => ({ ...prev, customerId: "" }));
-        return;
-      }
-      setLoadingCustomers(true);
-      try {
-        const customers = await desktopApi.customersByCarrier(form.carrierId);
-        setCarrierCustomers(
-          (customers as Array<Record<string, unknown>>).map((c) => ({
-            id: String(c.id),
-            tradeName: String(c.trade_name ?? c.tradeName ?? "")
-          }))
-        );
-      } catch {
-        setCarrierCustomers([]);
-      } finally {
-        setLoadingCustomers(false);
-      }
-    }
-
-    fetchCustomers();
-  }, [desktopApi, form.carrierId]);
 
   useEffect(() => {
     async function fetchPrice() {
@@ -1325,6 +1314,10 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
     fetchPrice();
   }, [desktopApi, form.customerId, form.productId]);
 
+  useEffect(() => {
+    setPriceLocked(false);
+  }, [form.customerId, form.productId]);
+
   const priceReais = useMemo(() => {
     if (form.unitPriceCents === null) return "";
     const reais = form.unitPriceCents / 100;
@@ -1335,7 +1328,7 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
     <section style={styles.panel}>
       <h2 style={styles.panelTitle}>Nova pesagem</h2>
       <p style={styles.muted}>
-        Selecione a placa, transportadora, cliente e demais dados. O peso vem da balanca em tempo real.
+        Selecione a placa, cliente, transportadora e demais dados. O peso vem da balanca em tempo real.
       </p>
 
       {liveWeight !== null ? (
@@ -1357,66 +1350,50 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
 
       {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
 
-      <label style={styles.fieldLabel}>
-        Tipo de operacao
-        <select
-          value={form.operationType}
-          onChange={(event) =>
-            setForm({ ...form, operationType: event.target.value as OperationType })
-          }
-          style={styles.input}
-        >
-          <option value="invoice">Com nota</option>
-          <option value="internal">Interna</option>
-        </select>
-      </label>
-
       <CacheSelect
         label="Placa"
         entityType="vehicle"
         value={form.vehicleId}
-        onChange={(id) => setForm({ ...form, vehicleId: id, carrierId: "", customerId: "" })}
+        onChange={(id) => setForm((prev) => ({ ...prev, vehicleId: id, carrierId: "" }))}
         onCreateNew={() => setShowVehicleModal(true)}
         desktopApi={desktopApi}
+        refreshKey={vehicleRefreshKey}
       />
 
-      {form.vehicleId ? (
-        <label style={styles.fieldLabel}>
-          Transportadora
-          <select
-            value={form.carrierId}
-            onChange={(event) => setForm({ ...form, carrierId: event.target.value, customerId: "" })}
-            style={styles.input}
-            disabled={loadingCarriers || vehicleCarriers.length === 0}
-          >
-            <option value="">{loadingCarriers ? "Carregando..." : vehicleCarriers.length === 0 ? "Nenhuma transportadora vinculada" : "Selecione a transportadora"}</option>
-            {vehicleCarriers.map((carrier) => (
-              <option key={carrier.carrierId} value={carrier.carrierId}>
-                {carrier.carrierName}
-              </option>
-            ))}
-          </select>
-        </label>
-      ) : null}
+      <CacheSelect
+        label="Cliente"
+        entityType="customer"
+        value={form.customerId}
+        onChange={(id) => setForm((prev) => ({ ...prev, customerId: id }))}
+        onCreateNew={() => setShowCustomerModal(true)}
+        desktopApi={desktopApi}
+        refreshKey={customerRefreshKey}
+      />
 
-      {form.carrierId ? (
-        <label style={styles.fieldLabel}>
-          Cliente
-          <select
-            value={form.customerId}
-            onChange={(event) => setForm({ ...form, customerId: event.target.value })}
-            style={styles.input}
-            disabled={loadingCustomers || carrierCustomers.length === 0}
-          >
-            <option value="">{loadingCustomers ? "Carregando..." : carrierCustomers.length === 0 ? "Nenhum cliente vinculado" : "Selecione o cliente"}</option>
-            {carrierCustomers.map((customer) => (
-              <option key={customer.id} value={customer.id}>
-                {customer.tradeName}
-              </option>
-            ))}
-          </select>
-        </label>
-      ) : null}
+      <label style={styles.fieldLabel}>
+        Transportadora
+        <select
+          value={form.carrierId}
+          onChange={(event) => {
+            const value = event.target.value;
+            if (value === "__create_new__") {
+              setShowCarrierModal(true);
+              return;
+            }
+            setForm({ ...form, carrierId: value });
+          }}
+          style={styles.input}
+          disabled={loadingCarriers}
+        >
+          <option value="">{loadingCarriers ? "Carregando..." : "Selecione a transportadora"}</option>
+          {vehicleCarriers.map((carrier) => (
+            <option key={carrier.carrierId} value={carrier.carrierId}>
+              {carrier.carrierName}
+            </option>
+          ))}
+          <option value="__create_new__">+ Cadastrar nova transportadora</option>
+        </select>
+      </label>
 
       <CacheSelect
         label="Motorista"
@@ -1425,6 +1402,7 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
         onChange={(id) => setForm({ ...form, driverId: id })}
         onCreateNew={() => setShowDriverModal(true)}
         desktopApi={desktopApi}
+        refreshKey={driverRefreshKey}
       />
 
       <CacheSelect
@@ -1449,14 +1427,20 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
           type="text"
           value={priceReais}
           onChange={(event) => {
+            setPriceLocked(true);
             const cents = parseCurrencyToCents(event.target.value);
             setForm({ ...form, unitPriceCents: cents ?? null });
+          }}
+          onFocus={() => {
+            if (!priceLocked && form.customerId && form.productId) {
+              /* hint: user is editing */
+            }
           }}
           style={styles.input}
         />
         {form.unitPriceCents !== null ? (
           <span style={{ fontSize: "12px", color: "#64748b" }}>
-            {formatMoney(form.unitPriceCents)}/kg
+            {formatMoney(form.unitPriceCents)}/kg {priceLocked ? "(editado)" : "(automatico)"}
           </span>
         ) : null}
       </label>
@@ -1475,8 +1459,9 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
           desktopApi={desktopApi}
           onClose={() => setShowVehicleModal(false)}
           onCreated={(id) => {
-            setForm((prev) => ({ ...prev, vehicleId: id }));
+            setForm((prev) => ({ ...prev, vehicleId: id, carrierId: "" }));
             setShowVehicleModal(false);
+            setVehicleRefreshKey((k) => k + 1);
           }}
         />
       ) : null}
@@ -1488,6 +1473,31 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
           onCreated={(id) => {
             setForm((prev) => ({ ...prev, driverId: id }));
             setShowDriverModal(false);
+            setDriverRefreshKey((k) => k + 1);
+          }}
+        />
+      ) : null}
+
+      {showCustomerModal ? (
+        <QuickCustomerModal
+          desktopApi={desktopApi}
+          onClose={() => setShowCustomerModal(false)}
+          onCreated={(id) => {
+            setForm((prev) => ({ ...prev, customerId: id }));
+            setShowCustomerModal(false);
+            setCustomerRefreshKey((k) => k + 1);
+          }}
+        />
+      ) : null}
+
+      {showCarrierModal ? (
+        <QuickCarrierModal
+          desktopApi={desktopApi}
+          onClose={() => setShowCarrierModal(false)}
+          onCreated={(id) => {
+            setForm((prev) => ({ ...prev, carrierId: id }));
+            setShowCarrierModal(false);
+            setVehicleRefreshKey((k) => k + 1);
           }}
         />
       ) : null}
@@ -1502,21 +1512,26 @@ interface QuickModalProps {
 }
 
 function QuickVehicleModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
-  const [plate, setPlate] = useState("");
+  const [plateInput, setPlateInput] = useState("");
   const [description, setDescription] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   async function handleSave() {
     if (!desktopApi) return;
-    if (!plate.trim()) {
+    const normalizedPlate = normalizePlate(plateInput);
+    if (!normalizedPlate) {
       setError("Informe a placa.");
+      return;
+    }
+    if (!isValidPlate(normalizedPlate)) {
+      setError("Placa invalida. Use o formato ABC1234 ou ABC1D23.");
       return;
     }
     setSaving(true);
     try {
       const result = await desktopApi.vehiclesCreate({
-        plate: plate.trim().toUpperCase(),
+        plate: normalizedPlate,
         description: description.trim() || undefined
       });
       onCreated((result as { id: string }).id);
@@ -1534,7 +1549,12 @@ function QuickVehicleModal({ desktopApi, onClose, onCreated }: QuickModalProps) 
         {error ? <p style={styles.errorMessage}>{error}</p> : null}
         <label style={styles.fieldLabel}>
           Placa
-          <input value={plate} onChange={(e) => setPlate(e.target.value)} style={styles.input} />
+          <input
+            value={plateInput}
+            onChange={(e) => setPlateInput(e.target.value.toUpperCase())}
+            placeholder="ABC1234 ou ABC1D23"
+            style={styles.input}
+          />
         </label>
         <label style={styles.fieldLabel}>
           Descricao
@@ -1555,7 +1575,7 @@ function QuickVehicleModal({ desktopApi, onClose, onCreated }: QuickModalProps) 
 
 function QuickDriverModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
   const [name, setName] = useState("");
-  const [document, setDocument] = useState("");
+  const [documentInput, setDocumentInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -1565,11 +1585,12 @@ function QuickDriverModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
       setError("Informe o nome.");
       return;
     }
+    const normalizedDocument = normalizeDocument(documentInput);
     setSaving(true);
     try {
       const result = await desktopApi.driversCreate({
         name: name.trim(),
-        document: document.trim() || undefined
+        document: normalizedDocument || undefined
       });
       onCreated((result as { id: string }).id);
     } catch (err) {
@@ -1589,8 +1610,149 @@ function QuickDriverModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
           <input value={name} onChange={(e) => setName(e.target.value)} style={styles.input} />
         </label>
         <label style={styles.fieldLabel}>
-          CPF/CNH
-          <input value={document} onChange={(e) => setDocument(e.target.value)} style={styles.input} />
+          CPF
+          <input
+            value={formatDocument(documentInput)}
+            onChange={(e) => setDocumentInput(normalizeDocument(e.target.value))}
+            placeholder="000.000.000-00"
+            style={styles.input}
+          />
+        </label>
+        <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+          <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
+            {saving ? "Salvando..." : "Salvar"}
+          </button>
+          <button type="button" onClick={onClose} style={styles.secondaryButton}>
+            Cancelar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function QuickCustomerModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
+  const [tradeName, setTradeName] = useState("");
+  const [legalName, setLegalName] = useState("");
+  const [documentInput, setDocumentInput] = useState("");
+  const [phone, setPhone] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  async function handleSave() {
+    if (!desktopApi) return;
+    if (!tradeName.trim() || !legalName.trim()) {
+      setError("Informe nome fantasia e razao social.");
+      return;
+    }
+    const normalizedDocument = normalizeDocument(documentInput);
+    if (normalizedDocument && !isValidDocument(normalizedDocument)) {
+      setError("CPF/CNPJ invalido.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const result = await desktopApi.customersCreate({
+        tradeName: tradeName.trim(),
+        legalName: legalName.trim(),
+        document: normalizedDocument || undefined,
+        phone: phone.trim() || undefined
+      });
+      onCreated((result as { id: string }).id);
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div style={modalOverlayStyle}>
+      <div style={modalContentStyle}>
+        <h3 style={{ margin: "0 0 12px 0", color: "#0f172a" }}>Cadastrar cliente</h3>
+        {error ? <p style={styles.errorMessage}>{error}</p> : null}
+        <label style={styles.fieldLabel}>
+          Nome fantasia
+          <input value={tradeName} onChange={(e) => setTradeName(e.target.value)} style={styles.input} />
+        </label>
+        <label style={styles.fieldLabel}>
+          Razao social
+          <input value={legalName} onChange={(e) => setLegalName(e.target.value)} style={styles.input} />
+        </label>
+        <label style={styles.fieldLabel}>
+          CPF/CNPJ
+          <input
+            value={formatDocument(documentInput)}
+            onChange={(e) => setDocumentInput(normalizeDocument(e.target.value))}
+            placeholder="000.000.000-00 ou 00.000.000/0000-00"
+            style={styles.input}
+          />
+        </label>
+        <label style={styles.fieldLabel}>
+          Telefone
+          <input value={phone} onChange={(e) => setPhone(e.target.value)} style={styles.input} />
+        </label>
+        <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+          <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
+            {saving ? "Salvando..." : "Salvar"}
+          </button>
+          <button type="button" onClick={onClose} style={styles.secondaryButton}>
+            Cancelar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function QuickCarrierModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
+  const [name, setName] = useState("");
+  const [documentInput, setDocumentInput] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  async function handleSave() {
+    if (!desktopApi) return;
+    if (!name.trim()) {
+      setError("Informe o nome.");
+      return;
+    }
+    const normalizedDocument = normalizeDocument(documentInput);
+    if (normalizedDocument && !isValidDocument(normalizedDocument)) {
+      setError("CPF/CNPJ invalido.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const result = await desktopApi.carriersCreate({
+        name: name.trim(),
+        document: normalizedDocument || undefined
+      });
+      onCreated((result as { id: string }).id);
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div style={modalOverlayStyle}>
+      <div style={modalContentStyle}>
+        <h3 style={{ margin: "0 0 12px 0", color: "#0f172a" }}>Cadastrar transportadora</h3>
+        {error ? <p style={styles.errorMessage}>{error}</p> : null}
+        <label style={styles.fieldLabel}>
+          Nome
+          <input value={name} onChange={(e) => setName(e.target.value)} style={styles.input} />
+        </label>
+        <label style={styles.fieldLabel}>
+          CPF/CNPJ
+          <input
+            value={formatDocument(documentInput)}
+            onChange={(e) => setDocumentInput(normalizeDocument(e.target.value))}
+            placeholder="000.000.000-00 ou 00.000.000/0000-00"
+            style={styles.input}
+          />
         </label>
         <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
           <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
@@ -1626,6 +1788,46 @@ const modalContentStyle: React.CSSProperties = {
   maxWidth: "400px",
   boxShadow: "0 10px 25px rgba(0,0,0,0.15)"
 };
+
+function CloseOperationTypeDialog({
+  defaultOperationType,
+  onConfirm,
+  onCancel
+}: {
+  defaultOperationType: OperationType;
+  onConfirm: (operationType: OperationType) => void;
+  onCancel: () => void;
+}) {
+  const [operationType, setOperationType] = useState<OperationType>(defaultOperationType);
+
+  return (
+    <div style={modalOverlayStyle}>
+      <div style={modalContentStyle}>
+        <h3 style={{ margin: "0 0 12px 0", color: "#0f172a" }}>Tipo de operacao na saida</h3>
+        <p style={styles.muted}>Selecione como esta saida sera registrada.</p>
+        <label style={styles.fieldLabel}>
+          Tipo
+          <select
+            value={operationType}
+            onChange={(event) => setOperationType(event.target.value as OperationType)}
+            style={styles.input}
+          >
+            <option value="invoice">Com nota (pedido de venda no OMIE)</option>
+            <option value="internal">Interna (ordem de servico no OMIE)</option>
+          </select>
+        </label>
+        <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+          <button type="button" onClick={() => onConfirm(operationType)} style={styles.primaryButton}>
+            Confirmar saida
+          </button>
+          <button type="button" onClick={onCancel} style={styles.secondaryButton}>
+            Cancelar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function formatMoney(value: number | null | undefined): string {
   if (value === null || value === undefined) {

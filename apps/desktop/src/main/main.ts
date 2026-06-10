@@ -39,6 +39,7 @@ import type {
   WindowsPrinterSummary
 } from "../services/printing.js";
 import { createInitialUpdateState, type UpdateState } from "../services/update-flow.js";
+import type { OperationType } from "../services/weighing-operations.js";
 
 const require = createRequire(import.meta.url);
 const { autoUpdater } = require("electron-updater") as typeof ElectronUpdater;
@@ -250,12 +251,12 @@ function registerIpcHandlers(): void {
     }
   );
 
-  ipcMain.handle("desktop:close-weighing", async (_event, operationId: string) => {
+  ipcMain.handle("desktop:close-weighing", async (_event, operationId: string, operationType?: string) => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");
     }
 
-    return runtime.closeWeighing(operationId);
+    return runtime.closeWeighing(operationId, operationType as OperationType | undefined);
   });
 
   ipcMain.handle("desktop:cancel-weighing", (_event, operationId: string, reason: string) => {

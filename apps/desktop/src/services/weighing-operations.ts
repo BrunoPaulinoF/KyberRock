@@ -46,6 +46,7 @@ export interface CreateWeighingOperationInput {
 export interface CloseWeighingOperationInput {
   operationId: string;
   exitWeightKg: number;
+  operationType?: OperationType;
 }
 
 export interface CancelWeighingOperationInput {
@@ -416,23 +417,43 @@ export function closeWeighingOperation(
   const totalCents =
     productTotalCents === null ? null : productTotalCents + operation.freightTotalCents;
   const timestamp = now.toISOString();
+  const nextOperationType: OperationType = input.operationType ?? operation.operationType;
 
   const closeOperation = database.transaction(() => {
-    database
-      .prepare(
-        `UPDATE weighing_operations
-         SET status = 'closed_local', exit_weight_kg = ?, exit_weight_captured_at = ?, net_weight_kg = ?, product_total_cents = ?, total_cents = ?, updated_at = ?
-         WHERE id = ?`
-      )
-      .run(
-        input.exitWeightKg,
-        timestamp,
-        netWeightKg,
-        productTotalCents,
-        totalCents,
-        timestamp,
-        input.operationId
-      );
+    if (input.operationType) {
+      database
+        .prepare(
+          `UPDATE weighing_operations
+           SET status = 'closed_local', operation_type = ?, exit_weight_kg = ?, exit_weight_captured_at = ?, net_weight_kg = ?, product_total_cents = ?, total_cents = ?, updated_at = ?
+           WHERE id = ?`
+        )
+        .run(
+          nextOperationType,
+          input.exitWeightKg,
+          timestamp,
+          netWeightKg,
+          productTotalCents,
+          totalCents,
+          timestamp,
+          input.operationId
+        );
+    } else {
+      database
+        .prepare(
+          `UPDATE weighing_operations
+           SET status = 'closed_local', exit_weight_kg = ?, exit_weight_captured_at = ?, net_weight_kg = ?, product_total_cents = ?, total_cents = ?, updated_at = ?
+           WHERE id = ?`
+        )
+        .run(
+          input.exitWeightKg,
+          timestamp,
+          netWeightKg,
+          productTotalCents,
+          totalCents,
+          timestamp,
+          input.operationId
+        );
+    }
 
     database
       .prepare(
@@ -446,7 +467,13 @@ export function closeWeighingOperation(
       input.operationId,
       "exit_weight_captured",
       operation,
-      { exitWeightKg: input.exitWeightKg, netWeightKg, productTotalCents, totalCents },
+      {
+        exitWeightKg: input.exitWeightKg,
+        netWeightKg,
+        productTotalCents,
+        totalCents,
+        operationType: input.operationType ?? operation.operationType
+      },
       timestamp
     );
 

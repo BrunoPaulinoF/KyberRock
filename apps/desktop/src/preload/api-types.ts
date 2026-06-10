@@ -52,7 +52,6 @@ export interface KyberRockDesktopApi {
   downloadAndInstallUpdate: () => Promise<UpdateState>;
   listOpenWeighingOperations: () => Promise<WeighingOperationSummary[]>;
   startWeighing: (input: {
-    operationType: OperationType;
     customerId: string;
     vehicleId: string;
     carrierId?: string;
@@ -61,7 +60,7 @@ export interface KyberRockDesktopApi {
     paymentTermId?: string;
     unitPriceCents?: number;
   }) => Promise<WeighingOperationSummary>;
-  closeWeighing: (operationId: string) => Promise<WeighingOperationSummary>;
+  closeWeighing: (operationId: string, operationType?: OperationType) => Promise<WeighingOperationSummary>;
   cancelWeighing: (operationId: string, reason: string) => Promise<WeighingOperationSummary>;
   listWindowsPrinters: () => Promise<WindowsPrinterSummary[]>;
   configureReceiptPrintProfile: (

@@ -160,7 +160,7 @@ export function getVehicleCarriers(
 ): Array<{ carrierId: string; carrierName: string; carrierDocument: string | null }> {
   return database
     .prepare(
-      `SELECT c.id as carrier_id, c.name as carrier_name, c.document as carrier_document
+      `SELECT c.id AS "carrierId", c.name AS "carrierName", c.document AS "carrierDocument"
        FROM vehicle_carriers vc
        JOIN carriers c ON vc.carrier_id = c.id
        WHERE vc.vehicle_id = ? AND vc.deleted_at IS NULL AND vc.is_active = 1
