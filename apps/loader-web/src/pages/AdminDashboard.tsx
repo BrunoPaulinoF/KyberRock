@@ -9,6 +9,8 @@ interface Company {
   document: string;
   isActive: boolean;
   createdAt: string;
+  omieAppKeyMasked?: string | null;
+  omieAppSecretConfigured?: boolean;
 }
 
 interface Unit {
@@ -63,7 +65,7 @@ export function AdminDashboard() {
     setIsLoading(true);
     try {
       const data = await callAdminFunction<{
-        companies: Array<{ id: string; name: string; legal_name: string; document: string | null; is_active: boolean; created_at: string }>;
+        companies: Array<{ id: string; name: string; legal_name: string; document: string | null; is_active: boolean; created_at: string; omie_app_key?: string | null; omie_app_secret?: string | null }>;
         units: Array<{ id: string; company_id: string; name: string; timezone: string; is_active: boolean; desktop_activation_code?: string; desktop_activation_code_rotated_at?: string }>;
         users: Array<{ id: string; email: string; name: string; company_id: string; unit_id: string; is_active: boolean }>;
         devices: Array<{ id: string; company_id: string; unit_id: string; name: string; is_active: boolean; last_seen_at: string | null; created_at: string; updated_at: string }>;
@@ -75,7 +77,9 @@ export function AdminDashboard() {
         legalName: company.legal_name,
         document: company.document ?? "",
         isActive: company.is_active,
-        createdAt: company.created_at
+        createdAt: company.created_at,
+        omieAppKeyMasked: company.omie_app_key ?? null,
+        omieAppSecretConfigured: Boolean(company.omie_app_secret)
       })));
       setUnits(data.units.map((unit) => ({
         id: unit.id,
@@ -115,14 +119,18 @@ export function AdminDashboard() {
     event.preventDefault();
     const form = event.currentTarget;
     const formData = new FormData(form);
-    
+    const omieAppKey = String(formData.get("omieAppKey") ?? "").trim();
+    const omieAppSecret = String(formData.get("omieAppSecret") ?? "").trim();
+
     try {
       await callAdminFunction("admin-api", {
         action: "create_company",
         payload: {
           name: formData.get("name"),
           legalName: formData.get("legalName"),
-          document: formData.get("document")
+          document: formData.get("document"),
+          omieAppKey: omieAppKey || null,
+          omieAppSecret: omieAppSecret || null
         }
       });
       form.reset();
@@ -281,6 +289,8 @@ export function AdminDashboard() {
     if (!editingCompany) return;
     const form = event.currentTarget;
     const formData = new FormData(form);
+    const omieAppKey = String(formData.get("omieAppKey") ?? "").trim();
+    const omieAppSecret = String(formData.get("omieAppSecret") ?? "").trim();
     try {
       await callAdminFunction("admin-api", {
         action: "update_company",
@@ -288,7 +298,9 @@ export function AdminDashboard() {
           companyId: editingCompany.id,
           name: formData.get("name"),
           legalName: formData.get("legalName"),
-          document: formData.get("document")
+          document: formData.get("document"),
+          omieAppKey: omieAppKey || null,
+          omieAppSecret: omieAppSecret || null
         }
       });
       setEditingCompany(null);
@@ -489,12 +501,27 @@ export function AdminDashboard() {
                     justifyContent: "center",
                     zIndex: 1000
                   }}>
-                    <div style={{ background: "#fff", padding: "24px", borderRadius: "16px", width: "100%", maxWidth: "400px" }}>
+                    <div style={{ background: "#fff", padding: "24px", borderRadius: "16px", width: "100%", maxWidth: "500px" }}>
                       <h3 style={{ margin: "0 0 16px 0" }}>Editar Empresa</h3>
                       <form onSubmit={handleUpdateCompany} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
                         <input name="name" defaultValue={editingCompany.name} placeholder="Nome fantasia" required style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
                         <input name="legalName" defaultValue={editingCompany.legalName} placeholder="Razao social" required style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
                         <input name="document" defaultValue={editingCompany.document} placeholder="CNPJ" style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
+                        <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: "12px", marginTop: "4px" }}>
+                          <strong style={{ fontSize: "13px", color: "#475569" }}>Token OMIE</strong>
+                          {editingCompany.omieAppKeyMasked ? (
+                            <p style={{ margin: "4px 0", fontSize: "12px", color: "#16a34a" }}>
+                              Configurado (App Key: {editingCompany.omieAppKeyMasked})
+                            </p>
+                          ) : (
+                            <p style={{ margin: "4px 0", fontSize: "12px", color: "#d97706" }}>
+                              Nao configurado. Os desktops nao conectam ao OMIE.
+                            </p>
+                          )}
+                          <input name="omieAppKey" placeholder="Novo App Key (deixe vazio para manter)" style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1", marginTop: "8px" }} />
+                          <input name="omieAppSecret" type="password" placeholder="Novo App Secret (deixe vazio para manter)" style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1", marginTop: "8px" }} />
+                          <small style={{ color: "#64748b" }}>Ao preencher, o app key/secret e atualizado. Para limpar, salve com campos vazios.</small>
+                        </div>
                         <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
                           <button type="submit" style={{ flex: 1, padding: "10px", borderRadius: "8px", border: "none", background: "#0f172a", color: "#fff", cursor: "pointer", fontWeight: 700 }}>
                             Salvar
@@ -517,6 +544,14 @@ export function AdminDashboard() {
                     <input name="name" placeholder="Nome fantasia" required style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
                     <input name="legalName" placeholder="Razao social" required style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
                     <input name="document" placeholder="CNPJ" style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
+                    <details style={{ marginTop: "4px" }}>
+                      <summary style={{ cursor: "pointer", color: "#475569", fontSize: "14px" }}>Token OMIE (opcional)</summary>
+                      <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "8px" }}>
+                        <input name="omieAppKey" placeholder="App Key OMIE" style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
+                        <input name="omieAppSecret" type="password" placeholder="App Secret OMIE" style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
+                        <small style={{ color: "#64748b" }}>Quando preenchido, os desktops desta empresa ja conectam ao OMIE automaticamente.</small>
+                      </div>
+                    </details>
                     <button type="submit" style={{ padding: "10px", borderRadius: "8px", border: "none", background: "#0f172a", color: "#fff", cursor: "pointer", fontWeight: 700 }}>
                       Criar Empresa
                     </button>

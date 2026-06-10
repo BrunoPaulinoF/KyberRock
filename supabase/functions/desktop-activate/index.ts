@@ -8,6 +8,8 @@ type CompanyRow = {
   legal_name: string;
   document: string | null;
   is_active: boolean;
+  omie_app_key: string | null;
+  omie_app_secret: string | null;
 };
 
 type UnitRow = {
@@ -41,7 +43,7 @@ Deno.serve(async (req) => {
   const activationCodeHash = await sha256Hex(activationCode);
   const { data: unit, error: unitError } = await supabase
     .from("units")
-    .select("id, company_id, name, timezone, is_active, companies(id, name, legal_name, document, is_active)")
+    .select("id, company_id, name, timezone, is_active, companies(id, name, legal_name, document, is_active, omie_app_key, omie_app_secret)")
     .eq("desktop_activation_code_hash", activationCodeHash)
     .single();
 
@@ -91,6 +93,8 @@ Deno.serve(async (req) => {
     unitTimezone: typedUnit.timezone,
     deviceId,
     deviceToken,
+    omieAppKey: company.omie_app_key ?? null,
+    omieAppSecret: company.omie_app_secret ?? null,
     checkedAt: now
   });
 });

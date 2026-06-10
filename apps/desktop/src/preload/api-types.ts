@@ -119,6 +119,14 @@ export interface KyberRockDesktopApi {
   scaleDisconnect: () => Promise<void>;
   scaleRead: () => Promise<{ weightKg: number; stable: boolean }>;
   scaleGetStatus: () => Promise<ToledoTcpAdapterStatus>;
+  omieConfig: () => Promise<{ configured: boolean; appKeyMasked: string | null }>;
+  omieSync: () => Promise<{
+    customersPulled: number;
+    customersPushed: number;
+    productsSynced: number;
+    paymentTermsSynced: number;
+    errors: string[];
+  }>;
   onUpdateAvailable: (callback: (event: unknown, version: string) => void) => void;
   offUpdateAvailable: (callback: (event: unknown, version: string) => void) => void;
   onPlateScanned: (callback: (plate: string) => void) => void;

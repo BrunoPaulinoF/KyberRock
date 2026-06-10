@@ -42,7 +42,10 @@ Deno.serve(async (req) => {
   try {
     if (body.action === "list") {
       const [companies, units, users, devices] = await Promise.all([
-        supabase.from("companies").select("*").order("created_at", { ascending: false }),
+        supabase
+          .from("companies")
+          .select("id, name, legal_name, document, is_active, omie_app_key, omie_app_secret, created_at, updated_at")
+          .order("created_at", { ascending: false }),
         supabase
           .from("units")
           .select("id, company_id, name, timezone, is_active, desktop_activation_code, desktop_activation_code_rotated_at, created_at, updated_at")
@@ -57,18 +60,27 @@ Deno.serve(async (req) => {
       if (units.error) throw units.error;
       if (users.error) throw users.error;
       if (devices.error) throw devices.error;
-      return jsonResponse({ companies: companies.data, units: units.data, users: users.data, devices: devices.data });
+      const maskedCompanies = (companies.data ?? []).map((c) => ({
+        ...c,
+        omie_app_key: c.omie_app_key ? maskSecret(c.omie_app_key) : null,
+        omie_app_secret: c.omie_app_secret ? "********" : null
+      }));
+      return jsonResponse({ companies: maskedCompanies, units: units.data, users: users.data, devices: devices.data });
     }
 
     if (body.action === "create_company") {
+      const omieAppKey = payload.omieAppKey ? String(payload.omieAppKey).trim() : null;
+      const omieAppSecret = payload.omieAppSecret ? String(payload.omieAppSecret).trim() : null;
       const { data, error } = await supabase.from("companies").insert({
         name: String(payload.name ?? ""),
         legal_name: String(payload.legalName ?? payload.legal_name ?? ""),
         document: payload.document ? String(payload.document) : null,
+        omie_app_key: omieAppKey && omieAppKey.length > 0 ? omieAppKey : null,
+        omie_app_secret: omieAppSecret && omieAppSecret.length > 0 ? omieAppSecret : null,
         is_active: true
       }).select("*").single();
       if (error) throw error;
-      return jsonResponse({ company: data });
+      return jsonResponse({ company: { ...data, omie_app_secret: data.omie_app_secret ? "********" : null } });
     }
 
     if (body.action === "toggle_company") {
@@ -156,12 +168,25 @@ Deno.serve(async (req) => {
     }
 
     if (body.action === "update_company") {
-      const { error } = await supabase.from("companies").update({
+      const updatePayload: Record<string, unknown> = {
         name: String(payload.name ?? ""),
         legal_name: String(payload.legalName ?? ""),
         document: payload.document ? String(payload.document) : null,
         updated_at: new Date().toISOString()
-      }).eq("id", String(payload.companyId));
+      };
+      if (payload.omieAppKey !== undefined) {
+        const key = String(payload.omieAppKey ?? "").trim();
+        updatePayload.omie_app_key = key.length > 0 ? key : null;
+      }
+      if (payload.omieAppSecret !== undefined) {
+        const secret = String(payload.omieAppSecret ?? "").trim();
+        if (secret.length > 0 && secret !== "********") {
+          updatePayload.omie_app_secret = secret;
+        } else if (secret.length === 0) {
+          updatePayload.omie_app_secret = null;
+        }
+      }
+      const { error } = await supabase.from("companies").update(updatePayload).eq("id", String(payload.companyId));
       if (error) throw error;
       return jsonResponse({ ok: true });
     }
@@ -212,4 +237,9 @@ function generateSixDigitCode(): string {
   const value = new Uint32Array(1);
   crypto.getRandomValues(value);
   return String(value[0] % 1_000_000).padStart(6, "0");
+}
+
+function maskSecret(value: string): string {
+  if (!value || value.length < 6) return "********";
+  return `${value.slice(0, 3)}****${value.slice(-3)}`;
 }

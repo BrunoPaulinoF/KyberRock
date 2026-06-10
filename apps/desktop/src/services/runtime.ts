@@ -55,6 +55,7 @@ import {
 } from "./supabase-sync.js";
 import {
   activateDesktop,
+  getOmieCredentials,
   getStoredDesktopAccessStatus,
   logoutDesktop,
   validateDesktopAccess,
@@ -66,6 +67,7 @@ import {
   type CacheQueryOptions,
   type CacheQueryResult
 } from "./cache-store.js";
+import { createOmieClient, OmieSyncService } from "./omie-sync.js";
 import {
   createToledoTcpAdapter,
   type ToledoTcpAdapter,
@@ -146,6 +148,8 @@ export class DesktopRuntime {
   private scaleAdapter: ToledoTcpAdapter = createToledoTcpAdapter();
   private simulatedScaleCursor = 0;
   private readonly simulatedScaleReadings = [12_000, 18_500, 12_250, 19_000];
+  private omieClient: { appKey: string; appSecret: string } | null = null;
+  private omieSync: OmieSyncService | null = null;
 
   private constructor(initialized: InitializedDesktopDatabase) {
     this.database = initialized.database;
@@ -153,6 +157,18 @@ export class DesktopRuntime {
     this.cacheStore = new CacheStore(this.database);
     this.ensureIdentity();
     this.cacheStore.loadAll(this.ensureIdentity().companyId);
+    this.initializeOmieClient();
+  }
+
+  private initializeOmieClient(): void {
+    const credentials = getOmieCredentials(this.database);
+    if (!credentials) {
+      this.omieClient = null;
+      this.omieSync = null;
+      return;
+    }
+    this.omieClient = credentials;
+    this.omieSync = new OmieSyncService(createOmieClient(credentials), this.database);
   }
 
   static initialize(baseDirectory?: string): DesktopRuntime {
@@ -411,12 +427,16 @@ export class DesktopRuntime {
     return validateDesktopAccess(this.database, { internetOnline, force });
   }
 
-  activateDesktop(input: ActivateDesktopInput): Promise<DesktopAccessStatus> {
-    return activateDesktop(this.database, input);
+  async activateDesktop(input: ActivateDesktopInput): Promise<DesktopAccessStatus> {
+    const status = await activateDesktop(this.database, input);
+    this.refreshOmieConfig();
+    return status;
   }
 
   logoutDesktop(): void {
     logoutDesktop(this.database);
+    this.omieClient = null;
+    this.omieSync = null;
   }
 
   queryCache(options: CacheQueryOptions): CacheQueryResult<unknown> {
@@ -679,6 +699,33 @@ export class DesktopRuntime {
       pendingPushCustomers,
       lastSyncAt: lastSync
     };
+  }
+
+  getOmieConfig(): { configured: boolean; appKeyMasked: string | null } {
+    if (!this.omieClient) {
+      return { configured: false, appKeyMasked: null };
+    }
+    const key = this.omieClient.appKey;
+    const appKeyMasked = key.length > 6 ? `${key.slice(0, 3)}****${key.slice(-3)}` : "********";
+    return { configured: true, appKeyMasked };
+  }
+
+  refreshOmieConfig(): void {
+    this.initializeOmieClient();
+  }
+
+  async syncOmieAll(): Promise<{
+    customersPulled: number;
+    customersPushed: number;
+    productsSynced: number;
+    paymentTermsSynced: number;
+    errors: string[];
+  }> {
+    if (!this.omieSync) {
+      throw new Error("OMIE nao configurado. Configure o token OMIE no site administrativo.");
+    }
+    const identity = this.ensureIdentity();
+    return this.omieSync.syncAll(identity.companyId);
   }
 
   private ensureIdentity(): LocalDesktopIdentity {

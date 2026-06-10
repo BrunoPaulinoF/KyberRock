@@ -124,6 +124,10 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:scale-read"),
   scaleGetStatus: () =>
     ipcRenderer.invoke("desktop:scale-get-status"),
+  omieConfig: () =>
+    ipcRenderer.invoke("desktop:omie-config"),
+  omieSync: () =>
+    ipcRenderer.invoke("desktop:omie-sync"),
   onUpdateAvailable: (callback: (event: unknown, version: string) => void) =>
     ipcRenderer.on("desktop:update-available", callback),
   offUpdateAvailable: (callback: (event: unknown, version: string) => void) =>

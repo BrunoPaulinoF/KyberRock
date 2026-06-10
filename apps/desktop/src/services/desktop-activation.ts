@@ -47,6 +47,11 @@ interface CloudCredentials {
   deviceToken: string;
 }
 
+interface OmieCredentials {
+  appKey: string;
+  appSecret: string;
+}
+
 interface ActivateDesktopResponse {
   status?: string;
   message?: string;
@@ -59,6 +64,8 @@ interface ActivateDesktopResponse {
   unitTimezone?: string;
   deviceId?: string;
   deviceToken?: string;
+  omieAppKey?: string | null;
+  omieAppSecret?: string | null;
   checkedAt?: string;
 }
 
@@ -121,6 +128,12 @@ export async function activateDesktop(
     deviceId: data.deviceId,
     deviceToken: data.deviceToken
   }, checkedAt);
+  if (data.omieAppKey && data.omieAppSecret) {
+    saveOmieCredentials(database, {
+      appKey: data.omieAppKey,
+      appSecret: data.omieAppSecret
+    }, checkedAt);
+  }
   saveAccessStatus(database, "approved", data.message ?? "Acesso aprovado. Sistema liberado.", checkedAt);
 
   return buildAccessStatus(database, {
@@ -360,7 +373,10 @@ export function logoutDesktop(database: DesktopDatabase, now: Date = new Date())
     "cloud_configured",
     "last_license_check_at",
     "desktop_access_status",
-    "desktop_access_message"
+    "desktop_access_message",
+    "omie_app_key",
+    "omie_app_secret",
+    "omie_configured"
   ];
 
   for (const key of keysToRemove) {
@@ -394,4 +410,17 @@ export function logoutDesktop(database: DesktopDatabase, now: Date = new Date())
 
 function isBlockingStatus(status: DesktopAccessStatusCode): boolean {
   return ["company_blocked", "unit_blocked", "device_blocked", "invalid_device"].includes(status);
+}
+
+function saveOmieCredentials(database: DesktopDatabase, credentials: OmieCredentials, updatedAt: string): void {
+  writeLocalSetting(database, "omie_app_key", credentials.appKey, updatedAt);
+  writeLocalSetting(database, "omie_app_secret", credentials.appSecret, updatedAt);
+  writeLocalSetting(database, "omie_configured", true, updatedAt);
+}
+
+export function getOmieCredentials(database: DesktopDatabase): OmieCredentials | null {
+  const appKey = readStringLocalSetting(database, "omie_app_key");
+  const appSecret = readStringLocalSetting(database, "omie_app_secret");
+  if (!appKey || !appSecret) return null;
+  return { appKey, appSecret };
 }
