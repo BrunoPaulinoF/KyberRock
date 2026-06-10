@@ -105,6 +105,8 @@ export interface KyberRockDesktopApi {
   carriersCreate: (input: Omit<CreateCarrierInput, "companyId">) => Promise<unknown>;
   carriersUpdate: (id: string, input: UpdateCarrierInput) => Promise<unknown>;
   carriersDelete: (id: string) => Promise<void>;
+  carriersList: () => Promise<unknown[]>;
+  carriersGetVehicles: (carrierId: string) => Promise<Array<{ id: string; plate: string; description: string | null }>>;
   getOmieStatus: () => Promise<{
     configured: boolean;
     totalCustomers: number;

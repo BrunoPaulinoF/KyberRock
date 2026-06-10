@@ -119,7 +119,10 @@ import {
 import {
   createCarrier,
   deleteCarrier,
+  getCarrierVehicles,
+  listCarriers,
   updateCarrier,
+  type CarrierRow,
   type CreateCarrierInput,
   type UpdateCarrierInput
 } from "./carriers.js";
@@ -627,6 +630,15 @@ export class DesktopRuntime {
     const identity = this.ensureIdentity();
     deleteCarrier(this.database, id);
     this.cacheStore.invalidate("carrier", identity.companyId);
+  }
+
+  listCarriers(): CarrierRow[] {
+    const identity = this.ensureIdentity();
+    return listCarriers(this.database, identity.companyId);
+  }
+
+  getCarrierVehicles(carrierId: string): Array<{ id: string; plate: string; description: string | null }> {
+    return getCarrierVehicles(this.database, carrierId);
   }
 
   getOmieSyncStatus(): {

@@ -110,6 +110,10 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:carriers-update", id, input),
   carriersDelete: (id: string) =>
     ipcRenderer.invoke("desktop:carriers-delete", id),
+  carriersList: () =>
+    ipcRenderer.invoke("desktop:carriers-list"),
+  carriersGetVehicles: (carrierId: string) =>
+    ipcRenderer.invoke("desktop:carriers-get-vehicles", carrierId),
   getOmieStatus: () =>
     ipcRenderer.invoke("desktop:get-omie-status"),
   scaleConnect: (config: unknown) =>

@@ -16,6 +16,7 @@ export interface CustomerCacheEntry {
   needsPush: boolean;
   lastSyncedAt: string | null;
   observations: string | null;
+  defaultCarrierId: string | null;
   isActive: boolean;
 }
 
@@ -125,6 +126,7 @@ interface CustomerRow {
   needs_push: number;
   last_synced_at: string | null;
   observations: string | null;
+  default_carrier_id: string | null;
   is_active: number;
 }
 
@@ -210,6 +212,7 @@ function mapCustomer(row: CustomerRow): CustomerCacheEntry {
     needsPush: row.needs_push === 1,
     lastSyncedAt: row.last_synced_at,
     observations: row.observations,
+    defaultCarrierId: row.default_carrier_id,
     isActive: row.is_active === 1
   };
 }

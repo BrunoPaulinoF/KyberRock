@@ -70,3 +70,37 @@ export function deleteCarrier(database: DesktopDatabase, id: string, now: Date =
     .prepare("UPDATE carriers SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL")
     .run(now.toISOString(), now.toISOString(), id);
 }
+
+export interface CarrierRow {
+  id: string;
+  company_id: string;
+  omie_customer_id: number | null;
+  name: string;
+  document: string | null;
+  source: string;
+  is_active: number;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+export function listCarriers(database: DesktopDatabase, companyId: string): CarrierRow[] {
+  return database
+    .prepare("SELECT * FROM carriers WHERE company_id = ? AND deleted_at IS NULL ORDER BY name ASC")
+    .all(companyId) as CarrierRow[];
+}
+
+export function getCarrierVehicles(
+  database: DesktopDatabase,
+  carrierId: string
+): Array<{ id: string; plate: string; description: string | null }> {
+  return database
+    .prepare(
+      `SELECT v.id, v.plate, v.description
+       FROM vehicle_carriers vc
+       JOIN vehicles v ON vc.vehicle_id = v.id
+       WHERE vc.carrier_id = ? AND vc.deleted_at IS NULL AND vc.is_active = 1
+       ORDER BY v.plate ASC`
+    )
+    .all(carrierId) as Array<{ id: string; plate: string; description: string | null }>;
+}

@@ -43,6 +43,7 @@ export interface CustomerRow {
   open_receivables_cents: number;
   omie_billing_blocked: number;
   observations: string | null;
+  default_carrier_id: string | null;
   financial_cache_at: string | null;
   sync_status: "synced" | "pending" | "error";
   needs_push: number;

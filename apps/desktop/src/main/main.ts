@@ -525,6 +525,16 @@ function registerIpcHandlers(): void {
     runtime.deleteCarrier(id);
   });
 
+  ipcMain.handle("desktop:carriers-list", () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.listCarriers();
+  });
+
+  ipcMain.handle("desktop:carriers-get-vehicles", (_event, carrierId: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.getCarrierVehicles(carrierId);
+  });
+
   ipcMain.handle("desktop:get-omie-status", () => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.getOmieSyncStatus();

@@ -1551,6 +1551,207 @@ function subTabStyle(active: boolean) {
   };
 }
 
+interface VehicleFormData {
+  plate: string;
+  description: string;
+  carrierId: string;
+}
+
+function VehicleListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
+  const [vehicles, setVehicles] = useState<Array<Record<string, unknown>>>([]);
+  const [carriers, setCarriers] = useState<CarrierCacheEntry[]>([]);
+  const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState<VehicleFormData>({ plate: "", description: "", carrierId: "" });
+  const [msg, setMsg] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  useEffect(() => {
+    loadVehicles();
+    loadCarriers();
+  }, [search]);
+
+  async function loadVehicles(): Promise<void> {
+    const result = await desktopApi.queryCache({
+      entityType: "vehicle",
+      search: search || undefined,
+      limit: 200
+    });
+    setVehicles(result.rows as Array<Record<string, unknown>>);
+    setLoading(false);
+  }
+
+  async function loadCarriers(): Promise<void> {
+    const result = await desktopApi.queryCache({
+      entityType: "carrier",
+      limit: 200
+    });
+    setCarriers(result.rows as CarrierCacheEntry[]);
+  }
+
+  function resetForm(): void {
+    setForm({ plate: "", description: "", carrierId: "" });
+    setEditingId(null);
+    setFormError(null);
+  }
+
+  function openCreate(): void {
+    resetForm();
+    setShowForm(true);
+  }
+
+  function openEdit(item: Record<string, unknown>): void {
+    setForm({
+      plate: String(item.plate ?? ""),
+      description: String(item.description ?? ""),
+      carrierId: String(item.carrier_id ?? "")
+    });
+    setEditingId(String(item.id));
+    setShowForm(true);
+  }
+
+  async function handleSave(): Promise<void> {
+    if (!form.plate.trim()) {
+      setFormError("Placa e obrigatoria.");
+      return;
+    }
+    try {
+      if (editingId) {
+        await desktopApi.vehiclesUpdate(editingId, {
+          plate: form.plate.trim().toUpperCase(),
+          description: form.description.trim() || undefined,
+          carrierId: form.carrierId || null
+        });
+      } else {
+        await desktopApi.vehiclesCreate({
+          plate: form.plate.trim().toUpperCase(),
+          description: form.description.trim() || undefined,
+          carrierId: form.carrierId || undefined
+        });
+      }
+      setShowForm(false);
+      resetForm();
+      await loadVehicles();
+      setMsg("Veiculo salvo.");
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Erro ao salvar.");
+    }
+  }
+
+  async function handleDelete(id: string): Promise<void> {
+    if (!window.confirm("Confirmar exclusao?")) return;
+    try {
+      await desktopApi.vehiclesDelete(id);
+      await loadVehicles();
+      setMsg("Excluido.");
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : "Erro.");
+    }
+  }
+
+  async function handleLinkCarrier(vehicleId: string, carrierId: string): Promise<void> {
+    try {
+      await desktopApi.vehiclesLinkCarrier(vehicleId, carrierId);
+      await loadVehicles();
+      setMsg("Transportadora vinculada.");
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : "Erro ao vincular.");
+    }
+  }
+
+  if (loading) return <p style={{ color: "#64748b" }}>Carregando veiculos...</p>;
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: "12px", marginBottom: "16px", flexWrap: "wrap" }}>
+        <input
+          placeholder="Buscar veiculo..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{ ...styles.input, flex: 1, minWidth: "200px" }}
+        />
+        <button type="button" onClick={openCreate} style={styles.primaryButton}>
+          + Novo Veiculo
+        </button>
+      </div>
+
+      {msg ? <p style={{ color: "#16a34a", fontWeight: 700, marginBottom: "8px" }}>{msg}</p> : null}
+
+      {showForm ? (
+        <div style={{ ...styles.card, marginBottom: "16px", padding: "20px" }}>
+          <h3 style={{ marginTop: 0 }}>{editingId ? "Editar Veiculo" : "Novo Veiculo"}</h3>
+          {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+            <label style={styles.fieldLabel}>
+              Placa *
+              <input value={form.plate} onChange={(e) => setForm({ ...form, plate: e.target.value })} style={styles.input} />
+            </label>
+            <label style={styles.fieldLabel}>
+              Descricao
+              <input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} style={styles.input} />
+            </label>
+          </div>
+          <label style={styles.fieldLabel}>
+            Transportadora
+            <select
+              value={form.carrierId}
+              onChange={(e) => setForm({ ...form, carrierId: e.target.value })}
+              style={styles.input}
+            >
+              <option value="">Selecione a transportadora</option>
+              {carriers.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </label>
+          <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+            <button type="button" onClick={handleSave} style={styles.primaryButton}>Salvar</button>
+            <button type="button" onClick={() => setShowForm(false)} style={styles.secondaryButton}>Cancelar</button>
+          </div>
+        </div>
+      ) : null}
+
+      {vehicles.length === 0 ? (
+        <p style={{ color: "#64748b" }}>Nenhum veiculo cadastrado.</p>
+      ) : (
+        <div style={{ display: "grid", gap: "8px" }}>
+          {vehicles.map((item) => {
+            const plate = String(item.plate ?? "");
+            const description = String(item.description ?? "");
+            const currentCarrierId = String(item.carrier_id ?? "");
+            return (
+              <div key={String(item.id)} style={{ ...styles.card, padding: "12px 16px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <strong>{plate}</strong>
+                    {description ? <span style={{ color: "#64748b", fontSize: "13px", marginLeft: "8px" }}>{description}</span> : null}
+                  </div>
+                  <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                    <select
+                      value={currentCarrierId}
+                      onChange={(e) => handleLinkCarrier(String(item.id), e.target.value)}
+                      style={{ ...styles.input, width: "180px", fontSize: "13px" }}
+                    >
+                      <option value="">Sem transportadora</option>
+                      {carriers.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                    <button type="button" onClick={() => openEdit(item)} style={styles.secondaryButton}>Editar</button>
+                    <button type="button" onClick={() => handleDelete(String(item.id))} style={{ ...styles.secondaryButton, color: "#b91c1c", borderColor: "#fecaca" }}>Excluir</button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TransportView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   const [transportTab, setTransportTab] = useState<"vehicles" | "drivers" | "carriers">("vehicles");
 
@@ -1581,15 +1782,7 @@ function TransportView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
       </nav>
       <div style={{ marginTop: "20px" }}>
         {transportTab === "vehicles" ? (
-          <SimpleCrudList
-            desktopApi={desktopApi}
-            entityType="vehicle"
-            title="Veiculos"
-            fields={[
-              { key: "plate", label: "Placa", required: true },
-              { key: "description", label: "Descricao", required: false }
-            ]}
-          />
+          <VehicleListView desktopApi={desktopApi} />
         ) : null}
         {transportTab === "drivers" ? (
           <SimpleCrudList
@@ -1604,30 +1797,196 @@ function TransportView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
           />
         ) : null}
         {transportTab === "carriers" ? (
-          <RegistrationsPlaceholder
-            title="Transportadoras"
-            description="Transportadoras do OMIE e cadastradas localmente."
-          />
+          <CarrierListView desktopApi={desktopApi} />
         ) : null}
       </div>
     </div>
   );
 }
 
-function RegistrationsPlaceholder({
-  title,
-  description
-}: {
-  title: string;
-  description: string;
-}) {
+interface CarrierFormData {
+  name: string;
+  document: string;
+}
+
+function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
+  const [carriers, setCarriers] = useState<CarrierCacheEntry[]>([]);
+  const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState<CarrierFormData>({ name: "", document: "" });
+  const [formError, setFormError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [selectedCarrier, setSelectedCarrier] = useState<string | null>(null);
+  const [carrierVehicles, setCarrierVehicles] = useState<Array<{ id: string; plate: string; description: string | null }>>([]);
+
+  useEffect(() => {
+    loadCarriers();
+  }, [search]);
+
+  useEffect(() => {
+    async function loadVehicles() {
+      if (!selectedCarrier || !desktopApi) return;
+      try {
+        const vehicles = await desktopApi.carriersGetVehicles(selectedCarrier);
+        setCarrierVehicles(vehicles);
+      } catch {
+        setCarrierVehicles([]);
+      }
+    }
+    loadVehicles();
+  }, [selectedCarrier, desktopApi]);
+
+  async function loadCarriers(): Promise<void> {
+    try {
+      const result = await desktopApi.queryCache({
+        entityType: "carrier",
+        search: search || undefined,
+        limit: 200
+      });
+      setCarriers(result.rows as CarrierCacheEntry[]);
+      setLoading(false);
+    } catch {
+      setLoading(false);
+    }
+  }
+
+  function resetForm(): void {
+    setForm({ name: "", document: "" });
+    setEditingId(null);
+    setFormError(null);
+  }
+
+  function openCreate(): void {
+    resetForm();
+    setShowForm(true);
+  }
+
+  function openEdit(carrier: CarrierCacheEntry): void {
+    setForm({ name: carrier.name, document: carrier.document ?? "" });
+    setEditingId(carrier.id);
+    setFormError(null);
+    setShowForm(true);
+  }
+
+  async function handleSave(): Promise<void> {
+    if (!form.name.trim()) {
+      setFormError("Nome e obrigatorio.");
+      return;
+    }
+    try {
+      if (editingId) {
+        await desktopApi.carriersUpdate(editingId, {
+          name: form.name.trim(),
+          document: form.document.trim() || undefined
+        });
+        setMessage("Transportadora atualizada.");
+      } else {
+        await desktopApi.carriersCreate({
+          name: form.name.trim(),
+          document: form.document.trim() || undefined
+        });
+        setMessage("Transportadora criada.");
+      }
+      setShowForm(false);
+      resetForm();
+      setLoading(true);
+      await loadCarriers();
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Erro ao salvar.");
+    }
+  }
+
+  async function handleDelete(id: string): Promise<void> {
+    if (!window.confirm("Deseja excluir esta transportadora?")) return;
+    try {
+      await desktopApi.carriersDelete(id);
+      setMessage("Transportadora excluida.");
+      await loadCarriers();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Erro ao excluir.");
+    }
+  }
+
+  if (loading) return <p style={{ color: "#64748b" }}>Carregando transportadoras...</p>;
+
   return (
-    <div style={{ padding: "40px 20px", textAlign: "center" }}>
-      <h3 style={{ margin: "0 0 8px 0", color: "#0f172a" }}>{title}</h3>
-      <p style={{ color: "#64748b", margin: 0 }}>{description}</p>
-      <p style={{ color: "#94a3b8", fontSize: "13px", marginTop: "8px" }}>
-        Em desenvolvimento...
-      </p>
+    <div>
+      <div style={{ display: "flex", gap: "12px", marginBottom: "16px", flexWrap: "wrap" }}>
+        <input
+          placeholder="Buscar transportadora..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{ ...styles.input, flex: 1, minWidth: "200px" }}
+        />
+        <button type="button" onClick={openCreate} style={styles.primaryButton}>
+          + Nova Transportadora
+        </button>
+      </div>
+
+      {message ? <p style={{ color: "#16a34a", fontWeight: 700, marginBottom: "12px" }}>{message}</p> : null}
+
+      {showForm ? (
+        <div style={{ ...styles.card, marginBottom: "16px", padding: "20px" }}>
+          <h3 style={{ marginTop: 0 }}>{editingId ? "Editar Transportadora" : "Nova Transportadora"}</h3>
+          {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+            <label style={styles.fieldLabel}>
+              Nome *
+              <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} style={styles.input} />
+            </label>
+            <label style={styles.fieldLabel}>
+              CNPJ/CPF
+              <input value={form.document} onChange={(e) => setForm({ ...form, document: e.target.value })} style={styles.input} />
+            </label>
+          </div>
+          <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+            <button type="button" onClick={handleSave} style={styles.primaryButton}>Salvar</button>
+            <button type="button" onClick={() => setShowForm(false)} style={styles.secondaryButton}>Cancelar</button>
+          </div>
+        </div>
+      ) : null}
+
+      {carriers.length === 0 ? (
+        <p style={{ color: "#64748b" }}>Nenhuma transportadora cadastrada.</p>
+      ) : (
+        <div style={{ display: "grid", gap: "8px" }}>
+          {carriers.map((carrier) => (
+            <div key={carrier.id} style={{ ...styles.card, padding: "12px 16px", cursor: "pointer" }} onClick={() => setSelectedCarrier(carrier.id === selectedCarrier ? null : carrier.id)}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <strong>{carrier.name}</strong>
+                  {carrier.document ? <span style={{ color: "#64748b", fontSize: "13px", marginLeft: "8px" }}>{carrier.document}</span> : null}
+                  <span style={{ fontSize: "11px", marginLeft: "8px", padding: "2px 6px", borderRadius: "4px", background: carrier.source === "omie" ? "#dbeafe" : "#dcfce7", color: carrier.source === "omie" ? "#1e40af" : "#166534" }}>
+                    {carrier.source === "omie" ? "OMIE" : "LOCAL"}
+                  </span>
+                </div>
+                <div style={{ display: "flex", gap: "6px" }}>
+                  <button type="button" onClick={(e) => { e.stopPropagation(); openEdit(carrier); }} style={styles.secondaryButton}>Editar</button>
+                  <button type="button" onClick={(e) => { e.stopPropagation(); handleDelete(carrier.id); }} style={{ ...styles.secondaryButton, color: "#b91c1c", borderColor: "#fecaca" }}>Excluir</button>
+                </div>
+              </div>
+              {selectedCarrier === carrier.id ? (
+                <div style={{ marginTop: "12px", borderTop: "1px solid #e2e8f0", paddingTop: "12px" }}>
+                  <h4 style={{ margin: "0 0 8px 0", fontSize: "14px", color: "#475569" }}>Veiculos vinculados</h4>
+                  {carrierVehicles.length === 0 ? (
+                    <p style={{ color: "#94a3b8", fontSize: "13px", margin: 0 }}>Nenhum veiculo vinculado.</p>
+                  ) : (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                      {carrierVehicles.map((v) => (
+                        <span key={v.id} style={{ fontSize: "13px", background: "#f1f5f9", padding: "4px 8px", borderRadius: "4px", color: "#0f172a" }}>
+                          {v.plate}{v.description ? ` — ${v.description}` : ""}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1647,6 +2006,15 @@ interface CustomerCacheEntry {
   needsPush: boolean;
   lastSyncedAt: string | null;
   observations: string | null;
+  defaultCarrierId: string | null;
+  isActive: boolean;
+}
+
+interface CarrierCacheEntry {
+  id: string;
+  name: string;
+  document: string | null;
+  source: string;
   isActive: boolean;
 }
 
@@ -1659,6 +2027,7 @@ interface CustomerFormData {
   creditLimitReais: string;
   omieBillingBlocked: boolean;
   observations: string;
+  defaultCarrierId: string;
 }
 
 function CustomerListView({
@@ -1679,14 +2048,29 @@ function CustomerListView({
     email: "",
     creditLimitReais: "",
     omieBillingBlocked: false,
-    observations: ""
+    observations: "",
+    defaultCarrierId: ""
   });
   const [formError, setFormErrorState] = useState<string | null>(null);
   const [message, setMessageState] = useState<string | null>(null);
+  const [carriers, setCarriers] = useState<CarrierCacheEntry[]>([]);
 
   useEffect(() => {
     loadCustomers();
+    loadCarriers();
   }, [search]);
+
+  async function loadCarriers(): Promise<void> {
+    try {
+      const result = await desktopApi.queryCache({
+        entityType: "carrier",
+        limit: 200
+      });
+      setCarriers(result.rows as CarrierCacheEntry[]);
+    } catch {
+      /* ignore */
+    }
+  }
 
   async function loadCustomers(): Promise<void> {
     try {
@@ -1711,7 +2095,8 @@ function CustomerListView({
       email: "",
       creditLimitReais: "",
       omieBillingBlocked: false,
-      observations: ""
+      observations: "",
+      defaultCarrierId: ""
     });
     setEditingId(null);
     setFormErrorState(null);
@@ -1733,7 +2118,8 @@ function CustomerListView({
         ? (customer.creditLimitCents / 100).toFixed(2).replace(".", ",")
         : "",
       omieBillingBlocked: customer.omieBillingBlocked,
-      observations: customer.observations ?? ""
+      observations: customer.observations ?? "",
+      defaultCarrierId: customer.defaultCarrierId ?? ""
     });
     setEditingId(customer.id);
     setFormErrorState(null);
@@ -1767,7 +2153,8 @@ function CustomerListView({
           email: form.email.trim() || undefined,
           creditLimitCents: creditLimitCents ?? undefined,
           omieBillingBlocked: form.omieBillingBlocked || undefined,
-          observations: form.observations.trim() || undefined
+          observations: form.observations.trim() || undefined,
+          defaultCarrierId: form.defaultCarrierId || null
         });
         setMessageState("Cliente atualizado com sucesso.");
       } else {
@@ -1779,7 +2166,8 @@ function CustomerListView({
           email: form.email.trim() || undefined,
           creditLimitCents: creditLimitCents ?? undefined,
           omieBillingBlocked: form.omieBillingBlocked,
-          observations: form.observations.trim() || undefined
+          observations: form.observations.trim() || undefined,
+          defaultCarrierId: form.defaultCarrierId || undefined
         });
         setMessageState("Cliente criado com sucesso.");
       }
@@ -1918,6 +2306,20 @@ function CustomerListView({
               onChange={(e) => setForm({ ...form, observations: e.target.value })}
               style={styles.input}
             />
+          </label>
+
+          <label style={{ ...styles.fieldLabel, marginTop: "12px" }}>
+            Transportadora padrao
+            <select
+              value={form.defaultCarrierId}
+              onChange={(e) => setForm({ ...form, defaultCarrierId: e.target.value })}
+              style={styles.input}
+            >
+              <option value="">Selecione a transportadora padrao</option>
+              {carriers.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
           </label>
 
           <div style={{ display: "flex", gap: "12px", marginTop: "16px" }}>
