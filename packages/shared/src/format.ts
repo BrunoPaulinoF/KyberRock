@@ -3,7 +3,7 @@ export function normalizePlate(plate: string): string {
 }
 
 export function normalizeDocument(document: string): string {
-  return document.replace(/\D/g, "").slice(0, 18);
+  return document.replace(/\D/g, "").slice(0, 14);
 }
 
 export function isValidPlate(plate: string): boolean {
@@ -57,6 +57,29 @@ export function formatDocument(document: string): string {
     return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`;
   }
   return digits;
+}
+
+export function normalizePhone(phone: string): string {
+  return phone.replace(/\D/g, "").slice(0, 11);
+}
+
+export function formatPhone(phone: string): string {
+  const digits = normalizePhone(phone);
+  if (digits.length === 11) {
+    return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
+  }
+  if (digits.length === 10) {
+    return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
+  }
+  return digits;
+}
+
+export function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+export function isValidEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 }
 
 function computeCheckDigit(base: string, weights: number[]): number {

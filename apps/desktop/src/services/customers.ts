@@ -67,12 +67,8 @@ export function createCustomer(
   let defaultCarrierId = input.defaultCarrierId ?? null;
 
   if (!defaultCarrierId) {
-    const company = database
-      .prepare("SELECT trade_name FROM companies WHERE id = ?")
-      .get(input.companyId) as { trade_name: string } | undefined;
-
-    if (company) {
-      const carrierName = `${company.trade_name} (padrão)`;
+    if (input.tradeName) {
+      const carrierName = `${input.tradeName} (padrão)`;
       const existing = database
         .prepare(
           "SELECT id FROM carriers WHERE company_id = ? AND name = ? AND deleted_at IS NULL"

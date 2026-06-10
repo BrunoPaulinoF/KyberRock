@@ -34,8 +34,8 @@ describe("normalizeDocument", () => {
     expect(normalizeDocument("123.456.789-09")).toBe("12345678909");
   });
 
-  it("caps length at 18", () => {
-    expect(normalizeDocument("1".repeat(20))).toBe("1".repeat(18));
+  it("caps length at 14", () => {
+    expect(normalizeDocument("1".repeat(20))).toBe("1".repeat(14));
   });
 
   it("returns empty for blank", () => {

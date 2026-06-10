@@ -17,9 +17,14 @@ import type { OperationType, WeighingOperationSummary } from "../services/weighi
 import type { CacheEntityType } from "../services/cache-store";
 import {
   formatDocument,
+  formatPhone,
+  formatPlate,
   isValidDocument,
+  isValidEmail,
   isValidPlate,
   normalizeDocument,
+  normalizeEmail,
+  normalizePhone,
   normalizePlate
 } from "@kyberrock/shared";
 import { ActivationGate } from "./ActivationGate";
@@ -1258,6 +1263,7 @@ function CacheSelect({
               onClick={() => {
                 onCreateNew();
                 setOpen(false);
+                setSearch("");
               }}
               style={{
                 display: "block",
@@ -1555,8 +1561,8 @@ function QuickVehicleModal({ desktopApi, onClose, onCreated }: QuickModalProps) 
         <label style={styles.fieldLabel}>
           Placa
           <input
-            value={plateInput}
-            onChange={(e) => setPlateInput(e.target.value.toUpperCase())}
+            value={formatPlate(plateInput)}
+            onChange={(e) => setPlateInput(normalizePlate(e.target.value))}
             placeholder="ABC1234 ou ABC1D23"
             style={styles.input}
           />
@@ -1581,6 +1587,7 @@ function QuickVehicleModal({ desktopApi, onClose, onCreated }: QuickModalProps) 
 function QuickDriverModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
   const [name, setName] = useState("");
   const [documentInput, setDocumentInput] = useState("");
+  const [phone, setPhone] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -1591,11 +1598,21 @@ function QuickDriverModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
       return;
     }
     const normalizedDocument = normalizeDocument(documentInput);
+    if (normalizedDocument && !isValidDocument(normalizedDocument)) {
+      setError("CPF invalido.");
+      return;
+    }
+    const normalizedPhone = normalizePhone(phone);
+    if (phone.trim() && normalizedPhone.length !== 10 && normalizedPhone.length !== 11) {
+      setError("Telefone invalido. Informe com DDD (11 digitos).");
+      return;
+    }
     setSaving(true);
     try {
       const result = await desktopApi.driversCreate({
         name: name.trim(),
-        document: normalizedDocument || undefined
+        document: normalizedDocument || undefined,
+        phone: normalizedPhone || undefined
       });
       onCreated((result as { id: string }).id);
     } catch (err) {
@@ -1623,6 +1640,15 @@ function QuickDriverModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
             style={styles.input}
           />
         </label>
+        <label style={styles.fieldLabel}>
+          Telefone
+          <input
+            value={formatPhone(phone)}
+            onChange={(e) => setPhone(normalizePhone(e.target.value))}
+            placeholder="(11) 91234-5678"
+            style={styles.input}
+          />
+        </label>
         <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
           <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
             {saving ? "Salvando..." : "Salvar"}
@@ -1641,6 +1667,7 @@ function QuickCustomerModal({ desktopApi, onClose, onCreated }: QuickModalProps)
   const [legalName, setLegalName] = useState("");
   const [documentInput, setDocumentInput] = useState("");
   const [phone, setPhone] = useState("");
+  const [emailInput, setEmailInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -1655,13 +1682,24 @@ function QuickCustomerModal({ desktopApi, onClose, onCreated }: QuickModalProps)
       setError("CPF/CNPJ invalido.");
       return;
     }
+    const normalizedPhone = normalizePhone(phone);
+    if (phone.trim() && normalizedPhone.length !== 10 && normalizedPhone.length !== 11) {
+      setError("Telefone invalido. Informe com DDD (11 digitos).");
+      return;
+    }
+    const normalizedEmail = normalizeEmail(emailInput);
+    if (emailInput.trim() && !isValidEmail(normalizedEmail)) {
+      setError("Email invalido.");
+      return;
+    }
     setSaving(true);
     try {
       const result = await desktopApi.customersCreate({
         tradeName: tradeName.trim(),
         legalName: legalName.trim(),
         document: normalizedDocument || undefined,
-        phone: phone.trim() || undefined
+        phone: normalizedPhone || undefined,
+        email: normalizedEmail || undefined
       });
       onCreated((result as { id: string }).id);
     } catch (err) {
@@ -1695,7 +1733,21 @@ function QuickCustomerModal({ desktopApi, onClose, onCreated }: QuickModalProps)
         </label>
         <label style={styles.fieldLabel}>
           Telefone
-          <input value={phone} onChange={(e) => setPhone(e.target.value)} style={styles.input} />
+          <input
+            value={formatPhone(phone)}
+            onChange={(e) => setPhone(normalizePhone(e.target.value))}
+            placeholder="(11) 91234-5678"
+            style={styles.input}
+          />
+        </label>
+        <label style={styles.fieldLabel}>
+          Email
+          <input
+            value={emailInput}
+            onChange={(e) => setEmailInput(e.target.value)}
+            placeholder="cliente@exemplo.com"
+            style={styles.input}
+          />
         </label>
         <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
           <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
@@ -1971,20 +2023,25 @@ function VehicleListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   }
 
   async function handleSave(): Promise<void> {
-    if (!form.plate.trim()) {
+    const normalizedPlate = normalizePlate(form.plate);
+    if (!normalizedPlate) {
       setFormError("Placa e obrigatoria.");
+      return;
+    }
+    if (!isValidPlate(normalizedPlate)) {
+      setFormError("Placa invalida. Use o formato ABC1234 ou ABC1D23.");
       return;
     }
     try {
       if (editingId) {
         await desktopApi.vehiclesUpdate(editingId, {
-          plate: form.plate.trim().toUpperCase(),
+          plate: normalizedPlate,
           description: form.description.trim() || undefined,
           carrierId: form.carrierId || null
         });
       } else {
         await desktopApi.vehiclesCreate({
-          plate: form.plate.trim().toUpperCase(),
+          plate: normalizedPlate,
           description: form.description.trim() || undefined,
           carrierId: form.carrierId || undefined
         });
@@ -2044,7 +2101,12 @@ function VehicleListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
             <label style={styles.fieldLabel}>
               Placa *
-              <input value={form.plate} onChange={(e) => setForm({ ...form, plate: e.target.value })} style={styles.input} />
+              <input
+                value={formatPlate(form.plate)}
+                onChange={(e) => setForm({ ...form, plate: normalizePlate(e.target.value) })}
+                placeholder="ABC1234 ou ABC1D23"
+                style={styles.input}
+              />
             </label>
             <label style={styles.fieldLabel}>
               Descricao
@@ -2233,17 +2295,22 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
       setFormError("Nome e obrigatorio.");
       return;
     }
+    const normalizedDocument = normalizeDocument(form.document);
+    if (form.document.trim() && !isValidDocument(normalizedDocument)) {
+      setFormError("CPF/CNPJ invalido.");
+      return;
+    }
     try {
       if (editingId) {
         await desktopApi.carriersUpdate(editingId, {
           name: form.name.trim(),
-          document: form.document.trim() || undefined
+          document: normalizedDocument || undefined
         });
         setMessage("Transportadora atualizada.");
       } else {
         await desktopApi.carriersCreate({
           name: form.name.trim(),
-          document: form.document.trim() || undefined
+          document: normalizedDocument || undefined
         });
         setMessage("Transportadora criada.");
       }
@@ -2296,7 +2363,12 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
             </label>
             <label style={styles.fieldLabel}>
               CNPJ/CPF
-              <input value={form.document} onChange={(e) => setForm({ ...form, document: e.target.value })} style={styles.input} />
+              <input
+                value={formatDocument(form.document)}
+                onChange={(e) => setForm({ ...form, document: normalizeDocument(e.target.value) })}
+                placeholder="00.000.000/0000-00"
+                style={styles.input}
+              />
             </label>
           </div>
           <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
@@ -2497,6 +2569,24 @@ function CustomerListView({
       return;
     }
 
+    const normalizedDocument = normalizeDocument(form.document);
+    if (form.document.trim() && !isValidDocument(normalizedDocument)) {
+      setFormErrorState("CPF/CNPJ invalido.");
+      return;
+    }
+
+    const normalizedPhone = normalizePhone(form.phone);
+    if (form.phone.trim() && normalizedPhone.length !== 10 && normalizedPhone.length !== 11) {
+      setFormErrorState("Telefone invalido. Informe com DDD (11 digitos).");
+      return;
+    }
+
+    const normalizedEmail = normalizeEmail(form.email);
+    if (form.email.trim() && !isValidEmail(normalizedEmail)) {
+      setFormErrorState("Email invalido.");
+      return;
+    }
+
     const creditLimitCents = form.creditLimitReais.trim()
       ? parseCurrencyToCents(form.creditLimitReais)
       : undefined;
@@ -2506,9 +2596,9 @@ function CustomerListView({
         await desktopApi.customersUpdate(editingId, {
           tradeName: form.tradeName.trim(),
           legalName: form.legalName.trim(),
-          document: form.document.trim() || undefined,
-          phone: form.phone.trim() || undefined,
-          email: form.email.trim() || undefined,
+          document: normalizedDocument || undefined,
+          phone: normalizedPhone || undefined,
+          email: normalizedEmail || undefined,
           creditLimitCents: creditLimitCents ?? undefined,
           omieBillingBlocked: form.omieBillingBlocked || undefined,
           observations: form.observations.trim() || undefined,
@@ -2519,9 +2609,9 @@ function CustomerListView({
         await desktopApi.customersCreate({
           tradeName: form.tradeName.trim(),
           legalName: form.legalName.trim(),
-          document: form.document.trim() || undefined,
-          phone: form.phone.trim() || undefined,
-          email: form.email.trim() || undefined,
+          document: normalizedDocument || undefined,
+          phone: normalizedPhone || undefined,
+          email: normalizedEmail || undefined,
           creditLimitCents: creditLimitCents ?? undefined,
           omieBillingBlocked: form.omieBillingBlocked,
           observations: form.observations.trim() || undefined,
@@ -2613,8 +2703,8 @@ function CustomerListView({
             <label style={styles.fieldLabel}>
               CNPJ/CPF
               <input
-                value={form.document}
-                onChange={(e) => setForm({ ...form, document: e.target.value })}
+                value={formatDocument(form.document)}
+                onChange={(e) => setForm({ ...form, document: normalizeDocument(e.target.value) })}
                 placeholder="00.000.000/0000-00"
                 style={styles.input}
               />
@@ -2622,8 +2712,9 @@ function CustomerListView({
             <label style={styles.fieldLabel}>
               Telefone
               <input
-                value={form.phone}
-                onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                value={formatPhone(form.phone)}
+                onChange={(e) => setForm({ ...form, phone: normalizePhone(e.target.value) })}
+                placeholder="(11) 91234-5678"
                 style={styles.input}
               />
             </label>
@@ -2632,6 +2723,7 @@ function CustomerListView({
               <input
                 value={form.email}
                 onChange={(e) => setForm({ ...form, email: e.target.value })}
+                placeholder="cliente@exemplo.com"
                 style={styles.input}
               />
             </label>
@@ -3020,7 +3112,25 @@ function SimpleCrudList({
     try {
       const input: Record<string, string> = {};
       for (const f of fields) {
-        if (formData[f.key].trim()) input[f.key] = formData[f.key].trim();
+        const raw = formData[f.key].trim();
+        if (!raw) continue;
+        if (f.key === "document") {
+          const normalized = normalizeDocument(raw);
+          if (!isValidDocument(normalized)) {
+            setMsg(f.label + " invalido.");
+            return;
+          }
+          input[f.key] = normalized;
+        } else if (f.key === "phone") {
+          const normalized = normalizePhone(raw);
+          if (normalized.length !== 10 && normalized.length !== 11) {
+            setMsg("Telefone invalido. Informe com DDD (11 digitos).");
+            return;
+          }
+          input[f.key] = normalized;
+        } else {
+          input[f.key] = raw;
+        }
       }
 
       if (editingId) {
@@ -3095,8 +3205,17 @@ function SimpleCrudList({
             <label key={f.key} style={styles.fieldLabel}>
               {f.label}{f.required ? " *" : ""}
               <input
-                value={formData[f.key] || ""}
-                onChange={(e) => setFormData({ ...formData, [f.key]: e.target.value })}
+                value={
+                  f.key === "document" ? formatDocument(formData[f.key] || "") :
+                  f.key === "phone" ? formatPhone(formData[f.key] || "") :
+                  formData[f.key] || ""
+                }
+                onChange={(e) => setFormData({
+                  ...formData,
+                  [f.key]: f.key === "document" ? normalizeDocument(e.target.value) :
+                           f.key === "phone" ? normalizePhone(e.target.value) :
+                           e.target.value
+                })}
                 style={styles.input}
               />
             </label>
