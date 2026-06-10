@@ -1263,12 +1263,10 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
   const [showDriverModal, setShowDriverModal] = useState(false);
   const [showCustomerModal, setShowCustomerModal] = useState(false);
   const [showCarrierModal, setShowCarrierModal] = useState(false);
-  const [vehicleCarriers, setVehicleCarriers] = useState<Array<{ carrierId: string; carrierName: string; carrierDocument: string | null }>>([]);
-  const [loadingCarriers, setLoadingCarriers] = useState(false);
   const [vehicleRefreshKey, setVehicleRefreshKey] = useState(0);
   const [driverRefreshKey, setDriverRefreshKey] = useState(0);
   const [customerRefreshKey, setCustomerRefreshKey] = useState(0);
-  const [priceLocked, setPriceLocked] = useState(false);
+  const [carrierRefreshKey, setCarrierRefreshKey] = useState(0);
 
   useEffect(() => {
     if (!desktopApi) return;
@@ -1278,26 +1276,6 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
       desktopApi.offScaleReading(handler as (reading: unknown) => void);
     };
   }, [desktopApi]);
-
-  useEffect(() => {
-    async function fetchCarriers() {
-      if (!desktopApi || !form.vehicleId) {
-        setVehicleCarriers([]);
-        return;
-      }
-      setLoadingCarriers(true);
-      try {
-        const carriers = await desktopApi.vehiclesGetCarriers(form.vehicleId);
-        setVehicleCarriers(carriers);
-      } catch {
-        setVehicleCarriers([]);
-      } finally {
-        setLoadingCarriers(false);
-      }
-    }
-
-    fetchCarriers();
-  }, [desktopApi, form.vehicleId]);
 
   useEffect(() => {
     async function fetchPrice() {
@@ -1314,16 +1292,6 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
 
     fetchPrice();
   }, [desktopApi, form.customerId, form.productId]);
-
-  useEffect(() => {
-    setPriceLocked(false);
-  }, [form.customerId, form.productId]);
-
-  const priceReais = useMemo(() => {
-    if (form.unitPriceCents === null) return "";
-    const reais = form.unitPriceCents / 100;
-    return reais.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  }, [form.unitPriceCents]);
 
   return (
     <section style={styles.panel}>
@@ -1352,6 +1320,16 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
       {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
 
       <CacheSelect
+        label="Cliente"
+        entityType="customer"
+        value={form.customerId}
+        onChange={(id) => setForm((prev) => ({ ...prev, customerId: id }))}
+        onCreateNew={() => setShowCustomerModal(true)}
+        desktopApi={desktopApi}
+        refreshKey={customerRefreshKey}
+      />
+
+      <CacheSelect
         label="Placa"
         entityType="vehicle"
         value={form.vehicleId}
@@ -1362,39 +1340,14 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
       />
 
       <CacheSelect
-        label="Cliente"
-        entityType="customer"
-        value={form.customerId}
-        onChange={(id) => setForm((prev) => ({ ...prev, customerId: id }))}
-        onCreateNew={() => setShowCustomerModal(true)}
+        label="Transportadora"
+        entityType="carrier"
+        value={form.carrierId}
+        onChange={(id) => setForm((prev) => ({ ...prev, carrierId: id }))}
+        onCreateNew={() => setShowCarrierModal(true)}
         desktopApi={desktopApi}
-        refreshKey={customerRefreshKey}
+        refreshKey={carrierRefreshKey}
       />
-
-      <label style={styles.fieldLabel}>
-        Transportadora
-        <select
-          value={form.carrierId}
-          onChange={(event) => {
-            const value = event.target.value;
-            if (value === "__create_new__") {
-              setShowCarrierModal(true);
-              return;
-            }
-            setForm({ ...form, carrierId: value });
-          }}
-          style={styles.input}
-          disabled={loadingCarriers}
-        >
-          <option value="">{loadingCarriers ? "Carregando..." : "Selecione a transportadora"}</option>
-          {vehicleCarriers.map((carrier) => (
-            <option key={carrier.carrierId} value={carrier.carrierId}>
-              {carrier.carrierName}
-            </option>
-          ))}
-          <option value="__create_new__">+ Cadastrar nova transportadora</option>
-        </select>
-      </label>
 
       <CacheSelect
         label="Motorista"
@@ -1422,29 +1375,10 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
         desktopApi={desktopApi}
       />
 
-      <label style={styles.fieldLabel}>
-        Preco por kg (R$)
-        <input
-          type="text"
-          value={priceReais}
-          onChange={(event) => {
-            setPriceLocked(true);
-            const cents = parseCurrencyToCents(event.target.value);
-            setForm({ ...form, unitPriceCents: cents ?? null });
-          }}
-          onFocus={() => {
-            if (!priceLocked && form.customerId && form.productId) {
-              /* hint: user is editing */
-            }
-          }}
-          style={styles.input}
-        />
-        {form.unitPriceCents !== null ? (
-          <span style={{ fontSize: "12px", color: "#64748b" }}>
-            {formatMoney(form.unitPriceCents)}/kg {priceLocked ? "(editado)" : "(automatico)"}
-          </span>
-        ) : null}
-      </label>
+      <PriceInput
+        valueCents={form.unitPriceCents}
+        onChange={(cents) => setForm((prev) => ({ ...prev, unitPriceCents: cents }))}
+      />
 
       <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
         <button type="button" onClick={onStart} style={styles.primaryButton}>
@@ -1495,9 +1429,13 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
         <QuickCarrierModal
           desktopApi={desktopApi}
           onClose={() => setShowCarrierModal(false)}
-          onCreated={(id) => {
+          onCreated={async (id) => {
             setForm((prev) => ({ ...prev, carrierId: id }));
             setShowCarrierModal(false);
+            if (desktopApi && form.vehicleId) {
+              try { await desktopApi.vehiclesLinkCarrier(form.vehicleId, id); } catch { /* ignore */ }
+            }
+            setCarrierRefreshKey((k) => k + 1);
             setVehicleRefreshKey((k) => k + 1);
           }}
         />
@@ -1827,6 +1765,51 @@ function CloseOperationTypeDialog({
         </div>
       </div>
     </div>
+  );
+}
+
+function PriceInput({
+  valueCents,
+  onChange
+}: {
+  valueCents: number | null;
+  onChange: (cents: number | null) => void;
+}) {
+  const [focused, setFocused] = useState(false);
+
+  const centsToBRL = (cents: number) =>
+    new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents / 100);
+
+  const displayValue = focused
+    ? (valueCents !== null ? String(valueCents / 100).replace(".", ",") : "")
+    : valueCents !== null ? centsToBRL(valueCents) : "";
+
+  return (
+    <label style={styles.fieldLabel}>
+      Preco por kg
+      <input
+        type="text"
+        inputMode="decimal"
+        value={displayValue}
+        placeholder="0,00"
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        onChange={(event) => {
+          const raw = event.target.value.replace(/[^\d,]/g, "");
+          if (!raw) { onChange(null); return; }
+          const parts = raw.split(",");
+          const intPart = parts[0] || "0";
+          const decPart = (parts[1] || "").slice(0, 2).padEnd(2, "0");
+          onChange(Number(`${intPart}${decPart}`));
+        }}
+        style={styles.input}
+      />
+      {valueCents !== null ? (
+        <span style={{ fontSize: "12px", color: "#64748b" }}>
+          {centsToBRL(valueCents)}/kg
+        </span>
+      ) : null}
+    </label>
   );
 }
 
