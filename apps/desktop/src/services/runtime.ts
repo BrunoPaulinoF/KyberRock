@@ -471,6 +471,7 @@ export class DesktopRuntime {
       companyId: identity.companyId
     });
     this.cacheStore.invalidate("customer", identity.companyId);
+    this.cacheStore.invalidate("carrier", identity.companyId);
     return result;
   }
 

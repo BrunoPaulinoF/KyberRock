@@ -1221,7 +1221,7 @@ function CacheSelect({
   }, []);
 
   return (
-    <div ref={containerRef} style={{ position: "relative", marginBottom: "12px" }}>
+    <div ref={containerRef} style={{ position: "relative", marginBottom: "8px" }}>
       <label style={styles.fieldLabel}>
         {label}
         <input
@@ -1382,13 +1382,13 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
           style={{
             background: "#f1f5f9",
             borderRadius: "8px",
-            padding: "16px",
-            marginBottom: "16px",
+            padding: "10px",
+            marginBottom: "12px",
             textAlign: "center"
           }}
         >
-          <div style={{ fontSize: "12px", color: "#64748b", marginBottom: "4px" }}>Peso atual</div>
-          <div style={{ fontSize: "32px", fontWeight: 700, color: "#0f172a" }}>
+          <div style={{ fontSize: "11px", color: "#64748b", marginBottom: "2px" }}>Peso atual</div>
+          <div style={{ fontSize: "26px", fontWeight: 700, color: "#0f172a" }}>
             {liveWeight.toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 0 })} kg
           </div>
         </div>
@@ -1400,14 +1400,14 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
         style={{
           display: "grid",
           gridTemplateColumns: "1fr 1fr",
-          gap: "16px",
-          marginBottom: "16px"
+          gap: "12px",
+          marginBottom: "12px"
         }}
       >
-        <div style={{ fontWeight: 700, fontSize: "14px", color: "#475569", borderBottom: "1px solid #e2e8f0", paddingBottom: "4px" }}>
+        <div style={{ fontWeight: 700, fontSize: "13px", color: "#475569", borderBottom: "1px solid #e2e8f0", paddingBottom: "2px" }}>
           Entidade
         </div>
-        <div style={{ fontWeight: 700, fontSize: "14px", color: "#475569", borderBottom: "1px solid #e2e8f0", paddingBottom: "4px" }}>
+        <div style={{ fontWeight: 700, fontSize: "13px", color: "#475569", borderBottom: "1px solid #e2e8f0", paddingBottom: "2px" }}>
           Transporte
         </div>
 
@@ -1593,7 +1593,7 @@ function QuickVehicleModal({ desktopApi, onClose, onCreated }: QuickModalProps) 
   return (
     <div style={modalOverlayStyle}>
       <div style={modalContentStyle}>
-        <h3 style={{ margin: "0 0 12px 0", color: "#0f172a" }}>Cadastrar veiculo</h3>
+        <h3 style={{ margin: "0 0 8px 0", color: "#0f172a", fontSize: "15px" }}>Cadastrar veiculo</h3>
         {error ? <p style={styles.errorMessage}>{error}</p> : null}
         <label style={styles.fieldLabel}>
           Placa
@@ -1608,7 +1608,7 @@ function QuickVehicleModal({ desktopApi, onClose, onCreated }: QuickModalProps) 
           Descricao
           <input value={description} onChange={(e) => setDescription(e.target.value)} style={styles.input} />
         </label>
-        <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+        <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
           <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
             {saving ? "Salvando..." : "Salvar"}
           </button>
@@ -1662,7 +1662,7 @@ function QuickDriverModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
   return (
     <div style={modalOverlayStyle}>
       <div style={modalContentStyle}>
-        <h3 style={{ margin: "0 0 12px 0", color: "#0f172a" }}>Cadastrar motorista</h3>
+        <h3 style={{ margin: "0 0 8px 0", color: "#0f172a", fontSize: "15px" }}>Cadastrar motorista</h3>
         {error ? <p style={styles.errorMessage}>{error}</p> : null}
         <label style={styles.fieldLabel}>
           Nome completo
@@ -1749,7 +1749,7 @@ function QuickCustomerModal({ desktopApi, onClose, onCreated }: QuickModalProps)
   return (
     <div style={modalOverlayStyle}>
       <div style={modalContentStyle}>
-        <h3 style={{ margin: "0 0 12px 0", color: "#0f172a" }}>Cadastrar cliente</h3>
+        <h3 style={{ margin: "0 0 8px 0", color: "#0f172a", fontSize: "15px" }}>Cadastrar cliente</h3>
         {error ? <p style={styles.errorMessage}>{error}</p> : null}
         <label style={styles.fieldLabel}>
           Nome fantasia
@@ -1786,7 +1786,7 @@ function QuickCustomerModal({ desktopApi, onClose, onCreated }: QuickModalProps)
             style={styles.input}
           />
         </label>
-        <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+        <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
           <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
             {saving ? "Salvando..." : "Salvar"}
           </button>
@@ -1833,7 +1833,7 @@ function QuickCarrierModal({ desktopApi, onClose, onCreated }: QuickModalProps) 
   return (
     <div style={modalOverlayStyle}>
       <div style={modalContentStyle}>
-        <h3 style={{ margin: "0 0 12px 0", color: "#0f172a" }}>Cadastrar transportadora</h3>
+        <h3 style={{ margin: "0 0 8px 0", color: "#0f172a", fontSize: "15px" }}>Cadastrar transportadora</h3>
         {error ? <p style={styles.errorMessage}>{error}</p> : null}
         <label style={styles.fieldLabel}>
           Nome
@@ -1844,11 +1844,11 @@ function QuickCarrierModal({ desktopApi, onClose, onCreated }: QuickModalProps) 
           <input
             value={formatDocument(documentInput)}
             onChange={(e) => setDocumentInput(normalizeDocument(e.target.value))}
-            placeholder="000.000.000-00 ou 00.000.000/0000-00"
+            placeholder="00.000.000/0000-00"
             style={styles.input}
           />
         </label>
-        <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+        <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
           <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
             {saving ? "Salvando..." : "Salvar"}
           </button>
@@ -1877,9 +1877,9 @@ const modalOverlayStyle: React.CSSProperties = {
 const modalContentStyle: React.CSSProperties = {
   background: "#fff",
   borderRadius: "8px",
-  padding: "24px",
+  padding: "16px",
   width: "100%",
-  maxWidth: "400px",
+  maxWidth: "380px",
   boxShadow: "0 10px 25px rgba(0,0,0,0.15)"
 };
 
@@ -1897,7 +1897,7 @@ function CloseOperationTypeDialog({
   return (
     <div style={modalOverlayStyle}>
       <div style={modalContentStyle}>
-        <h3 style={{ margin: "0 0 12px 0", color: "#0f172a" }}>Tipo de operacao na saida</h3>
+        <h3 style={{ margin: "0 0 8px 0", color: "#0f172a", fontSize: "15px" }}>Tipo de operacao na saida</h3>
         <p style={styles.muted}>Selecione como esta saida sera registrada.</p>
         <label style={styles.fieldLabel}>
           Tipo
@@ -1983,13 +1983,13 @@ function getErrorMessage(error: unknown): string {
 function navBtnStyle(active: boolean) {
   return {
     border: "none",
-    borderRadius: "8px",
-    padding: "6px 12px",
+    borderRadius: "6px",
+    padding: "4px 8px",
     background: active ? "#0f172a" : "transparent",
     color: active ? "#ffffff" : "#475569",
     cursor: "pointer",
     fontWeight: active ? 700 : 500,
-    fontSize: "13px",
+    fontSize: "12px",
     whiteSpace: "nowrap" as const
   };
 }
@@ -1999,12 +1999,12 @@ function subTabStyle(active: boolean) {
     border: "none",
     borderBottom: active ? "2px solid #0f172a" : "2px solid transparent",
     borderRadius: "0",
-    padding: "8px 16px",
+    padding: "6px 12px",
     background: "transparent",
     color: active ? "#0f172a" : "#64748b",
     cursor: "pointer",
     fontWeight: active ? 700 : 400,
-    fontSize: "14px"
+    fontSize: "12px"
   };
 }
 
@@ -2127,25 +2127,25 @@ function VehicleListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
 
   return (
     <div>
-      <div style={{ display: "flex", gap: "12px", marginBottom: "16px", flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: "8px", marginBottom: "8px", flexWrap: "wrap" }}>
         <input
           placeholder="Buscar veiculo..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          style={{ ...styles.input, flex: 1, minWidth: "200px" }}
+          style={{ ...styles.input, flex: 1, minWidth: "160px" }}
         />
         <button type="button" onClick={openCreate} style={styles.primaryButton}>
           + Novo Veiculo
         </button>
       </div>
 
-      {msg ? <p style={{ color: "#16a34a", fontWeight: 700, marginBottom: "8px" }}>{msg}</p> : null}
+      {msg ? <p style={{ color: "#16a34a", fontWeight: 700, marginBottom: "6px", fontSize: "13px" }}>{msg}</p> : null}
 
       {showForm ? (
-        <div style={{ ...styles.card, marginBottom: "16px", padding: "20px" }}>
-          <h3 style={{ marginTop: 0 }}>{editingId ? "Editar Veiculo" : "Novo Veiculo"}</h3>
+        <div style={{ ...styles.card, marginBottom: "12px", padding: "12px" }}>
+          <h3 style={{ margin: "0 0 8px 0", fontSize: "14px" }}>{editingId ? "Editar Veiculo" : "Novo Veiculo"}</h3>
           {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
             <label style={styles.fieldLabel}>
               Placa *
               <input
@@ -2173,7 +2173,7 @@ function VehicleListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
               ))}
             </select>
           </label>
-          <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+          <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
             <button type="button" onClick={handleSave} style={styles.primaryButton}>Salvar</button>
             <button type="button" onClick={() => setShowForm(false)} style={styles.secondaryButton}>Cancelar</button>
           </div>
@@ -2385,25 +2385,25 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
 
   return (
     <div>
-      <div style={{ display: "flex", gap: "12px", marginBottom: "16px", flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: "8px", marginBottom: "8px", flexWrap: "wrap" }}>
         <input
           placeholder="Buscar transportadora..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          style={{ ...styles.input, flex: 1, minWidth: "200px" }}
+          style={{ ...styles.input, flex: 1, minWidth: "160px" }}
         />
         <button type="button" onClick={openCreate} style={styles.primaryButton}>
           + Nova Transportadora
         </button>
       </div>
 
-      {message ? <p style={{ color: "#16a34a", fontWeight: 700, marginBottom: "12px" }}>{message}</p> : null}
+      {message ? <p style={{ color: "#16a34a", fontWeight: 700, marginBottom: "6px", fontSize: "13px" }}>{message}</p> : null}
 
       {showForm ? (
-        <div style={{ ...styles.card, marginBottom: "16px", padding: "20px" }}>
-          <h3 style={{ marginTop: 0 }}>{editingId ? "Editar Transportadora" : "Nova Transportadora"}</h3>
+        <div style={{ ...styles.card, marginBottom: "12px", padding: "12px" }}>
+          <h3 style={{ margin: "0 0 8px 0", fontSize: "14px" }}>{editingId ? "Editar Transportadora" : "Nova Transportadora"}</h3>
           {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
             <label style={styles.fieldLabel}>
               Nome *
               <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} style={styles.input} />
@@ -2418,7 +2418,7 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
               />
             </label>
           </div>
-          <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+          <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
             <button type="button" onClick={handleSave} style={styles.primaryButton}>Salvar</button>
             <button type="button" onClick={() => setShowForm(false)} style={styles.secondaryButton}>Cancelar</button>
           </div>
@@ -2706,12 +2706,12 @@ function CustomerListView({
 
   return (
     <div>
-      <div style={{ display: "flex", gap: "12px", marginBottom: "16px", flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: "8px", marginBottom: "8px", flexWrap: "wrap" }}>
         <input
           placeholder="Buscar cliente..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          style={{ ...styles.input, flex: 1, minWidth: "200px" }}
+          style={{ ...styles.input, flex: 1, minWidth: "160px" }}
         />
         <button type="button" onClick={openCreateForm} style={styles.primaryButton}>
           + Novo Cliente
@@ -2719,18 +2719,18 @@ function CustomerListView({
       </div>
 
       {message ? (
-        <p style={{ color: "#16a34a", fontWeight: 700, marginBottom: "12px" }}>{message}</p>
+        <p style={{ color: "#16a34a", fontWeight: 700, marginBottom: "6px", fontSize: "13px" }}>{message}</p>
       ) : null}
 
       {showForm ? (
-        <div style={{ ...styles.card, marginBottom: "16px", padding: "20px" }}>
-          <h3 style={{ marginTop: 0 }}>
+        <div style={{ ...styles.card, marginBottom: "12px", padding: "12px" }}>
+          <h3 style={{ margin: "0 0 8px 0", fontSize: "14px" }}>
             {editingId ? "Editar Cliente" : "Novo Cliente"}
           </h3>
 
           {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
             <label style={styles.fieldLabel}>
               Razao Social *
               <input
@@ -2785,8 +2785,8 @@ function CustomerListView({
             </label>
           </div>
 
-          <label style={{ ...styles.fieldLabel, marginTop: "12px" }}>
-            <span style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <label style={{ ...styles.fieldLabel, marginTop: "8px" }}>
+            <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
               <input
                 type="checkbox"
                 checked={form.omieBillingBlocked}
@@ -2796,7 +2796,7 @@ function CustomerListView({
             </span>
           </label>
 
-          <label style={{ ...styles.fieldLabel, marginTop: "12px" }}>
+          <label style={{ ...styles.fieldLabel, marginTop: "8px" }}>
             Observacoes
             <input
               value={form.observations}
@@ -2805,7 +2805,7 @@ function CustomerListView({
             />
           </label>
 
-          <label style={{ ...styles.fieldLabel, marginTop: "12px" }}>
+          <label style={{ ...styles.fieldLabel, marginTop: "8px" }}>
             Transportadora padrao
             <select
               value={form.defaultCarrierId}
@@ -2819,7 +2819,7 @@ function CustomerListView({
             </select>
           </label>
 
-          <div style={{ display: "flex", gap: "12px", marginTop: "16px" }}>
+          <div style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
             <button type="button" onClick={handleSave} style={styles.primaryButton}>
               Salvar
             </button>
@@ -3073,12 +3073,12 @@ function OmieViewer({
 
   return (
     <div>
-      <div style={{ display: "flex", gap: "12px", marginBottom: "16px", flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: "8px", marginBottom: "8px", flexWrap: "wrap" }}>
         <input
           placeholder={`Buscar ${title.toLowerCase()}...`}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          style={{ ...styles.input, flex: 1, minWidth: "200px" }}
+          style={{ ...styles.input, flex: 1, minWidth: "160px" }}
         />
       </div>
       {items.length === 0 ? (
@@ -3231,23 +3231,23 @@ function SimpleCrudList({
 
   return (
     <div>
-      <div style={{ display: "flex", gap: "12px", marginBottom: "16px", flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: "8px", marginBottom: "8px", flexWrap: "wrap" }}>
         <input
           placeholder={`Buscar ${title.toLowerCase()}...`}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          style={{ ...styles.input, flex: 1, minWidth: "200px" }}
+          style={{ ...styles.input, flex: 1, minWidth: "160px" }}
         />
         <button type="button" onClick={openCreate} style={styles.primaryButton}>
           + Novo
         </button>
       </div>
 
-      {msg ? <p style={{ color: "#16a34a", fontWeight: 700, marginBottom: "8px" }}>{msg}</p> : null}
+      {msg ? <p style={{ color: "#16a34a", fontWeight: 700, marginBottom: "6px", fontSize: "13px" }}>{msg}</p> : null}
 
       {showForm ? (
-        <div style={{ ...styles.card, marginBottom: "16px", padding: "20px" }}>
-          <h3 style={{ marginTop: 0 }}>{editingId ? "Editar" : "Novo"}</h3>
+        <div style={{ ...styles.card, marginBottom: "12px", padding: "12px" }}>
+          <h3 style={{ margin: "0 0 8px 0", fontSize: "14px" }}>{editingId ? "Editar" : "Novo"}</h3>
           {fields.map((f) => (
             <label key={f.key} style={styles.fieldLabel}>
               {f.label}{f.required ? " *" : ""}
@@ -3267,7 +3267,7 @@ function SimpleCrudList({
               />
             </label>
           ))}
-          <div style={{ display: "flex", gap: "12px", marginTop: "16px" }}>
+          <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
             <button type="button" onClick={handleSave} style={styles.primaryButton}>Salvar</button>
             <button type="button" onClick={() => setShowForm(false)} style={styles.secondaryButton}>Cancelar</button>
           </div>
@@ -3600,7 +3600,7 @@ const styles = {
   page: {
     minHeight: "100vh",
     margin: 0,
-    padding: "32px",
+    padding: "16px",
     fontFamily: "Segoe UI, Arial, sans-serif",
     color: "#0f172a",
     background: "#f8fafc"
@@ -3609,66 +3609,66 @@ const styles = {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: "12px",
-    padding: "8px 16px",
-    borderRadius: "12px",
+    gap: "8px",
+    padding: "6px 12px",
+    borderRadius: "10px",
     background: "#ffffff",
-    boxShadow: "0 2px 8px rgba(15, 23, 42, 0.06)",
-    marginBottom: "16px"
+    boxShadow: "0 1px 4px rgba(15, 23, 42, 0.06)",
+    marginBottom: "8px"
   },
   headerLeft: {
     display: "flex",
     alignItems: "center",
-    gap: "8px"
+    gap: "6px"
   },
   headerMessage: {
-    fontSize: "12px",
+    fontSize: "11px",
     color: "#94a3b8",
-    maxWidth: "200px",
+    maxWidth: "160px",
     overflow: "hidden" as const,
     textOverflow: "ellipsis",
     whiteSpace: "nowrap" as const
   },
   headerLogo: {
-    height: "24px",
+    height: "20px",
     width: "auto"
   },
   headerBrand: {
-    fontSize: "14px",
+    fontSize: "13px",
     fontWeight: 700,
     color: "#0f172a"
   },
   headerMeta: {
-    fontSize: "12px",
+    fontSize: "11px",
     color: "#64748b",
     marginLeft: "4px"
   },
   headerRight: {
     display: "flex",
     alignItems: "center",
-    gap: "8px"
+    gap: "6px"
   },
   navInline: {
     display: "flex",
-    gap: "4px",
+    gap: "2px",
     alignItems: "center"
   },
   headerActions: {
     display: "flex",
     alignItems: "center",
-    gap: "4px",
+    gap: "2px",
     borderLeft: "1px solid #e2e8f0",
-    paddingLeft: "8px",
-    marginLeft: "4px"
+    paddingLeft: "6px",
+    marginLeft: "2px"
   },
   headerBtn: {
     border: "none",
-    borderRadius: "8px",
-    padding: "6px 10px",
+    borderRadius: "6px",
+    padding: "4px 8px",
     background: "transparent",
     color: "#475569",
     cursor: "pointer",
-    fontSize: "16px",
+    fontSize: "14px",
     lineHeight: 1
   },
   settingsDropdown: {
@@ -3678,23 +3678,23 @@ const styles = {
     marginTop: "4px",
     background: "#ffffff",
     border: "1px solid #e2e8f0",
-    borderRadius: "10px",
+    borderRadius: "8px",
     boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
-    minWidth: "180px",
+    minWidth: "160px",
     zIndex: 100,
-    padding: "6px",
+    padding: "4px",
     display: "flex",
     flexDirection: "column" as const,
     gap: "2px"
   },
   settingsItem: {
     border: "none",
-    borderRadius: "6px",
-    padding: "8px 12px",
+    borderRadius: "4px",
+    padding: "6px 10px",
     background: "transparent",
     color: "#475569",
     cursor: "pointer",
-    fontSize: "13px",
+    fontSize: "12px",
     fontWeight: 500,
     textAlign: "left" as const,
     width: "100%"
@@ -3713,141 +3713,151 @@ const styles = {
   },
   modal: {
     background: "#ffffff",
-    padding: "24px",
-    borderRadius: "16px",
+    padding: "16px",
+    borderRadius: "12px",
     width: "100%",
-    maxWidth: "480px",
+    maxWidth: "440px",
     boxShadow: "0 10px 25px rgba(0,0,0,0.15)"
   },
   modalTitle: {
-    margin: "0 0 8px 0",
-    color: "#0f172a"
+    margin: "0 0 6px 0",
+    color: "#0f172a",
+    fontSize: "16px"
   },
   modalText: {
     color: "#475569",
-    margin: "0 0 16px 0"
+    margin: "0 0 12px 0",
+    fontSize: "13px"
   },
   modalActions: {
     display: "flex",
-    gap: "8px",
+    gap: "6px",
     justifyContent: "flex-end"
   },
   hero: {
     display: "flex",
     alignItems: "flex-start",
     justifyContent: "space-between",
-    gap: "24px",
-    padding: "28px",
-    borderRadius: "20px",
+    gap: "16px",
+    padding: "20px",
+    borderRadius: "16px",
     background: "#ffffff",
-    boxShadow: "0 18px 60px rgba(15, 23, 42, 0.08)"
+    boxShadow: "0 12px 40px rgba(15, 23, 42, 0.08)"
   },
   kicker: {
     margin: 0,
     color: "#475569",
-    fontSize: "14px",
+    fontSize: "12px",
     fontWeight: 700,
     letterSpacing: "0.06em",
     textTransform: "uppercase" as const
   },
   title: {
-    margin: "10px 0",
-    fontSize: "42px",
+    margin: "8px 0",
+    fontSize: "32px",
     lineHeight: 1.05
   },
   subtitle: {
     margin: 0,
     color: "#334155",
-    fontSize: "18px"
+    fontSize: "15px"
   },
   actions: {
     display: "flex",
-    gap: "12px",
+    gap: "8px",
     flexWrap: "wrap" as const
   },
   primaryButton: {
     border: "none",
-    borderRadius: "12px",
-    padding: "12px 16px",
+    borderRadius: "8px",
+    padding: "8px 12px",
     background: "#0f172a",
     color: "#ffffff",
     cursor: "pointer",
-    fontWeight: 700
+    fontWeight: 700,
+    fontSize: "13px"
   },
   secondaryButton: {
     border: "1px solid #cbd5e1",
-    borderRadius: "12px",
-    padding: "12px 16px",
+    borderRadius: "8px",
+    padding: "8px 12px",
     background: "#ffffff",
     color: "#0f172a",
     cursor: "pointer",
-    fontWeight: 700
+    fontWeight: 700,
+    fontSize: "13px"
   },
   twoColumns: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-    gap: "16px",
-    marginTop: "20px"
+    gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+    gap: "12px",
+    marginTop: "12px"
   },
   subTabs: {
     display: "flex",
-    gap: "4px",
-    marginTop: "16px",
+    gap: "2px",
+    marginTop: "8px",
     borderBottom: "1px solid #e2e8f0",
     flexWrap: "wrap" as const
   },
   card: {
     display: "flex",
     flexDirection: "column" as const,
-    gap: "8px",
-    padding: "20px",
+    gap: "6px",
+    padding: "12px",
     border: "1px solid",
-    borderRadius: "18px",
-    background: "#ffffff"
+    borderRadius: "12px",
+    background: "#ffffff",
+    borderColor: "#e2e8f0"
   },
   panel: {
-    marginTop: "20px",
-    padding: "24px",
-    borderRadius: "18px",
+    marginTop: "12px",
+    padding: "16px",
+    borderRadius: "12px",
     background: "#ffffff"
   },
   panelTitle: {
-    marginTop: 0
+    marginTop: 0,
+    fontSize: "15px"
   },
   muted: {
-    color: "#64748b"
+    color: "#64748b",
+    fontSize: "13px"
   },
   errorMessage: {
     color: "#b91c1c",
-    fontWeight: 700
+    fontWeight: 700,
+    fontSize: "13px"
   },
   fieldLabel: {
     display: "flex",
     flexDirection: "column" as const,
-    gap: "6px",
-    marginBottom: "12px",
-    fontWeight: 700
+    gap: "4px",
+    marginBottom: "8px",
+    fontWeight: 700,
+    fontSize: "13px"
   },
   input: {
     border: "1px solid #cbd5e1",
-    borderRadius: "10px",
-    padding: "10px 12px",
-    font: "inherit"
+    borderRadius: "8px",
+    padding: "8px 10px",
+    font: "inherit",
+    fontSize: "13px"
   },
   operationRow: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: "16px",
-    padding: "16px 0",
+    gap: "12px",
+    padding: "10px 0",
     borderTop: "1px solid #e2e8f0"
   },
   receiptRow: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: "16px",
-    padding: "14px 0",
+    gap: "12px",
+    padding: "10px 0",
     borderTop: "1px solid #e2e8f0"
   }
 };
