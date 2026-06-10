@@ -22,6 +22,13 @@
 - Source logo: `apps/desktop/midia/kyberrocklogo.png`
 - The `icon.ico` is used by `electron-builder` for the app executable and installer.
 
+## Subagentes & Modelos
+
+### Modelo obrigatório para subagentes
+- **Todos os subagentes (`explore`, `qa-build`, `qa-lint`, `qa-test`) devem usar o modelo `deepseek-v4-flash`.**
+- Isso garante consistência de custo e velocidade em todas as operações paralelas.
+- Nunca usar outros modelos (ex: `gpt-4`, `claude-3`) para subagentes sem autorização explícita do usuário.
+
 ## Versioning & Release Discipline
 
 **Every time a desktop installer is generated, it MUST be versioned and tagged.**
