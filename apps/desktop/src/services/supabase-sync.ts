@@ -165,7 +165,7 @@ export async function syncOmieReferenceDataFromCloud(
     }
   });
 
-  if (error) throw error;
+  if (error) throw new Error(await getFunctionErrorMessage(error));
   if (!data) throw new Error("Resposta OMIE vazia.");
 
   return applyOmieReferenceData(database, settings.companyId, data);
@@ -338,8 +338,11 @@ export async function pushOmieCustomersToCloud(
         }
       });
 
-      if (error || !data?.omieCustomerId) {
-        throw new Error(error?.message ?? "OMIE nao retornou omieCustomerId");
+      if (error) {
+        throw new Error(await getFunctionErrorMessage(error));
+      }
+      if (!data?.omieCustomerId) {
+        throw new Error("OMIE nao retornou omieCustomerId");
       }
 
       if (customer.omie_customer_id) {
@@ -401,8 +404,11 @@ export async function processOmieSyncQueue(
         }
       });
 
-      if (error || !data?.orderId) {
-        throw new Error(error?.message ?? "OMIE nao retornou orderId");
+      if (error) {
+        throw new Error(await getFunctionErrorMessage(error));
+      }
+      if (!data?.orderId) {
+        throw new Error("OMIE nao retornou orderId");
       }
 
       const updateSql = payload.operationType === "invoice"
@@ -428,7 +434,52 @@ async function invokeDesktopSync(settings: CloudSettings, payload: Record<string
   const { error } = await supabase.functions.invoke("desktop-sync", {
     body: { deviceId: settings.deviceId, deviceToken: settings.deviceToken, ...payload }
   });
-  if (error) throw error;
+  if (error) throw new Error(await getFunctionErrorMessage(error));
+}
+
+async function getFunctionErrorMessage(error: unknown): Promise<string> {
+  const fallback = getErrorLikeMessage(error);
+  const context = typeof error === "object" && error !== null && "context" in error
+    ? (error as { context?: unknown }).context
+    : null;
+
+  if (!context || typeof context !== "object") {
+    return fallback;
+  }
+
+  try {
+    const clone = "clone" in context && typeof context.clone === "function"
+      ? context.clone()
+      : context;
+    if (clone && typeof clone === "object" && "json" in clone && typeof clone.json === "function") {
+      const body = await clone.json();
+      if (body && typeof body === "object") {
+        const candidate = (body as { error?: unknown; message?: unknown }).error ??
+          (body as { error?: unknown; message?: unknown }).message;
+        if (typeof candidate === "string" && candidate.trim()) {
+          return candidate;
+        }
+        return JSON.stringify(body);
+      }
+    }
+  } catch {
+    // Fall through to statusText/message fallback.
+  }
+
+  const statusText = "statusText" in context ? (context as { statusText?: unknown }).statusText : null;
+  return typeof statusText === "string" && statusText.trim() ? statusText : fallback;
+}
+
+function getErrorLikeMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object") {
+    const candidate = (error as { error?: unknown; message?: unknown }).error ??
+      (error as { error?: unknown; message?: unknown }).message;
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate;
+    }
+  }
+  return "Erro desconhecido";
 }
 
 function upsertOmieCustomers(

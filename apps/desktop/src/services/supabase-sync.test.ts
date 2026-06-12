@@ -150,6 +150,25 @@ describe("supabase sync", () => {
     }
   });
 
+  it("shows the real Edge Function error body when OMIE bridge rejects the request", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      invokeMock.mockResolvedValueOnce({
+        error: createFunctionHttpError("OMIE nao configurado para esta empresa"),
+        data: null
+      });
+
+      await expect(syncOmieReferenceDataFromCloud(database, identity)).rejects.toThrow(
+        "OMIE nao configurado para esta empresa"
+      );
+    } finally {
+      database.close();
+    }
+  });
+
   it("pushes pending local customers to OMIE through the cloud bridge", async () => {
     const database = createDatabase();
 
@@ -309,4 +328,18 @@ function insertWeighingOperation(database: DesktopDatabase): void {
       )`
     )
     .run(now, now);
+}
+
+function createFunctionHttpError(message: string): Error & { context: unknown } {
+  const error = new Error("Edge Function returned a non-2xx status code") as Error & {
+    context: unknown;
+  };
+  error.name = "FunctionsHttpError";
+  error.context = {
+    statusText: "Bad Request",
+    clone: () => ({
+      json: async () => ({ error: message })
+    })
+  };
+  return error;
 }
