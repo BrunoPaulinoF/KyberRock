@@ -93,6 +93,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     totalProducts: number;
     totalPaymentTerms: number;
     pendingPushCustomers: number;
+    pendingOmieJobs: number;
     lastSyncAt: string | null;
   } | null>(null);
   const [registrationsTab, setRegistrationsTab] = useState<RegistrationsTab>("customers");
@@ -385,10 +386,18 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     setMessage("Sincronizando OMIE...");
     try {
       const result = await desktopApi.omieSync();
-      setMessage(
-        `OMIE: ${result.customersPulled} clientes, ${result.productsSynced} produtos, ${result.paymentTermsSynced} condicoes. ` +
-        `Pedidos enviados: ${result.ordersProcessed}, falhas: ${result.ordersFailed}.`
+      const parts: string[] = [];
+      if (result.customersPushed > 0) parts.push(`${result.customersPushed} clientes enviados`);
+      parts.push(
+        `${result.customersPulled} clientes baixados`,
+        `${result.productsSynced} produtos`,
+        `${result.paymentTermsSynced} condicoes`
       );
+      parts.push(`pedidos: ${result.ordersProcessed} ok, ${result.ordersFailed} falhas`);
+      if (result.errors.length > 0) {
+        parts.push(`${result.errors.length} erro(s)`);
+      }
+      setMessage(`OMIE: ${parts.join(" | ")}`);
       const omieStatusResult = await desktopApi.getOmieStatus();
       setOmieStatus(omieStatusResult);
     } catch (error) {
@@ -1076,6 +1085,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     <p>Produtos sincronizados: {omieStatus.totalProducts}</p>
                     <p>Condicoes sincronizadas: {omieStatus.totalPaymentTerms}</p>
                     <p>Pendentes de envio: {omieStatus.pendingPushCustomers} clientes</p>
+                    <p>Pedidos OMIE na fila: {omieStatus.pendingOmieJobs}</p>
                     <p>
                       Ultima sincronizacao:{" "}
                       {omieStatus.lastSyncAt
