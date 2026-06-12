@@ -592,6 +592,16 @@ function registerIpcHandlers(): void {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.syncOmieAll();
   });
+
+  ipcMain.handle("desktop:omie-data-entry-loop", async () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.runOmieDataEntryLoop();
+  });
+
+  ipcMain.handle("desktop:omie-loop-status", () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.getOmieLoopStatus();
+  });
 }
 
 function createElectronReceiptPrinter(parentWindow: BrowserWindow): ReceiptPrinter {

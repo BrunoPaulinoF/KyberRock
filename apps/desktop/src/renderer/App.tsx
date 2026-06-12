@@ -104,6 +104,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     message: string;
     details?: string;
   }>({ status: "idle", message: "" });
+  const [omieLoop, setOmieLoop] = useState<OmieLoopUiState | null>(null);
 
   useEffect(() => {
     const captureLog = (level: string, source: string) => (...args: unknown[]) => {
@@ -432,6 +433,76 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       });
     } finally {
       setOmieSyncing(false);
+    }
+  }
+
+  async function handleStartOmieDataEntryLoop(): Promise<void> {
+    if (!desktopApi) return;
+
+    setOmieLoop({
+      running: true,
+      finished: false,
+      customersPulled: 0,
+      productsSynced: 0,
+      paymentTermsSynced: 0,
+      iteration: 0,
+      customersPage: 1,
+      productsPage: 1,
+      paymentTermsPage: 1,
+      errorMessage: null
+    });
+    setMessage("Iniciando loop de entrada de dados do OMIE...");
+    try {
+      const result = await desktopApi.startOmieDataEntryLoop();
+      setOmieLoop({
+        running: false,
+        finished: result.finished,
+        customersPulled: result.customersPulled,
+        productsSynced: result.productsSynced,
+        paymentTermsSynced: result.paymentTermsSynced,
+        iteration: result.iterations,
+        customersPage: 1,
+        productsPage: 1,
+        paymentTermsPage: 1,
+        errorMessage: result.errors.length > 0 ? result.errors.join(" | ") : null
+      });
+      const omieStatusResult = await desktopApi.getOmieStatus();
+      setOmieStatus(omieStatusResult);
+      const summary =
+        `Loop OMIE: ${result.iterations} iteracoes | ` +
+        `${result.customersPulled} clientes clonados, ${result.productsSynced} produtos, ${result.paymentTermsSynced} condicoes`;
+      setMessage(summary);
+      setOmieConnectionFeedback({
+        status: result.finished && result.errors.length === 0
+          ? "success"
+          : result.errors.length > 0
+            ? "warning"
+            : "warning",
+        message: result.finished
+          ? "Loop OMIE concluido. Todos os dados foram clonados."
+          : "Loop OMIE parou antes de concluir. Veja detalhes.",
+        details: summary
+      });
+    } catch (error) {
+      const errorMessage = getErrorMessage(error);
+      setMessage(`Falha no loop OMIE: ${errorMessage}`);
+      setOmieLoop((prev) => ({
+        running: false,
+        finished: prev?.finished ?? false,
+        customersPulled: prev?.customersPulled ?? 0,
+        productsSynced: prev?.productsSynced ?? 0,
+        paymentTermsSynced: prev?.paymentTermsSynced ?? 0,
+        iteration: prev?.iteration ?? 0,
+        customersPage: prev?.customersPage ?? 1,
+        productsPage: prev?.productsPage ?? 1,
+        paymentTermsPage: prev?.paymentTermsPage ?? 1,
+        errorMessage
+      }));
+      setOmieConnectionFeedback({
+        status: "error",
+        message: "Nao foi possivel concluir o loop OMIE.",
+        details: errorMessage
+      });
     }
   }
 
@@ -1150,6 +1221,63 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     >
                       {omieSyncing ? "Sincronizando..." : "Sincronizar OMIE agora"}
                     </button>
+                    <div style={{ marginTop: "16px", padding: "12px", border: "1px dashed #cbd5e1", borderRadius: "8px", background: "#f8fafc" }}>
+                      <p style={{ margin: 0, fontWeight: 700, fontSize: "13px" }}>
+                        Loop automatico OMIE (temporario)
+                      </p>
+                      <p style={{ ...styles.muted, margin: "4px 0 8px 0" }}>
+                        Bate no OMIE pagina por pagina ate baixar todos os clientes, produtos e condicoes
+                        que ainda nao foram clonados.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={handleStartOmieDataEntryLoop}
+                        disabled={omieLoop?.running}
+                        style={{
+                          ...styles.primaryButton,
+                          background: "#0f766e",
+                          opacity: omieLoop?.running ? 0.6 : 1,
+                          cursor: omieLoop?.running ? "not-allowed" : "pointer"
+                        }}
+                      >
+                        {omieLoop?.running ? "Executando loop..." : "Iniciar loop de entrada de dados"}
+                      </button>
+                      {omieLoop ? (
+                        <div style={{ marginTop: "10px", fontSize: "13px", color: "#0f172a" }}>
+                          <p style={{ margin: "2px 0" }}>
+                            <strong>Iteracao:</strong> {omieLoop.iteration}
+                          </p>
+                          <p style={{ margin: "2px 0" }}>
+                            <strong>Clientes clonados do OMIE:</strong> {omieLoop.customersPulled}
+                          </p>
+                          <p style={{ margin: "2px 0" }}>
+                            <strong>Produtos clonados do OMIE:</strong> {omieLoop.productsSynced}
+                          </p>
+                          <p style={{ margin: "2px 0" }}>
+                            <strong>Condicoes clonadas do OMIE:</strong> {omieLoop.paymentTermsSynced}
+                          </p>
+                          <p style={{ margin: "2px 0" }}>
+                            <strong>Paginas restantes:</strong>{" "}
+                            clientes {omieLoop.customersPage},{" "}
+                            produtos {omieLoop.productsPage},{" "}
+                            condicoes {omieLoop.paymentTermsPage}
+                          </p>
+                          <p style={{ margin: "2px 0" }}>
+                            <strong>Status:</strong>{" "}
+                            {omieLoop.running
+                              ? "Executando..."
+                              : omieLoop.finished
+                                ? "Concluido"
+                                : "Parado"}
+                          </p>
+                          {omieLoop.errorMessage ? (
+                            <p style={{ margin: "6px 0 0 0", color: "#b91c1c" }}>
+                              {omieLoop.errorMessage}
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
                   </>
                 ) : (
                   <p style={styles.muted}>
@@ -1246,6 +1374,19 @@ async function lookupCep(value: string): Promise<{
     city: data.localidade ?? "",
     state: data.uf ?? ""
   };
+}
+
+interface OmieLoopUiState {
+  running: boolean;
+  finished: boolean;
+  customersPulled: number;
+  productsSynced: number;
+  paymentTermsSynced: number;
+  iteration: number;
+  customersPage: number;
+  productsPage: number;
+  paymentTermsPage: number;
+  errorMessage: string | null;
 }
 
 interface CacheSelectOption {

@@ -71,6 +71,22 @@ import {
   type CacheQueryResult
 } from "./cache-store.js";
 import { createOmieClient, OmieSyncService } from "./omie-sync.js";
+import { readOmiePullState, writeOmiePullState } from "./supabase-sync.js";
+
+export interface OmieLoopProgress {
+  iteration: number;
+  customersPulled: number;
+  productsSynced: number;
+  paymentTermsSynced: number;
+  customersPage: number;
+  productsPage: number;
+  paymentTermsPage: number;
+  inProgress: boolean;
+  lastBatchCustomers: number;
+  lastBatchProducts: number;
+  lastBatchPaymentTerms: number;
+  lastUpdatedAt?: string | null;
+}
 import {
   createToledoTcpAdapter,
   type ToledoTcpAdapter,
@@ -752,20 +768,97 @@ export class DesktopRuntime {
     errors: string[];
   }> {
     const identity = this.ensureIdentity();
-    const result = await syncOmieReferenceDataFromCloud(this.database, identity, { reset: true });
+    const loop = await this.runOmieDataEntryLoop({ reset: true, maxIterations: 200 });
     const customerPush = await pushOmieCustomersToCloud(this.database, identity);
-    const finalPull = await syncOmieReferenceDataFromCloud(this.database, identity, { reset: true });
+    const finalLoop = await this.runOmieDataEntryLoop({ reset: true, maxIterations: 200 });
     const queue = await processOmieSyncQueue(this.database, identity);
     this.cacheStore.invalidateAll(identity.companyId);
     return {
-      customersPulled: result.customersPulled + finalPull.customersPulled,
+      customersPulled: loop.customersPulled + finalLoop.customersPulled,
       customersPushed: customerPush.pushed,
-      productsSynced: result.productsSynced + finalPull.productsSynced,
-      paymentTermsSynced: result.paymentTermsSynced + finalPull.paymentTermsSynced,
+      productsSynced: loop.productsSynced + finalLoop.productsSynced,
+      paymentTermsSynced: loop.paymentTermsSynced + finalLoop.paymentTermsSynced,
       ordersProcessed: queue.processed,
       ordersFailed: queue.failed,
       customersPushFailed: customerPush.failed,
-      errors: customerPush.errors.concat(result.errors, finalPull.errors, queue.errors)
+      errors: customerPush.errors.concat(loop.errors, finalLoop.errors, queue.errors)
+    };
+  }
+
+  async runOmieDataEntryLoop(options: { reset?: boolean; maxIterations?: number; onProgress?: (progress: OmieLoopProgress) => void } = {}): Promise<{
+    customersPulled: number;
+    productsSynced: number;
+    paymentTermsSynced: number;
+    iterations: number;
+    finished: boolean;
+    errors: string[];
+  }> {
+    const identity = this.ensureIdentity();
+    const maxIterations = options.maxIterations ?? 200;
+    let customersPulled = 0;
+    let productsSynced = 0;
+    let paymentTermsSynced = 0;
+    const errors: string[] = [];
+    let iterations = 0;
+
+    if (options.reset) {
+      writeOmiePullState(this.database, { customersPage: 1, productsPage: 1, paymentTermsPage: 1, inProgress: true });
+    }
+
+    while (iterations < maxIterations) {
+      const before = readOmiePullState(this.database);
+      const result = await syncOmieReferenceDataFromCloud(this.database, identity);
+      const after = readOmiePullState(this.database);
+      iterations += 1;
+      customersPulled += result.customersPulled;
+      productsSynced += result.productsSynced;
+      paymentTermsSynced += result.paymentTermsSynced;
+      errors.push(...result.errors);
+
+      const progress: OmieLoopProgress = {
+        iteration: iterations,
+        customersPulled,
+        productsSynced,
+        paymentTermsSynced,
+        customersPage: after.customersPage,
+        productsPage: after.productsPage,
+        paymentTermsPage: after.paymentTermsPage,
+        inProgress: after.inProgress,
+        lastBatchCustomers: result.customersPulled,
+        lastBatchProducts: result.productsSynced,
+        lastBatchPaymentTerms: result.paymentTermsSynced
+      };
+      options.onProgress?.(progress);
+
+      const totalBefore = before.customersPage + before.productsPage + before.paymentTermsPage;
+      const totalAfter = after.customersPage + after.productsPage + after.paymentTermsPage;
+      const noProgress = totalAfter <= totalBefore && result.customersPulled + result.productsSynced + result.paymentTermsSynced === 0;
+      if (noProgress || !after.inProgress) {
+        writeOmiePullState(this.database, { inProgress: false });
+        this.cacheStore.invalidateAll(identity.companyId);
+        return { customersPulled, productsSynced, paymentTermsSynced, iterations, finished: !after.inProgress, errors };
+      }
+    }
+
+    this.cacheStore.invalidateAll(identity.companyId);
+    return { customersPulled, productsSynced, paymentTermsSynced, iterations, finished: false, errors };
+  }
+
+  getOmieLoopStatus(): OmieLoopProgress | null {
+    const state = readOmiePullState(this.database);
+    return {
+      iteration: 0,
+      customersPulled: 0,
+      productsSynced: 0,
+      paymentTermsSynced: 0,
+      customersPage: state.customersPage,
+      productsPage: state.productsPage,
+      paymentTermsPage: state.paymentTermsPage,
+      inProgress: state.inProgress,
+      lastBatchCustomers: 0,
+      lastBatchProducts: 0,
+      lastBatchPaymentTerms: 0,
+      lastUpdatedAt: state.lastUpdatedAt
     };
   }
 

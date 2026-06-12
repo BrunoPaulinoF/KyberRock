@@ -128,6 +128,10 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:omie-config"),
   omieSync: () =>
     ipcRenderer.invoke("desktop:omie-sync"),
+  startOmieDataEntryLoop: () =>
+    ipcRenderer.invoke("desktop:omie-data-entry-loop"),
+  getOmieLoopStatus: () =>
+    ipcRenderer.invoke("desktop:omie-loop-status"),
   onUpdateAvailable: (callback: (event: unknown, version: string) => void) =>
     ipcRenderer.on("desktop:update-available", callback),
   offUpdateAvailable: (callback: (event: unknown, version: string) => void) =>

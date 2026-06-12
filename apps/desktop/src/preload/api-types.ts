@@ -132,6 +132,28 @@ export interface KyberRockDesktopApi {
     customersPushFailed: number;
     errors: string[];
   }>;
+  startOmieDataEntryLoop: () => Promise<{
+    customersPulled: number;
+    productsSynced: number;
+    paymentTermsSynced: number;
+    iterations: number;
+    finished: boolean;
+    errors: string[];
+  }>;
+  getOmieLoopStatus: () => Promise<{
+    iteration: number;
+    customersPulled: number;
+    productsSynced: number;
+    paymentTermsSynced: number;
+    customersPage: number;
+    productsPage: number;
+    paymentTermsPage: number;
+    inProgress: boolean;
+    lastBatchCustomers: number;
+    lastBatchProducts: number;
+    lastBatchPaymentTerms: number;
+    lastUpdatedAt?: string | null;
+  } | null>;
   onUpdateAvailable: (callback: (event: unknown, version: string) => void) => void;
   offUpdateAvailable: (callback: (event: unknown, version: string) => void) => void;
   onPlateScanned: (callback: (plate: string) => void) => void;

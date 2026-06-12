@@ -383,6 +383,48 @@ describe("supabase sync", () => {
       database.close();
     }
   });
+
+  it("avanca cada entidade de forma independente (cliente parcial nao zera produtos)", () => {
+    const database = createDatabase();
+
+    try {
+      createIdentity(database);
+      applyOmieReferenceData(database, "company-1", {
+        customers: Array.from({ length: 200 }, (_, i) => ({
+          id: 100 + i,
+          name: `C${i}`,
+          tradeName: null,
+          document: null,
+          phone: null,
+          email: null
+        })),
+        products: [{ id: 9, code: "P9", description: "P9", unit: "UN" }],
+        paymentTerms: [],
+        pageSize: 200,
+        pagination: {
+          customersPage: 1,
+          productsPage: 4,
+          paymentTermsPage: 2,
+          customersReturned: 200,
+          productsReturned: 1,
+          paymentTermsReturned: 0
+        }
+      });
+
+      const state = JSON.parse(
+        database
+          .prepare("SELECT value_json FROM local_settings WHERE key = 'omie_pull_state'")
+          .pluck()
+          .get() as string
+      ) as { customersPage: number; productsPage: number; paymentTermsPage: number; inProgress: boolean };
+      expect(state.customersPage).toBe(2);
+      expect(state.productsPage).toBe(1);
+      expect(state.paymentTermsPage).toBe(1);
+      expect(state.inProgress).toBe(true);
+    } finally {
+      database.close();
+    }
+  });
 });
 
 function createDatabase(): DesktopDatabase {

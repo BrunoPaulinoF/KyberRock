@@ -79,7 +79,7 @@ interface OmiePullState {
 
 const OMIE_PULL_STATE_KEY = "omie_pull_state";
 
-function readOmiePullState(database: DesktopDatabase): OmiePullState {
+export function readOmiePullState(database: DesktopDatabase): OmiePullState {
   const stored = readLocalSetting<OmiePullState>(database, OMIE_PULL_STATE_KEY);
   return {
     customersPage: 1,
@@ -91,7 +91,7 @@ function readOmiePullState(database: DesktopDatabase): OmiePullState {
   };
 }
 
-function writeOmiePullState(
+export function writeOmiePullState(
   database: DesktopDatabase,
   patch: Partial<OmiePullState> & { markDone?: "customers" | "products" | "paymentTerms" }
 ): OmiePullState {
@@ -271,11 +271,18 @@ export function applyOmieReferenceData(
       products: pagination.productsReturned >= pageSize,
       paymentTerms: pagination.paymentTermsReturned >= pageSize
     };
+    const current = readOmiePullState(database);
     writeOmiePullState(database, {
       inProgress: partial.customers || partial.products || partial.paymentTerms,
-      customersPage: partial.customers ? pagination.customersPage + 1 : 1,
-      productsPage: partial.products ? pagination.productsPage + 1 : 1,
-      paymentTermsPage: partial.paymentTerms ? pagination.paymentTermsPage + 1 : 1
+      customersPage: partial.customers
+        ? Math.max(pagination.customersPage + 1, current.customersPage)
+        : 1,
+      productsPage: partial.products
+        ? Math.max(pagination.productsPage + 1, current.productsPage)
+        : 1,
+      paymentTermsPage: partial.paymentTerms
+        ? Math.max(pagination.paymentTermsPage + 1, current.paymentTermsPage)
+        : 1
     });
   } else {
     writeOmiePullState(database, {
