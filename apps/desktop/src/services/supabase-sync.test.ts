@@ -4,8 +4,16 @@ import { supabaseConfig } from "../config/supabase-config";
 import { runDesktopMigrations } from "../database/migrate";
 import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite";
 import { ensureInitialDesktopIdentity, type LocalDesktopIdentity } from "./bootstrap";
+import { enqueueSyncJob } from "./sync-queue";
 import { createSimulatedWeighingOperation } from "./weighing-operations";
-import { applyOmieReferenceData, initializeSupabase, isSupabaseInitialized } from "./supabase-sync";
+import {
+  applyOmieReferenceData,
+  initializeSupabase,
+  isSupabaseInitialized,
+  processOmieSyncQueue,
+  pushOmieCustomersToCloud,
+  syncOmieReferenceDataFromCloud
+} from "./supabase-sync";
 
 const invokeMock = vi.fn();
 
@@ -110,6 +118,135 @@ describe("supabase sync", () => {
       database.close();
     }
   });
+
+  it("pulls OMIE reference data through the secure cloud bridge", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      invokeMock.mockResolvedValueOnce({
+        error: null,
+        data: {
+          customers: [{ id: 123, name: "Cliente OMIE", tradeName: null, document: null, phone: null, email: null }],
+          products: [{ id: 456, code: "BRITA", description: "Brita", unit: "M3" }],
+          paymentTerms: [{ id: 789, description: "30 dias" }]
+        }
+      });
+
+      const result = await syncOmieReferenceDataFromCloud(database, identity);
+
+      expect(invokeMock).toHaveBeenCalledWith("omie-sync", {
+        body: {
+          deviceId: "device-1",
+          deviceToken: "device-token-1",
+          action: "pull_reference_data"
+        }
+      });
+      expect(result).toMatchObject({ customersPulled: 1, productsSynced: 1, paymentTermsSynced: 1 });
+      expect(database.prepare("SELECT COUNT(*) FROM customers WHERE omie_customer_id = 123").pluck().get()).toBe(1);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("pushes pending local customers to OMIE through the cloud bridge", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertLocalCustomer(database, "customer-1");
+      invokeMock.mockResolvedValueOnce({ error: null, data: { omieCustomerId: 321 } });
+
+      const result = await pushOmieCustomersToCloud(database, identity);
+
+      expect(invokeMock).toHaveBeenCalledWith("omie-sync", {
+        body: expect.objectContaining({
+          deviceId: "device-1",
+          deviceToken: "device-token-1",
+          action: "push_customer",
+          payload: expect.objectContaining({
+            localCustomerId: "customer-1",
+            razaoSocial: "Cliente Local LTDA",
+            nomeFantasia: "Cliente Local",
+            cnpjCpf: "12345678000195"
+          })
+        })
+      });
+      expect(result).toEqual({ pushed: 1, failed: 0, errors: [] });
+      expect(database.prepare("SELECT omie_customer_id FROM customers WHERE id = 'customer-1'").pluck().get()).toBe(321);
+      expect(database.prepare("SELECT needs_push FROM customers WHERE id = 'customer-1'").pluck().get()).toBe(0);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("reports local customer push failures to the caller", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertLocalCustomer(database, "customer-1");
+      invokeMock.mockResolvedValueOnce({ error: { message: "Credencial OMIE invalida" }, data: null });
+
+      const result = await pushOmieCustomersToCloud(database, identity);
+
+      expect(result).toMatchObject({ pushed: 0, failed: 1 });
+      expect(result.errors[0]).toContain("Credencial OMIE invalida");
+      expect(database.prepare("SELECT sync_status FROM customers WHERE id = 'customer-1'").pluck().get()).toBe("error");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("sends queued OMIE orders through the cloud bridge", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertWeighingOperation(database);
+      enqueueSyncJob(database, {
+        id: "omie-job-1",
+        target: "omie",
+        action: "create_order",
+        entityType: "weighing_operation",
+        entityId: "operation-1",
+        idempotencyKey: "kyberrock:unit-1:operation-1:create_sales_order",
+        payload: {
+          operationId: "operation-1",
+          operationType: "invoice",
+          customerOmieId: 123,
+          productOmieId: 456,
+          quantity: 10,
+          unitPrice: 25,
+          issueDate: "2026-06-12"
+        }
+      });
+      invokeMock.mockResolvedValueOnce({ error: null, data: { orderId: 987 } });
+
+      const result = await processOmieSyncQueue(database, identity);
+
+      expect(invokeMock).toHaveBeenCalledWith("omie-sync", {
+        body: expect.objectContaining({
+          action: "create_order",
+          payload: expect.objectContaining({
+            operationType: "invoice",
+            customerOmieId: 123,
+            productOmieId: 456,
+            idempotencyKey: "kyberrock:unit-1:operation-1:create_sales_order"
+          })
+        })
+      });
+      expect(result).toEqual({ processed: 1, failed: 0, errors: [] });
+      expect(database.prepare("SELECT omie_sales_order_id FROM weighing_operations WHERE id = 'operation-1'").pluck().get()).toBe(987);
+      expect(database.prepare("SELECT status FROM sync_queue WHERE id = 'omie-job-1'").pluck().get()).toBe("done");
+    } finally {
+      database.close();
+    }
+  });
 });
 
 function createDatabase(): DesktopDatabase {
@@ -144,4 +281,32 @@ function createCloudSettings(database: DesktopDatabase): void {
       .prepare("INSERT INTO local_settings (key, value_json, updated_at) VALUES (?, ?, ?)")
       .run(key, JSON.stringify(value), now);
   }
+}
+
+function insertLocalCustomer(database: DesktopDatabase, id: string): void {
+  const now = "2026-06-12T12:00:00.000Z";
+  database
+    .prepare(
+      `INSERT INTO customers (
+        id, company_id, source, legal_name, trade_name, document, phone, email,
+        sync_status, created_at, updated_at, needs_push
+      ) VALUES (?, 'company-1', 'local', 'Cliente Local LTDA', 'Cliente Local', '12345678000195', '(11) 99999-9999', 'cliente@example.com', 'pending', ?, ?, 1)`
+    )
+    .run(id, now, now);
+}
+
+function insertWeighingOperation(database: DesktopDatabase): void {
+  const now = "2026-06-12T12:00:00.000Z";
+  database
+    .prepare(
+      `INSERT INTO weighing_operations (
+        id, company_id, unit_id, device_id, status, operation_type,
+        entry_weight_kg, exit_weight_kg, net_weight_kg, unit_price_cents,
+        product_total_cents, total_cents, created_at, updated_at
+      ) VALUES (
+        'operation-1', 'company-1', 'unit-1', 'device-1', 'pending_omie', 'invoice',
+        20, 10, 10, 2500, 25000, 25000, ?, ?
+      )`
+    )
+    .run(now, now);
 }

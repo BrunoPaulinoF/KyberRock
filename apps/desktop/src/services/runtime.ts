@@ -747,21 +747,23 @@ export class DesktopRuntime {
     paymentTermsSynced: number;
     ordersProcessed: number;
     ordersFailed: number;
+    customersPushFailed: number;
     errors: string[];
   }> {
     const identity = this.ensureIdentity();
-    const customersPushed = await pushOmieCustomersToCloud(this.database, identity);
+    const customerPush = await pushOmieCustomersToCloud(this.database, identity);
     const result = await syncOmieReferenceDataFromCloud(this.database, identity);
     const queue = await processOmieSyncQueue(this.database, identity);
     this.cacheStore.invalidateAll(identity.companyId);
     return {
       customersPulled: result.customersPulled,
-      customersPushed,
+      customersPushed: customerPush.pushed,
       productsSynced: result.productsSynced,
       paymentTermsSynced: result.paymentTermsSynced,
       ordersProcessed: queue.processed,
       ordersFailed: queue.failed,
-      errors: result.errors.concat(queue.errors)
+      customersPushFailed: customerPush.failed,
+      errors: customerPush.errors.concat(result.errors, queue.errors)
     };
   }
 

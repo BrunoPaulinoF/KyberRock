@@ -277,7 +277,7 @@ function getLoadingRequestPayload(database: DesktopDatabase, requestId: string, 
 export async function pushOmieCustomersToCloud(
   database: DesktopDatabase,
   identity: LocalDesktopIdentity
-): Promise<number> {
+): Promise<{ pushed: number; failed: number; errors: string[] }> {
   const settings = getCloudSettings(database, identity);
   const supabase = getSupabaseClient();
 
@@ -299,6 +299,8 @@ export async function pushOmieCustomersToCloud(
     }>;
 
   let pushed = 0;
+  let failed = 0;
+  const errors: string[] = [];
   const setOmieId = database.prepare(`
     UPDATE customers
     SET omie_customer_id = ?, needs_push = 0, last_synced_at = datetime('now'), sync_status = 'synced', updated_at = datetime('now')
@@ -346,12 +348,15 @@ export async function pushOmieCustomersToCloud(
         setOmieId.run(data.omieCustomerId, customer.id);
       }
       pushed++;
-    } catch {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Erro OMIE";
       markError.run(customer.id);
+      failed++;
+      errors.push(`Cliente ${customer.id}: ${message}`);
     }
   }
 
-  return pushed;
+  return { pushed, failed, errors };
 }
 
 export async function processOmieSyncQueue(

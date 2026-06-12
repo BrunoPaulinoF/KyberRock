@@ -129,6 +129,7 @@ export interface KyberRockDesktopApi {
     paymentTermsSynced: number;
     ordersProcessed: number;
     ordersFailed: number;
+    customersPushFailed: number;
     errors: string[];
   }>;
   onUpdateAvailable: (callback: (event: unknown, version: string) => void) => void;

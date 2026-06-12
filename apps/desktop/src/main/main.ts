@@ -588,11 +588,6 @@ function registerIpcHandlers(): void {
     return runtime.getOmieConfig();
   });
 
-  ipcMain.handle("desktop:get-omie-status", () => {
-    if (!runtime) throw new Error("Desktop runtime is not ready.");
-    return runtime.getOmieSyncStatus();
-  });
-
   ipcMain.handle("desktop:omie-sync", async () => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.syncOmieAll();

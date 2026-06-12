@@ -99,6 +99,11 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [registrationsTab, setRegistrationsTab] = useState<RegistrationsTab>("customers");
   const [closingOperationId, setClosingOperationId] = useState<string | null>(null);
   const [omieSyncing, setOmieSyncing] = useState(false);
+  const [omieConnectionFeedback, setOmieConnectionFeedback] = useState<{
+    status: "idle" | "checking" | "success" | "warning" | "error";
+    message: string;
+    details?: string;
+  }>({ status: "idle", message: "" });
 
   useEffect(() => {
     const captureLog = (level: string, source: string) => (...args: unknown[]) => {
@@ -383,11 +388,16 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     if (!desktopApi) return;
 
     setOmieSyncing(true);
+    setOmieConnectionFeedback({
+      status: "checking",
+      message: "Conectando ao OMIE pelo bridge seguro..."
+    });
     setMessage("Sincronizando OMIE...");
     try {
       const result = await desktopApi.omieSync();
       const parts: string[] = [];
       if (result.customersPushed > 0) parts.push(`${result.customersPushed} clientes enviados`);
+      if (result.customersPushFailed > 0) parts.push(`${result.customersPushFailed} clientes com falha`);
       parts.push(
         `${result.customersPulled} clientes baixados`,
         `${result.productsSynced} produtos`,
@@ -397,11 +407,29 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       if (result.errors.length > 0) {
         parts.push(`${result.errors.length} erro(s)`);
       }
-      setMessage(`OMIE: ${parts.join(" | ")}`);
       const omieStatusResult = await desktopApi.getOmieStatus();
       setOmieStatus(omieStatusResult);
+      const summary = `OMIE: ${parts.join(" | ")}`;
+      setMessage(summary);
+      const hasFailures = result.errors.length > 0 || result.ordersFailed > 0 || result.customersPushFailed > 0;
+      setOmieConnectionFeedback({
+        status: hasFailures ? "warning" : "success",
+        message: hasFailures
+          ? "Conexao OMIE respondeu, mas houve falhas em alguns itens."
+          : "Conexao OMIE OK. Dados enviados e recebidos com sucesso.",
+        details: summary
+      });
+      if (result.errors.length > 0) {
+        console.error("OMIE sync errors:", result.errors);
+      }
     } catch (error) {
-      setMessage(`Falha no sync OMIE: ${getErrorMessage(error)}`);
+      const errorMessage = getErrorMessage(error);
+      setMessage(`Falha no sync OMIE: ${errorMessage}`);
+      setOmieConnectionFeedback({
+        status: "error",
+        message: "Nao foi possivel conectar/sincronizar com o OMIE.",
+        details: errorMessage
+      });
     } finally {
       setOmieSyncing(false);
     }
@@ -1092,6 +1120,23 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                         ? new Date(omieStatus.lastSyncAt).toLocaleString("pt-BR")
                         : "Nunca"}
                     </p>
+                    {omieConnectionFeedback.status !== "idle" ? (
+                      <div style={{
+                        ...styles.omieFeedback,
+                        ...(omieConnectionFeedback.status === "success"
+                          ? styles.omieFeedbackSuccess
+                          : omieConnectionFeedback.status === "warning"
+                            ? styles.omieFeedbackWarning
+                            : omieConnectionFeedback.status === "checking"
+                              ? styles.omieFeedbackChecking
+                              : styles.omieFeedbackError)
+                      }}>
+                        <strong>{omieConnectionFeedback.message}</strong>
+                        {omieConnectionFeedback.details ? (
+                          <p style={{ margin: "6px 0 0" }}>{omieConnectionFeedback.details}</p>
+                        ) : null}
+                      </div>
+                    ) : null}
                     <button
                       type="button"
                       onClick={handleSyncOmie}
@@ -3849,6 +3894,33 @@ const styles = {
     color: "#b91c1c",
     fontWeight: 700,
     fontSize: "13px"
+  },
+  omieFeedback: {
+    marginTop: "12px",
+    padding: "10px 12px",
+    borderRadius: "10px",
+    border: "1px solid",
+    fontSize: "13px"
+  },
+  omieFeedbackSuccess: {
+    color: "#166534",
+    background: "#f0fdf4",
+    borderColor: "#bbf7d0"
+  },
+  omieFeedbackWarning: {
+    color: "#92400e",
+    background: "#fffbeb",
+    borderColor: "#fde68a"
+  },
+  omieFeedbackChecking: {
+    color: "#1d4ed8",
+    background: "#eff6ff",
+    borderColor: "#bfdbfe"
+  },
+  omieFeedbackError: {
+    color: "#b91c1c",
+    background: "#fef2f2",
+    borderColor: "#fecaca"
   },
   fieldLabel: {
     display: "flex",
