@@ -274,8 +274,7 @@ async function listAllCustomers(credentials: OmieCredentials, startPage = 1): Pr
       }>;
     }>(credentials, "/geral/clientes/", "ListarClientes", {
       pagina: page,
-      registros_por_pagina: PAGE_SIZE,
-      apenas_importado_api: "N"
+      registros_por_pagina: PAGE_SIZE
     });
 
     const items = response.clientes_cadastro ?? response.clientesCadastro ?? [];
@@ -341,8 +340,7 @@ async function listAllProducts(credentials: OmieCredentials, startPage = 1): Pro
       }>;
     }>(credentials, "/geral/produtos/", "ListarProdutos", {
       pagina: page,
-      registros_por_pagina: PAGE_SIZE,
-      apenas_importado_api: "N"
+      registros_por_pagina: PAGE_SIZE
     });
 
     const items = response.produto_servico_cadastro ?? response.produtoCadastro ?? [];
@@ -544,12 +542,25 @@ async function callOmie<TParam, TResponse>(
   });
 
   if (!response.ok) {
-    throw new Error(`OMIE HTTP ${response.status}: ${response.statusText} em ${call} (${endpoint})`);
+    let detail = "";
+    try {
+      const body = await response.json();
+      if (body && typeof body === "object" && "faultstring" in body) {
+        detail = String((body as { faultstring?: unknown }).faultstring ?? "");
+      } else if (typeof body === "string") {
+        detail = body;
+      }
+    } catch {
+      // ignore body parse errors
+    }
+    const suffix = detail ? ` - ${detail}` : "";
+    throw new Error(`OMIE HTTP ${response.status}: ${response.statusText} em ${call} (${endpoint})${suffix}`);
   }
 
   const data = await response.json();
   if (data && typeof data === "object" && "faultstring" in data) {
-    throw new Error(String((data as { faultstring?: unknown }).faultstring ?? "Falha OMIE"));
+    const detail = String((data as { faultstring?: unknown }).faultstring ?? "Falha OMIE");
+    throw new Error(`OMIE faultstring em ${call} (${endpoint}): ${detail}`);
   }
 
   return data as TResponse;
