@@ -177,7 +177,20 @@ Deno.serve(async (req) => {
 async function listAllCustomers(credentials: OmieCredentials): Promise<OmieCustomer[]> {
   const all: OmieCustomer[] = [];
   for (let page = 1; ; page++) {
-    const response = await callOmie<{ pagina: number; registrosPorPagina: number }, {
+    const response = await callOmie<{
+      pagina: number;
+      registros_por_pagina: number;
+      apenas_importado_api: string;
+    }, {
+      clientes_cadastro?: Array<{
+        codigo_cliente_omie?: number;
+        razao_social?: string;
+        nome_fantasia?: string;
+        cnpj_cpf?: string;
+        email?: string;
+        telefone1_ddd?: string;
+        telefone1_numero?: string;
+      }>;
       clientesCadastro?: Array<{
         codigoClienteOmie?: number;
         razaoSocial?: string;
@@ -189,20 +202,27 @@ async function listAllCustomers(credentials: OmieCredentials): Promise<OmieCusto
       }>;
     }>(credentials, "/geral/clientes/", "ListarClientes", {
       pagina: page,
-      registrosPorPagina: PAGE_SIZE
+      registros_por_pagina: PAGE_SIZE,
+      apenas_importado_api: "N"
     });
 
-    const items = response.clientesCadastro ?? [];
+    const items = response.clientes_cadastro ?? response.clientesCadastro ?? [];
     for (const item of items) {
-      if (!item.codigoClienteOmie || !item.razaoSocial) continue;
+      const id = "codigo_cliente_omie" in item ? item.codigo_cliente_omie : item.codigoClienteOmie;
+      const name = "razao_social" in item ? item.razao_social : item.razaoSocial;
+      if (!id || !name) continue;
+      const tradeName = "nome_fantasia" in item ? item.nome_fantasia : item.nomeFantasia;
+      const document = "cnpj_cpf" in item ? item.cnpj_cpf : item.cnpjCpf;
+      const phoneDdd = "telefone1_ddd" in item ? item.telefone1_ddd : item.telefone1Ddd;
+      const phoneNumber = "telefone1_numero" in item ? item.telefone1_numero : item.telefone1Numero;
       all.push({
-        id: item.codigoClienteOmie,
-        name: item.razaoSocial,
-        tradeName: item.nomeFantasia ?? null,
-        document: item.cnpjCpf ?? null,
+        id,
+        name,
+        tradeName: tradeName ?? null,
+        document: document ?? null,
         email: item.email ?? null,
-        phone: item.telefone1Ddd && item.telefone1Numero
-          ? `(${item.telefone1Ddd}) ${item.telefone1Numero}`
+        phone: phoneDdd && phoneNumber
+          ? `(${phoneDdd}) ${phoneNumber}`
           : null
       });
     }
@@ -215,23 +235,33 @@ async function listAllCustomers(credentials: OmieCredentials): Promise<OmieCusto
 async function listAllProducts(credentials: OmieCredentials): Promise<OmieProduct[]> {
   const all: OmieProduct[] = [];
   for (let page = 1; ; page++) {
-    const response = await callOmie<{ pagina: number; registrosPorPagina: number }, {
+    const response = await callOmie<{ pagina: number; registros_por_pagina: number; apenas_importado_api: string }, {
+      produto_servico_cadastro?: Array<{
+        codigo_produto?: number | string;
+        codigo?: string;
+        descricao?: string;
+        unidade?: string;
+      }>;
       produtoCadastro?: Array<{
-        codigoProdutoOmie?: number;
+        codigoProdutoOmie?: number | string;
         descricao?: string;
         codigo?: string;
         unidade?: string;
       }>;
     }>(credentials, "/geral/produtos/", "ListarProdutos", {
       pagina: page,
-      registrosPorPagina: PAGE_SIZE
+      registros_por_pagina: PAGE_SIZE,
+      apenas_importado_api: "N"
     });
 
-    const items = response.produtoCadastro ?? [];
+    const items = response.produto_servico_cadastro ?? response.produtoCadastro ?? [];
     for (const item of items) {
-      if (!item.codigoProdutoOmie || !item.descricao) continue;
+      const id = "codigo_produto" in item ? item.codigo_produto : item.codigoProdutoOmie;
+      if (!id || !item.descricao) continue;
+      const productId = Number(id);
+      if (!Number.isFinite(productId)) continue;
       all.push({
-        id: item.codigoProdutoOmie,
+        id: productId,
         code: item.codigo ?? null,
         description: item.descricao,
         unit: item.unidade ?? null
@@ -246,7 +276,11 @@ async function listAllProducts(credentials: OmieCredentials): Promise<OmieProduc
 async function listAllPaymentTerms(credentials: OmieCredentials): Promise<OmiePaymentTerm[]> {
   const all: OmiePaymentTerm[] = [];
   for (let page = 1; ; page++) {
-    const response = await callOmie<{ pagina: number; registrosPorPagina: number }, {
+    const response = await callOmie<{ pagina: number; registros_por_pagina: number }, {
+      cadastros?: Array<{
+        nCodigo?: number | string;
+        cDescricao?: string;
+      }>;
       parcelasCadastro?: Array<{
         codigo?: number | string;
         codigoParcela?: number | string;
@@ -261,13 +295,13 @@ async function listAllPaymentTerms(credentials: OmieCredentials): Promise<OmiePa
       }>;
     }>(credentials, "/geral/parcelas/", "ListarParcelas", {
       pagina: page,
-      registrosPorPagina: PAGE_SIZE
+      registros_por_pagina: PAGE_SIZE
     });
 
-    const items = response.parcelasCadastro ?? response.listaParcelas ?? [];
+    const items = response.cadastros ?? response.parcelasCadastro ?? response.listaParcelas ?? [];
     for (const item of items) {
-      const code = item.codigoParcela ?? item.codigo;
-      const description = item.descricaoParcela ?? item.descricao;
+      const code = "nCodigo" in item ? item.nCodigo : item.codigoParcela ?? item.codigo;
+      const description = "cDescricao" in item ? item.cDescricao : item.descricaoParcela ?? item.descricao;
       if (!code || !description) continue;
       const id = Number(code);
       if (!Number.isFinite(id)) continue;
@@ -285,32 +319,35 @@ async function listAllPaymentTerms(credentials: OmieCredentials): Promise<OmiePa
 async function pushCustomerToOmie(credentials: OmieCredentials, payload: PushCustomerPayload): Promise<number> {
   if (payload.omieCustomerId) {
     await callOmie<unknown, unknown>(credentials, "/geral/clientes/", "AlterarCliente", {
-      codigoClienteOmie: payload.omieCustomerId,
-      razaoSocial: payload.razaoSocial,
-      nomeFantasia: payload.nomeFantasia,
-      cnpjCpf: payload.cnpjCpf,
+      codigo_cliente_omie: payload.omieCustomerId,
+      razao_social: payload.razaoSocial,
+      nome_fantasia: payload.nomeFantasia,
+      cnpj_cpf: payload.cnpjCpf,
       email: payload.email,
-      telefone1Ddd: payload.telefone1Ddd,
-      telefone1Numero: payload.telefone1Numero
+      telefone1_ddd: payload.telefone1Ddd,
+      telefone1_numero: payload.telefone1Numero
     });
     return payload.omieCustomerId;
   }
 
   const response = await callOmie<unknown, {
+    codigo_cliente_omie?: number;
     codigoClienteOmie?: number;
   }>(credentials, "/geral/clientes/", "IncluirCliente", {
-    razaoSocial: payload.razaoSocial,
-    nomeFantasia: payload.nomeFantasia,
-    cnpjCpf: payload.cnpjCpf,
+    codigo_cliente_integracao: payload.localCustomerId,
+    razao_social: payload.razaoSocial,
+    nome_fantasia: payload.nomeFantasia,
+    cnpj_cpf: payload.cnpjCpf,
     email: payload.email,
-    telefone1Ddd: payload.telefone1Ddd,
-    telefone1Numero: payload.telefone1Numero
+    telefone1_ddd: payload.telefone1Ddd,
+    telefone1_numero: payload.telefone1Numero
   });
 
-  if (!response.codigoClienteOmie) {
+  const omieCustomerId = response.codigo_cliente_omie ?? response.codigoClienteOmie;
+  if (!omieCustomerId) {
     throw new Error("OMIE nao retornou codigoClienteOmie");
   }
-  return response.codigoClienteOmie;
+  return omieCustomerId;
 }
 
 async function createOmieOrder(credentials: OmieCredentials, payload: CreateOrderPayload): Promise<number> {
@@ -319,59 +356,75 @@ async function createOmieOrder(credentials: OmieCredentials, payload: CreateOrde
       throw new Error("productOmieId obrigatorio para pedido de venda");
     }
     const response = await callOmie<unknown, {
+      codigo_pedido?: number;
       codigoPedido?: number;
+      codigo_pedido_integracao?: string;
       codigoPedidoIntegracao?: string;
     }>(credentials, "/produtos/pedido/", "IncluirPedido", {
-      codigoPedidoIntegracao: payload.idempotencyKey,
-      codigoCliente: payload.customerOmieId,
-      dataPrevisao: payload.issueDate,
-      itens: [
+      cabecalho: {
+        codigo_pedido_integracao: payload.idempotencyKey,
+        codigo_cliente: payload.customerOmieId,
+        data_previsao: toOmieDate(payload.issueDate),
+        etapa: "10",
+        codigo_parcela: "000",
+        quantidade_itens: 1
+      },
+      det: [
         {
-          codigoProduto: payload.productOmieId,
-          quantidade: payload.quantity,
-          valorUnitario: payload.unitPrice,
-          tipoDesconto: "P",
-          desconto: 0
+          ide: { codigo_item_integracao: `${payload.idempotencyKey}:1` },
+          produto: {
+            codigo_produto: payload.productOmieId,
+            quantidade: payload.quantity,
+            valor_unitario: payload.unitPrice,
+            tipo_desconto: "P",
+            percentual_desconto: 0
+          }
         }
       ],
-      departamentos: [{ codigo: "1.01.01", percentual: 100 }],
-      informacoesAdicionais: {
-        codigoCategoria: "1.01.01",
-        codigoContaCorrente: 0
-      }
+      frete: { modalidade: "9" },
+      informacoes_adicionais: { codigo_categoria: "1.01.01", codigo_conta_corrente: 0 }
     });
-    if (!response.codigoPedido) {
+    const orderId = response.codigo_pedido ?? response.codigoPedido;
+    if (!orderId) {
       throw new Error("OMIE nao retornou codigoPedido");
     }
-    return response.codigoPedido;
+    return orderId;
   }
 
-  const total = payload.quantity * payload.unitPrice;
   const response = await callOmie<unknown, {
+    nCodOS?: number;
     codigoOS?: number;
+    cCodIntOS?: string;
     codigoOSIntegracao?: string;
   }>(credentials, "/servicos/os/", "IncluirOS", {
-    codigoOSIntegracao: payload.idempotencyKey,
-    codigoCliente: payload.customerOmieId,
-    dataPrevisao: payload.issueDate,
-    servicos: [
+    Cabecalho: {
+      cCodIntOS: payload.idempotencyKey,
+      nCodCli: payload.customerOmieId,
+      dDtPrevisao: toOmieDate(payload.issueDate),
+      cEtapa: "10",
+      cCodParc: "000",
+      nQtdeParc: 1
+    },
+    ServicosPrestados: [
       {
-        codigoServico: 1,
-        descricaoServico: payload.serviceDescription || "Servico",
-        quantidadeHoras: payload.quantity,
-        valorTotalServico: total
+        cDescServ: payload.serviceDescription || "Servico",
+        nQtde: payload.quantity,
+        nValUnit: payload.unitPrice
       }
     ],
-    departamentos: [{ codigo: "1.01.01", percentual: 100 }],
-    informacoesAdicionais: {
-      codigoCategoria: "1.01.01",
-      codigoContaCorrente: 0
-    }
+    InformacoesAdicionais: { cCodCateg: "1.01.01", nCodCC: 0 }
   });
-  if (!response.codigoOS) {
+  const orderId = response.nCodOS ?? response.codigoOS;
+  if (!orderId) {
     throw new Error("OMIE nao retornou codigoOS");
   }
-  return response.codigoOS;
+  return orderId;
+}
+
+function toOmieDate(value: string): string {
+  const isoMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (isoMatch) return `${isoMatch[3]}/${isoMatch[2]}/${isoMatch[1]}`;
+  return value;
 }
 
 async function callOmie<TParam, TResponse>(
