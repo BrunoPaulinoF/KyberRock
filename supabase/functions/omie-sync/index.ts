@@ -81,6 +81,7 @@ Deno.serve(async (req) => {
     deviceId?: string;
     deviceToken?: string;
     action?: OmieAction;
+    payload?: unknown;
   };
 
   const deviceId = String(body.deviceId ?? "");
@@ -125,11 +126,17 @@ Deno.serve(async (req) => {
 
   try {
     if (action === "pull_reference_data") {
-      const [customers, products, paymentTerms] = await Promise.all([
+      const [customers, products] = await Promise.all([
         listAllCustomers(credentials),
-        listAllProducts(credentials),
-        listAllPaymentTerms(credentials)
+        listAllProducts(credentials)
       ]);
+      let paymentTerms: OmiePaymentTerm[] = [];
+      let paymentTermsWarning: string | null = null;
+      try {
+        paymentTerms = await listAllPaymentTerms(credentials);
+      } catch (error) {
+        paymentTermsWarning = error instanceof Error ? error.message : "Falha ao listar parcelas OMIE";
+      }
 
       const checkedAt = new Date().toISOString();
       await supabase
@@ -144,6 +151,7 @@ Deno.serve(async (req) => {
         customers,
         products,
         paymentTerms,
+        ...(paymentTermsWarning ? { paymentTermsWarning } : {}),
         checkedAt
       });
     }
