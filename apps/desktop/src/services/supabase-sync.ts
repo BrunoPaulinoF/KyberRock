@@ -3,6 +3,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { supabaseConfig } from "../config/supabase-config.js";
 import type { DesktopDatabase } from "../database/sqlite.js";
 import type { LocalDesktopIdentity } from "./bootstrap.js";
+import { readLocalSetting, writeLocalSetting } from "./local-settings.js";
 import { listRunnableSyncJobs, markSyncJobDone, markSyncJobFailed } from "./sync-queue.js";
 
 let client: SupabaseClient | null = null;
@@ -57,6 +58,61 @@ interface OmieReferenceDataResponse {
   customers?: OmieReferenceCustomer[];
   products?: OmieReferenceProduct[];
   paymentTerms?: OmieReferencePaymentTerm[];
+  pageSize?: number;
+  pagination?: {
+    customersPage: number;
+    productsPage: number;
+    paymentTermsPage: number;
+    customersReturned: number;
+    productsReturned: number;
+    paymentTermsReturned: number;
+  };
+}
+
+interface OmiePullState {
+  customersPage: number;
+  productsPage: number;
+  paymentTermsPage: number;
+  inProgress: boolean;
+  lastUpdatedAt: string | null;
+}
+
+const OMIE_PULL_STATE_KEY = "omie_pull_state";
+
+function readOmiePullState(database: DesktopDatabase): OmiePullState {
+  const stored = readLocalSetting<OmiePullState>(database, OMIE_PULL_STATE_KEY);
+  return {
+    customersPage: 1,
+    productsPage: 1,
+    paymentTermsPage: 1,
+    inProgress: false,
+    lastUpdatedAt: null,
+    ...(stored ?? {})
+  };
+}
+
+function writeOmiePullState(
+  database: DesktopDatabase,
+  patch: Partial<OmiePullState> & { markDone?: "customers" | "products" | "paymentTerms" }
+): OmiePullState {
+  const current = readOmiePullState(database);
+  const next: OmiePullState = {
+    ...current,
+    ...patch,
+    lastUpdatedAt: new Date().toISOString()
+  };
+  if (patch.markDone === "customers") next.customersPage = 1;
+  if (patch.markDone === "products") next.productsPage = 1;
+  if (patch.markDone === "paymentTerms") next.paymentTermsPage = 1;
+  if (
+    next.customersPage === 1 &&
+    next.productsPage === 1 &&
+    next.paymentTermsPage === 1
+  ) {
+    next.inProgress = false;
+  }
+  writeLocalSetting(database, OMIE_PULL_STATE_KEY, next);
+  return next;
 }
 
 interface CloudSettings {
@@ -163,15 +219,25 @@ export async function getSupabaseSyncStatus(companyId: string): Promise<{ totalO
 
 export async function syncOmieReferenceDataFromCloud(
   database: DesktopDatabase,
-  identity: LocalDesktopIdentity
+  identity: LocalDesktopIdentity,
+  options: { reset?: boolean } = {}
 ): Promise<OmieCloudSyncResult> {
   const settings = getCloudSettings(database, identity);
   const supabase = getSupabaseClient();
+  if (options.reset) {
+    writeOmiePullState(database, { customersPage: 1, productsPage: 1, paymentTermsPage: 1, inProgress: false });
+  }
+  const state = readOmiePullState(database);
   const { data, error } = await supabase.functions.invoke<OmieReferenceDataResponse>("omie-sync", {
     body: {
       deviceId: settings.deviceId,
       deviceToken: settings.deviceToken,
-      action: "pull_reference_data"
+      action: "pull_reference_data",
+      resume: {
+        customersPage: state.customersPage,
+        productsPage: state.productsPage,
+        paymentTermsPage: state.paymentTermsPage
+      }
     }
   });
 
@@ -189,6 +255,7 @@ export function applyOmieReferenceData(
   const customers = data.customers ?? [];
   const products = data.products ?? [];
   const paymentTerms = data.paymentTerms ?? [];
+  const pagination = data.pagination;
 
   const apply = database.transaction(() => {
     upsertOmieCustomers(database, companyId, customers);
@@ -196,6 +263,28 @@ export function applyOmieReferenceData(
     upsertOmiePaymentTerms(database, companyId, paymentTerms);
   });
   apply();
+
+  if (pagination) {
+    const pageSize = data.pageSize ?? 200;
+    const partial = {
+      customers: pagination.customersReturned >= pageSize,
+      products: pagination.productsReturned >= pageSize,
+      paymentTerms: pagination.paymentTermsReturned >= pageSize
+    };
+    writeOmiePullState(database, {
+      inProgress: partial.customers || partial.products || partial.paymentTerms,
+      customersPage: partial.customers ? pagination.customersPage + 1 : 1,
+      productsPage: partial.products ? pagination.productsPage + 1 : 1,
+      paymentTermsPage: partial.paymentTerms ? pagination.paymentTermsPage + 1 : 1
+    });
+  } else {
+    writeOmiePullState(database, {
+      customersPage: 1,
+      productsPage: 1,
+      paymentTermsPage: 1,
+      inProgress: false
+    });
+  }
 
   return {
     customersPulled: customers.length,

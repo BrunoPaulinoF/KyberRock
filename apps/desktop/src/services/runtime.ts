@@ -752,9 +752,9 @@ export class DesktopRuntime {
     errors: string[];
   }> {
     const identity = this.ensureIdentity();
-    const result = await syncOmieReferenceDataFromCloud(this.database, identity);
+    const result = await syncOmieReferenceDataFromCloud(this.database, identity, { reset: true });
     const customerPush = await pushOmieCustomersToCloud(this.database, identity);
-    const finalPull = await syncOmieReferenceDataFromCloud(this.database, identity);
+    const finalPull = await syncOmieReferenceDataFromCloud(this.database, identity, { reset: true });
     const queue = await processOmieSyncQueue(this.database, identity);
     this.cacheStore.invalidateAll(identity.companyId);
     return {

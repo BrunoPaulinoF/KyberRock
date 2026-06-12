@@ -1,11 +1,43 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { corsHeaders, jsonResponse } from "./_shared/cors.ts";
-import { safeEqual, sha256Hex } from "./_shared/crypto.ts";
 
 const OMIE_BASE_URL = "https://app.omie.com.br/api/v1";
-const PAGE_SIZE = 500;
+const PAGE_SIZE = 200;
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-admin-session",
+  "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+};
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" }
+  });
+}
+
+function toHex(buffer: ArrayBuffer): string {
+  return [...new Uint8Array(buffer)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function safeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  return toHex(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
+}
 
 type OmieAction = "pull_reference_data" | "create_order" | "push_customer";
+
+type PullResume = {
+  customersPage?: number;
+  productsPage?: number;
+  paymentTermsPage?: number;
+};
 
 type DeviceRow = {
   id: string;
@@ -99,11 +131,13 @@ Deno.serve(async (req) => {
     deviceToken?: string;
     action?: OmieAction;
     payload?: unknown;
+    resume?: PullResume;
   };
 
   const deviceId = String(body.deviceId ?? "");
   const deviceToken = String(body.deviceToken ?? "");
   const action = body.action ?? "pull_reference_data";
+  const resume = body.resume ?? {};
 
   const { data: device, error: deviceError } = await supabase
     .from("device_registrations")
@@ -144,13 +178,13 @@ Deno.serve(async (req) => {
   try {
     if (action === "pull_reference_data") {
       const [customers, products] = await Promise.all([
-        listAllCustomers(credentials),
-        listAllProducts(credentials)
+        listAllCustomers(credentials, resume.customersPage ?? 1),
+        listAllProducts(credentials, resume.productsPage ?? 1)
       ]);
       let paymentTerms: OmiePaymentTerm[] = [];
       let paymentTermsWarning: string | null = null;
       try {
-        paymentTerms = await listAllPaymentTerms(credentials);
+        paymentTerms = await listAllPaymentTerms(credentials, resume.paymentTermsPage ?? 1);
       } catch (error) {
         paymentTermsWarning = error instanceof Error ? error.message : "Falha ao listar parcelas OMIE";
       }
@@ -169,7 +203,16 @@ Deno.serve(async (req) => {
         products,
         paymentTerms,
         ...(paymentTermsWarning ? { paymentTermsWarning } : {}),
-        checkedAt
+        checkedAt,
+        pageSize: PAGE_SIZE,
+        pagination: {
+          customersPage: resume.customersPage ?? 1,
+          productsPage: resume.productsPage ?? 1,
+          paymentTermsPage: resume.paymentTermsPage ?? 1,
+          customersReturned: customers.length,
+          productsReturned: products.length,
+          paymentTermsReturned: paymentTerms.length
+        }
       });
     }
 
@@ -191,9 +234,9 @@ Deno.serve(async (req) => {
   }
 });
 
-async function listAllCustomers(credentials: OmieCredentials): Promise<OmieCustomer[]> {
+async function listAllCustomers(credentials: OmieCredentials, startPage = 1): Promise<OmieCustomer[]> {
   const all: OmieCustomer[] = [];
-  for (let page = 1; ; page++) {
+  for (let page = startPage; ; page++) {
     const response = await callOmie<{
       pagina: number;
       registros_por_pagina: number;
@@ -257,7 +300,7 @@ async function listAllCustomers(credentials: OmieCredentials): Promise<OmieCusto
         document: document ?? null,
         email: item.email ?? null,
         phone: phoneDdd && phoneNumber
-          ? `(${phoneDdd}) ${phoneNumber})`
+          ? `(${phoneDdd}) ${phoneNumber}`
           : null,
         addressStreet: street ?? null,
         addressNumber: number ?? null,
@@ -274,9 +317,9 @@ async function listAllCustomers(credentials: OmieCredentials): Promise<OmieCusto
   return all;
 }
 
-async function listAllProducts(credentials: OmieCredentials): Promise<OmieProduct[]> {
+async function listAllProducts(credentials: OmieCredentials, startPage = 1): Promise<OmieProduct[]> {
   const all: OmieProduct[] = [];
-  for (let page = 1; ; page++) {
+  for (let page = startPage; ; page++) {
     const response = await callOmie<{ pagina: number; registros_por_pagina: number; apenas_importado_api: string }, {
       produto_servico_cadastro?: Array<{
         codigo_produto?: number | string;
@@ -328,9 +371,9 @@ async function listAllProducts(credentials: OmieCredentials): Promise<OmieProduc
   return all;
 }
 
-async function listAllPaymentTerms(credentials: OmieCredentials): Promise<OmiePaymentTerm[]> {
+async function listAllPaymentTerms(credentials: OmieCredentials, startPage = 1): Promise<OmiePaymentTerm[]> {
   const all: OmiePaymentTerm[] = [];
-  for (let page = 1; ; page++) {
+  for (let page = startPage; ; page++) {
     const response = await callOmie<{ pagina: number; registros_por_pagina: number }, {
       cadastros?: Array<{
         nCodigo?: number | string;

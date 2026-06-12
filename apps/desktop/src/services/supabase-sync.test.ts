@@ -140,7 +140,12 @@ describe("supabase sync", () => {
         body: {
           deviceId: "device-1",
           deviceToken: "device-token-1",
-          action: "pull_reference_data"
+          action: "pull_reference_data",
+          resume: {
+            customersPage: 1,
+            productsPage: 1,
+            paymentTermsPage: 1
+          }
         }
       });
       expect(result).toMatchObject({ customersPulled: 1, productsSynced: 1, paymentTermsSynced: 1 });
@@ -262,6 +267,118 @@ describe("supabase sync", () => {
       expect(result).toEqual({ processed: 1, failed: 0, errors: [] });
       expect(database.prepare("SELECT omie_sales_order_id FROM weighing_operations WHERE id = 'operation-1'").pluck().get()).toBe(987);
       expect(database.prepare("SELECT status FROM sync_queue WHERE id = 'omie-job-1'").pluck().get()).toBe("done");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("resumes the OMIE pull from the checkpoint on the next call", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      invokeMock.mockResolvedValueOnce({
+        error: null,
+        data: {
+          customers: Array.from({ length: 200 }, (_, i) => ({
+            id: 1000 + i,
+            name: `Cliente ${i}`,
+            tradeName: null,
+            document: null,
+            phone: null,
+            email: null
+          })),
+          products: [],
+          paymentTerms: [],
+          pageSize: 200,
+          pagination: {
+            customersPage: 1,
+            productsPage: 1,
+            paymentTermsPage: 1,
+            customersReturned: 200,
+            productsReturned: 0,
+            paymentTermsReturned: 0
+          }
+        }
+      });
+
+      await syncOmieReferenceDataFromCloud(database, identity);
+      const stateRow = database
+        .prepare("SELECT value_json FROM local_settings WHERE key = 'omie_pull_state'")
+        .pluck()
+        .get() as string;
+      const state = JSON.parse(stateRow) as {
+        customersPage: number;
+        productsPage: number;
+        paymentTermsPage: number;
+        inProgress: boolean;
+      };
+      expect(state.customersPage).toBe(2);
+      expect(state.inProgress).toBe(true);
+
+      invokeMock.mockResolvedValueOnce({
+        error: null,
+        data: {
+          customers: Array.from({ length: 200 }, (_, i) => ({
+            id: 2000 + i,
+            name: `Cliente ${i}`,
+            tradeName: null,
+            document: null,
+            phone: null,
+            email: null
+          })),
+          products: [],
+          paymentTerms: [],
+          pageSize: 200,
+          pagination: {
+            customersPage: 2,
+            productsPage: 1,
+            paymentTermsPage: 1,
+            customersReturned: 200,
+            productsReturned: 0,
+            paymentTermsReturned: 0
+          }
+        }
+      });
+      await syncOmieReferenceDataFromCloud(database, identity);
+
+      const resumeCall = invokeMock.mock.calls[1]?.[1] as { body: { resume: { customersPage: number } } };
+      expect(resumeCall.body.resume.customersPage).toBe(2);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("marks the pull complete when a page comes back smaller than the page size", () => {
+    const database = createDatabase();
+
+    try {
+      createIdentity(database);
+      applyOmieReferenceData(database, "company-1", {
+        customers: [{ id: 1, name: "X", tradeName: null, document: null, email: null, phone: null }],
+        products: [{ id: 1, code: "P", description: "P", unit: "UN" }],
+        paymentTerms: [],
+        pageSize: 200,
+        pagination: {
+          customersPage: 5,
+          productsPage: 1,
+          paymentTermsPage: 1,
+          customersReturned: 1,
+          productsReturned: 1,
+          paymentTermsReturned: 0
+        }
+      });
+
+      const state = JSON.parse(
+        database
+          .prepare("SELECT value_json FROM local_settings WHERE key = 'omie_pull_state'")
+          .pluck()
+          .get() as string
+      ) as { customersPage: number; productsPage: number; paymentTermsPage: number; inProgress: boolean };
+      expect(state.customersPage).toBe(1);
+      expect(state.productsPage).toBe(1);
+      expect(state.inProgress).toBe(false);
     } finally {
       database.close();
     }
