@@ -108,6 +108,8 @@ export interface KyberRockDesktopApi {
   carriersGetVehicles: (carrierId: string) => Promise<Array<{ id: string; plate: string; description: string | null }>>;
   getOmieStatus: () => Promise<{
     configured: boolean;
+    appKeyMasked: string | null;
+    hasSyncedData: boolean;
     totalCustomers: number;
     totalProducts: number;
     totalPaymentTerms: number;
@@ -124,6 +126,8 @@ export interface KyberRockDesktopApi {
     customersPushed: number;
     productsSynced: number;
     paymentTermsSynced: number;
+    ordersProcessed: number;
+    ordersFailed: number;
     errors: string[];
   }>;
   onUpdateAvailable: (callback: (event: unknown, version: string) => void) => void;

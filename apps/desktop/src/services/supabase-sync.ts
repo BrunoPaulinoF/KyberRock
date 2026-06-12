@@ -3,6 +3,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { supabaseConfig } from "../config/supabase-config.js";
 import type { DesktopDatabase } from "../database/sqlite.js";
 import type { LocalDesktopIdentity } from "./bootstrap.js";
+import { listRunnableSyncJobs, markSyncJobDone, markSyncJobFailed } from "./sync-queue.js";
 
 let client: SupabaseClient | null = null;
 
@@ -11,6 +12,41 @@ export interface SyncResult {
   synced: number;
   failed: number;
   errors: string[];
+}
+
+export interface OmieCloudSyncResult {
+  customersPulled: number;
+  customersPushed: number;
+  productsSynced: number;
+  paymentTermsSynced: number;
+  errors: string[];
+}
+
+interface OmieReferenceCustomer {
+  id: number;
+  name: string;
+  tradeName: string | null;
+  document: string | null;
+  email: string | null;
+  phone: string | null;
+}
+
+interface OmieReferenceProduct {
+  id: number;
+  code: string | null;
+  description: string;
+  unit: string | null;
+}
+
+interface OmieReferencePaymentTerm {
+  id: number;
+  description: string;
+}
+
+interface OmieReferenceDataResponse {
+  customers?: OmieReferenceCustomer[];
+  products?: OmieReferenceProduct[];
+  paymentTerms?: OmieReferencePaymentTerm[];
 }
 
 interface CloudSettings {
@@ -115,6 +151,51 @@ export async function getSupabaseSyncStatus(companyId: string): Promise<{ totalO
   return { totalOperations: count ?? 0, lastSync: data?.[0]?.synced_at ?? null };
 }
 
+export async function syncOmieReferenceDataFromCloud(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity
+): Promise<OmieCloudSyncResult> {
+  const settings = getCloudSettings(database, identity);
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.functions.invoke<OmieReferenceDataResponse>("omie-sync", {
+    body: {
+      deviceId: settings.deviceId,
+      deviceToken: settings.deviceToken,
+      action: "pull_reference_data"
+    }
+  });
+
+  if (error) throw error;
+  if (!data) throw new Error("Resposta OMIE vazia.");
+
+  return applyOmieReferenceData(database, settings.companyId, data);
+}
+
+export function applyOmieReferenceData(
+  database: DesktopDatabase,
+  companyId: string,
+  data: OmieReferenceDataResponse
+): OmieCloudSyncResult {
+  const customers = data.customers ?? [];
+  const products = data.products ?? [];
+  const paymentTerms = data.paymentTerms ?? [];
+
+  const apply = database.transaction(() => {
+    upsertOmieCustomers(database, companyId, customers);
+    upsertOmieProducts(database, companyId, products);
+    upsertOmiePaymentTerms(database, companyId, paymentTerms);
+  });
+  apply();
+
+  return {
+    customersPulled: customers.length,
+    customersPushed: 0,
+    productsSynced: products.length,
+    paymentTermsSynced: paymentTerms.length,
+    errors: []
+  };
+}
+
 function getCloudSettings(database: DesktopDatabase, identity?: LocalDesktopIdentity): CloudSettings {
   const settings = database.prepare("SELECT key, value_json FROM local_settings WHERE key IN ('cloud_company_id', 'cloud_unit_id', 'cloud_device_id', 'cloud_device_token')").all() as Array<{ key: string; value_json: string }>;
   const map = new Map(settings.map((row) => [row.key, JSON.parse(row.value_json) as string]));
@@ -193,10 +274,176 @@ function getLoadingRequestPayload(database: DesktopDatabase, requestId: string, 
   };
 }
 
+export async function processOmieSyncQueue(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity
+): Promise<{ processed: number; failed: number; errors: string[] }> {
+  const settings = getCloudSettings(database, identity);
+  const supabase = getSupabaseClient();
+  const jobs = listRunnableSyncJobs(database, { target: "omie", limit: 50 });
+  let processed = 0;
+  let failed = 0;
+  const errors: string[] = [];
+
+  for (const job of jobs) {
+    const payload = job.payload as {
+      operationId: string;
+      operationType: "invoice" | "internal";
+      customerOmieId: number;
+      productOmieId?: number | null;
+      serviceDescription?: string | null;
+      quantity: number;
+      unitPrice: number;
+      issueDate: string;
+    };
+
+    try {
+      const { data, error } = await supabase.functions.invoke<{ orderId?: number }>("omie-sync", {
+        body: {
+          deviceId: settings.deviceId,
+          deviceToken: settings.deviceToken,
+          action: "create_order",
+          payload: {
+            operationType: payload.operationType,
+            customerOmieId: payload.customerOmieId,
+            productOmieId: payload.productOmieId ?? undefined,
+            serviceDescription: payload.serviceDescription ?? undefined,
+            quantity: payload.quantity,
+            unitPrice: payload.unitPrice,
+            issueDate: payload.issueDate,
+            idempotencyKey: job.idempotencyKey
+          }
+        }
+      });
+
+      if (error || !data?.orderId) {
+        throw new Error(error?.message ?? "OMIE nao retornou orderId");
+      }
+
+      const updateSql = payload.operationType === "invoice"
+        ? "UPDATE weighing_operations SET omie_sales_order_id = ?, status = 'synced', omie_synced_at = datetime('now'), updated_at = datetime('now') WHERE id = ?"
+        : "UPDATE weighing_operations SET omie_service_order_id = ?, status = 'synced', omie_synced_at = datetime('now'), updated_at = datetime('now') WHERE id = ?";
+
+      database.prepare(updateSql).run(data.orderId, payload.operationId);
+      markSyncJobDone(database, job.id);
+      processed++;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Erro OMIE";
+      markSyncJobFailed(database, job.id, message);
+      failed++;
+      errors.push(`Job ${job.id}: ${message}`);
+    }
+  }
+
+  return { processed, failed, errors };
+}
+
 async function invokeDesktopSync(settings: CloudSettings, payload: Record<string, unknown>): Promise<void> {
   const supabase = getSupabaseClient();
   const { error } = await supabase.functions.invoke("desktop-sync", {
     body: { deviceId: settings.deviceId, deviceToken: settings.deviceToken, ...payload }
   });
   if (error) throw error;
+}
+
+function upsertOmieCustomers(
+  database: DesktopDatabase,
+  companyId: string,
+  customers: OmieReferenceCustomer[]
+): void {
+  const findLocalId = database.prepare(
+    "SELECT id FROM customers WHERE company_id = ? AND omie_customer_id = ? AND deleted_at IS NULL LIMIT 1"
+  );
+  const upsert = database.prepare(`
+    INSERT INTO customers (
+      id, company_id, omie_customer_id, source, legal_name, trade_name,
+      document, phone, email, is_active, sync_status, last_synced_at,
+      omie_updated_at, needs_push, created_at, updated_at
+    ) VALUES (?, ?, ?, 'omie', ?, ?, ?, ?, ?, 1, 'synced', datetime('now'), datetime('now'), 0, datetime('now'), datetime('now'))
+    ON CONFLICT(id) DO UPDATE SET
+      omie_customer_id = excluded.omie_customer_id,
+      legal_name = CASE WHEN customers.needs_push = 0 THEN excluded.legal_name ELSE customers.legal_name END,
+      trade_name = CASE WHEN customers.needs_push = 0 THEN excluded.trade_name ELSE customers.trade_name END,
+      document = CASE WHEN customers.needs_push = 0 THEN excluded.document ELSE customers.document END,
+      phone = CASE WHEN customers.needs_push = 0 THEN excluded.phone ELSE customers.phone END,
+      email = CASE WHEN customers.needs_push = 0 THEN excluded.email ELSE customers.email END,
+      sync_status = CASE WHEN customers.needs_push = 0 THEN 'synced' ELSE customers.sync_status END,
+      last_synced_at = datetime('now'),
+      omie_updated_at = datetime('now'),
+      updated_at = datetime('now')
+  `);
+
+  for (const customer of customers) {
+    const existing = findLocalId.get(companyId, customer.id) as { id: string } | undefined;
+    const localId = existing?.id ?? `omie_${customer.id}`;
+    upsert.run(
+      localId,
+      companyId,
+      customer.id,
+      customer.name,
+      customer.tradeName || customer.name,
+      customer.document,
+      customer.phone,
+      customer.email
+    );
+  }
+}
+
+function upsertOmieProducts(
+  database: DesktopDatabase,
+  companyId: string,
+  products: OmieReferenceProduct[]
+): void {
+  const upsert = database.prepare(`
+    INSERT INTO products (
+      id, company_id, omie_product_id, code, description, unit,
+      is_active, updated_from_omie_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 1, datetime('now'), datetime('now'), datetime('now'))
+    ON CONFLICT(id) DO UPDATE SET
+      omie_product_id = excluded.omie_product_id,
+      code = excluded.code,
+      description = excluded.description,
+      unit = excluded.unit,
+      updated_from_omie_at = datetime('now'),
+      updated_at = datetime('now')
+  `);
+
+  for (const product of products) {
+    upsert.run(
+      `omie_${product.id}`,
+      companyId,
+      product.id,
+      product.code || `PROD_${product.id}`,
+      product.description,
+      product.unit || "UN"
+    );
+  }
+}
+
+function upsertOmiePaymentTerms(
+  database: DesktopDatabase,
+  companyId: string,
+  paymentTerms: OmieReferencePaymentTerm[]
+): void {
+  const upsert = database.prepare(`
+    INSERT INTO payment_terms (
+      id, company_id, omie_code, name, rules_json,
+      is_active, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, 1, datetime('now'), datetime('now'))
+    ON CONFLICT(id) DO UPDATE SET
+      omie_code = excluded.omie_code,
+      name = excluded.name,
+      rules_json = excluded.rules_json,
+      updated_at = datetime('now')
+  `);
+
+  for (const paymentTerm of paymentTerms) {
+    upsert.run(
+      `omie_${paymentTerm.id}`,
+      companyId,
+      String(paymentTerm.id),
+      paymentTerm.description,
+      JSON.stringify({ omieId: paymentTerm.id })
+    );
+  }
 }

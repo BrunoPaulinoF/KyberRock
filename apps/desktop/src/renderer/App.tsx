@@ -87,6 +87,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [accessStatus, setAccessStatus] = useState<DesktopAccessStatus | null>(null);
   const [omieStatus, setOmieStatus] = useState<{
     configured: boolean;
+    appKeyMasked: string | null;
+    hasSyncedData: boolean;
     totalCustomers: number;
     totalProducts: number;
     totalPaymentTerms: number;
@@ -384,8 +386,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     try {
       const result = await desktopApi.omieSync();
       setMessage(
-        `OMIE: ${result.customersPulled} clientes puxados, ${result.customersPushed} enviados, ` +
-        `${result.productsSynced} produtos, ${result.paymentTermsSynced} condicoes.`
+        `OMIE: ${result.customersPulled} clientes, ${result.productsSynced} produtos, ${result.paymentTermsSynced} condicoes. ` +
+        `Pedidos enviados: ${result.ordersProcessed}, falhas: ${result.ordersFailed}.`
       );
       const omieStatusResult = await desktopApi.getOmieStatus();
       setOmieStatus(omieStatusResult);
@@ -1062,35 +1064,44 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
               <>
                 <p>
                   <strong>Status:</strong>{" "}
-                  {omieStatus.configured ? "Conectado" : "Nao configurado"}
+                  {omieStatus.configured ? "Configurado" : "Nao configurado no admin"}
                 </p>
-                {omieStatus.configured && (
-              <>
-                <p>Clientes sincronizados: {omieStatus.totalCustomers}</p>
-                <p>Produtos sincronizados: {omieStatus.totalProducts}</p>
-                <p>Condicoes sincronizadas: {omieStatus.totalPaymentTerms}</p>
-                <p>Pendentes de envio: {omieStatus.pendingPushCustomers} clientes</p>
-                <p>
-                  Ultima sincronizacao:{" "}
-                  {omieStatus.lastSyncAt
-                    ? new Date(omieStatus.lastSyncAt).toLocaleString("pt-BR")
-                    : "Nunca"}
-                </p>
-                <button
-                  type="button"
-                  onClick={handleSyncOmie}
-                  disabled={omieSyncing}
-                  style={{
-                    ...styles.primaryButton,
-                    marginTop: "16px",
-                    opacity: omieSyncing ? 0.6 : 1,
-                    cursor: omieSyncing ? "not-allowed" : "pointer"
-                  }}
-                >
-                  {omieSyncing ? "Sincronizando..." : "Sincronizar OMIE agora"}
-                </button>
-              </>
-            )}
+                {omieStatus.appKeyMasked ? <p>App Key: {omieStatus.appKeyMasked}</p> : null}
+                {omieStatus.configured ? (
+                  <>
+                    {!omieStatus.hasSyncedData ? (
+                      <p style={styles.muted}>Credencial recebida. Execute a primeira sincronizacao.</p>
+                    ) : null}
+                    <p>Clientes sincronizados: {omieStatus.totalCustomers}</p>
+                    <p>Produtos sincronizados: {omieStatus.totalProducts}</p>
+                    <p>Condicoes sincronizadas: {omieStatus.totalPaymentTerms}</p>
+                    <p>Pendentes de envio: {omieStatus.pendingPushCustomers} clientes</p>
+                    <p>
+                      Ultima sincronizacao:{" "}
+                      {omieStatus.lastSyncAt
+                        ? new Date(omieStatus.lastSyncAt).toLocaleString("pt-BR")
+                        : "Nunca"}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleSyncOmie}
+                      disabled={omieSyncing}
+                      style={{
+                        ...styles.primaryButton,
+                        marginTop: "16px",
+                        opacity: omieSyncing ? 0.6 : 1,
+                        cursor: omieSyncing ? "not-allowed" : "pointer"
+                      }}
+                    >
+                      {omieSyncing ? "Sincronizando..." : "Sincronizar OMIE agora"}
+                    </button>
+                  </>
+                ) : (
+                  <p style={styles.muted}>
+                    Cadastre o App Key e App Secret OMIE no painel administrativo e aguarde a
+                    proxima validacao online do desktop.
+                  </p>
+                )}
           </>
         ) : (
           <p style={{ color: "#64748b" }}>Carregando status OMIE...</p>

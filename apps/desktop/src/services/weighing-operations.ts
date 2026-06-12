@@ -489,6 +489,41 @@ export function closeWeighingOperation(
       },
       now
     );
+
+    const operationIds = database
+      .prepare("SELECT customer_id, product_id FROM weighing_operations WHERE id = ?")
+      .get(input.operationId) as { customer_id: string | null; product_id: string | null } | undefined;
+
+    const omieCustomerId = operationIds?.customer_id
+      ? (database.prepare("SELECT omie_customer_id FROM customers WHERE id = ?").get(operationIds.customer_id) as { omie_customer_id: number | null } | undefined)?.omie_customer_id
+      : null;
+    const omieProductId = operationIds?.product_id
+      ? (database.prepare("SELECT omie_product_id FROM products WHERE id = ?").get(operationIds.product_id) as { omie_product_id: number | null } | undefined)?.omie_product_id
+      : null;
+
+    if (omieCustomerId) {
+      enqueueSyncJob(
+        database,
+        {
+          target: "omie",
+          action: "create_order",
+          entityType: "weighing_operation",
+          entityId: input.operationId,
+          idempotencyKey: `omie:operation:${input.operationId}`,
+          payload: {
+            operationId: input.operationId,
+            operationType: nextOperationType,
+            customerOmieId: omieCustomerId,
+            productOmieId: omieProductId ?? null,
+            serviceDescription: operation.productDescription,
+            quantity: netWeightKg,
+            unitPrice: operation.unitPriceCents ? operation.unitPriceCents / 100 : 0,
+            issueDate: timestamp.slice(0, 10)
+          }
+        },
+        now
+      );
+    }
   });
 
   closeOperation();

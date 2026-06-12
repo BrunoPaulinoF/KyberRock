@@ -5,7 +5,7 @@ import { runDesktopMigrations } from "../database/migrate";
 import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite";
 import { ensureInitialDesktopIdentity, type LocalDesktopIdentity } from "./bootstrap";
 import { createSimulatedWeighingOperation } from "./weighing-operations";
-import { initializeSupabase, isSupabaseInitialized } from "./supabase-sync";
+import { applyOmieReferenceData, initializeSupabase, isSupabaseInitialized } from "./supabase-sync";
 
 const invokeMock = vi.fn();
 
@@ -59,6 +59,53 @@ describe("supabase sync", () => {
           loadingRequests: [expect.objectContaining({ entry_weight_kg: 12_000 })]
         })
       });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("applies OMIE reference data returned by the cloud bridge", () => {
+    const database = createDatabase();
+
+    try {
+      createIdentity(database);
+      const result = applyOmieReferenceData(database, "company-1", {
+        customers: [
+          {
+            id: 123,
+            name: "Pedreira Cliente LTDA",
+            tradeName: "Pedreira Cliente",
+            document: "12345678000195",
+            phone: "(11) 99999-9999",
+            email: "cliente@example.com"
+          }
+        ],
+        products: [
+          {
+            id: 456,
+            code: "BRITA1",
+            description: "Brita 1",
+            unit: "M3"
+          }
+        ],
+        paymentTerms: [
+          {
+            id: 789,
+            description: "30 dias"
+          }
+        ]
+      });
+
+      expect(result).toMatchObject({
+        customersPulled: 1,
+        customersPushed: 0,
+        productsSynced: 1,
+        paymentTermsSynced: 1,
+        errors: []
+      });
+      expect(database.prepare("SELECT legal_name FROM customers WHERE id = 'omie_123'").pluck().get()).toBe("Pedreira Cliente LTDA");
+      expect(database.prepare("SELECT description FROM products WHERE id = 'omie_456'").pluck().get()).toBe("Brita 1");
+      expect(database.prepare("SELECT name FROM payment_terms WHERE id = 'omie_789'").pluck().get()).toBe("30 dias");
     } finally {
       database.close();
     }

@@ -49,6 +49,8 @@ import {
   initializeSupabase,
   syncOperationToSupabase,
   syncLoadingRequestToSupabase,
+  syncOmieReferenceDataFromCloud,
+  processOmieSyncQueue,
   getSupabaseSyncStatus,
   isSupabaseInitialized,
   type SyncResult
@@ -673,6 +675,8 @@ export class DesktopRuntime {
 
   getOmieSyncStatus(): {
     configured: boolean;
+    appKeyMasked: string | null;
+    hasSyncedData: boolean;
     totalCustomers: number;
     totalProducts: number;
     totalPaymentTerms: number;
@@ -701,8 +705,13 @@ export class DesktopRuntime {
       .prepare("SELECT MAX(last_synced_at) FROM customers WHERE company_id = ? AND deleted_at IS NULL")
       .pluck().get(identity.companyId) as string | null;
 
+    const config = this.getOmieConfig();
+    const hasSyncedData = totalCustomers > 0 || totalProducts > 0 || totalPaymentTerms > 0;
+
     return {
-      configured: totalCustomers > 0 || totalProducts > 0,
+      configured: config.configured,
+      appKeyMasked: config.appKeyMasked,
+      hasSyncedData,
       totalCustomers,
       totalProducts,
       totalPaymentTerms,
@@ -729,15 +738,23 @@ export class DesktopRuntime {
     customersPushed: number;
     productsSynced: number;
     paymentTermsSynced: number;
+    ordersProcessed: number;
+    ordersFailed: number;
     errors: string[];
   }> {
-    if (!this.omieSync) {
-      throw new Error("OMIE nao configurado. Configure o token OMIE no site administrativo.");
-    }
     const identity = this.ensureIdentity();
-    const result = await this.omieSync.syncAll(identity.companyId);
+    const result = await syncOmieReferenceDataFromCloud(this.database, identity);
+    const queue = await processOmieSyncQueue(this.database, identity);
     this.cacheStore.invalidateAll(identity.companyId);
-    return result;
+    return {
+      customersPulled: result.customersPulled,
+      customersPushed: result.customersPushed,
+      productsSynced: result.productsSynced,
+      paymentTermsSynced: result.paymentTermsSynced,
+      ordersProcessed: queue.processed,
+      ordersFailed: queue.failed,
+      errors: result.errors.concat(queue.errors)
+    };
   }
 
   private ensureIdentity(): LocalDesktopIdentity {
