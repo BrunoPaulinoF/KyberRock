@@ -752,19 +752,20 @@ export class DesktopRuntime {
     errors: string[];
   }> {
     const identity = this.ensureIdentity();
-    const customerPush = await pushOmieCustomersToCloud(this.database, identity);
     const result = await syncOmieReferenceDataFromCloud(this.database, identity);
+    const customerPush = await pushOmieCustomersToCloud(this.database, identity);
+    const finalPull = await syncOmieReferenceDataFromCloud(this.database, identity);
     const queue = await processOmieSyncQueue(this.database, identity);
     this.cacheStore.invalidateAll(identity.companyId);
     return {
-      customersPulled: result.customersPulled,
+      customersPulled: result.customersPulled + finalPull.customersPulled,
       customersPushed: customerPush.pushed,
-      productsSynced: result.productsSynced,
-      paymentTermsSynced: result.paymentTermsSynced,
+      productsSynced: result.productsSynced + finalPull.productsSynced,
+      paymentTermsSynced: result.paymentTermsSynced + finalPull.paymentTermsSynced,
       ordersProcessed: queue.processed,
       ordersFailed: queue.failed,
       customersPushFailed: customerPush.failed,
-      errors: customerPush.errors.concat(result.errors, queue.errors)
+      errors: customerPush.errors.concat(result.errors, finalPull.errors, queue.errors)
     };
   }
 

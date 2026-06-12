@@ -378,5 +378,27 @@ CREATE INDEX IF NOT EXISTS idx_vehicle_carriers_vehicle ON vehicle_carriers(vehi
 CREATE INDEX IF NOT EXISTS idx_vehicle_carriers_carrier ON vehicle_carriers(carrier_id, is_active, deleted_at);
 CREATE INDEX IF NOT EXISTS idx_customers_default_carrier ON customers(company_id, default_carrier_id, is_active);
 `
+  },
+  {
+    version: 4,
+    name: "customer_address_and_product_details",
+    sql: `
+ALTER TABLE customers ADD COLUMN zipcode TEXT;
+ALTER TABLE customers ADD COLUMN address_street TEXT;
+ALTER TABLE customers ADD COLUMN address_number TEXT;
+ALTER TABLE customers ADD COLUMN address_complement TEXT;
+ALTER TABLE customers ADD COLUMN neighborhood TEXT;
+ALTER TABLE customers ADD COLUMN city TEXT;
+ALTER TABLE customers ADD COLUMN state TEXT;
+ALTER TABLE customers ADD COLUMN default_payment_term_id TEXT;
+
+ALTER TABLE products ADD COLUMN ncm TEXT;
+ALTER TABLE products ADD COLUMN ean TEXT;
+ALTER TABLE products ADD COLUMN unit_price_cents INTEGER;
+
+CREATE INDEX IF NOT EXISTS idx_customers_company_zipcode ON customers(company_id, zipcode);
+CREATE INDEX IF NOT EXISTS idx_customers_default_payment_term ON customers(company_id, default_payment_term_id);
+CREATE INDEX IF NOT EXISTS idx_products_company_ncm ON products(company_id, ncm);
+`
   }
 ];

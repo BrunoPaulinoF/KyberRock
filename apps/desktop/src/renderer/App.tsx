@@ -1213,6 +1213,41 @@ function parseCurrencyToCents(value: string): number | null | undefined {
   return Math.round(parsed * 100);
 }
 
+function normalizeCep(value: string): string {
+  return value.replace(/\D/g, "").slice(0, 8);
+}
+
+function formatCep(value: string): string {
+  const clean = normalizeCep(value);
+  return clean.length > 5 ? `${clean.slice(0, 5)}-${clean.slice(5)}` : clean;
+}
+
+async function lookupCep(value: string): Promise<{
+  street: string;
+  neighborhood: string;
+  city: string;
+  state: string;
+} | null> {
+  const cep = normalizeCep(value);
+  if (cep.length !== 8) return null;
+  const response = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
+  if (!response.ok) return null;
+  const data = await response.json() as {
+    erro?: boolean;
+    logradouro?: string;
+    bairro?: string;
+    localidade?: string;
+    uf?: string;
+  };
+  if (data.erro) return null;
+  return {
+    street: data.logradouro ?? "",
+    neighborhood: data.bairro ?? "",
+    city: data.localidade ?? "",
+    state: data.uf ?? ""
+  };
+}
+
 interface CacheSelectOption {
   id: string;
   label: string;
@@ -1231,7 +1266,7 @@ function CacheSelect({
   label: string;
   entityType: CacheEntityType;
   value: string;
-  onChange: (id: string) => void;
+  onChange: (id: string, item?: Record<string, unknown>) => void;
   onCreateNew?: () => void;
   desktopApi: KyberRockDesktopApi | null;
   disabled?: boolean;
@@ -1482,7 +1517,15 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
             label="Cliente"
             entityType="customer"
             value={form.customerId}
-            onChange={(id) => setForm((prev) => ({ ...prev, customerId: id }))}
+            onChange={(id, item) =>
+              setForm((prev) => ({
+                ...prev,
+                customerId: id,
+                paymentTermId: typeof item?.defaultPaymentTermId === "string" && item.defaultPaymentTermId
+                  ? item.defaultPaymentTermId
+                  : prev.paymentTermId
+              }))
+            }
             onCreateNew={() => setShowCustomerModal(true)}
             desktopApi={desktopApi}
             refreshKey={customerRefreshKey}
@@ -2550,6 +2593,14 @@ interface CustomerCacheEntry {
   lastSyncedAt: string | null;
   observations: string | null;
   defaultCarrierId: string | null;
+  defaultPaymentTermId: string | null;
+  zipcode: string | null;
+  addressStreet: string | null;
+  addressNumber: string | null;
+  addressComplement: string | null;
+  neighborhood: string | null;
+  city: string | null;
+  state: string | null;
   isActive: boolean;
 }
 
@@ -2558,6 +2609,13 @@ interface CarrierCacheEntry {
   name: string;
   document: string | null;
   source: string;
+  isActive: boolean;
+}
+
+interface PaymentTermCacheEntry {
+  id: string;
+  name: string;
+  omieCode: string | null;
   isActive: boolean;
 }
 
@@ -2571,6 +2629,14 @@ interface CustomerFormData {
   omieBillingBlocked: boolean;
   observations: string;
   defaultCarrierId: string;
+  defaultPaymentTermId: string;
+  zipcode: string;
+  addressStreet: string;
+  addressNumber: string;
+  addressComplement: string;
+  neighborhood: string;
+  city: string;
+  state: string;
 }
 
 function CustomerListView({
@@ -2578,7 +2644,10 @@ function CustomerListView({
 }: {
   desktopApi: KyberRockDesktopApi;
 }) {
+  const pageSize = 100;
   const [customers, setCustomers] = useState<CustomerCacheEntry[]>([]);
+  const [customerTotal, setCustomerTotal] = useState(0);
+  const [customerPage, setCustomerPage] = useState(0);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -2592,15 +2661,32 @@ function CustomerListView({
     creditLimitReais: "",
     omieBillingBlocked: false,
     observations: "",
-    defaultCarrierId: ""
+    defaultCarrierId: "",
+    defaultPaymentTermId: "",
+    zipcode: "",
+    addressStreet: "",
+    addressNumber: "",
+    addressComplement: "",
+    neighborhood: "",
+    city: "",
+    state: ""
   });
   const [formError, setFormErrorState] = useState<string | null>(null);
   const [message, setMessageState] = useState<string | null>(null);
   const [carriers, setCarriers] = useState<CarrierCacheEntry[]>([]);
+  const [paymentTerms, setPaymentTerms] = useState<PaymentTermCacheEntry[]>([]);
 
   useEffect(() => {
     loadCustomers();
+  }, [search, customerPage]);
+
+  useEffect(() => {
     loadCarriers();
+    loadPaymentTerms();
+  }, []);
+
+  useEffect(() => {
+    setCustomerPage(0);
   }, [search]);
 
   async function loadCarriers(): Promise<void> {
@@ -2615,14 +2701,28 @@ function CustomerListView({
     }
   }
 
+  async function loadPaymentTerms(): Promise<void> {
+    try {
+      const result = await desktopApi.queryCache({
+        entityType: "payment_term",
+        limit: 500
+      });
+      setPaymentTerms(result.rows as PaymentTermCacheEntry[]);
+    } catch {
+      /* ignore */
+    }
+  }
+
   async function loadCustomers(): Promise<void> {
     try {
       const result = await desktopApi.queryCache({
         entityType: "customer",
         search: search || undefined,
-        limit: 200
+        limit: pageSize,
+        offset: customerPage * pageSize
       });
       setCustomers(result.rows as CustomerCacheEntry[]);
+      setCustomerTotal(result.total);
       setLoading(false);
     } catch {
       setLoading(false);
@@ -2639,7 +2739,15 @@ function CustomerListView({
       creditLimitReais: "",
       omieBillingBlocked: false,
       observations: "",
-      defaultCarrierId: ""
+      defaultCarrierId: "",
+      defaultPaymentTermId: "",
+      zipcode: "",
+      addressStreet: "",
+      addressNumber: "",
+      addressComplement: "",
+      neighborhood: "",
+      city: "",
+      state: ""
     });
     setEditingId(null);
     setFormErrorState(null);
@@ -2662,7 +2770,15 @@ function CustomerListView({
         : "",
       omieBillingBlocked: customer.omieBillingBlocked,
       observations: customer.observations ?? "",
-      defaultCarrierId: customer.defaultCarrierId ?? ""
+      defaultCarrierId: customer.defaultCarrierId ?? "",
+      defaultPaymentTermId: customer.defaultPaymentTermId ?? "",
+      zipcode: customer.zipcode ?? "",
+      addressStreet: customer.addressStreet ?? "",
+      addressNumber: customer.addressNumber ?? "",
+      addressComplement: customer.addressComplement ?? "",
+      neighborhood: customer.neighborhood ?? "",
+      city: customer.city ?? "",
+      state: customer.state ?? ""
     });
     setEditingId(customer.id);
     setFormErrorState(null);
@@ -2672,7 +2788,20 @@ function CustomerListView({
   function validateForm(): string | null {
     if (!form.tradeName.trim()) return "Nome fantasia e obrigatorio.";
     if (!form.legalName.trim()) return "Razao social e obrigatoria.";
+    if (form.zipcode.trim() && normalizeCep(form.zipcode).length !== 8) return "CEP invalido.";
     return null;
+  }
+
+  async function applyCepToForm(): Promise<void> {
+    const address = await lookupCep(form.zipcode);
+    if (!address) return;
+    setForm((prev) => ({
+      ...prev,
+      addressStreet: prev.addressStreet || address.street,
+      neighborhood: prev.neighborhood || address.neighborhood,
+      city: prev.city || address.city,
+      state: prev.state || address.state
+    }));
   }
 
   async function handleSave(): Promise<void> {
@@ -2703,6 +2832,7 @@ function CustomerListView({
     const creditLimitCents = form.creditLimitReais.trim()
       ? parseCurrencyToCents(form.creditLimitReais)
       : undefined;
+    const normalizedZipcode = normalizeCep(form.zipcode);
 
     try {
       if (editingId) {
@@ -2715,7 +2845,15 @@ function CustomerListView({
           creditLimitCents: creditLimitCents ?? undefined,
           omieBillingBlocked: form.omieBillingBlocked,
           observations: form.observations.trim() || undefined,
-          defaultCarrierId: form.defaultCarrierId || null
+          defaultCarrierId: form.defaultCarrierId || null,
+          defaultPaymentTermId: form.defaultPaymentTermId || null,
+          zipcode: normalizedZipcode || null,
+          addressStreet: form.addressStreet.trim() || null,
+          addressNumber: form.addressNumber.trim() || null,
+          addressComplement: form.addressComplement.trim() || null,
+          neighborhood: form.neighborhood.trim() || null,
+          city: form.city.trim() || null,
+          state: form.state.trim().toUpperCase() || null
         });
         setMessageState("Cliente atualizado com sucesso.");
       } else {
@@ -2728,7 +2866,15 @@ function CustomerListView({
           creditLimitCents: creditLimitCents ?? undefined,
           omieBillingBlocked: form.omieBillingBlocked,
           observations: form.observations.trim() || undefined,
-          defaultCarrierId: form.defaultCarrierId || undefined
+          defaultCarrierId: form.defaultCarrierId || undefined,
+          defaultPaymentTermId: form.defaultPaymentTermId || undefined,
+          zipcode: normalizedZipcode || undefined,
+          addressStreet: form.addressStreet.trim() || undefined,
+          addressNumber: form.addressNumber.trim() || undefined,
+          addressComplement: form.addressComplement.trim() || undefined,
+          neighborhood: form.neighborhood.trim() || undefined,
+          city: form.city.trim() || undefined,
+          state: form.state.trim().toUpperCase() || undefined
         });
         setMessageState("Cliente criado com sucesso.");
       }
@@ -2841,6 +2987,65 @@ function CustomerListView({
               />
             </label>
             <label style={styles.fieldLabel}>
+              CEP
+              <input
+                value={formatCep(form.zipcode)}
+                onChange={(e) => setForm({ ...form, zipcode: normalizeCep(e.target.value) })}
+                onBlur={applyCepToForm}
+                placeholder="00000-000"
+                style={styles.input}
+              />
+            </label>
+            <label style={styles.fieldLabel}>
+              Endereco
+              <input
+                value={form.addressStreet}
+                onChange={(e) => setForm({ ...form, addressStreet: e.target.value })}
+                style={styles.input}
+              />
+            </label>
+            <label style={styles.fieldLabel}>
+              Numero
+              <input
+                value={form.addressNumber}
+                onChange={(e) => setForm({ ...form, addressNumber: e.target.value })}
+                style={styles.input}
+              />
+            </label>
+            <label style={styles.fieldLabel}>
+              Complemento
+              <input
+                value={form.addressComplement}
+                onChange={(e) => setForm({ ...form, addressComplement: e.target.value })}
+                style={styles.input}
+              />
+            </label>
+            <label style={styles.fieldLabel}>
+              Bairro
+              <input
+                value={form.neighborhood}
+                onChange={(e) => setForm({ ...form, neighborhood: e.target.value })}
+                style={styles.input}
+              />
+            </label>
+            <label style={styles.fieldLabel}>
+              Cidade
+              <input
+                value={form.city}
+                onChange={(e) => setForm({ ...form, city: e.target.value })}
+                style={styles.input}
+              />
+            </label>
+            <label style={styles.fieldLabel}>
+              Estado
+              <input
+                value={form.state}
+                onChange={(e) => setForm({ ...form, state: e.target.value.toUpperCase().slice(0, 2) })}
+                placeholder="UF"
+                style={styles.input}
+              />
+            </label>
+            <label style={styles.fieldLabel}>
               Limite de Credito (R$)
               <input
                 value={form.creditLimitReais}
@@ -2881,6 +3086,20 @@ function CustomerListView({
               <option value="">Selecione a transportadora padrao</option>
               {carriers.map((c) => (
                 <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </label>
+
+          <label style={{ ...styles.fieldLabel, marginTop: "8px" }}>
+            Condicao de pagamento padrao
+            <select
+              value={form.defaultPaymentTermId}
+              onChange={(e) => setForm({ ...form, defaultPaymentTermId: e.target.value })}
+              style={styles.input}
+            >
+              <option value="">Selecione a condicao padrao</option>
+              {paymentTerms.map((term) => (
+                <option key={term.id} value={term.id}>{term.name}</option>
               ))}
             </select>
           </label>
@@ -2926,6 +3145,18 @@ function CustomerListView({
                   Limite: {formatMoney(customer.creditLimitCents)} | Em aberto: {formatMoney(customer.openReceivablesCents)}
                   {customer.omieBillingBlocked ? " | \uD83D\uDD34 Bloqueado" : ""}
                 </p>
+                {customer.city || customer.state || customer.addressStreet ? (
+                  <p style={{ ...styles.muted, margin: "2px 0 0 0", fontSize: "13px" }}>
+                    {[customer.addressStreet, customer.addressNumber, customer.neighborhood, customer.city, customer.state]
+                      .filter(Boolean)
+                      .join(", ")}
+                  </p>
+                ) : null}
+                {customer.defaultPaymentTermId ? (
+                  <p style={{ ...styles.muted, margin: "2px 0 0 0", fontSize: "13px" }}>
+                    Condicao padrao: {paymentTerms.find((term) => term.id === customer.defaultPaymentTermId)?.name ?? customer.defaultPaymentTermId}
+                  </p>
+                ) : null}
                 {customer.observations ? (
                   <p style={{ ...styles.muted, margin: "2px 0 0 0", fontSize: "12px", fontStyle: "italic" }}>
                     {customer.observations}
@@ -2952,6 +3183,29 @@ function CustomerListView({
           ))}
         </div>
       )}
+      <div style={{ display: "flex", gap: "8px", alignItems: "center", justifyContent: "space-between", marginTop: "10px" }}>
+        <span style={styles.muted}>
+          Mostrando {customerTotal === 0 ? 0 : customerPage * pageSize + 1}-{Math.min(customerTotal, (customerPage + 1) * pageSize)} de {customerTotal}
+        </span>
+        <div style={{ display: "flex", gap: "8px" }}>
+          <button
+            type="button"
+            onClick={() => setCustomerPage((page) => Math.max(0, page - 1))}
+            disabled={customerPage === 0}
+            style={styles.secondaryButton}
+          >
+            Anterior
+          </button>
+          <button
+            type="button"
+            onClick={() => setCustomerPage((page) => page + 1)}
+            disabled={(customerPage + 1) * pageSize >= customerTotal}
+            style={styles.secondaryButton}
+          >
+            Proximos 100
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -3121,20 +3375,29 @@ function OmieViewer({
   displayField: string;
   subField: string;
 }) {
+  const pageSize = entityType === "product" ? 50 : 200;
   const [items, setItems] = useState<Array<Record<string, unknown>>>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(0);
   const [search, setSearch] = useState("");
 
   useEffect(() => {
-    loadItems();
+    setPage(0);
   }, [search]);
+
+  useEffect(() => {
+    loadItems();
+  }, [search, page]);
 
   async function loadItems(): Promise<void> {
     const result = await desktopApi.queryCache({
       entityType: entityType as unknown as "product" | "payment_term",
       search: search || undefined,
-      limit: 200
+      limit: pageSize,
+      offset: page * pageSize
     });
     setItems(result.rows as Array<Record<string, unknown>>);
+    setTotal(result.total);
   }
 
   return (
@@ -3163,6 +3426,29 @@ function OmieViewer({
           </div>
         ))
       )}
+      <div style={{ display: "flex", gap: "8px", alignItems: "center", justifyContent: "space-between", marginTop: "10px" }}>
+        <span style={styles.muted}>
+          Mostrando {total === 0 ? 0 : page * pageSize + 1}-{Math.min(total, (page + 1) * pageSize)} de {total}
+        </span>
+        <div style={{ display: "flex", gap: "8px" }}>
+          <button
+            type="button"
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+            disabled={page === 0}
+            style={styles.secondaryButton}
+          >
+            Anterior
+          </button>
+          <button
+            type="button"
+            onClick={() => setPage((p) => p + 1)}
+            disabled={(page + 1) * pageSize >= total}
+            style={styles.secondaryButton}
+          >
+            Proximos {pageSize}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

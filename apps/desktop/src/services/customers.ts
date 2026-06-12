@@ -13,6 +13,14 @@ export interface CreateCustomerInput {
   omieBillingBlocked?: boolean;
   observations?: string;
   defaultCarrierId?: string;
+  defaultPaymentTermId?: string;
+  zipcode?: string;
+  addressStreet?: string;
+  addressNumber?: string;
+  addressComplement?: string;
+  neighborhood?: string;
+  city?: string;
+  state?: string;
 }
 
 export interface UpdateCustomerInput {
@@ -26,6 +34,14 @@ export interface UpdateCustomerInput {
   observations?: string;
   isActive?: boolean;
   defaultCarrierId?: string | null;
+  defaultPaymentTermId?: string | null;
+  zipcode?: string | null;
+  addressStreet?: string | null;
+  addressNumber?: string | null;
+  addressComplement?: string | null;
+  neighborhood?: string | null;
+  city?: string | null;
+  state?: string | null;
 }
 
 export interface CustomerRow {
@@ -44,6 +60,14 @@ export interface CustomerRow {
   omie_billing_blocked: number;
   observations: string | null;
   default_carrier_id: string | null;
+  default_payment_term_id: string | null;
+  zipcode: string | null;
+  address_street: string | null;
+  address_number: string | null;
+  address_complement: string | null;
+  neighborhood: string | null;
+  city: string | null;
+  state: string | null;
   financial_cache_at: string | null;
   sync_status: "synced" | "pending" | "error";
   needs_push: number;
@@ -95,9 +119,10 @@ export function createCustomer(
       `INSERT INTO customers (
         id, company_id, source, legal_name, trade_name, document, phone, email,
         credit_limit_cents, open_receivables_cents, omie_billing_blocked,
-        observations, default_carrier_id, sync_status, needs_push, local_updated_at, is_active,
+        observations, default_carrier_id, default_payment_term_id, zipcode, address_street, address_number,
+        address_complement, neighborhood, city, state, sync_status, needs_push, local_updated_at, is_active,
         created_at, updated_at
-      ) VALUES (?, ?, 'local', ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 'pending', 1, ?, 1, ?, ?)`
+      ) VALUES (?, ?, 'local', ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1, ?, 1, ?, ?)`
     )
     .run(
       id,
@@ -111,6 +136,14 @@ export function createCustomer(
       input.omieBillingBlocked ? 1 : 0,
       input.observations ?? null,
       defaultCarrierId,
+      input.defaultPaymentTermId ?? null,
+      input.zipcode ?? null,
+      input.addressStreet ?? null,
+      input.addressNumber ?? null,
+      input.addressComplement ?? null,
+      input.neighborhood ?? null,
+      input.city ?? null,
+      input.state ?? null,
       nowIso,
       nowIso,
       nowIso
@@ -174,6 +207,38 @@ export function updateCustomer(
   if (input.defaultCarrierId !== undefined) {
     sets.push("default_carrier_id = ?");
     values.push(input.defaultCarrierId);
+  }
+  if (input.defaultPaymentTermId !== undefined) {
+    sets.push("default_payment_term_id = ?");
+    values.push(input.defaultPaymentTermId);
+  }
+  if (input.zipcode !== undefined) {
+    sets.push("zipcode = ?");
+    values.push(input.zipcode);
+  }
+  if (input.addressStreet !== undefined) {
+    sets.push("address_street = ?");
+    values.push(input.addressStreet);
+  }
+  if (input.addressNumber !== undefined) {
+    sets.push("address_number = ?");
+    values.push(input.addressNumber);
+  }
+  if (input.addressComplement !== undefined) {
+    sets.push("address_complement = ?");
+    values.push(input.addressComplement);
+  }
+  if (input.neighborhood !== undefined) {
+    sets.push("neighborhood = ?");
+    values.push(input.neighborhood);
+  }
+  if (input.city !== undefined) {
+    sets.push("city = ?");
+    values.push(input.city);
+  }
+  if (input.state !== undefined) {
+    sets.push("state = ?");
+    values.push(input.state);
   }
   if (input.isActive !== undefined) {
     sets.push("is_active = ?");

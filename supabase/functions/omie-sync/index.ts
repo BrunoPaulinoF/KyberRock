@@ -34,6 +34,13 @@ type OmieCustomer = {
   document: string | null;
   email: string | null;
   phone: string | null;
+  zipcode: string | null;
+  addressStreet: string | null;
+  addressNumber: string | null;
+  neighborhood: string | null;
+  city: string | null;
+  state: string | null;
+  defaultPaymentTermId: string | null;
 };
 
 type OmieProduct = {
@@ -41,6 +48,9 @@ type OmieProduct = {
   code: string | null;
   description: string;
   unit: string | null;
+  ncm: string | null;
+  ean: string | null;
+  unitPriceCents: number | null;
 };
 
 type OmiePaymentTerm = {
@@ -68,6 +78,13 @@ type PushCustomerPayload = {
   email?: string;
   telefone1Ddd?: string;
   telefone1Numero?: string;
+  zipcode?: string;
+  addressStreet?: string;
+  addressNumber?: string;
+  neighborhood?: string;
+  city?: string;
+  state?: string;
+  defaultPaymentTermId?: string;
 };
 
 Deno.serve(async (req) => {
@@ -190,6 +207,12 @@ async function listAllCustomers(credentials: OmieCredentials): Promise<OmieCusto
         email?: string;
         telefone1_ddd?: string;
         telefone1_numero?: string;
+        endereco?: string;
+        endereco_numero?: string;
+        bairro?: string;
+        cidade?: string;
+        estado?: string;
+        cep?: string;
       }>;
       clientesCadastro?: Array<{
         codigoClienteOmie?: number;
@@ -199,6 +222,12 @@ async function listAllCustomers(credentials: OmieCredentials): Promise<OmieCusto
         email?: string;
         telefone1Ddd?: string;
         telefone1Numero?: string;
+        endereco?: string;
+        enderecoNumero?: string;
+        bairro?: string;
+        cidade?: string;
+        estado?: string;
+        cep?: string;
       }>;
     }>(credentials, "/geral/clientes/", "ListarClientes", {
       pagina: page,
@@ -215,6 +244,12 @@ async function listAllCustomers(credentials: OmieCredentials): Promise<OmieCusto
       const document = "cnpj_cpf" in item ? item.cnpj_cpf : item.cnpjCpf;
       const phoneDdd = "telefone1_ddd" in item ? item.telefone1_ddd : item.telefone1Ddd;
       const phoneNumber = "telefone1_numero" in item ? item.telefone1_numero : item.telefone1Numero;
+      const street = "endereco" in item ? item.endereco : item.endereco;
+      const number = "endereco_numero" in item ? item.endereco_numero : item.enderecoNumero;
+      const neighborhood = "bairro" in item ? item.bairro : item.bairro;
+      const city = "cidade" in item ? item.cidade : item.cidade;
+      const state = "estado" in item ? item.estado : item.estado;
+      const zipcode = "cep" in item ? item.cep : item.cep;
       all.push({
         id,
         name,
@@ -222,8 +257,15 @@ async function listAllCustomers(credentials: OmieCredentials): Promise<OmieCusto
         document: document ?? null,
         email: item.email ?? null,
         phone: phoneDdd && phoneNumber
-          ? `(${phoneDdd}) ${phoneNumber}`
-          : null
+          ? `(${phoneDdd}) ${phoneNumber})`
+          : null,
+        addressStreet: street ?? null,
+        addressNumber: number ?? null,
+        neighborhood: neighborhood ?? null,
+        city: city ?? null,
+        state: state ?? null,
+        zipcode: zipcode ?? null,
+        defaultPaymentTermId: null
       });
     }
 
@@ -241,12 +283,18 @@ async function listAllProducts(credentials: OmieCredentials): Promise<OmieProduc
         codigo?: string;
         descricao?: string;
         unidade?: string;
+        ncm?: string;
+        ean?: string;
+        valor_unitario?: number;
       }>;
       produtoCadastro?: Array<{
         codigoProdutoOmie?: number | string;
         descricao?: string;
         codigo?: string;
         unidade?: string;
+        ncm?: string;
+        ean?: string;
+        valorUnitario?: number;
       }>;
     }>(credentials, "/geral/produtos/", "ListarProdutos", {
       pagina: page,
@@ -260,11 +308,18 @@ async function listAllProducts(credentials: OmieCredentials): Promise<OmieProduc
       if (!id || !item.descricao) continue;
       const productId = Number(id);
       if (!Number.isFinite(productId)) continue;
+      const unitPrice = "valor_unitario" in item ? item.valor_unitario : item.valorUnitario;
+      const unitPriceCents = typeof unitPrice === "number" && Number.isFinite(unitPrice)
+        ? Math.round(unitPrice * 100)
+        : null;
       all.push({
         id: productId,
         code: item.codigo ?? null,
         description: item.descricao,
-        unit: item.unidade ?? null
+        unit: item.unidade ?? null,
+        ncm: item.ncm ?? null,
+        ean: item.ean ?? null,
+        unitPriceCents
       });
     }
 
@@ -317,31 +372,32 @@ async function listAllPaymentTerms(credentials: OmieCredentials): Promise<OmiePa
 }
 
 async function pushCustomerToOmie(credentials: OmieCredentials, payload: PushCustomerPayload): Promise<number> {
-  if (payload.omieCustomerId) {
-    await callOmie<unknown, unknown>(credentials, "/geral/clientes/", "AlterarCliente", {
-      codigo_cliente_omie: payload.omieCustomerId,
-      razao_social: payload.razaoSocial,
-      nome_fantasia: payload.nomeFantasia,
-      cnpj_cpf: payload.cnpjCpf,
-      email: payload.email,
-      telefone1_ddd: payload.telefone1Ddd,
-      telefone1_numero: payload.telefone1Numero
-    });
-    return payload.omieCustomerId;
-  }
-
-  const response = await callOmie<unknown, {
-    codigo_cliente_omie?: number;
-    codigoClienteOmie?: number;
-  }>(credentials, "/geral/clientes/", "IncluirCliente", {
+  const body = {
+    codigo_cliente_omie: payload.omieCustomerId,
     codigo_cliente_integracao: payload.localCustomerId,
     razao_social: payload.razaoSocial,
     nome_fantasia: payload.nomeFantasia,
     cnpj_cpf: payload.cnpjCpf,
     email: payload.email,
     telefone1_ddd: payload.telefone1Ddd,
-    telefone1_numero: payload.telefone1Numero
-  });
+    telefone1_numero: payload.telefone1Numero,
+    endereco: payload.addressStreet,
+    endereco_numero: payload.addressNumber,
+    bairro: payload.neighborhood,
+    cidade: payload.city,
+    estado: payload.state,
+    cep: payload.zipcode
+  };
+
+  if (payload.omieCustomerId) {
+    await callOmie<unknown, unknown>(credentials, "/geral/clientes/", "AlterarCliente", body);
+    return payload.omieCustomerId;
+  }
+
+  const response = await callOmie<unknown, {
+    codigo_cliente_omie?: number;
+    codigoClienteOmie?: number;
+  }>(credentials, "/geral/clientes/", "IncluirCliente", body);
 
   const omieCustomerId = response.codigo_cliente_omie ?? response.codigoClienteOmie;
   if (!omieCustomerId) {

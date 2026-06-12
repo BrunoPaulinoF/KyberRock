@@ -37,6 +37,11 @@ describe("runDesktopMigrations", () => {
           version: 3,
           name: "vehicle_carrier_links_and_customer_default_carrier",
           appliedAt: "2026-06-06T12:00:00.000Z"
+        },
+        {
+          version: 4,
+          name: "customer_address_and_product_details",
+          appliedAt: "2026-06-06T12:00:00.000Z"
         }
       ]);
       expect(tableNames).toContain("companies");
@@ -57,7 +62,7 @@ describe("runDesktopMigrations", () => {
       runDesktopMigrations(database, undefined, new Date("2026-06-06T12:00:00.000Z"));
       runDesktopMigrations(database, undefined, new Date("2026-06-06T13:00:00.000Z"));
 
-      expect(getAppliedMigrations(database)).toHaveLength(3);
+      expect(getAppliedMigrations(database)).toHaveLength(4);
     } finally {
       database.close();
     }

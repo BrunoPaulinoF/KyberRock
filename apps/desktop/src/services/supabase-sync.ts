@@ -29,6 +29,13 @@ interface OmieReferenceCustomer {
   document: string | null;
   email: string | null;
   phone: string | null;
+  zipcode: string | null;
+  addressStreet: string | null;
+  addressNumber: string | null;
+  neighborhood: string | null;
+  city: string | null;
+  state: string | null;
+  defaultPaymentTermId: string | null;
 }
 
 interface OmieReferenceProduct {
@@ -36,6 +43,9 @@ interface OmieReferenceProduct {
   code: string | null;
   description: string;
   unit: string | null;
+  ncm: string | null;
+  ean: string | null;
+  unitPriceCents: number | null;
 }
 
 interface OmieReferencePaymentTerm {
@@ -283,7 +293,9 @@ export async function pushOmieCustomersToCloud(
 
   const pending = database
     .prepare(
-      `SELECT id, omie_customer_id, legal_name, trade_name, document, phone, email
+      `SELECT id, omie_customer_id, legal_name, trade_name, document, phone, email,
+              zipcode, address_street, address_number, address_complement, neighborhood, city, state,
+              default_payment_term_id
        FROM customers
        WHERE company_id = ? AND deleted_at IS NULL AND needs_push = 1 AND source IN ('local', 'hybrid')
        ORDER BY updated_at ASC`
@@ -296,6 +308,14 @@ export async function pushOmieCustomersToCloud(
       document: string | null;
       phone: string | null;
       email: string | null;
+      zipcode: string | null;
+      address_street: string | null;
+      address_number: string | null;
+      address_complement: string | null;
+      neighborhood: string | null;
+      city: string | null;
+      state: string | null;
+      default_payment_term_id: string | null;
     }>;
 
   let pushed = 0;
@@ -333,7 +353,14 @@ export async function pushOmieCustomersToCloud(
             cnpjCpf: customer.document ?? undefined,
             email: customer.email ?? undefined,
             telefone1Ddd: phoneMatch?.[1] ?? undefined,
-            telefone1Numero: phoneMatch?.[2] ?? undefined
+            telefone1Numero: phoneMatch?.[2] ?? undefined,
+            zipcode: customer.zipcode ?? undefined,
+            addressStreet: customer.address_street ?? undefined,
+            addressNumber: customer.address_number ?? undefined,
+            neighborhood: customer.neighborhood ?? undefined,
+            city: customer.city ?? undefined,
+            state: customer.state ?? undefined,
+            defaultPaymentTermId: customer.default_payment_term_id ?? undefined
           }
         }
       });
@@ -490,12 +517,16 @@ function upsertOmieCustomers(
   const findLocalId = database.prepare(
     "SELECT id FROM customers WHERE company_id = ? AND omie_customer_id = ? AND deleted_at IS NULL LIMIT 1"
   );
+  const findByDocument = database.prepare(
+    "SELECT id FROM customers WHERE company_id = ? AND document = ? AND deleted_at IS NULL LIMIT 1"
+  );
   const upsert = database.prepare(`
     INSERT INTO customers (
       id, company_id, omie_customer_id, source, legal_name, trade_name,
-      document, phone, email, is_active, sync_status, last_synced_at,
+      document, phone, email, zipcode, address_street, address_number, neighborhood, city, state,
+      default_payment_term_id, is_active, sync_status, last_synced_at,
       omie_updated_at, needs_push, created_at, updated_at
-    ) VALUES (?, ?, ?, 'omie', ?, ?, ?, ?, ?, 1, 'synced', datetime('now'), datetime('now'), 0, datetime('now'), datetime('now'))
+    ) VALUES (?, ?, ?, 'omie', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'synced', datetime('now'), datetime('now'), 0, datetime('now'), datetime('now'))
     ON CONFLICT(id) DO UPDATE SET
       omie_customer_id = excluded.omie_customer_id,
       legal_name = CASE WHEN customers.needs_push = 0 THEN excluded.legal_name ELSE customers.legal_name END,
@@ -503,6 +534,13 @@ function upsertOmieCustomers(
       document = CASE WHEN customers.needs_push = 0 THEN excluded.document ELSE customers.document END,
       phone = CASE WHEN customers.needs_push = 0 THEN excluded.phone ELSE customers.phone END,
       email = CASE WHEN customers.needs_push = 0 THEN excluded.email ELSE customers.email END,
+      zipcode = CASE WHEN customers.needs_push = 0 THEN excluded.zipcode ELSE customers.zipcode END,
+      address_street = CASE WHEN customers.needs_push = 0 THEN excluded.address_street ELSE customers.address_street END,
+      address_number = CASE WHEN customers.needs_push = 0 THEN excluded.address_number ELSE customers.address_number END,
+      neighborhood = CASE WHEN customers.needs_push = 0 THEN excluded.neighborhood ELSE customers.neighborhood END,
+      city = CASE WHEN customers.needs_push = 0 THEN excluded.city ELSE customers.city END,
+      state = CASE WHEN customers.needs_push = 0 THEN excluded.state ELSE customers.state END,
+      default_payment_term_id = CASE WHEN customers.needs_push = 0 THEN excluded.default_payment_term_id ELSE customers.default_payment_term_id END,
       sync_status = CASE WHEN customers.needs_push = 0 THEN 'synced' ELSE customers.sync_status END,
       last_synced_at = datetime('now'),
       omie_updated_at = datetime('now'),
@@ -511,7 +549,10 @@ function upsertOmieCustomers(
 
   for (const customer of customers) {
     const existing = findLocalId.get(companyId, customer.id) as { id: string } | undefined;
-    const localId = existing?.id ?? `omie_${customer.id}`;
+    const byDocument = customer.document
+      ? (findByDocument.get(companyId, customer.document) as { id: string } | undefined)
+      : undefined;
+    const localId = existing?.id ?? byDocument?.id ?? `omie_${customer.id}`;
     upsert.run(
       localId,
       companyId,
@@ -520,7 +561,14 @@ function upsertOmieCustomers(
       customer.tradeName || customer.name,
       customer.document,
       customer.phone,
-      customer.email
+      customer.email,
+      customer.zipcode,
+      customer.addressStreet,
+      customer.addressNumber,
+      customer.neighborhood,
+      customer.city,
+      customer.state,
+      customer.defaultPaymentTermId
     );
   }
 }
@@ -532,14 +580,17 @@ function upsertOmieProducts(
 ): void {
   const upsert = database.prepare(`
     INSERT INTO products (
-      id, company_id, omie_product_id, code, description, unit,
+      id, company_id, omie_product_id, code, description, unit, ncm, ean, unit_price_cents,
       is_active, updated_from_omie_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, 1, datetime('now'), datetime('now'), datetime('now'))
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, datetime('now'), datetime('now'), datetime('now'))
     ON CONFLICT(id) DO UPDATE SET
       omie_product_id = excluded.omie_product_id,
       code = excluded.code,
       description = excluded.description,
       unit = excluded.unit,
+      ncm = excluded.ncm,
+      ean = excluded.ean,
+      unit_price_cents = excluded.unit_price_cents,
       updated_from_omie_at = datetime('now'),
       updated_at = datetime('now')
   `);
@@ -551,7 +602,10 @@ function upsertOmieProducts(
       product.id,
       product.code || `PROD_${product.id}`,
       product.description,
-      product.unit || "UN"
+      product.unit || "UN",
+      product.ncm,
+      product.ean,
+      product.unitPriceCents
     );
   }
 }

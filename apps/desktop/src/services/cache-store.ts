@@ -17,6 +17,14 @@ export interface CustomerCacheEntry {
   lastSyncedAt: string | null;
   observations: string | null;
   defaultCarrierId: string | null;
+  defaultPaymentTermId: string | null;
+  zipcode: string | null;
+  addressStreet: string | null;
+  addressNumber: string | null;
+  addressComplement: string | null;
+  neighborhood: string | null;
+  city: string | null;
+  state: string | null;
   isActive: boolean;
 }
 
@@ -26,6 +34,9 @@ export interface ProductCacheEntry {
   code: string;
   description: string;
   unit: string;
+  ncm: string | null;
+  ean: string | null;
+  unitPriceCents: number | null;
   isActive: boolean;
 }
 
@@ -127,6 +138,14 @@ interface CustomerRow {
   last_synced_at: string | null;
   observations: string | null;
   default_carrier_id: string | null;
+  default_payment_term_id: string | null;
+  zipcode: string | null;
+  address_street: string | null;
+  address_number: string | null;
+  address_complement: string | null;
+  neighborhood: string | null;
+  city: string | null;
+  state: string | null;
   is_active: number;
 }
 
@@ -136,6 +155,9 @@ interface ProductRow {
   code: string;
   description: string;
   unit: string;
+  ncm: string | null;
+  ean: string | null;
+  unit_price_cents: number | null;
   is_active: number;
 }
 
@@ -213,6 +235,14 @@ function mapCustomer(row: CustomerRow): CustomerCacheEntry {
     lastSyncedAt: row.last_synced_at,
     observations: row.observations,
     defaultCarrierId: row.default_carrier_id,
+    defaultPaymentTermId: row.default_payment_term_id,
+    zipcode: row.zipcode,
+    addressStreet: row.address_street,
+    addressNumber: row.address_number,
+    addressComplement: row.address_complement,
+    neighborhood: row.neighborhood,
+    city: row.city,
+    state: row.state,
     isActive: row.is_active === 1
   };
 }
@@ -224,6 +254,9 @@ function mapProduct(row: ProductRow): ProductCacheEntry {
     code: row.code,
     description: row.description,
     unit: row.unit,
+    ncm: row.ncm,
+    ean: row.ean,
+    unitPriceCents: row.unit_price_cents,
     isActive: row.is_active === 1
   };
 }
@@ -472,9 +505,9 @@ export class CacheStore {
   private getSearchFields(entityType: CacheEntityType): string[] {
     switch (entityType) {
       case "customer":
-        return ["legalName", "tradeName", "document"];
+        return ["legalName", "tradeName", "document", "zipcode", "addressStreet", "neighborhood", "city"];
       case "product":
-        return ["code", "description"];
+        return ["code", "description", "ncm", "ean"];
       case "vehicle":
         return ["plate"];
       case "driver":
@@ -497,7 +530,8 @@ export class CacheStore {
       .prepare(
         `SELECT id, omie_customer_id, legal_name, trade_name, document, phone, email,
                 credit_limit_cents, open_receivables_cents, omie_billing_blocked,
-                source, sync_status, needs_push, last_synced_at, observations, default_carrier_id, is_active
+                source, sync_status, needs_push, last_synced_at, observations, default_carrier_id, default_payment_term_id,
+                zipcode, address_street, address_number, address_complement, neighborhood, city, state, is_active
          FROM customers WHERE company_id = ? AND deleted_at IS NULL`
       )
       .all(companyId) as CustomerRow[];
@@ -511,7 +545,7 @@ export class CacheStore {
   private loadProducts(companyId: string): void {
     const rows = this.db
       .prepare(
-        `SELECT id, omie_product_id, code, description, unit, is_active
+        `SELECT id, omie_product_id, code, description, unit, ncm, ean, unit_price_cents, is_active
          FROM products WHERE company_id = ? AND deleted_at IS NULL`
       )
       .all(companyId) as ProductRow[];
