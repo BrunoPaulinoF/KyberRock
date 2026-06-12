@@ -682,6 +682,7 @@ export class DesktopRuntime {
     totalProducts: number;
     totalPaymentTerms: number;
     pendingPushCustomers: number;
+    pendingOmieJobs: number;
     lastSyncAt: string | null;
   } {
     const identity = this.ensureIdentity();
@@ -702,6 +703,10 @@ export class DesktopRuntime {
       .prepare("SELECT COUNT(*) FROM customers WHERE company_id = ? AND deleted_at IS NULL AND needs_push = 1")
       .pluck().get(identity.companyId) as number;
 
+    const pendingOmieJobs = this.database
+      .prepare("SELECT COUNT(*) FROM sync_queue WHERE target = 'omie' AND status IN ('pending', 'failed')")
+      .pluck().get() as number;
+
     const lastSync = this.database
       .prepare("SELECT MAX(last_synced_at) FROM customers WHERE company_id = ? AND deleted_at IS NULL")
       .pluck().get(identity.companyId) as string | null;
@@ -717,6 +722,7 @@ export class DesktopRuntime {
       totalProducts,
       totalPaymentTerms,
       pendingPushCustomers,
+      pendingOmieJobs,
       lastSyncAt: lastSync
     };
   }

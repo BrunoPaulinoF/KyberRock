@@ -114,6 +114,7 @@ export interface KyberRockDesktopApi {
     totalProducts: number;
     totalPaymentTerms: number;
     pendingPushCustomers: number;
+    pendingOmieJobs: number;
     lastSyncAt: string | null;
   }>;
   scaleConnect: (config: ToledoTcpConfig) => Promise<void>;
