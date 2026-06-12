@@ -239,21 +239,33 @@ async function listAllPaymentTerms(credentials: OmieCredentials): Promise<OmiePa
   const all: OmiePaymentTerm[] = [];
   for (let page = 1; ; page++) {
     const response = await callOmie<{ pagina: number; registrosPorPagina: number }, {
-      condicoesPagamentoCadastro?: Array<{
-        codigoCondicaoPagamentoOmie?: number;
-        descricaoCondicaoPagamento?: string;
+      parcelasCadastro?: Array<{
+        codigo?: number | string;
+        codigoParcela?: number | string;
+        descricao?: string;
+        descricaoParcela?: string;
       }>;
-    }>(credentials, "/geral/condicoespgto/", "ListarCondicoesPagamento", {
+      listaParcelas?: Array<{
+        codigo?: number | string;
+        codigoParcela?: number | string;
+        descricao?: string;
+        descricaoParcela?: string;
+      }>;
+    }>(credentials, "/geral/parcelas/", "ListarParcelas", {
       pagina: page,
       registrosPorPagina: PAGE_SIZE
     });
 
-    const items = response.condicoesPagamentoCadastro ?? [];
+    const items = response.parcelasCadastro ?? response.listaParcelas ?? [];
     for (const item of items) {
-      if (!item.codigoCondicaoPagamentoOmie || !item.descricaoCondicaoPagamento) continue;
+      const code = item.codigoParcela ?? item.codigo;
+      const description = item.descricaoParcela ?? item.descricao;
+      if (!code || !description) continue;
+      const id = Number(code);
+      if (!Number.isFinite(id)) continue;
       all.push({
-        id: item.codigoCondicaoPagamentoOmie,
-        description: item.descricaoCondicaoPagamento
+        id,
+        description
       });
     }
 
@@ -372,7 +384,7 @@ async function callOmie<TParam, TResponse>(
   });
 
   if (!response.ok) {
-    throw new Error(`OMIE HTTP ${response.status}: ${response.statusText}`);
+    throw new Error(`OMIE HTTP ${response.status}: ${response.statusText} em ${call} (${endpoint})`);
   }
 
   const data = await response.json();
