@@ -50,6 +50,7 @@ import {
   syncOperationToSupabase,
   syncLoadingRequestToSupabase,
   syncOmieReferenceDataFromCloud,
+  pushOmieCustomersToCloud,
   processOmieSyncQueue,
   getSupabaseSyncStatus,
   isSupabaseInitialized,
@@ -743,12 +744,13 @@ export class DesktopRuntime {
     errors: string[];
   }> {
     const identity = this.ensureIdentity();
+    const customersPushed = await pushOmieCustomersToCloud(this.database, identity);
     const result = await syncOmieReferenceDataFromCloud(this.database, identity);
     const queue = await processOmieSyncQueue(this.database, identity);
     this.cacheStore.invalidateAll(identity.companyId);
     return {
       customersPulled: result.customersPulled,
-      customersPushed: result.customersPushed,
+      customersPushed,
       productsSynced: result.productsSynced,
       paymentTermsSynced: result.paymentTermsSynced,
       ordersProcessed: queue.processed,

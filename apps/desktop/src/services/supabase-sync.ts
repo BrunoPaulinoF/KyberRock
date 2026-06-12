@@ -274,6 +274,86 @@ function getLoadingRequestPayload(database: DesktopDatabase, requestId: string, 
   };
 }
 
+export async function pushOmieCustomersToCloud(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity
+): Promise<number> {
+  const settings = getCloudSettings(database, identity);
+  const supabase = getSupabaseClient();
+
+  const pending = database
+    .prepare(
+      `SELECT id, omie_customer_id, legal_name, trade_name, document, phone, email
+       FROM customers
+       WHERE company_id = ? AND deleted_at IS NULL AND needs_push = 1 AND source IN ('local', 'hybrid')
+       ORDER BY updated_at ASC`
+    )
+    .all(identity.companyId) as Array<{
+      id: string;
+      omie_customer_id: number | null;
+      legal_name: string;
+      trade_name: string;
+      document: string | null;
+      phone: string | null;
+      email: string | null;
+    }>;
+
+  let pushed = 0;
+  const setOmieId = database.prepare(`
+    UPDATE customers
+    SET omie_customer_id = ?, needs_push = 0, last_synced_at = datetime('now'), sync_status = 'synced', updated_at = datetime('now')
+    WHERE id = ?
+  `);
+  const markSynced = database.prepare(`
+    UPDATE customers
+    SET needs_push = 0, last_synced_at = datetime('now'), sync_status = 'synced', updated_at = datetime('now')
+    WHERE id = ?
+  `);
+  const markError = database.prepare(`
+    UPDATE customers
+    SET sync_status = 'error', updated_at = datetime('now')
+    WHERE id = ?
+  `);
+
+  for (const customer of pending) {
+    try {
+      const phoneMatch = customer.phone?.match(/\(?(\d{2})\)?\s*(\d+)/);
+      const { data, error } = await supabase.functions.invoke<{ omieCustomerId?: number }>("omie-sync", {
+        body: {
+          deviceId: settings.deviceId,
+          deviceToken: settings.deviceToken,
+          action: "push_customer",
+          payload: {
+            localCustomerId: customer.id,
+            omieCustomerId: customer.omie_customer_id ?? undefined,
+            razaoSocial: customer.legal_name,
+            nomeFantasia: customer.trade_name || customer.legal_name,
+            cnpjCpf: customer.document ?? undefined,
+            email: customer.email ?? undefined,
+            telefone1Ddd: phoneMatch?.[1] ?? undefined,
+            telefone1Numero: phoneMatch?.[2] ?? undefined
+          }
+        }
+      });
+
+      if (error || !data?.omieCustomerId) {
+        throw new Error(error?.message ?? "OMIE nao retornou omieCustomerId");
+      }
+
+      if (customer.omie_customer_id) {
+        markSynced.run(customer.id);
+      } else {
+        setOmieId.run(data.omieCustomerId, customer.id);
+      }
+      pushed++;
+    } catch {
+      markError.run(customer.id);
+    }
+  }
+
+  return pushed;
+}
+
 export async function processOmieSyncQueue(
   database: DesktopDatabase,
   identity: LocalDesktopIdentity

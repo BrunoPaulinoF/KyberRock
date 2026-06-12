@@ -5,7 +5,7 @@ import { safeEqual, sha256Hex } from "./_shared/crypto.ts";
 const OMIE_BASE_URL = "https://app.omie.com.br/api/v1";
 const PAGE_SIZE = 500;
 
-type OmieAction = "pull_reference_data" | "create_order";
+type OmieAction = "pull_reference_data" | "create_order" | "push_customer";
 
 type DeviceRow = {
   id: string;
@@ -57,6 +57,17 @@ type CreateOrderPayload = {
   unitPrice: number;
   issueDate: string;
   idempotencyKey: string;
+};
+
+type PushCustomerPayload = {
+  localCustomerId: string;
+  omieCustomerId?: number;
+  razaoSocial: string;
+  nomeFantasia?: string;
+  cnpjCpf?: string;
+  email?: string;
+  telefone1Ddd?: string;
+  telefone1Numero?: string;
 };
 
 Deno.serve(async (req) => {
@@ -141,6 +152,12 @@ Deno.serve(async (req) => {
       const payload = body.payload as CreateOrderPayload;
       const orderId = await createOmieOrder(credentials, payload);
       return jsonResponse({ ok: true, orderId });
+    }
+
+    if (action === "push_customer") {
+      const payload = body.payload as PushCustomerPayload;
+      const omieCustomerId = await pushCustomerToOmie(credentials, payload);
+      return jsonResponse({ ok: true, omieCustomerId });
     }
 
     return jsonResponse({ error: "Acao OMIE desconhecida" }, 400);
@@ -243,6 +260,37 @@ async function listAllPaymentTerms(credentials: OmieCredentials): Promise<OmiePa
     if (items.length < PAGE_SIZE) break;
   }
   return all;
+}
+
+async function pushCustomerToOmie(credentials: OmieCredentials, payload: PushCustomerPayload): Promise<number> {
+  if (payload.omieCustomerId) {
+    await callOmie<unknown, unknown>(credentials, "/geral/clientes/", "AlterarCliente", {
+      codigoClienteOmie: payload.omieCustomerId,
+      razaoSocial: payload.razaoSocial,
+      nomeFantasia: payload.nomeFantasia,
+      cnpjCpf: payload.cnpjCpf,
+      email: payload.email,
+      telefone1Ddd: payload.telefone1Ddd,
+      telefone1Numero: payload.telefone1Numero
+    });
+    return payload.omieCustomerId;
+  }
+
+  const response = await callOmie<unknown, {
+    codigoClienteOmie?: number;
+  }>(credentials, "/geral/clientes/", "IncluirCliente", {
+    razaoSocial: payload.razaoSocial,
+    nomeFantasia: payload.nomeFantasia,
+    cnpjCpf: payload.cnpjCpf,
+    email: payload.email,
+    telefone1Ddd: payload.telefone1Ddd,
+    telefone1Numero: payload.telefone1Numero
+  });
+
+  if (!response.codigoClienteOmie) {
+    throw new Error("OMIE nao retornou codigoClienteOmie");
+  }
+  return response.codigoClienteOmie;
 }
 
 async function createOmieOrder(credentials: OmieCredentials, payload: CreateOrderPayload): Promise<number> {
