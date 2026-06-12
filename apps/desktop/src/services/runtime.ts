@@ -486,6 +486,7 @@ export class DesktopRuntime {
     const identity = this.ensureIdentity();
     const result = updateCustomer(this.database, id, input);
     this.cacheStore.invalidate("customer", identity.companyId);
+    this.cacheStore.invalidate("carrier", identity.companyId);
     return result;
   }
 

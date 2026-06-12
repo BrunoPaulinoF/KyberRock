@@ -497,7 +497,7 @@ export class CacheStore {
       .prepare(
         `SELECT id, omie_customer_id, legal_name, trade_name, document, phone, email,
                 credit_limit_cents, open_receivables_cents, omie_billing_blocked,
-                source, sync_status, needs_push, last_synced_at, observations, is_active
+                source, sync_status, needs_push, last_synced_at, observations, default_carrier_id, is_active
          FROM customers WHERE company_id = ? AND deleted_at IS NULL`
       )
       .all(companyId) as CustomerRow[];

@@ -2713,7 +2713,7 @@ function CustomerListView({
           phone: normalizedPhone || undefined,
           email: normalizedEmail || undefined,
           creditLimitCents: creditLimitCents ?? undefined,
-          omieBillingBlocked: form.omieBillingBlocked || undefined,
+          omieBillingBlocked: form.omieBillingBlocked,
           observations: form.observations.trim() || undefined,
           defaultCarrierId: form.defaultCarrierId || null
         });
