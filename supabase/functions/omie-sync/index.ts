@@ -177,14 +177,18 @@ Deno.serve(async (req) => {
 
   try {
     if (action === "pull_reference_data") {
-      const [customers, products] = await Promise.all([
-        listAllCustomers(credentials, resume.customersPage ?? 1),
-        listAllProducts(credentials, resume.productsPage ?? 1)
+      const customersPage = resume.customersPage ?? 1;
+      const productsPage = resume.productsPage ?? 1;
+      const paymentTermsPage = resume.paymentTermsPage ?? 1;
+
+      const [customersResult, productsResult] = await Promise.all([
+        listCustomersPage(credentials, customersPage),
+        listProductsPage(credentials, productsPage)
       ]);
-      let paymentTerms: OmiePaymentTerm[] = [];
+      let paymentTermsResult: PageResult<OmiePaymentTerm> = { items: [], page: paymentTermsPage, finished: true };
       let paymentTermsWarning: string | null = null;
       try {
-        paymentTerms = await listAllPaymentTerms(credentials, resume.paymentTermsPage ?? 1);
+        paymentTermsResult = await listPaymentTermsPage(credentials, paymentTermsPage);
       } catch (error) {
         paymentTermsWarning = error instanceof Error ? error.message : "Falha ao listar parcelas OMIE";
       }
@@ -199,19 +203,22 @@ Deno.serve(async (req) => {
         ok: true,
         companyId: typedDevice.company_id,
         unitId: typedDevice.unit_id,
-        customers,
-        products,
-        paymentTerms,
+        customers: customersResult.items,
+        products: productsResult.items,
+        paymentTerms: paymentTermsResult.items,
         ...(paymentTermsWarning ? { paymentTermsWarning } : {}),
         checkedAt,
         pageSize: PAGE_SIZE,
         pagination: {
-          customersPage: resume.customersPage ?? 1,
-          productsPage: resume.productsPage ?? 1,
-          paymentTermsPage: resume.paymentTermsPage ?? 1,
-          customersReturned: customers.length,
-          productsReturned: products.length,
-          paymentTermsReturned: paymentTerms.length
+          customersPage: customersResult.page,
+          customersReturned: customersResult.items.length,
+          customersFinished: customersResult.finished,
+          productsPage: productsResult.page,
+          productsReturned: productsResult.items.length,
+          productsFinished: productsResult.finished,
+          paymentTermsPage: paymentTermsResult.page,
+          paymentTermsReturned: paymentTermsResult.items.length,
+          paymentTermsFinished: paymentTermsResult.finished
         }
       });
     }
@@ -234,182 +241,213 @@ Deno.serve(async (req) => {
   }
 });
 
-async function listAllCustomers(credentials: OmieCredentials, startPage = 1): Promise<OmieCustomer[]> {
-  const all: OmieCustomer[] = [];
-  for (let page = startPage; ; page++) {
-    const response = await callOmie<{
-      pagina: number;
-      registros_por_pagina: number;
-      apenas_importado_api: string;
-    }, {
-      clientes_cadastro?: Array<{
-        codigo_cliente_omie?: number;
-        razao_social?: string;
-        nome_fantasia?: string;
-        cnpj_cpf?: string;
-        email?: string;
-        telefone1_ddd?: string;
-        telefone1_numero?: string;
-        endereco?: string;
-        endereco_numero?: string;
-        bairro?: string;
-        cidade?: string;
-        estado?: string;
-        cep?: string;
-      }>;
-      clientesCadastro?: Array<{
-        codigoClienteOmie?: number;
-        razaoSocial?: string;
-        nomeFantasia?: string;
-        cnpjCpf?: string;
-        email?: string;
-        telefone1Ddd?: string;
-        telefone1Numero?: string;
-        endereco?: string;
-        enderecoNumero?: string;
-        bairro?: string;
-        cidade?: string;
-        estado?: string;
-        cep?: string;
-      }>;
-    }>(credentials, "/geral/clientes/", "ListarClientes", {
-      pagina: page,
-      registros_por_pagina: PAGE_SIZE
-    });
+type PageResult<T> = { items: T[]; page: number; finished: boolean };
 
-    const items = response.clientes_cadastro ?? response.clientesCadastro ?? [];
-    for (const item of items) {
-      const id = "codigo_cliente_omie" in item ? item.codigo_cliente_omie : item.codigoClienteOmie;
-      const name = "razao_social" in item ? item.razao_social : item.razaoSocial;
-      if (!id || !name) continue;
-      const tradeName = "nome_fantasia" in item ? item.nome_fantasia : item.nomeFantasia;
-      const document = "cnpj_cpf" in item ? item.cnpj_cpf : item.cnpjCpf;
-      const phoneDdd = "telefone1_ddd" in item ? item.telefone1_ddd : item.telefone1Ddd;
-      const phoneNumber = "telefone1_numero" in item ? item.telefone1_numero : item.telefone1Numero;
-      const street = "endereco" in item ? item.endereco : item.endereco;
-      const number = "endereco_numero" in item ? item.endereco_numero : item.enderecoNumero;
-      const neighborhood = "bairro" in item ? item.bairro : item.bairro;
-      const city = "cidade" in item ? item.cidade : item.cidade;
-      const state = "estado" in item ? item.estado : item.estado;
-      const zipcode = "cep" in item ? item.cep : item.cep;
-      all.push({
-        id,
-        name,
-        tradeName: tradeName ?? null,
-        document: document ?? null,
-        email: item.email ?? null,
-        phone: phoneDdd && phoneNumber
-          ? `(${phoneDdd}) ${phoneNumber}`
-          : null,
-        addressStreet: street ?? null,
-        addressNumber: number ?? null,
-        neighborhood: neighborhood ?? null,
-        city: city ?? null,
-        state: state ?? null,
-        zipcode: zipcode ?? null,
-        defaultPaymentTermId: null
-      });
-    }
+const OMIE_PAGE_CACHE_TTL_MS = 60_000;
+const omiePageCache = new Map<string, { data: { items: unknown[]; finished: boolean }; expiresAt: number }>();
 
-    if (items.length < PAGE_SIZE) break;
+function getCachedPage<T>(key: string): { items: T[]; finished: boolean } | null {
+  const entry = omiePageCache.get(key);
+  if (!entry) return null;
+  if (entry.expiresAt < Date.now()) {
+    omiePageCache.delete(key);
+    return null;
   }
-  return all;
+  return { items: entry.data.items as T[], finished: entry.data.finished };
 }
 
-async function listAllProducts(credentials: OmieCredentials, startPage = 1): Promise<OmieProduct[]> {
-  const all: OmieProduct[] = [];
-  for (let page = startPage; ; page++) {
-    const response = await callOmie<{ pagina: number; registros_por_pagina: number; apenas_importado_api: string }, {
-      produto_servico_cadastro?: Array<{
-        codigo_produto?: number | string;
-        codigo?: string;
-        descricao?: string;
-        unidade?: string;
-        ncm?: string;
-        ean?: string;
-        valor_unitario?: number;
-      }>;
-      produtoCadastro?: Array<{
-        codigoProdutoOmie?: number | string;
-        descricao?: string;
-        codigo?: string;
-        unidade?: string;
-        ncm?: string;
-        ean?: string;
-        valorUnitario?: number;
-      }>;
-    }>(credentials, "/geral/produtos/", "ListarProdutos", {
-      pagina: page,
-      registros_por_pagina: PAGE_SIZE
-    });
-
-    const items = response.produto_servico_cadastro ?? response.produtoCadastro ?? [];
-    for (const item of items) {
-      const id = "codigo_produto" in item ? item.codigo_produto : item.codigoProdutoOmie;
-      if (!id || !item.descricao) continue;
-      const productId = Number(id);
-      if (!Number.isFinite(productId)) continue;
-      const unitPrice = "valor_unitario" in item ? item.valor_unitario : item.valorUnitario;
-      const unitPriceCents = typeof unitPrice === "number" && Number.isFinite(unitPrice)
-        ? Math.round(unitPrice * 100)
-        : null;
-      all.push({
-        id: productId,
-        code: item.codigo ?? null,
-        description: item.descricao,
-        unit: item.unidade ?? null,
-        ncm: item.ncm ?? null,
-        ean: item.ean ?? null,
-        unitPriceCents
-      });
-    }
-
-    if (items.length < PAGE_SIZE) break;
-  }
-  return all;
+function setCachedPage(key: string, items: unknown[], finished: boolean): void {
+  omiePageCache.set(key, {
+    data: { items, finished },
+    expiresAt: Date.now() + OMIE_PAGE_CACHE_TTL_MS
+  });
 }
 
-async function listAllPaymentTerms(credentials: OmieCredentials, startPage = 1): Promise<OmiePaymentTerm[]> {
-  const all: OmiePaymentTerm[] = [];
-  for (let page = startPage; ; page++) {
-    const response = await callOmie<{ pagina: number; registros_por_pagina: number }, {
-      cadastros?: Array<{
-        nCodigo?: number | string;
-        cDescricao?: string;
-      }>;
-      parcelasCadastro?: Array<{
-        codigo?: number | string;
-        codigoParcela?: number | string;
-        descricao?: string;
-        descricaoParcela?: string;
-      }>;
-      listaParcelas?: Array<{
-        codigo?: number | string;
-        codigoParcela?: number | string;
-        descricao?: string;
-        descricaoParcela?: string;
-      }>;
-    }>(credentials, "/geral/parcelas/", "ListarParcelas", {
-      pagina: page,
-      registros_por_pagina: PAGE_SIZE
+async function listCustomersPage(credentials: OmieCredentials, page: number): Promise<PageResult<OmieCustomer>> {
+  const cacheKey = `clientes:${credentials.appKey}:${page}`;
+  const cached = getCachedPage<OmieCustomer>(cacheKey);
+  if (cached) return { items: cached.items, page, finished: cached.finished };
+
+  const response = await callOmie<{
+    pagina: number;
+    registros_por_pagina: number;
+    apenas_importado_api: string;
+  }, {
+    clientes_cadastro?: Array<{
+      codigo_cliente_omie?: number;
+      razao_social?: string;
+      nome_fantasia?: string;
+      cnpj_cpf?: string;
+      email?: string;
+      telefone1_ddd?: string;
+      telefone1_numero?: string;
+      endereco?: string;
+      endereco_numero?: string;
+      bairro?: string;
+      cidade?: string;
+      estado?: string;
+      cep?: string;
+    }>;
+    clientesCadastro?: Array<{
+      codigoClienteOmie?: number;
+      razaoSocial?: string;
+      nomeFantasia?: string;
+      cnpjCpf?: string;
+      email?: string;
+      telefone1Ddd?: string;
+      telefone1Numero?: string;
+      endereco?: string;
+      enderecoNumero?: string;
+      bairro?: string;
+      cidade?: string;
+      estado?: string;
+      cep?: string;
+    }>;
+  }>(credentials, "/geral/clientes/", "ListarClientes", {
+    pagina: page,
+    registros_por_pagina: PAGE_SIZE
+  });
+
+  const rawItems = response.clientes_cadastro ?? response.clientesCadastro ?? [];
+  const items: OmieCustomer[] = [];
+  for (const item of rawItems) {
+    const id = "codigo_cliente_omie" in item ? item.codigo_cliente_omie : item.codigoClienteOmie;
+    const name = "razao_social" in item ? item.razao_social : item.razaoSocial;
+    if (!id || !name) continue;
+    const tradeName = "nome_fantasia" in item ? item.nome_fantasia : item.nomeFantasia;
+    const document = "cnpj_cpf" in item ? item.cnpj_cpf : item.cnpjCpf;
+    const phoneDdd = "telefone1_ddd" in item ? item.telefone1_ddd : item.telefone1Ddd;
+    const phoneNumber = "telefone1_numero" in item ? item.telefone1_numero : item.telefone1Numero;
+    const street = "endereco" in item ? item.endereco : item.endereco;
+    const number = "endereco_numero" in item ? item.endereco_numero : item.enderecoNumero;
+    const neighborhood = "bairro" in item ? item.bairro : item.bairro;
+    const city = "cidade" in item ? item.cidade : item.cidade;
+    const state = "estado" in item ? item.estado : item.estado;
+    const zipcode = "cep" in item ? item.cep : item.cep;
+    items.push({
+      id,
+      name,
+      tradeName: tradeName ?? null,
+      document: document ?? null,
+      email: item.email ?? null,
+      phone: phoneDdd && phoneNumber
+        ? `(${phoneDdd}) ${phoneNumber}`
+        : null,
+      addressStreet: street ?? null,
+      addressNumber: number ?? null,
+      neighborhood: neighborhood ?? null,
+      city: city ?? null,
+      state: state ?? null,
+      zipcode: zipcode ?? null,
+      defaultPaymentTermId: null
     });
-
-    const items = response.cadastros ?? response.parcelasCadastro ?? response.listaParcelas ?? [];
-    for (const item of items) {
-      const code = "nCodigo" in item ? item.nCodigo : item.codigoParcela ?? item.codigo;
-      const description = "cDescricao" in item ? item.cDescricao : item.descricaoParcela ?? item.descricao;
-      if (!code || !description) continue;
-      const id = Number(code);
-      if (!Number.isFinite(id)) continue;
-      all.push({
-        id,
-        description
-      });
-    }
-
-    if (items.length < PAGE_SIZE) break;
   }
-  return all;
+
+  const finished = rawItems.length < PAGE_SIZE;
+  setCachedPage(cacheKey, items, finished);
+  return { items, page, finished };
+}
+
+async function listProductsPage(credentials: OmieCredentials, page: number): Promise<PageResult<OmieProduct>> {
+  const cacheKey = `produtos:${credentials.appKey}:${page}`;
+  const cached = getCachedPage<OmieProduct>(cacheKey);
+  if (cached) return { items: cached.items, page, finished: cached.finished };
+
+  const response = await callOmie<{ pagina: number; registros_por_pagina: number; apenas_importado_api: string }, {
+    produto_servico_cadastro?: Array<{
+      codigo_produto?: number | string;
+      codigo?: string;
+      descricao?: string;
+      unidade?: string;
+      ncm?: string;
+      ean?: string;
+      valor_unitario?: number;
+    }>;
+    produtoCadastro?: Array<{
+      codigoProdutoOmie?: number | string;
+      descricao?: string;
+      codigo?: string;
+      unidade?: string;
+      ncm?: string;
+      ean?: string;
+      valorUnitario?: number;
+    }>;
+  }>(credentials, "/geral/produtos/", "ListarProdutos", {
+    pagina: page,
+    registros_por_pagina: PAGE_SIZE
+  });
+
+  const rawItems = response.produto_servico_cadastro ?? response.produtoCadastro ?? [];
+  const items: OmieProduct[] = [];
+  for (const item of rawItems) {
+    const id = "codigo_produto" in item ? item.codigo_produto : item.codigoProdutoOmie;
+    if (!id || !item.descricao) continue;
+    const productId = Number(id);
+    if (!Number.isFinite(productId)) continue;
+    const unitPrice = "valor_unitario" in item ? item.valor_unitario : item.valorUnitario;
+    const unitPriceCents = typeof unitPrice === "number" && Number.isFinite(unitPrice)
+      ? Math.round(unitPrice * 100)
+      : null;
+    items.push({
+      id: productId,
+      code: item.codigo ?? null,
+      description: item.descricao,
+      unit: item.unidade ?? null,
+      ncm: item.ncm ?? null,
+      ean: item.ean ?? null,
+      unitPriceCents
+    });
+  }
+
+  const finished = rawItems.length < PAGE_SIZE;
+  setCachedPage(cacheKey, items, finished);
+  return { items, page, finished };
+}
+
+async function listPaymentTermsPage(credentials: OmieCredentials, page: number): Promise<PageResult<OmiePaymentTerm>> {
+  const cacheKey = `parcelas:${credentials.appKey}:${page}`;
+  const cached = getCachedPage<OmiePaymentTerm>(cacheKey);
+  if (cached) return { items: cached.items, page, finished: cached.finished };
+
+  const response = await callOmie<{ pagina: number; registros_por_pagina: number }, {
+    cadastros?: Array<{
+      nCodigo?: number | string;
+      cDescricao?: string;
+    }>;
+    parcelasCadastro?: Array<{
+      codigo?: number | string;
+      codigoParcela?: number | string;
+      descricao?: string;
+      descricaoParcela?: string;
+    }>;
+    listaParcelas?: Array<{
+      codigo?: number | string;
+      codigoParcela?: number | string;
+      descricao?: string;
+      descricaoParcela?: string;
+    }>;
+  }>(credentials, "/geral/parcelas/", "ListarParcelas", {
+    pagina: page,
+    registros_por_pagina: PAGE_SIZE
+  });
+
+  const rawItems = response.cadastros ?? response.parcelasCadastro ?? response.listaParcelas ?? [];
+  const items: OmiePaymentTerm[] = [];
+  for (const item of rawItems) {
+    const code = "nCodigo" in item ? item.nCodigo : item.codigoParcela ?? item.codigo;
+    const description = "cDescricao" in item ? item.cDescricao : item.descricaoParcela ?? item.descricao;
+    if (!code || !description) continue;
+    const id = Number(code);
+    if (!Number.isFinite(id)) continue;
+    items.push({
+      id,
+      description
+    });
+  }
+
+  const finished = rawItems.length < PAGE_SIZE;
+  setCachedPage(cacheKey, items, finished);
+  return { items, page, finished };
 }
 
 async function pushCustomerToOmie(credentials: OmieCredentials, payload: PushCustomerPayload): Promise<number> {

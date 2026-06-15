@@ -66,6 +66,9 @@ interface OmieReferenceDataResponse {
     customersReturned: number;
     productsReturned: number;
     paymentTermsReturned: number;
+    customersFinished?: boolean;
+    productsFinished?: boolean;
+    paymentTermsFinished?: boolean;
   };
 }
 
@@ -266,21 +269,25 @@ export function applyOmieReferenceData(
 
   if (pagination) {
     const pageSize = data.pageSize ?? 200;
-    const partial = {
-      customers: pagination.customersReturned >= pageSize,
-      products: pagination.productsReturned >= pageSize,
-      paymentTerms: pagination.paymentTermsReturned >= pageSize
+    const isFinished = (returned: number, flag: boolean | undefined): boolean => {
+      if (typeof flag === "boolean") return flag;
+      return returned > 0 && returned < pageSize;
+    };
+    const finished = {
+      customers: isFinished(pagination.customersReturned, pagination.customersFinished),
+      products: isFinished(pagination.productsReturned, pagination.productsFinished),
+      paymentTerms: isFinished(pagination.paymentTermsReturned, pagination.paymentTermsFinished)
     };
     const current = readOmiePullState(database);
     writeOmiePullState(database, {
-      inProgress: partial.customers || partial.products || partial.paymentTerms,
-      customersPage: partial.customers
+      inProgress: !finished.customers || !finished.products || !finished.paymentTerms,
+      customersPage: !finished.customers
         ? Math.max(pagination.customersPage + 1, current.customersPage)
         : 1,
-      productsPage: partial.products
+      productsPage: !finished.products
         ? Math.max(pagination.productsPage + 1, current.productsPage)
         : 1,
-      paymentTermsPage: partial.paymentTerms
+      paymentTermsPage: !finished.paymentTerms
         ? Math.max(pagination.paymentTermsPage + 1, current.paymentTermsPage)
         : 1
     });

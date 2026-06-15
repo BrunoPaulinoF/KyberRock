@@ -298,7 +298,10 @@ describe("supabase sync", () => {
             paymentTermsPage: 1,
             customersReturned: 200,
             productsReturned: 0,
-            paymentTermsReturned: 0
+            paymentTermsReturned: 0,
+            customersFinished: false,
+            productsFinished: true,
+            paymentTermsFinished: true
           }
         }
       });
@@ -337,7 +340,10 @@ describe("supabase sync", () => {
             paymentTermsPage: 1,
             customersReturned: 200,
             productsReturned: 0,
-            paymentTermsReturned: 0
+            paymentTermsReturned: 0,
+            customersFinished: false,
+            productsFinished: true,
+            paymentTermsFinished: true
           }
         }
       });
@@ -350,7 +356,7 @@ describe("supabase sync", () => {
     }
   });
 
-  it("marks the pull complete when a page comes back smaller than the page size", () => {
+  it("marks the pull complete when the cloud reports the page as finished", () => {
     const database = createDatabase();
 
     try {
@@ -366,7 +372,10 @@ describe("supabase sync", () => {
           paymentTermsPage: 1,
           customersReturned: 1,
           productsReturned: 1,
-          paymentTermsReturned: 0
+          paymentTermsReturned: 0,
+          customersFinished: true,
+          productsFinished: true,
+          paymentTermsFinished: true
         }
       });
 
@@ -407,7 +416,10 @@ describe("supabase sync", () => {
           paymentTermsPage: 2,
           customersReturned: 200,
           productsReturned: 1,
-          paymentTermsReturned: 0
+          paymentTermsReturned: 0,
+          customersFinished: false,
+          productsFinished: true,
+          paymentTermsFinished: true
         }
       });
 
@@ -421,6 +433,59 @@ describe("supabase sync", () => {
       expect(state.productsPage).toBe(1);
       expect(state.paymentTermsPage).toBe(1);
       expect(state.inProgress).toBe(true);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("finaliza entidades quando finished=true explicito mesmo com pagina cheia", () => {
+    const database = createDatabase();
+
+    try {
+      createIdentity(database);
+      applyOmieReferenceData(database, "company-1", {
+        customers: Array.from({ length: 200 }, (_, i) => ({
+          id: 100 + i,
+          name: `C${i}`,
+          tradeName: null,
+          document: null,
+          phone: null,
+          email: null
+        })),
+        products: Array.from({ length: 200 }, (_, i) => ({
+          id: 100 + i,
+          code: `P${i}`,
+          description: `P${i}`,
+          unit: "UN"
+        })),
+        paymentTerms: Array.from({ length: 200 }, (_, i) => ({
+          id: 100 + i,
+          description: `T${i}`
+        })),
+        pageSize: 200,
+        pagination: {
+          customersPage: 1,
+          productsPage: 1,
+          paymentTermsPage: 1,
+          customersReturned: 200,
+          productsReturned: 200,
+          paymentTermsReturned: 200,
+          customersFinished: true,
+          productsFinished: true,
+          paymentTermsFinished: true
+        }
+      });
+
+      const state = JSON.parse(
+        database
+          .prepare("SELECT value_json FROM local_settings WHERE key = 'omie_pull_state'")
+          .pluck()
+          .get() as string
+      ) as { customersPage: number; productsPage: number; paymentTermsPage: number; inProgress: boolean };
+      expect(state.customersPage).toBe(1);
+      expect(state.productsPage).toBe(1);
+      expect(state.paymentTermsPage).toBe(1);
+      expect(state.inProgress).toBe(false);
     } finally {
       database.close();
     }
