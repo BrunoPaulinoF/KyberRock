@@ -74,7 +74,7 @@ type RegistrationsTab = "customers" | "price_tables" | "products" | "payment_ter
 
 type AppPhase = "checking_access" | "locked" | "unlocked";
 type ThemeMode = "light" | "dark";
-type OperationsTab = "open" | "canceled";
+type OperationsTab = "open" | "canceled" | "closed";
 type CanceledFilter = "all" | "day" | "week" | "month";
 
 export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }: AppProps = {}) {
@@ -83,8 +83,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [updateState, setUpdateState] = useState<UpdateState>(createInitialUpdateState());
   const [openOperations, setOpenOperations] = useState<WeighingOperationSummary[]>([]);
   const [canceledOperations, setCanceledOperations] = useState<WeighingOperationSummary[]>([]);
+  const [closedOperations, setClosedOperations] = useState<WeighingOperationSummary[]>([]);
   const [operationsTab, setOperationsTab] = useState<OperationsTab>("open");
   const [canceledFilter, setCanceledFilter] = useState<CanceledFilter>("all");
+  const [closedProductFilter, setClosedProductFilter] = useState<string>("all");
   const [printers, setPrinters] = useState<WindowsPrinterSummary[]>([]);
   const [printProfiles, setPrintProfiles] = useState<PrintProfileSummary[]>([]);
   const [printReceipts, setPrintReceipts] = useState<PrintReceiptSummary[]>([]);
@@ -131,6 +133,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     () => filterCanceledOperations(canceledOperations, canceledFilter),
     [canceledOperations, canceledFilter]
   );
+  const filteredClosedOperations = useMemo(
+    () =>
+      closedProductFilter === "all"
+        ? closedOperations
+        : closedOperations.filter((op) => op.productDescription === closedProductFilter),
+    [closedOperations, closedProductFilter]
+  );
 
   useEffect(() => {
     const captureLog = (level: string, source: string) => (...args: unknown[]) => {
@@ -171,6 +180,75 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       window.removeEventListener("unhandledrejection", onUnhandledRejection);
     };
   }, []);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement) {
+        if (event.key !== "Escape" && event.key !== "F1" && event.key !== "F2" && event.key !== "F3" && event.key !== "F4" && event.key !== "F5" && event.key !== "F6" && event.key !== "F7" && event.key !== "F8" && event.key !== "F9" && event.key !== "F10" && event.key !== "F11") {
+          return;
+        }
+      }
+      switch (event.key) {
+        case "F1":
+          event.preventDefault();
+          setActiveView("dashboard");
+          break;
+        case "F2":
+          event.preventDefault();
+          setActiveView("new-weighing");
+          break;
+        case "F3":
+          event.preventDefault();
+          setActiveView("open-operations");
+          break;
+        case "F4":
+          event.preventDefault();
+          setActiveView("registrations");
+          break;
+        case "F5":
+          event.preventDefault();
+          setActiveView("insights");
+          break;
+        case "F6":
+          event.preventDefault();
+          setActiveView("scale");
+          break;
+        case "F7":
+          event.preventDefault();
+          setActiveView("printing");
+          break;
+        case "F8":
+          event.preventDefault();
+          setActiveView("cloud");
+          break;
+        case "F9":
+          event.preventDefault();
+          void handleSyncOmie();
+          break;
+        case "F10":
+          event.preventDefault();
+          setShowLogsModal(true);
+          break;
+        case "F11":
+          event.preventDefault();
+          setThemeMode((mode) => mode === "light" ? "dark" : "light");
+          break;
+        case "Escape":
+          if (showUpdateModal || showLogsModal || showSettings || closingOperationId || cancelOperationId) {
+            setShowUpdateModal(false);
+            setShowLogsModal(false);
+            setShowSettings(false);
+            setClosingOperationId(null);
+            setCancelOperationId(null);
+          } else {
+            setActiveView("dashboard");
+          }
+          break;
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [showUpdateModal, showLogsModal, showSettings, closingOperationId, cancelOperationId]);
 
   useEffect(() => {
     if (!desktopApi) {
@@ -258,6 +336,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         nextUpdateState,
         nextOpenOperations,
         nextCanceledOperations,
+        nextClosedOperations,
         nextPrinters,
         nextProfiles,
         nextReceipts,
@@ -266,6 +345,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         desktopApi.getUpdateState(),
         desktopApi.listOpenWeighingOperations(),
         desktopApi.listCanceledWeighingOperations(),
+        desktopApi.listClosedWeighingOperations(),
         desktopApi.listWindowsPrinters(),
         desktopApi.listPrintProfiles(),
         desktopApi.listPrintReceipts(),
@@ -276,6 +356,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         setUpdateState(nextUpdateState);
         setOpenOperations(nextOpenOperations);
         setCanceledOperations(nextCanceledOperations);
+        setClosedOperations(nextClosedOperations);
         setPrinters(nextPrinters);
         setPrintProfiles(nextProfiles);
         setPrintReceipts(nextReceipts);
@@ -324,13 +405,15 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       return;
     }
 
-    const [nextOpenOperations, nextCanceledOperations, nextStatus] = await Promise.all([
+    const [nextOpenOperations, nextCanceledOperations, nextClosedOperations, nextStatus] = await Promise.all([
       desktopApi.listOpenWeighingOperations(),
       desktopApi.listCanceledWeighingOperations(),
+      desktopApi.listClosedWeighingOperations(),
       desktopApi.getStatus(navigator.onLine)
     ]);
     setOpenOperations(nextOpenOperations);
     setCanceledOperations(nextCanceledOperations);
+    setClosedOperations(nextClosedOperations);
     setStatus(nextStatus);
   }
 
@@ -994,7 +1077,11 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
           setForm={setForm}
           formError={formError}
           onStart={handleStartWeighing}
-          onCancel={() => setActiveView("dashboard")}
+          onCancel={() => {
+            setForm(initialWeighingForm);
+            setFormError(null);
+            setActiveView("dashboard");
+          }}
         />
       ) : null}
 
@@ -1008,7 +1095,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
             <span style={styles.countBadge}>
               {operationsTab === "open"
                 ? `${openOperations.length} abertas`
-                : `${filteredCanceledOperations.length} canceladas`}
+                : operationsTab === "canceled"
+                  ? `${filteredCanceledOperations.length} canceladas`
+                  : `${filteredClosedOperations.length} concluidas`}
             </span>
           </div>
 
@@ -1027,6 +1116,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 style={operationsTabStyle(operationsTab === "canceled")}
               >
                 Canceladas
+              </button>
+              <button
+                type="button"
+                onClick={() => setOperationsTab("closed")}
+                style={operationsTabStyle(operationsTab === "closed")}
+              >
+                Concluidas
               </button>
             </div>
 
@@ -1053,6 +1149,22 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 >
                   Limpar canceladas
                 </button>
+              </div>
+            ) : operationsTab === "closed" ? (
+              <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+                <label style={{ ...styles.fieldLabel, marginBottom: 0 }}>
+                  Produto
+                  <select
+                    value={closedProductFilter}
+                    onChange={(event) => setClosedProductFilter(event.target.value)}
+                    style={{ ...styles.input, minWidth: "180px" }}
+                  >
+                    <option value="all">Todos</option>
+                    {Array.from(new Set(closedOperations.map((op) => op.productDescription))).filter(Boolean).map((desc) => (
+                      <option key={desc} value={desc}>{desc}</option>
+                    ))}
+                  </select>
+                </label>
               </div>
             ) : null}
           </div>
@@ -1103,28 +1215,59 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 ))}
               </div>
             )
-          ) : filteredCanceledOperations.length === 0 ? (
+          ) : operationsTab === "canceled" ? (
+            filteredCanceledOperations.length === 0 ? (
+              <div style={styles.emptyState}>
+                <strong>Nenhuma operacao cancelada</strong>
+                <span>Altere o periodo no filtro para consultar outros cancelamentos.</span>
+              </div>
+            ) : (
+              <div style={styles.operationsTable}>
+                <div style={{ ...styles.canceledOperationsTableRow, ...styles.operationsTableHead }}>
+                  <span>Placa</span>
+                  <span>Cliente / Produto</span>
+                  <span>Cancelada em</span>
+                  <span>Motivo</span>
+                </div>
+                {filteredCanceledOperations.map((operation) => (
+                  <div key={operation.id} style={styles.canceledOperationsTableRow}>
+                    <strong style={styles.plateBadge}>{operation.plate || "--"}</strong>
+                    <span style={styles.operationCellStack}>
+                      <strong>{operation.customerName || "Cliente nao informado"}</strong>
+                      <span>{operation.productDescription || "Produto nao informado"}</span>
+                    </span>
+                    <span>{new Date(operation.updatedAt).toLocaleString("pt-BR")}</span>
+                    <span>{operation.cancelReason || "Sem motivo registrado"}</span>
+                  </div>
+                ))}
+              </div>
+            )
+          ) : filteredClosedOperations.length === 0 ? (
             <div style={styles.emptyState}>
-              <strong>Nenhuma operacao cancelada</strong>
-              <span>Altere o periodo no filtro para consultar outros cancelamentos.</span>
+              <strong>Nenhuma operacao concluida</strong>
+              <span>As operacoes fechadas aparecerao aqui.</span>
             </div>
           ) : (
             <div style={styles.operationsTable}>
-              <div style={{ ...styles.canceledOperationsTableRow, ...styles.operationsTableHead }}>
+              <div style={{ ...styles.operationsTableRow, ...styles.operationsTableHead }}>
                 <span>Placa</span>
                 <span>Cliente / Produto</span>
-                <span>Cancelada em</span>
-                <span>Motivo</span>
+                <span>Peso liquido / Receita</span>
+                <span>Concluida em</span>
               </div>
-              {filteredCanceledOperations.map((operation) => (
-                <div key={operation.id} style={styles.canceledOperationsTableRow}>
+              {filteredClosedOperations.map((operation) => (
+                <div key={operation.id} style={styles.operationsTableRow}>
                   <strong style={styles.plateBadge}>{operation.plate || "--"}</strong>
                   <span style={styles.operationCellStack}>
                     <strong>{operation.customerName || "Cliente nao informado"}</strong>
                     <span>{operation.productDescription || "Produto nao informado"}</span>
+                    <small>Motorista: {operation.driverName}</small>
+                  </span>
+                  <span style={styles.operationCellStack}>
+                    <strong>{formatWeightKg(operation.netWeightKg ?? 0)}</strong>
+                    <span>{formatMoney(operation.totalCents)}</span>
                   </span>
                   <span>{new Date(operation.updatedAt).toLocaleString("pt-BR")}</span>
-                  <span>{operation.cancelReason || "Sem motivo registrado"}</span>
                 </div>
               ))}
             </div>
@@ -1502,7 +1645,37 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
           </div>
         </div>
       </div>
+      <KeyboardShortcutsLegend />
     </main>
+  );
+}
+
+function KeyboardShortcutsLegend() {
+  const shortcuts = [
+    { key: "F1", label: "Painel" },
+    { key: "F2", label: "Nova entrada" },
+    { key: "F3", label: "Operacoes" },
+    { key: "F4", label: "Cadastros" },
+    { key: "F5", label: "Insights" },
+    { key: "F6", label: "Balança" },
+    { key: "F7", label: "Impressão" },
+    { key: "F8", label: "Cloud" },
+    { key: "F9", label: "OMIE sync" },
+    { key: "F10", label: "Logs" },
+    { key: "F11", label: "Tema" },
+    { key: "Esc", label: "Voltar" },
+    { key: "Ctrl+Enter", label: "Confirmar" }
+  ];
+
+  return (
+    <div style={styles.shortcutsLegend}>
+      {shortcuts.map((s) => (
+        <span key={s.key} style={styles.shortcutsLegendItem}>
+          <kbd style={styles.shortcutsLegendKey}>{s.key}</kbd>
+          <span style={styles.shortcutsLegendLabel}>{s.label}</span>
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -1905,6 +2078,21 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
   }, [desktopApi]);
 
   useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onCancel();
+      }
+      if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+        event.preventDefault();
+        onStart();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onStart, onCancel]);
+
+  useEffect(() => {
     async function fetchPrice() {
       if (!desktopApi || !form.customerId || !form.productId) {
         setPriceDetails(null);
@@ -1923,6 +2111,23 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
 
     fetchPrice();
   }, [desktopApi, form.customerId, form.productId]);
+
+  useEffect(() => {
+    async function syncInstallmentCount() {
+      if (!form.paymentTermId || !desktopApi) {
+        setPaymentTermInstallmentCount(null);
+        return;
+      }
+      try {
+        const result = await desktopApi.queryCache({ entityType: "payment_term", limit: 500 });
+        const term = (result.rows as Array<{ id: string; installmentCount?: number }>).find((r) => r.id === form.paymentTermId);
+        setPaymentTermInstallmentCount(term?.installmentCount ?? null);
+      } catch {
+        setPaymentTermInstallmentCount(null);
+      }
+    }
+    syncInstallmentCount();
+  }, [form.paymentTermId, desktopApi]);
 
   return (
     <section style={styles.entryShell}>
@@ -5124,5 +5329,41 @@ const styles = {
     gap: "12px",
     padding: "10px 0",
     borderTop: "1px solid var(--kr-border)"
+  },
+  shortcutsLegend: {
+    position: "fixed" as const,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    background: "var(--kr-surface-soft)",
+    borderTop: "1px solid var(--kr-border)",
+    padding: "6px 12px",
+    display: "flex",
+    gap: "12px",
+    alignItems: "center",
+    justifyContent: "center",
+    flexWrap: "wrap" as const,
+    zIndex: 1000,
+    fontSize: "11px"
+  },
+  shortcutsLegendItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: "4px"
+  },
+  shortcutsLegendKey: {
+    display: "inline-block",
+    padding: "2px 5px",
+    borderRadius: "4px",
+    background: "var(--kr-surface)",
+    border: "1px solid var(--kr-border)",
+    fontFamily: "monospace",
+    fontSize: "10px",
+    fontWeight: 700,
+    color: "var(--kr-text-strong)"
+  },
+  shortcutsLegendLabel: {
+    color: "var(--kr-muted)",
+    fontSize: "11px"
   }
 };

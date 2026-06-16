@@ -42,6 +42,7 @@ import {
   closeWeighingOperation,
   createWeighingOperation,
   listCanceledWeighingOperations,
+  listClosedWeighingOperations,
   listOpenWeighingOperations,
   type OperationType,
   type WeighingOperationSummary
@@ -373,6 +374,11 @@ export class DesktopRuntime {
   listCanceledWeighingOperations(): WeighingOperationSummary[] {
     this.assertDesktopAccess();
     return listCanceledWeighingOperations(this.database);
+  }
+
+  listClosedWeighingOperations(): WeighingOperationSummary[] {
+    this.assertDesktopAccess();
+    return listClosedWeighingOperations(this.database);
   }
 
   clearCanceledWeighingOperations(): number {
