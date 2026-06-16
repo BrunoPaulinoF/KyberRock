@@ -78,11 +78,29 @@ type OmieCustomer = {
 type OmieProduct = {
   id: number;
   code: string | null;
+  integrationCode: string | null;
   description: string;
+  detailedDescription: string | null;
   unit: string | null;
   ncm: string | null;
   ean: string | null;
   unitPriceCents: number | null;
+  familyCode: string | null;
+  familyDescription: string | null;
+  brand: string | null;
+  model: string | null;
+  internalNotes: string | null;
+  grossWeightKg: number | null;
+  netWeightKg: number | null;
+  heightM: number | null;
+  widthM: number | null;
+  depthM: number | null;
+  cest: string | null;
+  itemType: string | null;
+  icmsOrigin: string | null;
+  isActive: boolean;
+  blocked: boolean;
+  fiscalRecommendations: Record<string, unknown> | null;
 };
 
 type OmiePaymentTerm = {
@@ -353,55 +371,155 @@ async function listProductsPage(credentials: OmieCredentials, page: number): Pro
   const cached = getCachedPage<OmieProduct>(cacheKey);
   if (cached) return { items: cached.items, page, finished: cached.finished };
 
-  const response = await callOmie<{ pagina: number; registros_por_pagina: number; apenas_importado_api: string }, {
-    produto_servico_cadastro?: Array<{
-      codigo_produto?: number | string;
-      codigo?: string;
-      descricao?: string;
-      unidade?: string;
-      ncm?: string;
-      ean?: string;
-      valor_unitario?: number;
-    }>;
-    produtoCadastro?: Array<{
-      codigoProdutoOmie?: number | string;
-      descricao?: string;
-      codigo?: string;
-      unidade?: string;
-      ncm?: string;
-      ean?: string;
-      valorUnitario?: number;
-    }>;
+  const response = await callOmie<{
+    pagina: number;
+    registros_por_pagina: number;
+    apenas_importado_api: string;
+    filtrar_apenas_omiepdv: string;
+    exibir_caracteristicas: string;
+    exibir_obs: string;
+  }, {
+    produto_servico_cadastro?: OmieProductRaw[];
+    produtoCadastro?: OmieProductRaw[];
   }>(credentials, "/geral/produtos/", "ListarProdutos", {
     pagina: page,
-    registros_por_pagina: PAGE_SIZE
+    registros_por_pagina: PAGE_SIZE,
+    apenas_importado_api: "N",
+    filtrar_apenas_omiepdv: "N",
+    exibir_caracteristicas: "N",
+    exibir_obs: "S"
   });
 
   const rawItems = response.produto_servico_cadastro ?? response.produtoCadastro ?? [];
   const items: OmieProduct[] = [];
   for (const item of rawItems) {
-    const id = "codigo_produto" in item ? item.codigo_produto : item.codigoProdutoOmie;
-    if (!id || !item.descricao) continue;
-    const productId = Number(id);
-    if (!Number.isFinite(productId)) continue;
-    const unitPrice = "valor_unitario" in item ? item.valor_unitario : item.valorUnitario;
-    const unitPriceCents = typeof unitPrice === "number" && Number.isFinite(unitPrice)
-      ? Math.round(unitPrice * 100)
-      : null;
-    items.push({
-      id: productId,
-      code: item.codigo ?? null,
-      description: item.descricao,
-      unit: item.unidade ?? null,
-      ncm: item.ncm ?? null,
-      ean: item.ean ?? null,
-      unitPriceCents
-    });
+    const product = mapOmieProductRaw(item);
+    if (product) items.push(product);
   }
 
   const finished = rawItems.length < PAGE_SIZE;
   setCachedPage(cacheKey, items, finished);
   return { items, page, finished };
+}
+
+type OmieProductRaw = {
+  codigo_produto?: number | string;
+  codigoProdutoOmie?: number | string;
+  codigo_produto_integracao?: string;
+  codigoProdutoIntegracao?: string;
+  codigo?: string;
+  descricao?: string;
+  descr_detalhada?: string;
+  descrDetalhada?: string;
+  unidade?: string;
+  ncm?: string;
+  ean?: string;
+  valor_unitario?: number | string;
+  valorUnitario?: number | string;
+  codigo_familia?: number | string;
+  codigoFamilia?: number | string;
+  descricao_familia?: string;
+  descricaoFamilia?: string;
+  marca?: string;
+  modelo?: string;
+  obs_internas?: string;
+  obsInternas?: string;
+  peso_bruto?: number | string;
+  pesoBruto?: number | string;
+  peso_liq?: number | string;
+  pesoLiq?: number | string;
+  altura?: number | string;
+  largura?: number | string;
+  profundidade?: number | string;
+  cest?: string;
+  tipoItem?: string;
+  tipo_item?: string;
+  origem_mercadoria?: string;
+  origemMercadoria?: string;
+  inativo?: string;
+  bloqueado?: string;
+  recomendacoes_fiscais?: Record<string, unknown>;
+  recomendacoesFiscais?: Record<string, unknown>;
+};
+
+function mapOmieProductRaw(item: OmieProductRaw): OmieProduct | null {
+  const id = pickFirst(item.codigo_produto, item.codigoProdutoOmie);
+  if (!id || !item.descricao) return null;
+  const productId = toNumber(id);
+  if (productId === null) return null;
+
+  const recommendations = (item.recomendacoes_fiscais ?? item.recomendacoesFiscais ?? null) as
+    | Record<string, unknown>
+    | null;
+  const icmsOrigin = pickFirst(
+    item.origem_mercadoria,
+    item.origemMercadoria,
+    typeof recommendations?.origem_mercadoria === "string" ? recommendations.origem_mercadoria : null,
+    typeof recommendations?.origemMercadoria === "string" ? recommendations.origemMercadoria : null
+  );
+
+  const unitPrice = toNumber(pickFirst(item.valor_unitario, item.valorUnitario));
+  const unitPriceCents = unitPrice === null ? null : Math.round(unitPrice * 100);
+
+  return {
+    id: productId,
+    code: pickFirst(item.codigo),
+    integrationCode: pickFirst(item.codigo_produto_integracao, item.codigoProdutoIntegracao),
+    description: item.descricao,
+    detailedDescription: pickFirst(item.descr_detalhada, item.descrDetalhada),
+    unit: pickFirst(item.unidade),
+    ncm: pickFirst(item.ncm),
+    ean: pickFirst(item.ean),
+    unitPriceCents,
+    familyCode: pickFirstAsString(item.codigo_familia, item.codigoFamilia),
+    familyDescription: pickFirst(item.descricao_familia, item.descricaoFamilia),
+    brand: pickFirst(item.marca),
+    model: pickFirst(item.modelo),
+    internalNotes: pickFirst(item.obs_internas, item.obsInternas),
+    grossWeightKg: toNumber(pickFirst(item.peso_bruto, item.pesoBruto)),
+    netWeightKg: toNumber(pickFirst(item.peso_liq, item.pesoLiq)),
+    heightM: toNumber(item.altura),
+    widthM: toNumber(item.largura),
+    depthM: toNumber(item.profundidade),
+    cest: pickFirst(item.cest),
+    itemType: pickFirst(item.tipoItem, item.tipo_item),
+    icmsOrigin: icmsOrigin ?? null,
+    isActive: !isYesFlag(item.inativo),
+    blocked: isYesFlag(item.bloqueado),
+    fiscalRecommendations: recommendations
+  };
+}
+
+function pickFirst(...values: Array<string | number | null | undefined>): string | null {
+  for (const value of values) {
+    if (value === null || value === undefined) continue;
+    const text = String(value).trim();
+    if (text.length > 0) return text;
+  }
+  return null;
+}
+
+function pickFirstAsString(...values: Array<string | number | null | undefined>): string | null {
+  for (const value of values) {
+    if (value === null || value === undefined) continue;
+    if (typeof value === "number") {
+      if (!Number.isFinite(value)) continue;
+      return String(value);
+    }
+    const text = String(value).trim();
+    if (text.length > 0) return text;
+  }
+  return null;
+}
+
+function toNumber(value: string | number | null | undefined): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const num = typeof value === "number" ? value : Number(String(value).replace(",", "."));
+  return Number.isFinite(num) ? num : null;
+}
+
+function isYesFlag(value: string | null | undefined): boolean {
+  return typeof value === "string" && value.trim().toUpperCase() === "S";
 }
 
 async function listPaymentTermsPage(credentials: OmieCredentials, page: number): Promise<PageResult<OmiePaymentTerm>> {

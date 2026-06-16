@@ -52,7 +52,7 @@ describe("desktop backup", () => {
       const restoredDatabase = openDesktopDatabase({ databasePath: restoredDatabasePath });
 
       try {
-        expect(getAppliedMigrations(restoredDatabase)).toHaveLength(4);
+        expect(getAppliedMigrations(restoredDatabase)).toHaveLength(5);
         expect(getLocalDesktopIdentity(restoredDatabase)).toEqual(identity);
       } finally {
         restoredDatabase.close();

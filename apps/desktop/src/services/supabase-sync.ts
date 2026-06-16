@@ -42,11 +42,29 @@ interface OmieReferenceCustomer {
 interface OmieReferenceProduct {
   id: number;
   code: string | null;
+  integrationCode?: string | null;
   description: string;
+  detailedDescription?: string | null;
   unit: string | null;
   ncm: string | null;
   ean: string | null;
   unitPriceCents: number | null;
+  familyCode?: string | null;
+  familyDescription?: string | null;
+  brand?: string | null;
+  model?: string | null;
+  internalNotes?: string | null;
+  grossWeightKg?: number | null;
+  netWeightKg?: number | null;
+  heightM?: number | null;
+  widthM?: number | null;
+  depthM?: number | null;
+  cest?: string | null;
+  itemType?: string | null;
+  icmsOrigin?: string | null;
+  isActive?: boolean;
+  blocked?: boolean;
+  fiscalRecommendations?: Record<string, unknown> | null;
 }
 
 interface OmieReferencePaymentTerm {
@@ -683,17 +701,39 @@ function upsertOmieProducts(
 ): void {
   const upsert = database.prepare(`
     INSERT INTO products (
-      id, company_id, omie_product_id, code, description, unit, ncm, ean, unit_price_cents,
+      id, company_id, omie_product_id, omie_integration_code, code, description,
+      detailed_description, unit, ncm, ean, unit_price_cents,
+      family_code, family_description, brand, model, internal_notes,
+      gross_weight_kg, net_weight_kg, height_m, width_m, depth_m,
+      cest, item_type, icms_origin, blocked, fiscal_recommendations_json,
       is_active, updated_from_omie_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, datetime('now'), datetime('now'), datetime('now'))
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), datetime('now'))
     ON CONFLICT(id) DO UPDATE SET
       omie_product_id = excluded.omie_product_id,
+      omie_integration_code = excluded.omie_integration_code,
       code = excluded.code,
       description = excluded.description,
+      detailed_description = excluded.detailed_description,
       unit = excluded.unit,
       ncm = excluded.ncm,
       ean = excluded.ean,
       unit_price_cents = excluded.unit_price_cents,
+      family_code = excluded.family_code,
+      family_description = excluded.family_description,
+      brand = excluded.brand,
+      model = excluded.model,
+      internal_notes = excluded.internal_notes,
+      gross_weight_kg = excluded.gross_weight_kg,
+      net_weight_kg = excluded.net_weight_kg,
+      height_m = excluded.height_m,
+      width_m = excluded.width_m,
+      depth_m = excluded.depth_m,
+      cest = excluded.cest,
+      item_type = excluded.item_type,
+      icms_origin = excluded.icms_origin,
+      blocked = excluded.blocked,
+      fiscal_recommendations_json = excluded.fiscal_recommendations_json,
+      is_active = excluded.is_active,
       updated_from_omie_at = datetime('now'),
       updated_at = datetime('now')
   `);
@@ -703,12 +743,30 @@ function upsertOmieProducts(
       `omie_${product.id}`,
       companyId,
       product.id,
+      product.integrationCode ?? null,
       product.code || `PROD_${product.id}`,
       product.description,
+      product.detailedDescription ?? null,
       product.unit || "UN",
       product.ncm,
       product.ean,
-      product.unitPriceCents
+      product.unitPriceCents,
+      product.familyCode ?? null,
+      product.familyDescription ?? null,
+      product.brand ?? null,
+      product.model ?? null,
+      product.internalNotes ?? null,
+      product.grossWeightKg ?? null,
+      product.netWeightKg ?? null,
+      product.heightM ?? null,
+      product.widthM ?? null,
+      product.depthM ?? null,
+      product.cest ?? null,
+      product.itemType ?? null,
+      product.icmsOrigin ?? null,
+      product.blocked ? 1 : 0,
+      product.fiscalRecommendations ? JSON.stringify(product.fiscalRecommendations) : null,
+      product.isActive === false ? 0 : 1
     );
   }
 }

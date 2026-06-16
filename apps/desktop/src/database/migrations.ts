@@ -400,5 +400,31 @@ CREATE INDEX IF NOT EXISTS idx_customers_company_zipcode ON customers(company_id
 CREATE INDEX IF NOT EXISTS idx_customers_default_payment_term ON customers(company_id, default_payment_term_id);
 CREATE INDEX IF NOT EXISTS idx_products_company_ncm ON products(company_id, ncm);
 `
+  },
+  {
+    version: 5,
+    name: "product_omie_full_attributes",
+    sql: `
+ALTER TABLE products ADD COLUMN family_code TEXT;
+ALTER TABLE products ADD COLUMN family_description TEXT;
+ALTER TABLE products ADD COLUMN brand TEXT;
+ALTER TABLE products ADD COLUMN model TEXT;
+ALTER TABLE products ADD COLUMN detailed_description TEXT;
+ALTER TABLE products ADD COLUMN internal_notes TEXT;
+ALTER TABLE products ADD COLUMN gross_weight_kg REAL;
+ALTER TABLE products ADD COLUMN net_weight_kg REAL;
+ALTER TABLE products ADD COLUMN height_m REAL;
+ALTER TABLE products ADD COLUMN width_m REAL;
+ALTER TABLE products ADD COLUMN depth_m REAL;
+ALTER TABLE products ADD COLUMN cest TEXT;
+ALTER TABLE products ADD COLUMN item_type TEXT;
+ALTER TABLE products ADD COLUMN icms_origin TEXT;
+ALTER TABLE products ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0 CHECK (blocked IN (0, 1));
+ALTER TABLE products ADD COLUMN fiscal_recommendations_json TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_products_company_family ON products(company_id, family_code);
+CREATE INDEX IF NOT EXISTS idx_products_company_brand ON products(company_id, brand);
+CREATE INDEX IF NOT EXISTS idx_products_company_active ON products(company_id, is_active, deleted_at);
+`
   }
 ];

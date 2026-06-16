@@ -80,7 +80,9 @@ describe("OmieSyncService", () => {
         id: 456,
         description: "Brita 0",
         code: "BRITA0",
-        unit: "M3"
+        unit: "M3",
+        isActive: true,
+        blocked: false
       }
     ]);
 
