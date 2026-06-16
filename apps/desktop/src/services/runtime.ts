@@ -38,8 +38,10 @@ import {
 } from "./status.js";
 import {
   cancelWeighingOperation,
+  clearCanceledWeighingOperations,
   closeWeighingOperation,
   createWeighingOperation,
+  listCanceledWeighingOperations,
   listOpenWeighingOperations,
   type OperationType,
   type WeighingOperationSummary
@@ -366,6 +368,16 @@ export class DesktopRuntime {
   listOpenWeighingOperations(): WeighingOperationSummary[] {
     this.assertDesktopAccess();
     return listOpenWeighingOperations(this.database);
+  }
+
+  listCanceledWeighingOperations(): WeighingOperationSummary[] {
+    this.assertDesktopAccess();
+    return listCanceledWeighingOperations(this.database);
+  }
+
+  clearCanceledWeighingOperations(): number {
+    this.assertDesktopAccess();
+    return clearCanceledWeighingOperations(this.database);
   }
 
   configureReceiptPrintProfile(

@@ -74,12 +74,17 @@ type RegistrationsTab = "customers" | "price_tables" | "products" | "payment_ter
 
 type AppPhase = "checking_access" | "locked" | "unlocked";
 type ThemeMode = "light" | "dark";
+type OperationsTab = "open" | "canceled";
+type CanceledFilter = "all" | "day" | "week" | "month";
 
 export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }: AppProps = {}) {
   const [phase, setPhase] = useState<AppPhase>("checking_access");
   const [status, setStatus] = useState<DesktopStatusSnapshot | null>(initialStatus);
   const [updateState, setUpdateState] = useState<UpdateState>(createInitialUpdateState());
   const [openOperations, setOpenOperations] = useState<WeighingOperationSummary[]>([]);
+  const [canceledOperations, setCanceledOperations] = useState<WeighingOperationSummary[]>([]);
+  const [operationsTab, setOperationsTab] = useState<OperationsTab>("open");
+  const [canceledFilter, setCanceledFilter] = useState<CanceledFilter>("all");
   const [printers, setPrinters] = useState<WindowsPrinterSummary[]>([]);
   const [printProfiles, setPrintProfiles] = useState<PrintProfileSummary[]>([]);
   const [printReceipts, setPrintReceipts] = useState<PrintReceiptSummary[]>([]);
@@ -122,6 +127,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   }>({ status: "idle", message: "" });
   const [omieLoop, setOmieLoop] = useState<OmieLoopUiState | null>(null);
   const themeVars = useMemo(() => getThemeVariables(themeMode), [themeMode]);
+  const filteredCanceledOperations = useMemo(
+    () => filterCanceledOperations(canceledOperations, canceledFilter),
+    [canceledOperations, canceledFilter]
+  );
 
   useEffect(() => {
     const captureLog = (level: string, source: string) => (...args: unknown[]) => {
@@ -248,6 +257,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         nextStatus,
         nextUpdateState,
         nextOpenOperations,
+        nextCanceledOperations,
         nextPrinters,
         nextProfiles,
         nextReceipts,
@@ -255,6 +265,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         desktopApi.getStatus(navigator.onLine),
         desktopApi.getUpdateState(),
         desktopApi.listOpenWeighingOperations(),
+        desktopApi.listCanceledWeighingOperations(),
         desktopApi.listWindowsPrinters(),
         desktopApi.listPrintProfiles(),
         desktopApi.listPrintReceipts(),
@@ -264,6 +275,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         setStatus(nextStatus);
         setUpdateState(nextUpdateState);
         setOpenOperations(nextOpenOperations);
+        setCanceledOperations(nextCanceledOperations);
         setPrinters(nextPrinters);
         setPrintProfiles(nextProfiles);
         setPrintReceipts(nextReceipts);
@@ -312,8 +324,14 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       return;
     }
 
-    setOpenOperations(await desktopApi.listOpenWeighingOperations());
-    setStatus(await desktopApi.getStatus(navigator.onLine));
+    const [nextOpenOperations, nextCanceledOperations, nextStatus] = await Promise.all([
+      desktopApi.listOpenWeighingOperations(),
+      desktopApi.listCanceledWeighingOperations(),
+      desktopApi.getStatus(navigator.onLine)
+    ]);
+    setOpenOperations(nextOpenOperations);
+    setCanceledOperations(nextCanceledOperations);
+    setStatus(nextStatus);
   }
 
   async function refreshPrintData(): Promise<void> {
@@ -645,6 +663,23 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
   }
 
+  async function handleClearCanceledOperations(): Promise<void> {
+    if (!desktopApi) {
+      return;
+    }
+    if (!window.confirm("Limpar todas as operacoes canceladas da lista?")) {
+      return;
+    }
+
+    try {
+      const count = await desktopApi.clearCanceledWeighingOperations();
+      setMessage(`${count} operacao(oes) cancelada(s) removida(s) da lista.`);
+      await refreshOpenOperations();
+    } catch (error) {
+      setMessage(getErrorMessage(error));
+    }
+  }
+
   if (phase === "checking_access") {
     return (
       <main style={{ ...styles.page, ...getThemeVariables("light") }}>
@@ -968,50 +1003,128 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
           <div style={styles.sectionTitleRow}>
             <div>
               <p style={styles.kicker}>Fila operacional</p>
-              <h2 style={styles.panelTitle}>Operacoes em aberto</h2>
+              <h2 style={styles.panelTitle}>Operacoes</h2>
             </div>
-            <span style={styles.countBadge}>{openOperations.length} abertas</span>
+            <span style={styles.countBadge}>
+              {operationsTab === "open"
+                ? `${openOperations.length} abertas`
+                : `${filteredCanceledOperations.length} canceladas`}
+            </span>
           </div>
-          {openOperations.length === 0 ? (
+
+          <div style={styles.operationsToolbar}>
+            <div style={styles.segmentedTabs}>
+              <button
+                type="button"
+                onClick={() => setOperationsTab("open")}
+                style={operationsTabStyle(operationsTab === "open")}
+              >
+                Abertas
+              </button>
+              <button
+                type="button"
+                onClick={() => setOperationsTab("canceled")}
+                style={operationsTabStyle(operationsTab === "canceled")}
+              >
+                Canceladas
+              </button>
+            </div>
+
+            {operationsTab === "canceled" ? (
+              <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+                <label style={{ ...styles.fieldLabel, marginBottom: 0 }}>
+                  Periodo
+                  <select
+                    value={canceledFilter}
+                    onChange={(event) => setCanceledFilter(event.target.value as CanceledFilter)}
+                    style={{ ...styles.input, minWidth: "150px" }}
+                  >
+                    <option value="all">Todas</option>
+                    <option value="day">Hoje</option>
+                    <option value="week">Ultimos 7 dias</option>
+                    <option value="month">Este mes</option>
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => void handleClearCanceledOperations()}
+                  disabled={canceledOperations.length === 0}
+                  style={{ ...styles.secondaryButton, color: "#b91c1c", borderColor: "#fecaca" }}
+                >
+                  Limpar canceladas
+                </button>
+              </div>
+            ) : null}
+          </div>
+
+          {operationsTab === "open" ? (
+            openOperations.length === 0 ? (
+              <div style={styles.emptyState}>
+                <strong>Nenhuma operacao aberta</strong>
+                <span>As entradas capturadas pela balanca aparecem aqui para fechamento.</span>
+              </div>
+            ) : (
+              <div style={styles.operationsTable}>
+                <div style={{ ...styles.operationsTableRow, ...styles.operationsTableHead }}>
+                  <span>Placa</span>
+                  <span>Cliente / Produto</span>
+                  <span>Entrada / Preco</span>
+                  <span>Acoes</span>
+                </div>
+                {openOperations.map((operation) => (
+                  <div key={operation.id} style={styles.operationsTableRow}>
+                    <strong style={styles.plateBadge}>{operation.plate}</strong>
+                    <span style={styles.operationCellStack}>
+                      <strong>{operation.customerName}</strong>
+                      <span>{operation.productDescription}</span>
+                      <small>Motorista: {operation.driverName}</small>
+                    </span>
+                    <span style={styles.operationCellStack}>
+                      <strong>{formatWeightKg(operation.entryWeightKg ?? 0)}</strong>
+                      <span>{formatMoney(operation.unitPriceCents)}/ton</span>
+                    </span>
+                    <span style={styles.rowActions}>
+                      <button
+                        type="button"
+                        onClick={() => setClosingOperationId(operation.id)}
+                        style={styles.smallPrimaryButton}
+                      >
+                        Fechar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCancelOperationId(operation.id)}
+                        style={styles.smallDangerButton}
+                      >
+                        Cancelar
+                      </button>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )
+          ) : filteredCanceledOperations.length === 0 ? (
             <div style={styles.emptyState}>
-              <strong>Nenhuma operacao aberta</strong>
-              <span>As entradas capturadas pela balanca aparecem aqui para fechamento.</span>
+              <strong>Nenhuma operacao cancelada</strong>
+              <span>Altere o periodo no filtro para consultar outros cancelamentos.</span>
             </div>
           ) : (
             <div style={styles.operationsTable}>
-              <div style={{ ...styles.operationsTableRow, ...styles.operationsTableHead }}>
+              <div style={{ ...styles.canceledOperationsTableRow, ...styles.operationsTableHead }}>
                 <span>Placa</span>
-                <span>Cliente</span>
-                <span>Produto</span>
-                <span>Motorista</span>
-                <span>Entrada</span>
-                <span>Preco</span>
-                <span>Acoes</span>
+                <span>Cliente / Produto</span>
+                <span>Cancelada em</span>
+                <span>Motivo</span>
               </div>
-              {openOperations.map((operation) => (
-                <div key={operation.id} style={styles.operationsTableRow}>
-                  <strong style={styles.plateBadge}>{operation.plate}</strong>
-                  <span>{operation.customerName}</span>
-                  <span>{operation.productDescription}</span>
-                  <span>{operation.driverName}</span>
-                  <span>{formatWeightKg(operation.entryWeightKg ?? 0)}</span>
-                  <span>{formatMoney(operation.unitPriceCents)}/ton</span>
-                  <span style={styles.rowActions}>
-                    <button
-                      type="button"
-                      onClick={() => setClosingOperationId(operation.id)}
-                      style={styles.smallPrimaryButton}
-                    >
-                      Fechar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setCancelOperationId(operation.id)}
-                      style={styles.smallDangerButton}
-                    >
-                      Cancelar
-                    </button>
+              {filteredCanceledOperations.map((operation) => (
+                <div key={operation.id} style={styles.canceledOperationsTableRow}>
+                  <strong style={styles.plateBadge}>{operation.plate || "--"}</strong>
+                  <span style={styles.operationCellStack}>
+                    <strong>{operation.customerName || "Cliente nao informado"}</strong>
+                    <span>{operation.productDescription || "Produto nao informado"}</span>
                   </span>
+                  <span>{new Date(operation.updatedAt).toLocaleString("pt-BR")}</span>
+                  <span>{operation.cancelReason || "Sem motivo registrado"}</span>
                 </div>
               ))}
             </div>
@@ -1780,6 +1893,7 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
   const [driverRefreshKey, setDriverRefreshKey] = useState(0);
   const [customerRefreshKey, setCustomerRefreshKey] = useState(0);
   const [carrierRefreshKey, setCarrierRefreshKey] = useState(0);
+  const [paymentTermInstallmentCount, setPaymentTermInstallmentCount] = useState<number | null>(null);
 
   useEffect(() => {
     if (!desktopApi) return;
@@ -1866,19 +1980,20 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
             value={form.paymentTermId}
             onChange={(id, item) => {
               const rawCount = item?.installmentCount;
-              const installments =
+              const count =
                 typeof rawCount === "number" && Number.isFinite(rawCount) && rawCount > 0
                   ? rawCount
                   : null;
+              setPaymentTermInstallmentCount(count);
               setForm((prev) => ({
                 ...prev,
                 paymentTermId: id,
-                installments: id ? installments : null
+                installments: count && count > 1 ? count : null
               }));
             }}
             desktopApi={desktopApi}
           />
-          {form.paymentTermId ? (
+          {paymentTermInstallmentCount && paymentTermInstallmentCount > 1 ? (
             <label style={styles.fieldLabel}>
               Numero de parcelas
               <input
@@ -2525,6 +2640,26 @@ function formatWeightKg(value: number): string {
   return `${value.toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 0 })} kg`;
 }
 
+function filterCanceledOperations(
+  operations: WeighingOperationSummary[],
+  filter: CanceledFilter,
+  now = new Date()
+): WeighingOperationSummary[] {
+  if (filter === "all") return operations;
+
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+
+  if (filter === "week") {
+    start.setDate(start.getDate() - 6);
+  }
+  if (filter === "month") {
+    start.setDate(1);
+  }
+
+  return operations.filter((operation) => new Date(operation.updatedAt) >= start);
+}
+
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Falha inesperada.";
 }
@@ -2539,6 +2674,19 @@ function subTabStyle(active: boolean) {
     color: active ? "var(--kr-text-strong)" : "var(--kr-muted)",
     cursor: "pointer",
     fontWeight: active ? 700 : 400,
+    fontSize: "12px"
+  };
+}
+
+function operationsTabStyle(active: boolean): React.CSSProperties {
+  return {
+    border: "1px solid var(--kr-border)",
+    borderRadius: "999px",
+    padding: "6px 12px",
+    background: active ? "#0f172a" : "var(--kr-surface)",
+    color: active ? "#ffffff" : "var(--kr-text-strong)",
+    cursor: "pointer",
+    fontWeight: 800,
     fontSize: "12px"
   };
 }
@@ -3086,6 +3234,7 @@ interface CustomerFormData {
   observations: string;
   defaultCarrierId: string;
   defaultPaymentTermId: string;
+  priceTableId: string;
   zipcode: string;
   addressStreet: string;
   addressNumber: string;
@@ -3119,6 +3268,7 @@ function CustomerListView({
     observations: "",
     defaultCarrierId: "",
     defaultPaymentTermId: "",
+    priceTableId: "",
     zipcode: "",
     addressStreet: "",
     addressNumber: "",
@@ -3131,6 +3281,7 @@ function CustomerListView({
   const [message, setMessageState] = useState<string | null>(null);
   const [carriers, setCarriers] = useState<CarrierCacheEntry[]>([]);
   const [paymentTerms, setPaymentTerms] = useState<PaymentTermCacheEntry[]>([]);
+  const [priceTables, setPriceTables] = useState<Array<{ id: string; name: string }>>([]);
 
   useEffect(() => {
     loadCustomers();
@@ -3139,6 +3290,7 @@ function CustomerListView({
   useEffect(() => {
     loadCarriers();
     loadPaymentTerms();
+    loadPriceTables();
   }, []);
 
   useEffect(() => {
@@ -3164,6 +3316,15 @@ function CustomerListView({
         limit: 500
       });
       setPaymentTerms(result.rows as PaymentTermCacheEntry[]);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function loadPriceTables(): Promise<void> {
+    try {
+      const list = await desktopApi.priceTablesList() as Array<{ id: string; name: string }>;
+      setPriceTables(list);
     } catch {
       /* ignore */
     }
@@ -3197,6 +3358,7 @@ function CustomerListView({
       observations: "",
       defaultCarrierId: "",
       defaultPaymentTermId: "",
+      priceTableId: "",
       zipcode: "",
       addressStreet: "",
       addressNumber: "",
@@ -3228,6 +3390,7 @@ function CustomerListView({
       observations: customer.observations ?? "",
       defaultCarrierId: customer.defaultCarrierId ?? "",
       defaultPaymentTermId: customer.defaultPaymentTermId ?? "",
+      priceTableId: "",
       zipcode: customer.zipcode ?? "",
       addressStreet: customer.addressStreet ?? "",
       addressNumber: customer.addressNumber ?? "",
@@ -3291,6 +3454,7 @@ function CustomerListView({
     const normalizedZipcode = normalizeCep(form.zipcode);
 
     try {
+      let customerId = editingId;
       if (editingId) {
         await desktopApi.customersUpdate(editingId, {
           tradeName: form.tradeName.trim(),
@@ -3313,7 +3477,7 @@ function CustomerListView({
         });
         setMessageState("Cliente atualizado com sucesso.");
       } else {
-        await desktopApi.customersCreate({
+        const created = await desktopApi.customersCreate({
           tradeName: form.tradeName.trim(),
           legalName: form.legalName.trim(),
           document: normalizedDocument || undefined,
@@ -3331,8 +3495,20 @@ function CustomerListView({
           neighborhood: form.neighborhood.trim() || undefined,
           city: form.city.trim() || undefined,
           state: form.state.trim().toUpperCase() || undefined
-        });
+        }) as { id: string };
+        customerId = created.id;
         setMessageState("Cliente criado com sucesso.");
+      }
+
+      if (customerId && form.priceTableId) {
+        try {
+          await desktopApi.priceTablesLinkCustomer({
+            customerId,
+            priceTableId: form.priceTableId
+          });
+        } catch {
+          /* ignore link errors */
+        }
       }
 
       setShowForm(false);
@@ -3556,6 +3732,20 @@ function CustomerListView({
               <option value="">Selecione a condicao padrao</option>
               {paymentTerms.map((term) => (
                 <option key={term.id} value={term.id}>{term.name}</option>
+              ))}
+            </select>
+          </label>
+
+          <label style={{ ...styles.fieldLabel, marginTop: "8px" }}>
+            Tabela de preco
+            <select
+              value={form.priceTableId}
+              onChange={(e) => setForm({ ...form, priceTableId: e.target.value })}
+              style={styles.input}
+            >
+              <option value="">Selecione a tabela de preco</option>
+              {priceTables.map((t) => (
+                <option key={t.id} value={t.id}>{t.name}</option>
               ))}
             </select>
           </label>
@@ -4109,16 +4299,13 @@ function PriceTableListView({
 }) {
   const [tables, setTables] = useState<Array<{ id: string; name: string; needsPush?: boolean }>>([]);
   const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
-  const [items, setItems] = useState<Array<{ id: string; productId: string; productDesc?: string; unitPriceCents: number }>>([]);
-  const [linkedCustomers, setLinkedCustomers] = useState<Array<{ id: string; customerId: string; customerTradeName: string }>>([]);
-  const [customers, setCustomers] = useState<Array<{ id: string; tradeName: string }>>([]);
+  const [items, setItems] = useState<Array<{ id: string; productCode: string | null; productDesc: string; unitPriceCents: number }>>([]);
   const [products, setProducts] = useState<Array<{ id: string; code: string; description: string }>>([]);
   const [newTableName, setNewTableName] = useState("");
   const [editingTableId, setEditingTableId] = useState<string | null>(null);
   const [editingTableName, setEditingTableName] = useState("");
   const [itemProductId, setItemProductId] = useState("");
   const [itemPriceReais, setItemPriceReais] = useState("");
-  const [linkCustomerId, setLinkCustomerId] = useState("");
   const [message, setPriceMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -4129,7 +4316,6 @@ function PriceTableListView({
   useEffect(() => {
     if (selectedTableId) {
       loadTableDetails(selectedTableId);
-      loadCustomers();
     }
   }, [selectedTableId]);
 
@@ -4138,36 +4324,19 @@ function PriceTableListView({
     setTables(list);
   }
 
-  async function loadCustomers(): Promise<void> {
-    const result = await desktopApi.queryCache({ entityType: "customer", activeOnly: true, limit: 200 });
-    setCustomers(result.rows as Array<{ id: string; tradeName: string }>);
-  }
-
   async function loadProducts(): Promise<void> {
     const result = await desktopApi.queryCache({ entityType: "product", activeOnly: true, limit: 200 });
     setProducts(result.rows as Array<{ id: string; code: string; description: string }>);
   }
 
   async function loadTableDetails(tableId: string): Promise<void> {
-    const [itemList, links] = await Promise.all([
-      desktopApi.priceTablesListItems(tableId) as Promise<Array<{ id: string; productId: string; unitPriceCents: number }>>,
-      desktopApi.priceTablesListCustomerLinks(tableId) as Promise<Array<{ id: string; customerId: string; customerTradeName: string }>>
-    ]);
-
-    const enriched = await Promise.all(
-      itemList.map(async (item) => {
-        try {
-          const productRows = (await desktopApi.queryCache({ entityType: "product" })).rows as Array<{ id: string; description: string }>;
-          const product = productRows.find((p) => p.id === item.productId);
-          return { ...item, productDesc: product?.description ?? item.productId };
-        } catch {
-          return { ...item, productDesc: item.productId };
-        }
-      })
-    );
-
-    setItems(enriched);
-    setLinkedCustomers(links);
+    const itemList = await desktopApi.priceTablesListItems(tableId) as Array<{
+      id: string;
+      productCode: string | null;
+      productDesc: string;
+      unitPriceCents: number;
+    }>;
+    setItems(itemList);
   }
 
   async function handleCreateTable(): Promise<void> {
@@ -4215,23 +4384,6 @@ function PriceTableListView({
   async function handleRemoveItem(itemId: string): Promise<void> {
     await desktopApi.priceTablesRemoveItem(itemId);
     setPriceMessage("Item removido.");
-    if (selectedTableId) await loadTableDetails(selectedTableId);
-  }
-
-  async function handleLinkCustomer(): Promise<void> {
-    if (!selectedTableId || !linkCustomerId) return;
-    await desktopApi.priceTablesLinkCustomer({
-      customerId: linkCustomerId,
-      priceTableId: selectedTableId
-    });
-    setLinkCustomerId("");
-    setPriceMessage("Cliente vinculado.");
-    await loadTableDetails(selectedTableId);
-  }
-
-  async function handleUnlinkCustomer(linkId: string): Promise<void> {
-    await desktopApi.priceTablesUnlinkCustomer(linkId);
-    setPriceMessage("Vinculo removido.");
     if (selectedTableId) await loadTableDetails(selectedTableId);
   }
 
@@ -4346,7 +4498,7 @@ function PriceTableListView({
                 {items.map((item) => (
                   <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderTop: "1px solid #e2e8f0" }}>
                     <span>
-                      <strong>{item.productDesc}</strong> — {formatMoney(item.unitPriceCents)}/ton
+                      <strong>{item.productDesc}</strong>{item.productCode ? ` (${item.productCode})` : ""} — {formatMoney(item.unitPriceCents)}/ton
                     </span>
                     <button
                       type="button"
@@ -4358,44 +4510,6 @@ function PriceTableListView({
                   </div>
                 ))}
               </div>
-            )}
-
-            <h3 style={{ marginTop: "24px" }}>Clientes Vinculados</h3>
-
-            <div style={{ display: "flex", gap: "8px", marginBottom: "12px", alignItems: "flex-end" }}>
-              <label style={{ ...styles.fieldLabel, marginBottom: 0, flex: 1 }}>
-                Cliente
-                <select
-                  value={linkCustomerId}
-                  onChange={(e) => setLinkCustomerId(e.target.value)}
-                  style={styles.input}
-                >
-                  <option value="">Selecione...</option>
-                  {customers.map((c) => (
-                    <option key={c.id} value={c.id}>{c.tradeName}</option>
-                  ))}
-                </select>
-              </label>
-              <button type="button" onClick={handleLinkCustomer} style={{ ...styles.primaryButton, padding: "10px 14px" }}>
-                Vincular
-              </button>
-            </div>
-
-            {linkedCustomers.length === 0 ? (
-              <p style={{ color: "#64748b" }}>Nenhum cliente vinculado.</p>
-            ) : (
-              linkedCustomers.map((link) => (
-                <div key={link.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderTop: "1px solid #e2e8f0" }}>
-                  <span>{link.customerTradeName}</span>
-                  <button
-                    type="button"
-                    onClick={() => handleUnlinkCustomer(link.id)}
-                    style={{ border: "none", background: "none", cursor: "pointer", color: "#b91c1c", fontSize: "16px" }}
-                  >
-                    ✕
-                  </button>
-                </div>
-              ))
             )}
           </>
         )}
@@ -4852,6 +4966,19 @@ const styles = {
     color: "var(--kr-muted)",
     textAlign: "center" as const
   },
+  operationsToolbar: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "12px",
+    marginBottom: "12px",
+    flexWrap: "wrap" as const
+  },
+  segmentedTabs: {
+    display: "flex",
+    gap: "6px",
+    alignItems: "center"
+  },
   operationsTable: {
     overflowX: "auto" as const,
     border: "1px solid var(--kr-border)",
@@ -4859,14 +4986,29 @@ const styles = {
   },
   operationsTableRow: {
     display: "grid",
-    gridTemplateColumns: "110px minmax(170px, 1.1fr) minmax(160px, 1fr) minmax(130px, 0.8fr) 100px 120px 132px",
+    gridTemplateColumns: "96px minmax(180px, 1.4fr) minmax(120px, 0.8fr) 132px",
     alignItems: "center",
     gap: "10px",
-    minWidth: "1040px",
     padding: "10px 12px",
     borderTop: "1px solid var(--kr-border)",
     fontSize: "13px",
     color: "var(--kr-text)"
+  },
+  canceledOperationsTableRow: {
+    display: "grid",
+    gridTemplateColumns: "96px minmax(180px, 1.1fr) 150px minmax(180px, 1.2fr)",
+    alignItems: "center",
+    gap: "10px",
+    padding: "10px 12px",
+    borderTop: "1px solid var(--kr-border)",
+    fontSize: "13px",
+    color: "var(--kr-text)"
+  },
+  operationCellStack: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "2px",
+    minWidth: 0
   },
   operationsTableHead: {
     borderTop: "none",

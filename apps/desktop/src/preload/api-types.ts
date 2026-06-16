@@ -60,6 +60,8 @@ export interface KyberRockDesktopApi {
   checkForUpdates: () => Promise<UpdateState>;
   downloadAndInstallUpdate: () => Promise<UpdateState>;
   listOpenWeighingOperations: () => Promise<WeighingOperationSummary[]>;
+  listCanceledWeighingOperations: () => Promise<WeighingOperationSummary[]>;
+  clearCanceledWeighingOperations: () => Promise<number>;
   startWeighing: (input: {
     customerId: string;
     vehicleId: string;

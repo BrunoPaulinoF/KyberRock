@@ -746,11 +746,53 @@ export function listOpenWeighingOperations(database: DesktopDatabase): WeighingO
        LEFT JOIN drivers d ON d.id = o.driver_id
        LEFT JOIN products p ON p.id = o.product_id
        LEFT JOIN payment_terms pt ON pt.id = o.payment_term_id
-       WHERE o.status IN ('loading_requested', 'awaiting_exit', 'entry_registered')
-       ORDER BY o.created_at DESC`
+        WHERE o.status IN ('loading_requested', 'awaiting_exit', 'entry_registered')
+          AND o.deleted_at IS NULL
+        ORDER BY o.created_at DESC`
     )
     .all()
     .map((row) => mapOperationRow(row as OperationRow));
+}
+
+export function listCanceledWeighingOperations(database: DesktopDatabase): WeighingOperationSummary[] {
+  return database
+    .prepare(
+      `SELECT
+        o.id, o.status, o.operation_type, o.entry_weight_kg, o.exit_weight_kg, o.net_weight_kg,
+        o.unit_price_cents, o.base_unit_price_cents, o.applied_price_table_id, o.applied_price_table_name,
+        o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
+        o.product_total_cents, o.freight_total_cents, o.total_cents,
+        o.cancel_reason, o.created_at, o.updated_at,
+        c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
+        pt.name AS payment_term_name
+       FROM weighing_operations o
+       LEFT JOIN customers c ON c.id = o.customer_id
+       LEFT JOIN vehicles v ON v.id = o.vehicle_id
+       LEFT JOIN drivers d ON d.id = o.driver_id
+       LEFT JOIN products p ON p.id = o.product_id
+       LEFT JOIN payment_terms pt ON pt.id = o.payment_term_id
+       WHERE o.status = 'cancelled'
+         AND o.deleted_at IS NULL
+       ORDER BY o.updated_at DESC`
+    )
+    .all()
+    .map((row) => mapOperationRow(row as OperationRow));
+}
+
+export function clearCanceledWeighingOperations(
+  database: DesktopDatabase,
+  now: Date = new Date()
+): number {
+  const timestamp = now.toISOString();
+  const result = database
+    .prepare(
+      `UPDATE weighing_operations
+       SET deleted_at = ?, updated_at = ?
+       WHERE status = 'cancelled' AND deleted_at IS NULL`
+    )
+    .run(timestamp, timestamp);
+
+  return result.changes;
 }
 
 export function getWeighingOperation(

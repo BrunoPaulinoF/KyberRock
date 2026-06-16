@@ -259,6 +259,22 @@ function registerIpcHandlers(): void {
     return runtime.listOpenWeighingOperations();
   });
 
+  ipcMain.handle("desktop:list-canceled-weighing-operations", () => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.listCanceledWeighingOperations();
+  });
+
+  ipcMain.handle("desktop:clear-canceled-weighing-operations", () => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.clearCanceledWeighingOperations();
+  });
+
   ipcMain.handle(
     "desktop:start-weighing",
     async (_event, input: unknown) => {

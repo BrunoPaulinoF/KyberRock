@@ -18,6 +18,10 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:download-and-install-update"),
   listOpenWeighingOperations: () =>
     ipcRenderer.invoke("desktop:list-open-weighing-operations"),
+  listCanceledWeighingOperations: () =>
+    ipcRenderer.invoke("desktop:list-canceled-weighing-operations"),
+  clearCanceledWeighingOperations: () =>
+    ipcRenderer.invoke("desktop:clear-canceled-weighing-operations"),
   startWeighing: (input: unknown) =>
     ipcRenderer.invoke("desktop:start-weighing", input),
   closeWeighing: (operationId: string, operationType?: string) =>
