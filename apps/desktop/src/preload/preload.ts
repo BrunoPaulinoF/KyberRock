@@ -52,6 +52,18 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:is-cloud-connected"),
   queryCache: (options: unknown) =>
     ipcRenderer.invoke("desktop:query-cache", options),
+  getDailyReport: (date: string) =>
+    ipcRenderer.invoke("desktop:get-daily-report", date),
+  getMonthlyReport: (year: number, month: number) =>
+    ipcRenderer.invoke("desktop:get-monthly-report", year, month),
+  getReportByProduct: (startDate: string, endDate: string, limit?: number) =>
+    ipcRenderer.invoke("desktop:get-report-by-product", startDate, endDate, limit),
+  getReportByCustomer: (startDate: string, endDate: string, limit?: number) =>
+    ipcRenderer.invoke("desktop:get-report-by-customer", startDate, endDate, limit),
+  getDailySeries: (startDate: string, endDate: string) =>
+    ipcRenderer.invoke("desktop:get-daily-series", startDate, endDate),
+  getOperationMix: (startDate: string, endDate: string) =>
+    ipcRenderer.invoke("desktop:get-operation-mix", startDate, endDate),
   getPriceForCustomerProduct: (customerId: string, productId: string) =>
     ipcRenderer.invoke("desktop:get-price", customerId, productId),
   customersCreate: (input: unknown) =>

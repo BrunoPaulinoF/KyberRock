@@ -383,6 +383,48 @@ function registerIpcHandlers(): void {
     return runtime.queryCache(options);
   });
 
+  ipcMain.handle("desktop:get-daily-report", (_event, date: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.getDailyReport(date);
+  });
+
+  ipcMain.handle("desktop:get-monthly-report", (_event, year: number, month: number) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.getMonthlyReport(year, month);
+  });
+
+  ipcMain.handle(
+    "desktop:get-report-by-product",
+    (_event, startDate: string, endDate: string, limit?: number) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.getReportByProduct(startDate, endDate, limit);
+    }
+  );
+
+  ipcMain.handle(
+    "desktop:get-report-by-customer",
+    (_event, startDate: string, endDate: string, limit?: number) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.getReportByCustomer(startDate, endDate, limit);
+    }
+  );
+
+  ipcMain.handle(
+    "desktop:get-daily-series",
+    (_event, startDate: string, endDate: string) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.getDailySeries(startDate, endDate);
+    }
+  );
+
+  ipcMain.handle(
+    "desktop:get-operation-mix",
+    (_event, startDate: string, endDate: string) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.getOperationMix(startDate, endDate);
+    }
+  );
+
   ipcMain.handle("desktop:get-price", (_event, customerId: string, productId: string) => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");

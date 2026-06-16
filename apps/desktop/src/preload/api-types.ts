@@ -12,6 +12,14 @@ import type { SyncResult } from "../services/supabase-sync";
 import type { ActivateDesktopInput, DesktopAccessStatus } from "../services/desktop-activation";
 import type { CacheQueryOptions, CacheQueryResult } from "../services/cache-store";
 import type {
+  DailyReport,
+  DailySeriesPoint,
+  MonthlyReport,
+  OperationMix,
+  ProductReport,
+  CustomerReport
+} from "../services/reports";
+import type {
   CreateCustomerInput,
   UpdateCustomerInput
 } from "../services/customers";
@@ -75,6 +83,12 @@ export interface KyberRockDesktopApi {
   getCloudStatus: () => Promise<{ totalOperations: number; lastSync: string | null }>;
   isCloudConnected: () => Promise<boolean>;
   queryCache: (options: CacheQueryOptions) => Promise<CacheQueryResult<unknown>>;
+  getDailyReport: (date: string) => Promise<DailyReport>;
+  getMonthlyReport: (year: number, month: number) => Promise<MonthlyReport>;
+  getReportByProduct: (startDate: string, endDate: string, limit?: number) => Promise<ProductReport[]>;
+  getReportByCustomer: (startDate: string, endDate: string, limit?: number) => Promise<CustomerReport[]>;
+  getDailySeries: (startDate: string, endDate: string) => Promise<DailySeriesPoint[]>;
+  getOperationMix: (startDate: string, endDate: string) => Promise<OperationMix>;
   getPriceForCustomerProduct: (customerId: string, productId: string) => Promise<number | null>;
   customersCreate: (input: Omit<CreateCustomerInput, "companyId">) => Promise<unknown>;
   customersUpdate: (id: string, input: UpdateCustomerInput) => Promise<unknown>;

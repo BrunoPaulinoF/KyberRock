@@ -29,6 +29,7 @@ import {
 } from "@kyberrock/shared";
 import { ActivationGate } from "./ActivationGate";
 import { BlockedScreen } from "./BlockedScreen";
+import { InsightsView } from "./InsightsView";
 import type { KyberRockDesktopApi } from "./desktop-api";
 export interface AppProps {
   desktopApi?: KyberRockDesktopApi;
@@ -46,7 +47,16 @@ interface WeighingFormState {
   unitPriceCents: number | null;
 }
 
-type ActiveView = "dashboard" | "new-weighing" | "open-operations" | "scale" | "registrations" | "printing" | "cloud";
+type ActiveView =
+  | "dashboard"
+  | "new-weighing"
+  | "open-operations"
+  | "scale"
+  | "registrations"
+  | "printing"
+  | "cloud"
+  | "insights"
+  | "documentation";
 
 const initialWeighingForm: WeighingFormState = {
   vehicleId: "",
@@ -676,118 +686,143 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
   return (
     <main style={styles.page}>
-      <div style={styles.headerRow}>
-        <div style={styles.headerLeft}>
-          <img src="midia/logodesk.png" alt="KyberRock" style={styles.headerLogo} />
-          <span style={styles.headerBrand}>{desktopAppInfo.name}</span>
-          {companyName && unitName ? (
-            <span style={styles.headerMeta}>{companyName} — {unitName}</span>
-          ) : null}
-          <span style={styles.headerMessage}>{message}</span>
-        </div>
-        <div style={styles.headerRight}>
-          <nav aria-label="Fluxo operacional" style={styles.navInline}>
-            <button
-              type="button"
-              onClick={() => setActiveView("dashboard")}
-              style={navBtnStyle(activeView === "dashboard")}
-            >
-              Painel
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveView("new-weighing")}
-              style={navBtnStyle(activeView === "new-weighing")}
-            >
-              Nova entrada
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveView("open-operations")}
-              style={navBtnStyle(activeView === "open-operations")}
-            >
-              Operacoes
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveView("registrations")}
-              style={navBtnStyle(activeView === "registrations")}
-            >
-              Cadastros
-            </button>
-          </nav>
-          <div style={styles.headerActions}>
-            <div style={{ position: "relative" }}>
-              <button
-                type="button"
-                onClick={() => setShowSettings((s) => !s)}
-                style={styles.headerBtn}
-                title="Configuracoes"
-              >
-                ⚙
-              </button>
-              {showSettings ? (
-                <div style={styles.settingsDropdown}>
-                  <button
-                    type="button"
-                    onClick={() => { setActiveView("scale"); setShowSettings(false); }}
-                    style={styles.settingsItem}
-                  >
-                    Balança
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setActiveView("printing"); setShowSettings(false); }}
-                    style={styles.settingsItem}
-                  >
-                    Impressão
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setActiveView("cloud"); setShowSettings(false); }}
-                    style={styles.settingsItem}
-                  >
-                    Cloud
-                  </button>
-                  <div style={{ height: "1px", background: "#e2e8f0", margin: "4px 0" }} />
-                  <button
-                    type="button"
-                    onClick={() => { setShowLogsModal(true); setShowSettings(false); }}
-                    style={{
-                      ...styles.settingsItem,
-                      color: errorLogs.some((l) => l.level === "error") ? "#b91c1c" : "#475569"
-                    }}
-                  >
-                    Logs {errorLogs.length > 0 ? `(${errorLogs.length})` : ""}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { void handleExportBackup(); setShowSettings(false); }}
-                    style={styles.settingsItem}
-                  >
-                    Exportar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { void handleRestoreBackup(); setShowSettings(false); }}
-                    style={styles.settingsItem}
-                  >
-                    Restaurar
-                  </button>
-                  <div style={{ height: "1px", background: "#e2e8f0", margin: "4px 0" }} />
-                  <button
-                    type="button"
-                    onClick={() => { void handleLogout(); setShowSettings(false); }}
-                    style={{ ...styles.settingsItem, color: "#b91c1c" }}
-                  >
-                    Sair
-                  </button>
-                </div>
-              ) : null}
-            </div>
+      <div style={styles.shell}>
+        <aside style={styles.sidebar}>
+          <div style={styles.sidebarHeader}>
+            <img src="midia/logodesk.png" alt="KyberRock" style={styles.sidebarLogo} />
+            <span style={styles.sidebarBrand}>{desktopAppInfo.name}</span>
           </div>
-        </div>
-      </div>
+          <nav aria-label="Navegacao principal" style={styles.sidebarNav}>
+            <SidebarSection title="Operacional">
+              <SidebarItem
+                id="dashboard"
+                label="Painel"
+                icon="▦"
+                activeView={activeView}
+                onSelect={setActiveView}
+              />
+              <SidebarItem
+                id="new-weighing"
+                label="Nova entrada"
+                icon="＋"
+                activeView={activeView}
+                onSelect={setActiveView}
+              />
+              <SidebarItem
+                id="open-operations"
+                label="Operacoes"
+                icon="≡"
+                activeView={activeView}
+                onSelect={setActiveView}
+              />
+              <SidebarItem
+                id="registrations"
+                label="Cadastros"
+                icon="☰"
+                activeView={activeView}
+                onSelect={setActiveView}
+              />
+            </SidebarSection>
+            <SidebarSection title="Analise">
+              <SidebarItem
+                id="insights"
+                label="Insights"
+                icon="◔"
+                activeView={activeView}
+                onSelect={setActiveView}
+              />
+              <SidebarItem
+                id="documentation"
+                label="Documentacao"
+                icon="✦"
+                activeView={activeView}
+                onSelect={setActiveView}
+                disabled
+                badge="Em breve"
+              />
+            </SidebarSection>
+          </nav>
+        </aside>
+        <div style={styles.contentColumn}>
+          <header style={styles.topbar}>
+            <div style={styles.topbarLeft}>
+              {companyName && unitName ? (
+                <span style={styles.headerMeta}>{companyName} — {unitName}</span>
+              ) : null}
+              <span style={styles.headerMessage}>{message}</span>
+            </div>
+            <div style={styles.topbarRight}>
+              <div style={{ position: "relative" }}>
+                <button
+                  type="button"
+                  onClick={() => setShowSettings((s) => !s)}
+                  style={styles.headerBtn}
+                  title="Configuracoes"
+                >
+                  ⚙
+                </button>
+                {showSettings ? (
+                  <div style={styles.settingsDropdown}>
+                    <button
+                      type="button"
+                      onClick={() => { setActiveView("scale"); setShowSettings(false); }}
+                      style={styles.settingsItem}
+                    >
+                      Balança
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setActiveView("printing"); setShowSettings(false); }}
+                      style={styles.settingsItem}
+                    >
+                      Impressão
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setActiveView("cloud"); setShowSettings(false); }}
+                      style={styles.settingsItem}
+                    >
+                      Cloud
+                    </button>
+                    <div style={{ height: "1px", background: "#e2e8f0", margin: "4px 0" }} />
+                    <button
+                      type="button"
+                      onClick={() => { setShowLogsModal(true); setShowSettings(false); }}
+                      style={{
+                        ...styles.settingsItem,
+                        color: errorLogs.some((l) => l.level === "error") ? "#b91c1c" : "#475569"
+                      }}
+                    >
+                      Logs {errorLogs.length > 0 ? `(${errorLogs.length})` : ""}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { void handleExportBackup(); setShowSettings(false); }}
+                      style={styles.settingsItem}
+                    >
+                      Exportar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { void handleRestoreBackup(); setShowSettings(false); }}
+                      style={styles.settingsItem}
+                    >
+                      Restaurar
+                    </button>
+                    <div style={{ height: "1px", background: "#e2e8f0", margin: "4px 0" }} />
+                    <button
+                      type="button"
+                      onClick={() => { void handleLogout(); setShowSettings(false); }}
+                      style={{ ...styles.settingsItem, color: "#b91c1c" }}
+                    >
+                      Sair
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </header>
+          <div style={styles.contentBody}>
 
       {showSettings ? (
         <div
@@ -1294,12 +1329,112 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
           </article>
         </section>
       ) : null}
+      {activeView === "insights" ? (
+        <InsightsView
+          desktopApi={desktopApi}
+          openOperations={openOperations}
+          cloudConnected={cloudConnected}
+          cloudSyncing={cloudSyncing}
+          omieStatus={omieStatus}
+          onSyncOmie={handleSyncOmie}
+          onSyncCloud={handleSyncToCloud}
+        />
+      ) : null}
+      {activeView === "documentation" ? (
+        <section style={styles.panel}>
+          <h2 style={styles.panelTitle}>Documentacao</h2>
+          <p style={styles.muted}>Em breve.</p>
+        </section>
+      ) : null}
+          </div>
+        </div>
+      </div>
     </main>
   );
 }
 
 function getWindowDesktopApi(): KyberRockDesktopApi | undefined {
   return typeof window === "undefined" ? undefined : window.kyberrockDesktop;
+}
+
+interface SidebarItemProps {
+  id: ActiveView;
+  label: string;
+  icon: string;
+  activeView: ActiveView;
+  onSelect: (view: ActiveView) => void;
+  disabled?: boolean;
+  badge?: string;
+}
+
+function SidebarItem({ id, label, icon, activeView, onSelect, disabled, badge }: SidebarItemProps) {
+  const isActive = activeView === id;
+  const baseStyle: React.CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    width: "100%",
+    padding: "8px 12px",
+    margin: 0,
+    fontSize: "13px",
+    fontWeight: isActive ? 600 : 500,
+    color: disabled ? "#94a3b8" : isActive ? "#0f172a" : "#475569",
+    background: isActive ? "#e0f2fe" : "transparent",
+    border: "none",
+    borderLeft: isActive ? "3px solid #2563eb" : "3px solid transparent",
+    borderRadius: "0 6px 6px 0",
+    cursor: disabled ? "not-allowed" : "pointer",
+    textAlign: "left"
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        if (!disabled) onSelect(id);
+      }}
+      style={baseStyle}
+      disabled={disabled}
+      aria-current={isActive ? "page" : undefined}
+    >
+      <span style={{ width: "16px", textAlign: "center", fontSize: "14px" }}>{icon}</span>
+      <span style={{ flex: 1 }}>{label}</span>
+      {badge ? (
+        <span
+          style={{
+            fontSize: "10px",
+            fontWeight: 700,
+            padding: "2px 6px",
+            background: "#f1f5f9",
+            color: "#475569",
+            borderRadius: "999px"
+          }}
+        >
+          {badge}
+        </span>
+      ) : null}
+    </button>
+  );
+}
+
+function SidebarSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+      <p
+        style={{
+          fontSize: "10px",
+          fontWeight: 700,
+          color: "#94a3b8",
+          textTransform: "uppercase",
+          letterSpacing: "0.06em",
+          margin: "12px 12px 4px 12px"
+        }}
+      >
+        {title}
+      </p>
+      {children}
+    </div>
+  );
 }
 
 function describeUpdateState(state: UpdateState): string {
@@ -2271,20 +2406,6 @@ function formatMoney(value: number | null | undefined): string {
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Falha inesperada.";
-}
-
-function navBtnStyle(active: boolean) {
-  return {
-    border: "none",
-    borderRadius: "6px",
-    padding: "4px 8px",
-    background: active ? "#0f172a" : "transparent",
-    color: active ? "#ffffff" : "#475569",
-    cursor: "pointer",
-    fontWeight: active ? 700 : 500,
-    fontSize: "12px",
-    whiteSpace: "nowrap" as const
-  };
 }
 
 function subTabStyle(active: boolean) {
@@ -4160,7 +4281,7 @@ const styles = {
   headerMessage: {
     fontSize: "11px",
     color: "#94a3b8",
-    maxWidth: "160px",
+    maxWidth: "320px",
     overflow: "hidden" as const,
     textOverflow: "ellipsis",
     whiteSpace: "nowrap" as const
@@ -4196,6 +4317,78 @@ const styles = {
     borderLeft: "1px solid #e2e8f0",
     paddingLeft: "6px",
     marginLeft: "2px"
+  },
+  shell: {
+    display: "flex",
+    gap: "12px",
+    alignItems: "stretch",
+    minHeight: "calc(100vh - 32px)"
+  },
+  sidebar: {
+    width: "220px",
+    flexShrink: 0,
+    background: "#ffffff",
+    border: "1px solid #e2e8f0",
+    borderRadius: "10px",
+    padding: "12px 0",
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "8px",
+    boxShadow: "0 1px 4px rgba(15, 23, 42, 0.04)"
+  },
+  sidebarHeader: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    padding: "0 12px 8px 12px",
+    borderBottom: "1px solid #e2e8f0"
+  },
+  sidebarLogo: {
+    height: "22px",
+    width: "auto"
+  },
+  sidebarBrand: {
+    fontSize: "14px",
+    fontWeight: 700,
+    color: "#0f172a"
+  },
+  sidebarNav: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "4px",
+    overflowY: "auto" as const
+  },
+  contentColumn: {
+    flex: 1,
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "12px",
+    minWidth: 0
+  },
+  topbar: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "6px 12px",
+    borderRadius: "10px",
+    background: "#ffffff",
+    boxShadow: "0 1px 4px rgba(15, 23, 42, 0.06)"
+  },
+  topbarLeft: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    minWidth: 0
+  },
+  topbarRight: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px"
+  },
+  contentBody: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "12px"
   },
   headerBtn: {
     border: "none",

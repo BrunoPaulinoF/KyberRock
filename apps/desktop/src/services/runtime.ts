@@ -83,6 +83,7 @@ import {
 } from "./cache-store.js";
 import { createOmieClient, OmieSyncService } from "./omie-sync.js";
 import { readOmiePullState, writeOmiePullState } from "./supabase-sync.js";
+import { ReportService } from "./reports.js";
 
 export interface OmieLoopProgress {
   iteration: number;
@@ -181,11 +182,13 @@ export class DesktopRuntime {
   private readonly simulatedScaleReadings = [12_000, 18_500, 12_250, 19_000];
   private omieClient: { appKey: string; appSecret: string } | null = null;
   private omieSync: OmieSyncService | null = null;
+  private reportService: ReportService;
 
   private constructor(initialized: InitializedDesktopDatabase) {
     this.database = initialized.database;
     this.paths = initialized.paths;
     this.cacheStore = new CacheStore(this.database);
+    this.reportService = new ReportService(this.database);
     this.ensureIdentity();
     this.cacheStore.loadAll(this.ensureIdentity().companyId);
     this.initializeOmieClient();
@@ -523,6 +526,51 @@ export class DesktopRuntime {
 
   queryCache(options: CacheQueryOptions): CacheQueryResult<unknown> {
     return this.cacheStore.query(options);
+  }
+
+  getDailyReport(date: string): ReturnType<ReportService["getDailyReport"]> {
+    return this.reportService.getDailyReport(date, this.ensureIdentity().unitId);
+  }
+
+  getMonthlyReport(year: number, month: number): ReturnType<ReportService["getMonthlyReport"]> {
+    return this.reportService.getMonthlyReport(year, month, this.ensureIdentity().unitId);
+  }
+
+  getReportByProduct(
+    startDate: string,
+    endDate: string,
+    limit?: number
+  ): ReturnType<ReportService["getReportByProduct"]> {
+    const all = this.reportService.getReportByProduct(
+      startDate,
+      endDate,
+      this.ensureIdentity().unitId
+    );
+    return typeof limit === "number" ? all.slice(0, limit) : all;
+  }
+
+  getReportByCustomer(
+    startDate: string,
+    endDate: string,
+    limit?: number
+  ): ReturnType<ReportService["getReportByCustomer"]> {
+    const all = this.reportService.getReportByCustomer(
+      startDate,
+      endDate,
+      this.ensureIdentity().unitId
+    );
+    return typeof limit === "number" ? all.slice(0, limit) : all;
+  }
+
+  getDailySeries(
+    startDate: string,
+    endDate: string
+  ): ReturnType<ReportService["getDailySeries"]> {
+    return this.reportService.getDailySeries(startDate, endDate, this.ensureIdentity().unitId);
+  }
+
+  getOperationMix(startDate: string, endDate: string): ReturnType<ReportService["getOperationMix"]> {
+    return this.reportService.getOperationMix(startDate, endDate, this.ensureIdentity().unitId);
   }
 
   getPriceForCustomerProduct(customerId: string, productId: string): number | null {

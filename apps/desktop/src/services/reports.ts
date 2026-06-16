@@ -43,6 +43,19 @@ export interface CustomerReport {
   totalValueCents: number;
 }
 
+export interface DailySeriesPoint {
+  date: string;
+  totalOperations: number;
+  totalNetWeightKg: number;
+  totalCents: number;
+}
+
+export interface OperationMix {
+  invoice: { count: number; weightKg: number; totalCents: number };
+  internal: { count: number; weightKg: number; totalCents: number };
+  cancelled: { count: number; weightKg: number };
+}
+
 export class ReportService {
   constructor(private readonly db: DesktopDatabase) {}
 
@@ -208,6 +221,111 @@ export class ReportService {
       totalWeightKg: row.total_weight,
       totalValueCents: row.total_value
     }));
+  }
+
+  getDailySeries(
+    startDate: string,
+    endDate: string,
+    unitId: string
+  ): DailySeriesPoint[] {
+    const start = new Date(`${startDate}T00:00:00Z`);
+    const end = new Date(`${endDate}T00:00:00Z`);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) {
+      return [];
+    }
+
+    const stmt = this.db.prepare(`
+      SELECT
+        date(created_at) as day,
+        COUNT(*) as total_operations,
+        COALESCE(SUM(net_weight_kg), 0) as total_weight,
+        COALESCE(SUM(total_cents), 0) as total
+      FROM weighing_operations
+      WHERE unit_id = ?
+        AND status = 'closed_local'
+        AND date(created_at) >= date(?)
+        AND date(created_at) <= date(?)
+      GROUP BY day
+      ORDER BY day ASC
+    `);
+
+    const rows = stmt.all(unitId, startDate, endDate) as Array<{
+      day: string;
+      total_operations: number;
+      total_weight: number;
+      total: number;
+    }>;
+
+    const byDate = new Map<string, DailySeriesPoint>();
+    for (const row of rows) {
+      byDate.set(row.day, {
+        date: row.day,
+        totalOperations: row.total_operations,
+        totalNetWeightKg: row.total_weight,
+        totalCents: row.total
+      });
+    }
+
+    const series: DailySeriesPoint[] = [];
+    const cursor = new Date(start);
+    while (cursor <= end) {
+      const iso = cursor.toISOString().slice(0, 10);
+      series.push(
+        byDate.get(iso) ?? {
+          date: iso,
+          totalOperations: 0,
+          totalNetWeightKg: 0,
+          totalCents: 0
+        }
+      );
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+    return series;
+  }
+
+  getOperationMix(startDate: string, endDate: string, unitId: string): OperationMix {
+    const stmt = this.db.prepare(`
+      SELECT
+        operation_type,
+        status,
+        COUNT(*) as total_operations,
+        COALESCE(SUM(net_weight_kg), 0) as total_weight,
+        COALESCE(SUM(total_cents), 0) as total
+      FROM weighing_operations
+      WHERE unit_id = ?
+        AND date(created_at) >= date(?)
+        AND date(created_at) <= date(?)
+      GROUP BY operation_type, status
+    `);
+
+    const rows = stmt.all(unitId, startDate, endDate) as Array<{
+      operation_type: "invoice" | "internal";
+      status: string;
+      total_operations: number;
+      total_weight: number;
+      total: number;
+    }>;
+
+    const mix: OperationMix = {
+      invoice: { count: 0, weightKg: 0, totalCents: 0 },
+      internal: { count: 0, weightKg: 0, totalCents: 0 },
+      cancelled: { count: 0, weightKg: 0 }
+    };
+
+    for (const row of rows) {
+      if (row.status === "cancelled") {
+        mix.cancelled.count += row.total_operations;
+        mix.cancelled.weightKg += row.total_weight;
+        continue;
+      }
+      if (row.status !== "closed_local") continue;
+      const target = row.operation_type === "internal" ? mix.internal : mix.invoice;
+      target.count += row.total_operations;
+      target.weightKg += row.total_weight;
+      target.totalCents += row.total;
+    }
+
+    return mix;
   }
 
   exportDailyToCSV(date: string, unitId: string): string {
