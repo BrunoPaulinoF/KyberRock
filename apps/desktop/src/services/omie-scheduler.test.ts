@@ -79,6 +79,28 @@ describe("shouldRunOmiePull", () => {
   it("trata lastPullAt invalido como nunca rodou", () => {
     expect(shouldRunOmiePull(config, "data-invalida")).toBe(true);
   });
+
+  it("dispara imediato quando pullInProgress=true (retomada parcial)", () => {
+    expect(
+      shouldRunOmiePull(
+        config,
+        "2026-06-16T11:55:00.000Z",
+        new Date("2026-06-16T12:00:00.000Z"),
+        true
+      )
+    ).toBe(true);
+  });
+
+  it("pullInProgress=true nao sobrepoe enabled=false", () => {
+    expect(
+      shouldRunOmiePull(
+        { enabled: false, intervalMinutes: 20 },
+        "2026-06-16T11:55:00.000Z",
+        new Date("2026-06-16T12:00:00.000Z"),
+        true
+      )
+    ).toBe(false);
+  });
 });
 
 describe("computeNextPullAt", () => {

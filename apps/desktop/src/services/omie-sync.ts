@@ -275,9 +275,9 @@ export class OmieSyncService {
         detailed_description, unit, ncm, ean, unit_price_cents,
         family_code, family_description, brand, model, internal_notes,
         gross_weight_kg, net_weight_kg, height_m, width_m, depth_m,
-        cest, item_type, icms_origin, blocked, fiscal_recommendations_json,
+        cest, item_type, icms_origin, blocked, tracks_stock, fiscal_recommendations_json,
         is_active, updated_from_omie_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), datetime('now'))
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), datetime('now'))
       ON CONFLICT(id) DO UPDATE SET
         omie_product_id = excluded.omie_product_id,
         omie_integration_code = excluded.omie_integration_code,
@@ -302,6 +302,7 @@ export class OmieSyncService {
         item_type = excluded.item_type,
         icms_origin = excluded.icms_origin,
         blocked = excluded.blocked,
+        tracks_stock = excluded.tracks_stock,
         fiscal_recommendations_json = excluded.fiscal_recommendations_json,
         is_active = excluded.is_active,
         updated_from_omie_at = datetime('now'),
@@ -337,6 +338,7 @@ export class OmieSyncService {
         product.itemType ?? null,
         product.icmsOrigin ?? null,
         product.blocked ? 1 : 0,
+        1,
         product.fiscalRecommendations ? JSON.stringify(product.fiscalRecommendations) : null,
         product.isActive === false ? 0 : 1
       );
@@ -351,12 +353,24 @@ export class OmieSyncService {
 
     const insert = this.db.prepare(`
       INSERT INTO payment_terms (
-        id, company_id, omie_code, name, rules_json,
-        is_active, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, 1, datetime('now'), datetime('now'))
+        id, company_id, omie_code, omie_integration_code, name, rules_json,
+        first_installment_days, installment_interval_days, installment_count,
+        installment_type, installment_days_json, visible, is_active,
+        updated_from_omie_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), datetime('now'))
       ON CONFLICT(id) DO UPDATE SET
+        omie_code = excluded.omie_code,
+        omie_integration_code = excluded.omie_integration_code,
         name = excluded.name,
         rules_json = excluded.rules_json,
+        first_installment_days = excluded.first_installment_days,
+        installment_interval_days = excluded.installment_interval_days,
+        installment_count = excluded.installment_count,
+        installment_type = excluded.installment_type,
+        installment_days_json = excluded.installment_days_json,
+        visible = excluded.visible,
+        is_active = excluded.is_active,
+        updated_from_omie_at = datetime('now'),
         updated_at = datetime('now')
     `);
 
@@ -367,8 +381,24 @@ export class OmieSyncService {
         id,
         companyId,
         String(term.id),
+        term.integrationCode ?? null,
         term.description,
-        JSON.stringify({ omieId: term.id })
+        JSON.stringify({
+          omieId: term.id,
+          firstInstallmentDays: term.firstInstallmentDays ?? null,
+          installmentIntervalDays: term.installmentIntervalDays ?? null,
+          installmentCount: term.installmentCount ?? null,
+          installmentType: term.installmentType ?? null,
+          installmentDays: term.installmentDays ?? null,
+          visible: term.visible ?? true
+        }),
+        term.firstInstallmentDays ?? null,
+        term.installmentIntervalDays ?? null,
+        term.installmentCount ?? null,
+        term.installmentType ?? null,
+        term.installmentDays ? JSON.stringify(term.installmentDays) : null,
+        term.visible === false ? 0 : 1,
+        term.isActive === false ? 0 : 1
       );
       count++;
     }

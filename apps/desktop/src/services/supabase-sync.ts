@@ -25,17 +25,36 @@ export interface OmieCloudSyncResult {
 
 interface OmieReferenceCustomer {
   id: number;
+  integrationCode?: string | null;
   name: string;
   tradeName: string | null;
   document: string | null;
+  stateRegistration?: string | null;
+  municipalRegistration?: string | null;
+  isIndividual?: boolean;
   email: string | null;
+  homepage?: string | null;
+  contactName?: string | null;
   phone: string | null;
+  phoneSecondary?: string | null;
   zipcode: string | null;
   addressStreet: string | null;
   addressNumber: string | null;
+  addressComplement?: string | null;
   neighborhood: string | null;
   city: string | null;
   state: string | null;
+  country?: string | null;
+  countryCode?: string | null;
+  ibgeCityCode?: string | null;
+  ibgeStateCode?: string | null;
+  customerType?: string | null;
+  isForeign?: boolean;
+  billingBlocked?: boolean;
+  isActive?: boolean;
+  observations?: string | null;
+  tagsJson?: Record<string, unknown> | unknown[] | null;
+  salespersonId?: number | null;
   defaultPaymentTermId: string | null;
 }
 
@@ -64,12 +83,21 @@ interface OmieReferenceProduct {
   icmsOrigin?: string | null;
   isActive?: boolean;
   blocked?: boolean;
+  tracksStock?: boolean;
   fiscalRecommendations?: Record<string, unknown> | null;
 }
 
 interface OmieReferencePaymentTerm {
   id: number;
+  integrationCode?: string | null;
   description: string;
+  firstInstallmentDays?: number | null;
+  installmentIntervalDays?: number | null;
+  installmentCount?: number | null;
+  installmentType?: string | null;
+  installmentDaysJson?: number[] | null;
+  isActive?: boolean;
+  visible?: boolean;
 }
 
 interface OmieReferenceDataResponse {
@@ -87,6 +115,12 @@ interface OmieReferenceDataResponse {
     customersFinished?: boolean;
     productsFinished?: boolean;
     paymentTermsFinished?: boolean;
+    customersTotalPages?: number | null;
+    customersTotalRecords?: number | null;
+    productsTotalPages?: number | null;
+    productsTotalRecords?: number | null;
+    paymentTermsTotalPages?: number | null;
+    paymentTermsTotalRecords?: number | null;
   };
 }
 
@@ -286,15 +320,37 @@ export function applyOmieReferenceData(
   apply();
 
   if (pagination) {
-    const pageSize = data.pageSize ?? 200;
-    const isFinished = (returned: number, flag: boolean | undefined): boolean => {
+    const pageSize = data.pageSize ?? 50;
+    const isFinished = (
+      page: number,
+      returned: number,
+      flag: boolean | undefined,
+      totalPages: number | null | undefined
+    ): boolean => {
       if (typeof flag === "boolean") return flag;
-      return returned > 0 && returned < pageSize;
+      if (returned === 0) return true;
+      if (typeof totalPages === "number" && totalPages > 0) return page >= totalPages;
+      return returned < pageSize;
     };
     const finished = {
-      customers: isFinished(pagination.customersReturned, pagination.customersFinished),
-      products: isFinished(pagination.productsReturned, pagination.productsFinished),
-      paymentTerms: isFinished(pagination.paymentTermsReturned, pagination.paymentTermsFinished)
+      customers: isFinished(
+        pagination.customersPage,
+        pagination.customersReturned,
+        pagination.customersFinished,
+        pagination.customersTotalPages
+      ),
+      products: isFinished(
+        pagination.productsPage,
+        pagination.productsReturned,
+        pagination.productsFinished,
+        pagination.productsTotalPages
+      ),
+      paymentTerms: isFinished(
+        pagination.paymentTermsPage,
+        pagination.paymentTermsReturned,
+        pagination.paymentTermsFinished,
+        pagination.paymentTermsTotalPages
+      )
     };
     const current = readOmiePullState(database);
     writeOmiePullState(database, {
@@ -643,25 +699,49 @@ function upsertOmieCustomers(
   );
   const upsert = database.prepare(`
     INSERT INTO customers (
-      id, company_id, omie_customer_id, source, legal_name, trade_name,
-      document, phone, email, zipcode, address_street, address_number, neighborhood, city, state,
+      id, company_id, omie_customer_id, omie_integration_code, source, legal_name, trade_name,
+      document, state_registration, municipal_registration, is_individual,
+      email, homepage, contact_name, phone, phone_secondary,
+      zipcode, address_street, address_number, address_complement,
+      neighborhood, city, state, country, country_code,
+      ibge_city_code, ibge_state_code, customer_type, is_foreign,
+      omie_billing_blocked, observations, tags_json, salesperson_id,
       default_payment_term_id, is_active, sync_status, last_synced_at,
       omie_updated_at, needs_push, created_at, updated_at
-    ) VALUES (?, ?, ?, 'omie', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'synced', datetime('now'), datetime('now'), 0, datetime('now'), datetime('now'))
+    ) VALUES (?, ?, ?, ?, 'omie', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced', datetime('now'), datetime('now'), 0, datetime('now'), datetime('now'))
     ON CONFLICT(id) DO UPDATE SET
       omie_customer_id = excluded.omie_customer_id,
+      omie_integration_code = excluded.omie_integration_code,
       legal_name = CASE WHEN customers.needs_push = 0 THEN excluded.legal_name ELSE customers.legal_name END,
       trade_name = CASE WHEN customers.needs_push = 0 THEN excluded.trade_name ELSE customers.trade_name END,
       document = CASE WHEN customers.needs_push = 0 THEN excluded.document ELSE customers.document END,
-      phone = CASE WHEN customers.needs_push = 0 THEN excluded.phone ELSE customers.phone END,
+      state_registration = CASE WHEN customers.needs_push = 0 THEN excluded.state_registration ELSE customers.state_registration END,
+      municipal_registration = CASE WHEN customers.needs_push = 0 THEN excluded.municipal_registration ELSE customers.municipal_registration END,
+      is_individual = CASE WHEN customers.needs_push = 0 THEN excluded.is_individual ELSE customers.is_individual END,
       email = CASE WHEN customers.needs_push = 0 THEN excluded.email ELSE customers.email END,
+      homepage = CASE WHEN customers.needs_push = 0 THEN excluded.homepage ELSE customers.homepage END,
+      contact_name = CASE WHEN customers.needs_push = 0 THEN excluded.contact_name ELSE customers.contact_name END,
+      phone = CASE WHEN customers.needs_push = 0 THEN excluded.phone ELSE customers.phone END,
+      phone_secondary = CASE WHEN customers.needs_push = 0 THEN excluded.phone_secondary ELSE customers.phone_secondary END,
       zipcode = CASE WHEN customers.needs_push = 0 THEN excluded.zipcode ELSE customers.zipcode END,
       address_street = CASE WHEN customers.needs_push = 0 THEN excluded.address_street ELSE customers.address_street END,
       address_number = CASE WHEN customers.needs_push = 0 THEN excluded.address_number ELSE customers.address_number END,
+      address_complement = CASE WHEN customers.needs_push = 0 THEN excluded.address_complement ELSE customers.address_complement END,
       neighborhood = CASE WHEN customers.needs_push = 0 THEN excluded.neighborhood ELSE customers.neighborhood END,
       city = CASE WHEN customers.needs_push = 0 THEN excluded.city ELSE customers.city END,
       state = CASE WHEN customers.needs_push = 0 THEN excluded.state ELSE customers.state END,
+      country = CASE WHEN customers.needs_push = 0 THEN excluded.country ELSE customers.country END,
+      country_code = CASE WHEN customers.needs_push = 0 THEN excluded.country_code ELSE customers.country_code END,
+      ibge_city_code = CASE WHEN customers.needs_push = 0 THEN excluded.ibge_city_code ELSE customers.ibge_city_code END,
+      ibge_state_code = CASE WHEN customers.needs_push = 0 THEN excluded.ibge_state_code ELSE customers.ibge_state_code END,
+      customer_type = excluded.customer_type,
+      is_foreign = excluded.is_foreign,
+      omie_billing_blocked = excluded.omie_billing_blocked,
+      observations = CASE WHEN customers.needs_push = 0 THEN excluded.observations ELSE customers.observations END,
+      tags_json = excluded.tags_json,
+      salesperson_id = excluded.salesperson_id,
       default_payment_term_id = CASE WHEN customers.needs_push = 0 THEN excluded.default_payment_term_id ELSE customers.default_payment_term_id END,
+      is_active = excluded.is_active,
       sync_status = CASE WHEN customers.needs_push = 0 THEN 'synced' ELSE customers.sync_status END,
       last_synced_at = datetime('now'),
       omie_updated_at = datetime('now'),
@@ -678,18 +758,37 @@ function upsertOmieCustomers(
       localId,
       companyId,
       customer.id,
+      customer.integrationCode ?? null,
       customer.name,
       customer.tradeName || customer.name,
       customer.document,
-      customer.phone,
+      customer.stateRegistration ?? null,
+      customer.municipalRegistration ?? null,
+      customer.isIndividual ? 1 : 0,
       customer.email,
+      customer.homepage ?? null,
+      customer.contactName ?? null,
+      customer.phone,
+      customer.phoneSecondary ?? null,
       customer.zipcode,
       customer.addressStreet,
       customer.addressNumber,
+      customer.addressComplement ?? null,
       customer.neighborhood,
       customer.city,
       customer.state,
-      customer.defaultPaymentTermId
+      customer.country ?? null,
+      customer.countryCode ?? null,
+      customer.ibgeCityCode ?? null,
+      customer.ibgeStateCode ?? null,
+      customer.customerType ?? null,
+      customer.isForeign ? 1 : 0,
+      customer.billingBlocked ? 1 : 0,
+      customer.observations ?? null,
+      customer.tagsJson ? JSON.stringify(customer.tagsJson) : null,
+      customer.salespersonId ?? null,
+      customer.defaultPaymentTermId,
+      customer.isActive === false ? 0 : 1
     );
   }
 }
@@ -705,9 +804,9 @@ function upsertOmieProducts(
       detailed_description, unit, ncm, ean, unit_price_cents,
       family_code, family_description, brand, model, internal_notes,
       gross_weight_kg, net_weight_kg, height_m, width_m, depth_m,
-      cest, item_type, icms_origin, blocked, fiscal_recommendations_json,
+      cest, item_type, icms_origin, blocked, tracks_stock, fiscal_recommendations_json,
       is_active, updated_from_omie_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), datetime('now'))
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), datetime('now'))
     ON CONFLICT(id) DO UPDATE SET
       omie_product_id = excluded.omie_product_id,
       omie_integration_code = excluded.omie_integration_code,
@@ -732,6 +831,7 @@ function upsertOmieProducts(
       item_type = excluded.item_type,
       icms_origin = excluded.icms_origin,
       blocked = excluded.blocked,
+      tracks_stock = excluded.tracks_stock,
       fiscal_recommendations_json = excluded.fiscal_recommendations_json,
       is_active = excluded.is_active,
       updated_from_omie_at = datetime('now'),
@@ -765,6 +865,7 @@ function upsertOmieProducts(
       product.itemType ?? null,
       product.icmsOrigin ?? null,
       product.blocked ? 1 : 0,
+      product.tracksStock === false ? 0 : 1,
       product.fiscalRecommendations ? JSON.stringify(product.fiscalRecommendations) : null,
       product.isActive === false ? 0 : 1
     );
@@ -778,13 +879,24 @@ function upsertOmiePaymentTerms(
 ): void {
   const upsert = database.prepare(`
     INSERT INTO payment_terms (
-      id, company_id, omie_code, name, rules_json,
-      is_active, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, 1, datetime('now'), datetime('now'))
+      id, company_id, omie_code, omie_integration_code, name, rules_json,
+      first_installment_days, installment_interval_days, installment_count,
+      installment_type, installment_days_json, visible, is_active,
+      updated_from_omie_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), datetime('now'))
     ON CONFLICT(id) DO UPDATE SET
       omie_code = excluded.omie_code,
+      omie_integration_code = excluded.omie_integration_code,
       name = excluded.name,
       rules_json = excluded.rules_json,
+      first_installment_days = excluded.first_installment_days,
+      installment_interval_days = excluded.installment_interval_days,
+      installment_count = excluded.installment_count,
+      installment_type = excluded.installment_type,
+      installment_days_json = excluded.installment_days_json,
+      visible = excluded.visible,
+      is_active = excluded.is_active,
+      updated_from_omie_at = datetime('now'),
       updated_at = datetime('now')
   `);
 
@@ -793,8 +905,24 @@ function upsertOmiePaymentTerms(
       `omie_${paymentTerm.id}`,
       companyId,
       String(paymentTerm.id),
+      paymentTerm.integrationCode ?? null,
       paymentTerm.description,
-      JSON.stringify({ omieId: paymentTerm.id })
+      JSON.stringify({
+        omieId: paymentTerm.id,
+        firstInstallmentDays: paymentTerm.firstInstallmentDays ?? null,
+        installmentIntervalDays: paymentTerm.installmentIntervalDays ?? null,
+        installmentCount: paymentTerm.installmentCount ?? null,
+        installmentType: paymentTerm.installmentType ?? null,
+        installmentDays: paymentTerm.installmentDaysJson ?? null,
+        visible: paymentTerm.visible ?? true
+      }),
+      paymentTerm.firstInstallmentDays ?? null,
+      paymentTerm.installmentIntervalDays ?? null,
+      paymentTerm.installmentCount ?? null,
+      paymentTerm.installmentType ?? null,
+      paymentTerm.installmentDaysJson ? JSON.stringify(paymentTerm.installmentDaysJson) : null,
+      paymentTerm.visible === false ? 0 : 1,
+      paymentTerm.isActive === false ? 0 : 1
     );
   }
 }

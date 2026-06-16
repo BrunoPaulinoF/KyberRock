@@ -47,6 +47,11 @@ describe("runDesktopMigrations", () => {
           version: 5,
           name: "product_omie_full_attributes",
           appliedAt: "2026-06-06T12:00:00.000Z"
+        },
+        {
+          version: 6,
+          name: "omie_reference_full_attributes",
+          appliedAt: "2026-06-06T12:00:00.000Z"
         }
       ]);
       expect(tableNames).toContain("companies");
@@ -67,7 +72,7 @@ describe("runDesktopMigrations", () => {
       runDesktopMigrations(database, undefined, new Date("2026-06-06T12:00:00.000Z"));
       runDesktopMigrations(database, undefined, new Date("2026-06-06T13:00:00.000Z"));
 
-      expect(getAppliedMigrations(database)).toHaveLength(5);
+      expect(getAppliedMigrations(database)).toHaveLength(6);
     } finally {
       database.close();
     }

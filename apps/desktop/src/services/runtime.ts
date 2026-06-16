@@ -262,6 +262,7 @@ export class DesktopRuntime {
       getConfig: () => readOmieSchedulerConfig(this.database),
       getLastPullAt: () => readOmiePullLastRunAt(this.database),
       setLastPullAt: (isoString) => recordOmiePullRanAt(this.database, isoString),
+      isPullInProgress: () => readOmiePullState(this.database).inProgress,
       runPull: async () => {
         if (!this.omieClient) {
           throw new Error("Sincronizacao OMIE agendada ignorada: credenciais nao configuradas.");

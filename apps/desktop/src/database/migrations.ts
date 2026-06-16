@@ -426,5 +426,41 @@ CREATE INDEX IF NOT EXISTS idx_products_company_family ON products(company_id, f
 CREATE INDEX IF NOT EXISTS idx_products_company_brand ON products(company_id, brand);
 CREATE INDEX IF NOT EXISTS idx_products_company_active ON products(company_id, is_active, deleted_at);
 `
+  },
+  {
+    version: 6,
+    name: "omie_reference_full_attributes",
+    sql: `
+ALTER TABLE customers ADD COLUMN state_registration TEXT;
+ALTER TABLE customers ADD COLUMN municipal_registration TEXT;
+ALTER TABLE customers ADD COLUMN is_individual INTEGER NOT NULL DEFAULT 0 CHECK (is_individual IN (0, 1));
+ALTER TABLE customers ADD COLUMN homepage TEXT;
+ALTER TABLE customers ADD COLUMN contact_name TEXT;
+ALTER TABLE customers ADD COLUMN phone_secondary TEXT;
+ALTER TABLE customers ADD COLUMN ibge_city_code TEXT;
+ALTER TABLE customers ADD COLUMN ibge_state_code TEXT;
+ALTER TABLE customers ADD COLUMN country TEXT;
+ALTER TABLE customers ADD COLUMN country_code TEXT;
+ALTER TABLE customers ADD COLUMN customer_type TEXT;
+ALTER TABLE customers ADD COLUMN is_foreign INTEGER NOT NULL DEFAULT 0 CHECK (is_foreign IN (0, 1));
+ALTER TABLE customers ADD COLUMN tags_json TEXT;
+ALTER TABLE customers ADD COLUMN salesperson_id INTEGER;
+
+ALTER TABLE payment_terms ADD COLUMN omie_integration_code TEXT;
+ALTER TABLE payment_terms ADD COLUMN first_installment_days INTEGER;
+ALTER TABLE payment_terms ADD COLUMN installment_interval_days INTEGER;
+ALTER TABLE payment_terms ADD COLUMN installment_count INTEGER;
+ALTER TABLE payment_terms ADD COLUMN installment_type TEXT;
+ALTER TABLE payment_terms ADD COLUMN installment_days_json TEXT;
+ALTER TABLE payment_terms ADD COLUMN visible INTEGER NOT NULL DEFAULT 1 CHECK (visible IN (0, 1));
+ALTER TABLE payment_terms ADD COLUMN updated_from_omie_at TEXT;
+
+ALTER TABLE products ADD COLUMN tracks_stock INTEGER NOT NULL DEFAULT 1 CHECK (tracks_stock IN (0, 1));
+
+CREATE INDEX IF NOT EXISTS idx_customers_company_ibge ON customers(company_id, ibge_city_code);
+CREATE INDEX IF NOT EXISTS idx_customers_company_state_reg ON customers(company_id, state_registration);
+CREATE INDEX IF NOT EXISTS idx_customers_company_salesperson ON customers(company_id, salesperson_id);
+CREATE INDEX IF NOT EXISTS idx_payment_terms_active_visible ON payment_terms(company_id, is_active, visible);
+`
   }
 ];

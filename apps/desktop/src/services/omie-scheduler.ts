@@ -24,6 +24,7 @@ export interface StartOmiePullSchedulerOptions {
   getLastPullAt: () => string | null;
   setLastPullAt: (isoString: string) => void;
   runPull: () => Promise<void>;
+  isPullInProgress?: () => boolean;
   onError?: (error: unknown) => void;
   setIntervalFn?: typeof setInterval;
   clearIntervalFn?: typeof clearInterval;
@@ -76,9 +77,11 @@ export function normalizeOmieSchedulerConfig(
 export function shouldRunOmiePull(
   config: OmieSchedulerConfig,
   lastPullAt: string | null,
-  now: Date = new Date()
+  now: Date = new Date(),
+  pullInProgress = false
 ): boolean {
   if (!config.enabled) return false;
+  if (pullInProgress) return true;
   if (!lastPullAt) return true;
 
   const last = Date.parse(lastPullAt);
@@ -116,7 +119,8 @@ export function startOmiePullScheduler(
     if (!config.enabled) return;
     if (running) return;
 
-    if (!shouldRunOmiePull(config, options.getLastPullAt(), now())) return;
+    const pullInProgress = options.isPullInProgress?.() ?? false;
+    if (!shouldRunOmiePull(config, options.getLastPullAt(), now(), pullInProgress)) return;
 
     running = true;
     const startedAt = now().toISOString();
