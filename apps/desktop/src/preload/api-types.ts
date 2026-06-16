@@ -154,6 +154,18 @@ export interface KyberRockDesktopApi {
     lastBatchPaymentTerms: number;
     lastUpdatedAt?: string | null;
   } | null>;
+  getOmieSchedulerStatus: () => Promise<{
+    enabled: boolean;
+    intervalMinutes: number;
+    lastPullAt: string | null;
+    nextPullAt: string | null;
+  }>;
+  setOmieSchedulerConfig: (config: { enabled?: boolean; intervalMinutes?: number }) => Promise<{
+    enabled: boolean;
+    intervalMinutes: number;
+    lastPullAt: string | null;
+    nextPullAt: string | null;
+  }>;
   onUpdateAvailable: (callback: (event: unknown, version: string) => void) => void;
   offUpdateAvailable: (callback: (event: unknown, version: string) => void) => void;
   onPlateScanned: (callback: (plate: string) => void) => void;

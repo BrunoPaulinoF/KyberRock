@@ -55,6 +55,8 @@ async function createMainWindow(): Promise<void> {
   writeStartupLog("runtime:initialized");
   runtime.startAutomaticBackupScheduler();
   writeStartupLog("backupScheduler:started");
+  runtime.startOmiePullScheduler();
+  writeStartupLog("omieScheduler:started");
 
   mainWindow = new BrowserWindow({
     width: 1180,
@@ -602,6 +604,19 @@ function registerIpcHandlers(): void {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.getOmieLoopStatus();
   });
+
+  ipcMain.handle("desktop:omie-scheduler-status", () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.getOmieSchedulerStatus();
+  });
+
+  ipcMain.handle(
+    "desktop:omie-scheduler-config",
+    (_event, config: { enabled?: boolean; intervalMinutes?: number }) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.setOmieSchedulerConfig(config);
+    }
+  );
 }
 
 function createElectronReceiptPrinter(parentWindow: BrowserWindow): ReceiptPrinter {

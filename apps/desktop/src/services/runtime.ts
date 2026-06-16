@@ -21,6 +21,17 @@ import {
   type StartDailyBackupSchedulerOptions
 } from "./backup-scheduler.js";
 import {
+  computeNextPullAt,
+  readOmiePullLastRunAt,
+  readOmieSchedulerConfig,
+  recordOmiePullRanAt,
+  startOmiePullScheduler,
+  writeOmieSchedulerConfig,
+  type OmieSchedulerConfig,
+  type OmieSchedulerHandle,
+  type OmieSchedulerStatus
+} from "./omie-scheduler.js";
+import {
   getDesktopStatusSnapshot,
   recordLastBackupAt,
   type DesktopStatusSnapshot
@@ -162,6 +173,7 @@ export class DesktopRuntime {
   private database: DesktopDatabase;
   private readonly paths: InitializedDesktopDatabase["paths"];
   private backupScheduler: BackupSchedulerHandle | null = null;
+  private omieScheduler: OmieSchedulerHandle | null = null;
   private receiptPrinter: ReceiptPrinter = { printReceipt: async () => undefined };
   private cacheStore: CacheStore;
   private scaleAdapter: ToledoTcpAdapter = createToledoTcpAdapter();
@@ -242,6 +254,47 @@ export class DesktopRuntime {
     });
 
     return this.backupScheduler;
+  }
+
+  startOmiePullScheduler(): OmieSchedulerHandle {
+    this.omieScheduler?.stop();
+    this.omieScheduler = startOmiePullScheduler({
+      getConfig: () => readOmieSchedulerConfig(this.database),
+      getLastPullAt: () => readOmiePullLastRunAt(this.database),
+      setLastPullAt: (isoString) => recordOmiePullRanAt(this.database, isoString),
+      runPull: async () => {
+        if (!this.omieClient) {
+          throw new Error("Sincronizacao OMIE agendada ignorada: credenciais nao configuradas.");
+        }
+        await this.runOmieDataEntryLoop({ maxIterations: 200 });
+      },
+      onError: (error) => console.error("Pull OMIE automatico falhou", error)
+    });
+
+    return this.omieScheduler;
+  }
+
+  stopOmiePullScheduler(): void {
+    this.omieScheduler?.stop();
+    this.omieScheduler = null;
+  }
+
+  getOmieSchedulerStatus(): OmieSchedulerStatus {
+    const config = readOmieSchedulerConfig(this.database);
+    const lastPullAt = readOmiePullLastRunAt(this.database);
+    return {
+      ...config,
+      lastPullAt,
+      nextPullAt: computeNextPullAt(config, lastPullAt)
+    };
+  }
+
+  setOmieSchedulerConfig(config: Partial<OmieSchedulerConfig>): OmieSchedulerStatus {
+    writeOmieSchedulerConfig(this.database, config);
+    if (this.omieScheduler) {
+      this.startOmiePullScheduler();
+    }
+    return this.getOmieSchedulerStatus();
   }
 
   setReceiptPrinter(receiptPrinter: ReceiptPrinter): void {
