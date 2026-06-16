@@ -70,6 +70,7 @@ export interface PaymentTermCacheEntry {
   omieCode: string | null;
   name: string;
   rulesJson: string;
+  installmentCount: number | null;
   isActive: boolean;
 }
 
@@ -191,6 +192,7 @@ interface PaymentTermRow {
   omie_code: string | null;
   name: string;
   rules_json: string;
+  installment_count: number | null;
   is_active: number;
 }
 
@@ -298,6 +300,7 @@ function mapPaymentTerm(row: PaymentTermRow): PaymentTermCacheEntry {
     omieCode: row.omie_code,
     name: row.name,
     rulesJson: row.rules_json,
+    installmentCount: row.installment_count,
     isActive: row.is_active === 1
   };
 }
@@ -601,7 +604,7 @@ export class CacheStore {
   private loadPaymentTerms(companyId: string): void {
     const rows = this.db
       .prepare(
-        `SELECT id, omie_code, name, rules_json, is_active
+        `SELECT id, omie_code, name, rules_json, installment_count, is_active
          FROM payment_terms WHERE company_id = ? AND deleted_at IS NULL`
       )
       .all(companyId) as PaymentTermRow[];

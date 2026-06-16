@@ -42,6 +42,7 @@ interface WeighingFormState {
   driverId: string;
   productId: string;
   paymentTermId: string;
+  installments: number | null;
   unitPriceCents: number | null;
 }
 
@@ -54,6 +55,7 @@ const initialWeighingForm: WeighingFormState = {
   driverId: "",
   productId: "",
   paymentTermId: "",
+  installments: null,
   unitPriceCents: null
 };
 
@@ -1392,6 +1394,7 @@ interface OmieLoopUiState {
 interface CacheSelectOption {
   id: string;
   label: string;
+  raw?: Record<string, unknown>;
 }
 
 function CacheSelect({
@@ -1438,7 +1441,8 @@ function CacheSelect({
             id: String(item.id ?? item.omieCode ?? ""),
             label: String(
               item.tradeName ?? item.plate ?? item.name ?? item.description ?? item.fullName ?? ""
-            )
+            ),
+            raw: item
           }))
         );
       } catch {
@@ -1510,7 +1514,7 @@ function CacheSelect({
                 key={option.id}
                 type="button"
                 onClick={() => {
-                  onChange(option.id);
+                  onChange(option.id, option.raw);
                   setOpen(false);
                   setSearch("");
                 }}
@@ -1712,10 +1716,49 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
             label="Condicao de pagamento"
             entityType="payment_term"
             value={form.paymentTermId}
-            onChange={(id) => setForm({ ...form, paymentTermId: id })}
+            onChange={(id, item) => {
+              const rawCount = item?.installmentCount;
+              const installments =
+                typeof rawCount === "number" && Number.isFinite(rawCount) && rawCount > 0
+                  ? rawCount
+                  : null;
+              setForm((prev) => ({
+                ...prev,
+                paymentTermId: id,
+                installments: id ? installments : null
+              }));
+            }}
             desktopApi={desktopApi}
           />
         </div>
+
+        {form.paymentTermId ? (
+          <div>
+            <label style={styles.fieldLabel}>
+              Numero de parcelas
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={form.installments ?? ""}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  if (raw === "") {
+                    setForm((prev) => ({ ...prev, installments: null }));
+                    return;
+                  }
+                  const parsed = Number.parseInt(raw, 10);
+                  setForm((prev) => ({
+                    ...prev,
+                    installments: Number.isFinite(parsed) && parsed > 0 ? parsed : null
+                  }));
+                }}
+                placeholder="Informe o numero de parcelas"
+                style={styles.input}
+              />
+            </label>
+          </div>
+        ) : null}
 
         <div>
           <CacheSelect
