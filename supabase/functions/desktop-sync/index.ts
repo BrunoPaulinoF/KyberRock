@@ -14,6 +14,7 @@ Deno.serve(async (req) => {
     deviceToken?: string;
     operations?: Record<string, unknown>[];
     loadingRequests?: Record<string, unknown>[];
+    printReceipts?: Record<string, unknown>[];
     customers?: Record<string, unknown>[];
     products?: Record<string, unknown>[];
   };
@@ -30,7 +31,7 @@ Deno.serve(async (req) => {
   const tokenHash = await sha256Hex(deviceToken);
   if (!safeEqual(tokenHash, device.token_hash)) return jsonResponse({ error: "Token de dispositivo invalido" }, 401);
 
-  const counts = { operations: 0, loadingRequests: 0, customers: 0, products: 0 };
+  const counts = { operations: 0, loadingRequests: 0, printReceipts: 0, customers: 0, products: 0 };
   if (body.customers?.length) {
     const { error } = await supabase.from("customers").upsert(body.customers, { onConflict: "id" });
     if (error) throw error;
@@ -50,6 +51,11 @@ Deno.serve(async (req) => {
     const { error } = await supabase.from("loading_requests").upsert(body.loadingRequests, { onConflict: "id" });
     if (error) throw error;
     counts.loadingRequests = body.loadingRequests.length;
+  }
+  if (body.printReceipts?.length) {
+    const { error } = await supabase.from("print_receipts").upsert(body.printReceipts, { onConflict: "id" });
+    if (error) throw error;
+    counts.printReceipts = body.printReceipts.length;
   }
 
   await supabase.from("device_registrations").update({ last_seen_at: new Date().toISOString() }).eq("id", deviceId);

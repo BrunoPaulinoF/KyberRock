@@ -37,6 +37,8 @@ export interface ProductCacheEntry {
   ncm: string | null;
   ean: string | null;
   unitPriceCents: number | null;
+  itemType: string | null;
+  fiscalRecommendationsJson: string | null;
   isActive: boolean;
 }
 
@@ -115,6 +117,7 @@ export interface CacheQueryOptions {
   limit?: number;
   offset?: number;
   activeOnly?: boolean;
+  productFiscalType?: "finished_goods";
 }
 
 export interface CacheQueryResult<T> {
@@ -159,6 +162,8 @@ interface ProductRow {
   ncm: string | null;
   ean: string | null;
   unit_price_cents: number | null;
+  item_type: string | null;
+  fiscal_recommendations_json: string | null;
   is_active: number;
 }
 
@@ -259,8 +264,69 @@ function mapProduct(row: ProductRow): ProductCacheEntry {
     ncm: row.ncm,
     ean: row.ean,
     unitPriceCents: row.unit_price_cents,
+    itemType: row.item_type,
+    fiscalRecommendationsJson: row.fiscal_recommendations_json,
     isActive: row.is_active === 1
   };
+}
+
+function isFinishedGoodsProduct(product: ProductCacheEntry): boolean {
+  if (product.omieProductId === null) return false;
+
+  const candidates = [product.itemType, ...extractFiscalRecommendationValues(product.fiscalRecommendationsJson)];
+  return candidates.some((value) => matchesFinishedGoodsType(value));
+}
+
+function extractFiscalRecommendationValues(value: string | null): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    const values: string[] = [];
+    collectRecommendationValues(parsed, values);
+    return values;
+  } catch {
+    return [];
+  }
+}
+
+function collectRecommendationValues(value: unknown, output: string[]): void {
+  if (typeof value === "string" || typeof value === "number") {
+    output.push(String(value));
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) collectRecommendationValues(item, output);
+    return;
+  }
+
+  if (value && typeof value === "object") {
+    for (const [key, nested] of Object.entries(value)) {
+      const normalizedKey = normalizeFiscalTypeText(key);
+      if (normalizedKey.includes("tipo") && (normalizedKey.includes("produto") || normalizedKey.includes("item"))) {
+        collectRecommendationValues(nested, output);
+      }
+      if (normalizedKey === "codigo" || normalizedKey === "cod" || normalizedKey === "code") {
+        collectRecommendationValues(nested, output);
+      }
+    }
+  }
+}
+
+function matchesFinishedGoodsType(value: string | null | undefined): boolean {
+  if (!value) return false;
+  const normalized = normalizeFiscalTypeText(value);
+  return normalized === "04" || normalized.startsWith("04 ") || normalized.includes("produtos acabados") || normalized.includes("produto acabado");
+}
+
+function normalizeFiscalTypeText(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[-_/.:]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function mapVehicle(row: VehicleRow): VehicleCacheEntry {
@@ -425,13 +491,18 @@ export class CacheStore {
       search,
       limit = 100,
       offset = 0,
-      activeOnly = true
+      activeOnly = true,
+      productFiscalType
     } = options;
 
     let rows: unknown[] = this.getAllOfType(entityType);
 
     if (activeOnly) {
       rows = rows.filter((r) => (r as { isActive?: boolean }).isActive !== false);
+    }
+
+    if (entityType === "product" && productFiscalType === "finished_goods") {
+      rows = (rows as ProductCacheEntry[]).filter((product) => isFinishedGoodsProduct(product));
     }
 
     if (search) {
@@ -548,14 +619,18 @@ export class CacheStore {
   private loadProducts(companyId: string): void {
     const rows = this.db
       .prepare(
-        `SELECT id, omie_product_id, code, description, unit, ncm, ean, unit_price_cents, is_active
+        `SELECT id, omie_product_id, code, description, unit, ncm, ean, unit_price_cents,
+                item_type, fiscal_recommendations_json, is_active
          FROM products WHERE company_id = ? AND deleted_at IS NULL`
       )
       .all(companyId) as ProductRow[];
 
     this.products.clear();
     for (const row of rows) {
-      this.products.set(row.id, mapProduct(row));
+      const product = mapProduct(row);
+      if (isFinishedGoodsProduct(product)) {
+        this.products.set(row.id, product);
+      }
     }
   }
 

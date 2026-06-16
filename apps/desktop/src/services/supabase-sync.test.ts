@@ -10,6 +10,7 @@ import {
   applyOmieReferenceData,
   initializeSupabase,
   isSupabaseInitialized,
+  processCloudSyncQueue,
   processOmieSyncQueue,
   pushOmieCustomersToCloud,
   syncOmieReferenceDataFromCloud
@@ -72,6 +73,48 @@ describe("supabase sync", () => {
     }
   });
 
+  it("processes queued cloud jobs for operations and receipts", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertWeighingOperation(database);
+      insertPrintReceipt(database);
+      enqueueSyncJob(database, {
+        id: "cloud-operation-job",
+        target: "cloud",
+        action: "upsert_operation",
+        entityType: "operation",
+        entityId: "operation-1",
+        idempotencyKey: "cloud:operation:operation-1",
+        payload: { operationId: "operation-1" }
+      });
+      enqueueSyncJob(database, {
+        id: "cloud-receipt-job",
+        target: "cloud",
+        action: "upsert_print_receipt",
+        entityType: "print_receipt",
+        entityId: "receipt-1",
+        idempotencyKey: "cloud:print_receipt:receipt-1",
+        payload: { receiptId: "receipt-1" }
+      });
+
+      const result = await processCloudSyncQueue(database, identity);
+
+      expect(result).toEqual({ processed: 2, failed: 0, errors: [] });
+      expect(invokeMock).toHaveBeenCalledWith("desktop-sync", {
+        body: expect.objectContaining({ operations: [expect.objectContaining({ id: "operation-1" })] })
+      });
+      expect(invokeMock).toHaveBeenCalledWith("desktop-sync", {
+        body: expect.objectContaining({ printReceipts: [expect.objectContaining({ id: "receipt-1" })] })
+      });
+      expect(database.prepare("SELECT COUNT(*) FROM sync_queue WHERE status = 'done'").pluck().get()).toBe(2);
+    } finally {
+      database.close();
+    }
+  });
+
   it("applies OMIE reference data returned by the cloud bridge", () => {
     const database = createDatabase();
 
@@ -93,7 +136,8 @@ describe("supabase sync", () => {
             id: 456,
             code: "BRITA1",
             description: "Brita 1",
-            unit: "M3"
+            unit: "M3",
+            itemType: "04 - Produtos Acabados"
           }
         ],
         paymentTerms: [
@@ -129,7 +173,7 @@ describe("supabase sync", () => {
         error: null,
         data: {
           customers: [{ id: 123, name: "Cliente OMIE", tradeName: null, document: null, phone: null, email: null }],
-          products: [{ id: 456, code: "BRITA", description: "Brita", unit: "M3" }],
+          products: [{ id: 456, code: "BRITA", description: "Brita", unit: "M3", itemType: "04" }],
           paymentTerms: [{ id: 789, description: "30 dias" }]
         }
       });
@@ -552,6 +596,21 @@ function insertWeighingOperation(database: DesktopDatabase): void {
       )`
     )
     .run(now, now);
+}
+
+function insertPrintReceipt(database: DesktopDatabase): void {
+  const now = "2026-06-12T12:00:00.000Z";
+  database
+    .prepare(
+      `INSERT INTO print_receipts (
+        id, operation_id, unit_id, receipt_number, copy_number, content_snapshot_json,
+        printed_at, printer_name, status, created_at, updated_at
+      ) VALUES (
+        'receipt-1', 'operation-1', 'unit-1', 1, 1, '{"lines":[]}',
+        ?, 'TERMICA-80', 'printed', ?, ?
+      )`
+    )
+    .run(now, now, now);
 }
 
 function createFunctionHttpError(message: string): Error & { context: unknown } {

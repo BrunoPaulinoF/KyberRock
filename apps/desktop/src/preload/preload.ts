@@ -66,6 +66,8 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:get-operation-mix", startDate, endDate),
   getPriceForCustomerProduct: (customerId: string, productId: string) =>
     ipcRenderer.invoke("desktop:get-price", customerId, productId),
+  getPriceDetailsForCustomerProduct: (customerId: string, productId: string) =>
+    ipcRenderer.invoke("desktop:get-price-details", customerId, productId),
   customersCreate: (input: unknown) =>
     ipcRenderer.invoke("desktop:customers-create", input),
   customersUpdate: (id: string, input: unknown) =>

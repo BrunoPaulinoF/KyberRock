@@ -24,14 +24,11 @@ Deno.serve(async (req) => {
 
   const sessionSecret = Deno.env.get("KYBERROCK_ADMIN_SESSION_SECRET") ?? "";
   const sessionToken = req.headers.get("x-admin-session");
-  console.log("[admin-api] sessionToken present:", !!sessionToken, "secret length:", sessionSecret.length);
   
   const session = await verifyAdminSession(sessionToken, sessionSecret);
   if (!session) {
-    console.log("[admin-api] session verification failed");
     return jsonResponse({ error: "Sessao administrativa invalida" }, 401);
   }
-  console.log("[admin-api] session verified:", session.sub);
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";

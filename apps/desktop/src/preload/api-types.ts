@@ -9,6 +9,7 @@ import type { DesktopStatusSnapshot } from "../services/status";
 import type { UpdateState } from "../services/update-flow";
 import type { OperationType, WeighingOperationSummary } from "../services/weighing-operations";
 import type { SyncResult } from "../services/supabase-sync";
+import type { PriceDetails } from "../services/pricing";
 import type { ActivateDesktopInput, DesktopAccessStatus } from "../services/desktop-activation";
 import type { CacheQueryOptions, CacheQueryResult } from "../services/cache-store";
 import type {
@@ -90,6 +91,7 @@ export interface KyberRockDesktopApi {
   getDailySeries: (startDate: string, endDate: string) => Promise<DailySeriesPoint[]>;
   getOperationMix: (startDate: string, endDate: string) => Promise<OperationMix>;
   getPriceForCustomerProduct: (customerId: string, productId: string) => Promise<number | null>;
+  getPriceDetailsForCustomerProduct: (customerId: string, productId: string) => Promise<PriceDetails | null>;
   customersCreate: (input: Omit<CreateCustomerInput, "companyId">) => Promise<unknown>;
   customersUpdate: (id: string, input: UpdateCustomerInput) => Promise<unknown>;
   customersDelete: (id: string) => Promise<void>;

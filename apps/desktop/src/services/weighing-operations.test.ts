@@ -6,6 +6,7 @@ import { ensureInitialDesktopIdentity } from "./bootstrap";
 import {
   cancelWeighingOperation,
   closeWeighingOperation,
+  createWeighingOperation,
   createSimulatedWeighingOperation,
   listOpenWeighingOperations
 } from "./weighing-operations";
@@ -53,14 +54,14 @@ describe("weighing operations", () => {
         driverName: "Motorista Teste",
         productDescription: "Brita 1",
         paymentTermName: "Quinzenal",
-        unitPriceCents: 12,
+        unitPriceCents: 12_000,
         entryWeightKg: 12_000
       });
 
       expect(operation).toMatchObject({
         operationType: "internal",
         paymentTermName: "Quinzenal",
-        unitPriceCents: 12,
+        unitPriceCents: 12_000,
         productTotalCents: null,
         totalCents: null
       });
@@ -116,7 +117,7 @@ describe("weighing operations", () => {
         driverName: "Motorista Teste",
         productDescription: "Brita 1",
         paymentTermName: "A vista",
-        unitPriceCents: 12,
+        unitPriceCents: 12_000,
         entryWeightKg: 12_000
       });
 
@@ -127,7 +128,7 @@ describe("weighing operations", () => {
 
       expect(closed).toMatchObject({
         netWeightKg: 6_500,
-        unitPriceCents: 12,
+        unitPriceCents: 12_000,
         productTotalCents: 78_000,
         totalCents: 78_000,
         paymentTermName: "A vista"
@@ -217,6 +218,78 @@ describe("weighing operations", () => {
 
       expect(cancelled).toMatchObject({ status: "cancelled", cancelReason: "Cliente desistiu" });
       expect(database.prepare("SELECT COUNT(*) FROM audit_logs").pluck().get()).toBe(2);
+      expect(database.prepare("SELECT COUNT(*) FROM sync_queue WHERE status = 'pending'").pluck().get()).toBe(4);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("blocks duplicate open operations for the same plate", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+
+      createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        unitPriceCents: 12_000,
+        entryWeightKg: 12_000
+      });
+
+      expect(() =>
+        createWeighingOperation(database, {
+          identity,
+          customerId: "customer-1",
+          vehicleId: "vehicle-1",
+          driverId: "driver-1",
+          productId: "product-1",
+          unitPriceCents: 12_000,
+          entryWeightKg: 13_000
+        })
+      ).toThrow("Ja existe uma operacao aberta para a placa ABC1D23");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("blocks customers and products flagged as unavailable", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database, { customerBlocked: true });
+
+      expect(() =>
+        createWeighingOperation(database, {
+          identity,
+          customerId: "customer-1",
+          vehicleId: "vehicle-1",
+          driverId: "driver-1",
+          productId: "product-1",
+          unitPriceCents: 12_000,
+          entryWeightKg: 12_000
+        })
+      ).toThrow("Cliente bloqueado no OMIE");
+
+      database.prepare("UPDATE customers SET omie_billing_blocked = 0 WHERE id = 'customer-1'").run();
+      database.prepare("UPDATE products SET blocked = 1 WHERE id = 'product-1'").run();
+
+      expect(() =>
+        createWeighingOperation(database, {
+          identity,
+          customerId: "customer-1",
+          vehicleId: "vehicle-1",
+          driverId: "driver-1",
+          productId: "product-1",
+          unitPriceCents: 12_000,
+          entryWeightKg: 12_000
+        })
+      ).toThrow("Produto inativo ou bloqueado");
     } finally {
       database.close();
     }
@@ -239,4 +312,28 @@ function createIdentity(database: DesktopDatabase) {
     deviceName: "PC Balanca",
     installationId: "install-1"
   });
+}
+
+function insertCatalog(database: DesktopDatabase, options: { customerBlocked?: boolean } = {}): void {
+  const now = "2026-06-06T12:00:00.000Z";
+  database
+    .prepare(
+      `INSERT INTO customers (
+        id, company_id, source, legal_name, trade_name, omie_billing_blocked, created_at, updated_at
+      ) VALUES ('customer-1', 'company-1', 'omie', 'Cliente Teste LTDA', 'Cliente Teste', ?, ?, ?)`
+    )
+    .run(options.customerBlocked ? 1 : 0, now, now);
+  database
+    .prepare("INSERT INTO vehicles (id, company_id, plate, created_at, updated_at) VALUES ('vehicle-1', 'company-1', 'ABC1D23', ?, ?)")
+    .run(now, now);
+  database
+    .prepare("INSERT INTO drivers (id, company_id, name, created_at, updated_at) VALUES ('driver-1', 'company-1', 'Motorista Teste', ?, ?)")
+    .run(now, now);
+  database
+    .prepare(
+      `INSERT INTO products (
+        id, company_id, omie_product_id, code, description, unit, unit_price_cents, item_type, created_at, updated_at
+      ) VALUES ('product-1', 'company-1', 123, 'BRITA1', 'Brita 1', 'ton', 15000, '04 - Produtos Acabados', ?, ?)`
+    )
+    .run(now, now);
 }

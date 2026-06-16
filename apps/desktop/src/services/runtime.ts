@@ -58,6 +58,7 @@ import {
 } from "./printing.js";
 import {
   initializeSupabase,
+  processCloudSyncQueue,
   syncOperationToSupabase,
   syncLoadingRequestToSupabase,
   syncOmieReferenceDataFromCloud,
@@ -84,6 +85,7 @@ import {
 import { createOmieClient, OmieSyncService } from "./omie-sync.js";
 import { readOmiePullState, writeOmiePullState } from "./supabase-sync.js";
 import { ReportService } from "./reports.js";
+import { PricingService, type PriceDetails } from "./pricing.js";
 
 export interface OmieLoopProgress {
   iteration: number;
@@ -178,8 +180,6 @@ export class DesktopRuntime {
   private receiptPrinter: ReceiptPrinter = { printReceipt: async () => undefined };
   private cacheStore: CacheStore;
   private scaleAdapter: ToledoTcpAdapter = createToledoTcpAdapter();
-  private simulatedScaleCursor = 0;
-  private readonly simulatedScaleReadings = [12_000, 18_500, 12_250, 19_000];
   private omieClient: { appKey: string; appSecret: string } | null = null;
   private omieSync: OmieSyncService | null = null;
   private reportService: ReportService;
@@ -353,9 +353,8 @@ export class DesktopRuntime {
     try {
       const reading = await this.scaleAdapter.read();
       return reading.weightKg;
-    } catch {
-      // Fallback to simulated if scale is not connected
-      return this.readNextSimulatedScaleWeightKg();
+    } catch (error) {
+      throw new Error(`Nao foi possivel ler a balanca: ${error instanceof Error ? error.message : "falha desconhecida"}.`);
     }
   }
 
@@ -425,6 +424,11 @@ export class DesktopRuntime {
 
     try {
       initializeSupabase();
+
+      const queue = await processCloudSyncQueue(this.database, identity);
+      synced += queue.processed;
+      failed += queue.failed;
+      errors.push(...queue.errors);
 
       // Sync open operations
       const openOperations = listOpenWeighingOperations(this.database);
@@ -574,7 +578,11 @@ export class DesktopRuntime {
   }
 
   getPriceForCustomerProduct(customerId: string, productId: string): number | null {
-    return this.cacheStore.getPriceForCustomerProduct(customerId, productId);
+    return new PricingService(this.database).getPriceForCustomerProduct(customerId, productId);
+  }
+
+  getPriceDetailsForCustomerProduct(customerId: string, productId: string): PriceDetails | null {
+    return new PricingService(this.database).getPriceDetailsForCustomerProduct(customerId, productId);
   }
 
   invalidateCache(
@@ -984,12 +992,5 @@ export class DesktopRuntime {
     if (!access.canOperate) {
       throw new Error(access.message);
     }
-  }
-
-  private readNextSimulatedScaleWeightKg(): number {
-    const index = Math.min(this.simulatedScaleCursor, this.simulatedScaleReadings.length - 1);
-    this.simulatedScaleCursor += 1;
-
-    return this.simulatedScaleReadings[index];
   }
 }

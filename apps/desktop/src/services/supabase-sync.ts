@@ -217,6 +217,50 @@ export async function syncLoadingRequestToSupabase(
   return true;
 }
 
+export async function syncPrintReceiptToSupabase(
+  database: DesktopDatabase,
+  receiptId: string,
+  identity: LocalDesktopIdentity
+): Promise<boolean> {
+  const settings = getCloudSettings(database, identity);
+  const receipt = getPrintReceiptPayload(database, receiptId, settings);
+  await invokeDesktopSync(settings, { printReceipts: [receipt] });
+  return true;
+}
+
+export async function processCloudSyncQueue(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity
+): Promise<{ processed: number; failed: number; errors: string[] }> {
+  const jobs = listRunnableSyncJobs(database, { target: "cloud", limit: 100 });
+  let processed = 0;
+  let failed = 0;
+  const errors: string[] = [];
+
+  for (const job of jobs) {
+    try {
+      if (job.action === "upsert_operation") {
+        await syncOperationToSupabase(database, getPayloadId(job.payload, "operationId", job.entityId), identity);
+      } else if (job.action === "upsert_loading_request") {
+        await syncLoadingRequestToSupabase(database, job.entityId, identity);
+      } else if (job.action === "upsert_print_receipt") {
+        await syncPrintReceiptToSupabase(database, job.entityId, identity);
+      } else {
+        throw new Error(`Acao cloud desconhecida: ${job.action}`);
+      }
+      markSyncJobDone(database, job.id);
+      processed++;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Erro cloud";
+      markSyncJobFailed(database, job.id, message);
+      failed++;
+      errors.push(`Job ${job.id}: ${message}`);
+    }
+  }
+
+  return { processed, failed, errors };
+}
+
 export async function syncCustomerToSupabase(database: DesktopDatabase, customerId: string): Promise<boolean> {
   const settings = getCloudSettings(database);
   const customer = database.prepare("SELECT * FROM customers WHERE id = ?").get(customerId) as Record<string, unknown> | undefined;
@@ -424,11 +468,18 @@ function getOperationPayload(database: DesktopDatabase, operationId: string, set
     exit_weight_kg: operation.exit_weight_kg,
     net_weight_kg: operation.net_weight_kg,
     unit_price_cents: operation.unit_price_cents,
+    base_unit_price_cents: operation.base_unit_price_cents,
+    applied_price_table_id: operation.applied_price_table_id,
+    applied_price_table_name: operation.applied_price_table_name,
+    applied_price_table_item_id: operation.applied_price_table_item_id,
+    price_unit: operation.price_unit,
+    price_savings_percent: operation.price_savings_percent,
     product_total_cents: operation.product_total_cents,
     freight_total_cents: operation.freight_total_cents,
     total_cents: operation.total_cents,
     omie_sales_order_id: operation.omie_sales_order_id,
     omie_service_order_id: operation.omie_service_order_id,
+    cancel_reason: operation.cancel_reason,
     created_at: operation.created_at,
     updated_at: operation.updated_at,
     closed_at: operation.exit_weight_captured_at,
@@ -564,6 +615,41 @@ export async function pushOmieCustomersToCloud(
   }
 
   return { pushed, failed, errors };
+}
+
+function getPrintReceiptPayload(database: DesktopDatabase, receiptId: string, settings: CloudSettings): Record<string, unknown> {
+  const receipt = database.prepare("SELECT * FROM print_receipts WHERE id = ?").get(receiptId) as Record<string, unknown> | undefined;
+  if (!receipt) throw new Error(`Print receipt ${receiptId} not found`);
+  return {
+    id: receipt.id,
+    operation_id: receipt.operation_id,
+    unit_id: settings.unitId,
+    receipt_number: receipt.receipt_number,
+    copy_number: receipt.copy_number,
+    content_snapshot_json: parseJsonValue(receipt.content_snapshot_json),
+    printed_at: receipt.printed_at,
+    printer_name: receipt.printer_name,
+    status: receipt.status,
+    error_message: receipt.error_message,
+    created_at: receipt.created_at,
+    updated_at: receipt.updated_at
+  };
+}
+
+function getPayloadId(payload: unknown, key: string, fallback: string): string {
+  if (payload && typeof payload === "object" && key in payload) {
+    return String((payload as Record<string, unknown>)[key] ?? fallback);
+  }
+  return fallback;
+}
+
+function parseJsonValue(value: unknown): unknown {
+  if (typeof value !== "string") return value ?? {};
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return {};
+  }
 }
 
 export async function processOmieSyncQueue(
@@ -798,6 +884,15 @@ function upsertOmieProducts(
   companyId: string,
   products: OmieReferenceProduct[]
 ): void {
+  const removeFromKyberRock = database.prepare(`
+    UPDATE products
+    SET is_active = 0,
+        deleted_at = datetime('now'),
+        updated_from_omie_at = datetime('now'),
+        updated_at = datetime('now')
+    WHERE company_id = ?
+      AND omie_product_id = ?
+  `);
   const upsert = database.prepare(`
     INSERT INTO products (
       id, company_id, omie_product_id, omie_integration_code, code, description,
@@ -834,11 +929,17 @@ function upsertOmieProducts(
       tracks_stock = excluded.tracks_stock,
       fiscal_recommendations_json = excluded.fiscal_recommendations_json,
       is_active = excluded.is_active,
+      deleted_at = NULL,
       updated_from_omie_at = datetime('now'),
       updated_at = datetime('now')
   `);
 
   for (const product of products) {
+    if (!isFinishedGoodsOmieProduct(product)) {
+      removeFromKyberRock.run(companyId, product.id);
+      continue;
+    }
+
     upsert.run(
       `omie_${product.id}`,
       companyId,
@@ -870,6 +971,58 @@ function upsertOmieProducts(
       product.isActive === false ? 0 : 1
     );
   }
+}
+
+function isFinishedGoodsOmieProduct(product: OmieReferenceProduct): boolean {
+  const candidates = [
+    product.itemType ?? null,
+    ...extractFiscalRecommendationValues(product.fiscalRecommendations ?? null)
+  ];
+  return candidates.some((value) => matchesFinishedGoodsType(value));
+}
+
+function extractFiscalRecommendationValues(value: unknown): string[] {
+  const values: string[] = [];
+  collectFiscalRecommendationValues(value, values);
+  return values;
+}
+
+function collectFiscalRecommendationValues(value: unknown, output: string[]): void {
+  if (typeof value === "string" || typeof value === "number") {
+    output.push(String(value));
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectFiscalRecommendationValues(item, output);
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const [key, nested] of Object.entries(value)) {
+      const normalizedKey = normalizeFiscalTypeText(key);
+      if (normalizedKey.includes("tipo") && (normalizedKey.includes("produto") || normalizedKey.includes("item"))) {
+        collectFiscalRecommendationValues(nested, output);
+      }
+      if (normalizedKey === "codigo" || normalizedKey === "cod" || normalizedKey === "code") {
+        collectFiscalRecommendationValues(nested, output);
+      }
+    }
+  }
+}
+
+function matchesFinishedGoodsType(value: string | null | undefined): boolean {
+  if (!value) return false;
+  const normalized = normalizeFiscalTypeText(value);
+  return normalized === "04" || normalized.startsWith("04 ") || normalized.includes("produtos acabados") || normalized.includes("produto acabado");
+}
+
+function normalizeFiscalTypeText(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[-_/.:]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function upsertOmiePaymentTerms(

@@ -462,5 +462,19 @@ CREATE INDEX IF NOT EXISTS idx_customers_company_state_reg ON customers(company_
 CREATE INDEX IF NOT EXISTS idx_customers_company_salesperson ON customers(company_id, salesperson_id);
 CREATE INDEX IF NOT EXISTS idx_payment_terms_active_visible ON payment_terms(company_id, is_active, visible);
 `
+  },
+  {
+    version: 7,
+    name: "operation_price_snapshot",
+    sql: `
+ALTER TABLE weighing_operations ADD COLUMN base_unit_price_cents INTEGER;
+ALTER TABLE weighing_operations ADD COLUMN applied_price_table_id TEXT;
+ALTER TABLE weighing_operations ADD COLUMN applied_price_table_name TEXT;
+ALTER TABLE weighing_operations ADD COLUMN applied_price_table_item_id TEXT;
+ALTER TABLE weighing_operations ADD COLUMN price_unit TEXT NOT NULL DEFAULT 'ton';
+ALTER TABLE weighing_operations ADD COLUMN price_savings_percent REAL;
+
+CREATE INDEX IF NOT EXISTS idx_operations_price_table ON weighing_operations(applied_price_table_id);
+`
   }
 ];

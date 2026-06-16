@@ -81,6 +81,7 @@ describe("OmieSyncService", () => {
         description: "Brita 0",
         code: "BRITA0",
         unit: "M3",
+        itemType: "04 - Produtos Acabados",
         isActive: true,
         blocked: false
       }
@@ -90,6 +91,30 @@ describe("OmieSyncService", () => {
 
     expect(count).toBe(1);
     expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining("INSERT INTO products"));
+  });
+
+  it("removes non-finished products from KyberRock during OMIE sync", async () => {
+    const db = createMockDb();
+    const client = createMockClient();
+
+    const service = new OmieSyncService(client, db);
+
+    vi.spyOn((service as unknown as Record<string, unknown>).productsService as unknown as { listAll: () => Promise<unknown[]> }, "listAll").mockResolvedValue([
+      {
+        id: 457,
+        description: "Produto nao acabado",
+        code: "INSUMO",
+        unit: "UN",
+        itemType: "01",
+        isActive: true,
+        blocked: false
+      }
+    ]);
+
+    const count = await service.syncProducts("company-1");
+
+    expect(count).toBe(0);
+    expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining("UPDATE products"));
   });
 
   it("syncs payment terms from OMIE to local database", async () => {

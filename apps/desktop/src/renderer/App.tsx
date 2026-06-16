@@ -14,6 +14,7 @@ import {
   type UpdateState
 } from "../services/update-flow";
 import type { OperationType, WeighingOperationSummary } from "../services/weighing-operations";
+import type { PriceDetails } from "../services/pricing";
 import type { CacheEntityType } from "../services/cache-store";
 import {
   formatDocument,
@@ -72,6 +73,7 @@ const initialWeighingForm: WeighingFormState = {
 type RegistrationsTab = "customers" | "price_tables" | "products" | "payment_terms" | "transport";
 
 type AppPhase = "checking_access" | "locked" | "unlocked";
+type ThemeMode = "light" | "dark";
 
 export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }: AppProps = {}) {
   const [phase, setPhase] = useState<AppPhase>("checking_access");
@@ -95,6 +97,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [availableVersion, setAvailableVersion] = useState<string | null>(null);
   const [showLogsModal, setShowLogsModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [themeMode, setThemeMode] = useState<ThemeMode>("light");
   const [errorLogs, setErrorLogs] = useState<Array<{ timestamp: string; level: string; source: string; message: string; details?: string }>>([]);
   const [accessStatus, setAccessStatus] = useState<DesktopAccessStatus | null>(null);
   const [omieStatus, setOmieStatus] = useState<{
@@ -110,6 +113,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   } | null>(null);
   const [registrationsTab, setRegistrationsTab] = useState<RegistrationsTab>("customers");
   const [closingOperationId, setClosingOperationId] = useState<string | null>(null);
+  const [cancelOperationId, setCancelOperationId] = useState<string | null>(null);
   const [omieSyncing, setOmieSyncing] = useState(false);
   const [omieConnectionFeedback, setOmieConnectionFeedback] = useState<{
     status: "idle" | "checking" | "success" | "warning" | "error";
@@ -117,6 +121,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     details?: string;
   }>({ status: "idle", message: "" });
   const [omieLoop, setOmieLoop] = useState<OmieLoopUiState | null>(null);
+  const themeVars = useMemo(() => getThemeVariables(themeMode), [themeMode]);
 
   useEffect(() => {
     const captureLog = (level: string, source: string) => (...args: unknown[]) => {
@@ -540,6 +545,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         unitPriceCents: form.unitPriceCents ?? undefined
       });
       setMessage(`Entrada capturada: ${operation.entryWeightKg} kg.`);
+      setForm(initialWeighingForm);
       setActiveView("open-operations");
       await refreshOpenOperations();
     } catch (error) {
@@ -625,10 +631,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
   }
 
-  async function handleCancelOperation(operationId: string): Promise<void> {
-    const reason = window.prompt("Motivo do cancelamento");
-
-    if (!desktopApi || reason === null) {
+  async function handleCancelOperation(operationId: string, reason: string): Promise<void> {
+    if (!desktopApi) {
       return;
     }
 
@@ -643,7 +647,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
   if (phase === "checking_access") {
     return (
-      <main style={styles.page}>
+      <main style={{ ...styles.page, ...getThemeVariables("light") }}>
         <div style={{ ...styles.card, maxWidth: "480px", margin: "auto", marginTop: "40px" }}>
           <h1 style={styles.title}>KyberRock</h1>
           <p style={styles.subtitle}>Verificando acesso...</p>
@@ -655,7 +659,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   if (phase === "locked") {
     if (!desktopApi) {
       return (
-        <main style={styles.page}>
+        <main style={{ ...styles.page, ...getThemeVariables("light") }}>
           <div style={{ ...styles.card, maxWidth: "480px", margin: "auto", marginTop: "40px" }}>
             <h1 style={styles.title}>API do desktop indisponivel</h1>
             <p style={styles.subtitle}>Abra o aplicativo pelo Electron.</p>
@@ -675,7 +679,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
   if (!desktopApi) {
     return (
-      <main style={styles.page}>
+      <main style={{ ...styles.page, ...getThemeVariables("light") }}>
         <div style={{ ...styles.card, maxWidth: "480px", margin: "auto", marginTop: "40px" }}>
           <h1 style={styles.title}>API do desktop indisponivel</h1>
           <p style={styles.subtitle}>Abra o aplicativo pelo Electron.</p>
@@ -685,7 +689,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   }
 
   return (
-    <main style={styles.page}>
+    <main data-theme={themeMode} style={{ ...styles.page, ...themeVars }}>
       <div style={styles.shell}>
         <aside style={styles.sidebar}>
           <div style={styles.sidebarHeader}>
@@ -752,6 +756,15 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
               <span style={styles.headerMessage}>{message}</span>
             </div>
             <div style={styles.topbarRight}>
+              <button
+                type="button"
+                onClick={() => setThemeMode((mode) => mode === "light" ? "dark" : "light")}
+                style={styles.themeToggle}
+                title="Alternar tema"
+              >
+                <span>{themeMode === "light" ? "☾" : "☀"}</span>
+                {themeMode === "light" ? "Escuro" : "Claro"}
+              </button>
               <div style={{ position: "relative" }}>
                 <button
                   type="button"
@@ -951,42 +964,58 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       ) : null}
 
       {activeView === "open-operations" ? (
-        <section style={styles.panel}>
-          <h2 style={styles.panelTitle}>Operacoes em aberto</h2>
+        <section style={styles.operationsPanel}>
+          <div style={styles.sectionTitleRow}>
+            <div>
+              <p style={styles.kicker}>Fila operacional</p>
+              <h2 style={styles.panelTitle}>Operacoes em aberto</h2>
+            </div>
+            <span style={styles.countBadge}>{openOperations.length} abertas</span>
+          </div>
           {openOperations.length === 0 ? (
-            <p style={styles.muted}>Nenhuma operacao aberta.</p>
-          ) : null}
-          {openOperations.map((operation) => (
-            <article key={operation.id} style={styles.operationRow}>
-              <div>
-                <strong>{operation.plate}</strong>
-                <p style={styles.muted}>
-                  {operation.customerName} - {operation.driverName} - {operation.productDescription}
-                </p>
-                <p>
-                  Tipo: {operation.operationType === "invoice" ? "Com nota" : "Interna"} | Entrada:{" "}
-                  {operation.entryWeightKg} kg | Preco: {formatMoney(operation.unitPriceCents)}/kg
-                </p>
-                <p>Condicao: {operation.paymentTermName ?? "nao informada"}</p>
+            <div style={styles.emptyState}>
+              <strong>Nenhuma operacao aberta</strong>
+              <span>As entradas capturadas pela balanca aparecem aqui para fechamento.</span>
+            </div>
+          ) : (
+            <div style={styles.operationsTable}>
+              <div style={{ ...styles.operationsTableRow, ...styles.operationsTableHead }}>
+                <span>Placa</span>
+                <span>Cliente</span>
+                <span>Produto</span>
+                <span>Motorista</span>
+                <span>Entrada</span>
+                <span>Preco</span>
+                <span>Acoes</span>
               </div>
-              <div style={styles.actions}>
-                <button
-                  type="button"
-                  onClick={() => setClosingOperationId(operation.id)}
-                  style={styles.primaryButton}
-                >
-                  Fechar saida
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleCancelOperation(operation.id)}
-                  style={styles.secondaryButton}
-                >
-                  Cancelar
-                </button>
-              </div>
-            </article>
-          ))}
+              {openOperations.map((operation) => (
+                <div key={operation.id} style={styles.operationsTableRow}>
+                  <strong style={styles.plateBadge}>{operation.plate}</strong>
+                  <span>{operation.customerName}</span>
+                  <span>{operation.productDescription}</span>
+                  <span>{operation.driverName}</span>
+                  <span>{formatWeightKg(operation.entryWeightKg ?? 0)}</span>
+                  <span>{formatMoney(operation.unitPriceCents)}/ton</span>
+                  <span style={styles.rowActions}>
+                    <button
+                      type="button"
+                      onClick={() => setClosingOperationId(operation.id)}
+                      style={styles.smallPrimaryButton}
+                    >
+                      Fechar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCancelOperationId(operation.id)}
+                      style={styles.smallDangerButton}
+                    >
+                      Cancelar
+                    </button>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
       ) : null}
 
@@ -999,6 +1028,17 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
             void handleCloseOperation(id, operationType);
           }}
           onCancel={() => setClosingOperationId(null)}
+        />
+      ) : null}
+
+      {cancelOperationId ? (
+        <CancelOperationDialog
+          onConfirm={(reason) => {
+            const id = cancelOperationId;
+            setCancelOperationId(null);
+            void handleCancelOperation(id, reason);
+          }}
+          onCancel={() => setCancelOperationId(null)}
         />
       ) : null}
 
@@ -1540,7 +1580,8 @@ function CacheSelect({
   onCreateNew,
   desktopApi,
   disabled = false,
-  refreshKey = 0
+  refreshKey = 0,
+  productFiscalType
 }: {
   label: string;
   entityType: CacheEntityType;
@@ -1550,15 +1591,26 @@ function CacheSelect({
   desktopApi: KyberRockDesktopApi | null;
   disabled?: boolean;
   refreshKey?: number;
+  productFiscalType?: "finished_goods";
 }) {
   const [search, setSearch] = useState("");
   const [options, setOptions] = useState<CacheSelectOption[]>([]);
+  const [selectedOption, setSelectedOption] = useState<CacheSelectOption | null>(null);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const selectedLabel = useMemo(() => {
-    return options.find((o) => o.id === value)?.label ?? "";
+    return options.find((o) => o.id === value)?.label ?? (selectedOption?.id === value ? selectedOption.label : "");
+  }, [options, selectedOption, value]);
+
+  useEffect(() => {
+    if (!value) {
+      setSelectedOption(null);
+      return;
+    }
+    const option = options.find((item) => item.id === value);
+    if (option) setSelectedOption(option);
   }, [options, value]);
 
   useEffect(() => {
@@ -1569,7 +1621,8 @@ function CacheSelect({
         const result = await desktopApi.queryCache({
           entityType,
           search: search.trim(),
-          limit: 20
+          limit: 20,
+          productFiscalType
         });
         setOptions(
           (result.rows as Array<Record<string, unknown>>).map((item) => ({
@@ -1588,7 +1641,7 @@ function CacheSelect({
     }
 
     load();
-  }, [desktopApi, entityType, search, refreshKey]);
+  }, [desktopApi, entityType, productFiscalType, search, refreshKey]);
 
   useEffect(() => {
     function handleClick(event: MouseEvent) {
@@ -1649,6 +1702,7 @@ function CacheSelect({
                 key={option.id}
                 type="button"
                 onClick={() => {
+                  setSelectedOption(option);
                   onChange(option.id, option.raw);
                   setOpen(false);
                   setSearch("");
@@ -1717,6 +1771,7 @@ interface WeighingFormProps {
 
 function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel }: WeighingFormProps) {
   const [liveWeight, setLiveWeight] = useState<number | null>(null);
+  const [priceDetails, setPriceDetails] = useState<PriceDetails | null>(null);
   const [showVehicleModal, setShowVehicleModal] = useState(false);
   const [showDriverModal, setShowDriverModal] = useState(false);
   const [showCustomerModal, setShowCustomerModal] = useState(false);
@@ -1737,14 +1792,18 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
 
   useEffect(() => {
     async function fetchPrice() {
-      if (!desktopApi || !form.customerId || !form.productId) return;
+      if (!desktopApi || !form.customerId || !form.productId) {
+        setPriceDetails(null);
+        return;
+      }
       try {
-        const price = await desktopApi.getPriceForCustomerProduct(form.customerId, form.productId);
-        if (price !== null) {
-          setForm((prev) => ({ ...prev, unitPriceCents: price }));
+        const details = await desktopApi.getPriceDetailsForCustomerProduct(form.customerId, form.productId);
+        setPriceDetails(details);
+        if (details?.appliedUnitPriceCents !== null && details?.appliedUnitPriceCents !== undefined) {
+          setForm((prev) => ({ ...prev, unitPriceCents: details.appliedUnitPriceCents }));
         }
       } catch {
-        /* ignore */
+        setPriceDetails(null);
       }
     }
 
@@ -1752,47 +1811,29 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
   }, [desktopApi, form.customerId, form.productId]);
 
   return (
-    <section style={styles.panel}>
-      <h2 style={styles.panelTitle}>Nova pesagem</h2>
-      <p style={styles.muted}>
-        Selecione a placa, cliente, transportadora e demais dados. O peso vem da balanca em tempo real.
-      </p>
-
-      {liveWeight !== null ? (
-        <div
-          style={{
-            background: "#f1f5f9",
-            borderRadius: "8px",
-            padding: "10px",
-            marginBottom: "12px",
-            textAlign: "center"
-          }}
-        >
-          <div style={{ fontSize: "11px", color: "#64748b", marginBottom: "2px" }}>Peso atual</div>
-          <div style={{ fontSize: "26px", fontWeight: 700, color: "#0f172a" }}>
-            {liveWeight.toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 0 })} kg
-          </div>
+    <section style={styles.entryShell}>
+      <div style={styles.entryHero}>
+        <div>
+          <p style={styles.kicker}>Operacao de balanca</p>
+          <h2 style={{ ...styles.title, marginBottom: "6px" }}>Nova entrada</h2>
+          <p style={styles.subtitle}>
+            Selecione cliente, produto acabado OMIE, placa e motorista. O peso e capturado direto da balanca.
+          </p>
         </div>
-      ) : null}
+        <div style={styles.liveWeightCard}>
+          <span style={styles.metricLabel}>Peso atual</span>
+          <strong style={styles.metricValue}>
+            {liveWeight !== null ? formatWeightKg(liveWeight) : "-- kg"}
+          </strong>
+          <span style={styles.metricHint}>{liveWeight !== null ? "Leitura em tempo real" : "Aguardando balanca"}</span>
+        </div>
+      </div>
 
       {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr",
-          gap: "12px",
-          marginBottom: "12px"
-        }}
-      >
-        <div style={{ fontWeight: 700, fontSize: "13px", color: "#475569", borderBottom: "1px solid #e2e8f0", paddingBottom: "2px" }}>
-          Entidade
-        </div>
-        <div style={{ fontWeight: 700, fontSize: "13px", color: "#475569", borderBottom: "1px solid #e2e8f0", paddingBottom: "2px" }}>
-          Transporte
-        </div>
-
-        <div>
+      <div style={styles.entryGrid}>
+        <article style={styles.entryCard}>
+          <SectionHeader icon="◈" title="Dados comerciais" description="Cliente, produto fiscal e condicao de pagamento" />
           <CacheSelect
             label="Cliente"
             entityType="customer"
@@ -1810,43 +1851,15 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
             desktopApi={desktopApi}
             refreshKey={customerRefreshKey}
           />
-        </div>
-
-        <div>
           <CacheSelect
-            label="Placa"
-            entityType="vehicle"
-            value={form.vehicleId}
-            onChange={(id) => setForm((prev) => ({ ...prev, vehicleId: id, carrierId: "" }))}
-            onCreateNew={() => setShowVehicleModal(true)}
-            desktopApi={desktopApi}
-            refreshKey={vehicleRefreshKey}
-          />
-        </div>
-
-        <div>
-          <CacheSelect
-            label="Produto"
+            label="Produto acabado OMIE"
             entityType="product"
             value={form.productId}
             onChange={(id) => setForm({ ...form, productId: id })}
             desktopApi={desktopApi}
+            productFiscalType="finished_goods"
           />
-        </div>
-
-        <div>
-          <CacheSelect
-            label="Transportadora"
-            entityType="carrier"
-            value={form.carrierId}
-            onChange={(id) => setForm((prev) => ({ ...prev, carrierId: id }))}
-            onCreateNew={() => setShowCarrierModal(true)}
-            desktopApi={desktopApi}
-            refreshKey={carrierRefreshKey}
-          />
-        </div>
-
-        <div>
+          <p style={styles.helperText}>Somente produtos OMIE com recomendacao fiscal tipo 04 - produtos acabados.</p>
           <CacheSelect
             label="Condicao de pagamento"
             entityType="payment_term"
@@ -1865,10 +1878,7 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
             }}
             desktopApi={desktopApi}
           />
-        </div>
-
-        {form.paymentTermId ? (
-          <div>
+          {form.paymentTermId ? (
             <label style={styles.fieldLabel}>
               Numero de parcelas
               <input
@@ -1892,10 +1902,29 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
                 style={styles.input}
               />
             </label>
-          </div>
-        ) : null}
+          ) : null}
+        </article>
 
-        <div>
+        <article style={styles.entryCard}>
+          <SectionHeader icon="▣" title="Transporte" description="Placa, transportadora e motorista" />
+          <CacheSelect
+            label="Placa"
+            entityType="vehicle"
+            value={form.vehicleId}
+            onChange={(id) => setForm((prev) => ({ ...prev, vehicleId: id, carrierId: "" }))}
+            onCreateNew={() => setShowVehicleModal(true)}
+            desktopApi={desktopApi}
+            refreshKey={vehicleRefreshKey}
+          />
+          <CacheSelect
+            label="Transportadora"
+            entityType="carrier"
+            value={form.carrierId}
+            onChange={(id) => setForm((prev) => ({ ...prev, carrierId: id }))}
+            onCreateNew={() => setShowCarrierModal(true)}
+            desktopApi={desktopApi}
+            refreshKey={carrierRefreshKey}
+          />
           <CacheSelect
             label="Motorista"
             entityType="driver"
@@ -1905,25 +1934,24 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
             desktopApi={desktopApi}
             refreshKey={driverRefreshKey}
           />
-        </div>
+        </article>
 
-        <div>
+        <aside style={styles.entrySummaryCard}>
+          <SectionHeader icon="◆" title="Resumo da entrada" description="Preco, peso e acao final" />
           <PriceInput
             valueCents={form.unitPriceCents}
             onChange={(cents) => setForm((prev) => ({ ...prev, unitPriceCents: cents }))}
           />
-        </div>
-
-        <div></div>
-      </div>
-
-      <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
-        <button type="button" onClick={onStart} style={styles.primaryButton}>
-          Capturar peso entrada
-        </button>
-        <button type="button" onClick={onCancel} style={styles.secondaryButton}>
-          Cancelar
-        </button>
+          <PriceDetailsPanel details={priceDetails} appliedUnitPriceCents={form.unitPriceCents} />
+          <div style={styles.actionStack}>
+            <button type="button" onClick={onStart} style={styles.captureButton}>
+              Capturar peso de entrada
+            </button>
+            <button type="button" onClick={onCancel} style={styles.secondaryButton}>
+              Limpar e voltar
+            </button>
+          </div>
+        </aside>
       </div>
 
       {showVehicleModal ? (
@@ -1978,6 +2006,18 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
         />
       ) : null}
     </section>
+  );
+}
+
+function SectionHeader({ icon, title, description }: { icon: string; title: string; description: string }) {
+  return (
+    <div style={styles.sectionHeader}>
+      <span style={styles.sectionIcon}>{icon}</span>
+      <div>
+        <h3 style={styles.sectionTitle}>{title}</h3>
+        <p style={styles.sectionDescription}>{description}</p>
+      </div>
+    </div>
   );
 }
 
@@ -2351,6 +2391,83 @@ function CloseOperationTypeDialog({
   );
 }
 
+function CancelOperationDialog({
+  onConfirm,
+  onCancel
+}: {
+  onConfirm: (reason: string) => void;
+  onCancel: () => void;
+}) {
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  return (
+    <div style={modalOverlayStyle}>
+      <div style={modalContentStyle}>
+        <h3 style={{ margin: "0 0 8px 0", color: "#0f172a", fontSize: "15px" }}>Cancelar operacao</h3>
+        <p style={styles.muted}>Informe o motivo. Ele ficara registrado na auditoria e no sync.</p>
+        {error ? <p style={styles.errorMessage}>{error}</p> : null}
+        <label style={styles.fieldLabel}>
+          Motivo
+          <textarea
+            value={reason}
+            onChange={(event) => {
+              setReason(event.target.value);
+              setError(null);
+            }}
+            rows={4}
+            style={{ ...styles.input, resize: "vertical" }}
+            placeholder="Ex.: Cliente desistiu da carga"
+          />
+        </label>
+        <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+          <button
+            type="button"
+            onClick={() => {
+              const trimmed = reason.trim();
+              if (!trimmed) {
+                setError("Informe o motivo do cancelamento.");
+                return;
+              }
+              onConfirm(trimmed);
+            }}
+            style={styles.primaryButton}
+          >
+            Confirmar cancelamento
+          </button>
+          <button type="button" onClick={onCancel} style={styles.secondaryButton}>
+            Voltar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PriceDetailsPanel({
+  details,
+  appliedUnitPriceCents
+}: {
+  details: PriceDetails | null;
+  appliedUnitPriceCents: number | null;
+}) {
+  if (!details && appliedUnitPriceCents === null) return null;
+
+  const tableLabel = details?.priceTableName ?? "Preco base OMIE";
+  const savingsLabel = details?.savingsPercent
+    ? `${details.savingsPercent.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%`
+    : "Sem desconto";
+
+  return (
+    <div style={{ marginTop: "6px", padding: "8px", border: "1px solid #e2e8f0", borderRadius: "8px", background: "#f8fafc" }}>
+      <div style={{ fontSize: "12px", color: "#475569" }}>Base OMIE: {formatMoney(details?.baseUnitPriceCents)}/ton</div>
+      <div style={{ fontSize: "12px", color: "#475569" }}>Tabela: {tableLabel}</div>
+      <div style={{ fontSize: "12px", color: "#475569" }}>Aplicado: {formatMoney(appliedUnitPriceCents)}/ton</div>
+      <div style={{ fontSize: "12px", color: "#475569" }}>Economia: {savingsLabel}</div>
+    </div>
+  );
+}
+
 function PriceInput({
   valueCents,
   onChange
@@ -2369,7 +2486,7 @@ function PriceInput({
 
   return (
     <label style={styles.fieldLabel}>
-      Preco por kg
+      Preco por tonelada
       <input
         type="text"
         inputMode="decimal"
@@ -2389,7 +2506,7 @@ function PriceInput({
       />
       {valueCents !== null ? (
         <span style={{ fontSize: "12px", color: "#64748b" }}>
-          {centsToBRL(valueCents)}/kg
+          {centsToBRL(valueCents)}/ton
         </span>
       ) : null}
     </label>
@@ -2404,6 +2521,10 @@ function formatMoney(value: number | null | undefined): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value / 100);
 }
 
+function formatWeightKg(value: number): string {
+  return `${value.toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 0 })} kg`;
+}
+
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Falha inesperada.";
 }
@@ -2411,15 +2532,45 @@ function getErrorMessage(error: unknown): string {
 function subTabStyle(active: boolean) {
   return {
     border: "none",
-    borderBottom: active ? "2px solid #0f172a" : "2px solid transparent",
+    borderBottom: active ? "2px solid var(--kr-text-strong)" : "2px solid transparent",
     borderRadius: "0",
     padding: "6px 12px",
     background: "transparent",
-    color: active ? "#0f172a" : "#64748b",
+    color: active ? "var(--kr-text-strong)" : "var(--kr-muted)",
     cursor: "pointer",
     fontWeight: active ? 700 : 400,
     fontSize: "12px"
   };
+}
+
+function getThemeVariables(themeMode: ThemeMode): React.CSSProperties {
+  if (themeMode === "dark") {
+    return {
+      "--kr-bg": "#020617",
+      "--kr-surface": "#0f172a",
+      "--kr-surface-soft": "#111827",
+      "--kr-border": "#1e293b",
+      "--kr-text": "#e5e7eb",
+      "--kr-text-strong": "#f8fafc",
+      "--kr-muted": "#94a3b8",
+      "--kr-input-bg": "#020617",
+      "--kr-input-border": "#334155",
+      "--kr-shadow": "0 12px 36px rgba(0,0,0,0.35)"
+    } as React.CSSProperties;
+  }
+
+  return {
+    "--kr-bg": "#f8fafc",
+    "--kr-surface": "#ffffff",
+    "--kr-surface-soft": "#f8fafc",
+    "--kr-border": "#e2e8f0",
+    "--kr-text": "#0f172a",
+    "--kr-text-strong": "#0f172a",
+    "--kr-muted": "#64748b",
+    "--kr-input-bg": "#ffffff",
+    "--kr-input-border": "#cbd5e1",
+    "--kr-shadow": "0 12px 36px rgba(15, 23, 42, 0.08)"
+  } as React.CSSProperties;
 }
 
 interface VehicleFormData {
@@ -4173,11 +4324,11 @@ function PriceTableListView({
                 </select>
               </label>
               <label style={{ ...styles.fieldLabel, marginBottom: 0, width: "120px" }}>
-                Preco/kg (R$)
+                Preco/ton (R$)
                 <input
                   value={itemPriceReais}
                   onChange={(e) => setItemPriceReais(e.target.value)}
-                  placeholder="0,45"
+                  placeholder="150,00"
                   style={styles.input}
                 />
               </label>
@@ -4195,7 +4346,7 @@ function PriceTableListView({
                 {items.map((item) => (
                   <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderTop: "1px solid #e2e8f0" }}>
                     <span>
-                      <strong>{item.productDesc}</strong> — {formatMoney(item.unitPriceCents)}/kg
+                      <strong>{item.productDesc}</strong> — {formatMoney(item.unitPriceCents)}/ton
                     </span>
                     <button
                       type="button"
@@ -4259,8 +4410,8 @@ const styles = {
     margin: 0,
     padding: "16px",
     fontFamily: "Segoe UI, Arial, sans-serif",
-    color: "#0f172a",
-    background: "#f8fafc"
+    color: "var(--kr-text)",
+    background: "var(--kr-bg)"
   },
   headerRow: {
     display: "flex",
@@ -4269,8 +4420,8 @@ const styles = {
     gap: "8px",
     padding: "6px 12px",
     borderRadius: "10px",
-    background: "#ffffff",
-    boxShadow: "0 1px 4px rgba(15, 23, 42, 0.06)",
+    background: "var(--kr-surface)",
+    boxShadow: "var(--kr-shadow)",
     marginBottom: "8px"
   },
   headerLeft: {
@@ -4280,7 +4431,7 @@ const styles = {
   },
   headerMessage: {
     fontSize: "11px",
-    color: "#94a3b8",
+    color: "var(--kr-muted)",
     maxWidth: "320px",
     overflow: "hidden" as const,
     textOverflow: "ellipsis",
@@ -4293,11 +4444,11 @@ const styles = {
   headerBrand: {
     fontSize: "13px",
     fontWeight: 700,
-    color: "#0f172a"
+    color: "var(--kr-text-strong)"
   },
   headerMeta: {
     fontSize: "11px",
-    color: "#64748b",
+    color: "var(--kr-muted)",
     marginLeft: "4px"
   },
   headerRight: {
@@ -4314,7 +4465,7 @@ const styles = {
     display: "flex",
     alignItems: "center",
     gap: "2px",
-    borderLeft: "1px solid #e2e8f0",
+    borderLeft: "1px solid var(--kr-border)",
     paddingLeft: "6px",
     marginLeft: "2px"
   },
@@ -4327,21 +4478,21 @@ const styles = {
   sidebar: {
     width: "220px",
     flexShrink: 0,
-    background: "#ffffff",
-    border: "1px solid #e2e8f0",
+    background: "var(--kr-surface)",
+    border: "1px solid var(--kr-border)",
     borderRadius: "10px",
     padding: "12px 0",
     display: "flex",
     flexDirection: "column" as const,
     gap: "8px",
-    boxShadow: "0 1px 4px rgba(15, 23, 42, 0.04)"
+    boxShadow: "var(--kr-shadow)"
   },
   sidebarHeader: {
     display: "flex",
     alignItems: "center",
     gap: "8px",
     padding: "0 12px 8px 12px",
-    borderBottom: "1px solid #e2e8f0"
+    borderBottom: "1px solid var(--kr-border)"
   },
   sidebarLogo: {
     height: "22px",
@@ -4350,7 +4501,7 @@ const styles = {
   sidebarBrand: {
     fontSize: "14px",
     fontWeight: 700,
-    color: "#0f172a"
+    color: "var(--kr-text-strong)"
   },
   sidebarNav: {
     display: "flex",
@@ -4371,8 +4522,8 @@ const styles = {
     alignItems: "center",
     padding: "6px 12px",
     borderRadius: "10px",
-    background: "#ffffff",
-    boxShadow: "0 1px 4px rgba(15, 23, 42, 0.06)"
+    background: "var(--kr-surface)",
+    boxShadow: "var(--kr-shadow)"
   },
   topbarLeft: {
     display: "flex",
@@ -4395,20 +4546,33 @@ const styles = {
     borderRadius: "6px",
     padding: "4px 8px",
     background: "transparent",
-    color: "#475569",
+    color: "var(--kr-muted)",
     cursor: "pointer",
     fontSize: "14px",
     lineHeight: 1
+  },
+  themeToggle: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "6px",
+    border: "1px solid var(--kr-border)",
+    borderRadius: "999px",
+    padding: "6px 10px",
+    background: "var(--kr-surface-soft)",
+    color: "var(--kr-text-strong)",
+    cursor: "pointer",
+    fontWeight: 800,
+    fontSize: "12px"
   },
   settingsDropdown: {
     position: "absolute" as const,
     right: 0,
     top: "100%",
     marginTop: "4px",
-    background: "#ffffff",
-    border: "1px solid #e2e8f0",
+    background: "var(--kr-surface)",
+    border: "1px solid var(--kr-border)",
     borderRadius: "8px",
-    boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+    boxShadow: "var(--kr-shadow)",
     minWidth: "160px",
     zIndex: 100,
     padding: "4px",
@@ -4421,7 +4585,7 @@ const styles = {
     borderRadius: "4px",
     padding: "6px 10px",
     background: "transparent",
-    color: "#475569",
+    color: "var(--kr-muted)",
     cursor: "pointer",
     fontSize: "12px",
     fontWeight: 500,
@@ -4441,20 +4605,20 @@ const styles = {
     zIndex: 1000
   },
   modal: {
-    background: "#ffffff",
+    background: "var(--kr-surface)",
     padding: "16px",
     borderRadius: "12px",
     width: "100%",
     maxWidth: "440px",
-    boxShadow: "0 10px 25px rgba(0,0,0,0.15)"
+    boxShadow: "var(--kr-shadow)"
   },
   modalTitle: {
     margin: "0 0 6px 0",
-    color: "#0f172a",
+    color: "var(--kr-text-strong)",
     fontSize: "16px"
   },
   modalText: {
-    color: "#475569",
+    color: "var(--kr-muted)",
     margin: "0 0 12px 0",
     fontSize: "13px"
   },
@@ -4470,12 +4634,12 @@ const styles = {
     gap: "16px",
     padding: "20px",
     borderRadius: "16px",
-    background: "#ffffff",
-    boxShadow: "0 12px 40px rgba(15, 23, 42, 0.08)"
+    background: "var(--kr-surface)",
+    boxShadow: "var(--kr-shadow)"
   },
   kicker: {
     margin: 0,
-    color: "#475569",
+    color: "var(--kr-muted)",
     fontSize: "12px",
     fontWeight: 700,
     letterSpacing: "0.06em",
@@ -4488,7 +4652,7 @@ const styles = {
   },
   subtitle: {
     margin: 0,
-    color: "#334155",
+    color: "var(--kr-muted)",
     fontSize: "15px"
   },
   actions: {
@@ -4507,11 +4671,11 @@ const styles = {
     fontSize: "13px"
   },
   secondaryButton: {
-    border: "1px solid #cbd5e1",
+    border: "1px solid var(--kr-input-border)",
     borderRadius: "8px",
     padding: "8px 12px",
-    background: "#ffffff",
-    color: "#0f172a",
+    background: "var(--kr-surface)",
+    color: "var(--kr-text-strong)",
     cursor: "pointer",
     fontWeight: 700,
     fontSize: "13px"
@@ -4526,7 +4690,7 @@ const styles = {
     display: "flex",
     gap: "2px",
     marginTop: "8px",
-    borderBottom: "1px solid #e2e8f0",
+    borderBottom: "1px solid var(--kr-border)",
     flexWrap: "wrap" as const
   },
   card: {
@@ -4536,21 +4700,222 @@ const styles = {
     padding: "12px",
     border: "1px solid",
     borderRadius: "12px",
-    background: "#ffffff",
-    borderColor: "#e2e8f0"
+    background: "var(--kr-surface)",
+    borderColor: "var(--kr-border)"
   },
   panel: {
     marginTop: "12px",
     padding: "16px",
     borderRadius: "12px",
-    background: "#ffffff"
+    background: "var(--kr-surface)"
+  },
+  entryShell: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "14px",
+    marginTop: "12px"
+  },
+  entryHero: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "16px",
+    padding: "22px",
+    borderRadius: "20px",
+    background: "linear-gradient(135deg, #0f172a 0%, #1e293b 55%, #2563eb 100%)",
+    color: "#ffffff",
+    boxShadow: "0 18px 45px rgba(15, 23, 42, 0.18)"
+  },
+  liveWeightCard: {
+    minWidth: "210px",
+    padding: "14px",
+    borderRadius: "16px",
+    background: "rgba(255,255,255,0.12)",
+    border: "1px solid rgba(255,255,255,0.22)",
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "4px"
+  },
+  metricLabel: {
+    color: "#bfdbfe",
+    fontSize: "11px",
+    fontWeight: 800,
+    textTransform: "uppercase" as const,
+    letterSpacing: "0.08em"
+  },
+  metricValue: {
+    fontSize: "28px",
+    lineHeight: 1,
+    color: "#ffffff"
+  },
+  metricHint: {
+    color: "#dbeafe",
+    fontSize: "12px"
+  },
+  entryGrid: {
+    display: "grid",
+    gridTemplateColumns: "minmax(280px, 1.1fr) minmax(260px, 1fr) minmax(240px, 0.9fr)",
+    gap: "14px",
+    alignItems: "start"
+  },
+  entryCard: {
+    padding: "16px",
+    borderRadius: "16px",
+    background: "var(--kr-surface)",
+    border: "1px solid var(--kr-border)",
+    boxShadow: "var(--kr-shadow)"
+  },
+  entrySummaryCard: {
+    padding: "16px",
+    borderRadius: "16px",
+    background: "var(--kr-surface-soft)",
+    border: "1px solid var(--kr-input-border)",
+    boxShadow: "var(--kr-shadow)"
+  },
+  sectionHeader: {
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    marginBottom: "12px"
+  },
+  sectionIcon: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "32px",
+    height: "32px",
+    borderRadius: "10px",
+    background: "#eff6ff",
+    color: "#1d4ed8",
+    fontWeight: 900
+  },
+  sectionTitle: {
+    margin: 0,
+    color: "var(--kr-text-strong)",
+    fontSize: "14px"
+  },
+  sectionDescription: {
+    margin: "2px 0 0 0",
+    color: "var(--kr-muted)",
+    fontSize: "12px"
+  },
+  helperText: {
+    margin: "-2px 0 10px 0",
+    color: "var(--kr-muted)",
+    fontSize: "12px"
+  },
+  actionStack: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "8px",
+    marginTop: "14px"
+  },
+  captureButton: {
+    border: "none",
+    borderRadius: "12px",
+    padding: "12px 14px",
+    background: "linear-gradient(135deg, #16a34a, #15803d)",
+    color: "#ffffff",
+    cursor: "pointer",
+    fontWeight: 800,
+    fontSize: "14px",
+    boxShadow: "0 10px 22px rgba(22, 163, 74, 0.22)"
+  },
+  operationsPanel: {
+    marginTop: "12px",
+    padding: "16px",
+    borderRadius: "16px",
+    background: "var(--kr-surface)",
+    boxShadow: "var(--kr-shadow)"
+  },
+  sectionTitleRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "12px",
+    marginBottom: "12px"
+  },
+  countBadge: {
+    padding: "6px 10px",
+    borderRadius: "999px",
+    background: "#e0f2fe",
+    color: "#075985",
+    fontWeight: 800,
+    fontSize: "12px"
+  },
+  emptyState: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "4px",
+    padding: "26px",
+    borderRadius: "14px",
+    background: "var(--kr-surface-soft)",
+    color: "var(--kr-muted)",
+    textAlign: "center" as const
+  },
+  operationsTable: {
+    overflowX: "auto" as const,
+    border: "1px solid var(--kr-border)",
+    borderRadius: "14px"
+  },
+  operationsTableRow: {
+    display: "grid",
+    gridTemplateColumns: "110px minmax(170px, 1.1fr) minmax(160px, 1fr) minmax(130px, 0.8fr) 100px 120px 132px",
+    alignItems: "center",
+    gap: "10px",
+    minWidth: "1040px",
+    padding: "10px 12px",
+    borderTop: "1px solid var(--kr-border)",
+    fontSize: "13px",
+    color: "var(--kr-text)"
+  },
+  operationsTableHead: {
+    borderTop: "none",
+    background: "var(--kr-surface-soft)",
+    color: "var(--kr-muted)",
+    fontSize: "11px",
+    fontWeight: 900,
+    letterSpacing: "0.05em",
+    textTransform: "uppercase" as const
+  },
+  plateBadge: {
+    justifySelf: "start",
+    padding: "5px 8px",
+    borderRadius: "8px",
+    background: "#0f172a",
+    color: "#ffffff",
+    letterSpacing: "0.04em"
+  },
+  rowActions: {
+    display: "flex",
+    gap: "6px",
+    justifyContent: "flex-end"
+  },
+  smallPrimaryButton: {
+    border: "none",
+    borderRadius: "8px",
+    padding: "6px 8px",
+    background: "#2563eb",
+    color: "#ffffff",
+    cursor: "pointer",
+    fontWeight: 800,
+    fontSize: "11px"
+  },
+  smallDangerButton: {
+    border: "1px solid #fecaca",
+    borderRadius: "8px",
+    padding: "6px 8px",
+    background: "#fef2f2",
+    color: "#b91c1c",
+    cursor: "pointer",
+    fontWeight: 800,
+    fontSize: "11px"
   },
   panelTitle: {
     marginTop: 0,
     fontSize: "15px"
   },
   muted: {
-    color: "#64748b",
+    color: "var(--kr-muted)",
     fontSize: "13px"
   },
   errorMessage: {
@@ -4594,11 +4959,13 @@ const styles = {
     fontSize: "13px"
   },
   input: {
-    border: "1px solid #cbd5e1",
+    border: "1px solid var(--kr-input-border)",
     borderRadius: "8px",
     padding: "8px 10px",
     font: "inherit",
-    fontSize: "13px"
+    fontSize: "13px",
+    background: "var(--kr-input-bg)",
+    color: "var(--kr-text-strong)"
   },
   operationRow: {
     display: "flex",
@@ -4606,7 +4973,7 @@ const styles = {
     justifyContent: "space-between",
     gap: "12px",
     padding: "10px 0",
-    borderTop: "1px solid #e2e8f0"
+    borderTop: "1px solid var(--kr-border)"
   },
   receiptRow: {
     display: "flex",
@@ -4614,6 +4981,6 @@ const styles = {
     justifyContent: "space-between",
     gap: "12px",
     padding: "10px 0",
-    borderTop: "1px solid #e2e8f0"
+    borderTop: "1px solid var(--kr-border)"
   }
 };

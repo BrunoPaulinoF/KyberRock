@@ -56,7 +56,7 @@ describe("PricingService", () => {
     const service = new PricingService(db);
 
     // 6.5 toneladas a R$ 150,00/ton = R$ 975,00
-    const total = service.calculateTotal(6500, 15000); // kg, cents per kg
+    const total = service.calculateTotal(6500, 15000); // kg, cents per ton
 
     expect(total).toBe(97500); // R$ 975,00 em centavos
   });

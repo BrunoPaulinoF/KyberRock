@@ -433,6 +433,14 @@ function registerIpcHandlers(): void {
     return runtime.getPriceForCustomerProduct(customerId, productId);
   });
 
+  ipcMain.handle("desktop:get-price-details", (_event, customerId: string, productId: string) => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.getPriceDetailsForCustomerProduct(customerId, productId);
+  });
+
   ipcMain.handle("desktop:customers-create", (_event, input: Omit<CreateCustomerInput, "companyId">) => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");
