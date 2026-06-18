@@ -55,6 +55,7 @@ export interface KyberRockDesktopApi {
   listClosedWeighingOperations: () => Promise<WeighingOperationSummary[]>;
   clearCanceledWeighingOperations: () => Promise<number>;
   startWeighing: (input: {
+    operationType?: OperationType;
     customerId: string;
     vehicleId: string;
     carrierId?: string;

@@ -37,6 +37,6 @@ describe("toledo-tcp-adapter readSampled", () => {
 
     expect(reading.weightKg).toBe(15_200);
     expect(reading.unit).toBe("kg");
-    await adapter.disconnect();
+    adapter.disconnect();
   });
 });

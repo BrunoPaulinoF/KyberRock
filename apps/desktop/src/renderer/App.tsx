@@ -38,6 +38,7 @@ export interface AppProps {
 }
 
 interface WeighingFormState {
+  operationType: OperationType;
   vehicleId: string;
   carrierId: string;
   customerId: string;
@@ -63,6 +64,7 @@ type ActiveView =
   | "documentation";
 
 const initialWeighingForm: WeighingFormState = {
+  operationType: "invoice",
   vehicleId: "",
   carrierId: "",
   customerId: "",
