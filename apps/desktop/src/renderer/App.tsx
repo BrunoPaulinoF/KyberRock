@@ -771,11 +771,16 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
           detail: "Emitindo o comprovante local da pesagem."
         });
       }
-      const receipt = await desktopApi.printReceipt(operation.id);
-      const receiptStatus =
-        receipt.status === "printed"
-          ? `Cupom ${receipt.receiptNumber} impresso.`
-          : `Falha ao imprimir cupom: ${receipt.errorMessage}.`;
+      let receiptStatus = "";
+      try {
+        const receipt = await desktopApi.printReceipt(operation.id);
+        receiptStatus =
+          receipt.status === "printed"
+            ? `Cupom ${receipt.receiptNumber} impresso.`
+            : `Falha ao imprimir cupom: ${receipt.errorMessage}.`;
+      } catch (error) {
+        receiptStatus = `Cupom nao impresso: ${getErrorMessage(error)}.`;
+      }
       const fiscalStatus = billingStatus
         ? `Pedido fiscal OMIE ${billingStatus.orderId} faturado.${
             billingStatus.documentUrl
@@ -785,8 +790,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
               : " DANFE ainda nao foi retornado pela OMIE; imprima pelo portal OMIE se necessario."
           } `
         : "";
+      const operationLabel =
+        operationType === "invoice" ? "Operacao fiscal fechada" : "Operacao interna fechada";
       setMessage(
-        `Operacao fechada. Peso liquido: ${operation.netWeightKg} kg. ${fiscalStatus}${receiptStatus}`
+        `${operationLabel}. Peso liquido: ${operation.netWeightKg} kg. ${fiscalStatus}${receiptStatus}`
       );
       if (operationType === "invoice") {
         setFiscalCloseProgress({
@@ -3196,7 +3203,7 @@ function CloseOperationTypeDialog({
             style={styles.input}
           >
             <option value="invoice">Com nota (pedido de venda no OMIE)</option>
-            <option value="internal">Interna (ordem de servico no OMIE)</option>
+            <option value="internal">Interna (sem OMIE, permite offline)</option>
           </select>
         </label>
         <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>

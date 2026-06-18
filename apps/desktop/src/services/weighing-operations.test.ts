@@ -322,6 +322,40 @@ describe("weighing operations", () => {
     }
   });
 
+  it("does not queue OMIE jobs for internal operations", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET omie_customer_id = 456 WHERE id = 'customer-1'").run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        operationType: "internal",
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        unitPriceCents: 12_000,
+        entryWeightKg: 12_000
+      });
+
+      const closed = closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "internal"
+      });
+
+      expect(closed).toMatchObject({ status: "closed_local", operationType: "internal" });
+      expect(
+        database.prepare("SELECT COUNT(*) FROM sync_queue WHERE target = 'omie'").pluck().get()
+      ).toBe(0);
+    } finally {
+      database.close();
+    }
+  });
+
   it("exposes fiscal billing status on closed operations", () => {
     const database = createDatabase();
 

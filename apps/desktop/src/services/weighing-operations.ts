@@ -665,16 +665,15 @@ export function closeWeighingOperation(
         )?.omie_product_id
       : null;
 
-    if (omieCustomerId) {
-      const omieAction = nextOperationType === "invoice" ? "create_and_bill_order" : "create_order";
+    if (nextOperationType === "invoice" && omieCustomerId) {
       enqueueSyncJob(
         database,
         {
           target: "omie",
-          action: omieAction,
+          action: "create_and_bill_order",
           entityType: "weighing_operation",
           entityId: input.operationId,
-          idempotencyKey: `kyberrock:${operationIds?.unit_id ?? "unknown"}:${input.operationId}:${nextOperationType === "invoice" ? "create_sales_order" : "create_service_order"}`,
+          idempotencyKey: `kyberrock:${operationIds?.unit_id ?? "unknown"}:${input.operationId}:create_sales_order`,
           payload: {
             operationId: input.operationId,
             operationType: nextOperationType,
