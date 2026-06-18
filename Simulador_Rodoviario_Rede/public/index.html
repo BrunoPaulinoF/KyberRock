@@ -3,219 +3,75 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Simulador de Balanca Rodoviaria</title>
+    <title>Simulador de Balanca</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <div class="shell">
-      <header class="hero">
-        <div>
-          <p class="eyebrow">Pedreira / Pesagem rodoviaria</p>
-          <h1>Simulador de Balanca Rodoviaria</h1>
-          <p class="subtitle">
-            Controle visual da balanca com servidor TCP para integracao em rede.
-          </p>
-        </div>
-        <div class="connection-card">
-          <span class="status-dot" id="wsDot"></span>
-          <div>
-            <strong id="wsStatus">Conectando UI...</strong>
-            <small id="tcpEndpoint">TCP aguardando...</small>
-          </div>
-        </div>
+      <header>
+        <h1>Simulador de Balanca Toledo 950i</h1>
+        <p class="subtitle">
+          Conecta ao app desktop pela rede TCP. Use os botoes abaixo para simular o ciclo de
+          pesagem.
+        </p>
+        <p class="endpoint" id="tcpEndpoint">TCP aguardando...</p>
       </header>
 
-      <main class="grid">
-        <section class="panel scale-panel">
-          <div class="panel-title">
-            <span>Indicador da balanca</span>
-            <strong id="scaleStatus">IDLE</strong>
-          </div>
-          <div class="weight-display">
-            <span id="weightKg">000000</span>
-            <small>kg</small>
-          </div>
-          <div class="badges">
-            <span class="badge" id="stableBadge">ESTAVEL</span>
-            <span class="badge" id="motionBadge">SEM MOVIMENTO</span>
-            <span class="badge" id="zeroBadge">CENTRO ZERO</span>
-            <span class="badge" id="overloadBadge">CARGA OK</span>
-            <span class="badge" id="modeBadge">BRUTO</span>
-            <span class="badge" id="lightBadge">SINAL VERDE</span>
-            <span class="badge" id="sampleBadge" style="display: none">AGUARDANDO 0s</span>
-          </div>
-          <div class="stats">
-            <div>
-              <span>Bruto</span>
-              <strong id="grossKg">0 kg</strong>
-            </div>
-            <div>
-              <span>Tara</span>
-              <strong id="tareKg">0 kg</strong>
-            </div>
-            <div>
-              <span>Liquido</span>
-              <strong id="netKg">0 kg</strong>
-            </div>
-          </div>
-        </section>
+      <section class="indicator">
+        <div class="weight">
+          <span id="weightKg">000000000</span>
+          <small>kg</small>
+        </div>
+        <div class="badges">
+          <span class="badge" id="stableBadge">ESTAVEL</span>
+          <span class="badge" id="zeroBadge">CENTRO ZERO</span>
+          <span class="badge" id="modeBadge">BRUTO</span>
+          <span class="badge" id="tareBadge">SEM TARA</span>
+          <span class="badge" id="overloadBadge">CARGA OK</span>
+          <span class="badge" id="sampleBadge" style="display: none">AGUARDANDO 0s</span>
+        </div>
+        <div class="stats">
+          <div><span>Tara</span><strong id="tareKg">0 kg</strong></div>
+          <div><span>Liquido</span><strong id="netKg">0 kg</strong></div>
+          <div><span>Capacidade</span><strong id="capacityKg">0 kg</strong></div>
+        </div>
+        <div class="status" id="phaseBadge">IDLE</div>
+        <pre id="framePreview" aria-label="frame atual">Aguardando...</pre>
+      </section>
 
-        <section class="panel truck-panel">
-          <div class="panel-title">
-            <span>Caminhao atual</span>
-            <strong id="plate">SEM PLACA</strong>
-          </div>
-          <dl class="truck-list">
-            <div>
-              <dt>Motorista</dt>
-              <dd id="driver">-</dd>
-            </div>
-            <div>
-              <dt>Transportadora</dt>
-              <dd id="company">-</dd>
-            </div>
-            <div>
-              <dt>Material</dt>
-              <dd id="material">-</dd>
-            </div>
-            <div>
-              <dt>Destino</dt>
-              <dd id="destination">-</dd>
-            </div>
-            <div>
-              <dt>Eixos</dt>
-              <dd id="axleCount">-</dd>
-            </div>
-            <div>
-              <dt>Bruto previsto</dt>
-              <dd id="plannedGross">-</dd>
-            </div>
-          </dl>
-        </section>
+      <section class="controls">
+        <h2>Ciclo de pesagem</h2>
+        <ol class="steps">
+          <li>
+            <button data-action="arriveEmpty" class="primary">1. Entrada caminhao</button>
+            <small>Caminhao chega vazio. Peso alvo = tara esperada.</small>
+          </li>
+          <li>
+            <button data-action="startTareSample">2. Tara (media 5s)</button>
+            <small>Aguarda 5s e grava a tara no app desktop.</small>
+          </li>
+          <li>
+            <button data-action="startLoading">3. Carregar</button>
+            <small>Caminhao e carregado. Peso alvo = bruto esperado.</small>
+          </li>
+          <li>
+            <button data-action="startGrossSample">4. Bruto (media 5s)</button>
+            <small>Aguarda 5s e grava o peso bruto.</small>
+          </li>
+          <li>
+            <button data-action="leave" class="primary">5. Liberar saida</button>
+            <small>Caminhao deixa a plataforma. Tara e peso voltam a zero.</small>
+          </li>
+        </ol>
+        <div class="utility">
+          <button data-action="zero">Zerar balanca</button>
+        </div>
+      </section>
 
-        <section class="panel controls-panel">
-          <div class="panel-title">
-            <span>Controles de simulacao</span>
-            <strong id="autoMode">Manual</strong>
-          </div>
-          <div class="actions">
-            <button id="toggleAuto" class="primary">Ativar automatico</button>
-            <button data-action="arriveTruck" class="primary">Entrada caminhao</button>
-            <button data-action="tare">Capturar tara (media 5s)</button>
-            <button data-action="gross">Capturar bruto (media 5s)</button>
-            <button data-action="exitTruck">Saida caminhao</button>
-            <button data-action="zero">Zerar balanca</button>
-            <button data-action="emergencyStop" class="danger">Emergencia</button>
-          </div>
-        </section>
-
-        <section class="panel manual-panel">
-          <div class="panel-title">
-            <span>Ajuste manual</span>
-            <strong>API / UI</strong>
-          </div>
-          <form id="manualForm" class="manual-form">
-            <label>
-              Peso atual (kg)
-              <input
-                name="weight"
-                type="number"
-                min="-9999"
-                max="85000"
-                step="10"
-                placeholder="Ex: 42000"
-              />
-            </label>
-            <label>
-              Peso alvo (kg)
-              <input
-                name="target"
-                type="number"
-                min="0"
-                max="85000"
-                step="10"
-                placeholder="Ex: 42000"
-              />
-            </label>
-            <label>
-              Tara (kg)
-              <input
-                name="tare"
-                type="number"
-                min="0"
-                max="30000"
-                step="10"
-                placeholder="Ex: 15500"
-              />
-            </label>
-            <label>
-              Placa
-              <input name="plate" type="text" maxlength="12" placeholder="ABC1D23" />
-            </label>
-            <label>
-              Material
-              <select name="material">
-                <option value="">Manter atual</option>
-                <option>Brita 1</option>
-                <option>Brita 2</option>
-                <option>Po de pedra</option>
-                <option>Areia media</option>
-                <option>Rachao</option>
-                <option>Bica corrida</option>
-              </select>
-            </label>
-            <label>
-              Estabilidade
-              <select name="stable">
-                <option value="">Manter atual</option>
-                <option value="auto">Automatica</option>
-                <option value="true">Estavel</option>
-                <option value="false">Instavel / movimento</option>
-              </select>
-            </label>
-            <label>
-              Sobrecarga
-              <select name="overload">
-                <option value="">Manter atual</option>
-                <option value="auto">Automatica pela capacidade</option>
-                <option value="true">Forcar sobrecarga</option>
-                <option value="false">Forcar normal</option>
-              </select>
-            </label>
-            <button class="primary" type="submit">Aplicar ajuste</button>
-          </form>
-        </section>
-
-        <section class="panel network-panel">
-          <div class="panel-title">
-            <span>Integracao TCP</span>
-            <strong id="clientCount">0 clientes</strong>
-          </div>
-          <div class="code-card">
-            <span>Frame atual</span>
-            <code id="lastFrame">Aguardando...</code>
-          </div>
-          <div class="commands">
-            <strong>Comandos aceitos por TCP</strong>
-            <p>
-              PING, READ, ZERO, TARE, GROSS, ARRIVE, EXIT, NEW, LOAD, LEAVE, AUTO ON, AUTO OFF, SET
-              WEIGHT=42000;TARE=15500;STABLE=true;OVERLOAD=auto;PLATE=ABC1D23
-            </p>
-            <p>
-              TARE e GROSS coletam 5 segundos de leituras e gravam a media no estado da balanca. O
-              fluxo recomendado: ARRIVE -&gt; TARE -&gt; (carregar) -&gt; EXIT.
-            </p>
-          </div>
-        </section>
-
-        <section class="panel log-panel">
-          <div class="panel-title">
-            <span>Eventos da operacao</span>
-            <strong id="updatedAt">-</strong>
-          </div>
-          <ol id="events" class="events"></ol>
-        </section>
-      </main>
+      <section class="events">
+        <h2>Eventos</h2>
+        <ol id="events"></ol>
+      </section>
     </div>
 
     <script src="/app.js" type="module"></script>

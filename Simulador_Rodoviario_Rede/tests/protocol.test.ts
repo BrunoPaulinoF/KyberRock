@@ -1,132 +1,72 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  buildScaleFrame,
-  buildToledoStatus,
-  formatKgField,
-  formatToledoWeightField,
-  parseTcpCommand,
-  sanitizeFrameValue
-} from "../src/protocol.js";
-import type { SimulatorSnapshot } from "../src/types.js";
+  buildToledoFrame,
+  buildStatusByte,
+  buildWeightField,
+  parseToledoLine
+} from "../src/protocol/toledo.js";
+import type { ScaleSnapshot } from "../src/state/scale-state.js";
+import { createInitialSnapshot, deriveFlags } from "../src/state/derive.js";
 
-test("formatKgField pads signed weights", () => {
-  assert.equal(formatKgField(123), "00000123");
-  assert.equal(formatKgField(-45), "-0000045");
-});
+function snapshot(overrides: Partial<ScaleSnapshot> = {}): ScaleSnapshot {
+  return { ...createInitialSnapshot(80000, 5000), ...overrides };
+}
 
-test("formatToledoWeightField pads absolute weights", () => {
-  assert.equal(formatToledoWeightField(123), "000000123");
-  assert.equal(formatToledoWeightField(-45), "000000045");
-});
-
-test("sanitizeFrameValue removes separators and controls", () => {
-  assert.equal(sanitizeFrameValue("ABC;123\nXYZ"), "ABC123XYZ");
-});
-
-test("buildScaleFrame creates a Toledo-compatible TCP line", () => {
-  const snapshot: SimulatorSnapshot = {
-    sequence: 7,
-    tcpHost: "0.0.0.0",
-    tcpPort: 4001,
-    frameIntervalMs: 1000,
-    connectedClients: 1,
-    autoMode: false,
-    status: "WEIGHING_LOADED",
-    trafficLight: "GREEN",
-    weightKg: 42000,
-    targetWeightKg: 42000,
-    grossKg: 42000,
-    tareKg: 15000,
-    netKg: 27000,
-    stable: true,
-    motion: false,
-    overload: false,
-    negative: false,
-    zeroed: false,
+test("buildStatusByte follows Toledo 8-char layout", () => {
+  const flags = snapshot({
+    overload: true,
+    negative: true,
+    atZero: false,
+    motion: true,
     tareActive: true,
-    grossMode: false,
-    netMode: true,
-    capacityKg: 80000,
-    currentTruck: {
-      plate: "ABC1D23",
-      driver: "Teste",
-      company: "Pedreira",
-      material: "Brita 1",
-      origin: "Pedreira Principal",
-      destination: "Cliente",
-      axleCount: 5,
-      tareKg: 15000,
-      plannedGrossKg: 42000,
-      plannedNetKg: 27000
-    },
-    lastFrame: "",
-    updatedAt: "2026-01-01T10:00:00.000Z",
-    events: [],
-    samplingKind: null,
-    samplingRemainingMs: 0,
-    samplingSampleCount: 0
-  };
+    grossMode: true,
+    netMode: false
+  });
+  assert.equal(buildStatusByte(flags), "OM ITG  ");
+});
 
-  const frame = buildScaleFrame(snapshot);
+test("buildWeightField pads to 9 digits and ignores sign", () => {
+  assert.equal(buildWeightField(snapshot({ weightKg: 15234 })), "000015234");
+  assert.equal(buildWeightField(snapshot({ weightKg: -45 })), "000000045");
+  assert.equal(buildWeightField(snapshot({ weightKg: 123456789 })), "123456789");
+});
+
+test("buildToledoFrame produces parseable line ending with CRLF kg", () => {
+  const flags = snapshot({ tareKg: 15000, weightKg: 42000 });
+  flags.tareActive = true;
+  flags.netMode = true;
+  const frame = buildToledoFrame(deriveFlags(flags));
   assert.equal(frame, "    T N  000042000kg\r\n");
 });
 
-test("buildToledoStatus maps balance flags by position", () => {
-  const snapshot: SimulatorSnapshot = {
-    sequence: 7,
-    tcpHost: "0.0.0.0",
-    tcpPort: 4001,
-    frameIntervalMs: 1000,
-    connectedClients: 1,
-    autoMode: false,
-    status: "ERROR",
-    trafficLight: "RED",
-    weightKg: -45,
-    targetWeightKg: -45,
-    grossKg: 0,
-    tareKg: 0,
-    netKg: 0,
-    stable: false,
-    motion: true,
-    overload: true,
-    negative: true,
-    zeroed: false,
-    tareActive: false,
-    grossMode: true,
-    netMode: false,
-    capacityKg: 80000,
-    currentTruck: null,
-    lastFrame: "",
-    updatedAt: "2026-01-01T10:00:00.000Z",
-    events: [],
-    samplingKind: null,
-    samplingRemainingMs: 0,
-    samplingSampleCount: 0
-  };
-
-  assert.equal(buildToledoStatus(snapshot), "OM I G  ");
+test("parseToledoLine recovers a 15 200 kg gross reading", () => {
+  const parsed = parseToledoLine("    G    000015200kg\r\n");
+  assert.ok(parsed);
+  assert.equal(parsed?.weightKg, 15200);
+  assert.equal(parsed?.unit, "kg");
+  assert.equal(parsed?.isGross, true);
 });
 
-test("parseTcpCommand supports integration commands", () => {
-  assert.deepEqual(parseTcpCommand("PING"), { type: "ping" });
-  assert.deepEqual(parseTcpCommand("AUTO ON"), { type: "startAuto" });
-  assert.deepEqual(parseTcpCommand("SET WEIGHT=42000;TARE=15000;PLATE=ABC1D23"), {
-    type: "manualSet",
-    data: {
-      weight: 42000,
-      tare: 15000,
-      plate: "ABC1D23"
-    }
-  });
-  assert.deepEqual(parseTcpCommand("ARRIVE PLATE=ABC1D23"), {
-    type: "arriveTruck",
-    data: { plate: "ABC1D23" }
-  });
-  assert.deepEqual(parseTcpCommand("TARE"), { type: "tare", data: {} });
-  assert.deepEqual(parseTcpCommand("GROSS"), { type: "gross", data: {} });
-  assert.deepEqual(parseTcpCommand("EXIT DURATION=3000"), {
-    type: "exitTruck",
-    data: { duration: 3000 }
-  });
+test("parseToledoLine detects tare active and motion", () => {
+  const parsed = parseToledoLine("   ITN  000023500kg");
+  assert.ok(parsed);
+  assert.equal(parsed?.tareActive, true);
+  assert.equal(parsed?.inMotion, true);
+  assert.equal(parsed?.isNet, true);
+  assert.equal(parsed?.weightKg, 23500);
+});
+
+test("parseToledoLine returns null for invalid lines", () => {
+  assert.equal(parseToledoLine(""), null);
+  assert.equal(parseToledoLine("abc"), null);
+});
+
+test("deriveFlags updates tare modes and overload", () => {
+  const next = deriveFlags(snapshot({ weightKg: 85000, tareKg: 5000 }));
+  assert.equal(next.overload, true);
+  assert.equal(next.tareActive, true);
+  assert.equal(next.netMode, true);
+  assert.equal(next.grossMode, false);
+  assert.equal(next.netKg, 80000);
 });

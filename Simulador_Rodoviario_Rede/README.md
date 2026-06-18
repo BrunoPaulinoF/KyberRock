@@ -1,12 +1,14 @@
-# Simulador de Balanca Rodoviaria TCP
+# Simulador de Balanca Rodoviaria Toledo 950i
 
-Aplicacao independente para simular uma balanca rodoviaria de pedreira com interface web e conexao TCP. O servidor TCP emite leituras no formato simples aceito pelo adaptador Toledo 950i/TLC-G2 do desktop KyberRock.
+Simulador independente, sem licenca, de uma celula de carga rodoviaria Toledo 950i /
+TLC-G2. Emite o frame Toledo simples (8 status + 9 digitos kg + unidade) na mesma
+porta TCP que o adaptador Toledo do app desktop KyberRock escuta.
 
 ## Requisitos
 
 - Node.js 20 ou superior.
-- Uma porta TCP livre para integracao. Padrao: `4001`.
-- Uma porta HTTP livre para a tela. Padrao: `8080`.
+- Porta TCP livre (padrao `4001`) para o frame Toledo.
+- Porta HTTP livre (padrao `8080`) para a UI.
 
 ## Como rodar
 
@@ -15,95 +17,84 @@ npm install
 npm run dev
 ```
 
-Abra a tela em:
+Em seguida abra a UI em `http://localhost:8080`.
 
-```text
-http://localhost:8080
+A primeira conexao TCP do app desktop recebe o frame Toledo atual e, depois, o
+frame Toledo e reenviado periodicamente (`FRAME_INTERVAL_MS`, padrao 500ms).
+
+Variaveis de ambiente:
+
+| Variavel            | Padrao    | Descricao                                  |
+| ------------------- | --------- | ------------------------------------------ |
+| `HTTP_PORT`         | `8080`    | Porta da UI web                            |
+| `TCP_PORT`          | `4001`    | Porta TCP do frame Toledo                  |
+| `TCP_HOST`          | `0.0.0.0` | Host de bind do TCP                        |
+| `FRAME_INTERVAL_MS` | `500`     | Intervalo de envio do frame Toledo         |
+| `TICK_MS`           | `250`     | Intervalo do loop de movimentacao da carga |
+| `CAPACITY_KG`       | `80000`   | Capacidade maxima da balanca               |
+| `SAMPLE_WINDOW_MS`  | `5000`    | Janela padrao das medicoes de tara/bruto   |
+
+## Fluxo de pesagem
+
+A UI expoe o ciclo esperado pelo app desktop. Para cada pesagem, a UI:
+
+1. **Entrada caminhao** - simula o caminhao vazio posicionado. `ARRIVE` no TCP.
+2. **Tara (media 5s)** - tira a media de 5s e salva como tara. `TARE` no TCP.
+3. **Carregar** - comeca a carregar o caminhao. `LOAD` no TCP.
+4. **Bruto (media 5s)** - tira a media de 5s e salva como peso bruto. `GROSS` no TCP.
+5. **Liberar saida** - tira o caminhao da plataforma. `EXIT`/`LEAVE` no TCP.
+
+O frame Toledo e emitido durante todas as fases. O app desktop coleta o
+`weightKg` e o converte em `entryWeightKg` (entrada) e `exitWeightKg` (saida),
+calculando o peso liquido e disparando a impressao e o faturamento.
+
+## Protocolo TCP
+
+Frame simples, enviado em CRLF:
+
+```
+<8 status chars><1 espaco><9 digitos kg><2 unidade>\r\n
 ```
 
-Para rodar a versao compilada:
+Exemplo de peso estavel em 42000 kg com tara ativa: `    T N  000042000kg\r\n`.
 
-```bash
-npm run build
-npm start
-```
+Posicoes do byte de status (Toledo 950i):
 
-## Configuracao por ambiente
+| Pos | Flag | Significado                  |
+| --- | ---- | ---------------------------- |
+| 0   | O    | Fora de alcance / sobrecarga |
+| 1   | M    | Peso negativo                |
+| 2   | C    | Centro de zero               |
+| 3   | I    | Em movimento / instavel      |
+| 4   | T    | Tara ativa                   |
+| 5   | G    | Modo bruto                   |
+| 6   | N    | Modo liquido                 |
+| 7   | -    | Reservado                    |
 
-```bash
-HTTP_PORT=8080 TCP_HOST=0.0.0.0 TCP_PORT=4001 FRAME_INTERVAL_MS=1000 npm run dev
-```
+Comandos aceitos por linha (CRLF):
 
-No Windows PowerShell:
-
-```powershell
-$env:HTTP_PORT="8080"; $env:TCP_PORT="4001"; npm run dev
-```
-
-## Integracao TCP Toledo
-
-O servidor TCP escuta em `TCP_PORT` e envia um frame automaticamente a cada `FRAME_INTERVAL_MS`. Qualquer cliente TCP pode conectar e receber o peso.
-
-Frame exemplo:
-
-```text
-    T N  000042000kg<CRLF>
-```
-
-Formato:
-
-- 8 caracteres de status Toledo.
-- 1 espaco separador.
-- Peso absoluto com 9 digitos, em kg.
-- Unidade `kg`.
-- Final `CRLF`.
-
-Status Toledo por posicao:
-
-- `0`: `O` fora de alcance / sobrecarga.
-- `1`: `M` peso negativo.
-- `2`: `C` centro de zero.
-- `3`: `I` em movimento / instavel.
-- `4`: `T` tara ativa.
-- `5`: `G` peso bruto.
-- `6`: `N` peso liquido.
-- `7`: reservado.
-
-Para configurar o desktop KyberRock, conecte a balanca TCP no host da maquina do simulador e porta `4001`.
-
-Comandos aceitos pelo TCP:
-
-```text
-PING
-READ
-ZERO
-TARE
-NEW
-LOAD
-LEAVE
-AUTO ON
-AUTO OFF
-SET WEIGHT=42000;TARE=15000;PLATE=ABC1D23;MATERIAL=Brita 1
-SET WEIGHT=42000;STABLE=false;OVERLOAD=true
-SET OVERLOAD=auto;STABLE=auto
-```
+- `PING` -> `OK PONG`
+- `READ` / `PESO` / `WEIGHT` -> frame Toledo atual
+- `ZERO` / `ZERAR` -> zera a balanca
+- `ARRIVE` / `ENTRADA` -> simula entrada do caminhao vazio
+- `TARE` / `TARA` -> inicia amostragem de tara (5s)
+- `LOAD` / `CARREGAR` -> inicia carregamento
+- `GROSS` / `BRUTO` -> inicia amostragem de bruto (5s)
+- `EXIT` / `LEAVE` / `SAIR` -> libera saida do caminhao
 
 ## API HTTP
 
-- `GET /api/state`: estado completo da simulacao.
-- `GET /api/frame`: ultimo frame TCP em texto puro.
-- `POST /api/action`: executa uma acao.
-
-Exemplo:
-
-```bash
-curl -X POST http://localhost:8080/api/action -H "Content-Type: application/json" -d '{"type":"manualSet","data":{"target":42000,"tare":15000,"plate":"ABC1D23"}}'
-```
+- `GET /api/state` - snapshot completo.
+- `GET /api/frame` - frame Toledo atual em texto.
+- `POST /api/action` - executa acao: `arriveEmpty`, `startTareSample`,
+  `startLoading`, `startGrossSample`, `leave`, `zero`, `setWeight`,
+  `setSampleWindowMs`.
+- `GET /health` - status simples.
 
 ## Validacao
 
 ```bash
-npm run lint
-npm run test
 npm run build
+npm run lint
+npm test
 ```

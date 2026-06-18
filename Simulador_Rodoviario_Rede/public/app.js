@@ -1,75 +1,37 @@
-let state = null;
-let socket = null;
-let reconnectTimer = null;
-
 const refs = {
-  wsDot: document.querySelector("#wsDot"),
-  wsStatus: document.querySelector("#wsStatus"),
-  tcpEndpoint: document.querySelector("#tcpEndpoint"),
-  scaleStatus: document.querySelector("#scaleStatus"),
-  weightKg: document.querySelector("#weightKg"),
-  stableBadge: document.querySelector("#stableBadge"),
-  motionBadge: document.querySelector("#motionBadge"),
-  zeroBadge: document.querySelector("#zeroBadge"),
-  overloadBadge: document.querySelector("#overloadBadge"),
-  modeBadge: document.querySelector("#modeBadge"),
-  lightBadge: document.querySelector("#lightBadge"),
-  sampleBadge: document.querySelector("#sampleBadge"),
-  grossKg: document.querySelector("#grossKg"),
+  endpoint: document.querySelector("#tcpEndpoint"),
+  weight: document.querySelector("#weightKg"),
+  stable: document.querySelector("#stableBadge"),
+  zero: document.querySelector("#zeroBadge"),
+  mode: document.querySelector("#modeBadge"),
+  tare: document.querySelector("#tareBadge"),
+  overload: document.querySelector("#overloadBadge"),
+  sample: document.querySelector("#sampleBadge"),
   tareKg: document.querySelector("#tareKg"),
   netKg: document.querySelector("#netKg"),
-  plate: document.querySelector("#plate"),
-  driver: document.querySelector("#driver"),
-  company: document.querySelector("#company"),
-  material: document.querySelector("#material"),
-  destination: document.querySelector("#destination"),
-  axleCount: document.querySelector("#axleCount"),
-  plannedGross: document.querySelector("#plannedGross"),
-  autoMode: document.querySelector("#autoMode"),
-  toggleAuto: document.querySelector("#toggleAuto"),
-  clientCount: document.querySelector("#clientCount"),
-  lastFrame: document.querySelector("#lastFrame"),
-  updatedAt: document.querySelector("#updatedAt"),
-  events: document.querySelector("#events"),
-  manualForm: document.querySelector("#manualForm")
+  capacity: document.querySelector("#capacityKg"),
+  phase: document.querySelector("#phaseBadge"),
+  frame: document.querySelector("#framePreview"),
+  events: document.querySelector("#events")
 };
 
+let socket = null;
+let reconnectTimer = null;
+let lastSnapshot = null;
+
 connectWebSocket();
-fetchState();
+refreshState();
 
-document.querySelectorAll("[data-action]").forEach((button) => {
+for (const button of document.querySelectorAll("[data-action]")) {
   button.addEventListener("click", () => runAction(button.dataset.action));
-});
-
-refs.toggleAuto.addEventListener("click", () => {
-  runAction(state?.autoMode ? "stopAuto" : "startAuto");
-});
-
-refs.manualForm.addEventListener("submit", (event) => {
-  event.preventDefault();
-  const formData = new FormData(refs.manualForm);
-  const data = {};
-  for (const [key, value] of formData.entries()) {
-    const text = String(value).trim();
-    if (!text) continue;
-    if (["weight", "target", "tare"].includes(key)) {
-      data[key] = Number(text);
-    } else if (["stable", "motion", "overload"].includes(key) && text !== "auto") {
-      data[key] = text === "true";
-    } else {
-      data[key] = text;
-    }
-  }
-  runAction("manualSet", data);
-});
+}
 
 function connectWebSocket() {
   const protocol = location.protocol === "https:" ? "wss" : "ws";
   socket = new WebSocket(`${protocol}://${location.host}`);
-  setUiOnline(false, "Conectando UI...");
 
   socket.addEventListener("open", () => {
-    setUiOnline(true, "UI conectada");
+    setEndpoint("conectado");
   });
 
   socket.addEventListener("message", (event) => {
@@ -78,101 +40,113 @@ function connectWebSocket() {
   });
 
   socket.addEventListener("close", () => {
-    setUiOnline(false, "Reconectando UI...");
+    setEndpoint("reconectando...");
     clearTimeout(reconnectTimer);
     reconnectTimer = setTimeout(connectWebSocket, 1200);
   });
 }
 
-async function fetchState() {
+async function refreshState() {
   try {
     const response = await fetch("/api/state");
     render(await response.json());
   } catch {
-    setUiOnline(false, "API indisponivel");
+    setEndpoint("API indisponivel");
   }
 }
 
 async function runAction(type, data = {}) {
-  const response = await fetch("/api/action", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ type, data })
-  });
-  render(await response.json());
+  try {
+    const response = await fetch("/api/action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type, data })
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${response.status}`);
+    }
+    render(await response.json());
+  } catch (err) {
+    addEvent("error", `Acao ${type} falhou: ${err.message}`);
+  }
 }
 
-function render(nextState) {
-  state = nextState;
-  const truck = state.currentTruck;
-  const endpointHost = location.hostname || "localhost";
+function render(snapshot) {
+  if (!snapshot) return;
+  lastSnapshot = snapshot;
 
-  refs.tcpEndpoint.textContent = `TCP ${endpointHost}:${state.tcpPort}`;
-  refs.scaleStatus.textContent = statusLabel(state.status);
-  refs.weightKg.textContent = displayWeight(state.weightKg);
-  refs.grossKg.textContent = kg(state.grossKg);
-  refs.tareKg.textContent = kg(state.tareKg);
-  refs.netKg.textContent = kg(state.netKg);
-  refs.plate.textContent = truck?.plate ?? "SEM PLACA";
-  refs.driver.textContent = truck?.driver ?? "-";
-  refs.company.textContent = truck?.company ?? "-";
-  refs.material.textContent = truck?.material ?? "-";
-  refs.destination.textContent = truck?.destination ?? "-";
-  refs.axleCount.textContent = truck ? `${truck.axleCount} eixos` : "-";
-  refs.plannedGross.textContent = truck ? kg(truck.plannedGrossKg) : "-";
-  refs.autoMode.textContent = state.autoMode ? "Automatico" : "Manual";
-  refs.toggleAuto.textContent = state.autoMode ? "Pausar automatico" : "Ativar automatico";
-  refs.clientCount.textContent = `${state.connectedClients} cliente${state.connectedClients === 1 ? "" : "s"}`;
-  refs.lastFrame.textContent = printableFrame(state.lastFrame);
-  refs.updatedAt.textContent = new Date(state.updatedAt).toLocaleTimeString("pt-BR");
+  setEndpoint(`${location.hostname || "localhost"}:4001`);
+  refs.weight.textContent = Math.round(Math.abs(snapshot.weightKg)).toString().padStart(9, "0");
+  refs.tareKg.textContent = `${Math.round(snapshot.tareKg).toLocaleString("pt-BR")} kg`;
+  refs.netKg.textContent = `${Math.round(snapshot.netKg).toLocaleString("pt-BR")} kg`;
+  refs.capacity.textContent = `${snapshot.capacityKg.toLocaleString("pt-BR")} kg`;
 
-  setBadge(refs.stableBadge, state.stable ? "ESTAVEL" : "INSTAVEL", state.stable ? "good" : "warn");
+  refs.phase.textContent = phaseLabel(snapshot.phase);
+  refs.phase.style.color = snapshot.phase === "IDLE" ? "var(--good)" : "var(--accent)";
+
   setBadge(
-    refs.motionBadge,
-    state.motion ? "MOVIMENTO" : "SEM MOVIMENTO",
-    state.motion ? "warn" : "good"
+    refs.stable,
+    snapshot.motion ? "EM MOVIMENTO" : "ESTAVEL",
+    snapshot.motion ? "warn" : "good"
   );
   setBadge(
-    refs.zeroBadge,
-    state.zeroed ? "CENTRO ZERO" : "FORA DO ZERO",
-    state.zeroed ? "good" : "warn"
+    refs.zero,
+    snapshot.atZero ? "CENTRO ZERO" : "FORA DO ZERO",
+    snapshot.atZero ? "good" : "warn"
   );
   setBadge(
-    refs.overloadBadge,
-    state.overload ? "SOBRECARGA" : "CARGA OK",
-    state.overload ? "bad" : "good"
+    refs.mode,
+    snapshot.netMode ? "MODO LIQUIDO" : "MODO BRUTO",
+    snapshot.netMode ? "warn" : "good"
   );
-  setBadge(refs.modeBadge, state.netMode ? "LIQUIDO" : "BRUTO", state.netMode ? "warn" : "good");
   setBadge(
-    refs.lightBadge,
-    state.trafficLight === "GREEN" ? "SINAL VERDE" : "SINAL VERMELHO",
-    state.trafficLight === "GREEN" ? "good" : "bad"
+    refs.tare,
+    snapshot.tareActive ? "TARA ATIVA" : "SEM TARA",
+    snapshot.tareActive ? "warn" : "good"
+  );
+  setBadge(
+    refs.overload,
+    snapshot.overload ? "SOBRECARGA" : "CARGA OK",
+    snapshot.overload ? "bad" : "good"
   );
 
-  if (state.samplingKind) {
-    const remaining = Math.max(0, Math.ceil((state.samplingRemainingMs || 0) / 1000));
-    const label =
-      state.samplingKind === "tare"
-        ? `TARA media ${remaining}s (${state.samplingSampleCount} am.)`
-        : `BRUTO media ${remaining}s (${state.samplingSampleCount} am.)`;
-    refs.sampleBadge.textContent = label;
-    refs.sampleBadge.style.display = "inline-block";
-    refs.sampleBadge.className = "badge warn";
-  } else {
-    refs.sampleBadge.style.display = "none";
+  if (
+    snapshot.pendingMean !== null &&
+    (snapshot.phase === "TARE_DONE" || snapshot.phase === "WEIGHING_LOADED")
+  ) {
+    const which = snapshot.phase === "TARE_DONE" ? "tara" : "bruto";
+    refs.sample.textContent = `Media ${which}: ${snapshot.pendingMean} kg`;
+    refs.sample.style.display = "inline-block";
+    refs.sample.className = "badge good";
+    addEvent("info", `Amostragem de ${which} concluida: media ${snapshot.pendingMean} kg.`);
+    setTimeout(() => {
+      if (lastSnapshot && lastSnapshot.phase === snapshot.phase) {
+        refs.sample.style.display = "none";
+      }
+    }, 4000);
   }
 
-  refs.events.innerHTML = state.events
-    .map(
-      (event) =>
-        `<li class="${escapeHtml(event.level)}"><time>${new Date(event.at).toLocaleTimeString("pt-BR")}</time>${escapeHtml(event.text)}</li>`
-    )
-    .join("");
+  refs.frame.textContent = printableFrame(buildFramePreview(snapshot));
 }
 
-function setUiOnline(online, text) {
-  refs.wsDot.classList.toggle("online", online);
-  refs.wsStatus.textContent = text;
+function buildFramePreview(snapshot) {
+  const status = [
+    snapshot.overload ? "O" : " ",
+    snapshot.negative ? "M" : " ",
+    snapshot.atZero ? "C" : " ",
+    snapshot.motion ? "I" : " ",
+    snapshot.tareActive ? "T" : " ",
+    snapshot.grossMode ? "G" : " ",
+    snapshot.netMode ? "N" : " ",
+    " "
+  ].join("");
+  const weight = Math.round(Math.abs(snapshot.weightKg)).toString().padStart(9, "0");
+  return `${status} ${weight}kg`;
+}
+
+function printableFrame(text) {
+  return text.replace(/\r/g, "<CR>").replace(/\n/g, "<LF>");
 }
 
 function setBadge(element, text, tone) {
@@ -180,39 +154,33 @@ function setBadge(element, text, tone) {
   element.className = `badge ${tone}`;
 }
 
-function kg(value) {
-  return `${Math.round(value).toLocaleString("pt-BR")} kg`;
+function setEndpoint(text) {
+  refs.endpoint.textContent = `TCP ${text}`;
 }
 
-function displayWeight(value) {
-  const rounded = Math.round(value);
-  const sign = rounded < 0 ? "-" : "";
-  return `${sign}${Math.abs(rounded).toString().padStart(6, "0")}`;
-}
-
-function printableFrame(frame) {
-  return frame.replace(/\x02/g, "<STX>").replace(/\x03/g, "<ETX>").replace(/\r\n/g, "<CRLF>");
-}
-
-function statusLabel(status) {
+function phaseLabel(phase) {
   return (
     {
-      IDLE: "Livre",
-      APPROACHING: "Entrada",
-      WEIGHING_EMPTY: "Pesando vazio",
-      LOADING: "Carregando",
-      WEIGHING_LOADED: "Pesando carregado",
-      LEAVING: "Saida",
-      ERROR: "Erro"
-    }[status] ?? status
+      IDLE: "IDLE",
+      TARING: "AGUARDANDO TARA",
+      TARE_DONE: "TARA PRONTA",
+      LOADING: "CARREGANDO",
+      WEIGHING_LOADED: "CARREGADO",
+      RELEASED: "LIBERADO"
+    }[phase] ?? phase
   );
 }
 
-function escapeHtml(value) {
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
+function addEvent(level, text) {
+  const li = document.createElement("li");
+  const time = document.createElement("time");
+  time.textContent = new Date().toLocaleTimeString("pt-BR");
+  li.appendChild(time);
+  li.appendChild(document.createTextNode(text));
+  if (level === "error") li.style.borderLeftColor = "var(--bad)";
+  if (level === "warn") li.style.borderLeftColor = "var(--warn)";
+  refs.events.prepend(li);
+  while (refs.events.children.length > 30) {
+    refs.events.removeChild(refs.events.lastChild);
+  }
 }

@@ -1,9 +1,9 @@
 {
   "name": "simulador-balanca-rodoviaria",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
-  "description": "Simulador de balanca rodoviaria para pedreira com UI web e conexao TCP.",
+  "description": "Simulador de balanca rodoviaria Toledo 950i via TCP para integracao com o app desktop KyberRock.",
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
