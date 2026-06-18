@@ -7,10 +7,13 @@ export type TcpCommand =
   | { type: "ping" }
   | { type: "read" }
   | { type: "zero" }
-  | { type: "tare" }
+  | { type: "tare"; data: Record<string, string | number> }
+  | { type: "gross"; data: Record<string, string | number> }
   | { type: "newTruck" }
   | { type: "loadTruck" }
   | { type: "leaveScale" }
+  | { type: "arriveTruck"; data: Record<string, string | number> }
+  | { type: "exitTruck"; data: Record<string, string | number> }
   | { type: "startAuto" }
   | { type: "stopAuto" }
   | { type: "manualSet"; data: Record<string, string | number> }
@@ -55,34 +58,45 @@ export function buildScaleFrame(snapshot: SimulatorSnapshot): string {
 
 export function parseTcpCommand(rawInput: string): TcpCommand {
   const raw = rawInput.trim();
-  const normalized = raw.toUpperCase();
-
   if (!raw) return { type: "unknown", raw };
-  if (normalized === "PING") return { type: "ping" };
-  if (normalized === "READ" || normalized === "PESO" || normalized === "WEIGHT")
-    return { type: "read" };
-  if (normalized === "ZERO" || normalized === "ZERAR") return { type: "zero" };
-  if (normalized === "TARE" || normalized === "TARA") return { type: "tare" };
-  if (normalized === "NEW" || normalized === "TRUCK" || normalized === "CAMINHAO")
-    return { type: "newTruck" };
-  if (normalized === "LOAD" || normalized === "CARREGAR") return { type: "loadTruck" };
-  if (normalized === "LEAVE" || normalized === "SAIR") return { type: "leaveScale" };
-  if (normalized === "AUTO ON") return { type: "startAuto" };
-  if (normalized === "AUTO OFF") return { type: "stopAuto" };
+
+  const spaceIdx = raw.indexOf(" ");
+  const verb = (spaceIdx >= 0 ? raw.slice(0, spaceIdx) : raw).toUpperCase();
+  const args = spaceIdx >= 0 ? raw.slice(spaceIdx + 1) : "";
+
+  if (verb === "PING") return { type: "ping" };
+  if (verb === "READ" || verb === "PESO" || verb === "WEIGHT") return { type: "read" };
+  if (verb === "ZERO" || verb === "ZERAR") return { type: "zero" };
+  if (verb === "TARE" || verb === "TARA") return { type: "tare", data: parseInlineArgs(args) };
+  if (verb === "GROSS" || verb === "BRUTO") return { type: "gross", data: parseInlineArgs(args) };
+  if (verb === "NEW" || verb === "TRUCK" || verb === "CAMINHAO") return { type: "newTruck" };
+  if (verb === "LOAD" || verb === "CARREGAR") return { type: "loadTruck" };
+  if (verb === "LEAVE" || verb === "SAIR") return { type: "leaveScale" };
+  if (verb === "ARRIVE" || verb === "ENTRADA")
+    return { type: "arriveTruck", data: parseInlineArgs(args) };
+  if (verb === "EXIT" || verb === "SAIR_PESAGEM" || verb === "SAIDA")
+    return { type: "exitTruck", data: parseInlineArgs(args) };
+  if (raw.toUpperCase() === "AUTO ON") return { type: "startAuto" };
+  if (raw.toUpperCase() === "AUTO OFF") return { type: "stopAuto" };
 
   const setMatch = raw.match(/^SET\s+(.+)$/i);
   if (setMatch) {
-    const data: Record<string, string | number> = {};
-    for (const part of setMatch[1].split(/[;,]/)) {
-      const [key, ...rest] = part.split("=");
-      const value = rest.join("=").trim();
-      if (!key || !value) continue;
-      const normalizedKey = key.trim().toLowerCase();
-      const numeric = Number(value.replace(",", "."));
-      data[normalizedKey] = Number.isFinite(numeric) ? numeric : value.trim();
-    }
-    return { type: "manualSet", data };
+    return { type: "manualSet", data: parseInlineArgs(setMatch[1]) };
   }
 
   return { type: "unknown", raw };
+}
+
+function parseInlineArgs(input: string): Record<string, string | number> {
+  const data: Record<string, string | number> = {};
+  if (!input) return data;
+  for (const part of input.split(/[;,]/)) {
+    const [key, ...rest] = part.split("=");
+    const value = rest.join("=").trim();
+    if (!key || !value) continue;
+    const normalizedKey = key.trim().toLowerCase();
+    const numeric = Number(value.replace(",", "."));
+    data[normalizedKey] = Number.isFinite(numeric) ? numeric : value.trim();
+  }
+  return data;
 }

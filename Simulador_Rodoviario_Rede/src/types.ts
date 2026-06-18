@@ -57,6 +57,9 @@ export interface SimulatorSnapshot {
   lastFrame: string;
   updatedAt: string;
   events: EventEntry[];
+  samplingKind: "tare" | "gross" | null;
+  samplingRemainingMs: number;
+  samplingSampleCount: number;
 }
 
 export interface SimulatorConfig {

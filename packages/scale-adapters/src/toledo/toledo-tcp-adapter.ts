@@ -25,6 +25,9 @@ export interface ToledoTcpAdapter {
   /** Obter a ultima leitura valida (nao bloqueia) */
   read(): Promise<ScaleReading>;
 
+  /** Coletar leituras durante uma janela e devolver a media em kg */
+  readSampled(options?: { durationMs?: number; sampleIntervalMs?: number }): Promise<ScaleReading>;
+
   /** Obter status da conexao e ultima leitura */
   getStatus(): ToledoTcpAdapterStatus;
 
@@ -190,6 +193,55 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
       }
 
       throw new Error("Nenhuma leitura disponivel da balanca.");
+    },
+
+    async readSampled(
+      options: { durationMs?: number; sampleIntervalMs?: number } = {}
+    ): Promise<ScaleReading> {
+      if (state !== "connected") {
+        throw new Error("Balanca nao esta conectada.");
+      }
+
+      const durationMs = Math.max(500, options.durationMs ?? 5000);
+      const sampleIntervalMs = Math.max(50, options.sampleIntervalMs ?? 250);
+      const samples: { weightKg: number; stable: boolean; at: number }[] = [];
+      const start = Date.now();
+      let lastSampleAt = 0;
+
+      while (Date.now() - start < durationMs) {
+        const now = Date.now();
+        if (lastReading && now - lastSampleAt >= sampleIntervalMs) {
+          samples.push({
+            weightKg: lastReading.weightKg,
+            stable: lastReading.stable,
+            at: now
+          });
+          lastSampleAt = now;
+        }
+        await new Promise((r) => setTimeout(r, 50));
+      }
+
+      if (samples.length === 0 && lastReading) {
+        samples.push({
+          weightKg: lastReading.weightKg,
+          stable: lastReading.stable,
+          at: Date.now()
+        });
+      }
+
+      if (samples.length === 0) {
+        throw new Error("Nenhuma leitura recebida da balanca durante a amostragem.");
+      }
+
+      const mean = samples.reduce((sum, s) => sum + s.weightKg, 0) / samples.length;
+      const allStable = samples.every((s) => s.stable);
+
+      return {
+        weightKg: Math.round(mean),
+        unit: "kg",
+        stable: allStable,
+        capturedAt: new Date().toISOString()
+      };
     },
 
     getStatus(): ToledoTcpAdapterStatus {

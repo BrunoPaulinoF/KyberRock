@@ -691,9 +691,11 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
 
     setFormError(null);
+    setMessage("Coletando peso de entrada (media de 5s na balanca). Aguarde...");
 
     try {
       const operation = await desktopApi.startWeighing({
+        operationType: form.operationType,
         customerId: form.customerId,
         vehicleId: form.vehicleId,
         carrierId: form.carrierId || undefined,
@@ -706,7 +708,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         unitPriceCents: form.unitPriceCents ?? undefined,
         entryWeightKg: form.manualWeightEnabled ? (form.manualWeightKg ?? undefined) : undefined
       });
-      setMessage(`Entrada capturada: ${operation.entryWeightKg} kg.`);
+      setMessage(`Entrada capturada (media 5s): ${operation.entryWeightKg} kg.`);
       setForm(initialWeighingForm);
       setActiveView("open-operations");
       await refreshOpenOperations();
@@ -728,6 +730,12 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       return;
     }
 
+    setMessage(
+      operationType === "invoice"
+        ? "Coletando peso de saida (media 5s) e fechando a operacao fiscal."
+        : "Coletando peso de saida (media 5s) e fechando a operacao interna."
+    );
+
     try {
       if (operationType === "invoice") {
         setFiscalCloseProgress({
@@ -735,7 +743,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
           status: "running",
           step: "weighing",
           title: "Fechando saida fiscal",
-          detail: "Capturando peso de saida e calculando peso liquido."
+          detail: "Capturando peso de saida (media 5s) e calculando peso liquido."
         });
         setMessage("Fechando operacao fiscal e faturando no OMIE. Mantenha a internet conectada.");
       }

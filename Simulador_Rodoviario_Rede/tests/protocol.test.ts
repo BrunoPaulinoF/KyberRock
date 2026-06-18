@@ -62,7 +62,10 @@ test("buildScaleFrame creates a Toledo-compatible TCP line", () => {
     },
     lastFrame: "",
     updatedAt: "2026-01-01T10:00:00.000Z",
-    events: []
+    events: [],
+    samplingKind: null,
+    samplingRemainingMs: 0,
+    samplingSampleCount: 0
   };
 
   const frame = buildScaleFrame(snapshot);
@@ -96,7 +99,10 @@ test("buildToledoStatus maps balance flags by position", () => {
     currentTruck: null,
     lastFrame: "",
     updatedAt: "2026-01-01T10:00:00.000Z",
-    events: []
+    events: [],
+    samplingKind: null,
+    samplingRemainingMs: 0,
+    samplingSampleCount: 0
   };
 
   assert.equal(buildToledoStatus(snapshot), "OM I G  ");
@@ -112,5 +118,15 @@ test("parseTcpCommand supports integration commands", () => {
       tare: 15000,
       plate: "ABC1D23"
     }
+  });
+  assert.deepEqual(parseTcpCommand("ARRIVE PLATE=ABC1D23"), {
+    type: "arriveTruck",
+    data: { plate: "ABC1D23" }
+  });
+  assert.deepEqual(parseTcpCommand("TARE"), { type: "tare", data: {} });
+  assert.deepEqual(parseTcpCommand("GROSS"), { type: "gross", data: {} });
+  assert.deepEqual(parseTcpCommand("EXIT DURATION=3000"), {
+    type: "exitTruck",
+    data: { duration: 3000 }
   });
 });

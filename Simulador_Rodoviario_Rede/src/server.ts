@@ -97,7 +97,6 @@ function handleTcpCommand(socket: net.Socket, commandText: string): void {
       socket.write(simulator.snapshot().lastFrame);
       return;
     case "zero":
-    case "tare":
     case "newTruck":
     case "loadTruck":
     case "leaveScale":
@@ -105,6 +104,22 @@ function handleTcpCommand(socket: net.Socket, commandText: string): void {
     case "stopAuto":
       simulator.action(command.type);
       socket.write(`OK ${command.type}\r\n`);
+      return;
+    case "tare":
+      simulator.action("tare", command.data);
+      socket.write("OK tare sampling\r\n");
+      return;
+    case "gross":
+      simulator.action("gross", command.data);
+      socket.write("OK gross sampling\r\n");
+      return;
+    case "arriveTruck":
+      simulator.action("arriveTruck", command.data);
+      socket.write("OK arrive\r\n");
+      return;
+    case "exitTruck":
+      simulator.action("exitTruck", command.data);
+      socket.write("OK exit\r\n");
       return;
     case "manualSet":
       simulator.action("manualSet", command.data);

@@ -330,7 +330,7 @@ export class DesktopRuntime {
     entryWeightKg?: number;
   }): Promise<WeighingOperationSummary> {
     this.assertDesktopAccess();
-    const entryWeightKg = input.entryWeightKg ?? (await this.readScaleWeight());
+    const entryWeightKg = input.entryWeightKg ?? (await this.readScaleSampledWeight());
 
     return createWeighingOperation(this.database, {
       identity: this.ensureIdentity(),
@@ -352,7 +352,7 @@ export class DesktopRuntime {
     operationType?: OperationType
   ): Promise<WeighingOperationSummary> {
     this.assertDesktopAccess();
-    const exitWeightKg = await this.readScaleWeight();
+    const exitWeightKg = await this.readScaleSampledWeight();
 
     if (
       operationType !== undefined &&
@@ -369,8 +369,15 @@ export class DesktopRuntime {
     });
   }
 
-  private async readScaleWeight(): Promise<number> {
+  private async readScaleSampledWeight(): Promise<number> {
     try {
+      const adapter = this.scaleAdapter as Partial<{
+        readSampled: (options?: { durationMs?: number }) => Promise<{ weightKg: number }>;
+      }>;
+      if (typeof adapter.readSampled === "function") {
+        const reading = await adapter.readSampled({ durationMs: 5000 });
+        return reading.weightKg;
+      }
       const reading = await this.scaleAdapter.read();
       return reading.weightKg;
     } catch (error) {

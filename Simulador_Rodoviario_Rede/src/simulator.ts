@@ -14,6 +14,15 @@ type ManualOverrides = {
   motion?: boolean;
   overload?: boolean;
 };
+type SamplingKind = "tare" | "gross";
+type SamplingState = {
+  kind: SamplingKind;
+  startedAt: number;
+  durationMs: number;
+  samples: number[];
+  targetValue: number;
+  callback: (mean: number) => void;
+};
 
 const MATERIALS = ["Brita 1", "Brita 2", "Po de pedra", "Areia media", "Rachao", "Bica corrida"];
 const DRIVERS = [
@@ -39,12 +48,17 @@ const DESTINATIONS = [
   "Estoque interno"
 ];
 
+export const DEFAULT_SAMPLE_DURATION_MS = 5000;
+export const DEFAULT_SAMPLE_INTERVAL_MS = 200;
+
 export class QuarryScaleSimulator extends EventEmitter {
   private snapshotState: SimulatorSnapshot;
   private autoPhase: AutoPhase = "IDLE";
   private manualOverrides: ManualOverrides = {};
   private phaseStartedAt = Date.now();
   private eventId = 0;
+  private sampling: SamplingState | null = null;
+  private nextSampleTickAt = 0;
 
   constructor(config: SimulatorConfig) {
     super();
@@ -75,7 +89,10 @@ export class QuarryScaleSimulator extends EventEmitter {
       currentTruck: null,
       lastFrame: "",
       updatedAt: now,
-      events: []
+      events: [],
+      samplingKind: null,
+      samplingRemainingMs: 0,
+      samplingSampleCount: 0
     };
     this.addEvent("info", "Simulador iniciado e aguardando conexoes TCP.");
     this.refreshFrame();
@@ -101,13 +118,19 @@ export class QuarryScaleSimulator extends EventEmitter {
 
     this.moveWeightTowardsTarget();
     this.deriveWeightFields();
+    this.advanceSampling();
     this.touch();
   }
 
   action(type: string, data: Record<string, unknown> = {}): SimulatorSnapshot {
+    const keepsSampling = type === "tare" || type === "gross" || type === "exitTruck";
+    if (!keepsSampling) {
+      this.cancelSampling();
+    }
     switch (type) {
       case "startAuto":
         this.clearManualOverrides();
+        this.cancelSampling();
         this.snapshotState.autoMode = true;
         this.autoPhase = "IDLE";
         this.phaseStartedAt = Date.now();
@@ -119,28 +142,45 @@ export class QuarryScaleSimulator extends EventEmitter {
         break;
       case "newTruck":
         this.clearManualOverrides();
+        this.cancelSampling();
         this.startTruckEntry(this.createTruck(data));
         break;
       case "loadTruck":
         this.clearManualOverrides();
+        this.cancelSampling();
         this.startLoading();
         break;
       case "leaveScale":
         this.clearManualOverrides();
+        this.cancelSampling();
         this.leaveScale();
         break;
       case "zero":
         this.clearManualOverrides();
+        this.cancelSampling();
         this.zeroScale();
         break;
       case "tare":
-        this.captureTare();
+        this.startTareSampling(data);
+        break;
+      case "gross":
+        this.startGrossSampling(data);
+        break;
+      case "arriveTruck":
+        this.clearManualOverrides();
+        this.cancelSampling();
+        this.startTruckEntry(this.createTruck(data));
+        break;
+      case "exitTruck":
+        this.startExitSampling(data);
         break;
       case "manualSet":
+        this.cancelSampling();
         this.applyManualSet(data);
         break;
       case "emergencyStop":
         this.clearManualOverrides();
+        this.cancelSampling();
         this.snapshotState.autoMode = false;
         this.snapshotState.status = "ERROR";
         this.snapshotState.trafficLight = "RED";
@@ -153,8 +193,13 @@ export class QuarryScaleSimulator extends EventEmitter {
     }
 
     this.deriveWeightFields();
+    this.advanceSampling();
     this.touch();
     return this.snapshot();
+  }
+
+  isSampling(): boolean {
+    return this.sampling !== null;
   }
 
   private advanceAutoScenario(): void {
@@ -170,12 +215,12 @@ export class QuarryScaleSimulator extends EventEmitter {
     if (this.autoPhase === "ENTER_EMPTY" && elapsed > 4500 && this.snapshotState.stable) {
       this.autoPhase = "CAPTURE_TARE";
       this.snapshotState.status = "WEIGHING_EMPTY";
-      this.captureTare();
+      this.startTareSampling({ durationMs: DEFAULT_SAMPLE_DURATION_MS });
       this.phaseStartedAt = Date.now();
       return;
     }
 
-    if (this.autoPhase === "CAPTURE_TARE" && elapsed > 2800) {
+    if (this.autoPhase === "CAPTURE_TARE" && elapsed > 6800) {
       this.startLoading();
       this.autoPhase = "LOADING";
       this.phaseStartedAt = Date.now();
@@ -217,6 +262,7 @@ export class QuarryScaleSimulator extends EventEmitter {
     this.snapshotState.status = "APPROACHING";
     this.snapshotState.trafficLight = "RED";
     this.snapshotState.targetWeightKg = truck.tareKg;
+    this.snapshotState.weightKg = truck.tareKg;
     this.snapshotState.zeroed = false;
     this.addEvent("info", `Caminhao ${truck.plate} entrou na balanca para pesagem inicial.`);
   }
@@ -251,8 +297,115 @@ export class QuarryScaleSimulator extends EventEmitter {
     this.addEvent("info", "Balanca zerada manualmente.");
   }
 
-  private captureTare(): void {
-    const tare = Math.max(0, Math.round(this.snapshotState.weightKg));
+  private startTareSampling(data: Record<string, unknown> = {}): void {
+    const truck = this.snapshotState.currentTruck ?? this.createTruck(data);
+    this.snapshotState.currentTruck = truck;
+    this.snapshotState.status = "WEIGHING_EMPTY";
+    this.snapshotState.trafficLight = "RED";
+    this.snapshotState.targetWeightKg = truck.tareKg;
+    this.beginSampling("tare", truck.tareKg, data, (mean) => this.applyTare(mean));
+  }
+
+  private startGrossSampling(data: Record<string, unknown> = {}): void {
+    const truck = this.snapshotState.currentTruck ?? this.createTruck(data);
+    this.snapshotState.currentTruck = truck;
+    this.snapshotState.status = "WEIGHING_LOADED";
+    this.snapshotState.trafficLight = "GREEN";
+    this.snapshotState.targetWeightKg = truck.plannedGrossKg;
+    this.beginSampling("gross", truck.plannedGrossKg, data, (mean) => this.applyGross(mean));
+  }
+
+  private startExitSampling(data: Record<string, unknown> = {}): void {
+    const truck = this.snapshotState.currentTruck ?? this.createTruck(data);
+    this.snapshotState.currentTruck = truck;
+    this.snapshotState.status = "WEIGHING_LOADED";
+    this.snapshotState.trafficLight = "GREEN";
+    this.snapshotState.targetWeightKg = truck.plannedGrossKg;
+    this.beginSampling("gross", truck.plannedGrossKg, data, (mean) => {
+      this.applyGross(mean);
+      this.snapshotState.status = "LEAVING";
+      this.snapshotState.trafficLight = "RED";
+      this.snapshotState.targetWeightKg = 0;
+      this.addEvent("info", "Caminhao liberado e saindo da plataforma.");
+    });
+  }
+
+  private beginSampling(
+    kind: SamplingKind,
+    targetValue: number,
+    data: Record<string, unknown>,
+    callback: (mean: number) => void
+  ): void {
+    const durationMs =
+      numberFromAny(data.durationMs ?? data.duration) ?? DEFAULT_SAMPLE_DURATION_MS;
+    const intervalMs = numberFromAny(data.intervalMs) ?? DEFAULT_SAMPLE_INTERVAL_MS;
+    this.sampling = {
+      kind,
+      startedAt: Date.now(),
+      durationMs: Math.max(500, durationMs),
+      samples: [],
+      targetValue,
+      callback
+    };
+    this.nextSampleTickAt = Date.now();
+    this.snapshotState.samplingKind = kind;
+    this.snapshotState.samplingRemainingMs = this.sampling.durationMs;
+    this.snapshotState.samplingSampleCount = 0;
+    this.addEvent(
+      "info",
+      `Amostragem de ${kind === "tare" ? "tara" : "peso bruto"} iniciada (${this.sampling.durationMs} ms).`
+    );
+    if (intervalMs > 0) {
+      // placeholder; advanceSampling decide o intervalo real
+    }
+  }
+
+  private advanceSampling(): void {
+    if (!this.sampling) {
+      this.snapshotState.samplingKind = null;
+      this.snapshotState.samplingRemainingMs = 0;
+      this.snapshotState.samplingSampleCount = 0;
+      return;
+    }
+    const now = Date.now();
+    const elapsed = now - this.sampling.startedAt;
+    this.snapshotState.samplingRemainingMs = Math.max(0, this.sampling.durationMs - elapsed);
+    this.snapshotState.samplingSampleCount = this.sampling.samples.length;
+
+    if (now >= this.nextSampleTickAt) {
+      this.sampling.samples.push(this.snapshotState.weightKg);
+      this.nextSampleTickAt = now + DEFAULT_SAMPLE_INTERVAL_MS;
+      this.snapshotState.samplingSampleCount = this.sampling.samples.length;
+    }
+
+    if (elapsed >= this.sampling.durationMs) {
+      const mean = meanOf(
+        this.sampling.samples.length ? this.sampling.samples : [this.sampling.targetValue]
+      );
+      const kind = this.sampling.kind;
+      const callback = this.sampling.callback;
+      this.sampling = null;
+      this.snapshotState.samplingKind = null;
+      this.snapshotState.samplingRemainingMs = 0;
+      this.snapshotState.samplingSampleCount = 0;
+      callback(mean);
+      this.addEvent(
+        "info",
+        `Amostragem de ${kind === "tare" ? "tara" : "peso bruto"} concluida: media ${Math.round(mean)} kg em ${this.snapshotState.samplingSampleCount} amostras.`
+      );
+    }
+  }
+
+  private cancelSampling(): void {
+    if (!this.sampling) return;
+    this.sampling = null;
+    this.snapshotState.samplingKind = null;
+    this.snapshotState.samplingRemainingMs = 0;
+    this.snapshotState.samplingSampleCount = 0;
+  }
+
+  private applyTare(mean: number): void {
+    const tare = Math.max(0, Math.round(mean));
     this.snapshotState.tareKg = tare;
     if (this.snapshotState.currentTruck) {
       this.snapshotState.currentTruck.tareKg = tare;
@@ -261,7 +414,21 @@ export class QuarryScaleSimulator extends EventEmitter {
         this.snapshotState.currentTruck.plannedGrossKg - tare
       );
     }
-    this.addEvent("info", `Tara capturada: ${tare} kg.`);
+    this.snapshotState.status = "IDLE";
+    this.snapshotState.trafficLight = "GREEN";
+    this.addEvent("info", `Tara capturada (media 5s): ${tare} kg.`);
+  }
+
+  private applyGross(mean: number): void {
+    const gross = Math.max(0, Math.round(mean));
+    if (this.snapshotState.currentTruck) {
+      this.snapshotState.currentTruck.plannedGrossKg = gross;
+      this.snapshotState.currentTruck.plannedNetKg = Math.max(
+        0,
+        gross - this.snapshotState.currentTruck.tareKg
+      );
+    }
+    this.addEvent("info", `Peso bruto capturado (media 5s): ${gross} kg.`);
   }
 
   private applyManualSet(data: Record<string, unknown>): void {
@@ -335,14 +502,15 @@ export class QuarryScaleSimulator extends EventEmitter {
     const moving = Math.abs(distance) > 25;
 
     if (moving) {
-      const step = clamp(distance * 0.22, -2600, 2600);
-      const vibration = randomBetween(-35, 35);
+      // Convergencia em aprox. 3s a 30 ticks/segundo -> passo ~33% da distancia por tick.
+      const step = clamp(distance * 0.33, -3000, 3000);
+      const vibration = randomBetween(-25, 25);
       this.snapshotState.weightKg += step + vibration;
       this.snapshotState.motion = true;
       this.snapshotState.stable = false;
     } else {
       const noise =
-        this.snapshotState.status === "IDLE" ? randomBetween(-2, 2) : randomBetween(-8, 8);
+        this.snapshotState.status === "IDLE" ? randomBetween(-2, 2) : randomBetween(-6, 6);
       this.snapshotState.weightKg = this.snapshotState.targetWeightKg + noise;
       this.snapshotState.motion = false;
       this.snapshotState.stable = true;
@@ -399,7 +567,7 @@ export class QuarryScaleSimulator extends EventEmitter {
       plate: stringFromAny(data.plate ?? data.placa) ?? randomPlate(),
       driver: stringFromAny(data.driver) ?? pick(DRIVERS),
       company: stringFromAny(data.company) ?? pick(COMPANIES),
-      material: stringFromAny(data.material) ?? pick(MATERIALS),
+      material: stringFromAny(data.material ?? data.mat) ?? pick(MATERIALS),
       origin: "Pedreira Principal",
       destination: stringFromAny(data.destination) ?? pick(DESTINATIONS),
       axleCount: Math.round(numberFromAny(data.axleCount) ?? pick([3, 4, 5, 6])),
@@ -431,6 +599,12 @@ export class QuarryScaleSimulator extends EventEmitter {
     this.snapshotState.sequence += 1;
     this.snapshotState.lastFrame = buildScaleFrame(this.snapshotState);
   }
+}
+
+function meanOf(values: number[]): number {
+  let total = 0;
+  for (const value of values) total += value;
+  return total / values.length;
 }
 
 function randomPlate(): string {

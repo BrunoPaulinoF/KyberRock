@@ -14,6 +14,7 @@ const refs = {
   overloadBadge: document.querySelector("#overloadBadge"),
   modeBadge: document.querySelector("#modeBadge"),
   lightBadge: document.querySelector("#lightBadge"),
+  sampleBadge: document.querySelector("#sampleBadge"),
   grossKg: document.querySelector("#grossKg"),
   tareKg: document.querySelector("#tareKg"),
   netKg: document.querySelector("#netKg"),
@@ -147,6 +148,19 @@ function render(nextState) {
     state.trafficLight === "GREEN" ? "SINAL VERDE" : "SINAL VERMELHO",
     state.trafficLight === "GREEN" ? "good" : "bad"
   );
+
+  if (state.samplingKind) {
+    const remaining = Math.max(0, Math.ceil((state.samplingRemainingMs || 0) / 1000));
+    const label =
+      state.samplingKind === "tare"
+        ? `TARA media ${remaining}s (${state.samplingSampleCount} am.)`
+        : `BRUTO media ${remaining}s (${state.samplingSampleCount} am.)`;
+    refs.sampleBadge.textContent = label;
+    refs.sampleBadge.style.display = "inline-block";
+    refs.sampleBadge.className = "badge warn";
+  } else {
+    refs.sampleBadge.style.display = "none";
+  }
 
   refs.events.innerHTML = state.events
     .map(

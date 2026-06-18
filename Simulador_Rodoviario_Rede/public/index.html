@@ -42,6 +42,7 @@
             <span class="badge" id="overloadBadge">CARGA OK</span>
             <span class="badge" id="modeBadge">BRUTO</span>
             <span class="badge" id="lightBadge">SINAL VERDE</span>
+            <span class="badge" id="sampleBadge" style="display: none">AGUARDANDO 0s</span>
           </div>
           <div class="stats">
             <div>
@@ -99,10 +100,10 @@
           </div>
           <div class="actions">
             <button id="toggleAuto" class="primary">Ativar automatico</button>
-            <button data-action="newTruck">Novo caminhao</button>
-            <button data-action="loadTruck">Carregar</button>
-            <button data-action="leaveScale">Liberar saida</button>
-            <button data-action="tare">Capturar tara</button>
+            <button data-action="arriveTruck" class="primary">Entrada caminhao</button>
+            <button data-action="tare">Capturar tara (media 5s)</button>
+            <button data-action="gross">Capturar bruto (media 5s)</button>
+            <button data-action="exitTruck">Saida caminhao</button>
             <button data-action="zero">Zerar balanca</button>
             <button data-action="emergencyStop" class="danger">Emergencia</button>
           </div>
@@ -197,8 +198,12 @@
           <div class="commands">
             <strong>Comandos aceitos por TCP</strong>
             <p>
-              PING, READ, ZERO, TARE, NEW, LOAD, LEAVE, AUTO ON, AUTO OFF, SET
+              PING, READ, ZERO, TARE, GROSS, ARRIVE, EXIT, NEW, LOAD, LEAVE, AUTO ON, AUTO OFF, SET
               WEIGHT=42000;TARE=15500;STABLE=true;OVERLOAD=auto;PLATE=ABC1D23
+            </p>
+            <p>
+              TARE e GROSS coletam 5 segundos de leituras e gravam a media no estado da balanca. O
+              fluxo recomendado: ARRIVE -&gt; TARE -&gt; (carregar) -&gt; EXIT.
             </p>
           </div>
         </section>
