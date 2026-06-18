@@ -82,6 +82,14 @@ type AppPhase = "checking_access" | "locked" | "unlocked";
 type ThemeMode = "light" | "dark";
 type OperationsTab = "open" | "canceled" | "closed";
 type CanceledFilter = "all" | "day" | "week" | "month";
+type FiscalCloseStep = "weighing" | "billing" | "danfe" | "receipt";
+type FiscalCloseProgress = {
+  operationId: string;
+  status: "running" | "success" | "error";
+  step: FiscalCloseStep;
+  title: string;
+  detail: string;
+};
 
 export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }: AppProps = {}) {
   const [phase, setPhase] = useState<AppPhase>("checking_access");
@@ -132,6 +140,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [registrationsTab, setRegistrationsTab] = useState<RegistrationsTab>("customers");
   const [closingOperationId, setClosingOperationId] = useState<string | null>(null);
   const [cancelOperationId, setCancelOperationId] = useState<string | null>(null);
+  const [fiscalCloseProgress, setFiscalCloseProgress] = useState<FiscalCloseProgress | null>(null);
+  const [retryingFiscalOperationId, setRetryingFiscalOperationId] = useState<string | null>(null);
   const [omieSyncing, setOmieSyncing] = useState(false);
   const [omieConnectionFeedback, setOmieConnectionFeedback] = useState<{
     status: "idle" | "checking" | "success" | "warning" | "error";
@@ -720,11 +730,47 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
     try {
       if (operationType === "invoice") {
+        setFiscalCloseProgress({
+          operationId,
+          status: "running",
+          step: "weighing",
+          title: "Fechando saida fiscal",
+          detail: "Capturando peso de saida e calculando peso liquido."
+        });
         setMessage("Fechando operacao fiscal e faturando no OMIE. Mantenha a internet conectada.");
       }
       const operation = await desktopApi.closeWeighing(operationId, operationType);
+      if (operationType === "invoice") {
+        setFiscalCloseProgress({
+          operationId: operation.id,
+          status: "running",
+          step: "billing",
+          title: "Faturando no OMIE",
+          detail: "Criando e faturando o pedido de venda fiscal."
+        });
+      }
       const billingStatus =
         operationType === "invoice" ? await desktopApi.billFiscalOperation(operation.id) : null;
+      if (operationType === "invoice") {
+        setFiscalCloseProgress({
+          operationId: operation.id,
+          status: "running",
+          step: "danfe",
+          title: "Documento fiscal",
+          detail: billingStatus?.documentUrl
+            ? billingStatus.documentPrinted
+              ? "DANFE retornado pela OMIE e enviado para impressora."
+              : "DANFE retornado pela OMIE, mas a impressao automatica nao confirmou."
+            : "OMIE faturou o pedido, mas ainda nao retornou URL do DANFE."
+        });
+        setFiscalCloseProgress({
+          operationId: operation.id,
+          status: "running",
+          step: "receipt",
+          title: "Imprimindo cupom",
+          detail: "Emitindo o comprovante local da pesagem."
+        });
+      }
       const receipt = await desktopApi.printReceipt(operation.id);
       const receiptStatus =
         receipt.status === "printed"
@@ -742,10 +788,79 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       setMessage(
         `Operacao fechada. Peso liquido: ${operation.netWeightKg} kg. ${fiscalStatus}${receiptStatus}`
       );
+      if (operationType === "invoice") {
+        setFiscalCloseProgress({
+          operationId: operation.id,
+          status: "success",
+          step: "receipt",
+          title: "Saida fiscal concluida",
+          detail: fiscalStatus.trim() || "Pedido fiscal faturado no OMIE."
+        });
+      }
       await refreshOpenOperations();
       await refreshPrintData();
     } catch (error) {
-      setMessage(getErrorMessage(error));
+      const errorMessage = getErrorMessage(error);
+      setMessage(errorMessage);
+      if (operationType === "invoice") {
+        setFiscalCloseProgress((current) => ({
+          operationId,
+          status: "error",
+          step: current?.step ?? "billing",
+          title: "Saida fiscal exige atencao",
+          detail: errorMessage
+        }));
+      }
+      await refreshOpenOperations();
+    }
+  }
+
+  async function handleRetryFiscalBilling(operationId: string): Promise<void> {
+    if (!desktopApi) return;
+
+    if (!navigator.onLine) {
+      setMessage("Retry fiscal exige internet conectada para falar com o OMIE.");
+      return;
+    }
+
+    setRetryingFiscalOperationId(operationId);
+    setFiscalCloseProgress({
+      operationId,
+      status: "running",
+      step: "billing",
+      title: "Retentando faturamento OMIE",
+      detail: "Reprocessando o job fiscal pendente desta operacao."
+    });
+
+    try {
+      const billingStatus = await desktopApi.billFiscalOperation(operationId);
+      const danfeStatus = billingStatus.documentUrl
+        ? billingStatus.documentPrinted
+          ? "DANFE enviado para impressora."
+          : `DANFE disponivel, mas sem impressao automatica: ${billingStatus.documentPrintError ?? "sem detalhe"}.`
+        : "DANFE ainda nao foi retornado pela OMIE.";
+      setFiscalCloseProgress({
+        operationId,
+        status: "success",
+        step: "danfe",
+        title: "Faturamento fiscal recuperado",
+        detail: `Pedido OMIE ${billingStatus.orderId} faturado. ${danfeStatus}`
+      });
+      setMessage(`Faturamento OMIE recuperado para a operacao. ${danfeStatus}`);
+      await refreshOpenOperations();
+    } catch (error) {
+      const errorMessage = getErrorMessage(error);
+      setFiscalCloseProgress({
+        operationId,
+        status: "error",
+        step: "billing",
+        title: "Retry fiscal falhou",
+        detail: errorMessage
+      });
+      setMessage(errorMessage);
+      await refreshOpenOperations();
+    } finally {
+      setRetryingFiscalOperationId(null);
     }
   }
 
@@ -1449,14 +1564,17 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   </div>
                 ) : (
                   <div style={styles.operationsTable}>
-                    <div style={{ ...styles.operationsTableRow, ...styles.operationsTableHead }}>
+                    <div
+                      style={{ ...styles.closedOperationsTableRow, ...styles.operationsTableHead }}
+                    >
                       <span>Placa</span>
                       <span>Cliente / Produto</span>
                       <span>Peso liquido / Receita</span>
                       <span>Concluida em</span>
+                      <span>Fiscal OMIE</span>
                     </div>
                     {filteredClosedOperations.map((operation) => (
-                      <div key={operation.id} style={styles.operationsTableRow}>
+                      <div key={operation.id} style={styles.closedOperationsTableRow}>
                         <strong style={styles.plateBadge}>{operation.plate || "--"}</strong>
                         <span style={styles.operationCellStack}>
                           <strong>{operation.customerName || "Cliente nao informado"}</strong>
@@ -1468,6 +1586,11 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                           <span>{formatMoney(operation.totalCents)}</span>
                         </span>
                         <span>{new Date(operation.updatedAt).toLocaleString("pt-BR")}</span>
+                        <FiscalBillingStatus
+                          operation={operation}
+                          retrying={retryingFiscalOperationId === operation.id}
+                          onRetry={() => void handleRetryFiscalBilling(operation.id)}
+                        />
                       </div>
                     ))}
                   </div>
@@ -1495,6 +1618,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   void handleCancelOperation(id, reason);
                 }}
                 onCancel={() => setCancelOperationId(null)}
+              />
+            ) : null}
+
+            {fiscalCloseProgress ? (
+              <FiscalProgressDialog
+                progress={fiscalCloseProgress}
+                onClose={() => setFiscalCloseProgress(null)}
               />
             ) : null}
 
@@ -3141,6 +3271,120 @@ function CancelOperationDialog({
   );
 }
 
+function FiscalProgressDialog({
+  progress,
+  onClose
+}: {
+  progress: FiscalCloseProgress;
+  onClose: () => void;
+}) {
+  const steps: Array<{ key: FiscalCloseStep; label: string }> = [
+    { key: "weighing", label: "Saida" },
+    { key: "billing", label: "OMIE" },
+    { key: "danfe", label: "DANFE" },
+    { key: "receipt", label: "Cupom" }
+  ];
+  const activeIndex = steps.findIndex((step) => step.key === progress.step);
+
+  return (
+    <div style={modalOverlayStyle}>
+      <div style={{ ...modalContentStyle, maxWidth: "520px", borderRadius: "18px" }}>
+        <div style={styles.fiscalProgressHeader}>
+          <div>
+            <p style={styles.kicker}>Fluxo fiscal</p>
+            <h3 style={styles.fiscalProgressTitle}>{progress.title}</h3>
+          </div>
+          <span style={fiscalProgressBadgeStyle(progress.status)}>
+            {progress.status === "running"
+              ? "Em andamento"
+              : progress.status === "success"
+                ? "OK"
+                : "Atencao"}
+          </span>
+        </div>
+
+        <div style={styles.fiscalStepRail}>
+          {steps.map((step, index) => {
+            const done = progress.status === "success" || index < activeIndex;
+            const active = index === activeIndex && progress.status === "running";
+            const failed = index === activeIndex && progress.status === "error";
+            return (
+              <div key={step.key} style={styles.fiscalStepItem}>
+                <span style={fiscalStepDotStyle({ done, active, failed })}>
+                  {done ? "OK" : failed ? "!" : index + 1}
+                </span>
+                <span style={styles.fiscalStepLabel}>{step.label}</span>
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={styles.fiscalProgressDetailCard}>
+          <strong>{progress.detail}</strong>
+          {progress.status === "running" ? (
+            <span style={styles.fiscalProgressHint}>Aguarde. Nao feche o aplicativo.</span>
+          ) : progress.status === "success" ? (
+            <span style={styles.fiscalProgressHint}>Saida liberada para o operador.</span>
+          ) : (
+            <span style={styles.fiscalProgressHint}>
+              O job fiscal ficou pendente/falho e pode ser retentado na aba Concluidas.
+            </span>
+          )}
+        </div>
+
+        <div style={styles.modalActions}>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={progress.status === "running"}
+            style={{
+              ...styles.secondaryButton,
+              opacity: progress.status === "running" ? 0.5 : 1,
+              cursor: progress.status === "running" ? "not-allowed" : "pointer"
+            }}
+          >
+            Fechar painel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FiscalBillingStatus({
+  operation,
+  retrying,
+  onRetry
+}: {
+  operation: WeighingOperationSummary;
+  retrying: boolean;
+  onRetry: () => void;
+}) {
+  const status = getFiscalBillingStatus(operation);
+
+  return (
+    <span style={styles.operationCellStack}>
+      <span style={fiscalBillingPillStyle(status.tone)}>{status.label}</span>
+      <small>{status.detail}</small>
+      {status.canRetry ? (
+        <button
+          type="button"
+          onClick={onRetry}
+          disabled={retrying}
+          style={{
+            ...styles.smallPrimaryButton,
+            width: "fit-content",
+            opacity: retrying ? 0.6 : 1,
+            cursor: retrying ? "not-allowed" : "pointer"
+          }}
+        >
+          {retrying ? "Retentando..." : "Retentar OMIE"}
+        </button>
+      ) : null}
+    </span>
+  );
+}
+
 function PriceDetailsPanel({
   details,
   appliedUnitPriceCents
@@ -3287,6 +3531,126 @@ function operationsTabStyle(active: boolean): React.CSSProperties {
     cursor: "pointer",
     fontWeight: 800,
     fontSize: "12px"
+  };
+}
+
+function fiscalProgressBadgeStyle(status: FiscalCloseProgress["status"]): React.CSSProperties {
+  const tone =
+    status === "success"
+      ? { background: "#dcfce7", color: "#166534" }
+      : status === "error"
+        ? { background: "#fee2e2", color: "#991b1b" }
+        : { background: "#dbeafe", color: "#1e40af" };
+  return {
+    ...tone,
+    padding: "6px 10px",
+    borderRadius: "999px",
+    fontSize: "12px",
+    fontWeight: 900
+  };
+}
+
+function fiscalStepDotStyle(input: {
+  done: boolean;
+  active: boolean;
+  failed: boolean;
+}): React.CSSProperties {
+  const tone = input.failed
+    ? { background: "#b91c1c", color: "#ffffff", borderColor: "#b91c1c" }
+    : input.done
+      ? { background: "#16a34a", color: "#ffffff", borderColor: "#16a34a" }
+      : input.active
+        ? { background: "#2563eb", color: "#ffffff", borderColor: "#2563eb" }
+        : {
+            background: "var(--kr-surface)",
+            color: "var(--kr-muted)",
+            borderColor: "var(--kr-border)"
+          };
+  return {
+    ...tone,
+    width: "34px",
+    height: "34px",
+    border: "1px solid",
+    borderRadius: "999px",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: "11px",
+    fontWeight: 900
+  };
+}
+
+function getFiscalBillingStatus(operation: WeighingOperationSummary): {
+  label: string;
+  detail: string;
+  tone: "success" | "warning" | "danger" | "neutral";
+  canRetry: boolean;
+} {
+  if (operation.operationType !== "invoice") {
+    return {
+      label: "Interna",
+      detail: "Sem nota fiscal de venda.",
+      tone: "neutral",
+      canRetry: false
+    };
+  }
+
+  if (operation.omieBillingStatus === "billed") {
+    return {
+      label: "Faturada",
+      detail: operation.omieSalesOrderId
+        ? `Pedido OMIE ${operation.omieSalesOrderId}`
+        : operation.omieDocumentUrl
+          ? "DANFE disponivel."
+          : "Pedido faturado no OMIE.",
+      tone: "success",
+      canRetry: false
+    };
+  }
+
+  if (operation.omieBillingStatus === "failed") {
+    return {
+      label: "Falhou",
+      detail: operation.omieBillingMessage ?? "Faturamento nao confirmado.",
+      tone: "danger",
+      canRetry: true
+    };
+  }
+
+  return {
+    label: "Pendente",
+    detail: "Aguardando faturamento OMIE.",
+    tone: "warning",
+    canRetry: true
+  };
+}
+
+function fiscalBillingPillStyle(
+  tone: "success" | "warning" | "danger" | "neutral"
+): React.CSSProperties {
+  const colors =
+    tone === "success"
+      ? { background: "#dcfce7", color: "#166534", borderColor: "#bbf7d0" }
+      : tone === "danger"
+        ? { background: "#fee2e2", color: "#991b1b", borderColor: "#fecaca" }
+        : tone === "warning"
+          ? { background: "#fef3c7", color: "#92400e", borderColor: "#fde68a" }
+          : {
+              background: "var(--kr-surface-soft)",
+              color: "var(--kr-muted)",
+              borderColor: "var(--kr-border)"
+            };
+
+  return {
+    ...colors,
+    display: "inline-flex",
+    width: "fit-content",
+    alignItems: "center",
+    border: "1px solid",
+    borderRadius: "999px",
+    padding: "4px 8px",
+    fontSize: "11px",
+    fontWeight: 900
   };
 }
 
@@ -5625,6 +5989,54 @@ const styles = {
     gap: "6px",
     justifyContent: "flex-end"
   },
+  fiscalProgressHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: "12px",
+    marginBottom: "14px"
+  },
+  fiscalProgressTitle: {
+    margin: "4px 0 0 0",
+    color: "var(--kr-text-strong)",
+    fontSize: "20px"
+  },
+  fiscalStepRail: {
+    display: "grid",
+    gridTemplateColumns: "repeat(4, minmax(70px, 1fr))",
+    gap: "8px",
+    marginBottom: "14px"
+  },
+  fiscalStepItem: {
+    display: "flex",
+    flexDirection: "column" as const,
+    alignItems: "center",
+    gap: "6px",
+    minWidth: 0
+  },
+  fiscalStepLabel: {
+    color: "var(--kr-muted)",
+    fontSize: "11px",
+    fontWeight: 800,
+    textTransform: "uppercase" as const,
+    letterSpacing: "0.05em"
+  },
+  fiscalProgressDetailCard: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "6px",
+    padding: "14px",
+    marginBottom: "14px",
+    border: "1px solid var(--kr-border)",
+    borderRadius: "14px",
+    background: "var(--kr-surface-soft)",
+    color: "var(--kr-text-strong)"
+  },
+  fiscalProgressHint: {
+    color: "var(--kr-muted)",
+    fontSize: "12px",
+    lineHeight: 1.4
+  },
   hero: {
     display: "flex",
     alignItems: "flex-start",
@@ -5997,6 +6409,16 @@ const styles = {
   canceledOperationsTableRow: {
     display: "grid",
     gridTemplateColumns: "96px minmax(180px, 1.1fr) 150px minmax(180px, 1.2fr)",
+    alignItems: "center",
+    gap: "10px",
+    padding: "10px 12px",
+    borderTop: "1px solid var(--kr-border)",
+    fontSize: "13px",
+    color: "var(--kr-text)"
+  },
+  closedOperationsTableRow: {
+    display: "grid",
+    gridTemplateColumns: "96px minmax(180px, 1.2fr) minmax(120px, 0.8fr) 150px minmax(190px, 1fr)",
     alignItems: "center",
     gap: "10px",
     padding: "10px 12px",

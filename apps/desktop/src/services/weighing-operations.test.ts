@@ -8,6 +8,7 @@ import {
   closeWeighingOperation,
   createWeighingOperation,
   createSimulatedWeighingOperation,
+  listClosedWeighingOperations,
   listOpenWeighingOperations
 } from "./weighing-operations";
 
@@ -316,6 +317,52 @@ describe("weighing operations", () => {
       expect(
         database.prepare("SELECT action FROM sync_queue WHERE target = 'omie'").pluck().get()
       ).toBe("create_and_bill_order");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("exposes fiscal billing status on closed operations", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET omie_customer_id = 456 WHERE id = 'customer-1'").run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        unitPriceCents: 12_000,
+        entryWeightKg: 12_000
+      });
+
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+      database
+        .prepare(
+          `UPDATE weighing_operations
+           SET omie_sales_order_id = 987,
+               omie_billing_status = 'billed',
+               omie_billing_message = 'Pedido faturado',
+               omie_billed_at = '2026-06-06T13:10:00.000Z',
+               omie_document_url = 'https://example.test/danfe.pdf'
+           WHERE id = ?`
+        )
+        .run(operation.id);
+
+      expect(listClosedWeighingOperations(database)[0]).toMatchObject({
+        omieSalesOrderId: 987,
+        omieBillingStatus: "billed",
+        omieBillingMessage: "Pedido faturado",
+        omieDocumentUrl: "https://example.test/danfe.pdf"
+      });
     } finally {
       database.close();
     }

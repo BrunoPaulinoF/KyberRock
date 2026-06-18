@@ -12,6 +12,7 @@ export default [
       "coverage/**",
       "**/coverage/**",
       "release/**",
+      "Simulador_Rodoviario_Rede/**",
       "**/*.cjs"
     ]
   },

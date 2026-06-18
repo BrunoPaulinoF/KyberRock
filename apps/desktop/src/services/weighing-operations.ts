@@ -78,6 +78,11 @@ export interface WeighingOperationSummary {
   productTotalCents: number | null;
   freightTotalCents: number;
   totalCents: number | null;
+  omieSalesOrderId: number | null;
+  omieBillingStatus: string | null;
+  omieBillingMessage: string | null;
+  omieBilledAt: string | null;
+  omieDocumentUrl: string | null;
   cancelReason: string | null;
   createdAt: string;
   updatedAt: string;
@@ -100,6 +105,11 @@ interface OperationRow {
   product_total_cents: number | null;
   freight_total_cents: number;
   total_cents: number | null;
+  omie_sales_order_id: number | null;
+  omie_billing_status: string | null;
+  omie_billing_message: string | null;
+  omie_billed_at: string | null;
+  omie_document_url: string | null;
   cancel_reason: string | null;
   created_at: string;
   updated_at: string;
@@ -763,6 +773,8 @@ export function listOpenWeighingOperations(database: DesktopDatabase): WeighingO
         o.unit_price_cents, o.base_unit_price_cents, o.applied_price_table_id, o.applied_price_table_name,
         o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
         o.product_total_cents, o.freight_total_cents, o.total_cents,
+        o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
+        o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
         c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
         CASE
@@ -794,6 +806,8 @@ export function listCanceledWeighingOperations(
         o.unit_price_cents, o.base_unit_price_cents, o.applied_price_table_id, o.applied_price_table_name,
         o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
         o.product_total_cents, o.freight_total_cents, o.total_cents,
+        o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
+        o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
         c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
         CASE
@@ -825,6 +839,8 @@ export function listClosedWeighingOperations(
         o.unit_price_cents, o.base_unit_price_cents, o.applied_price_table_id, o.applied_price_table_name,
         o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
         o.product_total_cents, o.freight_total_cents, o.total_cents,
+        o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
+        o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
         c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
         CASE
@@ -873,6 +889,8 @@ export function getWeighingOperation(
         o.unit_price_cents, o.base_unit_price_cents, o.applied_price_table_id, o.applied_price_table_name,
         o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
         o.product_total_cents, o.freight_total_cents, o.total_cents,
+        o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
+        o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
         c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
         CASE
@@ -962,6 +980,11 @@ function mapOperationRow(row: OperationRow): WeighingOperationSummary {
     productTotalCents: row.product_total_cents,
     freightTotalCents: row.freight_total_cents,
     totalCents: row.total_cents,
+    omieSalesOrderId: row.omie_sales_order_id,
+    omieBillingStatus: row.omie_billing_status,
+    omieBillingMessage: row.omie_billing_message,
+    omieBilledAt: row.omie_billed_at,
+    omieDocumentUrl: row.omie_document_url,
     cancelReason: row.cancel_reason,
     createdAt: row.created_at,
     updatedAt: row.updated_at
