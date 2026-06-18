@@ -23,6 +23,16 @@ export interface OmieCloudSyncResult {
   errors: string[];
 }
 
+export interface FiscalBillingResult {
+  orderId: number;
+  billed: boolean;
+  billingStatusCode: string | null;
+  billingStatusMessage: string | null;
+  documentUrl: string | null;
+  documentPrinted: boolean;
+  documentPrintError: string | null;
+}
+
 interface OmieReferenceCustomer {
   id: number;
   integrationCode?: string | null;
@@ -159,11 +169,7 @@ export function writeOmiePullState(
   if (patch.markDone === "customers") next.customersPage = 1;
   if (patch.markDone === "products") next.productsPage = 1;
   if (patch.markDone === "paymentTerms") next.paymentTermsPage = 1;
-  if (
-    next.customersPage === 1 &&
-    next.productsPage === 1 &&
-    next.paymentTermsPage === 1
-  ) {
+  if (next.customersPage === 1 && next.productsPage === 1 && next.paymentTermsPage === 1) {
     next.inProgress = false;
   }
   writeLocalSetting(database, OMIE_PULL_STATE_KEY, next);
@@ -240,7 +246,11 @@ export async function processCloudSyncQueue(
   for (const job of jobs) {
     try {
       if (job.action === "upsert_operation") {
-        await syncOperationToSupabase(database, getPayloadId(job.payload, "operationId", job.entityId), identity);
+        await syncOperationToSupabase(
+          database,
+          getPayloadId(job.payload, "operationId", job.entityId),
+          identity
+        );
       } else if (job.action === "upsert_loading_request") {
         await syncLoadingRequestToSupabase(database, job.entityId, identity);
       } else if (job.action === "upsert_print_receipt") {
@@ -261,49 +271,65 @@ export async function processCloudSyncQueue(
   return { processed, failed, errors };
 }
 
-export async function syncCustomerToSupabase(database: DesktopDatabase, customerId: string): Promise<boolean> {
+export async function syncCustomerToSupabase(
+  database: DesktopDatabase,
+  customerId: string
+): Promise<boolean> {
   const settings = getCloudSettings(database);
-  const customer = database.prepare("SELECT * FROM customers WHERE id = ?").get(customerId) as Record<string, unknown> | undefined;
+  const customer = database.prepare("SELECT * FROM customers WHERE id = ?").get(customerId) as
+    | Record<string, unknown>
+    | undefined;
   if (!customer) throw new Error(`Customer ${customerId} not found`);
   await invokeDesktopSync(settings, {
-    customers: [{
-      id: String(customer.id),
-      company_id: settings.companyId,
-      omie_customer_id: customer.omie_customer_id,
-      legal_name: customer.legal_name,
-      trade_name: customer.trade_name,
-      document: customer.document,
-      phone: customer.phone,
-      email: customer.email,
-      credit_limit_cents: customer.credit_limit_cents,
-      open_receivables_cents: customer.open_receivables_cents,
-      is_active: Boolean(customer.is_active ?? true),
-      updated_at: new Date().toISOString()
-    }]
+    customers: [
+      {
+        id: String(customer.id),
+        company_id: settings.companyId,
+        omie_customer_id: customer.omie_customer_id,
+        legal_name: customer.legal_name,
+        trade_name: customer.trade_name,
+        document: customer.document,
+        phone: customer.phone,
+        email: customer.email,
+        credit_limit_cents: customer.credit_limit_cents,
+        open_receivables_cents: customer.open_receivables_cents,
+        is_active: Boolean(customer.is_active ?? true),
+        updated_at: new Date().toISOString()
+      }
+    ]
   });
   return true;
 }
 
-export async function syncProductToSupabase(database: DesktopDatabase, productId: string): Promise<boolean> {
+export async function syncProductToSupabase(
+  database: DesktopDatabase,
+  productId: string
+): Promise<boolean> {
   const settings = getCloudSettings(database);
-  const product = database.prepare("SELECT * FROM products WHERE id = ?").get(productId) as Record<string, unknown> | undefined;
+  const product = database.prepare("SELECT * FROM products WHERE id = ?").get(productId) as
+    | Record<string, unknown>
+    | undefined;
   if (!product) throw new Error(`Product ${productId} not found`);
   await invokeDesktopSync(settings, {
-    products: [{
-      id: String(product.id),
-      company_id: settings.companyId,
-      omie_product_id: product.omie_product_id,
-      code: product.code,
-      description: product.description,
-      unit: product.unit,
-      is_active: Boolean(product.is_active ?? true),
-      updated_at: new Date().toISOString()
-    }]
+    products: [
+      {
+        id: String(product.id),
+        company_id: settings.companyId,
+        omie_product_id: product.omie_product_id,
+        code: product.code,
+        description: product.description,
+        unit: product.unit,
+        is_active: Boolean(product.is_active ?? true),
+        updated_at: new Date().toISOString()
+      }
+    ]
   });
   return true;
 }
 
-export async function getSupabaseSyncStatus(companyId: string): Promise<{ totalOperations: number; lastSync: string | null }> {
+export async function getSupabaseSyncStatus(
+  companyId: string
+): Promise<{ totalOperations: number; lastSync: string | null }> {
   const supabase = getSupabaseClient();
   const { data, error, count } = await supabase
     .from("weighing_operations")
@@ -324,7 +350,12 @@ export async function syncOmieReferenceDataFromCloud(
   const settings = getCloudSettings(database, identity);
   const supabase = getSupabaseClient();
   if (options.reset) {
-    writeOmiePullState(database, { customersPage: 1, productsPage: 1, paymentTermsPage: 1, inProgress: false });
+    writeOmiePullState(database, {
+      customersPage: 1,
+      productsPage: 1,
+      paymentTermsPage: 1,
+      inProgress: false
+    });
   }
   const state = readOmiePullState(database);
   const { data, error } = await supabase.functions.invoke<OmieReferenceDataResponse>("omie-sync", {
@@ -427,35 +458,55 @@ export function applyOmieReferenceData(
   };
 }
 
-function getCloudSettings(database: DesktopDatabase, identity?: LocalDesktopIdentity): CloudSettings {
-  const settings = database.prepare("SELECT key, value_json FROM local_settings WHERE key IN ('cloud_company_id', 'cloud_unit_id', 'cloud_device_id', 'cloud_device_token')").all() as Array<{ key: string; value_json: string }>;
+function getCloudSettings(
+  database: DesktopDatabase,
+  identity?: LocalDesktopIdentity
+): CloudSettings {
+  const settings = database
+    .prepare(
+      "SELECT key, value_json FROM local_settings WHERE key IN ('cloud_company_id', 'cloud_unit_id', 'cloud_device_id', 'cloud_device_token')"
+    )
+    .all() as Array<{ key: string; value_json: string }>;
   const map = new Map(settings.map((row) => [row.key, JSON.parse(row.value_json) as string]));
   const companyId = map.get("cloud_company_id") || identity?.companyId || "";
   const unitId = map.get("cloud_unit_id") || identity?.unitId || "";
   const deviceId = map.get("cloud_device_id") || identity?.deviceId || "";
   const deviceToken = map.get("cloud_device_token") || "";
   if (!companyId || !unitId || !deviceId || !deviceToken) {
-    throw new Error("Supabase cloud nao configurado. Configure company/unit/device/token do dispositivo.");
+    throw new Error(
+      "Supabase cloud nao configurado. Configure company/unit/device/token do dispositivo."
+    );
   }
   return { companyId, unitId, deviceId, deviceToken };
 }
 
-function getOperationPayload(database: DesktopDatabase, operationId: string, settings: CloudSettings): Record<string, unknown> {
-  const operation = database.prepare(`SELECT
+function getOperationPayload(
+  database: DesktopDatabase,
+  operationId: string,
+  settings: CloudSettings
+): Record<string, unknown> {
+  const operation = database
+    .prepare(
+      `SELECT
     o.*, c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description
     FROM weighing_operations o
     LEFT JOIN customers c ON c.id = o.customer_id
     LEFT JOIN vehicles v ON v.id = o.vehicle_id
     LEFT JOIN drivers d ON d.id = o.driver_id
     LEFT JOIN products p ON p.id = o.product_id
-    WHERE o.id = ?`).get(operationId) as Record<string, unknown> | undefined;
+    WHERE o.id = ?`
+    )
+    .get(operationId) as Record<string, unknown> | undefined;
   if (!operation) throw new Error(`Operation ${operationId} not found`);
   return {
     id: operation.id,
     company_id: settings.companyId,
     unit_id: settings.unitId,
     device_id: settings.deviceId,
-    status: operation.status === "loading_requested" || operation.status === "awaiting_exit" ? "open" : operation.status,
+    status:
+      operation.status === "loading_requested" || operation.status === "awaiting_exit"
+        ? "open"
+        : operation.status,
     operation_type: operation.operation_type,
     customer_id: operation.customer_id,
     product_id: operation.product_id,
@@ -487,13 +538,21 @@ function getOperationPayload(database: DesktopDatabase, operationId: string, set
   };
 }
 
-function getLoadingRequestPayload(database: DesktopDatabase, requestId: string, settings: CloudSettings): Record<string, unknown> {
-  const request = database.prepare(`SELECT
+function getLoadingRequestPayload(
+  database: DesktopDatabase,
+  requestId: string,
+  settings: CloudSettings
+): Record<string, unknown> {
+  const request = database
+    .prepare(
+      `SELECT
     lr.*,
     o.entry_weight_kg
     FROM loading_requests lr
     LEFT JOIN weighing_operations o ON o.id = lr.operation_id
-    WHERE lr.id = ?`).get(requestId) as Record<string, unknown> | undefined;
+    WHERE lr.id = ?`
+    )
+    .get(requestId) as Record<string, unknown> | undefined;
   if (!request) throw new Error(`Loading request ${requestId} not found`);
   return {
     id: request.id,
@@ -529,22 +588,22 @@ export async function pushOmieCustomersToCloud(
        ORDER BY updated_at ASC`
     )
     .all(identity.companyId) as Array<{
-      id: string;
-      omie_customer_id: number | null;
-      legal_name: string;
-      trade_name: string;
-      document: string | null;
-      phone: string | null;
-      email: string | null;
-      zipcode: string | null;
-      address_street: string | null;
-      address_number: string | null;
-      address_complement: string | null;
-      neighborhood: string | null;
-      city: string | null;
-      state: string | null;
-      default_payment_term_id: string | null;
-    }>;
+    id: string;
+    omie_customer_id: number | null;
+    legal_name: string;
+    trade_name: string;
+    document: string | null;
+    phone: string | null;
+    email: string | null;
+    zipcode: string | null;
+    address_street: string | null;
+    address_number: string | null;
+    address_complement: string | null;
+    neighborhood: string | null;
+    city: string | null;
+    state: string | null;
+    default_payment_term_id: string | null;
+  }>;
 
   let pushed = 0;
   let failed = 0;
@@ -568,30 +627,33 @@ export async function pushOmieCustomersToCloud(
   for (const customer of pending) {
     try {
       const phoneMatch = customer.phone?.match(/\(?(\d{2})\)?\s*(\d+)/);
-      const { data, error } = await supabase.functions.invoke<{ omieCustomerId?: number }>("omie-sync", {
-        body: {
-          deviceId: settings.deviceId,
-          deviceToken: settings.deviceToken,
-          action: "push_customer",
-          payload: {
-            localCustomerId: customer.id,
-            omieCustomerId: customer.omie_customer_id ?? undefined,
-            razaoSocial: customer.legal_name,
-            nomeFantasia: customer.trade_name || customer.legal_name,
-            cnpjCpf: customer.document ?? undefined,
-            email: customer.email ?? undefined,
-            telefone1Ddd: phoneMatch?.[1] ?? undefined,
-            telefone1Numero: phoneMatch?.[2] ?? undefined,
-            zipcode: customer.zipcode ?? undefined,
-            addressStreet: customer.address_street ?? undefined,
-            addressNumber: customer.address_number ?? undefined,
-            neighborhood: customer.neighborhood ?? undefined,
-            city: customer.city ?? undefined,
-            state: customer.state ?? undefined,
-            defaultPaymentTermId: customer.default_payment_term_id ?? undefined
+      const { data, error } = await supabase.functions.invoke<{ omieCustomerId?: number }>(
+        "omie-sync",
+        {
+          body: {
+            deviceId: settings.deviceId,
+            deviceToken: settings.deviceToken,
+            action: "push_customer",
+            payload: {
+              localCustomerId: customer.id,
+              omieCustomerId: customer.omie_customer_id ?? undefined,
+              razaoSocial: customer.legal_name,
+              nomeFantasia: customer.trade_name || customer.legal_name,
+              cnpjCpf: customer.document ?? undefined,
+              email: customer.email ?? undefined,
+              telefone1Ddd: phoneMatch?.[1] ?? undefined,
+              telefone1Numero: phoneMatch?.[2] ?? undefined,
+              zipcode: customer.zipcode ?? undefined,
+              addressStreet: customer.address_street ?? undefined,
+              addressNumber: customer.address_number ?? undefined,
+              neighborhood: customer.neighborhood ?? undefined,
+              city: customer.city ?? undefined,
+              state: customer.state ?? undefined,
+              defaultPaymentTermId: customer.default_payment_term_id ?? undefined
+            }
           }
         }
-      });
+      );
 
       if (error) {
         throw new Error(await getFunctionErrorMessage(error));
@@ -617,8 +679,14 @@ export async function pushOmieCustomersToCloud(
   return { pushed, failed, errors };
 }
 
-function getPrintReceiptPayload(database: DesktopDatabase, receiptId: string, settings: CloudSettings): Record<string, unknown> {
-  const receipt = database.prepare("SELECT * FROM print_receipts WHERE id = ?").get(receiptId) as Record<string, unknown> | undefined;
+function getPrintReceiptPayload(
+  database: DesktopDatabase,
+  receiptId: string,
+  settings: CloudSettings
+): Record<string, unknown> {
+  const receipt = database.prepare("SELECT * FROM print_receipts WHERE id = ?").get(receiptId) as
+    | Record<string, unknown>
+    | undefined;
   if (!receipt) throw new Error(`Print receipt ${receiptId} not found`);
   return {
     id: receipt.id,
@@ -676,11 +744,19 @@ export async function processOmieSyncQueue(
     };
 
     try {
-      const { data, error } = await supabase.functions.invoke<{ orderId?: number }>("omie-sync", {
+      const bridgeAction =
+        job.action === "create_and_bill_order" ? "create_and_bill_order" : "create_order";
+      const { data, error } = await supabase.functions.invoke<{
+        orderId?: number;
+        billed?: boolean;
+        billingStatusCode?: string | null;
+        billingStatusMessage?: string | null;
+        documentUrl?: string | null;
+      }>("omie-sync", {
         body: {
           deviceId: settings.deviceId,
           deviceToken: settings.deviceToken,
-          action: "create_order",
+          action: bridgeAction,
           payload: {
             operationType: payload.operationType,
             customerOmieId: payload.customerOmieId,
@@ -701,11 +777,36 @@ export async function processOmieSyncQueue(
         throw new Error("OMIE nao retornou orderId");
       }
 
-      const updateSql = payload.operationType === "invoice"
-        ? "UPDATE weighing_operations SET omie_sales_order_id = ?, status = 'synced', omie_synced_at = datetime('now'), updated_at = datetime('now') WHERE id = ?"
-        : "UPDATE weighing_operations SET omie_service_order_id = ?, status = 'synced', omie_synced_at = datetime('now'), updated_at = datetime('now') WHERE id = ?";
+      const updateSql =
+        payload.operationType === "invoice"
+          ? `UPDATE weighing_operations
+           SET omie_sales_order_id = ?,
+               omie_billing_status = CASE WHEN ? THEN 'billed' ELSE omie_billing_status END,
+               omie_billing_message = CASE WHEN ? THEN ? ELSE omie_billing_message END,
+               omie_billed_at = CASE WHEN ? THEN datetime('now') ELSE omie_billed_at END,
+               omie_document_url = COALESCE(?, omie_document_url),
+               status = 'synced',
+               omie_synced_at = datetime('now'),
+               updated_at = datetime('now')
+           WHERE id = ?`
+          : "UPDATE weighing_operations SET omie_service_order_id = ?, status = 'synced', omie_synced_at = datetime('now'), updated_at = datetime('now') WHERE id = ?";
 
-      database.prepare(updateSql).run(data.orderId, payload.operationId);
+      if (payload.operationType === "invoice") {
+        const billed = data.billed === true;
+        database
+          .prepare(updateSql)
+          .run(
+            data.orderId,
+            billed ? 1 : 0,
+            billed ? 1 : 0,
+            data.billingStatusMessage ?? "Pedido faturado no OMIE.",
+            billed ? 1 : 0,
+            data.documentUrl ?? null,
+            payload.operationId
+          );
+      } else {
+        database.prepare(updateSql).run(data.orderId, payload.operationId);
+      }
       markSyncJobDone(database, job.id);
       processed++;
     } catch (error) {
@@ -719,7 +820,145 @@ export async function processOmieSyncQueue(
   return { processed, failed, errors };
 }
 
-async function invokeDesktopSync(settings: CloudSettings, payload: Record<string, unknown>): Promise<void> {
+export async function processFiscalBillingNow(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity,
+  operationId: string,
+  printDocument: (
+    documentUrl: string
+  ) => Promise<{ printed: boolean; error: string | null }> = async () => ({
+    printed: false,
+    error: null
+  })
+): Promise<FiscalBillingResult> {
+  const settings = getCloudSettings(database, identity);
+  const supabase = getSupabaseClient();
+  const job = database
+    .prepare(
+      `SELECT * FROM sync_queue
+       WHERE target = 'omie'
+         AND action = 'create_and_bill_order'
+         AND entity_id = ?
+         AND status IN ('pending', 'failed')
+       ORDER BY created_at DESC
+       LIMIT 1`
+    )
+    .get(operationId) as
+    | {
+        id: string;
+        idempotency_key: string;
+        payload_json: string;
+      }
+    | undefined;
+
+  if (!job) {
+    throw new Error("Nao ha faturamento OMIE pendente para esta operacao fiscal.");
+  }
+
+  const payload = parseJsonValue(job.payload_json) as {
+    operationId: string;
+    operationType: "invoice" | "internal";
+    customerOmieId: number;
+    productOmieId?: number | null;
+    serviceDescription?: string | null;
+    quantity: number;
+    unitPrice: number;
+    issueDate: string;
+  };
+
+  if (payload.operationType !== "invoice") {
+    throw new Error("Somente operacoes fiscais podem ser faturadas como pedido de venda.");
+  }
+
+  try {
+    const { data, error } = await supabase.functions.invoke<{
+      orderId?: number;
+      billed?: boolean;
+      billingStatusCode?: string | null;
+      billingStatusMessage?: string | null;
+      documentUrl?: string | null;
+    }>("omie-sync", {
+      body: {
+        deviceId: settings.deviceId,
+        deviceToken: settings.deviceToken,
+        action: "create_and_bill_order",
+        payload: {
+          operationType: payload.operationType,
+          customerOmieId: payload.customerOmieId,
+          productOmieId: payload.productOmieId ?? undefined,
+          quantity: payload.quantity,
+          unitPrice: payload.unitPrice,
+          issueDate: payload.issueDate,
+          idempotencyKey: job.idempotency_key
+        }
+      }
+    });
+
+    if (error) {
+      throw new Error(await getFunctionErrorMessage(error));
+    }
+    if (!data?.orderId || data.billed !== true) {
+      throw new Error("OMIE nao confirmou o faturamento do pedido de venda.");
+    }
+
+    let documentPrinted = false;
+    let documentPrintError: string | null = null;
+    if (data.documentUrl) {
+      const printed = await printDocument(data.documentUrl);
+      documentPrinted = printed.printed;
+      documentPrintError = printed.error;
+    }
+
+    database
+      .prepare(
+        `UPDATE weighing_operations
+         SET omie_sales_order_id = ?,
+             omie_billing_status = 'billed',
+             omie_billing_message = ?,
+             omie_billed_at = datetime('now'),
+             omie_document_url = COALESCE(?, omie_document_url),
+             updated_at = datetime('now')
+         WHERE id = ?`
+      )
+      .run(
+        data.orderId,
+        data.billingStatusMessage ?? "Pedido faturado no OMIE.",
+        data.documentUrl ?? null,
+        operationId
+      );
+    markSyncJobDone(database, job.id);
+
+    return {
+      orderId: data.orderId,
+      billed: true,
+      billingStatusCode: data.billingStatusCode ?? null,
+      billingStatusMessage: data.billingStatusMessage ?? "Pedido faturado no OMIE.",
+      documentUrl: data.documentUrl ?? null,
+      documentPrinted,
+      documentPrintError
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Erro ao faturar pedido no OMIE.";
+    markSyncJobFailed(database, job.id, message);
+    database
+      .prepare(
+        `UPDATE weighing_operations
+         SET omie_billing_status = 'failed',
+             omie_billing_message = ?,
+             updated_at = datetime('now')
+         WHERE id = ?`
+      )
+      .run(message, operationId);
+    throw new Error(
+      `Nao foi possivel faturar no OMIE. Verifique a internet conectada e a configuracao da API OMIE. Detalhe: ${message}`
+    );
+  }
+}
+
+async function invokeDesktopSync(
+  settings: CloudSettings,
+  payload: Record<string, unknown>
+): Promise<void> {
   const supabase = getSupabaseClient();
   const { error } = await supabase.functions.invoke("desktop-sync", {
     body: { deviceId: settings.deviceId, deviceToken: settings.deviceToken, ...payload }
@@ -729,22 +968,23 @@ async function invokeDesktopSync(settings: CloudSettings, payload: Record<string
 
 async function getFunctionErrorMessage(error: unknown): Promise<string> {
   const fallback = getErrorLikeMessage(error);
-  const context = typeof error === "object" && error !== null && "context" in error
-    ? (error as { context?: unknown }).context
-    : null;
+  const context =
+    typeof error === "object" && error !== null && "context" in error
+      ? (error as { context?: unknown }).context
+      : null;
 
   if (!context || typeof context !== "object") {
     return fallback;
   }
 
   try {
-    const clone = "clone" in context && typeof context.clone === "function"
-      ? context.clone()
-      : context;
+    const clone =
+      "clone" in context && typeof context.clone === "function" ? context.clone() : context;
     if (clone && typeof clone === "object" && "json" in clone && typeof clone.json === "function") {
       const body = await clone.json();
       if (body && typeof body === "object") {
-        const candidate = (body as { error?: unknown; message?: unknown }).error ??
+        const candidate =
+          (body as { error?: unknown; message?: unknown }).error ??
           (body as { error?: unknown; message?: unknown }).message;
         if (typeof candidate === "string" && candidate.trim()) {
           return candidate;
@@ -756,14 +996,16 @@ async function getFunctionErrorMessage(error: unknown): Promise<string> {
     // Fall through to statusText/message fallback.
   }
 
-  const statusText = "statusText" in context ? (context as { statusText?: unknown }).statusText : null;
+  const statusText =
+    "statusText" in context ? (context as { statusText?: unknown }).statusText : null;
   return typeof statusText === "string" && statusText.trim() ? statusText : fallback;
 }
 
 function getErrorLikeMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (error && typeof error === "object") {
-    const candidate = (error as { error?: unknown; message?: unknown }).error ??
+    const candidate =
+      (error as { error?: unknown; message?: unknown }).error ??
       (error as { error?: unknown; message?: unknown }).message;
     if (typeof candidate === "string" && candidate.trim()) {
       return candidate;
@@ -999,7 +1241,10 @@ function collectFiscalRecommendationValues(value: unknown, output: string[]): vo
   if (value && typeof value === "object") {
     for (const [key, nested] of Object.entries(value)) {
       const normalizedKey = normalizeFiscalTypeText(key);
-      if (normalizedKey.includes("tipo") && (normalizedKey.includes("produto") || normalizedKey.includes("item"))) {
+      if (
+        normalizedKey.includes("tipo") &&
+        (normalizedKey.includes("produto") || normalizedKey.includes("item"))
+      ) {
         collectFiscalRecommendationValues(nested, output);
       }
       if (normalizedKey === "codigo" || normalizedKey === "cod" || normalizedKey === "code") {
@@ -1012,7 +1257,12 @@ function collectFiscalRecommendationValues(value: unknown, output: string[]): vo
 function matchesFinishedGoodsType(value: string | null | undefined): boolean {
   if (!value) return false;
   const normalized = normalizeFiscalTypeText(value);
-  return normalized === "04" || normalized.startsWith("04 ") || normalized.includes("produtos acabados") || normalized.includes("produto acabado");
+  return (
+    normalized === "04" ||
+    normalized.startsWith("04 ") ||
+    normalized.includes("produtos acabados") ||
+    normalized.includes("produto acabado")
+  );
 }
 
 function normalizeFiscalTypeText(value: string): string {

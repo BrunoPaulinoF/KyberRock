@@ -11,6 +11,7 @@ import {
   initializeSupabase,
   isSupabaseInitialized,
   processCloudSyncQueue,
+  processFiscalBillingNow,
   processOmieSyncQueue,
   pushOmieCustomersToCloud,
   syncOmieReferenceDataFromCloud
@@ -104,12 +105,18 @@ describe("supabase sync", () => {
 
       expect(result).toEqual({ processed: 2, failed: 0, errors: [] });
       expect(invokeMock).toHaveBeenCalledWith("desktop-sync", {
-        body: expect.objectContaining({ operations: [expect.objectContaining({ id: "operation-1" })] })
+        body: expect.objectContaining({
+          operations: [expect.objectContaining({ id: "operation-1" })]
+        })
       });
       expect(invokeMock).toHaveBeenCalledWith("desktop-sync", {
-        body: expect.objectContaining({ printReceipts: [expect.objectContaining({ id: "receipt-1" })] })
+        body: expect.objectContaining({
+          printReceipts: [expect.objectContaining({ id: "receipt-1" })]
+        })
       });
-      expect(database.prepare("SELECT COUNT(*) FROM sync_queue WHERE status = 'done'").pluck().get()).toBe(2);
+      expect(
+        database.prepare("SELECT COUNT(*) FROM sync_queue WHERE status = 'done'").pluck().get()
+      ).toBe(2);
     } finally {
       database.close();
     }
@@ -155,9 +162,15 @@ describe("supabase sync", () => {
         paymentTermsSynced: 1,
         errors: []
       });
-      expect(database.prepare("SELECT legal_name FROM customers WHERE id = 'omie_123'").pluck().get()).toBe("Pedreira Cliente LTDA");
-      expect(database.prepare("SELECT description FROM products WHERE id = 'omie_456'").pluck().get()).toBe("Brita 1");
-      expect(database.prepare("SELECT name FROM payment_terms WHERE id = 'omie_789'").pluck().get()).toBe("30 dias");
+      expect(
+        database.prepare("SELECT legal_name FROM customers WHERE id = 'omie_123'").pluck().get()
+      ).toBe("Pedreira Cliente LTDA");
+      expect(
+        database.prepare("SELECT description FROM products WHERE id = 'omie_456'").pluck().get()
+      ).toBe("Brita 1");
+      expect(
+        database.prepare("SELECT name FROM payment_terms WHERE id = 'omie_789'").pluck().get()
+      ).toBe("30 dias");
     } finally {
       database.close();
     }
@@ -172,7 +185,16 @@ describe("supabase sync", () => {
       invokeMock.mockResolvedValueOnce({
         error: null,
         data: {
-          customers: [{ id: 123, name: "Cliente OMIE", tradeName: null, document: null, phone: null, email: null }],
+          customers: [
+            {
+              id: 123,
+              name: "Cliente OMIE",
+              tradeName: null,
+              document: null,
+              phone: null,
+              email: null
+            }
+          ],
           products: [{ id: 456, code: "BRITA", description: "Brita", unit: "M3", itemType: "04" }],
           paymentTerms: [{ id: 789, description: "30 dias" }]
         }
@@ -192,8 +214,17 @@ describe("supabase sync", () => {
           }
         }
       });
-      expect(result).toMatchObject({ customersPulled: 1, productsSynced: 1, paymentTermsSynced: 1 });
-      expect(database.prepare("SELECT COUNT(*) FROM customers WHERE omie_customer_id = 123").pluck().get()).toBe(1);
+      expect(result).toMatchObject({
+        customersPulled: 1,
+        productsSynced: 1,
+        paymentTermsSynced: 1
+      });
+      expect(
+        database
+          .prepare("SELECT COUNT(*) FROM customers WHERE omie_customer_id = 123")
+          .pluck()
+          .get()
+      ).toBe(1);
     } finally {
       database.close();
     }
@@ -243,8 +274,15 @@ describe("supabase sync", () => {
         })
       });
       expect(result).toEqual({ pushed: 1, failed: 0, errors: [] });
-      expect(database.prepare("SELECT omie_customer_id FROM customers WHERE id = 'customer-1'").pluck().get()).toBe(321);
-      expect(database.prepare("SELECT needs_push FROM customers WHERE id = 'customer-1'").pluck().get()).toBe(0);
+      expect(
+        database
+          .prepare("SELECT omie_customer_id FROM customers WHERE id = 'customer-1'")
+          .pluck()
+          .get()
+      ).toBe(321);
+      expect(
+        database.prepare("SELECT needs_push FROM customers WHERE id = 'customer-1'").pluck().get()
+      ).toBe(0);
     } finally {
       database.close();
     }
@@ -257,13 +295,18 @@ describe("supabase sync", () => {
       const identity = createIdentity(database);
       createCloudSettings(database);
       insertLocalCustomer(database, "customer-1");
-      invokeMock.mockResolvedValueOnce({ error: { message: "Credencial OMIE invalida" }, data: null });
+      invokeMock.mockResolvedValueOnce({
+        error: { message: "Credencial OMIE invalida" },
+        data: null
+      });
 
       const result = await pushOmieCustomersToCloud(database, identity);
 
       expect(result).toMatchObject({ pushed: 0, failed: 1 });
       expect(result.errors[0]).toContain("Credencial OMIE invalida");
-      expect(database.prepare("SELECT sync_status FROM customers WHERE id = 'customer-1'").pluck().get()).toBe("error");
+      expect(
+        database.prepare("SELECT sync_status FROM customers WHERE id = 'customer-1'").pluck().get()
+      ).toBe("error");
     } finally {
       database.close();
     }
@@ -309,8 +352,91 @@ describe("supabase sync", () => {
         })
       });
       expect(result).toEqual({ processed: 1, failed: 0, errors: [] });
-      expect(database.prepare("SELECT omie_sales_order_id FROM weighing_operations WHERE id = 'operation-1'").pluck().get()).toBe(987);
-      expect(database.prepare("SELECT status FROM sync_queue WHERE id = 'omie-job-1'").pluck().get()).toBe("done");
+      expect(
+        database
+          .prepare("SELECT omie_sales_order_id FROM weighing_operations WHERE id = 'operation-1'")
+          .pluck()
+          .get()
+      ).toBe(987);
+      expect(
+        database.prepare("SELECT status FROM sync_queue WHERE id = 'omie-job-1'").pluck().get()
+      ).toBe("done");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("processes immediate fiscal billing and prints returned document URL", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertWeighingOperation(database);
+      enqueueSyncJob(database, {
+        id: "omie-billing-job-1",
+        target: "omie",
+        action: "create_and_bill_order",
+        entityType: "weighing_operation",
+        entityId: "operation-1",
+        idempotencyKey: "kyberrock:unit-1:operation-1:create_sales_order",
+        payload: {
+          operationId: "operation-1",
+          operationType: "invoice",
+          customerOmieId: 123,
+          productOmieId: 456,
+          quantity: 10,
+          unitPrice: 25,
+          issueDate: "2026-06-12"
+        }
+      });
+      const printDocument = vi.fn().mockResolvedValue({ printed: true, error: null });
+      invokeMock.mockResolvedValueOnce({
+        error: null,
+        data: {
+          orderId: 987,
+          billed: true,
+          billingStatusCode: "0",
+          billingStatusMessage: "Pedido faturado",
+          documentUrl: "https://example.test/danfe.pdf"
+        }
+      });
+
+      const result = await processFiscalBillingNow(
+        database,
+        identity,
+        "operation-1",
+        printDocument
+      );
+
+      expect(invokeMock).toHaveBeenCalledWith("omie-sync", {
+        body: expect.objectContaining({
+          action: "create_and_bill_order",
+          payload: expect.objectContaining({
+            idempotencyKey: "kyberrock:unit-1:operation-1:create_sales_order"
+          })
+        })
+      });
+      expect(printDocument).toHaveBeenCalledWith("https://example.test/danfe.pdf");
+      expect(result).toMatchObject({ orderId: 987, billed: true, documentPrinted: true });
+      expect(
+        database
+          .prepare("SELECT omie_sales_order_id FROM weighing_operations WHERE id = 'operation-1'")
+          .pluck()
+          .get()
+      ).toBe(987);
+      expect(
+        database
+          .prepare("SELECT omie_billing_status FROM weighing_operations WHERE id = 'operation-1'")
+          .pluck()
+          .get()
+      ).toBe("billed");
+      expect(
+        database
+          .prepare("SELECT status FROM sync_queue WHERE id = 'omie-billing-job-1'")
+          .pluck()
+          .get()
+      ).toBe("done");
     } finally {
       database.close();
     }
@@ -393,7 +519,9 @@ describe("supabase sync", () => {
       });
       await syncOmieReferenceDataFromCloud(database, identity);
 
-      const resumeCall = invokeMock.mock.calls[1]?.[1] as { body: { resume: { customersPage: number } } };
+      const resumeCall = invokeMock.mock.calls[1]?.[1] as {
+        body: { resume: { customersPage: number } };
+      };
       expect(resumeCall.body.resume.customersPage).toBe(2);
     } finally {
       database.close();
@@ -406,7 +534,9 @@ describe("supabase sync", () => {
     try {
       createIdentity(database);
       applyOmieReferenceData(database, "company-1", {
-        customers: [{ id: 1, name: "X", tradeName: null, document: null, email: null, phone: null }],
+        customers: [
+          { id: 1, name: "X", tradeName: null, document: null, email: null, phone: null }
+        ],
         products: [{ id: 1, code: "P", description: "P", unit: "UN" }],
         paymentTerms: [],
         pageSize: 200,
@@ -428,7 +558,12 @@ describe("supabase sync", () => {
           .prepare("SELECT value_json FROM local_settings WHERE key = 'omie_pull_state'")
           .pluck()
           .get() as string
-      ) as { customersPage: number; productsPage: number; paymentTermsPage: number; inProgress: boolean };
+      ) as {
+        customersPage: number;
+        productsPage: number;
+        paymentTermsPage: number;
+        inProgress: boolean;
+      };
       expect(state.customersPage).toBe(1);
       expect(state.productsPage).toBe(1);
       expect(state.inProgress).toBe(false);
@@ -472,7 +607,12 @@ describe("supabase sync", () => {
           .prepare("SELECT value_json FROM local_settings WHERE key = 'omie_pull_state'")
           .pluck()
           .get() as string
-      ) as { customersPage: number; productsPage: number; paymentTermsPage: number; inProgress: boolean };
+      ) as {
+        customersPage: number;
+        productsPage: number;
+        paymentTermsPage: number;
+        inProgress: boolean;
+      };
       expect(state.customersPage).toBe(2);
       expect(state.productsPage).toBe(1);
       expect(state.paymentTermsPage).toBe(1);
@@ -525,7 +665,12 @@ describe("supabase sync", () => {
           .prepare("SELECT value_json FROM local_settings WHERE key = 'omie_pull_state'")
           .pluck()
           .get() as string
-      ) as { customersPage: number; productsPage: number; paymentTermsPage: number; inProgress: boolean };
+      ) as {
+        customersPage: number;
+        productsPage: number;
+        paymentTermsPage: number;
+        inProgress: boolean;
+      };
       expect(state.customersPage).toBe(1);
       expect(state.productsPage).toBe(1);
       expect(state.paymentTermsPage).toBe(1);

@@ -8,7 +8,7 @@ import type {
 import type { DesktopStatusSnapshot } from "../services/status";
 import type { UpdateState } from "../services/update-flow";
 import type { OperationType, WeighingOperationSummary } from "../services/weighing-operations";
-import type { SyncResult } from "../services/supabase-sync";
+import type { FiscalBillingResult, SyncResult } from "../services/supabase-sync";
 import type { PriceDetails } from "../services/pricing";
 import type { ActivateDesktopInput, DesktopAccessStatus } from "../services/desktop-activation";
 import type { CacheQueryOptions, CacheQueryResult } from "../services/cache-store";
@@ -20,28 +20,16 @@ import type {
   ProductReport,
   CustomerReport
 } from "../services/reports";
-import type {
-  CreateCustomerInput,
-  UpdateCustomerInput
-} from "../services/customers";
+import type { CreateCustomerInput, UpdateCustomerInput } from "../services/customers";
 import type {
   AddPriceTableItemInput,
   CreatePriceTableInput,
   LinkCustomerToPriceTableInput,
   UpdatePriceTableItemInput
 } from "../services/price-tables";
-import type {
-  CreateVehicleInput,
-  UpdateVehicleInput
-} from "../services/vehicles";
-import type {
-  CreateDriverInput,
-  UpdateDriverInput
-} from "../services/drivers";
-import type {
-  CreateCarrierInput,
-  UpdateCarrierInput
-} from "../services/carriers";
+import type { CreateVehicleInput, UpdateVehicleInput } from "../services/vehicles";
+import type { CreateDriverInput, UpdateDriverInput } from "../services/drivers";
+import type { CreateCarrierInput, UpdateCarrierInput } from "../services/carriers";
 import type {
   ToledoTcpConfig,
   ToledoTcpAdapterStatus,
@@ -54,7 +42,10 @@ export interface KyberRockDesktopApi {
   restoreBackup: () => Promise<boolean>;
   getUpdateState: () => Promise<UpdateState>;
   getAccessStatus: () => Promise<DesktopAccessStatus>;
-  validateDesktopAccess: (internetOnline?: boolean, force?: boolean) => Promise<DesktopAccessStatus>;
+  validateDesktopAccess: (
+    internetOnline?: boolean,
+    force?: boolean
+  ) => Promise<DesktopAccessStatus>;
   activateDesktop: (input: ActivateDesktopInput) => Promise<DesktopAccessStatus>;
   logoutDesktop: () => Promise<void>;
   checkForUpdates: () => Promise<UpdateState>;
@@ -70,9 +61,14 @@ export interface KyberRockDesktopApi {
     driverId: string;
     productId: string;
     paymentTermId?: string;
+    manualInstallments?: number;
     unitPriceCents?: number;
+    entryWeightKg?: number;
   }) => Promise<WeighingOperationSummary>;
-  closeWeighing: (operationId: string, operationType?: OperationType) => Promise<WeighingOperationSummary>;
+  closeWeighing: (
+    operationId: string,
+    operationType?: OperationType
+  ) => Promise<WeighingOperationSummary>;
   cancelWeighing: (operationId: string, reason: string) => Promise<WeighingOperationSummary>;
   listWindowsPrinters: () => Promise<WindowsPrinterSummary[]>;
   configureReceiptPrintProfile: (
@@ -83,18 +79,30 @@ export interface KyberRockDesktopApi {
   printReceipt: (operationId: string) => Promise<PrintReceiptSummary>;
   reprintReceipt: (receiptId: string) => Promise<PrintReceiptSummary>;
   printTestReceipt: () => Promise<PrintReceiptSummary>;
+  billFiscalOperation: (operationId: string) => Promise<FiscalBillingResult>;
   syncToCloud: () => Promise<SyncResult>;
   getCloudStatus: () => Promise<{ totalOperations: number; lastSync: string | null }>;
   isCloudConnected: () => Promise<boolean>;
   queryCache: (options: CacheQueryOptions) => Promise<CacheQueryResult<unknown>>;
   getDailyReport: (date: string) => Promise<DailyReport>;
   getMonthlyReport: (year: number, month: number) => Promise<MonthlyReport>;
-  getReportByProduct: (startDate: string, endDate: string, limit?: number) => Promise<ProductReport[]>;
-  getReportByCustomer: (startDate: string, endDate: string, limit?: number) => Promise<CustomerReport[]>;
+  getReportByProduct: (
+    startDate: string,
+    endDate: string,
+    limit?: number
+  ) => Promise<ProductReport[]>;
+  getReportByCustomer: (
+    startDate: string,
+    endDate: string,
+    limit?: number
+  ) => Promise<CustomerReport[]>;
   getDailySeries: (startDate: string, endDate: string) => Promise<DailySeriesPoint[]>;
   getOperationMix: (startDate: string, endDate: string) => Promise<OperationMix>;
   getPriceForCustomerProduct: (customerId: string, productId: string) => Promise<number | null>;
-  getPriceDetailsForCustomerProduct: (customerId: string, productId: string) => Promise<PriceDetails | null>;
+  getPriceDetailsForCustomerProduct: (
+    customerId: string,
+    productId: string
+  ) => Promise<PriceDetails | null>;
   customersCreate: (input: Omit<CreateCustomerInput, "companyId">) => Promise<unknown>;
   customersUpdate: (id: string, input: UpdateCustomerInput) => Promise<unknown>;
   customersDelete: (id: string) => Promise<void>;
@@ -113,7 +121,9 @@ export interface KyberRockDesktopApi {
   vehiclesUpdate: (id: string, input: UpdateVehicleInput) => Promise<unknown>;
   vehiclesDelete: (id: string) => Promise<void>;
   vehiclesFindOrCreate: (plate: string) => Promise<unknown>;
-  vehiclesGetCarriers: (vehicleId: string) => Promise<Array<{ carrierId: string; carrierName: string; carrierDocument: string | null }>>;
+  vehiclesGetCarriers: (
+    vehicleId: string
+  ) => Promise<Array<{ carrierId: string; carrierName: string; carrierDocument: string | null }>>;
   vehiclesLinkCarrier: (vehicleId: string, carrierId: string) => Promise<unknown>;
   customersByCarrier: (carrierId: string) => Promise<unknown[]>;
   driversCreate: (input: Omit<CreateDriverInput, "companyId">) => Promise<unknown>;
@@ -124,7 +134,9 @@ export interface KyberRockDesktopApi {
   carriersUpdate: (id: string, input: UpdateCarrierInput) => Promise<unknown>;
   carriersDelete: (id: string) => Promise<void>;
   carriersList: () => Promise<unknown[]>;
-  carriersGetVehicles: (carrierId: string) => Promise<Array<{ id: string; plate: string; description: string | null }>>;
+  carriersGetVehicles: (
+    carrierId: string
+  ) => Promise<Array<{ id: string; plate: string; description: string | null }>>;
   getOmieStatus: () => Promise<{
     configured: boolean;
     appKeyMasked: string | null;

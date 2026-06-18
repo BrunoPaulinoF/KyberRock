@@ -40,6 +40,7 @@ export interface CreateWeighingOperationInput {
   driverId: string;
   productId: string;
   paymentTermId?: string;
+  manualInstallments?: number;
   unitPriceCents?: number;
   entryWeightKg: number;
 }
@@ -339,8 +340,14 @@ export function createWeighingOperation(
   input: CreateWeighingOperationInput,
   now: Date = new Date()
 ): WeighingOperationSummary {
-  if (input.entryWeightKg <= 0) {
+  if (!Number.isFinite(input.entryWeightKg) || input.entryWeightKg <= 0) {
     throw new Error("Peso de entrada deve ser maior que zero.");
+  }
+  if (
+    input.manualInstallments !== undefined &&
+    (!Number.isInteger(input.manualInstallments) || input.manualInstallments <= 0)
+  ) {
+    throw new Error("Numero de parcelas deve ser maior que zero.");
   }
 
   const operationType = input.operationType ?? "invoice";
@@ -349,7 +356,9 @@ export function createWeighingOperation(
   const timestamp = now.toISOString();
 
   const customer = database
-    .prepare("SELECT trade_name, is_active, omie_billing_blocked FROM customers WHERE id = ? AND deleted_at IS NULL")
+    .prepare(
+      "SELECT trade_name, is_active, omie_billing_blocked FROM customers WHERE id = ? AND deleted_at IS NULL"
+    )
     .get(input.customerId) as
     | { trade_name: string; is_active: number; omie_billing_blocked: number }
     | undefined;
@@ -378,7 +387,8 @@ export function createWeighingOperation(
 
   if (!customer) throw new Error("Cliente selecionado nao foi encontrado.");
   if (customer.is_active !== 1) throw new Error("Cliente inativo nao pode iniciar pesagem.");
-  if (customer.omie_billing_blocked === 1) throw new Error("Cliente bloqueado no OMIE nao pode iniciar pesagem.");
+  if (customer.omie_billing_blocked === 1)
+    throw new Error("Cliente bloqueado no OMIE nao pode iniciar pesagem.");
   if (!vehicle) throw new Error("Placa selecionada nao foi encontrada.");
   if (!driver) throw new Error("Motorista selecionado nao foi encontrado.");
   if (!product) throw new Error("Produto selecionado nao foi encontrado.");
@@ -404,7 +414,10 @@ export function createWeighingOperation(
     throw new Error(`Ja existe uma operacao aberta para a placa ${vehicle.plate}.`);
   }
 
-  const priceDetails = new PricingService(database).getPriceDetailsForCustomerProduct(input.customerId, input.productId);
+  const priceDetails = new PricingService(database).getPriceDetailsForCustomerProduct(
+    input.customerId,
+    input.productId
+  );
   const unitPriceCents = input.unitPriceCents ?? priceDetails?.appliedUnitPriceCents ?? null;
 
   const operationId = randomUUID();
@@ -415,10 +428,10 @@ export function createWeighingOperation(
       .prepare(
         `INSERT INTO weighing_operations (
           id, company_id, unit_id, device_id, status, operation_type, customer_id, vehicle_id, carrier_id, driver_id, product_id,
-          payment_term_id, entry_weight_kg, entry_weight_captured_at, unit_price_cents,
+          payment_term_id, manual_installments, entry_weight_kg, entry_weight_captured_at, unit_price_cents,
           base_unit_price_cents, applied_price_table_id, applied_price_table_name, applied_price_table_item_id,
           price_unit, price_savings_percent, freight_total_cents, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, 'loading_requested', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`
+        ) VALUES (?, ?, ?, ?, 'loading_requested', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`
       )
       .run(
         operationId,
@@ -432,6 +445,7 @@ export function createWeighingOperation(
         input.driverId,
         input.productId,
         input.paymentTermId ?? null,
+        input.manualInstallments ?? null,
         input.entryWeightKg,
         timestamp,
         unitPriceCents,
@@ -473,6 +487,7 @@ export function createWeighingOperation(
       {
         entryWeightKg: input.entryWeightKg,
         operationType,
+        manualInstallments: input.manualInstallments ?? null,
         unitPriceCents,
         priceDetails: serializePriceDetails(priceDetails)
       },
@@ -621,21 +636,32 @@ export function closeWeighingOperation(
 
     const operationIds = database
       .prepare("SELECT customer_id, product_id, unit_id FROM weighing_operations WHERE id = ?")
-      .get(input.operationId) as { customer_id: string | null; product_id: string | null; unit_id: string } | undefined;
+      .get(input.operationId) as
+      | { customer_id: string | null; product_id: string | null; unit_id: string }
+      | undefined;
 
     const omieCustomerId = operationIds?.customer_id
-      ? (database.prepare("SELECT omie_customer_id FROM customers WHERE id = ?").get(operationIds.customer_id) as { omie_customer_id: number | null } | undefined)?.omie_customer_id
+      ? (
+          database
+            .prepare("SELECT omie_customer_id FROM customers WHERE id = ?")
+            .get(operationIds.customer_id) as { omie_customer_id: number | null } | undefined
+        )?.omie_customer_id
       : null;
     const omieProductId = operationIds?.product_id
-      ? (database.prepare("SELECT omie_product_id FROM products WHERE id = ?").get(operationIds.product_id) as { omie_product_id: number | null } | undefined)?.omie_product_id
+      ? (
+          database
+            .prepare("SELECT omie_product_id FROM products WHERE id = ?")
+            .get(operationIds.product_id) as { omie_product_id: number | null } | undefined
+        )?.omie_product_id
       : null;
 
     if (omieCustomerId) {
+      const omieAction = nextOperationType === "invoice" ? "create_and_bill_order" : "create_order";
       enqueueSyncJob(
         database,
         {
           target: "omie",
-          action: "create_order",
+          action: omieAction,
           entityType: "weighing_operation",
           entityId: input.operationId,
           idempotencyKey: `kyberrock:${operationIds?.unit_id ?? "unknown"}:${input.operationId}:${nextOperationType === "invoice" ? "create_sales_order" : "create_service_order"}`,
@@ -739,7 +765,11 @@ export function listOpenWeighingOperations(database: DesktopDatabase): WeighingO
         o.product_total_cents, o.freight_total_cents, o.total_cents,
         o.cancel_reason, o.created_at, o.updated_at,
         c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
-        pt.name AS payment_term_name
+        CASE
+          WHEN o.manual_installments = 1 THEN '1 parcela'
+          WHEN o.manual_installments > 1 THEN CAST(o.manual_installments AS TEXT) || ' parcelas'
+          ELSE pt.name
+        END AS payment_term_name
        FROM weighing_operations o
        LEFT JOIN customers c ON c.id = o.customer_id
        LEFT JOIN vehicles v ON v.id = o.vehicle_id
@@ -754,7 +784,9 @@ export function listOpenWeighingOperations(database: DesktopDatabase): WeighingO
     .map((row) => mapOperationRow(row as OperationRow));
 }
 
-export function listCanceledWeighingOperations(database: DesktopDatabase): WeighingOperationSummary[] {
+export function listCanceledWeighingOperations(
+  database: DesktopDatabase
+): WeighingOperationSummary[] {
   return database
     .prepare(
       `SELECT
@@ -764,7 +796,11 @@ export function listCanceledWeighingOperations(database: DesktopDatabase): Weigh
         o.product_total_cents, o.freight_total_cents, o.total_cents,
         o.cancel_reason, o.created_at, o.updated_at,
         c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
-        pt.name AS payment_term_name
+        CASE
+          WHEN o.manual_installments = 1 THEN '1 parcela'
+          WHEN o.manual_installments > 1 THEN CAST(o.manual_installments AS TEXT) || ' parcelas'
+          ELSE pt.name
+        END AS payment_term_name
        FROM weighing_operations o
        LEFT JOIN customers c ON c.id = o.customer_id
        LEFT JOIN vehicles v ON v.id = o.vehicle_id
@@ -779,7 +815,9 @@ export function listCanceledWeighingOperations(database: DesktopDatabase): Weigh
     .map((row) => mapOperationRow(row as OperationRow));
 }
 
-export function listClosedWeighingOperations(database: DesktopDatabase): WeighingOperationSummary[] {
+export function listClosedWeighingOperations(
+  database: DesktopDatabase
+): WeighingOperationSummary[] {
   return database
     .prepare(
       `SELECT
@@ -789,7 +827,11 @@ export function listClosedWeighingOperations(database: DesktopDatabase): Weighin
         o.product_total_cents, o.freight_total_cents, o.total_cents,
         o.cancel_reason, o.created_at, o.updated_at,
         c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
-        pt.name AS payment_term_name
+        CASE
+          WHEN o.manual_installments = 1 THEN '1 parcela'
+          WHEN o.manual_installments > 1 THEN CAST(o.manual_installments AS TEXT) || ' parcelas'
+          ELSE pt.name
+        END AS payment_term_name
        FROM weighing_operations o
        LEFT JOIN customers c ON c.id = o.customer_id
        LEFT JOIN vehicles v ON v.id = o.vehicle_id
@@ -833,7 +875,11 @@ export function getWeighingOperation(
         o.product_total_cents, o.freight_total_cents, o.total_cents,
         o.cancel_reason, o.created_at, o.updated_at,
         c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
-        pt.name AS payment_term_name
+        CASE
+          WHEN o.manual_installments = 1 THEN '1 parcela'
+          WHEN o.manual_installments > 1 THEN CAST(o.manual_installments AS TEXT) || ' parcelas'
+          ELSE pt.name
+        END AS payment_term_name
        FROM weighing_operations o
        LEFT JOIN customers c ON c.id = o.customer_id
        LEFT JOIN vehicles v ON v.id = o.vehicle_id
@@ -954,7 +1000,10 @@ function isFinishedGoodsProduct(product: {
   fiscal_recommendations_json: string | null;
 }): boolean {
   if (product.omie_product_id === null) return false;
-  const candidates = [product.item_type, ...extractFiscalRecommendationValues(product.fiscal_recommendations_json)];
+  const candidates = [
+    product.item_type,
+    ...extractFiscalRecommendationValues(product.fiscal_recommendations_json)
+  ];
   return candidates.some((value) => matchesFinishedGoodsType(value));
 }
 
@@ -982,7 +1031,10 @@ function collectFiscalRecommendationValues(value: unknown, output: string[]): vo
   if (value && typeof value === "object") {
     for (const [key, nested] of Object.entries(value)) {
       const normalizedKey = normalizeFiscalTypeText(key);
-      if (normalizedKey.includes("tipo") && (normalizedKey.includes("produto") || normalizedKey.includes("item"))) {
+      if (
+        normalizedKey.includes("tipo") &&
+        (normalizedKey.includes("produto") || normalizedKey.includes("item"))
+      ) {
         collectFiscalRecommendationValues(nested, output);
       }
       if (normalizedKey === "codigo" || normalizedKey === "cod" || normalizedKey === "code") {
@@ -995,7 +1047,12 @@ function collectFiscalRecommendationValues(value: unknown, output: string[]): vo
 function matchesFinishedGoodsType(value: string | null | undefined): boolean {
   if (!value) return false;
   const normalized = normalizeFiscalTypeText(value);
-  return normalized === "04" || normalized.startsWith("04 ") || normalized.includes("produtos acabados") || normalized.includes("produto acabado");
+  return (
+    normalized === "04" ||
+    normalized.startsWith("04 ") ||
+    normalized.includes("produtos acabados") ||
+    normalized.includes("produto acabado")
+  );
 }
 
 function normalizeFiscalTypeText(value: string): string {

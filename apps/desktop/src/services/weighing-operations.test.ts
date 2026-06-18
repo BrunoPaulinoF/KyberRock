@@ -218,7 +218,9 @@ describe("weighing operations", () => {
 
       expect(cancelled).toMatchObject({ status: "cancelled", cancelReason: "Cliente desistiu" });
       expect(database.prepare("SELECT COUNT(*) FROM audit_logs").pluck().get()).toBe(2);
-      expect(database.prepare("SELECT COUNT(*) FROM sync_queue WHERE status = 'pending'").pluck().get()).toBe(4);
+      expect(
+        database.prepare("SELECT COUNT(*) FROM sync_queue WHERE status = 'pending'").pluck().get()
+      ).toBe(4);
     } finally {
       database.close();
     }
@@ -257,6 +259,68 @@ describe("weighing operations", () => {
     }
   });
 
+  it("stores manual installments as the operation payment term label", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        manualInstallments: 3,
+        unitPriceCents: 12_000,
+        entryWeightKg: 12_000
+      });
+
+      expect(operation.paymentTermName).toBe("3 parcelas");
+      expect(
+        database
+          .prepare("SELECT manual_installments FROM weighing_operations WHERE id = ?")
+          .pluck()
+          .get(operation.id)
+      ).toBe(3);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("queues fiscal operations for OMIE billing on close", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET omie_customer_id = 456 WHERE id = 'customer-1'").run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        unitPriceCents: 12_000,
+        entryWeightKg: 12_000
+      });
+
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      expect(
+        database.prepare("SELECT action FROM sync_queue WHERE target = 'omie'").pluck().get()
+      ).toBe("create_and_bill_order");
+    } finally {
+      database.close();
+    }
+  });
+
   it("blocks customers and products flagged as unavailable", () => {
     const database = createDatabase();
 
@@ -276,7 +340,9 @@ describe("weighing operations", () => {
         })
       ).toThrow("Cliente bloqueado no OMIE");
 
-      database.prepare("UPDATE customers SET omie_billing_blocked = 0 WHERE id = 'customer-1'").run();
+      database
+        .prepare("UPDATE customers SET omie_billing_blocked = 0 WHERE id = 'customer-1'")
+        .run();
       database.prepare("UPDATE products SET blocked = 1 WHERE id = 'product-1'").run();
 
       expect(() =>
@@ -314,7 +380,10 @@ function createIdentity(database: DesktopDatabase) {
   });
 }
 
-function insertCatalog(database: DesktopDatabase, options: { customerBlocked?: boolean } = {}): void {
+function insertCatalog(
+  database: DesktopDatabase,
+  options: { customerBlocked?: boolean } = {}
+): void {
   const now = "2026-06-06T12:00:00.000Z";
   database
     .prepare(
@@ -324,10 +393,14 @@ function insertCatalog(database: DesktopDatabase, options: { customerBlocked?: b
     )
     .run(options.customerBlocked ? 1 : 0, now, now);
   database
-    .prepare("INSERT INTO vehicles (id, company_id, plate, created_at, updated_at) VALUES ('vehicle-1', 'company-1', 'ABC1D23', ?, ?)")
+    .prepare(
+      "INSERT INTO vehicles (id, company_id, plate, created_at, updated_at) VALUES ('vehicle-1', 'company-1', 'ABC1D23', ?, ?)"
+    )
     .run(now, now);
   database
-    .prepare("INSERT INTO drivers (id, company_id, name, created_at, updated_at) VALUES ('driver-1', 'company-1', 'Motorista Teste', ?, ?)")
+    .prepare(
+      "INSERT INTO drivers (id, company_id, name, created_at, updated_at) VALUES ('driver-1', 'company-1', 'Motorista Teste', ?, ?)"
+    )
     .run(now, now);
   database
     .prepare(

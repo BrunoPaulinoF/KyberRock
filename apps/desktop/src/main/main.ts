@@ -6,31 +6,19 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { inspect } from "node:util";
 
-import { DesktopRuntime } from "../services/runtime.js";
+import { DesktopRuntime, type FiscalDocumentPrinter } from "../services/runtime.js";
 import type { ActivateDesktopInput } from "../services/desktop-activation.js";
 import type { CacheQueryOptions } from "../services/cache-store.js";
-import type {
-  CreateCustomerInput,
-  UpdateCustomerInput
-} from "../services/customers.js";
+import type { CreateCustomerInput, UpdateCustomerInput } from "../services/customers.js";
 import type {
   AddPriceTableItemInput,
   CreatePriceTableInput,
   LinkCustomerToPriceTableInput,
   UpdatePriceTableItemInput
 } from "../services/price-tables.js";
-import type {
-  CreateVehicleInput,
-  UpdateVehicleInput
-} from "../services/vehicles.js";
-import type {
-  CreateDriverInput,
-  UpdateDriverInput
-} from "../services/drivers.js";
-import type {
-  CreateCarrierInput,
-  UpdateCarrierInput
-} from "../services/carriers.js";
+import type { CreateVehicleInput, UpdateVehicleInput } from "../services/vehicles.js";
+import type { CreateDriverInput, UpdateDriverInput } from "../services/drivers.js";
+import type { CreateCarrierInput, UpdateCarrierInput } from "../services/carriers.js";
 import type { ToledoTcpConfig } from "@kyberrock/scale-adapters";
 import type {
   ConfigureReceiptPrintProfileInput,
@@ -77,9 +65,12 @@ async function createMainWindow(): Promise<void> {
   mainWindow.webContents.on("did-finish-load", () => {
     writeStartupLog("renderer:did-finish-load", mainWindow?.webContents.getURL());
   });
-  mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
-    writeStartupLog("renderer:did-fail-load", { errorCode, errorDescription, validatedURL });
-  });
+  mainWindow.webContents.on(
+    "did-fail-load",
+    (_event, errorCode, errorDescription, validatedURL) => {
+      writeStartupLog("renderer:did-fail-load", { errorCode, errorDescription, validatedURL });
+    }
+  );
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
     writeStartupLog("renderer:process-gone", details);
   });
@@ -87,6 +78,7 @@ async function createMainWindow(): Promise<void> {
     writeStartupLog("renderer:console-message", { level, message, line, sourceId });
   });
   runtime.setReceiptPrinter(createElectronReceiptPrinter(mainWindow));
+  runtime.setFiscalDocumentPrinter(createElectronFiscalDocumentPrinter(mainWindow));
 
   const devServerUrl = process.env.KYBERROCK_DESKTOP_DEV_SERVER_URL;
 
@@ -283,24 +275,24 @@ function registerIpcHandlers(): void {
     return runtime.clearCanceledWeighingOperations();
   });
 
-  ipcMain.handle(
-    "desktop:start-weighing",
-    async (_event, input: unknown) => {
-      if (!runtime) {
-        throw new Error("Desktop runtime is not ready.");
-      }
-
-      return runtime.startWeighing(input as Parameters<DesktopRuntime["startWeighing"]>[0]);
-    }
-  );
-
-  ipcMain.handle("desktop:close-weighing", async (_event, operationId: string, operationType?: string) => {
+  ipcMain.handle("desktop:start-weighing", async (_event, input: unknown) => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");
     }
 
-    return runtime.closeWeighing(operationId, operationType as OperationType | undefined);
+    return runtime.startWeighing(input as Parameters<DesktopRuntime["startWeighing"]>[0]);
   });
+
+  ipcMain.handle(
+    "desktop:close-weighing",
+    async (_event, operationId: string, operationType?: string) => {
+      if (!runtime) {
+        throw new Error("Desktop runtime is not ready.");
+      }
+
+      return runtime.closeWeighing(operationId, operationType as OperationType | undefined);
+    }
+  );
 
   ipcMain.handle("desktop:cancel-weighing", (_event, operationId: string, reason: string) => {
     if (!runtime) {
@@ -375,6 +367,14 @@ function registerIpcHandlers(): void {
     return runtime.printTestReceipt();
   });
 
+  ipcMain.handle("desktop:bill-fiscal-operation", async (_event, operationId: string) => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.processFiscalBilling(operationId);
+  });
+
   ipcMain.handle("desktop:sync-to-cloud", async () => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");
@@ -433,21 +433,15 @@ function registerIpcHandlers(): void {
     }
   );
 
-  ipcMain.handle(
-    "desktop:get-daily-series",
-    (_event, startDate: string, endDate: string) => {
-      if (!runtime) throw new Error("Desktop runtime is not ready.");
-      return runtime.getDailySeries(startDate, endDate);
-    }
-  );
+  ipcMain.handle("desktop:get-daily-series", (_event, startDate: string, endDate: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.getDailySeries(startDate, endDate);
+  });
 
-  ipcMain.handle(
-    "desktop:get-operation-mix",
-    (_event, startDate: string, endDate: string) => {
-      if (!runtime) throw new Error("Desktop runtime is not ready.");
-      return runtime.getOperationMix(startDate, endDate);
-    }
-  );
+  ipcMain.handle("desktop:get-operation-mix", (_event, startDate: string, endDate: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.getOperationMix(startDate, endDate);
+  });
 
   ipcMain.handle("desktop:get-price", (_event, customerId: string, productId: string) => {
     if (!runtime) {
@@ -465,13 +459,16 @@ function registerIpcHandlers(): void {
     return runtime.getPriceDetailsForCustomerProduct(customerId, productId);
   });
 
-  ipcMain.handle("desktop:customers-create", (_event, input: Omit<CreateCustomerInput, "companyId">) => {
-    if (!runtime) {
-      throw new Error("Desktop runtime is not ready.");
-    }
+  ipcMain.handle(
+    "desktop:customers-create",
+    (_event, input: Omit<CreateCustomerInput, "companyId">) => {
+      if (!runtime) {
+        throw new Error("Desktop runtime is not ready.");
+      }
 
-    return runtime.createCustomer(input);
-  });
+      return runtime.createCustomer(input);
+    }
+  );
 
   ipcMain.handle("desktop:customers-update", (_event, id: string, input: UpdateCustomerInput) => {
     if (!runtime) {
@@ -489,10 +486,13 @@ function registerIpcHandlers(): void {
     runtime.deleteCustomer(id);
   });
 
-  ipcMain.handle("desktop:price-tables-create", (_event, input: Omit<CreatePriceTableInput, "companyId">) => {
-    if (!runtime) throw new Error("Desktop runtime is not ready.");
-    return runtime.createPriceTable(input);
-  });
+  ipcMain.handle(
+    "desktop:price-tables-create",
+    (_event, input: Omit<CreatePriceTableInput, "companyId">) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.createPriceTable(input);
+    }
+  );
 
   ipcMain.handle("desktop:price-tables-update-name", (_event, id: string, name: string) => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
@@ -509,20 +509,26 @@ function registerIpcHandlers(): void {
     return runtime.addPriceTableItem(input);
   });
 
-  ipcMain.handle("desktop:price-tables-update-item", (_event, id: string, input: UpdatePriceTableItemInput) => {
-    if (!runtime) throw new Error("Desktop runtime is not ready.");
-    return runtime.updatePriceTableItem(id, input);
-  });
+  ipcMain.handle(
+    "desktop:price-tables-update-item",
+    (_event, id: string, input: UpdatePriceTableItemInput) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.updatePriceTableItem(id, input);
+    }
+  );
 
   ipcMain.handle("desktop:price-tables-remove-item", (_event, id: string) => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     runtime.removePriceTableItem(id);
   });
 
-  ipcMain.handle("desktop:price-tables-link-customer", (_event, input: LinkCustomerToPriceTableInput) => {
-    if (!runtime) throw new Error("Desktop runtime is not ready.");
-    return runtime.linkCustomerToPriceTable(input);
-  });
+  ipcMain.handle(
+    "desktop:price-tables-link-customer",
+    (_event, input: LinkCustomerToPriceTableInput) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.linkCustomerToPriceTable(input);
+    }
+  );
 
   ipcMain.handle("desktop:price-tables-unlink-customer", (_event, linkId: string) => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
@@ -544,10 +550,13 @@ function registerIpcHandlers(): void {
     return runtime.listCustomerLinks(priceTableId);
   });
 
-  ipcMain.handle("desktop:vehicles-create", (_event, input: Omit<CreateVehicleInput, "companyId">) => {
-    if (!runtime) throw new Error("Desktop runtime is not ready.");
-    return runtime.createVehicle(input);
-  });
+  ipcMain.handle(
+    "desktop:vehicles-create",
+    (_event, input: Omit<CreateVehicleInput, "companyId">) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.createVehicle(input);
+    }
+  );
 
   ipcMain.handle("desktop:vehicles-update", (_event, id: string, input: UpdateVehicleInput) => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
@@ -569,20 +578,26 @@ function registerIpcHandlers(): void {
     return runtime.getVehicleCarriers(vehicleId);
   });
 
-  ipcMain.handle("desktop:vehicles-link-carrier", (_event, vehicleId: string, carrierId: string) => {
-    if (!runtime) throw new Error("Desktop runtime is not ready.");
-    return runtime.linkVehicleToCarrier(vehicleId, carrierId);
-  });
+  ipcMain.handle(
+    "desktop:vehicles-link-carrier",
+    (_event, vehicleId: string, carrierId: string) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.linkVehicleToCarrier(vehicleId, carrierId);
+    }
+  );
 
   ipcMain.handle("desktop:customers-by-carrier", (_event, carrierId: string) => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.getCustomersByCarrier(carrierId);
   });
 
-  ipcMain.handle("desktop:drivers-create", (_event, input: Omit<CreateDriverInput, "companyId">) => {
-    if (!runtime) throw new Error("Desktop runtime is not ready.");
-    return runtime.createDriver(input);
-  });
+  ipcMain.handle(
+    "desktop:drivers-create",
+    (_event, input: Omit<CreateDriverInput, "companyId">) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.createDriver(input);
+    }
+  );
 
   ipcMain.handle("desktop:drivers-update", (_event, id: string, input: UpdateDriverInput) => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
@@ -605,10 +620,13 @@ function registerIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle("desktop:carriers-create", (_event, input: Omit<CreateCarrierInput, "companyId">) => {
-    if (!runtime) throw new Error("Desktop runtime is not ready.");
-    return runtime.createCarrier(input);
-  });
+  ipcMain.handle(
+    "desktop:carriers-create",
+    (_event, input: Omit<CreateCarrierInput, "companyId">) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.createCarrier(input);
+    }
+  );
 
   ipcMain.handle("desktop:carriers-update", (_event, id: string, input: UpdateCarrierInput) => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
@@ -734,6 +752,50 @@ function createElectronReceiptPrinter(parentWindow: BrowserWindow): ReceiptPrint
   };
 }
 
+function createElectronFiscalDocumentPrinter(parentWindow: BrowserWindow): FiscalDocumentPrinter {
+  return {
+    async printDocument(documentUrl) {
+      const printWindow = new BrowserWindow({
+        show: false,
+        parent: parentWindow,
+        webPreferences: {
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true
+        }
+      });
+
+      try {
+        await printWindow.loadURL(documentUrl);
+        await new Promise<void>((resolve, reject) => {
+          printWindow.webContents.print(
+            {
+              silent: true,
+              printBackground: true
+            },
+            (success, failureReason) => {
+              if (success) {
+                resolve();
+                return;
+              }
+
+              reject(new Error(failureReason || "Falha ao imprimir documento fiscal."));
+            }
+          );
+        });
+        return { printed: true, error: null };
+      } catch (error) {
+        return {
+          printed: false,
+          error: error instanceof Error ? error.message : "Falha ao imprimir documento fiscal."
+        };
+      } finally {
+        printWindow.close();
+      }
+    }
+  };
+}
+
 function buildReceiptHtml(payload: ReceiptPrintPayload): string {
   return `<!doctype html>
 <html lang="pt-BR">
@@ -831,7 +893,7 @@ async function bootstrap(): Promise<void> {
 
 void bootstrap().catch((error: unknown) => {
   writeStartupLog("bootstrap:error", error);
-  const message = error instanceof Error ? error.stack ?? error.message : String(error);
+  const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
   dialog.showErrorBox("KyberRock Desktop", `Falha ao abrir o aplicativo.\n\n${message}`);
   app.quit();
 });

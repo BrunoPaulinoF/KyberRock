@@ -459,7 +459,12 @@ function getOperationForReceipt(
         o.entry_weight_kg, o.exit_weight_kg, o.net_weight_kg,
         o.product_total_cents, o.freight_total_cents, o.total_cents,
         c.trade_name AS customer_name, v.plate, d.name AS driver_name,
-        p.description AS product_description, pt.name AS payment_term_name
+        p.description AS product_description,
+        CASE
+          WHEN o.manual_installments = 1 THEN '1 parcela'
+          WHEN o.manual_installments > 1 THEN CAST(o.manual_installments AS TEXT) || ' parcelas'
+          ELSE pt.name
+        END AS payment_term_name
        FROM weighing_operations o
        INNER JOIN units u ON u.id = o.unit_id
        LEFT JOIN customers c ON c.id = o.customer_id

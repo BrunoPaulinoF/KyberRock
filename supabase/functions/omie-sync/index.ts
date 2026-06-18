@@ -5,7 +5,8 @@ const PAGE_SIZE = 50;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-admin-session",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-admin-session",
   "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS"
 };
 
@@ -31,7 +32,11 @@ async function sha256Hex(value: string): Promise<string> {
   return toHex(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
 }
 
-type OmieAction = "pull_reference_data" | "create_order" | "push_customer";
+type OmieAction =
+  | "pull_reference_data"
+  | "create_order"
+  | "create_and_bill_order"
+  | "push_customer";
 
 type PullResume = {
   customersPage?: number;
@@ -147,6 +152,14 @@ type CreateOrderPayload = {
   idempotencyKey: string;
 };
 
+type CreateAndBillOrderResult = {
+  orderId: number;
+  billed: boolean;
+  billingStatusCode: string | null;
+  billingStatusMessage: string | null;
+  documentUrl: string | null;
+};
+
 type PushCustomerPayload = {
   localCustomerId: string;
   omieCustomerId?: number;
@@ -172,7 +185,7 @@ Deno.serve(async (req) => {
   const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
   const supabase = createClient(supabaseUrl, serviceRoleKey);
-  const body = await req.json().catch(() => ({})) as {
+  const body = (await req.json().catch(() => ({}))) as {
     deviceId?: string;
     deviceToken?: string;
     action?: OmieAction;
@@ -242,7 +255,8 @@ Deno.serve(async (req) => {
       try {
         paymentTermsResult = await listPaymentTermsPage(credentials, paymentTermsPage);
       } catch (error) {
-        paymentTermsWarning = error instanceof Error ? error.message : "Falha ao listar parcelas OMIE";
+        paymentTermsWarning =
+          error instanceof Error ? error.message : "Falha ao listar parcelas OMIE";
       }
 
       const checkedAt = new Date().toISOString();
@@ -287,6 +301,12 @@ Deno.serve(async (req) => {
       return jsonResponse({ ok: true, orderId });
     }
 
+    if (action === "create_and_bill_order") {
+      const payload = body.payload as CreateOrderPayload;
+      const result = await createAndBillOmieOrder(credentials, payload);
+      return jsonResponse({ ok: true, ...result });
+    }
+
     if (action === "push_customer") {
       const payload = body.payload as PushCustomerPayload;
       const omieCustomerId = await pushCustomerToOmie(credentials, payload);
@@ -295,7 +315,10 @@ Deno.serve(async (req) => {
 
     return jsonResponse({ error: "Acao OMIE desconhecida" }, 400);
   } catch (error) {
-    return jsonResponse({ error: error instanceof Error ? error.message : "Erro OMIE inesperado" }, 400);
+    return jsonResponse(
+      { error: error instanceof Error ? error.message : "Erro OMIE inesperado" },
+      400
+    );
   }
 });
 
@@ -311,7 +334,12 @@ const OMIE_PAGE_CACHE_TTL_MS = 60_000;
 const omiePageCache = new Map<
   string,
   {
-    data: { items: unknown[]; finished: boolean; totalPages: number | null; totalRecords: number | null };
+    data: {
+      items: unknown[];
+      finished: boolean;
+      totalPages: number | null;
+      totalRecords: number | null;
+    };
     expiresAt: number;
   }
 >();
@@ -349,7 +377,10 @@ function setCachedPage(
   });
 }
 
-async function listCustomersPage(credentials: OmieCredentials, page: number): Promise<PageResult<OmieCustomer>> {
+async function listCustomersPage(
+  credentials: OmieCredentials,
+  page: number
+): Promise<PageResult<OmieCustomer>> {
   const cacheKey = `clientes:${credentials.appKey}:${page}`;
   const cached = getCachedPage<OmieCustomer>(cacheKey);
   if (cached) {
@@ -362,18 +393,21 @@ async function listCustomersPage(credentials: OmieCredentials, page: number): Pr
     };
   }
 
-  const response = await callOmie<{
-    pagina: number;
-    registros_por_pagina: number;
-    apenas_importado_api: string;
-  }, {
-    pagina?: number;
-    total_de_paginas?: number;
-    registros?: number;
-    total_de_registros?: number;
-    clientes_cadastro?: OmieCustomerRaw[];
-    clientesCadastro?: OmieCustomerRaw[];
-  }>(credentials, "/geral/clientes/", "ListarClientes", {
+  const response = await callOmie<
+    {
+      pagina: number;
+      registros_por_pagina: number;
+      apenas_importado_api: string;
+    },
+    {
+      pagina?: number;
+      total_de_paginas?: number;
+      registros?: number;
+      total_de_registros?: number;
+      clientes_cadastro?: OmieCustomerRaw[];
+      clientesCadastro?: OmieCustomerRaw[];
+    }
+  >(credentials, "/geral/clientes/", "ListarClientes", {
     pagina: page,
     registros_por_pagina: PAGE_SIZE,
     apenas_importado_api: "N"
@@ -504,7 +538,10 @@ function mapOmieCustomerRaw(item: OmieCustomerRaw): OmieCustomer | null {
   };
 }
 
-async function listProductsPage(credentials: OmieCredentials, page: number): Promise<PageResult<OmieProduct>> {
+async function listProductsPage(
+  credentials: OmieCredentials,
+  page: number
+): Promise<PageResult<OmieProduct>> {
   const cacheKey = `produtos:${credentials.appKey}:${page}`;
   const cached = getCachedPage<OmieProduct>(cacheKey);
   if (cached) {
@@ -517,21 +554,24 @@ async function listProductsPage(credentials: OmieCredentials, page: number): Pro
     };
   }
 
-  const response = await callOmie<{
-    pagina: number;
-    registros_por_pagina: number;
-    apenas_importado_api: string;
-    filtrar_apenas_omiepdv: string;
-    exibir_caracteristicas: string;
-    exibir_obs: string;
-  }, {
-    pagina?: number;
-    total_de_paginas?: number;
-    registros?: number;
-    total_de_registros?: number;
-    produto_servico_cadastro?: OmieProductRaw[];
-    produtoCadastro?: OmieProductRaw[];
-  }>(credentials, "/geral/produtos/", "ListarProdutos", {
+  const response = await callOmie<
+    {
+      pagina: number;
+      registros_por_pagina: number;
+      apenas_importado_api: string;
+      filtrar_apenas_omiepdv: string;
+      exibir_caracteristicas: string;
+      exibir_obs: string;
+    },
+    {
+      pagina?: number;
+      total_de_paginas?: number;
+      registros?: number;
+      total_de_registros?: number;
+      produto_servico_cadastro?: OmieProductRaw[];
+      produtoCadastro?: OmieProductRaw[];
+    }
+  >(credentials, "/geral/produtos/", "ListarProdutos", {
     pagina: page,
     registros_por_pagina: PAGE_SIZE,
     apenas_importado_api: "N",
@@ -603,13 +643,15 @@ function mapOmieProductRaw(item: OmieProductRaw): OmieProduct | null {
   const productId = toNumber(id);
   if (productId === null) return null;
 
-  const recommendations = (item.recomendacoes_fiscais ?? item.recomendacoesFiscais ?? null) as
-    | Record<string, unknown>
-    | null;
+  const recommendations = (item.recomendacoes_fiscais ??
+    item.recomendacoesFiscais ??
+    null) as Record<string, unknown> | null;
   const icmsOrigin = pickFirst(
     item.origem_mercadoria,
     item.origemMercadoria,
-    typeof recommendations?.origem_mercadoria === "string" ? recommendations.origem_mercadoria : null,
+    typeof recommendations?.origem_mercadoria === "string"
+      ? recommendations.origem_mercadoria
+      : null,
     typeof recommendations?.origemMercadoria === "string" ? recommendations.origemMercadoria : null
   );
 
@@ -688,7 +730,11 @@ function toIntOrNull(value: unknown): number | null {
   return Number.isFinite(num) ? Math.trunc(num) : null;
 }
 
-function computeFinished(currentPage: number, returned: number, totalPages: number | null): boolean {
+function computeFinished(
+  currentPage: number,
+  returned: number,
+  totalPages: number | null
+): boolean {
   if (returned === 0) return true;
   if (totalPages !== null && totalPages > 0) {
     return currentPage >= totalPages;
@@ -696,7 +742,10 @@ function computeFinished(currentPage: number, returned: number, totalPages: numb
   return returned < PAGE_SIZE;
 }
 
-async function listPaymentTermsPage(credentials: OmieCredentials, page: number): Promise<PageResult<OmiePaymentTerm>> {
+async function listPaymentTermsPage(
+  credentials: OmieCredentials,
+  page: number
+): Promise<PageResult<OmiePaymentTerm>> {
   const cacheKey = `parcelas:${credentials.appKey}:${page}`;
   const cached = getCachedPage<OmiePaymentTerm>(cacheKey);
   if (cached) {
@@ -709,16 +758,19 @@ async function listPaymentTermsPage(credentials: OmieCredentials, page: number):
     };
   }
 
-  const response = await callOmie<{ pagina: number; registros_por_pagina: number; apenas_importado_api: string }, {
-    pagina?: number;
-    total_de_paginas?: number;
-    registros?: number;
-    total_de_registros?: number;
-    condicoesPagamentoCadastro?: OmiePaymentTermRaw[];
-    condicoes_pagamento_cadastro?: OmiePaymentTermRaw[];
-    cadastros?: OmiePaymentTermRaw[];
-    listaCondicoesPagamento?: OmiePaymentTermRaw[];
-  }>(credentials, "/geral/condicoespgto/", "ListarCondicoesPagamento", {
+  const response = await callOmie<
+    { pagina: number; registros_por_pagina: number; apenas_importado_api: string },
+    {
+      pagina?: number;
+      total_de_paginas?: number;
+      registros?: number;
+      total_de_registros?: number;
+      condicoesPagamentoCadastro?: OmiePaymentTermRaw[];
+      condicoes_pagamento_cadastro?: OmiePaymentTermRaw[];
+      cadastros?: OmiePaymentTermRaw[];
+      listaCondicoesPagamento?: OmiePaymentTermRaw[];
+    }
+  >(credentials, "/geral/condicoespgto/", "ListarCondicoesPagamento", {
     pagina: page,
     registros_por_pagina: PAGE_SIZE,
     apenas_importado_api: "N"
@@ -794,14 +846,21 @@ function mapOmiePaymentTermRaw(item: OmiePaymentTermRaw): OmiePaymentTerm | null
   if (!description) return null;
 
   const days = Array.isArray(item.aparcela_dias)
-    ? (item.aparcela_dias.map((value) => toNumber(value)).filter((value): value is number => value !== null))
+    ? item.aparcela_dias
+        .map((value) => toNumber(value))
+        .filter((value): value is number => value !== null)
     : null;
 
   return {
     id,
-    integrationCode: pickFirst(item.codigoCondicaoPagamentoIntegracao, item.codigo_condicao_pagamento_integracao),
+    integrationCode: pickFirst(
+      item.codigoCondicaoPagamentoIntegracao,
+      item.codigo_condicao_pagamento_integracao
+    ),
     description,
-    firstInstallmentDays: toNumber(pickFirst(item.nDiasPrimeiraParcela, item.dias_primeira_parcela)),
+    firstInstallmentDays: toNumber(
+      pickFirst(item.nDiasPrimeiraParcela, item.dias_primeira_parcela)
+    ),
     installmentIntervalDays: toNumber(pickFirst(item.nIntervaloParcelas, item.intervalo_parcelas)),
     installmentCount: toNumber(pickFirst(item.nNumeroParcelas, item.numero_parcelas)),
     installmentType: pickFirst(item.cTipoParcelas, item.tipo_parcelas),
@@ -811,7 +870,10 @@ function mapOmiePaymentTermRaw(item: OmiePaymentTermRaw): OmiePaymentTerm | null
   };
 }
 
-async function pushCustomerToOmie(credentials: OmieCredentials, payload: PushCustomerPayload): Promise<number> {
+async function pushCustomerToOmie(
+  credentials: OmieCredentials,
+  payload: PushCustomerPayload
+): Promise<number> {
   const body = {
     codigo_cliente_omie: payload.omieCustomerId,
     codigo_cliente_integracao: payload.localCustomerId,
@@ -834,10 +896,13 @@ async function pushCustomerToOmie(credentials: OmieCredentials, payload: PushCus
     return payload.omieCustomerId;
   }
 
-  const response = await callOmie<unknown, {
-    codigo_cliente_omie?: number;
-    codigoClienteOmie?: number;
-  }>(credentials, "/geral/clientes/", "IncluirCliente", body);
+  const response = await callOmie<
+    unknown,
+    {
+      codigo_cliente_omie?: number;
+      codigoClienteOmie?: number;
+    }
+  >(credentials, "/geral/clientes/", "IncluirCliente", body);
 
   const omieCustomerId = response.codigo_cliente_omie ?? response.codigoClienteOmie;
   if (!omieCustomerId) {
@@ -846,53 +911,67 @@ async function pushCustomerToOmie(credentials: OmieCredentials, payload: PushCus
   return omieCustomerId;
 }
 
-async function createOmieOrder(credentials: OmieCredentials, payload: CreateOrderPayload): Promise<number> {
+async function createOmieOrder(
+  credentials: OmieCredentials,
+  payload: CreateOrderPayload
+): Promise<number> {
   if (payload.operationType === "invoice") {
     if (!payload.productOmieId) {
       throw new Error("productOmieId obrigatorio para pedido de venda");
     }
-    const response = await callOmie<unknown, {
-      codigo_pedido?: number;
-      codigoPedido?: number;
-      codigo_pedido_integracao?: string;
-      codigoPedidoIntegracao?: string;
-    }>(credentials, "/produtos/pedido/", "IncluirPedido", {
-      cabecalho: {
-        codigo_pedido_integracao: payload.idempotencyKey,
-        codigo_cliente: payload.customerOmieId,
-        data_previsao: toOmieDate(payload.issueDate),
-        etapa: "10",
-        codigo_parcela: "000",
-        quantidade_itens: 1
-      },
-      det: [
-        {
-          ide: { codigo_item_integracao: `${payload.idempotencyKey}:1` },
-          produto: {
-            codigo_produto: payload.productOmieId,
-            quantidade: payload.quantity,
-            valor_unitario: payload.unitPrice,
-            tipo_desconto: "P",
-            percentual_desconto: 0
+    const response = await callOmie<unknown, unknown>(
+      credentials,
+      "/produtos/pedido/",
+      "IncluirPedido",
+      {
+        cabecalho: {
+          codigo_pedido_integracao: payload.idempotencyKey,
+          codigo_cliente: payload.customerOmieId,
+          data_previsao: toOmieDate(payload.issueDate),
+          etapa: "10",
+          codigo_parcela: "000",
+          quantidade_itens: 1
+        },
+        det: [
+          {
+            ide: { codigo_item_integracao: `${payload.idempotencyKey}:1` },
+            produto: {
+              codigo_produto: payload.productOmieId,
+              quantidade: payload.quantity,
+              valor_unitario: payload.unitPrice,
+              tipo_desconto: "P",
+              percentual_desconto: 0
+            }
           }
-        }
-      ],
-      frete: { modalidade: "9" },
-      informacoes_adicionais: { codigo_categoria: "1.01.01", codigo_conta_corrente: 0 }
+        ],
+        frete: { modalidade: "9" },
+        informacoes_adicionais: { codigo_categoria: "1.01.01", codigo_conta_corrente: 0 }
+      }
+    ).catch(async (error) => {
+      const existing = await consultSalesOrderByIntegrationCode(
+        credentials,
+        payload.idempotencyKey
+      ).catch(() => null);
+      if (existing) return existing;
+      throw error;
     });
-    const orderId = response.codigo_pedido ?? response.codigoPedido;
+
+    const orderId = extractSalesOrderId(response);
     if (!orderId) {
       throw new Error("OMIE nao retornou codigoPedido");
     }
     return orderId;
   }
 
-  const response = await callOmie<unknown, {
-    nCodOS?: number;
-    codigoOS?: number;
-    cCodIntOS?: string;
-    codigoOSIntegracao?: string;
-  }>(credentials, "/servicos/os/", "IncluirOS", {
+  const response = await callOmie<
+    unknown,
+    {
+      nCodOS?: number;
+      codigoOS?: number;
+      cCodIntOS?: string;
+      codigoOSIntegracao?: string;
+    }
+  >(credentials, "/servicos/os/", "IncluirOS", {
     Cabecalho: {
       cCodIntOS: payload.idempotencyKey,
       nCodCli: payload.customerOmieId,
@@ -915,6 +994,114 @@ async function createOmieOrder(credentials: OmieCredentials, payload: CreateOrde
     throw new Error("OMIE nao retornou codigoOS");
   }
   return orderId;
+}
+
+async function createAndBillOmieOrder(
+  credentials: OmieCredentials,
+  payload: CreateOrderPayload
+): Promise<CreateAndBillOrderResult> {
+  if (payload.operationType !== "invoice") {
+    throw new Error("Faturamento automatico disponivel apenas para pedido de venda fiscal");
+  }
+
+  const orderId = await createOmieOrder(credentials, payload);
+  const billing = await billSalesOrder(credentials, orderId, payload.idempotencyKey);
+  const consultedOrder = await consultSalesOrder(credentials, orderId).catch(() => null);
+  const orderDocument = await getSalesOrderDocument(credentials, orderId).catch(() => null);
+  const documentUrl =
+    extractDocumentUrl(billing.raw) ??
+    extractDocumentUrl(consultedOrder) ??
+    extractDocumentUrl(orderDocument);
+
+  return {
+    orderId,
+    billed: true,
+    billingStatusCode: billing.statusCode,
+    billingStatusMessage: billing.statusMessage,
+    documentUrl
+  };
+}
+
+async function billSalesOrder(
+  credentials: OmieCredentials,
+  orderId: number,
+  integrationCode: string
+): Promise<{ statusCode: string | null; statusMessage: string | null; raw: unknown }> {
+  const response = await callOmie<
+    unknown,
+    {
+      cCodIntPed?: string;
+      nCodPed?: number;
+      cCodStatus?: string;
+      cDescStatus?: string;
+    }
+  >(credentials, "/produtos/pedidovendafat/", "FaturarPedidoVenda", {
+    cCodIntPed: integrationCode,
+    nCodPed: orderId
+  });
+
+  const statusCode = response.cCodStatus ?? null;
+  const statusMessage = response.cDescStatus ?? null;
+  if (statusCode && statusCode !== "0") {
+    throw new Error(statusMessage || `OMIE retornou status ${statusCode} ao faturar pedido`);
+  }
+
+  return { statusCode, statusMessage, raw: response };
+}
+
+async function consultSalesOrder(credentials: OmieCredentials, orderId: number): Promise<unknown> {
+  return callOmie<unknown, unknown>(credentials, "/produtos/pedido/", "ConsultarPedido", {
+    codigo_pedido: orderId
+  });
+}
+
+async function consultSalesOrderByIntegrationCode(
+  credentials: OmieCredentials,
+  integrationCode: string
+): Promise<unknown> {
+  return callOmie<unknown, unknown>(credentials, "/produtos/pedido/", "ConsultarPedido", {
+    codigo_pedido_integracao: integrationCode
+  });
+}
+
+function extractSalesOrderId(value: unknown): number | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const direct = toNumber(pickFirst(record.codigo_pedido, record.codigoPedido, record.nCodPed));
+  if (direct !== null) return direct;
+  const header =
+    record.cabecalho && typeof record.cabecalho === "object"
+      ? (record.cabecalho as Record<string, unknown>)
+      : null;
+  return toNumber(pickFirst(header?.codigo_pedido, header?.codigoPedido));
+}
+
+async function getSalesOrderDocument(
+  credentials: OmieCredentials,
+  orderId: number
+): Promise<unknown> {
+  return callOmie<unknown, unknown>(credentials, "/produtos/dfedocs/", "ObterPedVenda", {
+    nIdPed: orderId
+  });
+}
+
+function extractDocumentUrl(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof raw === "string" && /^https?:\/\//i.test(raw)) {
+      const normalizedKey = key.toLowerCase();
+      if (normalizedKey.includes("danfe") || normalizedKey.includes("pdf")) {
+        return raw;
+      }
+    }
+    if (raw && typeof raw === "object") {
+      const nested = Array.isArray(raw)
+        ? (raw.map((item) => extractDocumentUrl(item)).find(Boolean) ?? null)
+        : extractDocumentUrl(raw);
+      if (nested) return nested;
+    }
+  }
+  return null;
 }
 
 function toOmieDate(value: string): string {
@@ -953,7 +1140,9 @@ async function callOmie<TParam, TResponse>(
       // ignore body parse errors
     }
     const suffix = detail ? ` - ${detail}` : "";
-    throw new Error(`OMIE HTTP ${response.status}: ${response.statusText} em ${call} (${endpoint})${suffix}`);
+    throw new Error(
+      `OMIE HTTP ${response.status}: ${response.statusText} em ${call} (${endpoint})${suffix}`
+    );
   }
 
   const data = await response.json();

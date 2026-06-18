@@ -476,5 +476,22 @@ ALTER TABLE weighing_operations ADD COLUMN price_savings_percent REAL;
 
 CREATE INDEX IF NOT EXISTS idx_operations_price_table ON weighing_operations(applied_price_table_id);
 `
+  },
+  {
+    version: 8,
+    name: "operation_manual_installments",
+    sql: `
+ALTER TABLE weighing_operations ADD COLUMN manual_installments INTEGER;
+`
+  },
+  {
+    version: 9,
+    name: "operation_omie_billing_status",
+    sql: `
+ALTER TABLE weighing_operations ADD COLUMN omie_billing_status TEXT;
+ALTER TABLE weighing_operations ADD COLUMN omie_billing_message TEXT;
+ALTER TABLE weighing_operations ADD COLUMN omie_billed_at TEXT;
+ALTER TABLE weighing_operations ADD COLUMN omie_document_url TEXT;
+`
   }
 ];

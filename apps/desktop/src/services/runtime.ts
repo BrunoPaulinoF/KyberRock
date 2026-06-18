@@ -67,8 +67,10 @@ import {
   syncOmieReferenceDataFromCloud,
   pushOmieCustomersToCloud,
   processOmieSyncQueue,
+  processFiscalBillingNow,
   getSupabaseSyncStatus,
   isSupabaseInitialized,
+  type FiscalBillingResult,
   type SyncResult
 } from "./supabase-sync.js";
 import {
@@ -80,11 +82,7 @@ import {
   type ActivateDesktopInput,
   type DesktopAccessStatus
 } from "./desktop-activation.js";
-import {
-  CacheStore,
-  type CacheQueryOptions,
-  type CacheQueryResult
-} from "./cache-store.js";
+import { CacheStore, type CacheQueryOptions, type CacheQueryResult } from "./cache-store.js";
 import { createOmieClient, OmieSyncService } from "./omie-sync.js";
 import { readOmiePullState, writeOmiePullState } from "./supabase-sync.js";
 import { ReportService } from "./reports.js";
@@ -103,6 +101,10 @@ export interface OmieLoopProgress {
   lastBatchProducts: number;
   lastBatchPaymentTerms: number;
   lastUpdatedAt?: string | null;
+}
+
+export interface FiscalDocumentPrinter {
+  printDocument: (documentUrl: string) => Promise<{ printed: boolean; error: string | null }>;
 }
 import {
   createToledoTcpAdapter,
@@ -181,6 +183,9 @@ export class DesktopRuntime {
   private backupScheduler: BackupSchedulerHandle | null = null;
   private omieScheduler: OmieSchedulerHandle | null = null;
   private receiptPrinter: ReceiptPrinter = { printReceipt: async () => undefined };
+  private fiscalDocumentPrinter: FiscalDocumentPrinter = {
+    printDocument: async () => ({ printed: false, error: null })
+  };
   private cacheStore: CacheStore;
   private scaleAdapter: ToledoTcpAdapter = createToledoTcpAdapter();
   private omieClient: { appKey: string; appSecret: string } | null = null;
@@ -308,20 +313,24 @@ export class DesktopRuntime {
     this.receiptPrinter = receiptPrinter;
   }
 
-  async startWeighing(
-    input: {
-      operationType: OperationType;
-      customerId: string;
-      vehicleId: string;
-      carrierId?: string;
-      driverId: string;
-      productId: string;
-      paymentTermId?: string;
-      unitPriceCents?: number;
-    }
-  ): Promise<WeighingOperationSummary> {
+  setFiscalDocumentPrinter(fiscalDocumentPrinter: FiscalDocumentPrinter): void {
+    this.fiscalDocumentPrinter = fiscalDocumentPrinter;
+  }
+
+  async startWeighing(input: {
+    operationType?: OperationType;
+    customerId: string;
+    vehicleId: string;
+    carrierId?: string;
+    driverId: string;
+    productId: string;
+    paymentTermId?: string;
+    manualInstallments?: number;
+    unitPriceCents?: number;
+    entryWeightKg?: number;
+  }): Promise<WeighingOperationSummary> {
     this.assertDesktopAccess();
-    const entryWeightKg = await this.readScaleWeight();
+    const entryWeightKg = input.entryWeightKg ?? (await this.readScaleWeight());
 
     return createWeighingOperation(this.database, {
       identity: this.ensureIdentity(),
@@ -332,16 +341,24 @@ export class DesktopRuntime {
       driverId: input.driverId,
       productId: input.productId,
       paymentTermId: input.paymentTermId,
+      manualInstallments: input.manualInstallments,
       unitPriceCents: input.unitPriceCents,
       entryWeightKg
     });
   }
 
-  async closeWeighing(operationId: string, operationType?: OperationType): Promise<WeighingOperationSummary> {
+  async closeWeighing(
+    operationId: string,
+    operationType?: OperationType
+  ): Promise<WeighingOperationSummary> {
     this.assertDesktopAccess();
     const exitWeightKg = await this.readScaleWeight();
 
-    if (operationType !== undefined && operationType !== "invoice" && operationType !== "internal") {
+    if (
+      operationType !== undefined &&
+      operationType !== "invoice" &&
+      operationType !== "internal"
+    ) {
       throw new Error("Invalid operation type.");
     }
 
@@ -357,7 +374,9 @@ export class DesktopRuntime {
       const reading = await this.scaleAdapter.read();
       return reading.weightKg;
     } catch (error) {
-      throw new Error(`Nao foi possivel ler a balanca: ${error instanceof Error ? error.message : "falha desconhecida"}.`);
+      throw new Error(
+        `Nao foi possivel ler a balanca: ${error instanceof Error ? error.message : "falha desconhecida"}.`
+      );
     }
   }
 
@@ -433,6 +452,16 @@ export class DesktopRuntime {
     );
   }
 
+  processFiscalBilling(operationId: string): Promise<FiscalBillingResult> {
+    this.assertDesktopAccess();
+    return processFiscalBillingNow(
+      this.database,
+      this.ensureIdentity(),
+      operationId,
+      (documentUrl) => this.fiscalDocumentPrinter.printDocument(documentUrl)
+    );
+  }
+
   async syncToCloud(): Promise<SyncResult> {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
@@ -456,7 +485,9 @@ export class DesktopRuntime {
           synced++;
         } catch (error) {
           failed++;
-          errors.push(`Operation ${operation.id}: ${error instanceof Error ? error.message : "Unknown error"}`);
+          errors.push(
+            `Operation ${operation.id}: ${error instanceof Error ? error.message : "Unknown error"}`
+          );
         }
       }
 
@@ -471,7 +502,9 @@ export class DesktopRuntime {
           synced++;
         } catch (error) {
           failed++;
-          errors.push(`Loading request ${request.id}: ${error instanceof Error ? error.message : "Unknown error"}`);
+          errors.push(
+            `Loading request ${request.id}: ${error instanceof Error ? error.message : "Unknown error"}`
+          );
         }
       }
 
@@ -526,7 +559,10 @@ export class DesktopRuntime {
     return getStoredDesktopAccessStatus(this.database);
   }
 
-  async validateDesktopAccess(internetOnline?: boolean, force?: boolean): Promise<DesktopAccessStatus> {
+  async validateDesktopAccess(
+    internetOnline?: boolean,
+    force?: boolean
+  ): Promise<DesktopAccessStatus> {
     const status = await validateDesktopAccess(this.database, { internetOnline, force });
     if (status.canOperate) {
       this.refreshOmieConfig();
@@ -584,14 +620,14 @@ export class DesktopRuntime {
     return typeof limit === "number" ? all.slice(0, limit) : all;
   }
 
-  getDailySeries(
-    startDate: string,
-    endDate: string
-  ): ReturnType<ReportService["getDailySeries"]> {
+  getDailySeries(startDate: string, endDate: string): ReturnType<ReportService["getDailySeries"]> {
     return this.reportService.getDailySeries(startDate, endDate, this.ensureIdentity().unitId);
   }
 
-  getOperationMix(startDate: string, endDate: string): ReturnType<ReportService["getOperationMix"]> {
+  getOperationMix(
+    startDate: string,
+    endDate: string
+  ): ReturnType<ReportService["getOperationMix"]> {
     return this.reportService.getOperationMix(startDate, endDate, this.ensureIdentity().unitId);
   }
 
@@ -600,12 +636,13 @@ export class DesktopRuntime {
   }
 
   getPriceDetailsForCustomerProduct(customerId: string, productId: string): PriceDetails | null {
-    return new PricingService(this.database).getPriceDetailsForCustomerProduct(customerId, productId);
+    return new PricingService(this.database).getPriceDetailsForCustomerProduct(
+      customerId,
+      productId
+    );
   }
 
-  invalidateCache(
-    entityType: CacheQueryOptions["entityType"]
-  ): void {
+  invalidateCache(entityType: CacheQueryOptions["entityType"]): void {
     const identity = this.ensureIdentity();
     this.cacheStore.invalidate(entityType, identity.companyId);
   }
@@ -622,10 +659,7 @@ export class DesktopRuntime {
     return result;
   }
 
-  updateCustomer(
-    id: string,
-    input: UpdateCustomerInput
-  ): unknown {
+  updateCustomer(id: string, input: UpdateCustomerInput): unknown {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
     const result = updateCustomer(this.database, id, input);
@@ -741,7 +775,9 @@ export class DesktopRuntime {
     return result;
   }
 
-  getVehicleCarriers(vehicleId: string): Array<{ carrierId: string; carrierName: string; carrierDocument: string | null }> {
+  getVehicleCarriers(
+    vehicleId: string
+  ): Array<{ carrierId: string; carrierName: string; carrierDocument: string | null }> {
     return getVehicleCarriers(this.database, vehicleId);
   }
 
@@ -815,7 +851,9 @@ export class DesktopRuntime {
     return listCarriers(this.database, identity.companyId);
   }
 
-  getCarrierVehicles(carrierId: string): Array<{ id: string; plate: string; description: string | null }> {
+  getCarrierVehicles(
+    carrierId: string
+  ): Array<{ id: string; plate: string; description: string | null }> {
     return getCarrierVehicles(this.database, carrierId);
   }
 
@@ -833,28 +871,46 @@ export class DesktopRuntime {
     const identity = this.ensureIdentity();
 
     const totalCustomers = this.database
-      .prepare("SELECT COUNT(*) FROM customers WHERE company_id = ? AND deleted_at IS NULL AND source = 'omie'")
-      .pluck().get(identity.companyId) as number;
+      .prepare(
+        "SELECT COUNT(*) FROM customers WHERE company_id = ? AND deleted_at IS NULL AND source = 'omie'"
+      )
+      .pluck()
+      .get(identity.companyId) as number;
 
     const totalProducts = this.database
-      .prepare("SELECT COUNT(*) FROM products WHERE company_id = ? AND deleted_at IS NULL AND omie_product_id IS NOT NULL")
-      .pluck().get(identity.companyId) as number;
+      .prepare(
+        "SELECT COUNT(*) FROM products WHERE company_id = ? AND deleted_at IS NULL AND omie_product_id IS NOT NULL"
+      )
+      .pluck()
+      .get(identity.companyId) as number;
 
     const totalPaymentTerms = this.database
-      .prepare("SELECT COUNT(*) FROM payment_terms WHERE company_id = ? AND deleted_at IS NULL AND omie_code IS NOT NULL")
-      .pluck().get(identity.companyId) as number;
+      .prepare(
+        "SELECT COUNT(*) FROM payment_terms WHERE company_id = ? AND deleted_at IS NULL AND omie_code IS NOT NULL"
+      )
+      .pluck()
+      .get(identity.companyId) as number;
 
     const pendingPushCustomers = this.database
-      .prepare("SELECT COUNT(*) FROM customers WHERE company_id = ? AND deleted_at IS NULL AND needs_push = 1")
-      .pluck().get(identity.companyId) as number;
+      .prepare(
+        "SELECT COUNT(*) FROM customers WHERE company_id = ? AND deleted_at IS NULL AND needs_push = 1"
+      )
+      .pluck()
+      .get(identity.companyId) as number;
 
     const pendingOmieJobs = this.database
-      .prepare("SELECT COUNT(*) FROM sync_queue WHERE target = 'omie' AND status IN ('pending', 'failed')")
-      .pluck().get() as number;
+      .prepare(
+        "SELECT COUNT(*) FROM sync_queue WHERE target = 'omie' AND status IN ('pending', 'failed')"
+      )
+      .pluck()
+      .get() as number;
 
     const lastSync = this.database
-      .prepare("SELECT MAX(last_synced_at) FROM customers WHERE company_id = ? AND deleted_at IS NULL")
-      .pluck().get(identity.companyId) as string | null;
+      .prepare(
+        "SELECT MAX(last_synced_at) FROM customers WHERE company_id = ? AND deleted_at IS NULL"
+      )
+      .pluck()
+      .get(identity.companyId) as string | null;
 
     const config = this.getOmieConfig();
     const hasSyncedData = totalCustomers > 0 || totalProducts > 0 || totalPaymentTerms > 0;
@@ -913,7 +969,13 @@ export class DesktopRuntime {
     };
   }
 
-  async runOmieDataEntryLoop(options: { reset?: boolean; maxIterations?: number; onProgress?: (progress: OmieLoopProgress) => void } = {}): Promise<{
+  async runOmieDataEntryLoop(
+    options: {
+      reset?: boolean;
+      maxIterations?: number;
+      onProgress?: (progress: OmieLoopProgress) => void;
+    } = {}
+  ): Promise<{
     customersPulled: number;
     productsSynced: number;
     paymentTermsSynced: number;
@@ -930,7 +992,12 @@ export class DesktopRuntime {
     let iterations = 0;
 
     if (options.reset) {
-      writeOmiePullState(this.database, { customersPage: 1, productsPage: 1, paymentTermsPage: 1, inProgress: true });
+      writeOmiePullState(this.database, {
+        customersPage: 1,
+        productsPage: 1,
+        paymentTermsPage: 1,
+        inProgress: true
+      });
     }
 
     while (iterations < maxIterations) {
@@ -960,16 +1027,32 @@ export class DesktopRuntime {
 
       const totalBefore = before.customersPage + before.productsPage + before.paymentTermsPage;
       const totalAfter = after.customersPage + after.productsPage + after.paymentTermsPage;
-      const noProgress = totalAfter <= totalBefore && result.customersPulled + result.productsSynced + result.paymentTermsSynced === 0;
+      const noProgress =
+        totalAfter <= totalBefore &&
+        result.customersPulled + result.productsSynced + result.paymentTermsSynced === 0;
       if (noProgress || !after.inProgress) {
         writeOmiePullState(this.database, { inProgress: false });
         this.cacheStore.invalidateAll(identity.companyId);
-        return { customersPulled, productsSynced, paymentTermsSynced, iterations, finished: !after.inProgress, errors };
+        return {
+          customersPulled,
+          productsSynced,
+          paymentTermsSynced,
+          iterations,
+          finished: !after.inProgress,
+          errors
+        };
       }
     }
 
     this.cacheStore.invalidateAll(identity.companyId);
-    return { customersPulled, productsSynced, paymentTermsSynced, iterations, finished: false, errors };
+    return {
+      customersPulled,
+      productsSynced,
+      paymentTermsSynced,
+      iterations,
+      finished: false,
+      errors
+    };
   }
 
   getOmieLoopStatus(): OmieLoopProgress | null {

@@ -44,8 +44,11 @@ interface WeighingFormState {
   driverId: string;
   productId: string;
   paymentTermId: string;
+  manualInstallmentsEnabled: boolean;
   installments: number | null;
   unitPriceCents: number | null;
+  manualWeightEnabled: boolean;
+  manualWeightKg: number | null;
 }
 
 type ActiveView =
@@ -66,8 +69,11 @@ const initialWeighingForm: WeighingFormState = {
   driverId: "",
   productId: "",
   paymentTermId: "",
+  manualInstallmentsEnabled: false,
   installments: null,
-  unitPriceCents: null
+  unitPriceCents: null,
+  manualWeightEnabled: false,
+  manualWeightKg: null
 };
 
 type RegistrationsTab = "customers" | "price_tables" | "products" | "payment_terms" | "transport";
@@ -97,7 +103,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [message, setMessage] = useState("Inicializando desktop offline-first...");
   const [cloudConnected, setCloudConnected] = useState(false);
   const [cloudSyncing, setCloudSyncing] = useState(false);
-  const [cloudStatus, setCloudStatus] = useState<{ totalOperations: number; lastSync: string | null } | null>(null);
+  const [cloudStatus, setCloudStatus] = useState<{
+    totalOperations: number;
+    lastSync: string | null;
+  } | null>(null);
   const [companyName, setCompanyName] = useState<string | null>(null);
   const [unitName, setUnitName] = useState<string | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
@@ -105,7 +114,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [showLogsModal, setShowLogsModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>("light");
-  const [errorLogs, setErrorLogs] = useState<Array<{ timestamp: string; level: string; source: string; message: string; details?: string }>>([]);
+  const [errorLogs, setErrorLogs] = useState<
+    Array<{ timestamp: string; level: string; source: string; message: string; details?: string }>
+  >([]);
   const [accessStatus, setAccessStatus] = useState<DesktopAccessStatus | null>(null);
   const [omieStatus, setOmieStatus] = useState<{
     configured: boolean;
@@ -142,19 +153,21 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   );
 
   useEffect(() => {
-    const captureLog = (level: string, source: string) => (...args: unknown[]) => {
-      const message = args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ");
-      setErrorLogs((prev) => [
-        ...prev.slice(-99),
-        {
-          timestamp: new Date().toISOString(),
-          level,
-          source,
-          message: message.slice(0, 500),
-          details: args.length > 1 ? JSON.stringify(args.slice(1)).slice(0, 200) : undefined
-        }
-      ]);
-    };
+    const captureLog =
+      (level: string, source: string) =>
+      (...args: unknown[]) => {
+        const message = args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ");
+        setErrorLogs((prev) => [
+          ...prev.slice(-99),
+          {
+            timestamp: new Date().toISOString(),
+            level,
+            source,
+            message: message.slice(0, 500),
+            details: args.length > 1 ? JSON.stringify(args.slice(1)).slice(0, 200) : undefined
+          }
+        ]);
+      };
     const originalError = console.error;
     const originalWarn = console.warn;
     console.error = (...args: unknown[]) => {
@@ -183,8 +196,25 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement) {
-        if (event.key !== "Escape" && event.key !== "F1" && event.key !== "F2" && event.key !== "F3" && event.key !== "F4" && event.key !== "F5" && event.key !== "F6" && event.key !== "F7" && event.key !== "F8" && event.key !== "F9" && event.key !== "F10" && event.key !== "F11") {
+      if (
+        event.target instanceof HTMLInputElement ||
+        event.target instanceof HTMLTextAreaElement ||
+        event.target instanceof HTMLSelectElement
+      ) {
+        if (
+          event.key !== "Escape" &&
+          event.key !== "F1" &&
+          event.key !== "F2" &&
+          event.key !== "F3" &&
+          event.key !== "F4" &&
+          event.key !== "F5" &&
+          event.key !== "F6" &&
+          event.key !== "F7" &&
+          event.key !== "F8" &&
+          event.key !== "F9" &&
+          event.key !== "F10" &&
+          event.key !== "F11"
+        ) {
           return;
         }
       }
@@ -231,10 +261,16 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
           break;
         case "F11":
           event.preventDefault();
-          setThemeMode((mode) => mode === "light" ? "dark" : "light");
+          setThemeMode((mode) => (mode === "light" ? "dark" : "light"));
           break;
         case "Escape":
-          if (showUpdateModal || showLogsModal || showSettings || closingOperationId || cancelOperationId) {
+          if (
+            showUpdateModal ||
+            showLogsModal ||
+            showSettings ||
+            closingOperationId ||
+            cancelOperationId
+          ) {
             setShowUpdateModal(false);
             setShowLogsModal(false);
             setShowSettings(false);
@@ -256,18 +292,21 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       return;
     }
 
-    desktopApi.getAccessStatus().then((access) => {
-      setAccessStatus(access);
-      setCompanyName(access.companyName);
-      setUnitName(access.unitName);
-      if (access.canOperate) {
-        setPhase("unlocked");
-      } else {
+    desktopApi
+      .getAccessStatus()
+      .then((access) => {
+        setAccessStatus(access);
+        setCompanyName(access.companyName);
+        setUnitName(access.unitName);
+        if (access.canOperate) {
+          setPhase("unlocked");
+        } else {
+          setPhase("locked");
+        }
+      })
+      .catch(() => {
         setPhase("locked");
-      }
-    }).catch(() => {
-      setPhase("locked");
-    });
+      });
   }, [desktopApi]);
 
   useEffect(() => {
@@ -339,7 +378,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         nextClosedOperations,
         nextPrinters,
         nextProfiles,
-        nextReceipts,
+        nextReceipts
       ] = await Promise.all([
         desktopApi.getStatus(navigator.onLine),
         desktopApi.getUpdateState(),
@@ -348,7 +387,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         desktopApi.listClosedWeighingOperations(),
         desktopApi.listWindowsPrinters(),
         desktopApi.listPrintProfiles(),
-        desktopApi.listPrintReceipts(),
+        desktopApi.listPrintReceipts()
       ]);
 
       if (active) {
@@ -405,12 +444,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       return;
     }
 
-    const [nextOpenOperations, nextCanceledOperations, nextClosedOperations, nextStatus] = await Promise.all([
-      desktopApi.listOpenWeighingOperations(),
-      desktopApi.listCanceledWeighingOperations(),
-      desktopApi.listClosedWeighingOperations(),
-      desktopApi.getStatus(navigator.onLine)
-    ]);
+    const [nextOpenOperations, nextCanceledOperations, nextClosedOperations, nextStatus] =
+      await Promise.all([
+        desktopApi.listOpenWeighingOperations(),
+        desktopApi.listCanceledWeighingOperations(),
+        desktopApi.listClosedWeighingOperations(),
+        desktopApi.getStatus(navigator.onLine)
+      ]);
     setOpenOperations(nextOpenOperations);
     setCanceledOperations(nextCanceledOperations);
     setClosedOperations(nextClosedOperations);
@@ -491,13 +531,17 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       if (result.success) {
         setMessage(`Sincronizado com sucesso! ${result.synced} registros enviados.`);
       } else {
-        setMessage(`Sincronizacao concluida com erros. ${result.synced} enviados, ${result.failed} falhas.`);
+        setMessage(
+          `Sincronizacao concluida com erros. ${result.synced} enviados, ${result.failed} falhas.`
+        );
         if (result.errors.length > 0) {
           console.error("Cloud sync errors:", result.errors);
         }
       }
     } catch (error) {
-      setMessage(`Falha na sincronizacao: ${error instanceof Error ? error.message : "Erro desconhecido"}`);
+      setMessage(
+        `Falha na sincronizacao: ${error instanceof Error ? error.message : "Erro desconhecido"}`
+      );
     } finally {
       setCloudSyncing(false);
     }
@@ -516,7 +560,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       const result = await desktopApi.omieSync();
       const parts: string[] = [];
       if (result.customersPushed > 0) parts.push(`${result.customersPushed} clientes enviados`);
-      if (result.customersPushFailed > 0) parts.push(`${result.customersPushFailed} clientes com falha`);
+      if (result.customersPushFailed > 0)
+        parts.push(`${result.customersPushFailed} clientes com falha`);
       parts.push(
         `${result.customersPulled} clientes baixados`,
         `${result.productsSynced} produtos`,
@@ -530,7 +575,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       setOmieStatus(omieStatusResult);
       const summary = `OMIE: ${parts.join(" | ")}`;
       setMessage(summary);
-      const hasFailures = result.errors.length > 0 || result.ordersFailed > 0 || result.customersPushFailed > 0;
+      const hasFailures =
+        result.errors.length > 0 || result.ordersFailed > 0 || result.customersPushFailed > 0;
       setOmieConnectionFeedback({
         status: hasFailures ? "warning" : "success",
         message: hasFailures
@@ -591,11 +637,12 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         `${result.customersPulled} clientes clonados, ${result.productsSynced} produtos, ${result.paymentTermsSynced} condicoes`;
       setMessage(summary);
       setOmieConnectionFeedback({
-        status: result.finished && result.errors.length === 0
-          ? "success"
-          : result.errors.length > 0
-            ? "warning"
-            : "warning",
+        status:
+          result.finished && result.errors.length === 0
+            ? "success"
+            : result.errors.length > 0
+              ? "warning"
+              : "warning",
         message: result.finished
           ? "Loop OMIE concluido. Todos os dados foram clonados."
           : "Loop OMIE parou antes de concluir. Veja detalhes.",
@@ -642,8 +689,12 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         carrierId: form.carrierId || undefined,
         driverId: form.driverId,
         productId: form.productId,
-        paymentTermId: form.paymentTermId || undefined,
-        unitPriceCents: form.unitPriceCents ?? undefined
+        paymentTermId: form.manualInstallmentsEnabled ? undefined : form.paymentTermId || undefined,
+        manualInstallments: form.manualInstallmentsEnabled
+          ? (form.installments ?? undefined)
+          : undefined,
+        unitPriceCents: form.unitPriceCents ?? undefined,
+        entryWeightKg: form.manualWeightEnabled ? (form.manualWeightKg ?? undefined) : undefined
       });
       setMessage(`Entrada capturada: ${operation.entryWeightKg} kg.`);
       setForm(initialWeighingForm);
@@ -654,17 +705,43 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
   }
 
-  async function handleCloseOperation(operationId: string, operationType: OperationType): Promise<void> {
+  async function handleCloseOperation(
+    operationId: string,
+    operationType: OperationType
+  ): Promise<void> {
     if (!desktopApi) return;
 
+    if (operationType === "invoice" && !navigator.onLine) {
+      setMessage(
+        "Saida fiscal exige internet conectada para faturar no OMIE antes de liberar o caminhao."
+      );
+      return;
+    }
+
     try {
+      if (operationType === "invoice") {
+        setMessage("Fechando operacao fiscal e faturando no OMIE. Mantenha a internet conectada.");
+      }
       const operation = await desktopApi.closeWeighing(operationId, operationType);
+      const billingStatus =
+        operationType === "invoice" ? await desktopApi.billFiscalOperation(operation.id) : null;
       const receipt = await desktopApi.printReceipt(operation.id);
       const receiptStatus =
         receipt.status === "printed"
           ? `Cupom ${receipt.receiptNumber} impresso.`
           : `Falha ao imprimir cupom: ${receipt.errorMessage}.`;
-      setMessage(`Operacao fechada. Peso liquido: ${operation.netWeightKg} kg. ${receiptStatus}`);
+      const fiscalStatus = billingStatus
+        ? `Pedido fiscal OMIE ${billingStatus.orderId} faturado.${
+            billingStatus.documentUrl
+              ? billingStatus.documentPrinted
+                ? " DANFE enviado para impressora."
+                : ` DANFE disponivel, mas nao foi impresso automaticamente: ${billingStatus.documentPrintError ?? "sem detalhe"}.`
+              : " DANFE ainda nao foi retornado pela OMIE; imprima pelo portal OMIE se necessario."
+          } `
+        : "";
+      setMessage(
+        `Operacao fechada. Peso liquido: ${operation.netWeightKg} kg. ${fiscalStatus}${receiptStatus}`
+      );
       await refreshOpenOperations();
       await refreshPrintData();
     } catch (error) {
@@ -760,6 +837,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       await refreshOpenOperations();
     } catch (error) {
       setMessage(getErrorMessage(error));
+      await refreshOpenOperations();
     }
   }
 
@@ -869,14 +947,16 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
           <header style={styles.topbar}>
             <div style={styles.topbarLeft}>
               {companyName && unitName ? (
-                <span style={styles.headerMeta}>{companyName} — {unitName}</span>
+                <span style={styles.headerMeta}>
+                  {companyName} — {unitName}
+                </span>
               ) : null}
               <span style={styles.headerMessage}>{message}</span>
             </div>
             <div style={styles.topbarRight}>
               <button
                 type="button"
-                onClick={() => setThemeMode((mode) => mode === "light" ? "dark" : "light")}
+                onClick={() => setThemeMode((mode) => (mode === "light" ? "dark" : "light"))}
                 style={styles.themeToggle}
                 title="Alternar tema"
               >
@@ -896,21 +976,30 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   <div style={styles.settingsDropdown}>
                     <button
                       type="button"
-                      onClick={() => { setActiveView("scale"); setShowSettings(false); }}
+                      onClick={() => {
+                        setActiveView("scale");
+                        setShowSettings(false);
+                      }}
                       style={styles.settingsItem}
                     >
                       Balança
                     </button>
                     <button
                       type="button"
-                      onClick={() => { setActiveView("printing"); setShowSettings(false); }}
+                      onClick={() => {
+                        setActiveView("printing");
+                        setShowSettings(false);
+                      }}
                       style={styles.settingsItem}
                     >
                       Impressão
                     </button>
                     <button
                       type="button"
-                      onClick={() => { setActiveView("cloud"); setShowSettings(false); }}
+                      onClick={() => {
+                        setActiveView("cloud");
+                        setShowSettings(false);
+                      }}
                       style={styles.settingsItem}
                     >
                       Cloud
@@ -918,7 +1007,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     <div style={{ height: "1px", background: "#e2e8f0", margin: "4px 0" }} />
                     <button
                       type="button"
-                      onClick={() => { setShowLogsModal(true); setShowSettings(false); }}
+                      onClick={() => {
+                        setShowLogsModal(true);
+                        setShowSettings(false);
+                      }}
                       style={{
                         ...styles.settingsItem,
                         color: errorLogs.some((l) => l.level === "error") ? "#b91c1c" : "#475569"
@@ -928,14 +1020,20 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     </button>
                     <button
                       type="button"
-                      onClick={() => { void handleExportBackup(); setShowSettings(false); }}
+                      onClick={() => {
+                        void handleExportBackup();
+                        setShowSettings(false);
+                      }}
                       style={styles.settingsItem}
                     >
                       Exportar
                     </button>
                     <button
                       type="button"
-                      onClick={() => { void handleRestoreBackup(); setShowSettings(false); }}
+                      onClick={() => {
+                        void handleRestoreBackup();
+                        setShowSettings(false);
+                      }}
                       style={styles.settingsItem}
                     >
                       Restaurar
@@ -943,7 +1041,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     <div style={{ height: "1px", background: "#e2e8f0", margin: "4px 0" }} />
                     <button
                       type="button"
-                      onClick={() => { void handleLogout(); setShowSettings(false); }}
+                      onClick={() => {
+                        void handleLogout();
+                        setShowSettings(false);
+                      }}
                       style={{ ...styles.settingsItem, color: "#b91c1c" }}
                     >
                       Sair
@@ -954,694 +1055,812 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
             </div>
           </header>
           <div style={styles.contentBody}>
-
-      {showSettings ? (
-        <div
-          style={{ position: "fixed", inset: 0, zIndex: 99 }}
-          onClick={() => setShowSettings(false)}
-        />
-      ) : null}
-
-      {showUpdateModal ? (
-        <div style={styles.modalOverlay}>
-          <div style={styles.modal}>
-            <h2 style={styles.modalTitle}>Nova versão disponível</h2>
-            <p style={styles.modalText}>
-              A versão <strong>{availableVersion}</strong> do KyberRock Desktop está disponível.
-              Deseja atualizar agora?
-            </p>
-            <div style={styles.modalActions}>
-              <button
-                type="button"
-                onClick={() => {
-                  void handleUpdateAction();
-                  setShowUpdateModal(false);
-                }}
-                style={styles.primaryButton}
-              >
-                Atualizar agora
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowUpdateModal(false)}
-                style={styles.secondaryButton}
-              >
-                Mais tarde
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {showLogsModal ? (
-        <div style={styles.modalOverlay}>
-          <div style={{ ...styles.modal, maxWidth: "720px", maxHeight: "80vh" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-              <h2 style={{ ...styles.modalTitle, margin: 0 }}>Logs do sistema</h2>
-              <button type="button" onClick={() => setErrorLogs([])} style={styles.secondaryButton}>
-                Limpar
-              </button>
-            </div>
-            {errorLogs.length === 0 ? (
-              <p style={styles.muted}>Nenhum log capturado. Logs de erro aparecerao aqui automaticamente.</p>
-            ) : (
-              <div style={{ maxHeight: "60vh", overflowY: "auto", border: "1px solid #e2e8f0", borderRadius: "8px" }}>
-                {errorLogs.slice().reverse().map((log, index) => (
-                  <div
-                    key={`${log.timestamp}-${index}`}
-                    style={{
-                      padding: "8px 12px",
-                      borderBottom: "1px solid #f1f5f9",
-                      background: log.level === "error" ? "#fef2f2" : log.level === "warn" ? "#fffbeb" : "#fff"
-                    }}
-                  >
-                    <div style={{ display: "flex", gap: "8px", alignItems: "center", fontSize: "12px", color: "#64748b" }}>
-                      <span>{new Date(log.timestamp).toLocaleString("pt-BR")}</span>
-                      <span style={{
-                        padding: "1px 6px",
-                        borderRadius: "4px",
-                        background: log.level === "error" ? "#fee2e2" : log.level === "warn" ? "#fef3c7" : "#e2e8f0",
-                        color: log.level === "error" ? "#991b1b" : log.level === "warn" ? "#92400e" : "#475569",
-                        fontWeight: 700,
-                        fontSize: "10px"
-                      }}>{log.level.toUpperCase()}</span>
-                      <span>{log.source}</span>
-                    </div>
-                    <div style={{ marginTop: "4px", fontSize: "13px", color: "#0f172a", wordBreak: "break-word" }}>
-                      {log.message}
-                    </div>
-                    {log.details ? (
-                      <div style={{ marginTop: "4px", fontSize: "11px", color: "#94a3b8", wordBreak: "break-word" }}>
-                        {log.details}
-                      </div>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            )}
-            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "12px" }}>
-              <button type="button" onClick={() => setShowLogsModal(false)} style={styles.secondaryButton}>
-                Fechar
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {activeView === "dashboard" ? (
-        <section style={styles.twoColumns}>
-          <article style={styles.panel}>
-            <h2 style={styles.panelTitle}>Atualizacoes</h2>
-            <p style={styles.muted}>
-              O app checa automaticamente por novas versoes. Quando houver uma disponivel, voce sera notificado.
-            </p>
-            <p>Status: {describeUpdateState(updateState)}</p>
-            <button type="button" onClick={handleUpdateAction} style={styles.primaryButton}>
-              {getManualUpdateButtonLabel(updateState.status)}
-            </button>
-          </article>
-
-          <article style={styles.panel}>
-            <h2 style={styles.panelTitle}>Resumo operacional</h2>
-            <p>Operacoes abertas: {openOperations.length}</p>
-            <p>Cupons emitidos: {printReceipts.length}</p>
-            <p>Banco local: {status?.databasePath ?? "carregando..."}</p>
-          </article>
-        </section>
-      ) : null}
-
-      {activeView === "new-weighing" ? (
-        <WeighingForm
-          desktopApi={desktopApi}
-          form={form}
-          setForm={setForm}
-          formError={formError}
-          onStart={handleStartWeighing}
-          onCancel={() => {
-            setForm(initialWeighingForm);
-            setFormError(null);
-            setActiveView("dashboard");
-          }}
-        />
-      ) : null}
-
-      {activeView === "open-operations" ? (
-        <section style={styles.operationsPanel}>
-          <div style={styles.sectionTitleRow}>
-            <div>
-              <p style={styles.kicker}>Fila operacional</p>
-              <h2 style={styles.panelTitle}>Operacoes</h2>
-            </div>
-            <span style={styles.countBadge}>
-              {operationsTab === "open"
-                ? `${openOperations.length} abertas`
-                : operationsTab === "canceled"
-                  ? `${filteredCanceledOperations.length} canceladas`
-                  : `${filteredClosedOperations.length} concluidas`}
-            </span>
-          </div>
-
-          <div style={styles.operationsToolbar}>
-            <div style={styles.segmentedTabs}>
-              <button
-                type="button"
-                onClick={() => setOperationsTab("open")}
-                style={operationsTabStyle(operationsTab === "open")}
-              >
-                Abertas
-              </button>
-              <button
-                type="button"
-                onClick={() => setOperationsTab("canceled")}
-                style={operationsTabStyle(operationsTab === "canceled")}
-              >
-                Canceladas
-              </button>
-              <button
-                type="button"
-                onClick={() => setOperationsTab("closed")}
-                style={operationsTabStyle(operationsTab === "closed")}
-              >
-                Concluidas
-              </button>
-            </div>
-
-            {operationsTab === "canceled" ? (
-              <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
-                <label style={{ ...styles.fieldLabel, marginBottom: 0 }}>
-                  Periodo
-                  <select
-                    value={canceledFilter}
-                    onChange={(event) => setCanceledFilter(event.target.value as CanceledFilter)}
-                    style={{ ...styles.input, minWidth: "150px" }}
-                  >
-                    <option value="all">Todas</option>
-                    <option value="day">Hoje</option>
-                    <option value="week">Ultimos 7 dias</option>
-                    <option value="month">Este mes</option>
-                  </select>
-                </label>
-                <button
-                  type="button"
-                  onClick={() => void handleClearCanceledOperations()}
-                  disabled={canceledOperations.length === 0}
-                  style={{ ...styles.secondaryButton, color: "#b91c1c", borderColor: "#fecaca" }}
-                >
-                  Limpar canceladas
-                </button>
-              </div>
-            ) : operationsTab === "closed" ? (
-              <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
-                <label style={{ ...styles.fieldLabel, marginBottom: 0 }}>
-                  Produto
-                  <select
-                    value={closedProductFilter}
-                    onChange={(event) => setClosedProductFilter(event.target.value)}
-                    style={{ ...styles.input, minWidth: "180px" }}
-                  >
-                    <option value="all">Todos</option>
-                    {Array.from(new Set(closedOperations.map((op) => op.productDescription))).filter(Boolean).map((desc) => (
-                      <option key={desc} value={desc}>{desc}</option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-            ) : null}
-          </div>
-
-          {operationsTab === "open" ? (
-            openOperations.length === 0 ? (
-              <div style={styles.emptyState}>
-                <strong>Nenhuma operacao aberta</strong>
-                <span>As entradas capturadas pela balanca aparecem aqui para fechamento.</span>
-              </div>
-            ) : (
-              <div style={styles.operationsTable}>
-                <div style={{ ...styles.operationsTableRow, ...styles.operationsTableHead }}>
-                  <span>Placa</span>
-                  <span>Cliente / Produto</span>
-                  <span>Entrada / Preco</span>
-                  <span>Acoes</span>
-                </div>
-                {openOperations.map((operation) => (
-                  <div key={operation.id} style={styles.operationsTableRow}>
-                    <strong style={styles.plateBadge}>{operation.plate}</strong>
-                    <span style={styles.operationCellStack}>
-                      <strong>{operation.customerName}</strong>
-                      <span>{operation.productDescription}</span>
-                      <small>Motorista: {operation.driverName}</small>
-                    </span>
-                    <span style={styles.operationCellStack}>
-                      <strong>{formatWeightKg(operation.entryWeightKg ?? 0)}</strong>
-                      <span>{formatMoney(operation.unitPriceCents)}/ton</span>
-                    </span>
-                    <span style={styles.rowActions}>
-                      <button
-                        type="button"
-                        onClick={() => setClosingOperationId(operation.id)}
-                        style={styles.smallPrimaryButton}
-                      >
-                        Fechar
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setCancelOperationId(operation.id)}
-                        style={styles.smallDangerButton}
-                      >
-                        Cancelar
-                      </button>
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )
-          ) : operationsTab === "canceled" ? (
-            filteredCanceledOperations.length === 0 ? (
-              <div style={styles.emptyState}>
-                <strong>Nenhuma operacao cancelada</strong>
-                <span>Altere o periodo no filtro para consultar outros cancelamentos.</span>
-              </div>
-            ) : (
-              <div style={styles.operationsTable}>
-                <div style={{ ...styles.canceledOperationsTableRow, ...styles.operationsTableHead }}>
-                  <span>Placa</span>
-                  <span>Cliente / Produto</span>
-                  <span>Cancelada em</span>
-                  <span>Motivo</span>
-                </div>
-                {filteredCanceledOperations.map((operation) => (
-                  <div key={operation.id} style={styles.canceledOperationsTableRow}>
-                    <strong style={styles.plateBadge}>{operation.plate || "--"}</strong>
-                    <span style={styles.operationCellStack}>
-                      <strong>{operation.customerName || "Cliente nao informado"}</strong>
-                      <span>{operation.productDescription || "Produto nao informado"}</span>
-                    </span>
-                    <span>{new Date(operation.updatedAt).toLocaleString("pt-BR")}</span>
-                    <span>{operation.cancelReason || "Sem motivo registrado"}</span>
-                  </div>
-                ))}
-              </div>
-            )
-          ) : filteredClosedOperations.length === 0 ? (
-            <div style={styles.emptyState}>
-              <strong>Nenhuma operacao concluida</strong>
-              <span>As operacoes fechadas aparecerao aqui.</span>
-            </div>
-          ) : (
-            <div style={styles.operationsTable}>
-              <div style={{ ...styles.operationsTableRow, ...styles.operationsTableHead }}>
-                <span>Placa</span>
-                <span>Cliente / Produto</span>
-                <span>Peso liquido / Receita</span>
-                <span>Concluida em</span>
-              </div>
-              {filteredClosedOperations.map((operation) => (
-                <div key={operation.id} style={styles.operationsTableRow}>
-                  <strong style={styles.plateBadge}>{operation.plate || "--"}</strong>
-                  <span style={styles.operationCellStack}>
-                    <strong>{operation.customerName || "Cliente nao informado"}</strong>
-                    <span>{operation.productDescription || "Produto nao informado"}</span>
-                    <small>Motorista: {operation.driverName}</small>
-                  </span>
-                  <span style={styles.operationCellStack}>
-                    <strong>{formatWeightKg(operation.netWeightKg ?? 0)}</strong>
-                    <span>{formatMoney(operation.totalCents)}</span>
-                  </span>
-                  <span>{new Date(operation.updatedAt).toLocaleString("pt-BR")}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-      ) : null}
-
-      {closingOperationId ? (
-        <CloseOperationTypeDialog
-          defaultOperationType="invoice"
-          onConfirm={(operationType) => {
-            const id = closingOperationId;
-            setClosingOperationId(null);
-            void handleCloseOperation(id, operationType);
-          }}
-          onCancel={() => setClosingOperationId(null)}
-        />
-      ) : null}
-
-      {cancelOperationId ? (
-        <CancelOperationDialog
-          onConfirm={(reason) => {
-            const id = cancelOperationId;
-            setCancelOperationId(null);
-            void handleCancelOperation(id, reason);
-          }}
-          onCancel={() => setCancelOperationId(null)}
-        />
-      ) : null}
-
-      {activeView === "scale" ? (
-        <ScaleView desktopApi={desktopApi} />
-      ) : null}
-
-      {activeView === "registrations" ? (
-        <section style={styles.panel}>
-          <h2 style={styles.panelTitle}>Cadastros</h2>
-          <nav style={styles.subTabs}>
-            <button
-              type="button"
-              onClick={() => setRegistrationsTab("customers")}
-              style={subTabStyle(registrationsTab === "customers")}
-            >
-              Clientes
-            </button>
-            <button
-              type="button"
-              onClick={() => setRegistrationsTab("price_tables")}
-              style={subTabStyle(registrationsTab === "price_tables")}
-            >
-              Tabelas de Preco
-            </button>
-            <button
-              type="button"
-              onClick={() => setRegistrationsTab("products")}
-              style={subTabStyle(registrationsTab === "products")}
-            >
-              Produtos
-            </button>
-            <button
-              type="button"
-              onClick={() => setRegistrationsTab("payment_terms")}
-              style={subTabStyle(registrationsTab === "payment_terms")}
-            >
-              Condicoes
-            </button>
-            <button
-              type="button"
-              onClick={() => setRegistrationsTab("transport")}
-              style={subTabStyle(registrationsTab === "transport")}
-            >
-              Transporte
-            </button>
-          </nav>
-          <div style={{ marginTop: "20px" }}>
-            {registrationsTab === "customers" ? (
-              <CustomerListView desktopApi={desktopApi} />
-            ) : null}
-            {registrationsTab === "price_tables" ? (
-              <PriceTableListView desktopApi={desktopApi} />
-            ) : null}
-            {registrationsTab === "products" ? (
-              <OmieViewer
-                desktopApi={desktopApi}
-                entityType="product"
-                title="Produtos (OMIE)"
-                displayField="description"
-                subField="code"
+            {showSettings ? (
+              <div
+                style={{ position: "fixed", inset: 0, zIndex: 99 }}
+                onClick={() => setShowSettings(false)}
               />
             ) : null}
-            {registrationsTab === "payment_terms" ? (
-              <OmieViewer
-                desktopApi={desktopApi}
-                entityType="payment_term"
-                title="Condicoes de Pagamento (OMIE)"
-                displayField="name"
-                subField="omieCode"
-              />
-            ) : null}
-            {registrationsTab === "transport" ? (
-              <TransportView desktopApi={desktopApi} />
-            ) : null}
-          </div>
-        </section>
-      ) : null}
 
-      {activeView === "printing" ? (
-        <section style={styles.twoColumns}>
-          <article style={styles.panel}>
-            <h2 style={styles.panelTitle}>Perfil de cupom 80 mm</h2>
-            <p style={styles.muted}>
-              Selecione uma impressora instalada no Windows. O cupom e impresso sem depender de
-              campo manual.
-            </p>
-            <label style={styles.fieldLabel}>
-              Impressora Windows
-              <select
-                value={selectedPrinterName}
-                onChange={(event) => setSelectedPrinterName(event.target.value)}
-                style={styles.input}
-              >
-                <option value="">Selecione...</option>
-                {printers.map((printer) => (
-                  <option key={printer.name} value={printer.name}>
-                    {printer.name}
-                    {printer.isDefault ? " (padrao)" : ""}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {printers.length === 0 ? (
-              <p style={styles.errorMessage}>Nenhuma impressora instalada foi encontrada.</p>
-            ) : null}
-            <button
-              type="button"
-              onClick={handleConfigureReceiptPrinter}
-              style={styles.primaryButton}
-            >
-              Salvar perfil 80 mm
-            </button>
-
-            <button
-              type="button"
-              onClick={() => void handlePrintTest()}
-              style={{ ...styles.secondaryButton, marginTop: "12px" }}
-            >
-              Testar impressora (cupom exemplo)
-            </button>
-
-            <h3>Perfil ativo</h3>
-            {printProfiles.length === 0 ? (
-              <p style={styles.muted}>Nenhum perfil de impressao configurado.</p>
-            ) : (
-              <p>
-                {printProfiles[0].windowsPrinterName} - {printProfiles[0].paperWidthMm} mm
-              </p>
-            )}
-          </article>
-
-          <article style={styles.panel}>
-            <h2 style={styles.panelTitle}>Cupons emitidos</h2>
-            {printReceipts.length === 0 ? (
-              <p style={styles.muted}>Nenhum cupom emitido ainda.</p>
-            ) : null}
-            {printReceipts.map((receipt) => (
-              <div key={receipt.id} style={styles.receiptRow}>
-                <div>
-                  <strong>
-                    Cupom {receipt.receiptNumber} - via {receipt.copyNumber}
-                  </strong>
-                  <p style={styles.muted}>
-                    {receipt.status === "printed" ? "Impresso" : "Falhou"} em {receipt.printerName}
+            {showUpdateModal ? (
+              <div style={styles.modalOverlay}>
+                <div style={styles.modal}>
+                  <h2 style={styles.modalTitle}>Nova versão disponível</h2>
+                  <p style={styles.modalText}>
+                    A versão <strong>{availableVersion}</strong> do KyberRock Desktop está
+                    disponível. Deseja atualizar agora?
                   </p>
-                  {receipt.errorMessage ? (
-                    <p style={styles.errorMessage}>{receipt.errorMessage}</p>
-                  ) : null}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => void handleReprintReceipt(receipt.id)}
-                  style={styles.secondaryButton}
-                >
-                  Reimprimir segunda via
-                </button>
-              </div>
-            ))}
-          </article>
-        </section>
-      ) : null}
-
-      {activeView === "cloud" ? (
-        <section style={styles.twoColumns}>
-          <article style={styles.panel}>
-            <h2 style={styles.panelTitle}>Sincronizacao Supabase</h2>
-            <p style={styles.muted}>
-              Sincronize os dados locais com a nuvem. O desktop funciona offline e sincroniza
-              quando voce clicar no botao.
-            </p>
-
-            <div style={{ marginBottom: "16px" }}>
-              <p>
-                <strong>Status:</strong>{" "}
-                {cloudConnected ? "Conectado ao Supabase" : "Nao conectado"}
-              </p>
-              {cloudStatus && (
-                <>
-                  <p>Operacoes sincronizadas: {cloudStatus.totalOperations}</p>
-                  <p>
-                    Ultima sincronizacao:{" "}
-                    {cloudStatus.lastSync
-                      ? new Date(cloudStatus.lastSync).toLocaleString("pt-BR")
-                      : "Nunca"}
-                  </p>
-                </>
-              )}
-            </div>
-
-            <button
-              type="button"
-              onClick={handleSyncToCloud}
-              disabled={cloudSyncing}
-              style={{
-                ...styles.primaryButton,
-                opacity: cloudSyncing ? 0.6 : 1,
-                cursor: cloudSyncing ? "not-allowed" : "pointer"
-              }}
-            >
-              {cloudSyncing ? "Sincronizando..." : "Sincronizar agora"}
-            </button>
-          </article>
-
-          <article style={styles.panel}>
-            <h2 style={styles.panelTitle}>Status OMIE</h2>
-            {omieStatus ? (
-              <>
-                <p>
-                  <strong>Status:</strong>{" "}
-                  {omieStatus.configured ? "Configurado" : "Nao configurado no admin"}
-                </p>
-                {omieStatus.appKeyMasked ? <p>App Key: {omieStatus.appKeyMasked}</p> : null}
-                {omieStatus.configured ? (
-                  <>
-                    {!omieStatus.hasSyncedData ? (
-                      <p style={styles.muted}>Credencial recebida. Execute a primeira sincronizacao.</p>
-                    ) : null}
-                    <p>Clientes sincronizados: {omieStatus.totalCustomers}</p>
-                    <p>Produtos sincronizados: {omieStatus.totalProducts}</p>
-                    <p>Condicoes sincronizadas: {omieStatus.totalPaymentTerms}</p>
-                    <p>Pendentes de envio: {omieStatus.pendingPushCustomers} clientes</p>
-                    <p>Pedidos OMIE na fila: {omieStatus.pendingOmieJobs}</p>
-                    <p>
-                      Ultima sincronizacao:{" "}
-                      {omieStatus.lastSyncAt
-                        ? new Date(omieStatus.lastSyncAt).toLocaleString("pt-BR")
-                        : "Nunca"}
-                    </p>
-                    {omieConnectionFeedback.status !== "idle" ? (
-                      <div style={{
-                        ...styles.omieFeedback,
-                        ...(omieConnectionFeedback.status === "success"
-                          ? styles.omieFeedbackSuccess
-                          : omieConnectionFeedback.status === "warning"
-                            ? styles.omieFeedbackWarning
-                            : omieConnectionFeedback.status === "checking"
-                              ? styles.omieFeedbackChecking
-                              : styles.omieFeedbackError)
-                      }}>
-                        <strong>{omieConnectionFeedback.message}</strong>
-                        {omieConnectionFeedback.details ? (
-                          <p style={{ margin: "6px 0 0" }}>{omieConnectionFeedback.details}</p>
-                        ) : null}
-                      </div>
-                    ) : null}
+                  <div style={styles.modalActions}>
                     <button
                       type="button"
-                      onClick={handleSyncOmie}
-                      disabled={omieSyncing}
+                      onClick={() => {
+                        void handleUpdateAction();
+                        setShowUpdateModal(false);
+                      }}
+                      style={styles.primaryButton}
+                    >
+                      Atualizar agora
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowUpdateModal(false)}
+                      style={styles.secondaryButton}
+                    >
+                      Mais tarde
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {showLogsModal ? (
+              <div style={styles.modalOverlay}>
+                <div style={{ ...styles.modal, maxWidth: "720px", maxHeight: "80vh" }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      marginBottom: "12px"
+                    }}
+                  >
+                    <h2 style={{ ...styles.modalTitle, margin: 0 }}>Logs do sistema</h2>
+                    <button
+                      type="button"
+                      onClick={() => setErrorLogs([])}
+                      style={styles.secondaryButton}
+                    >
+                      Limpar
+                    </button>
+                  </div>
+                  {errorLogs.length === 0 ? (
+                    <p style={styles.muted}>
+                      Nenhum log capturado. Logs de erro aparecerao aqui automaticamente.
+                    </p>
+                  ) : (
+                    <div
                       style={{
-                        ...styles.primaryButton,
-                        marginTop: "16px",
-                        opacity: omieSyncing ? 0.6 : 1,
-                        cursor: omieSyncing ? "not-allowed" : "pointer"
+                        maxHeight: "60vh",
+                        overflowY: "auto",
+                        border: "1px solid #e2e8f0",
+                        borderRadius: "8px"
                       }}
                     >
-                      {omieSyncing ? "Sincronizando..." : "Sincronizar OMIE agora"}
+                      {errorLogs
+                        .slice()
+                        .reverse()
+                        .map((log, index) => (
+                          <div
+                            key={`${log.timestamp}-${index}`}
+                            style={{
+                              padding: "8px 12px",
+                              borderBottom: "1px solid #f1f5f9",
+                              background:
+                                log.level === "error"
+                                  ? "#fef2f2"
+                                  : log.level === "warn"
+                                    ? "#fffbeb"
+                                    : "#fff"
+                            }}
+                          >
+                            <div
+                              style={{
+                                display: "flex",
+                                gap: "8px",
+                                alignItems: "center",
+                                fontSize: "12px",
+                                color: "#64748b"
+                              }}
+                            >
+                              <span>{new Date(log.timestamp).toLocaleString("pt-BR")}</span>
+                              <span
+                                style={{
+                                  padding: "1px 6px",
+                                  borderRadius: "4px",
+                                  background:
+                                    log.level === "error"
+                                      ? "#fee2e2"
+                                      : log.level === "warn"
+                                        ? "#fef3c7"
+                                        : "#e2e8f0",
+                                  color:
+                                    log.level === "error"
+                                      ? "#991b1b"
+                                      : log.level === "warn"
+                                        ? "#92400e"
+                                        : "#475569",
+                                  fontWeight: 700,
+                                  fontSize: "10px"
+                                }}
+                              >
+                                {log.level.toUpperCase()}
+                              </span>
+                              <span>{log.source}</span>
+                            </div>
+                            <div
+                              style={{
+                                marginTop: "4px",
+                                fontSize: "13px",
+                                color: "#0f172a",
+                                wordBreak: "break-word"
+                              }}
+                            >
+                              {log.message}
+                            </div>
+                            {log.details ? (
+                              <div
+                                style={{
+                                  marginTop: "4px",
+                                  fontSize: "11px",
+                                  color: "#94a3b8",
+                                  wordBreak: "break-word"
+                                }}
+                              >
+                                {log.details}
+                              </div>
+                            ) : null}
+                          </div>
+                        ))}
+                    </div>
+                  )}
+                  <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "12px" }}>
+                    <button
+                      type="button"
+                      onClick={() => setShowLogsModal(false)}
+                      style={styles.secondaryButton}
+                    >
+                      Fechar
                     </button>
-                    <div style={{ marginTop: "16px", padding: "12px", border: "1px dashed #cbd5e1", borderRadius: "8px", background: "#f8fafc" }}>
-                      <p style={{ margin: 0, fontWeight: 700, fontSize: "13px" }}>
-                        Loop automatico OMIE (temporario)
-                      </p>
-                      <p style={{ ...styles.muted, margin: "4px 0 8px 0" }}>
-                        Bate no OMIE pagina por pagina ate baixar todos os clientes, produtos e condicoes
-                        que ainda nao foram clonados.
-                      </p>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {activeView === "dashboard" ? (
+              <section style={styles.twoColumns}>
+                <article style={styles.panel}>
+                  <h2 style={styles.panelTitle}>Atualizacoes</h2>
+                  <p style={styles.muted}>
+                    O app checa automaticamente por novas versoes. Quando houver uma disponivel,
+                    voce sera notificado.
+                  </p>
+                  <p>Status: {describeUpdateState(updateState)}</p>
+                  <button type="button" onClick={handleUpdateAction} style={styles.primaryButton}>
+                    {getManualUpdateButtonLabel(updateState.status)}
+                  </button>
+                </article>
+
+                <article style={styles.panel}>
+                  <h2 style={styles.panelTitle}>Resumo operacional</h2>
+                  <p>Operacoes abertas: {openOperations.length}</p>
+                  <p>Cupons emitidos: {printReceipts.length}</p>
+                  <p>Banco local: {status?.databasePath ?? "carregando..."}</p>
+                </article>
+              </section>
+            ) : null}
+
+            {activeView === "new-weighing" ? (
+              <WeighingForm
+                desktopApi={desktopApi}
+                form={form}
+                setForm={setForm}
+                formError={formError}
+                onStart={handleStartWeighing}
+                onCancel={() => {
+                  setForm(initialWeighingForm);
+                  setFormError(null);
+                  setActiveView("dashboard");
+                }}
+              />
+            ) : null}
+
+            {activeView === "open-operations" ? (
+              <section style={styles.operationsPanel}>
+                <div style={styles.sectionTitleRow}>
+                  <div>
+                    <p style={styles.kicker}>Fila operacional</p>
+                    <h2 style={styles.panelTitle}>Operacoes</h2>
+                  </div>
+                  <span style={styles.countBadge}>
+                    {operationsTab === "open"
+                      ? `${openOperations.length} abertas`
+                      : operationsTab === "canceled"
+                        ? `${filteredCanceledOperations.length} canceladas`
+                        : `${filteredClosedOperations.length} concluidas`}
+                  </span>
+                </div>
+
+                <div style={styles.operationsToolbar}>
+                  <div style={styles.segmentedTabs}>
+                    <button
+                      type="button"
+                      onClick={() => setOperationsTab("open")}
+                      style={operationsTabStyle(operationsTab === "open")}
+                    >
+                      Abertas
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setOperationsTab("canceled")}
+                      style={operationsTabStyle(operationsTab === "canceled")}
+                    >
+                      Canceladas
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setOperationsTab("closed")}
+                      style={operationsTabStyle(operationsTab === "closed")}
+                    >
+                      Concluidas
+                    </button>
+                  </div>
+
+                  {operationsTab === "canceled" ? (
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: "8px",
+                        alignItems: "center",
+                        flexWrap: "wrap"
+                      }}
+                    >
+                      <label style={{ ...styles.fieldLabel, marginBottom: 0 }}>
+                        Periodo
+                        <select
+                          value={canceledFilter}
+                          onChange={(event) =>
+                            setCanceledFilter(event.target.value as CanceledFilter)
+                          }
+                          style={{ ...styles.input, minWidth: "150px" }}
+                        >
+                          <option value="all">Todas</option>
+                          <option value="day">Hoje</option>
+                          <option value="week">Ultimos 7 dias</option>
+                          <option value="month">Este mes</option>
+                        </select>
+                      </label>
                       <button
                         type="button"
-                        onClick={handleStartOmieDataEntryLoop}
-                        disabled={omieLoop?.running}
+                        onClick={() => void handleClearCanceledOperations()}
+                        disabled={canceledOperations.length === 0}
                         style={{
-                          ...styles.primaryButton,
-                          background: "#0f766e",
-                          opacity: omieLoop?.running ? 0.6 : 1,
-                          cursor: omieLoop?.running ? "not-allowed" : "pointer"
+                          ...styles.secondaryButton,
+                          color: "#b91c1c",
+                          borderColor: "#fecaca"
                         }}
                       >
-                        {omieLoop?.running ? "Executando loop..." : "Iniciar loop de entrada de dados"}
+                        Limpar canceladas
                       </button>
-                      {omieLoop ? (
-                        <div style={{ marginTop: "10px", fontSize: "13px", color: "#0f172a" }}>
-                          <p style={{ margin: "2px 0" }}>
-                            <strong>Iteracao:</strong> {omieLoop.iteration}
-                          </p>
-                          <p style={{ margin: "2px 0" }}>
-                            <strong>Clientes clonados do OMIE:</strong> {omieLoop.customersPulled}
-                          </p>
-                          <p style={{ margin: "2px 0" }}>
-                            <strong>Produtos clonados do OMIE:</strong> {omieLoop.productsSynced}
-                          </p>
-                          <p style={{ margin: "2px 0" }}>
-                            <strong>Condicoes clonadas do OMIE:</strong> {omieLoop.paymentTermsSynced}
-                          </p>
-                          <p style={{ margin: "2px 0" }}>
-                            <strong>Paginas restantes:</strong>{" "}
-                            clientes {omieLoop.customersPage},{" "}
-                            produtos {omieLoop.productsPage},{" "}
-                            condicoes {omieLoop.paymentTermsPage}
-                          </p>
-                          <p style={{ margin: "2px 0" }}>
-                            <strong>Status:</strong>{" "}
-                            {omieLoop.running
-                              ? "Executando..."
-                              : omieLoop.finished
-                                ? "Concluido"
-                                : "Parado"}
-                          </p>
-                          {omieLoop.errorMessage ? (
-                            <p style={{ margin: "6px 0 0 0", color: "#b91c1c" }}>
-                              {omieLoop.errorMessage}
+                    </div>
+                  ) : operationsTab === "closed" ? (
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: "8px",
+                        alignItems: "center",
+                        flexWrap: "wrap"
+                      }}
+                    >
+                      <label style={{ ...styles.fieldLabel, marginBottom: 0 }}>
+                        Produto
+                        <select
+                          value={closedProductFilter}
+                          onChange={(event) => setClosedProductFilter(event.target.value)}
+                          style={{ ...styles.input, minWidth: "180px" }}
+                        >
+                          <option value="all">Todos</option>
+                          {Array.from(new Set(closedOperations.map((op) => op.productDescription)))
+                            .filter(Boolean)
+                            .map((desc) => (
+                              <option key={desc} value={desc}>
+                                {desc}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+                    </div>
+                  ) : null}
+                </div>
+
+                {operationsTab === "open" ? (
+                  openOperations.length === 0 ? (
+                    <div style={styles.emptyState}>
+                      <strong>Nenhuma operacao aberta</strong>
+                      <span>
+                        As entradas capturadas pela balanca aparecem aqui para fechamento.
+                      </span>
+                    </div>
+                  ) : (
+                    <div style={styles.operationsTable}>
+                      <div style={{ ...styles.operationsTableRow, ...styles.operationsTableHead }}>
+                        <span>Placa</span>
+                        <span>Cliente / Produto</span>
+                        <span>Entrada / Preco</span>
+                        <span>Acoes</span>
+                      </div>
+                      {openOperations.map((operation) => (
+                        <div key={operation.id} style={styles.operationsTableRow}>
+                          <strong style={styles.plateBadge}>{operation.plate}</strong>
+                          <span style={styles.operationCellStack}>
+                            <strong>{operation.customerName}</strong>
+                            <span>{operation.productDescription}</span>
+                            <small>Motorista: {operation.driverName}</small>
+                          </span>
+                          <span style={styles.operationCellStack}>
+                            <strong>{formatWeightKg(operation.entryWeightKg ?? 0)}</strong>
+                            <span>{formatMoney(operation.unitPriceCents)}/ton</span>
+                          </span>
+                          <span style={styles.rowActions}>
+                            <button
+                              type="button"
+                              onClick={() => setClosingOperationId(operation.id)}
+                              style={styles.smallPrimaryButton}
+                            >
+                              Fechar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setCancelOperationId(operation.id)}
+                              style={styles.smallDangerButton}
+                            >
+                              Cancelar
+                            </button>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                ) : operationsTab === "canceled" ? (
+                  filteredCanceledOperations.length === 0 ? (
+                    <div style={styles.emptyState}>
+                      <strong>Nenhuma operacao cancelada</strong>
+                      <span>Altere o periodo no filtro para consultar outros cancelamentos.</span>
+                    </div>
+                  ) : (
+                    <div style={styles.operationsTable}>
+                      <div
+                        style={{
+                          ...styles.canceledOperationsTableRow,
+                          ...styles.operationsTableHead
+                        }}
+                      >
+                        <span>Placa</span>
+                        <span>Cliente / Produto</span>
+                        <span>Cancelada em</span>
+                        <span>Motivo</span>
+                      </div>
+                      {filteredCanceledOperations.map((operation) => (
+                        <div key={operation.id} style={styles.canceledOperationsTableRow}>
+                          <strong style={styles.plateBadge}>{operation.plate || "--"}</strong>
+                          <span style={styles.operationCellStack}>
+                            <strong>{operation.customerName || "Cliente nao informado"}</strong>
+                            <span>{operation.productDescription || "Produto nao informado"}</span>
+                          </span>
+                          <span>{new Date(operation.updatedAt).toLocaleString("pt-BR")}</span>
+                          <span>{operation.cancelReason || "Sem motivo registrado"}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                ) : filteredClosedOperations.length === 0 ? (
+                  <div style={styles.emptyState}>
+                    <strong>Nenhuma operacao concluida</strong>
+                    <span>As operacoes fechadas aparecerao aqui.</span>
+                  </div>
+                ) : (
+                  <div style={styles.operationsTable}>
+                    <div style={{ ...styles.operationsTableRow, ...styles.operationsTableHead }}>
+                      <span>Placa</span>
+                      <span>Cliente / Produto</span>
+                      <span>Peso liquido / Receita</span>
+                      <span>Concluida em</span>
+                    </div>
+                    {filteredClosedOperations.map((operation) => (
+                      <div key={operation.id} style={styles.operationsTableRow}>
+                        <strong style={styles.plateBadge}>{operation.plate || "--"}</strong>
+                        <span style={styles.operationCellStack}>
+                          <strong>{operation.customerName || "Cliente nao informado"}</strong>
+                          <span>{operation.productDescription || "Produto nao informado"}</span>
+                          <small>Motorista: {operation.driverName}</small>
+                        </span>
+                        <span style={styles.operationCellStack}>
+                          <strong>{formatWeightKg(operation.netWeightKg ?? 0)}</strong>
+                          <span>{formatMoney(operation.totalCents)}</span>
+                        </span>
+                        <span>{new Date(operation.updatedAt).toLocaleString("pt-BR")}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            ) : null}
+
+            {closingOperationId ? (
+              <CloseOperationTypeDialog
+                defaultOperationType="invoice"
+                onConfirm={(operationType) => {
+                  const id = closingOperationId;
+                  setClosingOperationId(null);
+                  void handleCloseOperation(id, operationType);
+                }}
+                onCancel={() => setClosingOperationId(null)}
+              />
+            ) : null}
+
+            {cancelOperationId ? (
+              <CancelOperationDialog
+                onConfirm={(reason) => {
+                  const id = cancelOperationId;
+                  setCancelOperationId(null);
+                  void handleCancelOperation(id, reason);
+                }}
+                onCancel={() => setCancelOperationId(null)}
+              />
+            ) : null}
+
+            {activeView === "scale" ? <ScaleView desktopApi={desktopApi} /> : null}
+
+            {activeView === "registrations" ? (
+              <section style={styles.panel}>
+                <h2 style={styles.panelTitle}>Cadastros</h2>
+                <nav style={styles.subTabs}>
+                  <button
+                    type="button"
+                    onClick={() => setRegistrationsTab("customers")}
+                    style={subTabStyle(registrationsTab === "customers")}
+                  >
+                    Clientes
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRegistrationsTab("price_tables")}
+                    style={subTabStyle(registrationsTab === "price_tables")}
+                  >
+                    Tabelas de Preco
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRegistrationsTab("products")}
+                    style={subTabStyle(registrationsTab === "products")}
+                  >
+                    Produtos
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRegistrationsTab("payment_terms")}
+                    style={subTabStyle(registrationsTab === "payment_terms")}
+                  >
+                    Condicoes
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRegistrationsTab("transport")}
+                    style={subTabStyle(registrationsTab === "transport")}
+                  >
+                    Transporte
+                  </button>
+                </nav>
+                <div style={{ marginTop: "20px" }}>
+                  {registrationsTab === "customers" ? (
+                    <CustomerListView desktopApi={desktopApi} />
+                  ) : null}
+                  {registrationsTab === "price_tables" ? (
+                    <PriceTableListView desktopApi={desktopApi} />
+                  ) : null}
+                  {registrationsTab === "products" ? (
+                    <OmieViewer
+                      desktopApi={desktopApi}
+                      entityType="product"
+                      title="Produtos (OMIE)"
+                      displayField="description"
+                      subField="code"
+                    />
+                  ) : null}
+                  {registrationsTab === "payment_terms" ? (
+                    <OmieViewer
+                      desktopApi={desktopApi}
+                      entityType="payment_term"
+                      title="Condicoes de Pagamento (OMIE)"
+                      displayField="name"
+                      subField="omieCode"
+                    />
+                  ) : null}
+                  {registrationsTab === "transport" ? (
+                    <TransportView desktopApi={desktopApi} />
+                  ) : null}
+                </div>
+              </section>
+            ) : null}
+
+            {activeView === "printing" ? (
+              <section style={styles.twoColumns}>
+                <article style={styles.panel}>
+                  <h2 style={styles.panelTitle}>Perfil de cupom 80 mm</h2>
+                  <p style={styles.muted}>
+                    Selecione uma impressora instalada no Windows. O cupom e impresso sem depender
+                    de campo manual.
+                  </p>
+                  <label style={styles.fieldLabel}>
+                    Impressora Windows
+                    <select
+                      value={selectedPrinterName}
+                      onChange={(event) => setSelectedPrinterName(event.target.value)}
+                      style={styles.input}
+                    >
+                      <option value="">Selecione...</option>
+                      {printers.map((printer) => (
+                        <option key={printer.name} value={printer.name}>
+                          {printer.name}
+                          {printer.isDefault ? " (padrao)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {printers.length === 0 ? (
+                    <p style={styles.errorMessage}>Nenhuma impressora instalada foi encontrada.</p>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={handleConfigureReceiptPrinter}
+                    style={styles.primaryButton}
+                  >
+                    Salvar perfil 80 mm
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => void handlePrintTest()}
+                    style={{ ...styles.secondaryButton, marginTop: "12px" }}
+                  >
+                    Testar impressora (cupom exemplo)
+                  </button>
+
+                  <h3>Perfil ativo</h3>
+                  {printProfiles.length === 0 ? (
+                    <p style={styles.muted}>Nenhum perfil de impressao configurado.</p>
+                  ) : (
+                    <p>
+                      {printProfiles[0].windowsPrinterName} - {printProfiles[0].paperWidthMm} mm
+                    </p>
+                  )}
+                </article>
+
+                <article style={styles.panel}>
+                  <h2 style={styles.panelTitle}>Cupons emitidos</h2>
+                  {printReceipts.length === 0 ? (
+                    <p style={styles.muted}>Nenhum cupom emitido ainda.</p>
+                  ) : null}
+                  {printReceipts.map((receipt) => (
+                    <div key={receipt.id} style={styles.receiptRow}>
+                      <div>
+                        <strong>
+                          Cupom {receipt.receiptNumber} - via {receipt.copyNumber}
+                        </strong>
+                        <p style={styles.muted}>
+                          {receipt.status === "printed" ? "Impresso" : "Falhou"} em{" "}
+                          {receipt.printerName}
+                        </p>
+                        {receipt.errorMessage ? (
+                          <p style={styles.errorMessage}>{receipt.errorMessage}</p>
+                        ) : null}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void handleReprintReceipt(receipt.id)}
+                        style={styles.secondaryButton}
+                      >
+                        Reimprimir segunda via
+                      </button>
+                    </div>
+                  ))}
+                </article>
+              </section>
+            ) : null}
+
+            {activeView === "cloud" ? (
+              <section style={styles.twoColumns}>
+                <article style={styles.panel}>
+                  <h2 style={styles.panelTitle}>Sincronizacao Supabase</h2>
+                  <p style={styles.muted}>
+                    Sincronize os dados locais com a nuvem. O desktop funciona offline e sincroniza
+                    quando voce clicar no botao.
+                  </p>
+
+                  <div style={{ marginBottom: "16px" }}>
+                    <p>
+                      <strong>Status:</strong>{" "}
+                      {cloudConnected ? "Conectado ao Supabase" : "Nao conectado"}
+                    </p>
+                    {cloudStatus && (
+                      <>
+                        <p>Operacoes sincronizadas: {cloudStatus.totalOperations}</p>
+                        <p>
+                          Ultima sincronizacao:{" "}
+                          {cloudStatus.lastSync
+                            ? new Date(cloudStatus.lastSync).toLocaleString("pt-BR")
+                            : "Nunca"}
+                        </p>
+                      </>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleSyncToCloud}
+                    disabled={cloudSyncing}
+                    style={{
+                      ...styles.primaryButton,
+                      opacity: cloudSyncing ? 0.6 : 1,
+                      cursor: cloudSyncing ? "not-allowed" : "pointer"
+                    }}
+                  >
+                    {cloudSyncing ? "Sincronizando..." : "Sincronizar agora"}
+                  </button>
+                </article>
+
+                <article style={styles.panel}>
+                  <h2 style={styles.panelTitle}>Status OMIE</h2>
+                  {omieStatus ? (
+                    <>
+                      <p>
+                        <strong>Status:</strong>{" "}
+                        {omieStatus.configured ? "Configurado" : "Nao configurado no admin"}
+                      </p>
+                      {omieStatus.appKeyMasked ? <p>App Key: {omieStatus.appKeyMasked}</p> : null}
+                      {omieStatus.configured ? (
+                        <>
+                          {!omieStatus.hasSyncedData ? (
+                            <p style={styles.muted}>
+                              Credencial recebida. Execute a primeira sincronizacao.
                             </p>
                           ) : null}
-                        </div>
-                      ) : null}
-                    </div>
-                  </>
-                ) : (
-                  <p style={styles.muted}>
-                    Cadastre o App Key e App Secret OMIE no painel administrativo e aguarde a
-                    proxima validacao online do desktop.
-                  </p>
-                )}
-          </>
-        ) : (
-          <p style={{ color: "#64748b" }}>Carregando status OMIE...</p>
-        )}
-          </article>
-        </section>
-      ) : null}
-      {activeView === "insights" ? (
-        <InsightsView
-          desktopApi={desktopApi}
-          openOperations={openOperations}
-          cloudConnected={cloudConnected}
-          cloudSyncing={cloudSyncing}
-          omieStatus={omieStatus}
-          onSyncOmie={handleSyncOmie}
-          onSyncCloud={handleSyncToCloud}
-        />
-      ) : null}
-      {activeView === "documentation" ? (
-        <section style={styles.panel}>
-          <h2 style={styles.panelTitle}>Documentacao</h2>
-          <p style={styles.muted}>Em breve.</p>
-        </section>
-      ) : null}
+                          <p>Clientes sincronizados: {omieStatus.totalCustomers}</p>
+                          <p>Produtos sincronizados: {omieStatus.totalProducts}</p>
+                          <p>Condicoes sincronizadas: {omieStatus.totalPaymentTerms}</p>
+                          <p>Pendentes de envio: {omieStatus.pendingPushCustomers} clientes</p>
+                          <p>Pedidos OMIE na fila: {omieStatus.pendingOmieJobs}</p>
+                          <p>
+                            Ultima sincronizacao:{" "}
+                            {omieStatus.lastSyncAt
+                              ? new Date(omieStatus.lastSyncAt).toLocaleString("pt-BR")
+                              : "Nunca"}
+                          </p>
+                          {omieConnectionFeedback.status !== "idle" ? (
+                            <div
+                              style={{
+                                ...styles.omieFeedback,
+                                ...(omieConnectionFeedback.status === "success"
+                                  ? styles.omieFeedbackSuccess
+                                  : omieConnectionFeedback.status === "warning"
+                                    ? styles.omieFeedbackWarning
+                                    : omieConnectionFeedback.status === "checking"
+                                      ? styles.omieFeedbackChecking
+                                      : styles.omieFeedbackError)
+                              }}
+                            >
+                              <strong>{omieConnectionFeedback.message}</strong>
+                              {omieConnectionFeedback.details ? (
+                                <p style={{ margin: "6px 0 0" }}>
+                                  {omieConnectionFeedback.details}
+                                </p>
+                              ) : null}
+                            </div>
+                          ) : null}
+                          <button
+                            type="button"
+                            onClick={handleSyncOmie}
+                            disabled={omieSyncing}
+                            style={{
+                              ...styles.primaryButton,
+                              marginTop: "16px",
+                              opacity: omieSyncing ? 0.6 : 1,
+                              cursor: omieSyncing ? "not-allowed" : "pointer"
+                            }}
+                          >
+                            {omieSyncing ? "Sincronizando..." : "Sincronizar OMIE agora"}
+                          </button>
+                          <div
+                            style={{
+                              marginTop: "16px",
+                              padding: "12px",
+                              border: "1px dashed #cbd5e1",
+                              borderRadius: "8px",
+                              background: "#f8fafc"
+                            }}
+                          >
+                            <p style={{ margin: 0, fontWeight: 700, fontSize: "13px" }}>
+                              Loop automatico OMIE (temporario)
+                            </p>
+                            <p style={{ ...styles.muted, margin: "4px 0 8px 0" }}>
+                              Bate no OMIE pagina por pagina ate baixar todos os clientes, produtos
+                              e condicoes que ainda nao foram clonados.
+                            </p>
+                            <button
+                              type="button"
+                              onClick={handleStartOmieDataEntryLoop}
+                              disabled={omieLoop?.running}
+                              style={{
+                                ...styles.primaryButton,
+                                background: "#0f766e",
+                                opacity: omieLoop?.running ? 0.6 : 1,
+                                cursor: omieLoop?.running ? "not-allowed" : "pointer"
+                              }}
+                            >
+                              {omieLoop?.running
+                                ? "Executando loop..."
+                                : "Iniciar loop de entrada de dados"}
+                            </button>
+                            {omieLoop ? (
+                              <div
+                                style={{ marginTop: "10px", fontSize: "13px", color: "#0f172a" }}
+                              >
+                                <p style={{ margin: "2px 0" }}>
+                                  <strong>Iteracao:</strong> {omieLoop.iteration}
+                                </p>
+                                <p style={{ margin: "2px 0" }}>
+                                  <strong>Clientes clonados do OMIE:</strong>{" "}
+                                  {omieLoop.customersPulled}
+                                </p>
+                                <p style={{ margin: "2px 0" }}>
+                                  <strong>Produtos clonados do OMIE:</strong>{" "}
+                                  {omieLoop.productsSynced}
+                                </p>
+                                <p style={{ margin: "2px 0" }}>
+                                  <strong>Condicoes clonadas do OMIE:</strong>{" "}
+                                  {omieLoop.paymentTermsSynced}
+                                </p>
+                                <p style={{ margin: "2px 0" }}>
+                                  <strong>Paginas restantes:</strong> clientes{" "}
+                                  {omieLoop.customersPage}, produtos {omieLoop.productsPage},{" "}
+                                  condicoes {omieLoop.paymentTermsPage}
+                                </p>
+                                <p style={{ margin: "2px 0" }}>
+                                  <strong>Status:</strong>{" "}
+                                  {omieLoop.running
+                                    ? "Executando..."
+                                    : omieLoop.finished
+                                      ? "Concluido"
+                                      : "Parado"}
+                                </p>
+                                {omieLoop.errorMessage ? (
+                                  <p style={{ margin: "6px 0 0 0", color: "#b91c1c" }}>
+                                    {omieLoop.errorMessage}
+                                  </p>
+                                ) : null}
+                              </div>
+                            ) : null}
+                          </div>
+                        </>
+                      ) : (
+                        <p style={styles.muted}>
+                          Cadastre o App Key e App Secret OMIE no painel administrativo e aguarde a
+                          proxima validacao online do desktop.
+                        </p>
+                      )}
+                    </>
+                  ) : (
+                    <p style={{ color: "#64748b" }}>Carregando status OMIE...</p>
+                  )}
+                </article>
+              </section>
+            ) : null}
+            {activeView === "insights" ? (
+              <InsightsView
+                desktopApi={desktopApi}
+                openOperations={openOperations}
+                cloudConnected={cloudConnected}
+                cloudSyncing={cloudSyncing}
+                omieStatus={omieStatus}
+                onSyncOmie={handleSyncOmie}
+                onSyncCloud={handleSyncToCloud}
+              />
+            ) : null}
+            {activeView === "documentation" ? (
+              <section style={styles.panel}>
+                <h2 style={styles.panelTitle}>Documentacao</h2>
+                <p style={styles.muted}>Em breve.</p>
+              </section>
+            ) : null}
           </div>
         </div>
       </div>
@@ -1785,6 +2004,12 @@ function validateWeighingForm(form: WeighingFormState): string | null {
   if (!form.driverId) return "Selecione o motorista.";
   if (!form.productId) return "Selecione o produto.";
   if (form.unitPriceCents === null) return "Informe o preco.";
+  if (form.manualInstallmentsEnabled && (!form.installments || form.installments <= 0)) {
+    return "Informe o numero de parcelas.";
+  }
+  if (form.manualWeightEnabled && (!form.manualWeightKg || form.manualWeightKg <= 0)) {
+    return "Informe um peso simulado maior que zero.";
+  }
   return null;
 }
 
@@ -1823,7 +2048,7 @@ async function lookupCep(value: string): Promise<{
   if (cep.length !== 8) return null;
   const response = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
   if (!response.ok) return null;
-  const data = await response.json() as {
+  const data = (await response.json()) as {
     erro?: boolean;
     logradouro?: string;
     bairro?: string;
@@ -1887,7 +2112,10 @@ function CacheSelect({
   const containerRef = useRef<HTMLDivElement>(null);
 
   const selectedLabel = useMemo(() => {
-    return options.find((o) => o.id === value)?.label ?? (selectedOption?.id === value ? selectedOption.label : "");
+    return (
+      options.find((o) => o.id === value)?.label ??
+      (selectedOption?.id === value ? selectedOption.label : "")
+    );
   }, [options, selectedOption, value]);
 
   useEffect(() => {
@@ -1977,7 +2205,9 @@ function CacheSelect({
           }}
         >
           {loading ? (
-            <div style={{ padding: "8px 12px", color: "#94a3b8", fontSize: "13px" }}>Carregando...</div>
+            <div style={{ padding: "8px 12px", color: "#94a3b8", fontSize: "13px" }}>
+              Carregando...
+            </div>
           ) : options.length === 0 ? (
             <div style={{ padding: "8px 12px", color: "#94a3b8", fontSize: "13px" }}>
               Nenhum resultado
@@ -2055,7 +2285,14 @@ interface WeighingFormProps {
   onCancel: () => void;
 }
 
-function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel }: WeighingFormProps) {
+function WeighingForm({
+  desktopApi,
+  form,
+  setForm,
+  formError,
+  onStart,
+  onCancel
+}: WeighingFormProps) {
   const [liveWeight, setLiveWeight] = useState<number | null>(null);
   const [priceDetails, setPriceDetails] = useState<PriceDetails | null>(null);
   const [showVehicleModal, setShowVehicleModal] = useState(false);
@@ -2066,7 +2303,10 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
   const [driverRefreshKey, setDriverRefreshKey] = useState(0);
   const [customerRefreshKey, setCustomerRefreshKey] = useState(0);
   const [carrierRefreshKey, setCarrierRefreshKey] = useState(0);
-  const [paymentTermInstallmentCount, setPaymentTermInstallmentCount] = useState<number | null>(null);
+  const [paymentTermInstallmentCount, setPaymentTermInstallmentCount] = useState<number | null>(
+    null
+  );
+  const displayedWeight = form.manualWeightEnabled ? form.manualWeightKg : liveWeight;
 
   useEffect(() => {
     if (!desktopApi) return;
@@ -2099,9 +2339,15 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
         return;
       }
       try {
-        const details = await desktopApi.getPriceDetailsForCustomerProduct(form.customerId, form.productId);
+        const details = await desktopApi.getPriceDetailsForCustomerProduct(
+          form.customerId,
+          form.productId
+        );
         setPriceDetails(details);
-        if (details?.appliedUnitPriceCents !== null && details?.appliedUnitPriceCents !== undefined) {
+        if (
+          details?.appliedUnitPriceCents !== null &&
+          details?.appliedUnitPriceCents !== undefined
+        ) {
           setForm((prev) => ({ ...prev, unitPriceCents: details.appliedUnitPriceCents }));
         }
       } catch {
@@ -2114,20 +2360,22 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
 
   useEffect(() => {
     async function syncInstallmentCount() {
-      if (!form.paymentTermId || !desktopApi) {
+      if (form.manualInstallmentsEnabled || !form.paymentTermId || !desktopApi) {
         setPaymentTermInstallmentCount(null);
         return;
       }
       try {
         const result = await desktopApi.queryCache({ entityType: "payment_term", limit: 500 });
-        const term = (result.rows as Array<{ id: string; installmentCount?: number }>).find((r) => r.id === form.paymentTermId);
+        const term = (result.rows as Array<{ id: string; installmentCount?: number }>).find(
+          (r) => r.id === form.paymentTermId
+        );
         setPaymentTermInstallmentCount(term?.installmentCount ?? null);
       } catch {
         setPaymentTermInstallmentCount(null);
       }
     }
     syncInstallmentCount();
-  }, [form.paymentTermId, desktopApi]);
+  }, [form.manualInstallmentsEnabled, form.paymentTermId, desktopApi]);
 
   return (
     <section style={styles.entryShell}>
@@ -2136,15 +2384,57 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
           <p style={styles.kicker}>Operacao de balanca</p>
           <h2 style={{ ...styles.title, marginBottom: "6px" }}>Nova entrada</h2>
           <p style={styles.subtitle}>
-            Selecione cliente, produto acabado OMIE, placa e motorista. O peso e capturado direto da balanca.
+            Selecione cliente, produto acabado OMIE, placa e motorista. O peso e capturado direto da
+            balanca.
           </p>
         </div>
         <div style={styles.liveWeightCard}>
-          <span style={styles.metricLabel}>Peso atual</span>
+          <span style={styles.metricLabel}>
+            {form.manualWeightEnabled ? "Peso simulado" : "Peso atual"}
+          </span>
           <strong style={styles.metricValue}>
-            {liveWeight !== null ? formatWeightKg(liveWeight) : "-- kg"}
+            {displayedWeight !== null ? formatWeightKg(displayedWeight) : "-- kg"}
           </strong>
-          <span style={styles.metricHint}>{liveWeight !== null ? "Leitura em tempo real" : "Aguardando balanca"}</span>
+          <span style={styles.metricHint}>
+            {form.manualWeightEnabled
+              ? "Modo teste sem conexao com a balanca"
+              : liveWeight !== null
+                ? "Leitura em tempo real"
+                : "Aguardando balanca"}
+          </span>
+          {form.manualWeightEnabled ? (
+            <label style={styles.simulatedWeightField}>
+              Peso de teste (kg)
+              <input
+                type="number"
+                min={0}
+                step={0.001}
+                value={form.manualWeightKg ?? ""}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  setForm((prev) => ({
+                    ...prev,
+                    manualWeightKg: raw === "" ? null : Number(raw)
+                  }));
+                }}
+                placeholder="Ex: 12500"
+                style={styles.simulatedWeightInput}
+              />
+            </label>
+          ) : null}
+          <button
+            type="button"
+            onClick={() =>
+              setForm((prev) => ({
+                ...prev,
+                manualWeightEnabled: !prev.manualWeightEnabled,
+                manualWeightKg: prev.manualWeightEnabled ? null : prev.manualWeightKg
+              }))
+            }
+            style={styles.simulateWeightButton}
+          >
+            {form.manualWeightEnabled ? "Usar balanca real" : "Simular peso"}
+          </button>
         </div>
       </div>
 
@@ -2152,7 +2442,11 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
 
       <div style={styles.entryGrid}>
         <article style={styles.entryCard}>
-          <SectionHeader icon="◈" title="Dados comerciais" description="Cliente, produto fiscal e condicao de pagamento" />
+          <SectionHeader
+            icon="◈"
+            title="Dados comerciais"
+            description="Cliente, produto fiscal e condicao de pagamento"
+          />
           <CacheSelect
             label="Cliente"
             entityType="customer"
@@ -2161,9 +2455,12 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
               setForm((prev) => ({
                 ...prev,
                 customerId: id,
-                paymentTermId: typeof item?.defaultPaymentTermId === "string" && item.defaultPaymentTermId
-                  ? item.defaultPaymentTermId
-                  : prev.paymentTermId
+                paymentTermId:
+                  !prev.manualInstallmentsEnabled &&
+                  typeof item?.defaultPaymentTermId === "string" &&
+                  item.defaultPaymentTermId
+                    ? item.defaultPaymentTermId
+                    : prev.paymentTermId
               }))
             }
             onCreateNew={() => setShowCustomerModal(true)}
@@ -2178,27 +2475,32 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
             desktopApi={desktopApi}
             productFiscalType="finished_goods"
           />
-          <p style={styles.helperText}>Somente produtos OMIE com recomendacao fiscal tipo 04 - produtos acabados.</p>
-          <CacheSelect
-            label="Condicao de pagamento"
-            entityType="payment_term"
-            value={form.paymentTermId}
-            onChange={(id, item) => {
-              const rawCount = item?.installmentCount;
-              const count =
-                typeof rawCount === "number" && Number.isFinite(rawCount) && rawCount > 0
-                  ? rawCount
-                  : null;
-              setPaymentTermInstallmentCount(count);
-              setForm((prev) => ({
-                ...prev,
-                paymentTermId: id,
-                installments: count && count > 1 ? count : null
-              }));
-            }}
-            desktopApi={desktopApi}
-          />
-          {paymentTermInstallmentCount && paymentTermInstallmentCount > 1 ? (
+          <p style={styles.helperText}>
+            Somente produtos OMIE com recomendacao fiscal tipo 04 - produtos acabados.
+          </p>
+          <label style={styles.checkboxCard}>
+            <input
+              type="checkbox"
+              checked={form.manualInstallmentsEnabled}
+              onChange={(e) => {
+                const enabled = e.target.checked;
+                setPaymentTermInstallmentCount(null);
+                setForm((prev) => ({
+                  ...prev,
+                  manualInstallmentsEnabled: enabled,
+                  paymentTermId: enabled ? "" : prev.paymentTermId,
+                  installments: enabled ? prev.installments : null
+                }));
+              }}
+            />
+            <span>
+              <strong>Informar numero de parcelas</strong>
+              <small style={{ display: "block", color: "var(--kr-muted)", marginTop: "2px" }}>
+                Troca a lista de condicoes por um campo manual.
+              </small>
+            </span>
+          </label>
+          {form.manualInstallmentsEnabled ? (
             <label style={styles.fieldLabel}>
               Numero de parcelas
               <input
@@ -2218,15 +2520,46 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
                     installments: Number.isFinite(parsed) && parsed > 0 ? parsed : null
                   }));
                 }}
-                placeholder="Informe o numero de parcelas"
+                placeholder="Ex: 3"
                 style={styles.input}
               />
             </label>
-          ) : null}
+          ) : (
+            <>
+              <CacheSelect
+                label="Condicao de pagamento"
+                entityType="payment_term"
+                value={form.paymentTermId}
+                onChange={(id, item) => {
+                  const rawCount = item?.installmentCount;
+                  const count =
+                    typeof rawCount === "number" && Number.isFinite(rawCount) && rawCount > 0
+                      ? rawCount
+                      : null;
+                  setPaymentTermInstallmentCount(count);
+                  setForm((prev) => ({
+                    ...prev,
+                    paymentTermId: id,
+                    installments: count && count > 1 ? count : null
+                  }));
+                }}
+                desktopApi={desktopApi}
+              />
+              {paymentTermInstallmentCount && paymentTermInstallmentCount > 1 ? (
+                <p style={styles.helperText}>
+                  Condicao selecionada com {paymentTermInstallmentCount} parcelas.
+                </p>
+              ) : null}
+            </>
+          )}
         </article>
 
         <article style={styles.entryCard}>
-          <SectionHeader icon="▣" title="Transporte" description="Placa, transportadora e motorista" />
+          <SectionHeader
+            icon="▣"
+            title="Transporte"
+            description="Placa, transportadora e motorista"
+          />
           <CacheSelect
             label="Placa"
             entityType="vehicle"
@@ -2257,7 +2590,11 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
         </article>
 
         <aside style={styles.entrySummaryCard}>
-          <SectionHeader icon="◆" title="Resumo da entrada" description="Preco, peso e acao final" />
+          <SectionHeader
+            icon="◆"
+            title="Resumo da entrada"
+            description="Preco, peso e acao final"
+          />
           <PriceInput
             valueCents={form.unitPriceCents}
             onChange={(cents) => setForm((prev) => ({ ...prev, unitPriceCents: cents }))}
@@ -2318,7 +2655,11 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
             setForm((prev) => ({ ...prev, carrierId: id }));
             setShowCarrierModal(false);
             if (desktopApi && form.vehicleId) {
-              try { await desktopApi.vehiclesLinkCarrier(form.vehicleId, id); } catch { /* ignore */ }
+              try {
+                await desktopApi.vehiclesLinkCarrier(form.vehicleId, id);
+              } catch {
+                /* ignore */
+              }
             }
             setCarrierRefreshKey((k) => k + 1);
             setVehicleRefreshKey((k) => k + 1);
@@ -2329,7 +2670,15 @@ function WeighingForm({ desktopApi, form, setForm, formError, onStart, onCancel 
   );
 }
 
-function SectionHeader({ icon, title, description }: { icon: string; title: string; description: string }) {
+function SectionHeader({
+  icon,
+  title,
+  description
+}: {
+  icon: string;
+  title: string;
+  description: string;
+}) {
   return (
     <div style={styles.sectionHeader}>
       <span style={styles.sectionIcon}>{icon}</span>
@@ -2381,7 +2730,9 @@ function QuickVehicleModal({ desktopApi, onClose, onCreated }: QuickModalProps) 
   return (
     <div style={modalOverlayStyle}>
       <div style={modalContentStyle}>
-        <h3 style={{ margin: "0 0 8px 0", color: "#0f172a", fontSize: "15px" }}>Cadastrar veiculo</h3>
+        <h3 style={{ margin: "0 0 8px 0", color: "#0f172a", fontSize: "15px" }}>
+          Cadastrar veiculo
+        </h3>
         {error ? <p style={styles.errorMessage}>{error}</p> : null}
         <label style={styles.fieldLabel}>
           Placa
@@ -2394,7 +2745,11 @@ function QuickVehicleModal({ desktopApi, onClose, onCreated }: QuickModalProps) 
         </label>
         <label style={styles.fieldLabel}>
           Descricao
-          <input value={description} onChange={(e) => setDescription(e.target.value)} style={styles.input} />
+          <input
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            style={styles.input}
+          />
         </label>
         <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
           <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
@@ -2450,7 +2805,9 @@ function QuickDriverModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
   return (
     <div style={modalOverlayStyle}>
       <div style={modalContentStyle}>
-        <h3 style={{ margin: "0 0 8px 0", color: "#0f172a", fontSize: "15px" }}>Cadastrar motorista</h3>
+        <h3 style={{ margin: "0 0 8px 0", color: "#0f172a", fontSize: "15px" }}>
+          Cadastrar motorista
+        </h3>
         {error ? <p style={styles.errorMessage}>{error}</p> : null}
         <label style={styles.fieldLabel}>
           Nome completo
@@ -2537,15 +2894,25 @@ function QuickCustomerModal({ desktopApi, onClose, onCreated }: QuickModalProps)
   return (
     <div style={modalOverlayStyle}>
       <div style={modalContentStyle}>
-        <h3 style={{ margin: "0 0 8px 0", color: "#0f172a", fontSize: "15px" }}>Cadastrar cliente</h3>
+        <h3 style={{ margin: "0 0 8px 0", color: "#0f172a", fontSize: "15px" }}>
+          Cadastrar cliente
+        </h3>
         {error ? <p style={styles.errorMessage}>{error}</p> : null}
         <label style={styles.fieldLabel}>
           Nome fantasia
-          <input value={tradeName} onChange={(e) => setTradeName(e.target.value)} style={styles.input} />
+          <input
+            value={tradeName}
+            onChange={(e) => setTradeName(e.target.value)}
+            style={styles.input}
+          />
         </label>
         <label style={styles.fieldLabel}>
           Razao social
-          <input value={legalName} onChange={(e) => setLegalName(e.target.value)} style={styles.input} />
+          <input
+            value={legalName}
+            onChange={(e) => setLegalName(e.target.value)}
+            style={styles.input}
+          />
         </label>
         <label style={styles.fieldLabel}>
           CPF/CNPJ
@@ -2621,7 +2988,9 @@ function QuickCarrierModal({ desktopApi, onClose, onCreated }: QuickModalProps) 
   return (
     <div style={modalOverlayStyle}>
       <div style={modalContentStyle}>
-        <h3 style={{ margin: "0 0 8px 0", color: "#0f172a", fontSize: "15px" }}>Cadastrar transportadora</h3>
+        <h3 style={{ margin: "0 0 8px 0", color: "#0f172a", fontSize: "15px" }}>
+          Cadastrar transportadora
+        </h3>
         {error ? <p style={styles.errorMessage}>{error}</p> : null}
         <label style={styles.fieldLabel}>
           Nome
@@ -2685,7 +3054,9 @@ function CloseOperationTypeDialog({
   return (
     <div style={modalOverlayStyle}>
       <div style={modalContentStyle}>
-        <h3 style={{ margin: "0 0 8px 0", color: "#0f172a", fontSize: "15px" }}>Tipo de operacao na saida</h3>
+        <h3 style={{ margin: "0 0 8px 0", color: "#0f172a", fontSize: "15px" }}>
+          Tipo de operacao na saida
+        </h3>
         <p style={styles.muted}>Selecione como esta saida sera registrada.</p>
         <label style={styles.fieldLabel}>
           Tipo
@@ -2699,7 +3070,11 @@ function CloseOperationTypeDialog({
           </select>
         </label>
         <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
-          <button type="button" onClick={() => onConfirm(operationType)} style={styles.primaryButton}>
+          <button
+            type="button"
+            onClick={() => onConfirm(operationType)}
+            style={styles.primaryButton}
+          >
             Confirmar saida
           </button>
           <button type="button" onClick={onCancel} style={styles.secondaryButton}>
@@ -2724,7 +3099,9 @@ function CancelOperationDialog({
   return (
     <div style={modalOverlayStyle}>
       <div style={modalContentStyle}>
-        <h3 style={{ margin: "0 0 8px 0", color: "#0f172a", fontSize: "15px" }}>Cancelar operacao</h3>
+        <h3 style={{ margin: "0 0 8px 0", color: "#0f172a", fontSize: "15px" }}>
+          Cancelar operacao
+        </h3>
         <p style={styles.muted}>Informe o motivo. Ele ficara registrado na auditoria e no sync.</p>
         {error ? <p style={styles.errorMessage}>{error}</p> : null}
         <label style={styles.fieldLabel}>
@@ -2779,10 +3156,22 @@ function PriceDetailsPanel({
     : "Sem desconto";
 
   return (
-    <div style={{ marginTop: "6px", padding: "8px", border: "1px solid #e2e8f0", borderRadius: "8px", background: "#f8fafc" }}>
-      <div style={{ fontSize: "12px", color: "#475569" }}>Base OMIE: {formatMoney(details?.baseUnitPriceCents)}/ton</div>
+    <div
+      style={{
+        marginTop: "6px",
+        padding: "8px",
+        border: "1px solid #e2e8f0",
+        borderRadius: "8px",
+        background: "#f8fafc"
+      }}
+    >
+      <div style={{ fontSize: "12px", color: "#475569" }}>
+        Base OMIE: {formatMoney(details?.baseUnitPriceCents)}/ton
+      </div>
       <div style={{ fontSize: "12px", color: "#475569" }}>Tabela: {tableLabel}</div>
-      <div style={{ fontSize: "12px", color: "#475569" }}>Aplicado: {formatMoney(appliedUnitPriceCents)}/ton</div>
+      <div style={{ fontSize: "12px", color: "#475569" }}>
+        Aplicado: {formatMoney(appliedUnitPriceCents)}/ton
+      </div>
       <div style={{ fontSize: "12px", color: "#475569" }}>Economia: {savingsLabel}</div>
     </div>
   );
@@ -2801,8 +3190,12 @@ function PriceInput({
     new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents / 100);
 
   const displayValue = focused
-    ? (valueCents !== null ? String(valueCents / 100).replace(".", ",") : "")
-    : valueCents !== null ? centsToBRL(valueCents) : "";
+    ? valueCents !== null
+      ? String(valueCents / 100).replace(".", ",")
+      : ""
+    : valueCents !== null
+      ? centsToBRL(valueCents)
+      : "";
 
   return (
     <label style={styles.fieldLabel}>
@@ -2816,7 +3209,10 @@ function PriceInput({
         onBlur={() => setFocused(false)}
         onChange={(event) => {
           const raw = event.target.value.replace(/[^\d,]/g, "");
-          if (!raw) { onChange(null); return; }
+          if (!raw) {
+            onChange(null);
+            return;
+          }
           const parts = raw.split(",");
           const intPart = parts[0] || "0";
           const decPart = (parts[1] || "").slice(0, 2).padEnd(2, "0");
@@ -2825,9 +3221,7 @@ function PriceInput({
         style={styles.input}
       />
       {valueCents !== null ? (
-        <span style={{ fontSize: "12px", color: "#64748b" }}>
-          {centsToBRL(valueCents)}/ton
-        </span>
+        <span style={{ fontSize: "12px", color: "#64748b" }}>{centsToBRL(valueCents)}/ton</span>
       ) : null}
     </label>
   );
@@ -3057,11 +3451,17 @@ function VehicleListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
         </button>
       </div>
 
-      {msg ? <p style={{ color: "#16a34a", fontWeight: 700, marginBottom: "6px", fontSize: "13px" }}>{msg}</p> : null}
+      {msg ? (
+        <p style={{ color: "#16a34a", fontWeight: 700, marginBottom: "6px", fontSize: "13px" }}>
+          {msg}
+        </p>
+      ) : null}
 
       {showForm ? (
         <div style={{ ...styles.card, marginBottom: "12px", padding: "12px" }}>
-          <h3 style={{ margin: "0 0 8px 0", fontSize: "14px" }}>{editingId ? "Editar Veiculo" : "Novo Veiculo"}</h3>
+          <h3 style={{ margin: "0 0 8px 0", fontSize: "14px" }}>
+            {editingId ? "Editar Veiculo" : "Novo Veiculo"}
+          </h3>
           {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
             <label style={styles.fieldLabel}>
@@ -3075,7 +3475,11 @@ function VehicleListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
             </label>
             <label style={styles.fieldLabel}>
               Descricao
-              <input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} style={styles.input} />
+              <input
+                value={form.description}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+                style={styles.input}
+              />
             </label>
           </div>
           <label style={styles.fieldLabel}>
@@ -3087,13 +3491,19 @@ function VehicleListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
             >
               <option value="">Selecione a transportadora</option>
               {carriers.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
               ))}
             </select>
           </label>
           <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
-            <button type="button" onClick={handleSave} style={styles.primaryButton}>Salvar</button>
-            <button type="button" onClick={() => setShowForm(false)} style={styles.secondaryButton}>Cancelar</button>
+            <button type="button" onClick={handleSave} style={styles.primaryButton}>
+              Salvar
+            </button>
+            <button type="button" onClick={() => setShowForm(false)} style={styles.secondaryButton}>
+              Cancelar
+            </button>
           </div>
         </div>
       ) : null}
@@ -3108,10 +3518,16 @@ function VehicleListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
             const currentCarrierId = String(item.carrier_id ?? "");
             return (
               <div key={String(item.id)} style={{ ...styles.card, padding: "12px 16px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div
+                  style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}
+                >
                   <div>
                     <strong>{plate}</strong>
-                    {description ? <span style={{ color: "#64748b", fontSize: "13px", marginLeft: "8px" }}>{description}</span> : null}
+                    {description ? (
+                      <span style={{ color: "#64748b", fontSize: "13px", marginLeft: "8px" }}>
+                        {description}
+                      </span>
+                    ) : null}
                   </div>
                   <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
                     <select
@@ -3121,11 +3537,29 @@ function VehicleListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                     >
                       <option value="">Sem transportadora</option>
                       {carriers.map((c) => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
                       ))}
                     </select>
-                    <button type="button" onClick={() => openEdit(item)} style={styles.secondaryButton}>Editar</button>
-                    <button type="button" onClick={() => handleDelete(String(item.id))} style={{ ...styles.secondaryButton, color: "#b91c1c", borderColor: "#fecaca" }}>Excluir</button>
+                    <button
+                      type="button"
+                      onClick={() => openEdit(item)}
+                      style={styles.secondaryButton}
+                    >
+                      Editar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(String(item.id))}
+                      style={{
+                        ...styles.secondaryButton,
+                        color: "#b91c1c",
+                        borderColor: "#fecaca"
+                      }}
+                    >
+                      Excluir
+                    </button>
                   </div>
                 </div>
               </div>
@@ -3166,9 +3600,7 @@ function TransportView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
         </button>
       </nav>
       <div style={{ marginTop: "20px" }}>
-        {transportTab === "vehicles" ? (
-          <VehicleListView desktopApi={desktopApi} />
-        ) : null}
+        {transportTab === "vehicles" ? <VehicleListView desktopApi={desktopApi} /> : null}
         {transportTab === "drivers" ? (
           <SimpleCrudList
             desktopApi={desktopApi}
@@ -3181,9 +3613,7 @@ function TransportView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
             ]}
           />
         ) : null}
-        {transportTab === "carriers" ? (
-          <CarrierListView desktopApi={desktopApi} />
-        ) : null}
+        {transportTab === "carriers" ? <CarrierListView desktopApi={desktopApi} /> : null}
       </div>
     </div>
   );
@@ -3204,7 +3634,9 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   const [formError, setFormError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [selectedCarrier, setSelectedCarrier] = useState<string | null>(null);
-  const [carrierVehicles, setCarrierVehicles] = useState<Array<{ id: string; plate: string; description: string | null }>>([]);
+  const [carrierVehicles, setCarrierVehicles] = useState<
+    Array<{ id: string; plate: string; description: string | null }>
+  >([]);
 
   useEffect(() => {
     loadCarriers();
@@ -3315,16 +3747,26 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
         </button>
       </div>
 
-      {message ? <p style={{ color: "#16a34a", fontWeight: 700, marginBottom: "6px", fontSize: "13px" }}>{message}</p> : null}
+      {message ? (
+        <p style={{ color: "#16a34a", fontWeight: 700, marginBottom: "6px", fontSize: "13px" }}>
+          {message}
+        </p>
+      ) : null}
 
       {showForm ? (
         <div style={{ ...styles.card, marginBottom: "12px", padding: "12px" }}>
-          <h3 style={{ margin: "0 0 8px 0", fontSize: "14px" }}>{editingId ? "Editar Transportadora" : "Nova Transportadora"}</h3>
+          <h3 style={{ margin: "0 0 8px 0", fontSize: "14px" }}>
+            {editingId ? "Editar Transportadora" : "Nova Transportadora"}
+          </h3>
           {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
             <label style={styles.fieldLabel}>
               Nome *
-              <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} style={styles.input} />
+              <input
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                style={styles.input}
+              />
             </label>
             <label style={styles.fieldLabel}>
               CNPJ/CPF
@@ -3337,8 +3779,12 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
             </label>
           </div>
           <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
-            <button type="button" onClick={handleSave} style={styles.primaryButton}>Salvar</button>
-            <button type="button" onClick={() => setShowForm(false)} style={styles.secondaryButton}>Cancelar</button>
+            <button type="button" onClick={handleSave} style={styles.primaryButton}>
+              Salvar
+            </button>
+            <button type="button" onClick={() => setShowForm(false)} style={styles.secondaryButton}>
+              Cancelar
+            </button>
           </div>
         </div>
       ) : null}
@@ -3348,30 +3794,83 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
       ) : (
         <div style={{ display: "grid", gap: "8px" }}>
           {carriers.map((carrier) => (
-            <div key={carrier.id} style={{ ...styles.card, padding: "12px 16px", cursor: "pointer" }} onClick={() => setSelectedCarrier(carrier.id === selectedCarrier ? null : carrier.id)}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div
+              key={carrier.id}
+              style={{ ...styles.card, padding: "12px 16px", cursor: "pointer" }}
+              onClick={() => setSelectedCarrier(carrier.id === selectedCarrier ? null : carrier.id)}
+            >
+              <div
+                style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}
+              >
                 <div>
                   <strong>{carrier.name}</strong>
-                  {carrier.document ? <span style={{ color: "#64748b", fontSize: "13px", marginLeft: "8px" }}>{carrier.document}</span> : null}
-                  <span style={{ fontSize: "11px", marginLeft: "8px", padding: "2px 6px", borderRadius: "4px", background: carrier.source === "omie" ? "#dbeafe" : "#dcfce7", color: carrier.source === "omie" ? "#1e40af" : "#166534" }}>
+                  {carrier.document ? (
+                    <span style={{ color: "#64748b", fontSize: "13px", marginLeft: "8px" }}>
+                      {carrier.document}
+                    </span>
+                  ) : null}
+                  <span
+                    style={{
+                      fontSize: "11px",
+                      marginLeft: "8px",
+                      padding: "2px 6px",
+                      borderRadius: "4px",
+                      background: carrier.source === "omie" ? "#dbeafe" : "#dcfce7",
+                      color: carrier.source === "omie" ? "#1e40af" : "#166534"
+                    }}
+                  >
                     {carrier.source === "omie" ? "OMIE" : "LOCAL"}
                   </span>
                 </div>
                 <div style={{ display: "flex", gap: "6px" }}>
-                  <button type="button" onClick={(e) => { e.stopPropagation(); openEdit(carrier); }} style={styles.secondaryButton}>Editar</button>
-                  <button type="button" onClick={(e) => { e.stopPropagation(); handleDelete(carrier.id); }} style={{ ...styles.secondaryButton, color: "#b91c1c", borderColor: "#fecaca" }}>Excluir</button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openEdit(carrier);
+                    }}
+                    style={styles.secondaryButton}
+                  >
+                    Editar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDelete(carrier.id);
+                    }}
+                    style={{ ...styles.secondaryButton, color: "#b91c1c", borderColor: "#fecaca" }}
+                  >
+                    Excluir
+                  </button>
                 </div>
               </div>
               {selectedCarrier === carrier.id ? (
-                <div style={{ marginTop: "12px", borderTop: "1px solid #e2e8f0", paddingTop: "12px" }}>
-                  <h4 style={{ margin: "0 0 8px 0", fontSize: "14px", color: "#475569" }}>Veiculos vinculados</h4>
+                <div
+                  style={{ marginTop: "12px", borderTop: "1px solid #e2e8f0", paddingTop: "12px" }}
+                >
+                  <h4 style={{ margin: "0 0 8px 0", fontSize: "14px", color: "#475569" }}>
+                    Veiculos vinculados
+                  </h4>
                   {carrierVehicles.length === 0 ? (
-                    <p style={{ color: "#94a3b8", fontSize: "13px", margin: 0 }}>Nenhum veiculo vinculado.</p>
+                    <p style={{ color: "#94a3b8", fontSize: "13px", margin: 0 }}>
+                      Nenhum veiculo vinculado.
+                    </p>
                   ) : (
                     <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
                       {carrierVehicles.map((v) => (
-                        <span key={v.id} style={{ fontSize: "13px", background: "#f1f5f9", padding: "4px 8px", borderRadius: "4px", color: "#0f172a" }}>
-                          {v.plate}{v.description ? ` — ${v.description}` : ""}
+                        <span
+                          key={v.id}
+                          style={{
+                            fontSize: "13px",
+                            background: "#f1f5f9",
+                            padding: "4px 8px",
+                            borderRadius: "4px",
+                            color: "#0f172a"
+                          }}
+                        >
+                          {v.plate}
+                          {v.description ? ` — ${v.description}` : ""}
                         </span>
                       ))}
                     </div>
@@ -3449,11 +3948,7 @@ interface CustomerFormData {
   state: string;
 }
 
-function CustomerListView({
-  desktopApi
-}: {
-  desktopApi: KyberRockDesktopApi;
-}) {
+function CustomerListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   const pageSize = 100;
   const [customers, setCustomers] = useState<CustomerCacheEntry[]>([]);
   const [customerTotal, setCustomerTotal] = useState(0);
@@ -3528,7 +4023,7 @@ function CustomerListView({
 
   async function loadPriceTables(): Promise<void> {
     try {
-      const list = await desktopApi.priceTablesList() as Array<{ id: string; name: string }>;
+      const list = (await desktopApi.priceTablesList()) as Array<{ id: string; name: string }>;
       setPriceTables(list);
     } catch {
       /* ignore */
@@ -3682,7 +4177,7 @@ function CustomerListView({
         });
         setMessageState("Cliente atualizado com sucesso.");
       } else {
-        const created = await desktopApi.customersCreate({
+        const created = (await desktopApi.customersCreate({
           tradeName: form.tradeName.trim(),
           legalName: form.legalName.trim(),
           document: normalizedDocument || undefined,
@@ -3700,7 +4195,7 @@ function CustomerListView({
           neighborhood: form.neighborhood.trim() || undefined,
           city: form.city.trim() || undefined,
           state: form.state.trim().toUpperCase() || undefined
-        }) as { id: string };
+        })) as { id: string };
         customerId = created.id;
         setMessageState("Cliente criado com sucesso.");
       }
@@ -3768,202 +4263,244 @@ function CustomerListView({
       </div>
 
       {message ? (
-        <p style={{ color: "#16a34a", fontWeight: 700, marginBottom: "6px", fontSize: "13px" }}>{message}</p>
+        <p style={{ color: "#16a34a", fontWeight: 700, marginBottom: "6px", fontSize: "13px" }}>
+          {message}
+        </p>
       ) : null}
 
       {showForm ? (
-        <div style={{ ...styles.card, marginBottom: "12px", padding: "12px" }}>
-          <h3 style={{ margin: "0 0 8px 0", fontSize: "14px" }}>
-            {editingId ? "Editar Cliente" : "Novo Cliente"}
-          </h3>
+        <div style={styles.customerFormShell}>
+          <div style={styles.customerFormHeader}>
+            <div>
+              <p style={styles.kicker}>Cadastro comercial</p>
+              <h3 style={styles.customerFormTitle}>
+                {editingId ? "Editar Cliente" : "Novo Cliente"}
+              </h3>
+              <p style={styles.customerFormSubtitle}>
+                Organize dados fiscais, contato, endereco e regras comerciais em uma unica ficha.
+              </p>
+            </div>
+            <span style={styles.customerFormBadge}>{editingId ? "Edicao" : "Novo"}</span>
+          </div>
 
           {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-            <label style={styles.fieldLabel}>
-              Razao Social *
-              <input
-                value={form.legalName}
-                onChange={(e) => setForm({ ...form, legalName: e.target.value })}
-                style={styles.input}
-              />
-            </label>
-            <label style={styles.fieldLabel}>
-              Nome Fantasia *
-              <input
-                value={form.tradeName}
-                onChange={(e) => setForm({ ...form, tradeName: e.target.value })}
-                style={styles.input}
-              />
-            </label>
-            <label style={styles.fieldLabel}>
-              CNPJ/CPF
-              <input
-                value={formatDocument(form.document)}
-                onChange={(e) => setForm({ ...form, document: normalizeDocument(e.target.value) })}
-                placeholder="00.000.000/0000-00"
-                style={styles.input}
-              />
-            </label>
-            <label style={styles.fieldLabel}>
-              Telefone
-              <input
-                value={formatPhone(form.phone)}
-                onChange={(e) => setForm({ ...form, phone: normalizePhone(e.target.value) })}
-                placeholder="(11) 91234-5678"
-                style={styles.input}
-              />
-            </label>
-            <label style={styles.fieldLabel}>
-              Email
-              <input
-                value={form.email}
-                onChange={(e) => setForm({ ...form, email: e.target.value })}
-                placeholder="cliente@exemplo.com"
-                style={styles.input}
-              />
-            </label>
-            <label style={styles.fieldLabel}>
-              CEP
-              <input
-                value={formatCep(form.zipcode)}
-                onChange={(e) => setForm({ ...form, zipcode: normalizeCep(e.target.value) })}
-                onBlur={applyCepToForm}
-                placeholder="00000-000"
-                style={styles.input}
-              />
-            </label>
-            <label style={styles.fieldLabel}>
-              Endereco
-              <input
-                value={form.addressStreet}
-                onChange={(e) => setForm({ ...form, addressStreet: e.target.value })}
-                style={styles.input}
-              />
-            </label>
-            <label style={styles.fieldLabel}>
-              Numero
-              <input
-                value={form.addressNumber}
-                onChange={(e) => setForm({ ...form, addressNumber: e.target.value })}
-                style={styles.input}
-              />
-            </label>
-            <label style={styles.fieldLabel}>
-              Complemento
-              <input
-                value={form.addressComplement}
-                onChange={(e) => setForm({ ...form, addressComplement: e.target.value })}
-                style={styles.input}
-              />
-            </label>
-            <label style={styles.fieldLabel}>
-              Bairro
-              <input
-                value={form.neighborhood}
-                onChange={(e) => setForm({ ...form, neighborhood: e.target.value })}
-                style={styles.input}
-              />
-            </label>
-            <label style={styles.fieldLabel}>
-              Cidade
-              <input
-                value={form.city}
-                onChange={(e) => setForm({ ...form, city: e.target.value })}
-                style={styles.input}
-              />
-            </label>
-            <label style={styles.fieldLabel}>
-              Estado
-              <input
-                value={form.state}
-                onChange={(e) => setForm({ ...form, state: e.target.value.toUpperCase().slice(0, 2) })}
-                placeholder="UF"
-                style={styles.input}
-              />
-            </label>
-            <label style={styles.fieldLabel}>
-              Limite de Credito (R$)
-              <input
-                value={form.creditLimitReais}
-                onChange={(e) => setForm({ ...form, creditLimitReais: e.target.value })}
-                placeholder="50.000,00"
-                style={styles.input}
-              />
-            </label>
+          <div style={styles.customerFormGrid}>
+            <section style={styles.customerFormSection}>
+              <h4 style={styles.customerSectionTitle}>Identificacao</h4>
+              <div style={styles.customerFieldGrid}>
+                <label style={styles.fieldLabel}>
+                  Razao Social *
+                  <input
+                    value={form.legalName}
+                    onChange={(e) => setForm({ ...form, legalName: e.target.value })}
+                    style={styles.input}
+                  />
+                </label>
+                <label style={styles.fieldLabel}>
+                  Nome Fantasia *
+                  <input
+                    value={form.tradeName}
+                    onChange={(e) => setForm({ ...form, tradeName: e.target.value })}
+                    style={styles.input}
+                  />
+                </label>
+                <label style={styles.fieldLabel}>
+                  CNPJ/CPF
+                  <input
+                    value={formatDocument(form.document)}
+                    onChange={(e) =>
+                      setForm({ ...form, document: normalizeDocument(e.target.value) })
+                    }
+                    placeholder="00.000.000/0000-00"
+                    style={styles.input}
+                  />
+                </label>
+              </div>
+            </section>
+
+            <section style={styles.customerFormSection}>
+              <h4 style={styles.customerSectionTitle}>Contato</h4>
+              <div style={styles.customerFieldGrid}>
+                <label style={styles.fieldLabel}>
+                  Telefone
+                  <input
+                    value={formatPhone(form.phone)}
+                    onChange={(e) => setForm({ ...form, phone: normalizePhone(e.target.value) })}
+                    placeholder="(11) 91234-5678"
+                    style={styles.input}
+                  />
+                </label>
+                <label style={styles.fieldLabel}>
+                  Email
+                  <input
+                    value={form.email}
+                    onChange={(e) => setForm({ ...form, email: e.target.value })}
+                    placeholder="cliente@exemplo.com"
+                    style={styles.input}
+                  />
+                </label>
+              </div>
+            </section>
+
+            <section style={styles.customerFormSectionWide}>
+              <h4 style={styles.customerSectionTitle}>Endereco</h4>
+              <div style={styles.customerFieldGrid}>
+                <label style={styles.fieldLabel}>
+                  CEP
+                  <input
+                    value={formatCep(form.zipcode)}
+                    onChange={(e) => setForm({ ...form, zipcode: normalizeCep(e.target.value) })}
+                    onBlur={applyCepToForm}
+                    placeholder="00000-000"
+                    style={styles.input}
+                  />
+                </label>
+                <label style={styles.fieldLabel}>
+                  Endereco
+                  <input
+                    value={form.addressStreet}
+                    onChange={(e) => setForm({ ...form, addressStreet: e.target.value })}
+                    style={styles.input}
+                  />
+                </label>
+                <label style={styles.fieldLabel}>
+                  Numero
+                  <input
+                    value={form.addressNumber}
+                    onChange={(e) => setForm({ ...form, addressNumber: e.target.value })}
+                    style={styles.input}
+                  />
+                </label>
+                <label style={styles.fieldLabel}>
+                  Complemento
+                  <input
+                    value={form.addressComplement}
+                    onChange={(e) => setForm({ ...form, addressComplement: e.target.value })}
+                    style={styles.input}
+                  />
+                </label>
+                <label style={styles.fieldLabel}>
+                  Bairro
+                  <input
+                    value={form.neighborhood}
+                    onChange={(e) => setForm({ ...form, neighborhood: e.target.value })}
+                    style={styles.input}
+                  />
+                </label>
+                <label style={styles.fieldLabel}>
+                  Cidade
+                  <input
+                    value={form.city}
+                    onChange={(e) => setForm({ ...form, city: e.target.value })}
+                    style={styles.input}
+                  />
+                </label>
+                <label style={styles.fieldLabel}>
+                  Estado
+                  <input
+                    value={form.state}
+                    onChange={(e) =>
+                      setForm({ ...form, state: e.target.value.toUpperCase().slice(0, 2) })
+                    }
+                    placeholder="UF"
+                    style={styles.input}
+                  />
+                </label>
+              </div>
+            </section>
+
+            <section style={styles.customerFormSection}>
+              <h4 style={styles.customerSectionTitle}>Comercial</h4>
+              <div style={styles.customerFieldGrid}>
+                <label style={styles.fieldLabel}>
+                  Limite de Credito (R$)
+                  <input
+                    value={form.creditLimitReais}
+                    onChange={(e) => setForm({ ...form, creditLimitReais: e.target.value })}
+                    placeholder="50.000,00"
+                    style={styles.input}
+                  />
+                </label>
+                <label style={styles.fieldLabel}>
+                  Transportadora padrao
+                  <select
+                    value={form.defaultCarrierId}
+                    onChange={(e) => setForm({ ...form, defaultCarrierId: e.target.value })}
+                    style={styles.input}
+                  >
+                    <option value="">Selecione a transportadora padrao</option>
+                    {carriers.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label style={styles.fieldLabel}>
+                  Condicao de pagamento padrao
+                  <select
+                    value={form.defaultPaymentTermId}
+                    onChange={(e) => setForm({ ...form, defaultPaymentTermId: e.target.value })}
+                    style={styles.input}
+                  >
+                    <option value="">Selecione a condicao padrao</option>
+                    {paymentTerms.map((term) => (
+                      <option key={term.id} value={term.id}>
+                        {term.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label style={styles.fieldLabel}>
+                  Tabela de preco
+                  <select
+                    value={form.priceTableId}
+                    onChange={(e) => setForm({ ...form, priceTableId: e.target.value })}
+                    style={styles.input}
+                  >
+                    <option value="">Selecione a tabela de preco</option>
+                    {priceTables.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <label style={styles.checkboxCard}>
+                <input
+                  type="checkbox"
+                  checked={form.omieBillingBlocked}
+                  onChange={(e) => setForm({ ...form, omieBillingBlocked: e.target.checked })}
+                />
+                <span>
+                  <strong>Cliente bloqueado</strong>
+                  <small style={{ display: "block", color: "var(--kr-muted)", marginTop: "2px" }}>
+                    Sinaliza restricao de faturamento no atendimento.
+                  </small>
+                </span>
+              </label>
+            </section>
+
+            <section style={styles.customerFormSection}>
+              <h4 style={styles.customerSectionTitle}>Observacoes</h4>
+              <label style={styles.fieldLabel}>
+                Anotacoes internas
+                <input
+                  value={form.observations}
+                  onChange={(e) => setForm({ ...form, observations: e.target.value })}
+                  style={styles.input}
+                />
+              </label>
+            </section>
           </div>
 
-          <label style={{ ...styles.fieldLabel, marginTop: "8px" }}>
-            <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-              <input
-                type="checkbox"
-                checked={form.omieBillingBlocked}
-                onChange={(e) => setForm({ ...form, omieBillingBlocked: e.target.checked })}
-              />
-              Cliente bloqueado
-            </span>
-          </label>
-
-          <label style={{ ...styles.fieldLabel, marginTop: "8px" }}>
-            Observacoes
-            <input
-              value={form.observations}
-              onChange={(e) => setForm({ ...form, observations: e.target.value })}
-              style={styles.input}
-            />
-          </label>
-
-          <label style={{ ...styles.fieldLabel, marginTop: "8px" }}>
-            Transportadora padrao
-            <select
-              value={form.defaultCarrierId}
-              onChange={(e) => setForm({ ...form, defaultCarrierId: e.target.value })}
-              style={styles.input}
-            >
-              <option value="">Selecione a transportadora padrao</option>
-              {carriers.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
-          </label>
-
-          <label style={{ ...styles.fieldLabel, marginTop: "8px" }}>
-            Condicao de pagamento padrao
-            <select
-              value={form.defaultPaymentTermId}
-              onChange={(e) => setForm({ ...form, defaultPaymentTermId: e.target.value })}
-              style={styles.input}
-            >
-              <option value="">Selecione a condicao padrao</option>
-              {paymentTerms.map((term) => (
-                <option key={term.id} value={term.id}>{term.name}</option>
-              ))}
-            </select>
-          </label>
-
-          <label style={{ ...styles.fieldLabel, marginTop: "8px" }}>
-            Tabela de preco
-            <select
-              value={form.priceTableId}
-              onChange={(e) => setForm({ ...form, priceTableId: e.target.value })}
-              style={styles.input}
-            >
-              <option value="">Selecione a tabela de preco</option>
-              {priceTables.map((t) => (
-                <option key={t.id} value={t.id}>{t.name}</option>
-              ))}
-            </select>
-          </label>
-
-          <div style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
+          <div style={styles.customerFormActions}>
             <button type="button" onClick={handleSave} style={styles.primaryButton}>
               Salvar
             </button>
-            <button
-              type="button"
-              onClick={() => setShowForm(false)}
-              style={styles.secondaryButton}
-            >
+            <button type="button" onClick={() => setShowForm(false)} style={styles.secondaryButton}>
               Cancelar
             </button>
           </div>
@@ -3993,23 +4530,39 @@ function CustomerListView({
                   {customer.document ? ` \u2022 ${customer.document}` : ""}
                 </p>
                 <p style={{ ...styles.muted, margin: "2px 0 0 0", fontSize: "13px" }}>
-                  Limite: {formatMoney(customer.creditLimitCents)} | Em aberto: {formatMoney(customer.openReceivablesCents)}
+                  Limite: {formatMoney(customer.creditLimitCents)} | Em aberto:{" "}
+                  {formatMoney(customer.openReceivablesCents)}
                   {customer.omieBillingBlocked ? " | \uD83D\uDD34 Bloqueado" : ""}
                 </p>
                 {customer.city || customer.state || customer.addressStreet ? (
                   <p style={{ ...styles.muted, margin: "2px 0 0 0", fontSize: "13px" }}>
-                    {[customer.addressStreet, customer.addressNumber, customer.neighborhood, customer.city, customer.state]
+                    {[
+                      customer.addressStreet,
+                      customer.addressNumber,
+                      customer.neighborhood,
+                      customer.city,
+                      customer.state
+                    ]
                       .filter(Boolean)
                       .join(", ")}
                   </p>
                 ) : null}
                 {customer.defaultPaymentTermId ? (
                   <p style={{ ...styles.muted, margin: "2px 0 0 0", fontSize: "13px" }}>
-                    Condicao padrao: {paymentTerms.find((term) => term.id === customer.defaultPaymentTermId)?.name ?? customer.defaultPaymentTermId}
+                    Condicao padrao:{" "}
+                    {paymentTerms.find((term) => term.id === customer.defaultPaymentTermId)?.name ??
+                      customer.defaultPaymentTermId}
                   </p>
                 ) : null}
                 {customer.observations ? (
-                  <p style={{ ...styles.muted, margin: "2px 0 0 0", fontSize: "12px", fontStyle: "italic" }}>
+                  <p
+                    style={{
+                      ...styles.muted,
+                      margin: "2px 0 0 0",
+                      fontSize: "12px",
+                      fontStyle: "italic"
+                    }}
+                  >
                     {customer.observations}
                   </p>
                 ) : null}
@@ -4034,9 +4587,18 @@ function CustomerListView({
           ))}
         </div>
       )}
-      <div style={{ display: "flex", gap: "8px", alignItems: "center", justifyContent: "space-between", marginTop: "10px" }}>
+      <div
+        style={{
+          display: "flex",
+          gap: "8px",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginTop: "10px"
+        }}
+      >
         <span style={styles.muted}>
-          Mostrando {customerTotal === 0 ? 0 : customerPage * pageSize + 1}-{Math.min(customerTotal, (customerPage + 1) * pageSize)} de {customerTotal}
+          Mostrando {customerTotal === 0 ? 0 : customerPage * pageSize + 1}-
+          {Math.min(customerTotal, (customerPage + 1) * pageSize)} de {customerTotal}
         </span>
         <div style={{ display: "flex", gap: "8px" }}>
           <button
@@ -4061,11 +4623,7 @@ function CustomerListView({
   );
 }
 
-function ScaleView({
-  desktopApi
-}: {
-  desktopApi: KyberRockDesktopApi;
-}) {
+function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   const [host, setHost] = useState("192.168.1.100");
   const [port, setPort] = useState("4001");
   const [connected, setConnected] = useState(false);
@@ -4182,27 +4740,39 @@ function ScaleView({
         <article style={styles.panel}>
           <h2 style={styles.panelTitle}>Leitura ao Vivo</h2>
           <p style={styles.muted}>Status: {status}</p>
-          <div style={{
-            marginTop: "16px",
-            padding: "40px 20px",
-            background: connected ? "#f0fdf4" : "#f8fafc",
-            borderRadius: "16px",
-            border: `3px solid ${connected && reading?.stable ? "#16a34a" : connected ? "#d97706" : "#e2e8f0"}`,
-            textAlign: "center"
-          }}>
-            <p style={{ fontSize: "48px", fontWeight: 700, margin: 0, color: connected ? "#0f172a" : "#94a3b8", fontFamily: "monospace" }}>
+          <div
+            style={{
+              marginTop: "16px",
+              padding: "40px 20px",
+              background: connected ? "#f0fdf4" : "#f8fafc",
+              borderRadius: "16px",
+              border: `3px solid ${connected && reading?.stable ? "#16a34a" : connected ? "#d97706" : "#e2e8f0"}`,
+              textAlign: "center"
+            }}
+          >
+            <p
+              style={{
+                fontSize: "48px",
+                fontWeight: 700,
+                margin: 0,
+                color: connected ? "#0f172a" : "#94a3b8",
+                fontFamily: "monospace"
+              }}
+            >
               {reading ? new Intl.NumberFormat("pt-BR").format(reading.weightKg) : "----"}
             </p>
             <p style={{ fontSize: "20px", color: "#64748b", margin: "8px 0 0 0" }}>
               {connected ? "kg" : ""}
             </p>
             {reading ? (
-              <p style={{
-                fontSize: "14px",
-                color: reading.stable ? "#16a34a" : "#d97706",
-                marginTop: "8px",
-                fontWeight: 700
-              }}>
+              <p
+                style={{
+                  fontSize: "14px",
+                  color: reading.stable ? "#16a34a" : "#d97706",
+                  marginTop: "8px",
+                  fontWeight: 700
+                }}
+              >
                 {reading.stable ? "Estavel" : "Instavel"}
               </p>
             ) : null}
@@ -4262,10 +4832,15 @@ function OmieViewer({
         />
       </div>
       {items.length === 0 ? (
-        <p style={{ color: "#64748b" }}>Nenhum registro encontrado. Execute a sincronizacao OMIE.</p>
+        <p style={{ color: "#64748b" }}>
+          Nenhum registro encontrado. Execute a sincronizacao OMIE.
+        </p>
       ) : (
         items.map((item) => (
-          <div key={String(item.id)} style={{ ...styles.operationRow, borderTop: "1px solid #e2e8f0" }}>
+          <div
+            key={String(item.id)}
+            style={{ ...styles.operationRow, borderTop: "1px solid #e2e8f0" }}
+          >
             <div>
               <strong>{String(item[displayField] ?? "")}</strong>
               {subField && item[subField] ? (
@@ -4277,9 +4852,18 @@ function OmieViewer({
           </div>
         ))
       )}
-      <div style={{ display: "flex", gap: "8px", alignItems: "center", justifyContent: "space-between", marginTop: "10px" }}>
+      <div
+        style={{
+          display: "flex",
+          gap: "8px",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginTop: "10px"
+        }}
+      >
         <span style={styles.muted}>
-          Mostrando {total === 0 ? 0 : page * pageSize + 1}-{Math.min(total, (page + 1) * pageSize)} de {total}
+          Mostrando {total === 0 ? 0 : page * pageSize + 1}-{Math.min(total, (page + 1) * pageSize)}{" "}
+          de {total}
         </span>
         <div style={{ display: "flex", gap: "8px" }}>
           <button
@@ -4446,33 +5030,49 @@ function SimpleCrudList({
         </button>
       </div>
 
-      {msg ? <p style={{ color: "#16a34a", fontWeight: 700, marginBottom: "6px", fontSize: "13px" }}>{msg}</p> : null}
+      {msg ? (
+        <p style={{ color: "#16a34a", fontWeight: 700, marginBottom: "6px", fontSize: "13px" }}>
+          {msg}
+        </p>
+      ) : null}
 
       {showForm ? (
         <div style={{ ...styles.card, marginBottom: "12px", padding: "12px" }}>
           <h3 style={{ margin: "0 0 8px 0", fontSize: "14px" }}>{editingId ? "Editar" : "Novo"}</h3>
           {fields.map((f) => (
             <label key={f.key} style={styles.fieldLabel}>
-              {f.label}{f.required ? " *" : ""}
+              {f.label}
+              {f.required ? " *" : ""}
               <input
                 value={
-                  f.key === "document" ? formatDocument(formData[f.key] || "") :
-                  f.key === "phone" ? formatPhone(formData[f.key] || "") :
-                  formData[f.key] || ""
+                  f.key === "document"
+                    ? formatDocument(formData[f.key] || "")
+                    : f.key === "phone"
+                      ? formatPhone(formData[f.key] || "")
+                      : formData[f.key] || ""
                 }
-                onChange={(e) => setFormData({
-                  ...formData,
-                  [f.key]: f.key === "document" ? normalizeDocument(e.target.value) :
-                           f.key === "phone" ? normalizePhone(e.target.value) :
-                           e.target.value
-                })}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    [f.key]:
+                      f.key === "document"
+                        ? normalizeDocument(e.target.value)
+                        : f.key === "phone"
+                          ? normalizePhone(e.target.value)
+                          : e.target.value
+                  })
+                }
                 style={styles.input}
               />
             </label>
           ))}
           <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
-            <button type="button" onClick={handleSave} style={styles.primaryButton}>Salvar</button>
-            <button type="button" onClick={() => setShowForm(false)} style={styles.secondaryButton}>Cancelar</button>
+            <button type="button" onClick={handleSave} style={styles.primaryButton}>
+              Salvar
+            </button>
+            <button type="button" onClick={() => setShowForm(false)} style={styles.secondaryButton}>
+              Cancelar
+            </button>
           </div>
         </div>
       ) : null}
@@ -4484,11 +5084,23 @@ function SimpleCrudList({
           <div key={item.id as string} style={styles.operationRow}>
             <div>
               <strong>{displayLabel(item)}</strong>
-              {displaySub(item) ? <p style={{ ...styles.muted, margin: "2px 0 0 0", fontSize: "13px" }}>{displaySub(item)}</p> : null}
+              {displaySub(item) ? (
+                <p style={{ ...styles.muted, margin: "2px 0 0 0", fontSize: "13px" }}>
+                  {displaySub(item)}
+                </p>
+              ) : null}
             </div>
             <div style={{ display: "flex", gap: "8px" }}>
-              <button type="button" onClick={() => openEdit(item)} style={styles.secondaryButton}>Editar</button>
-              <button type="button" onClick={() => handleDelete(item.id as string)} style={{ ...styles.secondaryButton, color: "#b91c1c", borderColor: "#fecaca" }}>Excluir</button>
+              <button type="button" onClick={() => openEdit(item)} style={styles.secondaryButton}>
+                Editar
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDelete(item.id as string)}
+                style={{ ...styles.secondaryButton, color: "#b91c1c", borderColor: "#fecaca" }}
+              >
+                Excluir
+              </button>
             </div>
           </div>
         ))
@@ -4497,15 +5109,17 @@ function SimpleCrudList({
   );
 }
 
-function PriceTableListView({
-  desktopApi
-}: {
-  desktopApi: KyberRockDesktopApi;
-}) {
-  const [tables, setTables] = useState<Array<{ id: string; name: string; needsPush?: boolean }>>([]);
+function PriceTableListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
+  const [tables, setTables] = useState<Array<{ id: string; name: string; needsPush?: boolean }>>(
+    []
+  );
   const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
-  const [items, setItems] = useState<Array<{ id: string; productCode: string | null; productDesc: string; unitPriceCents: number }>>([]);
-  const [products, setProducts] = useState<Array<{ id: string; code: string; description: string }>>([]);
+  const [items, setItems] = useState<
+    Array<{ id: string; productCode: string | null; productDesc: string; unitPriceCents: number }>
+  >([]);
+  const [products, setProducts] = useState<
+    Array<{ id: string; code: string; description: string }>
+  >([]);
   const [newTableName, setNewTableName] = useState("");
   const [editingTableId, setEditingTableId] = useState<string | null>(null);
   const [editingTableName, setEditingTableName] = useState("");
@@ -4525,17 +5139,21 @@ function PriceTableListView({
   }, [selectedTableId]);
 
   async function loadTables(): Promise<void> {
-    const list = await desktopApi.priceTablesList() as Array<{ id: string; name: string }>;
+    const list = (await desktopApi.priceTablesList()) as Array<{ id: string; name: string }>;
     setTables(list);
   }
 
   async function loadProducts(): Promise<void> {
-    const result = await desktopApi.queryCache({ entityType: "product", activeOnly: true, limit: 200 });
+    const result = await desktopApi.queryCache({
+      entityType: "product",
+      activeOnly: true,
+      limit: 200
+    });
     setProducts(result.rows as Array<{ id: string; code: string; description: string }>);
   }
 
   async function loadTableDetails(tableId: string): Promise<void> {
-    const itemList = await desktopApi.priceTablesListItems(tableId) as Array<{
+    const itemList = (await desktopApi.priceTablesListItems(tableId)) as Array<{
       id: string;
       productCode: string | null;
       productDesc: string;
@@ -4593,8 +5211,10 @@ function PriceTableListView({
   }
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "250px 1fr", gap: "20px", minHeight: "400px" }}>
-      <div style={{ borderRight: "1px solid #e2e8f0", paddingRight: "16px" }}>
+    <div
+      style={{ display: "grid", gridTemplateColumns: "250px 1fr", gap: "20px", minHeight: "400px" }}
+    >
+      <div style={{ borderRight: "1px solid var(--kr-border)", paddingRight: "16px" }}>
         <h3 style={{ marginTop: 0 }}>Tabelas</h3>
         <div style={{ display: "flex", gap: "6px", marginBottom: "12px" }}>
           <input
@@ -4603,7 +5223,11 @@ function PriceTableListView({
             onChange={(e) => setNewTableName(e.target.value)}
             style={{ ...styles.input, flex: 1, padding: "6px 8px", fontSize: "13px" }}
           />
-          <button type="button" onClick={handleCreateTable} style={{ ...styles.primaryButton, padding: "6px 10px", fontSize: "13px" }}>
+          <button
+            type="button"
+            onClick={handleCreateTable}
+            style={{ ...styles.primaryButton, padding: "6px 10px", fontSize: "13px" }}
+          >
             +
           </button>
         </div>
@@ -4618,6 +5242,7 @@ function PriceTableListView({
               borderRadius: "8px",
               marginBottom: "4px",
               background: selectedTableId === table.id ? "#f1f5f9" : "transparent",
+              color: selectedTableId === table.id ? "#0f172a" : "var(--kr-text-strong)",
               fontWeight: selectedTableId === table.id ? 700 : 400
             }}
           >
@@ -4626,27 +5251,56 @@ function PriceTableListView({
                 <input
                   value={editingTableName}
                   onChange={(e) => setEditingTableName(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") handleRenameTable(); }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleRenameTable();
+                  }}
                   style={{ ...styles.input, flex: 1, padding: "4px 6px", fontSize: "12px" }}
                   autoFocus
                 />
-                <button type="button" onClick={handleRenameTable} style={{ ...styles.primaryButton, padding: "4px 6px", fontSize: "11px" }}>OK</button>
+                <button
+                  type="button"
+                  onClick={handleRenameTable}
+                  style={{ ...styles.primaryButton, padding: "4px 6px", fontSize: "11px" }}
+                >
+                  OK
+                </button>
               </div>
             ) : (
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div
+                style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}
+              >
                 <span style={{ fontSize: "14px" }}>{table.name}</span>
                 <div style={{ display: "flex", gap: "4px" }}>
                   <button
                     type="button"
-                    onClick={(e) => { e.stopPropagation(); setEditingTableId(table.id); setEditingTableName(table.name); }}
-                    style={{ border: "none", background: "none", cursor: "pointer", fontSize: "12px", color: "#64748b" }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEditingTableId(table.id);
+                      setEditingTableName(table.name);
+                    }}
+                    style={{
+                      border: "none",
+                      background: "none",
+                      cursor: "pointer",
+                      fontSize: "12px",
+                      color: "#64748b"
+                    }}
                   >
                     ✎
                   </button>
                   <button
                     type="button"
-                    onClick={(e) => { e.stopPropagation(); handleDeleteTable(table.id); }}
-                    style={{ border: "none", background: "none", cursor: "pointer", fontSize: "12px", color: "#b91c1c" }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteTable(table.id);
+                    }}
+                    style={{
+                      border: "none",
+                      background: "none",
+                      cursor: "pointer",
+                      fontSize: "12px",
+                      color: "#b91c1c"
+                    }}
                   >
                     ✕
                   </button>
@@ -4658,7 +5312,9 @@ function PriceTableListView({
       </div>
 
       <div>
-        {message ? <p style={{ color: "#16a34a", fontWeight: 700, marginBottom: "8px" }}>{message}</p> : null}
+        {message ? (
+          <p style={{ color: "#16a34a", fontWeight: 700, marginBottom: "8px" }}>{message}</p>
+        ) : null}
 
         {!selectedTableId ? (
           <p style={{ color: "#64748b" }}>Selecione uma tabela para ver seus itens.</p>
@@ -4666,7 +5322,9 @@ function PriceTableListView({
           <>
             <h3 style={{ marginTop: 0 }}>Itens da Tabela</h3>
 
-            <div style={{ display: "flex", gap: "8px", marginBottom: "16px", alignItems: "flex-end" }}>
+            <div
+              style={{ display: "flex", gap: "8px", marginBottom: "16px", alignItems: "flex-end" }}
+            >
               <label style={{ ...styles.fieldLabel, marginBottom: 0, flex: 1 }}>
                 Produto
                 <select
@@ -4676,7 +5334,9 @@ function PriceTableListView({
                 >
                   <option value="">Selecione...</option>
                   {products.map((p) => (
-                    <option key={p.id} value={p.id}>{p.code} - {p.description}</option>
+                    <option key={p.id} value={p.id}>
+                      {p.code} - {p.description}
+                    </option>
                   ))}
                 </select>
               </label>
@@ -4689,26 +5349,45 @@ function PriceTableListView({
                   style={styles.input}
                 />
               </label>
-              <button type="button" onClick={handleAddItem} style={{ ...styles.primaryButton, padding: "10px 14px" }}>
+              <button
+                type="button"
+                onClick={handleAddItem}
+                style={{ ...styles.primaryButton, padding: "10px 14px" }}
+              >
                 Adicionar
               </button>
             </div>
 
             {items.length === 0 ? (
-              <p style={{ color: "#64748b", marginBottom: "24px" }}>
-                Nenhum item cadastrado.
-              </p>
+              <p style={{ color: "#64748b", marginBottom: "24px" }}>Nenhum item cadastrado.</p>
             ) : (
               <div style={{ marginBottom: "24px" }}>
                 {items.map((item) => (
-                  <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderTop: "1px solid #e2e8f0" }}>
+                  <div
+                    key={item.id}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      padding: "8px 0",
+                      borderTop: "1px solid #e2e8f0"
+                    }}
+                  >
                     <span>
-                      <strong>{item.productDesc}</strong>{item.productCode ? ` (${item.productCode})` : ""} — {formatMoney(item.unitPriceCents)}/ton
+                      <strong>{item.productDesc}</strong>
+                      {item.productCode ? ` (${item.productCode})` : ""} —{" "}
+                      {formatMoney(item.unitPriceCents)}/ton
                     </span>
                     <button
                       type="button"
                       onClick={() => handleRemoveItem(item.id)}
-                      style={{ border: "none", background: "none", cursor: "pointer", color: "#b91c1c", fontSize: "16px" }}
+                      style={{
+                        border: "none",
+                        background: "none",
+                        cursor: "pointer",
+                        color: "#b91c1c",
+                        fontSize: "16px"
+                      }}
                     >
                       ✕
                     </button>
@@ -5022,6 +5701,80 @@ const styles = {
     background: "var(--kr-surface)",
     borderColor: "var(--kr-border)"
   },
+  customerFormShell: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "14px",
+    marginBottom: "14px",
+    padding: "16px",
+    border: "1px solid var(--kr-border)",
+    borderRadius: "18px",
+    background: "linear-gradient(180deg, var(--kr-surface) 0%, var(--kr-surface-soft) 100%)",
+    boxShadow: "var(--kr-shadow)"
+  },
+  customerFormHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: "12px",
+    paddingBottom: "12px",
+    borderBottom: "1px solid var(--kr-border)"
+  },
+  customerFormTitle: {
+    margin: "4px 0 4px 0",
+    color: "var(--kr-text-strong)",
+    fontSize: "20px"
+  },
+  customerFormSubtitle: {
+    margin: 0,
+    color: "var(--kr-muted)",
+    fontSize: "13px"
+  },
+  customerFormBadge: {
+    padding: "6px 10px",
+    borderRadius: "999px",
+    background: "#dbeafe",
+    color: "#1e3a8a",
+    fontSize: "12px",
+    fontWeight: 900
+  },
+  customerFormGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
+    gap: "12px"
+  },
+  customerFormSection: {
+    padding: "14px",
+    border: "1px solid var(--kr-border)",
+    borderRadius: "14px",
+    background: "var(--kr-surface)"
+  },
+  customerFormSectionWide: {
+    padding: "14px",
+    border: "1px solid var(--kr-border)",
+    borderRadius: "14px",
+    background: "var(--kr-surface)",
+    gridColumn: "1 / -1"
+  },
+  customerSectionTitle: {
+    margin: "0 0 10px 0",
+    color: "var(--kr-text-strong)",
+    fontSize: "13px",
+    textTransform: "uppercase" as const,
+    letterSpacing: "0.06em"
+  },
+  customerFieldGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+    gap: "8px 10px"
+  },
+  customerFormActions: {
+    display: "flex",
+    gap: "8px",
+    justifyContent: "flex-end",
+    paddingTop: "12px",
+    borderTop: "1px solid var(--kr-border)"
+  },
   panel: {
     marginTop: "12px",
     padding: "16px",
@@ -5053,6 +5806,35 @@ const styles = {
     display: "flex",
     flexDirection: "column" as const,
     gap: "4px"
+  },
+  simulatedWeightField: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "4px",
+    marginTop: "8px",
+    color: "#dbeafe",
+    fontSize: "12px",
+    fontWeight: 800
+  },
+  simulatedWeightInput: {
+    border: "1px solid rgba(255,255,255,0.35)",
+    borderRadius: "10px",
+    padding: "8px 10px",
+    font: "inherit",
+    fontSize: "13px",
+    background: "rgba(255,255,255,0.92)",
+    color: "#0f172a"
+  },
+  simulateWeightButton: {
+    border: "1px solid rgba(255,255,255,0.35)",
+    borderRadius: "999px",
+    padding: "7px 10px",
+    marginTop: "8px",
+    background: "rgba(255,255,255,0.14)",
+    color: "#ffffff",
+    cursor: "pointer",
+    fontWeight: 800,
+    fontSize: "12px"
   },
   metricLabel: {
     color: "#bfdbfe",
@@ -5121,6 +5903,19 @@ const styles = {
     margin: "-2px 0 10px 0",
     color: "var(--kr-muted)",
     fontSize: "12px"
+  },
+  checkboxCard: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: "10px",
+    padding: "10px",
+    border: "1px solid var(--kr-border)",
+    borderRadius: "12px",
+    background: "var(--kr-surface-soft)",
+    color: "var(--kr-text-strong)",
+    cursor: "pointer",
+    marginBottom: "10px",
+    fontSize: "13px"
   },
   actionStack: {
     display: "flex",

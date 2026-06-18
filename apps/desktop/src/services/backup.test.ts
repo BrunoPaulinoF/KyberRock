@@ -5,6 +5,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { getAppliedMigrations, runDesktopMigrations } from "../database/migrate";
+import { DESKTOP_MIGRATIONS } from "../database/migrations";
 import { openDesktopDatabase } from "../database/sqlite";
 import { ensureInitialDesktopIdentity, getLocalDesktopIdentity } from "./bootstrap";
 import {
@@ -52,7 +53,7 @@ describe("desktop backup", () => {
       const restoredDatabase = openDesktopDatabase({ databasePath: restoredDatabasePath });
 
       try {
-        expect(getAppliedMigrations(restoredDatabase)).toHaveLength(7);
+        expect(getAppliedMigrations(restoredDatabase)).toHaveLength(DESKTOP_MIGRATIONS.length);
         expect(getLocalDesktopIdentity(restoredDatabase)).toEqual(identity);
       } finally {
         restoredDatabase.close();

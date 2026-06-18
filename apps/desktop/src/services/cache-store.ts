@@ -329,6 +329,11 @@ function normalizeFiscalTypeText(value: string): string {
     .trim();
 }
 
+function isManualInstallmentsPaymentTerm(term: PaymentTermCacheEntry): boolean {
+  const normalizedName = normalizeFiscalTypeText(term.name);
+  return normalizedName.includes("informe") && normalizedName.includes("numero") && normalizedName.includes("parcela");
+}
+
 function mapVehicle(row: VehicleRow): VehicleCacheEntry {
   return {
     id: row.id,
@@ -499,6 +504,10 @@ export class CacheStore {
 
     if (activeOnly) {
       rows = rows.filter((r) => (r as { isActive?: boolean }).isActive !== false);
+    }
+
+    if (entityType === "payment_term") {
+      rows = (rows as PaymentTermCacheEntry[]).filter((term) => !isManualInstallmentsPaymentTerm(term));
     }
 
     if (entityType === "product" && productFiscalType === "finished_goods") {
