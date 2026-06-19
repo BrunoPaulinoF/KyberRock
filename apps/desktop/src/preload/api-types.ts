@@ -217,6 +217,14 @@ export interface KyberRockDesktopApi {
     lastPullAt: string | null;
     nextPullAt: string | null;
   }>;
+  lookupCep: (cep: string) => Promise<{
+    zipcode: string;
+    street: string;
+    complement: string;
+    neighborhood: string;
+    city: string;
+    state: string;
+  }>;
   onUpdateAvailable: (callback: (event: unknown, version: string) => void) => void;
   offUpdateAvailable: (callback: (event: unknown, version: string) => void) => void;
   onPlateScanned: (callback: (plate: string) => void) => void;

@@ -1,14 +1,25 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  formatCep,
   formatDocument,
+  formatMoneyInput,
+  formatPhone,
   formatPlate,
+  isValidCep,
   isValidCnpj,
   isValidCpf,
   isValidDocument,
+  isValidEmail,
+  isValidMoneyInput,
   isValidPlate,
+  normalizeCep,
   normalizeDocument,
-  normalizePlate
+  normalizeEmail,
+  normalizeMoneyInput,
+  normalizePhone,
+  normalizePlate,
+  parseMoneyInputToCents
 } from "./format";
 
 describe("normalizePlate", () => {
@@ -107,5 +118,109 @@ describe("formatDocument", () => {
 
   it("returns digits when length is not CPF/CNPJ", () => {
     expect(formatDocument("12345")).toBe("12345");
+  });
+});
+
+describe("normalizePhone", () => {
+  it("keeps digits only and caps at 11", () => {
+    expect(normalizePhone("(11) 9 1234-5678")).toBe("11912345678");
+    expect(normalizePhone("12345678901234")).toBe("12345678901");
+  });
+});
+
+describe("formatPhone", () => {
+  it("formats cellphone with 11 digits", () => {
+    expect(formatPhone("11912345678")).toBe("(11) 91234-5678");
+  });
+
+  it("formats landline with 10 digits", () => {
+    expect(formatPhone("1112345678")).toBe("(11) 1234-5678");
+  });
+});
+
+describe("normalizeEmail / isValidEmail", () => {
+  it("lowercases and trims", () => {
+    expect(normalizeEmail("  Foo@Bar.COM ")).toBe("foo@bar.com");
+  });
+
+  it("accepts valid emails", () => {
+    expect(isValidEmail("user@example.com")).toBe(true);
+  });
+
+  it("rejects invalid emails", () => {
+    expect(isValidEmail("user@")).toBe(false);
+    expect(isValidEmail("user@.com")).toBe(false);
+    expect(isValidEmail("user example.com")).toBe(false);
+  });
+});
+
+describe("normalizeCep / formatCep / isValidCep", () => {
+  it("normalizes to 8 digits", () => {
+    expect(normalizeCep("01310-100")).toBe("01310100");
+  });
+
+  it("formats CEP", () => {
+    expect(formatCep("01310100")).toBe("01310-100");
+  });
+
+  it("validates 8-digit CEP", () => {
+    expect(isValidCep("01310100")).toBe(true);
+    expect(isValidCep("0131")).toBe(false);
+  });
+});
+
+describe("normalizeMoneyInput", () => {
+  it("strips currency symbols and letters", () => {
+    expect(normalizeMoneyInput("R$ 1.250,75abc")).toBe("1250.75");
+  });
+
+  it("treats dot as thousands separator when no comma is present", () => {
+    expect(normalizeMoneyInput("1.500")).toBe("1500");
+  });
+
+  it("prefers comma as decimal separator", () => {
+    expect(normalizeMoneyInput("1.500,50")).toBe("1500.50");
+  });
+});
+
+describe("formatMoneyInput", () => {
+  it("formats decimal numbers with comma", () => {
+    expect(formatMoneyInput("1250.5")).toBe("1.250,50");
+  });
+
+  it("formats integers with dot grouping", () => {
+    expect(formatMoneyInput("1500")).toBe("1.500");
+  });
+
+  it("returns empty for empty input", () => {
+    expect(formatMoneyInput("")).toBe("");
+  });
+});
+
+describe("parseMoneyInputToCents", () => {
+  it("parses formatted BRL to cents", () => {
+    expect(parseMoneyInputToCents("1.250,75")).toBe(125075);
+  });
+
+  it("returns null for invalid input", () => {
+    expect(parseMoneyInputToCents("abc")).toBeNull();
+  });
+
+  it("returns null for negative values", () => {
+    expect(parseMoneyInputToCents("-10")).toBeNull();
+  });
+});
+
+describe("isValidMoneyInput", () => {
+  it("treats empty as valid", () => {
+    expect(isValidMoneyInput("")).toBe(true);
+  });
+
+  it("accepts formatted BRL", () => {
+    expect(isValidMoneyInput("1.250,75")).toBe(true);
+  });
+
+  it("rejects garbage", () => {
+    expect(isValidMoneyInput("abc")).toBe(false);
   });
 });

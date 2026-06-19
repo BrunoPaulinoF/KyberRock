@@ -119,6 +119,7 @@ const desktopApi = {
   scaleRead: () => ipcRenderer.invoke("desktop:scale-read"),
   scaleGetStatus: () => ipcRenderer.invoke("desktop:scale-get-status"),
   omieConfig: () => ipcRenderer.invoke("desktop:omie-config"),
+  lookupCep: (cep: string) => ipcRenderer.invoke("desktop:lookup-cep", cep),
   omieSync: () => ipcRenderer.invoke("desktop:omie-sync"),
   startOmieDataEntryLoop: () => ipcRenderer.invoke("desktop:omie-data-entry-loop"),
   getOmieLoopStatus: () => ipcRenderer.invoke("desktop:omie-loop-status"),

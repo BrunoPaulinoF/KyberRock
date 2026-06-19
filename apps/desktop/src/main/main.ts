@@ -753,6 +753,39 @@ function registerIpcHandlers(): void {
     return runtime.getOmieConfig();
   });
 
+  ipcMain.handle("desktop:lookup-cep", async (_event, cep: string) => {
+    const digits = String(cep ?? "").replace(/\D/g, "").slice(0, 8);
+    if (digits.length !== 8) {
+      throw new Error("CEP invalido. Informe 8 digitos.");
+    }
+    const response = await fetch(`https://viacep.com.br/ws/${digits}/json/`, {
+      headers: { Accept: "application/json" }
+    });
+    if (!response.ok) {
+      throw new Error(`Falha ao consultar CEP (HTTP ${response.status}).`);
+    }
+    const payload = (await response.json()) as {
+      cep?: string;
+      logradouro?: string;
+      complemento?: string;
+      bairro?: string;
+      localidade?: string;
+      uf?: string;
+      erro?: boolean;
+    };
+    if (payload.erro) {
+      throw new Error("CEP nao encontrado.");
+    }
+    return {
+      zipcode: digits,
+      street: String(payload.logradouro ?? "").trim(),
+      complement: String(payload.complemento ?? "").trim(),
+      neighborhood: String(payload.bairro ?? "").trim(),
+      city: String(payload.localidade ?? "").trim(),
+      state: String(payload.uf ?? "").trim().toUpperCase()
+    };
+  });
+
   ipcMain.handle("desktop:omie-sync", async () => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.syncOmieAll();

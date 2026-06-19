@@ -20,16 +20,14 @@ import type {
 import type { PriceDetails } from "../services/pricing";
 import type { CacheEntityType } from "../services/cache-store";
 import {
-  formatDocument,
-  formatPhone,
-  formatPlate,
   isValidDocument,
   isValidEmail,
   isValidPlate,
   normalizeDocument,
   normalizeEmail,
   normalizePhone,
-  normalizePlate
+  normalizePlate,
+  parseMoneyInputToCents
 } from "@kyberrock/shared";
 import { ActivationGate } from "./ActivationGate";
 import { BlockedScreen } from "./BlockedScreen";
@@ -37,6 +35,18 @@ import { DashboardView } from "./DashboardView";
 import { InsightsView } from "./InsightsView";
 import { ReportsView } from "./ReportsView";
 import { CustomersView } from "./CustomersView";
+import {
+  DocumentInput,
+  EmailInput,
+  Field,
+  MoneyCentsInput,
+  MoneyInput,
+  NumberInput,
+  PhoneInput,
+  PlateInput,
+  TextInput,
+  getInputStyle
+} from "./inputs";
 import type { CarrierCacheEntry } from "./customers.types";
 import type { KyberRockDesktopApi } from "./desktop-api";
 export interface AppProps {
@@ -2200,22 +2210,6 @@ function parsePositiveNumber(value: string): number | null {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
-function parseCurrencyToCents(value: string): number | null | undefined {
-  const normalized = value.trim().replace(".", "").replace(",", ".");
-
-  if (!normalized) {
-    return undefined;
-  }
-
-  const parsed = Number(normalized);
-
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    return null;
-  }
-
-  return Math.round(parsed * 100);
-}
-
 interface OmieLoopUiState {
   running: boolean;
   finished: boolean;
@@ -2776,19 +2770,15 @@ function WeighingForm({
                   />
                 ) : null}
                 {form.freightCalculationType === "per_ton_km" ? (
-                  <label style={styles.fieldLabel}>
-                    Distancia (km)
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      value={form.freightDistanceKm}
-                      onChange={(event) =>
-                        setForm((prev) => ({ ...prev, freightDistanceKm: event.target.value }))
-                      }
-                      placeholder="Ex: 35"
-                      style={styles.input}
-                    />
-                  </label>
+                  <NumberInput
+                    label="Distancia (km)"
+                    value={form.freightDistanceKm}
+                    onChange={(freightDistanceKm) =>
+                      setForm((prev) => ({ ...prev, freightDistanceKm }))
+                    }
+                    placeholder="Ex: 35"
+                    hint="Apenas numeros inteiros."
+                  />
                 ) : null}
                 <PriceInput
                   label="Frete minimo"
@@ -2798,17 +2788,14 @@ function WeighingForm({
                     setForm((prev) => ({ ...prev, freightMinValueCents: cents }))
                   }
                 />
-                <label style={styles.fieldLabel}>
-                  Destino/observacao do frete
-                  <input
-                    value={form.freightDestination}
-                    onChange={(event) =>
-                      setForm((prev) => ({ ...prev, freightDestination: event.target.value }))
-                    }
-                    placeholder="Destino ou regra comercial"
-                    style={styles.input}
-                  />
-                </label>
+                <TextInput
+                  label="Destino/observacao do frete"
+                  value={form.freightDestination}
+                  onChange={(freightDestination) =>
+                    setForm((prev) => ({ ...prev, freightDestination }))
+                  }
+                  placeholder="Destino ou regra comercial"
+                />
               </div>
             ) : null}
           </div>
@@ -2946,23 +2933,18 @@ function QuickVehicleModal({ desktopApi, onClose, onCreated }: QuickModalProps) 
           Cadastrar veiculo
         </h3>
         {error ? <p style={styles.errorMessage}>{error}</p> : null}
-        <label style={styles.fieldLabel}>
-          Placa
-          <input
-            value={formatPlate(plateInput)}
-            onChange={(e) => setPlateInput(normalizePlate(e.target.value))}
-            placeholder="ABC1234 ou ABC1D23"
-            style={styles.input}
-          />
-        </label>
-        <label style={styles.fieldLabel}>
-          Descricao
-          <input
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            style={styles.input}
-          />
-        </label>
+        <PlateInput
+          label="Placa"
+          value={plateInput}
+          onChange={setPlateInput}
+          required
+        />
+        <TextInput
+          label="Descricao"
+          value={description}
+          onChange={setDescription}
+          placeholder="Ex: Caminhao basculante"
+        />
         <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
           <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
             {saving ? "Salvando..." : "Salvar"}
@@ -3021,28 +3003,20 @@ function QuickDriverModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
           Cadastrar motorista
         </h3>
         {error ? <p style={styles.errorMessage}>{error}</p> : null}
-        <label style={styles.fieldLabel}>
-          Nome completo
-          <input value={name} onChange={(e) => setName(e.target.value)} style={styles.input} />
-        </label>
-        <label style={styles.fieldLabel}>
-          CPF
-          <input
-            value={formatDocument(documentInput)}
-            onChange={(e) => setDocumentInput(normalizeDocument(e.target.value))}
-            placeholder="000.000.000-00"
-            style={styles.input}
-          />
-        </label>
-        <label style={styles.fieldLabel}>
-          Telefone
-          <input
-            value={formatPhone(phone)}
-            onChange={(e) => setPhone(normalizePhone(e.target.value))}
-            placeholder="(11) 91234-5678"
-            style={styles.input}
-          />
-        </label>
+        <TextInput
+          label="Nome completo"
+          value={name}
+          onChange={setName}
+          required
+          autoComplete="name"
+        />
+        <DocumentInput
+          label="CPF"
+          value={documentInput}
+          onChange={setDocumentInput}
+          placeholder="000.000.000-00"
+        />
+        <PhoneInput label="Telefone" value={phone} onChange={setPhone} />
         <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
           <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
             {saving ? "Salvando..." : "Salvar"}
@@ -3110,49 +3084,29 @@ function QuickCustomerModal({ desktopApi, onClose, onCreated }: QuickModalProps)
           Cadastrar cliente
         </h3>
         {error ? <p style={styles.errorMessage}>{error}</p> : null}
-        <label style={styles.fieldLabel}>
-          Nome fantasia
-          <input
-            value={tradeName}
-            onChange={(e) => setTradeName(e.target.value)}
-            style={styles.input}
-          />
-        </label>
-        <label style={styles.fieldLabel}>
-          Razao social
-          <input
-            value={legalName}
-            onChange={(e) => setLegalName(e.target.value)}
-            style={styles.input}
-          />
-        </label>
-        <label style={styles.fieldLabel}>
-          CPF/CNPJ
-          <input
-            value={formatDocument(documentInput)}
-            onChange={(e) => setDocumentInput(normalizeDocument(e.target.value))}
-            placeholder="000.000.000-00 ou 00.000.000/0000-00"
-            style={styles.input}
-          />
-        </label>
-        <label style={styles.fieldLabel}>
-          Telefone
-          <input
-            value={formatPhone(phone)}
-            onChange={(e) => setPhone(normalizePhone(e.target.value))}
-            placeholder="(11) 91234-5678"
-            style={styles.input}
-          />
-        </label>
-        <label style={styles.fieldLabel}>
-          Email
-          <input
-            value={emailInput}
-            onChange={(e) => setEmailInput(e.target.value)}
-            placeholder="cliente@exemplo.com"
-            style={styles.input}
-          />
-        </label>
+        <TextInput
+          label="Nome fantasia"
+          value={tradeName}
+          onChange={setTradeName}
+          required
+        />
+        <TextInput
+          label="Razao social"
+          value={legalName}
+          onChange={setLegalName}
+          required
+        />
+        <DocumentInput
+          label="CPF/CNPJ"
+          value={documentInput}
+          onChange={setDocumentInput}
+        />
+        <PhoneInput label="Telefone" value={phone} onChange={setPhone} />
+        <EmailInput
+          label="Email"
+          value={emailInput}
+          onChange={setEmailInput}
+        />
         <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
           <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
             {saving ? "Salvando..." : "Salvar"}
@@ -3204,19 +3158,17 @@ function QuickCarrierModal({ desktopApi, onClose, onCreated }: QuickModalProps) 
           Cadastrar transportadora
         </h3>
         {error ? <p style={styles.errorMessage}>{error}</p> : null}
-        <label style={styles.fieldLabel}>
-          Nome
-          <input value={name} onChange={(e) => setName(e.target.value)} style={styles.input} />
-        </label>
-        <label style={styles.fieldLabel}>
-          CPF/CNPJ
-          <input
-            value={formatDocument(documentInput)}
-            onChange={(e) => setDocumentInput(normalizeDocument(e.target.value))}
-            placeholder="00.000.000/0000-00"
-            style={styles.input}
-          />
-        </label>
+        <TextInput
+          label="Nome"
+          value={name}
+          onChange={setName}
+          required
+        />
+        <DocumentInput
+          label="CPF/CNPJ"
+          value={documentInput}
+          onChange={setDocumentInput}
+        />
         <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
           <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
             {saving ? "Salvando..." : "Salvar"}
@@ -3514,48 +3466,25 @@ function PriceInput({
   label?: string;
   suffix?: string;
 }) {
-  const [focused, setFocused] = useState(false);
-
   const centsToBRL = (cents: number) =>
     new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents / 100);
 
-  const displayValue = focused
-    ? valueCents !== null
-      ? String(valueCents / 100).replace(".", ",")
-      : ""
-    : valueCents !== null
-      ? centsToBRL(valueCents)
-      : "";
-
   return (
-    <label style={styles.fieldLabel}>
-      {label}
-      <input
-        type="text"
-        inputMode="decimal"
-        value={displayValue}
-        placeholder="0,00"
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
-        onChange={(event) => {
-          const raw = event.target.value.replace(/[^\d,]/g, "");
-          if (!raw) {
-            onChange(null);
-            return;
-          }
-          const parts = raw.split(",");
-          const intPart = parts[0] || "0";
-          const decPart = (parts[1] || "").slice(0, 2).padEnd(2, "0");
-          onChange(Number(`${intPart}${decPart}`));
-        }}
-        style={styles.input}
+    <div>
+      <MoneyCentsInput
+        label={label}
+        valueCents={valueCents}
+        onChange={onChange}
+        allowZero
+        hint={`Use virgula para centavos. Ex: 125,50${suffix ? ` (${suffix})` : ""}`}
       />
       {valueCents !== null ? (
-        <span style={{ fontSize: "12px", color: "#64748b" }}>
-          {centsToBRL(valueCents)}{suffix}
+        <span style={{ fontSize: "12px", color: "#64748b", marginTop: "2px", display: "block" }}>
+          {centsToBRL(valueCents)}
+          {suffix}
         </span>
       ) : null}
-    </label>
+    </div>
   );
 }
 
@@ -3915,31 +3844,24 @@ function VehicleListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
             {editingId ? "Editar Veiculo" : "Novo Veiculo"}
           </h3>
           {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-            <label style={styles.fieldLabel}>
-              Placa *
-              <input
-                value={formatPlate(form.plate)}
-                onChange={(e) => setForm({ ...form, plate: normalizePlate(e.target.value) })}
-                placeholder="ABC1234 ou ABC1D23"
-                style={styles.input}
-              />
-            </label>
-            <label style={styles.fieldLabel}>
-              Descricao
-              <input
-                value={form.description}
-                onChange={(e) => setForm({ ...form, description: e.target.value })}
-                style={styles.input}
-              />
-            </label>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px" }}>
+            <PlateInput
+              label="Placa"
+              value={form.plate}
+              onChange={(plate) => setForm({ ...form, plate })}
+              required
+            />
+            <TextInput
+              label="Descricao"
+              value={form.description}
+              onChange={(description) => setForm({ ...form, description })}
+            />
           </div>
-          <label style={styles.fieldLabel}>
-            Transportadora
+          <Field label="Transportadora">
             <select
               value={form.carrierId}
               onChange={(e) => setForm({ ...form, carrierId: e.target.value })}
-              style={styles.input}
+              style={getInputStyle(false)}
             >
               <option value="">Selecione a transportadora</option>
               {carriers.map((c) => (
@@ -3948,7 +3870,7 @@ function VehicleListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                 </option>
               ))}
             </select>
-          </label>
+          </Field>
           <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
             <button type="button" onClick={handleSave} style={styles.primaryButton}>
               Salvar
@@ -4211,24 +4133,18 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
             {editingId ? "Editar Transportadora" : "Nova Transportadora"}
           </h3>
           {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-            <label style={styles.fieldLabel}>
-              Nome *
-              <input
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-                style={styles.input}
-              />
-            </label>
-            <label style={styles.fieldLabel}>
-              CNPJ/CPF
-              <input
-                value={formatDocument(form.document)}
-                onChange={(e) => setForm({ ...form, document: normalizeDocument(e.target.value) })}
-                placeholder="00.000.000/0000-00"
-                style={styles.input}
-              />
-            </label>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px" }}>
+            <TextInput
+              label="Nome"
+              value={form.name}
+              onChange={(name) => setForm({ ...form, name })}
+              required
+            />
+            <DocumentInput
+              label="CNPJ/CPF"
+              value={form.document}
+              onChange={(document) => setForm({ ...form, document })}
+            />
           </div>
           <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
             <button type="button" onClick={handleSave} style={styles.primaryButton}>
@@ -4412,24 +4328,21 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
       <section style={styles.twoColumns}>
         <article style={styles.panel}>
           <h2 style={styles.panelTitle}>Configuracao da Balanca Toledo</h2>
-          <label style={styles.fieldLabel}>
-            Host / IP
-            <input
-              value={host}
-              onChange={(e) => setHost(e.target.value)}
-              style={styles.input}
-              placeholder="192.168.1.100"
-            />
-          </label>
-          <label style={styles.fieldLabel}>
-            Porta TCP
-            <input
-              value={port}
-              onChange={(e) => setPort(e.target.value)}
-              style={styles.input}
-              placeholder="4001"
-            />
-          </label>
+          <TextInput
+            label="Host / IP"
+            value={host}
+            onChange={setHost}
+            placeholder="192.168.1.100"
+          />
+          <NumberInput
+            label="Porta TCP"
+            value={port}
+            onChange={setPort}
+            placeholder="4001"
+            maxLength={5}
+            minLength={1}
+            hint="Apenas numeros (1-65535)."
+          />
           {error ? <p style={styles.errorMessage}>{error}</p> : null}
           <div style={{ display: "flex", gap: "12px", marginTop: "16px" }}>
             <button
@@ -4753,33 +4666,40 @@ function SimpleCrudList({
       {showForm ? (
         <div style={{ ...styles.card, marginBottom: "12px", padding: "12px" }}>
           <h3 style={{ margin: "0 0 8px 0", fontSize: "14px" }}>{editingId ? "Editar" : "Novo"}</h3>
-          {fields.map((f) => (
-            <label key={f.key} style={styles.fieldLabel}>
-              {f.label}
-              {f.required ? " *" : ""}
-              <input
-                value={
-                  f.key === "document"
-                    ? formatDocument(formData[f.key] || "")
-                    : f.key === "phone"
-                      ? formatPhone(formData[f.key] || "")
-                      : formData[f.key] || ""
-                }
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    [f.key]:
-                      f.key === "document"
-                        ? normalizeDocument(e.target.value)
-                        : f.key === "phone"
-                          ? normalizePhone(e.target.value)
-                          : e.target.value
-                  })
-                }
-                style={styles.input}
+          {fields.map((f) => {
+            const value = formData[f.key] || "";
+            if (f.key === "document") {
+              return (
+                <DocumentInput
+                  key={f.key}
+                  label={f.label}
+                  value={value}
+                  required={f.required}
+                  onChange={(v) => setFormData({ ...formData, [f.key]: v })}
+                />
+              );
+            }
+            if (f.key === "phone") {
+              return (
+                <PhoneInput
+                  key={f.key}
+                  label={f.label}
+                  value={value}
+                  required={f.required}
+                  onChange={(v) => setFormData({ ...formData, [f.key]: v })}
+                />
+              );
+            }
+            return (
+              <TextInput
+                key={f.key}
+                label={f.label}
+                value={value}
+                required={f.required}
+                onChange={(v) => setFormData({ ...formData, [f.key]: v })}
               />
-            </label>
-          ))}
+            );
+          })}
           <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
             <button type="button" onClick={handleSave} style={styles.primaryButton}>
               Salvar
@@ -4903,8 +4823,8 @@ function PriceTableListView({ desktopApi }: { desktopApi: KyberRockDesktopApi })
 
   async function handleAddItem(): Promise<void> {
     if (!selectedTableId || !itemProductId || !itemPriceReais.trim()) return;
-    const unitPriceCents = parseCurrencyToCents(itemPriceReais);
-    if (unitPriceCents === null || unitPriceCents === undefined) return;
+    const unitPriceCents = parseMoneyInputToCents(itemPriceReais);
+    if (unitPriceCents === null) return;
 
     await desktopApi.priceTablesAddItem({
       priceTableId: selectedTableId,
@@ -5039,12 +4959,11 @@ function PriceTableListView({ desktopApi }: { desktopApi: KyberRockDesktopApi })
             <div
               style={{ display: "flex", gap: "8px", marginBottom: "16px", alignItems: "flex-end" }}
             >
-              <label style={{ ...styles.fieldLabel, marginBottom: 0, flex: 1 }}>
-                Produto
+              <Field label="Produto" style={{ flex: 1, marginBottom: 0 }}>
                 <select
                   value={itemProductId}
                   onChange={(e) => setItemProductId(e.target.value)}
-                  style={styles.input}
+                  style={getInputStyle(false)}
                 >
                   <option value="">Selecione...</option>
                   {products.map((p) => (
@@ -5053,16 +4972,16 @@ function PriceTableListView({ desktopApi }: { desktopApi: KyberRockDesktopApi })
                     </option>
                   ))}
                 </select>
-              </label>
-              <label style={{ ...styles.fieldLabel, marginBottom: 0, width: "120px" }}>
-                Preco/ton (R$)
-                <input
+              </Field>
+              <div style={{ width: "150px" }}>
+                <MoneyInput
+                  label="Preco/ton (R$)"
                   value={itemPriceReais}
-                  onChange={(e) => setItemPriceReais(e.target.value)}
+                  onChange={(formatted) => setItemPriceReais(formatted)}
                   placeholder="150,00"
-                  style={styles.input}
+                  allowZero={false}
                 />
-              </label>
+              </div>
               <button
                 type="button"
                 onClick={handleAddItem}

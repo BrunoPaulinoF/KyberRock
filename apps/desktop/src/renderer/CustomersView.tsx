@@ -1,20 +1,27 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import type { KyberRockDesktopApi } from "../preload/api-types";
-import type { CustomerCacheEntry, CustomerFormData } from "./customers.types";
 import {
-  formatDocument,
-  formatPhone,
   isValidDocument,
   isValidEmail,
   normalizeDocument,
   normalizeEmail,
-  normalizePhone
+  normalizePhone,
+  parseMoneyInputToCents
 } from "@kyberrock/shared";
 
-function normalizeCep(value: string): string {
-  return value.replace(/\D/g, "").slice(0, 8);
-}
+import type { KyberRockDesktopApi } from "../preload/api-types";
+import {
+  CepInput,
+  DocumentInput,
+  EmailInput,
+  Field,
+  MoneyInput,
+  PhoneInput,
+  TextInput,
+  getInputStyle
+} from "./inputs";
+import type { CepLookupResult } from "./inputs";
+import type { CustomerCacheEntry, CustomerFormData } from "./customers.types";
 
 const initialForm: CustomerFormData = {
   tradeName: "",
@@ -155,72 +162,41 @@ const styles = {
   }),
   formShell: {
     display: "grid",
-    gridTemplateColumns: "minmax(0, 1.1fr) minmax(0, 1.2fr) minmax(0, 0.9fr)",
+    gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
     gap: "12px",
     padding: "14px"
   },
   formSection: {
     display: "grid",
-    gap: "8px",
+    gap: "4px",
+    alignContent: "start",
     padding: "12px",
     border: "1px solid var(--kr-border)",
     borderRadius: "10px",
-    background: "var(--kr-surface-soft)"
+    background: "var(--kr-surface-soft)",
+    minWidth: 0
   },
   formSectionTitle: {
-    margin: 0,
+    margin: "0 0 6px 0",
     fontSize: "11px",
     fontWeight: 800,
     textTransform: "uppercase" as const,
     color: "var(--kr-muted)",
     letterSpacing: "0.04em"
   },
-  formGrid: {
-    display: "grid",
-    gap: "8px"
-  },
   fieldRow: {
     display: "grid",
-    gridTemplateColumns: "1fr 1fr",
+    gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
     gap: "8px"
-  },
-  fieldRow3: {
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr 1fr",
-    gap: "8px"
-  },
-  fieldLabel: {
-    display: "grid",
-    gap: "3px",
-    fontWeight: 700,
-    fontSize: "12px",
-    color: "var(--kr-text-strong)"
-  },
-  input: {
-    border: "1px solid var(--kr-input-border)",
-    borderRadius: "6px",
-    padding: "6px 8px",
-    font: "inherit",
-    fontSize: "13px",
-    background: "var(--kr-input-bg)",
-    color: "var(--kr-text-strong)"
-  },
-  inputDisabled: {
-    border: "1px solid var(--kr-input-border)",
-    borderRadius: "6px",
-    padding: "6px 8px",
-    font: "inherit",
-    fontSize: "13px",
-    background: "#f1f5f9",
-    color: "#64748b",
-    cursor: "not-allowed"
   },
   formFooter: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
     padding: "10px 14px",
-    borderTop: "1px solid var(--kr-border)"
+    borderTop: "1px solid var(--kr-border)",
+    flexWrap: "wrap" as const,
+    gap: "8px"
   },
   formHeader: {
     display: "flex",
@@ -228,7 +204,9 @@ const styles = {
     alignItems: "center",
     padding: "10px 14px",
     borderBottom: "1px solid var(--kr-border)",
-    background: "var(--kr-surface-soft)"
+    background: "var(--kr-surface-soft)",
+    flexWrap: "wrap" as const,
+    gap: "8px"
   },
   formTitle: {
     margin: 0,
@@ -252,14 +230,18 @@ const styles = {
     padding: "8px 14px",
     borderTop: "1px solid var(--kr-border)",
     color: "var(--kr-muted)",
-    fontSize: "12px"
+    fontSize: "12px",
+    flexWrap: "wrap" as const,
+    gap: "8px"
   },
   checkbox: {
     display: "flex",
     alignItems: "center",
     gap: "6px",
     fontWeight: 700,
-    fontSize: "12px"
+    fontSize: "12px",
+    margin: "4px 0 8px 0",
+    color: "var(--kr-text-strong)"
   }
 } as const;
 
@@ -384,7 +366,6 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
   function validateForm(): string | null {
     if (!form.tradeName.trim()) return "Nome fantasia obrigatorio.";
     if (!form.legalName.trim()) return "Razao social obrigatoria.";
-    if (form.zipcode.trim() && normalizeCep(form.zipcode).length !== 8) return "CEP invalido.";
     return null;
   }
 
@@ -411,9 +392,9 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
       return;
     }
     const creditLimitCents = form.creditLimitReais.trim()
-      ? Math.round(Number(form.creditLimitReais.replace(/\./g, "").replace(",", ".")) * 100) || undefined
+      ? parseMoneyInputToCents(form.creditLimitReais) ?? undefined
       : undefined;
-    const normalizedZipcode = normalizeCep(form.zipcode);
+    const normalizedZipcode = form.zipcode.replace(/\D/g, "");
 
     try {
       let customerId = editingId;
@@ -498,6 +479,15 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
     }
   }
 
+  async function handleCepLookup(digits: string): Promise<CepLookupResult | null> {
+    if (!desktopApi) return null;
+    try {
+      return await desktopApi.lookupCep(digits);
+    } catch {
+      return null;
+    }
+  }
+
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil(total / pageSize)),
     [total]
@@ -532,220 +522,184 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
           <div style={styles.formShell}>
             <section style={styles.formSection}>
               <h4 style={styles.formSectionTitle}>Identificacao</h4>
-              <div style={styles.formGrid}>
-                <label style={styles.fieldLabel}>
-                  Razao social
-                  <input
-                    value={form.legalName}
-                    onChange={(e) => setForm({ ...form, legalName: e.target.value })}
-                    disabled={isOmie}
-                    style={isOmie ? styles.inputDisabled : styles.input}
-                  />
-                </label>
-                <label style={styles.fieldLabel}>
-                  Nome fantasia
-                  <input
-                    value={form.tradeName}
-                    onChange={(e) => setForm({ ...form, tradeName: e.target.value })}
-                    disabled={isOmie}
-                    style={isOmie ? styles.inputDisabled : styles.input}
-                  />
-                </label>
-                <div style={styles.fieldRow}>
-                  <label style={styles.fieldLabel}>
-                    CNPJ/CPF
-                    <input
-                      value={formatDocument(form.document)}
-                      onChange={(e) =>
-                        setForm({ ...form, document: normalizeDocument(e.target.value) })
-                      }
-                      disabled={isOmie}
-                      style={isOmie ? styles.inputDisabled : styles.input}
-                      placeholder="00.000.000/0000-00"
-                    />
-                  </label>
-                  <label style={styles.fieldLabel}>
-                    Limite (R$)
-                    <input
-                      value={form.creditLimitReais}
-                      onChange={(e) => setForm({ ...form, creditLimitReais: e.target.value })}
-                      disabled={isOmie}
-                      style={isOmie ? styles.inputDisabled : styles.input}
-                      placeholder="0,00"
-                    />
-                  </label>
-                </div>
+              <TextInput
+                label="Razao social"
+                value={form.legalName}
+                onChange={(legalName) => setForm({ ...form, legalName })}
+                required
+                disabled={isOmie}
+              />
+              <TextInput
+                label="Nome fantasia"
+                value={form.tradeName}
+                onChange={(tradeName) => setForm({ ...form, tradeName })}
+                required
+                disabled={isOmie}
+              />
+              <div style={styles.fieldRow}>
+                <DocumentInput
+                  label="CNPJ/CPF"
+                  value={form.document}
+                  onChange={(document) => setForm({ ...form, document })}
+                  disabled={isOmie}
+                />
+                <MoneyInput
+                  label="Limite (R$)"
+                  value={form.creditLimitReais}
+                  onChange={(creditLimitReais) =>
+                    setForm({ ...form, creditLimitReais })
+                  }
+                  disabled={isOmie}
+                  allowZero
+                  hint="Use virgula para centavos."
+                />
               </div>
             </section>
 
             <section style={styles.formSection}>
               <h4 style={styles.formSectionTitle}>Contato e endereco</h4>
-              <div style={styles.formGrid}>
-                <div style={styles.fieldRow}>
-                  <label style={styles.fieldLabel}>
-                    Telefone
-                    <input
-                      value={formatPhone(form.phone)}
-                      onChange={(e) => setForm({ ...form, phone: normalizePhone(e.target.value) })}
-                      disabled={isOmie}
-                      style={isOmie ? styles.inputDisabled : styles.input}
-                    />
-                  </label>
-                  <label style={styles.fieldLabel}>
-                    E-mail
-                    <input
-                      value={form.email}
-                      onChange={(e) => setForm({ ...form, email: e.target.value })}
-                      disabled={isOmie}
-                      style={isOmie ? styles.inputDisabled : styles.input}
-                    />
-                  </label>
-                </div>
-                <div style={styles.fieldRow3}>
-                  <label style={styles.fieldLabel}>
-                    CEP
-                    <input
-                      value={form.zipcode}
-                      onChange={(e) => setForm({ ...form, zipcode: normalizeCep(e.target.value) })}
-                      disabled={isOmie}
-                      style={isOmie ? styles.inputDisabled : styles.input}
-                      onBlur={() => undefined}
-                      placeholder="00000-000"
-                    />
-                  </label>
-                  <label style={styles.fieldLabel}>
-                    Cidade
-                    <input
-                      value={form.city}
-                      onChange={(e) => setForm({ ...form, city: e.target.value })}
-                      disabled={isOmie}
-                      style={isOmie ? styles.inputDisabled : styles.input}
-                    />
-                  </label>
-                  <label style={styles.fieldLabel}>
-                    UF
-                    <input
-                      value={form.state}
-                      onChange={(e) =>
-                        setForm({ ...form, state: e.target.value.toUpperCase().slice(0, 2) })
-                      }
-                      disabled={isOmie}
-                      style={isOmie ? styles.inputDisabled : styles.input}
-                      maxLength={2}
-                    />
-                  </label>
-                </div>
-                <label style={styles.fieldLabel}>
-                  Endereco
+              <div style={styles.fieldRow}>
+                <PhoneInput
+                  label="Telefone"
+                  value={form.phone}
+                  onChange={(phone) => setForm({ ...form, phone })}
+                  disabled={isOmie}
+                />
+                <EmailInput
+                  label="E-mail"
+                  value={form.email}
+                  onChange={(email) => setForm({ ...form, email })}
+                  disabled={isOmie}
+                />
+              </div>
+              <div style={styles.fieldRow}>
+                <CepInput
+                  label="CEP"
+                  value={form.zipcode}
+                  onChange={(zipcode) => setForm({ ...form, zipcode })}
+                  onLookup={handleCepLookup}
+                  disabled={isOmie}
+                />
+                <TextInput
+                  label="Numero"
+                  value={form.addressNumber}
+                  onChange={(addressNumber) => setForm({ ...form, addressNumber })}
+                  disabled={isOmie}
+                  hint="Opcional"
+                />
+              </div>
+              <TextInput
+                label="Endereco"
+                value={form.addressStreet}
+                onChange={(addressStreet) => setForm({ ...form, addressStreet })}
+                disabled={isOmie}
+                placeholder="Rua / avenida"
+              />
+              <div style={styles.fieldRow}>
+                <TextInput
+                  label="Bairro"
+                  value={form.neighborhood}
+                  onChange={(neighborhood) => setForm({ ...form, neighborhood })}
+                  disabled={isOmie}
+                />
+                <TextInput
+                  label="Complemento"
+                  value={form.addressComplement}
+                  onChange={(addressComplement) =>
+                    setForm({ ...form, addressComplement })
+                  }
+                  disabled={isOmie}
+                />
+              </div>
+              <div style={styles.fieldRow}>
+                <TextInput
+                  label="Cidade"
+                  value={form.city}
+                  onChange={(city) => setForm({ ...form, city })}
+                  disabled={isOmie}
+                />
+                <Field label="UF">
                   <input
-                    value={form.addressStreet}
-                    onChange={(e) => setForm({ ...form, addressStreet: e.target.value })}
+                    type="text"
+                    inputMode="text"
+                    autoComplete="off"
                     disabled={isOmie}
-                    style={isOmie ? styles.inputDisabled : styles.input}
-                    placeholder="Rua / avenida"
+                    value={form.state}
+                    placeholder="SP"
+                    onChange={(e) =>
+                      setForm({ ...form, state: e.target.value.toUpperCase().slice(0, 2) })
+                    }
+                    style={getInputStyle(isOmie)}
+                    maxLength={2}
                   />
-                </label>
-                <div style={styles.fieldRow3}>
-                  <label style={styles.fieldLabel}>
-                    Numero
-                    <input
-                      value={form.addressNumber}
-                      onChange={(e) => setForm({ ...form, addressNumber: e.target.value })}
-                      disabled={isOmie}
-                      style={isOmie ? styles.inputDisabled : styles.input}
-                    />
-                  </label>
-                  <label style={styles.fieldLabel}>
-                    Bairro
-                    <input
-                      value={form.neighborhood}
-                      onChange={(e) => setForm({ ...form, neighborhood: e.target.value })}
-                      disabled={isOmie}
-                      style={isOmie ? styles.inputDisabled : styles.input}
-                    />
-                  </label>
-                  <label style={styles.fieldLabel}>
-                    Complemento
-                    <input
-                      value={form.addressComplement}
-                      onChange={(e) => setForm({ ...form, addressComplement: e.target.value })}
-                      disabled={isOmie}
-                      style={isOmie ? styles.inputDisabled : styles.input}
-                    />
-                  </label>
-                </div>
+                </Field>
               </div>
             </section>
 
             <section style={styles.formSection}>
               <h4 style={styles.formSectionTitle}>Comercial</h4>
-              <div style={styles.formGrid}>
-                <label style={styles.fieldLabel}>
-                  Transportadora
-                  <select
-                    value={form.defaultCarrierId}
-                    onChange={(e) => setForm({ ...form, defaultCarrierId: e.target.value })}
-                    style={styles.input}
-                  >
-                    <option value="">Selecione</option>
-                    {carriers.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label style={styles.fieldLabel}>
-                  Condicao de pagamento
-                  <select
-                    value={form.defaultPaymentTermId}
-                    onChange={(e) => setForm({ ...form, defaultPaymentTermId: e.target.value })}
-                    style={styles.input}
-                  >
-                    <option value="">Selecione</option>
-                    {paymentTerms.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label style={styles.fieldLabel}>
-                  Tabela de preco
-                  <select
-                    value={form.priceTableId}
-                    onChange={(e) => setForm({ ...form, priceTableId: e.target.value })}
-                    style={styles.input}
-                  >
-                    <option value="">Selecione</option>
-                    {priceTables.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label style={styles.checkbox}>
-                  <input
-                    type="checkbox"
-                    checked={form.omieBillingBlocked}
-                    onChange={(e) =>
-                      setForm({ ...form, omieBillingBlocked: e.target.checked })
-                    }
-                    disabled={isOmie}
-                  />
-                  Bloqueado para faturamento
-                </label>
-                <label style={styles.fieldLabel}>
-                  Observacoes internas
-                  <input
-                    value={form.observations}
-                    onChange={(e) => setForm({ ...form, observations: e.target.value })}
-                    style={styles.input}
-                    placeholder="Anotacoes visiveis apenas para a operacao"
-                  />
-                </label>
-              </div>
+              <Field label="Transportadora">
+                <select
+                  value={form.defaultCarrierId}
+                  onChange={(e) => setForm({ ...form, defaultCarrierId: e.target.value })}
+                  style={getInputStyle(false)}
+                >
+                  <option value="">Selecione</option>
+                  {carriers.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Condicao de pagamento">
+                <select
+                  value={form.defaultPaymentTermId}
+                  onChange={(e) => setForm({ ...form, defaultPaymentTermId: e.target.value })}
+                  style={getInputStyle(false)}
+                >
+                  <option value="">Selecione</option>
+                  {paymentTerms.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Tabela de preco">
+                <select
+                  value={form.priceTableId}
+                  onChange={(e) => setForm({ ...form, priceTableId: e.target.value })}
+                  style={getInputStyle(false)}
+                >
+                  <option value="">Selecione</option>
+                  {priceTables.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <label style={styles.checkbox}>
+                <input
+                  type="checkbox"
+                  checked={form.omieBillingBlocked}
+                  onChange={(e) =>
+                    setForm({ ...form, omieBillingBlocked: e.target.checked })
+                  }
+                  disabled={isOmie}
+                />
+                Bloqueado para faturamento
+              </label>
+              <Field label="Observacoes internas" hint="Visivel apenas para a operacao">
+                <textarea
+                  value={form.observations}
+                  onChange={(e) => setForm({ ...form, observations: e.target.value })}
+                  rows={3}
+                  style={{ ...getInputStyle(false), resize: "vertical", minHeight: "60px" }}
+                  placeholder="Anotacoes internas"
+                />
+              </Field>
             </section>
           </div>
           <div style={styles.formFooter}>
@@ -784,34 +738,11 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
           <p style={{ ...styles.cellMuted, padding: "14px" }}>Nenhum cliente encontrado.</p>
         ) : (
           customers.map((customer) => (
-            <div key={customer.id} style={styles.listRow}>
-              <div>
-                <div style={styles.cellPrimary}>{customer.tradeName || customer.legalName}</div>
-                <div style={styles.cellMuted}>{customer.legalName}</div>
-              </div>
-              <div style={styles.cellMuted}>{formatDocument(customer.document ?? "") || "-"}</div>
-              <div>
-                <div style={styles.cellPrimary}>{formatPhone(customer.phone ?? "") || "-"}</div>
-                <div style={styles.cellMuted}>{customer.email || "-"}</div>
-              </div>
-              <div>
-                <span style={styles.sourceBadge(customer.source)}>
-                  {customer.source === "omie" ? "OMIE" : "LOCAL"}
-                </span>
-                {customer.omieBillingBlocked ? (
-                  <span
-                    style={{ ...styles.pill("#b91c1c", "#fee2e2"), marginLeft: "6px" }}
-                  >
-                    Bloqueado
-                  </span>
-                ) : null}
-              </div>
-              <div style={styles.rowActions}>
-                <button type="button" onClick={() => openEditForm(customer)} style={styles.secondaryButton}>
-                  Editar
-                </button>
-              </div>
-            </div>
+            <CustomerRow
+              key={customer.id}
+              customer={customer}
+              onEdit={openEditForm}
+            />
           ))
         )}
         <div style={styles.pagination}>
@@ -845,4 +776,66 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
       </div>
     </div>
   );
+}
+
+function CustomerRow({
+  customer,
+  onEdit
+}: {
+  customer: CustomerCacheEntry;
+  onEdit: (customer: CustomerCacheEntry) => void;
+}) {
+  return (
+    <div style={styles.listRow}>
+      <div>
+        <div style={styles.cellPrimary}>{customer.tradeName || customer.legalName}</div>
+        <div style={styles.cellMuted}>{customer.legalName}</div>
+      </div>
+      <div style={styles.cellMuted}>{formatDocument(customer.document ?? "") || "-"}</div>
+      <div>
+        <div style={styles.cellPrimary}>{formatPhone(customer.phone ?? "") || "-"}</div>
+        <div style={styles.cellMuted}>{customer.email || "-"}</div>
+      </div>
+      <div>
+        <span style={styles.sourceBadge(customer.source)}>
+          {customer.source === "omie" ? "OMIE" : "LOCAL"}
+        </span>
+        {customer.omieBillingBlocked ? (
+          <span style={{ ...styles.pill("#b91c1c", "#fee2e2"), marginLeft: "6px" }}>Bloqueado</span>
+        ) : null}
+      </div>
+      <div style={styles.rowActions}>
+        <button
+          type="button"
+          onClick={() => onEdit(customer)}
+          style={styles.secondaryButton}
+        >
+          Editar
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function formatDocument(value: string): string {
+  if (!value) return "";
+  const digits = value.replace(/\D/g, "").slice(0, 14);
+  if (digits.length === 11) {
+    return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}`;
+  }
+  if (digits.length === 14) {
+    return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`;
+  }
+  return digits;
+}
+
+function formatPhone(value: string): string {
+  const digits = value.replace(/\D/g, "").slice(0, 11);
+  if (digits.length === 11) {
+    return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
+  }
+  if (digits.length === 10) {
+    return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
+  }
+  return digits;
 }
