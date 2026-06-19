@@ -7,7 +7,11 @@ import type {
 } from "../services/printing";
 import type { DesktopStatusSnapshot } from "../services/status";
 import type { UpdateState } from "../services/update-flow";
-import type { OperationType, WeighingOperationSummary } from "../services/weighing-operations";
+import type {
+  OperationFreightInput,
+  OperationType,
+  WeighingOperationSummary
+} from "../services/weighing-operations";
 import type { FiscalBillingResult, SyncResult } from "../services/supabase-sync";
 import type { PriceDetails } from "../services/pricing";
 import type { ActivateDesktopInput, DesktopAccessStatus } from "../services/desktop-activation";
@@ -64,7 +68,7 @@ export interface KyberRockDesktopApi {
     paymentTermId?: string;
     manualInstallments?: number;
     unitPriceCents?: number;
-    entryWeightKg?: number;
+    freight?: OperationFreightInput | null;
   }) => Promise<WeighingOperationSummary>;
   closeWeighing: (
     operationId: string,
@@ -87,6 +91,21 @@ export interface KyberRockDesktopApi {
   queryCache: (options: CacheQueryOptions) => Promise<CacheQueryResult<unknown>>;
   getDailyReport: (date: string) => Promise<DailyReport>;
   getMonthlyReport: (year: number, month: number) => Promise<MonthlyReport>;
+  getReportHtml: (startDate: string, endDate: string) => Promise<string>;
+  exportReportPdf: (startDate: string, endDate: string) => Promise<{ path: string } | null>;
+  exportReportExcel: (startDate: string, endDate: string) => Promise<{ path: string } | null>;
+  listReportRecipients: () => Promise<Array<{
+    id: string;
+    email: string;
+    displayName: string | null;
+    isActive: boolean;
+    syncStatus: "synced" | "pending" | "error";
+    lastError: string | null;
+    lastSyncedAt: string | null;
+  }>>;
+  createReportRecipient: (input: { email: string; displayName?: string | null; isActive?: boolean }) => Promise<unknown>;
+  updateReportRecipient: (id: string, input: { email?: string; displayName?: string | null; isActive?: boolean }) => Promise<unknown>;
+  deleteReportRecipient: (id: string) => Promise<void>;
   getReportByProduct: (
     startDate: string,
     endDate: string,

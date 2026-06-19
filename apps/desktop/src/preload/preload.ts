@@ -42,6 +42,19 @@ const desktopApi = {
   getDailyReport: (date: string) => ipcRenderer.invoke("desktop:get-daily-report", date),
   getMonthlyReport: (year: number, month: number) =>
     ipcRenderer.invoke("desktop:get-monthly-report", year, month),
+  getReportHtml: (startDate: string, endDate: string) =>
+    ipcRenderer.invoke("desktop:get-report-html", startDate, endDate),
+  exportReportPdf: (startDate: string, endDate: string) =>
+    ipcRenderer.invoke("desktop:export-report-pdf", startDate, endDate),
+  exportReportExcel: (startDate: string, endDate: string) =>
+    ipcRenderer.invoke("desktop:export-report-excel", startDate, endDate),
+  listReportRecipients: () => ipcRenderer.invoke("desktop:list-report-recipients"),
+  createReportRecipient: (input: unknown) =>
+    ipcRenderer.invoke("desktop:create-report-recipient", input),
+  updateReportRecipient: (id: string, input: unknown) =>
+    ipcRenderer.invoke("desktop:update-report-recipient", id, input),
+  deleteReportRecipient: (id: string) =>
+    ipcRenderer.invoke("desktop:delete-report-recipient", id),
   getReportByProduct: (startDate: string, endDate: string, limit?: number) =>
     ipcRenderer.invoke("desktop:get-report-by-product", startDate, endDate, limit),
   getReportByCustomer: (startDate: string, endDate: string, limit?: number) =>

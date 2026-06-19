@@ -45,6 +45,7 @@ import {
   listClosedWeighingOperations,
   listOpenWeighingOperations,
   type OperationType,
+  type OperationFreightInput,
   type WeighingOperationSummary
 } from "./weighing-operations.js";
 import {
@@ -75,7 +76,6 @@ import {
 } from "./supabase-sync.js";
 import {
   activateDesktop,
-  getOmieCredentials,
   getStoredDesktopAccessStatus,
   logoutDesktop,
   validateDesktopAccess,
@@ -83,9 +83,17 @@ import {
   type DesktopAccessStatus
 } from "./desktop-activation.js";
 import { CacheStore, type CacheQueryOptions, type CacheQueryResult } from "./cache-store.js";
-import { createOmieClient, OmieSyncService } from "./omie-sync.js";
 import { readOmiePullState, writeOmiePullState } from "./supabase-sync.js";
 import { ReportService } from "./reports.js";
+import {
+  createReportRecipient,
+  deleteReportRecipient,
+  listReportRecipients,
+  updateReportRecipient,
+  type CreateReportRecipientInput,
+  type ReportRecipient,
+  type UpdateReportRecipientInput
+} from "./report-recipients.js";
 import { PricingService, type PriceDetails } from "./pricing.js";
 
 export interface OmieLoopProgress {
@@ -188,8 +196,6 @@ export class DesktopRuntime {
   };
   private cacheStore: CacheStore;
   private scaleAdapter: ToledoTcpAdapter = createToledoTcpAdapter();
-  private omieClient: { appKey: string; appSecret: string } | null = null;
-  private omieSync: OmieSyncService | null = null;
   private reportService: ReportService;
 
   private constructor(initialized: InitializedDesktopDatabase) {
@@ -199,18 +205,6 @@ export class DesktopRuntime {
     this.reportService = new ReportService(this.database);
     this.ensureIdentity();
     this.cacheStore.loadAll(this.ensureIdentity().companyId);
-    this.initializeOmieClient();
-  }
-
-  private initializeOmieClient(): void {
-    const credentials = getOmieCredentials(this.database);
-    if (!credentials) {
-      this.omieClient = null;
-      this.omieSync = null;
-      return;
-    }
-    this.omieClient = credentials;
-    this.omieSync = new OmieSyncService(createOmieClient(credentials), this.database);
   }
 
   static initialize(baseDirectory?: string): DesktopRuntime {
@@ -275,9 +269,6 @@ export class DesktopRuntime {
       setLastPullAt: (isoString) => recordOmiePullRanAt(this.database, isoString),
       isPullInProgress: () => readOmiePullState(this.database).inProgress,
       runPull: async () => {
-        if (!this.omieClient) {
-          throw new Error("Sincronizacao OMIE agendada ignorada: credenciais nao configuradas.");
-        }
         await this.runOmieDataEntryLoop({ maxIterations: 200 });
       },
       onError: (error) => console.error("Pull OMIE automatico falhou", error)
@@ -327,10 +318,10 @@ export class DesktopRuntime {
     paymentTermId?: string;
     manualInstallments?: number;
     unitPriceCents?: number;
-    entryWeightKg?: number;
+    freight?: OperationFreightInput | null;
   }): Promise<WeighingOperationSummary> {
     this.assertDesktopAccess();
-    const entryWeightKg = input.entryWeightKg ?? (await this.readScaleSampledWeight());
+    const entryWeightKg = await this.readScaleSampledWeight();
 
     return createWeighingOperation(this.database, {
       identity: this.ensureIdentity(),
@@ -343,6 +334,7 @@ export class DesktopRuntime {
       paymentTermId: input.paymentTermId,
       manualInstallments: input.manualInstallments,
       unitPriceCents: input.unitPriceCents,
+      freight: input.freight,
       entryWeightKg
     });
   }
@@ -372,13 +364,19 @@ export class DesktopRuntime {
   private async readScaleSampledWeight(): Promise<number> {
     try {
       const adapter = this.scaleAdapter as Partial<{
-        readSampled: (options?: { durationMs?: number }) => Promise<{ weightKg: number }>;
+        readSampled: (options?: { durationMs?: number }) => Promise<{ weightKg: number; stable?: boolean }>;
       }>;
       if (typeof adapter.readSampled === "function") {
         const reading = await adapter.readSampled({ durationMs: 5000 });
+        if (reading.stable === false) {
+          throw new Error("peso instavel durante a amostragem de 5s");
+        }
         return reading.weightKg;
       }
       const reading = await this.scaleAdapter.read();
+      if (!reading.stable) {
+        throw new Error("peso instavel");
+      }
       return reading.weightKg;
     } catch (error) {
       throw new Error(
@@ -571,22 +569,15 @@ export class DesktopRuntime {
     force?: boolean
   ): Promise<DesktopAccessStatus> {
     const status = await validateDesktopAccess(this.database, { internetOnline, force });
-    if (status.canOperate) {
-      this.refreshOmieConfig();
-    }
     return status;
   }
 
   async activateDesktop(input: ActivateDesktopInput): Promise<DesktopAccessStatus> {
-    const status = await activateDesktop(this.database, input);
-    this.refreshOmieConfig();
-    return status;
+    return activateDesktop(this.database, input);
   }
 
   logoutDesktop(): void {
     logoutDesktop(this.database);
-    this.omieClient = null;
-    this.omieSync = null;
   }
 
   queryCache(options: CacheQueryOptions): CacheQueryResult<unknown> {
@@ -636,6 +627,33 @@ export class DesktopRuntime {
     endDate: string
   ): ReturnType<ReportService["getOperationMix"]> {
     return this.reportService.getOperationMix(startDate, endDate, this.ensureIdentity().unitId);
+  }
+
+  getReportHtml(startDate: string, endDate: string): string {
+    return this.reportService.exportRangeToHtml(
+      startDate,
+      endDate,
+      this.ensureIdentity().unitId
+    );
+  }
+
+  listReportRecipients(): ReportRecipient[] {
+    return listReportRecipients(this.database, this.ensureIdentity().companyId);
+  }
+
+  createReportRecipient(input: Omit<CreateReportRecipientInput, "companyId">): ReportRecipient {
+    return createReportRecipient(this.database, {
+      companyId: this.ensureIdentity().companyId,
+      ...input
+    });
+  }
+
+  updateReportRecipient(id: string, input: UpdateReportRecipientInput): ReportRecipient {
+    return updateReportRecipient(this.database, id, input);
+  }
+
+  deleteReportRecipient(id: string): void {
+    deleteReportRecipient(this.database, id);
   }
 
   getPriceForCustomerProduct(customerId: string, productId: string): number | null {
@@ -936,16 +954,7 @@ export class DesktopRuntime {
   }
 
   getOmieConfig(): { configured: boolean; appKeyMasked: string | null } {
-    if (!this.omieClient) {
-      return { configured: false, appKeyMasked: null };
-    }
-    const key = this.omieClient.appKey;
-    const appKeyMasked = key.length > 6 ? `${key.slice(0, 3)}****${key.slice(-3)}` : "********";
-    return { configured: true, appKeyMasked };
-  }
-
-  refreshOmieConfig(): void {
-    this.initializeOmieClient();
+    return { configured: this.hasCloudCredentials(), appKeyMasked: null };
   }
 
   async syncOmieAll(): Promise<{
@@ -1093,6 +1102,18 @@ export class DesktopRuntime {
         deviceName: "Desktop balanca"
       })
     );
+  }
+
+  private hasCloudCredentials(): boolean {
+    const count = this.database
+      .prepare(
+        `SELECT COUNT(*)
+         FROM local_settings
+         WHERE key IN ('cloud_company_id', 'cloud_unit_id', 'cloud_device_id', 'cloud_device_token')`
+      )
+      .pluck()
+      .get() as number;
+    return count === 4;
   }
 
   private assertDesktopAccess(): void {

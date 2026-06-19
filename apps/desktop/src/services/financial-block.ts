@@ -9,6 +9,25 @@ export interface BlockResult {
 export class FinancialBlockService {
   constructor(private readonly db: DesktopDatabase) {}
 
+  canStartLoading(customerId: string): BlockResult {
+    const customer = this.getCustomerFinancials(customerId);
+
+    if (!customer || customer.credit_limit_cents === null || customer.credit_limit_cents === 0) {
+      return { allowed: true };
+    }
+
+    const available = this.getAvailableBalance(customerId);
+    if (available <= 0) {
+      return {
+        allowed: false,
+        message: `Bloqueado: cliente sem limite disponivel. Disponivel: R$ ${(available / 100).toFixed(2)}.`,
+        availableBalanceCents: available
+      };
+    }
+
+    return { allowed: true, availableBalanceCents: available };
+  }
+
   canLoad(customerId: string, operationValueCents: number): BlockResult {
     const customer = this.getCustomerFinancials(customerId);
 

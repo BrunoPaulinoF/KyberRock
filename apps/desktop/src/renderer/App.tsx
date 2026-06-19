@@ -12,7 +12,11 @@ import {
   createInitialUpdateState,
   type UpdateState
 } from "../services/update-flow";
-import type { OperationType, WeighingOperationSummary } from "../services/weighing-operations";
+import type {
+  OperationFreightInput,
+  OperationType,
+  WeighingOperationSummary
+} from "../services/weighing-operations";
 import type { PriceDetails } from "../services/pricing";
 import type { CacheEntityType } from "../services/cache-store";
 import {
@@ -31,6 +35,7 @@ import { ActivationGate } from "./ActivationGate";
 import { BlockedScreen } from "./BlockedScreen";
 import { DashboardView } from "./DashboardView";
 import { InsightsView } from "./InsightsView";
+import { ReportsView } from "./ReportsView";
 import type { KyberRockDesktopApi } from "./desktop-api";
 export interface AppProps {
   desktopApi?: KyberRockDesktopApi;
@@ -46,8 +51,14 @@ interface WeighingFormState {
   productId: string;
   paymentTermId: string;
   unitPriceCents: number | null;
-  manualWeightEnabled: boolean;
-  manualWeightKg: number | null;
+  freightEnabled: boolean;
+  freightPayer: "customer" | "quarry" | "third_party";
+  freightCalculationType: "per_ton" | "per_ton_km" | "fixed_plus_ton";
+  freightBaseValueCents: number | null;
+  freightFixedValueCents: number | null;
+  freightMinValueCents: number | null;
+  freightDistanceKm: string;
+  freightDestination: string;
 }
 
 type ActiveView =
@@ -59,6 +70,7 @@ type ActiveView =
   | "printing"
   | "cloud"
   | "insights"
+  | "reports"
   | "documentation";
 
 const initialWeighingForm: WeighingFormState = {
@@ -70,8 +82,14 @@ const initialWeighingForm: WeighingFormState = {
   productId: "",
   paymentTermId: "",
   unitPriceCents: null,
-  manualWeightEnabled: false,
-  manualWeightKg: null
+  freightEnabled: false,
+  freightPayer: "customer",
+  freightCalculationType: "per_ton",
+  freightBaseValueCents: null,
+  freightFixedValueCents: null,
+  freightMinValueCents: null,
+  freightDistanceKm: "",
+  freightDestination: ""
 };
 
 type RegistrationsTab = "customers" | "price_tables" | "products" | "payment_terms" | "transport";
@@ -701,7 +719,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         productId: form.productId,
         paymentTermId: form.paymentTermId || undefined,
         unitPriceCents: form.unitPriceCents ?? undefined,
-        entryWeightKg: form.manualWeightEnabled ? (form.manualWeightKg ?? undefined) : undefined
+        freight: buildFreightInput(form)
       });
       setMessage(`Entrada capturada (media 5s): ${operation.entryWeightKg} kg.`);
       setForm(initialWeighingForm);
@@ -1053,6 +1071,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 id="insights"
                 label="Insights"
                 icon="◔"
+                activeView={activeView}
+                onSelect={setActiveView}
+              />
+              <SidebarItem
+                id="reports"
+                label="Relatorios"
+                icon="▣"
                 activeView={activeView}
                 onSelect={setActiveView}
               />
@@ -1988,6 +2013,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 onSyncCloud={handleSyncToCloud}
               />
             ) : null}
+            {activeView === "reports" ? <ReportsView desktopApi={desktopApi} /> : null}
             {activeView === "documentation" ? (
               <section style={styles.panel}>
                 <h2 style={styles.panelTitle}>Documentacao</h2>
@@ -2137,10 +2163,39 @@ function validateWeighingForm(form: WeighingFormState): string | null {
   if (!form.driverId) return "Selecione o motorista.";
   if (!form.productId) return "Selecione o produto.";
   if (form.unitPriceCents === null) return "Informe o preco.";
-  if (form.manualWeightEnabled && (!form.manualWeightKg || form.manualWeightKg <= 0)) {
-    return "Informe um peso simulado maior que zero.";
+  if (form.freightEnabled) {
+    if (form.freightBaseValueCents === null && form.freightFixedValueCents === null) {
+      return "Informe o valor do frete.";
+    }
+    if (form.freightCalculationType === "per_ton_km" && parsePositiveNumber(form.freightDistanceKm) === null) {
+      return "Informe a distancia do frete em km.";
+    }
   }
   return null;
+}
+
+function buildFreightInput(form: WeighingFormState): OperationFreightInput | null {
+  if (!form.freightEnabled) return null;
+  const distanceKm = parsePositiveNumber(form.freightDistanceKm);
+  return {
+    payer: form.freightPayer,
+    destination: form.freightDestination.trim() || null,
+    rule: {
+      id: "operation-freight",
+      name: "Frete da operacao",
+      type: form.freightCalculationType,
+      baseValueCents: form.freightBaseValueCents ?? 0,
+      fixedValueCents: form.freightFixedValueCents ?? undefined,
+      minValueCents: form.freightMinValueCents ?? undefined,
+      distanceKm: distanceKm ?? undefined,
+      unit: "ton"
+    }
+  };
+}
+
+function parsePositiveNumber(value: string): number | null {
+  const parsed = Number(value.trim().replace(",", "."));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 function parseCurrencyToCents(value: string): number | null | undefined {
@@ -2483,8 +2538,6 @@ function WeighingForm({
   const [paymentTermInstallmentCount, setPaymentTermInstallmentCount] = useState<number | null>(
     null
   );
-  const displayedWeight = form.manualWeightEnabled ? form.manualWeightKg : liveWeight;
-
   useEffect(() => {
     if (!desktopApi) return;
     const handler = (reading: { weightKg: number }) => setLiveWeight(reading.weightKg);
@@ -2566,52 +2619,13 @@ function WeighingForm({
           </p>
         </div>
         <div style={styles.liveWeightCard}>
-          <span style={styles.metricLabel}>
-            {form.manualWeightEnabled ? "Peso simulado" : "Peso atual"}
-          </span>
+          <span style={styles.metricLabel}>Peso atual</span>
           <strong style={styles.metricValue}>
-            {displayedWeight !== null ? formatWeightKg(displayedWeight) : "-- kg"}
+            {liveWeight !== null ? formatWeightKg(liveWeight) : "-- kg"}
           </strong>
           <span style={styles.metricHint}>
-            {form.manualWeightEnabled
-              ? "Modo teste sem conexao com a balanca"
-              : liveWeight !== null
-                ? "Leitura em tempo real"
-                : "Aguardando balanca"}
+            {liveWeight !== null ? "Leitura em tempo real" : "Aguardando balanca"}
           </span>
-          {form.manualWeightEnabled ? (
-            <label style={styles.simulatedWeightField}>
-              Peso de teste (kg)
-              <input
-                type="number"
-                min={0}
-                step={0.001}
-                value={form.manualWeightKg ?? ""}
-                onChange={(e) => {
-                  const raw = e.target.value;
-                  setForm((prev) => ({
-                    ...prev,
-                    manualWeightKg: raw === "" ? null : Number(raw)
-                  }));
-                }}
-                placeholder="Ex: 12500"
-                style={styles.simulatedWeightInput}
-              />
-            </label>
-          ) : null}
-          <button
-            type="button"
-            onClick={() =>
-              setForm((prev) => ({
-                ...prev,
-                manualWeightEnabled: !prev.manualWeightEnabled,
-                manualWeightKg: prev.manualWeightEnabled ? null : prev.manualWeightKg
-              }))
-            }
-            style={styles.simulateWeightButton}
-          >
-            {form.manualWeightEnabled ? "Usar balanca real" : "Simular peso"}
-          </button>
         </div>
       </div>
 
@@ -2724,6 +2738,113 @@ function WeighingForm({
             onChange={(cents) => setForm((prev) => ({ ...prev, unitPriceCents: cents }))}
           />
           <PriceDetailsPanel details={priceDetails} appliedUnitPriceCents={form.unitPriceCents} />
+          <div style={styles.freightBox}>
+            <label style={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                checked={form.freightEnabled}
+                onChange={(event) =>
+                  setForm((prev) => ({ ...prev, freightEnabled: event.target.checked }))
+                }
+              />
+              Operacao com frete
+            </label>
+            {form.freightEnabled ? (
+              <div style={{ display: "grid", gap: "10px" }}>
+                <label style={styles.fieldLabel}>
+                  Responsavel pelo frete
+                  <select
+                    value={form.freightPayer}
+                    onChange={(event) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        freightPayer: event.target.value as WeighingFormState["freightPayer"]
+                      }))
+                    }
+                    style={styles.input}
+                  >
+                    <option value="customer">Cliente</option>
+                    <option value="quarry">Pedreira</option>
+                    <option value="third_party">Terceiro</option>
+                  </select>
+                </label>
+                <label style={styles.fieldLabel}>
+                  Calculo do frete
+                  <select
+                    value={form.freightCalculationType}
+                    onChange={(event) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        freightCalculationType: event.target
+                          .value as WeighingFormState["freightCalculationType"]
+                      }))
+                    }
+                    style={styles.input}
+                  >
+                    <option value="per_ton">Valor por tonelada</option>
+                    <option value="per_ton_km">Valor por tonelada-km</option>
+                    <option value="fixed_plus_ton">Fixo + valor por tonelada</option>
+                  </select>
+                </label>
+                <PriceInput
+                  label={
+                    form.freightCalculationType === "per_ton_km"
+                      ? "Frete por ton-km"
+                      : "Frete por tonelada"
+                  }
+                  suffix={form.freightCalculationType === "per_ton_km" ? "/ton-km" : "/ton"}
+                  valueCents={form.freightBaseValueCents}
+                  onChange={(cents) =>
+                    setForm((prev) => ({ ...prev, freightBaseValueCents: cents }))
+                  }
+                />
+                {form.freightCalculationType === "fixed_plus_ton" ? (
+                  <PriceInput
+                    label="Valor fixo do frete"
+                    suffix=""
+                    valueCents={form.freightFixedValueCents}
+                    onChange={(cents) =>
+                      setForm((prev) => ({ ...prev, freightFixedValueCents: cents }))
+                    }
+                  />
+                ) : null}
+                {form.freightCalculationType === "per_ton_km" ? (
+                  <label style={styles.fieldLabel}>
+                    Distancia (km)
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={form.freightDistanceKm}
+                      onChange={(event) =>
+                        setForm((prev) => ({ ...prev, freightDistanceKm: event.target.value }))
+                      }
+                      placeholder="Ex: 35"
+                      style={styles.input}
+                    />
+                  </label>
+                ) : null}
+                <PriceInput
+                  label="Frete minimo"
+                  suffix=""
+                  valueCents={form.freightMinValueCents}
+                  onChange={(cents) =>
+                    setForm((prev) => ({ ...prev, freightMinValueCents: cents }))
+                  }
+                />
+                <label style={styles.fieldLabel}>
+                  Destino/observacao do frete
+                  <input
+                    value={form.freightDestination}
+                    onChange={(event) =>
+                      setForm((prev) => ({ ...prev, freightDestination: event.target.value }))
+                    }
+                    placeholder="Destino ou regra comercial"
+                    style={styles.input}
+                  />
+                </label>
+              </div>
+            ) : null}
+          </div>
           <div style={styles.actionStack}>
             <button type="button" onClick={onStart} style={styles.captureButton}>
               Capturar peso de entrada
@@ -3417,10 +3538,14 @@ function PriceDetailsPanel({
 
 function PriceInput({
   valueCents,
-  onChange
+  onChange,
+  label = "Preco por tonelada",
+  suffix = "/ton"
 }: {
   valueCents: number | null;
   onChange: (cents: number | null) => void;
+  label?: string;
+  suffix?: string;
 }) {
   const [focused, setFocused] = useState(false);
 
@@ -3437,7 +3562,7 @@ function PriceInput({
 
   return (
     <label style={styles.fieldLabel}>
-      Preco por tonelada
+      {label}
       <input
         type="text"
         inputMode="decimal"
@@ -3459,7 +3584,9 @@ function PriceInput({
         style={styles.input}
       />
       {valueCents !== null ? (
-        <span style={{ fontSize: "12px", color: "#64748b" }}>{centsToBRL(valueCents)}/ton</span>
+        <span style={{ fontSize: "12px", color: "#64748b" }}>
+          {centsToBRL(valueCents)}{suffix}
+        </span>
       ) : null}
     </label>
   );
@@ -4315,6 +4442,7 @@ function CustomerListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingCustomerSource, setEditingCustomerSource] = useState<string | null>(null);
   const [form, setForm] = useState<CustomerFormData>({
     tradeName: "",
     legalName: "",
@@ -4426,6 +4554,7 @@ function CustomerListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
       state: ""
     });
     setEditingId(null);
+    setEditingCustomerSource(null);
     setFormErrorState(null);
   }
 
@@ -4458,6 +4587,7 @@ function CustomerListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
       state: customer.state ?? ""
     });
     setEditingId(customer.id);
+    setEditingCustomerSource(customer.source);
     setFormErrorState(null);
     setShowForm(true);
   }
@@ -4511,10 +4641,15 @@ function CustomerListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
       : undefined;
     const normalizedZipcode = normalizeCep(form.zipcode);
 
-    try {
-      let customerId = editingId;
-      if (editingId) {
-        await desktopApi.customersUpdate(editingId, {
+      try {
+        let customerId = editingId;
+        if (editingId) {
+        const localPatch = {
+          observations: form.observations.trim() || undefined,
+          defaultCarrierId: form.defaultCarrierId || null,
+          defaultPaymentTermId: form.defaultPaymentTermId || null
+        };
+        const fullPatch = {
           tradeName: form.tradeName.trim(),
           legalName: form.legalName.trim(),
           document: normalizedDocument || undefined,
@@ -4522,9 +4657,7 @@ function CustomerListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
           email: normalizedEmail || undefined,
           creditLimitCents: creditLimitCents ?? undefined,
           omieBillingBlocked: form.omieBillingBlocked,
-          observations: form.observations.trim() || undefined,
-          defaultCarrierId: form.defaultCarrierId || null,
-          defaultPaymentTermId: form.defaultPaymentTermId || null,
+          ...localPatch,
           zipcode: normalizedZipcode || null,
           addressStreet: form.addressStreet.trim() || null,
           addressNumber: form.addressNumber.trim() || null,
@@ -4532,7 +4665,11 @@ function CustomerListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
           neighborhood: form.neighborhood.trim() || null,
           city: form.city.trim() || null,
           state: form.state.trim().toUpperCase() || null
-        });
+        };
+        await desktopApi.customersUpdate(
+          editingId,
+          editingCustomerSource === "omie" ? localPatch : fullPatch
+        );
         setMessageState("Cliente atualizado com sucesso.");
       } else {
         const created = (await desktopApi.customersCreate({
@@ -4652,6 +4789,7 @@ function CustomerListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                   <input
                     value={form.legalName}
                     onChange={(e) => setForm({ ...form, legalName: e.target.value })}
+                    disabled={editingCustomerSource === "omie"}
                     style={styles.input}
                   />
                 </label>
@@ -4660,6 +4798,7 @@ function CustomerListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                   <input
                     value={form.tradeName}
                     onChange={(e) => setForm({ ...form, tradeName: e.target.value })}
+                    disabled={editingCustomerSource === "omie"}
                     style={styles.input}
                   />
                 </label>
@@ -4670,6 +4809,7 @@ function CustomerListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                     onChange={(e) =>
                       setForm({ ...form, document: normalizeDocument(e.target.value) })
                     }
+                    disabled={editingCustomerSource === "omie"}
                     placeholder="00.000.000/0000-00"
                     style={styles.input}
                   />
@@ -4685,6 +4825,7 @@ function CustomerListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                   <input
                     value={formatPhone(form.phone)}
                     onChange={(e) => setForm({ ...form, phone: normalizePhone(e.target.value) })}
+                    disabled={editingCustomerSource === "omie"}
                     placeholder="(11) 91234-5678"
                     style={styles.input}
                   />
@@ -4694,6 +4835,7 @@ function CustomerListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                   <input
                     value={form.email}
                     onChange={(e) => setForm({ ...form, email: e.target.value })}
+                    disabled={editingCustomerSource === "omie"}
                     placeholder="cliente@exemplo.com"
                     style={styles.input}
                   />
@@ -4710,6 +4852,7 @@ function CustomerListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                     value={formatCep(form.zipcode)}
                     onChange={(e) => setForm({ ...form, zipcode: normalizeCep(e.target.value) })}
                     onBlur={applyCepToForm}
+                    disabled={editingCustomerSource === "omie"}
                     placeholder="00000-000"
                     style={styles.input}
                   />
@@ -4719,6 +4862,7 @@ function CustomerListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                   <input
                     value={form.addressStreet}
                     onChange={(e) => setForm({ ...form, addressStreet: e.target.value })}
+                    disabled={editingCustomerSource === "omie"}
                     style={styles.input}
                   />
                 </label>
@@ -4727,6 +4871,7 @@ function CustomerListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                   <input
                     value={form.addressNumber}
                     onChange={(e) => setForm({ ...form, addressNumber: e.target.value })}
+                    disabled={editingCustomerSource === "omie"}
                     style={styles.input}
                   />
                 </label>
@@ -4735,6 +4880,7 @@ function CustomerListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                   <input
                     value={form.addressComplement}
                     onChange={(e) => setForm({ ...form, addressComplement: e.target.value })}
+                    disabled={editingCustomerSource === "omie"}
                     style={styles.input}
                   />
                 </label>
@@ -4743,6 +4889,7 @@ function CustomerListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                   <input
                     value={form.neighborhood}
                     onChange={(e) => setForm({ ...form, neighborhood: e.target.value })}
+                    disabled={editingCustomerSource === "omie"}
                     style={styles.input}
                   />
                 </label>
@@ -4751,6 +4898,7 @@ function CustomerListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                   <input
                     value={form.city}
                     onChange={(e) => setForm({ ...form, city: e.target.value })}
+                    disabled={editingCustomerSource === "omie"}
                     style={styles.input}
                   />
                 </label>
@@ -4761,6 +4909,7 @@ function CustomerListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                     onChange={(e) =>
                       setForm({ ...form, state: e.target.value.toUpperCase().slice(0, 2) })
                     }
+                    disabled={editingCustomerSource === "omie"}
                     placeholder="UF"
                     style={styles.input}
                   />
@@ -4776,6 +4925,7 @@ function CustomerListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                   <input
                     value={form.creditLimitReais}
                     onChange={(e) => setForm({ ...form, creditLimitReais: e.target.value })}
+                    disabled={editingCustomerSource === "omie"}
                     placeholder="50.000,00"
                     style={styles.input}
                   />
@@ -4831,6 +4981,7 @@ function CustomerListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                   type="checkbox"
                   checked={form.omieBillingBlocked}
                   onChange={(e) => setForm({ ...form, omieBillingBlocked: e.target.checked })}
+                  disabled={editingCustomerSource === "omie"}
                 />
                 <span>
                   <strong>Cliente bloqueado</strong>
@@ -5554,7 +5705,7 @@ function PriceTableListView({ desktopApi }: { desktopApi: KyberRockDesktopApi })
       priceTableId: selectedTableId,
       productId: itemProductId,
       unitPriceCents,
-      unit: "kg"
+      unit: "ton"
     });
     setItemProductId("");
     setItemPriceReais("");
@@ -6213,35 +6364,6 @@ const styles = {
     flexDirection: "column" as const,
     gap: "4px"
   },
-  simulatedWeightField: {
-    display: "flex",
-    flexDirection: "column" as const,
-    gap: "4px",
-    marginTop: "8px",
-    color: "#dbeafe",
-    fontSize: "12px",
-    fontWeight: 800
-  },
-  simulatedWeightInput: {
-    border: "1px solid rgba(255,255,255,0.35)",
-    borderRadius: "10px",
-    padding: "8px 10px",
-    font: "inherit",
-    fontSize: "13px",
-    background: "rgba(255,255,255,0.92)",
-    color: "#0f172a"
-  },
-  simulateWeightButton: {
-    border: "1px solid rgba(255,255,255,0.35)",
-    borderRadius: "999px",
-    padding: "7px 10px",
-    marginTop: "8px",
-    background: "rgba(255,255,255,0.14)",
-    color: "#ffffff",
-    cursor: "pointer",
-    fontWeight: 800,
-    fontSize: "12px"
-  },
   metricLabel: {
     color: "#bfdbfe",
     fontSize: "11px",
@@ -6277,6 +6399,23 @@ const styles = {
     background: "var(--kr-surface-soft)",
     border: "1px solid var(--kr-input-border)",
     boxShadow: "var(--kr-shadow)"
+  },
+  freightBox: {
+    display: "grid",
+    gap: "10px",
+    marginTop: "12px",
+    padding: "12px",
+    borderRadius: "12px",
+    background: "var(--kr-surface)",
+    border: "1px solid var(--kr-border)"
+  },
+  checkboxLabel: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    fontWeight: 800,
+    fontSize: "13px",
+    color: "var(--kr-text-strong)"
   },
   sectionHeader: {
     display: "flex",

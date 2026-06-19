@@ -168,6 +168,29 @@ export function updateCustomer(
     throw new Error("Cliente nao encontrado.");
   }
 
+  if (existing.source === "omie") {
+    const protectedFields: Array<keyof UpdateCustomerInput> = [
+      "tradeName",
+      "legalName",
+      "document",
+      "phone",
+      "email",
+      "creditLimitCents",
+      "omieBillingBlocked",
+      "zipcode",
+      "addressStreet",
+      "addressNumber",
+      "addressComplement",
+      "neighborhood",
+      "city",
+      "state"
+    ];
+    const changedProtectedField = protectedFields.some((field) => input[field] !== undefined);
+    if (changedProtectedField) {
+      throw new Error("Campos vindos do OMIE nao podem ser alterados localmente.");
+    }
+  }
+
   const nowIso = now.toISOString();
   const sets: string[] = [];
   const values: unknown[] = [];

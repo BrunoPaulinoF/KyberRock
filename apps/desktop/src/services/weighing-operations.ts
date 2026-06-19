@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 
 import type { DesktopDatabase } from "../database/sqlite.js";
 import type { LocalDesktopIdentity } from "./bootstrap.js";
+import { FinancialBlockService } from "./financial-block.js";
+import { FreightCalculator, type FreightRule } from "./freight.js";
 import { PricingService, type PriceDetails } from "./pricing.js";
 import { enqueueSyncJob } from "./sync-queue.js";
 
@@ -18,6 +20,13 @@ type OperationStatus =
   | "cancelled";
 
 export type OperationType = "invoice" | "internal";
+export type FreightPayer = "customer" | "quarry" | "third_party";
+
+export interface OperationFreightInput {
+  payer: FreightPayer;
+  rule: FreightRule;
+  destination?: string | null;
+}
 
 export interface CreateSimulatedWeighingOperationInput {
   identity: LocalDesktopIdentity;
@@ -43,6 +52,7 @@ export interface CreateWeighingOperationInput {
   manualInstallments?: number;
   unitPriceCents?: number;
   entryWeightKg: number;
+  freight?: OperationFreightInput | null;
 }
 
 export interface CloseWeighingOperationInput {
@@ -77,6 +87,7 @@ export interface WeighingOperationSummary {
   priceSavingsPercent: number | null;
   productTotalCents: number | null;
   freightTotalCents: number;
+  freightJson: string | null;
   totalCents: number | null;
   omieSalesOrderId: number | null;
   omieBillingStatus: string | null;
@@ -104,6 +115,7 @@ interface OperationRow {
   price_savings_percent: number | null;
   product_total_cents: number | null;
   freight_total_cents: number;
+  freight_json: string | null;
   total_cents: number | null;
   omie_sales_order_id: number | null;
   omie_billing_status: string | null;
@@ -429,6 +441,10 @@ export function createWeighingOperation(
     input.productId
   );
   const unitPriceCents = input.unitPriceCents ?? priceDetails?.appliedUnitPriceCents ?? null;
+  const financialBlock = new FinancialBlockService(database).canStartLoading(input.customerId);
+  if (!financialBlock.allowed) {
+    throw new Error(financialBlock.message ?? "Cliente bloqueado por limite financeiro.");
+  }
 
   const operationId = randomUUID();
   const loadingRequestId = randomUUID();
@@ -440,8 +456,8 @@ export function createWeighingOperation(
           id, company_id, unit_id, device_id, status, operation_type, customer_id, vehicle_id, carrier_id, driver_id, product_id,
           payment_term_id, manual_installments, entry_weight_kg, entry_weight_captured_at, unit_price_cents,
           base_unit_price_cents, applied_price_table_id, applied_price_table_name, applied_price_table_item_id,
-          price_unit, price_savings_percent, freight_total_cents, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, 'loading_requested', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`
+          price_unit, price_savings_percent, freight_total_cents, freight_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'loading_requested', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`
       )
       .run(
         operationId,
@@ -465,6 +481,7 @@ export function createWeighingOperation(
         priceDetails?.priceTableItemId ?? null,
         priceDetails?.priceUnit ?? "ton",
         priceDetails?.savingsPercent ?? null,
+        serializeOperationFreight(input.freight),
         timestamp,
         timestamp
       );
@@ -549,8 +566,8 @@ export function closeWeighingOperation(
 
   const netWeightKg = calculateNetWeightKg(operation.entryWeightKg, input.exitWeightKg);
   const productTotalCents = calculateProductTotalCents(netWeightKg, operation.unitPriceCents);
-  const totalCents =
-    productTotalCents === null ? null : productTotalCents + operation.freightTotalCents;
+  const freightTotalCents = calculateFreightTotalCents(operation.freightJson, netWeightKg);
+  const totalCents = productTotalCents === null ? null : productTotalCents + freightTotalCents;
   const timestamp = now.toISOString();
   const nextOperationType: OperationType = input.operationType ?? operation.operationType;
 
@@ -559,7 +576,7 @@ export function closeWeighingOperation(
       database
         .prepare(
           `UPDATE weighing_operations
-           SET status = 'closed_local', operation_type = ?, exit_weight_kg = ?, exit_weight_captured_at = ?, net_weight_kg = ?, product_total_cents = ?, total_cents = ?, updated_at = ?
+           SET status = 'closed_local', operation_type = ?, exit_weight_kg = ?, exit_weight_captured_at = ?, net_weight_kg = ?, product_total_cents = ?, freight_total_cents = ?, total_cents = ?, updated_at = ?
            WHERE id = ?`
         )
         .run(
@@ -568,6 +585,7 @@ export function closeWeighingOperation(
           timestamp,
           netWeightKg,
           productTotalCents,
+          freightTotalCents,
           totalCents,
           timestamp,
           input.operationId
@@ -576,7 +594,7 @@ export function closeWeighingOperation(
       database
         .prepare(
           `UPDATE weighing_operations
-           SET status = 'closed_local', exit_weight_kg = ?, exit_weight_captured_at = ?, net_weight_kg = ?, product_total_cents = ?, total_cents = ?, updated_at = ?
+           SET status = 'closed_local', exit_weight_kg = ?, exit_weight_captured_at = ?, net_weight_kg = ?, product_total_cents = ?, freight_total_cents = ?, total_cents = ?, updated_at = ?
            WHERE id = ?`
         )
         .run(
@@ -584,6 +602,7 @@ export function closeWeighingOperation(
           timestamp,
           netWeightKg,
           productTotalCents,
+          freightTotalCents,
           totalCents,
           timestamp,
           input.operationId
@@ -606,6 +625,7 @@ export function closeWeighingOperation(
         exitWeightKg: input.exitWeightKg,
         netWeightKg,
         productTotalCents,
+        freightTotalCents,
         totalCents,
         operationType: input.operationType ?? operation.operationType
       },
@@ -665,15 +685,18 @@ export function closeWeighingOperation(
         )?.omie_product_id
       : null;
 
-    if (nextOperationType === "invoice" && omieCustomerId) {
+    if (omieCustomerId) {
+      const omieAction = nextOperationType === "invoice" ? "create_and_bill_order" : "create_order";
+      const idempotencyAction =
+        nextOperationType === "invoice" ? "create_sales_order" : "create_service_order";
       enqueueSyncJob(
         database,
         {
           target: "omie",
-          action: "create_and_bill_order",
+          action: omieAction,
           entityType: "weighing_operation",
           entityId: input.operationId,
-          idempotencyKey: `kyberrock:${operationIds?.unit_id ?? "unknown"}:${input.operationId}:create_sales_order`,
+          idempotencyKey: `kyberrock:${operationIds?.unit_id ?? "unknown"}:${input.operationId}:${idempotencyAction}`,
           payload: {
             operationId: input.operationId,
             operationType: nextOperationType,
@@ -682,6 +705,7 @@ export function closeWeighingOperation(
             serviceDescription: operation.productDescription,
             quantity: netWeightKg / 1000,
             unitPrice: operation.unitPriceCents ? operation.unitPriceCents / 100 : 0,
+            freightTotalCents,
             issueDate: timestamp.slice(0, 10)
           }
         },
@@ -771,7 +795,7 @@ export function listOpenWeighingOperations(database: DesktopDatabase): WeighingO
         o.id, o.status, o.operation_type, o.entry_weight_kg, o.exit_weight_kg, o.net_weight_kg,
         o.unit_price_cents, o.base_unit_price_cents, o.applied_price_table_id, o.applied_price_table_name,
         o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
-        o.product_total_cents, o.freight_total_cents, o.total_cents,
+        o.product_total_cents, o.freight_total_cents, o.freight_json, o.total_cents,
         o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
@@ -804,7 +828,7 @@ export function listCanceledWeighingOperations(
         o.id, o.status, o.operation_type, o.entry_weight_kg, o.exit_weight_kg, o.net_weight_kg,
         o.unit_price_cents, o.base_unit_price_cents, o.applied_price_table_id, o.applied_price_table_name,
         o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
-        o.product_total_cents, o.freight_total_cents, o.total_cents,
+        o.product_total_cents, o.freight_total_cents, o.freight_json, o.total_cents,
         o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
@@ -837,7 +861,7 @@ export function listClosedWeighingOperations(
         o.id, o.status, o.operation_type, o.entry_weight_kg, o.exit_weight_kg, o.net_weight_kg,
         o.unit_price_cents, o.base_unit_price_cents, o.applied_price_table_id, o.applied_price_table_name,
         o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
-        o.product_total_cents, o.freight_total_cents, o.total_cents,
+        o.product_total_cents, o.freight_total_cents, o.freight_json, o.total_cents,
         o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
@@ -887,7 +911,7 @@ export function getWeighingOperation(
         o.id, o.status, o.operation_type, o.entry_weight_kg, o.exit_weight_kg, o.net_weight_kg,
         o.unit_price_cents, o.base_unit_price_cents, o.applied_price_table_id, o.applied_price_table_name,
         o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
-        o.product_total_cents, o.freight_total_cents, o.total_cents,
+        o.product_total_cents, o.freight_total_cents, o.freight_json, o.total_cents,
         o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
@@ -927,6 +951,31 @@ function calculateProductTotalCents(
   unitPriceCents: number | null
 ): number | null {
   return unitPriceCents === null ? null : Math.round((netWeightKg / 1000) * unitPriceCents);
+}
+
+function serializeOperationFreight(freight: OperationFreightInput | null | undefined): string | null {
+  if (!freight) return null;
+  if (!freight.payer) throw new Error("Responsavel pelo frete e obrigatorio.");
+  if (!freight.rule?.type) throw new Error("Regra de frete invalida.");
+  if (freight.rule.baseValueCents < 0) throw new Error("Valor de frete nao pode ser negativo.");
+  return JSON.stringify({
+    payer: freight.payer,
+    rule: freight.rule,
+    destination: freight.destination?.trim() || null
+  });
+}
+
+function calculateFreightTotalCents(freightJson: string | null, netWeightKg: number): number {
+  if (!freightJson) return 0;
+  try {
+    const freight = JSON.parse(freightJson) as { rule?: FreightRule };
+    if (!freight.rule) return 0;
+    return new FreightCalculator().calculate(netWeightKg, freight.rule);
+  } catch (error) {
+    throw new Error(
+      `Nao foi possivel calcular o frete: ${error instanceof Error ? error.message : "regra invalida"}.`
+    );
+  }
 }
 
 function insertAuditLog(
@@ -978,6 +1027,7 @@ function mapOperationRow(row: OperationRow): WeighingOperationSummary {
     priceSavingsPercent: row.price_savings_percent,
     productTotalCents: row.product_total_cents,
     freightTotalCents: row.freight_total_cents,
+    freightJson: row.freight_json,
     totalCents: row.total_cents,
     omieSalesOrderId: row.omie_sales_order_id,
     omieBillingStatus: row.omie_billing_status,

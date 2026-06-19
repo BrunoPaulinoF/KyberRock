@@ -443,6 +443,77 @@ function registerIpcHandlers(): void {
     return runtime.getOperationMix(startDate, endDate);
   });
 
+  ipcMain.handle("desktop:get-report-html", (_event, startDate: string, endDate: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.getReportHtml(startDate, endDate);
+  });
+
+  ipcMain.handle(
+    "desktop:export-report-pdf",
+    async (_event, startDate: string, endDate: string) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      if (!mainWindow) throw new Error("Janela principal nao disponivel.");
+      runtime.getReportHtml(startDate, endDate);
+      const target = mainWindow.webContents;
+      const data = await target.printToPDF({
+        pageSize: "A4",
+        printBackground: true,
+        margins: { top: 0.5, bottom: 0.5, left: 0.5, right: 0.5 }
+      });
+      const filePath = await pickReportFilePath(`relatorio-${startDate}-a-${endDate}.pdf`, ["pdf"]);
+      if (!filePath) return null;
+      const fs = await import("node:fs/promises");
+      await fs.writeFile(filePath, data);
+      return { path: filePath };
+    }
+  );
+
+  ipcMain.handle(
+    "desktop:export-report-excel",
+    async (_event, startDate: string, endDate: string) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      const html = runtime.getReportHtml(startDate, endDate);
+      const filePath = await pickReportFilePath(
+        `relatorio-${startDate}-a-${endDate}.xls`,
+        ["xls"]
+      );
+      if (!filePath) return null;
+      const fs = await import("node:fs/promises");
+      await fs.writeFile(filePath, html, "utf8");
+      return { path: filePath };
+    }
+  );
+
+  ipcMain.handle("desktop:list-report-recipients", () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.listReportRecipients();
+  });
+
+  ipcMain.handle(
+    "desktop:create-report-recipient",
+    (_event, input: { email: string; displayName?: string | null; isActive?: boolean }) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.createReportRecipient(input);
+    }
+  );
+
+  ipcMain.handle(
+    "desktop:update-report-recipient",
+    (
+      _event,
+      id: string,
+      input: { email?: string; displayName?: string | null; isActive?: boolean }
+    ) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.updateReportRecipient(id, input);
+    }
+  );
+
+  ipcMain.handle("desktop:delete-report-recipient", (_event, id: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    runtime.deleteReportRecipient(id);
+  });
+
   ipcMain.handle("desktop:get-price", (_event, customerId: string, productId: string) => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");
@@ -867,6 +938,20 @@ function writeStartupLog(step: string, detail?: unknown): void {
   } catch {
     // Startup logging must never prevent the app from opening.
   }
+}
+
+async function pickReportFilePath(
+  defaultName: string,
+  allowedExtensions: string[]
+): Promise<string | null> {
+  if (!mainWindow) return null;
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: "Salvar relatorio",
+    defaultPath: defaultName,
+    filters: [{ name: defaultName, extensions: allowedExtensions }]
+  });
+  if (result.canceled || !result.filePath) return null;
+  return result.filePath;
 }
 
 process.on("uncaughtException", (error) => {

@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-import { supabaseConfig } from "../config/supabase-config.js";
+import { isSupabaseConfigured, supabaseConfig } from "../config/supabase-config.js";
 import type { DesktopDatabase } from "../database/sqlite.js";
 import type { LocalDesktopIdentity } from "./bootstrap.js";
 import { readLocalSetting, writeLocalSetting } from "./local-settings.js";
@@ -185,6 +185,9 @@ interface CloudSettings {
 
 export function initializeSupabase(): void {
   if (!client) {
+    if (!isSupabaseConfigured()) {
+      return;
+    }
     client = createClient(supabaseConfig.url, supabaseConfig.publishableKey, {
       auth: { persistSession: false, autoRefreshToken: false }
     });
@@ -868,6 +871,7 @@ export async function processOmieSyncQueue(
       serviceDescription?: string | null;
       quantity: number;
       unitPrice: number;
+      freightTotalCents?: number;
       issueDate: string;
     };
 
@@ -892,6 +896,7 @@ export async function processOmieSyncQueue(
             serviceDescription: payload.serviceDescription ?? undefined,
             quantity: payload.quantity,
             unitPrice: payload.unitPrice,
+            freightTotalCents: payload.freightTotalCents,
             issueDate: payload.issueDate,
             idempotencyKey: job.idempotencyKey
           }
@@ -991,6 +996,7 @@ export async function processFiscalBillingNow(
     serviceDescription?: string | null;
     quantity: number;
     unitPrice: number;
+    freightTotalCents?: number;
     issueDate: string;
   };
 
@@ -1016,6 +1022,7 @@ export async function processFiscalBillingNow(
           productOmieId: payload.productOmieId ?? undefined,
           quantity: payload.quantity,
           unitPrice: payload.unitPrice,
+          freightTotalCents: payload.freightTotalCents,
           issueDate: payload.issueDate,
           idempotencyKey: job.idempotency_key
         }

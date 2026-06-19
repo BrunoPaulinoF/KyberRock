@@ -47,11 +47,6 @@ interface CloudCredentials {
   deviceToken: string;
 }
 
-interface OmieCredentials {
-  appKey: string;
-  appSecret: string;
-}
-
 interface ActivateDesktopResponse {
   status?: string;
   message?: string;
@@ -64,8 +59,6 @@ interface ActivateDesktopResponse {
   unitTimezone?: string;
   deviceId?: string;
   deviceToken?: string;
-  omieAppKey?: string | null;
-  omieAppSecret?: string | null;
   checkedAt?: string;
 }
 
@@ -76,8 +69,6 @@ interface DesktopStatusResponse {
   companyId?: string;
   unitId?: string;
   deviceId?: string;
-  omieAppKey?: string | null;
-  omieAppSecret?: string | null;
   checkedAt?: string;
 }
 
@@ -130,12 +121,6 @@ export async function activateDesktop(
     deviceId: data.deviceId,
     deviceToken: data.deviceToken
   }, checkedAt);
-  if (data.omieAppKey && data.omieAppSecret) {
-    saveOmieCredentials(database, {
-      appKey: data.omieAppKey,
-      appSecret: data.omieAppSecret
-    }, checkedAt);
-  }
   saveAccessStatus(database, "approved", data.message ?? "Acesso aprovado. Sistema liberado.", checkedAt);
 
   return buildAccessStatus(database, {
@@ -195,10 +180,6 @@ export async function validateDesktopAccess(
     if (data?.allowed) {
       writeLocalSetting(database, "last_license_check_at", checkedAt, checkedAt);
     }
-    if (data?.allowed && data.omieAppKey && data.omieAppSecret) {
-      saveOmieCredentials(database, { appKey: data.omieAppKey, appSecret: data.omieAppSecret }, checkedAt);
-    }
-
     return buildAccessStatus(database, {
       status,
       canOperate: data?.allowed === true,
@@ -415,17 +396,4 @@ export function logoutDesktop(database: DesktopDatabase, now: Date = new Date())
 
 function isBlockingStatus(status: DesktopAccessStatusCode): boolean {
   return ["company_blocked", "unit_blocked", "device_blocked", "invalid_device"].includes(status);
-}
-
-function saveOmieCredentials(database: DesktopDatabase, credentials: OmieCredentials, updatedAt: string): void {
-  writeLocalSetting(database, "omie_app_key", credentials.appKey, updatedAt);
-  writeLocalSetting(database, "omie_app_secret", credentials.appSecret, updatedAt);
-  writeLocalSetting(database, "omie_configured", true, updatedAt);
-}
-
-export function getOmieCredentials(database: DesktopDatabase): OmieCredentials | null {
-  const appKey = readStringLocalSetting(database, "omie_app_key");
-  const appSecret = readStringLocalSetting(database, "omie_app_secret");
-  if (!appKey || !appSecret) return null;
-  return { appKey, appSecret };
 }

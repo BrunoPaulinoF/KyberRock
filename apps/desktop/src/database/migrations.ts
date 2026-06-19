@@ -493,5 +493,26 @@ ALTER TABLE weighing_operations ADD COLUMN omie_billing_message TEXT;
 ALTER TABLE weighing_operations ADD COLUMN omie_billed_at TEXT;
 ALTER TABLE weighing_operations ADD COLUMN omie_document_url TEXT;
 `
+  },
+  {
+    version: 10,
+    name: "registration_internal_codes_and_missing_fields",
+    sql: `
+ALTER TABLE customers ADD COLUMN internal_code TEXT;
+ALTER TABLE products ADD COLUMN internal_code TEXT;
+ALTER TABLE drivers ADD COLUMN cnh TEXT;
+ALTER TABLE carriers ADD COLUMN phone TEXT;
+ALTER TABLE carriers ADD COLUMN omie_integration_code TEXT;
+ALTER TABLE products ADD COLUMN unit_type TEXT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_company_internal_code
+  ON customers(company_id, internal_code)
+  WHERE internal_code IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_products_company_internal_code
+  ON products(company_id, internal_code)
+  WHERE internal_code IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_drivers_company_cnh ON drivers(company_id, cnh);
+CREATE INDEX IF NOT EXISTS idx_carriers_company_phone ON carriers(company_id, phone);
+`
   }
 ];

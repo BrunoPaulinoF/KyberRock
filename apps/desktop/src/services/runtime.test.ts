@@ -17,21 +17,21 @@ describe("DesktopRuntime OMIE status", () => {
     }
   });
 
-  it("reports OMIE configured when credentials exist before first sync", () => {
+  it("reports OMIE configured when cloud credentials are present", () => {
     const baseDirectory = mkdtempSync(path.join(tmpdir(), "kyberrock-runtime-"));
     tempDirectories.push(baseDirectory);
     const runtime = DesktopRuntime.initialize(baseDirectory);
 
     try {
       const database = (runtime as unknown as { database: DesktopDatabase }).database;
-      writeLocalSetting(database, "omie_app_key", "abc123456");
-      writeLocalSetting(database, "omie_app_secret", "secret");
-      writeLocalSetting(database, "omie_configured", true);
-      runtime.refreshOmieConfig();
+      writeLocalSetting(database, "cloud_company_id", "company-1");
+      writeLocalSetting(database, "cloud_unit_id", "unit-1");
+      writeLocalSetting(database, "cloud_device_id", "device-1");
+      writeLocalSetting(database, "cloud_device_token", "token-1");
+      writeLocalSetting(database, "cloud_configured", true);
 
       expect(runtime.getOmieSyncStatus()).toMatchObject({
         configured: true,
-        appKeyMasked: "abc****456",
         hasSyncedData: false,
         totalCustomers: 0,
         totalProducts: 0,

@@ -19,13 +19,39 @@ export function LoaderDashboard() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    loadOperations();
-  }, [user?.unitId]);
+    void loadOperations();
 
-  async function loadOperations() {
     if (!user?.unitId) return;
 
-    setIsLoading(true);
+    const channel = supabase
+      .channel(`loading-requests:${user.unitId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "loading_requests",
+          filter: `unit_id=eq.${user.unitId}`
+        },
+        () => void loadOperations({ preserveLoading: true })
+      )
+      .subscribe();
+
+    const fallbackPolling = window.setInterval(
+      () => void loadOperations({ preserveLoading: true }),
+      15_000
+    );
+
+    return () => {
+      window.clearInterval(fallbackPolling);
+      void supabase.removeChannel(channel);
+    };
+  }, [user?.unitId]);
+
+  async function loadOperations(options: { preserveLoading?: boolean } = {}) {
+    if (!user?.unitId) return;
+
+    if (!options.preserveLoading) setIsLoading(true);
     try {
       const { data, error } = await supabase
         .from("loading_requests")

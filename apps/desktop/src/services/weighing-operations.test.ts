@@ -322,7 +322,7 @@ describe("weighing operations", () => {
     }
   });
 
-  it("does not queue OMIE jobs for internal operations", () => {
+  it("queues a service order job for internal operations", () => {
     const database = createDatabase();
 
     try {
@@ -349,8 +349,13 @@ describe("weighing operations", () => {
 
       expect(closed).toMatchObject({ status: "closed_local", operationType: "internal" });
       expect(
-        database.prepare("SELECT COUNT(*) FROM sync_queue WHERE target = 'omie'").pluck().get()
-      ).toBe(0);
+        database
+          .prepare("SELECT action, idempotency_key FROM sync_queue WHERE target = 'omie'")
+          .get()
+      ).toMatchObject({
+        action: "create_order",
+        idempotency_key: `kyberrock:unit-1:${operation.id}:create_service_order`
+      });
     } finally {
       database.close();
     }

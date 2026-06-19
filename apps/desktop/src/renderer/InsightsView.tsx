@@ -127,6 +127,8 @@ export function InsightsView({
   const [mix, setMix] = useState<OperationMix | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState<"pdf" | "excel" | null>(null);
+  const [exportMessage, setExportMessage] = useState<string | null>(null);
 
   const range = useMemo(() => resolveRange(period, new Date()), [period]);
 
@@ -158,6 +160,25 @@ export function InsightsView({
       cancelled = true;
     };
   }, [desktopApi, range.start, range.end]);
+
+  async function exportReport(kind: "pdf" | "excel"): Promise<void> {
+    if (!desktopApi) return;
+    setExporting(kind);
+    setExportMessage(null);
+    try {
+      const result =
+        kind === "pdf"
+          ? await desktopApi.exportReportPdf(range.start, range.end)
+          : await desktopApi.exportReportExcel(range.start, range.end);
+      if (result) {
+        setExportMessage(`Arquivo salvo em ${result.path}`);
+      }
+    } catch (err) {
+      setExportMessage(err instanceof Error ? err.message : "Falha ao exportar relatorio.");
+    } finally {
+      setExporting(null);
+    }
+  }
 
   const totals = useMemo(() => {
     const operations = series.reduce((sum, point) => sum + point.totalOperations, 0);
@@ -225,10 +246,40 @@ export function InsightsView({
               {opt.label}
             </button>
           ))}
+          <button
+            type="button"
+            onClick={() => void exportReport("pdf")}
+            disabled={exporting !== null}
+            style={styles.periodChip}
+          >
+            {exporting === "pdf" ? "Gerando PDF..." : "Exportar PDF"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void exportReport("excel")}
+            disabled={exporting !== null}
+            style={styles.periodChip}
+          >
+            {exporting === "excel" ? "Gerando Excel..." : "Exportar Excel"}
+          </button>
         </div>
       </header>
 
       {error ? <p style={styles.errorMessage}>{error}</p> : null}
+      {exportMessage ? (
+        <p
+          style={{
+            color: "#1d4ed8",
+            background: "#eff6ff",
+            border: "1px solid #bfdbfe",
+            padding: "8px 12px",
+            borderRadius: "8px",
+            fontSize: "13px"
+          }}
+        >
+          {exportMessage}
+        </p>
+      ) : null}
 
       <div style={styles.kpiGrid}>
         <KpiCard

@@ -148,6 +148,7 @@ type CreateOrderPayload = {
   serviceDescription?: string;
   quantity: number;
   unitPrice: number;
+  freightTotalCents?: number;
   issueDate: string;
   idempotencyKey: string;
 };
@@ -896,6 +897,17 @@ async function pushCustomerToOmie(
     return payload.omieCustomerId;
   }
 
+  if (payload.cnpjCpf) {
+    const existing = await findCustomerByDocument(credentials, payload.cnpjCpf);
+    if (existing) {
+      await callOmie<unknown, unknown>(credentials, "/geral/clientes/", "AlterarCliente", {
+        ...body,
+        codigo_cliente_omie: existing
+      });
+      return existing;
+    }
+  }
+
   const response = await callOmie<
     unknown,
     {
@@ -909,6 +921,31 @@ async function pushCustomerToOmie(
     throw new Error("OMIE nao retornou codigoClienteOmie");
   }
   return omieCustomerId;
+}
+
+async function findCustomerByDocument(
+  credentials: OmieCredentials,
+  document: string
+): Promise<number | null> {
+  try {
+    const response = await callOmie<unknown, { clientes?: Array<Record<string, unknown>> }>(
+      credentials,
+      "/geral/clientes/",
+      "ListarClientesResumido",
+      {
+        pagina: 1,
+        registros_por_pagina: 200,
+        filtro: { cnpj_cpf: document }
+      }
+    );
+    const customers = (response.clientes ?? []) as Array<Record<string, unknown>>;
+    const id = customers
+      .map((row) => toNumber(pickFirst(row.codigo_cliente_omie, row.codigoClienteOmie)))
+      .find((value) => value !== null);
+    return id ?? null;
+  } catch {
+    return null;
+  }
 }
 
 async function createOmieOrder(
@@ -944,7 +981,7 @@ async function createOmieOrder(
             }
           }
         ],
-        frete: { modalidade: "9" },
+        frete: buildOmieFreight(payload.freightTotalCents),
         informacoes_adicionais: { codigo_categoria: "1.01.01", codigo_conta_corrente: 0 }
       }
     ).catch(async (error) => {
@@ -994,6 +1031,16 @@ async function createOmieOrder(
     throw new Error("OMIE nao retornou codigoOS");
   }
   return orderId;
+}
+
+function buildOmieFreight(freightTotalCents: number | null | undefined): Record<string, unknown> {
+  if (!freightTotalCents || freightTotalCents <= 0) {
+    return { modalidade: "9" };
+  }
+  return {
+    modalidade: "0",
+    valor_frete: Math.round(freightTotalCents) / 100
+  };
 }
 
 async function createAndBillOmieOrder(
