@@ -126,6 +126,11 @@ const desktopApi = {
   getOmieSchedulerStatus: () => ipcRenderer.invoke("desktop:omie-scheduler-status"),
   setOmieSchedulerConfig: (config: { enabled?: boolean; intervalMinutes?: number }) =>
     ipcRenderer.invoke("desktop:omie-scheduler-config", config),
+  syncCloudNow: () => ipcRenderer.invoke("desktop:cloud-sync-now"),
+  getCloudSyncSchedulerStatus: () => ipcRenderer.invoke("desktop:cloud-scheduler-status"),
+  setCloudSyncConfig: (config: { enabled?: boolean; intervalMinutes?: number }) =>
+    ipcRenderer.invoke("desktop:cloud-scheduler-config", config),
+  probeConnectivity: () => ipcRenderer.invoke("desktop:probe-connectivity"),
   onUpdateAvailable: (callback: (event: unknown, version: string) => void) =>
     ipcRenderer.on("desktop:update-available", callback),
   offUpdateAvailable: (callback: (event: unknown, version: string) => void) =>

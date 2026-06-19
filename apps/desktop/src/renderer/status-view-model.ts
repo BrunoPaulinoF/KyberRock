@@ -24,17 +24,29 @@ export function buildStatusIndicatorViewModels(
       detail:
         snapshot.internet === "online"
           ? "Rede disponivel para sync futuro"
-          : "Operacao local continua disponivel"
+          : "Operacao local continua disponivel; a fila sera drenada ao reconectar"
     },
     buildScaleIndicator(snapshot.scale),
     buildIntegrationIndicator("Cloud", snapshot.cloud),
     buildIntegrationIndicator("OMIE", snapshot.omie),
     {
-      label: "Fila pendente",
+      label: "Fila cloud",
       value: `${snapshot.pendingSyncJobs} pendente(s)`,
       tone: snapshot.pendingSyncJobs > 0 ? "warning" : "success",
       detail:
-        snapshot.pendingSyncJobs > 0 ? "Itens aguardando sincronizacao" : "Sem itens pendentes"
+        snapshot.pendingSyncJobs > 0
+          ? "Itens aguardando envio ao Supabase - enviarao ao reconectar a internet"
+          : "Sem itens pendentes"
+    },
+    {
+      label: "Ultimo sync cloud",
+      value: snapshot.cloudLastRunAt
+        ? formatDateTime(snapshot.cloudLastRunAt)
+        : "Nunca executado",
+      tone: snapshot.cloudLastRunAt ? "success" : "warning",
+      detail: snapshot.cloudLastRunAt
+        ? "Sincronizacao automatica em execucao a cada 20 min"
+        : "Sincronizacao sera disparada na primeira janela"
     },
     {
       label: "Ultimo backup",

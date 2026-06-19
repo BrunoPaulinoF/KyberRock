@@ -217,6 +217,29 @@ export interface KyberRockDesktopApi {
     lastPullAt: string | null;
     nextPullAt: string | null;
   }>;
+  syncCloudNow: () => Promise<{
+    success: boolean;
+    synced: number;
+    failed: number;
+    errors: string[];
+  }>;
+  getCloudSyncSchedulerStatus: () => Promise<{
+    enabled: boolean;
+    intervalMinutes: number;
+    lastRunAt: string | null;
+    nextRunAt: string | null;
+  }>;
+  setCloudSyncConfig: (config: { enabled?: boolean; intervalMinutes?: number }) => Promise<{
+    enabled: boolean;
+    intervalMinutes: number;
+    lastRunAt: string | null;
+    nextRunAt: string | null;
+  }>;
+  probeConnectivity: () => Promise<{
+    internetOnline: boolean;
+    cloudReachable: boolean;
+    omieReachable: boolean;
+  }>;
   lookupCep: (cep: string) => Promise<{
     zipcode: string;
     street: string;

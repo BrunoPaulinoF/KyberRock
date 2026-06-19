@@ -3,13 +3,19 @@ import { describe, expect, it } from "vitest";
 import { buildStatusIndicatorViewModels } from "./status-view-model";
 
 describe("buildStatusIndicatorViewModels", () => {
-  it("creates the six Phase 3 visual indicators", () => {
+  it("creates the seven visual indicators with cloud queue detail", () => {
     const indicators = buildStatusIndicatorViewModels({
       internet: "offline",
       scale: "not_configured",
       cloud: "not_configured",
       omie: "not_configured",
       pendingSyncJobs: 2,
+      pendingOmieJobs: 0,
+      pendingCloudJobs: 2,
+      cloudLastRunAt: null,
+      cloudInitialized: false,
+      cloudReachable: false,
+      internetOnline: false,
       lastBackupAt: "2026-06-06T12:00:00.000Z",
       databasePath: "C:/KyberRock/data/kyberrock.sqlite3",
       identity: {
@@ -26,7 +32,8 @@ describe("buildStatusIndicatorViewModels", () => {
       "Balanca",
       "Cloud",
       "OMIE",
-      "Fila pendente",
+      "Fila cloud",
+      "Ultimo sync cloud",
       "Ultimo backup"
     ]);
     expect(indicators[0]).toMatchObject({ tone: "danger", value: "Offline" });

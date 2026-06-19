@@ -198,6 +198,34 @@ export function isSupabaseInitialized(): boolean {
   return client !== null;
 }
 
+export function ensureSupabaseInitialized(): SupabaseClient | null {
+  initializeSupabase();
+  return client;
+}
+
+export async function pingSupabase(timeoutMs = 4_000): Promise<boolean> {
+  const instance = ensureSupabaseInitialized();
+  if (!instance) {
+    return false;
+  }
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const { error } = await instance
+      .from("weighing_operations")
+      .select("synced_at", { count: "exact", head: true })
+      .abortSignal(controller.signal);
+    if (error) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+}
+
 export function getSupabaseClient(): SupabaseClient {
   initializeSupabase();
   if (!client) throw new Error("Supabase not initialized");

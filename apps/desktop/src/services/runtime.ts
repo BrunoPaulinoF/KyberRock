@@ -32,6 +32,18 @@ import {
   type OmieSchedulerStatus
 } from "./omie-scheduler.js";
 import {
+  startCloudSyncScheduler,
+  computeNextSyncAt as computeNextCloudSyncAt,
+  readCloudSyncConfig,
+  readCloudSyncLastRunAt,
+  recordCloudSyncRanAt,
+  writeCloudSyncConfig,
+  type CloudSyncConfig,
+  type CloudSyncSchedulerHandle,
+  type CloudSyncSchedulerStatus
+} from "./cloud-scheduler.js";
+import { probeInternet, probeOmie } from "./connectivity.js";
+import {
   getDesktopStatusSnapshot,
   recordLastBackupAt,
   type DesktopStatusSnapshot
@@ -62,6 +74,7 @@ import {
 } from "./printing.js";
 import {
   initializeSupabase,
+  pingSupabase,
   processCloudSyncQueue,
   syncOperationToSupabase,
   syncLoadingRequestToSupabase,
@@ -190,6 +203,8 @@ export class DesktopRuntime {
   private readonly paths: InitializedDesktopDatabase["paths"];
   private backupScheduler: BackupSchedulerHandle | null = null;
   private omieScheduler: OmieSchedulerHandle | null = null;
+  private cloudSyncScheduler: CloudSyncSchedulerHandle | null = null;
+  private cloudSyncInProgress = false;
   private receiptPrinter: ReceiptPrinter = { printReceipt: async () => undefined };
   private fiscalDocumentPrinter: FiscalDocumentPrinter = {
     printDocument: async () => ({ printed: false, error: null })
@@ -214,7 +229,9 @@ export class DesktopRuntime {
   getStatus(internetOnline?: boolean): DesktopStatusSnapshot {
     return getDesktopStatusSnapshot(this.database, {
       databasePath: this.paths.databasePath,
-      internetOnline
+      internetOnline,
+      cloudInitialized: isSupabaseInitialized(),
+      cloudReachable: isSupabaseInitialized()
     });
   }
 
@@ -280,6 +297,45 @@ export class DesktopRuntime {
   stopOmiePullScheduler(): void {
     this.omieScheduler?.stop();
     this.omieScheduler = null;
+  }
+
+  startCloudSyncScheduler(): CloudSyncSchedulerHandle {
+    this.cloudSyncScheduler?.stop();
+    this.cloudSyncScheduler = startCloudSyncScheduler({
+      getConfig: () => readCloudSyncConfig(this.database),
+      getLastRunAt: () => readCloudSyncLastRunAt(this.database),
+      setLastRunAt: (isoString) => recordCloudSyncRanAt(this.database, isoString),
+      isSyncInProgress: () => this.cloudSyncInProgress,
+      runSync: async () => {
+        await this.syncCloudNow();
+      },
+      onError: (error) => console.error("Sincronizacao cloud automatica falhou", error)
+    });
+
+    return this.cloudSyncScheduler;
+  }
+
+  stopCloudSyncScheduler(): void {
+    this.cloudSyncScheduler?.stop();
+    this.cloudSyncScheduler = null;
+  }
+
+  getCloudSyncSchedulerStatus(): CloudSyncSchedulerStatus {
+    const config = readCloudSyncConfig(this.database);
+    const lastRunAt = readCloudSyncLastRunAt(this.database);
+    return {
+      ...config,
+      lastRunAt,
+      nextRunAt: computeNextCloudSyncAt(config, lastRunAt)
+    };
+  }
+
+  setCloudSyncConfig(config: Partial<CloudSyncConfig>): CloudSyncSchedulerStatus {
+    writeCloudSyncConfig(this.database, config);
+    if (this.cloudSyncScheduler) {
+      this.startCloudSyncScheduler();
+    }
+    return this.getCloudSyncSchedulerStatus();
   }
 
   getOmieSchedulerStatus(): OmieSchedulerStatus {
@@ -468,7 +524,21 @@ export class DesktopRuntime {
   }
 
   async syncToCloud(): Promise<SyncResult> {
+    return this.syncCloudNow();
+  }
+
+  async syncCloudNow(): Promise<SyncResult> {
     this.assertDesktopAccess();
+    if (this.cloudSyncInProgress) {
+      return {
+        success: true,
+        synced: 0,
+        failed: 0,
+        errors: ["Sincronizacao cloud ja em andamento."]
+      };
+    }
+
+    this.cloudSyncInProgress = true;
     const identity = this.ensureIdentity();
     const errors: string[] = [];
     let synced = 0;
@@ -513,6 +583,7 @@ export class DesktopRuntime {
         }
       }
 
+      recordCloudSyncRanAt(this.database);
       return { success: failed === 0, synced, failed, errors };
     } catch (error) {
       return {
@@ -521,13 +592,37 @@ export class DesktopRuntime {
         failed,
         errors: [...errors, error instanceof Error ? error.message : "Cloud synchronization failed"]
       };
+    } finally {
+      this.cloudSyncInProgress = false;
     }
+  }
+
+  async probeCloudConnectivity(): Promise<{
+    internetOnline: boolean;
+    cloudReachable: boolean;
+    omieReachable: boolean;
+  }> {
+    const [internet, supabaseReachable, omie] = await Promise.all([
+      probeInternet(),
+      pingSupabase(),
+      probeOmie()
+    ]);
+    return {
+      internetOnline: internet.online,
+      cloudReachable: supabaseReachable,
+      omieReachable: omie.online
+    };
   }
 
   async getCloudStatus(): Promise<{ totalOperations: number; lastSync: string | null }> {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
-    return getSupabaseSyncStatus(identity.companyId);
+    const result = await getSupabaseSyncStatus(identity.companyId);
+    const lastRunAt = readCloudSyncLastRunAt(this.database);
+    return {
+      totalOperations: result.totalOperations,
+      lastSync: lastRunAt ?? result.lastSync
+    };
   }
 
   isCloudConnected(): boolean {
@@ -557,6 +652,10 @@ export class DesktopRuntime {
   close(): void {
     this.backupScheduler?.stop();
     this.backupScheduler = null;
+    this.cloudSyncScheduler?.stop();
+    this.cloudSyncScheduler = null;
+    this.omieScheduler?.stop();
+    this.omieScheduler = null;
     this.database.close();
   }
 

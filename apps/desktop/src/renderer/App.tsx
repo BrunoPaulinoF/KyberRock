@@ -177,6 +177,17 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     details?: string;
   }>({ status: "idle", message: "" });
   const [omieLoop, setOmieLoop] = useState<OmieLoopUiState | null>(null);
+  const [cloudSchedulerStatus, setCloudSchedulerStatus] = useState<{
+    enabled: boolean;
+    intervalMinutes: number;
+    lastRunAt: string | null;
+    nextRunAt: string | null;
+  } | null>(null);
+  const [connectivity, setConnectivity] = useState<{
+    internetOnline: boolean;
+    cloudReachable: boolean;
+    omieReachable: boolean;
+  } | null>(null);
   const themeVars = useMemo(() => getThemeVariables(themeMode), [themeMode]);
   const filteredCanceledOperations = useMemo(
     () => filterCanceledOperations(canceledOperations, canceledFilter),
@@ -428,43 +439,63 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         desktopApi.listPrintReceipts()
       ]);
 
-      if (active) {
-        setStatus(nextStatus);
-        setUpdateState(nextUpdateState);
-        setOpenOperations(nextOpenOperations);
-        setCanceledOperations(nextCanceledOperations);
-        setClosedOperations(nextClosedOperations);
-        setPrinters(nextPrinters);
-        setPrintProfiles(nextProfiles);
-        setPrintReceipts(nextReceipts);
-        setSelectedPrinterName(
-          (current) =>
-            current ||
-            nextPrinters.find((printer) => printer.isDefault)?.name ||
-            nextPrinters[0]?.name ||
-            ""
-        );
+      if (!active) return;
 
-        // Check cloud status
-        try {
-          const connected = await desktopApi.isCloudConnected();
-          setCloudConnected(connected);
-          if (connected) {
-            const nextCloudStatus = await desktopApi.getCloudStatus();
-            setCloudStatus(nextCloudStatus);
-          }
-        } catch {
+      setStatus(nextStatus);
+      setUpdateState(nextUpdateState);
+      setOpenOperations(nextOpenOperations);
+      setCanceledOperations(nextCanceledOperations);
+      setClosedOperations(nextClosedOperations);
+      setPrinters(nextPrinters);
+      setPrintProfiles(nextProfiles);
+      setPrintReceipts(nextReceipts);
+      setSelectedPrinterName(
+        (current) =>
+          current ||
+          nextPrinters.find((printer) => printer.isDefault)?.name ||
+          nextPrinters[0]?.name ||
+          ""
+      );
+
+      try {
+        const probe = await desktopApi.probeConnectivity();
+        if (!active) return;
+        setConnectivity(probe);
+        const connected = probe.cloudReachable;
+        setCloudConnected(connected);
+        if (connected) {
+          const nextCloudStatus = await desktopApi.getCloudStatus();
+          if (active) setCloudStatus(nextCloudStatus);
+        }
+      } catch {
+        if (active) {
+          setConnectivity((prev) => prev ?? { internetOnline: false, cloudReachable: false, omieReachable: false });
           setCloudConnected(false);
         }
+      }
 
-        try {
-          const omieStatusResult = await desktopApi.getOmieStatus();
-          setOmieStatus(omieStatusResult);
-        } catch {
-          // OMIE status is optional
+      try {
+        const omieStatusResult = await desktopApi.getOmieStatus();
+        if (active) setOmieStatus(omieStatusResult);
+      } catch {
+        // OMIE status is optional
+      }
+
+      try {
+        const cloudSched = await desktopApi.getCloudSyncSchedulerStatus();
+        if (active) setCloudSchedulerStatus(cloudSched);
+      } catch {
+        // scheduler status is optional
+      }
+
+      if (active) {
+        if (nextStatus.pendingSyncJobs > 0) {
+          setMessage(
+            `Fila: ${nextStatus.pendingSyncJobs} item(ns) pendente(s) - envio automatico a cada ${cloudSchedulerStatus?.intervalMinutes ?? 20} min.`
+          );
+        } else {
+          setMessage("Sincronizacao automatica ativa (OMIE + Supabase) a cada 20 min.");
         }
-
-        setMessage("Desktop pronto para operacao local offline-first.");
       }
     }
 
@@ -476,6 +507,102 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       window.clearInterval(intervalId);
     };
   }, [desktopApi]);
+
+  const autoSyncCloud = useCallback(async () => {
+    if (!desktopApi) return;
+    if (!navigator.onLine) return;
+    setCloudSyncing(true);
+    try {
+      const result = await desktopApi.syncCloudNow();
+      if (result.success) {
+        setMessage(
+          result.synced > 0
+            ? `Sincronizacao cloud concluida: ${result.synced} item(ns) enviados.`
+            : "Sincronizacao cloud concluida, sem itens novos."
+        );
+      } else {
+        setMessage(
+          `Sincronizacao cloud parcial: ${result.synced} enviados, ${result.failed} falharam.`
+        );
+      }
+      const nextCloudStatus = await desktopApi.getCloudStatus();
+      setCloudStatus(nextCloudStatus);
+      const probe = await desktopApi.probeConnectivity();
+      setConnectivity(probe);
+      setCloudConnected(probe.cloudReachable);
+      const refreshStatus = await desktopApi.getStatus(navigator.onLine);
+      setStatus(refreshStatus);
+    } catch (error) {
+      setMessage(
+        `Falha na sincronizacao automatica: ${error instanceof Error ? error.message : "erro desconhecido"}.`
+      );
+    } finally {
+      setCloudSyncing(false);
+    }
+  }, [desktopApi]);
+
+  const autoSyncOmie = useCallback(async () => {
+    if (!desktopApi) return;
+    if (!navigator.onLine) return;
+    setOmieSyncing(true);
+    try {
+      await desktopApi.omieSync();
+      const omieStatusResult = await desktopApi.getOmieStatus();
+      setOmieStatus(omieStatusResult);
+      setMessage("Sincronizacao OMIE automatica concluida.");
+    } catch (error) {
+      console.warn("Auto-sync OMIE falhou", error);
+    } finally {
+      setOmieSyncing(false);
+    }
+  }, [desktopApi]);
+
+  useEffect(() => {
+    if (!desktopApi || phase !== "unlocked") return;
+    let cancelled = false;
+    const initial = window.setTimeout(() => {
+      if (cancelled) return;
+      void autoSyncCloud();
+      void autoSyncOmie();
+    }, 1_500);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(initial);
+    };
+  }, [desktopApi, phase, autoSyncCloud, autoSyncOmie]);
+
+  useEffect(() => {
+    if (!desktopApi || phase !== "unlocked") return;
+    const handleOnline = () => {
+      setMessage("Internet disponivel novamente - drenando fila de sincronizacao.");
+      void autoSyncCloud();
+      void autoSyncOmie();
+    };
+    const handleOffline = () => {
+      setMessage(
+        "Internet indisponivel - operacao segue normalmente, dados ficarao na fila para envio."
+      );
+      setConnectivity((prev) =>
+        prev ? { ...prev, internetOnline: false } : { internetOnline: false, cloudReachable: false, omieReachable: false }
+      );
+    };
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, [desktopApi, phase, autoSyncCloud, autoSyncOmie]);
+
+  useEffect(() => {
+    if (!desktopApi) return;
+    const id = window.setInterval(() => {
+      if (navigator.onLine) {
+        void autoSyncCloud();
+      }
+    }, 20 * 60 * 1000);
+    return () => window.clearInterval(id);
+  }, [desktopApi, autoSyncCloud]);
 
   async function refreshOpenOperations(): Promise<void> {
     if (!desktopApi) {
@@ -1113,6 +1240,14 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   {companyName} — {unitName}
                 </span>
               ) : null}
+              <ConnectivityBadge
+                internetOnline={navigator.onLine}
+                connectivity={connectivity}
+                cloudScheduler={cloudSchedulerStatus}
+                pendingSyncJobs={status?.pendingSyncJobs ?? 0}
+                cloudSyncing={cloudSyncing}
+                onSyncNow={() => void autoSyncCloud()}
+              />
               <span style={styles.headerMessage}>{message}</span>
             </div>
             <div style={styles.topbarRight}>
@@ -2038,6 +2173,138 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       <KeyboardShortcutsLegend />
     </main>
   );
+}
+
+function ConnectivityBadge({
+  internetOnline,
+  connectivity,
+  cloudScheduler,
+  pendingSyncJobs,
+  cloudSyncing,
+  onSyncNow
+}: {
+  internetOnline: boolean;
+  connectivity: { internetOnline: boolean; cloudReachable: boolean; omieReachable: boolean } | null;
+  cloudScheduler: { enabled: boolean; intervalMinutes: number; lastRunAt: string | null } | null;
+  pendingSyncJobs: number;
+  cloudSyncing: boolean;
+  onSyncNow: () => void;
+}) {
+  const effectiveInternet = connectivity?.internetOnline ?? internetOnline;
+  const cloudReachable = connectivity?.cloudReachable ?? false;
+  const omieReachable = connectivity?.omieReachable ?? false;
+
+  let tone: "success" | "warning" | "danger" | "neutral" = "neutral";
+  let label = "Verificando...";
+  let detail = "Coletando informacoes de rede";
+
+  if (!effectiveInternet) {
+    tone = "danger";
+    label = "Sem internet";
+    detail =
+      pendingSyncJobs > 0
+        ? `${pendingSyncJobs} item(ns) na fila; envio ao reconectar`
+        : "Operacao local segue normalmente";
+  } else if (!cloudReachable && !omieReachable) {
+    tone = "danger";
+    label = "Integrações indisponíveis";
+    detail = "Supabase e OMIE não respondem - sincronização ficará pendente";
+  } else if (!cloudReachable) {
+    tone = "warning";
+    label = "Supabase indisponível";
+    detail = omieReachable
+      ? "OMIE respondendo; Supabase offline - fila aguardando"
+      : "Supabase não responde - fila aguardando";
+  } else if (!omieReachable) {
+    tone = "warning";
+    label = "OMIE indisponível";
+    detail = "Supabase OK; OMIE não responde - envio de pedidos aguardando";
+  } else {
+    tone = "success";
+    label = cloudSyncing ? "Sincronizando..." : "Conectado";
+    const interval = cloudScheduler?.intervalMinutes ?? 20;
+    const last = cloudScheduler?.lastRunAt
+      ? new Date(cloudScheduler.lastRunAt).toLocaleTimeString("pt-BR")
+      : "nunca";
+    detail = `Supabase + OMIE online · auto a cada ${interval} min · último: ${last}`;
+  }
+
+  const palette = badgePalette(tone);
+  return (
+    <div
+      title={detail}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "6px",
+        padding: "3px 8px",
+        borderRadius: "999px",
+        background: palette.bg,
+        color: palette.fg,
+        border: `1px solid ${palette.border}`,
+        fontSize: "11px",
+        fontWeight: 700,
+        whiteSpace: "nowrap"
+      }}
+    >
+      <span
+        style={{
+          width: "8px",
+          height: "8px",
+          borderRadius: "50%",
+          background: palette.dot,
+          display: "inline-block"
+        }}
+      />
+      <span>{label}</span>
+      {pendingSyncJobs > 0 ? (
+        <span
+          style={{
+            background: "rgba(0,0,0,0.18)",
+            color: palette.fg,
+            borderRadius: "999px",
+            padding: "0 6px",
+            fontSize: "10px"
+          }}
+        >
+          {pendingSyncJobs} fila
+        </span>
+      ) : null}
+      {effectiveInternet && !cloudSyncing ? (
+        <button
+          type="button"
+          onClick={onSyncNow}
+          style={{
+            background: "transparent",
+            color: palette.fg,
+            border: `1px solid ${palette.border}`,
+            borderRadius: "999px",
+            padding: "0 8px",
+            fontSize: "10px",
+            cursor: "pointer",
+            fontWeight: 700
+          }}
+        >
+          Sincronizar
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function badgePalette(
+  tone: "success" | "warning" | "danger" | "neutral"
+): { bg: string; fg: string; border: string; dot: string } {
+  switch (tone) {
+    case "success":
+      return { bg: "#dcfce7", fg: "#166534", border: "#86efac", dot: "#16a34a" };
+    case "warning":
+      return { bg: "#fef3c7", fg: "#92400e", border: "#fcd34d", dot: "#d97706" };
+    case "danger":
+      return { bg: "#fee2e2", fg: "#991b1b", border: "#fca5a5", dot: "#dc2626" };
+    default:
+      return { bg: "#e2e8f0", fg: "#475569", border: "#cbd5e1", dot: "#64748b" };
+  }
 }
 
 function KeyboardShortcutsLegend() {

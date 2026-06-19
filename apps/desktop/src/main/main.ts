@@ -45,6 +45,8 @@ async function createMainWindow(): Promise<void> {
   writeStartupLog("backupScheduler:started");
   runtime.startOmiePullScheduler();
   writeStartupLog("omieScheduler:started");
+  runtime.startCloudSyncScheduler();
+  writeStartupLog("cloudScheduler:started");
 
   mainWindow = new BrowserWindow({
     width: 1180,
@@ -813,6 +815,29 @@ function registerIpcHandlers(): void {
       return runtime.setOmieSchedulerConfig(config);
     }
   );
+
+  ipcMain.handle("desktop:cloud-sync-now", async () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.syncCloudNow();
+  });
+
+  ipcMain.handle("desktop:cloud-scheduler-status", () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.getCloudSyncSchedulerStatus();
+  });
+
+  ipcMain.handle(
+    "desktop:cloud-scheduler-config",
+    (_event, config: { enabled?: boolean; intervalMinutes?: number }) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.setCloudSyncConfig(config);
+    }
+  );
+
+  ipcMain.handle("desktop:probe-connectivity", async () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.probeCloudConnectivity();
+  });
 }
 
 function createElectronReceiptPrinter(parentWindow: BrowserWindow): ReceiptPrinter {
