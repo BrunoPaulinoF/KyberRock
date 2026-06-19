@@ -55,17 +55,17 @@ describe("probeSupabase", () => {
     vi.restoreAllMocks();
   });
 
-  it("retorna offline quando URL nao configurada", async () => {
-    delete process.env.SUPABASE_URL;
-    const result = await probeSupabase();
-    expect(result.online).toBe(false);
-    expect(result.error).toContain("SUPABASE_URL");
-  });
-
   it("faz HEAD em /auth/v1/health e retorna online quando 2xx", async () => {
     const fetchImpl = createFetchMock(() => ({ ok: true, status: 200 }));
     const result = await probeSupabase({ fetchImpl });
     expect(result.online).toBe(true);
+  });
+
+  it("retorna offline quando o endpoint retorna 5xx", async () => {
+    const fetchImpl = createFetchMock(() => ({ ok: false, status: 502 }));
+    const result = await probeSupabase({ fetchImpl });
+    expect(result.online).toBe(false);
+    expect(result.error).toContain("502");
   });
 });
 

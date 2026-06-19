@@ -73,7 +73,7 @@ import {
   type ReceiptPrinter
 } from "./printing.js";
 import {
-  initializeSupabase,
+  initializeSupabaseFromSettings,
   pingSupabase,
   processCloudSyncQueue,
   syncOperationToSupabase,
@@ -220,6 +220,7 @@ export class DesktopRuntime {
     this.reportService = new ReportService(this.database);
     this.ensureIdentity();
     this.cacheStore.loadAll(this.ensureIdentity().companyId);
+    initializeSupabaseFromSettings(this.database);
   }
 
   static initialize(baseDirectory?: string): DesktopRuntime {
@@ -545,7 +546,17 @@ export class DesktopRuntime {
     let failed = 0;
 
     try {
-      initializeSupabase();
+      initializeSupabaseFromSettings(this.database);
+      if (!isSupabaseInitialized()) {
+        return {
+          success: false,
+          synced: 0,
+          failed: 0,
+          errors: [
+            "Supabase nao configurado. Defina SUPABASE_PUBLISHABLE_KEY na pedreira no admin (loader-web) e reative o desktop."
+          ]
+        };
+      }
 
       const queue = await processCloudSyncQueue(this.database, identity);
       synced += queue.processed;
@@ -1066,6 +1077,21 @@ export class DesktopRuntime {
     customersPushFailed: number;
     errors: string[];
   }> {
+    initializeSupabaseFromSettings(this.database);
+    if (!isSupabaseInitialized()) {
+      return {
+        customersPulled: 0,
+        customersPushed: 0,
+        productsSynced: 0,
+        paymentTermsSynced: 0,
+        ordersProcessed: 0,
+        ordersFailed: 0,
+        customersPushFailed: 0,
+        errors: [
+          "Supabase nao configurado. Defina SUPABASE_PUBLISHABLE_KEY na pedreira no admin (loader-web) e reative o desktop."
+        ]
+      };
+    }
     const identity = this.ensureIdentity();
     const loop = await this.runOmieDataEntryLoop({ reset: true, maxIterations: 200 });
     const customerPush = await pushOmieCustomersToCloud(this.database, identity);

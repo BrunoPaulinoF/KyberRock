@@ -1,12 +1,55 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-import { isSupabaseConfigured, supabaseConfig } from "../config/supabase-config.js";
+import {
+  isSupabaseConfigured,
+  resetSupabaseConfigCache,
+  setSupabaseConfigCache,
+  supabaseConfig
+} from "../config/supabase-config.js";
 import type { DesktopDatabase } from "../database/sqlite.js";
 import type { LocalDesktopIdentity } from "./bootstrap.js";
-import { readLocalSetting, writeLocalSetting } from "./local-settings.js";
+import { readLocalSetting, readStringLocalSetting, writeLocalSetting } from "./local-settings.js";
 import { listRunnableSyncJobs, markSyncJobDone, markSyncJobFailed } from "./sync-queue.js";
 
 let client: SupabaseClient | null = null;
+let clientConfigKey: string | null = null;
+
+export const CLOUD_SUPABASE_URL_KEY = "cloud_supabase_url";
+export const CLOUD_PUBLISHABLE_KEY_KEY = "cloud_publishable_key";
+
+export function readStoredSupabaseConfig(
+  database: DesktopDatabase
+): { url: string; publishableKey: string } {
+  const url = readStringLocalSetting(database, CLOUD_SUPABASE_URL_KEY) ?? "";
+  const publishableKey = readStringLocalSetting(database, CLOUD_PUBLISHABLE_KEY_KEY) ?? "";
+  return { url, publishableKey };
+}
+
+export function writeStoredSupabaseConfig(
+  database: DesktopDatabase,
+  values: { url?: string | null; publishableKey?: string | null },
+  updatedAt: string = new Date().toISOString()
+): void {
+  if (values.url !== undefined) {
+    const trimmed = values.url?.trim() ?? "";
+    writeLocalSetting(
+      database,
+      CLOUD_SUPABASE_URL_KEY,
+      trimmed.length > 0 ? trimmed : null,
+      updatedAt
+    );
+  }
+  if (values.publishableKey !== undefined) {
+    const trimmed = values.publishableKey?.trim() ?? "";
+    writeLocalSetting(
+      database,
+      CLOUD_PUBLISHABLE_KEY_KEY,
+      trimmed.length > 0 ? trimmed : null,
+      updatedAt
+    );
+  }
+  resetSupabaseConfigCache();
+}
 
 export interface SyncResult {
   success: boolean;
@@ -184,13 +227,39 @@ interface CloudSettings {
 }
 
 export function initializeSupabase(): void {
-  if (!client) {
-    if (!isSupabaseConfigured()) {
-      return;
-    }
+  if (!client && isSupabaseConfigured()) {
+    const configKey = `${supabaseConfig.url}|${supabaseConfig.publishableKey}`;
     client = createClient(supabaseConfig.url, supabaseConfig.publishableKey, {
       auth: { persistSession: false, autoRefreshToken: false }
     });
+    clientConfigKey = configKey;
+  }
+}
+
+export function initializeSupabaseFromSettings(
+  database: DesktopDatabase,
+  options: { reset?: boolean } = {}
+): void {
+  const stored = readStoredSupabaseConfig(database);
+  if (options.reset) {
+    setSupabaseConfigCache(null, null);
+    if (client) {
+      client = null;
+      clientConfigKey = null;
+    }
+    return;
+  }
+  setSupabaseConfigCache(stored.url || null, stored.publishableKey || null);
+  const configKey = `${supabaseConfig.url}|${supabaseConfig.publishableKey}`;
+  if (client && clientConfigKey !== configKey) {
+    client = null;
+    clientConfigKey = null;
+  }
+  if (!client && isSupabaseConfigured()) {
+    client = createClient(supabaseConfig.url, supabaseConfig.publishableKey, {
+      auth: { persistSession: false, autoRefreshToken: false }
+    });
+    clientConfigKey = configKey;
   }
 }
 
@@ -228,7 +297,11 @@ export async function pingSupabase(timeoutMs = 4_000): Promise<boolean> {
 
 export function getSupabaseClient(): SupabaseClient {
   initializeSupabase();
-  if (!client) throw new Error("Supabase not initialized");
+  if (!client) {
+    throw new Error(
+      "Supabase nao configurado. Defina SUPABASE_PUBLISHABLE_KEY na pedreira no admin (loader-web) e reative o desktop."
+    );
+  }
   return client;
 }
 

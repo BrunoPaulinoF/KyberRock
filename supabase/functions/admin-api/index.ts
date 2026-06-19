@@ -45,7 +45,7 @@ Deno.serve(async (req) => {
           .order("created_at", { ascending: false }),
         supabase
           .from("units")
-          .select("id, company_id, name, timezone, is_active, desktop_activation_code, desktop_activation_code_rotated_at, created_at, updated_at")
+          .select("id, company_id, name, timezone, is_active, desktop_activation_code, desktop_activation_code_rotated_at, desktop_publishable_key, created_at, updated_at")
           .order("created_at", { ascending: false }),
         supabase.from("user_profiles").select("*").order("created_at", { ascending: false }),
         supabase
@@ -90,11 +90,13 @@ Deno.serve(async (req) => {
     }
 
     if (body.action === "create_unit") {
+      const publishableKey = String(payload.desktopPublishableKey ?? "").trim();
       const { data, error } = await supabase.from("units").insert({
         company_id: String(payload.companyId),
         name: String(payload.name ?? ""),
         timezone: "America/Sao_Paulo",
-        is_active: true
+        is_active: true,
+        desktop_publishable_key: publishableKey.length > 0 ? publishableKey : null
       }).select("*").single();
       if (error) throw error;
       return jsonResponse({ unit: data });
@@ -189,10 +191,15 @@ Deno.serve(async (req) => {
     }
 
     if (body.action === "update_unit") {
-      const { error } = await supabase.from("units").update({
+      const updatePayload: Record<string, unknown> = {
         name: String(payload.name ?? ""),
         updated_at: new Date().toISOString()
-      }).eq("id", String(payload.unitId));
+      };
+      if (payload.desktopPublishableKey !== undefined) {
+        const key = String(payload.desktopPublishableKey ?? "").trim();
+        updatePayload.desktop_publishable_key = key.length > 0 ? key : null;
+      }
+      const { error } = await supabase.from("units").update(updatePayload).eq("id", String(payload.unitId));
       if (error) throw error;
       return jsonResponse({ ok: true });
     }

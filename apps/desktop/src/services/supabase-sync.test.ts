@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { supabaseConfig } from "../config/supabase-config";
+import {
+  isSupabaseConfigured,
+  resetSupabaseConfigCache,
+  setSupabaseConfigCache,
+  supabaseConfig
+} from "../config/supabase-config";
 import { runDesktopMigrations } from "../database/migrate";
 import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite";
 import { ensureInitialDesktopIdentity, type LocalDesktopIdentity } from "./bootstrap";
@@ -9,12 +14,15 @@ import { createSimulatedWeighingOperation } from "./weighing-operations";
 import {
   applyOmieReferenceData,
   initializeSupabase,
+  initializeSupabaseFromSettings,
   isSupabaseInitialized,
   processCloudSyncQueue,
   processFiscalBillingNow,
   processOmieSyncQueue,
   pushOmieCustomersToCloud,
-  syncOmieReferenceDataFromCloud
+  readStoredSupabaseConfig,
+  syncOmieReferenceDataFromCloud,
+  writeStoredSupabaseConfig
 } from "./supabase-sync";
 
 const invokeMock = vi.fn();
@@ -40,6 +48,77 @@ describe("supabase sync", () => {
 
   it("has a valid desktop publishable key without requiring a runtime .env file", () => {
     expect(supabaseConfig.publishableKey).toMatch(/^sb_publishable_/);
+  });
+
+  it("falls back to the bundled project URL when SUPABASE_URL is empty", () => {
+    const previous = process.env.SUPABASE_URL;
+    delete process.env.SUPABASE_URL;
+    setSupabaseConfigCache(null, null);
+    try {
+      expect(supabaseConfig.url).toMatch(/^https:\/\/vksihzfrgqoemcqpquit\.supabase\.co$/);
+    } finally {
+      if (previous) process.env.SUPABASE_URL = previous;
+      setSupabaseConfigCache(null, null);
+    }
+  });
+
+  it("persists the supabase url and publishable key in local_settings", () => {
+    const database = createDatabase();
+    try {
+      writeStoredSupabaseConfig(database, {
+        url: "https://pedreira.supabase.co",
+        publishableKey: "sb_publishable_pedreira_key"
+      });
+      const stored = readStoredSupabaseConfig(database);
+      expect(stored).toEqual({
+        url: "https://pedreira.supabase.co",
+        publishableKey: "sb_publishable_pedreira_key"
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("uses the stored publishable key when initializing from settings", () => {
+    const database = createDatabase();
+    const previousUrl = process.env.SUPABASE_URL;
+    const previousKey = process.env.SUPABASE_PUBLISHABLE_KEY;
+    delete process.env.SUPABASE_PUBLISHABLE_KEY;
+    process.env.SUPABASE_URL = "https://example.supabase.co";
+    setSupabaseConfigCache(null, null);
+    resetSupabaseConfigCache();
+    try {
+      writeStoredSupabaseConfig(database, {
+        url: "https://example.supabase.co",
+        publishableKey: "sb_publishable_pedreira"
+      });
+      initializeSupabaseFromSettings(database);
+      expect(isSupabaseInitialized()).toBe(true);
+      expect(supabaseConfig.publishableKey).toBe("sb_publishable_pedreira");
+    } finally {
+      if (previousUrl) process.env.SUPABASE_URL = previousUrl;
+      else delete process.env.SUPABASE_URL;
+      if (previousKey) process.env.SUPABASE_PUBLISHABLE_KEY = previousKey;
+      resetSupabaseConfigCache();
+      database.close();
+    }
+  });
+
+  it("reports not configured when neither env nor local_settings have a publishable key", () => {
+    const database = createDatabase();
+    const previousKey = process.env.SUPABASE_PUBLISHABLE_KEY;
+    delete process.env.SUPABASE_PUBLISHABLE_KEY;
+    resetSupabaseConfigCache();
+    try {
+      writeStoredSupabaseConfig(database, { publishableKey: null });
+      initializeSupabaseFromSettings(database);
+      expect(isSupabaseInitialized()).toBe(false);
+      expect(isSupabaseConfigured()).toBe(false);
+    } finally {
+      if (previousKey) process.env.SUPABASE_PUBLISHABLE_KEY = previousKey;
+      resetSupabaseConfigCache();
+      database.close();
+    }
   });
 
   it("includes the operation entry weight when syncing loading requests", async () => {

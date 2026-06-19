@@ -21,6 +21,7 @@ interface Unit {
   isActive: boolean;
   desktopActivationCode?: string;
   desktopActivationCodeRotatedAt?: string;
+  desktopPublishableKey?: string | null;
 }
 
 interface LoaderUser {
@@ -157,13 +158,15 @@ export function AdminDashboard() {
     event.preventDefault();
     const form = event.currentTarget;
     const formData = new FormData(form);
-    
+    const publishableKey = String(formData.get("desktopPublishableKey") ?? "").trim();
+
     try {
       await callAdminFunction("admin-api", {
         action: "create_unit",
         payload: {
           companyId: formData.get("companyId"),
-          name: formData.get("name")
+          name: formData.get("name"),
+          desktopPublishableKey: publishableKey || null
         }
       });
       form.reset();
@@ -314,12 +317,14 @@ export function AdminDashboard() {
     if (!editingUnit) return;
     const form = event.currentTarget;
     const formData = new FormData(form);
+    const publishableKey = String(formData.get("desktopPublishableKey") ?? "").trim();
     try {
       await callAdminFunction("admin-api", {
         action: "update_unit",
         payload: {
           unitId: editingUnit.id,
-          name: formData.get("name")
+          name: formData.get("name"),
+          desktopPublishableKey: publishableKey || null
         }
       });
       setEditingUnit(null);
@@ -566,6 +571,14 @@ export function AdminDashboard() {
                       ))}
                     </select>
                     <input name="name" placeholder="Nome da unidade" required style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
+                    <input
+                      name="desktopPublishableKey"
+                      placeholder="Publishable key do Supabase (opcional)"
+                      style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
+                    />
+                    <p style={{ color: "#64748b", fontSize: "12px", margin: 0 }}>
+                      Necessario para o desktop acessar o Supabase. Copie do dashboard do projeto (Project API keys &gt; Publishable).
+                    </p>
                     <button type="submit" style={{ padding: "10px", borderRadius: "8px", border: "none", background: "#0f172a", color: "#fff", cursor: "pointer", fontWeight: 700 }}>
                       Criar Unidade
                     </button>
@@ -872,6 +885,15 @@ export function AdminDashboard() {
                             <h3 style={{ margin: "0 0 16px 0" }}>Editar Unidade</h3>
                             <form onSubmit={handleUpdateUnit} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
                               <input name="name" defaultValue={editingUnit.name} placeholder="Nome da unidade" required style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
+                              <input
+                                name="desktopPublishableKey"
+                                defaultValue={editingUnit.desktopPublishableKey ?? ""}
+                                placeholder="Publishable key do Supabase"
+                                style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
+                              />
+                              <p style={{ color: "#64748b", fontSize: "12px", margin: 0 }}>
+                                Vazio para remover. Copie do dashboard do projeto (Project API keys &gt; Publishable).
+                              </p>
                               <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
                                 <button type="submit" style={{ flex: 1, padding: "10px", borderRadius: "8px", border: "none", background: "#0f172a", color: "#fff", cursor: "pointer", fontWeight: 700 }}>
                                   Salvar

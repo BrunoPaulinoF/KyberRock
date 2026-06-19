@@ -551,7 +551,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       setOmieStatus(omieStatusResult);
       setMessage("Sincronizacao OMIE automatica concluida.");
     } catch (error) {
-      console.warn("Auto-sync OMIE falhou", error);
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn("Auto-sync OMIE falhou", message);
     } finally {
       setOmieSyncing(false);
     }

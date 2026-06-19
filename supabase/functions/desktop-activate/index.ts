@@ -16,6 +16,7 @@ type UnitRow = {
   name: string;
   timezone: string;
   is_active: boolean;
+  desktop_publishable_key: string | null;
   companies: CompanyRow | CompanyRow[] | null;
 };
 
@@ -41,7 +42,7 @@ Deno.serve(async (req) => {
   const activationCodeHash = await sha256Hex(activationCode);
   const { data: unit, error: unitError } = await supabase
     .from("units")
-    .select("id, company_id, name, timezone, is_active, companies(id, name, legal_name, document, is_active)")
+    .select("id, company_id, name, timezone, is_active, desktop_publishable_key, companies(id, name, legal_name, document, is_active)")
     .eq("desktop_activation_code_hash", activationCodeHash)
     .single();
 
@@ -91,6 +92,8 @@ Deno.serve(async (req) => {
     unitTimezone: typedUnit.timezone,
     deviceId,
     deviceToken,
+    supabaseUrl,
+    publishableKey: typedUnit.desktop_publishable_key ?? null,
     checkedAt: now
   });
 });
