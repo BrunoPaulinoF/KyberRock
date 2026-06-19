@@ -208,7 +208,8 @@ export async function syncOperationToSupabase(
 ): Promise<boolean> {
   const settings = getCloudSettings(database, identity);
   const operation = getOperationPayload(database, operationId, settings);
-  await invokeDesktopSync(settings, { operations: [operation] });
+  const dependencies = collectCloudSyncDependencies(database, operation);
+  await invokeDesktopSync(settings, { operations: [operation], ...dependencies });
   return true;
 }
 
@@ -219,7 +220,11 @@ export async function syncLoadingRequestToSupabase(
 ): Promise<boolean> {
   const settings = getCloudSettings(database, identity);
   const request = getLoadingRequestPayload(database, requestId, settings);
-  await invokeDesktopSync(settings, { loadingRequests: [request] });
+  const dependencies = collectCloudSyncDependencies(database, {
+    customer_id: request.customer_id,
+    product_id: request.product_id
+  });
+  await invokeDesktopSync(settings, { loadingRequests: [request], ...dependencies });
   return true;
 }
 
@@ -230,7 +235,14 @@ export async function syncPrintReceiptToSupabase(
 ): Promise<boolean> {
   const settings = getCloudSettings(database, identity);
   const receipt = getPrintReceiptPayload(database, receiptId, settings);
-  await invokeDesktopSync(settings, { printReceipts: [receipt] });
+  const operation = getOperationForReceipt(database, receiptId);
+  const dependencies = operation
+    ? collectCloudSyncDependencies(database, operation)
+    : collectCloudSyncDependencies(database, {
+        customer_id: null,
+        product_id: null
+      });
+  await invokeDesktopSync(settings, { printReceipts: [receipt], ...dependencies });
   return true;
 }
 
@@ -239,11 +251,12 @@ export async function processCloudSyncQueue(
   identity: LocalDesktopIdentity
 ): Promise<{ processed: number; failed: number; errors: string[] }> {
   const jobs = listRunnableSyncJobs(database, { target: "cloud", limit: 100 });
+  const orderedJobs = orderCloudSyncJobsTopologically(jobs);
   let processed = 0;
   let failed = 0;
   const errors: string[] = [];
 
-  for (const job of jobs) {
+  for (const job of orderedJobs) {
     try {
       if (job.action === "upsert_operation") {
         await syncOperationToSupabase(
@@ -269,6 +282,25 @@ export async function processCloudSyncQueue(
   }
 
   return { processed, failed, errors };
+}
+
+const CLOUD_SYNC_JOB_ORDER: Record<string, number> = {
+  upsert_customer: 0,
+  upsert_product: 1,
+  upsert_operation: 2,
+  upsert_loading_request: 3,
+  upsert_print_receipt: 4
+};
+
+function orderCloudSyncJobsTopologically<
+  T extends { action: string; createdAt: string; id: string }
+>(jobs: T[]): T[] {
+  return [...jobs].sort((a, b) => {
+    const orderDiff =
+      (CLOUD_SYNC_JOB_ORDER[a.action] ?? 99) - (CLOUD_SYNC_JOB_ORDER[b.action] ?? 99);
+    if (orderDiff !== 0) return orderDiff;
+    return a.createdAt.localeCompare(b.createdAt);
+  });
 }
 
 export async function syncCustomerToSupabase(
@@ -542,17 +574,24 @@ function getLoadingRequestPayload(
   database: DesktopDatabase,
   requestId: string,
   settings: CloudSettings
-): Record<string, unknown> {
+): Record<string, unknown> & { customer_id: string | null; product_id: string | null } {
   const request = database
     .prepare(
       `SELECT
     lr.*,
-    o.entry_weight_kg
+    o.entry_weight_kg,
+    o.customer_id AS operation_customer_id,
+    o.product_id AS operation_product_id
     FROM loading_requests lr
     LEFT JOIN weighing_operations o ON o.id = lr.operation_id
     WHERE lr.id = ?`
     )
-    .get(requestId) as Record<string, unknown> | undefined;
+    .get(requestId) as
+    | (Record<string, unknown> & {
+        operation_customer_id: string | null;
+        operation_product_id: string | null;
+      })
+    | undefined;
   if (!request) throw new Error(`Loading request ${requestId} not found`);
   return {
     id: request.id,
@@ -564,6 +603,8 @@ function getLoadingRequestPayload(
     customer_name: request.customer_name,
     driver_name: request.driver_name,
     product_description: request.product_description,
+    customer_id: request.operation_customer_id ?? null,
+    product_id: request.operation_product_id ?? null,
     entry_weight_kg: request.entry_weight_kg,
     created_at: request.created_at,
     updated_at: request.updated_at,
@@ -702,6 +743,93 @@ function getPrintReceiptPayload(
     created_at: receipt.created_at,
     updated_at: receipt.updated_at
   };
+}
+
+function getOperationForReceipt(
+  database: DesktopDatabase,
+  receiptId: string
+): { customer_id: string | null; product_id: string | null } | null {
+  const row = database
+    .prepare(
+      `SELECT o.customer_id, o.product_id
+       FROM print_receipts pr
+       JOIN weighing_operations o ON o.id = pr.operation_id
+       WHERE pr.id = ?`
+    )
+    .get(receiptId) as { customer_id: string | null; product_id: string | null } | undefined;
+  return row ?? null;
+}
+
+function getCustomerPayload(
+  database: DesktopDatabase,
+  customerId: string,
+  companyId: string
+): Record<string, unknown> | null {
+  const customer = database
+    .prepare("SELECT * FROM customers WHERE id = ?")
+    .get(customerId) as Record<string, unknown> | undefined;
+  if (!customer) return null;
+  return {
+    id: String(customer.id),
+    company_id: companyId,
+    omie_customer_id: customer.omie_customer_id ?? null,
+    omie_integration_code: customer.omie_integration_code ?? null,
+    legal_name: customer.legal_name,
+    trade_name: customer.trade_name,
+    document: customer.document ?? null,
+    phone: customer.phone ?? null,
+    email: customer.email ?? null,
+    credit_limit_cents: customer.credit_limit_cents ?? null,
+    open_receivables_cents: customer.open_receivables_cents ?? 0,
+    is_active: Boolean(customer.is_active ?? true),
+    default_payment_term_id: customer.default_payment_term_id ?? null,
+    updated_at: new Date().toISOString()
+  };
+}
+
+function getProductPayload(
+  database: DesktopDatabase,
+  productId: string,
+  companyId: string
+): Record<string, unknown> | null {
+  const product = database
+    .prepare("SELECT * FROM products WHERE id = ?")
+    .get(productId) as Record<string, unknown> | undefined;
+  if (!product) return null;
+  return {
+    id: String(product.id),
+    company_id: companyId,
+    omie_product_id: product.omie_product_id ?? null,
+    code: product.code,
+    description: product.description,
+    unit: product.unit,
+    is_active: Boolean(product.is_active ?? true),
+    updated_at: new Date().toISOString()
+  };
+}
+
+function collectCloudSyncDependencies(
+  database: DesktopDatabase,
+  references: { customer_id?: string | null; product_id?: string | null }
+): { customers: Record<string, unknown>[]; products: Record<string, unknown>[] } {
+  const companyId = readLocalSetting<string>(database, "cloud_company_id");
+  const customers: Record<string, unknown>[] = [];
+  const products: Record<string, unknown>[] = [];
+
+  if (!companyId) {
+    return { customers, products };
+  }
+
+  if (references.customer_id) {
+    const customer = getCustomerPayload(database, references.customer_id, companyId);
+    if (customer) customers.push(customer);
+  }
+  if (references.product_id) {
+    const product = getProductPayload(database, references.product_id, companyId);
+    if (product) products.push(product);
+  }
+
+  return { customers, products };
 }
 
 function getPayloadId(payload: unknown, key: string, fallback: string): string {
