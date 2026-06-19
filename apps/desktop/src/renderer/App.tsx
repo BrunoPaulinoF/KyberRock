@@ -10,7 +10,6 @@ import type { DesktopAccessStatus } from "../services/desktop-activation";
 import type { DesktopStatusSnapshot } from "../services/status";
 import {
   createInitialUpdateState,
-  getManualUpdateButtonLabel,
   type UpdateState
 } from "../services/update-flow";
 import type { OperationType, WeighingOperationSummary } from "../services/weighing-operations";
@@ -30,6 +29,7 @@ import {
 } from "@kyberrock/shared";
 import { ActivationGate } from "./ActivationGate";
 import { BlockedScreen } from "./BlockedScreen";
+import { DashboardView } from "./DashboardView";
 import { InsightsView } from "./InsightsView";
 import type { KyberRockDesktopApi } from "./desktop-api";
 export interface AppProps {
@@ -1349,26 +1349,19 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
             ) : null}
 
             {activeView === "dashboard" ? (
-              <section style={styles.twoColumns}>
-                <article style={styles.panel}>
-                  <h2 style={styles.panelTitle}>Atualizacoes</h2>
-                  <p style={styles.muted}>
-                    O app checa automaticamente por novas versoes. Quando houver uma disponivel,
-                    voce sera notificado.
-                  </p>
-                  <p>Status: {describeUpdateState(updateState)}</p>
-                  <button type="button" onClick={handleUpdateAction} style={styles.primaryButton}>
-                    {getManualUpdateButtonLabel(updateState.status)}
-                  </button>
-                </article>
-
-                <article style={styles.panel}>
-                  <h2 style={styles.panelTitle}>Resumo operacional</h2>
-                  <p>Operacoes abertas: {openOperations.length}</p>
-                  <p>Cupons emitidos: {printReceipts.length}</p>
-                  <p>Banco local: {status?.databasePath ?? "carregando..."}</p>
-                </article>
-              </section>
+              <DashboardView
+                status={status}
+                openOperations={openOperations}
+                closedOperations={closedOperations}
+                cloudConnected={cloudConnected}
+                omieStatus={omieStatus}
+                printProfiles={printProfiles}
+                errorLogsCount={errorLogs.length}
+                onNavigate={setActiveView}
+                onSyncOmie={() => void handleSyncOmie()}
+                onSyncCloud={() => void handleSyncToCloud()}
+                onOpenLogs={() => setShowLogsModal(true)}
+              />
             ) : null}
 
             {activeView === "new-weighing" ? (
