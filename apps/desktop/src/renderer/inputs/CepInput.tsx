@@ -5,6 +5,7 @@ import { Field, getInputStyle } from "./Field";
 export interface CepLookupResult {
   zipcode: string;
   street: string;
+  complement: string;
   neighborhood: string;
   city: string;
   state: string;
@@ -93,12 +94,13 @@ export function CepInput({
               border: "1px solid var(--kr-input-border)",
               borderRadius: "8px",
               padding: "8px 12px",
-              background: canLookup ? "#0f172a" : "#cbd5e1",
-              color: "#ffffff",
+              background: canLookup ? "var(--kr-text-strong)" : "var(--kr-input-border)",
+              color: canLookup ? "var(--kr-bg)" : "var(--kr-text-strong)",
               cursor: canLookup ? "pointer" : "not-allowed",
               fontWeight: 700,
               fontSize: "12px",
-              whiteSpace: "nowrap"
+              whiteSpace: "nowrap",
+              transition: "background 0.15s ease, color 0.15s ease"
             }}
           >
             {loading ? "Buscando..." : "Buscar"}

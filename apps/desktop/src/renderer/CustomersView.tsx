@@ -488,6 +488,18 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
     }
   }
 
+  function handleCepAddressFound(address: CepLookupResult): void {
+    setForm((prev) => ({
+      ...prev,
+      zipcode: address.zipcode || prev.zipcode,
+      addressStreet: address.street || prev.addressStreet,
+      addressComplement: address.complement || prev.addressComplement,
+      neighborhood: address.neighborhood || prev.neighborhood,
+      city: address.city || prev.city,
+      state: (address.state || prev.state).toUpperCase().slice(0, 2)
+    }));
+  }
+
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil(total / pageSize)),
     [total]
@@ -578,6 +590,7 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
                   value={form.zipcode}
                   onChange={(zipcode) => setForm({ ...form, zipcode })}
                   onLookup={handleCepLookup}
+                  onAddressFound={handleCepAddressFound}
                   disabled={isOmie}
                 />
                 <TextInput
