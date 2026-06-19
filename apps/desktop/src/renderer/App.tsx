@@ -2249,7 +2249,9 @@ function CacheSelect({
   const [selectedOption, setSelectedOption] = useState<CacheSelectOption | null>(null);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
+  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
   const containerRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   const selectedLabel = useMemo(() => {
     return (
@@ -2299,14 +2301,62 @@ function CacheSelect({
 
   useEffect(() => {
     function handleClick(event: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
+      const target = event.target as Node;
+      if (containerRef.current?.contains(target)) return;
+      if (dropdownRef.current?.contains(target)) return;
+      setOpen(false);
     }
 
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const margin = 4;
+    const preferredMaxHeight = 240;
+    const minVisibleHeight = 80;
+    const flipThreshold = 160;
+
+    function recompute(): void {
+      if (!containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom - margin;
+      const spaceAbove = rect.top - margin;
+      const flip = spaceBelow < flipThreshold && spaceAbove > spaceBelow;
+      const available = Math.max(minVisibleHeight, flip ? spaceAbove : spaceBelow);
+      const maxHeight = Math.min(preferredMaxHeight, available);
+
+      if (flip) {
+        setDropdownStyle({
+          position: "fixed",
+          bottom: `${window.innerHeight - rect.top + margin}px`,
+          left: `${rect.left}px`,
+          width: `${rect.width}px`,
+          maxHeight: `${maxHeight}px`
+        });
+      } else {
+        setDropdownStyle({
+          position: "fixed",
+          top: `${rect.bottom + margin}px`,
+          left: `${rect.left}px`,
+          width: `${rect.width}px`,
+          maxHeight: `${maxHeight}px`
+        });
+      }
+    }
+
+    recompute();
+    window.addEventListener("resize", recompute);
+    window.addEventListener("scroll", recompute, true);
+    return () => {
+      window.removeEventListener("resize", recompute);
+      window.removeEventListener("scroll", recompute, true);
+    };
+  }, [open]);
 
   return (
     <div ref={containerRef} style={{ position: "relative", marginBottom: "8px" }}>
@@ -2330,18 +2380,15 @@ function CacheSelect({
       </label>
       {open ? (
         <div
+          ref={dropdownRef}
           style={{
-            position: "absolute",
-            top: "100%",
-            left: 0,
-            right: 0,
             background: "#fff",
             border: "1px solid #e2e8f0",
             borderRadius: "4px",
-            maxHeight: "200px",
             overflowY: "auto",
             zIndex: 100,
-            boxShadow: "0 4px 6px rgba(0,0,0,0.1)"
+            boxShadow: "0 4px 6px rgba(0,0,0,0.1)",
+            ...dropdownStyle
           }}
         >
           {loading ? (
