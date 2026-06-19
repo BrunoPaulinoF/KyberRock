@@ -45,8 +45,6 @@ interface WeighingFormState {
   driverId: string;
   productId: string;
   paymentTermId: string;
-  manualInstallmentsEnabled: boolean;
-  installments: number | null;
   unitPriceCents: number | null;
   manualWeightEnabled: boolean;
   manualWeightKg: number | null;
@@ -71,8 +69,6 @@ const initialWeighingForm: WeighingFormState = {
   driverId: "",
   productId: "",
   paymentTermId: "",
-  manualInstallmentsEnabled: false,
-  installments: null,
   unitPriceCents: null,
   manualWeightEnabled: false,
   manualWeightKg: null
@@ -703,10 +699,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         carrierId: form.carrierId || undefined,
         driverId: form.driverId,
         productId: form.productId,
-        paymentTermId: form.manualInstallmentsEnabled ? undefined : form.paymentTermId || undefined,
-        manualInstallments: form.manualInstallmentsEnabled
-          ? (form.installments ?? undefined)
-          : undefined,
+        paymentTermId: form.paymentTermId || undefined,
         unitPriceCents: form.unitPriceCents ?? undefined,
         entryWeightKg: form.manualWeightEnabled ? (form.manualWeightKg ?? undefined) : undefined
       });
@@ -2144,9 +2137,6 @@ function validateWeighingForm(form: WeighingFormState): string | null {
   if (!form.driverId) return "Selecione o motorista.";
   if (!form.productId) return "Selecione o produto.";
   if (form.unitPriceCents === null) return "Informe o preco.";
-  if (form.manualInstallmentsEnabled && (!form.installments || form.installments <= 0)) {
-    return "Informe o numero de parcelas.";
-  }
   if (form.manualWeightEnabled && (!form.manualWeightKg || form.manualWeightKg <= 0)) {
     return "Informe um peso simulado maior que zero.";
   }
@@ -2547,7 +2537,7 @@ function WeighingForm({
 
   useEffect(() => {
     async function syncInstallmentCount() {
-      if (form.manualInstallmentsEnabled || !form.paymentTermId || !desktopApi) {
+      if (!form.paymentTermId || !desktopApi) {
         setPaymentTermInstallmentCount(null);
         return;
       }
@@ -2562,7 +2552,7 @@ function WeighingForm({
       }
     }
     syncInstallmentCount();
-  }, [form.manualInstallmentsEnabled, form.paymentTermId, desktopApi]);
+  }, [form.paymentTermId, desktopApi]);
 
   return (
     <section style={styles.entryShell}>
@@ -2643,9 +2633,7 @@ function WeighingForm({
                 ...prev,
                 customerId: id,
                 paymentTermId:
-                  !prev.manualInstallmentsEnabled &&
-                  typeof item?.defaultPaymentTermId === "string" &&
-                  item.defaultPaymentTermId
+                  typeof item?.defaultPaymentTermId === "string" && item.defaultPaymentTermId
                     ? item.defaultPaymentTermId
                     : prev.paymentTermId
               }))
@@ -2665,80 +2653,29 @@ function WeighingForm({
           <p style={styles.helperText}>
             Somente produtos OMIE com recomendacao fiscal tipo 04 - produtos acabados.
           </p>
-          <label style={styles.checkboxCard}>
-            <input
-              type="checkbox"
-              checked={form.manualInstallmentsEnabled}
-              onChange={(e) => {
-                const enabled = e.target.checked;
-                setPaymentTermInstallmentCount(null);
-                setForm((prev) => ({
-                  ...prev,
-                  manualInstallmentsEnabled: enabled,
-                  paymentTermId: enabled ? "" : prev.paymentTermId,
-                  installments: enabled ? prev.installments : null
-                }));
-              }}
-            />
-            <span>
-              <strong>Informar numero de parcelas</strong>
-              <small style={{ display: "block", color: "var(--kr-muted)", marginTop: "2px" }}>
-                Troca a lista de condicoes por um campo manual.
-              </small>
-            </span>
-          </label>
-          {form.manualInstallmentsEnabled ? (
-            <label style={styles.fieldLabel}>
-              Numero de parcelas
-              <input
-                type="number"
-                min={1}
-                step={1}
-                value={form.installments ?? ""}
-                onChange={(e) => {
-                  const raw = e.target.value;
-                  if (raw === "") {
-                    setForm((prev) => ({ ...prev, installments: null }));
-                    return;
-                  }
-                  const parsed = Number.parseInt(raw, 10);
-                  setForm((prev) => ({
-                    ...prev,
-                    installments: Number.isFinite(parsed) && parsed > 0 ? parsed : null
-                  }));
-                }}
-                placeholder="Ex: 3"
-                style={styles.input}
-              />
-            </label>
-          ) : (
-            <>
-              <CacheSelect
-                label="Condicao de pagamento"
-                entityType="payment_term"
-                value={form.paymentTermId}
-                onChange={(id, item) => {
-                  const rawCount = item?.installmentCount;
-                  const count =
-                    typeof rawCount === "number" && Number.isFinite(rawCount) && rawCount > 0
-                      ? rawCount
-                      : null;
-                  setPaymentTermInstallmentCount(count);
-                  setForm((prev) => ({
-                    ...prev,
-                    paymentTermId: id,
-                    installments: count && count > 1 ? count : null
-                  }));
-                }}
-                desktopApi={desktopApi}
-              />
-              {paymentTermInstallmentCount && paymentTermInstallmentCount > 1 ? (
-                <p style={styles.helperText}>
-                  Condicao selecionada com {paymentTermInstallmentCount} parcelas.
-                </p>
-              ) : null}
-            </>
-          )}
+          <CacheSelect
+            label="Condicao de pagamento"
+            entityType="payment_term"
+            value={form.paymentTermId}
+            onChange={(id, item) => {
+              const rawCount = item?.installmentCount;
+              const count =
+                typeof rawCount === "number" && Number.isFinite(rawCount) && rawCount > 0
+                  ? rawCount
+                  : null;
+              setPaymentTermInstallmentCount(count);
+              setForm((prev) => ({
+                ...prev,
+                paymentTermId: id
+              }));
+            }}
+            desktopApi={desktopApi}
+          />
+          {paymentTermInstallmentCount && paymentTermInstallmentCount > 1 ? (
+            <p style={styles.helperText}>
+              Condicao selecionada com {paymentTermInstallmentCount} parcelas.
+            </p>
+          ) : null}
         </article>
 
         <article style={styles.entryCard}>
