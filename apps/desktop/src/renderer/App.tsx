@@ -35,6 +35,8 @@ import { DashboardView } from "./DashboardView";
 import { InsightsView } from "./InsightsView";
 import { ReportsView } from "./ReportsView";
 import { CustomersView } from "./CustomersView";
+import { Tooltip } from "./Tooltip";
+import { TIPS } from "./tooltip-messages";
 import {
   DocumentInput,
   EmailInput,
@@ -1183,6 +1185,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 icon="▦"
                 activeView={activeView}
                 onSelect={setActiveView}
+                tooltip={TIPS.nav.panel}
               />
               <SidebarItem
                 id="new-weighing"
@@ -1190,6 +1193,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 icon="＋"
                 activeView={activeView}
                 onSelect={setActiveView}
+                tooltip={TIPS.nav.newEntry}
               />
               <SidebarItem
                 id="open-operations"
@@ -1197,6 +1201,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 icon="≡"
                 activeView={activeView}
                 onSelect={setActiveView}
+                tooltip={TIPS.nav.operations}
               />
               <SidebarItem
                 id="registrations"
@@ -1204,6 +1209,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 icon="☰"
                 activeView={activeView}
                 onSelect={setActiveView}
+                tooltip={TIPS.nav.registrations}
               />
             </SidebarSection>
             <SidebarSection title="Analise">
@@ -1213,6 +1219,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 icon="◔"
                 activeView={activeView}
                 onSelect={setActiveView}
+                tooltip={TIPS.nav.insights}
               />
               <SidebarItem
                 id="reports"
@@ -1220,6 +1227,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 icon="▣"
                 activeView={activeView}
                 onSelect={setActiveView}
+                tooltip={TIPS.nav.reports}
               />
               <SidebarItem
                 id="documentation"
@@ -1229,6 +1237,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 onSelect={setActiveView}
                 disabled
                 badge="Em breve"
+                tooltip={TIPS.nav.documentation}
               />
             </SidebarSection>
           </nav>
@@ -1252,101 +1261,119 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
               <span style={styles.headerMessage}>{message}</span>
             </div>
             <div style={styles.topbarRight}>
-              <button
-                type="button"
-                onClick={() => setThemeMode((mode) => (mode === "light" ? "dark" : "light"))}
-                style={styles.themeToggle}
-                title="Alternar tema"
-              >
-                <span>{themeMode === "light" ? "☾" : "☀"}</span>
-                {themeMode === "light" ? "Escuro" : "Claro"}
-              </button>
-              <div style={{ position: "relative" }}>
+              <Tooltip content={TIPS.header.theme} placement="bottom" shortcut="F11">
                 <button
                   type="button"
-                  onClick={() => setShowSettings((s) => !s)}
-                  style={styles.headerBtn}
-                  title="Configuracoes"
+                  onClick={() => setThemeMode((mode) => (mode === "light" ? "dark" : "light"))}
+                  style={styles.themeToggle}
+                  title="Alternar tema"
                 >
-                  ⚙
+                  <span>{themeMode === "light" ? "☾" : "☀"}</span>
+                  {themeMode === "light" ? "Escuro" : "Claro"}
                 </button>
+              </Tooltip>
+              <div style={{ position: "relative" }}>
+                <Tooltip content={TIPS.header.settings} placement="bottom">
+                  <button
+                    type="button"
+                    onClick={() => setShowSettings((s) => !s)}
+                    style={styles.headerBtn}
+                    title="Configuracoes"
+                  >
+                    ⚙
+                  </button>
+                </Tooltip>
                 {showSettings ? (
                   <div style={styles.settingsDropdown}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setActiveView("scale");
-                        setShowSettings(false);
-                      }}
-                      style={styles.settingsItem}
-                    >
-                      Balança
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setActiveView("printing");
-                        setShowSettings(false);
-                      }}
-                      style={styles.settingsItem}
-                    >
-                      Impressão
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setActiveView("cloud");
-                        setShowSettings(false);
-                      }}
-                      style={styles.settingsItem}
-                    >
-                      Cloud
-                    </button>
+                    <Tooltip content={TIPS.header.settingsScale} placement="left">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveView("scale");
+                          setShowSettings(false);
+                        }}
+                        style={styles.settingsItem}
+                      >
+                        Balança
+                      </button>
+                    </Tooltip>
+                    <Tooltip content={TIPS.header.settingsPrinting} placement="left">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveView("printing");
+                          setShowSettings(false);
+                        }}
+                        style={styles.settingsItem}
+                      >
+                        Impressão
+                      </button>
+                    </Tooltip>
+                    <Tooltip content={TIPS.header.settingsCloud} placement="left">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveView("cloud");
+                          setShowSettings(false);
+                        }}
+                        style={styles.settingsItem}
+                      >
+                        Cloud
+                      </button>
+                    </Tooltip>
                     <div style={{ height: "1px", background: "#e2e8f0", margin: "4px 0" }} />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowLogsModal(true);
-                        setShowSettings(false);
-                      }}
-                      style={{
-                        ...styles.settingsItem,
-                        color: errorLogs.some((l) => l.level === "error") ? "#b91c1c" : "#475569"
-                      }}
-                    >
-                      Logs {errorLogs.length > 0 ? `(${errorLogs.length})` : ""}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void handleExportBackup();
-                        setShowSettings(false);
-                      }}
-                      style={styles.settingsItem}
-                    >
-                      Exportar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void handleRestoreBackup();
-                        setShowSettings(false);
-                      }}
-                      style={styles.settingsItem}
-                    >
-                      Restaurar
-                    </button>
+                    <Tooltip content={TIPS.header.settingsLogs} placement="left" shortcut="F10">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowLogsModal(true);
+                          setShowSettings(false);
+                        }}
+                        style={{
+                          ...styles.settingsItem,
+                          color: errorLogs.some((l) => l.level === "error") ? "#b91c1c" : "#475569"
+                        }}
+                      >
+                        Logs {errorLogs.length > 0 ? `(${errorLogs.length})` : ""}
+                      </button>
+                    </Tooltip>
+                    <Tooltip content={TIPS.header.settingsExport} placement="left">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void handleExportBackup();
+                          setShowSettings(false);
+                        }}
+                        style={styles.settingsItem}
+                      >
+                        Exportar
+                      </button>
+                    </Tooltip>
+                    <Tooltip content={TIPS.header.settingsRestore} placement="left">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void handleRestoreBackup();
+                          setShowSettings(false);
+                        }}
+                        style={styles.settingsItem}
+                      >
+                        Restaurar
+                      </button>
+                    </Tooltip>
                     <div style={{ height: "1px", background: "#e2e8f0", margin: "4px 0" }} />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void handleLogout();
-                        setShowSettings(false);
-                      }}
-                      style={{ ...styles.settingsItem, color: "#b91c1c" }}
-                    >
-                      Sair
-                    </button>
+                    <Tooltip content={TIPS.header.settingsLogout} placement="left">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void handleLogout();
+                          setShowSettings(false);
+                        }}
+                        style={{ ...styles.settingsItem, color: "#b91c1c" }}
+                      >
+                        Sair
+                      </button>
+                    </Tooltip>
                   </div>
                 ) : null}
               </div>
@@ -1369,23 +1396,27 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     disponível. Deseja atualizar agora?
                   </p>
                   <div style={styles.modalActions}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void handleUpdateAction();
-                        setShowUpdateModal(false);
-                      }}
-                      style={styles.primaryButton}
-                    >
-                      Atualizar agora
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowUpdateModal(false)}
-                      style={styles.secondaryButton}
-                    >
-                      Mais tarde
-                    </button>
+                    <Tooltip content={TIPS.update.now} placement="top">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void handleUpdateAction();
+                          setShowUpdateModal(false);
+                        }}
+                        style={styles.primaryButton}
+                      >
+                        Atualizar agora
+                      </button>
+                    </Tooltip>
+                    <Tooltip content={TIPS.update.later} placement="top">
+                      <button
+                        type="button"
+                        onClick={() => setShowUpdateModal(false)}
+                        style={styles.secondaryButton}
+                      >
+                        Mais tarde
+                      </button>
+                    </Tooltip>
                   </div>
                 </div>
               </div>
@@ -1403,13 +1434,15 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     }}
                   >
                     <h2 style={{ ...styles.modalTitle, margin: 0 }}>Logs do sistema</h2>
-                    <button
-                      type="button"
-                      onClick={() => setErrorLogs([])}
-                      style={styles.secondaryButton}
-                    >
-                      Limpar
-                    </button>
+                    <Tooltip content={TIPS.logs.clear} placement="left">
+                      <button
+                        type="button"
+                        onClick={() => setErrorLogs([])}
+                        style={styles.secondaryButton}
+                      >
+                        Limpar
+                      </button>
+                    </Tooltip>
                   </div>
                   {errorLogs.length === 0 ? (
                     <p style={styles.muted}>
@@ -1502,13 +1535,15 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     </div>
                   )}
                   <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "12px" }}>
-                    <button
-                      type="button"
-                      onClick={() => setShowLogsModal(false)}
-                      style={styles.secondaryButton}
-                    >
-                      Fechar
-                    </button>
+                    <Tooltip content={TIPS.generic.close} placement="top">
+                      <button
+                        type="button"
+                        onClick={() => setShowLogsModal(false)}
+                        style={styles.secondaryButton}
+                      >
+                        Fechar
+                      </button>
+                    </Tooltip>
                   </div>
                 </div>
               </div>
@@ -1595,7 +1630,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                         flexWrap: "wrap"
                       }}
                     >
-                      <label style={{ ...styles.fieldLabel, marginBottom: 0 }}>
+                      <label style={{ ...styles.fieldLabel, marginBottom: 0 }} title={TIPS.operations.filterPeriod}>
                         Periodo
                         <select
                           value={canceledFilter}
@@ -1610,18 +1645,20 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                           <option value="month">Este mes</option>
                         </select>
                       </label>
-                      <button
-                        type="button"
-                        onClick={() => void handleClearCanceledOperations()}
-                        disabled={canceledOperations.length === 0}
-                        style={{
-                          ...styles.secondaryButton,
-                          color: "#b91c1c",
-                          borderColor: "#fecaca"
-                        }}
-                      >
-                        Limpar canceladas
-                      </button>
+                      <Tooltip content={TIPS.operations.clearCanceled} placement="bottom">
+                        <button
+                          type="button"
+                          onClick={() => void handleClearCanceledOperations()}
+                          disabled={canceledOperations.length === 0}
+                          style={{
+                            ...styles.secondaryButton,
+                            color: "#b91c1c",
+                            borderColor: "#fecaca"
+                          }}
+                        >
+                          Limpar canceladas
+                        </button>
+                      </Tooltip>
                     </div>
                   ) : operationsTab === "closed" ? (
                     <div
@@ -1632,7 +1669,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                         flexWrap: "wrap"
                       }}
                     >
-                      <label style={{ ...styles.fieldLabel, marginBottom: 0 }}>
+                      <label style={{ ...styles.fieldLabel, marginBottom: 0 }} title={TIPS.operations.filterProduct}>
                         Produto
                         <select
                           value={closedProductFilter}
@@ -1682,20 +1719,24 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                             <span>{formatMoney(operation.unitPriceCents)}/ton</span>
                           </span>
                           <span style={styles.rowActions}>
-                            <button
-                              type="button"
-                              onClick={() => setClosingOperationId(operation.id)}
-                              style={styles.smallPrimaryButton}
-                            >
-                              Fechar
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setCancelOperationId(operation.id)}
-                              style={styles.smallDangerButton}
-                            >
-                              Cancelar
-                            </button>
+                            <Tooltip content={TIPS.operations.close} placement="left">
+                              <button
+                                type="button"
+                                onClick={() => setClosingOperationId(operation.id)}
+                                style={styles.smallPrimaryButton}
+                              >
+                                Fechar
+                              </button>
+                            </Tooltip>
+                            <Tooltip content={TIPS.operations.cancel} placement="left">
+                              <button
+                                type="button"
+                                onClick={() => setCancelOperationId(operation.id)}
+                                style={styles.smallDangerButton}
+                              >
+                                Cancelar
+                              </button>
+                            </Tooltip>
                           </span>
                         </div>
                       ))}
@@ -1846,6 +1887,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     Transporte
                   </button>
                 </nav>
+                <p style={styles.muted}>{TIPS.screens.registrations}</p>
                 <div style={{ marginTop: "20px" }}>
                   {registrationsTab === "customers" ? (
                     <CustomersView desktopApi={desktopApi} />
@@ -1883,10 +1925,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 <article style={styles.panel}>
                   <h2 style={styles.panelTitle}>Perfil de cupom 80 mm</h2>
                   <p style={styles.muted}>
-                    Selecione uma impressora instalada no Windows. O cupom e impresso sem depender
-                    de campo manual.
+                    {TIPS.screens.printing}
                   </p>
-                  <label style={styles.fieldLabel}>
+                  <label style={styles.fieldLabel} title={TIPS.printing.selectPrinter}>
                     Impressora Windows
                     <select
                       value={selectedPrinterName}
@@ -1905,21 +1946,25 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   {printers.length === 0 ? (
                     <p style={styles.errorMessage}>Nenhuma impressora instalada foi encontrada.</p>
                   ) : null}
-                  <button
-                    type="button"
-                    onClick={handleConfigureReceiptPrinter}
-                    style={styles.primaryButton}
-                  >
-                    Salvar perfil 80 mm
-                  </button>
+                  <Tooltip content={TIPS.printing.saveProfile} placement="top">
+                    <button
+                      type="button"
+                      onClick={handleConfigureReceiptPrinter}
+                      style={styles.primaryButton}
+                    >
+                      Salvar perfil 80 mm
+                    </button>
+                  </Tooltip>
 
-                  <button
-                    type="button"
-                    onClick={() => void handlePrintTest()}
-                    style={{ ...styles.secondaryButton, marginTop: "12px" }}
-                  >
-                    Testar impressora (cupom exemplo)
-                  </button>
+                  <Tooltip content={TIPS.printing.testPrint} placement="top">
+                    <button
+                      type="button"
+                      onClick={() => void handlePrintTest()}
+                      style={{ ...styles.secondaryButton, marginTop: "12px" }}
+                    >
+                      Testar impressora (cupom exemplo)
+                    </button>
+                  </Tooltip>
 
                   <h3>Perfil ativo</h3>
                   {printProfiles.length === 0 ? (
@@ -1950,13 +1995,15 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                           <p style={styles.errorMessage}>{receipt.errorMessage}</p>
                         ) : null}
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => void handleReprintReceipt(receipt.id)}
-                        style={styles.secondaryButton}
-                      >
-                        Reimprimir segunda via
-                      </button>
+                      <Tooltip content={TIPS.printing.reprint} placement="left">
+                        <button
+                          type="button"
+                          onClick={() => void handleReprintReceipt(receipt.id)}
+                          style={styles.secondaryButton}
+                        >
+                          Reimprimir segunda via
+                        </button>
+                      </Tooltip>
                     </div>
                   ))}
                 </article>
@@ -1968,8 +2015,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 <article style={styles.panel}>
                   <h2 style={styles.panelTitle}>Sincronizacao Supabase</h2>
                   <p style={styles.muted}>
-                    Sincronize os dados locais com a nuvem. O desktop funciona offline e sincroniza
-                    quando voce clicar no botao.
+                    {TIPS.screens.cloud}
                   </p>
 
                   <div style={{ marginBottom: "16px" }}>
@@ -1990,18 +2036,20 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     )}
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={handleSyncToCloud}
-                    disabled={cloudSyncing}
-                    style={{
-                      ...styles.primaryButton,
-                      opacity: cloudSyncing ? 0.6 : 1,
-                      cursor: cloudSyncing ? "not-allowed" : "pointer"
-                    }}
-                  >
-                    {cloudSyncing ? "Sincronizando..." : "Sincronizar agora"}
-                  </button>
+                  <Tooltip content={TIPS.cloud.syncNow} placement="top">
+                    <button
+                      type="button"
+                      onClick={handleSyncToCloud}
+                      disabled={cloudSyncing}
+                      style={{
+                        ...styles.primaryButton,
+                        opacity: cloudSyncing ? 0.6 : 1,
+                        cursor: cloudSyncing ? "not-allowed" : "pointer"
+                      }}
+                    >
+                      {cloudSyncing ? "Sincronizando..." : "Sincronizar agora"}
+                    </button>
+                  </Tooltip>
                 </article>
 
                 <article style={styles.panel}>
@@ -2052,19 +2100,21 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                               ) : null}
                             </div>
                           ) : null}
-                          <button
-                            type="button"
-                            onClick={handleSyncOmie}
-                            disabled={omieSyncing}
-                            style={{
-                              ...styles.primaryButton,
-                              marginTop: "16px",
-                              opacity: omieSyncing ? 0.6 : 1,
-                              cursor: omieSyncing ? "not-allowed" : "pointer"
-                            }}
-                          >
-                            {omieSyncing ? "Sincronizando..." : "Sincronizar OMIE agora"}
-                          </button>
+                          <Tooltip content={TIPS.cloud.syncOmie} placement="top">
+                            <button
+                              type="button"
+                              onClick={handleSyncOmie}
+                              disabled={omieSyncing}
+                              style={{
+                                ...styles.primaryButton,
+                                marginTop: "16px",
+                                opacity: omieSyncing ? 0.6 : 1,
+                                cursor: omieSyncing ? "not-allowed" : "pointer"
+                              }}
+                            >
+                              {omieSyncing ? "Sincronizando..." : "Sincronizar OMIE agora"}
+                            </button>
+                          </Tooltip>
                           <div
                             style={{
                               marginTop: "16px",
@@ -2081,21 +2131,23 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                               Bate no OMIE pagina por pagina ate baixar todos os clientes, produtos
                               e condicoes que ainda nao foram clonados.
                             </p>
-                            <button
-                              type="button"
-                              onClick={handleStartOmieDataEntryLoop}
-                              disabled={omieLoop?.running}
-                              style={{
-                                ...styles.primaryButton,
-                                background: "#0f766e",
-                                opacity: omieLoop?.running ? 0.6 : 1,
-                                cursor: omieLoop?.running ? "not-allowed" : "pointer"
-                              }}
-                            >
-                              {omieLoop?.running
-                                ? "Executando loop..."
-                                : "Iniciar loop de entrada de dados"}
-                            </button>
+                            <Tooltip content={TIPS.cloud.omieLoop} placement="top">
+                              <button
+                                type="button"
+                                onClick={handleStartOmieDataEntryLoop}
+                                disabled={omieLoop?.running}
+                                style={{
+                                  ...styles.primaryButton,
+                                  background: "#0f766e",
+                                  opacity: omieLoop?.running ? 0.6 : 1,
+                                  cursor: omieLoop?.running ? "not-allowed" : "pointer"
+                                }}
+                              >
+                                {omieLoop?.running
+                                  ? "Executando loop..."
+                                  : "Iniciar loop de entrada de dados"}
+                              </button>
+                            </Tooltip>
                             {omieLoop ? (
                               <div
                                 style={{ marginTop: "10px", fontSize: "13px", color: "#0f172a" }}
@@ -2272,22 +2324,24 @@ function ConnectivityBadge({
         </span>
       ) : null}
       {effectiveInternet && !cloudSyncing ? (
-        <button
-          type="button"
-          onClick={onSyncNow}
-          style={{
-            background: "transparent",
-            color: palette.fg,
-            border: `1px solid ${palette.border}`,
-            borderRadius: "999px",
-            padding: "0 8px",
-            fontSize: "10px",
-            cursor: "pointer",
-            fontWeight: 700
-          }}
-        >
-          Sincronizar
-        </button>
+        <Tooltip content={TIPS.header.syncNow} placement="bottom">
+          <button
+            type="button"
+            onClick={onSyncNow}
+            style={{
+              background: "transparent",
+              color: palette.fg,
+              border: `1px solid ${palette.border}`,
+              borderRadius: "999px",
+              padding: "0 8px",
+              fontSize: "10px",
+              cursor: "pointer",
+              fontWeight: 700
+            }}
+          >
+            Sincronizar
+          </button>
+        </Tooltip>
       ) : null}
     </div>
   );
@@ -2349,9 +2403,10 @@ interface SidebarItemProps {
   onSelect: (view: ActiveView) => void;
   disabled?: boolean;
   badge?: string;
+  tooltip?: string;
 }
 
-function SidebarItem({ id, label, icon, activeView, onSelect, disabled, badge }: SidebarItemProps) {
+function SidebarItem({ id, label, icon, activeView, onSelect, disabled, badge, tooltip }: SidebarItemProps) {
   const isActive = activeView === id;
   const baseStyle: React.CSSProperties = {
     display: "flex",
@@ -2371,7 +2426,7 @@ function SidebarItem({ id, label, icon, activeView, onSelect, disabled, badge }:
     textAlign: "left"
   };
 
-  return (
+  const button = (
     <button
       type="button"
       onClick={() => {
@@ -2399,6 +2454,12 @@ function SidebarItem({ id, label, icon, activeView, onSelect, disabled, badge }:
       ) : null}
     </button>
   );
+
+  if (!tooltip) {
+    return button;
+  }
+
+  return <Tooltip content={tooltip} placement="right">{button}</Tooltip>;
 }
 
 function SidebarSection({ title, children }: { title: string; children: React.ReactNode }) {
@@ -2848,7 +2909,14 @@ function WeighingForm({
           </p>
         </div>
         <div style={styles.liveWeightCard}>
-          <span style={styles.metricLabel}>Peso atual</span>
+          <div style={styles.metricHeader}>
+            <img
+              src="midia/peso.png"
+              alt=""
+              style={{ width: "22px", height: "22px", objectFit: "contain" }}
+            />
+            <span style={styles.metricLabel}>Peso atual</span>
+          </div>
           <strong style={styles.metricValue}>
             {liveWeight !== null ? formatWeightKg(liveWeight) : "-- kg"}
           </strong>
@@ -2863,7 +2931,7 @@ function WeighingForm({
       <div style={styles.entryGrid}>
         <article style={styles.entryCard}>
           <SectionHeader
-            icon="◈"
+            iconSrc="midia/commerce.png"
             title="Dados comerciais"
             description="Cliente, produto fiscal e condicao de pagamento"
           />
@@ -2923,7 +2991,7 @@ function WeighingForm({
 
         <article style={styles.entryCard}>
           <SectionHeader
-            icon="▣"
+            iconSrc="midia/truck.png"
             title="Transporte"
             description="Placa, transportadora e motorista"
           />
@@ -3068,12 +3136,21 @@ function WeighingForm({
             ) : null}
           </div>
           <div style={styles.actionStack}>
-            <button type="button" onClick={onStart} style={styles.captureButton}>
-              Capturar peso de entrada
-            </button>
-            <button type="button" onClick={onCancel} style={styles.secondaryButton}>
-              Limpar e voltar
-            </button>
+            <Tooltip content={TIPS.form.start} placement="top" shortcut="Ctrl+Enter">
+              <button type="button" onClick={onStart} style={styles.captureButton}>
+                <img
+                  src="midia/proximo-botao.png"
+                  alt=""
+                  style={{ width: "18px", height: "18px", objectFit: "contain" }}
+                />
+                Capturar peso de entrada
+              </button>
+            </Tooltip>
+            <Tooltip content={TIPS.form.cancel} placement="top" shortcut="Esc">
+              <button type="button" onClick={onCancel} style={styles.secondaryButton}>
+                Limpar e voltar
+              </button>
+            </Tooltip>
           </div>
         </aside>
       </div>
@@ -3139,16 +3216,24 @@ function WeighingForm({
 
 function SectionHeader({
   icon,
+  iconSrc,
   title,
   description
 }: {
-  icon: string;
+  icon?: string;
+  iconSrc?: string;
   title: string;
   description: string;
 }) {
   return (
     <div style={styles.sectionHeader}>
-      <span style={styles.sectionIcon}>{icon}</span>
+      <span style={styles.sectionIcon}>
+        {iconSrc ? (
+          <img src={iconSrc} alt="" style={{ width: "20px", height: "20px", objectFit: "contain" }} />
+        ) : (
+          icon
+        )}
+      </span>
       <div>
         <h3 style={styles.sectionTitle}>{title}</h3>
         <p style={styles.sectionDescription}>{description}</p>
@@ -3214,12 +3299,16 @@ function QuickVehicleModal({ desktopApi, onClose, onCreated }: QuickModalProps) 
           placeholder="Ex: Caminhao basculante"
         />
         <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
-          <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
-            {saving ? "Salvando..." : "Salvar"}
-          </button>
-          <button type="button" onClick={onClose} style={styles.secondaryButton}>
-            Cancelar
-          </button>
+          <Tooltip content={TIPS.generic.save} placement="top">
+            <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
+              {saving ? "Salvando..." : "Salvar"}
+            </button>
+          </Tooltip>
+          <Tooltip content={TIPS.generic.cancel} placement="top">
+            <button type="button" onClick={onClose} style={styles.secondaryButton}>
+              Cancelar
+            </button>
+          </Tooltip>
         </div>
       </div>
     </div>
@@ -3286,12 +3375,16 @@ function QuickDriverModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
         />
         <PhoneInput label="Telefone" value={phone} onChange={setPhone} />
         <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
-          <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
-            {saving ? "Salvando..." : "Salvar"}
-          </button>
-          <button type="button" onClick={onClose} style={styles.secondaryButton}>
-            Cancelar
-          </button>
+          <Tooltip content={TIPS.generic.save} placement="top">
+            <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
+              {saving ? "Salvando..." : "Salvar"}
+            </button>
+          </Tooltip>
+          <Tooltip content={TIPS.generic.cancel} placement="top">
+            <button type="button" onClick={onClose} style={styles.secondaryButton}>
+              Cancelar
+            </button>
+          </Tooltip>
         </div>
       </div>
     </div>
@@ -3376,12 +3469,16 @@ function QuickCustomerModal({ desktopApi, onClose, onCreated }: QuickModalProps)
           onChange={setEmailInput}
         />
         <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
-          <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
-            {saving ? "Salvando..." : "Salvar"}
-          </button>
-          <button type="button" onClick={onClose} style={styles.secondaryButton}>
-            Cancelar
-          </button>
+          <Tooltip content={TIPS.generic.save} placement="top">
+            <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
+              {saving ? "Salvando..." : "Salvar"}
+            </button>
+          </Tooltip>
+          <Tooltip content={TIPS.generic.cancel} placement="top">
+            <button type="button" onClick={onClose} style={styles.secondaryButton}>
+              Cancelar
+            </button>
+          </Tooltip>
         </div>
       </div>
     </div>
@@ -3438,12 +3535,16 @@ function QuickCarrierModal({ desktopApi, onClose, onCreated }: QuickModalProps) 
           onChange={setDocumentInput}
         />
         <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
-          <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
-            {saving ? "Salvando..." : "Salvar"}
-          </button>
-          <button type="button" onClick={onClose} style={styles.secondaryButton}>
-            Cancelar
-          </button>
+          <Tooltip content={TIPS.generic.save} placement="top">
+            <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
+              {saving ? "Salvando..." : "Salvar"}
+            </button>
+          </Tooltip>
+          <Tooltip content={TIPS.generic.cancel} placement="top">
+            <button type="button" onClick={onClose} style={styles.secondaryButton}>
+              Cancelar
+            </button>
+          </Tooltip>
         </div>
       </div>
     </div>
@@ -3490,7 +3591,7 @@ function CloseOperationTypeDialog({
           Tipo de operacao na saida
         </h3>
         <p style={styles.muted}>Selecione como esta saida sera registrada.</p>
-        <label style={styles.fieldLabel}>
+        <label style={styles.fieldLabel} title={TIPS.form.operationType}>
           Tipo
           <select
             value={operationType}
@@ -3502,16 +3603,20 @@ function CloseOperationTypeDialog({
           </select>
         </label>
         <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
-          <button
-            type="button"
-            onClick={() => onConfirm(operationType)}
-            style={styles.primaryButton}
-          >
-            Confirmar saida
-          </button>
-          <button type="button" onClick={onCancel} style={styles.secondaryButton}>
-            Cancelar
-          </button>
+          <Tooltip content={TIPS.form.confirmClose} placement="top">
+            <button
+              type="button"
+              onClick={() => onConfirm(operationType)}
+              style={styles.primaryButton}
+            >
+              Confirmar saida
+            </button>
+          </Tooltip>
+          <Tooltip content={TIPS.form.back} placement="top">
+            <button type="button" onClick={onCancel} style={styles.secondaryButton}>
+              Cancelar
+            </button>
+          </Tooltip>
         </div>
       </div>
     </div>
@@ -3550,23 +3655,27 @@ function CancelOperationDialog({
           />
         </label>
         <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
-          <button
-            type="button"
-            onClick={() => {
-              const trimmed = reason.trim();
-              if (!trimmed) {
-                setError("Informe o motivo do cancelamento.");
-                return;
-              }
-              onConfirm(trimmed);
-            }}
-            style={styles.primaryButton}
-          >
-            Confirmar cancelamento
-          </button>
-          <button type="button" onClick={onCancel} style={styles.secondaryButton}>
-            Voltar
-          </button>
+          <Tooltip content={TIPS.operations.cancel} placement="top">
+            <button
+              type="button"
+              onClick={() => {
+                const trimmed = reason.trim();
+                if (!trimmed) {
+                  setError("Informe o motivo do cancelamento.");
+                  return;
+                }
+                onConfirm(trimmed);
+              }}
+              style={styles.primaryButton}
+            >
+              Confirmar cancelamento
+            </button>
+          </Tooltip>
+          <Tooltip content={TIPS.form.back} placement="top">
+            <button type="button" onClick={onCancel} style={styles.secondaryButton}>
+              Voltar
+            </button>
+          </Tooltip>
         </div>
       </div>
     </div>
@@ -3635,18 +3744,20 @@ function FiscalProgressDialog({
         </div>
 
         <div style={styles.modalActions}>
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={progress.status === "running"}
-            style={{
-              ...styles.secondaryButton,
-              opacity: progress.status === "running" ? 0.5 : 1,
-              cursor: progress.status === "running" ? "not-allowed" : "pointer"
-            }}
-          >
-            Fechar painel
-          </button>
+          <Tooltip content={TIPS.generic.close} placement="top">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={progress.status === "running"}
+              style={{
+                ...styles.secondaryButton,
+                opacity: progress.status === "running" ? 0.5 : 1,
+                cursor: progress.status === "running" ? "not-allowed" : "pointer"
+              }}
+            >
+              Fechar painel
+            </button>
+          </Tooltip>
         </div>
       </div>
     </div>
@@ -3669,19 +3780,21 @@ function FiscalBillingStatus({
       <span style={fiscalBillingPillStyle(status.tone)}>{status.label}</span>
       <small>{status.detail}</small>
       {status.canRetry ? (
-        <button
-          type="button"
-          onClick={onRetry}
-          disabled={retrying}
-          style={{
-            ...styles.smallPrimaryButton,
-            width: "fit-content",
-            opacity: retrying ? 0.6 : 1,
-            cursor: retrying ? "not-allowed" : "pointer"
-          }}
-        >
-          {retrying ? "Retentando..." : "Retentar OMIE"}
-        </button>
+        <Tooltip content={TIPS.operations.retryOmie} placement="left">
+          <button
+            type="button"
+            onClick={onRetry}
+            disabled={retrying}
+            style={{
+              ...styles.smallPrimaryButton,
+              width: "fit-content",
+              opacity: retrying ? 0.6 : 1,
+              cursor: retrying ? "not-allowed" : "pointer"
+            }}
+          >
+            {retrying ? "Retentando..." : "Retentar OMIE"}
+          </button>
+        </Tooltip>
       ) : null}
     </span>
   );
@@ -5682,6 +5795,11 @@ const styles = {
     flexDirection: "column" as const,
     gap: "4px"
   },
+  metricHeader: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px"
+  },
   metricLabel: {
     color: "#bfdbfe",
     fontSize: "11px",
@@ -5795,7 +5913,11 @@ const styles = {
     cursor: "pointer",
     fontWeight: 800,
     fontSize: "14px",
-    boxShadow: "0 10px 22px rgba(22, 163, 74, 0.22)"
+    boxShadow: "0 10px 22px rgba(22, 163, 74, 0.22)",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "8px"
   },
   operationsPanel: {
     marginTop: "12px",

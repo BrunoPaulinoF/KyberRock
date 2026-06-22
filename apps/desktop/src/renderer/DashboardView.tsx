@@ -5,6 +5,8 @@ import type { PrintProfileSummary } from "../services/printing";
 import type { DesktopStatusSnapshot } from "../services/status";
 import type { WeighingOperationSummary } from "../services/weighing-operations";
 import { buildStatusIndicatorViewModels, type StatusIndicatorTone } from "./status-view-model";
+import { Tooltip } from "./Tooltip";
+import { TIPS } from "./tooltip-messages";
 
 type ActiveView =
   | "dashboard"
@@ -269,20 +271,24 @@ export function DashboardView(props: DashboardViewProps) {
           </p>
         </div>
         <div style={styles.heroActions}>
-          <button
-            type="button"
-            onClick={() => props.onNavigate("new-weighing")}
-            style={styles.primaryButton}
-          >
-            + Nova entrada
-          </button>
-          <button
-            type="button"
-            onClick={() => props.onNavigate("insights")}
-            style={styles.secondaryButton}
-          >
-            Ver insights (F5)
-          </button>
+          <Tooltip content={TIPS.dashboard.newEntry} placement="bottom" shortcut="F2">
+            <button
+              type="button"
+              onClick={() => props.onNavigate("new-weighing")}
+              style={styles.primaryButton}
+            >
+              + Nova entrada
+            </button>
+          </Tooltip>
+          <Tooltip content={TIPS.dashboard.insights} placement="bottom" shortcut="F5">
+            <button
+              type="button"
+              onClick={() => props.onNavigate("insights")}
+              style={styles.secondaryButton}
+            >
+              Ver insights (F5)
+            </button>
+          </Tooltip>
         </div>
       </header>
 
@@ -331,7 +337,7 @@ export function DashboardView(props: DashboardViewProps) {
           <header style={styles.panelHeader}>
             <div>
               <p style={styles.kicker}>Atencao</p>
-              <h3 style={styles.panelTitle}>Pendencias</h3>
+              <h3 style={styles.panelTitle} title={TIPS.dashboard.pending}>Pendencias</h3>
             </div>
             {hasPendingAttention ? null : (
               <span style={{ ...styles.pillNeutral, padding: "4px 10px", fontSize: "11px" }}>
@@ -414,19 +420,21 @@ export function DashboardView(props: DashboardViewProps) {
         </article>
       </div>
 
-      <article style={{ ...styles.panel, ...styles.recentPanel }}>
+        <article style={{ ...styles.panel, ...styles.recentPanel }}>
         <header style={styles.panelHeader}>
           <div>
             <p style={styles.kicker}>Recente</p>
             <h3 style={styles.panelTitle}>Ultimas pesagens</h3>
           </div>
-          <button
-            type="button"
-            onClick={() => props.onNavigate("open-operations")}
-            style={{ ...styles.secondaryButton, padding: "6px 10px", fontSize: "12px" }}
-          >
-            Ver todas
-          </button>
+          <Tooltip content={TIPS.dashboard.recent} placement="left" shortcut="F3">
+            <button
+              type="button"
+              onClick={() => props.onNavigate("open-operations")}
+              style={{ ...styles.secondaryButton, padding: "6px 10px", fontSize: "12px" }}
+            >
+              Ver todas
+            </button>
+          </Tooltip>
         </header>
         {recentOperations.length === 0 ? (
           <p style={styles.muted}>Nenhuma pesagem registrada ainda.</p>
@@ -443,7 +451,7 @@ export function DashboardView(props: DashboardViewProps) {
             {recentOperations.map((op) => {
               const updated = new Date(op.updatedAt).getTime();
               const isOpen = op.status !== "closed_local" && op.status !== "synced" && op.status !== "cancelled";
-              return (
+              const row = (
                 <button
                   key={op.id}
                   type="button"
@@ -493,6 +501,15 @@ export function DashboardView(props: DashboardViewProps) {
                     </span>
                   </span>
                 </button>
+              );
+              return (
+                <Tooltip
+                  key={op.id}
+                  content={`${op.plate || "--"} - ${op.customerName || "cliente"} | ${op.productDescription || "produto"} | ${isOpen ? "Aberta" : "Fechada"}. Clique para abrir a lista de operacoes.`}
+                  placement="top"
+                >
+                  {row}
+                </Tooltip>
               );
             })}
           </div>

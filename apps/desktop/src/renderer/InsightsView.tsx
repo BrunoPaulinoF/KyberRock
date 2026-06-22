@@ -10,7 +10,7 @@ import {
   Pie,
   PieChart,
   ResponsiveContainer,
-  Tooltip,
+  Tooltip as RechartsTooltip,
   XAxis,
   YAxis
 } from "recharts";
@@ -22,6 +22,8 @@ import type {
   ProductReport
 } from "../services/reports";
 import type { WeighingOperationSummary } from "../services/weighing-operations";
+import { Tooltip } from "./Tooltip";
+import { TIPS } from "./tooltip-messages";
 
 type Period = "today" | "7d" | "30d" | "month" | "lastMonth";
 
@@ -237,31 +239,36 @@ export function InsightsView({
               { id: "lastMonth", label: "Mes anterior" }
             ] as Array<{ id: Period; label: string }>
           ).map((opt) => (
-            <button
-              key={opt.id}
-              type="button"
-              onClick={() => setPeriod(opt.id)}
-              style={period === opt.id ? styles.periodChipActive : styles.periodChip}
-            >
-              {opt.label}
-            </button>
+            <Tooltip key={opt.id} content={TIPS.insights.period} placement="bottom">
+              <button
+                type="button"
+                onClick={() => setPeriod(opt.id)}
+                style={period === opt.id ? styles.periodChipActive : styles.periodChip}
+              >
+                {opt.label}
+              </button>
+            </Tooltip>
           ))}
-          <button
-            type="button"
-            onClick={() => void exportReport("pdf")}
-            disabled={exporting !== null}
-            style={styles.periodChip}
-          >
-            {exporting === "pdf" ? "Gerando PDF..." : "Exportar PDF"}
-          </button>
-          <button
-            type="button"
-            onClick={() => void exportReport("excel")}
-            disabled={exporting !== null}
-            style={styles.periodChip}
-          >
-            {exporting === "excel" ? "Gerando Excel..." : "Exportar Excel"}
-          </button>
+          <Tooltip content={TIPS.insights.exportPdf} placement="bottom">
+            <button
+              type="button"
+              onClick={() => void exportReport("pdf")}
+              disabled={exporting !== null}
+              style={styles.periodChip}
+            >
+              {exporting === "pdf" ? "Gerando PDF..." : "Exportar PDF"}
+            </button>
+          </Tooltip>
+          <Tooltip content={TIPS.insights.exportExcel} placement="bottom">
+            <button
+              type="button"
+              onClick={() => void exportReport("excel")}
+              disabled={exporting !== null}
+              style={styles.periodChip}
+            >
+              {exporting === "excel" ? "Gerando Excel..." : "Exportar Excel"}
+            </button>
+          </Tooltip>
         </div>
       </header>
 
@@ -340,7 +347,7 @@ export function InsightsView({
                     fontSize={11}
                     width={48}
                   />
-                  <Tooltip
+                  <RechartsTooltip
                     formatter={(value: number) => formatKg(value)}
                     labelFormatter={(label: string) => `Dia ${formatShortDate(label)}`}
                     contentStyle={tooltipStyle}
@@ -391,7 +398,7 @@ export function InsightsView({
                     fontSize={11}
                     width={120}
                   />
-                  <Tooltip
+                  <RechartsTooltip
                     formatter={(value: number) => formatKg(value)}
                     contentStyle={tooltipStyle}
                   />
@@ -425,7 +432,7 @@ export function InsightsView({
                       <Cell key={entry.name} fill={entry.color} />
                     ))}
                   </Pie>
-                  <Tooltip
+                  <RechartsTooltip
                     formatter={(value: number, name: string) => [
                       `${value} (${((value / mixTotal) * 100).toFixed(1)}%)`,
                       name
@@ -461,14 +468,16 @@ export function InsightsView({
                       : "Desconectado"}
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => void onSyncCloud()}
-                disabled={!cloudConnected || cloudSyncing}
-                style={styles.syncButton}
-              >
-                Sincronizar
-              </button>
+              <Tooltip content={TIPS.insights.syncCloud} placement="left">
+                <button
+                  type="button"
+                  onClick={() => void onSyncCloud()}
+                  disabled={!cloudConnected || cloudSyncing}
+                  style={styles.syncButton}
+                >
+                  Sincronizar
+                </button>
+              </Tooltip>
             </div>
 
             <div style={styles.syncDivider} />
@@ -485,14 +494,16 @@ export function InsightsView({
                   </p>
                 ) : null}
               </div>
-              <button
-                type="button"
-                onClick={() => void onSyncOmie()}
-                disabled={!omieStatus?.configured}
-                style={styles.syncButton}
-              >
-                Sincronizar
-              </button>
+              <Tooltip content={TIPS.insights.syncOmie} placement="left">
+                <button
+                  type="button"
+                  onClick={() => void onSyncOmie()}
+                  disabled={!omieStatus?.configured}
+                  style={styles.syncButton}
+                >
+                  Sincronizar
+                </button>
+              </Tooltip>
             </div>
 
             <div style={styles.syncDivider} />
