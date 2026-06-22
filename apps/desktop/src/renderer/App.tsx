@@ -35,7 +35,7 @@ import { DashboardView } from "./DashboardView";
 import { InsightsView } from "./InsightsView";
 import { ReportsView } from "./ReportsView";
 import { CustomersView } from "./CustomersView";
-import { Tooltip } from "./Tooltip";
+import { HelpTooltip } from "./Tooltip";
 import { TIPS } from "./tooltip-messages";
 import {
   DocumentInput,
@@ -1261,8 +1261,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
               <span style={styles.headerMessage}>{message}</span>
             </div>
             <div style={styles.topbarRight}>
-              <Tooltip content={TIPS.header.theme} placement="bottom" shortcut="F11">
-                <button
+              <button
                   type="button"
                   onClick={() => setThemeMode((mode) => (mode === "light" ? "dark" : "light"))}
                   style={styles.themeToggle}
@@ -1271,10 +1270,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   <span>{themeMode === "light" ? "☾" : "☀"}</span>
                   {themeMode === "light" ? "Escuro" : "Claro"}
                 </button>
-              </Tooltip>
+              <HelpTooltip content={TIPS.header.theme} placement="bottom" shortcut="F11" />
               <div style={{ position: "relative" }}>
-                <Tooltip content={TIPS.header.settings} placement="bottom">
-                  <button
+                <button
                     type="button"
                     onClick={() => setShowSettings((s) => !s)}
                     style={styles.headerBtn}
@@ -1282,11 +1280,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   >
                     ⚙
                   </button>
-                </Tooltip>
+                <HelpTooltip content={TIPS.header.settings} placement="bottom" />
                 {showSettings ? (
                   <div style={styles.settingsDropdown}>
-                    <Tooltip content={TIPS.header.settingsScale} placement="left">
-                      <button
+                    <button
                         type="button"
                         onClick={() => {
                           setActiveView("scale");
@@ -1296,9 +1293,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       >
                         Balança
                       </button>
-                    </Tooltip>
-                    <Tooltip content={TIPS.header.settingsPrinting} placement="left">
-                      <button
+                    <HelpTooltip content={TIPS.header.settingsScale} placement="left" />
+                    <button
                         type="button"
                         onClick={() => {
                           setActiveView("printing");
@@ -1308,9 +1304,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       >
                         Impressão
                       </button>
-                    </Tooltip>
-                    <Tooltip content={TIPS.header.settingsCloud} placement="left">
-                      <button
+                    <HelpTooltip content={TIPS.header.settingsPrinting} placement="left" />
+                    <button
                         type="button"
                         onClick={() => {
                           setActiveView("cloud");
@@ -1320,10 +1315,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       >
                         Cloud
                       </button>
-                    </Tooltip>
+                    <HelpTooltip content={TIPS.header.settingsCloud} placement="left" />
                     <div style={{ height: "1px", background: "#e2e8f0", margin: "4px 0" }} />
-                    <Tooltip content={TIPS.header.settingsLogs} placement="left" shortcut="F10">
-                      <button
+                    <button
                         type="button"
                         onClick={() => {
                           setShowLogsModal(true);
@@ -1336,9 +1330,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       >
                         Logs {errorLogs.length > 0 ? `(${errorLogs.length})` : ""}
                       </button>
-                    </Tooltip>
-                    <Tooltip content={TIPS.header.settingsExport} placement="left">
-                      <button
+                    <HelpTooltip content={TIPS.header.settingsLogs} placement="left" shortcut="F10" />
+                    <button
                         type="button"
                         onClick={() => {
                           void handleExportBackup();
@@ -1348,9 +1341,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       >
                         Exportar
                       </button>
-                    </Tooltip>
-                    <Tooltip content={TIPS.header.settingsRestore} placement="left">
-                      <button
+                    <HelpTooltip content={TIPS.header.settingsExport} placement="left" />
+                    <button
                         type="button"
                         onClick={() => {
                           void handleRestoreBackup();
@@ -1360,10 +1352,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       >
                         Restaurar
                       </button>
-                    </Tooltip>
+                    <HelpTooltip content={TIPS.header.settingsRestore} placement="left" />
                     <div style={{ height: "1px", background: "#e2e8f0", margin: "4px 0" }} />
-                    <Tooltip content={TIPS.header.settingsLogout} placement="left">
-                      <button
+                    <button
                         type="button"
                         onClick={() => {
                           void handleLogout();
@@ -1373,7 +1364,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       >
                         Sair
                       </button>
-                    </Tooltip>
+                    <HelpTooltip content={TIPS.header.settingsLogout} placement="left" />
                   </div>
                 ) : null}
               </div>
@@ -1396,8 +1387,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     disponível. Deseja atualizar agora?
                   </p>
                   <div style={styles.modalActions}>
-                    <Tooltip content={TIPS.update.now} placement="top">
-                      <button
+                    <button
                         type="button"
                         onClick={() => {
                           void handleUpdateAction();
@@ -1407,16 +1397,15 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       >
                         Atualizar agora
                       </button>
-                    </Tooltip>
-                    <Tooltip content={TIPS.update.later} placement="top">
-                      <button
+                    <HelpTooltip content={TIPS.update.now} placement="top" />
+                    <button
                         type="button"
                         onClick={() => setShowUpdateModal(false)}
                         style={styles.secondaryButton}
                       >
                         Mais tarde
                       </button>
-                    </Tooltip>
+                    <HelpTooltip content={TIPS.update.later} placement="top" />
                   </div>
                 </div>
               </div>
@@ -1434,15 +1423,14 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     }}
                   >
                     <h2 style={{ ...styles.modalTitle, margin: 0 }}>Logs do sistema</h2>
-                    <Tooltip content={TIPS.logs.clear} placement="left">
-                      <button
+                    <button
                         type="button"
                         onClick={() => setErrorLogs([])}
                         style={styles.secondaryButton}
                       >
                         Limpar
                       </button>
-                    </Tooltip>
+                    <HelpTooltip content={TIPS.logs.clear} placement="left" />
                   </div>
                   {errorLogs.length === 0 ? (
                     <p style={styles.muted}>
@@ -1535,15 +1523,14 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     </div>
                   )}
                   <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "12px" }}>
-                    <Tooltip content={TIPS.generic.close} placement="top">
-                      <button
+                    <button
                         type="button"
                         onClick={() => setShowLogsModal(false)}
                         style={styles.secondaryButton}
                       >
                         Fechar
                       </button>
-                    </Tooltip>
+                    <HelpTooltip content={TIPS.generic.close} placement="top" />
                   </div>
                 </div>
               </div>
@@ -1645,8 +1632,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                           <option value="month">Este mes</option>
                         </select>
                       </label>
-                      <Tooltip content={TIPS.operations.clearCanceled} placement="bottom">
-                        <button
+                      <button
                           type="button"
                           onClick={() => void handleClearCanceledOperations()}
                           disabled={canceledOperations.length === 0}
@@ -1658,7 +1644,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                         >
                           Limpar canceladas
                         </button>
-                      </Tooltip>
+                    <HelpTooltip content={TIPS.operations.clearCanceled} placement="bottom" />
                     </div>
                   ) : operationsTab === "closed" ? (
                     <div
@@ -1719,24 +1705,22 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                             <span>{formatMoney(operation.unitPriceCents)}/ton</span>
                           </span>
                           <span style={styles.rowActions}>
-                            <Tooltip content={TIPS.operations.close} placement="left">
-                              <button
+                            <button
                                 type="button"
                                 onClick={() => setClosingOperationId(operation.id)}
                                 style={styles.smallPrimaryButton}
                               >
                                 Fechar
                               </button>
-                            </Tooltip>
-                            <Tooltip content={TIPS.operations.cancel} placement="left">
-                              <button
+                            <HelpTooltip content={TIPS.operations.close} placement="left" />
+                            <button
                                 type="button"
                                 onClick={() => setCancelOperationId(operation.id)}
                                 style={styles.smallDangerButton}
                               >
                                 Cancelar
                               </button>
-                            </Tooltip>
+                            <HelpTooltip content={TIPS.operations.cancel} placement="left" />
                           </span>
                         </div>
                       ))}
@@ -1946,25 +1930,23 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   {printers.length === 0 ? (
                     <p style={styles.errorMessage}>Nenhuma impressora instalada foi encontrada.</p>
                   ) : null}
-                  <Tooltip content={TIPS.printing.saveProfile} placement="top">
-                    <button
+                  <button
                       type="button"
                       onClick={handleConfigureReceiptPrinter}
                       style={styles.primaryButton}
                     >
                       Salvar perfil 80 mm
                     </button>
-                  </Tooltip>
+                  <HelpTooltip content={TIPS.printing.saveProfile} placement="top" />
 
-                  <Tooltip content={TIPS.printing.testPrint} placement="top">
-                    <button
+                  <button
                       type="button"
                       onClick={() => void handlePrintTest()}
                       style={{ ...styles.secondaryButton, marginTop: "12px" }}
                     >
                       Testar impressora (cupom exemplo)
                     </button>
-                  </Tooltip>
+                  <HelpTooltip content={TIPS.printing.testPrint} placement="top" />
 
                   <h3>Perfil ativo</h3>
                   {printProfiles.length === 0 ? (
@@ -1995,15 +1977,14 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                           <p style={styles.errorMessage}>{receipt.errorMessage}</p>
                         ) : null}
                       </div>
-                      <Tooltip content={TIPS.printing.reprint} placement="left">
-                        <button
+                      <button
                           type="button"
                           onClick={() => void handleReprintReceipt(receipt.id)}
                           style={styles.secondaryButton}
                         >
                           Reimprimir segunda via
                         </button>
-                      </Tooltip>
+                      <HelpTooltip content={TIPS.printing.reprint} placement="left" />
                     </div>
                   ))}
                 </article>
@@ -2036,8 +2017,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     )}
                   </div>
 
-                  <Tooltip content={TIPS.cloud.syncNow} placement="top">
-                    <button
+                  <button
                       type="button"
                       onClick={handleSyncToCloud}
                       disabled={cloudSyncing}
@@ -2049,7 +2029,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     >
                       {cloudSyncing ? "Sincronizando..." : "Sincronizar agora"}
                     </button>
-                  </Tooltip>
+                  <HelpTooltip content={TIPS.cloud.syncNow} placement="top" />
                 </article>
 
                 <article style={styles.panel}>
@@ -2100,8 +2080,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                               ) : null}
                             </div>
                           ) : null}
-                          <Tooltip content={TIPS.cloud.syncOmie} placement="top">
-                            <button
+                          <button
                               type="button"
                               onClick={handleSyncOmie}
                               disabled={omieSyncing}
@@ -2114,7 +2093,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                             >
                               {omieSyncing ? "Sincronizando..." : "Sincronizar OMIE agora"}
                             </button>
-                          </Tooltip>
+                          <HelpTooltip content={TIPS.cloud.syncOmie} placement="top" />
                           <div
                             style={{
                               marginTop: "16px",
@@ -2131,8 +2110,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                               Bate no OMIE pagina por pagina ate baixar todos os clientes, produtos
                               e condicoes que ainda nao foram clonados.
                             </p>
-                            <Tooltip content={TIPS.cloud.omieLoop} placement="top">
-                              <button
+                            <button
                                 type="button"
                                 onClick={handleStartOmieDataEntryLoop}
                                 disabled={omieLoop?.running}
@@ -2147,7 +2125,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                                   ? "Executando loop..."
                                   : "Iniciar loop de entrada de dados"}
                               </button>
-                            </Tooltip>
+                            <HelpTooltip content={TIPS.cloud.omieLoop} placement="top" />
                             {omieLoop ? (
                               <div
                                 style={{ marginTop: "10px", fontSize: "13px", color: "#0f172a" }}
@@ -2324,7 +2302,7 @@ function ConnectivityBadge({
         </span>
       ) : null}
       {effectiveInternet && !cloudSyncing ? (
-        <Tooltip content={TIPS.header.syncNow} placement="bottom">
+        <>
           <button
             type="button"
             onClick={onSyncNow}
@@ -2341,7 +2319,8 @@ function ConnectivityBadge({
           >
             Sincronizar
           </button>
-        </Tooltip>
+          <HelpTooltip content={TIPS.header.syncNow} placement="bottom" />
+        </>
       ) : null}
     </div>
   );
@@ -2459,7 +2438,12 @@ function SidebarItem({ id, label, icon, activeView, onSelect, disabled, badge, t
     return button;
   }
 
-  return <Tooltip content={tooltip} placement="right">{button}</Tooltip>;
+  return (
+    <>
+      {button}
+      <HelpTooltip content={tooltip} placement="right" />
+    </>
+  );
 }
 
 function SidebarSection({ title, children }: { title: string; children: React.ReactNode }) {
@@ -3136,8 +3120,7 @@ function WeighingForm({
             ) : null}
           </div>
           <div style={styles.actionStack}>
-            <Tooltip content={TIPS.form.start} placement="top" shortcut="Ctrl+Enter">
-              <button type="button" onClick={onStart} style={styles.captureButton}>
+            <button type="button" onClick={onStart} style={styles.captureButton}>
                 <img
                   src="midia/proximo-botao.png"
                   alt=""
@@ -3145,12 +3128,11 @@ function WeighingForm({
                 />
                 Capturar peso de entrada
               </button>
-            </Tooltip>
-            <Tooltip content={TIPS.form.cancel} placement="top" shortcut="Esc">
-              <button type="button" onClick={onCancel} style={styles.secondaryButton}>
+    <HelpTooltip content={TIPS.form.start} placement="top" shortcut="Ctrl+Enter" />
+            <button type="button" onClick={onCancel} style={styles.secondaryButton}>
                 Limpar e voltar
               </button>
-            </Tooltip>
+            <HelpTooltip content={TIPS.form.cancel} placement="top" shortcut="Esc" />
           </div>
         </aside>
       </div>
@@ -3299,16 +3281,14 @@ function QuickVehicleModal({ desktopApi, onClose, onCreated }: QuickModalProps) 
           placeholder="Ex: Caminhao basculante"
         />
         <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
-          <Tooltip content={TIPS.generic.save} placement="top">
-            <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
+          <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
               {saving ? "Salvando..." : "Salvar"}
             </button>
-          </Tooltip>
-          <Tooltip content={TIPS.generic.cancel} placement="top">
-            <button type="button" onClick={onClose} style={styles.secondaryButton}>
+          <HelpTooltip content={TIPS.generic.save} placement="top" />
+          <button type="button" onClick={onClose} style={styles.secondaryButton}>
               Cancelar
             </button>
-          </Tooltip>
+          <HelpTooltip content={TIPS.generic.cancel} placement="top" />
         </div>
       </div>
     </div>
@@ -3375,16 +3355,14 @@ function QuickDriverModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
         />
         <PhoneInput label="Telefone" value={phone} onChange={setPhone} />
         <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
-          <Tooltip content={TIPS.generic.save} placement="top">
-            <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
+          <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
               {saving ? "Salvando..." : "Salvar"}
             </button>
-          </Tooltip>
-          <Tooltip content={TIPS.generic.cancel} placement="top">
-            <button type="button" onClick={onClose} style={styles.secondaryButton}>
+          <HelpTooltip content={TIPS.generic.save} placement="top" />
+          <button type="button" onClick={onClose} style={styles.secondaryButton}>
               Cancelar
             </button>
-          </Tooltip>
+          <HelpTooltip content={TIPS.generic.cancel} placement="top" />
         </div>
       </div>
     </div>
@@ -3469,16 +3447,14 @@ function QuickCustomerModal({ desktopApi, onClose, onCreated }: QuickModalProps)
           onChange={setEmailInput}
         />
         <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
-          <Tooltip content={TIPS.generic.save} placement="top">
-            <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
+          <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
               {saving ? "Salvando..." : "Salvar"}
             </button>
-          </Tooltip>
-          <Tooltip content={TIPS.generic.cancel} placement="top">
-            <button type="button" onClick={onClose} style={styles.secondaryButton}>
+          <HelpTooltip content={TIPS.generic.save} placement="top" />
+          <button type="button" onClick={onClose} style={styles.secondaryButton}>
               Cancelar
             </button>
-          </Tooltip>
+          <HelpTooltip content={TIPS.generic.cancel} placement="top" />
         </div>
       </div>
     </div>
@@ -3535,16 +3511,14 @@ function QuickCarrierModal({ desktopApi, onClose, onCreated }: QuickModalProps) 
           onChange={setDocumentInput}
         />
         <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
-          <Tooltip content={TIPS.generic.save} placement="top">
-            <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
+          <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
               {saving ? "Salvando..." : "Salvar"}
             </button>
-          </Tooltip>
-          <Tooltip content={TIPS.generic.cancel} placement="top">
-            <button type="button" onClick={onClose} style={styles.secondaryButton}>
+          <HelpTooltip content={TIPS.generic.save} placement="top" />
+          <button type="button" onClick={onClose} style={styles.secondaryButton}>
               Cancelar
             </button>
-          </Tooltip>
+          <HelpTooltip content={TIPS.generic.cancel} placement="top" />
         </div>
       </div>
     </div>
@@ -3603,20 +3577,18 @@ function CloseOperationTypeDialog({
           </select>
         </label>
         <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
-          <Tooltip content={TIPS.form.confirmClose} placement="top">
-            <button
+          <button
               type="button"
               onClick={() => onConfirm(operationType)}
               style={styles.primaryButton}
             >
               Confirmar saida
             </button>
-          </Tooltip>
-          <Tooltip content={TIPS.form.back} placement="top">
-            <button type="button" onClick={onCancel} style={styles.secondaryButton}>
+          <HelpTooltip content={TIPS.form.confirmClose} placement="top" />
+          <button type="button" onClick={onCancel} style={styles.secondaryButton}>
               Cancelar
             </button>
-          </Tooltip>
+          <HelpTooltip content={TIPS.form.back} placement="top" />
         </div>
       </div>
     </div>
@@ -3655,8 +3627,7 @@ function CancelOperationDialog({
           />
         </label>
         <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
-          <Tooltip content={TIPS.operations.cancel} placement="top">
-            <button
+          <button
               type="button"
               onClick={() => {
                 const trimmed = reason.trim();
@@ -3670,12 +3641,11 @@ function CancelOperationDialog({
             >
               Confirmar cancelamento
             </button>
-          </Tooltip>
-          <Tooltip content={TIPS.form.back} placement="top">
-            <button type="button" onClick={onCancel} style={styles.secondaryButton}>
+          <HelpTooltip content={TIPS.operations.cancel} placement="top" />
+          <button type="button" onClick={onCancel} style={styles.secondaryButton}>
               Voltar
             </button>
-          </Tooltip>
+          <HelpTooltip content={TIPS.form.back} placement="top" />
         </div>
       </div>
     </div>
@@ -3744,8 +3714,7 @@ function FiscalProgressDialog({
         </div>
 
         <div style={styles.modalActions}>
-          <Tooltip content={TIPS.generic.close} placement="top">
-            <button
+          <button
               type="button"
               onClick={onClose}
               disabled={progress.status === "running"}
@@ -3757,7 +3726,7 @@ function FiscalProgressDialog({
             >
               Fechar painel
             </button>
-          </Tooltip>
+          <HelpTooltip content={TIPS.generic.close} placement="top" />
         </div>
       </div>
     </div>
@@ -3780,7 +3749,7 @@ function FiscalBillingStatus({
       <span style={fiscalBillingPillStyle(status.tone)}>{status.label}</span>
       <small>{status.detail}</small>
       {status.canRetry ? (
-        <Tooltip content={TIPS.operations.retryOmie} placement="left">
+        <>
           <button
             type="button"
             onClick={onRetry}
@@ -3794,7 +3763,8 @@ function FiscalBillingStatus({
           >
             {retrying ? "Retentando..." : "Retentar OMIE"}
           </button>
-        </Tooltip>
+          <HelpTooltip content={TIPS.operations.retryOmie} placement="left" />
+        </>
       ) : null}
     </span>
   );
@@ -4064,7 +4034,31 @@ function getThemeVariables(themeMode: ThemeMode): React.CSSProperties {
       "--kr-muted": "#94a3b8",
       "--kr-input-bg": "#020617",
       "--kr-input-border": "#334155",
-      "--kr-shadow": "0 12px 36px rgba(0,0,0,0.35)"
+      "--kr-shadow": "0 12px 36px rgba(0,0,0,0.35)",
+      "--kr-card-bg": "#0b1326",
+      "--kr-card-border": "#1e293b",
+      "--kr-card-hover": "#111c38",
+      "--kr-chart-1": "#60a5fa",
+      "--kr-chart-2": "#38bdf8",
+      "--kr-chart-3": "#fbbf24",
+      "--kr-chart-4": "#f87171",
+      "--kr-chart-5": "#34d399",
+      "--kr-chart-6": "#a78bfa",
+      "--kr-chart-7": "#f472b6",
+      "--kr-chart-axis": "#64748b",
+      "--kr-chart-grid": "#1e293b",
+      "--kr-chart-tooltip-bg": "#0f172a",
+      "--kr-chart-tooltip-border": "#334155",
+      "--kr-chart-tooltip-text": "#e5e7eb",
+      "--kr-info-bg": "#172554",
+      "--kr-info-border": "#1e40af",
+      "--kr-info-text": "#bfdbfe",
+      "--kr-tooltip-bg": "#1e3a8a",
+      "--kr-tooltip-text": "#eff6ff",
+      "--kr-tooltip-border": "#3b82f6",
+      "--kr-tooltip-kbd-bg": "#172554",
+      "--kr-tooltip-kbd-border": "#3b82f6",
+      "--kr-tooltip-shortcut": "#bfdbfe"
     } as React.CSSProperties;
   }
 
@@ -4078,7 +4072,31 @@ function getThemeVariables(themeMode: ThemeMode): React.CSSProperties {
     "--kr-muted": "#64748b",
     "--kr-input-bg": "#ffffff",
     "--kr-input-border": "#cbd5e1",
-    "--kr-shadow": "0 12px 36px rgba(15, 23, 42, 0.08)"
+    "--kr-shadow": "0 12px 36px rgba(15, 23, 42, 0.08)",
+    "--kr-card-bg": "#ffffff",
+    "--kr-card-border": "#e2e8f0",
+    "--kr-card-hover": "#f1f5f9",
+    "--kr-chart-1": "#2563eb",
+    "--kr-chart-2": "#0ea5e9",
+    "--kr-chart-3": "#f59e0b",
+    "--kr-chart-4": "#ef4444",
+    "--kr-chart-5": "#10b981",
+    "--kr-chart-6": "#8b5cf6",
+    "--kr-chart-7": "#ec4899",
+    "--kr-chart-axis": "#64748b",
+    "--kr-chart-grid": "#e2e8f0",
+    "--kr-chart-tooltip-bg": "#ffffff",
+    "--kr-chart-tooltip-border": "#e2e8f0",
+    "--kr-chart-tooltip-text": "#0f172a",
+    "--kr-info-bg": "#eff6ff",
+    "--kr-info-border": "#bfdbfe",
+    "--kr-info-text": "#1d4ed8",
+    "--kr-tooltip-bg": "#1e3a8a",
+    "--kr-tooltip-text": "#eff6ff",
+    "--kr-tooltip-border": "#3b82f6",
+    "--kr-tooltip-kbd-bg": "#1e293b",
+    "--kr-tooltip-kbd-border": "#334155",
+    "--kr-tooltip-shortcut": "#cbd5e1"
   } as React.CSSProperties;
 }
 

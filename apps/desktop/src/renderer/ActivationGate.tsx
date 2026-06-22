@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { DesktopAccessStatus } from "../services/desktop-activation";
 import type { KyberRockDesktopApi } from "./desktop-api";
-import { Tooltip } from "./Tooltip";
+import { HelpTooltip } from "./Tooltip";
 import { TIPS } from "./tooltip-messages";
 
 type GateScreen = "checking" | "activate" | "blocked" | "error" | "offline";
@@ -180,8 +180,7 @@ export function ActivationGate({ desktopApi, onUnlocked }: ActivationGateProps) 
 
           {message ? <p style={styles.message}>{message}</p> : null}
 
-          <Tooltip content={TIPS.activation.code} placement="top">
-            <button
+          <button
               type="button"
               onClick={handleActivate}
               disabled={activating || activationCode.join("").length !== 6}
@@ -193,7 +192,7 @@ export function ActivationGate({ desktopApi, onUnlocked }: ActivationGateProps) 
             >
               {activating ? "Ativando..." : "Ativar"}
             </button>
-          </Tooltip>
+          <HelpTooltip content={TIPS.activation.code} placement="top" />
         </div>
       </main>
     );
@@ -225,21 +224,18 @@ export function ActivationGate({ desktopApi, onUnlocked }: ActivationGateProps) 
         )}
 
         <div style={styles.buttonColumn}>
-          <Tooltip content={TIPS.activation.retry} placement="top">
-            <button type="button" onClick={handleRetryValidation} style={styles.primaryButton}>
+          <button type="button" onClick={handleRetryValidation} style={styles.primaryButton}>
               Tentar validar novamente
             </button>
-          </Tooltip>
-          <Tooltip content={TIPS.activation.diagnostic} placement="top">
-            <button type="button" onClick={() => setScreen("activate")} style={styles.secondaryButton}>
+          <HelpTooltip content={TIPS.activation.retry} placement="top" />
+          <button type="button" onClick={() => setScreen("activate")} style={styles.secondaryButton}>
               Ver diagnostico
             </button>
-          </Tooltip>
-          <Tooltip content={TIPS.activation.export} placement="top">
-            <button type="button" onClick={handleExportBackup} style={styles.secondaryButton}>
+          <HelpTooltip content={TIPS.activation.diagnostic} placement="top" />
+          <button type="button" onClick={handleExportBackup} style={styles.secondaryButton}>
               Exportar backup
             </button>
-          </Tooltip>
+          <HelpTooltip content={TIPS.activation.export} placement="top" />
         </div>
       </div>
     </main>

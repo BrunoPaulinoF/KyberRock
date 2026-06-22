@@ -22,7 +22,7 @@ import type {
   ProductReport
 } from "../services/reports";
 import type { WeighingOperationSummary } from "../services/weighing-operations";
-import { Tooltip } from "./Tooltip";
+import { HelpTooltip } from "./Tooltip";
 import { TIPS } from "./tooltip-messages";
 
 type Period = "today" | "7d" | "30d" | "month" | "lastMonth";
@@ -48,13 +48,18 @@ interface InsightsProps {
   onSyncCloud: () => void | Promise<void>;
 }
 
-const CHART_COLORS = {
-  primary: "#2563eb",
-  primaryFill: "rgba(37, 99, 235, 0.15)",
-  invoice: "#0ea5e9",
-  internal: "#f59e0b",
-  cancelled: "#94a3b8"
-} as const;
+const CHART_PALETTE = [
+  "var(--kr-chart-1)",
+  "var(--kr-chart-2)",
+  "var(--kr-chart-3)",
+  "var(--kr-chart-4)",
+  "var(--kr-chart-5)",
+  "var(--kr-chart-6)",
+  "var(--kr-chart-7)"
+] as const;
+
+const CHART_AXIS = "var(--kr-chart-axis)";
+const CHART_GRID = "var(--kr-chart-grid)";
 
 function toIsoDate(date: Date): string {
   const year = date.getFullYear();
@@ -193,9 +198,9 @@ export function InsightsView({
   const mixData = useMemo(() => {
     if (!mix) return [];
     return [
-      { name: "Com nota", value: mix.invoice.count, color: CHART_COLORS.invoice },
-      { name: "Interna", value: mix.internal.count, color: CHART_COLORS.internal },
-      { name: "Cancelada", value: mix.cancelled.count, color: CHART_COLORS.cancelled }
+      { name: "Com nota", value: mix.invoice.count, color: CHART_PALETTE[1] },
+      { name: "Interna", value: mix.internal.count, color: CHART_PALETTE[2] },
+      { name: "Cancelada", value: mix.cancelled.count, color: CHART_PALETTE[3] }
     ].filter((item) => item.value > 0);
   }, [mix]);
 
@@ -209,15 +214,15 @@ export function InsightsView({
   }, null);
 
   const syncBadge = (() => {
-    if (!omieStatus) return { label: "OMIE nao configurado", color: "#94a3b8" };
-    if (!omieStatus.configured) return { label: "OMIE nao configurado", color: "#94a3b8" };
+    if (!omieStatus) return { label: "OMIE nao configurado", color: "var(--kr-muted)" };
+    if (!omieStatus.configured) return { label: "OMIE nao configurado", color: "var(--kr-muted)" };
     if (omieStatus.pendingOmieJobs > 0) {
       return {
         label: `${omieStatus.pendingOmieJobs} pendente(s) OMIE`,
-        color: "#b45309"
+        color: "#f59e0b"
       };
     }
-    return { label: "OMIE em dia", color: "#047857" };
+    return { label: "OMIE em dia", color: "var(--kr-chart-5)" };
   })();
 
   return (
@@ -239,53 +244,40 @@ export function InsightsView({
               { id: "lastMonth", label: "Mes anterior" }
             ] as Array<{ id: Period; label: string }>
           ).map((opt) => (
-            <Tooltip key={opt.id} content={TIPS.insights.period} placement="bottom">
-              <button
-                type="button"
-                onClick={() => setPeriod(opt.id)}
-                style={period === opt.id ? styles.periodChipActive : styles.periodChip}
-              >
-                {opt.label}
-              </button>
-            </Tooltip>
+            <button
+              key={opt.id}
+              type="button"
+              onClick={() => setPeriod(opt.id)}
+              style={period === opt.id ? styles.periodChipActive : styles.periodChip}
+            >
+              {opt.label}
+            </button>
           ))}
-          <Tooltip content={TIPS.insights.exportPdf} placement="bottom">
-            <button
-              type="button"
-              onClick={() => void exportReport("pdf")}
-              disabled={exporting !== null}
-              style={styles.periodChip}
-            >
-              {exporting === "pdf" ? "Gerando PDF..." : "Exportar PDF"}
-            </button>
-          </Tooltip>
-          <Tooltip content={TIPS.insights.exportExcel} placement="bottom">
-            <button
-              type="button"
-              onClick={() => void exportReport("excel")}
-              disabled={exporting !== null}
-              style={styles.periodChip}
-            >
-              {exporting === "excel" ? "Gerando Excel..." : "Exportar Excel"}
-            </button>
-          </Tooltip>
+          <HelpTooltip content={TIPS.insights.period} placement="bottom" />
+          <button
+            type="button"
+            onClick={() => void exportReport("pdf")}
+            disabled={exporting !== null}
+            style={styles.periodChip}
+          >
+            {exporting === "pdf" ? "Gerando PDF..." : "Exportar PDF"}
+          </button>
+          <HelpTooltip content={TIPS.insights.exportPdf} placement="bottom" />
+          <button
+            type="button"
+            onClick={() => void exportReport("excel")}
+            disabled={exporting !== null}
+            style={styles.periodChip}
+          >
+            {exporting === "excel" ? "Gerando Excel..." : "Exportar Excel"}
+          </button>
+          <HelpTooltip content={TIPS.insights.exportExcel} placement="bottom" />
         </div>
       </header>
 
       {error ? <p style={styles.errorMessage}>{error}</p> : null}
       {exportMessage ? (
-        <p
-          style={{
-            color: "#1d4ed8",
-            background: "#eff6ff",
-            border: "1px solid #bfdbfe",
-            padding: "8px 12px",
-            borderRadius: "8px",
-            fontSize: "13px"
-          }}
-        >
-          {exportMessage}
-        </p>
+        <p style={styles.exportMessage}>{exportMessage}</p>
       ) : null}
 
       <div style={styles.kpiGrid}>
@@ -330,20 +322,20 @@ export function InsightsView({
                 <AreaChart data={series} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
                   <defs>
                     <linearGradient id="weightFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={CHART_COLORS.primary} stopOpacity={0.35} />
-                      <stop offset="100%" stopColor={CHART_COLORS.primary} stopOpacity={0} />
+                      <stop offset="0%" stopColor="var(--kr-chart-1)" stopOpacity={0.45} />
+                      <stop offset="100%" stopColor="var(--kr-chart-1)" stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" />
+                  <CartesianGrid stroke={CHART_GRID} strokeDasharray="3 3" />
                   <XAxis
                     dataKey="date"
                     tickFormatter={formatShortDate}
-                    stroke="#64748b"
+                    stroke={CHART_AXIS}
                     fontSize={11}
                   />
                   <YAxis
                     tickFormatter={(value) => `${(Number(value) / 1000).toFixed(0)}t`}
-                    stroke="#64748b"
+                    stroke={CHART_AXIS}
                     fontSize={11}
                     width={48}
                   />
@@ -351,12 +343,13 @@ export function InsightsView({
                     formatter={(value: number) => formatKg(value)}
                     labelFormatter={(label: string) => `Dia ${formatShortDate(label)}`}
                     contentStyle={tooltipStyle}
+                    labelStyle={tooltipLabelStyle}
                   />
                   <Area
                     type="monotone"
                     dataKey="totalNetWeightKg"
-                    stroke={CHART_COLORS.primary}
-                    strokeWidth={2}
+                    stroke="var(--kr-chart-1)"
+                    strokeWidth={2.5}
                     fill="url(#weightFill)"
                     name="Peso liquido"
                   />
@@ -384,25 +377,31 @@ export function InsightsView({
                   layout="vertical"
                   margin={{ top: 8, right: 24, left: 8, bottom: 0 }}
                 >
-                  <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" />
+                  <CartesianGrid stroke={CHART_GRID} strokeDasharray="3 3" />
                   <XAxis
                     type="number"
                     tickFormatter={(value) => `${(Number(value) / 1000).toFixed(0)}t`}
-                    stroke="#64748b"
+                    stroke={CHART_AXIS}
                     fontSize={11}
                   />
                   <YAxis
                     type="category"
                     dataKey="name"
-                    stroke="#64748b"
+                    stroke={CHART_AXIS}
                     fontSize={11}
                     width={120}
                   />
                   <RechartsTooltip
                     formatter={(value: number) => formatKg(value)}
                     contentStyle={tooltipStyle}
+                    labelStyle={tooltipLabelStyle}
+                    cursor={{ fill: "var(--kr-card-hover)" }}
                   />
-                  <Bar dataKey="peso" fill={CHART_COLORS.primary} radius={[0, 4, 4, 0]} />
+                  <Bar dataKey="peso" radius={[0, 4, 4, 0]}>
+                    {topProducts.map((_, index) => (
+                      <Cell key={`bar-${index}`} fill={CHART_PALETTE[index % CHART_PALETTE.length]} />
+                    ))}
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             )}
@@ -427,6 +426,8 @@ export function InsightsView({
                     innerRadius={55}
                     outerRadius={90}
                     paddingAngle={2}
+                    stroke="var(--kr-card-bg)"
+                    strokeWidth={2}
                   >
                     {mixData.map((entry) => (
                       <Cell key={entry.name} fill={entry.color} />
@@ -438,12 +439,13 @@ export function InsightsView({
                       name
                     ]}
                     contentStyle={tooltipStyle}
+                    labelStyle={tooltipLabelStyle}
                   />
                   <Legend
                     verticalAlign="bottom"
                     height={28}
                     iconType="circle"
-                    wrapperStyle={{ fontSize: 12, color: "#475569" }}
+                    wrapperStyle={{ fontSize: 12, color: "var(--kr-muted)" }}
                   />
                 </PieChart>
               </ResponsiveContainer>
@@ -468,7 +470,7 @@ export function InsightsView({
                       : "Desconectado"}
                 </p>
               </div>
-              <Tooltip content={TIPS.insights.syncCloud} placement="left">
+              <div style={styles.syncActionGroup}>
                 <button
                   type="button"
                   onClick={() => void onSyncCloud()}
@@ -477,7 +479,8 @@ export function InsightsView({
                 >
                   Sincronizar
                 </button>
-              </Tooltip>
+                <HelpTooltip content={TIPS.insights.syncCloud} placement="left" />
+              </div>
             </div>
 
             <div style={styles.syncDivider} />
@@ -494,7 +497,7 @@ export function InsightsView({
                   </p>
                 ) : null}
               </div>
-              <Tooltip content={TIPS.insights.syncOmie} placement="left">
+              <div style={styles.syncActionGroup}>
                 <button
                   type="button"
                   onClick={() => void onSyncOmie()}
@@ -503,7 +506,8 @@ export function InsightsView({
                 >
                   Sincronizar
                 </button>
-              </Tooltip>
+                <HelpTooltip content={TIPS.insights.syncOmie} placement="left" />
+              </div>
             </div>
 
             <div style={styles.syncDivider} />
@@ -534,11 +538,18 @@ function KpiCard({ label, value, hint }: { label: string; value: string; hint: s
 }
 
 const tooltipStyle: React.CSSProperties = {
-  background: "#ffffff",
-  border: "1px solid #e2e8f0",
+  background: "var(--kr-chart-tooltip-bg)",
+  border: "1px solid var(--kr-chart-tooltip-border)",
   borderRadius: "6px",
   fontSize: "12px",
-  color: "#0f172a"
+  color: "var(--kr-chart-tooltip-text)",
+  boxShadow: "var(--kr-shadow)"
+};
+
+const tooltipLabelStyle: React.CSSProperties = {
+  color: "var(--kr-muted)",
+  fontWeight: 600,
+  marginBottom: "2px"
 };
 
 const styles: Record<string, React.CSSProperties> = {
@@ -557,12 +568,12 @@ const styles: Record<string, React.CSSProperties> = {
   title: {
     fontSize: "20px",
     fontWeight: 700,
-    color: "#0f172a",
+    color: "var(--kr-text-strong)",
     margin: 0
   },
   subtitle: {
     fontSize: "13px",
-    color: "#64748b",
+    color: "var(--kr-muted)",
     margin: "4px 0 0 0"
   },
   periodRow: {
@@ -574,9 +585,9 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "6px 12px",
     fontSize: "12px",
     fontWeight: 600,
-    color: "#475569",
-    background: "#ffffff",
-    border: "1px solid #e2e8f0",
+    color: "var(--kr-text)",
+    background: "var(--kr-card-bg)",
+    border: "1px solid var(--kr-card-border)",
     borderRadius: "999px",
     cursor: "pointer"
   },
@@ -585,8 +596,8 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "12px",
     fontWeight: 600,
     color: "#ffffff",
-    background: "#0f172a",
-    border: "1px solid #0f172a",
+    background: "var(--kr-chart-1)",
+    border: "1px solid var(--kr-chart-1)",
     borderRadius: "999px",
     cursor: "pointer"
   },
@@ -596,15 +607,16 @@ const styles: Record<string, React.CSSProperties> = {
     gap: "12px"
   },
   kpiCard: {
-    background: "#ffffff",
-    border: "1px solid #e2e8f0",
+    background: "var(--kr-card-bg)",
+    border: "1px solid var(--kr-card-border)",
     borderRadius: "10px",
-    padding: "14px 16px"
+    padding: "14px 16px",
+    boxShadow: "var(--kr-shadow)"
   },
   kpiLabel: {
     fontSize: "11px",
     fontWeight: 700,
-    color: "#64748b",
+    color: "var(--kr-muted)",
     textTransform: "uppercase",
     letterSpacing: "0.04em",
     margin: 0
@@ -612,12 +624,12 @@ const styles: Record<string, React.CSSProperties> = {
   kpiValue: {
     fontSize: "24px",
     fontWeight: 700,
-    color: "#0f172a",
+    color: "var(--kr-text-strong)",
     margin: "4px 0 2px 0"
   },
   kpiHint: {
     fontSize: "12px",
-    color: "#64748b",
+    color: "var(--kr-muted)",
     margin: 0
   },
   chartGrid: {
@@ -626,10 +638,11 @@ const styles: Record<string, React.CSSProperties> = {
     gap: "12px"
   },
   chartCard: {
-    background: "#ffffff",
-    border: "1px solid #e2e8f0",
+    background: "var(--kr-card-bg)",
+    border: "1px solid var(--kr-card-border)",
     borderRadius: "10px",
-    padding: "14px 16px"
+    padding: "14px 16px",
+    boxShadow: "var(--kr-shadow)"
   },
   chartHeader: {
     display: "flex",
@@ -640,29 +653,38 @@ const styles: Record<string, React.CSSProperties> = {
   chartTitle: {
     fontSize: "14px",
     fontWeight: 700,
-    color: "#0f172a",
+    color: "var(--kr-text-strong)",
     margin: 0
   },
   chartHint: {
     fontSize: "11px",
-    color: "#64748b"
+    color: "var(--kr-muted)"
   },
   chartBody: {
     width: "100%",
     minHeight: "240px"
   },
   muted: {
-    color: "#94a3b8",
+    color: "var(--kr-muted)",
     fontSize: "13px",
     margin: 0
   },
   errorMessage: {
-    color: "#b91c1c",
+    color: "var(--kr-chart-4)",
     fontSize: "13px",
-    background: "#fef2f2",
-    border: "1px solid #fecaca",
+    background: "color-mix(in srgb, var(--kr-chart-4) 12%, transparent)",
+    border: "1px solid color-mix(in srgb, var(--kr-chart-4) 35%, transparent)",
     borderRadius: "8px",
     padding: "8px 12px",
+    margin: 0
+  },
+  exportMessage: {
+    color: "var(--kr-info-text)",
+    background: "var(--kr-info-bg)",
+    border: "1px solid var(--kr-info-border)",
+    padding: "8px 12px",
+    borderRadius: "8px",
+    fontSize: "13px",
     margin: 0
   },
   syncBody: {
@@ -676,10 +698,15 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "flex-start",
     gap: "12px"
   },
+  syncActionGroup: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px"
+  },
   syncLabel: {
     fontSize: "11px",
     fontWeight: 700,
-    color: "#64748b",
+    color: "var(--kr-muted)",
     textTransform: "uppercase",
     letterSpacing: "0.04em",
     margin: 0
@@ -687,12 +714,12 @@ const styles: Record<string, React.CSSProperties> = {
   syncValue: {
     fontSize: "15px",
     fontWeight: 600,
-    color: "#0f172a",
+    color: "var(--kr-text-strong)",
     margin: "4px 0 0 0"
   },
   syncHint: {
     fontSize: "11px",
-    color: "#94a3b8",
+    color: "var(--kr-muted)",
     margin: "2px 0 0 0"
   },
   syncButton: {
@@ -700,13 +727,13 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "12px",
     fontWeight: 600,
     color: "#ffffff",
-    background: "#0f172a",
-    border: "1px solid #0f172a",
+    background: "var(--kr-chart-1)",
+    border: "1px solid var(--kr-chart-1)",
     borderRadius: "6px",
     cursor: "pointer"
   },
   syncDivider: {
     height: "1px",
-    background: "#e2e8f0"
+    background: "var(--kr-border)"
   }
 };

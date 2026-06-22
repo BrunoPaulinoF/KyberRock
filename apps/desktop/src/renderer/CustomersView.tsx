@@ -22,7 +22,7 @@ import {
 } from "./inputs";
 import type { CepLookupResult } from "./inputs";
 import type { CustomerCacheEntry, CustomerFormData } from "./customers.types";
-import { Tooltip } from "./Tooltip";
+import { HelpTooltip } from "./Tooltip";
 import { TIPS } from "./tooltip-messages";
 
 const initialForm: CustomerFormData = {
@@ -519,11 +519,10 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
           style={styles.search}
           title="Filtrar clientes por nome, fantasia ou CNPJ"
         />
-        <Tooltip content="Abre o formulario para cadastrar um cliente novo" placement="left">
-          <button type="button" onClick={openCreateForm} style={styles.primaryButton}>
+        <button type="button" onClick={openCreateForm} style={styles.primaryButton}>
             + Novo cliente
           </button>
-        </Tooltip>
+        <HelpTooltip content="Abre o formulario para cadastrar um cliente novo" placement="left" />
       </div>
 
       {feedback ? <p style={styles.message}>{feedback}</p> : null}
@@ -721,14 +720,13 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
             </section>
           </div>
           <div style={styles.formFooter}>
-            <Tooltip content={TIPS.generic.cancel} placement="top">
-              <button type="button" onClick={() => setShowForm(false)} style={styles.secondaryButton}>
+            <button type="button" onClick={() => setShowForm(false)} style={styles.secondaryButton}>
                 Cancelar
               </button>
-            </Tooltip>
+          <HelpTooltip content={TIPS.generic.cancel} placement="top" />
             <div style={{ display: "flex", gap: "8px" }}>
               {editingId ? (
-                <Tooltip content={TIPS.generic.delete} placement="top">
+                <>
                   <button
                     type="button"
                     onClick={() => void handleDelete(editingId)}
@@ -736,13 +734,13 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
                   >
                     Excluir
                   </button>
-                </Tooltip>
+                  <HelpTooltip content={TIPS.generic.delete} placement="top" />
+                </>
               ) : null}
-              <Tooltip content={TIPS.generic.save} placement="top">
-                <button type="button" onClick={() => void handleSave()} style={styles.primaryButton}>
+              <button type="button" onClick={() => void handleSave()} style={styles.primaryButton}>
                   {editingId ? "Salvar alteracoes" : "Cadastrar cliente"}
                 </button>
-              </Tooltip>
+              <HelpTooltip content={TIPS.generic.save} placement="top" />
             </div>
           </div>
         </div>
@@ -776,8 +774,7 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
               : `${page * pageSize + 1}-${Math.min(total, (page + 1) * pageSize)} de ${total}`}
           </span>
           <div style={{ display: "flex", gap: "6px" }}>
-            <Tooltip content="Pagina anterior de clientes" placement="top">
-              <button
+            <button
                 type="button"
                 onClick={() => setPage((p) => Math.max(0, p - 1))}
                 disabled={page === 0}
@@ -785,12 +782,11 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
               >
                 Anterior
               </button>
-            </Tooltip>
+            <HelpTooltip content="Pagina anterior de clientes" placement="top" />
             <span>
               {page + 1}/{totalPages}
             </span>
-            <Tooltip content="Proxima pagina de clientes" placement="top">
-              <button
+            <button
                 type="button"
                 onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
                 disabled={page >= totalPages - 1}
@@ -798,7 +794,7 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
               >
                 Proxima
               </button>
-            </Tooltip>
+            <HelpTooltip content="Proxima pagina de clientes" placement="top" />
           </div>
         </div>
       </div>
@@ -833,15 +829,14 @@ function CustomerRow({
         ) : null}
       </div>
       <div style={styles.rowActions}>
-        <Tooltip content={TIPS.generic.edit} placement="left">
-          <button
+        <button
             type="button"
             onClick={() => onEdit(customer)}
             style={styles.secondaryButton}
           >
             Editar
           </button>
-        </Tooltip>
+              <HelpTooltip content={TIPS.generic.edit} placement="left" />
       </div>
     </div>
   );

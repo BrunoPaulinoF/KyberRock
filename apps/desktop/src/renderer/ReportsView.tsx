@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import type { KyberRockDesktopApi } from "../preload/api-types";
-import { Tooltip } from "./Tooltip";
+import { HelpTooltip } from "./Tooltip";
 import { TIPS } from "./tooltip-messages";
 
 interface RecipientRow {
@@ -295,17 +295,17 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
             </select>
           </label>
           <div style={{ display: "flex", gap: "6px" }}>
-            <Tooltip content={editingId ? TIPS.generic.save : "Cadastra o destinatario para receber o fechamento diario"} placement="top">
-              <button type="button" onClick={handleSave} style={styles.primaryButton}>
+            <button type="button" onClick={handleSave} style={styles.primaryButton}>
                 {editingId ? "Salvar" : "Adicionar"}
               </button>
-            </Tooltip>
+            <HelpTooltip content={editingId ? TIPS.generic.save : "Cadastra o destinatario para receber o fechamento diario"} placement="top" />
             {editingId ? (
-              <Tooltip content={TIPS.generic.cancel} placement="top">
+              <>
                 <button type="button" onClick={resetForm} style={styles.secondaryButton}>
                   Cancelar
                 </button>
-              </Tooltip>
+                <HelpTooltip content={TIPS.generic.cancel} placement="top" />
+              </>
             ) : null}
           </div>
         </div>
@@ -365,24 +365,22 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
                       : "-"}
                   </td>
                   <td style={{ padding: "8px", display: "flex", gap: "6px" }}>
-                    <Tooltip content={TIPS.generic.edit} placement="left">
-                      <button
+                    <button
                         type="button"
                         onClick={() => handleEdit(recipient)}
                         style={styles.secondaryButton}
                       >
                         Editar
                       </button>
-                    </Tooltip>
-                    <Tooltip content="Remove este destinatario do envio automatico" placement="left">
-                      <button
+                    <HelpTooltip content={TIPS.generic.edit} placement="left" />
+                    <button
                         type="button"
                         onClick={() => void handleDelete(recipient.id)}
                         style={styles.dangerButton}
                       >
                         Remover
                       </button>
-                    </Tooltip>
+            <HelpTooltip content="Remove este destinatario do envio automatico" placement="left" />
                   </td>
                 </tr>
               ))}

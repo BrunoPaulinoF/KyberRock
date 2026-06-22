@@ -5,7 +5,7 @@ import type { PrintProfileSummary } from "../services/printing";
 import type { DesktopStatusSnapshot } from "../services/status";
 import type { WeighingOperationSummary } from "../services/weighing-operations";
 import { buildStatusIndicatorViewModels, type StatusIndicatorTone } from "./status-view-model";
-import { Tooltip } from "./Tooltip";
+import { Tooltip, HelpTooltip } from "./Tooltip";
 import { TIPS } from "./tooltip-messages";
 
 type ActiveView =
@@ -271,24 +271,22 @@ export function DashboardView(props: DashboardViewProps) {
           </p>
         </div>
         <div style={styles.heroActions}>
-          <Tooltip content={TIPS.dashboard.newEntry} placement="bottom" shortcut="F2">
-            <button
+          <button
               type="button"
               onClick={() => props.onNavigate("new-weighing")}
               style={styles.primaryButton}
             >
               + Nova entrada
             </button>
-          </Tooltip>
-          <Tooltip content={TIPS.dashboard.insights} placement="bottom" shortcut="F5">
-            <button
+          <HelpTooltip content={TIPS.dashboard.newEntry} placement="bottom" shortcut="F2" />
+          <button
               type="button"
               onClick={() => props.onNavigate("insights")}
               style={styles.secondaryButton}
             >
               Ver insights (F5)
             </button>
-          </Tooltip>
+          <HelpTooltip content={TIPS.dashboard.insights} placement="bottom" shortcut="F5" />
         </div>
       </header>
 
@@ -426,15 +424,14 @@ export function DashboardView(props: DashboardViewProps) {
             <p style={styles.kicker}>Recente</p>
             <h3 style={styles.panelTitle}>Ultimas pesagens</h3>
           </div>
-          <Tooltip content={TIPS.dashboard.recent} placement="left" shortcut="F3">
-            <button
+          <button
               type="button"
               onClick={() => props.onNavigate("open-operations")}
               style={{ ...styles.secondaryButton, padding: "6px 10px", fontSize: "12px" }}
             >
               Ver todas
             </button>
-          </Tooltip>
+          <HelpTooltip content={TIPS.dashboard.recent} placement="left" shortcut="F3" />
         </header>
         {recentOperations.length === 0 ? (
           <p style={styles.muted}>Nenhuma pesagem registrada ainda.</p>

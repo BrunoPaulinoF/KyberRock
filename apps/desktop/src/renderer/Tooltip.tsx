@@ -38,14 +38,14 @@ const arrowStyle = (placement: TooltipPlacement): CSSProperties => {
   };
   switch (placement) {
     case "bottom":
-      return { ...base, top: -6, left: "50%", transform: "translateX(-50%)", borderWidth: "0 6px 6px 6px", borderColor: "transparent transparent #0f172a transparent" };
+      return { ...base, top: -6, left: "50%", transform: "translateX(-50%)", borderWidth: "0 6px 6px 6px", borderColor: "transparent transparent var(--kr-tooltip-border) transparent" };
     case "left":
-      return { ...base, right: -6, top: "50%", transform: "translateY(-50%)", borderWidth: "6px 0 6px 6px", borderColor: "transparent transparent transparent #0f172a" };
+      return { ...base, right: -6, top: "50%", transform: "translateY(-50%)", borderWidth: "6px 0 6px 6px", borderColor: "transparent transparent transparent var(--kr-tooltip-border)" };
     case "right":
-      return { ...base, left: -6, top: "50%", transform: "translateY(-50%)", borderWidth: "6px 6px 6px 0", borderColor: "transparent #0f172a transparent transparent" };
+      return { ...base, left: -6, top: "50%", transform: "translateY(-50%)", borderWidth: "6px 6px 6px 0", borderColor: "transparent var(--kr-tooltip-border) transparent transparent" };
     case "top":
     default:
-      return { ...base, bottom: -6, left: "50%", transform: "translateX(-50%)", borderWidth: "6px 6px 0 6px", borderColor: "#0f172a transparent transparent transparent" };
+      return { ...base, bottom: -6, left: "50%", transform: "translateX(-50%)", borderWidth: "6px 6px 0 6px", borderColor: "var(--kr-tooltip-border) transparent transparent transparent" };
   }
 };
 
@@ -214,13 +214,14 @@ export function Tooltip({
             zIndex: 9999,
             maxWidth: "320px",
             padding: "8px 10px",
-            background: "#0f172a",
-            color: "#f8fafc",
-            borderRadius: "6px",
+            background: "var(--kr-tooltip-bg)",
+            color: "var(--kr-tooltip-text)",
+            border: "1px solid var(--kr-tooltip-border)",
+            borderRadius: "8px",
             fontSize: "12px",
             lineHeight: 1.4,
             fontWeight: 500,
-            boxShadow: "0 6px 20px rgba(15, 23, 42, 0.25)",
+            boxShadow: "0 8px 24px rgba(30, 58, 138, 0.45)",
             pointerEvents: "none",
             ...(coords ? placementStyle(coords.placement, coords.x, coords.y) : { top: -9999, left: -9999 })
           }}
@@ -231,7 +232,7 @@ export function Tooltip({
               style={{
                 marginTop: "4px",
                 fontSize: "11px",
-                color: "#cbd5e1",
+                color: "var(--kr-tooltip-shortcut)",
                 fontWeight: 600,
                 letterSpacing: "0.02em"
               }}
@@ -249,10 +250,55 @@ export function Tooltip({
 const kbdStyle: CSSProperties = {
   display: "inline-block",
   padding: "1px 5px",
-  background: "#1e293b",
-  border: "1px solid #334155",
+  background: "var(--kr-tooltip-kbd-bg)",
+  border: "1px solid var(--kr-tooltip-kbd-border)",
   borderRadius: "4px",
   fontSize: "10px",
   fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-  color: "#f8fafc"
+  color: "var(--kr-tooltip-text)"
 };
+
+export interface HelpTooltipProps {
+  content: ReactNode;
+  placement?: TooltipPlacement;
+  shortcut?: string;
+  size?: number;
+  className?: string;
+  ariaLabel?: string;
+}
+
+export function HelpTooltip({
+  content,
+  placement = "top",
+  shortcut,
+  size = 18,
+  className,
+  ariaLabel
+}: HelpTooltipProps) {
+  return (
+    <Tooltip content={content} placement={placement} shortcut={shortcut}>
+      <img
+        src="midia/tooltip.png"
+        alt={ariaLabel ?? "Ajuda"}
+        width={size}
+        height={size}
+        className={className}
+        style={{
+          display: "inline-block",
+          verticalAlign: "middle",
+          cursor: "help",
+          opacity: 0.75,
+          transition: "opacity 120ms ease, transform 120ms ease"
+        }}
+        onMouseEnter={(event) => {
+          event.currentTarget.style.opacity = "1";
+          event.currentTarget.style.transform = "scale(1.08)";
+        }}
+        onMouseLeave={(event) => {
+          event.currentTarget.style.opacity = "0.75";
+          event.currentTarget.style.transform = "scale(1)";
+        }}
+      />
+    </Tooltip>
+  );
+}
