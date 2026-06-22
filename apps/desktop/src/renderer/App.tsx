@@ -1174,7 +1174,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       <div style={styles.shell}>
         <aside style={styles.sidebar}>
           <div style={styles.sidebarHeader}>
-            <img src="midia/logodesk.png" alt="KyberRock" style={styles.sidebarLogo} />
+            <img src="midia/logo.png" alt="KyberRock" style={styles.sidebarLogo} />
             <span style={styles.sidebarBrand}>{desktopAppInfo.name}</span>
           </div>
           <nav aria-label="Navegacao principal" style={styles.sidebarNav}>
