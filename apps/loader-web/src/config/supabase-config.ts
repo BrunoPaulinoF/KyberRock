@@ -1,5 +1,5 @@
 export const supabaseConfig = {
-  url: import.meta.env.VITE_SUPABASE_URL || "",
+  url: import.meta.env.VITE_SUPABASE_URL || "https://vksihzfrgqoemcqpquit.supabase.co",
   publishableKey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || "missing-publishable-key"
 };
 
