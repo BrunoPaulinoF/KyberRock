@@ -132,8 +132,17 @@ import {
   type ToledoTcpAdapter,
   type ToledoTcpConfig,
   type ToledoTcpAdapterStatus,
-  type ParsedToledoReading
+  type ParsedToledoReading,
+  type ScaleReading,
+  type ScaleSamplingOptions
 } from "@kyberrock/scale-adapters";
+import {
+  readScaleConfiguration,
+  writeScaleConfiguration,
+  type ScaleConfiguration,
+  type ScaleConfigurationInput,
+  type ScaleStabilityConfig
+} from "./scale-configs.js";
 import {
   createCustomer,
   deleteCustomer,
@@ -419,20 +428,27 @@ export class DesktopRuntime {
   }
 
   private async readScaleSampledWeight(): Promise<number> {
+    const scaleConfig = this.getScaleConfiguration();
+
     try {
       const adapter = this.scaleAdapter as Partial<{
-        readSampled: (options?: { durationMs?: number }) => Promise<{ weightKg: number; stable?: boolean }>;
+        readSampled: (options?: ScaleSamplingOptions) => Promise<{ weightKg: number; stable?: boolean }>;
       }>;
       if (typeof adapter.readSampled === "function") {
-        const reading = await adapter.readSampled({ durationMs: 5000 });
-        if (reading.stable === false) {
-          throw new Error("peso instavel durante a amostragem de 5s");
+        const reading = await adapter.readSampled(
+          buildScaleSamplingOptions(scaleConfig.stability)
+        );
+        if (scaleConfig.stability.requireStable && reading.stable === false) {
+          throw new Error("peso instavel durante a amostragem configurada");
         }
         return reading.weightKg;
       }
       const reading = await this.scaleAdapter.read();
-      if (!reading.stable) {
+      if (scaleConfig.stability.requireStable && !reading.stable) {
         throw new Error("peso instavel");
+      }
+      if (reading.weightKg < scaleConfig.stability.minWeightKg) {
+        throw new Error(`peso abaixo do minimo configurado (${scaleConfig.stability.minWeightKg} kg)`);
       }
       return reading.weightKg;
     } catch (error) {
@@ -652,8 +668,22 @@ export class DesktopRuntime {
     return this.scaleAdapter.read();
   }
 
+  async readScaleSampled(): Promise<ScaleReading> {
+    return this.scaleAdapter.readSampled(
+      buildScaleSamplingOptions(this.getScaleConfiguration().stability)
+    );
+  }
+
   getScaleStatus(): ToledoTcpAdapterStatus {
     return this.scaleAdapter.getStatus();
+  }
+
+  getScaleConfiguration(): ScaleConfiguration {
+    return readScaleConfiguration(this.database, this.ensureIdentity());
+  }
+
+  saveScaleConfiguration(input: ScaleConfigurationInput): ScaleConfiguration {
+    return writeScaleConfiguration(this.database, this.ensureIdentity(), input);
   }
 
   onScaleReading(callback: (reading: ParsedToledoReading) => void): () => void {
@@ -1247,4 +1277,14 @@ export class DesktopRuntime {
       throw new Error(access.message);
     }
   }
+}
+
+function buildScaleSamplingOptions(stability: ScaleStabilityConfig): ScaleSamplingOptions {
+  return {
+    durationMs: stability.sampleDurationMs,
+    sampleIntervalMs: stability.sampleIntervalMs,
+    minStableMs: stability.requireStable ? stability.minStableMs : undefined,
+    maxVariationKg: stability.maxVariationKg,
+    minWeightKg: stability.minWeightKg
+  };
 }

@@ -34,10 +34,12 @@ import type {
 import type { CreateVehicleInput, UpdateVehicleInput } from "../services/vehicles";
 import type { CreateDriverInput, UpdateDriverInput } from "../services/drivers";
 import type { CreateCarrierInput, UpdateCarrierInput } from "../services/carriers";
+import type { ScaleConfiguration, ScaleConfigurationInput } from "../services/scale-configs";
 import type {
   ToledoTcpConfig,
   ToledoTcpAdapterStatus,
-  ParsedToledoReading
+  ParsedToledoReading,
+  ScaleReading
 } from "@kyberrock/scale-adapters";
 
 export interface KyberRockDesktopApi {
@@ -171,7 +173,10 @@ export interface KyberRockDesktopApi {
   scaleConnect: (config: ToledoTcpConfig) => Promise<void>;
   scaleDisconnect: () => Promise<void>;
   scaleRead: () => Promise<{ weightKg: number; stable: boolean }>;
+  scaleReadSampled: () => Promise<ScaleReading>;
   scaleGetStatus: () => Promise<ToledoTcpAdapterStatus>;
+  scaleGetConfig: () => Promise<ScaleConfiguration>;
+  scaleSaveConfig: (input: ScaleConfigurationInput) => Promise<ScaleConfiguration>;
   omieConfig: () => Promise<{ configured: boolean; appKeyMasked: string | null }>;
   omieSync: () => Promise<{
     customersPulled: number;

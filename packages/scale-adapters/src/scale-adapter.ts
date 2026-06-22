@@ -25,6 +25,14 @@ export interface ScaleReading extends NormalizedScaleReading {
   capturedAt: string;
 }
 
+export interface ScaleSamplingOptions {
+  durationMs?: number;
+  sampleIntervalMs?: number;
+  minStableMs?: number;
+  maxVariationKg?: number;
+  minWeightKg?: number;
+}
+
 export interface ScaleAdapter {
   read: () => Promise<ScaleReading>;
 }

@@ -92,7 +92,7 @@ export const TIPS = {
     clear: "Limpar os logs de erro e aviso capturados nesta sessao."
   },
   form: {
-    start: "Captura o peso atual da balanca (media de 5s) e abre a operacao de entrada.",
+    start: "Captura o peso atual da balanca usando os criterios configurados e abre a operacao de entrada.",
     cancel: "Limpa o formulario e volta para a tela inicial.",
     operationType: "Tipo da operacao na saida: com nota (pedido OMIE) ou interna (sem fiscal).",
     confirmClose: "Fecha a operacao conforme o tipo selecionado.",

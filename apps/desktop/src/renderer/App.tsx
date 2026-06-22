@@ -72,6 +72,7 @@ import {
 } from "./inputs";
 import type { CarrierCacheEntry } from "./customers.types";
 import type { KyberRockDesktopApi } from "./desktop-api";
+import type { ScaleConfiguration, ScaleConfigurationInput } from "../services/scale-configs";
 export interface AppProps {
   desktopApi?: KyberRockDesktopApi;
   initialStatus?: DesktopStatusSnapshot | null;
@@ -870,7 +871,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
 
     setFormError(null);
-    setMessage("Coletando peso de entrada (media de 5s na balanca). Aguarde...");
+    setMessage("Coletando peso de entrada com os criterios configurados na balanca. Aguarde...");
 
     try {
       const operation = await desktopApi.startWeighing({
@@ -884,7 +885,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         unitPriceCents: form.unitPriceCents ?? undefined,
         freight: buildFreightInput(form)
       });
-      setMessage(`Entrada capturada (media 5s): ${operation.entryWeightKg} kg.`);
+      setMessage(`Entrada capturada com media configurada: ${operation.entryWeightKg} kg.`);
       setForm(initialWeighingForm);
       setActiveView("open-operations");
       await refreshOpenOperations();
@@ -908,8 +909,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
     setMessage(
       operationType === "invoice"
-        ? "Coletando peso de saida (media 5s) e fechando a operacao fiscal."
-        : "Coletando peso de saida (media 5s) e fechando a operacao interna."
+        ? "Coletando peso de saida com os criterios configurados e fechando a operacao fiscal."
+        : "Coletando peso de saida com os criterios configurados e fechando a operacao interna."
     );
 
     try {
@@ -919,7 +920,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
           status: "running",
           step: "weighing",
           title: "Fechando saida fiscal",
-          detail: "Capturando peso de saida (media 5s) e calculando peso liquido."
+          detail: "Capturando peso de saida com os criterios configurados e calculando peso liquido."
         });
         setMessage("Fechando operacao fiscal e faturando no OMIE. Mantenha a internet conectada.");
       }
@@ -4652,6 +4653,18 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
 function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   const [host, setHost] = useState("192.168.1.100");
   const [port, setPort] = useState("4001");
+  const [autoConnect, setAutoConnect] = useState(false);
+  const [sampleDurationSeconds, setSampleDurationSeconds] = useState("5");
+  const [sampleIntervalMs, setSampleIntervalMs] = useState("250");
+  const [requireStable, setRequireStable] = useState(true);
+  const [minStableSeconds, setMinStableSeconds] = useState("1");
+  const [maxVariationKg, setMaxVariationKg] = useState("50");
+  const [minWeightKg, setMinWeightKg] = useState("1000");
+  const [configLoaded, setConfigLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [configMessage, setConfigMessage] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const [reading, setReading] = useState<{ weightKg: number; stable: boolean } | null>(null);
   const [status, setStatus] = useState<string>("Disconectado");
@@ -4672,6 +4685,39 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
         void desktopApi.scaleDisconnect();
         setConnected(false);
       }
+    };
+  }, [desktopApi]);
+
+  useEffect(() => {
+    if (!desktopApi) return;
+
+    let canceled = false;
+
+    async function loadScaleConfig(): Promise<void> {
+      try {
+        const config = await desktopApi.scaleGetConfig();
+        if (canceled) return;
+        applyScaleConfig(config);
+        setConfigLoaded(true);
+
+        if (config.connection.autoConnect) {
+          await desktopApi.scaleConnect(config.connection);
+          if (canceled) return;
+          setConnected(true);
+          setStatus("Conectado");
+        }
+      } catch (err) {
+        if (!canceled) {
+          setError(err instanceof Error ? err.message : "Falha ao carregar configuracao da balanca");
+          setConfigLoaded(true);
+        }
+      }
+    }
+
+    void loadScaleConfig();
+
+    return () => {
+      canceled = true;
     };
   }, [desktopApi]);
 
@@ -4699,13 +4745,14 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
 
   async function handleConnect(): Promise<void> {
     setError(null);
+    setConfigMessage(null);
     try {
-      await desktopApi.scaleConnect({
-        host: host.trim(),
-        port: parseInt(port, 10) || 4001
-      });
+      const config = await desktopApi.scaleSaveConfig(buildScaleConfigInput());
+      applyScaleConfig(config);
+      await desktopApi.scaleConnect(config.connection);
       setConnected(true);
       setStatus("Conectado");
+      setConfigMessage("Configuracao salva e balanca conectada.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Falha ao conectar");
       setConnected(false);
@@ -4717,6 +4764,87 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
     setConnected(false);
     setStatus("Disconectado");
     setReading(null);
+  }
+
+  async function handleSaveConfig(): Promise<void> {
+    setSaving(true);
+    setError(null);
+    setConfigMessage(null);
+    try {
+      const config = await desktopApi.scaleSaveConfig(buildScaleConfigInput());
+      applyScaleConfig(config);
+      setConfigMessage("Configuracao da balanca salva.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Falha ao salvar configuracao");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleTestCapture(): Promise<void> {
+    setTesting(true);
+    setError(null);
+    setConfigMessage(null);
+    setTestResult(null);
+
+    try {
+      const config = await desktopApi.scaleSaveConfig(buildScaleConfigInput());
+      applyScaleConfig(config);
+
+      if (!connectedRef.current) {
+        await desktopApi.scaleConnect(config.connection);
+        setConnected(true);
+        setStatus("Conectado");
+      }
+
+      const sampled = await desktopApi.scaleReadSampled();
+      setReading({ weightKg: sampled.weightKg, stable: sampled.stable });
+      setTestResult(
+        `Captura aprovada: ${new Intl.NumberFormat("pt-BR").format(sampled.weightKg)} kg em ${Math.round(config.stability.sampleDurationMs / 1000)}s.`
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Falha no teste de captura");
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  function applyScaleConfig(config: ScaleConfiguration): void {
+    setHost(config.connection.host);
+    setPort(String(config.connection.port));
+    setAutoConnect(config.connection.autoConnect);
+    setSampleDurationSeconds(String(Math.max(1, Math.round(config.stability.sampleDurationMs / 1000))));
+    setSampleIntervalMs(String(config.stability.sampleIntervalMs));
+    setRequireStable(config.stability.requireStable);
+    setMinStableSeconds(String(Math.round(config.stability.minStableMs / 1000)));
+    setMaxVariationKg(String(config.stability.maxVariationKg));
+    setMinWeightKg(String(config.stability.minWeightKg));
+  }
+
+  function buildScaleConfigInput(): ScaleConfigurationInput {
+    return {
+      connection: {
+        host: host.trim() || "192.168.1.100",
+        port: parseInteger(port, 4001),
+        timeoutMs: 3000,
+        reconnectIntervalMs: 5000,
+        maxReconnectAttempts: 10,
+        autoConnect
+      },
+      stability: {
+        sampleDurationMs: parseInteger(sampleDurationSeconds, 5) * 1000,
+        sampleIntervalMs: parseInteger(sampleIntervalMs, 250),
+        requireStable,
+        minStableMs: parseInteger(minStableSeconds, 1) * 1000,
+        maxVariationKg: parseInteger(maxVariationKg, 50),
+        minWeightKg: parseInteger(minWeightKg, 1000)
+      }
+    };
+  }
+
+  function parseInteger(value: string, fallback: number): number {
+    const parsed = parseInt(value, 10);
+    return Number.isFinite(parsed) ? parsed : fallback;
   }
 
   return (
@@ -4739,13 +4867,24 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
             minLength={1}
             hint="Apenas numeros (1-65535)."
           />
+          <label style={{ ...styles.checkboxLabel, marginTop: "10px" }}>
+            <input
+              type="checkbox"
+              checked={autoConnect}
+              onChange={(event) => setAutoConnect(event.target.checked)}
+            />
+            Auto conectar ao abrir a tela da balanca
+          </label>
           {error ? <p style={styles.errorMessage}>{error}</p> : null}
+          {configMessage ? (
+            <p style={{ ...styles.muted, color: "#166534", fontWeight: 700 }}>{configMessage}</p>
+          ) : null}
           <div style={{ display: "flex", gap: "12px", marginTop: "16px" }}>
             <button
               type="button"
               onClick={handleConnect}
-              disabled={connected}
-              style={{ ...styles.primaryButton, opacity: connected ? 0.5 : 1 }}
+              disabled={connected || !configLoaded}
+              style={{ ...styles.primaryButton, opacity: connected || !configLoaded ? 0.5 : 1 }}
             >
               Conectar
             </button>
@@ -4799,6 +4938,82 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                 {reading.stable ? "Estavel" : "Instavel"}
               </p>
             ) : null}
+          </div>
+        </article>
+
+        <article style={styles.panel}>
+          <h2 style={styles.panelTitle}>Criterios de Captura</h2>
+          <NumberInput
+            label="Tempo para tirar media (s)"
+            value={sampleDurationSeconds}
+            onChange={setSampleDurationSeconds}
+            placeholder="5"
+            maxLength={2}
+            minLength={1}
+            hint="Janela usada para entrada, saida e teste."
+          />
+          <NumberInput
+            label="Intervalo entre leituras (ms)"
+            value={sampleIntervalMs}
+            onChange={setSampleIntervalMs}
+            placeholder="250"
+            maxLength={4}
+            minLength={2}
+            hint="Quanto menor, mais amostras entram na media."
+          />
+          <label style={{ ...styles.checkboxLabel, marginTop: "10px" }}>
+            <input
+              type="checkbox"
+              checked={requireStable}
+              onChange={(event) => setRequireStable(event.target.checked)}
+            />
+            Exigir peso estavel para capturar
+          </label>
+          <NumberInput
+            label="Tempo minimo estavel (s)"
+            value={minStableSeconds}
+            onChange={setMinStableSeconds}
+            disabled={!requireStable}
+            placeholder="1"
+            maxLength={2}
+            hint="O caminhao precisa ficar parado por esse tempo."
+          />
+          <NumberInput
+            label="Tolerancia de oscilacao (kg)"
+            value={maxVariationKg}
+            onChange={setMaxVariationKg}
+            placeholder="50"
+            maxLength={5}
+            hint="Se a janela variar mais que isso, a captura falha."
+          />
+          <NumberInput
+            label="Peso minimo para captura (kg)"
+            value={minWeightKg}
+            onChange={setMinWeightKg}
+            placeholder="1000"
+            maxLength={6}
+            hint="Evita capturar com a balanca vazia."
+          />
+          {testResult ? (
+            <p style={{ ...styles.muted, color: "#166534", fontWeight: 700 }}>{testResult}</p>
+          ) : null}
+          <div style={{ display: "flex", gap: "12px", marginTop: "16px", flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={handleSaveConfig}
+              disabled={saving || !configLoaded}
+              style={{ ...styles.secondaryButton, opacity: saving || !configLoaded ? 0.5 : 1 }}
+            >
+              {saving ? "Salvando..." : "Salvar configuracao"}
+            </button>
+            <button
+              type="button"
+              onClick={handleTestCapture}
+              disabled={testing || !configLoaded}
+              style={{ ...styles.primaryButton, opacity: testing || !configLoaded ? 0.5 : 1 }}
+            >
+              {testing ? "Testando..." : "Salvar e testar captura"}
+            </button>
           </div>
         </article>
       </section>

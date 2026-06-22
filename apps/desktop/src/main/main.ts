@@ -20,6 +20,7 @@ import type { CreateVehicleInput, UpdateVehicleInput } from "../services/vehicle
 import type { CreateDriverInput, UpdateDriverInput } from "../services/drivers.js";
 import type { CreateCarrierInput, UpdateCarrierInput } from "../services/carriers.js";
 import type { ToledoTcpConfig } from "@kyberrock/scale-adapters";
+import type { ScaleConfigurationInput } from "../services/scale-configs.js";
 import type {
   ConfigureReceiptPrintProfileInput,
   ReceiptPrintPayload,
@@ -747,9 +748,24 @@ function registerIpcHandlers(): void {
     return runtime.readScale();
   });
 
+  ipcMain.handle("desktop:scale-read-sampled", async () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.readScaleSampled();
+  });
+
   ipcMain.handle("desktop:scale-get-status", () => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.getScaleStatus();
+  });
+
+  ipcMain.handle("desktop:scale-get-config", () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.getScaleConfiguration();
+  });
+
+  ipcMain.handle("desktop:scale-save-config", (_event, input: ScaleConfigurationInput) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.saveScaleConfiguration(input);
   });
 
   ipcMain.handle("desktop:omie-config", () => {

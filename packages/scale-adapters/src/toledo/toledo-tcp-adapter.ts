@@ -3,7 +3,7 @@ import type { Socket } from "node:net";
 
 import { parseToledoLine } from "./toledo-protocol-parser.js";
 import type { ParsedToledoReading, ToledoTcpConfig } from "./toledo-types.js";
-import type { ScaleReading } from "../scale-adapter.js";
+import type { ScaleReading, ScaleSamplingOptions } from "../scale-adapter.js";
 
 export type ToledoConnectionState = "disconnected" | "connecting" | "connected" | "error";
 
@@ -26,7 +26,7 @@ export interface ToledoTcpAdapter {
   read(): Promise<ScaleReading>;
 
   /** Coletar leituras durante uma janela e devolver a media em kg */
-  readSampled(options?: { durationMs?: number; sampleIntervalMs?: number }): Promise<ScaleReading>;
+  readSampled(options?: ScaleSamplingOptions): Promise<ScaleReading>;
 
   /** Obter status da conexao e ultima leitura */
   getStatus(): ToledoTcpAdapterStatus;
@@ -195,15 +195,14 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
       throw new Error("Nenhuma leitura disponivel da balanca.");
     },
 
-    async readSampled(
-      options: { durationMs?: number; sampleIntervalMs?: number } = {}
-    ): Promise<ScaleReading> {
+    async readSampled(options: ScaleSamplingOptions = {}): Promise<ScaleReading> {
       if (state !== "connected") {
         throw new Error("Balanca nao esta conectada.");
       }
 
       const durationMs = Math.max(500, options.durationMs ?? 5000);
       const sampleIntervalMs = Math.max(50, options.sampleIntervalMs ?? 250);
+      const minStableMs = Math.max(0, options.minStableMs ?? 0);
       const samples: { weightKg: number; stable: boolean; at: number }[] = [];
       const start = Date.now();
       let lastSampleAt = 0;
@@ -234,12 +233,34 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
       }
 
       const mean = samples.reduce((sum, s) => sum + s.weightKg, 0) / samples.length;
+      const weights = samples.map((s) => s.weightKg);
+      const variationKg = Math.max(...weights) - Math.min(...weights);
+      const maxVariationKg = options.maxVariationKg;
+      const minWeightKg = options.minWeightKg;
+
+      if (minWeightKg !== undefined && mean < minWeightKg) {
+        throw new Error(
+          `Peso medio abaixo do minimo configurado (${Math.round(mean)} kg < ${minWeightKg} kg).`
+        );
+      }
+
+      if (maxVariationKg !== undefined && variationKg > maxVariationKg) {
+        throw new Error(
+          `Peso oscilou ${Math.round(variationKg)} kg durante a amostragem (limite ${maxVariationKg} kg).`
+        );
+      }
+
       const allStable = samples.every((s) => s.stable);
+      const stableDurationMs = calculateTrailingStableDurationMs(samples, sampleIntervalMs);
+
+      if (minStableMs > 0 && stableDurationMs < minStableMs) {
+        throw new Error(`Peso nao ficou estavel por ${Math.round(minStableMs / 1000)}s.`);
+      }
 
       return {
         weightKg: Math.round(mean),
         unit: "kg",
-        stable: allStable,
+        stable: minStableMs > 0 ? stableDurationMs >= minStableMs : allStable,
         capturedAt: new Date().toISOString()
       };
     },
@@ -266,4 +287,22 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
       listeners.length = 0;
     }
   };
+}
+
+function calculateTrailingStableDurationMs(
+  samples: Array<{ stable: boolean; at: number }>,
+  sampleIntervalMs: number
+): number {
+  let firstStableAt: number | null = null;
+  let lastStableAt: number | null = null;
+
+  for (let index = samples.length - 1; index >= 0; index--) {
+    const sample = samples[index];
+    if (!sample?.stable) break;
+    firstStableAt = sample.at;
+    lastStableAt = lastStableAt ?? sample.at;
+  }
+
+  if (firstStableAt === null || lastStableAt === null) return 0;
+  return lastStableAt - firstStableAt + sampleIntervalMs;
 }
