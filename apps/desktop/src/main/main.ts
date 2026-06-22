@@ -32,6 +32,7 @@ import type { OperationType } from "../services/weighing-operations.js";
 const require = createRequire(import.meta.url);
 const { autoUpdater } = require("electron-updater") as typeof ElectronUpdater;
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
+const appIconPath = path.join(currentDirectory, "../../midia/logo.png");
 let mainWindow: BrowserWindow | null = null;
 let runtime: DesktopRuntime | null = null;
 let updateState: UpdateState = createInitialUpdateState();
@@ -54,6 +55,7 @@ async function createMainWindow(): Promise<void> {
     minWidth: 960,
     minHeight: 640,
     title: "KyberRock Desktop",
+    icon: appIconPath,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,

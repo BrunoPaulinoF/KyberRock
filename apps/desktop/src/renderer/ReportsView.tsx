@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
 import type { KyberRockDesktopApi } from "../preload/api-types";
-import { HelpTooltip } from "./Tooltip";
-import { TIPS } from "./tooltip-messages";
 
 interface RecipientRow {
   id: string;
@@ -298,13 +296,11 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
             <button type="button" onClick={handleSave} style={styles.primaryButton}>
                 {editingId ? "Salvar" : "Adicionar"}
               </button>
-            <HelpTooltip content={editingId ? TIPS.generic.save : "Cadastra o destinatario para receber o fechamento diario"} placement="top" />
             {editingId ? (
               <>
                 <button type="button" onClick={resetForm} style={styles.secondaryButton}>
                   Cancelar
                 </button>
-                <HelpTooltip content={TIPS.generic.cancel} placement="top" />
               </>
             ) : null}
           </div>
@@ -372,7 +368,6 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
                       >
                         Editar
                       </button>
-                    <HelpTooltip content={TIPS.generic.edit} placement="left" />
                     <button
                         type="button"
                         onClick={() => void handleDelete(recipient.id)}
@@ -380,7 +375,6 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
                       >
                         Remover
                       </button>
-            <HelpTooltip content="Remove este destinatario do envio automatico" placement="left" />
                   </td>
                 </tr>
               ))}

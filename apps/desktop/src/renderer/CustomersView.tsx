@@ -22,8 +22,6 @@ import {
 } from "./inputs";
 import type { CepLookupResult } from "./inputs";
 import type { CustomerCacheEntry, CustomerFormData } from "./customers.types";
-import { HelpTooltip } from "./Tooltip";
-import { TIPS } from "./tooltip-messages";
 
 const initialForm: CustomerFormData = {
   tradeName: "",
@@ -522,7 +520,6 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
         <button type="button" onClick={openCreateForm} style={styles.primaryButton}>
             + Novo cliente
           </button>
-        <HelpTooltip content="Abre o formulario para cadastrar um cliente novo" placement="left" />
       </div>
 
       {feedback ? <p style={styles.message}>{feedback}</p> : null}
@@ -723,7 +720,6 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
             <button type="button" onClick={() => setShowForm(false)} style={styles.secondaryButton}>
                 Cancelar
               </button>
-          <HelpTooltip content={TIPS.generic.cancel} placement="top" />
             <div style={{ display: "flex", gap: "8px" }}>
               {editingId ? (
                 <>
@@ -734,13 +730,11 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
                   >
                     Excluir
                   </button>
-                  <HelpTooltip content={TIPS.generic.delete} placement="top" />
                 </>
               ) : null}
               <button type="button" onClick={() => void handleSave()} style={styles.primaryButton}>
                   {editingId ? "Salvar alteracoes" : "Cadastrar cliente"}
                 </button>
-              <HelpTooltip content={TIPS.generic.save} placement="top" />
             </div>
           </div>
         </div>
@@ -782,7 +776,6 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
               >
                 Anterior
               </button>
-            <HelpTooltip content="Pagina anterior de clientes" placement="top" />
             <span>
               {page + 1}/{totalPages}
             </span>
@@ -794,7 +787,6 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
               >
                 Proxima
               </button>
-            <HelpTooltip content="Proxima pagina de clientes" placement="top" />
           </div>
         </div>
       </div>
@@ -836,7 +828,6 @@ function CustomerRow({
           >
             Editar
           </button>
-              <HelpTooltip content={TIPS.generic.edit} placement="left" />
       </div>
     </div>
   );

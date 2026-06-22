@@ -227,11 +227,9 @@ export function ActivationGate({ desktopApi, onUnlocked }: ActivationGateProps) 
           <button type="button" onClick={handleRetryValidation} style={styles.primaryButton}>
               Tentar validar novamente
             </button>
-          <HelpTooltip content={TIPS.activation.retry} placement="top" />
           <button type="button" onClick={() => setScreen("activate")} style={styles.secondaryButton}>
               Ver diagnostico
             </button>
-          <HelpTooltip content={TIPS.activation.diagnostic} placement="top" />
           <button type="button" onClick={handleExportBackup} style={styles.secondaryButton}>
               Exportar backup
             </button>

@@ -1,4 +1,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { LucideIcon } from "lucide-react";
+import {
+  BarChart3,
+  BadgeDollarSign,
+  BookOpen,
+  Cloud,
+  Download,
+  Database,
+  FileText,
+  LayoutDashboard,
+  ListChecks,
+  LogOut,
+  Moon,
+  PlusCircle,
+  Printer,
+  Scale,
+  ScrollText,
+  Settings,
+  Sun,
+  Upload
+} from "lucide-react";
 
 import { desktopAppInfo } from "../app-info";
 import type {
@@ -1182,7 +1203,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
               <SidebarItem
                 id="dashboard"
                 label="Painel"
-                icon="▦"
+                icon={LayoutDashboard}
                 activeView={activeView}
                 onSelect={setActiveView}
                 tooltip={TIPS.nav.panel}
@@ -1190,33 +1211,30 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
               <SidebarItem
                 id="new-weighing"
                 label="Nova entrada"
-                icon="＋"
+                icon={PlusCircle}
                 activeView={activeView}
                 onSelect={setActiveView}
-                tooltip={TIPS.nav.newEntry}
               />
               <SidebarItem
                 id="open-operations"
                 label="Operacoes"
-                icon="≡"
+                icon={ListChecks}
                 activeView={activeView}
                 onSelect={setActiveView}
-                tooltip={TIPS.nav.operations}
               />
               <SidebarItem
                 id="registrations"
                 label="Cadastros"
-                icon="☰"
+                icon={Database}
                 activeView={activeView}
                 onSelect={setActiveView}
-                tooltip={TIPS.nav.registrations}
               />
             </SidebarSection>
             <SidebarSection title="Analise">
               <SidebarItem
                 id="insights"
                 label="Insights"
-                icon="◔"
+                icon={BarChart3}
                 activeView={activeView}
                 onSelect={setActiveView}
                 tooltip={TIPS.nav.insights}
@@ -1224,20 +1242,18 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
               <SidebarItem
                 id="reports"
                 label="Relatorios"
-                icon="▣"
+                icon={FileText}
                 activeView={activeView}
                 onSelect={setActiveView}
-                tooltip={TIPS.nav.reports}
               />
               <SidebarItem
                 id="documentation"
                 label="Documentacao"
-                icon="✦"
+                icon={BookOpen}
                 activeView={activeView}
                 onSelect={setActiveView}
                 disabled
                 badge="Em breve"
-                tooltip={TIPS.nav.documentation}
               />
             </SidebarSection>
           </nav>
@@ -1262,109 +1278,107 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
             </div>
             <div style={styles.topbarRight}>
               <button
-                  type="button"
-                  onClick={() => setThemeMode((mode) => (mode === "light" ? "dark" : "light"))}
-                  style={styles.themeToggle}
-                  title="Alternar tema"
-                >
-                  <span>{themeMode === "light" ? "☾" : "☀"}</span>
-                  {themeMode === "light" ? "Escuro" : "Claro"}
-                </button>
-              <HelpTooltip content={TIPS.header.theme} placement="bottom" shortcut="F11" />
+                type="button"
+                onClick={() => setThemeMode((mode) => (mode === "light" ? "dark" : "light"))}
+                style={styles.themeToggle}
+                title="Alternar tema (F11)"
+              >
+                {themeMode === "light" ? <Moon size={14} /> : <Sun size={14} />}
+                {themeMode === "light" ? "Escuro" : "Claro"}
+              </button>
               <div style={{ position: "relative" }}>
                 <button
-                    type="button"
-                    onClick={() => setShowSettings((s) => !s)}
-                    style={styles.headerBtn}
-                    title="Configuracoes"
-                  >
-                    ⚙
-                  </button>
-                <HelpTooltip content={TIPS.header.settings} placement="bottom" />
+                  type="button"
+                  onClick={() => setShowSettings((s) => !s)}
+                  style={styles.headerBtn}
+                  title="Configuracoes"
+                >
+                  <Settings size={17} />
+                </button>
                 {showSettings ? (
                   <div style={styles.settingsDropdown}>
                     <button
-                        type="button"
-                        onClick={() => {
-                          setActiveView("scale");
-                          setShowSettings(false);
-                        }}
-                        style={styles.settingsItem}
-                      >
-                        Balança
-                      </button>
-                    <HelpTooltip content={TIPS.header.settingsScale} placement="left" />
+                      type="button"
+                      onClick={() => {
+                        setActiveView("scale");
+                        setShowSettings(false);
+                      }}
+                      style={styles.settingsItem}
+                    >
+                      <Scale size={14} />
+                      Balanca
+                    </button>
                     <button
-                        type="button"
-                        onClick={() => {
-                          setActiveView("printing");
-                          setShowSettings(false);
-                        }}
-                        style={styles.settingsItem}
-                      >
-                        Impressão
-                      </button>
-                    <HelpTooltip content={TIPS.header.settingsPrinting} placement="left" />
+                      type="button"
+                      onClick={() => {
+                        setActiveView("printing");
+                        setShowSettings(false);
+                      }}
+                      style={styles.settingsItem}
+                    >
+                      <Printer size={14} />
+                      Impressao
+                    </button>
                     <button
-                        type="button"
-                        onClick={() => {
-                          setActiveView("cloud");
-                          setShowSettings(false);
-                        }}
-                        style={styles.settingsItem}
-                      >
-                        Cloud
-                      </button>
-                    <HelpTooltip content={TIPS.header.settingsCloud} placement="left" />
+                      type="button"
+                      onClick={() => {
+                        setActiveView("cloud");
+                        setShowSettings(false);
+                      }}
+                      style={styles.settingsItem}
+                    >
+                      <Cloud size={14} />
+                      Cloud
+                    </button>
                     <div style={{ height: "1px", background: "#e2e8f0", margin: "4px 0" }} />
                     <button
-                        type="button"
-                        onClick={() => {
-                          setShowLogsModal(true);
-                          setShowSettings(false);
-                        }}
-                        style={{
-                          ...styles.settingsItem,
-                          color: errorLogs.some((l) => l.level === "error") ? "#b91c1c" : "#475569"
-                        }}
-                      >
-                        Logs {errorLogs.length > 0 ? `(${errorLogs.length})` : ""}
-                      </button>
-                    <HelpTooltip content={TIPS.header.settingsLogs} placement="left" shortcut="F10" />
+                      type="button"
+                      onClick={() => {
+                        setShowLogsModal(true);
+                        setShowSettings(false);
+                      }}
+                      style={{
+                        ...styles.settingsItem,
+                        color: errorLogs.some((l) => l.level === "error") ? "#b91c1c" : "var(--kr-muted)"
+                      }}
+                    >
+                      <ScrollText size={14} />
+                      Logs {errorLogs.length > 0 ? `(${errorLogs.length})` : ""}
+                    </button>
                     <button
-                        type="button"
-                        onClick={() => {
-                          void handleExportBackup();
-                          setShowSettings(false);
-                        }}
-                        style={styles.settingsItem}
-                      >
-                        Exportar
-                      </button>
-                    <HelpTooltip content={TIPS.header.settingsExport} placement="left" />
+                      type="button"
+                      onClick={() => {
+                        void handleExportBackup();
+                        setShowSettings(false);
+                      }}
+                      style={styles.settingsItem}
+                    >
+                      <Download size={14} />
+                      Exportar
+                    </button>
                     <button
-                        type="button"
-                        onClick={() => {
-                          void handleRestoreBackup();
-                          setShowSettings(false);
-                        }}
-                        style={styles.settingsItem}
-                      >
-                        Restaurar
-                      </button>
-                    <HelpTooltip content={TIPS.header.settingsRestore} placement="left" />
+                      type="button"
+                      onClick={() => {
+                        void handleRestoreBackup();
+                        setShowSettings(false);
+                      }}
+                      style={styles.settingsItem}
+                    >
+                      <Upload size={14} />
+                      Restaurar
+                    </button>
                     <div style={{ height: "1px", background: "#e2e8f0", margin: "4px 0" }} />
                     <button
-                        type="button"
-                        onClick={() => {
-                          void handleLogout();
-                          setShowSettings(false);
-                        }}
-                        style={{ ...styles.settingsItem, color: "#b91c1c" }}
-                      >
-                        Sair
-                      </button>
-                    <HelpTooltip content={TIPS.header.settingsLogout} placement="left" />
+                      type="button"
+                      onClick={() => {
+                        void handleLogout();
+                        setShowSettings(false);
+                      }}
+                      style={{ ...styles.settingsItem, color: "#b91c1c" }}
+                    >
+                      <LogOut size={14} />
+                      Sair
+                    </button>
                   </div>
                 ) : null}
               </div>
@@ -1397,7 +1411,6 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       >
                         Atualizar agora
                       </button>
-                    <HelpTooltip content={TIPS.update.now} placement="top" />
                     <button
                         type="button"
                         onClick={() => setShowUpdateModal(false)}
@@ -1405,7 +1418,6 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       >
                         Mais tarde
                       </button>
-                    <HelpTooltip content={TIPS.update.later} placement="top" />
                   </div>
                 </div>
               </div>
@@ -1430,7 +1442,6 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       >
                         Limpar
                       </button>
-                    <HelpTooltip content={TIPS.logs.clear} placement="left" />
                   </div>
                   {errorLogs.length === 0 ? (
                     <p style={styles.muted}>
@@ -1530,7 +1541,6 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       >
                         Fechar
                       </button>
-                    <HelpTooltip content={TIPS.generic.close} placement="top" />
                   </div>
                 </div>
               </div>
@@ -2377,7 +2387,7 @@ function getWindowDesktopApi(): KyberRockDesktopApi | undefined {
 interface SidebarItemProps {
   id: ActiveView;
   label: string;
-  icon: string;
+  icon: LucideIcon;
   activeView: ActiveView;
   onSelect: (view: ActiveView) => void;
   disabled?: boolean;
@@ -2385,14 +2395,14 @@ interface SidebarItemProps {
   tooltip?: string;
 }
 
-function SidebarItem({ id, label, icon, activeView, onSelect, disabled, badge, tooltip }: SidebarItemProps) {
+function SidebarItem({ id, label, icon: Icon, activeView, onSelect, disabled, badge, tooltip }: SidebarItemProps) {
   const isActive = activeView === id;
   const baseStyle: React.CSSProperties = {
     display: "flex",
     alignItems: "center",
     gap: "10px",
     width: "100%",
-    padding: "8px 12px",
+    padding: tooltip ? "8px 30px 8px 12px" : "8px 12px",
     margin: 0,
     fontSize: "13px",
     fontWeight: isActive ? 600 : 500,
@@ -2405,44 +2415,43 @@ function SidebarItem({ id, label, icon, activeView, onSelect, disabled, badge, t
     textAlign: "left"
   };
 
-  const button = (
-    <button
-      type="button"
-      onClick={() => {
-        if (!disabled) onSelect(id);
-      }}
-      style={baseStyle}
-      disabled={disabled}
-      aria-current={isActive ? "page" : undefined}
-    >
-      <span style={{ width: "16px", textAlign: "center", fontSize: "14px" }}>{icon}</span>
-      <span style={{ flex: 1 }}>{label}</span>
-      {badge ? (
-        <span
-          style={{
-            fontSize: "10px",
-            fontWeight: 700,
-            padding: "2px 6px",
-            background: "#f1f5f9",
-            color: "#475569",
-            borderRadius: "999px"
-          }}
-        >
-          {badge}
-        </span>
-      ) : null}
-    </button>
-  );
-
-  if (!tooltip) {
-    return button;
-  }
-
   return (
-    <>
-      {button}
-      <HelpTooltip content={tooltip} placement="right" />
-    </>
+    <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+      <button
+        type="button"
+        onClick={() => {
+          if (!disabled) onSelect(id);
+        }}
+        style={baseStyle}
+        disabled={disabled}
+        aria-current={isActive ? "page" : undefined}
+      >
+        <Icon size={16} strokeWidth={2.2} />
+        <span style={{ flex: 1 }}>{label}</span>
+        {badge ? (
+          <span
+            style={{
+              fontSize: "10px",
+              fontWeight: 700,
+              padding: "2px 6px",
+              background: "#f1f5f9",
+              color: "#475569",
+              borderRadius: "999px"
+            }}
+          >
+            {badge}
+          </span>
+        ) : null}
+      </button>
+      {tooltip ? (
+        <HelpTooltip
+          content={tooltip}
+          placement="right"
+          size={12}
+          style={{ position: "absolute", right: "10px", top: "10px" }}
+        />
+      ) : null}
+    </div>
   );
 }
 
@@ -3010,7 +3019,7 @@ function WeighingForm({
 
         <aside style={styles.entrySummaryCard}>
           <SectionHeader
-            icon="◆"
+            iconComponent={BadgeDollarSign}
             title="Resumo da entrada"
             description="Preco, peso e acao final"
           />
@@ -3121,18 +3130,13 @@ function WeighingForm({
           </div>
           <div style={styles.actionStack}>
             <button type="button" onClick={onStart} style={styles.captureButton}>
-                <img
-                  src="midia/proximo-botao.png"
-                  alt=""
-                  style={{ width: "18px", height: "18px", objectFit: "contain" }}
-                />
-                Capturar peso de entrada
-              </button>
-    <HelpTooltip content={TIPS.form.start} placement="top" shortcut="Ctrl+Enter" />
+              <Scale size={18} strokeWidth={2.4} />
+              Capturar peso de entrada
+            </button>
+            <HelpTooltip content={TIPS.form.start} placement="top" shortcut="Ctrl+Enter" />
             <button type="button" onClick={onCancel} style={styles.secondaryButton}>
-                Limpar e voltar
-              </button>
-            <HelpTooltip content={TIPS.form.cancel} placement="top" shortcut="Esc" />
+              Limpar e voltar
+            </button>
           </div>
         </aside>
       </div>
@@ -3198,11 +3202,13 @@ function WeighingForm({
 
 function SectionHeader({
   icon,
+  iconComponent: Icon,
   iconSrc,
   title,
   description
 }: {
   icon?: string;
+  iconComponent?: LucideIcon;
   iconSrc?: string;
   title: string;
   description: string;
@@ -3212,6 +3218,8 @@ function SectionHeader({
       <span style={styles.sectionIcon}>
         {iconSrc ? (
           <img src={iconSrc} alt="" style={{ width: "20px", height: "20px", objectFit: "contain" }} />
+        ) : Icon ? (
+          <Icon size={18} strokeWidth={2.4} />
         ) : (
           icon
         )}
@@ -3284,11 +3292,9 @@ function QuickVehicleModal({ desktopApi, onClose, onCreated }: QuickModalProps) 
           <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
               {saving ? "Salvando..." : "Salvar"}
             </button>
-          <HelpTooltip content={TIPS.generic.save} placement="top" />
           <button type="button" onClick={onClose} style={styles.secondaryButton}>
               Cancelar
             </button>
-          <HelpTooltip content={TIPS.generic.cancel} placement="top" />
         </div>
       </div>
     </div>
@@ -3358,11 +3364,9 @@ function QuickDriverModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
           <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
               {saving ? "Salvando..." : "Salvar"}
             </button>
-          <HelpTooltip content={TIPS.generic.save} placement="top" />
           <button type="button" onClick={onClose} style={styles.secondaryButton}>
               Cancelar
             </button>
-          <HelpTooltip content={TIPS.generic.cancel} placement="top" />
         </div>
       </div>
     </div>
@@ -3450,11 +3454,9 @@ function QuickCustomerModal({ desktopApi, onClose, onCreated }: QuickModalProps)
           <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
               {saving ? "Salvando..." : "Salvar"}
             </button>
-          <HelpTooltip content={TIPS.generic.save} placement="top" />
           <button type="button" onClick={onClose} style={styles.secondaryButton}>
               Cancelar
             </button>
-          <HelpTooltip content={TIPS.generic.cancel} placement="top" />
         </div>
       </div>
     </div>
@@ -3514,11 +3516,9 @@ function QuickCarrierModal({ desktopApi, onClose, onCreated }: QuickModalProps) 
           <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
               {saving ? "Salvando..." : "Salvar"}
             </button>
-          <HelpTooltip content={TIPS.generic.save} placement="top" />
           <button type="button" onClick={onClose} style={styles.secondaryButton}>
               Cancelar
             </button>
-          <HelpTooltip content={TIPS.generic.cancel} placement="top" />
         </div>
       </div>
     </div>
@@ -3588,7 +3588,6 @@ function CloseOperationTypeDialog({
           <button type="button" onClick={onCancel} style={styles.secondaryButton}>
               Cancelar
             </button>
-          <HelpTooltip content={TIPS.form.back} placement="top" />
         </div>
       </div>
     </div>
@@ -3645,7 +3644,6 @@ function CancelOperationDialog({
           <button type="button" onClick={onCancel} style={styles.secondaryButton}>
               Voltar
             </button>
-          <HelpTooltip content={TIPS.form.back} placement="top" />
         </div>
       </div>
     </div>
@@ -3726,7 +3724,6 @@ function FiscalProgressDialog({
             >
               Fechar painel
             </button>
-          <HelpTooltip content={TIPS.generic.close} placement="top" />
         </div>
       </div>
     </div>
@@ -5572,9 +5569,12 @@ const styles = {
     gap: "12px"
   },
   headerBtn: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
     border: "none",
     borderRadius: "6px",
-    padding: "4px 8px",
+    padding: "6px 8px",
     background: "transparent",
     color: "var(--kr-muted)",
     cursor: "pointer",
@@ -5611,9 +5611,12 @@ const styles = {
     gap: "2px"
   },
   settingsItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
     border: "none",
     borderRadius: "4px",
-    padding: "6px 10px",
+    padding: "8px 10px",
     background: "transparent",
     color: "var(--kr-muted)",
     cursor: "pointer",

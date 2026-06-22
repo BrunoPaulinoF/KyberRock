@@ -1,12 +1,13 @@
 import { useMemo } from "react";
 import type { CSSProperties, ReactNode } from "react";
+import type { LucideIcon } from "lucide-react";
+import { BadgeDollarSign, BarChart3, ClipboardList, PlusCircle, Receipt, Scale } from "lucide-react";
 
 import type { PrintProfileSummary } from "../services/printing";
 import type { DesktopStatusSnapshot } from "../services/status";
 import type { WeighingOperationSummary } from "../services/weighing-operations";
 import { buildStatusIndicatorViewModels, type StatusIndicatorTone } from "./status-view-model";
-import { Tooltip, HelpTooltip } from "./Tooltip";
-import { TIPS } from "./tooltip-messages";
+import { Tooltip } from "./Tooltip";
 
 type ActiveView =
   | "dashboard"
@@ -276,17 +277,17 @@ export function DashboardView(props: DashboardViewProps) {
               onClick={() => props.onNavigate("new-weighing")}
               style={styles.primaryButton}
             >
-              + Nova entrada
+              <PlusCircle size={16} />
+              Nova entrada
             </button>
-          <HelpTooltip content={TIPS.dashboard.newEntry} placement="bottom" shortcut="F2" />
           <button
               type="button"
               onClick={() => props.onNavigate("insights")}
               style={styles.secondaryButton}
             >
+              <BarChart3 size={16} />
               Ver insights (F5)
             </button>
-          <HelpTooltip content={TIPS.dashboard.insights} placement="bottom" shortcut="F5" />
         </div>
       </header>
 
@@ -309,21 +310,29 @@ export function DashboardView(props: DashboardViewProps) {
           </header>
           <div style={styles.kpiGrid}>
             <KpiCell
+              icon={ClipboardList}
+              accent="var(--kr-chart-1)"
               label="Operacoes"
               value={todayKpis.operations.toLocaleString("pt-BR")}
               hint="Fechadas hoje"
             />
             <KpiCell
+              icon={Scale}
+              accent="var(--kr-chart-5)"
               label="Peso liquido"
               value={formatTons(todayKpis.weightKg)}
               hint={formatKg(todayKpis.weightKg)}
             />
             <KpiCell
+              icon={BadgeDollarSign}
+              accent="var(--kr-chart-3)"
               label="Faturamento"
               value={formatMoney(todayKpis.totalCents)}
               hint="Soma das operacoes fechadas"
             />
             <KpiCell
+              icon={Receipt}
+              accent="var(--kr-chart-6)"
               label="Ticket medio"
               value={formatMoney(todayKpis.ticketCents)}
               hint="Por operacao fechada"
@@ -335,7 +344,6 @@ export function DashboardView(props: DashboardViewProps) {
           <header style={styles.panelHeader}>
             <div>
               <p style={styles.kicker}>Atencao</p>
-              <h3 style={styles.panelTitle} title={TIPS.dashboard.pending}>Pendencias</h3>
             </div>
             {hasPendingAttention ? null : (
               <span style={{ ...styles.pillNeutral, padding: "4px 10px", fontSize: "11px" }}>
@@ -431,7 +439,6 @@ export function DashboardView(props: DashboardViewProps) {
             >
               Ver todas
             </button>
-          <HelpTooltip content={TIPS.dashboard.recent} placement="left" shortcut="F3" />
         </header>
         {recentOperations.length === 0 ? (
           <p style={styles.muted}>Nenhuma pesagem registrada ainda.</p>
@@ -556,10 +563,29 @@ function HealthPills({ pills }: { pills: HealthPillItem[] }): ReactNode {
   );
 }
 
-function KpiCell({ label, value, hint }: { label: string; value: string; hint?: string }): ReactNode {
+function KpiCell({
+  icon: Icon,
+  accent,
+  label,
+  value,
+  hint
+}: {
+  icon?: LucideIcon;
+  accent?: string;
+  label: string;
+  value: string;
+  hint?: string;
+}): ReactNode {
   return (
     <div style={styles.kpiCell}>
-      <span style={styles.kpiLabel}>{label}</span>
+      <span style={styles.kpiTopLine}>
+        {Icon ? (
+          <span style={{ ...styles.kpiIcon, color: accent ?? "var(--kr-chart-1)" }}>
+            <Icon size={15} strokeWidth={2.4} />
+          </span>
+        ) : null}
+        <span style={styles.kpiLabel}>{label}</span>
+      </span>
       <span style={styles.kpiValue}>{value}</span>
       {hint ? <span style={styles.kpiHint}>{hint}</span> : null}
     </div>
@@ -646,6 +672,10 @@ const styles: Record<string, CSSProperties> = {
     flexWrap: "wrap"
   },
   primaryButton: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "7px",
     border: "none",
     borderRadius: "8px",
     padding: "10px 14px",
@@ -656,6 +686,10 @@ const styles: Record<string, CSSProperties> = {
     fontSize: "13px"
   },
   secondaryButton: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "7px",
     border: "1px solid var(--kr-input-border)",
     borderRadius: "8px",
     padding: "8px 12px",
@@ -759,6 +793,20 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: "10px",
     border: "1px solid var(--kr-border)",
     background: "var(--kr-surface-soft)"
+  },
+  kpiTopLine: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "6px"
+  },
+  kpiIcon: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "24px",
+    height: "24px",
+    borderRadius: "8px",
+    background: "color-mix(in srgb, currentColor 12%, transparent)"
   },
   kpiLabel: {
     fontSize: "11px",

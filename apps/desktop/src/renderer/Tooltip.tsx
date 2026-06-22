@@ -265,40 +265,56 @@ export interface HelpTooltipProps {
   size?: number;
   className?: string;
   ariaLabel?: string;
+  style?: CSSProperties;
 }
 
 export function HelpTooltip({
   content,
   placement = "top",
   shortcut,
-  size = 18,
+  size = 14,
   className,
-  ariaLabel
+  ariaLabel,
+  style
 }: HelpTooltipProps) {
   return (
     <Tooltip content={content} placement={placement} shortcut={shortcut}>
-      <img
-        src="midia/tooltip.png"
-        alt={ariaLabel ?? "Ajuda"}
-        width={size}
-        height={size}
+      <span
+        role="img"
+        aria-label={ariaLabel ?? "Dica"}
         className={className}
         style={{
-          display: "inline-block",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: `${size}px`,
+          height: `${size}px`,
           verticalAlign: "middle",
           cursor: "help",
-          opacity: 0.75,
-          transition: "opacity 120ms ease, transform 120ms ease"
+          opacity: 0.42,
+          borderRadius: "999px",
+          transition: "opacity 160ms ease, transform 160ms ease, background 160ms ease",
+          ...style
         }}
         onMouseEnter={(event) => {
-          event.currentTarget.style.opacity = "1";
-          event.currentTarget.style.transform = "scale(1.08)";
+          event.currentTarget.style.opacity = "0.9";
+          event.currentTarget.style.transform = "translateY(-1px) scale(1.08)";
+          event.currentTarget.style.background = "color-mix(in srgb, var(--kr-chart-1) 12%, transparent)";
         }}
         onMouseLeave={(event) => {
-          event.currentTarget.style.opacity = "0.75";
-          event.currentTarget.style.transform = "scale(1)";
+          event.currentTarget.style.opacity = "0.42";
+          event.currentTarget.style.transform = "translateY(0) scale(1)";
+          event.currentTarget.style.background = "transparent";
         }}
-      />
+      >
+        <img
+          src="midia/dica.png"
+          alt=""
+          width={size}
+          height={size}
+          style={{ display: "block", width: `${size}px`, height: `${size}px` }}
+        />
+      </span>
     </Tooltip>
   );
 }
