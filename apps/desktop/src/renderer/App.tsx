@@ -873,9 +873,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
 
     setFormError(null);
-    setMessage("Coletando peso de entrada com os criterios configurados na balanca. Aguarde...");
+    setMessage("Calculando peso medio da balanca. Aguarde...");
 
     try {
+      const sampled = await desktopApi.scaleReadSampled();
       const operation = await desktopApi.startWeighing({
         operationType: form.operationType,
         customerId: form.customerId,
@@ -886,9 +887,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         paymentTermId: form.paymentTermId || undefined,
         freight: buildFreightInput(form),
         quotationId: form.quotationId || undefined,
-        deductFreightFromCredit: form.deductFreightFromCredit
+        deductFreightFromCredit: form.deductFreightFromCredit,
+        entryWeightKg: sampled.weightKg
       });
-      setMessage(`Entrada capturada com media configurada: ${operation.entryWeightKg} kg.`);
+      setMessage(`Entrada registrada com peso medio calculado: ${operation.entryWeightKg} kg.`);
       setForm(initialWeighingForm);
       setActiveView("open-operations");
       await refreshOpenOperations();
@@ -3142,7 +3144,7 @@ function WeighingForm({
           <div style={styles.actionStack}>
             <button type="button" onClick={onStart} style={styles.captureButton}>
               <Scale size={18} strokeWidth={2.4} />
-              Capturar peso de entrada
+              Calcular peso
             </button>
             <HelpTooltip content={TIPS.form.start} placement="top" shortcut="Ctrl+Enter" />
             <button type="button" onClick={onCancel} style={styles.secondaryButton}>
@@ -4690,6 +4692,7 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   const [configLoaded, setConfigLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [discovering, setDiscovering] = useState(false);
   const [configMessage, setConfigMessage] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
@@ -4708,10 +4711,6 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
 
     return () => {
       desktopApi.offScaleReading(handler as (reading: unknown) => void);
-      if (connectedRef.current) {
-        void desktopApi.scaleDisconnect();
-        setConnected(false);
-      }
     };
   }, [desktopApi]);
 
@@ -4769,6 +4768,26 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
 
     return () => clearInterval(interval);
   }, [connected, desktopApi]);
+
+  async function handleDiscover(): Promise<void> {
+    setDiscovering(true);
+    setError(null);
+    setConfigMessage(null);
+    try {
+      const result = await desktopApi.scaleDiscover();
+      if (result) {
+        setHost(result.host);
+        setPort(String(result.port));
+        setConfigMessage(`Balanca encontrada em ${result.host}:${result.port}`);
+      } else {
+        setError("Nenhuma balanca encontrada na rede local.");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Falha ao procurar balanca");
+    } finally {
+      setDiscovering(false);
+    }
+  }
 
   async function handleConnect(): Promise<void> {
     setError(null);
@@ -4894,6 +4913,16 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
             minLength={1}
             hint="Apenas numeros (1-65535)."
           />
+          <div style={{ marginTop: "10px" }}>
+            <button
+              type="button"
+              onClick={handleDiscover}
+              disabled={discovering}
+              style={{ ...styles.secondaryButton, opacity: discovering ? 0.5 : 1 }}
+            >
+              {discovering ? "Procurando..." : "Procurar balanca"}
+            </button>
+          </div>
           <label style={{ ...styles.checkboxLabel, marginTop: "10px" }}>
             <input
               type="checkbox"

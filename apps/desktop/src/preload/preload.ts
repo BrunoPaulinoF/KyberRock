@@ -135,6 +135,7 @@ const desktopApi = {
   scaleDisconnect: () => ipcRenderer.invoke("desktop:scale-disconnect"),
   scaleRead: () => ipcRenderer.invoke("desktop:scale-read"),
   scaleReadSampled: () => ipcRenderer.invoke("desktop:scale-read-sampled"),
+  scaleDiscover: () => ipcRenderer.invoke("desktop:scale-discover"),
   scaleGetStatus: () => ipcRenderer.invoke("desktop:scale-get-status"),
   scaleGetConfig: () => ipcRenderer.invoke("desktop:scale-get-config"),
   scaleSaveConfig: (input: unknown) => ipcRenderer.invoke("desktop:scale-save-config", input),

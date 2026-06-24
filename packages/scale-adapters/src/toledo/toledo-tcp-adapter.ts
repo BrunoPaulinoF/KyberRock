@@ -49,15 +49,25 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let buffer = "";
   const listeners: Array<(reading: ParsedToledoReading) => void> = [];
+  let lastValidReading: ParsedToledoReading | null = null;
+
+  function isValidReading(reading: ParsedToledoReading): boolean {
+    if (reading.statusFlags.outOfRange) return false;
+    if (reading.weightKg === 90_000) return false;
+    return true;
+  }
 
   function notify(reading: ParsedToledoReading): void {
     lastReading = reading;
     lastReadingAt = new Date().toISOString();
-    for (const listener of listeners) {
-      try {
-        listener(reading);
-      } catch {
-        // Ignore listener errors
+    if (isValidReading(reading)) {
+      lastValidReading = reading;
+      for (const listener of listeners) {
+        try {
+          listener(reading);
+        } catch {
+          // Ignore listener errors
+        }
       }
     }
   }
@@ -166,14 +176,14 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
         throw new Error("Balanca nao esta conectada.");
       }
 
-      // Wait briefly for a stable reading if current one is unstable
+      // Wait briefly for a stable valid reading
       const maxWaitMs = 2000;
       const start = Date.now();
 
       while (Date.now() - start < maxWaitMs) {
-        if (lastReading && lastReading.stable) {
+        if (lastValidReading && lastValidReading.stable) {
           return {
-            weightKg: lastReading.weightKg,
+            weightKg: lastValidReading.weightKg,
             unit: "kg",
             stable: true,
             capturedAt: lastReadingAt ?? new Date().toISOString()
@@ -182,17 +192,17 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
         await new Promise((r) => setTimeout(r, 100));
       }
 
-      // Return last reading even if unstable
-      if (lastReading) {
+      // Return last valid reading even if unstable
+      if (lastValidReading) {
         return {
-          weightKg: lastReading.weightKg,
+          weightKg: lastValidReading.weightKg,
           unit: "kg",
-          stable: lastReading.stable,
+          stable: lastValidReading.stable,
           capturedAt: lastReadingAt ?? new Date().toISOString()
         };
       }
 
-      throw new Error("Nenhuma leitura disponivel da balanca.");
+      throw new Error("Nenhuma leitura valida disponivel da balanca.");
     },
 
     async readSampled(options: ScaleSamplingOptions = {}): Promise<ScaleReading> {
@@ -209,10 +219,10 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
 
       while (Date.now() - start < durationMs) {
         const now = Date.now();
-        if (lastReading && now - lastSampleAt >= sampleIntervalMs) {
+        if (lastValidReading && now - lastSampleAt >= sampleIntervalMs) {
           samples.push({
-            weightKg: lastReading.weightKg,
-            stable: lastReading.stable,
+            weightKg: lastValidReading.weightKg,
+            stable: lastValidReading.stable,
             at: now
           });
           lastSampleAt = now;
@@ -220,10 +230,10 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
         await new Promise((r) => setTimeout(r, 50));
       }
 
-      if (samples.length === 0 && lastReading) {
+      if (samples.length === 0 && lastValidReading) {
         samples.push({
-          weightKg: lastReading.weightKg,
-          stable: lastReading.stable,
+          weightKg: lastValidReading.weightKg,
+          stable: lastValidReading.stable,
           at: Date.now()
         });
       }

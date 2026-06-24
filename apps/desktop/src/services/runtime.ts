@@ -154,6 +154,7 @@ import {
   type ScaleReading,
   type ScaleSamplingOptions
 } from "@kyberrock/scale-adapters";
+import { discoverScale } from "./scale-discovery.js";
 import {
   readScaleConfiguration,
   writeScaleConfiguration,
@@ -404,9 +405,10 @@ export class DesktopRuntime {
     freight?: OperationFreightInput | null;
     quotationId?: string;
     deductFreightFromCredit?: boolean;
+    entryWeightKg?: number;
   }): Promise<WeighingOperationSummary> {
     this.assertDesktopAccess();
-    const entryWeightKg = await this.readScaleSampledWeight();
+    const entryWeightKg = input.entryWeightKg ?? (await this.readScaleSampledWeight());
 
     return createWeighingOperation(this.database, {
       identity: this.ensureIdentity(),
@@ -692,6 +694,12 @@ export class DesktopRuntime {
     return this.scaleAdapter.readSampled(
       buildScaleSamplingOptions(this.getScaleConfiguration().stability)
     );
+  }
+
+  async discoverScale(): Promise<{ host: string; port: number } | null> {
+    const result = await discoverScale();
+    if (!result) return null;
+    return { host: result.host, port: result.port };
   }
 
   getScaleStatus(): ToledoTcpAdapterStatus {

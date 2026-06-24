@@ -82,6 +82,7 @@ export interface KyberRockDesktopApi {
     freight?: OperationFreightInput | null;
     quotationId?: string;
     deductFreightFromCredit?: boolean;
+    entryWeightKg?: number;
   }) => Promise<WeighingOperationSummary>;
   closeWeighing: (
     operationId: string,
@@ -204,6 +205,7 @@ export interface KyberRockDesktopApi {
   scaleDisconnect: () => Promise<void>;
   scaleRead: () => Promise<{ weightKg: number; stable: boolean }>;
   scaleReadSampled: () => Promise<ScaleReading>;
+  scaleDiscover: () => Promise<{ host: string; port: number } | null>;
   scaleGetStatus: () => Promise<ToledoTcpAdapterStatus>;
   scaleGetConfig: () => Promise<ScaleConfiguration>;
   scaleSaveConfig: (input: ScaleConfigurationInput) => Promise<ScaleConfiguration>;

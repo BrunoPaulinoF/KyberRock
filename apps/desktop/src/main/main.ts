@@ -819,6 +819,11 @@ function registerIpcHandlers(): void {
     return runtime.readScaleSampled();
   });
 
+  ipcMain.handle("desktop:scale-discover", async () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.discoverScale();
+  });
+
   ipcMain.handle("desktop:scale-get-status", () => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.getScaleStatus();
