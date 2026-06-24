@@ -517,6 +517,14 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
       return;
     }
 
+    const password = window.prompt("Digite a senha de 4 digitos para alterar precos:");
+    if (!password) return;
+    const valid = await desktopApi.verifyPriceChangePassword(password);
+    if (!valid) {
+      setFormError("Senha incorreta.");
+      return;
+    }
+
     try {
       await desktopApi.customerSpecialPricesSet({
         customerId: editingId,
@@ -535,6 +543,13 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
 
   async function handleRemoveSpecialPrice(productId: string): Promise<void> {
     if (!desktopApi || !editingId) return;
+    const password = window.prompt("Digite a senha de 4 digitos para alterar precos:");
+    if (!password) return;
+    const valid = await desktopApi.verifyPriceChangePassword(password);
+    if (!valid) {
+      setFormError("Senha incorreta.");
+      return;
+    }
     try {
       await desktopApi.customerSpecialPricesRemove(editingId, productId);
       await loadSpecialPrices(editingId);

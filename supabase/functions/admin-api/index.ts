@@ -8,6 +8,7 @@ type AdminAction =
   | "create_company"
   | "toggle_company"
   | "update_company"
+  | "update_company_price_password"
   | "delete_company"
   | "create_unit"
   | "toggle_unit"
@@ -186,6 +187,19 @@ Deno.serve(async (req) => {
         }
       }
       const { error } = await supabase.from("companies").update(updatePayload).eq("id", String(payload.companyId));
+      if (error) throw error;
+      return jsonResponse({ ok: true });
+    }
+
+    if (body.action === "update_company_price_password") {
+      const password = String(payload.priceChangePassword ?? "").trim();
+      if (!/^\d{4}$/.test(password)) {
+        return jsonResponse({ error: "A senha deve ter exatamente 4 digitos numericos" }, 400);
+      }
+      const { error } = await supabase.from("companies").update({
+        price_change_password: password,
+        updated_at: new Date().toISOString()
+      }).eq("id", String(payload.companyId));
       if (error) throw error;
       return jsonResponse({ ok: true });
     }

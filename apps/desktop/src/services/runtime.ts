@@ -759,6 +759,14 @@ export class DesktopRuntime {
     return this.scaleAdapter.onReading(callback);
   }
 
+  verifyPriceChangePassword(password: string): boolean {
+    const identity = this.ensureIdentity();
+    const row = this.database
+      .prepare("SELECT price_change_password FROM companies WHERE id = ?")
+      .get(identity.companyId) as { price_change_password: string } | undefined;
+    return row ? row.price_change_password === password : false;
+  }
+
   close(): void {
     this.backupScheduler?.stop();
     this.backupScheduler = null;

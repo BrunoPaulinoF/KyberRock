@@ -848,6 +848,11 @@ function registerIpcHandlers(): void {
     return runtime.listIndependentDrivers();
   });
 
+  ipcMain.handle("desktop:verify-price-password", (_event, password: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.verifyPriceChangePassword(password);
+  });
+
   ipcMain.handle("desktop:get-omie-status", () => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.getOmieSyncStatus();

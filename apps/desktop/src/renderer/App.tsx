@@ -5676,6 +5676,14 @@ function PriceTableListView({ desktopApi }: { desktopApi: KyberRockDesktopApi })
     const unitPriceCents = parseMoneyInputToCents(priceReais);
     if (unitPriceCents === null) return;
 
+    const password = window.prompt("Digite a senha de 4 digitos para alterar precos:");
+    if (!password) return;
+    const valid = await desktopApi.verifyPriceChangePassword(password);
+    if (!valid) {
+      setPriceMessage("Senha incorreta.");
+      return;
+    }
+
     await desktopApi.productDefaultPricesUpsert({
       productId: selectedProductId,
       unitPriceCents,

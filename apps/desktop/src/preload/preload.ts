@@ -156,6 +156,7 @@ const desktopApi = {
   scaleGetStatus: () => ipcRenderer.invoke("desktop:scale-get-status"),
   scaleGetConfig: () => ipcRenderer.invoke("desktop:scale-get-config"),
   scaleSaveConfig: (input: unknown) => ipcRenderer.invoke("desktop:scale-save-config", input),
+  verifyPriceChangePassword: (password: string) => ipcRenderer.invoke("desktop:verify-price-password", password),
   omieConfig: () => ipcRenderer.invoke("desktop:omie-config"),
   lookupCep: (cep: string) => ipcRenderer.invoke("desktop:lookup-cep", cep),
   omieSync: () => ipcRenderer.invoke("desktop:omie-sync"),
