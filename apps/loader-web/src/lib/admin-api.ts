@@ -1,4 +1,4 @@
-import { assertSupabaseConfig, supabaseConfig } from "../config/supabase-config";
+import { supabaseConfig } from "../config/supabase-config";
 
 const ADMIN_SESSION_KEY = "kyberrock_admin_session";
 
@@ -42,8 +42,6 @@ export async function callAdminFunction<TResponse>(
   body: unknown,
   sessionToken = getAdminSessionToken()
 ): Promise<TResponse> {
-  assertSupabaseConfig();
-
   if (functionName === "admin-api" && isTokenExpired(sessionToken)) {
     clearAdminSessionToken();
     throw new Error("Sessao administrativa expirada. Faca login novamente.");

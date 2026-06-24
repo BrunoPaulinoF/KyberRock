@@ -12,8 +12,6 @@ export function LoaderLogin() {
     setIsLoading(true);
     try {
       await loginLoader(email, password);
-    } catch {
-      // O contexto de auth ja expoe a mensagem para a tela.
     } finally {
       setIsLoading(false);
     }

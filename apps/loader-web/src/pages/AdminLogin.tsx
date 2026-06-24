@@ -22,8 +22,6 @@ export function AdminLogin() {
       await loginAdmin(String(formData.get("username") ?? ""), String(formData.get("password") ?? ""));
       // Login bem-sucedido, navega para o admin dashboard
       navigate("/admin", { replace: true });
-    } catch {
-      // O contexto de auth ja expoe a mensagem para a tela.
     } finally {
       setIsSubmitting(false);
     }
