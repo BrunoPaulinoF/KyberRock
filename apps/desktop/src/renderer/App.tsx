@@ -4962,7 +4962,7 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
     await desktopApi.scaleDisconnect();
     setConnected(false);
     setStatus("Desconectado");
-    setReadings([]);
+    readingsRef.current = [];
     setStats({ count: 0, min: 0, max: 0, avg: 0, variation: 0, stableCount: 0, unstableCount: 0 });
   }
 

@@ -84,6 +84,11 @@ import {
   processFiscalBillingNow,
   getSupabaseSyncStatus,
   isSupabaseInitialized,
+  pullCompanyPricePasswordFromCloud,
+  syncCustomerCarriersToCloud,
+  syncDriverCarriersToCloud,
+  pullCustomerCarriersFromCloud,
+  pullDriverCarriersFromCloud,
   type FiscalBillingResult,
   type SyncResult
 } from "./supabase-sync.js";
@@ -656,6 +661,57 @@ export class DesktopRuntime {
             `Loading request ${request.id}: ${error instanceof Error ? error.message : "Unknown error"}`
           );
         }
+      }
+
+      // Pull company price_change_password from cloud
+      try {
+        await pullCompanyPricePasswordFromCloud(this.database, identity);
+      } catch (error) {
+        errors.push(
+          `Price password pull: ${error instanceof Error ? error.message : "Unknown error"}`
+        );
+      }
+
+      // Sync junction tables to cloud
+      try {
+        const ccResult = await syncCustomerCarriersToCloud(this.database, identity);
+        synced += ccResult.synced;
+        errors.push(...ccResult.errors);
+      } catch (error) {
+        errors.push(
+          `Customer carriers sync: ${error instanceof Error ? error.message : "Unknown error"}`
+        );
+      }
+
+      try {
+        const dcResult = await syncDriverCarriersToCloud(this.database, identity);
+        synced += dcResult.synced;
+        errors.push(...dcResult.errors);
+      } catch (error) {
+        errors.push(
+          `Driver carriers sync: ${error instanceof Error ? error.message : "Unknown error"}`
+        );
+      }
+
+      // Pull junction tables from cloud
+      try {
+        const ccPull = await pullCustomerCarriersFromCloud(this.database, identity);
+        synced += ccPull.pulled;
+        errors.push(...ccPull.errors);
+      } catch (error) {
+        errors.push(
+          `Customer carriers pull: ${error instanceof Error ? error.message : "Unknown error"}`
+        );
+      }
+
+      try {
+        const dcPull = await pullDriverCarriersFromCloud(this.database, identity);
+        synced += dcPull.pulled;
+        errors.push(...dcPull.errors);
+      } catch (error) {
+        errors.push(
+          `Driver carriers pull: ${error instanceof Error ? error.message : "Unknown error"}`
+        );
       }
 
       recordCloudSyncRanAt(this.database);

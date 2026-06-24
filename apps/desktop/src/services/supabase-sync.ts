@@ -1567,3 +1567,204 @@ function upsertOmiePaymentTerms(
     );
   }
 }
+
+export async function pullCompanyPricePasswordFromCloud(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity
+): Promise<boolean> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from("companies")
+    .select("price_change_password")
+    .eq("id", identity.companyId)
+    .single();
+
+  if (error || !data) return false;
+
+  database.prepare(`
+    UPDATE companies
+    SET price_change_password = ?,
+        updated_at = datetime('now')
+    WHERE id = ?
+  `).run(String(data.price_change_password ?? "0000"), identity.companyId);
+
+  return true;
+}
+
+export async function syncCustomerCarriersToCloud(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity
+): Promise<{ synced: number; errors: string[] }> {
+  const supabase = getSupabaseClient();
+  const rows = database
+    .prepare(`
+      SELECT cc.id, cc.customer_id, cc.carrier_id, cc.is_active, cc.created_at, cc.updated_at
+      FROM customer_carriers cc
+      JOIN customers c ON c.id = cc.customer_id
+      WHERE c.company_id = ? AND cc.deleted_at IS NULL
+    `)
+    .all(identity.companyId) as Array<{
+      id: string;
+      customer_id: string;
+      carrier_id: string;
+      is_active: number;
+      created_at: string;
+      updated_at: string;
+    }>;
+
+  const errors: string[] = [];
+  let synced = 0;
+
+  for (const row of rows) {
+    try {
+      const { error } = await supabase.from("customer_carriers").upsert({
+        id: row.id,
+        customer_id: row.customer_id,
+        carrier_id: row.carrier_id,
+        is_active: Boolean(row.is_active),
+        created_at: row.created_at,
+        updated_at: row.updated_at
+      }, { onConflict: "id" });
+
+      if (error) throw error;
+      synced++;
+    } catch (err) {
+      errors.push(`customer_carrier ${row.id}: ${err instanceof Error ? err.message : "Erro"}`);
+    }
+  }
+
+  return { synced, errors };
+}
+
+export async function syncDriverCarriersToCloud(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity
+): Promise<{ synced: number; errors: string[] }> {
+  const supabase = getSupabaseClient();
+  const rows = database
+    .prepare(`
+      SELECT dc.id, dc.driver_id, dc.carrier_id, dc.is_active, dc.created_at, dc.updated_at
+      FROM driver_carriers dc
+      JOIN drivers d ON d.id = dc.driver_id
+      WHERE d.company_id = ? AND dc.deleted_at IS NULL
+    `)
+    .all(identity.companyId) as Array<{
+      id: string;
+      driver_id: string;
+      carrier_id: string;
+      is_active: number;
+      created_at: string;
+      updated_at: string;
+    }>;
+
+  const errors: string[] = [];
+  let synced = 0;
+
+  for (const row of rows) {
+    try {
+      const { error } = await supabase.from("driver_carriers").upsert({
+        id: row.id,
+        driver_id: row.driver_id,
+        carrier_id: row.carrier_id,
+        is_active: Boolean(row.is_active),
+        created_at: row.created_at,
+        updated_at: row.updated_at
+      }, { onConflict: "id" });
+
+      if (error) throw error;
+      synced++;
+    } catch (err) {
+      errors.push(`driver_carrier ${row.id}: ${err instanceof Error ? err.message : "Erro"}`);
+    }
+  }
+
+  return { synced, errors };
+}
+
+export async function pullCustomerCarriersFromCloud(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity
+): Promise<{ pulled: number; errors: string[] }> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from("customer_carriers")
+    .select("id, customer_id, carrier_id, is_active, created_at, updated_at")
+    .eq("customer_id", identity.companyId)
+    .eq("is_active", true);
+
+  const errors: string[] = [];
+  if (error) {
+    errors.push(`pullCustomerCarriers: ${error.message}`);
+    return { pulled: 0, errors };
+  }
+
+  const upsert = database.prepare(`
+    INSERT INTO customer_carriers (id, customer_id, carrier_id, is_active, created_at, updated_at, deleted_at)
+    VALUES (?, ?, ?, ?, ?, ?, NULL)
+    ON CONFLICT(id) DO UPDATE SET
+      customer_id = excluded.customer_id,
+      carrier_id = excluded.carrier_id,
+      is_active = excluded.is_active,
+      updated_at = excluded.updated_at,
+      deleted_at = NULL
+  `);
+
+  let pulled = 0;
+  for (const row of (data ?? [])) {
+    upsert.run(
+      row.id,
+      row.customer_id,
+      row.carrier_id,
+      row.is_active ? 1 : 0,
+      row.created_at,
+      row.updated_at
+    );
+    pulled++;
+  }
+
+  return { pulled, errors };
+}
+
+export async function pullDriverCarriersFromCloud(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity
+): Promise<{ pulled: number; errors: string[] }> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from("driver_carriers")
+    .select("id, driver_id, carrier_id, is_active, created_at, updated_at")
+    .eq("driver_id", identity.companyId)
+    .eq("is_active", true);
+
+  const errors: string[] = [];
+  if (error) {
+    errors.push(`pullDriverCarriers: ${error.message}`);
+    return { pulled: 0, errors };
+  }
+
+  const upsert = database.prepare(`
+    INSERT INTO driver_carriers (id, driver_id, carrier_id, is_active, created_at, updated_at, deleted_at)
+    VALUES (?, ?, ?, ?, ?, ?, NULL)
+    ON CONFLICT(id) DO UPDATE SET
+      driver_id = excluded.driver_id,
+      carrier_id = excluded.carrier_id,
+      is_active = excluded.is_active,
+      updated_at = excluded.updated_at,
+      deleted_at = NULL
+  `);
+
+  let pulled = 0;
+  for (const row of (data ?? [])) {
+    upsert.run(
+      row.id,
+      row.driver_id,
+      row.carrier_id,
+      row.is_active ? 1 : 0,
+      row.created_at,
+      row.updated_at
+    );
+    pulled++;
+  }
+
+  return { pulled, errors };
+}
