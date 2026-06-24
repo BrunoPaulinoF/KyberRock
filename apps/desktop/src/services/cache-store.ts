@@ -9,6 +9,7 @@ export interface CustomerCacheEntry {
   phone: string | null;
   email: string | null;
   creditLimitCents: number | null;
+  creditMode: "normal" | "prepaid";
   openReceivablesCents: number;
   omieBillingBlocked: boolean;
   source: "omie" | "local" | "hybrid";
@@ -134,6 +135,7 @@ interface CustomerRow {
   phone: string | null;
   email: string | null;
   credit_limit_cents: number | null;
+  credit_mode: "normal" | "prepaid";
   open_receivables_cents: number;
   omie_billing_blocked: number;
   source: "omie" | "local" | "hybrid";
@@ -234,6 +236,7 @@ function mapCustomer(row: CustomerRow): CustomerCacheEntry {
     phone: row.phone,
     email: row.email,
     creditLimitCents: row.credit_limit_cents,
+    creditMode: row.credit_mode,
     openReceivablesCents: row.open_receivables_cents,
     omieBillingBlocked: row.omie_billing_blocked === 1,
     source: row.source,
@@ -612,7 +615,7 @@ export class CacheStore {
     const rows = this.db
       .prepare(
         `SELECT id, omie_customer_id, legal_name, trade_name, document, phone, email,
-                credit_limit_cents, open_receivables_cents, omie_billing_blocked,
+                credit_limit_cents, credit_mode, open_receivables_cents, omie_billing_blocked,
                 source, sync_status, needs_push, last_synced_at, observations, default_carrier_id, default_payment_term_id,
                 zipcode, address_street, address_number, address_complement, neighborhood, city, state, is_active
          FROM customers WHERE company_id = ? AND deleted_at IS NULL`

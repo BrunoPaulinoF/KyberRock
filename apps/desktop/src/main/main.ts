@@ -21,6 +21,7 @@ import type { CreateDriverInput, UpdateDriverInput } from "../services/drivers.j
 import type { CreateCarrierInput, UpdateCarrierInput } from "../services/carriers.js";
 import type { ToledoTcpConfig } from "@kyberrock/scale-adapters";
 import type { ScaleConfigurationInput } from "../services/scale-configs.js";
+import type { CreateQuotationInput } from "../services/quotations.js";
 import type {
   ConfigureReceiptPrintProfileInput,
   ReceiptPrintPayload,
@@ -533,6 +534,71 @@ function registerIpcHandlers(): void {
     }
 
     return runtime.getPriceDetailsForCustomerProduct(customerId, productId);
+  });
+
+  ipcMain.handle("desktop:product-default-prices-list", () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.listProductDefaultPrices();
+  });
+
+  ipcMain.handle(
+    "desktop:product-default-prices-upsert",
+    (_event, input: { productId: string; unitPriceCents: number; unit?: string }) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.upsertProductDefaultPrice(input);
+    }
+  );
+
+  ipcMain.handle("desktop:customer-special-prices-list", (_event, customerId: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.listCustomerSpecialPrices(customerId);
+  });
+
+  ipcMain.handle(
+    "desktop:customer-special-prices-set",
+    (_event, input: { customerId: string; productId: string; unitPriceCents: number; unit?: string }) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.setCustomerSpecialPrice(input);
+    }
+  );
+
+  ipcMain.handle(
+    "desktop:customer-special-prices-remove",
+    (_event, customerId: string, productId: string) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      runtime.removeCustomerSpecialPrice(customerId, productId);
+    }
+  );
+
+  ipcMain.handle("desktop:customer-credit-balance", (_event, customerId: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.getCustomerCreditBalance(customerId);
+  });
+
+  ipcMain.handle(
+    "desktop:customer-credit-movements",
+    (_event, customerId: string, limit?: number) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.listCustomerCreditMovements(customerId, limit);
+    }
+  );
+
+  ipcMain.handle(
+    "desktop:quotations-create",
+    (_event, input: Omit<CreateQuotationInput, "companyId">) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.createQuotation(input);
+    }
+  );
+
+  ipcMain.handle("desktop:quotations-cancel", (_event, id: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    runtime.cancelQuotation(id);
+  });
+
+  ipcMain.handle("desktop:quotations-list-open-for-customer", (_event, customerId: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.listOpenQuotationsForCustomer(customerId);
   });
 
   ipcMain.handle(

@@ -108,6 +108,24 @@ import {
   type UpdateReportRecipientInput
 } from "./report-recipients.js";
 import { PricingService, type PriceDetails } from "./pricing.js";
+import {
+  listCustomerSpecialPrices,
+  listProductDefaultPriceSummaries,
+  removeCustomerSpecialPrice,
+  setCustomerSpecialPrice,
+  upsertProductDefaultPrice,
+  type CustomerSpecialPriceSummary,
+  type ProductDefaultPriceSummary
+} from "./product-prices.js";
+import { CreditService, type CreditMovementRow } from "./credit.js";
+import {
+  cancelQuotation,
+  createQuotation,
+  listOpenQuotationsForCustomer,
+  type CreateQuotationInput,
+  type QuotationRow,
+  type QuotationSummary
+} from "./quotations.js";
 
 export interface OmieLoopProgress {
   iteration: number;
@@ -383,8 +401,9 @@ export class DesktopRuntime {
     productId: string;
     paymentTermId?: string;
     manualInstallments?: number;
-    unitPriceCents?: number;
     freight?: OperationFreightInput | null;
+    quotationId?: string;
+    deductFreightFromCredit?: boolean;
   }): Promise<WeighingOperationSummary> {
     this.assertDesktopAccess();
     const entryWeightKg = await this.readScaleSampledWeight();
@@ -399,8 +418,9 @@ export class DesktopRuntime {
       productId: input.productId,
       paymentTermId: input.paymentTermId,
       manualInstallments: input.manualInstallments,
-      unitPriceCents: input.unitPriceCents,
       freight: input.freight,
+      quotationId: input.quotationId,
+      deductFreightFromCredit: input.deductFreightFromCredit,
       entryWeightKg
     });
   }
@@ -805,6 +825,78 @@ export class DesktopRuntime {
       customerId,
       productId
     );
+  }
+
+  listProductDefaultPrices(): ProductDefaultPriceSummary[] {
+    this.assertDesktopAccess();
+    return listProductDefaultPriceSummaries(this.database, this.ensureIdentity().companyId);
+  }
+
+  upsertProductDefaultPrice(input: {
+    productId: string;
+    unitPriceCents: number;
+    unit?: string;
+  }): unknown {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    const result = upsertProductDefaultPrice(this.database, {
+      ...input,
+      companyId: identity.companyId
+    });
+    this.cacheStore.invalidate("product", identity.companyId);
+    return result;
+  }
+
+  listCustomerSpecialPrices(customerId: string): CustomerSpecialPriceSummary[] {
+    this.assertDesktopAccess();
+    return listCustomerSpecialPrices(this.database, customerId);
+  }
+
+  setCustomerSpecialPrice(input: {
+    customerId: string;
+    productId: string;
+    unitPriceCents: number;
+    unit?: string;
+  }): unknown {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    return setCustomerSpecialPrice(this.database, {
+      ...input,
+      companyId: identity.companyId
+    });
+  }
+
+  removeCustomerSpecialPrice(customerId: string, productId: string): void {
+    this.assertDesktopAccess();
+    removeCustomerSpecialPrice(this.database, customerId, productId);
+  }
+
+  getCustomerCreditBalance(customerId: string): number {
+    this.assertDesktopAccess();
+    return new CreditService(this.database).getBalance(customerId);
+  }
+
+  listCustomerCreditMovements(customerId: string, limit?: number): CreditMovementRow[] {
+    this.assertDesktopAccess();
+    return new CreditService(this.database).listMovements(customerId, limit ?? 100);
+  }
+
+  createQuotation(input: Omit<CreateQuotationInput, "companyId">): QuotationRow {
+    this.assertDesktopAccess();
+    return createQuotation(this.database, {
+      ...input,
+      companyId: this.ensureIdentity().companyId
+    });
+  }
+
+  cancelQuotation(id: string): void {
+    this.assertDesktopAccess();
+    cancelQuotation(this.database, id);
+  }
+
+  listOpenQuotationsForCustomer(customerId: string): QuotationSummary[] {
+    this.assertDesktopAccess();
+    return listOpenQuotationsForCustomer(this.database, customerId);
   }
 
   invalidateCache(entityType: CacheQueryOptions["entityType"]): void {

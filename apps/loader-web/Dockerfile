@@ -29,6 +29,10 @@ COPY --from=builder /app/apps/loader-web/dist /usr/share/nginx/html
 # Copy nginx config
 COPY apps/loader-web/nginx.conf /etc/nginx/conf.d/default.conf
 
+# Generate runtime frontend config from container env before nginx starts
+COPY apps/loader-web/docker-entrypoint.d/10-kyberrock-env.sh /docker-entrypoint.d/10-kyberrock-env.sh
+RUN chmod +x /docker-entrypoint.d/10-kyberrock-env.sh
+
 # Expose port
 EXPOSE 80
 

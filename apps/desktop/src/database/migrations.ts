@@ -514,5 +514,109 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_products_company_internal_code
 CREATE INDEX IF NOT EXISTS idx_drivers_company_cnh ON drivers(company_id, cnh);
 CREATE INDEX IF NOT EXISTS idx_carriers_company_phone ON carriers(company_id, phone);
 `
+  },
+  {
+    version: 11,
+    name: "customer_special_prices_and_default_prices",
+    sql: `
+CREATE TABLE IF NOT EXISTS product_default_prices (
+  id TEXT PRIMARY KEY,
+  company_id TEXT NOT NULL REFERENCES companies(id),
+  product_id TEXT NOT NULL REFERENCES products(id),
+  unit_price_cents INTEGER NOT NULL,
+  unit TEXT NOT NULL DEFAULT 'ton',
+  valid_from TEXT,
+  valid_to TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT,
+  sync_version INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS customer_special_prices (
+  id TEXT PRIMARY KEY,
+  company_id TEXT NOT NULL REFERENCES companies(id),
+  customer_id TEXT NOT NULL REFERENCES customers(id),
+  product_id TEXT NOT NULL REFERENCES products(id),
+  unit_price_cents INTEGER NOT NULL,
+  unit TEXT NOT NULL DEFAULT 'ton',
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT,
+  sync_version INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_special_prices_customer_product
+  ON customer_special_prices(customer_id, product_id)
+  WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_product_default_prices_product
+  ON product_default_prices(product_id, is_active)
+  WHERE deleted_at IS NULL;
+`
+  },
+  {
+    version: 12,
+    name: "customer_credit_balance_and_movements",
+    sql: `
+CREATE TABLE IF NOT EXISTS customer_credit_balances (
+  customer_id TEXT PRIMARY KEY REFERENCES customers(id),
+  balance_cents INTEGER NOT NULL DEFAULT 0,
+  omie_source_json TEXT,
+  last_synced_at TEXT,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS customer_credit_movements (
+  id TEXT PRIMARY KEY,
+  company_id TEXT NOT NULL REFERENCES companies(id),
+  customer_id TEXT NOT NULL REFERENCES customers(id),
+  operation_id TEXT REFERENCES weighing_operations(id),
+  movement_type TEXT NOT NULL CHECK (movement_type IN ('credit', 'debit_product', 'debit_freight', 'refund_product', 'refund_freight', 'manual_adjustment')),
+  amount_cents INTEGER NOT NULL,
+  balance_after_cents INTEGER NOT NULL,
+  reason TEXT,
+  created_at TEXT NOT NULL
+);
+
+ALTER TABLE customers ADD COLUMN credit_mode TEXT NOT NULL DEFAULT 'normal' CHECK (credit_mode IN ('normal', 'prepaid'));
+
+CREATE INDEX IF NOT EXISTS idx_customer_credit_movements_customer_created
+  ON customer_credit_movements(customer_id, created_at DESC);
+`
+  },
+  {
+    version: 13,
+    name: "quotations_and_operation_credit_fields",
+    sql: `
+CREATE TABLE IF NOT EXISTS quotations (
+  id TEXT PRIMARY KEY,
+  company_id TEXT NOT NULL REFERENCES companies(id),
+  customer_id TEXT NOT NULL REFERENCES customers(id),
+  product_id TEXT NOT NULL REFERENCES products(id),
+  payment_term_id TEXT REFERENCES payment_terms(id),
+  unit_price_cents INTEGER NOT NULL,
+  estimated_quantity_kg REAL NOT NULL,
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'consumed', 'cancelled')),
+  consumed_operation_id TEXT REFERENCES weighing_operations(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT,
+  sync_version INTEGER NOT NULL DEFAULT 0
+);
+
+ALTER TABLE weighing_operations ADD COLUMN deduct_freight_from_credit INTEGER NOT NULL DEFAULT 0 CHECK (deduct_freight_from_credit IN (0, 1));
+ALTER TABLE weighing_operations ADD COLUMN product_credit_debit_cents INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE weighing_operations ADD COLUMN freight_credit_debit_cents INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE weighing_operations ADD COLUMN quotation_id TEXT REFERENCES quotations(id);
+
+CREATE INDEX IF NOT EXISTS idx_quotations_customer_status
+  ON quotations(customer_id, status, created_at DESC)
+  WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_weighing_operations_quotation
+  ON weighing_operations(quotation_id);
+`
   }
 ];

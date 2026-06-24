@@ -30,11 +30,11 @@ const initialForm: CustomerFormData = {
   phone: "",
   email: "",
   creditLimitReais: "",
+  creditMode: "normal",
   omieBillingBlocked: false,
   observations: "",
   defaultCarrierId: "",
   defaultPaymentTermId: "",
-  priceTableId: "",
   zipcode: "",
   addressStreet: "",
   addressNumber: "",
@@ -253,9 +253,20 @@ interface PaymentTermOption {
   id: string;
   name: string;
 }
-interface PriceTableOption {
+interface ProductOption {
   id: string;
-  name: string;
+  code: string | null;
+  description: string;
+}
+
+interface CustomerSpecialPriceEntry {
+  id: string;
+  customerId: string;
+  productId: string;
+  productCode: string | null;
+  productDescription: string;
+  unitPriceCents: number;
+  unit: string;
 }
 
 export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi | null }) {
@@ -273,21 +284,24 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
 
   const [carriers, setCarriers] = useState<CarrierOption[]>([]);
   const [paymentTerms, setPaymentTerms] = useState<PaymentTermOption[]>([]);
-  const [priceTables, setPriceTables] = useState<PriceTableOption[]>([]);
+  const [products, setProducts] = useState<ProductOption[]>([]);
+  const [specialPrices, setSpecialPrices] = useState<CustomerSpecialPriceEntry[]>([]);
+  const [specialProductId, setSpecialProductId] = useState("");
+  const [specialPriceReais, setSpecialPriceReais] = useState("");
 
   const pageSize = 50;
 
   const loadOptions = useCallback(async () => {
     if (!desktopApi) return;
     try {
-      const [carriersResult, termsResult, tables] = await Promise.all([
+      const [carriersResult, termsResult, productsResult] = await Promise.all([
         desktopApi.queryCache({ entityType: "carrier", limit: 200 }),
         desktopApi.queryCache({ entityType: "payment_term", limit: 500 }),
-        desktopApi.priceTablesList() as Promise<PriceTableOption[]>
+        desktopApi.queryCache({ entityType: "product", activeOnly: true, limit: 500 })
       ]);
       setCarriers((carriersResult.rows as CarrierOption[]) ?? []);
       setPaymentTerms((termsResult.rows as PaymentTermOption[]) ?? []);
-      setPriceTables(tables ?? []);
+      setProducts((productsResult.rows as ProductOption[]) ?? []);
     } catch {
       /* ignore */
     }
@@ -327,6 +341,9 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
     setEditingId(null);
     setEditingSource(null);
     setFormError(null);
+    setSpecialPrices([]);
+    setSpecialProductId("");
+    setSpecialPriceReais("");
   }
 
   function openCreateForm(): void {
@@ -344,11 +361,11 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
       creditLimitReais: customer.creditLimitCents
         ? (customer.creditLimitCents / 100).toFixed(2).replace(".", ",")
         : "",
+      creditMode: customer.creditMode,
       omieBillingBlocked: customer.omieBillingBlocked,
       observations: customer.observations ?? "",
       defaultCarrierId: customer.defaultCarrierId ?? "",
       defaultPaymentTermId: customer.defaultPaymentTermId ?? "",
-      priceTableId: "",
       zipcode: customer.zipcode ?? "",
       addressStreet: customer.addressStreet ?? "",
       addressNumber: customer.addressNumber ?? "",
@@ -361,6 +378,13 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
     setEditingSource(customer.source);
     setFormError(null);
     setShowForm(true);
+    void loadSpecialPrices(customer.id);
+  }
+
+  async function loadSpecialPrices(customerId: string): Promise<void> {
+    if (!desktopApi) return;
+    const rows = await desktopApi.customerSpecialPricesList(customerId);
+    setSpecialPrices(rows as CustomerSpecialPriceEntry[]);
   }
 
   function validateForm(): string | null {
@@ -397,10 +421,10 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
     const normalizedZipcode = form.zipcode.replace(/\D/g, "");
 
     try {
-      let customerId = editingId;
       if (editingId) {
         const localPatch = {
           observations: form.observations.trim() || undefined,
+          creditMode: form.creditMode,
           defaultCarrierId: form.defaultCarrierId || null,
           defaultPaymentTermId: form.defaultPaymentTermId || null
         };
@@ -427,13 +451,14 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
         );
         setFeedback("Cliente atualizado.");
       } else {
-        const created = (await desktopApi.customersCreate({
+        await desktopApi.customersCreate({
           tradeName: form.tradeName.trim(),
           legalName: form.legalName.trim(),
           document: normalizedDocument || undefined,
           phone: normalizedPhone || undefined,
           email: normalizedEmail || undefined,
           creditLimitCents: creditLimitCents ?? undefined,
+          creditMode: form.creditMode,
           omieBillingBlocked: form.omieBillingBlocked,
           observations: form.observations.trim() || undefined,
           defaultCarrierId: form.defaultCarrierId || undefined,
@@ -445,25 +470,49 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
           neighborhood: form.neighborhood.trim() || undefined,
           city: form.city.trim() || undefined,
           state: form.state.trim().toUpperCase() || undefined
-        })) as { id: string };
-        customerId = created.id;
+        });
         setFeedback("Cliente criado.");
-      }
-      if (customerId && form.priceTableId) {
-        try {
-          await desktopApi.priceTablesLinkCustomer({
-            customerId,
-            priceTableId: form.priceTableId
-          });
-        } catch {
-          /* ignore */
-        }
       }
       setShowForm(false);
       resetForm();
       await loadCustomers();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Erro ao salvar cliente.");
+    }
+  }
+
+  async function handleSaveSpecialPrice(): Promise<void> {
+    if (!desktopApi || !editingId || !specialProductId || !specialPriceReais.trim()) return;
+    const unitPriceCents = parseMoneyInputToCents(specialPriceReais);
+    if (unitPriceCents === null) {
+      setFormError("Preco especial invalido.");
+      return;
+    }
+
+    try {
+      await desktopApi.customerSpecialPricesSet({
+        customerId: editingId,
+        productId: specialProductId,
+        unitPriceCents,
+        unit: "ton"
+      });
+      setSpecialProductId("");
+      setSpecialPriceReais("");
+      await loadSpecialPrices(editingId);
+      setFeedback("Preco especial salvo.");
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Erro ao salvar preco especial.");
+    }
+  }
+
+  async function handleRemoveSpecialPrice(productId: string): Promise<void> {
+    if (!desktopApi || !editingId) return;
+    try {
+      await desktopApi.customerSpecialPricesRemove(editingId, productId);
+      await loadSpecialPrices(editingId);
+      setFeedback("Preco especial removido.");
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Erro ao remover preco especial.");
     }
   }
 
@@ -680,18 +729,16 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
                   ))}
                 </select>
               </Field>
-              <Field label="Tabela de preco">
+              <Field label="Uso de credito OMIE">
                 <select
-                  value={form.priceTableId}
-                  onChange={(e) => setForm({ ...form, priceTableId: e.target.value })}
+                  value={form.creditMode}
+                  onChange={(e) =>
+                    setForm({ ...form, creditMode: e.target.value as "normal" | "prepaid" })
+                  }
                   style={getInputStyle(false)}
                 >
-                  <option value="">Selecione</option>
-                  {priceTables.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
+                  <option value="normal">Nao debitar credito</option>
+                  <option value="prepaid">Debitar credito pre-pago</option>
                 </select>
               </Field>
               <label style={styles.checkbox}>
@@ -714,6 +761,74 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
                   placeholder="Anotacoes internas"
                 />
               </Field>
+              <div style={{ display: "grid", gap: "8px", marginTop: "8px" }}>
+                <h4 style={styles.formSectionTitle}>Precos especiais</h4>
+                {editingId ? (
+                  <>
+                    <div style={styles.fieldRow}>
+                      <Field label="Produto">
+                        <select
+                          value={specialProductId}
+                          onChange={(e) => setSpecialProductId(e.target.value)}
+                          style={getInputStyle(false)}
+                        >
+                          <option value="">Selecione</option>
+                          {products.map((product) => (
+                            <option key={product.id} value={product.id}>
+                              {product.code ? `${product.code} - ` : ""}
+                              {product.description}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
+                      <MoneyInput
+                        label="Preco/ton (R$)"
+                        value={specialPriceReais}
+                        onChange={setSpecialPriceReais}
+                        allowZero={false}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveSpecialPrice()}
+                      style={styles.secondaryButton}
+                    >
+                      Salvar preco especial
+                    </button>
+                    {specialPrices.length === 0 ? (
+                      <p style={styles.cellMuted}>Nenhum preco especial cadastrado.</p>
+                    ) : (
+                      specialPrices.map((price) => (
+                        <div
+                          key={price.id}
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            gap: "8px",
+                            borderTop: "1px solid var(--kr-border)",
+                            paddingTop: "8px"
+                          }}
+                        >
+                          <span style={styles.cellMuted}>
+                            <strong>{price.productDescription}</strong>
+                            {price.productCode ? ` (${price.productCode})` : ""}: {formatMoney(price.unitPriceCents)}/ton
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => void handleRemoveSpecialPrice(price.productId)}
+                            style={styles.dangerButton}
+                          >
+                            Remover
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </>
+                ) : (
+                  <p style={styles.cellMuted}>Salve o cliente antes de cadastrar preco especial.</p>
+                )}
+              </div>
             </section>
           </div>
           <div style={styles.formFooter}>
@@ -854,4 +969,12 @@ function formatPhone(value: string): string {
     return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
   }
   return digits;
+}
+
+function formatMoney(value: number | null | undefined): string {
+  if (value === null || value === undefined) return "-";
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL"
+  }).format(value / 100);
 }

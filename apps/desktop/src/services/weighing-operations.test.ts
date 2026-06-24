@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { runDesktopMigrations } from "../database/migrate";
 import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite";
 import { ensureInitialDesktopIdentity } from "./bootstrap";
+import { CreditService } from "./credit";
 import {
   cancelWeighingOperation,
   closeWeighingOperation,
@@ -240,7 +241,6 @@ describe("weighing operations", () => {
         vehicleId: "vehicle-1",
         driverId: "driver-1",
         productId: "product-1",
-        unitPriceCents: 12_000,
         entryWeightKg: 12_000
       });
 
@@ -251,7 +251,6 @@ describe("weighing operations", () => {
           vehicleId: "vehicle-1",
           driverId: "driver-1",
           productId: "product-1",
-          unitPriceCents: 12_000,
           entryWeightKg: 13_000
         })
       ).toThrow("Ja existe uma operacao aberta para a placa ABC1D23");
@@ -274,7 +273,6 @@ describe("weighing operations", () => {
         driverId: "driver-1",
         productId: "product-1",
         manualInstallments: 3,
-        unitPriceCents: 12_000,
         entryWeightKg: 12_000
       });
 
@@ -285,6 +283,166 @@ describe("weighing operations", () => {
           .pluck()
           .get(operation.id)
       ).toBe(3);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("debits prepaid product credit and refunds it when cancelled", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'").run();
+      const creditService = new CreditService(database);
+      creditService.applyCredit("customer-1", 100_000, "saldo OMIE");
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+
+      const closed = closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500
+      });
+
+      expect(closed).toMatchObject({
+        productTotalCents: 78_000,
+        productCreditDebitCents: 78_000,
+        freightCreditDebitCents: 0
+      });
+      expect(creditService.getBalance("customer-1")).toBe(22_000);
+
+      cancelWeighingOperation(database, { operationId: operation.id, reason: "cancelado" });
+
+      expect(creditService.getBalance("customer-1")).toBe(100_000);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("does not debit freight from prepaid credit unless requested", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'").run();
+      const creditService = new CreditService(database);
+      creditService.applyCredit("customer-1", 200_000, "saldo OMIE");
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000,
+        freight: {
+          payer: "customer",
+          rule: {
+            id: "freight-1",
+            name: "Frete por tonelada",
+            type: "per_ton",
+            baseValueCents: 10_000,
+            unit: "ton"
+          }
+        }
+      });
+
+      const closed = closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500
+      });
+
+      expect(closed).toMatchObject({
+        productCreditDebitCents: 78_000,
+        freightTotalCents: 65_000,
+        freightCreditDebitCents: 0,
+        totalCents: 143_000
+      });
+      expect(creditService.getBalance("customer-1")).toBe(122_000);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("debits freight from prepaid credit when requested", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'").run();
+      const creditService = new CreditService(database);
+      creditService.applyCredit("customer-1", 200_000, "saldo OMIE");
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000,
+        deductFreightFromCredit: true,
+        freight: {
+          payer: "customer",
+          rule: {
+            id: "freight-1",
+            name: "Frete por tonelada",
+            type: "per_ton",
+            baseValueCents: 10_000,
+            unit: "ton"
+          }
+        }
+      });
+
+      const closed = closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500
+      });
+
+      expect(closed).toMatchObject({
+        productCreditDebitCents: 78_000,
+        freightTotalCents: 65_000,
+        freightCreditDebitCents: 65_000
+      });
+      expect(creditService.getBalance("customer-1")).toBe(57_000);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("blocks prepaid close when credit is insufficient", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'").run();
+      new CreditService(database).applyCredit("customer-1", 70_000, "saldo OMIE");
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+
+      expect(() =>
+        closeWeighingOperation(database, {
+          operationId: operation.id,
+          exitWeightKg: 18_500
+        })
+      ).toThrow("insuficiente");
     } finally {
       database.close();
     }
@@ -304,7 +462,6 @@ describe("weighing operations", () => {
         vehicleId: "vehicle-1",
         driverId: "driver-1",
         productId: "product-1",
-        unitPriceCents: 12_000,
         entryWeightKg: 12_000
       });
 
@@ -337,7 +494,6 @@ describe("weighing operations", () => {
         vehicleId: "vehicle-1",
         driverId: "driver-1",
         productId: "product-1",
-        unitPriceCents: 12_000,
         entryWeightKg: 12_000
       });
 
@@ -375,7 +531,6 @@ describe("weighing operations", () => {
         vehicleId: "vehicle-1",
         driverId: "driver-1",
         productId: "product-1",
-        unitPriceCents: 12_000,
         entryWeightKg: 12_000
       });
 
@@ -421,7 +576,6 @@ describe("weighing operations", () => {
           vehicleId: "vehicle-1",
           driverId: "driver-1",
           productId: "product-1",
-          unitPriceCents: 12_000,
           entryWeightKg: 12_000
         })
       ).toThrow("Cliente bloqueado no OMIE");
@@ -438,7 +592,6 @@ describe("weighing operations", () => {
           vehicleId: "vehicle-1",
           driverId: "driver-1",
           productId: "product-1",
-          unitPriceCents: 12_000,
           entryWeightKg: 12_000
         })
       ).toThrow("Produto inativo ou bloqueado");
@@ -493,6 +646,13 @@ function insertCatalog(
       `INSERT INTO products (
         id, company_id, omie_product_id, code, description, unit, unit_price_cents, item_type, created_at, updated_at
       ) VALUES ('product-1', 'company-1', 123, 'BRITA1', 'Brita 1', 'ton', 15000, '04 - Produtos Acabados', ?, ?)`
+    )
+    .run(now, now);
+  database
+    .prepare(
+      `INSERT INTO product_default_prices (
+        id, company_id, product_id, unit_price_cents, unit, created_at, updated_at
+      ) VALUES ('default-price-1', 'company-1', 'product-1', 12000, 'ton', ?, ?)`
     )
     .run(now, now);
 }

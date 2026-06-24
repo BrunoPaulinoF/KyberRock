@@ -6,6 +6,8 @@ import { FinancialBlockService } from "./financial-block.js";
 import { FreightCalculator, type FreightRule } from "./freight.js";
 import { PricingService, type PriceDetails } from "./pricing.js";
 import { enqueueSyncJob } from "./sync-queue.js";
+import { CreditService } from "./credit.js";
+import { consumeQuotation } from "./quotations.js";
 
 type OperationStatus =
   | "draft"
@@ -50,9 +52,10 @@ export interface CreateWeighingOperationInput {
   productId: string;
   paymentTermId?: string;
   manualInstallments?: number;
-  unitPriceCents?: number;
   entryWeightKg: number;
   freight?: OperationFreightInput | null;
+  quotationId?: string;
+  deductFreightFromCredit?: boolean;
 }
 
 export interface CloseWeighingOperationInput {
@@ -89,6 +92,10 @@ export interface WeighingOperationSummary {
   freightTotalCents: number;
   freightJson: string | null;
   totalCents: number | null;
+  deductFreightFromCredit: boolean;
+  productCreditDebitCents: number;
+  freightCreditDebitCents: number;
+  quotationId: string | null;
   omieSalesOrderId: number | null;
   omieBillingStatus: string | null;
   omieBillingMessage: string | null;
@@ -117,6 +124,10 @@ interface OperationRow {
   freight_total_cents: number;
   freight_json: string | null;
   total_cents: number | null;
+  deduct_freight_from_credit: number;
+  product_credit_debit_cents: number;
+  freight_credit_debit_cents: number;
+  quotation_id: string | null;
   omie_sales_order_id: number | null;
   omie_billing_status: string | null;
   omie_billing_message: string | null;
@@ -374,7 +385,6 @@ export function createWeighingOperation(
 
   const operationType = input.operationType ?? "invoice";
   validateOperationType(operationType);
-  validateUnitPrice(input.unitPriceCents);
   const timestamp = now.toISOString();
 
   const customer = database
@@ -440,7 +450,12 @@ export function createWeighingOperation(
     input.customerId,
     input.productId
   );
-  const unitPriceCents = input.unitPriceCents ?? priceDetails?.appliedUnitPriceCents ?? null;
+  if (!priceDetails || priceDetails.appliedUnitPriceCents === null) {
+    throw new Error(
+      "Sem preco cadastrado para este cliente/produto. Cadastre um preco padrao no produto ou um preco especial no cliente."
+    );
+  }
+  const unitPriceCents = priceDetails.appliedUnitPriceCents;
   const financialBlock = new FinancialBlockService(database).canStartLoading(input.customerId);
   if (!financialBlock.allowed) {
     throw new Error(financialBlock.message ?? "Cliente bloqueado por limite financeiro.");
@@ -456,8 +471,9 @@ export function createWeighingOperation(
           id, company_id, unit_id, device_id, status, operation_type, customer_id, vehicle_id, carrier_id, driver_id, product_id,
           payment_term_id, manual_installments, entry_weight_kg, entry_weight_captured_at, unit_price_cents,
           base_unit_price_cents, applied_price_table_id, applied_price_table_name, applied_price_table_item_id,
-          price_unit, price_savings_percent, freight_total_cents, freight_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, 'loading_requested', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`
+          price_unit, price_savings_percent, freight_total_cents, freight_json, deduct_freight_from_credit,
+          product_credit_debit_cents, freight_credit_debit_cents, quotation_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'loading_requested', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0, 0, ?, ?, ?)`
       )
       .run(
         operationId,
@@ -476,12 +492,14 @@ export function createWeighingOperation(
         timestamp,
         unitPriceCents,
         priceDetails?.baseUnitPriceCents ?? null,
-        priceDetails?.priceTableId ?? null,
-        priceDetails?.priceTableName ?? null,
-        priceDetails?.priceTableItemId ?? null,
+        null,
+        null,
+        null,
         priceDetails?.priceUnit ?? "ton",
         priceDetails?.savingsPercent ?? null,
         serializeOperationFreight(input.freight),
+        input.deductFreightFromCredit ? 1 : 0,
+        input.quotationId ?? null,
         timestamp,
         timestamp
       );
@@ -571,12 +589,44 @@ export function closeWeighingOperation(
   const timestamp = now.toISOString();
   const nextOperationType: OperationType = input.operationType ?? operation.operationType;
 
+  const opRow = database
+    .prepare(
+      `SELECT customer_id, deduct_freight_from_credit, quotation_id FROM weighing_operations WHERE id = ?`
+    )
+    .get(input.operationId) as
+    | { customer_id: string | null; deduct_freight_from_credit: number; quotation_id: string | null }
+    | undefined;
+
+  let productCreditDebitCents = 0;
+  let freightCreditDebitCents = 0;
+
+  if (opRow?.customer_id && productTotalCents !== null) {
+    const creditService = new CreditService(database);
+    const isPrepaid = creditService.isCustomerPrepaid(opRow.customer_id);
+
+    if (isPrepaid) {
+      const deductFreight = opRow.deduct_freight_from_credit === 1;
+      const required = deductFreight
+        ? productTotalCents + (freightTotalCents ?? 0)
+        : productTotalCents;
+
+      const validation = creditService.validateDebit(opRow.customer_id, required);
+      if (!validation.allowed) {
+        throw new Error(validation.message ?? "Crédito insuficiente.");
+      }
+
+      productCreditDebitCents = productTotalCents;
+      freightCreditDebitCents = deductFreight ? freightTotalCents ?? 0 : 0;
+    }
+  }
+
   const closeOperation = database.transaction(() => {
     if (input.operationType) {
       database
         .prepare(
           `UPDATE weighing_operations
-           SET status = 'closed_local', operation_type = ?, exit_weight_kg = ?, exit_weight_captured_at = ?, net_weight_kg = ?, product_total_cents = ?, freight_total_cents = ?, total_cents = ?, updated_at = ?
+           SET status = 'closed_local', operation_type = ?, exit_weight_kg = ?, exit_weight_captured_at = ?, net_weight_kg = ?, product_total_cents = ?, freight_total_cents = ?, total_cents = ?,
+               product_credit_debit_cents = ?, freight_credit_debit_cents = ?, updated_at = ?
            WHERE id = ?`
         )
         .run(
@@ -587,6 +637,8 @@ export function closeWeighingOperation(
           productTotalCents,
           freightTotalCents,
           totalCents,
+          productCreditDebitCents,
+          freightCreditDebitCents,
           timestamp,
           input.operationId
         );
@@ -594,7 +646,8 @@ export function closeWeighingOperation(
       database
         .prepare(
           `UPDATE weighing_operations
-           SET status = 'closed_local', exit_weight_kg = ?, exit_weight_captured_at = ?, net_weight_kg = ?, product_total_cents = ?, freight_total_cents = ?, total_cents = ?, updated_at = ?
+           SET status = 'closed_local', exit_weight_kg = ?, exit_weight_captured_at = ?, net_weight_kg = ?, product_total_cents = ?, freight_total_cents = ?, total_cents = ?,
+               product_credit_debit_cents = ?, freight_credit_debit_cents = ?, updated_at = ?
            WHERE id = ?`
         )
         .run(
@@ -604,9 +657,26 @@ export function closeWeighingOperation(
           productTotalCents,
           freightTotalCents,
           totalCents,
+          productCreditDebitCents,
+          freightCreditDebitCents,
           timestamp,
           input.operationId
         );
+    }
+
+    if (productCreditDebitCents > 0 || freightCreditDebitCents > 0) {
+      if (opRow?.customer_id) {
+        new CreditService(database).applyDebit(
+          opRow.customer_id,
+          input.operationId,
+          productCreditDebitCents,
+          freightCreditDebitCents
+        );
+      }
+    }
+
+    if (opRow?.quotation_id) {
+      consumeQuotation(database, opRow.quotation_id, input.operationId, now);
     }
 
     database
@@ -729,6 +799,19 @@ export function cancelWeighingOperation(
   const operation = getWeighingOperation(database, input.operationId);
   const timestamp = now.toISOString();
 
+  const opRow = database
+    .prepare(
+      `SELECT customer_id, product_credit_debit_cents, freight_credit_debit_cents, quotation_id FROM weighing_operations WHERE id = ?`
+    )
+    .get(input.operationId) as
+    | {
+        customer_id: string | null;
+        product_credit_debit_cents: number;
+        freight_credit_debit_cents: number;
+        quotation_id: string | null;
+      }
+    | undefined;
+
   const cancelOperation = database.transaction(() => {
     database
       .prepare(
@@ -740,6 +823,29 @@ export function cancelWeighingOperation(
         "UPDATE loading_requests SET status = 'cancelled', closed_at = ?, updated_at = ? WHERE operation_id = ?"
       )
       .run(timestamp, timestamp, input.operationId);
+
+    if (opRow?.customer_id) {
+      const productDebit = opRow.product_credit_debit_cents ?? 0;
+      const freightDebit = opRow.freight_credit_debit_cents ?? 0;
+      if (productDebit > 0 || freightDebit > 0) {
+        new CreditService(database).applyRefund(
+          opRow.customer_id,
+          input.operationId,
+          productDebit,
+          freightDebit,
+          input.reason.trim()
+        );
+      }
+
+      if (opRow.quotation_id) {
+        database
+          .prepare(
+            `UPDATE quotations SET status = 'open', consumed_operation_id = NULL, updated_at = ? WHERE id = ?`
+          )
+          .run(timestamp, opRow.quotation_id);
+      }
+    }
+
     insertAuditLog(
       database,
       null,
@@ -796,6 +902,7 @@ export function listOpenWeighingOperations(database: DesktopDatabase): WeighingO
         o.unit_price_cents, o.base_unit_price_cents, o.applied_price_table_id, o.applied_price_table_name,
         o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
         o.product_total_cents, o.freight_total_cents, o.freight_json, o.total_cents,
+        o.deduct_freight_from_credit, o.product_credit_debit_cents, o.freight_credit_debit_cents, o.quotation_id,
         o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
@@ -829,6 +936,7 @@ export function listCanceledWeighingOperations(
         o.unit_price_cents, o.base_unit_price_cents, o.applied_price_table_id, o.applied_price_table_name,
         o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
         o.product_total_cents, o.freight_total_cents, o.freight_json, o.total_cents,
+        o.deduct_freight_from_credit, o.product_credit_debit_cents, o.freight_credit_debit_cents, o.quotation_id,
         o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
@@ -862,6 +970,7 @@ export function listClosedWeighingOperations(
         o.unit_price_cents, o.base_unit_price_cents, o.applied_price_table_id, o.applied_price_table_name,
         o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
         o.product_total_cents, o.freight_total_cents, o.freight_json, o.total_cents,
+        o.deduct_freight_from_credit, o.product_credit_debit_cents, o.freight_credit_debit_cents, o.quotation_id,
         o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
@@ -912,6 +1021,7 @@ export function getWeighingOperation(
         o.unit_price_cents, o.base_unit_price_cents, o.applied_price_table_id, o.applied_price_table_name,
         o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
         o.product_total_cents, o.freight_total_cents, o.freight_json, o.total_cents,
+        o.deduct_freight_from_credit, o.product_credit_debit_cents, o.freight_credit_debit_cents, o.quotation_id,
         o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
@@ -1029,6 +1139,10 @@ function mapOperationRow(row: OperationRow): WeighingOperationSummary {
     freightTotalCents: row.freight_total_cents,
     freightJson: row.freight_json,
     totalCents: row.total_cents,
+    deductFreightFromCredit: row.deduct_freight_from_credit === 1,
+    productCreditDebitCents: row.product_credit_debit_cents ?? 0,
+    freightCreditDebitCents: row.freight_credit_debit_cents ?? 0,
+    quotationId: row.quotation_id,
     omieSalesOrderId: row.omie_sales_order_id,
     omieBillingStatus: row.omie_billing_status,
     omieBillingMessage: row.omie_billing_message,

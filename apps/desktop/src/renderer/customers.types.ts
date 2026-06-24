@@ -6,6 +6,7 @@ export interface CustomerCacheEntry {
   phone: string | null;
   email: string | null;
   creditLimitCents: number | null;
+  creditMode: "normal" | "prepaid";
   openReceivablesCents: number;
   omieBillingBlocked: boolean;
   source: string;
@@ -47,11 +48,11 @@ export interface CustomerFormData {
   phone: string;
   email: string;
   creditLimitReais: string;
+  creditMode: "normal" | "prepaid";
   omieBillingBlocked: boolean;
   observations: string;
   defaultCarrierId: string;
   defaultPaymentTermId: string;
-  priceTableId: string;
   zipcode: string;
   addressStreet: string;
   addressNumber: string;

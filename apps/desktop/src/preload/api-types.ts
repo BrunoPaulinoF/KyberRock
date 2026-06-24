@@ -14,6 +14,16 @@ import type {
 } from "../services/weighing-operations";
 import type { FiscalBillingResult, SyncResult } from "../services/supabase-sync";
 import type { PriceDetails } from "../services/pricing";
+import type {
+  CustomerSpecialPriceSummary,
+  ProductDefaultPriceSummary
+} from "../services/product-prices";
+import type { CreditMovementRow } from "../services/credit";
+import type {
+  CreateQuotationInput,
+  QuotationRow,
+  QuotationSummary
+} from "../services/quotations";
 import type { ActivateDesktopInput, DesktopAccessStatus } from "../services/desktop-activation";
 import type { CacheQueryOptions, CacheQueryResult } from "../services/cache-store";
 import type {
@@ -69,8 +79,9 @@ export interface KyberRockDesktopApi {
     productId: string;
     paymentTermId?: string;
     manualInstallments?: number;
-    unitPriceCents?: number;
     freight?: OperationFreightInput | null;
+    quotationId?: string;
+    deductFreightFromCredit?: boolean;
   }) => Promise<WeighingOperationSummary>;
   closeWeighing: (
     operationId: string,
@@ -125,6 +136,25 @@ export interface KyberRockDesktopApi {
     customerId: string,
     productId: string
   ) => Promise<PriceDetails | null>;
+  productDefaultPricesList: () => Promise<ProductDefaultPriceSummary[]>;
+  productDefaultPricesUpsert: (input: {
+    productId: string;
+    unitPriceCents: number;
+    unit?: string;
+  }) => Promise<unknown>;
+  customerSpecialPricesList: (customerId: string) => Promise<CustomerSpecialPriceSummary[]>;
+  customerSpecialPricesSet: (input: {
+    customerId: string;
+    productId: string;
+    unitPriceCents: number;
+    unit?: string;
+  }) => Promise<unknown>;
+  customerSpecialPricesRemove: (customerId: string, productId: string) => Promise<void>;
+  customerCreditBalance: (customerId: string) => Promise<number>;
+  customerCreditMovements: (customerId: string, limit?: number) => Promise<CreditMovementRow[]>;
+  quotationsCreate: (input: Omit<CreateQuotationInput, "companyId">) => Promise<QuotationRow>;
+  quotationsCancel: (id: string) => Promise<void>;
+  quotationsListOpenForCustomer: (customerId: string) => Promise<QuotationSummary[]>;
   customersCreate: (input: Omit<CreateCustomerInput, "companyId">) => Promise<unknown>;
   customersUpdate: (id: string, input: UpdateCustomerInput) => Promise<unknown>;
   customersDelete: (id: string) => Promise<void>;

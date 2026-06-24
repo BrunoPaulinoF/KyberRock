@@ -86,7 +86,8 @@ interface WeighingFormState {
   driverId: string;
   productId: string;
   paymentTermId: string;
-  unitPriceCents: number | null;
+  quotationId: string;
+  deductFreightFromCredit: boolean;
   freightEnabled: boolean;
   freightPayer: "customer" | "quarry" | "third_party";
   freightCalculationType: "per_ton" | "per_ton_km" | "fixed_plus_ton";
@@ -117,7 +118,8 @@ const initialWeighingForm: WeighingFormState = {
   driverId: "",
   productId: "",
   paymentTermId: "",
-  unitPriceCents: null,
+  quotationId: "",
+  deductFreightFromCredit: false,
   freightEnabled: false,
   freightPayer: "customer",
   freightCalculationType: "per_ton",
@@ -882,8 +884,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         driverId: form.driverId,
         productId: form.productId,
         paymentTermId: form.paymentTermId || undefined,
-        unitPriceCents: form.unitPriceCents ?? undefined,
-        freight: buildFreightInput(form)
+        freight: buildFreightInput(form),
+        quotationId: form.quotationId || undefined,
+        deductFreightFromCredit: form.deductFreightFromCredit
       });
       setMessage(`Entrada capturada com media configurada: ${operation.entryWeightKg} kg.`);
       setForm(initialWeighingForm);
@@ -1858,7 +1861,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     onClick={() => setRegistrationsTab("price_tables")}
                     style={subTabStyle(registrationsTab === "price_tables")}
                   >
-                    Tabelas de Preco
+                    Precos Padrao
                   </button>
                   <button
                     type="button"
@@ -2497,7 +2500,6 @@ function validateWeighingForm(form: WeighingFormState): string | null {
   if (!form.customerId) return "Selecione o cliente.";
   if (!form.driverId) return "Selecione o motorista.";
   if (!form.productId) return "Selecione o produto.";
-  if (form.unitPriceCents === null) return "Informe o preco.";
   if (form.freightEnabled) {
     if (form.freightBaseValueCents === null && form.freightFixedValueCents === null) {
       return "Informe o valor do frete.";
@@ -2858,12 +2860,6 @@ function WeighingForm({
           form.productId
         );
         setPriceDetails(details);
-        if (
-          details?.appliedUnitPriceCents !== null &&
-          details?.appliedUnitPriceCents !== undefined
-        ) {
-          setForm((prev) => ({ ...prev, unitPriceCents: details.appliedUnitPriceCents }));
-        }
       } catch {
         setPriceDetails(null);
       }
@@ -3022,13 +3018,9 @@ function WeighingForm({
           <SectionHeader
             iconComponent={BadgeDollarSign}
             title="Resumo da entrada"
-            description="Preco, peso e acao final"
+            description="Preco resolvido, frete e acao final"
           />
-          <PriceInput
-            valueCents={form.unitPriceCents}
-            onChange={(cents) => setForm((prev) => ({ ...prev, unitPriceCents: cents }))}
-          />
-          <PriceDetailsPanel details={priceDetails} appliedUnitPriceCents={form.unitPriceCents} />
+          <PriceDetailsPanel details={priceDetails} />
           <div style={styles.freightBox}>
             <label style={styles.checkboxLabel}>
               <input
@@ -3126,6 +3118,24 @@ function WeighingForm({
                   }
                   placeholder="Destino ou regra comercial"
                 />
+                <label style={styles.checkboxLabel}>
+                  <input
+                    type="checkbox"
+                    checked={form.deductFreightFromCredit}
+                    onChange={(event) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        deductFreightFromCredit: event.target.checked
+                      }))
+                    }
+                  />
+                  Abater frete do credito do cliente
+                </label>
+                <p style={styles.helperText}>
+                  Por padrao, o credito abate apenas o produto. Marque esta opcao para que o
+                  frete tambem seja compensado do credito (exige saldo suficiente para produto
+                  + frete).
+                </p>
               </div>
             ) : null}
           </div>
@@ -3768,36 +3778,53 @@ function FiscalBillingStatus({
   );
 }
 
-function PriceDetailsPanel({
-  details,
-  appliedUnitPriceCents
-}: {
-  details: PriceDetails | null;
-  appliedUnitPriceCents: number | null;
-}) {
-  if (!details && appliedUnitPriceCents === null) return null;
+function PriceDetailsPanel({ details }: { details: PriceDetails | null }) {
+  if (!details) {
+    return (
+      <div
+        style={{
+          padding: "8px",
+          border: "1px dashed #cbd5e1",
+          borderRadius: "8px",
+          background: "#f8fafc"
+        }}
+      >
+        <div style={{ fontSize: "12px", color: "#64748b" }}>
+          Selecione cliente e produto para ver o preco.
+        </div>
+      </div>
+    );
+  }
 
-  const tableLabel = details?.priceTableName ?? "Preco base OMIE";
-  const savingsLabel = details?.savingsPercent
+  const sourceLabel =
+    details.source === "special"
+      ? "Preco especial do cliente"
+      : details.source === "default"
+        ? "Preco padrao da empresa"
+        : "Sem preco cadastrado";
+  const savingsLabel = details.savingsPercent
     ? `${details.savingsPercent.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%`
     : "Sem desconto";
 
   return (
     <div
       style={{
-        marginTop: "6px",
         padding: "8px",
         border: "1px solid #e2e8f0",
         borderRadius: "8px",
         background: "#f8fafc"
       }}
     >
-      <div style={{ fontSize: "12px", color: "#475569" }}>
-        Base OMIE: {formatMoney(details?.baseUnitPriceCents)}/ton
+      <div style={{ fontSize: "13px", fontWeight: 700, color: "#0f172a" }}>
+        {details.appliedUnitPriceCents !== null
+          ? `${formatMoney(details.appliedUnitPriceCents)}/ton`
+          : "Preco nao definido"}
       </div>
-      <div style={{ fontSize: "12px", color: "#475569" }}>Tabela: {tableLabel}</div>
+      <div style={{ fontSize: "12px", color: "#475569", marginTop: "2px" }}>
+        Origem: {sourceLabel}
+      </div>
       <div style={{ fontSize: "12px", color: "#475569" }}>
-        Aplicado: {formatMoney(appliedUnitPriceCents)}/ton
+        Base padrao: {formatMoney(details.baseUnitPriceCents)}/ton
       </div>
       <div style={{ fontSize: "12px", color: "#475569" }}>Economia: {savingsLabel}</div>
     </div>
@@ -5355,293 +5382,117 @@ function SimpleCrudList({
 }
 
 function PriceTableListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
-  const [tables, setTables] = useState<Array<{ id: string; name: string; needsPush?: boolean }>>(
-    []
-  );
-  const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
   const [items, setItems] = useState<
-    Array<{ id: string; productCode: string | null; productDesc: string; unitPriceCents: number }>
+    Array<{
+      id: string | null;
+      productId: string;
+      productCode: string | null;
+      productDescription: string;
+      unitPriceCents: number | null;
+      unit: string;
+    }>
   >([]);
-  const [products, setProducts] = useState<
-    Array<{ id: string; code: string; description: string }>
-  >([]);
-  const [newTableName, setNewTableName] = useState("");
-  const [editingTableId, setEditingTableId] = useState<string | null>(null);
-  const [editingTableName, setEditingTableName] = useState("");
-  const [itemProductId, setItemProductId] = useState("");
-  const [itemPriceReais, setItemPriceReais] = useState("");
+  const [selectedProductId, setSelectedProductId] = useState("");
+  const [priceReais, setPriceReais] = useState("");
   const [message, setPriceMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    loadTables();
-    loadProducts();
+    void loadPrices();
   }, []);
 
-  useEffect(() => {
-    if (selectedTableId) {
-      loadTableDetails(selectedTableId);
-    }
-  }, [selectedTableId]);
-
-  async function loadTables(): Promise<void> {
-    const list = (await desktopApi.priceTablesList()) as Array<{ id: string; name: string }>;
-    setTables(list);
+  async function loadPrices(): Promise<void> {
+    const list = await desktopApi.productDefaultPricesList();
+    setItems(list);
   }
 
-  async function loadProducts(): Promise<void> {
-    const result = await desktopApi.queryCache({
-      entityType: "product",
-      activeOnly: true,
-      limit: 200
-    });
-    setProducts(result.rows as Array<{ id: string; code: string; description: string }>);
-  }
-
-  async function loadTableDetails(tableId: string): Promise<void> {
-    const itemList = (await desktopApi.priceTablesListItems(tableId)) as Array<{
-      id: string;
-      productCode: string | null;
-      productDesc: string;
-      unitPriceCents: number;
-    }>;
-    setItems(itemList);
-  }
-
-  async function handleCreateTable(): Promise<void> {
-    if (!newTableName.trim()) return;
-    await desktopApi.priceTablesCreate({ name: newTableName.trim() });
-    setNewTableName("");
-    setPriceMessage("Tabela criada.");
-    await loadTables();
-  }
-
-  async function handleRenameTable(): Promise<void> {
-    if (!editingTableId || !editingTableName.trim()) return;
-    await desktopApi.priceTablesUpdateName(editingTableId, editingTableName.trim());
-    setEditingTableId(null);
-    setEditingTableName("");
-    setPriceMessage("Tabela renomeada.");
-    await loadTables();
-  }
-
-  async function handleDeleteTable(id: string): Promise<void> {
-    if (!window.confirm("Excluir tabela e todos os seus itens?")) return;
-    await desktopApi.priceTablesDelete(id);
-    if (selectedTableId === id) setSelectedTableId(null);
-    setPriceMessage("Tabela excluida.");
-    await loadTables();
-  }
-
-  async function handleAddItem(): Promise<void> {
-    if (!selectedTableId || !itemProductId || !itemPriceReais.trim()) return;
-    const unitPriceCents = parseMoneyInputToCents(itemPriceReais);
+  async function handleSaveDefaultPrice(): Promise<void> {
+    if (!selectedProductId || !priceReais.trim()) return;
+    const unitPriceCents = parseMoneyInputToCents(priceReais);
     if (unitPriceCents === null) return;
 
-    await desktopApi.priceTablesAddItem({
-      priceTableId: selectedTableId,
-      productId: itemProductId,
+    await desktopApi.productDefaultPricesUpsert({
+      productId: selectedProductId,
       unitPriceCents,
       unit: "ton"
     });
-    setItemProductId("");
-    setItemPriceReais("");
-    setPriceMessage("Item adicionado.");
-    await loadTableDetails(selectedTableId);
-  }
-
-  async function handleRemoveItem(itemId: string): Promise<void> {
-    await desktopApi.priceTablesRemoveItem(itemId);
-    setPriceMessage("Item removido.");
-    if (selectedTableId) await loadTableDetails(selectedTableId);
+    setSelectedProductId("");
+    setPriceReais("");
+    setPriceMessage("Preco padrao salvo.");
+    await loadPrices();
   }
 
   return (
-    <div
-      style={{ display: "grid", gridTemplateColumns: "250px 1fr", gap: "20px", minHeight: "400px" }}
-    >
-      <div style={{ borderRight: "1px solid var(--kr-border)", paddingRight: "16px" }}>
-        <h3 style={{ marginTop: 0 }}>Tabelas</h3>
-        <div style={{ display: "flex", gap: "6px", marginBottom: "12px" }}>
-          <input
-            placeholder="Nova tabela..."
-            value={newTableName}
-            onChange={(e) => setNewTableName(e.target.value)}
-            style={{ ...styles.input, flex: 1, padding: "6px 8px", fontSize: "13px" }}
-          />
-          <button
-            type="button"
-            onClick={handleCreateTable}
-            style={{ ...styles.primaryButton, padding: "6px 10px", fontSize: "13px" }}
-          >
-            +
-          </button>
-        </div>
-
-        {tables.map((table) => (
-          <div
-            key={table.id}
-            onClick={() => setSelectedTableId(table.id)}
-            style={{
-              padding: "8px 10px",
-              cursor: "pointer",
-              borderRadius: "8px",
-              marginBottom: "4px",
-              background: selectedTableId === table.id ? "#f1f5f9" : "transparent",
-              color: selectedTableId === table.id ? "#0f172a" : "var(--kr-text-strong)",
-              fontWeight: selectedTableId === table.id ? 700 : 400
-            }}
-          >
-            {editingTableId === table.id ? (
-              <div style={{ display: "flex", gap: "4px" }}>
-                <input
-                  value={editingTableName}
-                  onChange={(e) => setEditingTableName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") handleRenameTable();
-                  }}
-                  style={{ ...styles.input, flex: 1, padding: "4px 6px", fontSize: "12px" }}
-                  autoFocus
-                />
-                <button
-                  type="button"
-                  onClick={handleRenameTable}
-                  style={{ ...styles.primaryButton, padding: "4px 6px", fontSize: "11px" }}
-                >
-                  OK
-                </button>
-              </div>
-            ) : (
-              <div
-                style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}
-              >
-                <span style={{ fontSize: "14px" }}>{table.name}</span>
-                <div style={{ display: "flex", gap: "4px" }}>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setEditingTableId(table.id);
-                      setEditingTableName(table.name);
-                    }}
-                    style={{
-                      border: "none",
-                      background: "none",
-                      cursor: "pointer",
-                      fontSize: "12px",
-                      color: "#64748b"
-                    }}
-                  >
-                    ✎
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteTable(table.id);
-                    }}
-                    style={{
-                      border: "none",
-                      background: "none",
-                      cursor: "pointer",
-                      fontSize: "12px",
-                      color: "#b91c1c"
-                    }}
-                  >
-                    ✕
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-
+    <div style={{ display: "grid", gap: "16px" }}>
       <div>
-        {message ? (
-          <p style={{ color: "#16a34a", fontWeight: 700, marginBottom: "8px" }}>{message}</p>
-        ) : null}
-
-        {!selectedTableId ? (
-          <p style={{ color: "#64748b" }}>Selecione uma tabela para ver seus itens.</p>
-        ) : (
-          <>
-            <h3 style={{ marginTop: 0 }}>Itens da Tabela</h3>
-
-            <div
-              style={{ display: "flex", gap: "8px", marginBottom: "16px", alignItems: "flex-end" }}
-            >
-              <Field label="Produto" style={{ flex: 1, marginBottom: 0 }}>
-                <select
-                  value={itemProductId}
-                  onChange={(e) => setItemProductId(e.target.value)}
-                  style={getInputStyle(false)}
-                >
-                  <option value="">Selecione...</option>
-                  {products.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.code} - {p.description}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <div style={{ width: "150px" }}>
-                <MoneyInput
-                  label="Preco/ton (R$)"
-                  value={itemPriceReais}
-                  onChange={(formatted) => setItemPriceReais(formatted)}
-                  placeholder="150,00"
-                  allowZero={false}
-                />
-              </div>
-              <button
-                type="button"
-                onClick={handleAddItem}
-                style={{ ...styles.primaryButton, padding: "10px 14px" }}
-              >
-                Adicionar
-              </button>
-            </div>
-
-            {items.length === 0 ? (
-              <p style={{ color: "#64748b", marginBottom: "24px" }}>Nenhum item cadastrado.</p>
-            ) : (
-              <div style={{ marginBottom: "24px" }}>
-                {items.map((item) => (
-                  <div
-                    key={item.id}
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      padding: "8px 0",
-                      borderTop: "1px solid #e2e8f0"
-                    }}
-                  >
-                    <span>
-                      <strong>{item.productDesc}</strong>
-                      {item.productCode ? ` (${item.productCode})` : ""} —{" "}
-                      {formatMoney(item.unitPriceCents)}/ton
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveItem(item.id)}
-                      style={{
-                        border: "none",
-                        background: "none",
-                        cursor: "pointer",
-                        color: "#b91c1c",
-                        fontSize: "16px"
-                      }}
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </>
-        )}
+        <h3 style={{ marginTop: 0 }}>Preco padrao por produto</h3>
+        <p style={styles.muted}>
+          Este preco e usado quando o cliente nao tem preco especial cadastrado.
+        </p>
       </div>
+
+      {message ? (
+        <p style={{ color: "#16a34a", fontWeight: 700, marginBottom: "8px" }}>{message}</p>
+      ) : null}
+
+      <div style={{ display: "flex", gap: "8px", alignItems: "flex-end", flexWrap: "wrap" }}>
+        <Field label="Produto" style={{ flex: 1, minWidth: "260px", marginBottom: 0 }}>
+          <select
+            value={selectedProductId}
+            onChange={(e) => setSelectedProductId(e.target.value)}
+            style={getInputStyle(false)}
+          >
+            <option value="">Selecione...</option>
+            {items.map((item) => (
+              <option key={item.productId} value={item.productId}>
+                {item.productCode ? `${item.productCode} - ` : ""}
+                {item.productDescription}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <div style={{ width: "180px" }}>
+          <MoneyInput
+            label="Preco/ton (R$)"
+            value={priceReais}
+            onChange={setPriceReais}
+            placeholder="150,00"
+            allowZero={false}
+          />
+        </div>
+        <button
+          type="button"
+          onClick={() => void handleSaveDefaultPrice()}
+          style={{ ...styles.primaryButton, padding: "10px 14px" }}
+        >
+          Salvar preco
+        </button>
+      </div>
+
+      {items.length === 0 ? (
+        <p style={{ color: "#64748b", marginBottom: "24px" }}>Nenhum produto encontrado.</p>
+      ) : (
+        <div style={{ marginBottom: "24px" }}>
+          {items.map((item) => (
+            <div
+              key={item.productId}
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: "12px",
+                padding: "8px 0",
+                borderTop: "1px solid #e2e8f0"
+              }}
+            >
+              <span>
+                <strong>{item.productDescription}</strong>
+                {item.productCode ? ` (${item.productCode})` : ""}
+              </span>
+              <span style={{ fontWeight: 700 }}>{formatMoney(item.unitPriceCents)}/ton</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -67,6 +67,23 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:get-price", customerId, productId),
   getPriceDetailsForCustomerProduct: (customerId: string, productId: string) =>
     ipcRenderer.invoke("desktop:get-price-details", customerId, productId),
+  productDefaultPricesList: () => ipcRenderer.invoke("desktop:product-default-prices-list"),
+  productDefaultPricesUpsert: (input: unknown) =>
+    ipcRenderer.invoke("desktop:product-default-prices-upsert", input),
+  customerSpecialPricesList: (customerId: string) =>
+    ipcRenderer.invoke("desktop:customer-special-prices-list", customerId),
+  customerSpecialPricesSet: (input: unknown) =>
+    ipcRenderer.invoke("desktop:customer-special-prices-set", input),
+  customerSpecialPricesRemove: (customerId: string, productId: string) =>
+    ipcRenderer.invoke("desktop:customer-special-prices-remove", customerId, productId),
+  customerCreditBalance: (customerId: string) =>
+    ipcRenderer.invoke("desktop:customer-credit-balance", customerId),
+  customerCreditMovements: (customerId: string, limit?: number) =>
+    ipcRenderer.invoke("desktop:customer-credit-movements", customerId, limit),
+  quotationsCreate: (input: unknown) => ipcRenderer.invoke("desktop:quotations-create", input),
+  quotationsCancel: (id: string) => ipcRenderer.invoke("desktop:quotations-cancel", id),
+  quotationsListOpenForCustomer: (customerId: string) =>
+    ipcRenderer.invoke("desktop:quotations-list-open-for-customer", customerId),
   customersCreate: (input: unknown) => ipcRenderer.invoke("desktop:customers-create", input),
   customersUpdate: (id: string, input: unknown) =>
     ipcRenderer.invoke("desktop:customers-update", id, input),
