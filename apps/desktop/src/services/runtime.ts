@@ -132,6 +132,7 @@ export interface OmieLoopProgress {
   customersPulled: number;
   productsSynced: number;
   paymentTermsSynced: number;
+  suppliersSynced: number;
   customersPage: number;
   productsPage: number;
   paymentTermsPage: number;
@@ -139,6 +140,7 @@ export interface OmieLoopProgress {
   lastBatchCustomers: number;
   lastBatchProducts: number;
   lastBatchPaymentTerms: number;
+  lastBatchSuppliers: number;
   lastUpdatedAt?: string | null;
 }
 
@@ -1292,6 +1294,7 @@ export class DesktopRuntime {
     customersPushed: number;
     productsSynced: number;
     paymentTermsSynced: number;
+    suppliersSynced: number;
     ordersProcessed: number;
     ordersFailed: number;
     customersPushFailed: number;
@@ -1304,6 +1307,7 @@ export class DesktopRuntime {
         customersPushed: 0,
         productsSynced: 0,
         paymentTermsSynced: 0,
+        suppliersSynced: 0,
         ordersProcessed: 0,
         ordersFailed: 0,
         customersPushFailed: 0,
@@ -1323,6 +1327,7 @@ export class DesktopRuntime {
       customersPushed: customerPush.pushed,
       productsSynced: loop.productsSynced + finalLoop.productsSynced,
       paymentTermsSynced: loop.paymentTermsSynced + finalLoop.paymentTermsSynced,
+      suppliersSynced: loop.suppliersSynced + finalLoop.suppliersSynced,
       ordersProcessed: queue.processed,
       ordersFailed: queue.failed,
       customersPushFailed: customerPush.failed,
@@ -1340,6 +1345,7 @@ export class DesktopRuntime {
     customersPulled: number;
     productsSynced: number;
     paymentTermsSynced: number;
+    suppliersSynced: number;
     iterations: number;
     finished: boolean;
     errors: string[];
@@ -1349,6 +1355,7 @@ export class DesktopRuntime {
     let customersPulled = 0;
     let productsSynced = 0;
     let paymentTermsSynced = 0;
+    let suppliersSynced = 0;
     const errors: string[] = [];
     let iterations = 0;
 
@@ -1369,6 +1376,7 @@ export class DesktopRuntime {
       customersPulled += result.customersPulled;
       productsSynced += result.productsSynced;
       paymentTermsSynced += result.paymentTermsSynced;
+      suppliersSynced += result.suppliersSynced;
       errors.push(...result.errors);
 
       const progress: OmieLoopProgress = {
@@ -1376,13 +1384,15 @@ export class DesktopRuntime {
         customersPulled,
         productsSynced,
         paymentTermsSynced,
+        suppliersSynced,
         customersPage: after.customersPage,
         productsPage: after.productsPage,
         paymentTermsPage: after.paymentTermsPage,
         inProgress: after.inProgress,
         lastBatchCustomers: result.customersPulled,
         lastBatchProducts: result.productsSynced,
-        lastBatchPaymentTerms: result.paymentTermsSynced
+        lastBatchPaymentTerms: result.paymentTermsSynced,
+        lastBatchSuppliers: result.suppliersSynced
       };
       options.onProgress?.(progress);
 
@@ -1390,7 +1400,7 @@ export class DesktopRuntime {
       const totalAfter = after.customersPage + after.productsPage + after.paymentTermsPage;
       const noProgress =
         totalAfter <= totalBefore &&
-        result.customersPulled + result.productsSynced + result.paymentTermsSynced === 0;
+        result.customersPulled + result.productsSynced + result.paymentTermsSynced + result.suppliersSynced === 0;
       if (noProgress || !after.inProgress) {
         writeOmiePullState(this.database, { inProgress: false });
         this.cacheStore.invalidateAll(identity.companyId);
@@ -1398,6 +1408,7 @@ export class DesktopRuntime {
           customersPulled,
           productsSynced,
           paymentTermsSynced,
+          suppliersSynced,
           iterations,
           finished: !after.inProgress,
           errors
@@ -1410,6 +1421,7 @@ export class DesktopRuntime {
       customersPulled,
       productsSynced,
       paymentTermsSynced,
+      suppliersSynced,
       iterations,
       finished: false,
       errors
@@ -1423,6 +1435,7 @@ export class DesktopRuntime {
       customersPulled: 0,
       productsSynced: 0,
       paymentTermsSynced: 0,
+      suppliersSynced: 0,
       customersPage: state.customersPage,
       productsPage: state.productsPage,
       paymentTermsPage: state.paymentTermsPage,
@@ -1430,6 +1443,7 @@ export class DesktopRuntime {
       lastBatchCustomers: 0,
       lastBatchProducts: 0,
       lastBatchPaymentTerms: 0,
+      lastBatchSuppliers: 0,
       lastUpdatedAt: state.lastUpdatedAt
     };
   }

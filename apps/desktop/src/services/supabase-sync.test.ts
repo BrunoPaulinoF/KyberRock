@@ -239,6 +239,7 @@ describe("supabase sync", () => {
         customersPushed: 0,
         productsSynced: 1,
         paymentTermsSynced: 1,
+        suppliersSynced: 0,
         errors: []
       });
       expect(
@@ -296,7 +297,8 @@ describe("supabase sync", () => {
       expect(result).toMatchObject({
         customersPulled: 1,
         productsSynced: 1,
-        paymentTermsSynced: 1
+        paymentTermsSynced: 1,
+        suppliersSynced: 0
       });
       expect(
         database

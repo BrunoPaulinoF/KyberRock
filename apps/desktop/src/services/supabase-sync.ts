@@ -63,6 +63,7 @@ export interface OmieCloudSyncResult {
   customersPushed: number;
   productsSynced: number;
   paymentTermsSynced: number;
+  suppliersSynced: number;
   errors: string[];
 }
 
@@ -590,6 +591,7 @@ export function applyOmieReferenceData(
     customersPushed: 0,
     productsSynced: products.length,
     paymentTermsSynced: paymentTerms.length,
+    suppliersSynced: 0,
     errors: []
   };
 }

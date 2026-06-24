@@ -4,6 +4,8 @@ import {
   OmiePaymentTermsService,
   OmieProductsService,
   OmieReceivablesService,
+  OmieSuppliersService,
+  hasTransportadoraTag,
   type CreateCustomerInput,
   type Product,
   type UpdateCustomerInput
@@ -21,6 +23,7 @@ export interface OmieSyncResult {
   customersPushed: number;
   productsSynced: number;
   paymentTermsSynced: number;
+  suppliersSynced: number;
   errors: string[];
 }
 
@@ -36,6 +39,7 @@ export class OmieSyncService {
   private readonly productsService: OmieProductsService;
   private readonly paymentTermsService: OmiePaymentTermsService;
   private readonly receivablesService: OmieReceivablesService;
+  private readonly suppliersService: OmieSuppliersService;
 
   constructor(
     private readonly client: OmieClient,
@@ -45,6 +49,7 @@ export class OmieSyncService {
     this.productsService = new OmieProductsService(client);
     this.paymentTermsService = new OmiePaymentTermsService(client);
     this.receivablesService = new OmieReceivablesService(client);
+    this.suppliersService = new OmieSuppliersService(client);
   }
 
   async syncAll(companyId: string): Promise<OmieSyncResult> {
@@ -53,6 +58,7 @@ export class OmieSyncService {
       customersPushed: 0,
       productsSynced: 0,
       paymentTermsSynced: 0,
+      suppliersSynced: 0,
       errors: []
     };
 
@@ -74,6 +80,12 @@ export class OmieSyncService {
       result.paymentTermsSynced = await this.syncPaymentTerms(companyId);
     } catch (err) {
       result.errors.push(`Condicoes: ${(err as Error).message}`);
+    }
+
+    try {
+      result.suppliersSynced = await this.syncSuppliers(companyId);
+    } catch (err) {
+      result.errors.push(`Transportadoras: ${(err as Error).message}`);
     }
 
     return result;
@@ -423,6 +435,39 @@ export class OmieSyncService {
     return count;
   }
 
+  async syncSuppliers(companyId: string): Promise<number> {
+    const suppliers = await this.suppliersService.listAll();
+    const transportadoras = suppliers.filter((s) => hasTransportadoraTag(s));
+
+    const upsert = this.db.prepare(`
+      INSERT INTO carriers (
+        id, company_id, omie_customer_id, name, document, source,
+        is_active, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 'omie', ?, datetime('now'), datetime('now'))
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        document = excluded.document,
+        is_active = excluded.is_active,
+        updated_at = datetime('now')
+    `);
+
+    let count = 0;
+    for (const supplier of transportadoras) {
+      const localId = this.findCarrierLocalIdByOmieId(companyId, supplier.id) ?? `omie_supplier_${supplier.id}`;
+      upsert.run(
+        localId,
+        companyId,
+        supplier.id,
+        supplier.name,
+        supplier.document || null,
+        supplier.isActive ? 1 : 0
+      );
+      count++;
+    }
+
+    return count;
+  }
+
   private findLocalIdByOmieId(companyId: string, omieCustomerId: number): string | null {
     const row = this.db
       .prepare(
@@ -430,6 +475,17 @@ export class OmieSyncService {
          WHERE company_id = ? AND omie_customer_id = ? AND deleted_at IS NULL LIMIT 1`
       )
       .get(companyId, omieCustomerId) as { id: string } | undefined;
+
+    return row?.id ?? null;
+  }
+
+  private findCarrierLocalIdByOmieId(companyId: string, omieId: number): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT id FROM carriers
+         WHERE company_id = ? AND omie_customer_id = ? AND deleted_at IS NULL LIMIT 1`
+      )
+      .get(companyId, omieId) as { id: string } | undefined;
 
     return row?.id ?? null;
   }

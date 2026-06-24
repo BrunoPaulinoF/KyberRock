@@ -2836,7 +2836,6 @@ function WeighingForm({
   );
   const [availableCarrierIds, setAvailableCarrierIds] = useState<string[] | undefined>(undefined);
   const [availableDriverIds, setAvailableDriverIds] = useState<string[] | undefined>(undefined);
-  const [driverIsIndependent, setDriverIsIndependent] = useState(false);
 
   // Buscar transportadoras vinculadas ao cliente
   useEffect(() => {
@@ -2884,7 +2883,6 @@ function WeighingForm({
   useEffect(() => {
     async function load() {
       if (!desktopApi || !form.driverId) {
-        setDriverIsIndependent(false);
         setForm((prev) => ({ ...prev, driverIsIndependent: false }));
         return;
       }
@@ -2895,7 +2893,6 @@ function WeighingForm({
           (d) => d.id === form.driverId
         );
         const isIndependent = Boolean(driver?.is_independent);
-        setDriverIsIndependent(isIndependent);
         setForm((prev) => ({ ...prev, driverIsIndependent: isIndependent }));
 
         if (carriers.length === 1 && !isIndependent) {
@@ -2906,7 +2903,6 @@ function WeighingForm({
           setForm((prev) => ({ ...prev, carrierId: "" }));
         }
       } catch {
-        setDriverIsIndependent(false);
         setForm((prev) => ({ ...prev, driverIsIndependent: false }));
       }
     }
@@ -4827,7 +4823,7 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   const [error, setError] = useState<string | null>(null);
 
   // Estatísticas em tempo real
-  const [readings, setReadings] = useState<Array<{ weightKg: number; stable: boolean; at: number }>>([]);
+  const readingsRef = useRef<Array<{ weightKg: number; stable: boolean; at: number }>>([]);
   const [stats, setStats] = useState({
     count: 0,
     min: 0,
@@ -4847,23 +4843,21 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
 
     const handler = (r: { weightKg: number; stable: boolean }) => {
       setReading(r);
-      setReadings((prev) => {
-        const next = [...prev, { ...r, at: Date.now() }].slice(-100);
-        const weights = next.map((x) => x.weightKg);
-        const min = Math.min(...weights);
-        const max = Math.max(...weights);
-        const avg = Math.round(weights.reduce((a, b) => a + b, 0) / weights.length);
-        const stableCount = next.filter((x) => x.stable).length;
-        setStats({
-          count: next.length,
-          min,
-          max,
-          avg,
-          variation: max - min,
-          stableCount,
-          unstableCount: next.length - stableCount
-        });
-        return next;
+      const next = [...readingsRef.current, { ...r, at: Date.now() }].slice(-100);
+      readingsRef.current = next;
+      const weights = next.map((x) => x.weightKg);
+      const min = Math.min(...weights);
+      const max = Math.max(...weights);
+      const avg = Math.round(weights.reduce((a, b) => a + b, 0) / weights.length);
+      const stableCount = next.filter((x) => x.stable).length;
+      setStats({
+        count: next.length,
+        min,
+        max,
+        avg,
+        variation: max - min,
+        stableCount,
+        unstableCount: next.length - stableCount
       });
     };
     desktopApi.onScaleReading(handler as (reading: unknown) => void);

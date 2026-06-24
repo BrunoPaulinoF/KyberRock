@@ -146,6 +146,7 @@ describe("OmieSyncService", () => {
     vi.spyOn(service, "syncCustomersBidirectional").mockResolvedValue({ pulled: 5, pushed: 2 });
     vi.spyOn(service, "syncProducts").mockRejectedValue(new Error("API error"));
     vi.spyOn(service, "syncPaymentTerms").mockResolvedValue(3);
+    vi.spyOn(service, "syncSuppliers").mockResolvedValue(4);
 
     const result = await service.syncAll("company-1");
 
@@ -153,6 +154,7 @@ describe("OmieSyncService", () => {
     expect(result.customersPushed).toBe(2);
     expect(result.productsSynced).toBe(0);
     expect(result.paymentTermsSynced).toBe(3);
+    expect(result.suppliersSynced).toBe(4);
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]).toContain("Produtos");
   });
