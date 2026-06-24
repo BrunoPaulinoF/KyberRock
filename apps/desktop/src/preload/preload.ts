@@ -130,6 +130,23 @@ const desktopApi = {
   carriersList: () => ipcRenderer.invoke("desktop:carriers-list"),
   carriersGetVehicles: (carrierId: string) =>
     ipcRenderer.invoke("desktop:carriers-get-vehicles", carrierId),
+  linkCustomerCarrier: (customerId: string, carrierId: string) =>
+    ipcRenderer.invoke("desktop:link-customer-carrier", customerId, carrierId),
+  unlinkCustomerCarrier: (customerId: string, carrierId: string) =>
+    ipcRenderer.invoke("desktop:unlink-customer-carrier", customerId, carrierId),
+  listCarriersByCustomer: (customerId: string) =>
+    ipcRenderer.invoke("desktop:list-carriers-by-customer", customerId),
+  listCustomersByCarrier: (carrierId: string) =>
+    ipcRenderer.invoke("desktop:list-customers-by-carrier", carrierId),
+  linkDriverCarrier: (driverId: string, carrierId: string) =>
+    ipcRenderer.invoke("desktop:link-driver-carrier", driverId, carrierId),
+  unlinkDriverCarrier: (driverId: string, carrierId: string) =>
+    ipcRenderer.invoke("desktop:unlink-driver-carrier", driverId, carrierId),
+  listCarriersByDriver: (driverId: string) =>
+    ipcRenderer.invoke("desktop:list-carriers-by-driver", driverId),
+  listDriversByCarrier: (carrierId: string) =>
+    ipcRenderer.invoke("desktop:list-drivers-by-carrier", carrierId),
+  listIndependentDrivers: () => ipcRenderer.invoke("desktop:list-independent-drivers"),
   getOmieStatus: () => ipcRenderer.invoke("desktop:get-omie-status"),
   scaleConnect: (config: unknown) => ipcRenderer.invoke("desktop:scale-connect", config),
   scaleDisconnect: () => ipcRenderer.invoke("desktop:scale-disconnect"),

@@ -618,5 +618,42 @@ CREATE INDEX IF NOT EXISTS idx_quotations_customer_status
 CREATE INDEX IF NOT EXISTS idx_weighing_operations_quotation
   ON weighing_operations(quotation_id);
 `
+  },
+  {
+    version: 14,
+    name: "customer_carrier_driver_carrier_links_and_price_password",
+    sql: `
+ALTER TABLE drivers ADD COLUMN is_independent INTEGER NOT NULL DEFAULT 0 CHECK (is_independent IN (0, 1));
+
+ALTER TABLE companies ADD COLUMN price_change_password TEXT NOT NULL DEFAULT '0000';
+
+CREATE TABLE IF NOT EXISTS customer_carriers (
+  id TEXT PRIMARY KEY,
+  customer_id TEXT NOT NULL REFERENCES customers(id),
+  carrier_id TEXT NOT NULL REFERENCES carriers(id),
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT,
+  sync_version INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS driver_carriers (
+  id TEXT PRIMARY KEY,
+  driver_id TEXT NOT NULL REFERENCES drivers(id),
+  carrier_id TEXT NOT NULL REFERENCES carriers(id),
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT,
+  sync_version INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_customer_carriers_customer ON customer_carriers(customer_id, is_active, deleted_at);
+CREATE INDEX IF NOT EXISTS idx_customer_carriers_carrier ON customer_carriers(carrier_id, is_active, deleted_at);
+CREATE INDEX IF NOT EXISTS idx_driver_carriers_driver ON driver_carriers(driver_id, is_active, deleted_at);
+CREATE INDEX IF NOT EXISTS idx_driver_carriers_carrier ON driver_carriers(carrier_id, is_active, deleted_at);
+`
   }
 ];
+

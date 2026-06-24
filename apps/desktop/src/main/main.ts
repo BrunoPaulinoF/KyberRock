@@ -86,6 +86,19 @@ async function createMainWindow(): Promise<void> {
   runtime.setReceiptPrinter(createElectronReceiptPrinter(mainWindow));
   runtime.setFiscalDocumentPrinter(createElectronFiscalDocumentPrinter(mainWindow));
 
+  // Auto-connect scale on startup if configured
+  try {
+    const connected = await runtime.tryAutoConnectScale();
+    if (connected) {
+      runtime.onScaleReading((reading) => {
+        mainWindow?.webContents.send("desktop:scale-reading", reading);
+      });
+      writeStartupLog("scale:auto-connected");
+    }
+  } catch {
+    writeStartupLog("scale:auto-connect:skipped");
+  }
+
   const devServerUrl = process.env.KYBERROCK_DESKTOP_DEV_SERVER_URL;
 
   if (devServerUrl) {
@@ -788,6 +801,51 @@ function registerIpcHandlers(): void {
   ipcMain.handle("desktop:carriers-get-vehicles", (_event, carrierId: string) => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.getCarrierVehicles(carrierId);
+  });
+
+  ipcMain.handle("desktop:link-customer-carrier", (_event, customerId: string, carrierId: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.linkCustomerCarrier(customerId, carrierId);
+  });
+
+  ipcMain.handle("desktop:unlink-customer-carrier", (_event, customerId: string, carrierId: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.unlinkCustomerCarrier(customerId, carrierId);
+  });
+
+  ipcMain.handle("desktop:list-carriers-by-customer", (_event, customerId: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.listCarriersByCustomer(customerId);
+  });
+
+  ipcMain.handle("desktop:list-customers-by-carrier", (_event, carrierId: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.listCustomersByCarrier(carrierId);
+  });
+
+  ipcMain.handle("desktop:link-driver-carrier", (_event, driverId: string, carrierId: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.linkDriverCarrier(driverId, carrierId);
+  });
+
+  ipcMain.handle("desktop:unlink-driver-carrier", (_event, driverId: string, carrierId: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.unlinkDriverCarrier(driverId, carrierId);
+  });
+
+  ipcMain.handle("desktop:list-carriers-by-driver", (_event, driverId: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.listCarriersByDriver(driverId);
+  });
+
+  ipcMain.handle("desktop:list-drivers-by-carrier", (_event, carrierId: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.listDriversByCarrier(carrierId);
+  });
+
+  ipcMain.handle("desktop:list-independent-drivers", () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.listIndependentDrivers();
   });
 
   ipcMain.handle("desktop:get-omie-status", () => {

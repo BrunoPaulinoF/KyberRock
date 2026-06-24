@@ -288,6 +288,7 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
   const [specialPrices, setSpecialPrices] = useState<CustomerSpecialPriceEntry[]>([]);
   const [specialProductId, setSpecialProductId] = useState("");
   const [specialPriceReais, setSpecialPriceReais] = useState("");
+  const [linkedCarrierIds, setLinkedCarrierIds] = useState<string[]>([]);
 
   const pageSize = 50;
 
@@ -344,6 +345,7 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
     setSpecialPrices([]);
     setSpecialProductId("");
     setSpecialPriceReais("");
+    setLinkedCarrierIds([]);
   }
 
   function openCreateForm(): void {
@@ -379,12 +381,38 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
     setFormError(null);
     setShowForm(true);
     void loadSpecialPrices(customer.id);
+    void loadLinkedCarriers(customer.id);
   }
 
   async function loadSpecialPrices(customerId: string): Promise<void> {
     if (!desktopApi) return;
     const rows = await desktopApi.customerSpecialPricesList(customerId);
     setSpecialPrices(rows as CustomerSpecialPriceEntry[]);
+  }
+
+  async function loadLinkedCarriers(customerId: string): Promise<void> {
+    if (!desktopApi) return;
+    try {
+      const rows = await desktopApi.listCarriersByCustomer(customerId);
+      setLinkedCarrierIds(rows.map((r) => r.id));
+    } catch {
+      setLinkedCarrierIds([]);
+    }
+  }
+
+  async function handleToggleCarrier(carrierId: string): Promise<void> {
+    if (!desktopApi || !editingId) return;
+    try {
+      if (linkedCarrierIds.includes(carrierId)) {
+        await desktopApi.unlinkCustomerCarrier(editingId, carrierId);
+        setLinkedCarrierIds((prev) => prev.filter((id) => id !== carrierId));
+      } else {
+        await desktopApi.linkCustomerCarrier(editingId, carrierId);
+        setLinkedCarrierIds((prev) => [...prev, carrierId]);
+      }
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Erro ao vincular transportadora");
+    }
   }
 
   function validateForm(): string | null {
@@ -697,6 +725,30 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
                   />
                 </Field>
               </div>
+            </section>
+
+            <section style={styles.formSection}>
+              <h4 style={styles.formSectionTitle}>Transportadoras vinculadas</h4>
+              {editingId ? (
+                <div style={{ display: "grid", gap: "6px" }}>
+                  {carriers.length === 0 ? (
+                    <p style={styles.cellMuted}>Nenhuma transportadora cadastrada.</p>
+                  ) : (
+                    carriers.map((carrier) => (
+                      <label key={carrier.id} style={styles.checkbox}>
+                        <input
+                          type="checkbox"
+                          checked={linkedCarrierIds.includes(carrier.id)}
+                          onChange={() => void handleToggleCarrier(carrier.id)}
+                        />
+                        {carrier.name}
+                      </label>
+                    ))
+                  )}
+                </div>
+              ) : (
+                <p style={styles.cellMuted}>Salve o cliente antes de vincular transportadoras.</p>
+              )}
             </section>
 
             <section style={styles.formSection}>

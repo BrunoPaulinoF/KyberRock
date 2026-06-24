@@ -190,6 +190,15 @@ export interface KyberRockDesktopApi {
   carriersGetVehicles: (
     carrierId: string
   ) => Promise<Array<{ id: string; plate: string; description: string | null }>>;
+  linkCustomerCarrier: (customerId: string, carrierId: string) => Promise<unknown>;
+  unlinkCustomerCarrier: (customerId: string, carrierId: string) => Promise<void>;
+  listCarriersByCustomer: (customerId: string) => Promise<Array<{ id: string; name: string; document: string | null }>>;
+  listCustomersByCarrier: (carrierId: string) => Promise<Array<{ id: string; trade_name: string; legal_name: string }>>;
+  linkDriverCarrier: (driverId: string, carrierId: string) => Promise<unknown>;
+  unlinkDriverCarrier: (driverId: string, carrierId: string) => Promise<void>;
+  listCarriersByDriver: (driverId: string) => Promise<Array<{ id: string; name: string; document: string | null }>>;
+  listDriversByCarrier: (carrierId: string) => Promise<Array<{ id: string; name: string; document: string | null; is_independent: number }>>;
+  listIndependentDrivers: () => Promise<Array<{ id: string; name: string; document: string | null }>>;
   getOmieStatus: () => Promise<{
     configured: boolean;
     appKeyMasked: string | null;

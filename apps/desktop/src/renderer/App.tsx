@@ -3318,6 +3318,7 @@ function QuickDriverModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
   const [name, setName] = useState("");
   const [documentInput, setDocumentInput] = useState("");
   const [phone, setPhone] = useState("");
+  const [isIndependent, setIsIndependent] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -3342,7 +3343,8 @@ function QuickDriverModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
       const result = await desktopApi.driversCreate({
         name: name.trim(),
         document: normalizedDocument || undefined,
-        phone: normalizedPhone || undefined
+        phone: normalizedPhone || undefined,
+        isIndependent
       });
       onCreated((result as { id: string }).id);
     } catch (err) {
@@ -3373,6 +3375,14 @@ function QuickDriverModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
           placeholder="000.000.000-00"
         />
         <PhoneInput label="Telefone" value={phone} onChange={setPhone} />
+        <label style={styles.checkboxLabel}>
+          <input
+            type="checkbox"
+            checked={isIndependent}
+            onChange={(e) => setIsIndependent(e.target.checked)}
+          />
+          Motorista independente (frete proprio)
+        </label>
         <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
           <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
               {saving ? "Salvando..." : "Salvar"}
@@ -4697,8 +4707,21 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   const [testResult, setTestResult] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const [reading, setReading] = useState<{ weightKg: number; stable: boolean } | null>(null);
-  const [status, setStatus] = useState<string>("Disconectado");
+  const [status, setStatus] = useState<string>("Desconectado");
   const [error, setError] = useState<string | null>(null);
+
+  // Estatísticas em tempo real
+  const [readings, setReadings] = useState<Array<{ weightKg: number; stable: boolean; at: number }>>([]);
+  const [stats, setStats] = useState({
+    count: 0,
+    min: 0,
+    max: 0,
+    avg: 0,
+    variation: 0,
+    stableCount: 0,
+    unstableCount: 0
+  });
+  const [testProgress, setTestProgress] = useState<string | null>(null);
 
   const connectedRef = useRef(connected);
   connectedRef.current = connected;
@@ -4706,7 +4729,27 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   useEffect(() => {
     if (!desktopApi) return;
 
-    const handler = (r: { weightKg: number; stable: boolean }) => setReading(r);
+    const handler = (r: { weightKg: number; stable: boolean }) => {
+      setReading(r);
+      setReadings((prev) => {
+        const next = [...prev, { ...r, at: Date.now() }].slice(-100);
+        const weights = next.map((x) => x.weightKg);
+        const min = Math.min(...weights);
+        const max = Math.max(...weights);
+        const avg = Math.round(weights.reduce((a, b) => a + b, 0) / weights.length);
+        const stableCount = next.filter((x) => x.stable).length;
+        setStats({
+          count: next.length,
+          min,
+          max,
+          avg,
+          variation: max - min,
+          stableCount,
+          unstableCount: next.length - stableCount
+        });
+        return next;
+      });
+    };
     desktopApi.onScaleReading(handler as (reading: unknown) => void);
 
     return () => {
@@ -4808,8 +4851,9 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   async function handleDisconnect(): Promise<void> {
     await desktopApi.scaleDisconnect();
     setConnected(false);
-    setStatus("Disconectado");
-    setReading(null);
+    setStatus("Desconectado");
+    setReadings([]);
+    setStats({ count: 0, min: 0, max: 0, avg: 0, variation: 0, stableCount: 0, unstableCount: 0 });
   }
 
   async function handleSaveConfig(): Promise<void> {
@@ -4819,7 +4863,7 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
     try {
       const config = await desktopApi.scaleSaveConfig(buildScaleConfigInput());
       applyScaleConfig(config);
-      setConfigMessage("Configuracao da balanca salva.");
+      setConfigMessage("Configuracao salva.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Falha ao salvar configuracao");
     } finally {
@@ -4827,11 +4871,12 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
     }
   }
 
-  async function handleTestCapture(): Promise<void> {
+  async function handleTestInstant(): Promise<void> {
     setTesting(true);
     setError(null);
     setConfigMessage(null);
     setTestResult(null);
+    setTestProgress("Fazendo leitura instantanea...");
 
     try {
       const config = await desktopApi.scaleSaveConfig(buildScaleConfigInput());
@@ -4843,12 +4888,45 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
         setStatus("Conectado");
       }
 
-      const sampled = await desktopApi.scaleReadSampled();
-      setReading({ weightKg: sampled.weightKg, stable: sampled.stable });
+      const instant = await desktopApi.scaleRead();
+      setTestProgress(null);
       setTestResult(
-        `Captura aprovada: ${new Intl.NumberFormat("pt-BR").format(sampled.weightKg)} kg em ${Math.round(config.stability.sampleDurationMs / 1000)}s.`
+        `Leitura instantanea: ${new Intl.NumberFormat("pt-BR").format(instant.weightKg)} kg (${instant.stable ? "estavel" : "instavel"})`
       );
     } catch (err) {
+      setTestProgress(null);
+      setError(err instanceof Error ? err.message : "Falha na leitura instantanea");
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  async function handleTestCapture(): Promise<void> {
+    setTesting(true);
+    setError(null);
+    setConfigMessage(null);
+    setTestResult(null);
+    setTestProgress("Iniciando captura com media...");
+
+    try {
+      const config = await desktopApi.scaleSaveConfig(buildScaleConfigInput());
+      applyScaleConfig(config);
+
+      if (!connectedRef.current) {
+        await desktopApi.scaleConnect(config.connection);
+        setConnected(true);
+        setStatus("Conectado");
+      }
+
+      setTestProgress(`Coletando amostras durante ${config.stability.sampleDurationMs / 1000}s...`);
+
+      const sampled = await desktopApi.scaleReadSampled();
+      setTestProgress(null);
+      setTestResult(
+        `Captura aprovada: ${new Intl.NumberFormat("pt-BR").format(sampled.weightKg)} kg (${sampled.stable ? "estavel" : "instavel"}) em ${Math.round(config.stability.sampleDurationMs / 1000)}s de amostragem.`
+      );
+    } catch (err) {
+      setTestProgress(null);
       setError(err instanceof Error ? err.message : "Falha no teste de captura");
     } finally {
       setTesting(false);
@@ -4957,7 +5035,7 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
 
         <article style={styles.panel}>
           <h2 style={styles.panelTitle}>Leitura ao Vivo</h2>
-          <p style={styles.muted}>Status: {status}</p>
+          <p style={styles.muted}>Status: {status} | Amostras: {stats.count}</p>
           <div
             style={{
               marginTop: "16px",
@@ -4995,6 +5073,36 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
               </p>
             ) : null}
           </div>
+
+          {connected && stats.count > 0 && (
+            <div style={{ marginTop: "16px", display: "grid", gap: "8px" }}>
+              <h4 style={{ margin: "0", fontSize: "13px", color: "#0f172a" }}>Estatisticas (ultimas 100 leituras)</h4>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                <div style={{ background: "#f8fafc", padding: "8px", borderRadius: "8px", textAlign: "center" }}>
+                  <div style={{ fontSize: "11px", color: "#64748b" }}>Minimo</div>
+                  <div style={{ fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>{new Intl.NumberFormat("pt-BR").format(stats.min)} kg</div>
+                </div>
+                <div style={{ background: "#f8fafc", padding: "8px", borderRadius: "8px", textAlign: "center" }}>
+                  <div style={{ fontSize: "11px", color: "#64748b" }}>Maximo</div>
+                  <div style={{ fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>{new Intl.NumberFormat("pt-BR").format(stats.max)} kg</div>
+                </div>
+                <div style={{ background: "#f8fafc", padding: "8px", borderRadius: "8px", textAlign: "center" }}>
+                  <div style={{ fontSize: "11px", color: "#64748b" }}>Media</div>
+                  <div style={{ fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>{new Intl.NumberFormat("pt-BR").format(stats.avg)} kg</div>
+                </div>
+                <div style={{ background: "#f8fafc", padding: "8px", borderRadius: "8px", textAlign: "center" }}>
+                  <div style={{ fontSize: "11px", color: "#64748b" }}>Variacao</div>
+                  <div style={{ fontSize: "16px", fontWeight: 700, color: stats.variation > parseInt(maxVariationKg, 10) ? "#dc2626" : "#0f172a" }}>
+                    {new Intl.NumberFormat("pt-BR").format(stats.variation)} kg
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: "8px", fontSize: "12px" }}>
+                <span style={{ color: "#16a34a", fontWeight: 700 }}>{stats.stableCount} estaveis</span>
+                <span style={{ color: "#d97706", fontWeight: 700 }}>{stats.unstableCount} instaveis</span>
+              </div>
+            </div>
+          )}
         </article>
 
         <article style={styles.panel}>
@@ -5006,7 +5114,7 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
             placeholder="5"
             maxLength={2}
             minLength={1}
-            hint="Janela usada para entrada, saida e teste."
+            hint="Duracao da janela de amostragem para calcular a media."
           />
           <NumberInput
             label="Intervalo entre leituras (ms)"
@@ -5015,7 +5123,7 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
             placeholder="250"
             maxLength={4}
             minLength={2}
-            hint="Quanto menor, mais amostras entram na media."
+            hint="Quanto menor, mais amostras e precisao."
           />
           <label style={{ ...styles.checkboxLabel, marginTop: "10px" }}>
             <input
@@ -5032,7 +5140,7 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
             disabled={!requireStable}
             placeholder="1"
             maxLength={2}
-            hint="O caminhao precisa ficar parado por esse tempo."
+            hint="O caminhao precisa ficar parado na balanca por esse tempo."
           />
           <NumberInput
             label="Tolerancia de oscilacao (kg)"
@@ -5040,7 +5148,7 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
             onChange={setMaxVariationKg}
             placeholder="50"
             maxLength={5}
-            hint="Se a janela variar mais que isso, a captura falha."
+            hint="Se a janela variar mais que isso, a captura e rejeitada."
           />
           <NumberInput
             label="Peso minimo para captura (kg)"
@@ -5050,9 +5158,14 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
             maxLength={6}
             hint="Evita capturar com a balanca vazia."
           />
+
+          {testProgress ? (
+            <p style={{ ...styles.muted, color: "#0369a1", fontWeight: 700 }}>{testProgress}</p>
+          ) : null}
           {testResult ? (
             <p style={{ ...styles.muted, color: "#166534", fontWeight: 700 }}>{testResult}</p>
           ) : null}
+
           <div style={{ display: "flex", gap: "12px", marginTop: "16px", flexWrap: "wrap" }}>
             <button
               type="button"
@@ -5064,11 +5177,19 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
             </button>
             <button
               type="button"
+              onClick={handleTestInstant}
+              disabled={testing || !configLoaded}
+              style={{ ...styles.secondaryButton, opacity: testing || !configLoaded ? 0.5 : 1 }}
+            >
+              {testing ? "Testando..." : "Testar leitura instantanea"}
+            </button>
+            <button
+              type="button"
               onClick={handleTestCapture}
               disabled={testing || !configLoaded}
               style={{ ...styles.primaryButton, opacity: testing || !configLoaded ? 0.5 : 1 }}
             >
-              {testing ? "Testando..." : "Salvar e testar captura"}
+              {testing ? "Testando..." : "Testar captura com media"}
             </button>
           </div>
         </article>

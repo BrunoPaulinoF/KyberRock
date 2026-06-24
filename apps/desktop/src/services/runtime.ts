@@ -215,6 +215,19 @@ import {
   type CreateCarrierInput,
   type UpdateCarrierInput
 } from "./carriers.js";
+import {
+  linkCustomerCarrier,
+  unlinkCustomerCarrier,
+  listCarriersByCustomer,
+  listCustomersByCarrier
+} from "./customer-carriers.js";
+import {
+  linkDriverCarrier,
+  unlinkDriverCarrier,
+  listCarriersByDriver,
+  listDriversByCarrier,
+  listIndependentDrivers
+} from "./driver-carriers.js";
 
 export interface StartSimulatedWeighingInput {
   operationType: OperationType;
@@ -452,6 +465,17 @@ export class DesktopRuntime {
   private async readScaleSampledWeight(): Promise<number> {
     const scaleConfig = this.getScaleConfiguration();
 
+    // Attempt auto-reconnect if not connected
+    const status = this.scaleAdapter.getStatus();
+    if (status.state !== "connected") {
+      const reconnected = await this.tryAutoConnectScale();
+      if (!reconnected) {
+        throw new Error(
+          "Balanca nao esta conectada. Verifique as configuracoes de conexao em Configuracoes > Balanca."
+        );
+      }
+    }
+
     try {
       const adapter = this.scaleAdapter as Partial<{
         readSampled: (options?: ScaleSamplingOptions) => Promise<{ weightKg: number; stable?: boolean }>;
@@ -680,6 +704,23 @@ export class DesktopRuntime {
 
   async connectScale(config: ToledoTcpConfig): Promise<void> {
     await this.scaleAdapter.connect(config);
+  }
+
+  async tryAutoConnectScale(): Promise<boolean> {
+    try {
+      const scaleConfig = this.getScaleConfiguration();
+      if (!scaleConfig.id) return false;
+      await this.scaleAdapter.connect({
+        host: scaleConfig.connection.host,
+        port: scaleConfig.connection.port,
+        timeoutMs: scaleConfig.connection.timeoutMs,
+        reconnectIntervalMs: scaleConfig.connection.reconnectIntervalMs,
+        maxReconnectAttempts: scaleConfig.connection.maxReconnectAttempts
+      });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   disconnectScale(): void {
@@ -1120,6 +1161,47 @@ export class DesktopRuntime {
     carrierId: string
   ): Array<{ id: string; plate: string; description: string | null }> {
     return getCarrierVehicles(this.database, carrierId);
+  }
+
+  linkCustomerCarrier(customerId: string, carrierId: string): unknown {
+    this.assertDesktopAccess();
+    return linkCustomerCarrier(this.database, customerId, carrierId);
+  }
+
+  unlinkCustomerCarrier(customerId: string, carrierId: string): void {
+    this.assertDesktopAccess();
+    unlinkCustomerCarrier(this.database, customerId, carrierId);
+  }
+
+  listCarriersByCustomer(customerId: string): Array<{ id: string; name: string; document: string | null }> {
+    return listCarriersByCustomer(this.database, customerId);
+  }
+
+  listCustomersByCarrier(carrierId: string): Array<{ id: string; trade_name: string; legal_name: string }> {
+    return listCustomersByCarrier(this.database, carrierId);
+  }
+
+  linkDriverCarrier(driverId: string, carrierId: string): unknown {
+    this.assertDesktopAccess();
+    return linkDriverCarrier(this.database, driverId, carrierId);
+  }
+
+  unlinkDriverCarrier(driverId: string, carrierId: string): void {
+    this.assertDesktopAccess();
+    unlinkDriverCarrier(this.database, driverId, carrierId);
+  }
+
+  listCarriersByDriver(driverId: string): Array<{ id: string; name: string; document: string | null }> {
+    return listCarriersByDriver(this.database, driverId);
+  }
+
+  listDriversByCarrier(carrierId: string): Array<{ id: string; name: string; document: string | null; is_independent: number }> {
+    return listDriversByCarrier(this.database, carrierId);
+  }
+
+  listIndependentDrivers(): Array<{ id: string; name: string; document: string | null }> {
+    const identity = this.ensureIdentity();
+    return listIndependentDrivers(this.database, identity.companyId);
   }
 
   getOmieSyncStatus(): {
