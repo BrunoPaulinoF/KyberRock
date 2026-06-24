@@ -96,6 +96,7 @@ interface WeighingFormState {
   freightMinValueCents: number | null;
   freightDistanceKm: string;
   freightDestination: string;
+  driverIsIndependent: boolean;
 }
 
 type ActiveView =
@@ -127,7 +128,8 @@ const initialWeighingForm: WeighingFormState = {
   freightFixedValueCents: null,
   freightMinValueCents: null,
   freightDistanceKm: "",
-  freightDestination: ""
+  freightDestination: "",
+  driverIsIndependent: false
 };
 
 type RegistrationsTab = "customers" | "price_tables" | "products" | "payment_terms" | "transport";
@@ -2502,6 +2504,7 @@ function validateWeighingForm(form: WeighingFormState): string | null {
   if (!form.customerId) return "Selecione o cliente.";
   if (!form.driverId) return "Selecione o motorista.";
   if (!form.productId) return "Selecione o produto.";
+  if (!form.driverIsIndependent && !form.carrierId) return "Selecione a transportadora.";
   if (form.freightEnabled) {
     if (form.freightBaseValueCents === null && form.freightFixedValueCents === null) {
       return "Informe o valor do frete.";
@@ -2565,7 +2568,8 @@ function CacheSelect({
   desktopApi,
   disabled = false,
   refreshKey = 0,
-  productFiscalType
+  productFiscalType,
+  filterIds
 }: {
   label: string;
   entityType: CacheEntityType;
@@ -2576,6 +2580,7 @@ function CacheSelect({
   disabled?: boolean;
   refreshKey?: number;
   productFiscalType?: "finished_goods";
+  filterIds?: string[];
 }) {
   const [search, setSearch] = useState("");
   const [options, setOptions] = useState<CacheSelectOption[]>([]);
@@ -2613,14 +2618,17 @@ function CacheSelect({
           limit: 20,
           productFiscalType
         });
-        setOptions(
-          (result.rows as Array<Record<string, unknown>>).map((item) => ({
+        const allOptions = (result.rows as Array<Record<string, unknown>>).map((item) => ({
             id: String(item.id ?? item.omieCode ?? ""),
             label: String(
               item.tradeName ?? item.plate ?? item.name ?? item.description ?? item.fullName ?? ""
             ),
             raw: item
-          }))
+          }));
+        setOptions(
+          filterIds && filterIds.length > 0
+            ? allOptions.filter((o) => filterIds.includes(o.id))
+            : allOptions
         );
       } catch {
         setOptions([]);
@@ -2630,7 +2638,7 @@ function CacheSelect({
     }
 
     load();
-  }, [desktopApi, entityType, productFiscalType, search, refreshKey]);
+  }, [desktopApi, entityType, productFiscalType, search, refreshKey, filterIds]);
 
   useEffect(() => {
     function handleClick(event: MouseEvent) {
@@ -2826,6 +2834,84 @@ function WeighingForm({
   const [paymentTermInstallmentCount, setPaymentTermInstallmentCount] = useState<number | null>(
     null
   );
+  const [availableCarrierIds, setAvailableCarrierIds] = useState<string[] | undefined>(undefined);
+  const [availableDriverIds, setAvailableDriverIds] = useState<string[] | undefined>(undefined);
+  const [driverIsIndependent, setDriverIsIndependent] = useState(false);
+
+  // Buscar transportadoras vinculadas ao cliente
+  useEffect(() => {
+    async function load() {
+      if (!desktopApi || !form.customerId) {
+        setAvailableCarrierIds(undefined);
+        return;
+      }
+      try {
+        const carriers = await desktopApi.listCarriersByCustomer(form.customerId);
+        setAvailableCarrierIds(carriers.map((c) => c.id));
+      } catch {
+        setAvailableCarrierIds(undefined);
+      }
+    }
+    load();
+  }, [desktopApi, form.customerId]);
+
+  // Buscar motoristas vinculados a transportadora + independentes
+  useEffect(() => {
+    async function load() {
+      if (!desktopApi) {
+        setAvailableDriverIds(undefined);
+        return;
+      }
+      try {
+        const independent = await desktopApi.listIndependentDrivers();
+        const independentIds = independent.map((d) => d.id);
+
+        if (form.carrierId) {
+          const linked = await desktopApi.listDriversByCarrier(form.carrierId);
+          const linkedIds = linked.map((d) => d.id);
+          setAvailableDriverIds([...new Set([...linkedIds, ...independentIds])]);
+        } else {
+          setAvailableDriverIds(independentIds.length > 0 ? independentIds : undefined);
+        }
+      } catch {
+        setAvailableDriverIds(undefined);
+      }
+    }
+    load();
+  }, [desktopApi, form.carrierId]);
+
+  // Quando motorista muda, verificar se tem 1 transportadora e preencher
+  useEffect(() => {
+    async function load() {
+      if (!desktopApi || !form.driverId) {
+        setDriverIsIndependent(false);
+        setForm((prev) => ({ ...prev, driverIsIndependent: false }));
+        return;
+      }
+      try {
+        const carriers = await desktopApi.listCarriersByDriver(form.driverId);
+        const driverData = await desktopApi.queryCache({ entityType: "driver", limit: 1 });
+        const driver = (driverData.rows as Array<Record<string, unknown>>).find(
+          (d) => d.id === form.driverId
+        );
+        const isIndependent = Boolean(driver?.is_independent);
+        setDriverIsIndependent(isIndependent);
+        setForm((prev) => ({ ...prev, driverIsIndependent: isIndependent }));
+
+        if (carriers.length === 1 && !isIndependent) {
+          // Motorista tem exatamente 1 transportadora - preencher automaticamente
+          setForm((prev) => ({ ...prev, carrierId: carriers[0].id }));
+        } else if (isIndependent) {
+          // Motorista independente - limpar transportadora
+          setForm((prev) => ({ ...prev, carrierId: "" }));
+        }
+      } catch {
+        setDriverIsIndependent(false);
+        setForm((prev) => ({ ...prev, driverIsIndependent: false }));
+      }
+    }
+    load();
+  }, [desktopApi, form.driverId]);
   useEffect(() => {
     if (!desktopApi) return;
     const handler = (reading: { weightKg: number }) => setLiveWeight(reading.weightKg);
@@ -3004,7 +3090,22 @@ function WeighingForm({
             onCreateNew={() => setShowCarrierModal(true)}
             desktopApi={desktopApi}
             refreshKey={carrierRefreshKey}
+            filterIds={availableCarrierIds}
           />
+          {form.customerId && availableCarrierIds && availableCarrierIds.length === 0 ? (
+            <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" }}>
+              <p style={{ ...styles.helperText, color: "#d97706", margin: 0 }}>
+                Nenhuma transportadora vinculada a este cliente.
+              </p>
+              <button
+                type="button"
+                onClick={() => setShowCarrierModal(true)}
+                style={{ ...styles.secondaryButton, fontSize: "11px", padding: "4px 8px" }}
+              >
+                + Vincular transportadora
+              </button>
+            </div>
+          ) : null}
           <CacheSelect
             label="Motorista"
             entityType="driver"
@@ -3013,7 +3114,22 @@ function WeighingForm({
             onCreateNew={() => setShowDriverModal(true)}
             desktopApi={desktopApi}
             refreshKey={driverRefreshKey}
+            filterIds={availableDriverIds}
           />
+          {form.carrierId && availableDriverIds && availableDriverIds.length === 0 ? (
+            <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" }}>
+              <p style={{ ...styles.helperText, color: "#d97706", margin: 0 }}>
+                Nenhum motorista vinculado a esta transportadora.
+              </p>
+              <button
+                type="button"
+                onClick={() => setShowDriverModal(true)}
+                style={{ ...styles.secondaryButton, fontSize: "11px", padding: "4px 8px" }}
+              >
+                + Cadastrar motorista
+              </button>
+            </div>
+          ) : null}
         </article>
 
         <aside style={styles.entrySummaryCard}>
