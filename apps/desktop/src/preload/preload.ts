@@ -21,8 +21,8 @@ const desktopApi = {
   clearCanceledWeighingOperations: () =>
     ipcRenderer.invoke("desktop:clear-canceled-weighing-operations"),
   startWeighing: (input: unknown) => ipcRenderer.invoke("desktop:start-weighing", input),
-  closeWeighing: (operationId: string, operationType?: string) =>
-    ipcRenderer.invoke("desktop:close-weighing", operationId, operationType),
+  closeWeighing: (operationId: string, operationType?: string, exitWeightKg?: number) =>
+    ipcRenderer.invoke("desktop:close-weighing", operationId, operationType, exitWeightKg),
   cancelWeighing: (operationId: string, reason: string) =>
     ipcRenderer.invoke("desktop:cancel-weighing", operationId, reason),
   listWindowsPrinters: () => ipcRenderer.invoke("desktop:list-windows-printers"),
@@ -160,6 +160,8 @@ const desktopApi = {
   omieConfig: () => ipcRenderer.invoke("desktop:omie-config"),
   lookupCep: (cep: string) => ipcRenderer.invoke("desktop:lookup-cep", cep),
   omieSync: () => ipcRenderer.invoke("desktop:omie-sync"),
+  syncOmieDirect: (appKey: string, appSecret: string) =>
+    ipcRenderer.invoke("desktop:sync-omie-direct", appKey, appSecret),
   startOmieDataEntryLoop: () => ipcRenderer.invoke("desktop:omie-data-entry-loop"),
   getOmieLoopStatus: () => ipcRenderer.invoke("desktop:omie-loop-status"),
   getOmieSchedulerStatus: () => ipcRenderer.invoke("desktop:omie-scheduler-status"),

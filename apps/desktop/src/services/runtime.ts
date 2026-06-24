@@ -131,6 +131,7 @@ import {
   type QuotationRow,
   type QuotationSummary
 } from "./quotations.js";
+import { createOmieClient, OmieSyncService } from "./omie-sync.js";
 
 export interface OmieLoopProgress {
   iteration: number;
@@ -449,10 +450,11 @@ export class DesktopRuntime {
 
   async closeWeighing(
     operationId: string,
-    operationType?: OperationType
+    operationType?: OperationType,
+    exitWeightKg?: number
   ): Promise<WeighingOperationSummary> {
     this.assertDesktopAccess();
-    const exitWeightKg = await this.readScaleSampledWeight();
+    const finalExitWeightKg = exitWeightKg ?? (await this.readScaleSampledWeight());
 
     if (
       operationType !== undefined &&
@@ -464,7 +466,7 @@ export class DesktopRuntime {
 
     return closeWeighingOperation(this.database, {
       operationId,
-      exitWeightKg,
+      exitWeightKg: finalExitWeightKg,
       operationType
     });
   }
@@ -484,24 +486,16 @@ export class DesktopRuntime {
     }
 
     try {
-      const adapter = this.scaleAdapter as Partial<{
-        readSampled: (options?: ScaleSamplingOptions) => Promise<{ weightKg: number; stable?: boolean }>;
-      }>;
-      if (typeof adapter.readSampled === "function") {
-        const reading = await adapter.readSampled(
-          buildScaleSamplingOptions(scaleConfig.stability)
-        );
-        if (scaleConfig.stability.requireStable && reading.stable === false) {
-          throw new Error("peso instavel durante a amostragem configurada");
-        }
-        return reading.weightKg;
-      }
-      const reading = await this.scaleAdapter.read();
-      if (scaleConfig.stability.requireStable && !reading.stable) {
-        throw new Error("peso instavel");
+      const reading = await this.scaleAdapter.readSampled(
+        buildScaleSamplingOptions(scaleConfig.stability)
+      );
+      if (scaleConfig.stability.requireStable && reading.stable === false) {
+        throw new Error("peso instavel durante a amostragem configurada");
       }
       if (reading.weightKg < scaleConfig.stability.minWeightKg) {
-        throw new Error(`peso abaixo do minimo configurado (${scaleConfig.stability.minWeightKg} kg)`);
+        throw new Error(
+          `peso abaixo do minimo configurado (${reading.weightKg} kg < ${scaleConfig.stability.minWeightKg} kg)`
+        );
       }
       return reading.weightKg;
     } catch (error) {
@@ -1388,6 +1382,30 @@ export class DesktopRuntime {
       ordersFailed: queue.failed,
       customersPushFailed: customerPush.failed,
       errors: customerPush.errors.concat(loop.errors, finalLoop.errors, queue.errors)
+    };
+  }
+
+  async syncOmieDirect(appKey: string, appSecret: string): Promise<{
+    customersPulled: number;
+    customersPushed: number;
+    productsSynced: number;
+    paymentTermsSynced: number;
+    suppliersSynced: number;
+    errors: string[];
+  }> {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    const client = createOmieClient({ appKey, appSecret });
+    const service = new OmieSyncService(client, this.database);
+    const result = await service.syncAll(identity.companyId);
+    this.cacheStore.invalidateAll(identity.companyId);
+    return {
+      customersPulled: result.customersPulled,
+      customersPushed: result.customersPushed,
+      productsSynced: result.productsSynced,
+      paymentTermsSynced: result.paymentTermsSynced,
+      suppliersSynced: result.suppliersSynced,
+      errors: result.errors
     };
   }
 

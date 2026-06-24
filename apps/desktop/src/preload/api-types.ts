@@ -86,7 +86,8 @@ export interface KyberRockDesktopApi {
   }) => Promise<WeighingOperationSummary>;
   closeWeighing: (
     operationId: string,
-    operationType?: OperationType
+    operationType?: OperationType,
+    exitWeightKg?: number
   ) => Promise<WeighingOperationSummary>;
   cancelWeighing: (operationId: string, reason: string) => Promise<WeighingOperationSummary>;
   listWindowsPrinters: () => Promise<WindowsPrinterSummary[]>;
@@ -228,6 +229,14 @@ export interface KyberRockDesktopApi {
     ordersProcessed: number;
     ordersFailed: number;
     customersPushFailed: number;
+    errors: string[];
+  }>;
+  syncOmieDirect: (appKey: string, appSecret: string) => Promise<{
+    customersPulled: number;
+    customersPushed: number;
+    productsSynced: number;
+    paymentTermsSynced: number;
+    suppliersSynced: number;
     errors: string[];
   }>;
   startOmieDataEntryLoop: () => Promise<{

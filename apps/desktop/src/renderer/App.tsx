@@ -194,11 +194,12 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     lastSyncAt: string | null;
   } | null>(null);
   const [registrationsTab, setRegistrationsTab] = useState<RegistrationsTab>("customers");
-  const [closingOperationId, setClosingOperationId] = useState<string | null>(null);
+  const [closingOperation, setClosingOperation] = useState<WeighingOperationSummary | null>(null);
   const [cancelOperationId, setCancelOperationId] = useState<string | null>(null);
   const [fiscalCloseProgress, setFiscalCloseProgress] = useState<FiscalCloseProgress | null>(null);
   const [retryingFiscalOperationId, setRetryingFiscalOperationId] = useState<string | null>(null);
   const [omieSyncing, setOmieSyncing] = useState(false);
+  const [showOmieDirectSync, setShowOmieDirectSync] = useState(false);
   const [omieConnectionFeedback, setOmieConnectionFeedback] = useState<{
     status: "idle" | "checking" | "success" | "warning" | "error";
     message: string;
@@ -345,13 +346,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
             showUpdateModal ||
             showLogsModal ||
             showSettings ||
-            closingOperationId ||
+            closingOperation ||
             cancelOperationId
           ) {
             setShowUpdateModal(false);
             setShowLogsModal(false);
             setShowSettings(false);
-            setClosingOperationId(null);
+            setClosingOperation(null);
             setCancelOperationId(null);
           } else {
             setActiveView("dashboard");
@@ -361,7 +362,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [showUpdateModal, showLogsModal, showSettings, closingOperationId, cancelOperationId]);
+  }, [showUpdateModal, showLogsModal, showSettings, closingOperation, cancelOperationId]);
 
   useEffect(() => {
     if (!desktopApi) {
@@ -865,7 +866,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
   }
 
-  async function handleStartWeighing(): Promise<void> {
+  async function handleStartWeighing(entryWeightKg?: number): Promise<void> {
     if (!desktopApi) return;
 
     const validationError = validateWeighingForm(form);
@@ -878,7 +879,11 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     setMessage("Calculando peso medio da balanca. Aguarde...");
 
     try {
-      const sampled = await desktopApi.scaleReadSampled();
+      let weight = entryWeightKg;
+      if (weight === undefined) {
+        const sampled = await desktopApi.scaleReadSampled();
+        weight = sampled.weightKg;
+      }
       const operation = await desktopApi.startWeighing({
         operationType: form.operationType,
         customerId: form.customerId,
@@ -890,7 +895,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         freight: buildFreightInput(form),
         quotationId: form.quotationId || undefined,
         deductFreightFromCredit: form.deductFreightFromCredit,
-        entryWeightKg: sampled.weightKg
+        entryWeightKg: weight
       });
       setMessage(`Entrada registrada com peso medio calculado: ${operation.entryWeightKg} kg.`);
       setForm(initialWeighingForm);
@@ -903,7 +908,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
   async function handleCloseOperation(
     operationId: string,
-    operationType: OperationType
+    operationType: OperationType,
+    exitWeightKg?: number
   ): Promise<void> {
     if (!desktopApi) return;
 
@@ -916,8 +922,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
     setMessage(
       operationType === "invoice"
-        ? "Coletando peso de saida com os criterios configurados e fechando a operacao fiscal."
-        : "Coletando peso de saida com os criterios configurados e fechando a operacao interna."
+        ? "Fechando operacao fiscal e faturando no OMIE. Mantenha a internet conectada."
+        : "Fechando operacao interna."
     );
 
     try {
@@ -931,7 +937,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         });
         setMessage("Fechando operacao fiscal e faturando no OMIE. Mantenha a internet conectada.");
       }
-      const operation = await desktopApi.closeWeighing(operationId, operationType);
+      const operation = await desktopApi.closeWeighing(operationId, operationType, exitWeightKg);
       if (operationType === "invoice") {
         setFiscalCloseProgress({
           operationId: operation.id,
@@ -1725,7 +1731,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                           <span style={styles.rowActions}>
                             <button
                                 type="button"
-                                onClick={() => setClosingOperationId(operation.id)}
+                                onClick={() => setClosingOperation(operation)}
                                 style={styles.smallPrimaryButton}
                               >
                                 Fechar
@@ -1817,15 +1823,16 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
               </section>
             ) : null}
 
-            {closingOperationId ? (
-              <CloseOperationTypeDialog
-                defaultOperationType="invoice"
-                onConfirm={(operationType) => {
-                  const id = closingOperationId;
-                  setClosingOperationId(null);
-                  void handleCloseOperation(id, operationType);
+            {closingOperation ? (
+              <CloseOperationWeighingDialog
+                desktopApi={desktopApi}
+                operation={closingOperation}
+                onConfirm={(operationType, exitWeightKg) => {
+                  const id = closingOperation.id;
+                  setClosingOperation(null);
+                  void handleCloseOperation(id, operationType, exitWeightKg);
                 }}
-                onCancel={() => setClosingOperationId(null)}
+                onCancel={() => setClosingOperation(null)}
               />
             ) : null}
 
@@ -1844,6 +1851,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
               <FiscalProgressDialog
                 progress={fiscalCloseProgress}
                 onClose={() => setFiscalCloseProgress(null)}
+              />
+            ) : null}
+
+            {showOmieDirectSync ? (
+              <OmieDirectSyncDialog
+                desktopApi={desktopApi}
+                onClose={() => setShowOmieDirectSync(false)}
               />
             ) : null}
 
@@ -2098,20 +2112,32 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                               ) : null}
                             </div>
                           ) : null}
-                          <button
-                              type="button"
-                              onClick={handleSyncOmie}
-                              disabled={omieSyncing}
-                              style={{
-                                ...styles.primaryButton,
-                                marginTop: "16px",
-                                opacity: omieSyncing ? 0.6 : 1,
-                                cursor: omieSyncing ? "not-allowed" : "pointer"
-                              }}
-                            >
-                              {omieSyncing ? "Sincronizando..." : "Sincronizar OMIE agora"}
-                            </button>
-                          <HelpTooltip content={TIPS.cloud.syncOmie} placement="top" />
+                            <button
+                                type="button"
+                                onClick={handleSyncOmie}
+                                disabled={omieSyncing}
+                                style={{
+                                  ...styles.primaryButton,
+                                  marginTop: "16px",
+                                  opacity: omieSyncing ? 0.6 : 1,
+                                  cursor: omieSyncing ? "not-allowed" : "pointer"
+                                }}
+                              >
+                                {omieSyncing ? "Sincronizando..." : "Sincronizar OMIE agora"}
+                              </button>
+                            <HelpTooltip content={TIPS.cloud.syncOmie} placement="top" />
+                            <button
+                                type="button"
+                                onClick={() => setShowOmieDirectSync(true)}
+                                style={{
+                                  ...styles.secondaryButton,
+                                  marginTop: "8px",
+                                  marginLeft: "8px"
+                                }}
+                              >
+                                Sincronizar OMIE direto
+                              </button>
+                            <HelpTooltip content="Puxa clientes, produtos, condicoes e transportadoras direto do OMIE usando credenciais da empresa." placement="top" />
                           <div
                             style={{
                               marginTop: "16px",
@@ -2809,7 +2835,7 @@ interface WeighingFormProps {
   form: WeighingFormState;
   setForm: React.Dispatch<React.SetStateAction<WeighingFormState>>;
   formError: string | null;
-  onStart: () => void;
+  onStart: (entryWeightKg?: number) => Promise<void> | void;
   onCancel: () => void;
 }
 
@@ -2822,6 +2848,10 @@ function WeighingForm({
   onCancel
 }: WeighingFormProps) {
   const [liveWeight, setLiveWeight] = useState<number | null>(null);
+  const [capturedWeight, setCapturedWeight] = useState<number | null>(null);
+  const [scaleState, setScaleState] = useState<"disconnected" | "connecting" | "connected" | "error">("disconnected");
+  const [scaleStateMessage, setScaleStateMessage] = useState<string>("Balança desconectada");
+  const [isCapturing, setIsCapturing] = useState(false);
   const [priceDetails, setPriceDetails] = useState<PriceDetails | null>(null);
   const [showVehicleModal, setShowVehicleModal] = useState(false);
   const [showDriverModal, setShowDriverModal] = useState(false);
@@ -2917,6 +2947,63 @@ function WeighingForm({
     };
   }, [desktopApi]);
 
+  // Verificar status da balança periodicamente
+  useEffect(() => {
+    if (!desktopApi) return;
+    const api = desktopApi;
+    let canceled = false;
+    async function checkStatus() {
+      try {
+        const status = await api.scaleGetStatus();
+        if (canceled) return;
+        setScaleState(status.state);
+        if (status.state === "connected") {
+          setScaleStateMessage("Balança conectada");
+        } else if (status.state === "connecting") {
+          setScaleStateMessage("Conectando à balança...");
+        } else if (status.state === "error") {
+          setScaleStateMessage(status.errorMessage || "Erro na balança");
+        } else {
+          setScaleStateMessage("Balança desconectada");
+        }
+      } catch {
+        if (!canceled) {
+          setScaleState("error");
+          setScaleStateMessage("Erro ao verificar balança");
+        }
+      }
+    }
+    checkStatus();
+    const interval = setInterval(checkStatus, 2000);
+    return () => {
+      canceled = true;
+      clearInterval(interval);
+    };
+  }, [desktopApi]);
+
+  // Auto-conectar balança quando abrir a tela
+  useEffect(() => {
+    if (!desktopApi) return;
+    const api = desktopApi;
+    let canceled = false;
+    async function autoConnect() {
+      try {
+        const status = await api.scaleGetStatus();
+        if (canceled) return;
+        if (status.state !== "connected") {
+          setScaleState("connecting");
+          setScaleStateMessage("Tentando conectar à balança...");
+          const config = await api.scaleGetConfig();
+          await api.scaleConnect(config.connection as unknown as Parameters<KyberRockDesktopApi["scaleConnect"]>[0]);
+        }
+      } catch {
+        // Silencioso - o checkStatus periodicamente vai atualizar
+      }
+    }
+    autoConnect();
+    return () => { canceled = true; };
+  }, [desktopApi]);
+
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
@@ -2982,21 +3069,66 @@ function WeighingForm({
             balanca.
           </p>
         </div>
-        <div style={styles.liveWeightCard}>
-          <div style={styles.metricHeader}>
-            <img
-              src="midia/peso.png"
-              alt=""
-              style={{ width: "22px", height: "22px", objectFit: "contain" }}
-            />
-            <span style={styles.metricLabel}>Peso atual</span>
+        <div style={{ display: "flex", gap: "16px", alignItems: "stretch" }}>
+          <div style={{ ...styles.liveWeightCard, flex: 1 }}>
+            <div style={styles.metricHeader}>
+              <img
+                src="midia/peso.png"
+                alt=""
+                style={{ width: "22px", height: "22px", objectFit: "contain" }}
+              />
+              <span style={styles.metricLabel}>Peso ao vivo</span>
+              <span style={{
+                width: "10px",
+                height: "10px",
+                borderRadius: "50%",
+                backgroundColor: scaleState === "connected" ? "#22c55e" : scaleState === "connecting" ? "#f59e0b" : "#ef4444",
+                marginLeft: "auto"
+              }} />
+            </div>
+            <strong style={styles.metricValue}>
+              {liveWeight !== null ? formatWeightKg(liveWeight) : "-- kg"}
+            </strong>
+            <span style={styles.metricHint}>
+              {scaleState === "connected" ? "Leitura em tempo real" : scaleStateMessage}
+            </span>
+            {scaleState !== "connected" ? (
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!desktopApi) return;
+                  setScaleState("connecting");
+                  setScaleStateMessage("Conectando...");
+                  try {
+                    const config = await desktopApi.scaleGetConfig();
+                    await desktopApi.scaleConnect(config.connection as unknown as Parameters<KyberRockDesktopApi["scaleConnect"]>[0]);
+                  } catch (err) {
+                    setScaleState("error");
+                    setScaleStateMessage(err instanceof Error ? err.message : "Falha ao conectar");
+                  }
+                }}
+                style={{ ...styles.secondaryButton, fontSize: "12px", padding: "6px 12px", marginTop: "8px" }}
+              >
+                Reconectar balança
+              </button>
+            ) : null}
           </div>
-          <strong style={styles.metricValue}>
-            {liveWeight !== null ? formatWeightKg(liveWeight) : "-- kg"}
-          </strong>
-          <span style={styles.metricHint}>
-            {liveWeight !== null ? "Leitura em tempo real" : "Aguardando balanca"}
-          </span>
+          <div style={{ ...styles.liveWeightCard, flex: 1, backgroundColor: capturedWeight !== null ? "#f0fdf4" : undefined, borderColor: capturedWeight !== null ? "#86efac" : undefined }}>
+            <div style={styles.metricHeader}>
+              <img
+                src="midia/peso.png"
+                alt=""
+                style={{ width: "22px", height: "22px", objectFit: "contain" }}
+              />
+              <span style={styles.metricLabel}>Peso calculado</span>
+            </div>
+            <strong style={{ ...styles.metricValue, color: capturedWeight !== null ? "#15803d" : undefined }}>
+              {capturedWeight !== null ? formatWeightKg(capturedWeight) : "-- kg"}
+            </strong>
+            <span style={styles.metricHint}>
+              {capturedWeight !== null ? "Média calculada da balança" : "Clique em 'Calcular peso'"}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -3254,7 +3386,7 @@ function WeighingForm({
             ) : null}
           </div>
           <div style={styles.actionStack}>
-            <button type="button" onClick={onStart} style={styles.captureButton}>
+            <button type="button" onClick={() => onStart()} style={styles.captureButton}>
               <Scale size={18} strokeWidth={2.4} />
               Calcular peso
             </button>
@@ -3681,6 +3813,353 @@ const modalContentStyle: React.CSSProperties = {
   maxWidth: "380px",
   boxShadow: "0 10px 25px rgba(0,0,0,0.15)"
 };
+
+function CloseOperationWeighingDialog({
+  desktopApi,
+  operation,
+  onConfirm,
+  onCancel
+}: {
+  desktopApi: KyberRockDesktopApi | null;
+  operation: WeighingOperationSummary;
+  onConfirm: (operationType: OperationType, exitWeightKg: number) => void;
+  onCancel: () => void;
+}) {
+  const [operationType, setOperationType] = useState<OperationType>(operation.operationType);
+  const [liveWeight, setLiveWeight] = useState<number | null>(null);
+  const [capturedExitWeight, setCapturedExitWeight] = useState<number | null>(null);
+  const [scaleState, setScaleState] = useState<"disconnected" | "connecting" | "connected" | "error">("disconnected");
+  const [scaleMessage, setScaleMessage] = useState<string>("Balança desconectada");
+  const [isCapturing, setIsCapturing] = useState(false);
+  const [captureError, setCaptureError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!desktopApi) return;
+    const handler = (reading: { weightKg: number }) => setLiveWeight(reading.weightKg);
+    desktopApi.onScaleReading(handler as (reading: unknown) => void);
+    return () => {
+      desktopApi.offScaleReading(handler as (reading: unknown) => void);
+    };
+  }, [desktopApi]);
+
+  useEffect(() => {
+    if (!desktopApi) return;
+    const api = desktopApi;
+    let canceled = false;
+    async function checkStatus() {
+      try {
+        const status = await api.scaleGetStatus();
+        if (canceled) return;
+        setScaleState(status.state);
+        if (status.state === "connected") {
+          setScaleMessage("Balança conectada");
+        } else if (status.state === "connecting") {
+          setScaleMessage("Conectando...");
+        } else if (status.state === "error") {
+          setScaleMessage(status.errorMessage || "Erro na balança");
+        } else {
+          setScaleMessage("Balança desconectada");
+        }
+      } catch {
+        if (!canceled) {
+          setScaleState("error");
+          setScaleMessage("Erro ao verificar balança");
+        }
+      }
+    }
+    checkStatus();
+    const interval = setInterval(checkStatus, 2000);
+    return () => {
+      canceled = true;
+      clearInterval(interval);
+    };
+  }, [desktopApi]);
+
+  useEffect(() => {
+    if (!desktopApi) return;
+    const api = desktopApi;
+    let canceled = false;
+    async function autoConnect() {
+      try {
+        const status = await api.scaleGetStatus();
+        if (canceled) return;
+        if (status.state !== "connected") {
+          const config = await api.scaleGetConfig();
+          await api.scaleConnect(config.connection as unknown as Parameters<KyberRockDesktopApi["scaleConnect"]>[0]);
+        }
+      } catch {
+        // Silencioso
+      }
+    }
+    autoConnect();
+    return () => { canceled = true; };
+  }, [desktopApi]);
+
+  async function handleCaptureExitWeight(): Promise<void> {
+    if (!desktopApi) return;
+    setIsCapturing(true);
+    setCaptureError(null);
+    try {
+      const sampled = await desktopApi.scaleReadSampled();
+      setCapturedExitWeight(sampled.weightKg);
+    } catch (err) {
+      setCaptureError(err instanceof Error ? err.message : "Falha ao capturar peso");
+    } finally {
+      setIsCapturing(false);
+    }
+  }
+
+  const netWeight = capturedExitWeight !== null && operation.entryWeightKg !== null
+    ? Math.abs(operation.entryWeightKg - capturedExitWeight)
+    : null;
+
+  return (
+    <div style={modalOverlayStyle}>
+      <div style={{ ...modalContentStyle, maxWidth: "720px", width: "90%" }}>
+        <h3 style={{ margin: "0 0 8px 0", color: "#0f172a", fontSize: "18px" }}>
+          Fechar operação - Captura de peso de saída
+        </h3>
+
+        {/* Dados da operação */}
+        <div style={{ background: "#f8fafc", padding: "12px", borderRadius: "8px", marginBottom: "16px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px", fontSize: "13px" }}>
+            <div>
+              <div style={{ color: "#64748b", fontSize: "11px" }}>Placa</div>
+              <strong>{operation.plate}</strong>
+            </div>
+            <div>
+              <div style={{ color: "#64748b", fontSize: "11px" }}>Cliente</div>
+              <strong>{operation.customerName}</strong>
+            </div>
+            <div>
+              <div style={{ color: "#64748b", fontSize: "11px" }}>Produto</div>
+              <strong>{operation.productDescription}</strong>
+            </div>
+            <div>
+              <div style={{ color: "#64748b", fontSize: "11px" }}>Motorista</div>
+              <strong>{operation.driverName}</strong>
+            </div>
+            <div>
+              <div style={{ color: "#64748b", fontSize: "11px" }}>Peso de entrada</div>
+              <strong style={{ color: "#15803d" }}>{formatWeightKg(operation.entryWeightKg ?? 0)}</strong>
+            </div>
+            <div>
+              <div style={{ color: "#64748b", fontSize: "11px" }}>Preço</div>
+              <strong>{formatMoney(operation.unitPriceCents)}/ton</strong>
+            </div>
+          </div>
+        </div>
+
+        {/* Balança - peso ao vivo e capturado */}
+        <div style={{ display: "flex", gap: "16px", marginBottom: "16px" }}>
+          <div style={{ flex: 1, padding: "16px", background: "#f8fafc", borderRadius: "12px", border: "2px solid #e2e8f0", textAlign: "center" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", marginBottom: "8px" }}>
+              <span style={{ fontSize: "13px", color: "#64748b" }}>Peso ao vivo</span>
+              <span style={{
+                width: "10px",
+                height: "10px",
+                borderRadius: "50%",
+                backgroundColor: scaleState === "connected" ? "#22c55e" : scaleState === "connecting" ? "#f59e0b" : "#ef4444"
+              }} />
+            </div>
+            <strong style={{ fontSize: "32px", color: "#0f172a", fontFamily: "monospace" }}>
+              {liveWeight !== null ? formatWeightKg(liveWeight) : "-- kg"}
+            </strong>
+            <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "4px" }}>
+              {scaleState === "connected" ? "Leitura em tempo real" : scaleMessage}
+            </div>
+            {scaleState !== "connected" ? (
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!desktopApi) return;
+                  const api = desktopApi;
+                  setScaleState("connecting");
+                  try {
+                    const config = await api.scaleGetConfig();
+                    await api.scaleConnect(config.connection as unknown as Parameters<KyberRockDesktopApi["scaleConnect"]>[0]);
+                  } catch (err) {
+                    setScaleState("error");
+                    setScaleMessage(err instanceof Error ? err.message : "Falha ao conectar");
+                  }
+                }}
+                style={{ ...styles.secondaryButton, fontSize: "12px", padding: "6px 12px", marginTop: "8px" }}
+              >
+                Reconectar balança
+              </button>
+            ) : null}
+          </div>
+
+          <div style={{
+            flex: 1,
+            padding: "16px",
+            background: capturedExitWeight !== null ? "#f0fdf4" : "#f8fafc",
+            borderRadius: "12px",
+            border: `2px solid ${capturedExitWeight !== null ? "#86efac" : "#e2e8f0"}`,
+            textAlign: "center"
+          }}>
+            <div style={{ fontSize: "13px", color: "#64748b", marginBottom: "8px" }}>Peso de saída calculado</div>
+            <strong style={{ fontSize: "32px", color: capturedExitWeight !== null ? "#15803d" : "#0f172a", fontFamily: "monospace" }}>
+              {capturedExitWeight !== null ? formatWeightKg(capturedExitWeight) : "-- kg"}
+            </strong>
+            <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "4px" }}>
+              {capturedExitWeight !== null ? "Média calculada da balança" : "Clique em 'Capturar peso'"}
+            </div>
+          </div>
+        </div>
+
+        {/* Peso líquido */}
+        {netWeight !== null ? (
+          <div style={{ textAlign: "center", padding: "12px", background: "#eff6ff", borderRadius: "8px", marginBottom: "16px" }}>
+            <span style={{ fontSize: "14px", color: "#1e40af" }}>
+              Peso líquido: <strong style={{ fontSize: "20px" }}>{formatWeightKg(netWeight)}</strong>
+            </span>
+          </div>
+        ) : null}
+
+        {captureError ? <p style={styles.errorMessage}>{captureError}</p> : null}
+
+        {/* Botão capturar peso */}
+        <div style={{ textAlign: "center", marginBottom: "16px" }}>
+          <button
+            type="button"
+            onClick={handleCaptureExitWeight}
+            disabled={isCapturing || scaleState !== "connected"}
+            style={{
+              ...styles.captureButton,
+              opacity: isCapturing || scaleState !== "connected" ? 0.5 : 1,
+              fontSize: "16px",
+              padding: "12px 24px"
+            }}
+          >
+            <Scale size={20} strokeWidth={2.4} />
+            {isCapturing ? "Capturando..." : "Capturar peso de saída"}
+          </button>
+        </div>
+
+        {/* Tipo de operação */}
+        <label style={styles.fieldLabel} title={TIPS.form.operationType}>
+          Tipo de fechamento
+          <select
+            value={operationType}
+            onChange={(event) => setOperationType(event.target.value as OperationType)}
+            style={styles.input}
+          >
+            <option value="invoice">Com nota (pedido de venda no OMIE)</option>
+            <option value="internal">Interna (sem OMIE, permite offline)</option>
+          </select>
+        </label>
+
+        {/* Ações */}
+        <div style={{ display: "flex", gap: "8px", marginTop: "16px", justifyContent: "center" }}>
+          <button
+            type="button"
+            onClick={() => {
+              if (capturedExitWeight !== null) {
+                onConfirm(operationType, capturedExitWeight);
+              }
+            }}
+            disabled={capturedExitWeight === null}
+            style={{
+              ...styles.primaryButton,
+              opacity: capturedExitWeight === null ? 0.5 : 1
+            }}
+          >
+            Confirmar fechamento
+          </button>
+          <HelpTooltip content={TIPS.form.confirmClose} placement="top" />
+          <button type="button" onClick={onCancel} style={styles.secondaryButton}>
+            Cancelar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OmieDirectSyncDialog({
+  desktopApi,
+  onClose
+}: {
+  desktopApi: KyberRockDesktopApi | null;
+  onClose: () => void;
+}) {
+  const [appKey, setAppKey] = useState("");
+  const [appSecret, setAppSecret] = useState("");
+  const [syncing, setSyncing] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSync(): Promise<void> {
+    if (!desktopApi) return;
+    const key = appKey.trim();
+    const secret = appSecret.trim();
+    if (!key || !secret) {
+      setError("Informe o App Key e App Secret do OMIE.");
+      return;
+    }
+    setSyncing(true);
+    setError(null);
+    setResult(null);
+    try {
+      const res = await desktopApi.syncOmieDirect(key, secret);
+      const parts: string[] = [];
+      if (res.customersPulled > 0) parts.push(`${res.customersPulled} clientes baixados`);
+      if (res.customersPushed > 0) parts.push(`${res.customersPushed} clientes enviados`);
+      if (res.productsSynced > 0) parts.push(`${res.productsSynced} produtos`);
+      if (res.paymentTermsSynced > 0) parts.push(`${res.paymentTermsSynced} condicoes`);
+      if (res.suppliersSynced > 0) parts.push(`${res.suppliersSynced} transportadoras`);
+      if (res.errors.length > 0) parts.push(`${res.errors.length} erro(s)`);
+      setResult(parts.join(" | ") || "Nenhum dado sincronizado.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Falha no sync direto OMIE");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  return (
+    <div style={modalOverlayStyle}>
+      <div style={{ ...modalContentStyle, maxWidth: "480px" }}>
+        <h3 style={{ margin: "0 0 8px 0", color: "#0f172a", fontSize: "16px" }}>
+          Sincronizar OMIE direto
+        </h3>
+        <p style={styles.muted}>
+          Puxa clientes, produtos, condicoes e transportadoras diretamente do OMIE.
+        </p>
+        <TextInput
+          label="OMIE App Key"
+          value={appKey}
+          onChange={setAppKey}
+          placeholder="Informe o App Key"
+        />
+        <TextInput
+          label="OMIE App Secret"
+          value={appSecret}
+          onChange={setAppSecret}
+          placeholder="Informe o App Secret"
+        />
+        {error ? <p style={styles.errorMessage}>{error}</p> : null}
+        {result ? (
+          <p style={{ ...styles.muted, color: "#166534", fontWeight: 700 }}>{result}</p>
+        ) : null}
+        <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+          <button
+            type="button"
+            onClick={handleSync}
+            disabled={syncing}
+            style={{ ...styles.primaryButton, opacity: syncing ? 0.5 : 1 }}
+          >
+            {syncing ? "Sincronizando..." : "Iniciar sync"}
+          </button>
+          <button type="button" onClick={onClose} style={styles.secondaryButton}>
+            Fechar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function CloseOperationTypeDialog({
   defaultOperationType,

@@ -304,12 +304,12 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "desktop:close-weighing",
-    async (_event, operationId: string, operationType?: string) => {
+    async (_event, operationId: string, operationType?: string, exitWeightKg?: number) => {
       if (!runtime) {
         throw new Error("Desktop runtime is not ready.");
       }
 
-      return runtime.closeWeighing(operationId, operationType as OperationType | undefined);
+      return runtime.closeWeighing(operationId, operationType as OperationType | undefined, exitWeightKg);
     }
   );
 
@@ -943,6 +943,11 @@ function registerIpcHandlers(): void {
   ipcMain.handle("desktop:omie-sync", async () => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.syncOmieAll();
+  });
+
+  ipcMain.handle("desktop:sync-omie-direct", async (_event, appKey: string, appSecret: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.syncOmieDirect(appKey, appSecret);
   });
 
   ipcMain.handle("desktop:omie-data-entry-loop", async () => {
