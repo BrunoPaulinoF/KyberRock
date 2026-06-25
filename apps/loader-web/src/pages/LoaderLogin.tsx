@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 
 export function LoaderLogin() {
-  const { loginLoader, error, isLoader } = useAuth();
+  const { loginLoader, error, isLoader, clearError } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -29,6 +29,16 @@ export function LoaderLogin() {
     }
   }
 
+  function handleEmailChange(value: string) {
+    setEmail(value);
+    if (error) clearError();
+  }
+
+  function handlePasswordChange(value: string) {
+    setPassword(value);
+    if (error) clearError();
+  }
+
   return (
     <main style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#f8fafc" }}>
       <section style={{ background: "#fff", padding: "48px", borderRadius: "20px", boxShadow: "0 18px 60px rgba(15, 23, 42, 0.08)", maxWidth: "420px", width: "100%" }}>
@@ -42,22 +52,28 @@ export function LoaderLogin() {
         )}
 
         <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-          <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontWeight: 700 }}>
+          <label htmlFor="loader-login-email" style={{ display: "flex", flexDirection: "column", gap: "6px", fontWeight: 700 }}>
             E-mail
             <input
+              id="loader-login-email"
+              name="email"
               type="email"
+              autoComplete="username"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => handleEmailChange(e.target.value)}
               required
               style={{ padding: "12px", borderRadius: "10px", border: "1px solid #cbd5e1", font: "inherit" }}
             />
           </label>
-          <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontWeight: 700 }}>
+          <label htmlFor="loader-login-password" style={{ display: "flex", flexDirection: "column", gap: "6px", fontWeight: 700 }}>
             Senha
             <input
+              id="loader-login-password"
+              name="password"
               type="password"
+              autoComplete="current-password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) => handlePasswordChange(e.target.value)}
               required
               style={{ padding: "12px", borderRadius: "10px", border: "1px solid #cbd5e1", font: "inherit" }}
             />

@@ -23,6 +23,7 @@ interface AuthContextType {
   loginLoader: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   error: string | null;
+  clearError: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -159,8 +160,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }
 
+  function clearError(): void {
+    setError(null);
+  }
+
   return (
-    <AuthContext.Provider value={{ user, isLoading, isAdmin, isLoader, loginAdmin, loginLoader, logout, error }}>
+    <AuthContext.Provider value={{ user, isLoading, isAdmin, isLoader, loginAdmin, loginLoader, logout, error, clearError }}>
       {children}
     </AuthContext.Provider>
   );
