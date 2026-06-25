@@ -82,7 +82,7 @@ export async function listProducts(
   client: OmieClient,
   param: ListProductsParam
 ): Promise<Product[]> {
-  const response = (await client.call("/api/v1/geral/produtos/", "ListarProdutos", param)) as {
+  const response = (await client.call("/geral/produtos/", "ListarProdutos", param)) as {
     produto_servico_cadastro?: OmieProductRaw[];
     produtoCadastro?: OmieProductRaw[];
   };

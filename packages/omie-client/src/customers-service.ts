@@ -120,7 +120,7 @@ export async function listCustomers(
   param: ListCustomersParam
 ): Promise<Customer[]> {
   const response = (await client.call(
-    "/api/v1/geral/clientes/",
+    "/geral/clientes/",
     "ListarClientes",
     param
   )) as {
@@ -142,7 +142,7 @@ export async function getCustomer(
   codigoClienteOmie: number
 ): Promise<Customer | null> {
   const response = (await client.call(
-    "/api/v1/geral/clientes/",
+    "/geral/clientes/",
     "ConsultarCliente",
     { codigoClienteOmie }
   )) as OmieCustomerRaw;
@@ -155,7 +155,7 @@ export async function createCustomer(
   input: CreateCustomerInput
 ): Promise<number> {
   const response = (await client.call(
-    "/api/v1/geral/clientes/",
+    "/geral/clientes/",
     "IncluirCliente",
     input
   )) as {
@@ -173,7 +173,7 @@ export async function updateCustomer(
   input: UpdateCustomerInput
 ): Promise<void> {
   await client.call(
-    "/api/v1/geral/clientes/",
+    "/geral/clientes/",
     "AlterarCliente",
     input
   );

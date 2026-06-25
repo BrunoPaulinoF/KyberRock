@@ -19,7 +19,7 @@ describe("listProducts", () => {
     await listProducts(client, { pagina: 1, registrosPorPagina: 50 });
 
     expect(client.call).toHaveBeenCalledWith(
-      "/api/v1/geral/produtos/",
+      "/geral/produtos/",
       "ListarProdutos",
       { pagina: 1, registrosPorPagina: 50 }
     );
@@ -155,7 +155,7 @@ describe("OmieProductsService", () => {
 
     expect(products).toHaveLength(1);
     expect(client.call).toHaveBeenCalledWith(
-      "/api/v1/geral/produtos/",
+      "/geral/produtos/",
       "ListarProdutos",
       expect.objectContaining({
         pagina: 1,

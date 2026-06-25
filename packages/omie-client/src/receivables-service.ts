@@ -19,7 +19,7 @@ export async function listReceivables(
   param: ListReceivablesParam
 ): Promise<Receivable[]> {
   const response = (await client.call(
-    "/api/v1/financas/contareceber/",
+    "//financas/contareceber//",
     "ListarContasReceber",
     param
   )) as {

@@ -22,7 +22,7 @@ describe("listReceivables", () => {
     await listReceivables(client, { pagina: 1, registrosPorPagina: 50 });
 
     expect(client.call).toHaveBeenCalledWith(
-      "/api/v1/financas/contareceber/",
+      "//financas/contareceber//",
       "ListarContasReceber",
       { pagina: 1, registrosPorPagina: 50 }
     );

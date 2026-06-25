@@ -1,9 +1,9 @@
 export const OMIE_ENDPOINTS = {
-  customers: "/api/v1/geral/clientes/",
-  products: "/api/v1/geral/produtos/",
-  salesOrders: "/api/v1/produtos/pedido/",
-  serviceOrders: "/api/v1/servicos/os/",
-  receivables: "/api/v1/financas/contareceber/"
+  customers: "/geral/clientes/",
+  products: "/geral/produtos/",
+  salesOrders: "/produtos/pedido/",
+  serviceOrders: "/servicos/os/",
+  receivables: "/financas/contareceber/"
 } as const;
 
 export type OmieEndpoint = (typeof OMIE_ENDPOINTS)[keyof typeof OMIE_ENDPOINTS];

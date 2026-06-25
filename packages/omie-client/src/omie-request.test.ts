@@ -25,6 +25,6 @@ describe("buildOmieIntegrationCode", () => {
 
 describe("OMIE_ENDPOINTS", () => {
   it("contains the sales order endpoint", () => {
-    expect(OMIE_ENDPOINTS.salesOrders).toBe("/api/v1/produtos/pedido/");
+    expect(OMIE_ENDPOINTS.salesOrders).toBe("/produtos/pedido/");
   });
 });

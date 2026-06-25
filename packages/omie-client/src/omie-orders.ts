@@ -45,7 +45,7 @@ export async function createSalesOrder(
   };
 
   const response = (await client.call(
-    "/api/v1/produtos/pedido/",
+    "//produtos/pedido//",
     "IncluirPedido",
     body
   )) as {
@@ -104,7 +104,7 @@ export async function createServiceOrder(
   };
 
   const response = (await client.call(
-    "/api/v1/servicos/os/",
+    "//servicos/os//",
     "IncluirOS",
     body
   )) as {
@@ -126,7 +126,7 @@ export async function cancelSalesOrder(
   client: OmieClient,
   input: CancelOrderInput
 ): Promise<void> {
-  await client.call("/api/v1/produtos/pedido/", "CancelarPedido", {
+  await client.call("/produtos/pedido/", "CancelarPedido", {
     codigoPedido: input.omieOrderId
   });
 }
@@ -135,7 +135,7 @@ export async function cancelServiceOrder(
   client: OmieClient,
   input: CancelOrderInput
 ): Promise<void> {
-  await client.call("/api/v1/servicos/os/", "CancelarOS", {
+  await client.call("/servicos/os/", "CancelarOS", {
     codigoOS: input.omieOrderId
   });
 }

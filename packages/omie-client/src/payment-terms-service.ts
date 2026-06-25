@@ -52,7 +52,7 @@ export async function listPaymentTerms(
   param: ListPaymentTermsParam
 ): Promise<PaymentTerm[]> {
   const response = (await client.call(
-    "/api/v1/geral/condicoespgto/",
+    "/geral/condicoespgto/",
     "ListarCondicoesPagamento",
     param
   )) as {
