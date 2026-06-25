@@ -71,7 +71,7 @@ export function createVirtualScaleAdapter(): ToledoTcpAdapter & {
         throw new Error("Nenhum peso informado na balanca virtual.");
       }
 
-      return toScaleReading(lastReading, lastReadingAt ?? new Date().toISOString());
+      return toScaleReading(lastReading, new Date().toISOString());
     },
 
     async readSampled(options: ScaleSamplingOptions = {}): Promise<ScaleReading> {
@@ -85,7 +85,7 @@ export function createVirtualScaleAdapter(): ToledoTcpAdapter & {
 
       const minWeightKg = options.minWeightKg;
       const weightKg = lastReading.weightKg;
-      const reading = toScaleReading(lastReading, lastReadingAt ?? new Date().toISOString());
+      const reading = toScaleReading(lastReading, new Date().toISOString());
 
       if (reading.status !== "stable" || !reading.stable) {
         throw new Error("Balanca virtual sem peso util para captura.");
