@@ -55,9 +55,9 @@ describe("toledo-tcp-adapter readSampled", () => {
     await adapter.connect({ host: "127.0.0.1", port });
 
     const reading = await adapter.readSampled({
-      durationMs: 1400,
+      durationMs: 3000,
       sampleIntervalMs: 200,
-      minStableMs: 500,
+      minStableMs: 800,
       maxVariationKg: 100
     });
 
