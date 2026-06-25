@@ -219,6 +219,8 @@ export interface KyberRockDesktopApi {
   scaleGetStatus: () => Promise<ToledoTcpAdapterStatus>;
   scaleGetConfig: () => Promise<ScaleConfiguration>;
   scaleSaveConfig: (input: ScaleConfigurationInput) => Promise<ScaleConfiguration>;
+  virtualScaleSetWeight: (weightKg: number) => Promise<void>;
+  virtualScaleConnect: () => Promise<void>;
   verifyPriceChangePassword: (password: string) => Promise<boolean>;
   omieConfig: () => Promise<{ configured: boolean; appKeyMasked: string | null }>;
   omieSync: () => Promise<{

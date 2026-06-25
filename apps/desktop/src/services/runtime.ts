@@ -155,6 +155,7 @@ export interface FiscalDocumentPrinter {
 }
 import {
   createToledoTcpAdapter,
+  createVirtualScaleAdapter,
   type ToledoTcpAdapter,
   type ToledoTcpConfig,
   type ToledoTcpAdapterStatus,
@@ -259,7 +260,9 @@ export class DesktopRuntime {
     printDocument: async () => ({ printed: false, error: null })
   };
   private cacheStore: CacheStore;
-  private scaleAdapter: ToledoTcpAdapter = createToledoTcpAdapter();
+  private tcpScaleAdapter: ToledoTcpAdapter = createToledoTcpAdapter();
+  private virtualScaleAdapter: ReturnType<typeof createVirtualScaleAdapter> = createVirtualScaleAdapter();
+  private activeScaleAdapter: ToledoTcpAdapter = this.tcpScaleAdapter;
   private reportService: ReportService;
 
   private constructor(initialized: InitializedDesktopDatabase) {
@@ -475,7 +478,7 @@ export class DesktopRuntime {
     const scaleConfig = this.getScaleConfiguration();
 
     // Attempt auto-reconnect if not connected
-    const status = this.scaleAdapter.getStatus();
+    const status = this.activeScaleAdapter.getStatus();
     if (status.state !== "connected") {
       const reconnected = await this.tryAutoConnectScale();
       if (!reconnected) {
@@ -486,7 +489,7 @@ export class DesktopRuntime {
     }
 
     try {
-      const reading = await this.scaleAdapter.readSampled(
+      const reading = await this.activeScaleAdapter.readSampled(
         buildScaleSamplingOptions(scaleConfig.stability)
       );
       if (scaleConfig.stability.requireStable && reading.stable === false) {
@@ -755,14 +758,34 @@ export class DesktopRuntime {
   }
 
   async connectScale(config: ToledoTcpConfig): Promise<void> {
-    await this.scaleAdapter.connect(config);
+    const scaleConfig = this.getScaleConfiguration();
+    this.activateAdapter(scaleConfig.adapterType);
+    this.activeScaleAdapter.removeAllListeners();
+    await this.activeScaleAdapter.connect(config);
+  }
+
+  private activateAdapter(adapterType: "tcp" | "virtual"): void {
+    this.tcpScaleAdapter.disconnect();
+    this.virtualScaleAdapter.disconnect();
+    this.activeScaleAdapter =
+      adapterType === "virtual" ? this.virtualScaleAdapter : this.tcpScaleAdapter;
+  }
+
+  async virtualScaleSetWeight(weightKg: number): Promise<void> {
+    const scaleConfig = this.getScaleConfiguration();
+    if (scaleConfig.adapterType !== "virtual") {
+      throw new Error("Modo virtual nao esta ativo. Altere a configuracao da balanca.");
+    }
+    this.virtualScaleAdapter.setWeight(weightKg);
   }
 
   async tryAutoConnectScale(): Promise<boolean> {
     try {
       const scaleConfig = this.getScaleConfiguration();
       if (!scaleConfig.id) return false;
-      await this.scaleAdapter.connect({
+      this.activateAdapter(scaleConfig.adapterType);
+      this.activeScaleAdapter.removeAllListeners();
+      await this.activeScaleAdapter.connect({
         host: scaleConfig.connection.host,
         port: scaleConfig.connection.port,
         timeoutMs: scaleConfig.connection.timeoutMs,
@@ -776,15 +799,16 @@ export class DesktopRuntime {
   }
 
   disconnectScale(): void {
-    this.scaleAdapter.disconnect();
+    this.tcpScaleAdapter.disconnect();
+    this.virtualScaleAdapter.disconnect();
   }
 
   async readScale(): Promise<{ weightKg: number; stable: boolean }> {
-    return this.scaleAdapter.read();
+    return this.activeScaleAdapter.read();
   }
 
   async readScaleSampled(): Promise<ScaleReading> {
-    return this.scaleAdapter.readSampled(
+    return this.activeScaleAdapter.readSampled(
       buildScaleSamplingOptions(this.getScaleConfiguration().stability)
     );
   }
@@ -796,7 +820,7 @@ export class DesktopRuntime {
   }
 
   getScaleStatus(): ToledoTcpAdapterStatus {
-    return this.scaleAdapter.getStatus();
+    return this.activeScaleAdapter.getStatus();
   }
 
   getScaleConfiguration(): ScaleConfiguration {
@@ -808,7 +832,7 @@ export class DesktopRuntime {
   }
 
   onScaleReading(callback: (reading: ParsedToledoReading) => void): () => void {
-    return this.scaleAdapter.onReading(callback);
+    return this.activeScaleAdapter.onReading(callback);
   }
 
   verifyPriceChangePassword(password: string): boolean {

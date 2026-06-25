@@ -1,0 +1,1140 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app.omie.com.br/api/v1/geral/produtos/",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"call\": \"ListarProdutos\",\n  \"param\": [\n    {\n      \"pagina\": {{ $json.NumeroAtual }},\n      \"registros_por_pagina\": 100,\n      \"exibir_caracteristicas\": \"N\",\n      \"exibir_obs\": \"S\",\n      \"apenas_importado_api\": \"N\",\n      \"filtrar_apenas_omiepdv\": \"N\"\n    }\n  ],\n  \"app_key\": \"2526248473749\",\n  \"app_secret\": \"0e7833081591ab00e2e90b824980b322\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -656,
+        848
+      ],
+      "id": "b94f9350-07b6-4086-bc91-fe4b0d39b8ea",
+      "name": "LISTA PRODUTOS OMIE DIBRATEC"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "produto_servico_cadastro",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        -656,
+        1072
+      ],
+      "id": "1b869fd2-fa9f-4485-94d7-0af770f6bd79",
+      "name": "Split Out"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "4e068ee0-0b4b-4159-b9e9-73fb0ca28517",
+              "leftValue": "={{ $json.inativo }}",
+              "rightValue": "S",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -176,
+        896
+      ],
+      "id": "aa49f0c1-5904-41a4-810e-077cb9db3c45",
+      "name": "inativo?"
+    },
+    {
+      "parameters": {
+        "authentication": "longLivedToken",
+        "resource": "lists",
+        "operation": "getListElements",
+        "catalog_id": 17412,
+        "returnAll": true,
+        "filter": {},
+        "limit": 250
+      },
+      "type": "n8n-nodes-kommo.kommo",
+      "typeVersion": 1,
+      "position": [
+        272,
+        880
+      ],
+      "id": "9b69e52b-f39f-45b6-8f61-29f2d901783b",
+      "name": "Get available list elements on the account1",
+      "executeOnce": true,
+      "retryOnFail": true,
+      "credentials": {
+        "kommoLongLivedApi": {
+          "id": "maUmZYVqBOHYsG9h",
+          "name": "API KOMMO DIBRATEC"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "_embedded.elements",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        272,
+        1088
+      ],
+      "id": "691ef434-bd26-4280-abfd-f45b15b6113a",
+      "name": "Split Out1"
+    },
+    {
+      "parameters": {
+        "content": "Listar produtos que temos no omie\n",
+        "height": 656,
+        "width": 288
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -736,
+        800
+      ],
+      "id": "ff3e9cc6-8367-4378-87fa-acd3555b7bd2",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "Listar produtos que temos no kommo",
+        "height": 656,
+        "width": 256
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        192,
+        800
+      ],
+      "id": "28732148-9e98-47e2-aee1-86636d2bf464",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "content": "Ignorar produtos que estão inativos no omie\n",
+        "height": 960
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -240,
+        800
+      ],
+      "id": "1474318d-3022-48c9-a305-e9cab89fdcbb",
+      "name": "Sticky Note7"
+    },
+    {
+      "parameters": {
+        "content": "Verificar alterações de preços, etc... Divergencias, e editar os itens com divergencia, etc.. respeitando o que está no omie",
+        "height": 1008,
+        "width": 304
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1072,
+        800
+      ],
+      "id": "083e9e2c-3bb2-47a0-b6f0-af0b25633971",
+      "name": "Sticky Note9"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pega todos os itens da entrada atual (Kommo) e do nó do Omie\nconst kommoItems = $input.all();\nconst omieItems = $('lista de produtos omie').all();\n\n// 1. Criamos um \"Set\" com os SKUs do KOMMO para busca rápida\nconst skusKommo = new Set();\n\nfor (const item of kommoItems) {\n  if (item.json && item.json.SKU) {\n    skusKommo.add(String(item.json.SKU).trim().toUpperCase());\n  }\n}\n\n// 2. Array para guardar o resultado final\nconst produtosExclusivosOmie = [];\n\n// 3. Itera sobre a lista do OMIE\nfor (const item of omieItems) {\n  const omieData = item.json; \n  \n  if (omieData.SKU) {\n    const skuOmieLimpo = String(omieData.SKU).trim().toUpperCase();\n\n    // Se o SKU do Omie NÃO existe no Kommo, adiciona o JSON inteiro\n    if (!skusKommo.has(skuOmieLimpo)) {\n      produtosExclusivosOmie.push({\n        json: omieData\n      });\n    }\n  }\n}\n\n// 4. Verifica se achou alguma diferença. Se estiver vazio, gera a mensagem.\nif (produtosExclusivosOmie.length === 0) {\n  return [{\n    json: {\n      status: \"sincronizado\",\n      mensagem: \"Todos os itens que estão no Omie também estão no Kommo\"\n    }\n  }];\n}\n\n// Caso existam itens faltando no Kommo, retorna a lista com os JSONs completos\nreturn produtosExclusivosOmie;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        896
+      ],
+      "id": "d8662e24-418a-4005-a3b9-431ff1495b89",
+      "name": "identifica os itens que só existe no Kommo"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "57949798-bf01-4011-87fe-5b3f20098160",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "sincronizado",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        704,
+        1216
+      ],
+      "id": "70b84c14-1925-4b60-b083-0b43201ed4b9",
+      "name": "sincronizado?"
+    },
+    {
+      "parameters": {
+        "authentication": "longLivedToken",
+        "resource": "lists",
+        "operation": "addListElements",
+        "catalog_id": 17412,
+        "collection": {
+          "element": [
+            {
+              "name": "={{ $json.Nome }}",
+              "custom_fields_values": {
+                "custom_field": [
+                  {
+                    "data": "{\"id\":2121816,\"type\":\"text\"}",
+                    "value": "={{ $json.SKU }}"
+                  },
+                  {
+                    "data": "{\"id\":2203526,\"type\":\"text\"}",
+                    "value": "={{ $json.Familia }}"
+                  },
+                  {
+                    "data": "{\"id\":2203454,\"type\":\"text\"}",
+                    "value": "={{ $json.Unidade }}"
+                  },
+                  {
+                    "data": "{\"id\":2121820,\"type\":\"price\"}",
+                    "value": "={{ $json['Preço'] }}"
+                  },
+                  {
+                    "data": "{\"id\":2203456,\"type\":\"text\"}",
+                    "value": "={{ $json.Peso_Bruto }}"
+                  },
+                  {
+                    "data": "{\"id\":2203458,\"type\":\"text\"}",
+                    "value": "={{ $json.Largura }}"
+                  },
+                  {
+                    "data": "{\"id\":2203520,\"type\":\"text\"}",
+                    "value": "={{ $json.Altura }}"
+                  },
+                  {
+                    "data": "{\"id\":2203522,\"type\":\"text\"}",
+                    "value": "={{ $json.Marca }}"
+                  },
+                  {
+                    "data": "{\"id\":2203524,\"type\":\"textarea\"}",
+                    "value": "={{ $json.obs_internas }}"
+                  },
+                  {
+                    "data": "{\"id\":2121818,\"type\":\"textarea\"}",
+                    "value": "={{ $json['Descrição'] }}"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-kommo.kommo",
+      "typeVersion": 1,
+      "position": [
+        720,
+        1664
+      ],
+      "id": "204cc32f-e447-41a9-9684-ac9c0c8444de",
+      "name": "cria produto no kommo",
+      "credentials": {
+        "kommoLongLivedApi": {
+          "id": "maUmZYVqBOHYsG9h",
+          "name": "API KOMMO DIBRATEC"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pega todos os itens de entrada do nó anterior\nconst items = $input.all();\nconst result = [];\n\nfor (const item of items) {\n  const data = item.json;\n  \n  // Cria o objeto que vai guardar os dados finais formatados\n  // Já puxo o ID e o Nome do produto da raiz para facilitar a identificação\n  let itemFormatado = {\n    id: data.id,\n    name: data.name\n  };\n\n  // Verifica se existem campos customizados neste item\n  if (data.custom_fields_values && Array.isArray(data.custom_fields_values)) {\n    \n    // Itera sobre cada campo customizado\n    for (const field of data.custom_fields_values) {\n      const chave = field.field_name;\n      let valor = null;\n\n      // Validação de segurança: verifica se o array 'values' existe e tem dados\n      if (field.values && field.values.length > 0 && field.values[0].value !== undefined) {\n        valor = field.values[0].value;\n      }\n\n      // Adiciona a chave e o valor no nosso objeto formatado\n      if (chave) {\n        itemFormatado[chave] = valor;\n      }\n    }\n  }\n\n  // O n8n exige que os dados de saída estejam dentro de uma chave 'json'\n  result.push({ json: itemFormatado });\n}\n\nreturn result;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        272,
+        1312
+      ],
+      "id": "9e5f64a8-ff58-4ab3-a482-3992f5f03c48",
+      "name": "lista de produtos kommo"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f44eabfd-1016-45c6-89e5-50040c9dccc8",
+              "name": "SKU",
+              "value": "={{ $json.codigo }}",
+              "type": "string"
+            },
+            {
+              "id": "d736d5d1-087d-4d91-81e7-e050e77765a8",
+              "name": "Nome",
+              "value": "={{ $json.descricao }}",
+              "type": "string"
+            },
+            {
+              "id": "3ab4c7d1-5971-4796-aaf1-9ef7115cc710",
+              "name": "Familia",
+              "value": "={{ $json.descricao_familia }}",
+              "type": "string"
+            },
+            {
+              "id": "9150b50d-4a0f-47e7-880c-4fc2b6cfee7c",
+              "name": "Unidade",
+              "value": "={{ $json.unidade }}",
+              "type": "string"
+            },
+            {
+              "id": "15e08d47-798f-47a3-8bd1-48b47eba7afe",
+              "name": "Preço",
+              "value": "={{ $json.valor_unitario }}",
+              "type": "number"
+            },
+            {
+              "id": "38f73c7d-b223-4f08-9f8e-526f29572890",
+              "name": "Peso_Bruto",
+              "value": "={{ $json.peso_bruto }}",
+              "type": "number"
+            },
+            {
+              "id": "14a2fc7a-5f55-4648-9c6d-77b2dba04126",
+              "name": "Largura",
+              "value": "={{ $json.largura }}",
+              "type": "number"
+            },
+            {
+              "id": "af78b8be-12f7-4afd-8950-d7e27945b8fa",
+              "name": "Altura",
+              "value": "={{ $json.altura }}",
+              "type": "number"
+            },
+            {
+              "id": "9bda225c-3c44-4e8e-9319-c372537bb64c",
+              "name": "Marca",
+              "value": "={{ $json.marca }}",
+              "type": "string"
+            },
+            {
+              "id": "86fe3f60-421e-4c65-8acc-d90eea3c52b8",
+              "name": "obs_internas",
+              "value": "={{ $json.obs_internas }}",
+              "type": "string"
+            },
+            {
+              "id": "aae86176-dbb4-48be-b8cd-3f4c7914fa7c",
+              "name": "Descrição",
+              "value": "={{ $json.descr_detalhada }}",
+              "type": "string"
+            },
+            {
+              "id": "42d4d6fe-29f1-44db-a05e-84aaea8f24c3",
+              "name": "inativo",
+              "value": "={{ $json.inativo }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -656,
+        1296
+      ],
+      "id": "95500921-6434-4ff6-aba1-f8c856d6e03b",
+      "name": "lista de produtos omie"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ATENÇÃO: Substitua pelos nomes exatos dos seus nós que geram as listas\nconst kommoItems = $('lista de produtos kommo').all();\nconst omieItems = $('lista de produtos omie').all(); \n\n// 1. Dicionário de busca super rápida com os produtos do KOMMO\nconst kommoMap = new Map();\n\nfor (const item of kommoItems) {\n  const data = item.json;\n  if (data.SKU) {\n    const skuLimpo = String(data.SKU).trim().toUpperCase();\n    kommoMap.set(skuLimpo, data);\n  }\n}\n\n// 2. Array final para guardar os produtos com divergência\nconst produtosDivergentes = [];\n\n// Funções auxiliares para comparar sem dar falso positivo por causa de tipos (String vs Number)\nconst numDif = (val1, val2) => Number(val1 || 0) !== Number(val2 || 0);\nconst strDif = (val1, val2) => String(val1 || '').trim() !== String(val2 || '').trim();\n\n// 3. Itera sobre a lista do OMIE (nossa fonte da verdade)\nfor (const item of omieItems) {\n  const omieData = item.json;\n  \n  if (omieData.SKU) {\n    const skuOmieLimpo = String(omieData.SKU).trim().toUpperCase();\n\n    // Verifica se esse produto existe no Kommo\n    if (kommoMap.has(skuOmieLimpo)) {\n      \n      const kommoData = kommoMap.get(skuOmieLimpo);\n      let temDivergencia = false;\n      let motivos = []; // Para anotar o que mudou\n      \n      // ====================================================================\n      // 4. COMPARAÇÃO DOS CAMPOS (Tratando as diferenças de nomes e formatos)\n      // ====================================================================\n      \n      if (strDif(omieData.Nome, kommoData.name)) { temDivergencia = true; motivos.push('Nome'); }\n      if (numDif(omieData.Preço, kommoData.Preço)) { temDivergencia = true; motivos.push('Preço'); }\n      if (strDif(omieData.Unidade, kommoData.Unidade)) { temDivergencia = true; motivos.push('Unidade'); }\n      if (numDif(omieData.Peso_Bruto, kommoData.PesoBruto)) { temDivergencia = true; motivos.push('Peso Bruto'); }\n      if (numDif(omieData.Largura, kommoData.Largura)) { temDivergencia = true; motivos.push('Largura'); }\n      if (numDif(omieData.Altura, kommoData.Altura)) { temDivergencia = true; motivos.push('Altura'); }\n      if (strDif(omieData.Marca, kommoData.Marca)) { temDivergencia = true; motivos.push('Marca'); }\n      if (strDif(omieData.Familia, kommoData.Familia)) { temDivergencia = true; motivos.push('Familia'); }\n      if (strDif(omieData.Descrição, kommoData.Descrição)) { temDivergencia = true; motivos.push('Descrição'); }\n      if (strDif(omieData.obs_internas, kommoData.obsinternas)) { temDivergencia = true; motivos.push('Obs Internas'); }\n\n      // ====================================================================\n\n      // 5. Se achou qualquer diferença, prepara o JSON de saída\n      if (temDivergencia) {\n        \n        let dadosParaAtualizar = { ...omieData };\n        \n        // Pega o ID do Kommo para a requisição de Update\n        dadosParaAtualizar.id_kommo = kommoData.id; \n        \n        // Campo bônus para debug (mostra o que ativou a atualização)\n        dadosParaAtualizar._campos_alterados = motivos.join(', ');\n        \n        produtosDivergentes.push({\n          json: dadosParaAtualizar\n        });\n      }\n    }\n  }\n}\n\n// 6. Se nada mudou, retornamos a mensagem\nif (produtosDivergentes.length === 0) {\n  return [{\n    json: {\n      status: \"atualizado\",\n      mensagem: \"Nenhuma divergência encontrada. Todos os produtos estão iguais.\"\n    }\n  }];\n}\n\n// Caso existam divergências, retorna os produtos do Omie com o ID do Kommo\nreturn produtosDivergentes;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1168,
+        912
+      ],
+      "id": "8c00380e-3935-4096-a239-939940513e24",
+      "name": "identifica produtos que atualizou no omie"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "a2b1d514-62a7-436d-a303-fc9efc5ede3f",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "atualizado",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1168,
+        1120
+      ],
+      "id": "553e73d5-6c2f-422d-bd30-aa4ceb934d27",
+      "name": "atualizado"
+    },
+    {
+      "parameters": {
+        "authentication": "longLivedToken",
+        "resource": "lists",
+        "operation": "updateListElements",
+        "catalog_id": 17412,
+        "collection": {
+          "element": [
+            {
+              "id": "={{ $json.id_kommo }}",
+              "name": "={{ $json.Nome }}",
+              "custom_fields_values": {
+                "custom_field": [
+                  {
+                    "data": "{\"id\":2203526,\"type\":\"text\"}",
+                    "value": "={{ $json.Familia }}"
+                  },
+                  {
+                    "data": "{\"id\":2203454,\"type\":\"text\"}",
+                    "value": "={{ $json.Unidade }}"
+                  },
+                  {
+                    "data": "{\"id\":2121820,\"type\":\"price\"}",
+                    "value": "={{ $json['Preço'] }}"
+                  },
+                  {
+                    "data": "{\"id\":2203456,\"type\":\"text\"}",
+                    "value": "={{ $json.Peso_Bruto }}"
+                  },
+                  {
+                    "data": "{\"id\":2203458,\"type\":\"text\"}",
+                    "value": "={{ $json.Largura }}"
+                  },
+                  {
+                    "data": "{\"id\":2203520,\"type\":\"text\"}",
+                    "value": "={{ $json.Altura }}"
+                  },
+                  {
+                    "data": "{\"id\":2203522,\"type\":\"text\"}",
+                    "value": "={{ $json.Marca }}"
+                  },
+                  {
+                    "data": "{\"id\":2203524,\"type\":\"textarea\"}",
+                    "value": "={{ $json.obs_internas }}"
+                  },
+                  {
+                    "data": "{\"id\":2121818,\"type\":\"textarea\"}",
+                    "value": "={{ $json['Descrição'] }}"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-kommo.kommo",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        1568
+      ],
+      "id": "8f588b98-b39c-477f-84a4-f0539b89ba1c",
+      "name": "atualiza produtos kommo",
+      "credentials": {
+        "kommoLongLivedApi": {
+          "id": "maUmZYVqBOHYsG9h",
+          "name": "API KOMMO DIBRATEC"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1168,
+        1344
+      ],
+      "id": "86c125a2-2041-4ab3-a595-5d5e42293059",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        688,
+        1440
+      ],
+      "id": "e2fe1039-d34e-45e1-8f22-9348f528a820",
+      "name": "Loop Over Items1"
+    },
+    {
+      "parameters": {
+        "authentication": "longLivedToken",
+        "resource": "lists",
+        "operation": "updateListElements",
+        "catalog_id": 17412,
+        "collection": {
+          "element": [
+            {
+              "id": "={{ $json._embedded.elements[0].id }}",
+              "name": "=INATIVO - {{ $json._embedded.elements[0].name }}",
+              "custom_fields_values": {
+                "custom_field": [
+                  {
+                    "data": "{\"id\":2203526,\"type\":\"text\"}",
+                    "value": "INATIVO"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-kommo.kommo",
+      "typeVersion": 1,
+      "position": [
+        -160,
+        1568
+      ],
+      "id": "3ea7fa0e-0558-4934-8c6a-535257feeb17",
+      "name": "COLOCA NO GRUPO INATIVOS DO KOMMO",
+      "credentials": {
+        "kommoLongLivedApi": {
+          "id": "maUmZYVqBOHYsG9h",
+          "name": "API KOMMO DIBRATEC"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -176,
+        1120
+      ],
+      "id": "0a780cd8-a16d-433a-b981-c7bf95ba78b2",
+      "name": "Loop Over Items2"
+    },
+    {
+      "parameters": {
+        "authentication": "longLivedToken",
+        "resource": "lists",
+        "operation": "getListElements",
+        "catalog_id": 17412,
+        "returnAll": true,
+        "filter": {
+          "query": "={{ $json.SKU }}"
+        },
+        "limit": 100
+      },
+      "type": "n8n-nodes-kommo.kommo",
+      "typeVersion": 1,
+      "position": [
+        -160,
+        1360
+      ],
+      "id": "45a8133e-4039-45c4-86ef-1f91520bd19e",
+      "name": "Get available list elements on the account2",
+      "credentials": {
+        "kommoLongLivedApi": {
+          "id": "maUmZYVqBOHYsG9h",
+          "name": "API KOMMO DIBRATEC"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "z1V5tyuRghzj7XXh",
+          "mode": "list",
+          "cachedResultName": "Dibratec - indice numero paginas variavel",
+          "cachedResultUrl": "/projects/72MghKyBe7pL4bex/datatables/z1V5tyuRghzj7XXh"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyValue": "=3"
+            }
+          ]
+        },
+        "returnAll": true
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        -1056,
+        848
+      ],
+      "id": "5744c063-e41d-486c-8961-364e5a87c0d0",
+      "name": "Get row(s)",
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "value": "z1V5tyuRghzj7XXh",
+          "mode": "list",
+          "cachedResultName": "Dibratec - indice numero paginas variavel",
+          "cachedResultUrl": "/projects/72MghKyBe7pL4bex/datatables/z1V5tyuRghzj7XXh"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyValue": "={{ $('Get row(s)').item.json.id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "NumeroTotal": "=1",
+            "NumeroAtual": "=1"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "NumeroTotal",
+              "displayName": "NumeroTotal",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "NumeroAtual",
+              "displayName": "NumeroAtual",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        -32,
+        432
+      ],
+      "id": "d9e87608-e076-40d3-9025-ede00b87f4ab",
+      "name": "Update row(s)1",
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "e22f3c3c-b5bd-406e-bc8d-e5d707767dec",
+              "leftValue": "={{ $json.pagina }}",
+              "rightValue": "={{ $json.total_de_paginas }}",
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -416,
+        528
+      ],
+      "id": "7ad8d180-ea68-48a0-8a54-1a6f2f9b26a0",
+      "name": "numero de pagina igual então reseta"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "value": "z1V5tyuRghzj7XXh",
+          "mode": "list",
+          "cachedResultName": "Dibratec - indice numero paginas variavel",
+          "cachedResultUrl": "/projects/72MghKyBe7pL4bex/datatables/z1V5tyuRghzj7XXh"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyValue": "={{ $('Get row(s)').item.json.id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "NumeroTotal": "={{ $json.total_de_paginas }}",
+            "NumeroAtual": "={{ $json.pagina + 1 }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "NumeroTotal",
+              "displayName": "NumeroTotal",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "NumeroAtual",
+              "displayName": "NumeroAtual",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        -32,
+        624
+      ],
+      "id": "0507ed24-4935-4754-851c-f5844fc9c44f",
+      "name": "Update row(s)2",
+      "executeOnce": true
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        928,
+        1424
+      ],
+      "id": "eb42f6bc-122e-4125-a448-49056775648d",
+      "name": "No Operation, do nothing"
+    },
+    {
+      "parameters": {
+        "content": "Atualiza indice de paginas\n",
+        "height": 384,
+        "width": 736
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -464,
+        384
+      ],
+      "id": "c2d34d80-300b-43f8-a37d-c5718780363e",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 20
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -1344,
+        848
+      ],
+      "id": "c1c7b094-f41e-4dcf-b886-7373da4c33b4",
+      "name": "A CADA 20 MIN"
+    }
+  ],
+  "connections": {
+    "LISTA PRODUTOS OMIE DIBRATEC": {
+      "main": [
+        [
+          {
+            "node": "Split Out",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "numero de pagina igual então reseta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out": {
+      "main": [
+        [
+          {
+            "node": "lista de produtos omie",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "inativo?": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get available list elements on the account1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get available list elements on the account1": {
+      "main": [
+        [
+          {
+            "node": "Split Out1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out1": {
+      "main": [
+        [
+          {
+            "node": "lista de produtos kommo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "identifica os itens que só existe no Kommo": {
+      "main": [
+        [
+          {
+            "node": "sincronizado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "sincronizado?": {
+      "main": [
+        [
+          {
+            "node": "identifica produtos que atualizou no omie",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "cria produto no kommo": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "lista de produtos kommo": {
+      "main": [
+        [
+          {
+            "node": "identifica os itens que só existe no Kommo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "lista de produtos omie": {
+      "main": [
+        [
+          {
+            "node": "inativo?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "identifica produtos que atualizou no omie": {
+      "main": [
+        [
+          {
+            "node": "atualizado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "atualizado": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "atualiza produtos kommo": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "atualiza produtos kommo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items1": {
+      "main": [
+        [
+          {
+            "node": "No Operation, do nothing",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "cria produto no kommo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "COLOCA NO GRUPO INATIVOS DO KOMMO": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items2": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Get available list elements on the account2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get available list elements on the account2": {
+      "main": [
+        [
+          {
+            "node": "COLOCA NO GRUPO INATIVOS DO KOMMO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s)": {
+      "main": [
+        [
+          {
+            "node": "LISTA PRODUTOS OMIE DIBRATEC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "numero de pagina igual então reseta": {
+      "main": [
+        [
+          {
+            "node": "Update row(s)1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update row(s)2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "A CADA 20 MIN": {
+      "main": [
+        [
+          {
+            "node": "Get row(s)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {
+    "A CADA 20 MIN": [
+      {
+        "timestamp": "2026-03-21T17:00:08.005-03:00",
+        "Readable date": "March 21st 2026, 5:00:08 pm",
+        "Readable time": "5:00:08 pm",
+        "Day of week": "Saturday",
+        "Year": "2026",
+        "Month": "March",
+        "Day of month": "21",
+        "Hour": "17",
+        "Minute": "00",
+        "Second": "08",
+        "Timezone": "America/Sao_Paulo (UTC-03:00)"
+      }
+    ]
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "1298077cbb8f79eeb72df2f20a332d6c08903b1cddff5e7c5fbf9e96da9acd58"
+  }
+}

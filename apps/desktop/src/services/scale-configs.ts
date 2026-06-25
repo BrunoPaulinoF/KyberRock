@@ -23,7 +23,7 @@ export interface ScaleStabilityConfig {
 
 export interface ScaleConfiguration {
   id: string | null;
-  adapterType: "tcp";
+  adapterType: "tcp" | "virtual";
   manufacturer: string;
   model: string;
   connection: ScaleConnectionConfig;
@@ -31,6 +31,7 @@ export interface ScaleConfiguration {
 }
 
 export interface ScaleConfigurationInput {
+  adapterType?: "tcp" | "virtual";
   connection?: Partial<ScaleConnectionConfig>;
   stability?: Partial<ScaleStabilityConfig>;
 }
@@ -82,9 +83,9 @@ export function readScaleConfiguration(
 
   return {
     id: row.id,
-    adapterType: "tcp",
+    adapterType: normalizeAdapterType(row.adapter_type),
     manufacturer: row.manufacturer?.trim() || "Toledo",
-    model: row.model?.trim() || "TCP",
+    model: row.model?.trim() || (row.adapter_type === "virtual" ? "Virtual" : "TCP"),
     connection: normalizeScaleConnectionConfig(parseJsonObject(row.connection_config_json)),
     stability: normalizeScaleStabilityConfig(parseJsonObject(row.stability_config_json))
   };
@@ -99,9 +100,9 @@ export function writeScaleConfiguration(
   const current = readScaleConfiguration(database, identity);
   const next: ScaleConfiguration = {
     id: current.id ?? randomUUID(),
-    adapterType: "tcp",
+    adapterType: normalizeAdapterType(input.adapterType ?? current.adapterType),
     manufacturer: "Toledo",
-    model: "TCP",
+    model: input.adapterType === "virtual" || current.adapterType === "virtual" ? "Virtual" : "TCP",
     connection: normalizeScaleConnectionConfig({ ...current.connection, ...input.connection }),
     stability: normalizeScaleStabilityConfig({ ...current.stability, ...input.stability })
   };
@@ -134,7 +135,7 @@ export function writeScaleConfiguration(
          ) VALUES (
            @id,
            @deviceId,
-           'tcp',
+            @adapterType,
            @manufacturer,
            @model,
            @connectionConfigJson,
@@ -159,6 +160,7 @@ export function writeScaleConfiguration(
       .run({
         id: next.id,
         deviceId: identity.deviceId,
+        adapterType: next.adapterType,
         manufacturer: next.manufacturer,
         model: next.model,
         connectionConfigJson: JSON.stringify(next.connection),
@@ -256,6 +258,11 @@ function parseJsonObject(value: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+function normalizeAdapterType(value: string | null | undefined): "tcp" | "virtual" {
+  if (value === "virtual") return "virtual";
+  return "tcp";
 }
 
 function clampInteger(

@@ -902,6 +902,29 @@ function registerIpcHandlers(): void {
     return runtime.saveScaleConfiguration(input);
   });
 
+  ipcMain.handle("desktop:virtual-scale-set-weight", (_event, weightKg: number) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.virtualScaleSetWeight(weightKg);
+  });
+
+  ipcMain.handle("desktop:virtual-scale-connect", async () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    const config = runtime.getScaleConfiguration();
+    if (config.adapterType !== "virtual") {
+      throw new Error("Modo virtual nao esta configurado. Altere em Configuracoes > Balanca.");
+    }
+    await runtime.connectScale({
+      host: "127.0.0.1",
+      port: 0,
+      timeoutMs: 3000,
+      reconnectIntervalMs: 5000,
+      maxReconnectAttempts: 0
+    });
+    runtime.onScaleReading((reading) => {
+      mainWindow?.webContents.send("desktop:scale-reading", reading);
+    });
+  });
+
   ipcMain.handle("desktop:omie-config", () => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.getOmieConfig();

@@ -2851,6 +2851,8 @@ function WeighingForm({
   const [capturedWeight, setCapturedWeight] = useState<number | null>(null);
   const [scaleState, setScaleState] = useState<"disconnected" | "connecting" | "connected" | "error">("disconnected");
   const [scaleStateMessage, setScaleStateMessage] = useState<string>("Balança desconectada");
+  const [isVirtual, setIsVirtual] = useState(false);
+  const [virtualWeightInput, setVirtualWeightInput] = useState("");
   const [isCapturing, setIsCapturing] = useState(false);
   const [priceDetails, setPriceDetails] = useState<PriceDetails | null>(null);
   const [showVehicleModal, setShowVehicleModal] = useState(false);
@@ -2988,13 +2990,19 @@ function WeighingForm({
     let canceled = false;
     async function autoConnect() {
       try {
+        const config = await api.scaleGetConfig();
+        if (canceled) return;
+        setIsVirtual(config.adapterType === "virtual");
         const status = await api.scaleGetStatus();
         if (canceled) return;
         if (status.state !== "connected") {
           setScaleState("connecting");
           setScaleStateMessage("Tentando conectar à balança...");
-          const config = await api.scaleGetConfig();
-          await api.scaleConnect(config.connection as unknown as Parameters<KyberRockDesktopApi["scaleConnect"]>[0]);
+          if (config.adapterType === "virtual") {
+            await api.virtualScaleConnect();
+          } else {
+            await api.scaleConnect(config.connection as unknown as Parameters<KyberRockDesktopApi["scaleConnect"]>[0]);
+          }
         }
       } catch {
         // Silencioso - o checkStatus periodicamente vai atualizar
@@ -3101,7 +3109,11 @@ function WeighingForm({
                   setScaleStateMessage("Conectando...");
                   try {
                     const config = await desktopApi.scaleGetConfig();
-                    await desktopApi.scaleConnect(config.connection as unknown as Parameters<KyberRockDesktopApi["scaleConnect"]>[0]);
+                    if (config.adapterType === "virtual") {
+                      await desktopApi.virtualScaleConnect();
+                    } else {
+                      await desktopApi.scaleConnect(config.connection as unknown as Parameters<KyberRockDesktopApi["scaleConnect"]>[0]);
+                    }
                   } catch (err) {
                     setScaleState("error");
                     setScaleStateMessage(err instanceof Error ? err.message : "Falha ao conectar");
@@ -3130,6 +3142,75 @@ function WeighingForm({
             </span>
           </div>
         </div>
+        {isVirtual && scaleState === "connected" ? (
+          <div style={{ marginTop: "12px", display: "flex", gap: "8px", alignItems: "flex-end" }}>
+            <div style={{ flex: 1 }}>
+              <label style={{ fontSize: "12px", fontWeight: 600, color: "#475569", display: "block", marginBottom: "4px" }}>
+                Peso para simular (kg)
+              </label>
+              <input
+                type="number"
+                value={virtualWeightInput}
+                onChange={(e) => setVirtualWeightInput(e.target.value)}
+                onKeyDown={async (e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    if (!desktopApi) return;
+                    const kg = parseFloat(virtualWeightInput);
+                    if (!Number.isFinite(kg) || kg < 0) return;
+                    try {
+                      await desktopApi.virtualScaleSetWeight(kg);
+                      setLiveWeight(kg);
+                    } catch (err) {
+                      setScaleStateMessage(err instanceof Error ? err.message : "Erro ao enviar peso");
+                    }
+                  }
+                }}
+                placeholder="Ex: 15500"
+                min="0"
+                step="1"
+                style={{
+                  width: "100%",
+                  padding: "10px 12px",
+                  fontSize: "16px",
+                  fontWeight: 700,
+                  border: "2px solid #86efac",
+                  borderRadius: "8px",
+                  background: "#f0fdf4",
+                  outline: "none",
+                  boxSizing: "border-box",
+                  fontFamily: "monospace"
+                }}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={async () => {
+                if (!desktopApi) return;
+                const kg = parseFloat(virtualWeightInput);
+                if (!Number.isFinite(kg) || kg < 0) {
+                  setScaleStateMessage("Digite um peso valido em kg.");
+                  return;
+                }
+                try {
+                  await desktopApi.virtualScaleSetWeight(kg);
+                  setLiveWeight(kg);
+                } catch (err) {
+                  setScaleStateMessage(err instanceof Error ? err.message : "Erro ao enviar peso");
+                }
+              }}
+              style={{
+                ...styles.primaryButton,
+                padding: "10px 20px",
+                fontSize: "14px",
+                fontWeight: 700,
+                whiteSpace: "nowrap"
+              }}
+            >
+              Enviar peso
+            </button>
+          </div>
+        ) : null}
       </div>
 
       {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
@@ -3830,6 +3911,8 @@ function CloseOperationWeighingDialog({
   const [capturedExitWeight, setCapturedExitWeight] = useState<number | null>(null);
   const [scaleState, setScaleState] = useState<"disconnected" | "connecting" | "connected" | "error">("disconnected");
   const [scaleMessage, setScaleMessage] = useState<string>("Balança desconectada");
+  const [isVirtual, setIsVirtual] = useState(false);
+  const [virtualWeightInput, setVirtualWeightInput] = useState("");
   const [isCapturing, setIsCapturing] = useState(false);
   const [captureError, setCaptureError] = useState<string | null>(null);
 
@@ -3881,11 +3964,17 @@ function CloseOperationWeighingDialog({
     let canceled = false;
     async function autoConnect() {
       try {
+        const config = await api.scaleGetConfig();
+        if (canceled) return;
+        setIsVirtual(config.adapterType === "virtual");
         const status = await api.scaleGetStatus();
         if (canceled) return;
         if (status.state !== "connected") {
-          const config = await api.scaleGetConfig();
-          await api.scaleConnect(config.connection as unknown as Parameters<KyberRockDesktopApi["scaleConnect"]>[0]);
+          if (config.adapterType === "virtual") {
+            await api.virtualScaleConnect();
+          } else {
+            await api.scaleConnect(config.connection as unknown as Parameters<KyberRockDesktopApi["scaleConnect"]>[0]);
+          }
         }
       } catch {
         // Silencioso
@@ -3977,7 +4066,11 @@ function CloseOperationWeighingDialog({
                   setScaleState("connecting");
                   try {
                     const config = await api.scaleGetConfig();
-                    await api.scaleConnect(config.connection as unknown as Parameters<KyberRockDesktopApi["scaleConnect"]>[0]);
+                    if (config.adapterType === "virtual") {
+                      await api.virtualScaleConnect();
+                    } else {
+                      await api.scaleConnect(config.connection as unknown as Parameters<KyberRockDesktopApi["scaleConnect"]>[0]);
+                    }
                   } catch (err) {
                     setScaleState("error");
                     setScaleMessage(err instanceof Error ? err.message : "Falha ao conectar");
@@ -3989,6 +4082,7 @@ function CloseOperationWeighingDialog({
               </button>
             ) : null}
           </div>
+          {/* end of live weight card - first div closes card, second the flex row container */}
 
           <div style={{
             flex: 1,
@@ -4007,6 +4101,76 @@ function CloseOperationWeighingDialog({
             </div>
           </div>
         </div>
+
+        {isVirtual && scaleState === "connected" ? (
+          <div style={{ marginBottom: "16px", display: "flex", gap: "8px", alignItems: "flex-end" }}>
+            <div style={{ flex: 1 }}>
+              <label style={{ fontSize: "12px", fontWeight: 600, color: "#475569", display: "block", marginBottom: "4px" }}>
+                Peso de saida para simular (kg)
+              </label>
+              <input
+                type="number"
+                value={virtualWeightInput}
+                onChange={(e) => setVirtualWeightInput(e.target.value)}
+                onKeyDown={async (e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    if (!desktopApi) return;
+                    const kg = parseFloat(virtualWeightInput);
+                    if (!Number.isFinite(kg) || kg < 0) return;
+                    try {
+                      await desktopApi.virtualScaleSetWeight(kg);
+                      setLiveWeight(kg);
+                    } catch (err) {
+                      setScaleMessage(err instanceof Error ? err.message : "Erro ao enviar peso");
+                    }
+                  }
+                }}
+                placeholder="Ex: 35000"
+                min="0"
+                step="1"
+                style={{
+                  width: "100%",
+                  padding: "10px 12px",
+                  fontSize: "16px",
+                  fontWeight: 700,
+                  border: "2px solid #86efac",
+                  borderRadius: "8px",
+                  background: "#f0fdf4",
+                  outline: "none",
+                  boxSizing: "border-box",
+                  fontFamily: "monospace"
+                }}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={async () => {
+                if (!desktopApi) return;
+                const kg = parseFloat(virtualWeightInput);
+                if (!Number.isFinite(kg) || kg < 0) {
+                  setScaleMessage("Digite um peso valido em kg.");
+                  return;
+                }
+                try {
+                  await desktopApi.virtualScaleSetWeight(kg);
+                  setLiveWeight(kg);
+                } catch (err) {
+                  setScaleMessage(err instanceof Error ? err.message : "Erro ao enviar peso");
+                }
+              }}
+              style={{
+                ...styles.primaryButton,
+                padding: "10px 20px",
+                fontSize: "14px",
+                fontWeight: 700,
+                whiteSpace: "nowrap"
+              }}
+            >
+              Enviar peso
+            </button>
+          </div>
+        ) : null}
 
         {/* Peso líquido */}
         {netWeight !== null ? (
@@ -5283,6 +5447,7 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
 function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   const [host, setHost] = useState("192.168.1.100");
   const [port, setPort] = useState("4001");
+  const [adapterType, setAdapterType] = useState<"tcp" | "virtual">("tcp");
   const [autoConnect, setAutoConnect] = useState(false);
   const [sampleDurationSeconds, setSampleDurationSeconds] = useState("5");
   const [sampleIntervalMs, setSampleIntervalMs] = useState("250");
@@ -5427,7 +5592,11 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
     try {
       const config = await desktopApi.scaleSaveConfig(buildScaleConfigInput());
       applyScaleConfig(config);
-      await desktopApi.scaleConnect(config.connection);
+      if (config.adapterType === "virtual") {
+        await desktopApi.virtualScaleConnect();
+      } else {
+        await desktopApi.scaleConnect(config.connection);
+      }
       setConnected(true);
       setStatus("Conectado");
       setConfigMessage("Configuracao salva e balanca conectada.");
@@ -5472,7 +5641,11 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
       applyScaleConfig(config);
 
       if (!connectedRef.current) {
-        await desktopApi.scaleConnect(config.connection);
+        if (config.adapterType === "virtual") {
+          await desktopApi.virtualScaleConnect();
+        } else {
+          await desktopApi.scaleConnect(config.connection);
+        }
         setConnected(true);
         setStatus("Conectado");
       }
@@ -5502,7 +5675,11 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
       applyScaleConfig(config);
 
       if (!connectedRef.current) {
-        await desktopApi.scaleConnect(config.connection);
+        if (config.adapterType === "virtual") {
+          await desktopApi.virtualScaleConnect();
+        } else {
+          await desktopApi.scaleConnect(config.connection);
+        }
         setConnected(true);
         setStatus("Conectado");
       }
@@ -5523,6 +5700,7 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   }
 
   function applyScaleConfig(config: ScaleConfiguration): void {
+    setAdapterType(config.adapterType);
     setHost(config.connection.host);
     setPort(String(config.connection.port));
     setAutoConnect(config.connection.autoConnect);
@@ -5536,6 +5714,7 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
 
   function buildScaleConfigInput(): ScaleConfigurationInput {
     return {
+      adapterType,
       connection: {
         host: host.trim() || "192.168.1.100",
         port: parseInteger(port, 4001),
@@ -5564,32 +5743,99 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
     <div>
       <section style={styles.twoColumns}>
         <article style={styles.panel}>
-          <h2 style={styles.panelTitle}>Configuracao da Balanca Toledo</h2>
-          <TextInput
-            label="Host / IP"
-            value={host}
-            onChange={setHost}
-            placeholder="192.168.1.100"
-          />
-          <NumberInput
-            label="Porta TCP"
-            value={port}
-            onChange={setPort}
-            placeholder="4001"
-            maxLength={5}
-            minLength={1}
-            hint="Apenas numeros (1-65535)."
-          />
-          <div style={{ marginTop: "10px" }}>
+          <h2 style={styles.panelTitle}>Configuracao da Balanca</h2>
+          <div style={{ display: "flex", gap: "12px", marginBottom: "16px" }}>
             <button
               type="button"
-              onClick={handleDiscover}
-              disabled={discovering}
-              style={{ ...styles.secondaryButton, opacity: discovering ? 0.5 : 1 }}
+              onClick={async () => {
+                setAdapterType("tcp");
+                await desktopApi.scaleSaveConfig(buildScaleConfigInput());
+                if (connected) {
+                  await handleDisconnect();
+                }
+              }}
+              style={{
+                flex: 1,
+                padding: "10px 16px",
+                border: adapterType === "tcp" ? "2px solid #2563eb" : "1px solid #e2e8f0",
+                borderRadius: "8px",
+                background: adapterType === "tcp" ? "#eff6ff" : "#f8fafc",
+                color: adapterType === "tcp" ? "#1e40af" : "#64748b",
+                fontWeight: adapterType === "tcp" ? 700 : 500,
+                fontSize: "13px",
+                cursor: "pointer"
+              }}
             >
-              {discovering ? "Procurando..." : "Procurar balanca"}
+              TCP (Real)
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                await desktopApi.scaleSaveConfig({ adapterType: "virtual" });
+                setAdapterType("virtual");
+                if (connected) {
+                  await handleDisconnect();
+                }
+              }}
+              style={{
+                flex: 1,
+                padding: "10px 16px",
+                border: adapterType === "virtual" ? "2px solid #2563eb" : "1px solid #e2e8f0",
+                borderRadius: "8px",
+                background: adapterType === "virtual" ? "#eff6ff" : "#f8fafc",
+                color: adapterType === "virtual" ? "#1e40af" : "#64748b",
+                fontWeight: adapterType === "virtual" ? 700 : 500,
+                fontSize: "13px",
+                cursor: "pointer"
+              }}
+            >
+              Virtual (Simulada)
             </button>
           </div>
+          {adapterType === "tcp" ? (
+            <>
+              <TextInput
+                label="Host / IP"
+                value={host}
+                onChange={setHost}
+                placeholder="192.168.1.100"
+              />
+              <NumberInput
+                label="Porta TCP"
+                value={port}
+                onChange={setPort}
+                placeholder="4001"
+                maxLength={5}
+                minLength={1}
+                hint="Apenas numeros (1-65535)."
+              />
+              <div style={{ marginTop: "10px" }}>
+                <button
+                  type="button"
+                  onClick={handleDiscover}
+                  disabled={discovering}
+                  style={{ ...styles.secondaryButton, opacity: discovering ? 0.5 : 1 }}
+                >
+                  {discovering ? "Procurando..." : "Procurar balanca"}
+                </button>
+              </div>
+            </>
+          ) : (
+            <div style={{
+              marginTop: "10px",
+              padding: "16px",
+              background: "#f0fdf4",
+              borderRadius: "8px",
+              border: "1px solid #bbf7d0"
+            }}>
+              <p style={{ margin: 0, fontSize: "14px", fontWeight: 600, color: "#166534" }}>
+                Modo Balanca Virtual
+              </p>
+              <p style={{ margin: "4px 0 0 0", fontSize: "12px", color: "#166534" }}>
+                Conecte para simular leituras de peso manualmente. Use o botao abaixo para conectar.
+              </p>
+            </div>
+          )}
           <label style={{ ...styles.checkboxLabel, marginTop: "10px" }}>
             <input
               type="checkbox"
