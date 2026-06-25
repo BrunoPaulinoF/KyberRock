@@ -147,33 +147,11 @@ export function LoaderDashboard() {
   return (
     <main style={styles.page}>
       <header style={styles.header}>
-        <div>
-          <p style={styles.eyebrow}>Painel do carregador</p>
-          <h1 style={styles.title}>Fila de cargas</h1>
-          <p style={styles.subtitle}>Organize os caminhões por ordem de chegada e marque as cargas concluídas.</p>
-        </div>
-
-        <div style={styles.userArea}>
-          <span style={styles.userName}>{user?.name ?? "Carregador"}</span>
-          <button onClick={logout} style={styles.logoutButton}>
-            Sair
-          </button>
-        </div>
+        <span style={styles.userName}>{user?.name ?? "Carregador"}</span>
+        <button onClick={logout} style={styles.logoutButton}>
+          Sair
+        </button>
       </header>
-
-      <section style={styles.summaryGrid} aria-label="Resumo da fila de carga">
-        <article style={styles.summaryCard}>
-          <span style={styles.summaryLabel}>Em andamento</span>
-          <strong style={styles.summaryValue}>{inProgressOperations.length}</strong>
-          <span style={styles.summaryHelp}>Ordem FIFO: primeiro que chega, primeiro que carrega.</span>
-        </article>
-
-        <article style={styles.summaryCard}>
-          <span style={styles.summaryLabel}>Concluídas</span>
-          <strong style={styles.summaryValue}>{completedOperations.length}</strong>
-          <span style={styles.summaryHelp}>Conclusões locais, sem envio ao desktop por enquanto.</span>
-        </article>
-      </section>
 
       <section style={styles.board}>
         <section style={styles.column} aria-labelledby="in-progress-title">
@@ -328,41 +306,10 @@ const styles: Record<string, CSSProperties> = {
   header: {
     display: "flex",
     justifyContent: "space-between",
-    alignItems: "flex-start",
-    gap: "20px",
-    margin: "0 auto 24px",
-    maxWidth: "1280px",
-    flexWrap: "wrap"
-  },
-  eyebrow: {
-    margin: "0 0 8px",
-    color: "#2563eb",
-    fontSize: "12px",
-    fontWeight: 800,
-    letterSpacing: "0.08em",
-    textTransform: "uppercase"
-  },
-  title: {
-    margin: 0,
-    fontSize: "36px",
-    lineHeight: 1.1,
-    letterSpacing: "-0.04em"
-  },
-  subtitle: {
-    margin: "10px 0 0",
-    color: "#64748b",
-    fontSize: "16px",
-    maxWidth: "620px"
-  },
-  userArea: {
-    display: "flex",
     alignItems: "center",
     gap: "12px",
-    background: "rgba(255, 255, 255, 0.82)",
-    border: "1px solid #e2e8f0",
-    borderRadius: "999px",
-    padding: "8px 8px 8px 16px",
-    boxShadow: "0 14px 40px rgba(15, 23, 42, 0.08)"
+    margin: "0 auto 20px",
+    maxWidth: "1280px"
   },
   userName: {
     color: "#334155",
@@ -377,38 +324,6 @@ const styles: Record<string, CSSProperties> = {
     color: "#0f172a",
     cursor: "pointer",
     fontWeight: 800
-  },
-  summaryGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-    gap: "16px",
-    margin: "0 auto 18px",
-    maxWidth: "1280px"
-  },
-  summaryCard: {
-    background: "rgba(255, 255, 255, 0.9)",
-    border: "1px solid #e2e8f0",
-    borderRadius: "20px",
-    padding: "18px 20px",
-    boxShadow: "0 18px 60px rgba(15, 23, 42, 0.08)",
-    display: "flex",
-    flexDirection: "column",
-    gap: "6px"
-  },
-  summaryLabel: {
-    color: "#64748b",
-    fontSize: "13px",
-    fontWeight: 800,
-    textTransform: "uppercase",
-    letterSpacing: "0.06em"
-  },
-  summaryValue: {
-    fontSize: "34px",
-    lineHeight: 1
-  },
-  summaryHelp: {
-    color: "#64748b",
-    fontSize: "13px"
   },
   board: {
     display: "grid",
