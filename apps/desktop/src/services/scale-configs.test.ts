@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { runDesktopMigrations } from "../database/migrate";
+import { DESKTOP_MIGRATIONS } from "../database/migrations";
 import { openDesktopDatabase } from "../database/sqlite";
 import { ensureInitialDesktopIdentity } from "./bootstrap";
 import {
@@ -90,6 +91,45 @@ describe("scale-configs", () => {
           minWeightKg: 1500
         }
       });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("migrates legacy scale configs to accept the virtual adapter", () => {
+    const database = openDesktopDatabase({ databasePath: ":memory:" });
+
+    try {
+      const legacyMigrations = DESKTOP_MIGRATIONS.filter((migration) => migration.version <= 14).map(
+        (migration) =>
+          migration.version === 1
+            ? {
+                ...migration,
+                sql: migration.sql.replace(
+                  "'serial', 'tcp', 'http', 'file', 'custom', 'virtual'",
+                  "'serial', 'tcp', 'http', 'file', 'custom'"
+                )
+              }
+            : migration
+      );
+
+      runDesktopMigrations(database, legacyMigrations);
+      const identity = ensureInitialDesktopIdentity(database, {
+        companyId: "company-1",
+        companyLegalName: "KyberRock Mineracao LTDA",
+        unitId: "unit-1",
+        unitName: "Pedreira Principal",
+        deviceId: "device-1",
+        deviceName: "PC Balanca",
+        installationId: "install-1"
+      });
+
+      runDesktopMigrations(database);
+
+      const saved = writeScaleConfiguration(database, identity, { adapterType: "virtual" });
+
+      expect(saved.adapterType).toBe("virtual");
+      expect(readScaleConfiguration(database, identity).adapterType).toBe("virtual");
     } finally {
       database.close();
     }

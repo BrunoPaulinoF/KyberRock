@@ -3020,12 +3020,24 @@ function WeighingForm({
       }
       if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
         event.preventDefault();
-        onStart();
+        void handleCalculateWeight();
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onStart, onCancel]);
+
+  async function handleCalculateWeight(): Promise<void> {
+    if (!desktopApi) return;
+    setIsCapturing(true);
+    try {
+      const sampled = await desktopApi.scaleReadSampled();
+      setCapturedWeight(sampled.weightKg);
+      await onStart(sampled.weightKg);
+    } finally {
+      setIsCapturing(false);
+    }
+  }
 
   useEffect(() => {
     async function fetchPrice() {
@@ -3467,9 +3479,17 @@ function WeighingForm({
             ) : null}
           </div>
           <div style={styles.actionStack}>
-            <button type="button" onClick={() => onStart()} style={styles.captureButton}>
+            <button
+              type="button"
+              onClick={() => void handleCalculateWeight()}
+              disabled={isCapturing || scaleState !== "connected"}
+              style={{
+                ...styles.captureButton,
+                opacity: isCapturing || scaleState !== "connected" ? 0.55 : 1
+              }}
+            >
               <Scale size={18} strokeWidth={2.4} />
-              Calcular peso
+              {isCapturing ? "Calculando..." : "Calcular peso"}
             </button>
             <HelpTooltip content={TIPS.form.start} placement="top" shortcut="Ctrl+Enter" />
             <button type="button" onClick={onCancel} style={styles.secondaryButton}>
@@ -4319,53 +4339,6 @@ function OmieDirectSyncDialog({
           <button type="button" onClick={onClose} style={styles.secondaryButton}>
             Fechar
           </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function CloseOperationTypeDialog({
-  defaultOperationType,
-  onConfirm,
-  onCancel
-}: {
-  defaultOperationType: OperationType;
-  onConfirm: (operationType: OperationType) => void;
-  onCancel: () => void;
-}) {
-  const [operationType, setOperationType] = useState<OperationType>(defaultOperationType);
-
-  return (
-    <div style={modalOverlayStyle}>
-      <div style={modalContentStyle}>
-        <h3 style={{ margin: "0 0 8px 0", color: "#0f172a", fontSize: "15px" }}>
-          Tipo de operacao na saida
-        </h3>
-        <p style={styles.muted}>Selecione como esta saida sera registrada.</p>
-        <label style={styles.fieldLabel} title={TIPS.form.operationType}>
-          Tipo
-          <select
-            value={operationType}
-            onChange={(event) => setOperationType(event.target.value as OperationType)}
-            style={styles.input}
-          >
-            <option value="invoice">Com nota (pedido de venda no OMIE)</option>
-            <option value="internal">Interna (sem OMIE, permite offline)</option>
-          </select>
-        </label>
-        <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
-          <button
-              type="button"
-              onClick={() => onConfirm(operationType)}
-              style={styles.primaryButton}
-            >
-              Confirmar saida
-            </button>
-          <HelpTooltip content={TIPS.form.confirmClose} placement="top" />
-          <button type="button" onClick={onCancel} style={styles.secondaryButton}>
-              Cancelar
-            </button>
         </div>
       </div>
     </div>

@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS devices (
 CREATE TABLE IF NOT EXISTS scale_configs (
   id TEXT PRIMARY KEY,
   device_id TEXT NOT NULL REFERENCES devices(id),
-  adapter_type TEXT NOT NULL CHECK (adapter_type IN ('serial', 'tcp', 'http', 'file', 'custom')),
+  adapter_type TEXT NOT NULL CHECK (adapter_type IN ('serial', 'tcp', 'http', 'file', 'custom', 'virtual')),
   manufacturer TEXT,
   model TEXT,
   connection_config_json TEXT NOT NULL,
@@ -654,6 +654,58 @@ CREATE INDEX IF NOT EXISTS idx_customer_carriers_carrier ON customer_carriers(ca
 CREATE INDEX IF NOT EXISTS idx_driver_carriers_driver ON driver_carriers(driver_id, is_active, deleted_at);
 CREATE INDEX IF NOT EXISTS idx_driver_carriers_carrier ON driver_carriers(carrier_id, is_active, deleted_at);
 `
+  },
+  {
+    version: 15,
+    name: "scale_config_virtual_adapter_type",
+    sql: `
+ALTER TABLE scale_configs RENAME TO scale_configs_old;
+
+CREATE TABLE scale_configs (
+  id TEXT PRIMARY KEY,
+  device_id TEXT NOT NULL REFERENCES devices(id),
+  adapter_type TEXT NOT NULL CHECK (adapter_type IN ('serial', 'tcp', 'http', 'file', 'custom', 'virtual')),
+  manufacturer TEXT,
+  model TEXT,
+  connection_config_json TEXT NOT NULL,
+  stability_config_json TEXT NOT NULL,
+  unit TEXT NOT NULL DEFAULT 'kg',
+  kg_factor REAL NOT NULL DEFAULT 1,
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+INSERT INTO scale_configs (
+  id,
+  device_id,
+  adapter_type,
+  manufacturer,
+  model,
+  connection_config_json,
+  stability_config_json,
+  unit,
+  kg_factor,
+  is_active,
+  created_at,
+  updated_at
+)
+SELECT
+  id,
+  device_id,
+  adapter_type,
+  manufacturer,
+  model,
+  connection_config_json,
+  stability_config_json,
+  unit,
+  kg_factor,
+  is_active,
+  created_at,
+  updated_at
+FROM scale_configs_old;
+
+DROP TABLE scale_configs_old;
+`
   }
 ];
-
