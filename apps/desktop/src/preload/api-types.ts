@@ -245,6 +245,42 @@ export interface KyberRockDesktopApi {
     suppliersSynced: number;
     errors: string[];
   }>;
+  syncOmieMasterData: (options?: unknown) => Promise<{
+    success: boolean;
+    startedAt: Date;
+    finishedAt: Date;
+    triggeredBy: "manual" | "automatic" | "startup";
+    mode: "full" | "incremental";
+    entities: Array<{
+      entity: string;
+      success: boolean;
+      totalFetched: number;
+      totalCreated: number;
+      totalUpdated: number;
+      totalSkipped: number;
+      startedAt: Date;
+      finishedAt: Date;
+      errorMessage?: string;
+    }>;
+    runId: string;
+  }>;
+  getLastOmieSyncRun: () => Promise<{
+    id: string;
+    startedAt: string;
+    finishedAt: string | null;
+    success: boolean;
+    mode: string;
+    triggeredBy: string;
+  } | null>;
+  getOmieSyncEntitiesByRun: (runId: string) => Promise<Array<{
+    entity: string;
+    success: boolean;
+    totalFetched: number;
+    totalCreated: number;
+    totalUpdated: number;
+    totalSkipped: number;
+    errorMessage: string | null;
+  }>>;
   startOmieDataEntryLoop: () => Promise<{
     customersPulled: number;
     productsSynced: number;

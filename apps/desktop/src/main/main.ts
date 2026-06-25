@@ -986,6 +986,21 @@ function registerIpcHandlers(): void {
     return runtime.syncOmieDirect(appKey, appSecret);
   });
 
+  ipcMain.handle("desktop:sync-omie-master", async (_event, options: unknown) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.syncOmieMasterData(options as { mode?: "full" | "incremental"; triggeredBy?: "manual" | "automatic" | "startup"; appKey?: string; appSecret?: string });
+  });
+
+  ipcMain.handle("desktop:get-last-omie-sync-run", () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.getLastOmieSyncRun();
+  });
+
+  ipcMain.handle("desktop:get-omie-sync-entities", (_event, runId: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.getOmieSyncEntitiesByRun(runId);
+  });
+
   ipcMain.handle("desktop:omie-data-entry-loop", async () => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.runOmieDataEntryLoop();

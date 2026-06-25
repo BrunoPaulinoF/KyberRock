@@ -135,6 +135,13 @@ import {
   type QuotationSummary
 } from "./quotations.js";
 import { createOmieClient, OmieSyncService } from "./omie-sync.js";
+import {
+  syncOmieMasterData,
+  getLastSyncRun,
+  getSyncEntitiesByRun,
+  type OmieSyncResult,
+  type SyncOmieMasterDataOptions
+} from "./omie-master-sync.js";
 
 export interface OmieLoopProgress {
   iteration: number;
@@ -1505,6 +1512,21 @@ export class DesktopRuntime {
       suppliersSynced: result.suppliersSynced,
       errors: result.errors
     };
+  }
+
+  async syncOmieMasterData(options?: SyncOmieMasterDataOptions): Promise<OmieSyncResult> {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    return syncOmieMasterData(this.database, identity.companyId, options);
+  }
+
+  getLastOmieSyncRun(): ReturnType<typeof getLastSyncRun> {
+    const identity = this.ensureIdentity();
+    return getLastSyncRun(this.database, identity.companyId);
+  }
+
+  getOmieSyncEntitiesByRun(runId: string): ReturnType<typeof getSyncEntitiesByRun> {
+    return getSyncEntitiesByRun(this.database, runId);
   }
 
   async runOmieDataEntryLoop(

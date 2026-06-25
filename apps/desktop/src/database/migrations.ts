@@ -707,5 +707,68 @@ FROM scale_configs_old;
 
 DROP TABLE scale_configs_old;
 `
+  },
+  {
+    version: 16,
+    name: "omie_master_sync_and_driver_vehicle_omie_fields",
+    sql: `
+ALTER TABLE drivers ADD COLUMN omie_driver_id INTEGER;
+ALTER TABLE drivers ADD COLUMN source TEXT NOT NULL DEFAULT 'local' CHECK (source IN ('omie', 'local'));
+ALTER TABLE drivers ADD COLUMN last_synced_at TEXT;
+ALTER TABLE drivers ADD COLUMN raw_omie_payload_id TEXT;
+
+ALTER TABLE vehicles ADD COLUMN omie_vehicle_id INTEGER;
+ALTER TABLE vehicles ADD COLUMN source TEXT NOT NULL DEFAULT 'local' CHECK (source IN ('omie', 'local'));
+ALTER TABLE vehicles ADD COLUMN last_synced_at TEXT;
+ALTER TABLE vehicles ADD COLUMN raw_omie_payload_id TEXT;
+ALTER TABLE vehicles ADD COLUMN plate_normalized TEXT;
+
+UPDATE vehicles SET plate_normalized = UPPER(REPLACE(plate, ' ', '')) WHERE plate_normalized IS NULL;
+
+CREATE TABLE IF NOT EXISTS omie_sync_runs (
+  id TEXT PRIMARY KEY,
+  company_id TEXT NOT NULL REFERENCES companies(id),
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  mode TEXT NOT NULL CHECK (mode IN ('full', 'incremental')),
+  triggered_by TEXT NOT NULL CHECK (triggered_by IN ('manual', 'automatic', 'startup')),
+  success INTEGER NOT NULL DEFAULT 0 CHECK (success IN (0, 1)),
+  errors_json TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS omie_sync_entities (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES omie_sync_runs(id),
+  entity TEXT NOT NULL,
+  success INTEGER NOT NULL DEFAULT 0 CHECK (success IN (0, 1)),
+  total_fetched INTEGER NOT NULL DEFAULT 0,
+  total_created INTEGER NOT NULL DEFAULT 0,
+  total_updated INTEGER NOT NULL DEFAULT 0,
+  total_skipped INTEGER NOT NULL DEFAULT 0,
+  error_message TEXT,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS omie_raw_records (
+  id TEXT PRIMARY KEY,
+  company_id TEXT NOT NULL REFERENCES companies(id),
+  entity_type TEXT NOT NULL,
+  omie_id TEXT,
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_vehicles_company_plate_normalized ON vehicles(company_id, plate_normalized);
+CREATE INDEX IF NOT EXISTS idx_drivers_company_omie ON drivers(company_id, omie_driver_id);
+CREATE INDEX IF NOT EXISTS idx_vehicles_company_omie ON vehicles(company_id, omie_vehicle_id);
+CREATE INDEX IF NOT EXISTS idx_omie_sync_runs_company_started ON omie_sync_runs(company_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_omie_sync_entities_run ON omie_sync_entities(run_id);
+CREATE INDEX IF NOT EXISTS idx_omie_raw_records_company_entity ON omie_raw_records(company_id, entity_type);
+`
   }
 ];
