@@ -20,7 +20,7 @@ describe("toledo-tcp-adapter readSampled", () => {
           socket.end();
           return;
         }
-        const line = readings[Math.min(index, readings.length - 1)] ?? readings[0];
+        const line = readings[Math.min(index, readings.length - 1)] ?? readings[0] ?? "";
         index++;
         socket.write(`${line}\r\n`);
       }, 200);
@@ -36,7 +36,8 @@ describe("toledo-tcp-adapter readSampled", () => {
     server = null;
   });
 
-  it("returns the mean of readings collected during the window", async () => {
+  it("returns a stable protocol reading without calculating a mean", async () => {
+    readings = ["       000015200kg", "       000018400kg"];
     const adapter = createToledoTcpAdapter();
     await adapter.connect({ host: "127.0.0.1", port });
 
@@ -44,17 +45,23 @@ describe("toledo-tcp-adapter readSampled", () => {
 
     expect(reading.weightKg).toBe(15_200);
     expect(reading.unit).toBe("kg");
+    expect(reading.status).toBe("stable");
     adapter.disconnect();
   });
 
-  it("rejects sampled readings above the configured variation", async () => {
-    readings = ["       000015000kg", "       000015300kg", "       000015500kg"];
+  it("does not average the last stable window", async () => {
+    readings = ["       000015000kg", "       000017000kg"];
     const adapter = createToledoTcpAdapter();
     await adapter.connect({ host: "127.0.0.1", port });
 
-    await expect(
-      adapter.readSampled({ durationMs: 1000, sampleIntervalMs: 200, maxVariationKg: 100 })
-    ).rejects.toThrow("Peso oscilou");
+    const reading = await adapter.readSampled({
+      durationMs: 1400,
+      sampleIntervalMs: 200,
+      minStableMs: 500,
+      maxVariationKg: 100
+    });
+
+    expect(reading.weightKg).toBe(17_000);
     adapter.disconnect();
   });
 
@@ -65,7 +72,7 @@ describe("toledo-tcp-adapter readSampled", () => {
 
     await expect(
       adapter.readSampled({ durationMs: 1000, sampleIntervalMs: 200, minStableMs: 500 })
-    ).rejects.toThrow("Peso nao ficou estavel");
+    ).rejects.toThrow("Peso instavel");
     adapter.disconnect();
   });
 });

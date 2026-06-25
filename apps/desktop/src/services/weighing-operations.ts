@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { ScaleStatus } from "@kyberrock/scale-adapters";
 
 import type { DesktopDatabase } from "../database/sqlite.js";
 import type { LocalDesktopIdentity } from "./bootstrap.js";
@@ -30,6 +31,17 @@ export interface OperationFreightInput {
   destination?: string | null;
 }
 
+export interface ScaleCaptureAudit {
+  weightKg: number;
+  status: ScaleStatus;
+  stable: boolean;
+  capturedAt: string;
+  receivedAt: string;
+  rawFrame?: string;
+  deviceId?: string;
+  adapterName?: string;
+}
+
 export interface CreateSimulatedWeighingOperationInput {
   identity: LocalDesktopIdentity;
   operationType?: OperationType;
@@ -53,6 +65,7 @@ export interface CreateWeighingOperationInput {
   paymentTermId?: string;
   manualInstallments?: number;
   entryWeightKg: number;
+  entryScaleCapture?: ScaleCaptureAudit | null;
   freight?: OperationFreightInput | null;
   quotationId?: string;
   deductFreightFromCredit?: boolean;
@@ -61,6 +74,7 @@ export interface CreateWeighingOperationInput {
 export interface CloseWeighingOperationInput {
   operationId: string;
   exitWeightKg: number;
+  exitScaleCapture?: ScaleCaptureAudit | null;
   operationType?: OperationType;
 }
 
@@ -531,6 +545,7 @@ export function createWeighingOperation(
       null,
       {
         entryWeightKg: input.entryWeightKg,
+        scaleCapture: input.entryScaleCapture ?? null,
         operationType,
         manualInstallments: input.manualInstallments ?? null,
         unitPriceCents,
@@ -694,6 +709,7 @@ export function closeWeighingOperation(
       {
         exitWeightKg: input.exitWeightKg,
         netWeightKg,
+        scaleCapture: input.exitScaleCapture ?? null,
         productTotalCents,
         freightTotalCents,
         totalCents,

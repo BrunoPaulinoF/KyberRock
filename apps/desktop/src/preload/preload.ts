@@ -21,8 +21,8 @@ const desktopApi = {
   clearCanceledWeighingOperations: () =>
     ipcRenderer.invoke("desktop:clear-canceled-weighing-operations"),
   startWeighing: (input: unknown) => ipcRenderer.invoke("desktop:start-weighing", input),
-  closeWeighing: (operationId: string, operationType?: string, exitWeightKg?: number) =>
-    ipcRenderer.invoke("desktop:close-weighing", operationId, operationType, exitWeightKg),
+  closeWeighing: (operationId: string, operationType?: string, scaleCaptureId?: string) =>
+    ipcRenderer.invoke("desktop:close-weighing", operationId, operationType, scaleCaptureId),
   cancelWeighing: (operationId: string, reason: string) =>
     ipcRenderer.invoke("desktop:cancel-weighing", operationId, reason),
   listWindowsPrinters: () => ipcRenderer.invoke("desktop:list-windows-printers"),
@@ -152,6 +152,7 @@ const desktopApi = {
   scaleDisconnect: () => ipcRenderer.invoke("desktop:scale-disconnect"),
   scaleRead: () => ipcRenderer.invoke("desktop:scale-read"),
   scaleReadSampled: () => ipcRenderer.invoke("desktop:scale-read-sampled"),
+  scaleCaptureStable: (options: unknown) => ipcRenderer.invoke("desktop:scale-capture-stable", options),
   scaleDiscover: () => ipcRenderer.invoke("desktop:scale-discover"),
   scaleGetStatus: () => ipcRenderer.invoke("desktop:scale-get-status"),
   scaleGetConfig: () => ipcRenderer.invoke("desktop:scale-get-config"),

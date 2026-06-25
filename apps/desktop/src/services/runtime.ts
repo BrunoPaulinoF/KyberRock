@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import {
   initializeDesktopDatabase,
   type InitializedDesktopDatabase
@@ -58,6 +60,7 @@ import {
   listOpenWeighingOperations,
   type OperationType,
   type OperationFreightInput,
+  type ScaleCaptureAudit,
   type WeighingOperationSummary
 } from "./weighing-operations.js";
 import {
@@ -160,17 +163,17 @@ import {
   type ToledoTcpConfig,
   type ToledoTcpAdapterStatus,
   type ParsedToledoReading,
-  type ScaleReading,
-  type ScaleSamplingOptions
+  type ScaleReading
 } from "@kyberrock/scale-adapters";
 import { discoverScale } from "./scale-discovery.js";
 import {
   readScaleConfiguration,
   writeScaleConfiguration,
+  type ScaleConnectionConfig,
   type ScaleConfiguration,
-  type ScaleConfigurationInput,
-  type ScaleStabilityConfig
+  type ScaleConfigurationInput
 } from "./scale-configs.js";
+import { ScaleCaptureService, type ScaleCaptureOperationType } from "./scale-capture.js";
 import {
   createCustomer,
   deleteCustomer,
@@ -248,6 +251,11 @@ export interface StartSimulatedWeighingInput {
   unitPriceCents?: number;
 }
 
+export interface ScaleCaptureResult {
+  captureId: string;
+  reading: ScaleReading;
+}
+
 export class DesktopRuntime {
   private database: DesktopDatabase;
   private readonly paths: InitializedDesktopDatabase["paths"];
@@ -263,6 +271,10 @@ export class DesktopRuntime {
   private tcpScaleAdapter: ToledoTcpAdapter = createToledoTcpAdapter();
   private virtualScaleAdapter: ReturnType<typeof createVirtualScaleAdapter> = createVirtualScaleAdapter();
   private activeScaleAdapter: ToledoTcpAdapter = this.tcpScaleAdapter;
+  private readonly pendingScaleCaptures = new Map<
+    string,
+    { operationType: ScaleCaptureOperationType; reading: ScaleReading; expiresAt: number }
+  >();
   private reportService: ReportService;
 
   private constructor(initialized: InitializedDesktopDatabase) {
@@ -429,10 +441,12 @@ export class DesktopRuntime {
     freight?: OperationFreightInput | null;
     quotationId?: string;
     deductFreightFromCredit?: boolean;
-    entryWeightKg?: number;
+    scaleCaptureId?: string;
   }): Promise<WeighingOperationSummary> {
     this.assertDesktopAccess();
-    const entryWeightKg = input.entryWeightKg ?? (await this.readScaleSampledWeight());
+    const entryReading =
+      this.consumeScaleCapture(input.scaleCaptureId, "entry") ??
+      (await this.captureStableWeight({ operationType: "entry" }));
 
     return createWeighingOperation(this.database, {
       identity: this.ensureIdentity(),
@@ -447,18 +461,17 @@ export class DesktopRuntime {
       freight: input.freight,
       quotationId: input.quotationId,
       deductFreightFromCredit: input.deductFreightFromCredit,
-      entryWeightKg
+      entryWeightKg: entryReading.weightKg,
+      entryScaleCapture: buildScaleCaptureAudit(entryReading)
     });
   }
 
   async closeWeighing(
     operationId: string,
     operationType?: OperationType,
-    exitWeightKg?: number
+    scaleCaptureId?: string
   ): Promise<WeighingOperationSummary> {
     this.assertDesktopAccess();
-    const finalExitWeightKg = exitWeightKg ?? (await this.readScaleSampledWeight());
-
     if (
       operationType !== undefined &&
       operationType !== "invoice" &&
@@ -467,14 +480,22 @@ export class DesktopRuntime {
       throw new Error("Invalid operation type.");
     }
 
+    const exitReading =
+      this.consumeScaleCapture(scaleCaptureId, "exit") ??
+      (await this.captureStableWeight({ operationType: "exit" }));
+
     return closeWeighingOperation(this.database, {
       operationId,
-      exitWeightKg: finalExitWeightKg,
-      operationType
+      exitWeightKg: exitReading.weightKg,
+      operationType,
+      exitScaleCapture: buildScaleCaptureAudit(exitReading)
     });
   }
 
-  private async readScaleSampledWeight(): Promise<number> {
+  private async captureStableWeight(options: {
+    operationType: ScaleCaptureOperationType;
+    timeoutMs?: number;
+  }): Promise<ScaleReading> {
     const scaleConfig = this.getScaleConfiguration();
 
     // Attempt auto-reconnect if not connected
@@ -482,29 +503,84 @@ export class DesktopRuntime {
     if (status.state !== "connected") {
       const reconnected = await this.tryAutoConnectScale();
       if (!reconnected) {
-        throw new Error(
-          "Balanca nao esta conectada. Verifique as configuracoes de conexao em Configuracoes > Balanca."
-        );
+        const message =
+          "Balanca nao esta conectada. Verifique as configuracoes de conexao em Configuracoes > Balanca.";
+        this.recordTechnicalLog("error", "scale-capture", message, {
+          operationType: options.operationType,
+          adapterType: scaleConfig.adapterType,
+          state: status.state
+        });
+        throw new Error(message);
       }
     }
 
     try {
-      const reading = await this.activeScaleAdapter.readSampled(
-        buildScaleSamplingOptions(scaleConfig.stability)
-      );
-      if (scaleConfig.stability.requireStable && reading.stable === false) {
-        throw new Error("peso instavel durante a amostragem configurada");
-      }
-      if (reading.weightKg < scaleConfig.stability.minWeightKg) {
-        throw new Error(
-          `peso abaixo do minimo configurado (${reading.weightKg} kg < ${scaleConfig.stability.minWeightKg} kg)`
-        );
-      }
-      return reading.weightKg;
+      const captureService = new ScaleCaptureService({
+        adapter: this.activeScaleAdapter,
+        stability: scaleConfig.stability,
+        adapterName: scaleConfig.adapterType === "virtual" ? "virtual" : scaleConfig.model,
+        deviceId: scaleConfig.id ?? this.ensureIdentity().deviceId
+      });
+      return await captureService.captureStableWeight({
+        operationType: options.operationType,
+        timeoutMs: options.timeoutMs
+      });
     } catch (error) {
+      const message = error instanceof Error ? error.message : "falha desconhecida";
+      this.recordTechnicalLog("error", "scale-capture", message, {
+        operationType: options.operationType,
+        adapterType: scaleConfig.adapterType,
+        connection: redactScaleConnection(scaleConfig.connection),
+        status: this.activeScaleAdapter.getStatus()
+      });
       throw new Error(
-        `Nao foi possivel ler a balanca: ${error instanceof Error ? error.message : "falha desconhecida"}.`
+        `Nao foi possivel capturar peso ${options.operationType === "entry" ? "de entrada" : "de saida"}: ${message}`
       );
+    }
+  }
+
+  async captureStableScaleWeight(options: {
+    operationType: ScaleCaptureOperationType;
+    timeoutMs?: number;
+  }): Promise<ScaleCaptureResult> {
+    this.assertDesktopAccess();
+    const reading = await this.captureStableWeight(options);
+    const captureId = randomUUID();
+    this.pendingScaleCaptures.set(captureId, {
+      operationType: options.operationType,
+      reading,
+      expiresAt: Date.now() + 30_000
+    });
+    this.pruneExpiredScaleCaptures();
+    return { captureId, reading };
+  }
+
+  private consumeScaleCapture(
+    captureId: string | undefined,
+    operationType: ScaleCaptureOperationType
+  ): ScaleReading | null {
+    if (!captureId) return null;
+    const capture = this.pendingScaleCaptures.get(captureId);
+    this.pendingScaleCaptures.delete(captureId);
+
+    if (!capture) {
+      throw new Error("Captura de peso nao encontrada ou ja utilizada. Capture o peso novamente.");
+    }
+    if (capture.operationType !== operationType) {
+      throw new Error("Captura de peso nao pertence a este tipo de operacao.");
+    }
+    if (capture.expiresAt < Date.now()) {
+      throw new Error("Captura de peso expirada. Capture o peso novamente.");
+    }
+    return capture.reading;
+  }
+
+  private pruneExpiredScaleCaptures(): void {
+    const now = Date.now();
+    for (const [captureId, capture] of this.pendingScaleCaptures.entries()) {
+      if (capture.expiresAt < now) {
+        this.pendingScaleCaptures.delete(captureId);
+      }
     }
   }
 
@@ -803,14 +879,12 @@ export class DesktopRuntime {
     this.virtualScaleAdapter.disconnect();
   }
 
-  async readScale(): Promise<{ weightKg: number; stable: boolean }> {
+  async readScale(): Promise<ScaleReading> {
     return this.activeScaleAdapter.read();
   }
 
   async readScaleSampled(): Promise<ScaleReading> {
-    return this.activeScaleAdapter.readSampled(
-      buildScaleSamplingOptions(this.getScaleConfiguration().stability)
-    );
+    return this.captureStableWeight({ operationType: "entry" });
   }
 
   async discoverScale(): Promise<{ host: string; port: number } | null> {
@@ -1573,6 +1647,24 @@ export class DesktopRuntime {
     return count === 4;
   }
 
+  private recordTechnicalLog(
+    level: "debug" | "info" | "warning" | "error",
+    source: string,
+    message: string,
+    context: Record<string, unknown>
+  ): void {
+    try {
+      this.database
+        .prepare(
+          `INSERT INTO technical_logs (id, level, source, message, context_json, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`
+        )
+        .run(randomUUID(), level, source, message, JSON.stringify(context), new Date().toISOString());
+    } catch (error) {
+      console.error("Failed to record technical log", error);
+    }
+  }
+
   private assertDesktopAccess(): void {
     const access = getStoredDesktopAccessStatus(this.database);
     if (!access.canOperate) {
@@ -1581,12 +1673,26 @@ export class DesktopRuntime {
   }
 }
 
-function buildScaleSamplingOptions(stability: ScaleStabilityConfig): ScaleSamplingOptions {
+function buildScaleCaptureAudit(reading: ScaleReading): ScaleCaptureAudit {
   return {
-    durationMs: stability.sampleDurationMs,
-    sampleIntervalMs: stability.sampleIntervalMs,
-    minStableMs: stability.requireStable ? stability.minStableMs : undefined,
-    maxVariationKg: stability.maxVariationKg,
-    minWeightKg: stability.minWeightKg
+    weightKg: reading.weightKg,
+    status: reading.status,
+    stable: reading.stable,
+    capturedAt: reading.capturedAt,
+    receivedAt: reading.receivedAt,
+    rawFrame: reading.rawFrame,
+    deviceId: reading.deviceId,
+    adapterName: reading.adapterName
+  };
+}
+
+function redactScaleConnection(connection: ScaleConnectionConfig): Record<string, unknown> {
+  return {
+    host: connection.host,
+    port: connection.port,
+    timeoutMs: connection.timeoutMs,
+    reconnectIntervalMs: connection.reconnectIntervalMs,
+    maxReconnectAttempts: connection.maxReconnectAttempts,
+    autoConnect: connection.autoConnect
   };
 }

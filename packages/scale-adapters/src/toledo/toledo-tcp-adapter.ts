@@ -3,7 +3,7 @@ import type { Socket } from "node:net";
 
 import { parseToledoLine } from "./toledo-protocol-parser.js";
 import type { ParsedToledoReading, ToledoTcpConfig } from "./toledo-types.js";
-import type { ScaleReading, ScaleSamplingOptions } from "../scale-adapter.js";
+import type { ScaleReading, ScaleSamplingOptions, ScaleStatus } from "../scale-adapter.js";
 
 export type ToledoConnectionState = "disconnected" | "connecting" | "connected" | "error";
 
@@ -22,10 +22,10 @@ export interface ToledoTcpAdapter {
   /** Desconectar do indicador */
   disconnect(): void;
 
-  /** Obter a ultima leitura valida (nao bloqueia) */
+  /** Obter a ultima leitura recebida normalizada (nao bloqueia) */
   read(): Promise<ScaleReading>;
 
-  /** Coletar leituras durante uma janela e devolver a media em kg */
+  /** Aguardar uma leitura estavel, recente e valida sem calcular media */
   readSampled(options?: ScaleSamplingOptions): Promise<ScaleReading>;
 
   /** Obter status da conexao e ultima leitura */
@@ -49,25 +49,24 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let buffer = "";
   const listeners: Array<(reading: ParsedToledoReading) => void> = [];
-  let lastValidReading: ParsedToledoReading | null = null;
 
-  function isValidReading(reading: ParsedToledoReading): boolean {
-    if (reading.statusFlags.outOfRange) return false;
-    if (reading.weightKg === 90_000) return false;
-    return true;
+  function getDeviceId(): string | undefined {
+    return config ? `${config.host}:${config.port}` : undefined;
+  }
+
+  function getLastScaleReading(): ScaleReading | null {
+    if (!lastReading || !lastReadingAt) return null;
+    return normalizeParsedReading(lastReading, lastReadingAt, "toledo-tcp", getDeviceId());
   }
 
   function notify(reading: ParsedToledoReading): void {
     lastReading = reading;
     lastReadingAt = new Date().toISOString();
-    if (isValidReading(reading)) {
-      lastValidReading = reading;
-      for (const listener of listeners) {
-        try {
-          listener(reading);
-        } catch {
-          // Ignore listener errors
-        }
+    for (const listener of listeners) {
+      try {
+        listener(reading);
+      } catch {
+        // Ignore listener errors
       }
     }
   }
@@ -176,33 +175,10 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
         throw new Error("Balanca nao esta conectada.");
       }
 
-      // Wait briefly for a stable valid reading
-      const maxWaitMs = 2000;
-      const start = Date.now();
+      const reading = getLastScaleReading();
+      if (reading) return reading;
 
-      while (Date.now() - start < maxWaitMs) {
-        if (lastValidReading && lastValidReading.stable) {
-          return {
-            weightKg: lastValidReading.weightKg,
-            unit: "kg",
-            stable: true,
-            capturedAt: lastReadingAt ?? new Date().toISOString()
-          };
-        }
-        await new Promise((r) => setTimeout(r, 100));
-      }
-
-      // Return last valid reading even if unstable
-      if (lastValidReading) {
-        return {
-          weightKg: lastValidReading.weightKg,
-          unit: "kg",
-          stable: lastValidReading.stable,
-          capturedAt: lastReadingAt ?? new Date().toISOString()
-        };
-      }
-
-      throw new Error("Nenhuma leitura valida disponivel da balanca.");
+      throw new Error("Nenhuma leitura disponivel da balanca.");
     },
 
     async readSampled(options: ScaleSamplingOptions = {}): Promise<ScaleReading> {
@@ -210,69 +186,71 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
         throw new Error("Balanca nao esta conectada.");
       }
 
-      const durationMs = Math.max(500, options.durationMs ?? 5000);
+      const timeoutMs = Math.max(500, options.durationMs ?? 5000);
       const sampleIntervalMs = Math.max(50, options.sampleIntervalMs ?? 250);
       const minStableMs = Math.max(0, options.minStableMs ?? 0);
-      const samples: { weightKg: number; stable: boolean; at: number }[] = [];
       const start = Date.now();
-      let lastSampleAt = 0;
-
-      while (Date.now() - start < durationMs) {
-        const now = Date.now();
-        if (lastValidReading && now - lastSampleAt >= sampleIntervalMs) {
-          samples.push({
-            weightKg: lastValidReading.weightKg,
-            stable: lastValidReading.stable,
-            at: now
-          });
-          lastSampleAt = now;
-        }
-        await new Promise((r) => setTimeout(r, 50));
-      }
-
-      if (samples.length === 0 && lastValidReading) {
-        samples.push({
-          weightKg: lastValidReading.weightKg,
-          stable: lastValidReading.stable,
-          at: Date.now()
-        });
-      }
-
-      if (samples.length === 0) {
-        throw new Error("Nenhuma leitura recebida da balanca durante a amostragem.");
-      }
-
-      const mean = samples.reduce((sum, s) => sum + s.weightKg, 0) / samples.length;
-      const weights = samples.map((s) => s.weightKg);
-      const variationKg = Math.max(...weights) - Math.min(...weights);
-      const maxVariationKg = options.maxVariationKg;
+      const maxReadingAgeMs = Math.max(1500, minStableMs + sampleIntervalMs * 2);
+      const maxVariationKg = options.maxVariationKg ?? 0;
       const minWeightKg = options.minWeightKg;
+      let stableSince: number | null = null;
+      let stableReferenceWeightKg: number | null = null;
+      let lastStatus: ScaleStatus = "no_data";
 
-      if (minWeightKg !== undefined && mean < minWeightKg) {
-        throw new Error(
-          `Peso medio abaixo do minimo configurado (${Math.round(mean)} kg < ${minWeightKg} kg).`
-        );
+      while (Date.now() - start < timeoutMs) {
+        const now = Date.now();
+        const reading = getLastScaleReading();
+        if (!reading) {
+          await delay(sampleIntervalMs);
+          continue;
+        }
+
+        lastStatus = reading.status;
+        const receivedAt = Date.parse(reading.receivedAt);
+        if (
+          !Number.isFinite(receivedAt) ||
+          now - receivedAt > maxReadingAgeMs ||
+          (receivedAt < start && start - receivedAt > maxReadingAgeMs)
+        ) {
+          await delay(sampleIntervalMs);
+          continue;
+        }
+
+        if (reading.status !== "stable" || !reading.stable) {
+          assertNonRecoverableStatus(reading);
+          stableSince = null;
+          stableReferenceWeightKg = null;
+          await delay(sampleIntervalMs);
+          continue;
+        }
+
+        if (minWeightKg !== undefined && reading.weightKg < minWeightKg) {
+          throw new Error(
+            `Peso abaixo do minimo configurado (${Math.round(reading.weightKg)} kg < ${minWeightKg} kg).`
+          );
+        }
+
+        if (stableReferenceWeightKg === null) {
+          stableReferenceWeightKg = reading.weightKg;
+          stableSince = now;
+        }
+
+        if (Math.abs(reading.weightKg - stableReferenceWeightKg) > maxVariationKg) {
+          stableReferenceWeightKg = reading.weightKg;
+          stableSince = now;
+        }
+
+        if (stableSince !== null && now - stableSince >= minStableMs) {
+          return { ...reading, capturedAt: new Date().toISOString() };
+        }
+
+        await delay(sampleIntervalMs);
       }
 
-      if (maxVariationKg !== undefined && variationKg > maxVariationKg) {
-        throw new Error(
-          `Peso oscilou ${Math.round(variationKg)} kg durante a amostragem (limite ${maxVariationKg} kg).`
-        );
+      if (lastStatus === "unstable") {
+        throw new Error("Peso instavel informado pela balanca.");
       }
-
-      const allStable = samples.every((s) => s.stable);
-      const stableDurationMs = calculateTrailingStableDurationMs(samples, sampleIntervalMs);
-
-      if (minStableMs > 0 && stableDurationMs < minStableMs) {
-        throw new Error(`Peso nao ficou estavel por ${Math.round(minStableMs / 1000)}s.`);
-      }
-
-      return {
-        weightKg: Math.round(mean),
-        unit: "kg",
-        stable: minStableMs > 0 ? stableDurationMs >= minStableMs : allStable,
-        capturedAt: new Date().toISOString()
-      };
+      throw new Error("Nenhuma leitura estavel e recente recebida da balanca.");
     },
 
     getStatus(): ToledoTcpAdapterStatus {
@@ -299,20 +277,53 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
   };
 }
 
-function calculateTrailingStableDurationMs(
-  samples: Array<{ stable: boolean; at: number }>,
-  sampleIntervalMs: number
-): number {
-  let firstStableAt: number | null = null;
-  let lastStableAt: number | null = null;
+function normalizeParsedReading(
+  reading: ParsedToledoReading,
+  receivedAt: string,
+  adapterName: string,
+  deviceId?: string
+): ScaleReading {
+  const status = getScaleStatusFromParsedReading(reading);
+  return {
+    weightKg: Math.round(reading.weightKg),
+    unit: "kg",
+    status,
+    stable: status === "stable",
+    capturedAt: receivedAt,
+    receivedAt,
+    rawFrame: reading.raw,
+    adapterName,
+    deviceId
+  };
+}
 
-  for (let index = samples.length - 1; index >= 0; index--) {
-    const sample = samples[index];
-    if (!sample?.stable) break;
-    firstStableAt = sample.at;
-    lastStableAt = lastStableAt ?? sample.at;
+function getScaleStatusFromParsedReading(reading: ParsedToledoReading): ScaleStatus {
+  if (!Number.isFinite(reading.weightKg)) return "error";
+  if (reading.statusFlags.outOfRange || reading.weightKg === 90_000) return "overload";
+  if (reading.statusFlags.negative || reading.weightKg < 0) return "negative";
+  if (!reading.stable || reading.statusFlags.inMotion) return "unstable";
+  if (reading.statusFlags.atZero || reading.weightKg === 0) return "zero";
+  return "stable";
+}
+
+function assertNonRecoverableStatus(reading: ScaleReading): void {
+  switch (reading.status) {
+    case "unstable":
+    case "no_data":
+      return;
+    case "overload":
+      throw new Error("Balanca em sobrecarga ou fora de alcance.");
+    case "negative":
+      throw new Error("Balanca informou peso negativo.");
+    case "zero":
+      throw new Error("Balanca sem peso util para captura.");
+    case "stable":
+      return;
+    default:
+      throw new Error("Balanca informou erro de leitura.");
   }
+}
 
-  if (firstStableAt === null || lastStableAt === null) return 0;
-  return lastStableAt - firstStableAt + sampleIntervalMs;
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

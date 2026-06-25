@@ -1,6 +1,6 @@
 import type { ParsedToledoReading } from "./toledo/toledo-types.js";
 import type { ToledoTcpAdapter, ToledoConnectionState, ToledoTcpAdapterStatus } from "./toledo/toledo-tcp-adapter.js";
-import type { ScaleReading, ScaleSamplingOptions } from "./scale-adapter.js";
+import type { ScaleReading, ScaleSamplingOptions, ScaleStatus } from "./scale-adapter.js";
 
 export type VirtualScaleMode = "tcp" | "virtual";
 
@@ -71,12 +71,7 @@ export function createVirtualScaleAdapter(): ToledoTcpAdapter & {
         throw new Error("Nenhum peso informado na balanca virtual.");
       }
 
-      return {
-        weightKg: lastReading.weightKg,
-        unit: "kg",
-        stable: true,
-        capturedAt: lastReadingAt ?? new Date().toISOString()
-      };
+      return toScaleReading(lastReading, lastReadingAt ?? new Date().toISOString());
     },
 
     async readSampled(options: ScaleSamplingOptions = {}): Promise<ScaleReading> {
@@ -90,6 +85,11 @@ export function createVirtualScaleAdapter(): ToledoTcpAdapter & {
 
       const minWeightKg = options.minWeightKg;
       const weightKg = lastReading.weightKg;
+      const reading = toScaleReading(lastReading, lastReadingAt ?? new Date().toISOString());
+
+      if (reading.status !== "stable" || !reading.stable) {
+        throw new Error("Balanca virtual sem peso util para captura.");
+      }
 
       if (minWeightKg !== undefined && weightKg < minWeightKg) {
         throw new Error(
@@ -97,12 +97,7 @@ export function createVirtualScaleAdapter(): ToledoTcpAdapter & {
         );
       }
 
-      return {
-        weightKg: Math.round(weightKg),
-        unit: "kg",
-        stable: true,
-        capturedAt: new Date().toISOString()
-      };
+      return { ...reading, capturedAt: new Date().toISOString() };
     },
 
     getStatus(): ToledoTcpAdapterStatus {
@@ -140,4 +135,27 @@ export function createVirtualScaleAdapter(): ToledoTcpAdapter & {
       notify(reading);
     }
   };
+}
+
+function toScaleReading(reading: ParsedToledoReading, receivedAt: string): ScaleReading {
+  const status = getVirtualScaleStatus(reading);
+  return {
+    weightKg: Math.round(reading.weightKg),
+    unit: "kg",
+    status,
+    stable: status === "stable",
+    capturedAt: receivedAt,
+    receivedAt,
+    rawFrame: reading.raw,
+    adapterName: "virtual"
+  };
+}
+
+function getVirtualScaleStatus(reading: ParsedToledoReading): ScaleStatus {
+  if (!Number.isFinite(reading.weightKg)) return "error";
+  if (reading.statusFlags.outOfRange) return "overload";
+  if (reading.statusFlags.negative || reading.weightKg < 0) return "negative";
+  if (!reading.stable || reading.statusFlags.inMotion) return "unstable";
+  if (reading.statusFlags.atZero || reading.weightKg === 0) return "zero";
+  return "stable";
 }

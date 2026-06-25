@@ -304,12 +304,16 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "desktop:close-weighing",
-    async (_event, operationId: string, operationType?: string, exitWeightKg?: number) => {
+    async (_event, operationId: string, operationType?: string, scaleCaptureId?: string) => {
       if (!runtime) {
         throw new Error("Desktop runtime is not ready.");
       }
 
-      return runtime.closeWeighing(operationId, operationType as OperationType | undefined, exitWeightKg);
+      return runtime.closeWeighing(
+        operationId,
+        operationType as OperationType | undefined,
+        scaleCaptureId
+      );
     }
   );
 
@@ -880,6 +884,15 @@ function registerIpcHandlers(): void {
   ipcMain.handle("desktop:scale-read-sampled", async () => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.readScaleSampled();
+  });
+
+  ipcMain.handle("desktop:scale-capture-stable", async (_event, options: unknown) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    const input = options as { operationType?: "entry" | "exit"; timeoutMs?: number } | undefined;
+    return runtime.captureStableScaleWeight({
+      operationType: input?.operationType === "exit" ? "exit" : "entry",
+      timeoutMs: input?.timeoutMs
+    });
   });
 
   ipcMain.handle("desktop:scale-discover", async () => {

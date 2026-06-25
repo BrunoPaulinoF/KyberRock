@@ -866,7 +866,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
   }
 
-  async function handleStartWeighing(entryWeightKg?: number): Promise<void> {
+  async function handleStartWeighing(scaleCaptureId?: string): Promise<void> {
     if (!desktopApi) return;
 
     const validationError = validateWeighingForm(form);
@@ -876,14 +876,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
 
     setFormError(null);
-    setMessage("Calculando peso medio da balanca. Aguarde...");
+    setMessage("Aguardando peso estavel da balanca. Aguarde...");
 
     try {
-      let weight = entryWeightKg;
-      if (weight === undefined) {
-        const sampled = await desktopApi.scaleReadSampled();
-        weight = sampled.weightKg;
-      }
       const operation = await desktopApi.startWeighing({
         operationType: form.operationType,
         customerId: form.customerId,
@@ -895,9 +890,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         freight: buildFreightInput(form),
         quotationId: form.quotationId || undefined,
         deductFreightFromCredit: form.deductFreightFromCredit,
-        entryWeightKg: weight
+        scaleCaptureId
       });
-      setMessage(`Entrada registrada com peso medio calculado: ${operation.entryWeightKg} kg.`);
+      setMessage(`Entrada registrada com peso estavel capturado: ${operation.entryWeightKg} kg.`);
       setForm(initialWeighingForm);
       setActiveView("open-operations");
       await refreshOpenOperations();
@@ -909,7 +904,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   async function handleCloseOperation(
     operationId: string,
     operationType: OperationType,
-    exitWeightKg?: number
+    scaleCaptureId?: string
   ): Promise<void> {
     if (!desktopApi) return;
 
@@ -937,7 +932,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         });
         setMessage("Fechando operacao fiscal e faturando no OMIE. Mantenha a internet conectada.");
       }
-      const operation = await desktopApi.closeWeighing(operationId, operationType, exitWeightKg);
+      const operation = await desktopApi.closeWeighing(operationId, operationType, scaleCaptureId);
       if (operationType === "invoice") {
         setFiscalCloseProgress({
           operationId: operation.id,
@@ -1582,6 +1577,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 form={form}
                 setForm={setForm}
                 formError={formError}
+                setFormError={setFormError}
                 onStart={handleStartWeighing}
                 onCancel={() => {
                   setForm(initialWeighingForm);
@@ -1827,10 +1823,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
               <CloseOperationWeighingDialog
                 desktopApi={desktopApi}
                 operation={closingOperation}
-                onConfirm={(operationType, exitWeightKg) => {
+                onConfirm={(operationType, scaleCaptureId) => {
                   const id = closingOperation.id;
                   setClosingOperation(null);
-                  void handleCloseOperation(id, operationType, exitWeightKg);
+                  void handleCloseOperation(id, operationType, scaleCaptureId);
                 }}
                 onCancel={() => setClosingOperation(null)}
               />
@@ -2835,7 +2831,8 @@ interface WeighingFormProps {
   form: WeighingFormState;
   setForm: React.Dispatch<React.SetStateAction<WeighingFormState>>;
   formError: string | null;
-  onStart: (entryWeightKg?: number) => Promise<void> | void;
+  setFormError: React.Dispatch<React.SetStateAction<string | null>>;
+  onStart: (scaleCaptureId?: string) => Promise<void> | void;
   onCancel: () => void;
 }
 
@@ -2844,6 +2841,7 @@ function WeighingForm({
   form,
   setForm,
   formError,
+  setFormError,
   onStart,
   onCancel
 }: WeighingFormProps) {
@@ -3029,11 +3027,19 @@ function WeighingForm({
 
   async function handleCalculateWeight(): Promise<void> {
     if (!desktopApi) return;
+    const validationError = validateWeighingForm(form);
+    if (validationError) {
+      setFormError(validationError);
+      return;
+    }
     setIsCapturing(true);
+    setFormError(null);
     try {
-      const sampled = await desktopApi.scaleReadSampled();
-      setCapturedWeight(sampled.weightKg);
-      await onStart(sampled.weightKg);
+      const capture = await desktopApi.scaleCaptureStable({ operationType: "entry" });
+      setCapturedWeight(capture.reading.weightKg);
+      await onStart(capture.captureId);
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Falha ao capturar peso de entrada");
     } finally {
       setIsCapturing(false);
     }
@@ -3144,13 +3150,13 @@ function WeighingForm({
                 alt=""
                 style={{ width: "22px", height: "22px", objectFit: "contain" }}
               />
-              <span style={styles.metricLabel}>Peso calculado</span>
+              <span style={styles.metricLabel}>Peso capturado</span>
             </div>
             <strong style={{ ...styles.metricValue, color: capturedWeight !== null ? "#15803d" : undefined }}>
               {capturedWeight !== null ? formatWeightKg(capturedWeight) : "-- kg"}
             </strong>
             <span style={styles.metricHint}>
-              {capturedWeight !== null ? "Média calculada da balança" : "Clique em 'Calcular peso'"}
+              {capturedWeight !== null ? "Leitura estavel capturada" : "Clique em 'Capturar peso'"}
             </span>
           </div>
         </div>
@@ -3489,7 +3495,7 @@ function WeighingForm({
               }}
             >
               <Scale size={18} strokeWidth={2.4} />
-              {isCapturing ? "Calculando..." : "Calcular peso"}
+              {isCapturing ? "Capturando..." : "Capturar peso"}
             </button>
             <HelpTooltip content={TIPS.form.start} placement="top" shortcut="Ctrl+Enter" />
             <button type="button" onClick={onCancel} style={styles.secondaryButton}>
@@ -3923,12 +3929,13 @@ function CloseOperationWeighingDialog({
 }: {
   desktopApi: KyberRockDesktopApi | null;
   operation: WeighingOperationSummary;
-  onConfirm: (operationType: OperationType, exitWeightKg: number) => void;
+  onConfirm: (operationType: OperationType, scaleCaptureId: string) => void;
   onCancel: () => void;
 }) {
   const [operationType, setOperationType] = useState<OperationType>(operation.operationType);
   const [liveWeight, setLiveWeight] = useState<number | null>(null);
   const [capturedExitWeight, setCapturedExitWeight] = useState<number | null>(null);
+  const [capturedExitCaptureId, setCapturedExitCaptureId] = useState<string | null>(null);
   const [scaleState, setScaleState] = useState<"disconnected" | "connecting" | "connected" | "error">("disconnected");
   const [scaleMessage, setScaleMessage] = useState<string>("Balança desconectada");
   const [isVirtual, setIsVirtual] = useState(false);
@@ -4009,9 +4016,14 @@ function CloseOperationWeighingDialog({
     setIsCapturing(true);
     setCaptureError(null);
     try {
-      const sampled = await desktopApi.scaleReadSampled();
-      setCapturedExitWeight(sampled.weightKg);
+      const capture = await desktopApi.scaleCaptureStable({ operationType: "exit" });
+      setCapturedExitWeight(capture.reading.weightKg);
+      setCapturedExitCaptureId(capture.captureId);
+      if (operation.entryWeightKg !== null && capture.reading.weightKg <= operation.entryWeightKg) {
+        setCaptureError("Peso de saida deve ser maior que o peso de entrada.");
+      }
     } catch (err) {
+      setCapturedExitCaptureId(null);
       setCaptureError(err instanceof Error ? err.message : "Falha ao capturar peso");
     } finally {
       setIsCapturing(false);
@@ -4019,8 +4031,9 @@ function CloseOperationWeighingDialog({
   }
 
   const netWeight = capturedExitWeight !== null && operation.entryWeightKg !== null
-    ? Math.abs(operation.entryWeightKg - capturedExitWeight)
+    ? capturedExitWeight - operation.entryWeightKg
     : null;
+  const invalidNetWeight = netWeight !== null && netWeight <= 0;
 
   return (
     <div style={modalOverlayStyle}>
@@ -4112,12 +4125,12 @@ function CloseOperationWeighingDialog({
             border: `2px solid ${capturedExitWeight !== null ? "#86efac" : "#e2e8f0"}`,
             textAlign: "center"
           }}>
-            <div style={{ fontSize: "13px", color: "#64748b", marginBottom: "8px" }}>Peso de saída calculado</div>
+            <div style={{ fontSize: "13px", color: "#64748b", marginBottom: "8px" }}>Peso de saida capturado</div>
             <strong style={{ fontSize: "32px", color: capturedExitWeight !== null ? "#15803d" : "#0f172a", fontFamily: "monospace" }}>
               {capturedExitWeight !== null ? formatWeightKg(capturedExitWeight) : "-- kg"}
             </strong>
             <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "4px" }}>
-              {capturedExitWeight !== null ? "Média calculada da balança" : "Clique em 'Capturar peso'"}
+              {capturedExitWeight !== null ? "Leitura estavel capturada" : "Clique em 'Capturar peso'"}
             </div>
           </div>
         </div>
@@ -4195,7 +4208,7 @@ function CloseOperationWeighingDialog({
         {/* Peso líquido */}
         {netWeight !== null ? (
           <div style={{ textAlign: "center", padding: "12px", background: "#eff6ff", borderRadius: "8px", marginBottom: "16px" }}>
-            <span style={{ fontSize: "14px", color: "#1e40af" }}>
+            <span style={{ fontSize: "14px", color: invalidNetWeight ? "#b91c1c" : "#1e40af" }}>
               Peso líquido: <strong style={{ fontSize: "20px" }}>{formatWeightKg(netWeight)}</strong>
             </span>
           </div>
@@ -4239,14 +4252,14 @@ function CloseOperationWeighingDialog({
           <button
             type="button"
             onClick={() => {
-              if (capturedExitWeight !== null) {
-                onConfirm(operationType, capturedExitWeight);
+              if (capturedExitCaptureId && !invalidNetWeight) {
+                onConfirm(operationType, capturedExitCaptureId);
               }
             }}
-            disabled={capturedExitWeight === null}
+            disabled={!capturedExitCaptureId || invalidNetWeight}
             style={{
               ...styles.primaryButton,
-              opacity: capturedExitWeight === null ? 0.5 : 1
+              opacity: !capturedExitCaptureId || invalidNetWeight ? 0.5 : 1
             }}
           >
             Confirmar fechamento
@@ -5641,7 +5654,7 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
     setError(null);
     setConfigMessage(null);
     setTestResult(null);
-    setTestProgress("Iniciando captura com media...");
+    setTestProgress("Iniciando captura de peso estavel...");
 
     try {
       const config = await desktopApi.scaleSaveConfig(buildScaleConfigInput());
@@ -5657,12 +5670,12 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
         setStatus("Conectado");
       }
 
-      setTestProgress(`Coletando amostras durante ${config.stability.sampleDurationMs / 1000}s...`);
+      setTestProgress("Aguardando leitura estavel e recente da balanca...");
 
-      const sampled = await desktopApi.scaleReadSampled();
+      const capture = await desktopApi.scaleCaptureStable({ operationType: "entry" });
       setTestProgress(null);
       setTestResult(
-        `Captura aprovada: ${new Intl.NumberFormat("pt-BR").format(sampled.weightKg)} kg (${sampled.stable ? "estavel" : "instavel"}) em ${Math.round(config.stability.sampleDurationMs / 1000)}s de amostragem.`
+        `Captura aprovada: ${new Intl.NumberFormat("pt-BR").format(capture.reading.weightKg)} kg (${capture.reading.status}).`
       );
     } catch (err) {
       setTestProgress(null);
@@ -5916,13 +5929,13 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
         <article style={styles.panel}>
           <h2 style={styles.panelTitle}>Criterios de Captura</h2>
           <NumberInput
-            label="Tempo para tirar media (s)"
+            label="Tempo limite da captura (s)"
             value={sampleDurationSeconds}
             onChange={setSampleDurationSeconds}
             placeholder="5"
             maxLength={2}
             minLength={1}
-            hint="Duracao da janela de amostragem para calcular a media."
+            hint="Tempo maximo para aguardar uma leitura estavel e recente."
           />
           <NumberInput
             label="Intervalo entre leituras (ms)"
@@ -5997,7 +6010,7 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
               disabled={testing || !configLoaded}
               style={{ ...styles.primaryButton, opacity: testing || !configLoaded ? 0.5 : 1 }}
             >
-              {testing ? "Testando..." : "Testar captura com media"}
+              {testing ? "Testando..." : "Testar captura estavel"}
             </button>
           </div>
         </article>

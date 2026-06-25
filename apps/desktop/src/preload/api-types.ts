@@ -82,12 +82,12 @@ export interface KyberRockDesktopApi {
     freight?: OperationFreightInput | null;
     quotationId?: string;
     deductFreightFromCredit?: boolean;
-    entryWeightKg?: number;
+    scaleCaptureId?: string;
   }) => Promise<WeighingOperationSummary>;
   closeWeighing: (
     operationId: string,
     operationType?: OperationType,
-    exitWeightKg?: number
+    scaleCaptureId?: string
   ) => Promise<WeighingOperationSummary>;
   cancelWeighing: (operationId: string, reason: string) => Promise<WeighingOperationSummary>;
   listWindowsPrinters: () => Promise<WindowsPrinterSummary[]>;
@@ -213,8 +213,12 @@ export interface KyberRockDesktopApi {
   }>;
   scaleConnect: (config: ToledoTcpConfig) => Promise<void>;
   scaleDisconnect: () => Promise<void>;
-  scaleRead: () => Promise<{ weightKg: number; stable: boolean }>;
+  scaleRead: () => Promise<ScaleReading>;
   scaleReadSampled: () => Promise<ScaleReading>;
+  scaleCaptureStable: (options: {
+    operationType: "entry" | "exit";
+    timeoutMs?: number;
+  }) => Promise<{ captureId: string; reading: ScaleReading }>;
   scaleDiscover: () => Promise<{ host: string; port: number } | null>;
   scaleGetStatus: () => Promise<ToledoTcpAdapterStatus>;
   scaleGetConfig: () => Promise<ScaleConfiguration>;
