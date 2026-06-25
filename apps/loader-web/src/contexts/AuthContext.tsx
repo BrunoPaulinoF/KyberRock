@@ -145,7 +145,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       assertSupabaseConfig();
       const { data, error: loginError } = await auth.signInWithPassword({ email, password });
       if (loginError) throw loginError;
-      if (data.user) await loadLoaderProfile(data.user.id);
+      if (!data.user) throw new Error("Login nao retornou um usuario valido. Tente novamente.");
+      await loadLoaderProfile(data.user.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro no login do carregador.");
       throw err;

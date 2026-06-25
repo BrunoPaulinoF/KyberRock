@@ -1,17 +1,27 @@
-import { useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
+import { useNavigate } from "react-router-dom";
+
 import { useAuth } from "../contexts/AuthContext";
 
 export function LoaderLogin() {
-  const { loginLoader, error } = useAuth();
+  const { loginLoader, error, isLoader } = useAuth();
+  const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
-  async function handleSubmit(event: React.FormEvent) {
+  useEffect(() => {
+    if (isLoader) {
+      navigate("/loader", { replace: true });
+    }
+  }, [isLoader, navigate]);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setIsLoading(true);
     try {
       await loginLoader(email, password);
+      navigate("/loader", { replace: true });
     } catch {
       // O contexto de auth ja expoe a mensagem para a tela.
     } finally {
