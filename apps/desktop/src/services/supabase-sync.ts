@@ -501,6 +501,21 @@ export async function getSupabaseSyncStatus(
   return { totalOperations: count ?? 0, lastSync: data?.[0]?.synced_at ?? null };
 }
 
+const OMIE_SYNC_REDUNDANT_MAX_RETRIES = 2;
+const OMIE_SYNC_REDUNDANT_DEFAULT_WAIT_MS = 60_000;
+const OMIE_SYNC_REDUNDANT_MAX_WAIT_MS = 65_000;
+
+function isOmieSyncRedundantError(message: string): boolean {
+  return /REDUNDANT|Consumo redundante/i.test(message);
+}
+
+function parseOmieSyncRedundantWaitMs(message: string): number {
+  const match = /Aguarde\s+(\d+)\s+segundos?/i.exec(message);
+  const seconds = match ? Number(match[1]) : NaN;
+  if (!Number.isFinite(seconds) || seconds <= 0) return OMIE_SYNC_REDUNDANT_DEFAULT_WAIT_MS;
+  return Math.min(seconds * 1000 + 1000, OMIE_SYNC_REDUNDANT_MAX_WAIT_MS);
+}
+
 export async function syncOmieReferenceDataFromCloud(
   database: DesktopDatabase,
   identity: LocalDesktopIdentity,
@@ -518,24 +533,39 @@ export async function syncOmieReferenceDataFromCloud(
     });
   }
   const state = readOmiePullState(database);
-  const { data, error } = await supabase.functions.invoke<OmieReferenceDataResponse>("omie-sync", {
-    body: {
-      deviceId: settings.deviceId,
-      deviceToken: settings.deviceToken,
-      action: "pull_reference_data",
-      resume: {
-        customersPage: state.customersPage,
-        productsPage: state.productsPage,
-        paymentTermsPage: state.paymentTermsPage,
-        suppliersPage: state.suppliersPage
-      }
+  const body = {
+    deviceId: settings.deviceId,
+    deviceToken: settings.deviceToken,
+    action: "pull_reference_data",
+    resume: {
+      customersPage: state.customersPage,
+      productsPage: state.productsPage,
+      paymentTermsPage: state.paymentTermsPage,
+      suppliersPage: state.suppliersPage
     }
-  });
+  };
 
-  if (error) throw new Error(await getFunctionErrorMessage(error));
-  if (!data) throw new Error("Resposta OMIE vazia.");
+  for (let attempt = 0; attempt <= OMIE_SYNC_REDUNDANT_MAX_RETRIES; attempt++) {
+    const { data, error } = await supabase.functions.invoke<OmieReferenceDataResponse>(
+      "omie-sync",
+      { body }
+    );
 
-  return applyOmieReferenceData(database, settings.companyId, data);
+    if (error) {
+      const message = await getFunctionErrorMessage(error);
+      if (isOmieSyncRedundantError(message) && attempt < OMIE_SYNC_REDUNDANT_MAX_RETRIES) {
+        await new Promise((resolve) => setTimeout(resolve, parseOmieSyncRedundantWaitMs(message)));
+        continue;
+      }
+      throw new Error(message);
+    }
+
+    if (!data) throw new Error("Resposta OMIE vazia.");
+
+    return applyOmieReferenceData(database, settings.companyId, data);
+  }
+
+  throw new Error("OMIE sync redundant retry exhausted.");
 }
 
 export function applyOmieReferenceData(

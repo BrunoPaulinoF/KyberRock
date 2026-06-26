@@ -347,6 +347,88 @@ describe("supabase sync", () => {
     }
   });
 
+  it("retries on OMIE redundant error from the cloud bridge before throwing", async () => {
+    vi.useFakeTimers();
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+
+      invokeMock.mockResolvedValueOnce({
+        error: createFunctionHttpError(
+          "OMIE HTTP 500: Internal Server Error em ListarClientes (/geral/clientes/) - ERROR: Consumo redundante detectado. Aguarde 48 segundos para tentar novamente (REDUNDANT)"
+        ),
+        data: null
+      });
+      invokeMock.mockResolvedValueOnce({
+        error: null,
+        data: {
+          customers: [
+            {
+              id: 123,
+              name: "Cliente OMIE",
+              tradeName: null,
+              document: null,
+              phone: null,
+              email: null
+            }
+          ],
+          products: [{ id: 456, code: "BRITA", description: "Brita", unit: "M3", itemType: "04" }],
+          paymentTerms: [{ id: 789, description: "30 dias" }]
+        }
+      });
+
+      const promise = syncOmieReferenceDataFromCloud(database, identity);
+      await vi.runAllTimersAsync();
+      const result = await promise;
+
+      expect(invokeMock).toHaveBeenCalledTimes(2);
+      expect(result).toMatchObject({
+        customersPulled: 1,
+        productsSynced: 1,
+        paymentTermsSynced: 1,
+        suppliersSynced: 0
+      });
+    } finally {
+      vi.useRealTimers();
+      database.close();
+    }
+  });
+
+  it("throws after exhausting OMIE redundant retries on the desktop side", async () => {
+    vi.useFakeTimers();
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+
+      const redundantMessage =
+        "OMIE HTTP 500: Internal Server Error em ListarClientes (/geral/clientes/) - ERROR: Consumo redundante detectado. Aguarde 48 segundos para tentar novamente (REDUNDANT)";
+      invokeMock.mockResolvedValueOnce({
+        error: createFunctionHttpError(redundantMessage),
+        data: null
+      });
+      invokeMock.mockResolvedValueOnce({
+        error: createFunctionHttpError(redundantMessage),
+        data: null
+      });
+      invokeMock.mockResolvedValueOnce({
+        error: createFunctionHttpError(redundantMessage),
+        data: null
+      });
+
+      const promise = syncOmieReferenceDataFromCloud(database, identity);
+      const rejectionExpect = expect(promise).rejects.toThrow(/Consumo redundante|REDUNDANT/);
+      await vi.runAllTimersAsync();
+      await rejectionExpect;
+    } finally {
+      vi.useRealTimers();
+      database.close();
+    }
+  });
+
   it("pushes pending local customers to OMIE through the cloud bridge", async () => {
     const database = createDatabase();
 
