@@ -29,10 +29,7 @@ import type {
 } from "../services/printing";
 import type { DesktopAccessStatus } from "../services/desktop-activation";
 import type { DesktopStatusSnapshot } from "../services/status";
-import {
-  createInitialUpdateState,
-  type UpdateState
-} from "../services/update-flow";
+import { createInitialUpdateState, type UpdateState } from "../services/update-flow";
 import type {
   OperationFreightInput,
   OperationType,
@@ -500,7 +497,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         }
       } catch {
         if (active) {
-          setConnectivity((prev) => prev ?? { internetOnline: false, cloudReachable: false, omieReachable: false });
+          setConnectivity(
+            (prev) => prev ?? { internetOnline: false, cloudReachable: false, omieReachable: false }
+          );
           setCloudConnected(false);
         }
       }
@@ -615,7 +614,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         "Internet indisponivel - operacao segue normalmente, dados ficarao na fila para envio."
       );
       setConnectivity((prev) =>
-        prev ? { ...prev, internetOnline: false } : { internetOnline: false, cloudReachable: false, omieReachable: false }
+        prev
+          ? { ...prev, internetOnline: false }
+          : { internetOnline: false, cloudReachable: false, omieReachable: false }
       );
     };
     window.addEventListener("online", handleOnline);
@@ -628,11 +629,14 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
   useEffect(() => {
     if (!desktopApi) return;
-    const id = window.setInterval(() => {
-      if (navigator.onLine) {
-        void autoSyncCloud();
-      }
-    }, 20 * 60 * 1000);
+    const id = window.setInterval(
+      () => {
+        if (navigator.onLine) {
+          void autoSyncCloud();
+        }
+      },
+      20 * 60 * 1000
+    );
     return () => window.clearInterval(id);
   }, [desktopApi, autoSyncCloud]);
 
@@ -930,7 +934,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
           status: "running",
           step: "weighing",
           title: "Fechando saida fiscal",
-          detail: "Capturando peso de saida com os criterios configurados e calculando peso liquido."
+          detail:
+            "Capturando peso de saida com os criterios configurados e calculando peso liquido."
         });
         setMessage("Fechando operacao fiscal e faturando no OMIE. Mantenha a internet conectada.");
       }
@@ -1203,6 +1208,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
   return (
     <main data-theme={themeMode} style={{ ...styles.page, ...themeVars }}>
+      <GlobalUiPolish />
       <div style={styles.shell}>
         <aside style={styles.sidebar}>
           <div style={styles.sidebarHeader}>
@@ -1348,7 +1354,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       }}
                       style={{
                         ...styles.settingsItem,
-                        color: errorLogs.some((l) => l.level === "error") ? "#b91c1c" : "var(--kr-muted)"
+                        color: errorLogs.some((l) => l.level === "error")
+                          ? "#b91c1c"
+                          : "var(--kr-muted)"
                       }}
                     >
                       <ScrollText size={14} />
@@ -1411,22 +1419,22 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   </p>
                   <div style={styles.modalActions}>
                     <button
-                        type="button"
-                        onClick={() => {
-                          void handleUpdateAction();
-                          setShowUpdateModal(false);
-                        }}
-                        style={styles.primaryButton}
-                      >
-                        Atualizar agora
-                      </button>
+                      type="button"
+                      onClick={() => {
+                        void handleUpdateAction();
+                        setShowUpdateModal(false);
+                      }}
+                      style={styles.primaryButton}
+                    >
+                      Atualizar agora
+                    </button>
                     <button
-                        type="button"
-                        onClick={() => setShowUpdateModal(false)}
-                        style={styles.secondaryButton}
-                      >
-                        Mais tarde
-                      </button>
+                      type="button"
+                      onClick={() => setShowUpdateModal(false)}
+                      style={styles.secondaryButton}
+                    >
+                      Mais tarde
+                    </button>
                   </div>
                 </div>
               </div>
@@ -1445,12 +1453,12 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   >
                     <h2 style={{ ...styles.modalTitle, margin: 0 }}>Logs do sistema</h2>
                     <button
-                        type="button"
-                        onClick={() => setErrorLogs([])}
-                        style={styles.secondaryButton}
-                      >
-                        Limpar
-                      </button>
+                      type="button"
+                      onClick={() => setErrorLogs([])}
+                      style={styles.secondaryButton}
+                    >
+                      Limpar
+                    </button>
                   </div>
                   {errorLogs.length === 0 ? (
                     <p style={styles.muted}>
@@ -1461,8 +1469,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       style={{
                         maxHeight: "60vh",
                         overflowY: "auto",
-                        border: "1px solid #e2e8f0",
-                        borderRadius: "8px"
+                        border: "1px solid var(--kr-border)",
+                        borderRadius: "10px"
                       }}
                     >
                       {errorLogs
@@ -1473,13 +1481,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                             key={`${log.timestamp}-${index}`}
                             style={{
                               padding: "8px 12px",
-                              borderBottom: "1px solid #f1f5f9",
+                              borderBottom: "1px solid var(--kr-border)",
                               background:
                                 log.level === "error"
                                   ? "#fef2f2"
                                   : log.level === "warn"
                                     ? "#fffbeb"
-                                    : "#fff"
+                                    : "var(--kr-surface)"
                             }}
                           >
                             <div
@@ -1488,7 +1496,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                                 gap: "8px",
                                 alignItems: "center",
                                 fontSize: "12px",
-                                color: "#64748b"
+                                color: "var(--kr-muted)"
                               }}
                             >
                               <span>{new Date(log.timestamp).toLocaleString("pt-BR")}</span>
@@ -1520,7 +1528,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                               style={{
                                 marginTop: "4px",
                                 fontSize: "13px",
-                                color: "#0f172a",
+                                color: "var(--kr-text-strong)",
                                 wordBreak: "break-word"
                               }}
                             >
@@ -1531,7 +1539,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                                 style={{
                                   marginTop: "4px",
                                   fontSize: "11px",
-                                  color: "#94a3b8",
+                                  color: "var(--kr-muted)",
                                   wordBreak: "break-word"
                                 }}
                               >
@@ -1544,12 +1552,12 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   )}
                   <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "12px" }}>
                     <button
-                        type="button"
-                        onClick={() => setShowLogsModal(false)}
-                        style={styles.secondaryButton}
-                      >
-                        Fechar
-                      </button>
+                      type="button"
+                      onClick={() => setShowLogsModal(false)}
+                      style={styles.secondaryButton}
+                    >
+                      Fechar
+                    </button>
                   </div>
                 </div>
               </div>
@@ -1637,7 +1645,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                         flexWrap: "wrap"
                       }}
                     >
-                      <label style={{ ...styles.fieldLabel, marginBottom: 0 }} title={TIPS.operations.filterPeriod}>
+                      <label
+                        style={{ ...styles.fieldLabel, marginBottom: 0 }}
+                        title={TIPS.operations.filterPeriod}
+                      >
                         Periodo
                         <select
                           value={canceledFilter}
@@ -1653,18 +1664,18 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                         </select>
                       </label>
                       <button
-                          type="button"
-                          onClick={() => void handleClearCanceledOperations()}
-                          disabled={canceledOperations.length === 0}
-                          style={{
-                            ...styles.secondaryButton,
-                            color: "#b91c1c",
-                            borderColor: "#fecaca"
-                          }}
-                        >
-                          Limpar canceladas
-                        </button>
-                    <HelpTooltip content={TIPS.operations.clearCanceled} placement="bottom" />
+                        type="button"
+                        onClick={() => void handleClearCanceledOperations()}
+                        disabled={canceledOperations.length === 0}
+                        style={{
+                          ...styles.secondaryButton,
+                          color: "#b91c1c",
+                          borderColor: "#fecaca"
+                        }}
+                      >
+                        Limpar canceladas
+                      </button>
+                      <HelpTooltip content={TIPS.operations.clearCanceled} placement="bottom" />
                     </div>
                   ) : operationsTab === "closed" ? (
                     <div
@@ -1675,7 +1686,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                         flexWrap: "wrap"
                       }}
                     >
-                      <label style={{ ...styles.fieldLabel, marginBottom: 0 }} title={TIPS.operations.filterProduct}>
+                      <label
+                        style={{ ...styles.fieldLabel, marginBottom: 0 }}
+                        title={TIPS.operations.filterProduct}
+                      >
                         Produto
                         <select
                           value={closedProductFilter}
@@ -1726,20 +1740,20 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                           </span>
                           <span style={styles.rowActions}>
                             <button
-                                type="button"
-                                onClick={() => setClosingOperation(operation)}
-                                style={styles.smallPrimaryButton}
-                              >
-                                Fechar
-                              </button>
+                              type="button"
+                              onClick={() => setClosingOperation(operation)}
+                              style={styles.smallPrimaryButton}
+                            >
+                              Fechar
+                            </button>
                             <HelpTooltip content={TIPS.operations.close} placement="left" />
                             <button
-                                type="button"
-                                onClick={() => setCancelOperationId(operation.id)}
-                                style={styles.smallDangerButton}
-                              >
-                                Cancelar
-                              </button>
+                              type="button"
+                              onClick={() => setCancelOperationId(operation.id)}
+                              style={styles.smallDangerButton}
+                            >
+                              Cancelar
+                            </button>
                             <HelpTooltip content={TIPS.operations.cancel} placement="left" />
                           </span>
                         </div>
@@ -1936,9 +1950,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
               <section style={styles.twoColumns}>
                 <article style={styles.panel}>
                   <h2 style={styles.panelTitle}>Perfil de cupom 80 mm</h2>
-                  <p style={styles.muted}>
-                    {TIPS.screens.printing}
-                  </p>
+                  <p style={styles.muted}>{TIPS.screens.printing}</p>
                   <label style={styles.fieldLabel} title={TIPS.printing.selectPrinter}>
                     Impressora Windows
                     <select
@@ -1959,21 +1971,21 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     <p style={styles.errorMessage}>Nenhuma impressora instalada foi encontrada.</p>
                   ) : null}
                   <button
-                      type="button"
-                      onClick={handleConfigureReceiptPrinter}
-                      style={styles.primaryButton}
-                    >
-                      Salvar perfil 80 mm
-                    </button>
+                    type="button"
+                    onClick={handleConfigureReceiptPrinter}
+                    style={styles.primaryButton}
+                  >
+                    Salvar perfil 80 mm
+                  </button>
                   <HelpTooltip content={TIPS.printing.saveProfile} placement="top" />
 
                   <button
-                      type="button"
-                      onClick={() => void handlePrintTest()}
-                      style={{ ...styles.secondaryButton, marginTop: "12px" }}
-                    >
-                      Testar impressora (cupom exemplo)
-                    </button>
+                    type="button"
+                    onClick={() => void handlePrintTest()}
+                    style={{ ...styles.secondaryButton, marginTop: "12px" }}
+                  >
+                    Testar impressora (cupom exemplo)
+                  </button>
                   <HelpTooltip content={TIPS.printing.testPrint} placement="top" />
 
                   <h3>Perfil ativo</h3>
@@ -2006,12 +2018,12 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                         ) : null}
                       </div>
                       <button
-                          type="button"
-                          onClick={() => void handleReprintReceipt(receipt.id)}
-                          style={styles.secondaryButton}
-                        >
-                          Reimprimir segunda via
-                        </button>
+                        type="button"
+                        onClick={() => void handleReprintReceipt(receipt.id)}
+                        style={styles.secondaryButton}
+                      >
+                        Reimprimir segunda via
+                      </button>
                       <HelpTooltip content={TIPS.printing.reprint} placement="left" />
                     </div>
                   ))}
@@ -2023,9 +2035,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
               <section style={styles.twoColumns}>
                 <article style={styles.panel}>
                   <h2 style={styles.panelTitle}>Sincronizacao Supabase</h2>
-                  <p style={styles.muted}>
-                    {TIPS.screens.cloud}
-                  </p>
+                  <p style={styles.muted}>{TIPS.screens.cloud}</p>
 
                   <div style={{ marginBottom: "16px" }}>
                     <p>
@@ -2046,17 +2056,17 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   </div>
 
                   <button
-                      type="button"
-                      onClick={handleSyncToCloud}
-                      disabled={cloudSyncing}
-                      style={{
-                        ...styles.primaryButton,
-                        opacity: cloudSyncing ? 0.6 : 1,
-                        cursor: cloudSyncing ? "not-allowed" : "pointer"
-                      }}
-                    >
-                      {cloudSyncing ? "Sincronizando..." : "Sincronizar agora"}
-                    </button>
+                    type="button"
+                    onClick={handleSyncToCloud}
+                    disabled={cloudSyncing}
+                    style={{
+                      ...styles.primaryButton,
+                      opacity: cloudSyncing ? 0.6 : 1,
+                      cursor: cloudSyncing ? "not-allowed" : "pointer"
+                    }}
+                  >
+                    {cloudSyncing ? "Sincronizando..." : "Sincronizar agora"}
+                  </button>
                   <HelpTooltip content={TIPS.cloud.syncNow} placement="top" />
                 </article>
 
@@ -2108,39 +2118,42 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                               ) : null}
                             </div>
                           ) : null}
-                            <button
-                                type="button"
-                                onClick={handleSyncOmie}
-                                disabled={omieSyncing}
-                                style={{
-                                  ...styles.primaryButton,
-                                  marginTop: "16px",
-                                  opacity: omieSyncing ? 0.6 : 1,
-                                  cursor: omieSyncing ? "not-allowed" : "pointer"
-                                }}
-                              >
-                                {omieSyncing ? "Sincronizando..." : "Sincronizar OMIE agora"}
-                              </button>
-                            <HelpTooltip content={TIPS.cloud.syncOmie} placement="top" />
-                            <button
-                                type="button"
-                                onClick={() => setShowOmieDirectSync(true)}
-                                style={{
-                                  ...styles.secondaryButton,
-                                  marginTop: "8px",
-                                  marginLeft: "8px"
-                                }}
-                              >
-                                Sincronizar OMIE direto
-                              </button>
-                            <HelpTooltip content="Puxa clientes, produtos, condicoes e transportadoras direto do OMIE usando credenciais da empresa." placement="top" />
+                          <button
+                            type="button"
+                            onClick={handleSyncOmie}
+                            disabled={omieSyncing}
+                            style={{
+                              ...styles.primaryButton,
+                              marginTop: "16px",
+                              opacity: omieSyncing ? 0.6 : 1,
+                              cursor: omieSyncing ? "not-allowed" : "pointer"
+                            }}
+                          >
+                            {omieSyncing ? "Sincronizando..." : "Sincronizar OMIE agora"}
+                          </button>
+                          <HelpTooltip content={TIPS.cloud.syncOmie} placement="top" />
+                          <button
+                            type="button"
+                            onClick={() => setShowOmieDirectSync(true)}
+                            style={{
+                              ...styles.secondaryButton,
+                              marginTop: "8px",
+                              marginLeft: "8px"
+                            }}
+                          >
+                            Sincronizar OMIE direto
+                          </button>
+                          <HelpTooltip
+                            content="Puxa clientes, produtos, condicoes e transportadoras direto do OMIE usando credenciais da empresa."
+                            placement="top"
+                          />
                           <div
                             style={{
                               marginTop: "16px",
                               padding: "12px",
-                              border: "1px dashed #cbd5e1",
+                              border: "1px dashed var(--kr-input-border)",
                               borderRadius: "8px",
-                              background: "#f8fafc"
+                              background: "var(--kr-surface-soft)"
                             }}
                           >
                             <p style={{ margin: 0, fontWeight: 700, fontSize: "13px" }}>
@@ -2151,24 +2164,28 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                               e condicoes que ainda nao foram clonados.
                             </p>
                             <button
-                                type="button"
-                                onClick={handleStartOmieDataEntryLoop}
-                                disabled={omieLoop?.running}
-                                style={{
-                                  ...styles.primaryButton,
-                                  background: "#0f766e",
-                                  opacity: omieLoop?.running ? 0.6 : 1,
-                                  cursor: omieLoop?.running ? "not-allowed" : "pointer"
-                                }}
-                              >
-                                {omieLoop?.running
-                                  ? "Executando loop..."
-                                  : "Iniciar loop de entrada de dados"}
-                              </button>
+                              type="button"
+                              onClick={handleStartOmieDataEntryLoop}
+                              disabled={omieLoop?.running}
+                              style={{
+                                ...styles.primaryButton,
+                                background: "#0f766e",
+                                opacity: omieLoop?.running ? 0.6 : 1,
+                                cursor: omieLoop?.running ? "not-allowed" : "pointer"
+                              }}
+                            >
+                              {omieLoop?.running
+                                ? "Executando loop..."
+                                : "Iniciar loop de entrada de dados"}
+                            </button>
                             <HelpTooltip content={TIPS.cloud.omieLoop} placement="top" />
                             {omieLoop ? (
                               <div
-                                style={{ marginTop: "10px", fontSize: "13px", color: "#0f172a" }}
+                                style={{
+                                  marginTop: "10px",
+                                  fontSize: "13px",
+                                  color: "var(--kr-text-strong)"
+                                }}
                               >
                                 <p style={{ margin: "2px 0" }}>
                                   <strong>Iteracao:</strong> {omieLoop.iteration}
@@ -2361,9 +2378,12 @@ function ConnectivityBadge({
   );
 }
 
-function badgePalette(
-  tone: "success" | "warning" | "danger" | "neutral"
-): { bg: string; fg: string; border: string; dot: string } {
+function badgePalette(tone: "success" | "warning" | "danger" | "neutral"): {
+  bg: string;
+  fg: string;
+  border: string;
+  dot: string;
+} {
   switch (tone) {
     case "success":
       return { bg: "#dcfce7", fg: "#166534", border: "#86efac", dot: "#16a34a" };
@@ -2405,6 +2425,59 @@ function KeyboardShortcutsLegend() {
   );
 }
 
+function GlobalUiPolish() {
+  return (
+    <style>{`
+      [data-theme] *, [data-theme] *::before, [data-theme] *::after {
+        box-sizing: border-box;
+      }
+
+      [data-theme] button,
+      [data-theme] input,
+      [data-theme] select,
+      [data-theme] textarea {
+        font-family: inherit;
+      }
+
+      [data-theme] button:focus-visible,
+      [data-theme] input:focus-visible,
+      [data-theme] select:focus-visible,
+      [data-theme] textarea:focus-visible,
+      [data-theme] [tabindex]:focus-visible {
+        outline: 3px solid var(--kr-focus-ring);
+        outline-offset: 2px;
+      }
+
+      [data-theme] button:disabled,
+      [data-theme] input:disabled,
+      [data-theme] select:disabled,
+      [data-theme] textarea:disabled {
+        cursor: not-allowed;
+      }
+
+      [data-theme] ::selection {
+        background: var(--kr-selection-bg);
+        color: var(--kr-selection-text);
+      }
+
+      [data-theme] ::-webkit-scrollbar {
+        width: 10px;
+        height: 10px;
+      }
+
+      [data-theme] ::-webkit-scrollbar-track {
+        background: var(--kr-scroll-track);
+      }
+
+      [data-theme] ::-webkit-scrollbar-thumb {
+        background: var(--kr-scroll-thumb);
+        border: 2px solid var(--kr-scroll-track);
+        border-radius: 999px;
+      }
+    `}</style>
+  );
+}
+
 function getWindowDesktopApi(): KyberRockDesktopApi | undefined {
   return typeof window === "undefined" ? undefined : window.kyberrockDesktop;
 }
@@ -2420,7 +2493,16 @@ interface SidebarItemProps {
   tooltip?: string;
 }
 
-function SidebarItem({ id, label, icon: Icon, activeView, onSelect, disabled, badge, tooltip }: SidebarItemProps) {
+function SidebarItem({
+  id,
+  label,
+  icon: Icon,
+  activeView,
+  onSelect,
+  disabled,
+  badge,
+  tooltip
+}: SidebarItemProps) {
   const isActive = activeView === id;
   const baseStyle: React.CSSProperties = {
     display: "flex",
@@ -2431,11 +2513,11 @@ function SidebarItem({ id, label, icon: Icon, activeView, onSelect, disabled, ba
     margin: 0,
     fontSize: "13px",
     fontWeight: isActive ? 600 : 500,
-    color: disabled ? "#94a3b8" : isActive ? "#0f172a" : "#475569",
-    background: isActive ? "#e0f2fe" : "transparent",
+    color: disabled ? "var(--kr-muted)" : isActive ? "var(--kr-primary-text)" : "var(--kr-muted)",
+    background: isActive ? "var(--kr-primary-strong)" : "transparent",
     border: "none",
-    borderLeft: isActive ? "3px solid #2563eb" : "3px solid transparent",
-    borderRadius: "0 6px 6px 0",
+    borderLeft: isActive ? "3px solid var(--kr-primary)" : "3px solid transparent",
+    borderRadius: "0 10px 10px 0",
     cursor: disabled ? "not-allowed" : "pointer",
     textAlign: "left"
   };
@@ -2487,7 +2569,7 @@ function SidebarSection({ title, children }: { title: string; children: React.Re
         style={{
           fontSize: "10px",
           fontWeight: 700,
-          color: "#94a3b8",
+          color: "var(--kr-muted)",
           textTransform: "uppercase",
           letterSpacing: "0.06em",
           margin: "12px 12px 4px 12px"
@@ -2526,7 +2608,10 @@ function validateWeighingForm(form: WeighingFormState): string | null {
     if (form.freightBaseValueCents === null && form.freightFixedValueCents === null) {
       return "Informe o valor do frete.";
     }
-    if (form.freightCalculationType === "per_ton_km" && parsePositiveNumber(form.freightDistanceKm) === null) {
+    if (
+      form.freightCalculationType === "per_ton_km" &&
+      parsePositiveNumber(form.freightDistanceKm) === null
+    ) {
       return "Informe a distancia do frete em km.";
     }
   }
@@ -2604,6 +2689,7 @@ function CacheSelect({
   const [selectedOption, setSelectedOption] = useState<CacheSelectOption | null>(null);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
   const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
   const containerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -2636,12 +2722,12 @@ function CacheSelect({
           productFiscalType
         });
         const allOptions = (result.rows as Array<Record<string, unknown>>).map((item) => ({
-            id: String(item.id ?? item.omieCode ?? ""),
-            label: String(
-              item.tradeName ?? item.plate ?? item.name ?? item.description ?? item.fullName ?? ""
-            ),
-            raw: item
-          }));
+          id: String(item.id ?? item.omieCode ?? ""),
+          label: String(
+            item.tradeName ?? item.plate ?? item.name ?? item.description ?? item.fullName ?? ""
+          ),
+          raw: item
+        }));
         setOptions(
           filterIds && filterIds.length > 0
             ? allOptions.filter((o) => filterIds.includes(o.id))
@@ -2656,6 +2742,10 @@ function CacheSelect({
 
     load();
   }, [desktopApi, entityType, productFiscalType, search, refreshKey, filterIds]);
+
+  useEffect(() => {
+    setHighlightedIndex(0);
+  }, [open, options.length]);
 
   useEffect(() => {
     function handleClick(event: MouseEvent) {
@@ -2716,8 +2806,15 @@ function CacheSelect({
     };
   }, [open]);
 
+  function selectOption(option: CacheSelectOption): void {
+    setSelectedOption(option);
+    onChange(option.id, option.raw);
+    setOpen(false);
+    setSearch("");
+  }
+
   return (
-    <div ref={containerRef} style={{ position: "relative", marginBottom: "8px" }}>
+    <div ref={containerRef} style={{ position: "relative", marginBottom: "6px" }}>
       <label style={styles.fieldLabel}>
         {label}
         <input
@@ -2731,6 +2828,29 @@ function CacheSelect({
             setOpen(true);
             setSearch("");
           }}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowDown") {
+              event.preventDefault();
+              if (!open) setOpen(true);
+              setHighlightedIndex((index) => Math.min(Math.max(0, options.length - 1), index + 1));
+              return;
+            }
+            if (event.key === "ArrowUp") {
+              event.preventDefault();
+              setHighlightedIndex((index) => Math.max(0, index - 1));
+              return;
+            }
+            if (event.key === "Enter" && open && options[highlightedIndex]) {
+              event.preventDefault();
+              selectOption(options[highlightedIndex]);
+              return;
+            }
+            if (event.key === "Escape") {
+              event.preventDefault();
+              setOpen(false);
+              setSearch("");
+            }
+          }}
           disabled={disabled}
           placeholder={`Buscar ${label.toLowerCase()}...`}
           style={styles.input}
@@ -2740,12 +2860,12 @@ function CacheSelect({
         <div
           ref={dropdownRef}
           style={{
-            background: "#fff",
-            border: "1px solid #e2e8f0",
-            borderRadius: "4px",
+            background: "var(--kr-surface)",
+            border: "1px solid var(--kr-border)",
+            borderRadius: "12px",
             overflowY: "auto",
             zIndex: 100,
-            boxShadow: "0 4px 6px rgba(0,0,0,0.1)",
+            boxShadow: "var(--kr-shadow)",
             ...dropdownStyle
           }}
         >
@@ -2758,33 +2878,23 @@ function CacheSelect({
               Nenhum resultado
             </div>
           ) : (
-            options.map((option) => (
+            options.map((option, index) => (
               <button
                 key={option.id}
                 type="button"
-                onClick={() => {
-                  setSelectedOption(option);
-                  onChange(option.id, option.raw);
-                  setOpen(false);
-                  setSearch("");
-                }}
+                onClick={() => selectOption(option)}
                 style={{
                   display: "block",
                   width: "100%",
                   textAlign: "left",
                   padding: "8px 12px",
                   border: "none",
-                  background: "transparent",
+                  background: highlightedIndex === index ? "var(--kr-card-hover)" : "transparent",
                   cursor: "pointer",
                   fontSize: "14px",
-                  color: "#0f172a"
+                  color: "var(--kr-text-strong)"
                 }}
-                onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.background = "#f1f5f9";
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.background = "transparent";
-                }}
+                onMouseEnter={() => setHighlightedIndex(index)}
               >
                 {option.label}
               </button>
@@ -2804,11 +2914,11 @@ function CacheSelect({
                 textAlign: "left",
                 padding: "8px 12px",
                 border: "none",
-                borderTop: "1px solid #e2e8f0",
-                background: "#f8fafc",
+                borderTop: "1px solid var(--kr-border)",
+                background: "var(--kr-surface-soft)",
                 cursor: "pointer",
                 fontSize: "13px",
-                color: "#2563eb",
+                color: "var(--kr-primary)",
                 fontWeight: 600
               }}
             >
@@ -2842,7 +2952,9 @@ function WeighingForm({
 }: WeighingFormProps) {
   const [liveWeight, setLiveWeight] = useState<number | null>(null);
   const [capturedWeight, setCapturedWeight] = useState<number | null>(null);
-  const [scaleState, setScaleState] = useState<"disconnected" | "connecting" | "connected" | "error">("disconnected");
+  const [scaleState, setScaleState] = useState<
+    "disconnected" | "connecting" | "connected" | "error"
+  >("disconnected");
   const [scaleStateMessage, setScaleStateMessage] = useState<string>("Balança desconectada");
   const [isVirtual, setIsVirtual] = useState(false);
   const [virtualWeightInput, setVirtualWeightInput] = useState("");
@@ -2994,7 +3106,9 @@ function WeighingForm({
           if (config.adapterType === "virtual") {
             await api.virtualScaleConnect();
           } else {
-            await api.scaleConnect(config.connection as unknown as Parameters<KyberRockDesktopApi["scaleConnect"]>[0]);
+            await api.scaleConnect(
+              config.connection as unknown as Parameters<KyberRockDesktopApi["scaleConnect"]>[0]
+            );
           }
         }
       } catch {
@@ -3002,7 +3116,9 @@ function WeighingForm({
       }
     }
     autoConnect();
-    return () => { canceled = true; };
+    return () => {
+      canceled = true;
+    };
   }, [desktopApi]);
 
   useEffect(() => {
@@ -3099,13 +3215,20 @@ function WeighingForm({
                 style={{ width: "22px", height: "22px", objectFit: "contain" }}
               />
               <span style={styles.metricLabel}>Peso ao vivo</span>
-              <span style={{
-                width: "10px",
-                height: "10px",
-                borderRadius: "50%",
-                backgroundColor: scaleState === "connected" ? "#22c55e" : scaleState === "connecting" ? "#f59e0b" : "#ef4444",
-                marginLeft: "auto"
-              }} />
+              <span
+                style={{
+                  width: "10px",
+                  height: "10px",
+                  borderRadius: "50%",
+                  backgroundColor:
+                    scaleState === "connected"
+                      ? "#22c55e"
+                      : scaleState === "connecting"
+                        ? "#f59e0b"
+                        : "#ef4444",
+                  marginLeft: "auto"
+                }}
+              />
             </div>
             <strong style={styles.metricValue}>
               {liveWeight !== null ? formatWeightKg(liveWeight) : "-- kg"}
@@ -3125,20 +3248,36 @@ function WeighingForm({
                     if (config.adapterType === "virtual") {
                       await desktopApi.virtualScaleConnect();
                     } else {
-                      await desktopApi.scaleConnect(config.connection as unknown as Parameters<KyberRockDesktopApi["scaleConnect"]>[0]);
+                      await desktopApi.scaleConnect(
+                        config.connection as unknown as Parameters<
+                          KyberRockDesktopApi["scaleConnect"]
+                        >[0]
+                      );
                     }
                   } catch (err) {
                     setScaleState("error");
                     setScaleStateMessage(err instanceof Error ? err.message : "Falha ao conectar");
                   }
                 }}
-                style={{ ...styles.secondaryButton, fontSize: "12px", padding: "6px 12px", marginTop: "8px" }}
+                style={{
+                  ...styles.secondaryButton,
+                  fontSize: "12px",
+                  padding: "6px 12px",
+                  marginTop: "8px"
+                }}
               >
                 Reconectar balança
               </button>
             ) : null}
           </div>
-          <div style={{ ...styles.liveWeightCard, flex: 1, backgroundColor: capturedWeight !== null ? "#f0fdf4" : undefined, borderColor: capturedWeight !== null ? "#86efac" : undefined }}>
+          <div
+            style={{
+              ...styles.liveWeightCard,
+              flex: 1,
+              backgroundColor: capturedWeight !== null ? "#f0fdf4" : undefined,
+              borderColor: capturedWeight !== null ? "#86efac" : undefined
+            }}
+          >
             <div style={styles.metricHeader}>
               <img
                 src="midia/peso.png"
@@ -3147,7 +3286,12 @@ function WeighingForm({
               />
               <span style={styles.metricLabel}>Peso capturado</span>
             </div>
-            <strong style={{ ...styles.metricValue, color: capturedWeight !== null ? "#15803d" : undefined }}>
+            <strong
+              style={{
+                ...styles.metricValue,
+                color: capturedWeight !== null ? "#15803d" : undefined
+              }}
+            >
               {capturedWeight !== null ? formatWeightKg(capturedWeight) : "-- kg"}
             </strong>
             <span style={styles.metricHint}>
@@ -3158,7 +3302,15 @@ function WeighingForm({
         {isVirtual && scaleState === "connected" ? (
           <div style={{ marginTop: "12px", display: "flex", gap: "8px", alignItems: "flex-end" }}>
             <div style={{ flex: 1 }}>
-              <label style={{ fontSize: "12px", fontWeight: 600, color: "#475569", display: "block", marginBottom: "4px" }}>
+              <label
+                style={{
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  color: "#475569",
+                  display: "block",
+                  marginBottom: "4px"
+                }}
+              >
                 Peso para simular (kg)
               </label>
               <input
@@ -3175,7 +3327,9 @@ function WeighingForm({
                       await desktopApi.virtualScaleSetWeight(kg);
                       setLiveWeight(kg);
                     } catch (err) {
-                      setScaleStateMessage(err instanceof Error ? err.message : "Erro ao enviar peso");
+                      setScaleStateMessage(
+                        err instanceof Error ? err.message : "Erro ao enviar peso"
+                      );
                     }
                   }
                 }}
@@ -3472,9 +3626,8 @@ function WeighingForm({
                   Abater frete do credito do cliente
                 </label>
                 <p style={styles.helperText}>
-                  Por padrao, o credito abate apenas o produto. Marque esta opcao para que o
-                  frete tambem seja compensado do credito (exige saldo suficiente para produto
-                  + frete).
+                  Por padrao, o credito abate apenas o produto. Marque esta opcao para que o frete
+                  tambem seja compensado do credito (exige saldo suficiente para produto + frete).
                 </p>
               </div>
             ) : null}
@@ -3576,7 +3729,11 @@ function SectionHeader({
     <div style={styles.sectionHeader}>
       <span style={styles.sectionIcon}>
         {iconSrc ? (
-          <img src={iconSrc} alt="" style={{ width: "20px", height: "20px", objectFit: "contain" }} />
+          <img
+            src={iconSrc}
+            alt=""
+            style={{ width: "20px", height: "20px", objectFit: "contain" }}
+          />
         ) : Icon ? (
           <Icon size={18} strokeWidth={2.4} />
         ) : (
@@ -3631,16 +3788,11 @@ function QuickVehicleModal({ desktopApi, onClose, onCreated }: QuickModalProps) 
   return (
     <div style={modalOverlayStyle}>
       <div style={modalContentStyle}>
-        <h3 style={{ margin: "0 0 8px 0", color: "#0f172a", fontSize: "15px" }}>
+        <h3 style={{ margin: "0 0 8px 0", color: "var(--kr-text-strong)", fontSize: "15px" }}>
           Cadastrar veiculo
         </h3>
         {error ? <p style={styles.errorMessage}>{error}</p> : null}
-        <PlateInput
-          label="Placa"
-          value={plateInput}
-          onChange={setPlateInput}
-          required
-        />
+        <PlateInput label="Placa" value={plateInput} onChange={setPlateInput} required />
         <TextInput
           label="Descricao"
           value={description}
@@ -3649,11 +3801,11 @@ function QuickVehicleModal({ desktopApi, onClose, onCreated }: QuickModalProps) 
         />
         <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
           <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
-              {saving ? "Salvando..." : "Salvar"}
-            </button>
+            {saving ? "Salvando..." : "Salvar"}
+          </button>
           <button type="button" onClick={onClose} style={styles.secondaryButton}>
-              Cancelar
-            </button>
+            Cancelar
+          </button>
         </div>
       </div>
     </div>
@@ -3703,7 +3855,7 @@ function QuickDriverModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
   return (
     <div style={modalOverlayStyle}>
       <div style={modalContentStyle}>
-        <h3 style={{ margin: "0 0 8px 0", color: "#0f172a", fontSize: "15px" }}>
+        <h3 style={{ margin: "0 0 8px 0", color: "var(--kr-text-strong)", fontSize: "15px" }}>
           Cadastrar motorista
         </h3>
         {error ? <p style={styles.errorMessage}>{error}</p> : null}
@@ -3731,11 +3883,11 @@ function QuickDriverModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
         </label>
         <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
           <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
-              {saving ? "Salvando..." : "Salvar"}
-            </button>
+            {saving ? "Salvando..." : "Salvar"}
+          </button>
           <button type="button" onClick={onClose} style={styles.secondaryButton}>
-              Cancelar
-            </button>
+            Cancelar
+          </button>
         </div>
       </div>
     </div>
@@ -3792,40 +3944,22 @@ function QuickCustomerModal({ desktopApi, onClose, onCreated }: QuickModalProps)
   return (
     <div style={modalOverlayStyle}>
       <div style={modalContentStyle}>
-        <h3 style={{ margin: "0 0 8px 0", color: "#0f172a", fontSize: "15px" }}>
+        <h3 style={{ margin: "0 0 8px 0", color: "var(--kr-text-strong)", fontSize: "15px" }}>
           Cadastrar cliente
         </h3>
         {error ? <p style={styles.errorMessage}>{error}</p> : null}
-        <TextInput
-          label="Nome fantasia"
-          value={tradeName}
-          onChange={setTradeName}
-          required
-        />
-        <TextInput
-          label="Razao social"
-          value={legalName}
-          onChange={setLegalName}
-          required
-        />
-        <DocumentInput
-          label="CPF/CNPJ"
-          value={documentInput}
-          onChange={setDocumentInput}
-        />
+        <TextInput label="Nome fantasia" value={tradeName} onChange={setTradeName} required />
+        <TextInput label="Razao social" value={legalName} onChange={setLegalName} required />
+        <DocumentInput label="CPF/CNPJ" value={documentInput} onChange={setDocumentInput} />
         <PhoneInput label="Telefone" value={phone} onChange={setPhone} />
-        <EmailInput
-          label="Email"
-          value={emailInput}
-          onChange={setEmailInput}
-        />
+        <EmailInput label="Email" value={emailInput} onChange={setEmailInput} />
         <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
           <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
-              {saving ? "Salvando..." : "Salvar"}
-            </button>
+            {saving ? "Salvando..." : "Salvar"}
+          </button>
           <button type="button" onClick={onClose} style={styles.secondaryButton}>
-              Cancelar
-            </button>
+            Cancelar
+          </button>
         </div>
       </div>
     </div>
@@ -3866,28 +4000,19 @@ function QuickCarrierModal({ desktopApi, onClose, onCreated }: QuickModalProps) 
   return (
     <div style={modalOverlayStyle}>
       <div style={modalContentStyle}>
-        <h3 style={{ margin: "0 0 8px 0", color: "#0f172a", fontSize: "15px" }}>
+        <h3 style={{ margin: "0 0 8px 0", color: "var(--kr-text-strong)", fontSize: "15px" }}>
           Cadastrar transportadora
         </h3>
         {error ? <p style={styles.errorMessage}>{error}</p> : null}
-        <TextInput
-          label="Nome"
-          value={name}
-          onChange={setName}
-          required
-        />
-        <DocumentInput
-          label="CPF/CNPJ"
-          value={documentInput}
-          onChange={setDocumentInput}
-        />
+        <TextInput label="Nome" value={name} onChange={setName} required />
+        <DocumentInput label="CPF/CNPJ" value={documentInput} onChange={setDocumentInput} />
         <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
           <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
-              {saving ? "Salvando..." : "Salvar"}
-            </button>
+            {saving ? "Salvando..." : "Salvar"}
+          </button>
           <button type="button" onClick={onClose} style={styles.secondaryButton}>
-              Cancelar
-            </button>
+            Cancelar
+          </button>
         </div>
       </div>
     </div>
@@ -3908,12 +4033,14 @@ const modalOverlayStyle: React.CSSProperties = {
 };
 
 const modalContentStyle: React.CSSProperties = {
-  background: "#fff",
-  borderRadius: "8px",
-  padding: "16px",
+  background: "var(--kr-surface)",
+  color: "var(--kr-text)",
+  border: "1px solid var(--kr-border)",
+  borderRadius: "14px",
+  padding: "14px",
   width: "100%",
   maxWidth: "380px",
-  boxShadow: "0 10px 25px rgba(0,0,0,0.15)"
+  boxShadow: "var(--kr-shadow)"
 };
 
 function CloseOperationWeighingDialog({
@@ -3931,7 +4058,9 @@ function CloseOperationWeighingDialog({
   const [liveWeight, setLiveWeight] = useState<number | null>(null);
   const [capturedExitWeight, setCapturedExitWeight] = useState<number | null>(null);
   const [capturedExitCaptureId, setCapturedExitCaptureId] = useState<string | null>(null);
-  const [scaleState, setScaleState] = useState<"disconnected" | "connecting" | "connected" | "error">("disconnected");
+  const [scaleState, setScaleState] = useState<
+    "disconnected" | "connecting" | "connected" | "error"
+  >("disconnected");
   const [scaleMessage, setScaleMessage] = useState<string>("Balança desconectada");
   const [isVirtual, setIsVirtual] = useState(false);
   const [virtualWeightInput, setVirtualWeightInput] = useState("");
@@ -3995,7 +4124,9 @@ function CloseOperationWeighingDialog({
           if (config.adapterType === "virtual") {
             await api.virtualScaleConnect();
           } else {
-            await api.scaleConnect(config.connection as unknown as Parameters<KyberRockDesktopApi["scaleConnect"]>[0]);
+            await api.scaleConnect(
+              config.connection as unknown as Parameters<KyberRockDesktopApi["scaleConnect"]>[0]
+            );
           }
         }
       } catch {
@@ -4003,7 +4134,9 @@ function CloseOperationWeighingDialog({
       }
     }
     autoConnect();
-    return () => { canceled = true; };
+    return () => {
+      canceled = true;
+    };
   }, [desktopApi]);
 
   async function handleCaptureExitWeight(): Promise<void> {
@@ -4025,21 +4158,37 @@ function CloseOperationWeighingDialog({
     }
   }
 
-  const netWeight = capturedExitWeight !== null && operation.entryWeightKg !== null
-    ? capturedExitWeight - operation.entryWeightKg
-    : null;
+  const netWeight =
+    capturedExitWeight !== null && operation.entryWeightKg !== null
+      ? capturedExitWeight - operation.entryWeightKg
+      : null;
   const invalidNetWeight = netWeight !== null && netWeight <= 0;
 
   return (
     <div style={modalOverlayStyle}>
       <div style={{ ...modalContentStyle, maxWidth: "720px", width: "90%" }}>
-        <h3 style={{ margin: "0 0 8px 0", color: "#0f172a", fontSize: "18px" }}>
+        <h3 style={{ margin: "0 0 8px 0", color: "var(--kr-text-strong)", fontSize: "18px" }}>
           Fechar operação - Captura de peso de saída
         </h3>
 
         {/* Dados da operação */}
-        <div style={{ background: "#f8fafc", padding: "12px", borderRadius: "8px", marginBottom: "16px" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px", fontSize: "13px" }}>
+        <div
+          style={{
+            background: "var(--kr-surface-soft)",
+            padding: "12px",
+            borderRadius: "10px",
+            marginBottom: "12px",
+            border: "1px solid var(--kr-border)"
+          }}
+        >
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr 1fr",
+              gap: "12px",
+              fontSize: "13px"
+            }}
+          >
             <div>
               <div style={{ color: "#64748b", fontSize: "11px" }}>Placa</div>
               <strong>{operation.plate}</strong>
@@ -4058,7 +4207,9 @@ function CloseOperationWeighingDialog({
             </div>
             <div>
               <div style={{ color: "#64748b", fontSize: "11px" }}>Peso de entrada</div>
-              <strong style={{ color: "#15803d" }}>{formatWeightKg(operation.entryWeightKg ?? 0)}</strong>
+              <strong style={{ color: "#15803d" }}>
+                {formatWeightKg(operation.entryWeightKg ?? 0)}
+              </strong>
             </div>
             <div>
               <div style={{ color: "#64748b", fontSize: "11px" }}>Preço</div>
@@ -4069,17 +4220,43 @@ function CloseOperationWeighingDialog({
 
         {/* Balança - peso ao vivo e capturado */}
         <div style={{ display: "flex", gap: "16px", marginBottom: "16px" }}>
-          <div style={{ flex: 1, padding: "16px", background: "#f8fafc", borderRadius: "12px", border: "2px solid #e2e8f0", textAlign: "center" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", marginBottom: "8px" }}>
+          <div
+            style={{
+              flex: 1,
+              padding: "12px",
+              background: "var(--kr-surface-soft)",
+              borderRadius: "12px",
+              border: "1px solid var(--kr-border)",
+              textAlign: "center"
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "8px",
+                marginBottom: "8px"
+              }}
+            >
               <span style={{ fontSize: "13px", color: "#64748b" }}>Peso ao vivo</span>
-              <span style={{
-                width: "10px",
-                height: "10px",
-                borderRadius: "50%",
-                backgroundColor: scaleState === "connected" ? "#22c55e" : scaleState === "connecting" ? "#f59e0b" : "#ef4444"
-              }} />
+              <span
+                style={{
+                  width: "10px",
+                  height: "10px",
+                  borderRadius: "50%",
+                  backgroundColor:
+                    scaleState === "connected"
+                      ? "#22c55e"
+                      : scaleState === "connecting"
+                        ? "#f59e0b"
+                        : "#ef4444"
+                }}
+              />
             </div>
-            <strong style={{ fontSize: "32px", color: "#0f172a", fontFamily: "monospace" }}>
+            <strong
+              style={{ fontSize: "28px", color: "var(--kr-text-strong)", fontFamily: "monospace" }}
+            >
               {liveWeight !== null ? formatWeightKg(liveWeight) : "-- kg"}
             </strong>
             <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "4px" }}>
@@ -4097,14 +4274,23 @@ function CloseOperationWeighingDialog({
                     if (config.adapterType === "virtual") {
                       await api.virtualScaleConnect();
                     } else {
-                      await api.scaleConnect(config.connection as unknown as Parameters<KyberRockDesktopApi["scaleConnect"]>[0]);
+                      await api.scaleConnect(
+                        config.connection as unknown as Parameters<
+                          KyberRockDesktopApi["scaleConnect"]
+                        >[0]
+                      );
                     }
                   } catch (err) {
                     setScaleState("error");
                     setScaleMessage(err instanceof Error ? err.message : "Falha ao conectar");
                   }
                 }}
-                style={{ ...styles.secondaryButton, fontSize: "12px", padding: "6px 12px", marginTop: "8px" }}
+                style={{
+                  ...styles.secondaryButton,
+                  fontSize: "12px",
+                  padding: "6px 12px",
+                  marginTop: "8px"
+                }}
               >
                 Reconectar balança
               </button>
@@ -4112,28 +4298,50 @@ function CloseOperationWeighingDialog({
           </div>
           {/* end of live weight card - first div closes card, second the flex row container */}
 
-          <div style={{
-            flex: 1,
-            padding: "16px",
-            background: capturedExitWeight !== null ? "#f0fdf4" : "#f8fafc",
-            borderRadius: "12px",
-            border: `2px solid ${capturedExitWeight !== null ? "#86efac" : "#e2e8f0"}`,
-            textAlign: "center"
-          }}>
-            <div style={{ fontSize: "13px", color: "#64748b", marginBottom: "8px" }}>Peso de saida capturado</div>
-            <strong style={{ fontSize: "32px", color: capturedExitWeight !== null ? "#15803d" : "#0f172a", fontFamily: "monospace" }}>
+          <div
+            style={{
+              flex: 1,
+              padding: "16px",
+              background: capturedExitWeight !== null ? "#f0fdf4" : "#f8fafc",
+              borderRadius: "12px",
+              border: `2px solid ${capturedExitWeight !== null ? "#86efac" : "#e2e8f0"}`,
+              textAlign: "center"
+            }}
+          >
+            <div style={{ fontSize: "13px", color: "#64748b", marginBottom: "8px" }}>
+              Peso de saida capturado
+            </div>
+            <strong
+              style={{
+                fontSize: "32px",
+                color: capturedExitWeight !== null ? "#15803d" : "#0f172a",
+                fontFamily: "monospace"
+              }}
+            >
               {capturedExitWeight !== null ? formatWeightKg(capturedExitWeight) : "-- kg"}
             </strong>
             <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "4px" }}>
-              {capturedExitWeight !== null ? "Leitura estavel capturada" : "Clique em 'Capturar peso'"}
+              {capturedExitWeight !== null
+                ? "Leitura estavel capturada"
+                : "Clique em 'Capturar peso'"}
             </div>
           </div>
         </div>
 
         {isVirtual && scaleState === "connected" ? (
-          <div style={{ marginBottom: "16px", display: "flex", gap: "8px", alignItems: "flex-end" }}>
+          <div
+            style={{ marginBottom: "16px", display: "flex", gap: "8px", alignItems: "flex-end" }}
+          >
             <div style={{ flex: 1 }}>
-              <label style={{ fontSize: "12px", fontWeight: 600, color: "#475569", display: "block", marginBottom: "4px" }}>
+              <label
+                style={{
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  color: "#475569",
+                  display: "block",
+                  marginBottom: "4px"
+                }}
+              >
                 Peso de saida para simular (kg)
               </label>
               <input
@@ -4202,9 +4410,18 @@ function CloseOperationWeighingDialog({
 
         {/* Peso líquido */}
         {netWeight !== null ? (
-          <div style={{ textAlign: "center", padding: "12px", background: "#eff6ff", borderRadius: "8px", marginBottom: "16px" }}>
+          <div
+            style={{
+              textAlign: "center",
+              padding: "12px",
+              background: "#eff6ff",
+              borderRadius: "8px",
+              marginBottom: "16px"
+            }}
+          >
             <span style={{ fontSize: "14px", color: invalidNetWeight ? "#b91c1c" : "#1e40af" }}>
-              Peso líquido: <strong style={{ fontSize: "20px" }}>{formatWeightKg(netWeight)}</strong>
+              Peso líquido:{" "}
+              <strong style={{ fontSize: "20px" }}>{formatWeightKg(netWeight)}</strong>
             </span>
           </div>
         ) : null}
@@ -4313,7 +4530,7 @@ function OmieDirectSyncDialog({
   return (
     <div style={modalOverlayStyle}>
       <div style={{ ...modalContentStyle, maxWidth: "480px" }}>
-        <h3 style={{ margin: "0 0 8px 0", color: "#0f172a", fontSize: "16px" }}>
+        <h3 style={{ margin: "0 0 8px 0", color: "var(--kr-text-strong)", fontSize: "16px" }}>
           Sincronizar OMIE direto
         </h3>
         <p style={styles.muted}>
@@ -4366,7 +4583,7 @@ function CancelOperationDialog({
   return (
     <div style={modalOverlayStyle}>
       <div style={modalContentStyle}>
-        <h3 style={{ margin: "0 0 8px 0", color: "#0f172a", fontSize: "15px" }}>
+        <h3 style={{ margin: "0 0 8px 0", color: "var(--kr-text-strong)", fontSize: "15px" }}>
           Cancelar operacao
         </h3>
         <p style={styles.muted}>Informe o motivo. Ele ficara registrado na auditoria e no sync.</p>
@@ -4386,23 +4603,23 @@ function CancelOperationDialog({
         </label>
         <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
           <button
-              type="button"
-              onClick={() => {
-                const trimmed = reason.trim();
-                if (!trimmed) {
-                  setError("Informe o motivo do cancelamento.");
-                  return;
-                }
-                onConfirm(trimmed);
-              }}
-              style={styles.primaryButton}
-            >
-              Confirmar cancelamento
-            </button>
+            type="button"
+            onClick={() => {
+              const trimmed = reason.trim();
+              if (!trimmed) {
+                setError("Informe o motivo do cancelamento.");
+                return;
+              }
+              onConfirm(trimmed);
+            }}
+            style={styles.primaryButton}
+          >
+            Confirmar cancelamento
+          </button>
           <HelpTooltip content={TIPS.operations.cancel} placement="top" />
           <button type="button" onClick={onCancel} style={styles.secondaryButton}>
-              Voltar
-            </button>
+            Voltar
+          </button>
         </div>
       </div>
     </div>
@@ -4472,17 +4689,17 @@ function FiscalProgressDialog({
 
         <div style={styles.modalActions}>
           <button
-              type="button"
-              onClick={onClose}
-              disabled={progress.status === "running"}
-              style={{
-                ...styles.secondaryButton,
-                opacity: progress.status === "running" ? 0.5 : 1,
-                cursor: progress.status === "running" ? "not-allowed" : "pointer"
-              }}
-            >
-              Fechar painel
-            </button>
+            type="button"
+            onClick={onClose}
+            disabled={progress.status === "running"}
+            style={{
+              ...styles.secondaryButton,
+              opacity: progress.status === "running" ? 0.5 : 1,
+              cursor: progress.status === "running" ? "not-allowed" : "pointer"
+            }}
+          >
+            Fechar painel
+          </button>
         </div>
       </div>
     </div>
@@ -4532,12 +4749,12 @@ function PriceDetailsPanel({ details }: { details: PriceDetails | null }) {
       <div
         style={{
           padding: "8px",
-          border: "1px dashed #cbd5e1",
-          borderRadius: "8px",
-          background: "#f8fafc"
+          border: "1px dashed var(--kr-input-border)",
+          borderRadius: "10px",
+          background: "var(--kr-surface-soft)"
         }}
       >
-        <div style={{ fontSize: "12px", color: "#64748b" }}>
+        <div style={{ fontSize: "12px", color: "var(--kr-muted)" }}>
           Selecione cliente e produto para ver o preco.
         </div>
       </div>
@@ -4558,23 +4775,23 @@ function PriceDetailsPanel({ details }: { details: PriceDetails | null }) {
     <div
       style={{
         padding: "8px",
-        border: "1px solid #e2e8f0",
-        borderRadius: "8px",
-        background: "#f8fafc"
+        border: "1px solid var(--kr-border)",
+        borderRadius: "10px",
+        background: "var(--kr-surface-soft)"
       }}
     >
-      <div style={{ fontSize: "13px", fontWeight: 700, color: "#0f172a" }}>
+      <div style={{ fontSize: "13px", fontWeight: 700, color: "var(--kr-text-strong)" }}>
         {details.appliedUnitPriceCents !== null
           ? `${formatMoney(details.appliedUnitPriceCents)}/ton`
           : "Preco nao definido"}
       </div>
-      <div style={{ fontSize: "12px", color: "#475569", marginTop: "2px" }}>
+      <div style={{ fontSize: "12px", color: "var(--kr-muted)", marginTop: "2px" }}>
         Origem: {sourceLabel}
       </div>
-      <div style={{ fontSize: "12px", color: "#475569" }}>
+      <div style={{ fontSize: "12px", color: "var(--kr-muted)" }}>
         Base padrao: {formatMoney(details.baseUnitPriceCents)}/ton
       </div>
-      <div style={{ fontSize: "12px", color: "#475569" }}>Economia: {savingsLabel}</div>
+      <div style={{ fontSize: "12px", color: "var(--kr-muted)" }}>Economia: {savingsLabel}</div>
     </div>
   );
 }
@@ -4667,8 +4884,8 @@ function operationsTabStyle(active: boolean): React.CSSProperties {
     border: "1px solid var(--kr-border)",
     borderRadius: "999px",
     padding: "6px 12px",
-    background: active ? "#0f172a" : "var(--kr-surface)",
-    color: active ? "#ffffff" : "var(--kr-text-strong)",
+    background: active ? "var(--kr-primary-strong)" : "var(--kr-surface)",
+    color: active ? "var(--kr-primary-text)" : "var(--kr-text-strong)",
     cursor: "pointer",
     fontWeight: 800,
     fontSize: "12px"
@@ -4801,12 +5018,23 @@ function getThemeVariables(themeMode: ThemeMode): React.CSSProperties {
       "--kr-bg": "#020617",
       "--kr-surface": "#0f172a",
       "--kr-surface-soft": "#111827",
+      "--kr-surface-elevated": "#172033",
       "--kr-border": "#1e293b",
       "--kr-text": "#e5e7eb",
       "--kr-text-strong": "#f8fafc",
       "--kr-muted": "#94a3b8",
       "--kr-input-bg": "#020617",
       "--kr-input-border": "#334155",
+      "--kr-input-disabled-bg": "#111827",
+      "--kr-input-disabled-text": "#64748b",
+      "--kr-primary": "#60a5fa",
+      "--kr-primary-strong": "#2563eb",
+      "--kr-primary-text": "#eff6ff",
+      "--kr-focus-ring": "rgba(96, 165, 250, 0.58)",
+      "--kr-selection-bg": "#1d4ed8",
+      "--kr-selection-text": "#eff6ff",
+      "--kr-scroll-track": "#020617",
+      "--kr-scroll-thumb": "#334155",
       "--kr-shadow": "0 12px 36px rgba(0,0,0,0.35)",
       "--kr-card-bg": "#0b1326",
       "--kr-card-border": "#1e293b",
@@ -4839,12 +5067,23 @@ function getThemeVariables(themeMode: ThemeMode): React.CSSProperties {
     "--kr-bg": "#f8fafc",
     "--kr-surface": "#ffffff",
     "--kr-surface-soft": "#f8fafc",
+    "--kr-surface-elevated": "#ffffff",
     "--kr-border": "#e2e8f0",
     "--kr-text": "#0f172a",
     "--kr-text-strong": "#0f172a",
     "--kr-muted": "#64748b",
     "--kr-input-bg": "#ffffff",
     "--kr-input-border": "#cbd5e1",
+    "--kr-input-disabled-bg": "#f1f5f9",
+    "--kr-input-disabled-text": "#64748b",
+    "--kr-primary": "#2563eb",
+    "--kr-primary-strong": "#1d4ed8",
+    "--kr-primary-text": "#ffffff",
+    "--kr-focus-ring": "rgba(37, 99, 235, 0.38)",
+    "--kr-selection-bg": "#bfdbfe",
+    "--kr-selection-text": "#0f172a",
+    "--kr-scroll-track": "#f8fafc",
+    "--kr-scroll-thumb": "#cbd5e1",
     "--kr-shadow": "0 12px 36px rgba(15, 23, 42, 0.08)",
     "--kr-card-bg": "#ffffff",
     "--kr-card-border": "#e2e8f0",
@@ -5016,7 +5255,13 @@ function VehicleListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
             {editingId ? "Editar Veiculo" : "Novo Veiculo"}
           </h3>
           {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px" }}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+              gap: "8px"
+            }}
+          >
             <PlateInput
               label="Placa"
               value={form.plate}
@@ -5358,7 +5603,13 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
             {editingId ? "Editar Transportadora" : "Nova Transportadora"}
           </h3>
           {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px" }}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+              gap: "8px"
+            }}
+          >
             <TextInput
               label="Nome"
               value={form.name}
@@ -5617,7 +5868,9 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
         }
       } catch (err) {
         if (!canceled) {
-          setError(err instanceof Error ? err.message : "Falha ao carregar configuracao da balanca");
+          setError(
+            err instanceof Error ? err.message : "Falha ao carregar configuracao da balanca"
+          );
           setConfigLoaded(true);
         }
       }
@@ -5790,7 +6043,9 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
     setHost(config.connection.host);
     setPort(String(config.connection.port));
     setAutoConnect(config.connection.autoConnect);
-    setSampleDurationSeconds(String(Math.max(1, Math.round(config.stability.sampleDurationMs / 1000))));
+    setSampleDurationSeconds(
+      String(Math.max(1, Math.round(config.stability.sampleDurationMs / 1000)))
+    );
     setSampleIntervalMs(String(config.stability.sampleIntervalMs));
     setRequireStable(config.stability.requireStable);
     setMinStableSeconds(String(Math.round(config.stability.minStableMs / 1000)));
@@ -5907,13 +6162,15 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
               </div>
             </>
           ) : (
-            <div style={{
-              marginTop: "10px",
-              padding: "16px",
-              background: "#f0fdf4",
-              borderRadius: "8px",
-              border: "1px solid #bbf7d0"
-            }}>
+            <div
+              style={{
+                marginTop: "10px",
+                padding: "16px",
+                background: "#f0fdf4",
+                borderRadius: "8px",
+                border: "1px solid #bbf7d0"
+              }}
+            >
               <p style={{ margin: 0, fontSize: "14px", fontWeight: 600, color: "#166534" }}>
                 Modo Balanca Virtual
               </p>
@@ -5956,7 +6213,9 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
 
         <article style={styles.panel}>
           <h2 style={styles.panelTitle}>Leitura ao Vivo</h2>
-          <p style={styles.muted}>Status: {status} | Amostras: {stats.count}</p>
+          <p style={styles.muted}>
+            Status: {status} | Amostras: {stats.count}
+          </p>
           <div
             style={{
               marginTop: "16px",
@@ -5997,30 +6256,76 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
 
           {connected && stats.count > 0 && (
             <div style={{ marginTop: "16px", display: "grid", gap: "8px" }}>
-              <h4 style={{ margin: "0", fontSize: "13px", color: "#0f172a" }}>Estatisticas (ultimas 100 leituras)</h4>
+              <h4 style={{ margin: "0", fontSize: "13px", color: "#0f172a" }}>
+                Estatisticas (ultimas 100 leituras)
+              </h4>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-                <div style={{ background: "#f8fafc", padding: "8px", borderRadius: "8px", textAlign: "center" }}>
+                <div
+                  style={{
+                    background: "#f8fafc",
+                    padding: "8px",
+                    borderRadius: "8px",
+                    textAlign: "center"
+                  }}
+                >
                   <div style={{ fontSize: "11px", color: "#64748b" }}>Minimo</div>
-                  <div style={{ fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>{new Intl.NumberFormat("pt-BR").format(stats.min)} kg</div>
+                  <div style={{ fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>
+                    {new Intl.NumberFormat("pt-BR").format(stats.min)} kg
+                  </div>
                 </div>
-                <div style={{ background: "#f8fafc", padding: "8px", borderRadius: "8px", textAlign: "center" }}>
+                <div
+                  style={{
+                    background: "#f8fafc",
+                    padding: "8px",
+                    borderRadius: "8px",
+                    textAlign: "center"
+                  }}
+                >
                   <div style={{ fontSize: "11px", color: "#64748b" }}>Maximo</div>
-                  <div style={{ fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>{new Intl.NumberFormat("pt-BR").format(stats.max)} kg</div>
+                  <div style={{ fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>
+                    {new Intl.NumberFormat("pt-BR").format(stats.max)} kg
+                  </div>
                 </div>
-                <div style={{ background: "#f8fafc", padding: "8px", borderRadius: "8px", textAlign: "center" }}>
+                <div
+                  style={{
+                    background: "#f8fafc",
+                    padding: "8px",
+                    borderRadius: "8px",
+                    textAlign: "center"
+                  }}
+                >
                   <div style={{ fontSize: "11px", color: "#64748b" }}>Media</div>
-                  <div style={{ fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>{new Intl.NumberFormat("pt-BR").format(stats.avg)} kg</div>
+                  <div style={{ fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>
+                    {new Intl.NumberFormat("pt-BR").format(stats.avg)} kg
+                  </div>
                 </div>
-                <div style={{ background: "#f8fafc", padding: "8px", borderRadius: "8px", textAlign: "center" }}>
+                <div
+                  style={{
+                    background: "#f8fafc",
+                    padding: "8px",
+                    borderRadius: "8px",
+                    textAlign: "center"
+                  }}
+                >
                   <div style={{ fontSize: "11px", color: "#64748b" }}>Variacao</div>
-                  <div style={{ fontSize: "16px", fontWeight: 700, color: stats.variation > parseInt(maxVariationKg, 10) ? "#dc2626" : "#0f172a" }}>
+                  <div
+                    style={{
+                      fontSize: "16px",
+                      fontWeight: 700,
+                      color: stats.variation > parseInt(maxVariationKg, 10) ? "#dc2626" : "#0f172a"
+                    }}
+                  >
                     {new Intl.NumberFormat("pt-BR").format(stats.variation)} kg
                   </div>
                 </div>
               </div>
               <div style={{ display: "flex", gap: "8px", fontSize: "12px" }}>
-                <span style={{ color: "#16a34a", fontWeight: 700 }}>{stats.stableCount} estaveis</span>
-                <span style={{ color: "#d97706", fontWeight: 700 }}>{stats.unstableCount} instaveis</span>
+                <span style={{ color: "#16a34a", fontWeight: 700 }}>
+                  {stats.stableCount} estaveis
+                </span>
+                <span style={{ color: "#d97706", fontWeight: 700 }}>
+                  {stats.unstableCount} instaveis
+                </span>
               </div>
             </div>
           )}
@@ -6609,12 +6914,15 @@ function PriceTableListView({ desktopApi }: { desktopApi: KyberRockDesktopApi })
 
 const styles = {
   page: {
+    height: "100vh",
     minHeight: "100vh",
     margin: 0,
-    padding: "16px",
+    padding: "10px 10px 34px",
     fontFamily: "Segoe UI, Arial, sans-serif",
     color: "var(--kr-text)",
-    background: "var(--kr-bg)"
+    background: "var(--kr-bg)",
+    overflow: "hidden" as const,
+    boxSizing: "border-box" as const
   },
   headerRow: {
     display: "flex",
@@ -6674,21 +6982,24 @@ const styles = {
   },
   shell: {
     display: "flex",
-    gap: "12px",
+    gap: "10px",
     alignItems: "stretch",
-    minHeight: "calc(100vh - 32px)"
+    height: "calc(100vh - 44px)",
+    minHeight: 0
   },
   sidebar: {
-    width: "220px",
+    width: "204px",
     flexShrink: 0,
     background: "var(--kr-surface)",
     border: "1px solid var(--kr-border)",
-    borderRadius: "10px",
-    padding: "12px 0",
+    borderRadius: "16px",
+    padding: "10px 0",
     display: "flex",
     flexDirection: "column" as const,
-    gap: "8px",
-    boxShadow: "var(--kr-shadow)"
+    gap: "6px",
+    boxShadow: "var(--kr-shadow)",
+    minHeight: 0,
+    overflow: "hidden" as const
   },
   sidebarHeader: {
     display: "flex",
@@ -6710,23 +7021,27 @@ const styles = {
     display: "flex",
     flexDirection: "column" as const,
     gap: "4px",
-    overflowY: "auto" as const
+    overflowY: "auto" as const,
+    paddingRight: "4px"
   },
   contentColumn: {
     flex: 1,
     display: "flex",
     flexDirection: "column" as const,
-    gap: "12px",
-    minWidth: 0
+    gap: "10px",
+    minWidth: 0,
+    minHeight: 0
   },
   topbar: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    padding: "6px 12px",
-    borderRadius: "10px",
+    padding: "6px 10px",
+    borderRadius: "14px",
     background: "var(--kr-surface)",
-    boxShadow: "var(--kr-shadow)"
+    border: "1px solid var(--kr-border)",
+    boxShadow: "var(--kr-shadow)",
+    flexShrink: 0
   },
   topbarLeft: {
     display: "flex",
@@ -6742,7 +7057,12 @@ const styles = {
   contentBody: {
     display: "flex",
     flexDirection: "column" as const,
-    gap: "12px"
+    gap: "10px",
+    flex: 1,
+    minHeight: 0,
+    overflowY: "auto" as const,
+    overflowX: "hidden" as const,
+    paddingRight: "2px"
   },
   headerBtn: {
     display: "inline-flex",
@@ -6889,9 +7209,10 @@ const styles = {
     alignItems: "flex-start",
     justifyContent: "space-between",
     gap: "16px",
-    padding: "20px",
-    borderRadius: "16px",
+    padding: "14px 16px",
+    borderRadius: "14px",
     background: "var(--kr-surface)",
+    border: "1px solid var(--kr-border)",
     boxShadow: "var(--kr-shadow)"
   },
   kicker: {
@@ -6903,14 +7224,15 @@ const styles = {
     textTransform: "uppercase" as const
   },
   title: {
-    margin: "8px 0",
-    fontSize: "32px",
+    margin: "4px 0",
+    fontSize: "24px",
     lineHeight: 1.05
   },
   subtitle: {
     margin: 0,
     color: "var(--kr-muted)",
-    fontSize: "15px"
+    fontSize: "13px",
+    lineHeight: 1.35
   },
   actions: {
     display: "flex",
@@ -6919,17 +7241,17 @@ const styles = {
   },
   primaryButton: {
     border: "none",
-    borderRadius: "8px",
+    borderRadius: "10px",
     padding: "8px 12px",
-    background: "#0f172a",
-    color: "#ffffff",
+    background: "var(--kr-primary-strong)",
+    color: "var(--kr-primary-text)",
     cursor: "pointer",
     fontWeight: 700,
     fontSize: "13px"
   },
   secondaryButton: {
     border: "1px solid var(--kr-input-border)",
-    borderRadius: "8px",
+    borderRadius: "10px",
     padding: "8px 12px",
     background: "var(--kr-surface)",
     color: "var(--kr-text-strong)",
@@ -6940,8 +7262,8 @@ const styles = {
   twoColumns: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-    gap: "12px",
-    marginTop: "12px"
+    gap: "10px",
+    marginTop: 0
   },
   subTabs: {
     display: "flex",
@@ -6961,31 +7283,35 @@ const styles = {
     borderColor: "var(--kr-border)"
   },
   panel: {
-    marginTop: "12px",
-    padding: "16px",
-    borderRadius: "12px",
-    background: "var(--kr-surface)"
+    marginTop: 0,
+    padding: "14px",
+    borderRadius: "14px",
+    background: "var(--kr-surface)",
+    border: "1px solid var(--kr-border)",
+    boxShadow: "var(--kr-shadow)"
   },
   entryShell: {
     display: "flex",
     flexDirection: "column" as const,
-    gap: "14px",
-    marginTop: "12px"
+    gap: "10px",
+    marginTop: 0,
+    minHeight: 0
   },
   entryHero: {
-    display: "flex",
-    justifyContent: "space-between",
-    gap: "16px",
-    padding: "22px",
-    borderRadius: "20px",
+    display: "grid",
+    gridTemplateColumns: "minmax(260px, 1fr) minmax(420px, 1.1fr)",
+    alignItems: "stretch",
+    gap: "12px",
+    padding: "14px",
+    borderRadius: "18px",
     background: "linear-gradient(135deg, #0f172a 0%, #1e293b 55%, #2563eb 100%)",
     color: "#ffffff",
     boxShadow: "0 18px 45px rgba(15, 23, 42, 0.18)"
   },
   liveWeightCard: {
-    minWidth: "210px",
-    padding: "14px",
-    borderRadius: "16px",
+    minWidth: "180px",
+    padding: "12px",
+    borderRadius: "14px",
     background: "rgba(255,255,255,0.12)",
     border: "1px solid rgba(255,255,255,0.22)",
     display: "flex",
@@ -7005,7 +7331,7 @@ const styles = {
     letterSpacing: "0.08em"
   },
   metricValue: {
-    fontSize: "28px",
+    fontSize: "24px",
     lineHeight: 1,
     color: "#ffffff"
   },
@@ -7015,29 +7341,31 @@ const styles = {
   },
   entryGrid: {
     display: "grid",
-    gridTemplateColumns: "minmax(280px, 1.1fr) minmax(260px, 1fr) minmax(240px, 0.9fr)",
-    gap: "14px",
+    gridTemplateColumns: "minmax(260px, 1fr) minmax(260px, 1fr) minmax(280px, 0.95fr)",
+    gap: "10px",
     alignItems: "start"
   },
   entryCard: {
-    padding: "16px",
-    borderRadius: "16px",
+    padding: "12px",
+    borderRadius: "14px",
     background: "var(--kr-surface)",
     border: "1px solid var(--kr-border)",
     boxShadow: "var(--kr-shadow)"
   },
   entrySummaryCard: {
-    padding: "16px",
-    borderRadius: "16px",
+    padding: "12px",
+    borderRadius: "14px",
     background: "var(--kr-surface-soft)",
     border: "1px solid var(--kr-input-border)",
-    boxShadow: "var(--kr-shadow)"
+    boxShadow: "var(--kr-shadow)",
+    position: "sticky" as const,
+    top: 0
   },
   freightBox: {
     display: "grid",
-    gap: "10px",
-    marginTop: "12px",
-    padding: "12px",
+    gap: "8px",
+    marginTop: "8px",
+    padding: "10px",
     borderRadius: "12px",
     background: "var(--kr-surface)",
     border: "1px solid var(--kr-border)"
@@ -7053,18 +7381,18 @@ const styles = {
   sectionHeader: {
     display: "flex",
     alignItems: "center",
-    gap: "10px",
-    marginBottom: "12px"
+    gap: "8px",
+    marginBottom: "8px"
   },
   sectionIcon: {
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
-    width: "32px",
-    height: "32px",
+    width: "30px",
+    height: "30px",
     borderRadius: "10px",
-    background: "#eff6ff",
-    color: "#1d4ed8",
+    background: "var(--kr-info-bg)",
+    color: "var(--kr-info-text)",
     fontWeight: 900
   },
   sectionTitle: {
@@ -7078,7 +7406,7 @@ const styles = {
     fontSize: "12px"
   },
   helperText: {
-    margin: "-2px 0 10px 0",
+    margin: "-2px 0 6px 0",
     color: "var(--kr-muted)",
     fontSize: "12px"
   },
@@ -7099,7 +7427,7 @@ const styles = {
     display: "flex",
     flexDirection: "column" as const,
     gap: "8px",
-    marginTop: "14px"
+    marginTop: "10px"
   },
   captureButton: {
     border: "none",
@@ -7117,11 +7445,13 @@ const styles = {
     gap: "8px"
   },
   operationsPanel: {
-    marginTop: "12px",
-    padding: "16px",
+    marginTop: 0,
+    padding: "14px",
     borderRadius: "16px",
     background: "var(--kr-surface)",
-    boxShadow: "var(--kr-shadow)"
+    border: "1px solid var(--kr-border)",
+    boxShadow: "var(--kr-shadow)",
+    minHeight: 0
   },
   sectionTitleRow: {
     display: "flex",
@@ -7163,6 +7493,8 @@ const styles = {
   },
   operationsTable: {
     overflowX: "auto" as const,
+    overflowY: "auto" as const,
+    maxHeight: "calc(100vh - 230px)",
     border: "1px solid var(--kr-border)",
     borderRadius: "14px"
   },
@@ -7171,7 +7503,7 @@ const styles = {
     gridTemplateColumns: "96px minmax(180px, 1.4fr) minmax(120px, 0.8fr) 132px",
     alignItems: "center",
     gap: "10px",
-    padding: "10px 12px",
+    padding: "8px 10px",
     borderTop: "1px solid var(--kr-border)",
     fontSize: "13px",
     color: "var(--kr-text)"
@@ -7181,7 +7513,7 @@ const styles = {
     gridTemplateColumns: "96px minmax(180px, 1.1fr) 150px minmax(180px, 1.2fr)",
     alignItems: "center",
     gap: "10px",
-    padding: "10px 12px",
+    padding: "8px 10px",
     borderTop: "1px solid var(--kr-border)",
     fontSize: "13px",
     color: "var(--kr-text)"
@@ -7191,7 +7523,7 @@ const styles = {
     gridTemplateColumns: "96px minmax(180px, 1.2fr) minmax(120px, 0.8fr) 150px minmax(190px, 1fr)",
     alignItems: "center",
     gap: "10px",
-    padding: "10px 12px",
+    padding: "8px 10px",
     borderTop: "1px solid var(--kr-border)",
     fontSize: "13px",
     color: "var(--kr-text)"
@@ -7209,7 +7541,10 @@ const styles = {
     fontSize: "11px",
     fontWeight: 900,
     letterSpacing: "0.05em",
-    textTransform: "uppercase" as const
+    textTransform: "uppercase" as const,
+    position: "sticky" as const,
+    top: 0,
+    zIndex: 1
   },
   plateBadge: {
     justifySelf: "start",
@@ -7246,7 +7581,9 @@ const styles = {
   },
   panelTitle: {
     marginTop: 0,
-    fontSize: "15px"
+    marginBottom: "4px",
+    fontSize: "15px",
+    color: "var(--kr-text-strong)"
   },
   muted: {
     color: "var(--kr-muted)",
@@ -7288,13 +7625,13 @@ const styles = {
     display: "flex",
     flexDirection: "column" as const,
     gap: "4px",
-    marginBottom: "8px",
+    marginBottom: "6px",
     fontWeight: 700,
     fontSize: "13px"
   },
   input: {
     border: "1px solid var(--kr-input-border)",
-    borderRadius: "8px",
+    borderRadius: "10px",
     padding: "8px 10px",
     font: "inherit",
     fontSize: "13px",
@@ -7324,9 +7661,9 @@ const styles = {
     right: 0,
     background: "var(--kr-surface-soft)",
     borderTop: "1px solid var(--kr-border)",
-    padding: "6px 12px",
+    padding: "5px 10px",
     display: "flex",
-    gap: "12px",
+    gap: "10px",
     alignItems: "center",
     justifyContent: "center",
     flexWrap: "wrap" as const,

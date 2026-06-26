@@ -17,7 +17,7 @@ export function Field({ label, required, hint, error, style, children, disabled 
         display: "flex",
         flexDirection: "column",
         gap: "4px",
-        marginBottom: "8px",
+        marginBottom: "6px",
         fontWeight: 700,
         fontSize: "12px",
         color: "var(--kr-text-strong)",
@@ -44,7 +44,7 @@ export const baseInputStyle: CSSProperties = {
   width: "100%",
   boxSizing: "border-box",
   border: "1px solid var(--kr-input-border)",
-  borderRadius: "8px",
+  borderRadius: "10px",
   padding: "8px 10px",
   font: "inherit",
   fontSize: "13px",
@@ -55,8 +55,8 @@ export const baseInputStyle: CSSProperties = {
 
 export const inputDisabledStyle: CSSProperties = {
   ...baseInputStyle,
-  background: "#f1f5f9",
-  color: "#64748b",
+  background: "var(--kr-input-disabled-bg)",
+  color: "var(--kr-input-disabled-text)",
   cursor: "not-allowed"
 };
 

@@ -16,11 +16,7 @@ import {
 } from "recharts";
 
 import type { KyberRockDesktopApi } from "../preload/api-types";
-import type {
-  DailySeriesPoint,
-  OperationMix,
-  ProductReport
-} from "../services/reports";
+import type { DailySeriesPoint, OperationMix, ProductReport } from "../services/reports";
 import type { WeighingOperationSummary } from "../services/weighing-operations";
 import { HelpTooltip } from "./Tooltip";
 import { TIPS } from "./tooltip-messages";
@@ -276,9 +272,7 @@ export function InsightsView({
       </header>
 
       {error ? <p style={styles.errorMessage}>{error}</p> : null}
-      {exportMessage ? (
-        <p style={styles.exportMessage}>{exportMessage}</p>
-      ) : null}
+      {exportMessage ? <p style={styles.exportMessage}>{exportMessage}</p> : null}
 
       <div style={styles.kpiGrid}>
         <KpiCard
@@ -399,7 +393,10 @@ export function InsightsView({
                   />
                   <Bar dataKey="peso" radius={[0, 4, 4, 0]}>
                     {topProducts.map((_, index) => (
-                      <Cell key={`bar-${index}`} fill={CHART_PALETTE[index % CHART_PALETTE.length]} />
+                      <Cell
+                        key={`bar-${index}`}
+                        fill={CHART_PALETTE[index % CHART_PALETTE.length]}
+                      />
                     ))}
                   </Bar>
                 </BarChart>
@@ -488,9 +485,7 @@ export function InsightsView({
             <div style={styles.syncRow}>
               <div>
                 <p style={styles.syncLabel}>Sincronizacao OMIE (ERP)</p>
-                <p style={{ ...styles.syncValue, color: syncBadge.color }}>
-                  {syncBadge.label}
-                </p>
+                <p style={{ ...styles.syncValue, color: syncBadge.color }}>{syncBadge.label}</p>
                 {omieStatus?.lastSyncAt ? (
                   <p style={styles.syncHint}>
                     Ultima: {new Date(omieStatus.lastSyncAt).toLocaleString("pt-BR")}
@@ -515,9 +510,7 @@ export function InsightsView({
             <div>
               <p style={styles.syncLabel}>Operacoes em aberto na balanca</p>
               <p style={styles.syncValue}>
-                {openCount === 0
-                  ? "Nenhuma em aberto"
-                  : `${openCount} aguardando saida`}
+                {openCount === 0 ? "Nenhuma em aberto" : `${openCount} aguardando saida`}
               </p>
             </div>
           </div>
@@ -556,17 +549,18 @@ const styles: Record<string, React.CSSProperties> = {
   page: {
     display: "flex",
     flexDirection: "column",
-    gap: "16px"
+    gap: "10px",
+    minHeight: 0
   },
   header: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "flex-start",
-    gap: "16px",
+    gap: "10px",
     flexWrap: "wrap"
   },
   title: {
-    fontSize: "20px",
+    fontSize: "18px",
     fontWeight: 700,
     color: "var(--kr-text-strong)",
     margin: 0
@@ -582,7 +576,7 @@ const styles: Record<string, React.CSSProperties> = {
     flexWrap: "wrap"
   },
   periodChip: {
-    padding: "6px 12px",
+    padding: "6px 10px",
     fontSize: "12px",
     fontWeight: 600,
     color: "var(--kr-text)",
@@ -592,7 +586,7 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer"
   },
   periodChipActive: {
-    padding: "6px 12px",
+    padding: "6px 10px",
     fontSize: "12px",
     fontWeight: 600,
     color: "#ffffff",
@@ -603,14 +597,14 @@ const styles: Record<string, React.CSSProperties> = {
   },
   kpiGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-    gap: "12px"
+    gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+    gap: "10px"
   },
   kpiCard: {
     background: "var(--kr-card-bg)",
     border: "1px solid var(--kr-card-border)",
-    borderRadius: "10px",
-    padding: "14px 16px",
+    borderRadius: "12px",
+    padding: "10px 12px",
     boxShadow: "var(--kr-shadow)"
   },
   kpiLabel: {
@@ -622,7 +616,7 @@ const styles: Record<string, React.CSSProperties> = {
     margin: 0
   },
   kpiValue: {
-    fontSize: "24px",
+    fontSize: "21px",
     fontWeight: 700,
     color: "var(--kr-text-strong)",
     margin: "4px 0 2px 0"
@@ -635,13 +629,13 @@ const styles: Record<string, React.CSSProperties> = {
   chartGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))",
-    gap: "12px"
+    gap: "10px"
   },
   chartCard: {
     background: "var(--kr-card-bg)",
     border: "1px solid var(--kr-card-border)",
-    borderRadius: "10px",
-    padding: "14px 16px",
+    borderRadius: "12px",
+    padding: "12px",
     boxShadow: "var(--kr-shadow)"
   },
   chartHeader: {
@@ -662,7 +656,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   chartBody: {
     width: "100%",
-    minHeight: "240px"
+    minHeight: "205px"
   },
   muted: {
     color: "var(--kr-muted)",
@@ -690,13 +684,13 @@ const styles: Record<string, React.CSSProperties> = {
   syncBody: {
     display: "flex",
     flexDirection: "column",
-    gap: "12px"
+    gap: "8px"
   },
   syncRow: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "flex-start",
-    gap: "12px"
+    gap: "10px"
   },
   syncActionGroup: {
     display: "flex",

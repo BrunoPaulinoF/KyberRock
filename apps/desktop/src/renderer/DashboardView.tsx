@@ -1,7 +1,14 @@
 import { useMemo } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
-import { BadgeDollarSign, BarChart3, ClipboardList, PlusCircle, Receipt, Scale } from "lucide-react";
+import {
+  BadgeDollarSign,
+  BarChart3,
+  ClipboardList,
+  PlusCircle,
+  Receipt,
+  Scale
+} from "lucide-react";
 
 import type { PrintProfileSummary } from "../services/printing";
 import type { DesktopStatusSnapshot } from "../services/status";
@@ -108,7 +115,14 @@ function toneColor(tone: StatusIndicatorTone): { bg: string; fg: string; border:
 
 function buildHealthPills(
   props: DashboardViewProps
-): Array<{ id: string; label: string; value: string; tone: StatusIndicatorTone; detail: string; onClick: (() => void) | null }> {
+): Array<{
+  id: string;
+  label: string;
+  value: string;
+  tone: StatusIndicatorTone;
+  detail: string;
+  onClick: (() => void) | null;
+}> {
   const pills: Array<{
     id: string;
     label: string;
@@ -218,10 +232,7 @@ export function DashboardView(props: DashboardViewProps) {
 
   const todayKpis = useMemo(() => {
     const operations = closedToday.length;
-    const weightKg = closedToday.reduce(
-      (sum, op) => sum + (op.netWeightKg ?? 0),
-      0
-    );
+    const weightKg = closedToday.reduce((sum, op) => sum + (op.netWeightKg ?? 0), 0);
     const totalCents = closedToday.reduce((sum, op) => sum + (op.totalCents ?? 0), 0);
     const ticketCents = operations > 0 ? Math.round(totalCents / operations) : 0;
     return { operations, weightKg, totalCents, ticketCents };
@@ -273,21 +284,21 @@ export function DashboardView(props: DashboardViewProps) {
         </div>
         <div style={styles.heroActions}>
           <button
-              type="button"
-              onClick={() => props.onNavigate("new-weighing")}
-              style={styles.primaryButton}
-            >
-              <PlusCircle size={16} />
-              Nova entrada
-            </button>
+            type="button"
+            onClick={() => props.onNavigate("new-weighing")}
+            style={styles.primaryButton}
+          >
+            <PlusCircle size={16} />
+            Nova entrada
+          </button>
           <button
-              type="button"
-              onClick={() => props.onNavigate("insights")}
-              style={styles.secondaryButton}
-            >
-              <BarChart3 size={16} />
-              Ver insights (F5)
-            </button>
+            type="button"
+            onClick={() => props.onNavigate("insights")}
+            style={styles.secondaryButton}
+          >
+            <BarChart3 size={16} />
+            Ver insights (F5)
+          </button>
         </div>
       </header>
 
@@ -365,7 +376,10 @@ export function DashboardView(props: DashboardViewProps) {
                     key={operation.id}
                     label={`${operation.plate || "--"} - ${operation.customerName || "cliente"}`}
                     detail={`${operation.productDescription || "produto"} - ${formatElapsed(operation.createdAt, now)}`}
-                    action={{ label: "Abrir operacoes", onClick: () => props.onNavigate("open-operations") }}
+                    action={{
+                      label: "Abrir operacoes",
+                      onClick: () => props.onNavigate("open-operations")
+                    }}
                     tone={tone}
                   />
                 ))}
@@ -373,7 +387,10 @@ export function DashboardView(props: DashboardViewProps) {
                 <PendingRow
                   label={`${staleOpen.filter((s) => s.tone === "neutral").length} aberta(s) recente(s)`}
                   detail="Sem alerta, dentro do tempo normal"
-                  action={{ label: "Abrir operacoes", onClick: () => props.onNavigate("open-operations") }}
+                  action={{
+                    label: "Abrir operacoes",
+                    onClick: () => props.onNavigate("open-operations")
+                  }}
                   tone="neutral"
                 />
               ) : null}
@@ -395,7 +412,11 @@ export function DashboardView(props: DashboardViewProps) {
             <PendingSection title="Fila cloud (Supabase)" tone="warning">
               <PendingRow
                 label={`${props.status.pendingSyncJobs} item(ns) na fila`}
-                detail={props.cloudConnected ? "Conectado - sincronize para enviar" : "Offline - sincronizara quando voltar a conexao"}
+                detail={
+                  props.cloudConnected
+                    ? "Conectado - sincronize para enviar"
+                    : "Offline - sincronizara quando voltar a conexao"
+                }
                 action={
                   props.cloudConnected
                     ? { label: "Sincronizar", onClick: () => void props.onSyncCloud() }
@@ -426,19 +447,19 @@ export function DashboardView(props: DashboardViewProps) {
         </article>
       </div>
 
-        <article style={{ ...styles.panel, ...styles.recentPanel }}>
+      <article style={{ ...styles.panel, ...styles.recentPanel }}>
         <header style={styles.panelHeader}>
           <div>
             <p style={styles.kicker}>Recente</p>
             <h3 style={styles.panelTitle}>Ultimas pesagens</h3>
           </div>
           <button
-              type="button"
-              onClick={() => props.onNavigate("open-operations")}
-              style={{ ...styles.secondaryButton, padding: "6px 10px", fontSize: "12px" }}
-            >
-              Ver todas
-            </button>
+            type="button"
+            onClick={() => props.onNavigate("open-operations")}
+            style={{ ...styles.secondaryButton, padding: "6px 10px", fontSize: "12px" }}
+          >
+            Ver todas
+          </button>
         </header>
         {recentOperations.length === 0 ? (
           <p style={styles.muted}>Nenhuma pesagem registrada ainda.</p>
@@ -454,7 +475,8 @@ export function DashboardView(props: DashboardViewProps) {
             </div>
             {recentOperations.map((op) => {
               const updated = new Date(op.updatedAt).getTime();
-              const isOpen = op.status !== "closed_local" && op.status !== "synced" && op.status !== "cancelled";
+              const isOpen =
+                op.status !== "closed_local" && op.status !== "synced" && op.status !== "cancelled";
               const row = (
                 <button
                   key={op.id}
@@ -485,15 +507,17 @@ export function DashboardView(props: DashboardViewProps) {
                   <span>{op.productDescription || "--"}</span>
                   <span>
                     <strong>
-                      {op.netWeightKg !== null ? formatKg(op.netWeightKg) : op.entryWeightKg !== null ? `E: ${formatKg(op.entryWeightKg)}` : "--"}
+                      {op.netWeightKg !== null
+                        ? formatKg(op.netWeightKg)
+                        : op.entryWeightKg !== null
+                          ? `E: ${formatKg(op.entryWeightKg)}`
+                          : "--"}
                     </strong>
                   </span>
                   <span>
                     <span
                       style={
-                        op.operationType === "invoice"
-                          ? styles.pillInvoice
-                          : styles.pillInternal
+                        op.operationType === "invoice" ? styles.pillInvoice : styles.pillInternal
                       }
                     >
                       {op.operationType === "invoice" ? "Com nota" : "Interna"}
@@ -603,7 +627,9 @@ function PendingSection({
 }): ReactNode {
   const colors = toneColor(tone);
   return (
-    <div style={{ ...styles.pendingSection, borderLeftColor: colors.border, background: colors.bg }}>
+    <div
+      style={{ ...styles.pendingSection, borderLeftColor: colors.border, background: colors.bg }}
+    >
       <strong style={{ ...styles.pendingTitle, color: colors.fg }}>{title}</strong>
       <div style={styles.pendingList}>{children}</div>
     </div>
@@ -635,7 +661,7 @@ function PendingRow({
           ...styles.pendingAction,
           color: colors.fg,
           borderColor: colors.border,
-          background: "#ffffff"
+          background: "var(--kr-surface)"
         }}
       >
         {action.label}
@@ -648,22 +674,24 @@ const styles: Record<string, CSSProperties> = {
   page: {
     display: "flex",
     flexDirection: "column",
-    gap: "12px",
-    marginTop: "4px"
+    gap: "10px",
+    marginTop: 0,
+    minHeight: 0
   },
   hero: {
     display: "flex",
     alignItems: "flex-start",
     justifyContent: "space-between",
-    gap: "16px",
-    padding: "20px",
-    borderRadius: "16px",
+    gap: "12px",
+    padding: "14px 16px",
+    borderRadius: "14px",
     background: "var(--kr-surface)",
+    border: "1px solid var(--kr-border)",
     boxShadow: "var(--kr-shadow)"
   },
   heroTitle: {
-    margin: "6px 0 4px 0",
-    fontSize: "26px",
+    margin: "4px 0",
+    fontSize: "21px",
     color: "var(--kr-text-strong)"
   },
   heroActions: {
@@ -717,7 +745,7 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     gap: "8px",
     flexWrap: "wrap",
-    padding: "10px 12px",
+    padding: "8px 10px",
     borderRadius: "12px",
     background: "var(--kr-surface)",
     boxShadow: "var(--kr-shadow)"
@@ -727,7 +755,7 @@ const styles: Record<string, CSSProperties> = {
     flexDirection: "column",
     alignItems: "flex-start",
     gap: "2px",
-    padding: "6px 10px",
+    padding: "5px 9px",
     borderRadius: "10px",
     border: "1px solid transparent",
     fontFamily: "inherit",
@@ -747,13 +775,14 @@ const styles: Record<string, CSSProperties> = {
   },
   twoColumns: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))",
-    gap: "12px"
+    gridTemplateColumns: "repeat(auto-fit, minmax(330px, 1fr))",
+    gap: "10px"
   },
   panel: {
-    padding: "16px",
-    borderRadius: "12px",
+    padding: "12px",
+    borderRadius: "14px",
     background: "var(--kr-surface)",
+    border: "1px solid var(--kr-border)",
     boxShadow: "var(--kr-shadow)",
     display: "flex",
     flexDirection: "column",
@@ -782,14 +811,14 @@ const styles: Record<string, CSSProperties> = {
   },
   kpiGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
-    gap: "10px"
+    gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
+    gap: "8px"
   },
   kpiCell: {
     display: "flex",
     flexDirection: "column",
     gap: "2px",
-    padding: "10px 12px",
+    padding: "9px 10px",
     borderRadius: "10px",
     border: "1px solid var(--kr-border)",
     background: "var(--kr-surface-soft)"
@@ -816,7 +845,7 @@ const styles: Record<string, CSSProperties> = {
     color: "var(--kr-muted)"
   },
   kpiValue: {
-    fontSize: "20px",
+    fontSize: "18px",
     fontWeight: 800,
     color: "var(--kr-text-strong)"
   },
@@ -828,7 +857,7 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     gap: "6px",
-    padding: "10px 12px",
+    padding: "8px 10px",
     borderLeft: "3px solid",
     borderRadius: "8px"
   },
@@ -841,14 +870,14 @@ const styles: Record<string, CSSProperties> = {
   pendingList: {
     display: "flex",
     flexDirection: "column",
-    gap: "6px"
+    gap: "5px"
   },
   pendingRow: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
     gap: "8px",
-    padding: "8px 10px",
+    padding: "7px 9px",
     borderRadius: "8px",
     background: "var(--kr-surface)",
     border: "1px solid var(--kr-border)"
@@ -874,7 +903,7 @@ const styles: Record<string, CSSProperties> = {
     cursor: "pointer",
     fontWeight: 700,
     fontSize: "11px",
-    background: "#ffffff"
+    background: "var(--kr-surface)"
   },
   recentPanel: {
     marginTop: 0
@@ -891,7 +920,7 @@ const styles: Record<string, CSSProperties> = {
     gridTemplateColumns: "70px 1.4fr 1.4fr 1fr 0.8fr 0.8fr",
     gap: "10px",
     alignItems: "center",
-    padding: "8px 12px",
+    padding: "7px 10px",
     fontSize: "12px"
   },
   recentHead: {

@@ -26,38 +26,42 @@ const initialForm: RecipientFormState = {
 
 const styles = {
   page: {
-    padding: "32px",
+    padding: 0,
     display: "grid",
-    gap: "20px"
+    gap: "10px",
+    minHeight: 0
   },
   header: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "flex-start",
     flexWrap: "wrap" as const,
-    gap: "16px"
+    gap: "10px"
   },
   title: {
     margin: 0,
     color: "var(--kr-text-strong)",
-    fontSize: "20px"
+    fontSize: "18px"
   },
   subtitle: {
     margin: "4px 0 0 0",
     color: "var(--kr-muted)",
-    maxWidth: "720px"
+    maxWidth: "720px",
+    fontSize: "13px"
   },
   card: {
     background: "var(--kr-surface)",
     border: "1px solid var(--kr-border)",
-    borderRadius: "16px",
-    padding: "20px",
-    boxShadow: "var(--kr-shadow)"
+    borderRadius: "14px",
+    padding: "14px",
+    boxShadow: "var(--kr-shadow)",
+    overflow: "hidden" as const,
+    minHeight: 0
   },
   formGrid: {
     display: "grid",
-    gridTemplateColumns: "minmax(220px, 1.5fr) minmax(180px, 1fr) auto auto",
-    gap: "12px",
+    gridTemplateColumns: "minmax(220px, 1.5fr) minmax(170px, 1fr) 110px auto",
+    gap: "10px",
     alignItems: "end"
   },
   fieldLabel: {
@@ -70,7 +74,7 @@ const styles = {
   },
   input: {
     border: "1px solid var(--kr-input-border)",
-    borderRadius: "8px",
+    borderRadius: "10px",
     padding: "8px 10px",
     font: "inherit",
     fontSize: "13px",
@@ -79,8 +83,8 @@ const styles = {
   },
   primaryButton: {
     border: "none",
-    background: "#0f172a",
-    color: "#fff",
+    background: "var(--kr-primary-strong)",
+    color: "var(--kr-primary-text)",
     borderRadius: "10px",
     padding: "10px 16px",
     cursor: "pointer",
@@ -97,7 +101,7 @@ const styles = {
   },
   dangerButton: {
     border: "1px solid #fecaca",
-    background: "#fff",
+    background: "var(--kr-surface)",
     color: "#b91c1c",
     borderRadius: "10px",
     padding: "6px 10px",
@@ -108,6 +112,12 @@ const styles = {
     width: "100%",
     borderCollapse: "collapse" as const,
     fontSize: "13px"
+  },
+  tableScroll: {
+    overflow: "auto" as const,
+    maxHeight: "calc(100vh - 390px)",
+    border: "1px solid var(--kr-border)",
+    borderRadius: "12px"
   },
   badge: (color: string, background: string) => ({
     display: "inline-flex",
@@ -248,9 +258,9 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
         <div>
           <h2 style={styles.title}>Relatorios e fechamento diario</h2>
           <p style={styles.subtitle}>
-            Cadastre os destinatarios que receberao o fechamento diario por e-mail as 20h,
-            conforme o PRD 24.6. Tambem e possivel exportar o periodo atual em PDF (A4) e Excel
-            pelo menu Insights.
+            Cadastre os destinatarios que receberao o fechamento diario por e-mail as 20h, conforme
+            o PRD 24.6. Tambem e possivel exportar o periodo atual em PDF (A4) e Excel pelo menu
+            Insights.
           </p>
         </div>
       </header>
@@ -283,9 +293,7 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
             Ativo
             <select
               value={form.isActive ? "yes" : "no"}
-              onChange={(event) =>
-                setForm({ ...form, isActive: event.target.value === "yes" })
-              }
+              onChange={(event) => setForm({ ...form, isActive: event.target.value === "yes" })}
               style={styles.input}
             >
               <option value="yes">Sim</option>
@@ -294,8 +302,8 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
           </label>
           <div style={{ display: "flex", gap: "6px" }}>
             <button type="button" onClick={handleSave} style={styles.primaryButton}>
-                {editingId ? "Salvar" : "Adicionar"}
-              </button>
+              {editingId ? "Salvar" : "Adicionar"}
+            </button>
             {editingId ? (
               <>
                 <button type="button" onClick={resetForm} style={styles.secondaryButton}>
@@ -324,62 +332,73 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
             Nenhum destinatario cadastrado. Adicione pelo menos um e-mail acima.
           </p>
         ) : (
-          <table style={styles.table}>
-            <thead>
-              <tr style={{ textAlign: "left", color: "var(--kr-muted)" }}>
-                <th style={{ padding: "8px" }}>Nome</th>
-                <th style={{ padding: "8px" }}>E-mail</th>
-                <th style={{ padding: "8px" }}>Status</th>
-                <th style={{ padding: "8px" }}>Ultima sincronizacao</th>
-                <th style={{ padding: "8px" }}>Acoes</th>
-              </tr>
-            </thead>
-            <tbody>
-              {recipients.map((recipient) => (
-                <tr key={recipient.id} style={{ borderTop: "1px solid var(--kr-border)" }}>
-                  <td style={{ padding: "8px" }}>{recipient.displayName ?? "-"}</td>
-                  <td style={{ padding: "8px" }}>{recipient.email}</td>
-                  <td style={{ padding: "8px" }}>
-                    <span style={badgeForStatus(recipient.syncStatus)}>
-                      {recipient.syncStatus === "synced"
-                        ? recipient.isActive
-                          ? "Sincronizado"
-                          : "Inativo"
-                        : recipient.syncStatus === "pending"
-                          ? "Pendente"
-                          : "Erro"}
-                    </span>
-                    {recipient.lastError ? (
-                      <span style={{ ...styles.helperText, marginLeft: "8px", color: "#b91c1c" }}>
-                        {recipient.lastError}
+          <div style={styles.tableScroll}>
+            <table style={styles.table}>
+              <thead>
+                <tr
+                  style={{
+                    textAlign: "left",
+                    color: "var(--kr-muted)",
+                    background: "var(--kr-surface-soft)",
+                    position: "sticky",
+                    top: 0,
+                    zIndex: 1
+                  }}
+                >
+                  <th style={{ padding: "8px" }}>Nome</th>
+                  <th style={{ padding: "8px" }}>E-mail</th>
+                  <th style={{ padding: "8px" }}>Status</th>
+                  <th style={{ padding: "8px" }}>Ultima sincronizacao</th>
+                  <th style={{ padding: "8px" }}>Acoes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recipients.map((recipient) => (
+                  <tr key={recipient.id} style={{ borderTop: "1px solid var(--kr-border)" }}>
+                    <td style={{ padding: "8px" }}>{recipient.displayName ?? "-"}</td>
+                    <td style={{ padding: "8px" }}>{recipient.email}</td>
+                    <td style={{ padding: "8px" }}>
+                      <span style={badgeForStatus(recipient.syncStatus)}>
+                        {recipient.syncStatus === "synced"
+                          ? recipient.isActive
+                            ? "Sincronizado"
+                            : "Inativo"
+                          : recipient.syncStatus === "pending"
+                            ? "Pendente"
+                            : "Erro"}
                       </span>
-                    ) : null}
-                  </td>
-                  <td style={{ padding: "8px" }}>
-                    {recipient.lastSyncedAt
-                      ? new Date(recipient.lastSyncedAt).toLocaleString("pt-BR")
-                      : "-"}
-                  </td>
-                  <td style={{ padding: "8px", display: "flex", gap: "6px" }}>
-                    <button
+                      {recipient.lastError ? (
+                        <span style={{ ...styles.helperText, marginLeft: "8px", color: "#b91c1c" }}>
+                          {recipient.lastError}
+                        </span>
+                      ) : null}
+                    </td>
+                    <td style={{ padding: "8px" }}>
+                      {recipient.lastSyncedAt
+                        ? new Date(recipient.lastSyncedAt).toLocaleString("pt-BR")
+                        : "-"}
+                    </td>
+                    <td style={{ padding: "8px", display: "flex", gap: "6px" }}>
+                      <button
                         type="button"
                         onClick={() => handleEdit(recipient)}
                         style={styles.secondaryButton}
                       >
                         Editar
                       </button>
-                    <button
+                      <button
                         type="button"
                         onClick={() => void handleDelete(recipient.id)}
                         style={styles.dangerButton}
                       >
                         Remover
                       </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </section>

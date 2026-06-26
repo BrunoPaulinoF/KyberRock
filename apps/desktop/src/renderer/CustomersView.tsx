@@ -48,7 +48,8 @@ const initialForm: CustomerFormData = {
 const styles = {
   page: {
     display: "grid",
-    gap: "12px"
+    gap: "10px",
+    minHeight: 0
   },
   toolbar: {
     display: "flex",
@@ -60,17 +61,17 @@ const styles = {
     flex: 1,
     minWidth: "180px",
     border: "1px solid var(--kr-input-border)",
-    borderRadius: "8px",
-    padding: "8px 10px",
+    borderRadius: "10px",
+    padding: "9px 11px",
     fontSize: "13px",
     background: "var(--kr-input-bg)",
     color: "var(--kr-text-strong)"
   },
   primaryButton: {
     border: "none",
-    background: "#0f172a",
-    color: "#fff",
-    borderRadius: "8px",
+    background: "var(--kr-primary-strong)",
+    color: "var(--kr-primary-text)",
+    borderRadius: "10px",
     padding: "8px 12px",
     cursor: "pointer",
     fontWeight: 700,
@@ -80,7 +81,7 @@ const styles = {
     border: "1px solid var(--kr-border)",
     background: "var(--kr-surface)",
     color: "var(--kr-text-strong)",
-    borderRadius: "8px",
+    borderRadius: "10px",
     padding: "6px 10px",
     cursor: "pointer",
     fontWeight: 700,
@@ -88,9 +89,9 @@ const styles = {
   },
   dangerButton: {
     border: "1px solid #fecaca",
-    background: "#fff",
+    background: "var(--kr-surface)",
     color: "#b91c1c",
-    borderRadius: "8px",
+    borderRadius: "10px",
     padding: "6px 10px",
     cursor: "pointer",
     fontWeight: 700,
@@ -115,29 +116,44 @@ const styles = {
   card: {
     background: "var(--kr-surface)",
     border: "1px solid var(--kr-border)",
-    borderRadius: "12px",
-    boxShadow: "var(--kr-shadow)"
+    borderRadius: "14px",
+    boxShadow: "var(--kr-shadow)",
+    overflow: "hidden" as const,
+    minHeight: 0
+  },
+  listCard: {
+    display: "flex",
+    flexDirection: "column" as const,
+    minHeight: 0
+  },
+  listBody: {
+    overflow: "auto" as const,
+    maxHeight: "calc(100vh - 380px)",
+    minHeight: "180px"
   },
   listRow: {
     display: "grid",
     gridTemplateColumns: "minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr) auto",
-    gap: "12px",
+    gap: "10px",
     alignItems: "center",
-    padding: "10px 14px",
+    padding: "8px 12px",
     borderTop: "1px solid var(--kr-border)",
     fontSize: "13px"
   },
   listHeader: {
     display: "grid",
     gridTemplateColumns: "minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr) auto",
-    gap: "12px",
-    padding: "8px 14px",
+    gap: "10px",
+    padding: "8px 12px",
     background: "var(--kr-surface-soft)",
     color: "var(--kr-muted)",
     fontSize: "11px",
     fontWeight: 800,
     textTransform: "uppercase" as const,
-    letterSpacing: "0.04em"
+    letterSpacing: "0.04em",
+    position: "sticky" as const,
+    top: 0,
+    zIndex: 1
   },
   cellPrimary: {
     fontWeight: 700,
@@ -163,22 +179,22 @@ const styles = {
   }),
   formShell: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-    gap: "12px",
-    padding: "14px"
+    gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+    gap: "10px",
+    padding: "10px"
   },
   formSection: {
     display: "grid",
-    gap: "4px",
+    gap: "2px",
     alignContent: "start",
-    padding: "12px",
+    padding: "10px",
     border: "1px solid var(--kr-border)",
     borderRadius: "10px",
     background: "var(--kr-surface-soft)",
     minWidth: 0
   },
   formSectionTitle: {
-    margin: "0 0 6px 0",
+    margin: "0 0 4px 0",
     fontSize: "11px",
     fontWeight: 800,
     textTransform: "uppercase" as const,
@@ -190,11 +206,18 @@ const styles = {
     gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
     gap: "8px"
   },
+  compactScrollList: {
+    display: "grid",
+    gap: "4px",
+    maxHeight: "160px",
+    overflow: "auto" as const,
+    paddingRight: "4px"
+  },
   formFooter: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    padding: "10px 14px",
+    padding: "8px 12px",
     borderTop: "1px solid var(--kr-border)",
     flexWrap: "wrap" as const,
     gap: "8px"
@@ -203,7 +226,7 @@ const styles = {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    padding: "10px 14px",
+    padding: "8px 12px",
     borderBottom: "1px solid var(--kr-border)",
     background: "var(--kr-surface-soft)",
     flexWrap: "wrap" as const,
@@ -241,7 +264,7 @@ const styles = {
     gap: "6px",
     fontWeight: 700,
     fontSize: "12px",
-    margin: "4px 0 8px 0",
+    margin: "2px 0",
     color: "var(--kr-text-strong)"
   }
 } as const;
@@ -462,7 +485,7 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
       return;
     }
     const creditLimitCents = form.creditLimitReais.trim()
-      ? parseMoneyInputToCents(form.creditLimitReais) ?? undefined
+      ? (parseMoneyInputToCents(form.creditLimitReais) ?? undefined)
       : undefined;
     const normalizedZipcode = form.zipcode.replace(/\D/g, "");
 
@@ -621,10 +644,7 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
     }));
   }
 
-  const totalPages = useMemo(
-    () => Math.max(1, Math.ceil(total / pageSize)),
-    [total]
-  );
+  const totalPages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total]);
 
   const isOmie = editingSource === "omie";
 
@@ -639,8 +659,8 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
           title="Filtrar clientes por nome, fantasia ou CNPJ"
         />
         <button type="button" onClick={openCreateForm} style={styles.primaryButton}>
-            + Novo cliente
-          </button>
+          + Novo cliente
+        </button>
       </div>
 
       {feedback ? <p style={styles.message}>{feedback}</p> : null}
@@ -649,7 +669,9 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
         <div style={styles.card}>
           <div style={styles.formHeader}>
             <h3 style={styles.formTitle}>
-              {editingId ? `Editar cliente ${isOmie ? "(somente campos KyberRock)" : ""}` : "Novo cliente"}
+              {editingId
+                ? `Editar cliente ${isOmie ? "(somente campos KyberRock)" : ""}`
+                : "Novo cliente"}
             </h3>
             {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
           </div>
@@ -680,9 +702,7 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
                 <MoneyInput
                   label="Limite (R$)"
                   value={form.creditLimitReais}
-                  onChange={(creditLimitReais) =>
-                    setForm({ ...form, creditLimitReais })
-                  }
+                  onChange={(creditLimitReais) => setForm({ ...form, creditLimitReais })}
                   disabled={isOmie}
                   allowZero
                   hint="Use virgula para centavos."
@@ -740,9 +760,7 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
                 <TextInput
                   label="Complemento"
                   value={form.addressComplement}
-                  onChange={(addressComplement) =>
-                    setForm({ ...form, addressComplement })
-                  }
+                  onChange={(addressComplement) => setForm({ ...form, addressComplement })}
                   disabled={isOmie}
                 />
               </div>
@@ -774,7 +792,7 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
             <section style={styles.formSection}>
               <h4 style={styles.formSectionTitle}>Transportadoras vinculadas</h4>
               {editingId ? (
-                <div style={{ display: "grid", gap: "6px" }}>
+                <div style={styles.compactScrollList}>
                   {carriers.length === 0 ? (
                     <p style={styles.cellMuted}>Nenhuma transportadora cadastrada.</p>
                   ) : (
@@ -841,9 +859,7 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
                 <input
                   type="checkbox"
                   checked={form.omieBillingBlocked}
-                  onChange={(e) =>
-                    setForm({ ...form, omieBillingBlocked: e.target.checked })
-                  }
+                  onChange={(e) => setForm({ ...form, omieBillingBlocked: e.target.checked })}
                   disabled={isOmie}
                 />
                 Bloqueado para faturamento
@@ -908,7 +924,8 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
                         >
                           <span style={styles.cellMuted}>
                             <strong>{price.productDescription}</strong>
-                            {price.productCode ? ` (${price.productCode})` : ""}: {formatMoney(price.unitPriceCents)}/ton
+                            {price.productCode ? ` (${price.productCode})` : ""}:{" "}
+                            {formatMoney(price.unitPriceCents)}/ton
                           </span>
                           <button
                             type="button"
@@ -929,8 +946,8 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
           </div>
           <div style={styles.formFooter}>
             <button type="button" onClick={() => setShowForm(false)} style={styles.secondaryButton}>
-                Cancelar
-              </button>
+              Cancelar
+            </button>
             <div style={{ display: "flex", gap: "8px" }}>
               {editingId ? (
                 <>
@@ -944,8 +961,8 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
                 </>
               ) : null}
               <button type="button" onClick={() => void handleSave()} style={styles.primaryButton}>
-                  {editingId ? "Salvar alteracoes" : "Cadastrar cliente"}
-                </button>
+                {editingId ? "Salvar alteracoes" : "Cadastrar cliente"}
+              </button>
             </div>
           </div>
         </div>
@@ -963,7 +980,7 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
         />
       ) : null}
 
-      <div style={styles.card}>
+      <div style={{ ...styles.card, ...styles.listCard }}>
         <div style={styles.listHeader}>
           <span>Cliente</span>
           <span>Documento</span>
@@ -971,19 +988,17 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
           <span>Origem / status</span>
           <span style={{ textAlign: "right" }}>Acoes</span>
         </div>
-        {loading ? (
-          <p style={{ ...styles.cellMuted, padding: "14px" }}>Carregando clientes...</p>
-        ) : customers.length === 0 ? (
-          <p style={{ ...styles.cellMuted, padding: "14px" }}>Nenhum cliente encontrado.</p>
-        ) : (
-          customers.map((customer) => (
-            <CustomerRow
-              key={customer.id}
-              customer={customer}
-              onEdit={openEditForm}
-            />
-          ))
-        )}
+        <div style={styles.listBody}>
+          {loading ? (
+            <p style={{ ...styles.cellMuted, padding: "14px" }}>Carregando clientes...</p>
+          ) : customers.length === 0 ? (
+            <p style={{ ...styles.cellMuted, padding: "14px" }}>Nenhum cliente encontrado.</p>
+          ) : (
+            customers.map((customer) => (
+              <CustomerRow key={customer.id} customer={customer} onEdit={openEditForm} />
+            ))
+          )}
+        </div>
         <div style={styles.pagination}>
           <span>
             {total === 0
@@ -992,24 +1007,24 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
           </span>
           <div style={{ display: "flex", gap: "6px" }}>
             <button
-                type="button"
-                onClick={() => setPage((p) => Math.max(0, p - 1))}
-                disabled={page === 0}
-                style={styles.secondaryButton}
-              >
-                Anterior
-              </button>
+              type="button"
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={page === 0}
+              style={styles.secondaryButton}
+            >
+              Anterior
+            </button>
             <span>
               {page + 1}/{totalPages}
             </span>
             <button
-                type="button"
-                onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-                disabled={page >= totalPages - 1}
-                style={styles.secondaryButton}
-              >
-                Proxima
-              </button>
+              type="button"
+              onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+              disabled={page >= totalPages - 1}
+              style={styles.secondaryButton}
+            >
+              Proxima
+            </button>
           </div>
         </div>
       </div>
@@ -1044,13 +1059,9 @@ function CustomerRow({
         ) : null}
       </div>
       <div style={styles.rowActions}>
-        <button
-            type="button"
-            onClick={() => onEdit(customer)}
-            style={styles.secondaryButton}
-          >
-            Editar
-          </button>
+        <button type="button" onClick={() => onEdit(customer)} style={styles.secondaryButton}>
+          Editar
+        </button>
       </div>
     </div>
   );
