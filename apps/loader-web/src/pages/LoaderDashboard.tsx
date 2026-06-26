@@ -15,8 +15,6 @@ export interface WeighingOperation {
   loaderCompletedAt: string | null;
 }
 
-export type CompletedWeighingOperation = WeighingOperation;
-
 function formatWeight(weightKg: number): string {
   if (!weightKg) {
     return "A definir";
@@ -180,11 +178,6 @@ export function LoaderDashboard() {
   }
 
   const inProgressOperations = operations.filter((operation) => !operation.loaderCompletedAt);
-  const completedOperations = operations
-    .filter((operation) => operation.loaderCompletedAt)
-    .sort((a, b) => (a.loaderCompletedAt && b.loaderCompletedAt
-      ? b.loaderCompletedAt.localeCompare(a.loaderCompletedAt)
-      : 0));
 
   return (
     <main style={styles.page}>
@@ -208,7 +201,7 @@ export function LoaderDashboard() {
               <h2 id="in-progress-title" style={styles.columnTitle}>
                 Cargas em andamento
               </h2>
-              <p style={styles.columnDescription}>Atenda de cima para baixo para preservar a chegada.</p>
+              <p style={styles.columnDescription}>Atenda de cima para baixo. Ao concluir, a carga sai desta lista.</p>
             </div>
             <span style={styles.badge}>{inProgressOperations.length}</span>
           </div>
@@ -230,31 +223,6 @@ export function LoaderDashboard() {
                   isSubmitting={pendingCompletions.has(operation.id)}
                   onComplete={() => void handleCompleteOperation(operation)}
                 />
-              ))}
-            </div>
-          )}
-        </section>
-
-        <section style={styles.column} aria-labelledby="completed-title">
-          <div style={styles.columnHeader}>
-            <div>
-              <h2 id="completed-title" style={styles.columnTitle}>
-                Concluídas
-              </h2>
-              <p style={styles.columnDescription}>Cargas marcadas pelo carregador nesta unidade.</p>
-            </div>
-            <span style={{ ...styles.badge, ...styles.successBadge }}>{completedOperations.length}</span>
-          </div>
-
-          {completedOperations.length === 0 ? (
-            <EmptyState
-              title="Nada concluído ainda"
-              description="Clique em Concluir carga quando o caminhão já tiver sido carregado."
-            />
-          ) : (
-            <div style={styles.cardList}>
-              {completedOperations.map((operation, index) => (
-                <CompletedCard key={operation.id} operation={operation} position={index + 1} />
               ))}
             </div>
           )}
@@ -303,34 +271,6 @@ function LoadingCard({
       >
         {isSubmitting ? "Enviando..." : "Concluir carga"}
       </button>
-    </article>
-  );
-}
-
-function CompletedCard({
-  operation,
-  position
-}: {
-  operation: CompletedWeighingOperation;
-  position: number;
-}) {
-  return (
-    <article style={{ ...styles.operationCard, ...styles.completedCard }}>
-      <div style={styles.operationTopRow}>
-        <span style={{ ...styles.queuePosition, ...styles.completedPosition }}>{position}º</span>
-        <div style={styles.operationIdentity}>
-          <h3 style={styles.plate}>{operation.plate}</h3>
-          <p style={styles.customer}>{operation.customerName}</p>
-        </div>
-        <span style={styles.donePill}>Concluída</span>
-      </div>
-
-      <dl style={styles.detailsGrid}>
-        <InfoItem label="Motorista" value={operation.driverName} />
-        <InfoItem label="Produto" value={operation.productDescription} />
-        <InfoItem label="Quantidade" value={formatWeight(operation.entryWeightKg)} />
-        <InfoItem label="Finalizada" value={formatDateTime(operation.loaderCompletedAt)} />
-      </dl>
     </article>
   );
 }
@@ -384,14 +324,12 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 800
   },
   board: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-    gap: "18px",
+    display: "block",
     maxWidth: "1280px",
     margin: "0 auto"
   },
   column: {
-    minHeight: "520px",
+    minHeight: "680px",
     background: "rgba(255, 255, 255, 0.92)",
     border: "1px solid #e2e8f0",
     borderRadius: "24px",
@@ -427,14 +365,10 @@ const styles: Record<string, CSSProperties> = {
     color: "#1d4ed8",
     fontWeight: 900
   },
-  successBadge: {
-    background: "#dcfce7",
-    color: "#166534"
-  },
   cardList: {
     display: "flex",
     flexDirection: "column",
-    gap: "12px"
+    gap: "14px"
   },
   operationCard: {
     background: "#fff",
@@ -442,10 +376,6 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: "18px",
     padding: "16px",
     boxShadow: "0 12px 34px rgba(15, 23, 42, 0.06)"
-  },
-  completedCard: {
-    background: "#f8fff9",
-    borderColor: "#bbf7d0"
   },
   operationTopRow: {
     display: "flex",
@@ -463,9 +393,6 @@ const styles: Record<string, CSSProperties> = {
     color: "#fff",
     fontSize: "15px",
     fontWeight: 900
-  },
-  completedPosition: {
-    background: "#166534"
   },
   operationIdentity: {
     flex: 1,
@@ -487,15 +414,6 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: "999px",
     background: "#fef3c7",
     color: "#92400e",
-    padding: "6px 10px",
-    fontSize: "12px",
-    fontWeight: 900,
-    whiteSpace: "nowrap"
-  },
-  donePill: {
-    borderRadius: "999px",
-    background: "#dcfce7",
-    color: "#166534",
     padding: "6px 10px",
     fontSize: "12px",
     fontWeight: 900,

@@ -80,6 +80,12 @@ Deno.serve(async (req) => {
 
   if (deviceError) throw deviceError;
 
+  const publishableKey =
+    typedUnit.desktop_publishable_key ??
+    Deno.env.get("SUPABASE_PUBLISHABLE_KEY") ??
+    Deno.env.get("KYBERROCK_DESKTOP_PUBLISHABLE_KEY") ??
+    null;
+
   return jsonResponse({
     status: "approved",
     message: "Desktop ativado com sucesso.",
@@ -93,7 +99,12 @@ Deno.serve(async (req) => {
     deviceId,
     deviceToken,
     supabaseUrl,
-    publishableKey: typedUnit.desktop_publishable_key ?? null,
+    publishableKey,
+    publishableKeySource: typedUnit.desktop_publishable_key
+      ? "unit"
+      : publishableKey
+        ? "env"
+        : "missing",
     checkedAt: now
   });
 });

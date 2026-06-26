@@ -20,47 +20,26 @@ function makeOperation(
   };
 }
 
-function splitByLoaderCompletion(operations: WeighingOperation[]): {
-  inProgress: WeighingOperation[];
-  completed: WeighingOperation[];
-} {
-  return {
-    inProgress: operations.filter((operation) => !operation.loaderCompletedAt),
-    completed: operations
-      .filter((operation) => operation.loaderCompletedAt)
-      .sort((a, b) => (a.loaderCompletedAt && b.loaderCompletedAt
-        ? b.loaderCompletedAt.localeCompare(a.loaderCompletedAt)
-        : 0))
-  };
+function getVisibleLoaderOperations(operations: WeighingOperation[]): WeighingOperation[] {
+  return operations.filter((operation) => !operation.loaderCompletedAt);
 }
 
-describe("LoaderDashboard completion split", () => {
-  it("keeps operations without loaderCompletedAt in the in-progress column", () => {
+describe("LoaderDashboard visible operations", () => {
+  it("keeps operations without loaderCompletedAt visible to the loader", () => {
     const first = makeOperation("1", "2026-06-25T10:00:00.000Z");
     const second = makeOperation("2", "2026-06-25T10:05:00.000Z");
 
-    const { inProgress, completed } = splitByLoaderCompletion([first, second]);
+    const visible = getVisibleLoaderOperations([first, second]);
 
-    expect(inProgress).toEqual([first, second]);
-    expect(completed).toEqual([]);
+    expect(visible).toEqual([first, second]);
   });
 
-  it("moves operations with loaderCompletedAt to the completed column", () => {
+  it("hides operations with loaderCompletedAt after the loader concludes the load", () => {
     const first = makeOperation("1", "2026-06-25T10:00:00.000Z", "2026-06-25T10:20:00.000Z");
     const second = makeOperation("2", "2026-06-25T10:05:00.000Z");
 
-    const { inProgress, completed } = splitByLoaderCompletion([first, second]);
+    const visible = getVisibleLoaderOperations([first, second]);
 
-    expect(inProgress).toEqual([second]);
-    expect(completed).toEqual([first]);
-  });
-
-  it("orders the completed column by most recent completion first", () => {
-    const oldest = makeOperation("1", "2026-06-25T10:00:00.000Z", "2026-06-25T10:20:00.000Z");
-    const newest = makeOperation("2", "2026-06-25T10:05:00.000Z", "2026-06-25T10:30:00.000Z");
-
-    const { completed } = splitByLoaderCompletion([oldest, newest]);
-
-    expect(completed).toEqual([newest, oldest]);
+    expect(visible).toEqual([second]);
   });
 });
