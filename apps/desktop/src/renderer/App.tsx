@@ -53,6 +53,7 @@ import {
 import { ActivationGate } from "./ActivationGate";
 import { BlockedScreen } from "./BlockedScreen";
 import { DashboardView } from "./DashboardView";
+import { DocumentationView } from "./DocumentationView";
 import { InsightsView } from "./InsightsView";
 import { ReportsView } from "./ReportsView";
 import { CustomersView } from "./CustomersView";
@@ -1262,8 +1263,6 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 icon={BookOpen}
                 activeView={activeView}
                 onSelect={setActiveView}
-                disabled
-                badge="Em breve"
               />
             </SidebarSection>
           </nav>
@@ -2233,12 +2232,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
               />
             ) : null}
             {activeView === "reports" ? <ReportsView desktopApi={desktopApi} /> : null}
-            {activeView === "documentation" ? (
-              <section style={styles.panel}>
-                <h2 style={styles.panelTitle}>Documentacao</h2>
-                <p style={styles.muted}>Em breve.</p>
-              </section>
-            ) : null}
+            {activeView === "documentation" ? <DocumentationView /> : null}
           </div>
         </div>
       </div>
