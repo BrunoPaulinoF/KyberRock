@@ -155,14 +155,15 @@ export async function syncOmieMasterData(
 
   try {
     const mapping = readOmieSyncMapping(database);
+    let taggedSupplierResult: { customersPulled: number; suppliersSynced: number } | null = null;
 
     // 1. Customers
     entities.push(await syncEntity("clientes", async () => {
       if (options.appKey && options.appSecret) {
         const client = createOmieClient({ appKey: options.appKey, appSecret: options.appSecret });
         const service = new OmieSyncService(client, database);
-        const result = await service.syncCustomersBidirectional(companyId);
-        return { fetched: result.pulled, created: result.pulled, updated: 0, skipped: 0 };
+        taggedSupplierResult = await service.rebuildCustomersAndCarriersFromOmie(companyId);
+        return { fetched: taggedSupplierResult.customersPulled, created: taggedSupplierResult.customersPulled, updated: 0, skipped: 0 };
       }
       // Cloud sync path is handled by the scheduler; for master data we focus on direct/local when credentials provided
       return { fetched: 0, created: 0, updated: 0, skipped: 0 };
@@ -193,9 +194,7 @@ export async function syncOmieMasterData(
     // 4. Carriers (transportadoras)
     entities.push(await syncEntity("transportadoras", async () => {
       if (options.appKey && options.appSecret) {
-        const client = createOmieClient({ appKey: options.appKey, appSecret: options.appSecret });
-        const service = new OmieSyncService(client, database);
-        const fetched = await service.syncSuppliers(companyId);
+        const fetched = taggedSupplierResult?.suppliersSynced ?? 0;
         return { fetched, created: fetched, updated: 0, skipped: 0 };
       }
       return { fetched: 0, created: 0, updated: 0, skipped: 0 };

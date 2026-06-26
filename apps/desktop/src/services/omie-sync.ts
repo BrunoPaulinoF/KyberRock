@@ -9,6 +9,7 @@ import {
   hasTransportadoraTag,
   type CreateCustomerInput,
   type Product,
+  type Supplier,
   type UpdateCustomerInput
 } from "@kyberrock/omie-client";
 
@@ -26,6 +27,11 @@ export interface OmieSyncResult {
   paymentTermsSynced: number;
   suppliersSynced: number;
   errors: string[];
+}
+
+export interface TaggedSupplierSyncResult {
+  customersPulled: number;
+  suppliersSynced: number;
 }
 
 export function createOmieClient(config: OmieSyncConfig): OmieClient {
@@ -64,11 +70,11 @@ export class OmieSyncService {
     };
 
     try {
-      const customerResult = await this.syncCustomersBidirectional(companyId);
-      result.customersPulled = customerResult.pulled;
-      result.customersPushed = customerResult.pushed;
+      const taggedResult = await this.rebuildCustomersAndCarriersFromOmie(companyId);
+      result.customersPulled = taggedResult.customersPulled;
+      result.suppliersSynced = taggedResult.suppliersSynced;
     } catch (err) {
-      result.errors.push(`Clientes: ${(err as Error).message}`);
+      result.errors.push(`Clientes/Transportadoras: ${(err as Error).message}`);
     }
 
     try {
@@ -83,38 +89,50 @@ export class OmieSyncService {
       result.errors.push(`Condicoes: ${(err as Error).message}`);
     }
 
-    try {
-      result.suppliersSynced = await this.syncSuppliers(companyId);
-    } catch (err) {
-      result.errors.push(`Transportadoras: ${(err as Error).message}`);
-    }
-
     return result;
+  }
+
+  async rebuildCustomersAndCarriersFromOmie(companyId: string): Promise<TaggedSupplierSyncResult> {
+    const suppliers = await this.suppliersService.listAll();
+    const customers = suppliers.filter((supplier) => hasClienteTag(supplier));
+    const carriers = suppliers.filter((supplier) => hasTransportadoraTag(supplier));
+
+    this.runInTransaction(() => {
+      this.clearCustomerCarrierRegistrations(companyId);
+      this.upsertCustomersFromSuppliers(companyId, customers);
+      this.upsertCarriersFromSuppliers(companyId, carriers);
+    });
+
+    await this.updateCustomerReceivables(companyId, customers);
+
+    return {
+      customersPulled: customers.length,
+      suppliersSynced: carriers.length
+    };
   }
 
   async syncCustomersBidirectional(companyId: string): Promise<{
     pulled: number;
     pushed: number;
   }> {
-    const pulled = await this.pullCustomersFromOmie(companyId);
-    const pushed = await this.pushCustomersToOmie(companyId);
-    return { pulled, pushed };
+    const result = await this.rebuildCustomersAndCarriersFromOmie(companyId);
+    return { pulled: result.customersPulled, pushed: 0 };
   }
 
   async pullCustomersFromOmie(companyId: string): Promise<number> {
     const suppliers = await this.suppliersService.listAll();
     const omieCustomers = suppliers.filter((supplier) => hasClienteTag(supplier));
 
-    this.db.prepare(`
-      UPDATE customers
-      SET deleted_at = datetime('now'),
-          is_active = 0,
-          updated_at = datetime('now')
-      WHERE company_id = ?
-        AND source = 'omie'
-        AND deleted_at IS NULL
-    `).run(companyId);
+    this.runInTransaction(() => {
+      this.clearCustomers(companyId);
+      this.upsertCustomersFromSuppliers(companyId, omieCustomers);
+    });
+    await this.updateCustomerReceivables(companyId, omieCustomers);
 
+    return omieCustomers.length;
+  }
+
+  private upsertCustomersFromSuppliers(companyId: string, customers: Supplier[]): void {
     const upsert = this.db.prepare(`
       INSERT INTO customers (
         id, company_id, omie_customer_id, source, legal_name, trade_name,
@@ -143,20 +161,9 @@ export class OmieSyncService {
         updated_at = datetime('now')
     `);
 
-    const updateReceivables = this.db.prepare(`
-      UPDATE customers
-      SET open_receivables_cents = ?,
-          financial_cache_at = datetime('now'),
-          updated_at = datetime('now')
-      WHERE id = ? AND company_id = ?
-    `);
-
-    let count = 0;
-    for (const customer of omieCustomers) {
-      const localId = this.findLocalIdByOmieId(companyId, customer.id) ?? `omie_${customer.id}`;
-
+    for (const customer of customers) {
       upsert.run(
-        localId,
+        `omie_${customer.id}`,
         companyId,
         customer.id,
         customer.name,
@@ -173,19 +180,26 @@ export class OmieSyncService {
         customer.state || null,
         customer.isActive ? 1 : 0
       );
-      count++;
+    }
+  }
 
-      if (customer.id) {
-        try {
-          const openAmount = await this.receivablesService.getTotalOpenAmountForClient(customer.id);
-          updateReceivables.run(Math.round(openAmount * 100), localId, companyId);
-        } catch {
-          // Continue even if receivables fail
-        }
+  private async updateCustomerReceivables(companyId: string, customers: Supplier[]): Promise<void> {
+    const updateReceivables = this.db.prepare(`
+      UPDATE customers
+      SET open_receivables_cents = ?,
+          financial_cache_at = datetime('now'),
+          updated_at = datetime('now')
+      WHERE id = ? AND company_id = ?
+    `);
+
+    for (const customer of customers) {
+      try {
+        const openAmount = await this.receivablesService.getTotalOpenAmountForClient(customer.id);
+        updateReceivables.run(Math.round(openAmount * 100), `omie_${customer.id}`, companyId);
+      } catch {
+        // Continue even if receivables fail.
       }
     }
-
-    return count;
   }
 
   async pushCustomersToOmie(companyId: string): Promise<number> {
@@ -468,16 +482,15 @@ export class OmieSyncService {
     const suppliers = await this.suppliersService.listAll();
     const transportadoras = suppliers.filter((s) => hasTransportadoraTag(s));
 
-    this.db.prepare(`
-      UPDATE carriers
-      SET deleted_at = datetime('now'),
-          is_active = 0,
-          updated_at = datetime('now')
-      WHERE company_id = ?
-        AND source = 'omie'
-        AND deleted_at IS NULL
-    `).run(companyId);
+    this.runInTransaction(() => {
+      this.clearCarriers(companyId);
+      this.upsertCarriersFromSuppliers(companyId, transportadoras);
+    });
 
+    return transportadoras.length;
+  }
+
+  private upsertCarriersFromSuppliers(companyId: string, carriers: Supplier[]): void {
     const upsert = this.db.prepare(`
       INSERT INTO carriers (
         id, company_id, omie_customer_id, omie_integration_code, name, document, phone, email,
@@ -503,11 +516,9 @@ export class OmieSyncService {
         updated_at = datetime('now')
     `);
 
-    let count = 0;
-    for (const supplier of transportadoras) {
-      const localId = this.findCarrierLocalIdByOmieId(companyId, supplier.id) ?? `omie_supplier_${supplier.id}`;
+    for (const supplier of carriers) {
       upsert.run(
-        localId,
+        `omie_supplier_${supplier.id}`,
         companyId,
         supplier.id,
         supplier.integrationCode || null,
@@ -524,32 +535,91 @@ export class OmieSyncService {
         supplier.state || null,
         supplier.isActive ? 1 : 0
       );
-      count++;
     }
-
-    return count;
   }
 
-  private findLocalIdByOmieId(companyId: string, omieCustomerId: number): string | null {
-    const row = this.db
-      .prepare(
-        `SELECT id FROM customers
-         WHERE company_id = ? AND omie_customer_id = ? AND deleted_at IS NULL LIMIT 1`
-      )
-      .get(companyId, omieCustomerId) as { id: string } | undefined;
-
-    return row?.id ?? null;
+  private clearCustomerCarrierRegistrations(companyId: string): void {
+    this.clearCustomers(companyId);
+    this.clearCarriers(companyId);
   }
 
-  private findCarrierLocalIdByOmieId(companyId: string, omieId: number): string | null {
-    const row = this.db
-      .prepare(
-        `SELECT id FROM carriers
-         WHERE company_id = ? AND omie_customer_id = ? AND deleted_at IS NULL LIMIT 1`
-      )
-      .get(companyId, omieId) as { id: string } | undefined;
+  private clearCustomers(companyId: string): void {
+    this.db.prepare(`
+      UPDATE customer_carriers
+      SET deleted_at = datetime('now'),
+          is_active = 0,
+          updated_at = datetime('now')
+      WHERE deleted_at IS NULL
+        AND customer_id IN (SELECT id FROM customers WHERE company_id = ?)
+    `).run(companyId);
 
-    return row?.id ?? null;
+    this.db.prepare(`
+      UPDATE customers
+      SET default_carrier_id = NULL,
+          deleted_at = datetime('now'),
+          is_active = 0,
+          updated_at = datetime('now')
+      WHERE company_id = ?
+        AND deleted_at IS NULL
+    `).run(companyId);
+  }
+
+  private clearCarriers(companyId: string): void {
+    this.db.prepare(`
+      UPDATE customer_carriers
+      SET deleted_at = datetime('now'),
+          is_active = 0,
+          updated_at = datetime('now')
+      WHERE deleted_at IS NULL
+        AND carrier_id IN (SELECT id FROM carriers WHERE company_id = ?)
+    `).run(companyId);
+
+    this.db.prepare(`
+      UPDATE driver_carriers
+      SET deleted_at = datetime('now'),
+          is_active = 0,
+          updated_at = datetime('now')
+      WHERE deleted_at IS NULL
+        AND carrier_id IN (SELECT id FROM carriers WHERE company_id = ?)
+    `).run(companyId);
+
+    this.db.prepare(`
+      UPDATE vehicle_carriers
+      SET deleted_at = datetime('now'),
+          is_active = 0,
+          updated_at = datetime('now')
+      WHERE deleted_at IS NULL
+        AND carrier_id IN (SELECT id FROM carriers WHERE company_id = ?)
+    `).run(companyId);
+
+    this.db.prepare(`
+      UPDATE vehicles
+      SET carrier_id = NULL,
+          updated_at = datetime('now')
+      WHERE company_id = ?
+        AND carrier_id IN (SELECT id FROM carriers WHERE company_id = ?)
+    `).run(companyId, companyId);
+
+    this.db.prepare(`
+      UPDATE customers
+      SET default_carrier_id = NULL,
+          updated_at = datetime('now')
+      WHERE company_id = ?
+        AND default_carrier_id IN (SELECT id FROM carriers WHERE company_id = ?)
+    `).run(companyId, companyId);
+
+    this.db.prepare(`
+      UPDATE carriers
+      SET deleted_at = datetime('now'),
+          is_active = 0,
+          updated_at = datetime('now')
+      WHERE company_id = ?
+        AND deleted_at IS NULL
+    `).run(companyId);
+  }
+
+  private runInTransaction<T>(action: () => T): T {
+    return this.db.transaction(action)();
   }
 }
 
