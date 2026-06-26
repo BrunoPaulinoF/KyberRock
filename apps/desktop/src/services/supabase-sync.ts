@@ -1768,3 +1768,40 @@ export async function pullDriverCarriersFromCloud(
 
   return { pulled, errors };
 }
+
+export async function pullLoaderCompletionsFromCloud(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity
+): Promise<{ pulled: number; errors: string[] }> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from("loading_requests")
+    .select("id, loader_completed_at, updated_at")
+    .eq("unit_id", identity.unitId)
+    .not("loader_completed_at", "is", null);
+
+  const errors: string[] = [];
+  if (error) {
+    errors.push(`pullLoaderCompletions: ${error.message}`);
+    return { pulled: 0, errors };
+  }
+
+  const update = database.prepare(`
+    UPDATE loading_requests
+    SET loader_completed_at = ?, updated_at = ?
+    WHERE id = ? AND (loader_completed_at IS NULL OR loader_completed_at < ?)
+  `);
+
+  let pulled = 0;
+  for (const row of data ?? []) {
+    if (!row.loader_completed_at) continue;
+    const completedAt = String(row.loader_completed_at);
+    const updatedAt = String(row.updated_at ?? completedAt);
+    const result = update.run(completedAt, updatedAt, row.id, completedAt);
+    if (result.changes > 0) {
+      pulled++;
+    }
+  }
+
+  return { pulled, errors };
+}

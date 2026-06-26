@@ -12,32 +12,10 @@ export interface WeighingOperation {
   entryWeightKg: number;
   status: string;
   createdAt: string;
+  loaderCompletedAt: string | null;
 }
 
-export interface CompletedWeighingOperation extends WeighingOperation {
-  completedAt: string;
-}
-
-export function completeLoadingOperation(
-  inProgress: WeighingOperation[],
-  completed: CompletedWeighingOperation[],
-  operationId: string,
-  completedAt: string
-): { inProgress: WeighingOperation[]; completed: CompletedWeighingOperation[] } {
-  if (completed.some((operation) => operation.id === operationId)) {
-    return { inProgress, completed };
-  }
-
-  const operation = inProgress.find((item) => item.id === operationId);
-  if (!operation) {
-    return { inProgress, completed };
-  }
-
-  return {
-    inProgress: inProgress.filter((item) => item.id !== operationId),
-    completed: [...completed, { ...operation, status: "completed", completedAt }]
-  };
-}
+export type CompletedWeighingOperation = WeighingOperation;
 
 function formatWeight(weightKg: number): string {
   if (!weightKg) {
@@ -47,7 +25,8 @@ function formatWeight(weightKg: number): string {
   return `${weightKg.toLocaleString("pt-BR")} kg`;
 }
 
-function formatDateTime(value: string): string {
+function formatDateTime(value: string | null | undefined): string {
+  if (!value) return "-";
   return new Date(value).toLocaleString("pt-BR", {
     day: "2-digit",
     month: "2-digit",
@@ -56,11 +35,38 @@ function formatDateTime(value: string): string {
   });
 }
 
+interface LoadingRequestRow {
+  id: string;
+  plate: string;
+  customer_name: string;
+  driver_name: string;
+  product_description: string;
+  entry_weight_kg: number | null;
+  status: string;
+  created_at: string;
+  loader_completed_at: string | null;
+}
+
+function mapRow(row: LoadingRequestRow): WeighingOperation {
+  return {
+    id: row.id,
+    plate: row.plate,
+    customerName: row.customer_name,
+    driverName: row.driver_name,
+    productDescription: row.product_description,
+    entryWeightKg: Number(row.entry_weight_kg ?? 0),
+    status: row.status,
+    createdAt: row.created_at,
+    loaderCompletedAt: row.loader_completed_at
+  };
+}
+
 export function LoaderDashboard() {
   const { user, logout } = useAuth();
   const [operations, setOperations] = useState<WeighingOperation[]>([]);
-  const [completedOperations, setCompletedOperations] = useState<CompletedWeighingOperation[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [pendingCompletions, setPendingCompletions] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     void loadOperations();
@@ -102,47 +108,83 @@ export function LoaderDashboard() {
     try {
       const { data, error } = await supabase
         .from("loading_requests")
-        .select("id,plate,customer_name,driver_name,product_description,entry_weight_kg,status,created_at")
+        .select(
+          "id,plate,customer_name,driver_name,product_description,entry_weight_kg,status,created_at,loader_completed_at"
+        )
         .eq("unit_id", user.unitId)
         .eq("status", "open")
         .order("created_at", { ascending: true });
 
       if (error) throw error;
-      const ops = (data ?? []).map((row) => ({
-        id: row.id,
-        plate: row.plate,
-        customerName: row.customer_name,
-        driverName: row.driver_name,
-        productDescription: row.product_description,
-        entryWeightKg: Number(row.entry_weight_kg ?? 0),
-        status: row.status,
-        createdAt: row.created_at
-      })) as WeighingOperation[];
-
-      setOperations(ops);
+      setOperations((data ?? []).map(mapRow));
+      setErrorMessage(null);
     } catch (error) {
       console.error("Error loading operations:", error);
+      setErrorMessage(
+        error instanceof Error ? error.message : "Nao foi possivel carregar a fila de cargas."
+      );
     } finally {
       setIsLoading(false);
     }
   }
 
-  function handleCompleteOperation(operationId: string) {
-    setCompletedOperations((current) => {
-      const result = completeLoadingOperation(
-        operations,
-        current,
-        operationId,
-        new Date().toISOString()
-      );
+  async function handleCompleteOperation(operation: WeighingOperation) {
+    if (!user?.unitId) return;
+    if (operation.loaderCompletedAt) return;
+    if (pendingCompletions.has(operation.id)) return;
 
-      return result.completed;
+    setPendingCompletions((current) => {
+      const next = new Set(current);
+      next.add(operation.id);
+      return next;
     });
+
+    const optimisticTimestamp = new Date().toISOString();
+    setOperations((current) =>
+      current.map((item) =>
+        item.id === operation.id
+          ? { ...item, loaderCompletedAt: optimisticTimestamp }
+          : item
+      )
+    );
+
+    try {
+      const { error } = await supabase
+        .from("loading_requests")
+        .update({ loader_completed_at: optimisticTimestamp })
+        .eq("id", operation.id)
+        .eq("unit_id", user.unitId)
+        .eq("status", "open");
+
+      if (error) throw error;
+      setErrorMessage(null);
+    } catch (error) {
+      console.error("Error completing loading operation:", error);
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Nao foi possivel marcar a carga como concluida."
+      );
+      setOperations((current) =>
+        current.map((item) =>
+          item.id === operation.id ? { ...item, loaderCompletedAt: null } : item
+        )
+      );
+    } finally {
+      setPendingCompletions((current) => {
+        const next = new Set(current);
+        next.delete(operation.id);
+        return next;
+      });
+    }
   }
 
-  const inProgressOperations = operations.filter((operation) =>
-    completedOperations.every((completed) => completed.id !== operation.id)
-  );
+  const inProgressOperations = operations.filter((operation) => !operation.loaderCompletedAt);
+  const completedOperations = operations
+    .filter((operation) => operation.loaderCompletedAt)
+    .sort((a, b) => (a.loaderCompletedAt && b.loaderCompletedAt
+      ? b.loaderCompletedAt.localeCompare(a.loaderCompletedAt)
+      : 0));
 
   return (
     <main style={styles.page}>
@@ -152,6 +194,12 @@ export function LoaderDashboard() {
           Sair
         </button>
       </header>
+
+      {errorMessage ? (
+        <div style={styles.errorBanner} role="alert">
+          {errorMessage}
+        </div>
+      ) : null}
 
       <section style={styles.board}>
         <section style={styles.column} aria-labelledby="in-progress-title">
@@ -179,7 +227,8 @@ export function LoaderDashboard() {
                   key={operation.id}
                   operation={operation}
                   position={index + 1}
-                  onComplete={() => handleCompleteOperation(operation.id)}
+                  isSubmitting={pendingCompletions.has(operation.id)}
+                  onComplete={() => void handleCompleteOperation(operation)}
                 />
               ))}
             </div>
@@ -192,7 +241,7 @@ export function LoaderDashboard() {
               <h2 id="completed-title" style={styles.columnTitle}>
                 Concluídas
               </h2>
-              <p style={styles.columnDescription}>Histórico das cargas finalizadas nesta tela.</p>
+              <p style={styles.columnDescription}>Cargas marcadas pelo carregador nesta unidade.</p>
             </div>
             <span style={{ ...styles.badge, ...styles.successBadge }}>{completedOperations.length}</span>
           </div>
@@ -218,10 +267,12 @@ export function LoaderDashboard() {
 function LoadingCard({
   operation,
   position,
+  isSubmitting,
   onComplete
 }: {
   operation: WeighingOperation;
   position: number;
+  isSubmitting: boolean;
   onComplete: () => void;
 }) {
   return (
@@ -242,8 +293,15 @@ function LoadingCard({
         <InfoItem label="Chegada" value={formatDateTime(operation.createdAt)} />
       </dl>
 
-      <button onClick={onComplete} style={styles.completeButton}>
-        Concluir carga
+      <button
+        onClick={onComplete}
+        disabled={isSubmitting}
+        style={{
+          ...styles.completeButton,
+          ...(isSubmitting ? styles.completeButtonDisabled : null)
+        }}
+      >
+        {isSubmitting ? "Enviando..." : "Concluir carga"}
       </button>
     </article>
   );
@@ -271,7 +329,7 @@ function CompletedCard({
         <InfoItem label="Motorista" value={operation.driverName} />
         <InfoItem label="Produto" value={operation.productDescription} />
         <InfoItem label="Quantidade" value={formatWeight(operation.entryWeightKg)} />
-        <InfoItem label="Finalizada" value={formatDateTime(operation.completedAt)} />
+        <InfoItem label="Finalizada" value={formatDateTime(operation.loaderCompletedAt)} />
       </dl>
     </article>
   );
@@ -473,6 +531,21 @@ const styles: Record<string, CSSProperties> = {
     cursor: "pointer",
     fontSize: "15px",
     fontWeight: 900
+  },
+  completeButtonDisabled: {
+    background: "#475569",
+    cursor: "not-allowed",
+    opacity: 0.7
+  },
+  errorBanner: {
+    maxWidth: "1280px",
+    margin: "0 auto 16px",
+    background: "#fee2e2",
+    border: "1px solid #ef4444",
+    borderRadius: "12px",
+    padding: "12px 16px",
+    color: "#991b1b",
+    fontSize: "14px"
   },
   emptyState: {
     minHeight: "220px",

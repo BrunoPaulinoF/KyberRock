@@ -92,6 +92,7 @@ import {
   syncDriverCarriersToCloud,
   pullCustomerCarriersFromCloud,
   pullDriverCarriersFromCloud,
+  pullLoaderCompletionsFromCloud,
   type FiscalBillingResult,
   type SyncResult
 } from "./supabase-sync.js";
@@ -791,6 +792,18 @@ export class DesktopRuntime {
       } catch (error) {
         errors.push(
           `Driver carriers pull: ${error instanceof Error ? error.message : "Unknown error"}`
+        );
+      }
+
+      // Pull loader completions from cloud so the desktop knows when the
+      // loader marked a loading_request as completed via the loader-web.
+      try {
+        const lcPull = await pullLoaderCompletionsFromCloud(this.database, identity);
+        synced += lcPull.pulled;
+        errors.push(...lcPull.errors);
+      } catch (error) {
+        errors.push(
+          `Loader completions pull: ${error instanceof Error ? error.message : "Unknown error"}`
         );
       }
 

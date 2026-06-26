@@ -770,5 +770,15 @@ CREATE INDEX IF NOT EXISTS idx_omie_sync_runs_company_started ON omie_sync_runs(
 CREATE INDEX IF NOT EXISTS idx_omie_sync_entities_run ON omie_sync_entities(run_id);
 CREATE INDEX IF NOT EXISTS idx_omie_raw_records_company_entity ON omie_raw_records(company_id, entity_type);
 `
+  },
+  {
+    version: 17,
+    name: "loading_request_loader_completed_at",
+    sql: `
+ALTER TABLE loading_requests ADD COLUMN loader_completed_at TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_loading_requests_unit_loader_completed
+  ON loading_requests(unit_id, loader_completed_at);
+`
   }
 ];

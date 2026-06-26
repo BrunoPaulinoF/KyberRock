@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  completeLoadingOperation,
-  type CompletedWeighingOperation,
-  type WeighingOperation
-} from "./LoaderDashboard";
+import type { WeighingOperation } from "./LoaderDashboard";
 
-function makeOperation(id: string, createdAt: string): WeighingOperation {
+function makeOperation(
+  id: string,
+  createdAt: string,
+  loaderCompletedAt: string | null = null
+): WeighingOperation {
   return {
     id,
     plate: `ABC${id}`,
@@ -15,40 +15,52 @@ function makeOperation(id: string, createdAt: string): WeighingOperation {
     productDescription: "Brita",
     entryWeightKg: 12_000,
     status: "open",
-    createdAt
+    createdAt,
+    loaderCompletedAt
   };
 }
 
-describe("completeLoadingOperation", () => {
-  it("moves the selected operation to completed without changing the remaining queue order", () => {
+function splitByLoaderCompletion(operations: WeighingOperation[]): {
+  inProgress: WeighingOperation[];
+  completed: WeighingOperation[];
+} {
+  return {
+    inProgress: operations.filter((operation) => !operation.loaderCompletedAt),
+    completed: operations
+      .filter((operation) => operation.loaderCompletedAt)
+      .sort((a, b) => (a.loaderCompletedAt && b.loaderCompletedAt
+        ? b.loaderCompletedAt.localeCompare(a.loaderCompletedAt)
+        : 0))
+  };
+}
+
+describe("LoaderDashboard completion split", () => {
+  it("keeps operations without loaderCompletedAt in the in-progress column", () => {
     const first = makeOperation("1", "2026-06-25T10:00:00.000Z");
     const second = makeOperation("2", "2026-06-25T10:05:00.000Z");
 
-    const result = completeLoadingOperation([first, second], [], first.id, "2026-06-25T10:20:00.000Z");
+    const { inProgress, completed } = splitByLoaderCompletion([first, second]);
 
-    expect(result.inProgress).toEqual([second]);
-    expect(result.completed).toEqual([
-      {
-        ...first,
-        status: "completed",
-        completedAt: "2026-06-25T10:20:00.000Z"
-      }
-    ]);
+    expect(inProgress).toEqual([first, second]);
+    expect(completed).toEqual([]);
   });
 
-  it("does not duplicate an operation that is already completed", () => {
-    const operation = makeOperation("1", "2026-06-25T10:00:00.000Z");
-    const completed: CompletedWeighingOperation[] = [
-      {
-        ...operation,
-        status: "completed",
-        completedAt: "2026-06-25T10:20:00.000Z"
-      }
-    ];
+  it("moves operations with loaderCompletedAt to the completed column", () => {
+    const first = makeOperation("1", "2026-06-25T10:00:00.000Z", "2026-06-25T10:20:00.000Z");
+    const second = makeOperation("2", "2026-06-25T10:05:00.000Z");
 
-    const result = completeLoadingOperation([operation], completed, operation.id, "2026-06-25T10:25:00.000Z");
+    const { inProgress, completed } = splitByLoaderCompletion([first, second]);
 
-    expect(result.completed).toHaveLength(1);
-    expect(result.completed[0]?.completedAt).toBe("2026-06-25T10:20:00.000Z");
+    expect(inProgress).toEqual([second]);
+    expect(completed).toEqual([first]);
+  });
+
+  it("orders the completed column by most recent completion first", () => {
+    const oldest = makeOperation("1", "2026-06-25T10:00:00.000Z", "2026-06-25T10:20:00.000Z");
+    const newest = makeOperation("2", "2026-06-25T10:05:00.000Z", "2026-06-25T10:30:00.000Z");
+
+    const { completed } = splitByLoaderCompletion([oldest, newest]);
+
+    expect(completed).toEqual([newest, oldest]);
   });
 });
