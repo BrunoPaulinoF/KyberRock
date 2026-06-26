@@ -239,9 +239,17 @@ Deno.serve(async (req) => {
 
     return jsonResponse({ error: "Invalid action" }, 400);
   } catch (error) {
-    return jsonResponse({ error: error instanceof Error ? error.message : "Erro inesperado" }, 400);
+    return jsonResponse({ error: getErrorMessage(error) }, 400);
   }
 });
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "object" && error !== null && "message" in error) {
+    return String((error as { message?: unknown }).message ?? "Erro inesperado");
+  }
+  return "Erro inesperado";
+}
 
 async function verifyAdminPassword(password: string): Promise<boolean> {
   const passwordHash = Deno.env.get("KYBERROCK_ADMIN_PASSWORD_HASH") ?? "";
