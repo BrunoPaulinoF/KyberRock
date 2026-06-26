@@ -1577,6 +1577,7 @@ export class DesktopRuntime {
         customersPage: 1,
         productsPage: 1,
         paymentTermsPage: 1,
+        suppliersPage: 1,
         inProgress: true
       });
     }
@@ -1609,11 +1610,17 @@ export class DesktopRuntime {
       };
       options.onProgress?.(progress);
 
-      const totalBefore = before.customersPage + before.productsPage + before.paymentTermsPage;
-      const totalAfter = after.customersPage + after.productsPage + after.paymentTermsPage;
+      const totalBefore =
+        before.customersPage + before.productsPage + before.paymentTermsPage + before.suppliersPage;
+      const totalAfter =
+        after.customersPage + after.productsPage + after.paymentTermsPage + after.suppliersPage;
       const noProgress =
         totalAfter <= totalBefore &&
-        result.customersPulled + result.productsSynced + result.paymentTermsSynced + result.suppliersSynced === 0;
+        result.customersPulled +
+          result.productsSynced +
+          result.paymentTermsSynced +
+          result.suppliersSynced ===
+          0;
       if (noProgress || !after.inProgress) {
         writeOmiePullState(this.database, { inProgress: false });
         this.cacheStore.invalidateAll(identity.companyId);

@@ -2,6 +2,9 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const OMIE_BASE_URL = "https://app.omie.com.br/api/v1";
 const PAGE_SIZE = 50;
+const OMIE_REDUNDANT_MAX_RETRIES = 2;
+const OMIE_REDUNDANT_DEFAULT_WAIT_MS = 60_000;
+const OMIE_REDUNDANT_MAX_WAIT_MS = 65_000;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -42,6 +45,7 @@ type PullResume = {
   customersPage?: number;
   productsPage?: number;
   paymentTermsPage?: number;
+  suppliersPage?: number;
 };
 
 type DeviceRow = {
@@ -139,6 +143,16 @@ type OmiePaymentTerm = {
   installmentDaysJson: number[] | null;
   isActive: boolean;
   visible: boolean;
+};
+
+type OmieSupplier = {
+  id: number;
+  integrationCode: string | null;
+  name: string;
+  tradeName: string | null;
+  document: string | null;
+  isActive: boolean;
+  tagsJson: Record<string, unknown> | unknown[] | null;
 };
 
 type CreateOrderPayload = {
@@ -240,10 +254,12 @@ Deno.serve(async (req) => {
       const customersPage = resume.customersPage ?? 1;
       const productsPage = resume.productsPage ?? 1;
       const paymentTermsPage = resume.paymentTermsPage ?? 1;
+      const suppliersPage = resume.suppliersPage ?? 1;
 
-      const [customersResult, productsResult] = await Promise.all([
+      const [customersResult, productsResult, suppliersResult] = await Promise.all([
         listCustomersPage(credentials, customersPage),
-        listProductsPage(credentials, productsPage)
+        listProductsPage(credentials, productsPage),
+        listSuppliersPage(credentials, suppliersPage)
       ]);
       let paymentTermsResult: PageResult<OmiePaymentTerm> = {
         items: [],
@@ -273,6 +289,7 @@ Deno.serve(async (req) => {
         customers: customersResult.items,
         products: productsResult.items,
         paymentTerms: paymentTermsResult.items,
+        suppliers: suppliersResult.items,
         ...(paymentTermsWarning ? { paymentTermsWarning } : {}),
         checkedAt,
         pageSize: PAGE_SIZE,
@@ -291,7 +308,12 @@ Deno.serve(async (req) => {
           paymentTermsReturned: paymentTermsResult.items.length,
           paymentTermsFinished: paymentTermsResult.finished,
           paymentTermsTotalPages: paymentTermsResult.totalPages,
-          paymentTermsTotalRecords: paymentTermsResult.totalRecords
+          paymentTermsTotalRecords: paymentTermsResult.totalRecords,
+          suppliersPage: suppliersResult.page,
+          suppliersReturned: suppliersResult.items.length,
+          suppliersFinished: suppliersResult.finished,
+          suppliersTotalPages: suppliersResult.totalPages,
+          suppliersTotalRecords: suppliersResult.totalRecords
         }
       });
     }
@@ -743,6 +765,91 @@ function computeFinished(
   return returned < PAGE_SIZE;
 }
 
+async function listSuppliersPage(
+  credentials: OmieCredentials,
+  page: number
+): Promise<PageResult<OmieSupplier>> {
+  const cacheKey = `fornecedores:${credentials.appKey}:${page}`;
+  const cached = getCachedPage<OmieSupplier>(cacheKey);
+  if (cached) {
+    return {
+      items: cached.items,
+      page,
+      finished: cached.finished,
+      totalPages: cached.totalPages,
+      totalRecords: cached.totalRecords
+    };
+  }
+
+  const response = await callOmie<
+    { pagina: number; registros_por_pagina: number },
+    {
+      nPagina?: number;
+      nTotPaginas?: number;
+      nRegistros?: number;
+      nTotRegistros?: number;
+      fornecedoresCadastro?: OmieSupplierRaw[];
+    }
+  >(credentials, "/geral/fornecedores/", "ListarFornecedores", {
+    pagina: page,
+    registros_por_pagina: PAGE_SIZE
+  });
+
+  const rawItems = response.fornecedoresCadastro ?? [];
+  const items = rawItems.map(mapOmieSupplierRaw).filter(hasTransportadoraTag);
+  const totalPages = toIntOrNull(response.nTotPaginas);
+  const totalRecords = toIntOrNull(response.nTotRegistros ?? response.nRegistros);
+  const finished = computeFinished(page, rawItems.length, totalPages);
+
+  setCachedPage(cacheKey, items, finished, totalPages, totalRecords);
+  return { items, page, finished, totalPages, totalRecords };
+}
+
+type OmieSupplierRaw = {
+  codigo_cliente_fornecedor?: number | string;
+  codigoClienteFornecedor?: number | string;
+  codigo_cliente_integracao?: string;
+  codigoClienteIntegracao?: string;
+  razao_social?: string;
+  razaoSocial?: string;
+  nome_fantasia?: string;
+  nomeFantasia?: string;
+  cnpj_cpf?: string;
+  cnpjCpf?: string;
+  tags?: Array<{ tag?: string }> | Record<string, unknown>;
+  inativo?: string;
+};
+
+function mapOmieSupplierRaw(item: OmieSupplierRaw): OmieSupplier {
+  return {
+    id: toNumber(pickFirst(item.codigo_cliente_fornecedor, item.codigoClienteFornecedor)) ?? 0,
+    integrationCode: pickFirst(item.codigo_cliente_integracao, item.codigoClienteIntegracao),
+    name: pickFirst(item.razao_social, item.razaoSocial) ?? "",
+    tradeName: pickFirst(item.nome_fantasia, item.nomeFantasia),
+    document: pickFirst(item.cnpj_cpf, item.cnpjCpf),
+    isActive: !isYesFlag(item.inativo),
+    tagsJson: item.tags ?? null
+  };
+}
+
+function hasTransportadoraTag(supplier: OmieSupplier): boolean {
+  if (!supplier.tagsJson) return false;
+  const tagValues: string[] = [];
+  if (Array.isArray(supplier.tagsJson)) {
+    tagValues.push(
+      ...supplier.tagsJson.map((tag) =>
+        typeof tag === "object" && tag !== null && "tag" in tag
+          ? String((tag as { tag?: unknown }).tag ?? "")
+          : String(tag)
+      )
+    );
+  } else {
+    const tags = supplier.tagsJson.tags;
+    if (Array.isArray(tags)) tagValues.push(...tags.map(String));
+  }
+  return tagValues.some((tag) => tag.toLowerCase().includes("transportadora"));
+}
+
 async function listPaymentTermsPage(
   credentials: OmieCredentials,
   page: number
@@ -1163,40 +1270,70 @@ async function callOmie<TParam, TResponse>(
   call: string,
   param: TParam
 ): Promise<TResponse> {
-  const response = await fetch(`${OMIE_BASE_URL}${endpoint}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      call,
-      param: [param],
-      app_key: credentials.appKey,
-      app_secret: credentials.appSecret
-    })
-  });
+  for (let attempt = 0; attempt <= OMIE_REDUNDANT_MAX_RETRIES; attempt++) {
+    const response = await fetch(`${OMIE_BASE_URL}${endpoint}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        call,
+        param: [param],
+        app_key: credentials.appKey,
+        app_secret: credentials.appSecret
+      })
+    });
 
-  if (!response.ok) {
-    let detail = "";
-    try {
-      const body = await response.json();
-      if (body && typeof body === "object" && "faultstring" in body) {
-        detail = String((body as { faultstring?: unknown }).faultstring ?? "");
-      } else if (typeof body === "string") {
-        detail = body;
+    const data = await readOmieResponseBody(response);
+    const detail = getOmieFaultString(data);
+
+    if (!response.ok) {
+      if (detail && isRedundantOmieError(detail) && attempt < OMIE_REDUNDANT_MAX_RETRIES) {
+        await sleep(parseRedundantWaitMs(detail));
+        continue;
       }
-    } catch {
-      // ignore body parse errors
+      const suffix = detail ? ` - ${detail}` : "";
+      throw new Error(
+        `OMIE HTTP ${response.status}: ${response.statusText} em ${call} (${endpoint})${suffix}`
+      );
     }
-    const suffix = detail ? ` - ${detail}` : "";
-    throw new Error(
-      `OMIE HTTP ${response.status}: ${response.statusText} em ${call} (${endpoint})${suffix}`
-    );
+
+    if (detail) {
+      if (isRedundantOmieError(detail) && attempt < OMIE_REDUNDANT_MAX_RETRIES) {
+        await sleep(parseRedundantWaitMs(detail));
+        continue;
+      }
+      throw new Error(`OMIE faultstring em ${call} (${endpoint}): ${detail}`);
+    }
+
+    return data as TResponse;
   }
 
-  const data = await response.json();
-  if (data && typeof data === "object" && "faultstring" in data) {
-    const detail = String((data as { faultstring?: unknown }).faultstring ?? "Falha OMIE");
-    throw new Error(`OMIE faultstring em ${call} (${endpoint}): ${detail}`);
-  }
+  throw new Error(`OMIE redundant retry exhausted em ${call} (${endpoint})`);
+}
 
-  return data as TResponse;
+async function readOmieResponseBody(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+function getOmieFaultString(data: unknown): string | null {
+  if (!data || typeof data !== "object" || !("faultstring" in data)) return null;
+  return String((data as { faultstring?: unknown }).faultstring ?? "Falha OMIE");
+}
+
+function isRedundantOmieError(message: string): boolean {
+  return /REDUNDANT|Consumo redundante/i.test(message);
+}
+
+function parseRedundantWaitMs(message: string): number {
+  const match = /Aguarde\s+(\d+)\s+segundos?/i.exec(message);
+  const seconds = match ? Number(match[1]) : NaN;
+  if (!Number.isFinite(seconds) || seconds <= 0) return OMIE_REDUNDANT_DEFAULT_WAIT_MS;
+  return Math.min(seconds * 1000 + 1000, OMIE_REDUNDANT_MAX_WAIT_MS);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

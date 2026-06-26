@@ -154,27 +154,43 @@ interface OmieReferencePaymentTerm {
   visible?: boolean;
 }
 
+interface OmieReferenceSupplier {
+  id: number;
+  integrationCode?: string | null;
+  name: string;
+  tradeName?: string | null;
+  document?: string | null;
+  isActive?: boolean;
+  tagsJson?: Record<string, unknown> | unknown[] | null;
+}
+
 interface OmieReferenceDataResponse {
   customers?: OmieReferenceCustomer[];
   products?: OmieReferenceProduct[];
   paymentTerms?: OmieReferencePaymentTerm[];
+  suppliers?: OmieReferenceSupplier[];
   pageSize?: number;
   pagination?: {
     customersPage: number;
     productsPage: number;
     paymentTermsPage: number;
+    suppliersPage?: number;
     customersReturned: number;
     productsReturned: number;
     paymentTermsReturned: number;
+    suppliersReturned?: number;
     customersFinished?: boolean;
     productsFinished?: boolean;
     paymentTermsFinished?: boolean;
+    suppliersFinished?: boolean;
     customersTotalPages?: number | null;
     customersTotalRecords?: number | null;
     productsTotalPages?: number | null;
     productsTotalRecords?: number | null;
     paymentTermsTotalPages?: number | null;
     paymentTermsTotalRecords?: number | null;
+    suppliersTotalPages?: number | null;
+    suppliersTotalRecords?: number | null;
   };
 }
 
@@ -182,6 +198,7 @@ interface OmiePullState {
   customersPage: number;
   productsPage: number;
   paymentTermsPage: number;
+  suppliersPage: number;
   inProgress: boolean;
   lastUpdatedAt: string | null;
 }
@@ -194,6 +211,7 @@ export function readOmiePullState(database: DesktopDatabase): OmiePullState {
     customersPage: 1,
     productsPage: 1,
     paymentTermsPage: 1,
+    suppliersPage: 1,
     inProgress: false,
     lastUpdatedAt: null,
     ...(stored ?? {})
@@ -417,9 +435,9 @@ export async function syncCustomerToSupabase(
   customerId: string
 ): Promise<boolean> {
   const settings = getCloudSettings(database);
-  const customer = database.prepare("SELECT * FROM customers WHERE id = ?").get(customerId) as
-    | Record<string, unknown>
-    | undefined;
+  const customer = database
+    .prepare("SELECT * FROM customers WHERE id = ?")
+    .get(customerId) as Record<string, unknown> | undefined;
   if (!customer) throw new Error(`Customer ${customerId} not found`);
   await invokeDesktopSync(settings, {
     customers: [
@@ -447,9 +465,9 @@ export async function syncProductToSupabase(
   productId: string
 ): Promise<boolean> {
   const settings = getCloudSettings(database);
-  const product = database.prepare("SELECT * FROM products WHERE id = ?").get(productId) as
-    | Record<string, unknown>
-    | undefined;
+  const product = database
+    .prepare("SELECT * FROM products WHERE id = ?")
+    .get(productId) as Record<string, unknown> | undefined;
   if (!product) throw new Error(`Product ${productId} not found`);
   await invokeDesktopSync(settings, {
     products: [
@@ -495,6 +513,7 @@ export async function syncOmieReferenceDataFromCloud(
       customersPage: 1,
       productsPage: 1,
       paymentTermsPage: 1,
+      suppliersPage: 1,
       inProgress: false
     });
   }
@@ -507,7 +526,8 @@ export async function syncOmieReferenceDataFromCloud(
       resume: {
         customersPage: state.customersPage,
         productsPage: state.productsPage,
-        paymentTermsPage: state.paymentTermsPage
+        paymentTermsPage: state.paymentTermsPage,
+        suppliersPage: state.suppliersPage
       }
     }
   });
@@ -526,12 +546,14 @@ export function applyOmieReferenceData(
   const customers = data.customers ?? [];
   const products = data.products ?? [];
   const paymentTerms = data.paymentTerms ?? [];
+  const suppliers = data.suppliers ?? [];
   const pagination = data.pagination;
 
   const apply = database.transaction(() => {
     upsertOmieCustomers(database, companyId, customers);
     upsertOmieProducts(database, companyId, products);
     upsertOmiePaymentTerms(database, companyId, paymentTerms);
+    upsertOmieSuppliers(database, companyId, suppliers);
   });
   apply();
 
@@ -566,11 +588,18 @@ export function applyOmieReferenceData(
         pagination.paymentTermsReturned,
         pagination.paymentTermsFinished,
         pagination.paymentTermsTotalPages
+      ),
+      suppliers: isFinished(
+        pagination.suppliersPage ?? 1,
+        pagination.suppliersReturned ?? 0,
+        pagination.suppliersFinished,
+        pagination.suppliersTotalPages
       )
     };
     const current = readOmiePullState(database);
     writeOmiePullState(database, {
-      inProgress: !finished.customers || !finished.products || !finished.paymentTerms,
+      inProgress:
+        !finished.customers || !finished.products || !finished.paymentTerms || !finished.suppliers,
       customersPage: !finished.customers
         ? Math.max(pagination.customersPage + 1, current.customersPage)
         : 1,
@@ -579,6 +608,9 @@ export function applyOmieReferenceData(
         : 1,
       paymentTermsPage: !finished.paymentTerms
         ? Math.max(pagination.paymentTermsPage + 1, current.paymentTermsPage)
+        : 1,
+      suppliersPage: !finished.suppliers
+        ? Math.max((pagination.suppliersPage ?? 1) + 1, current.suppliersPage)
         : 1
     });
   } else {
@@ -586,6 +618,7 @@ export function applyOmieReferenceData(
       customersPage: 1,
       productsPage: 1,
       paymentTermsPage: 1,
+      suppliersPage: 1,
       inProgress: false
     });
   }
@@ -595,7 +628,7 @@ export function applyOmieReferenceData(
     customersPushed: 0,
     productsSynced: products.length,
     paymentTermsSynced: paymentTerms.length,
-    suppliersSynced: 0,
+    suppliersSynced: suppliers.length,
     errors: []
   };
 }
@@ -875,9 +908,9 @@ function getCustomerPayload(
   customerId: string,
   companyId: string
 ): Record<string, unknown> | null {
-  const customer = database
-    .prepare("SELECT * FROM customers WHERE id = ?")
-    .get(customerId) as Record<string, unknown> | undefined;
+  const customer = database.prepare("SELECT * FROM customers WHERE id = ?").get(customerId) as
+    | Record<string, unknown>
+    | undefined;
   if (!customer) return null;
   return {
     id: String(customer.id),
@@ -902,9 +935,9 @@ function getProductPayload(
   productId: string,
   companyId: string
 ): Record<string, unknown> | null {
-  const product = database
-    .prepare("SELECT * FROM products WHERE id = ?")
-    .get(productId) as Record<string, unknown> | undefined;
+  const product = database.prepare("SELECT * FROM products WHERE id = ?").get(productId) as
+    | Record<string, unknown>
+    | undefined;
   if (!product) return null;
   return {
     id: String(product.id),
@@ -1570,6 +1603,54 @@ function upsertOmiePaymentTerms(
       paymentTerm.isActive === false ? 0 : 1
     );
   }
+}
+
+function upsertOmieSuppliers(
+  database: DesktopDatabase,
+  companyId: string,
+  suppliers: OmieReferenceSupplier[]
+): void {
+  const upsert = database.prepare(`
+    INSERT INTO carriers (
+      id, company_id, omie_customer_id, name, document, source,
+      is_active, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, 'omie', ?, datetime('now'), datetime('now'))
+    ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name,
+      document = excluded.document,
+      is_active = excluded.is_active,
+      updated_at = datetime('now')
+  `);
+
+  for (const supplier of suppliers) {
+    if (!Number.isFinite(supplier.id) || !supplier.name.trim()) continue;
+    const localId =
+      findCarrierLocalIdByOmieId(database, companyId, supplier.id) ??
+      `omie_supplier_${supplier.id}`;
+    upsert.run(
+      localId,
+      companyId,
+      supplier.id,
+      supplier.name,
+      supplier.document ?? null,
+      supplier.isActive === false ? 0 : 1
+    );
+  }
+}
+
+function findCarrierLocalIdByOmieId(
+  database: DesktopDatabase,
+  companyId: string,
+  omieId: number
+): string | null {
+  const row = database
+    .prepare(
+      `SELECT id FROM carriers
+       WHERE company_id = ? AND omie_customer_id = ? AND deleted_at IS NULL LIMIT 1`
+    )
+    .get(companyId, omieId) as { id: string } | undefined;
+
+  return row?.id ?? null;
 }
 
 export async function pullCompanyPricePasswordFromCloud(

@@ -236,6 +236,14 @@ describe("supabase sync", () => {
             id: 789,
             description: "30 dias"
           }
+        ],
+        suppliers: [
+          {
+            id: 321,
+            name: "Transportadora OMIE",
+            document: "11222333000144",
+            isActive: true
+          }
         ]
       });
 
@@ -244,7 +252,7 @@ describe("supabase sync", () => {
         customersPushed: 0,
         productsSynced: 1,
         paymentTermsSynced: 1,
-        suppliersSynced: 0,
+        suppliersSynced: 1,
         errors: []
       });
       expect(
@@ -256,6 +264,9 @@ describe("supabase sync", () => {
       expect(
         database.prepare("SELECT name FROM payment_terms WHERE id = 'omie_789'").pluck().get()
       ).toBe("30 dias");
+      expect(
+        database.prepare("SELECT name FROM carriers WHERE id = 'omie_supplier_321'").pluck().get()
+      ).toBe("Transportadora OMIE");
     } finally {
       database.close();
     }
@@ -295,7 +306,8 @@ describe("supabase sync", () => {
           resume: {
             customersPage: 1,
             productsPage: 1,
-            paymentTermsPage: 1
+            paymentTermsPage: 1,
+            suppliersPage: 1
           }
         }
       });
