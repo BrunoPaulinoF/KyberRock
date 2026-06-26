@@ -456,7 +456,7 @@ export class DesktopRuntime {
       this.consumeScaleCapture(input.scaleCaptureId, "entry") ??
       (await this.captureStableWeight({ operationType: "entry" }));
 
-    return createWeighingOperation(this.database, {
+    const operation = createWeighingOperation(this.database, {
       identity: this.ensureIdentity(),
       operationType: input.operationType,
       customerId: input.customerId,
@@ -472,6 +472,8 @@ export class DesktopRuntime {
       entryWeightKg: entryReading.weightKg,
       entryScaleCapture: buildScaleCaptureAudit(entryReading)
     });
+    this.triggerBackgroundCloudSync("entry_registered", { operationId: operation.id });
+    return operation;
   }
 
   async closeWeighing(
@@ -492,12 +494,14 @@ export class DesktopRuntime {
       this.consumeScaleCapture(scaleCaptureId, "exit") ??
       (await this.captureStableWeight({ operationType: "exit" }));
 
-    return closeWeighingOperation(this.database, {
+    const operation = closeWeighingOperation(this.database, {
       operationId,
       exitWeightKg: exitReading.weightKg,
       operationType,
       exitScaleCapture: buildScaleCaptureAudit(exitReading)
     });
+    this.triggerBackgroundCloudSync("exit_registered", { operationId });
+    return operation;
   }
 
   private async captureStableWeight(options: {
@@ -594,7 +598,9 @@ export class DesktopRuntime {
 
   cancelWeighing(operationId: string, reason: string): WeighingOperationSummary {
     this.assertDesktopAccess();
-    return cancelWeighingOperation(this.database, { operationId, reason });
+    const operation = cancelWeighingOperation(this.database, { operationId, reason });
+    this.triggerBackgroundCloudSync("operation_cancelled", { operationId });
+    return operation;
   }
 
   listOpenWeighingOperations(): WeighingOperationSummary[] {
@@ -1680,6 +1686,28 @@ export class DesktopRuntime {
       .pluck()
       .get() as number;
     return count === 4;
+  }
+
+  private triggerBackgroundCloudSync(reason: string, context: Record<string, unknown> = {}): void {
+    void this.syncCloudNow()
+      .then((result) => {
+        if (!result.success) {
+          this.recordTechnicalLog(
+            "warning",
+            "cloud-sync",
+            "Sincronizacao cloud em segundo plano falhou.",
+            { reason, ...context, result }
+          );
+        }
+      })
+      .catch((error: unknown) => {
+        this.recordTechnicalLog(
+          "error",
+          "cloud-sync",
+          error instanceof Error ? error.message : "Sincronizacao cloud em segundo plano falhou.",
+          { reason, ...context }
+        );
+      });
   }
 
   private recordTechnicalLog(

@@ -27,7 +27,7 @@ Deno.serve(async (req) => {
   const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
   const supabase = createClient(supabaseUrl, serviceRoleKey);
-  const body = await req.json().catch(() => ({})) as {
+  const body = (await req.json().catch(() => ({}))) as {
     activationCode?: string;
     deviceName?: string;
   };
@@ -42,7 +42,9 @@ Deno.serve(async (req) => {
   const activationCodeHash = await sha256Hex(activationCode);
   const { data: unit, error: unitError } = await supabase
     .from("units")
-    .select("id, company_id, name, timezone, is_active, desktop_publishable_key, companies(id, name, legal_name, document, is_active)")
+    .select(
+      "id, company_id, name, timezone, is_active, desktop_publishable_key, companies(id, name, legal_name, document, is_active)"
+    )
     .eq("desktop_activation_code_hash", activationCodeHash)
     .single();
 
@@ -83,6 +85,7 @@ Deno.serve(async (req) => {
   const publishableKey =
     typedUnit.desktop_publishable_key ??
     Deno.env.get("SUPABASE_PUBLISHABLE_KEY") ??
+    Deno.env.get("SUPABASE_ANON_KEY") ??
     Deno.env.get("KYBERROCK_DESKTOP_PUBLISHABLE_KEY") ??
     null;
 
