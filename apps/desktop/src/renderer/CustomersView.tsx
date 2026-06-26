@@ -22,6 +22,7 @@ import {
 } from "./inputs";
 import type { CepLookupResult } from "./inputs";
 import type { CustomerCacheEntry, CustomerFormData } from "./customers.types";
+import { PriceChangePasswordDialog } from "./PriceChangePasswordDialog";
 
 const initialForm: CustomerFormData = {
   tradeName: "",
@@ -269,6 +270,19 @@ interface CustomerSpecialPriceEntry {
   unit: string;
 }
 
+type PendingSpecialPriceAction =
+  | {
+      type: "save";
+      customerId: string;
+      productId: string;
+      unitPriceCents: number;
+    }
+  | {
+      type: "remove";
+      customerId: string;
+      productId: string;
+    };
+
 export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi | null }) {
   const [customers, setCustomers] = useState<CustomerCacheEntry[]>([]);
   const [total, setTotal] = useState(0);
@@ -288,6 +302,10 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
   const [specialPrices, setSpecialPrices] = useState<CustomerSpecialPriceEntry[]>([]);
   const [specialProductId, setSpecialProductId] = useState("");
   const [specialPriceReais, setSpecialPriceReais] = useState("");
+  const [pendingSpecialPriceAction, setPendingSpecialPriceAction] =
+    useState<PendingSpecialPriceAction | null>(null);
+  const [pricePasswordError, setPricePasswordError] = useState<string | null>(null);
+  const [savingSpecialPrice, setSavingSpecialPrice] = useState(false);
   const [linkedCarrierIds, setLinkedCarrierIds] = useState<string[]>([]);
 
   const pageSize = 50;
@@ -517,46 +535,57 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
       return;
     }
 
-    const password = window.prompt("Digite a senha de 4 digitos para alterar precos:");
-    if (!password) return;
-    const valid = await desktopApi.verifyPriceChangePassword(password);
-    if (!valid) {
-      setFormError("Senha incorreta.");
-      return;
-    }
+    setPricePasswordError(null);
+    setPendingSpecialPriceAction({
+      type: "save",
+      customerId: editingId,
+      productId: specialProductId,
+      unitPriceCents
+    });
+  }
 
+  async function handleConfirmSpecialPrice(password: string): Promise<void> {
+    if (!desktopApi || !pendingSpecialPriceAction || savingSpecialPrice) return;
+    setSavingSpecialPrice(true);
     try {
-      await desktopApi.customerSpecialPricesSet({
-        customerId: editingId,
-        productId: specialProductId,
-        unitPriceCents,
-        unit: "ton"
-      });
-      setSpecialProductId("");
-      setSpecialPriceReais("");
-      await loadSpecialPrices(editingId);
-      setFeedback("Preco especial salvo.");
+      const valid = await desktopApi.verifyPriceChangePassword(password);
+      if (!valid) {
+        setPricePasswordError("Senha incorreta.");
+        return;
+      }
+
+      if (pendingSpecialPriceAction.type === "save") {
+        await desktopApi.customerSpecialPricesSet({
+          customerId: pendingSpecialPriceAction.customerId,
+          productId: pendingSpecialPriceAction.productId,
+          unitPriceCents: pendingSpecialPriceAction.unitPriceCents,
+          unit: "ton"
+        });
+        setSpecialProductId("");
+        setSpecialPriceReais("");
+        await loadSpecialPrices(pendingSpecialPriceAction.customerId);
+        setFeedback("Preco especial salvo.");
+      } else {
+        await desktopApi.customerSpecialPricesRemove(
+          pendingSpecialPriceAction.customerId,
+          pendingSpecialPriceAction.productId
+        );
+        await loadSpecialPrices(pendingSpecialPriceAction.customerId);
+        setFeedback("Preco especial removido.");
+      }
+      setPendingSpecialPriceAction(null);
+      setPricePasswordError(null);
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : "Erro ao salvar preco especial.");
+      setFormError(err instanceof Error ? err.message : "Erro ao alterar preco especial.");
+    } finally {
+      setSavingSpecialPrice(false);
     }
   }
 
   async function handleRemoveSpecialPrice(productId: string): Promise<void> {
     if (!desktopApi || !editingId) return;
-    const password = window.prompt("Digite a senha de 4 digitos para alterar precos:");
-    if (!password) return;
-    const valid = await desktopApi.verifyPriceChangePassword(password);
-    if (!valid) {
-      setFormError("Senha incorreta.");
-      return;
-    }
-    try {
-      await desktopApi.customerSpecialPricesRemove(editingId, productId);
-      await loadSpecialPrices(editingId);
-      setFeedback("Preco especial removido.");
-    } catch (err) {
-      setFormError(err instanceof Error ? err.message : "Erro ao remover preco especial.");
-    }
+    setPricePasswordError(null);
+    setPendingSpecialPriceAction({ type: "remove", customerId: editingId, productId });
   }
 
   async function handleDelete(id: string): Promise<void> {
@@ -920,6 +949,18 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
             </div>
           </div>
         </div>
+      ) : null}
+
+      {pendingSpecialPriceAction ? (
+        <PriceChangePasswordDialog
+          error={pricePasswordError}
+          submitting={savingSpecialPrice}
+          onCancel={() => {
+            setPendingSpecialPriceAction(null);
+            setPricePasswordError(null);
+          }}
+          onSubmit={(password) => void handleConfirmSpecialPrice(password)}
+        />
       ) : null}
 
       <div style={styles.card}>

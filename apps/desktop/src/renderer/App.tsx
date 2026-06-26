@@ -57,6 +57,7 @@ import { InsightsView } from "./InsightsView";
 import { ReportsView } from "./ReportsView";
 import { CustomersView } from "./CustomersView";
 import { HelpTooltip } from "./Tooltip";
+import { PriceChangePasswordDialog } from "./PriceChangePasswordDialog";
 import { TIPS } from "./tooltip-messages";
 import {
   DocumentInput,
@@ -6366,6 +6367,12 @@ function PriceTableListView({ desktopApi }: { desktopApi: KyberRockDesktopApi })
   const [selectedProductId, setSelectedProductId] = useState("");
   const [priceReais, setPriceReais] = useState("");
   const [message, setPriceMessage] = useState<string | null>(null);
+  const [pendingDefaultPrice, setPendingDefaultPrice] = useState<{
+    productId: string;
+    unitPriceCents: number;
+  } | null>(null);
+  const [pricePasswordError, setPricePasswordError] = useState<string | null>(null);
+  const [savingDefaultPrice, setSavingDefaultPrice] = useState(false);
 
   useEffect(() => {
     void loadPrices();
@@ -6381,23 +6388,36 @@ function PriceTableListView({ desktopApi }: { desktopApi: KyberRockDesktopApi })
     const unitPriceCents = parseMoneyInputToCents(priceReais);
     if (unitPriceCents === null) return;
 
-    const password = window.prompt("Digite a senha de 4 digitos para alterar precos:");
-    if (!password) return;
-    const valid = await desktopApi.verifyPriceChangePassword(password);
-    if (!valid) {
-      setPriceMessage("Senha incorreta.");
-      return;
-    }
+    setPricePasswordError(null);
+    setPendingDefaultPrice({ productId: selectedProductId, unitPriceCents });
+  }
 
-    await desktopApi.productDefaultPricesUpsert({
-      productId: selectedProductId,
-      unitPriceCents,
-      unit: "ton"
-    });
-    setSelectedProductId("");
-    setPriceReais("");
-    setPriceMessage("Preco padrao salvo.");
-    await loadPrices();
+  async function handleConfirmDefaultPrice(password: string): Promise<void> {
+    if (!pendingDefaultPrice || savingDefaultPrice) return;
+    setSavingDefaultPrice(true);
+    try {
+      const valid = await desktopApi.verifyPriceChangePassword(password);
+      if (!valid) {
+        setPricePasswordError("Senha incorreta.");
+        return;
+      }
+
+      await desktopApi.productDefaultPricesUpsert({
+        productId: pendingDefaultPrice.productId,
+        unitPriceCents: pendingDefaultPrice.unitPriceCents,
+        unit: "ton"
+      });
+      await loadPrices();
+      setPendingDefaultPrice(null);
+      setPricePasswordError(null);
+      setSelectedProductId("");
+      setPriceReais("");
+      setPriceMessage("Preco padrao salvo.");
+    } catch (err) {
+      setPricePasswordError(err instanceof Error ? err.message : "Erro ao salvar preco padrao.");
+    } finally {
+      setSavingDefaultPrice(false);
+    }
   }
 
   return (
@@ -6472,6 +6492,18 @@ function PriceTableListView({ desktopApi }: { desktopApi: KyberRockDesktopApi })
           ))}
         </div>
       )}
+
+      {pendingDefaultPrice ? (
+        <PriceChangePasswordDialog
+          error={pricePasswordError}
+          submitting={savingDefaultPrice}
+          onCancel={() => {
+            setPendingDefaultPrice(null);
+            setPricePasswordError(null);
+          }}
+          onSubmit={(password) => void handleConfirmDefaultPrice(password)}
+        />
+      ) : null}
     </div>
   );
 }
