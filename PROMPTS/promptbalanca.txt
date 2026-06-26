@@ -1,0 +1,183 @@
+Você é um engenheiro sênior responsável por ajustar a integração da balança rodoviária no sistema KyberRock.
+
+Contexto do produto:
+O KyberRock é um sistema desktop Windows para operação de pedreira, com controle de entrada e saída de caminhões na balança. O PRD exige captura automática de peso, bloqueio total de lançamento manual e operação offline. A primeira balança conhecida é uma Toledo 950 IDLCG 2, mas a arquitetura não deve ficar hard-coded para apenas esse modelo.
+
+Problema atual:
+Hoje o sistema tenta calcular estabilidade por conta própria: espera um tempo, coleta várias leituras, soma os pesos e tira uma média para gravar o peso de entrada ou saída.
+
+Esse comportamento deve ser alterado.
+
+Nova regra desejada:
+O sistema deve capturar o peso oficial enviado pelo indicador da balança quando ele já estiver estável. Se o protocolo da balança informar status de estabilidade, o sistema deve usar esse status como fonte principal da verdade. O sistema não deve calcular média de peso como regra padrão.
+
+Objetivo da tarefa:
+Refatorar o funcionamento da leitura/captura da balança para remover a média artificial e implementar uma captura baseada em leitura estável, recente e válida vinda do adapter da balança.
+
+Requisitos funcionais:
+
+1. Entrada do caminhão:
+
+   * Ao abrir uma pesagem de entrada, o sistema deve solicitar/capturar o peso atual da balança.
+   * O peso só pode ser registrado se vier como estável pelo adapter/protocolo.
+   * O peso capturado deve ser congelado na operação como peso de entrada.
+   * Não deve existir campo de lançamento manual de peso.
+
+2. Saída do caminhão:
+
+   * Ao fechar uma operação em aberto, o sistema deve capturar o peso atual da balança.
+   * O peso só pode ser registrado se vier como estável pelo adapter/protocolo.
+   * O peso capturado deve ser congelado como peso de saída.
+   * O sistema deve calcular automaticamente o peso líquido: peso_saida - peso_entrada.
+   * Se peso_saida <= peso_entrada, bloquear o fechamento e exibir erro claro.
+
+3. Falha ou instabilidade:
+
+   * Se a balança estiver desconectada, sem dados, instável, em erro, negativa ou em sobrecarga, bloquear a abertura/fechamento da pesagem.
+   * Exibir mensagem objetiva para o operador.
+   * Registrar log técnico do erro.
+   * Não permitir contingência por peso manual.
+
+4. Adapter da balança:
+
+   * Criar ou ajustar uma camada de adapter para normalizar as leituras da balança.
+   * A tela de entrada/saída não deve depender diretamente do protocolo físico da balança.
+   * O adapter deve retornar um objeto normalizado semelhante a:
+
+```ts
+type ScaleStatus =
+  | 'stable'
+  | 'unstable'
+  | 'overload'
+  | 'negative'
+  | 'zero'
+  | 'no_data'
+  | 'error';
+
+type ScaleReading = {
+  weightKg: number;
+  status: ScaleStatus;
+  stable: boolean;
+  rawFrame?: string;
+  receivedAt: Date;
+  deviceId?: string;
+  adapterName?: string;
+};
+```
+
+5. Serviço de captura:
+
+   * Implementar ou ajustar um serviço central, por exemplo `ScaleCaptureService`, `ScaleService` ou equivalente já existente.
+   * Esse serviço deve expor uma função semelhante a:
+
+```ts
+captureStableWeight(options?: {
+  timeoutMs?: number;
+  operationType: 'entry' | 'exit';
+}): Promise<ScaleReading>
+```
+
+* Essa função deve aguardar um peso estável dentro do timeout configurado.
+* Deve aceitar somente leitura estável.
+* Deve rejeitar leituras antigas.
+* Deve rejeitar leituras com status inválido.
+* Não deve calcular média de peso.
+
+6. Leitura recente:
+
+   * Ao capturar peso, aceitar apenas dados recebidos depois do início da tentativa de captura ou dados muito recentes.
+   * Evitar gravar um peso antigo que estava em memória antes do operador iniciar a entrada/saída.
+   * Usar uma janela curta configurável, por exemplo 1 a 2 segundos, se fizer sentido na arquitetura atual.
+
+7. Pequena proteção permitida:
+
+   * Pode existir um debounce simples, desde que não seja média.
+   * Exemplo aceitável: exigir duas leituras estáveis consecutivas com o mesmo peso ou diferença irrelevante dentro da tolerância configurada.
+   * Não usar soma, média ou cálculo estatístico como critério principal de estabilidade.
+   * Se o protocolo já informa explicitamente estabilidade, priorizar esse status.
+
+8. Auditoria:
+
+   * Salvar junto com a operação, quando disponível:
+
+     * peso capturado;
+     * data/hora da captura;
+     * status da balança;
+     * frame bruto recebido (`rawFrame`);
+     * nome do adapter;
+     * identificador do dispositivo;
+     * operador atual, se o sistema já tiver esse contexto.
+   * Não sobrescrever peso já capturado sem regra explícita de auditoria.
+
+9. Configuração:
+
+   * A lógica deve ser configurável por unidade/dispositivo.
+   * Não hard-code para Toledo dentro das telas.
+   * Se já existir configuração de balança, preservar e expandir.
+   * Se existir o campo/configuração de tempo para média, depreciar ou remover do fluxo principal.
+   * Caso mantenha compatibilidade com adapters antigos sem status de estabilidade, deixar isso isolado como fallback técnico, não como comportamento padrão.
+
+10. Interface:
+
+* A tela deve mostrar o status da balança de forma clara:
+
+  * conectado;
+  * aguardando peso estável;
+  * peso estável capturado;
+  * instável;
+  * desconectado;
+  * erro.
+* Durante a captura, evitar múltiplos cliques ou múltiplas capturas concorrentes.
+* Após capturar o peso, exibir o valor capturado e permitir seguir o fluxo normal.
+* Não criar input manual de peso.
+
+Requisitos técnicos:
+
+* Primeiro, localize a implementação atual da leitura de balança e da média de pesos.
+* Refatore o menor número possível de arquivos, mantendo a arquitetura limpa.
+* Remova ou isole a lógica de média usada para gravar entrada/saída.
+* Centralize a regra de captura em um serviço reutilizável.
+* Preserve compatibilidade com o restante do fluxo de entrada e saída.
+* Evite alterações não relacionadas ao escopo.
+* Use nomes claros e tipagem forte.
+* Trate erros explicitamente.
+* Registre logs técnicos úteis para diagnóstico.
+* Atualize testes existentes ou crie testes novos cobrindo o novo comportamento.
+
+Critérios de aceite:
+
+1. O sistema não grava mais peso calculado por média como comportamento padrão.
+2. O sistema grava somente peso estável recebido da balança/adapter.
+3. Entrada captura e congela `peso_entrada`.
+4. Saída captura e congela `peso_saida`.
+5. Peso líquido é calculado corretamente.
+6. Saída com peso menor ou igual ao peso de entrada é bloqueada.
+7. Balança instável, desconectada ou com erro bloqueia entrada e saída.
+8. Não existe campo nem fallback operacional para peso manual.
+9. A lógica de captura está centralizada em serviço/adapter, não espalhada nas telas.
+10. Dados técnicos da captura são salvos ou preparados para auditoria.
+11. Testes relevantes passam.
+12. O código continua compatível com operação offline.
+
+Antes de alterar:
+
+* Faça uma breve análise da implementação atual.
+* Identifique onde está a média de peso.
+* Identifique onde entrada e saída chamam a captura da balança.
+* Identifique se já existe adapter ou serviço de balança.
+
+Depois de alterar:
+
+* Liste os arquivos modificados.
+* Explique o que foi removido.
+* Explique o novo fluxo de captura.
+* Informe como testar manualmente:
+
+  1. entrada com peso estável;
+  2. entrada com balança instável;
+  3. saída com peso válido;
+  4. saída com peso menor que entrada;
+  5. balança desconectada;
+  6. tentativa de múltiplos cliques durante captura.
+
+Não implemente funcionalidades fora desse escopo.

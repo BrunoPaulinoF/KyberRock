@@ -1,0 +1,453 @@
+Você é um engenheiro sênior full-stack responsável por ajustar a integração OMIE no sistema KyberRock.
+
+Contexto do sistema:
+O KyberRock é um sistema desktop Windows offline-first para operação de pedreira, com controle de entrada e saída de caminhões na balança. O OMIE continuará sendo o sistema oficial para cadastros comerciais, produtos e financeiro. O KyberRock deve manter uma cópia local sincronizada desses dados para operar mesmo sem internet.
+
+Situação atual:
+
+* A integração com OMIE já existe parcialmente.
+* O sistema já importou aproximadamente 1187 clientes do OMIE.
+* O sistema já importou produtos do OMIE.
+* Ainda não está completa a sincronização de:
+
+  * transportadoras;
+  * motoristas;
+  * veículos;
+  * formas/condições de pagamento, se ainda não estiverem completas;
+  * tabelas de preço, se aplicável;
+  * contas a receber/resumo financeiro por cliente, se aplicável.
+* A parte financeira continuará sendo feita no OMIE.
+* O KyberRock não deve substituir o OMIE no financeiro.
+* O KyberRock deve apenas consultar e espelhar dados necessários para a operação da balança.
+
+Objetivo:
+Implementar ou refatorar uma sincronização mestre de cadastros do OMIE, centralizada, segura, idempotente e offline-first.
+
+Nome sugerido da função principal:
+`syncOmieMasterData`
+
+Ou, se o projeto estiver usando nomes em português:
+`sincronizarCadastrosOmie`
+
+Essa função deve coordenar a sincronização de todos os cadastros necessários para o KyberRock.
+
+Escopo obrigatório:
+
+1. Clientes
+
+   * Reaproveitar a sincronização existente.
+   * Não quebrar os 1187 clientes já importados.
+   * Garantir upsert por ID externo do OMIE.
+   * Atualizar dados locais quando houver alteração no OMIE.
+   * Preservar campos locais que não pertencem ao OMIE.
+
+2. Produtos
+
+   * Reaproveitar a sincronização existente.
+   * Garantir upsert por ID externo do OMIE.
+   * Usar os produtos locais sincronizados nas telas operacionais.
+
+3. Transportadoras
+
+   * Implementar sincronização de transportadoras a partir da estrutura disponível no OMIE/projeto.
+   * Verificar primeiro como o projeto atual representa clientes, fornecedores e transportadoras.
+   * Não assumir hard-code sem checar a estrutura existente.
+   * Criar uma regra configurável para identificar transportadoras, por exemplo:
+
+     * tag no OMIE;
+     * característica no OMIE;
+     * tipo de cadastro;
+     * campo específico já existente;
+     * referência em cliente/pedido, se houver.
+   * Salvar transportadoras em tabela/entidade local própria ou adaptar a entidade existente, conforme a arquitetura do projeto.
+
+4. Motoristas
+
+   * Implementar sincronização de motoristas.
+   * Antes de codar, investigar no projeto e na integração atual onde motoristas podem estar vindo do OMIE.
+   * Se o OMIE não tiver endpoint direto já implementado no projeto, criar uma camada configurável para origem dos motoristas.
+   * Possíveis origens:
+
+     * contatos do cliente/transportadora;
+     * características;
+     * tags;
+     * observações estruturadas;
+     * outro endpoint já usado no projeto.
+   * Não inventar endpoint inexistente.
+   * Se a origem exata ainda não estiver configurada, deixar a estrutura pronta e documentar claramente o ponto de configuração.
+
+5. Veículos
+
+   * Implementar sincronização de veículos.
+   * Antes de codar, investigar como veículos estão ou deveriam estar representados no projeto.
+   * Considerar que veículos podem estar no OMIE como:
+
+     * características;
+     * tags;
+     * observações estruturadas;
+     * dados vinculados a transportadora/cliente;
+     * outro endpoint já disponível.
+   * Criar mapeamento configurável para placa, tipo de veículo, transportadora e motorista padrão.
+   * Não usar parsing frágil sem isolar em função própria e sem logs.
+   * A placa deve ser normalizada para comparação, removendo espaços e padronizando maiúsculas.
+
+6. Formas e condições de pagamento
+
+   * Verificar se já existe sincronização.
+   * Se existir, reaproveitar e padronizar no fluxo mestre.
+   * Se não existir, implementar como subfunção da sincronização OMIE.
+   * Esses dados devem ser somente leitura no KyberRock, salvo se o projeto já tiver regra local diferente.
+
+7. Tabelas de preço
+
+   * Verificar se o KyberRock precisa usar tabela de preço do OMIE no fluxo operacional.
+   * Se já existir estrutura no projeto, integrar ao fluxo mestre.
+   * Se não existir, preparar a sincronização sem quebrar a operação atual.
+
+8. Contas a receber / situação financeira do cliente
+
+   * O KyberRock não fará financeiro.
+   * O sistema deve apenas consultar/espelhar informações necessárias para bloqueio operacional, se o PRD ou código atual já tiver essa regra.
+   * Consolidar por cliente, quando aplicável:
+
+     * total em aberto;
+     * total vencido;
+     * quantidade de títulos vencidos;
+     * data da última atualização;
+     * status de bloqueio, se existir no OMIE ou no projeto.
+
+Arquitetura esperada:
+
+Criar ou reaproveitar uma camada:
+
+`OmieClient`
+
+Responsável por:
+
+* autenticação;
+* chamadas HTTP;
+* tratamento de erros;
+* paginação;
+* retry controlado, se já existir padrão no projeto;
+* padronização de respostas.
+
+Criar ou reaproveitar uma camada:
+
+`OmieSyncService`
+
+Responsável por:
+
+* orquestrar a sincronização;
+* executar subfunções por entidade;
+* controlar lock de sincronização;
+* registrar logs;
+* salvar histórico de execução;
+* fazer upsert no banco local;
+* salvar payload bruto para diagnóstico.
+
+Funções sugeridas:
+
+```ts
+async function syncOmieMasterData(options?: {
+  mode?: 'full' | 'incremental';
+  triggeredBy?: 'manual' | 'automatic' | 'startup';
+}): Promise<OmieSyncResult>
+
+async function syncOmieClientes(): Promise<EntitySyncResult>
+async function syncOmieProdutos(): Promise<EntitySyncResult>
+async function syncOmieTransportadoras(): Promise<EntitySyncResult>
+async function syncOmieMotoristas(): Promise<EntitySyncResult>
+async function syncOmieVeiculos(): Promise<EntitySyncResult>
+async function syncOmieFormasPagamento(): Promise<EntitySyncResult>
+async function syncOmieCondicoesPagamento(): Promise<EntitySyncResult>
+async function syncOmieTabelasPreco(): Promise<EntitySyncResult>
+async function syncOmieContasReceber(): Promise<EntitySyncResult>
+```
+
+Tipos sugeridos:
+
+```ts
+type OmieSyncResult = {
+  success: boolean;
+  startedAt: Date;
+  finishedAt: Date;
+  triggeredBy: 'manual' | 'automatic' | 'startup';
+  mode: 'full' | 'incremental';
+  entities: EntitySyncResult[];
+};
+
+type EntitySyncResult = {
+  entity: string;
+  success: boolean;
+  totalFetched: number;
+  totalCreated: number;
+  totalUpdated: number;
+  totalSkipped: number;
+  startedAt: Date;
+  finishedAt: Date;
+  errorMessage?: string;
+};
+```
+
+Regras técnicas obrigatórias:
+
+1. Não espalhar chamadas OMIE pelas telas.
+2. Telas operacionais devem usar apenas o banco local.
+3. O sistema deve continuar funcionando offline com o último espelho local sincronizado.
+4. A sincronização deve ser paginada.
+5. A sincronização deve ser idempotente.
+6. Usar upsert por ID externo do OMIE.
+7. Não duplicar clientes, produtos, transportadoras, motoristas ou veículos.
+8. Não apagar dados locais sem regra explícita.
+9. Não sobrescrever campos locais exclusivos do KyberRock.
+10. Salvar `omieId`, `omieCodigoIntegracao` ou identificador equivalente disponível.
+11. Salvar data da última sincronização por registro.
+12. Salvar origem do dado, por exemplo:
+
+    * `OMIE_CLIENTE`;
+    * `OMIE_PRODUTO`;
+    * `OMIE_TRANSPORTADORA`;
+    * `OMIE_CONTATO`;
+    * `OMIE_CARACTERISTICA`;
+    * `LOCAL`.
+13. Salvar payload bruto do OMIE para auditoria/debug, quando possível.
+14. Criar lock para impedir duas sincronizações simultâneas.
+15. Tratar erro por entidade sem corromper a sincronização inteira.
+16. Registrar logs técnicos úteis.
+17. Não expor segredo, app_key ou app_secret em logs.
+18. Não hard-code para um cliente específico.
+19. Não implementar financeiro dentro do KyberRock.
+20. Não criar alterações fora desse escopo.
+
+Banco de dados:
+
+Verificar antes qual ORM/banco o projeto usa.
+
+Se já existirem tabelas/entidades equivalentes, adaptar sem duplicar estrutura.
+
+Se não existirem, criar ou propor entidades locais para:
+
+* `clientes`
+* `produtos`
+* `transportadoras`
+* `motoristas`
+* `veiculos`
+* `omie_sync_runs`
+* `omie_sync_entities`
+* `omie_raw_records`
+
+Campos recomendados para entidades sincronizadas:
+
+```ts
+{
+  id: string;
+  omieId?: string;
+  omieCodigo?: string;
+  omieCodigoIntegracao?: string;
+  nome: string;
+  ativo: boolean;
+  origem: 'OMIE' | 'LOCAL';
+  rawOmiePayloadId?: string;
+  lastSyncedAt?: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+```
+
+Para veículos:
+
+```ts
+{
+  id: string;
+  omieId?: string;
+  placa: string;
+  placaNormalizada: string;
+  tipo?: string;
+  transportadoraId?: string;
+  motoristaPadraoId?: string;
+  ativo: boolean;
+  origem: 'OMIE' | 'LOCAL';
+  rawOmiePayloadId?: string;
+  lastSyncedAt?: Date;
+}
+```
+
+Para motoristas:
+
+```ts
+{
+  id: string;
+  omieId?: string;
+  nome: string;
+  cpf?: string;
+  telefone?: string;
+  transportadoraId?: string;
+  ativo: boolean;
+  origem: 'OMIE' | 'LOCAL';
+  rawOmiePayloadId?: string;
+  lastSyncedAt?: Date;
+}
+```
+
+Interface:
+
+Criar ou ajustar uma tela/seção de configuração OMIE com:
+
+* botão “Sincronizar OMIE agora”;
+* status da última sincronização;
+* data/hora da última sincronização;
+* quantidade de registros sincronizados por entidade;
+* mensagem de erro por entidade;
+* indicador visual de sincronização em andamento;
+* bloqueio contra múltiplos cliques durante sincronização;
+* configuração de origem/mapeamento para:
+
+  * transportadoras;
+  * motoristas;
+  * veículos.
+
+A sincronização automática deve rodar a cada 30 minutos, se isso já estiver previsto no projeto/PRD. Se já existir job/agendador, reaproveitar. Se não existir, implementar respeitando a arquitetura atual.
+
+Configuração de mapeamento:
+
+Adicionar configuração para identificar entidades no OMIE sem hard-code.
+
+Exemplo:
+
+```json
+{
+  "omieSync": {
+    "transportadoras": {
+      "source": "clientes",
+      "identifier": {
+        "type": "tag_or_characteristic",
+        "values": ["TRANSPORTADORA", "Transportadora"]
+      }
+    },
+    "motoristas": {
+      "source": "contatos",
+      "identifier": {
+        "type": "cargo_or_tag",
+        "values": ["MOTORISTA", "Motorista"]
+      }
+    },
+    "veiculos": {
+      "source": "characteristics",
+      "plateFieldNames": ["PLACA", "PLACA_VEICULO", "VEICULO_PLACA"],
+      "typeFieldNames": ["TIPO_VEICULO", "TIPO_CAMINHAO"],
+      "carrierFieldNames": ["TRANSPORTADORA"]
+    }
+  }
+}
+```
+
+Adapte o formato acima ao padrão real do projeto.
+
+Comportamento esperado nas telas operacionais:
+
+1. Entrada de caminhão:
+
+   * cliente deve vir da base local sincronizada;
+   * produto deve vir da base local sincronizada;
+   * transportadora deve vir da base local sincronizada;
+   * motorista deve vir da base local sincronizada;
+   * veículo/placa deve vir da base local sincronizada quando existir;
+   * permitir busca rápida nos cadastros locais;
+   * não depender de internet na hora da pesagem.
+
+2. Saída de caminhão:
+
+   * usar dados já salvos na operação;
+   * não consultar OMIE diretamente;
+   * preservar consistência mesmo offline.
+
+3. Cadastro local:
+
+   * dados vindos do OMIE devem ser somente leitura, salvo exceções já existentes no projeto;
+   * se o sistema permitir criação local emergencial de motorista/veículo, marcar como `LOCAL` e não misturar com registros OMIE sem reconciliação explícita.
+
+Ordem de trabalho obrigatória:
+
+1. Analisar a estrutura atual do projeto.
+2. Localizar a integração OMIE existente.
+3. Identificar como clientes e produtos já estão sendo importados.
+4. Identificar modelos/tabelas existentes.
+5. Identificar se já existe job de sincronização automática.
+6. Identificar se já existe tela de configuração OMIE.
+7. Planejar a menor alteração segura.
+8. Implementar reaproveitando o máximo possível.
+9. Criar testes.
+10. Rodar validações disponíveis no projeto.
+
+Não comece codando antes de entender a estrutura existente.
+
+Testes obrigatórios:
+
+Criar ou ajustar testes para:
+
+1. Paginação da API OMIE.
+2. Upsert sem duplicar registros.
+3. Atualização de registro existente.
+4. Preservação de campo local.
+5. Lock impedindo sincronização simultânea.
+6. Erro parcial em uma entidade sem corromper outras.
+7. Importação de clientes existente continua funcionando.
+8. Importação de produtos existente continua funcionando.
+9. Importação de transportadoras via regra configurada.
+10. Importação de motoristas via regra configurada.
+11. Importação de veículos com normalização de placa.
+12. Tela operacional busca dados locais sem chamar OMIE.
+13. Sistema funciona com OMIE indisponível usando dados locais já sincronizados.
+
+Critérios de aceite:
+
+1. Existe uma função central de sincronização mestre do OMIE.
+2. Clientes e produtos continuam sincronizando corretamente.
+3. Transportadoras passam a ter estrutura de sincronização.
+4. Motoristas passam a ter estrutura de sincronização.
+5. Veículos passam a ter estrutura de sincronização.
+6. O sistema não duplica registros já existentes.
+7. O sistema salva ou prepara logs de sincronização por entidade.
+8. O sistema salva ou prepara payload bruto do OMIE para diagnóstico.
+9. As telas operacionais usam banco local, não chamadas diretas ao OMIE.
+10. A sincronização manual funciona por botão.
+11. A sincronização automática funciona ou é integrada ao agendador existente.
+12. O sistema continua operacional offline.
+13. Build, lint e testes existentes passam.
+14. O código não contém app_key/app_secret expostos.
+15. A implementação não cria funcionalidades financeiras novas dentro do KyberRock.
+
+Cuidados importantes:
+
+* Não alterar regras de balança nesta tarefa.
+* Não alterar fluxo financeiro além de leitura/sincronização de dados necessários.
+* Não alterar autenticação geral do sistema.
+* Não criar cadastros manuais como substituto do OMIE.
+* Não remover dados existentes sem migration segura.
+* Não quebrar compatibilidade com os clientes e produtos já importados.
+* Não inventar endpoint OMIE: use o que já existe no projeto ou crie adapter configurável quando a origem exata ainda depender de configuração.
+* Se houver dúvida entre alterar tela ou serviço, priorize serviço centralizado e mantenha telas simples.
+
+Entrega esperada ao final:
+
+1. Lista de arquivos alterados.
+2. Explicação curta do fluxo novo.
+3. Explicação de como a sincronização identifica:
+
+   * transportadoras;
+   * motoristas;
+   * veículos.
+4. Explicação de como configurar os mapeamentos.
+5. Explicação de como testar manualmente:
+
+   * sincronização completa;
+   * OMIE fora do ar;
+   * cliente já existente;
+   * produto já existente;
+   * motorista novo;
+   * veículo novo;
+   * transportadora nova;
+   * sincronização simultânea.
+6. Resultado dos testes/build/lint executados.
+
+Implemente com foco em segurança, rastreabilidade, idempotência e compatibilidade com a base atual.
