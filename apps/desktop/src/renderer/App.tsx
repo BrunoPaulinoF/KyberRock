@@ -5174,7 +5174,30 @@ function TransportView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
 interface CarrierFormData {
   name: string;
   document: string;
+  phone: string;
+  email: string;
+  zipcode: string;
+  addressStreet: string;
+  addressNumber: string;
+  addressComplement: string;
+  neighborhood: string;
+  city: string;
+  state: string;
 }
+
+const emptyCarrierForm: CarrierFormData = {
+  name: "",
+  document: "",
+  phone: "",
+  email: "",
+  zipcode: "",
+  addressStreet: "",
+  addressNumber: "",
+  addressComplement: "",
+  neighborhood: "",
+  city: "",
+  state: ""
+};
 
 function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   const [carriers, setCarriers] = useState<CarrierCacheEntry[]>([]);
@@ -5182,7 +5205,7 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState<CarrierFormData>({ name: "", document: "" });
+  const [form, setForm] = useState<CarrierFormData>(emptyCarrierForm);
   const [formError, setFormError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [selectedCarrier, setSelectedCarrier] = useState<string | null>(null);
@@ -5222,7 +5245,7 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   }
 
   function resetForm(): void {
-    setForm({ name: "", document: "" });
+    setForm(emptyCarrierForm);
     setEditingId(null);
     setFormError(null);
   }
@@ -5233,7 +5256,19 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   }
 
   function openEdit(carrier: CarrierCacheEntry): void {
-    setForm({ name: carrier.name, document: carrier.document ?? "" });
+    setForm({
+      name: carrier.name,
+      document: carrier.document ?? "",
+      phone: carrier.phone ?? "",
+      email: carrier.email ?? "",
+      zipcode: carrier.zipcode ?? "",
+      addressStreet: carrier.addressStreet ?? "",
+      addressNumber: carrier.addressNumber ?? "",
+      addressComplement: carrier.addressComplement ?? "",
+      neighborhood: carrier.neighborhood ?? "",
+      city: carrier.city ?? "",
+      state: carrier.state ?? ""
+    });
     setEditingId(carrier.id);
     setFormError(null);
     setShowForm(true);
@@ -5253,13 +5288,31 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
       if (editingId) {
         await desktopApi.carriersUpdate(editingId, {
           name: form.name.trim(),
-          document: normalizedDocument || undefined
+          document: normalizedDocument || null,
+          phone: form.phone.trim() || null,
+          email: form.email.trim() || null,
+          zipcode: form.zipcode.trim() || null,
+          addressStreet: form.addressStreet.trim() || null,
+          addressNumber: form.addressNumber.trim() || null,
+          addressComplement: form.addressComplement.trim() || null,
+          neighborhood: form.neighborhood.trim() || null,
+          city: form.city.trim() || null,
+          state: form.state.trim() || null
         });
         setMessage("Transportadora atualizada.");
       } else {
         await desktopApi.carriersCreate({
           name: form.name.trim(),
-          document: normalizedDocument || undefined
+          document: normalizedDocument || undefined,
+          phone: form.phone.trim() || undefined,
+          email: form.email.trim() || undefined,
+          zipcode: form.zipcode.trim() || undefined,
+          addressStreet: form.addressStreet.trim() || undefined,
+          addressNumber: form.addressNumber.trim() || undefined,
+          addressComplement: form.addressComplement.trim() || undefined,
+          neighborhood: form.neighborhood.trim() || undefined,
+          city: form.city.trim() || undefined,
+          state: form.state.trim() || undefined
         });
         setMessage("Transportadora criada.");
       }
@@ -5323,6 +5376,51 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
               value={form.document}
               onChange={(document) => setForm({ ...form, document })}
             />
+            <TextInput
+              label="Telefone"
+              value={form.phone}
+              onChange={(phone) => setForm({ ...form, phone })}
+            />
+            <TextInput
+              label="Email"
+              value={form.email}
+              onChange={(email) => setForm({ ...form, email })}
+            />
+            <TextInput
+              label="CEP"
+              value={form.zipcode}
+              onChange={(zipcode) => setForm({ ...form, zipcode })}
+            />
+            <TextInput
+              label="Endereco"
+              value={form.addressStreet}
+              onChange={(addressStreet) => setForm({ ...form, addressStreet })}
+            />
+            <TextInput
+              label="Numero"
+              value={form.addressNumber}
+              onChange={(addressNumber) => setForm({ ...form, addressNumber })}
+            />
+            <TextInput
+              label="Complemento"
+              value={form.addressComplement}
+              onChange={(addressComplement) => setForm({ ...form, addressComplement })}
+            />
+            <TextInput
+              label="Bairro"
+              value={form.neighborhood}
+              onChange={(neighborhood) => setForm({ ...form, neighborhood })}
+            />
+            <TextInput
+              label="Cidade"
+              value={form.city}
+              onChange={(city) => setForm({ ...form, city })}
+            />
+            <TextInput
+              label="Estado"
+              value={form.state}
+              onChange={(state) => setForm({ ...form, state })}
+            />
           </div>
           <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
             <button type="button" onClick={handleSave} style={styles.primaryButton}>
@@ -5367,6 +5465,13 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                   >
                     {carrier.source === "omie" ? "OMIE" : "LOCAL"}
                   </span>
+                  {[carrier.email, carrier.city, carrier.state].filter(Boolean).length > 0 ? (
+                    <div style={{ color: "#64748b", fontSize: "12px", marginTop: "4px" }}>
+                      {[carrier.email, [carrier.city, carrier.state].filter(Boolean).join("/")]
+                        .filter(Boolean)
+                        .join(" - ")}
+                    </div>
+                  ) : null}
                 </div>
                 <div style={{ display: "flex", gap: "6px" }}>
                   <button

@@ -64,6 +64,15 @@ export interface CarrierCacheEntry {
   omieCustomerId: number | null;
   name: string;
   document: string | null;
+  phone: string | null;
+  email: string | null;
+  zipcode: string | null;
+  addressStreet: string | null;
+  addressNumber: string | null;
+  addressComplement: string | null;
+  neighborhood: string | null;
+  city: string | null;
+  state: string | null;
   source: "omie" | "local";
   isActive: boolean;
 }
@@ -190,6 +199,15 @@ interface CarrierRow {
   omie_customer_id: number | null;
   name: string;
   document: string | null;
+  phone: string | null;
+  email: string | null;
+  zipcode: string | null;
+  address_street: string | null;
+  address_number: string | null;
+  address_complement: string | null;
+  neighborhood: string | null;
+  city: string | null;
+  state: string | null;
   source: "omie" | "local";
   is_active: number;
 }
@@ -363,6 +381,15 @@ function mapCarrier(row: CarrierRow): CarrierCacheEntry {
     omieCustomerId: row.omie_customer_id,
     name: row.name,
     document: row.document,
+    phone: row.phone,
+    email: row.email,
+    zipcode: row.zipcode,
+    addressStreet: row.address_street,
+    addressNumber: row.address_number,
+    addressComplement: row.address_complement,
+    neighborhood: row.neighborhood,
+    city: row.city,
+    state: row.state,
     source: row.source,
     isActive: row.is_active === 1
   };
@@ -599,7 +626,7 @@ export class CacheStore {
       case "driver":
         return ["name", "document"];
       case "carrier":
-        return ["name", "document"];
+        return ["name", "document", "zipcode", "addressStreet", "neighborhood", "city"];
       case "payment_term":
         return ["name", "omieCode"];
       case "price_table":
@@ -677,7 +704,8 @@ export class CacheStore {
   private loadCarriers(companyId: string): void {
     const rows = this.db
       .prepare(
-        `SELECT id, omie_customer_id, name, document, source, is_active
+        `SELECT id, omie_customer_id, name, document, phone, email, zipcode, address_street,
+                address_number, address_complement, neighborhood, city, state, source, is_active
          FROM carriers WHERE company_id = ? AND deleted_at IS NULL`
       )
       .all(companyId) as CarrierRow[];

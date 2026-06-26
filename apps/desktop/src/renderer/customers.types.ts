@@ -30,6 +30,15 @@ export interface CarrierCacheEntry {
   id: string;
   name: string;
   document: string | null;
+  phone: string | null;
+  email: string | null;
+  zipcode: string | null;
+  addressStreet: string | null;
+  addressNumber: string | null;
+  addressComplement: string | null;
+  neighborhood: string | null;
+  city: string | null;
+  state: string | null;
   source: string;
   isActive: boolean;
 }

@@ -47,19 +47,30 @@ describe("OmieSyncService", () => {
 
     const service = new OmieSyncService(client, db);
 
-     
-    vi.spyOn((service as unknown as Record<string, unknown>).customersService as unknown as { listAll: () => Promise<unknown[]> }, "listAll").mockResolvedValue([
+    vi.spyOn((service as unknown as Record<string, unknown>).suppliersService as unknown as { listAll: () => Promise<unknown[]> }, "listAll").mockResolvedValue([
       {
         id: 123,
         name: "ACME Ltda",
         tradeName: "ACME",
         document: "12345678000195",
         email: "acme@example.com",
-        phone: "(11) 99999-9999"
+        phone: "(11) 99999-9999",
+        zipcode: "01001000",
+        addressStreet: "Rua A",
+        neighborhood: "Centro",
+        city: "Sao Paulo",
+        state: "SP",
+        isActive: true,
+        tags: { tags: ["Cliente"] }
+      },
+      {
+        id: 124,
+        name: "Transportadora Ltda",
+        isActive: true,
+        tags: { tags: ["Transportadora"] }
       }
     ]);
 
-     
     vi.spyOn((service as unknown as Record<string, unknown>).receivablesService as unknown as { getTotalOpenAmountForClient: () => Promise<number> }, "getTotalOpenAmountForClient").mockResolvedValue(500);
 
     const count = await service.pullCustomersFromOmie("company-1");

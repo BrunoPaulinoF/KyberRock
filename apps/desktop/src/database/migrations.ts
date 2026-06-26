@@ -780,5 +780,21 @@ ALTER TABLE loading_requests ADD COLUMN loader_completed_at TEXT;
 CREATE INDEX IF NOT EXISTS idx_loading_requests_unit_loader_completed
   ON loading_requests(unit_id, loader_completed_at);
 `
+  },
+  {
+    version: 18,
+    name: "carrier_contact_address_fields",
+    sql: `
+ALTER TABLE carriers ADD COLUMN email TEXT;
+ALTER TABLE carriers ADD COLUMN zipcode TEXT;
+ALTER TABLE carriers ADD COLUMN address_street TEXT;
+ALTER TABLE carriers ADD COLUMN address_number TEXT;
+ALTER TABLE carriers ADD COLUMN address_complement TEXT;
+ALTER TABLE carriers ADD COLUMN neighborhood TEXT;
+ALTER TABLE carriers ADD COLUMN city TEXT;
+ALTER TABLE carriers ADD COLUMN state TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_carriers_company_city ON carriers(company_id, city);
+`
   }
 ];

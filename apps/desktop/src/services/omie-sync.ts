@@ -5,6 +5,7 @@ import {
   OmieProductsService,
   OmieReceivablesService,
   OmieSuppliersService,
+  hasClienteTag,
   hasTransportadoraTag,
   type CreateCustomerInput,
   type Product,
@@ -97,19 +98,30 @@ export class OmieSyncService {
   }> {
     const pulled = await this.pullCustomersFromOmie(companyId);
     const pushed = await this.pushCustomersToOmie(companyId);
-    await this.reconcileCustomersByDocument(companyId);
     return { pulled, pushed };
   }
 
   async pullCustomersFromOmie(companyId: string): Promise<number> {
-    const omieCustomers = await this.customersService.listAll();
+    const suppliers = await this.suppliersService.listAll();
+    const omieCustomers = suppliers.filter((supplier) => hasClienteTag(supplier));
+
+    this.db.prepare(`
+      UPDATE customers
+      SET deleted_at = datetime('now'),
+          is_active = 0,
+          updated_at = datetime('now')
+      WHERE company_id = ?
+        AND source = 'omie'
+        AND deleted_at IS NULL
+    `).run(companyId);
 
     const upsert = this.db.prepare(`
       INSERT INTO customers (
         id, company_id, omie_customer_id, source, legal_name, trade_name,
-        document, phone, email, is_active, sync_status, last_synced_at,
+        document, phone, email, zipcode, address_street, address_number,
+        address_complement, neighborhood, city, state, is_active, sync_status, last_synced_at,
         omie_updated_at, needs_push, created_at, updated_at
-      ) VALUES (?, ?, ?, 'omie', ?, ?, ?, ?, ?, 1, 'synced', datetime('now'), datetime('now'), 0, datetime('now'), datetime('now'))
+      ) VALUES (?, ?, ?, 'omie', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced', datetime('now'), datetime('now'), 0, datetime('now'), datetime('now'))
       ON CONFLICT(id) DO UPDATE SET
         omie_customer_id = excluded.omie_customer_id,
         legal_name = CASE WHEN customers.needs_push = 0 THEN excluded.legal_name ELSE customers.legal_name END,
@@ -117,6 +129,15 @@ export class OmieSyncService {
         document = CASE WHEN customers.needs_push = 0 THEN excluded.document ELSE customers.document END,
         phone = CASE WHEN customers.needs_push = 0 THEN excluded.phone ELSE customers.phone END,
         email = CASE WHEN customers.needs_push = 0 THEN excluded.email ELSE customers.email END,
+        zipcode = CASE WHEN customers.needs_push = 0 THEN excluded.zipcode ELSE customers.zipcode END,
+        address_street = CASE WHEN customers.needs_push = 0 THEN excluded.address_street ELSE customers.address_street END,
+        address_number = CASE WHEN customers.needs_push = 0 THEN excluded.address_number ELSE customers.address_number END,
+        address_complement = CASE WHEN customers.needs_push = 0 THEN excluded.address_complement ELSE customers.address_complement END,
+        neighborhood = CASE WHEN customers.needs_push = 0 THEN excluded.neighborhood ELSE customers.neighborhood END,
+        city = CASE WHEN customers.needs_push = 0 THEN excluded.city ELSE customers.city END,
+        state = CASE WHEN customers.needs_push = 0 THEN excluded.state ELSE customers.state END,
+        is_active = excluded.is_active,
+        deleted_at = NULL,
         last_synced_at = datetime('now'),
         omie_updated_at = datetime('now'),
         updated_at = datetime('now')
@@ -142,7 +163,15 @@ export class OmieSyncService {
         customer.tradeName || customer.name,
         customer.document || null,
         customer.phone || null,
-        customer.email || null
+        customer.email || null,
+        customer.zipcode || null,
+        customer.addressStreet || null,
+        customer.addressNumber || null,
+        customer.addressComplement || null,
+        customer.neighborhood || null,
+        customer.city || null,
+        customer.state || null,
+        customer.isActive ? 1 : 0
       );
       count++;
 
@@ -439,15 +468,38 @@ export class OmieSyncService {
     const suppliers = await this.suppliersService.listAll();
     const transportadoras = suppliers.filter((s) => hasTransportadoraTag(s));
 
+    this.db.prepare(`
+      UPDATE carriers
+      SET deleted_at = datetime('now'),
+          is_active = 0,
+          updated_at = datetime('now')
+      WHERE company_id = ?
+        AND source = 'omie'
+        AND deleted_at IS NULL
+    `).run(companyId);
+
     const upsert = this.db.prepare(`
       INSERT INTO carriers (
-        id, company_id, omie_customer_id, name, document, source,
+        id, company_id, omie_customer_id, omie_integration_code, name, document, phone, email,
+        zipcode, address_street, address_number, address_complement, neighborhood, city, state, source,
         is_active, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, 'omie', ?, datetime('now'), datetime('now'))
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'omie', ?, datetime('now'), datetime('now'))
       ON CONFLICT(id) DO UPDATE SET
+        omie_customer_id = excluded.omie_customer_id,
+        omie_integration_code = excluded.omie_integration_code,
         name = excluded.name,
         document = excluded.document,
+        phone = excluded.phone,
+        email = excluded.email,
+        zipcode = excluded.zipcode,
+        address_street = excluded.address_street,
+        address_number = excluded.address_number,
+        address_complement = excluded.address_complement,
+        neighborhood = excluded.neighborhood,
+        city = excluded.city,
+        state = excluded.state,
         is_active = excluded.is_active,
+        deleted_at = NULL,
         updated_at = datetime('now')
     `);
 
@@ -458,8 +510,18 @@ export class OmieSyncService {
         localId,
         companyId,
         supplier.id,
+        supplier.integrationCode || null,
         supplier.name,
         supplier.document || null,
+        supplier.phone || null,
+        supplier.email || null,
+        supplier.zipcode || null,
+        supplier.addressStreet || null,
+        supplier.addressNumber || null,
+        supplier.addressComplement || null,
+        supplier.neighborhood || null,
+        supplier.city || null,
+        supplier.state || null,
         supplier.isActive ? 1 : 0
       );
       count++;
