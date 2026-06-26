@@ -148,6 +148,11 @@ describe("supabase sync", () => {
           loadingRequests: [expect.objectContaining({ entry_weight_kg: 12_000 })]
         })
       });
+      const body = invokeMock.mock.calls[0]?.[1]?.body as {
+        loadingRequests?: Array<Record<string, unknown>>;
+      };
+      expect(body.loadingRequests?.[0]).not.toHaveProperty("customer_id");
+      expect(body.loadingRequests?.[0]).not.toHaveProperty("product_id");
     } finally {
       database.close();
     }

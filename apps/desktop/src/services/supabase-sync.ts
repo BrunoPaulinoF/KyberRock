@@ -324,10 +324,14 @@ export async function syncLoadingRequestToSupabase(
   identity: LocalDesktopIdentity
 ): Promise<boolean> {
   const settings = getCloudSettings(database, identity);
-  const request = getLoadingRequestPayload(database, requestId, settings);
+  const {
+    customer_id: customerId,
+    product_id: productId,
+    ...request
+  } = getLoadingRequestPayload(database, requestId, settings);
   const dependencies = collectCloudSyncDependencies(database, {
-    customer_id: request.customer_id,
-    product_id: request.product_id
+    customer_id: customerId,
+    product_id: productId
   });
   await invokeDesktopSync(settings, { loadingRequests: [request], ...dependencies });
   return true;
