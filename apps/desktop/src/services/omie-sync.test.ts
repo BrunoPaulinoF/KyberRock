@@ -50,7 +50,7 @@ describe("OmieSyncService", () => {
 
     const service = new OmieSyncService(client, db);
 
-    vi.spyOn((service as unknown as Record<string, unknown>).suppliersService as unknown as { listAll: () => Promise<unknown[]> }, "listAll").mockResolvedValue([
+    vi.spyOn((service as unknown as Record<string, unknown>).customersService as unknown as { listAll: () => Promise<unknown[]> }, "listAll").mockResolvedValue([
       {
         id: 123,
         name: "ACME Ltda",
@@ -73,8 +73,6 @@ describe("OmieSyncService", () => {
         tags: { tags: ["Transportadora"] }
       }
     ]);
-
-    vi.spyOn((service as unknown as Record<string, unknown>).receivablesService as unknown as { getTotalOpenAmountForClient: () => Promise<number> }, "getTotalOpenAmountForClient").mockResolvedValue(500);
 
     const count = await service.pullCustomersFromOmie("company-1");
 
@@ -107,7 +105,7 @@ describe("OmieSyncService", () => {
     expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining("INSERT INTO products"));
   });
 
-  it("rebuilds customers and carriers from supplier tags after clearing local registrations", async () => {
+  it("rebuilds customers and carriers from ListarClientes tags after clearing local registrations", async () => {
     const db = openDesktopDatabase({ databasePath: ":memory:" });
 
     try {
@@ -140,7 +138,7 @@ describe("OmieSyncService", () => {
 
       const service = new OmieSyncService(createMockClient(), db);
       vi.spyOn(
-        (service as unknown as Record<string, unknown>).suppliersService as { listAll: () => Promise<unknown[]> },
+        (service as unknown as Record<string, unknown>).customersService as { listAll: () => Promise<unknown[]> },
         "listAll"
       ).mockResolvedValue([
         {
@@ -186,13 +184,6 @@ describe("OmieSyncService", () => {
           tags: { tags: ["Fornecedor"] }
         }
       ]);
-      vi.spyOn(
-        (service as unknown as Record<string, unknown>).receivablesService as {
-          getTotalOpenAmountForClient: () => Promise<number>;
-        },
-        "getTotalOpenAmountForClient"
-      ).mockResolvedValue(0);
-
       const result = await service.rebuildCustomersAndCarriersFromOmie("company-1");
 
       expect(result).toEqual({ customersPulled: 2, suppliersSynced: 2 });

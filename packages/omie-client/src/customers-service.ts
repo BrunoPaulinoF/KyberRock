@@ -182,7 +182,7 @@ export async function updateCustomer(
 export class OmieCustomersService {
   constructor(private readonly client: OmieClient) {}
 
-  async listAll(pageSize = 50): Promise<Customer[]> {
+  async listAll(pageSize = 100): Promise<Customer[]> {
     const all: Customer[] = [];
     let page = 1;
     let hasMore = true;

@@ -1,7 +1,8 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const OMIE_BASE_URL = "https://app.omie.com.br/api/v1";
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 100;
+const OMIE_REQUEST_DELAY_MS = 3_000;
 const OMIE_REDUNDANT_MAX_RETRIES = 2;
 const OMIE_REDUNDANT_DEFAULT_WAIT_MS = 60_000;
 const OMIE_REDUNDANT_MAX_WAIT_MS = 65_000;
@@ -45,7 +46,9 @@ type PullResume = {
   customersPage?: number;
   productsPage?: number;
   paymentTermsPage?: number;
-  suppliersPage?: number;
+  customersFinished?: boolean;
+  productsFinished?: boolean;
+  paymentTermsFinished?: boolean;
 };
 
 type DeviceRow = {
@@ -151,6 +154,15 @@ type OmieSupplier = {
   name: string;
   tradeName: string | null;
   document: string | null;
+  phone: string | null;
+  email: string | null;
+  zipcode: string | null;
+  addressStreet: string | null;
+  addressNumber: string | null;
+  addressComplement: string | null;
+  neighborhood: string | null;
+  city: string | null;
+  state: string | null;
   isActive: boolean;
   tagsJson: Record<string, unknown> | unknown[] | null;
 };
@@ -254,13 +266,12 @@ Deno.serve(async (req) => {
       const customersPage = resume.customersPage ?? 1;
       const productsPage = resume.productsPage ?? 1;
       const paymentTermsPage = resume.paymentTermsPage ?? 1;
-      const suppliersPage = resume.suppliersPage ?? 1;
-
-      const [customersResult, productsResult, suppliersResult] = await Promise.all([
-        listCustomersPage(credentials, customersPage),
-        listProductsPage(credentials, productsPage),
-        listSuppliersPage(credentials, suppliersPage)
-      ]);
+      const customersResult = resume.customersFinished
+        ? emptyCustomerPage(customersPage)
+        : await listCustomersPage(credentials, customersPage);
+      const productsResult = resume.productsFinished
+        ? emptyPage<OmieProduct>(productsPage)
+        : await listProductsPage(credentials, productsPage);
       let paymentTermsResult: PageResult<OmiePaymentTerm> = {
         items: [],
         page: paymentTermsPage,
@@ -269,11 +280,13 @@ Deno.serve(async (req) => {
         totalRecords: null
       };
       let paymentTermsWarning: string | null = null;
-      try {
-        paymentTermsResult = await listPaymentTermsPage(credentials, paymentTermsPage);
-      } catch (error) {
-        paymentTermsWarning =
-          error instanceof Error ? error.message : "Falha ao listar parcelas OMIE";
+      if (!resume.paymentTermsFinished) {
+        try {
+          paymentTermsResult = await listPaymentTermsPage(credentials, paymentTermsPage);
+        } catch (error) {
+          paymentTermsWarning =
+            error instanceof Error ? error.message : "Falha ao listar parcelas OMIE";
+        }
       }
 
       const checkedAt = new Date().toISOString();
@@ -289,13 +302,13 @@ Deno.serve(async (req) => {
         customers: customersResult.items,
         products: productsResult.items,
         paymentTerms: paymentTermsResult.items,
-        suppliers: suppliersResult.items,
+        suppliers: customersResult.carriers,
         ...(paymentTermsWarning ? { paymentTermsWarning } : {}),
         checkedAt,
         pageSize: PAGE_SIZE,
         pagination: {
           customersPage: customersResult.page,
-          customersReturned: customersResult.items.length,
+          customersReturned: customersResult.returned,
           customersFinished: customersResult.finished,
           customersTotalPages: customersResult.totalPages,
           customersTotalRecords: customersResult.totalRecords,
@@ -309,11 +322,11 @@ Deno.serve(async (req) => {
           paymentTermsFinished: paymentTermsResult.finished,
           paymentTermsTotalPages: paymentTermsResult.totalPages,
           paymentTermsTotalRecords: paymentTermsResult.totalRecords,
-          suppliersPage: suppliersResult.page,
-          suppliersReturned: suppliersResult.items.length,
-          suppliersFinished: suppliersResult.finished,
-          suppliersTotalPages: suppliersResult.totalPages,
-          suppliersTotalRecords: suppliersResult.totalRecords
+          suppliersPage: customersResult.page,
+          suppliersReturned: customersResult.returned,
+          suppliersFinished: customersResult.finished,
+          suppliersTotalPages: customersResult.totalPages,
+          suppliersTotalRecords: customersResult.totalRecords
         }
       });
     }
@@ -353,6 +366,19 @@ type PageResult<T> = {
   totalRecords: number | null;
 };
 
+type CustomersPageResult = PageResult<OmieCustomer> & {
+  carriers: OmieSupplier[];
+  returned: number;
+};
+
+function emptyPage<T>(page: number): PageResult<T> {
+  return { items: [], page, finished: true, totalPages: null, totalRecords: null };
+}
+
+function emptyCustomerPage(page: number): CustomersPageResult {
+  return { ...emptyPage<OmieCustomer>(page), carriers: [], returned: 0 };
+}
+
 const OMIE_PAGE_CACHE_TTL_MS = 60_000;
 const omiePageCache = new Map<
   string,
@@ -362,6 +388,7 @@ const omiePageCache = new Map<
       finished: boolean;
       totalPages: number | null;
       totalRecords: number | null;
+      returned: number;
     };
     expiresAt: number;
   }
@@ -372,6 +399,7 @@ function getCachedPage<T>(key: string): {
   finished: boolean;
   totalPages: number | null;
   totalRecords: number | null;
+  returned: number;
 } | null {
   const entry = omiePageCache.get(key);
   if (!entry) return null;
@@ -383,7 +411,8 @@ function getCachedPage<T>(key: string): {
     items: entry.data.items as T[],
     finished: entry.data.finished,
     totalPages: entry.data.totalPages,
-    totalRecords: entry.data.totalRecords
+    totalRecords: entry.data.totalRecords,
+    returned: entry.data.returned
   };
 }
 
@@ -392,10 +421,11 @@ function setCachedPage(
   items: unknown[],
   finished: boolean,
   totalPages: number | null,
-  totalRecords: number | null
+  totalRecords: number | null,
+  returned = items.length
 ): void {
   omiePageCache.set(key, {
-    data: { items, finished, totalPages, totalRecords },
+    data: { items, finished, totalPages, totalRecords, returned },
     expiresAt: Date.now() + OMIE_PAGE_CACHE_TTL_MS
   });
 }
@@ -403,12 +433,14 @@ function setCachedPage(
 async function listCustomersPage(
   credentials: OmieCredentials,
   page: number
-): Promise<PageResult<OmieCustomer>> {
+): Promise<CustomersPageResult> {
   const cacheKey = `clientes:${credentials.appKey}:${page}`;
   const cached = getCachedPage<OmieCustomer>(cacheKey);
   if (cached) {
     return {
-      items: cached.items,
+      items: cached.items.filter(hasClienteTag),
+      carriers: cached.items.filter(hasTransportadoraTag).map(mapCustomerToCarrier),
+      returned: cached.returned,
       page,
       finished: cached.finished,
       totalPages: cached.totalPages,
@@ -447,8 +479,16 @@ async function listCustomersPage(
   const totalRecords = toIntOrNull(response.total_de_registros);
   const finished = computeFinished(page, rawItems.length, totalPages);
 
-  setCachedPage(cacheKey, items, finished, totalPages, totalRecords);
-  return { items, page, finished, totalPages, totalRecords };
+  setCachedPage(cacheKey, items, finished, totalPages, totalRecords, rawItems.length);
+  return {
+    items: items.filter(hasClienteTag),
+    carriers: items.filter(hasTransportadoraTag).map(mapCustomerToCarrier),
+    returned: rawItems.length,
+    page,
+    finished,
+    totalPages,
+    totalRecords
+  };
 }
 
 type OmieCustomerRaw = {
@@ -765,89 +805,60 @@ function computeFinished(
   return returned < PAGE_SIZE;
 }
 
-async function listSuppliersPage(
-  credentials: OmieCredentials,
-  page: number
-): Promise<PageResult<OmieSupplier>> {
-  const cacheKey = `fornecedores:${credentials.appKey}:${page}`;
-  const cached = getCachedPage<OmieSupplier>(cacheKey);
-  if (cached) {
-    return {
-      items: cached.items,
-      page,
-      finished: cached.finished,
-      totalPages: cached.totalPages,
-      totalRecords: cached.totalRecords
-    };
-  }
-
-  const response = await callOmie<
-    { pagina: number; registros_por_pagina: number },
-    {
-      nPagina?: number;
-      nTotPaginas?: number;
-      nRegistros?: number;
-      nTotRegistros?: number;
-      fornecedoresCadastro?: OmieSupplierRaw[];
-    }
-  >(credentials, "/geral/fornecedores/", "ListarFornecedores", {
-    pagina: page,
-    registros_por_pagina: PAGE_SIZE
-  });
-
-  const rawItems = response.fornecedoresCadastro ?? [];
-  const items = rawItems.map(mapOmieSupplierRaw).filter(hasTransportadoraTag);
-  const totalPages = toIntOrNull(response.nTotPaginas);
-  const totalRecords = toIntOrNull(response.nTotRegistros ?? response.nRegistros);
-  const finished = computeFinished(page, rawItems.length, totalPages);
-
-  setCachedPage(cacheKey, items, finished, totalPages, totalRecords);
-  return { items, page, finished, totalPages, totalRecords };
+function hasClienteTag(customer: OmieCustomer): boolean {
+  return hasOmieTag(customer.tagsJson, "cliente");
 }
 
-type OmieSupplierRaw = {
-  codigo_cliente_fornecedor?: number | string;
-  codigoClienteFornecedor?: number | string;
-  codigo_cliente_integracao?: string;
-  codigoClienteIntegracao?: string;
-  razao_social?: string;
-  razaoSocial?: string;
-  nome_fantasia?: string;
-  nomeFantasia?: string;
-  cnpj_cpf?: string;
-  cnpjCpf?: string;
-  tags?: Array<{ tag?: string }> | Record<string, unknown>;
-  inativo?: string;
-};
-
-function mapOmieSupplierRaw(item: OmieSupplierRaw): OmieSupplier {
-  return {
-    id: toNumber(pickFirst(item.codigo_cliente_fornecedor, item.codigoClienteFornecedor)) ?? 0,
-    integrationCode: pickFirst(item.codigo_cliente_integracao, item.codigoClienteIntegracao),
-    name: pickFirst(item.razao_social, item.razaoSocial) ?? "",
-    tradeName: pickFirst(item.nome_fantasia, item.nomeFantasia),
-    document: pickFirst(item.cnpj_cpf, item.cnpjCpf),
-    isActive: !isYesFlag(item.inativo),
-    tagsJson: item.tags ?? null
-  };
+function hasTransportadoraTag(customer: OmieCustomer): boolean {
+  return hasOmieTag(customer.tagsJson, "transportadora");
 }
 
-function hasTransportadoraTag(supplier: OmieSupplier): boolean {
-  if (!supplier.tagsJson) return false;
+function hasOmieTag(tagsJson: Record<string, unknown> | unknown[] | null, expected: string): boolean {
+  if (!tagsJson) return false;
   const tagValues: string[] = [];
-  if (Array.isArray(supplier.tagsJson)) {
-    tagValues.push(
-      ...supplier.tagsJson.map((tag) =>
-        typeof tag === "object" && tag !== null && "tag" in tag
-          ? String((tag as { tag?: unknown }).tag ?? "")
-          : String(tag)
-      )
-    );
+  if (Array.isArray(tagsJson)) {
+    tagValues.push(...tagsJson.map(readTagValue));
   } else {
-    const tags = supplier.tagsJson.tags;
-    if (Array.isArray(tags)) tagValues.push(...tags.map(String));
+    const tags = tagsJson.tags;
+    if (Array.isArray(tags)) tagValues.push(...tags.map(readTagValue));
   }
-  return tagValues.some((tag) => tag.toLowerCase().includes("transportadora"));
+  const normalizedExpected = normalizeTag(expected);
+  return tagValues.some((tag) => normalizeTag(tag) === normalizedExpected);
+}
+
+function readTagValue(tag: unknown): string {
+  return typeof tag === "object" && tag !== null && "tag" in tag
+    ? String((tag as { tag?: unknown }).tag ?? "")
+    : String(tag ?? "");
+}
+
+function normalizeTag(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function mapCustomerToCarrier(customer: OmieCustomer): OmieSupplier {
+  return {
+    id: customer.id,
+    integrationCode: customer.integrationCode,
+    name: customer.name,
+    tradeName: customer.tradeName,
+    document: customer.document,
+    phone: customer.phone,
+    email: customer.email,
+    zipcode: customer.zipcode,
+    addressStreet: customer.addressStreet,
+    addressNumber: customer.addressNumber,
+    addressComplement: customer.addressComplement,
+    neighborhood: customer.neighborhood,
+    city: customer.city,
+    state: customer.state,
+    isActive: customer.isActive,
+    tagsJson: customer.tagsJson
+  };
 }
 
 async function listPaymentTermsPage(
@@ -1271,18 +1282,25 @@ async function callOmie<TParam, TResponse>(
   param: TParam
 ): Promise<TResponse> {
   for (let attempt = 0; attempt <= OMIE_REDUNDANT_MAX_RETRIES; attempt++) {
-    const response = await fetch(`${OMIE_BASE_URL}${endpoint}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        call,
-        param: [param],
-        app_key: credentials.appKey,
-        app_secret: credentials.appSecret
-      })
-    });
-
-    const data = await readOmieResponseBody(response);
+    const release = await acquireOmieRequestSlot();
+    let response: Response | null = null;
+    let data: unknown;
+    try {
+      response = await fetch(`${OMIE_BASE_URL}${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          call,
+          param: [param],
+          app_key: credentials.appKey,
+          app_secret: credentials.appSecret
+        })
+      });
+      data = await readOmieResponseBody(response);
+    } finally {
+      release();
+    }
+    if (!response) throw new Error(`Falha de transporte OMIE em ${call} (${endpoint})`);
     const detail = getOmieFaultString(data);
 
     if (!response.ok) {
@@ -1308,6 +1326,29 @@ async function callOmie<TParam, TResponse>(
   }
 
   throw new Error(`OMIE redundant retry exhausted em ${call} (${endpoint})`);
+}
+
+let omieRequestGate: Promise<void> = Promise.resolve();
+let lastOmieRequestFinishedAt = 0;
+
+async function acquireOmieRequestSlot(): Promise<() => void> {
+  let releaseSlot: () => void = () => undefined;
+  const nextSlot = new Promise<void>((resolve) => {
+    releaseSlot = resolve;
+  });
+  const previousSlot = omieRequestGate;
+  omieRequestGate = previousSlot.then(() => nextSlot);
+  await previousSlot;
+
+  const elapsedMs = Date.now() - lastOmieRequestFinishedAt;
+  if (lastOmieRequestFinishedAt > 0 && elapsedMs >= 0 && elapsedMs < OMIE_REQUEST_DELAY_MS) {
+    await sleep(OMIE_REQUEST_DELAY_MS - elapsedMs);
+  }
+
+  return () => {
+    lastOmieRequestFinishedAt = Date.now();
+    releaseSlot();
+  };
 }
 
 async function readOmieResponseBody(response: Response): Promise<unknown> {

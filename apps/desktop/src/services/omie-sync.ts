@@ -3,13 +3,11 @@ import {
   OmieCustomersService,
   OmiePaymentTermsService,
   OmieProductsService,
-  OmieReceivablesService,
-  OmieSuppliersService,
   hasClienteTag,
   hasTransportadoraTag,
   type CreateCustomerInput,
+  type Customer,
   type Product,
-  type Supplier,
   type UpdateCustomerInput
 } from "@kyberrock/omie-client";
 
@@ -45,8 +43,6 @@ export class OmieSyncService {
   private readonly customersService: OmieCustomersService;
   private readonly productsService: OmieProductsService;
   private readonly paymentTermsService: OmiePaymentTermsService;
-  private readonly receivablesService: OmieReceivablesService;
-  private readonly suppliersService: OmieSuppliersService;
 
   constructor(
     private readonly client: OmieClient,
@@ -55,8 +51,6 @@ export class OmieSyncService {
     this.customersService = new OmieCustomersService(client);
     this.productsService = new OmieProductsService(client);
     this.paymentTermsService = new OmiePaymentTermsService(client);
-    this.receivablesService = new OmieReceivablesService(client);
-    this.suppliersService = new OmieSuppliersService(client);
   }
 
   async syncAll(companyId: string): Promise<OmieSyncResult> {
@@ -93,17 +87,15 @@ export class OmieSyncService {
   }
 
   async rebuildCustomersAndCarriersFromOmie(companyId: string): Promise<TaggedSupplierSyncResult> {
-    const suppliers = await this.suppliersService.listAll();
-    const customers = suppliers.filter((supplier) => hasClienteTag(supplier));
-    const carriers = suppliers.filter((supplier) => hasTransportadoraTag(supplier));
+    const omieCustomers = await this.customersService.listAll();
+    const customers = omieCustomers.filter((customer) => hasClienteTag(customer));
+    const carriers = omieCustomers.filter((customer) => hasTransportadoraTag(customer));
 
     this.runInTransaction(() => {
       this.clearCustomerCarrierRegistrations(companyId);
-      this.upsertCustomersFromSuppliers(companyId, customers);
-      this.upsertCarriersFromSuppliers(companyId, carriers);
+      this.upsertCustomersFromOmieCustomers(companyId, customers);
+      this.upsertCarriersFromOmieCustomers(companyId, carriers);
     });
-
-    await this.updateCustomerReceivables(companyId, customers);
 
     return {
       customersPulled: customers.length,
@@ -120,19 +112,17 @@ export class OmieSyncService {
   }
 
   async pullCustomersFromOmie(companyId: string): Promise<number> {
-    const suppliers = await this.suppliersService.listAll();
-    const omieCustomers = suppliers.filter((supplier) => hasClienteTag(supplier));
+    const listedCustomers = await this.customersService.listAll();
+    const omieCustomers = listedCustomers.filter((customer) => hasClienteTag(customer));
 
     this.runInTransaction(() => {
       this.clearCustomers(companyId);
-      this.upsertCustomersFromSuppliers(companyId, omieCustomers);
+      this.upsertCustomersFromOmieCustomers(companyId, omieCustomers);
     });
-    await this.updateCustomerReceivables(companyId, omieCustomers);
-
     return omieCustomers.length;
   }
 
-  private upsertCustomersFromSuppliers(companyId: string, customers: Supplier[]): void {
+  private upsertCustomersFromOmieCustomers(companyId: string, customers: Customer[]): void {
     const upsert = this.db.prepare(`
       INSERT INTO customers (
         id, company_id, omie_customer_id, source, legal_name, trade_name,
@@ -180,25 +170,6 @@ export class OmieSyncService {
         customer.state || null,
         customer.isActive ? 1 : 0
       );
-    }
-  }
-
-  private async updateCustomerReceivables(companyId: string, customers: Supplier[]): Promise<void> {
-    const updateReceivables = this.db.prepare(`
-      UPDATE customers
-      SET open_receivables_cents = ?,
-          financial_cache_at = datetime('now'),
-          updated_at = datetime('now')
-      WHERE id = ? AND company_id = ?
-    `);
-
-    for (const customer of customers) {
-      try {
-        const openAmount = await this.receivablesService.getTotalOpenAmountForClient(customer.id);
-        updateReceivables.run(Math.round(openAmount * 100), `omie_${customer.id}`, companyId);
-      } catch {
-        // Continue even if receivables fail.
-      }
     }
   }
 
@@ -479,18 +450,18 @@ export class OmieSyncService {
   }
 
   async syncSuppliers(companyId: string): Promise<number> {
-    const suppliers = await this.suppliersService.listAll();
-    const transportadoras = suppliers.filter((s) => hasTransportadoraTag(s));
+    const customers = await this.customersService.listAll();
+    const transportadoras = customers.filter((customer) => hasTransportadoraTag(customer));
 
     this.runInTransaction(() => {
       this.clearCarriers(companyId);
-      this.upsertCarriersFromSuppliers(companyId, transportadoras);
+      this.upsertCarriersFromOmieCustomers(companyId, transportadoras);
     });
 
     return transportadoras.length;
   }
 
-  private upsertCarriersFromSuppliers(companyId: string, carriers: Supplier[]): void {
+  private upsertCarriersFromOmieCustomers(companyId: string, carriers: Customer[]): void {
     const upsert = this.db.prepare(`
       INSERT INTO carriers (
         id, company_id, omie_customer_id, omie_integration_code, name, document, phone, email,

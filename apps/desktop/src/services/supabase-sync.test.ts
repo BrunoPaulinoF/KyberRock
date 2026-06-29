@@ -307,7 +307,9 @@ describe("supabase sync", () => {
             customersPage: 1,
             productsPage: 1,
             paymentTermsPage: 1,
-            suppliersPage: 1
+            customersFinished: false,
+            productsFinished: false,
+            paymentTermsFinished: false
           }
         }
       });
@@ -492,6 +494,29 @@ describe("supabase sync", () => {
     }
   });
 
+  it("limits local customer push batches to avoid OMIE request bursts", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      for (let index = 0; index < 12; index++) {
+        insertLocalCustomer(database, `customer-${index}`);
+      }
+      invokeMock.mockResolvedValue({ error: null, data: { omieCustomerId: 321 } });
+
+      const result = await pushOmieCustomersToCloud(database, identity, { delayMs: 0 });
+
+      expect(result).toMatchObject({ pushed: 10, failed: 0 });
+      expect(invokeMock).toHaveBeenCalledTimes(10);
+      expect(
+        database.prepare("SELECT COUNT(*) FROM customers WHERE needs_push = 1").pluck().get()
+      ).toBe(2);
+    } finally {
+      database.close();
+    }
+  });
+
   it("sends queued OMIE orders through the cloud bridge", async () => {
     const database = createDatabase();
 
@@ -541,6 +566,46 @@ describe("supabase sync", () => {
       expect(
         database.prepare("SELECT status FROM sync_queue WHERE id = 'omie-job-1'").pluck().get()
       ).toBe("done");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("limits OMIE queue batches to avoid long request bursts", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertWeighingOperation(database);
+      for (let index = 0; index < 12; index++) {
+        enqueueSyncJob(database, {
+          id: `omie-job-${index}`,
+          target: "omie",
+          action: "create_order",
+          entityType: "weighing_operation",
+          entityId: `operation-${index}`,
+          idempotencyKey: `kyberrock:unit-1:operation-${index}:create_sales_order`,
+          payload: {
+            operationId: "operation-1",
+            operationType: "invoice",
+            customerOmieId: 123,
+            productOmieId: 456,
+            quantity: 10,
+            unitPrice: 25,
+            issueDate: "2026-06-12"
+          }
+        });
+      }
+      invokeMock.mockResolvedValue({ error: null, data: { orderId: 987 } });
+
+      const result = await processOmieSyncQueue(database, identity, { delayMs: 0 });
+
+      expect(result).toMatchObject({ processed: 10, failed: 0 });
+      expect(invokeMock).toHaveBeenCalledTimes(10);
+      expect(
+        database.prepare("SELECT COUNT(*) FROM sync_queue WHERE status = 'pending'").pluck().get()
+      ).toBe(2);
     } finally {
       database.close();
     }

@@ -4,7 +4,8 @@ import { readLocalSetting, writeLocalSetting } from "./local-settings.js";
 export const OMIE_PULL_SCHEDULER_KEY = "omie_pull_scheduler";
 export const OMIE_PULL_LAST_RUN_KEY = "omie_pull_last_run_at";
 
-export const DEFAULT_OMIE_PULL_INTERVAL_MINUTES = 20;
+export const DEFAULT_OMIE_PULL_INTERVAL_MINUTES = 30;
+const LEGACY_OMIE_PULL_INTERVAL_MINUTES = 20;
 export const MIN_OMIE_PULL_INTERVAL_MINUTES = 5;
 export const MAX_OMIE_PULL_INTERVAL_MINUTES = 720;
 const TICK_FALLBACK_MS = 60_000;
@@ -67,7 +68,10 @@ export function normalizeOmieSchedulerConfig(
   config: Partial<OmieSchedulerConfig> | null | undefined
 ): OmieSchedulerConfig {
   const intervalRaw = Number(config?.intervalMinutes);
-  const interval = Number.isFinite(intervalRaw) && intervalRaw > 0 ? intervalRaw : DEFAULT_OMIE_PULL_INTERVAL_MINUTES;
+  const interval =
+    Number.isFinite(intervalRaw) && intervalRaw > 0 && intervalRaw !== LEGACY_OMIE_PULL_INTERVAL_MINUTES
+      ? intervalRaw
+      : DEFAULT_OMIE_PULL_INTERVAL_MINUTES;
   return {
     enabled: config?.enabled !== false,
     intervalMinutes: clampInterval(interval)

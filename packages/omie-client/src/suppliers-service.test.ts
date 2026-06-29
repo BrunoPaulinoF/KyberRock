@@ -53,4 +53,14 @@ describe("suppliers-service", () => {
     expect(hasClienteTag(items[0])).toBe(true);
     expect(hasTransportadoraTag(items[0])).toBe(false);
   });
+
+  it("classifies multiple tags without treating Fornecedor as Transportadora", () => {
+    expect(hasClienteTag({ tags: [{ tag: "Cliente" }, { tag: "Fornecedor" }] })).toBe(true);
+    expect(hasTransportadoraTag({ tags: [{ tag: "Cliente" }, { tag: "Fornecedor" }] })).toBe(
+      false
+    );
+    expect(hasTransportadoraTag({ tags: [{ tag: "Transportadora" }, { tag: "Fornecedor" }] })).toBe(
+      true
+    );
+  });
 });

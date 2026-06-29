@@ -46,6 +46,12 @@ describe("normalizeOmieSchedulerConfig", () => {
     expect(normalizeOmieSchedulerConfig({ enabled: false })).toMatchObject({ enabled: false });
   });
 
+  it("migra o intervalo legado de 20 minutos para o default atual", () => {
+    expect(normalizeOmieSchedulerConfig({ intervalMinutes: 20 })).toMatchObject({
+      intervalMinutes: DEFAULT_OMIE_PULL_INTERVAL_MINUTES
+    });
+  });
+
   it("trata intervalo invalido como default", () => {
     expect(
       normalizeOmieSchedulerConfig({ intervalMinutes: Number.NaN })

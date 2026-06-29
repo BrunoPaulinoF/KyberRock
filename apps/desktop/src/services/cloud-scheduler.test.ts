@@ -45,6 +45,12 @@ describe("normalizeCloudSyncConfig", () => {
   it("respeita enabled=false explicito", () => {
     expect(normalizeCloudSyncConfig({ enabled: false })).toMatchObject({ enabled: false });
   });
+
+  it("migra o intervalo legado de 20 minutos para o default atual", () => {
+    expect(normalizeCloudSyncConfig({ intervalMinutes: 20 })).toMatchObject({
+      intervalMinutes: DEFAULT_CLOUD_SYNC_INTERVAL_MINUTES
+    });
+  });
 });
 
 describe("shouldRunCloudSync", () => {

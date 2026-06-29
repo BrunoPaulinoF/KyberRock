@@ -99,7 +99,7 @@ export async function listProducts(
 export class OmieProductsService {
   constructor(private readonly client: OmieClient) {}
 
-  async listAll(pageSize = 500): Promise<Product[]> {
+  async listAll(pageSize = 100): Promise<Product[]> {
     const all: Product[] = [];
     let page = 1;
     let hasMore = true;

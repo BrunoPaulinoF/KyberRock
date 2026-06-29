@@ -19,6 +19,10 @@ export interface Supplier {
   tags?: Record<string, unknown> | unknown[];
 }
 
+interface TaggedOmieEntity {
+  tags?: Record<string, unknown> | unknown[];
+}
+
 export interface ListSuppliersParam {
   pagina: number;
   registrosPorPagina?: number;
@@ -114,26 +118,41 @@ function parseTags(
   return tags;
 }
 
-export function hasTransportadoraTag(supplier: Supplier): boolean {
+export function hasTransportadoraTag(supplier: TaggedOmieEntity): boolean {
   return hasSupplierTag(supplier, "transportadora");
 }
 
-export function hasClienteTag(supplier: Supplier): boolean {
+export function hasClienteTag(supplier: TaggedOmieEntity): boolean {
   return hasSupplierTag(supplier, "cliente");
 }
 
-function hasSupplierTag(supplier: Supplier, expectedTag: string): boolean {
+function hasSupplierTag(supplier: TaggedOmieEntity, expectedTag: string): boolean {
   if (!supplier.tags) return false;
   const tagValues: string[] = [];
   if (Array.isArray(supplier.tags)) {
-    tagValues.push(...supplier.tags.map((t) => String((t as { tag?: string }).tag ?? t)));
+    tagValues.push(...supplier.tags.map(readTagValue));
   } else if (typeof supplier.tags === "object") {
     const tagsArray = supplier.tags.tags;
     if (Array.isArray(tagsArray)) {
-      tagValues.push(...tagsArray.map(String));
+      tagValues.push(...tagsArray.map(readTagValue));
     }
   }
-  return tagValues.some((t) => t.toLowerCase().includes(expectedTag));
+  const normalizedExpected = normalizeTag(expectedTag);
+  return tagValues.some((tag) => normalizeTag(tag) === normalizedExpected);
+}
+
+function readTagValue(tag: unknown): string {
+  return typeof tag === "object" && tag !== null && "tag" in tag
+    ? String((tag as { tag?: unknown }).tag ?? "")
+    : String(tag ?? "");
+}
+
+function normalizeTag(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
 }
 
 function pickFirst(...values: Array<string | number | null | undefined>): string | undefined {
@@ -148,7 +167,7 @@ function pickFirst(...values: Array<string | number | null | undefined>): string
 export class OmieSuppliersService {
   constructor(private readonly client: OmieClient) {}
 
-  async listAll(pageSize = 50): Promise<Supplier[]> {
+  async listAll(pageSize = 100): Promise<Supplier[]> {
     const all: Supplier[] = [];
     let page = 1;
     let hasMore = true;

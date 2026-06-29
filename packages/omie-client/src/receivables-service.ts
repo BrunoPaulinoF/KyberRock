@@ -47,7 +47,7 @@ export class OmieReceivablesService {
   async getTotalOpenAmountForClient(clientId: number): Promise<number> {
     const receivables = await listReceivables(this.client, {
       pagina: 1,
-      registrosPorPagina: 500,
+      registrosPorPagina: 100,
       codigoClienteOmie: clientId
     });
 

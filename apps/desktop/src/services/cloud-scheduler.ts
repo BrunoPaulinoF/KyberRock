@@ -4,7 +4,8 @@ import { readLocalSetting, writeLocalSetting } from "./local-settings.js";
 export const CLOUD_SYNC_SCHEDULER_KEY = "cloud_sync_scheduler";
 export const CLOUD_SYNC_LAST_RUN_KEY = "cloud_sync_last_run_at";
 
-export const DEFAULT_CLOUD_SYNC_INTERVAL_MINUTES = 20;
+export const DEFAULT_CLOUD_SYNC_INTERVAL_MINUTES = 30;
+const LEGACY_CLOUD_SYNC_INTERVAL_MINUTES = 20;
 export const MIN_CLOUD_SYNC_INTERVAL_MINUTES = 5;
 export const MAX_CLOUD_SYNC_INTERVAL_MINUTES = 720;
 const TICK_FALLBACK_MS = 60_000;
@@ -68,7 +69,7 @@ export function normalizeCloudSyncConfig(
 ): CloudSyncConfig {
   const intervalRaw = Number(config?.intervalMinutes);
   const interval =
-    Number.isFinite(intervalRaw) && intervalRaw > 0
+    Number.isFinite(intervalRaw) && intervalRaw > 0 && intervalRaw !== LEGACY_CLOUD_SYNC_INTERVAL_MINUTES
       ? intervalRaw
       : DEFAULT_CLOUD_SYNC_INTERVAL_MINUTES;
   return {

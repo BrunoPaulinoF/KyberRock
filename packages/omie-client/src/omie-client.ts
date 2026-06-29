@@ -10,6 +10,7 @@ export interface OmieClientConfig {
 const OMIE_REDUNDANT_MAX_RETRIES = 2;
 const OMIE_REDUNDANT_DEFAULT_WAIT_MS = 60_000;
 const OMIE_REDUNDANT_MAX_WAIT_MS = 65_000;
+const OMIE_REQUEST_DELAY_MS = 3_000;
 
 export interface OmieAuthBody<TParam> extends OmieRequestBody<TParam> {
   app_key: string;
@@ -43,15 +44,23 @@ export class OmieClient {
     const body = this.createAuthBody(call, param);
 
     for (let attempt = 0; attempt <= OMIE_REDUNDANT_MAX_RETRIES; attempt++) {
-      const response = await fetch(`${this.baseUrl}${endpoint}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(body)
-      });
+      const release = await acquireOmieRequestSlot();
+      let response: Response | null = null;
+      let data: unknown;
+      try {
+        response = await fetch(`${this.baseUrl}${endpoint}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(body)
+        });
 
-      const data = await readOmieResponseBody(response);
+        data = await readOmieResponseBody(response);
+      } finally {
+        release();
+      }
+      if (!response) throw new Error(`Falha de transporte OMIE em ${call} (${endpoint})`);
 
       if (!response.ok) {
         const detail = getOmieFaultString(data);
@@ -77,6 +86,29 @@ export class OmieClient {
 
     throw new Error(`OMIE redundant retry exhausted em ${call} (${endpoint})`);
   }
+}
+
+let omieRequestGate: Promise<void> = Promise.resolve();
+let lastOmieRequestFinishedAt = 0;
+
+async function acquireOmieRequestSlot(): Promise<() => void> {
+  let releaseSlot: () => void = () => undefined;
+  const nextSlot = new Promise<void>((resolve) => {
+    releaseSlot = resolve;
+  });
+  const previousSlot = omieRequestGate;
+  omieRequestGate = previousSlot.then(() => nextSlot);
+  await previousSlot;
+
+  const elapsedMs = Date.now() - lastOmieRequestFinishedAt;
+  if (lastOmieRequestFinishedAt > 0 && elapsedMs >= 0 && elapsedMs < OMIE_REQUEST_DELAY_MS) {
+    await sleep(OMIE_REQUEST_DELAY_MS - elapsedMs);
+  }
+
+  return () => {
+    lastOmieRequestFinishedAt = Date.now();
+    releaseSlot();
+  };
 }
 
 async function readOmieResponseBody(response: Response): Promise<unknown> {

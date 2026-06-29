@@ -45,7 +45,7 @@ export function buildStatusIndicatorViewModels(
         : "Nunca executado",
       tone: snapshot.cloudLastRunAt ? "success" : "warning",
       detail: snapshot.cloudLastRunAt
-        ? "Sincronizacao automatica em execucao a cada 20 min"
+        ? "Sincronizacao automatica em execucao a cada 30 min"
         : "Sincronizacao sera disparada na primeira janela"
     },
     {

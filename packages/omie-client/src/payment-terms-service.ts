@@ -80,7 +80,7 @@ export async function listPaymentTerms(
 export class OmiePaymentTermsService {
   constructor(private readonly client: OmieClient) {}
 
-  async listAll(pageSize = 50): Promise<PaymentTerm[]> {
+  async listAll(pageSize = 100): Promise<PaymentTerm[]> {
     const all: PaymentTerm[] = [];
     let page = 1;
     let hasMore = true;

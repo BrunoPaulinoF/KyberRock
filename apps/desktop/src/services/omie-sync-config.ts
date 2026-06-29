@@ -28,7 +28,7 @@ export interface OmieSyncMappingConfig {
 
 export const DEFAULT_OMIE_SYNC_MAPPING: OmieSyncMappingConfig = {
   transportadoras: {
-    source: "fornecedores",
+    source: "clientes",
     identifier: {
       type: "tag_or_characteristic",
       values: ["TRANSPORTADORA", "Transportadora"]
