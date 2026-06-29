@@ -8,6 +8,7 @@ import { FreightCalculator, type FreightRule } from "./freight.js";
 import { PricingService, type PriceDetails } from "./pricing.js";
 import { enqueueSyncJob } from "./sync-queue.js";
 import { CreditService } from "./credit.js";
+import { buildOmieIntegrationCode } from "@kyberrock/omie-client";
 import { consumeQuotation } from "./quotations.js";
 
 type OperationStatus =
@@ -782,7 +783,11 @@ export function closeWeighingOperation(
           action: omieAction,
           entityType: "weighing_operation",
           entityId: input.operationId,
-          idempotencyKey: `kyberrock:${operationIds?.unit_id ?? "unknown"}:${input.operationId}:${idempotencyAction}`,
+          idempotencyKey: buildOmieIntegrationCode(
+            operationIds?.unit_id ?? "unknown",
+            input.operationId,
+            idempotencyAction
+          ),
           payload: {
             operationId: input.operationId,
             operationType: nextOperationType,

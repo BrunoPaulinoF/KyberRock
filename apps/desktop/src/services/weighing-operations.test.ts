@@ -4,6 +4,7 @@ import { runDesktopMigrations } from "../database/migrate";
 import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite";
 import { ensureInitialDesktopIdentity } from "./bootstrap";
 import { CreditService } from "./credit";
+import { buildOmieIntegrationCode } from "@kyberrock/omie-client";
 import {
   cancelWeighingOperation,
   closeWeighingOperation,
@@ -510,7 +511,7 @@ describe("weighing operations", () => {
           .get()
       ).toMatchObject({
         action: "create_order",
-        idempotency_key: `kyberrock:unit-1:${operation.id}:create_service_order`
+        idempotency_key: buildOmieIntegrationCode("unit-1", operation.id, "create_service_order")
       });
     } finally {
       database.close();
