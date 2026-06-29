@@ -300,6 +300,12 @@ export interface KyberRockDesktopApi {
     suppliersSynced: number;
     errors: string[];
   }>;
+  resetOmieMaster: () => Promise<{
+    customersCleared: number;
+    carriersCleared: number;
+    syncRunsCleared: number;
+    syncQueueCleared: number;
+  }>;
   syncOmieMasterData: (options?: unknown) => Promise<{
     success: boolean;
     startedAt: Date;

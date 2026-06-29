@@ -175,6 +175,7 @@ const desktopApi = {
   syncOmieMasterData: (options?: unknown) => ipcRenderer.invoke("desktop:sync-omie-master", options),
   getLastOmieSyncRun: () => ipcRenderer.invoke("desktop:get-last-omie-sync-run"),
   getOmieSyncEntitiesByRun: (runId: string) => ipcRenderer.invoke("desktop:get-omie-sync-entities", runId),
+  resetOmieMaster: () => ipcRenderer.invoke("desktop:reset-omie-master"),
   startOmieDataEntryLoop: () => ipcRenderer.invoke("desktop:omie-data-entry-loop"),
   getOmieLoopStatus: () => ipcRenderer.invoke("desktop:omie-loop-status"),
   getOmieSchedulerStatus: () => ipcRenderer.invoke("desktop:omie-scheduler-status"),

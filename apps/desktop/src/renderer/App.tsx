@@ -207,6 +207,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [fiscalCloseProgress, setFiscalCloseProgress] = useState<FiscalCloseProgress | null>(null);
   const [retryingFiscalOperationId, setRetryingFiscalOperationId] = useState<string | null>(null);
   const [omieSyncing, setOmieSyncing] = useState(false);
+  const [omieResetting, setOmieResetting] = useState(false);
   const [showOmieDirectSync, setShowOmieDirectSync] = useState(false);
   const [omieConnectionFeedback, setOmieConnectionFeedback] = useState<{
     status: "idle" | "checking" | "success" | "warning" | "error";
@@ -845,6 +846,75 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       });
     } finally {
       setOmieSyncing(false);
+    }
+  }
+
+  async function handleResetOmieMaster(): Promise<void> {
+    if (!desktopApi) return;
+
+    const confirmed = window.confirm(
+      "Isso vai apagar todos os clientes, transportadoras e dados de sincronizacao OMIE locais, e depois forcar uma re-sincronizacao completa. Deseja continuar?"
+    );
+    if (!confirmed) return;
+
+    setOmieResetting(true);
+    setOmieConnectionFeedback({
+      status: "checking",
+      message: "Limpando dados locais OMIE..."
+    });
+    setMessage("Limpando dados OMIE...");
+    try {
+      const resetResult = await desktopApi.resetOmieMaster();
+      setMessage(
+        `Dados OMIE limpos: ${resetResult.customersCleared} clientes, ${resetResult.carriersCleared} transportadoras, ${resetResult.syncRunsCleared} runs, ${resetResult.syncQueueCleared} jobs.`
+      );
+
+      setOmieConnectionFeedback({
+        status: "success",
+        message: "Dados locais limpos. Iniciando sincronizacao completa..."
+      });
+
+      // Trigger a full sync after reset
+      const syncResult = await desktopApi.omieSync();
+      const parts: string[] = [];
+      if (syncResult.customersPushed > 0) parts.push(`${syncResult.customersPushed} clientes enviados`);
+      if (syncResult.customersPushFailed > 0)
+        parts.push(`${syncResult.customersPushFailed} clientes com falha`);
+      parts.push(
+        `${syncResult.customersPulled} clientes baixados`,
+        `${syncResult.productsSynced} produtos`,
+        `${syncResult.paymentTermsSynced} condicoes`
+      );
+      parts.push(`pedidos: ${syncResult.ordersProcessed} ok, ${syncResult.ordersFailed} falhas`);
+      if (syncResult.errors.length > 0) {
+        parts.push(`${syncResult.errors.length} erro(s)`);
+      }
+      const omieStatusResult = await desktopApi.getOmieStatus();
+      setOmieStatus(omieStatusResult);
+      const summary = `OMIE re-sync: ${parts.join(" | ")}`;
+      setMessage(summary);
+      const hasFailures =
+        syncResult.errors.length > 0 || syncResult.ordersFailed > 0 || syncResult.customersPushFailed > 0;
+      setOmieConnectionFeedback({
+        status: hasFailures ? "warning" : "success",
+        message: hasFailures
+          ? "Re-sincronizacao concluida, mas houve falhas em alguns itens."
+          : "Re-sincronizacao completa concluida com sucesso.",
+        details: summary
+      });
+      if (syncResult.errors.length > 0) {
+        console.error("OMIE re-sync errors:", syncResult.errors);
+      }
+    } catch (error) {
+      const errorMessage = getErrorMessage(error);
+      setMessage(`Falha ao limpar/re-sincronizar OMIE: ${errorMessage}`);
+      setOmieConnectionFeedback({
+        status: "error",
+        message: "Nao foi possivel limpar ou re-sincronizar com o OMIE.",
+        details: errorMessage
+      });
+    } finally {
+      setOmieResetting(false);
     }
   }
 
@@ -2227,21 +2297,39 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                           </button>
                           <HelpTooltip content={TIPS.cloud.syncOmie} placement="top" />
                           <button
-                            type="button"
-                            onClick={() => setShowOmieDirectSync(true)}
-                            style={{
-                              ...styles.secondaryButton,
-                              marginTop: "8px",
-                              marginLeft: "8px"
-                            }}
-                          >
-                            Sincronizar OMIE direto
-                          </button>
-                          <HelpTooltip
-                            content="Puxa clientes, produtos, condicoes e transportadoras direto do OMIE usando credenciais da empresa."
-                            placement="top"
-                          />
-                          <div
+                             type="button"
+                             onClick={() => setShowOmieDirectSync(true)}
+                             style={{
+                               ...styles.secondaryButton,
+                               marginTop: "8px",
+                               marginLeft: "8px"
+                             }}
+                           >
+                             Sincronizar OMIE direto
+                           </button>
+                           <HelpTooltip
+                             content="Puxa clientes, produtos, condicoes e transportadoras direto do OMIE usando credenciais da empresa."
+                             placement="top"
+                           />
+                           <button
+                             type="button"
+                             onClick={handleResetOmieMaster}
+                             disabled={omieResetting || omieSyncing}
+                             style={{
+                               ...styles.dangerButton,
+                               marginTop: "8px",
+                               marginLeft: "8px",
+                               opacity: omieResetting || omieSyncing ? 0.6 : 1,
+                               cursor: omieResetting || omieSyncing ? "not-allowed" : "pointer"
+                             }}
+                           >
+                             {omieResetting ? "Limpando e sincronizando..." : "Limpar e Re-sincronizar OMIE"}
+                           </button>
+                           <HelpTooltip
+                             content="Apaga todos os dados OMIE locais (clientes, transportadoras, historico de sync) e forca uma sincronizacao completa do zero."
+                             placement="top"
+                           />
+                           <div
                             style={{
                               marginTop: "16px",
                               padding: "12px",
@@ -7354,6 +7442,16 @@ const styles = {
     padding: "8px 12px",
     background: "var(--kr-surface)",
     color: "var(--kr-text-strong)",
+    cursor: "pointer",
+    fontWeight: 700,
+    fontSize: "13px"
+  },
+  dangerButton: {
+    border: "none",
+    borderRadius: "10px",
+    padding: "8px 12px",
+    background: "#dc2626",
+    color: "#fff",
     cursor: "pointer",
     fontWeight: 700,
     fontSize: "13px"
