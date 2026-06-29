@@ -796,5 +796,16 @@ ALTER TABLE carriers ADD COLUMN state TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_carriers_company_city ON carriers(company_id, city);
 `
+  },
+  {
+    version: 19,
+    name: "clear_omie_queue_long_keys",
+    sql: `
+-- Limpa jobs da fila OMIE com idempotency_key > 60 caracteres,
+-- que causam erro HTTP 500 por exceder o limite do campo cCodIntOS.
+DELETE FROM sync_queue
+WHERE target = 'omie'
+  AND LENGTH(idempotency_key) > 60;
+`
   }
 ];
