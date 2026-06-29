@@ -23,11 +23,7 @@ import type {
   ProductDefaultPriceSummary
 } from "../services/product-prices";
 import type { CreditMovementRow } from "../services/credit";
-import type {
-  CreateQuotationInput,
-  QuotationRow,
-  QuotationSummary
-} from "../services/quotations";
+import type { CreateQuotationInput, QuotationRow, QuotationSummary } from "../services/quotations";
 import type { ActivateDesktopInput, DesktopAccessStatus } from "../services/desktop-activation";
 import type { CacheQueryOptions, CacheQueryResult } from "../services/cache-store";
 import type {
@@ -121,6 +117,8 @@ export interface KyberRockDesktopApi {
       whatsappPhone: string | null;
       sendEmail: boolean;
       sendWhatsapp: boolean;
+      scheduleFrequency: string;
+      scheduleTime: string;
       displayName: string | null;
       isActive: boolean;
       syncStatus: "synced" | "pending" | "error";
@@ -133,6 +131,8 @@ export interface KyberRockDesktopApi {
     whatsappPhone?: string | null;
     sendEmail?: boolean;
     sendWhatsapp?: boolean;
+    scheduleFrequency?: string;
+    scheduleTime?: string;
     displayName?: string | null;
     isActive?: boolean;
   }) => Promise<unknown>;
@@ -143,6 +143,8 @@ export interface KyberRockDesktopApi {
       whatsappPhone?: string | null;
       sendEmail?: boolean;
       sendWhatsapp?: boolean;
+      scheduleFrequency?: string;
+      scheduleTime?: string;
       displayName?: string | null;
       isActive?: boolean;
     }
@@ -220,13 +222,25 @@ export interface KyberRockDesktopApi {
   ) => Promise<Array<{ id: string; plate: string; description: string | null }>>;
   linkCustomerCarrier: (customerId: string, carrierId: string) => Promise<unknown>;
   unlinkCustomerCarrier: (customerId: string, carrierId: string) => Promise<void>;
-  listCarriersByCustomer: (customerId: string) => Promise<Array<{ id: string; name: string; document: string | null }>>;
-  listCustomersByCarrier: (carrierId: string) => Promise<Array<{ id: string; trade_name: string; legal_name: string }>>;
+  listCarriersByCustomer: (
+    customerId: string
+  ) => Promise<Array<{ id: string; name: string; document: string | null }>>;
+  listCustomersByCarrier: (
+    carrierId: string
+  ) => Promise<Array<{ id: string; trade_name: string; legal_name: string }>>;
   linkDriverCarrier: (driverId: string, carrierId: string) => Promise<unknown>;
   unlinkDriverCarrier: (driverId: string, carrierId: string) => Promise<void>;
-  listCarriersByDriver: (driverId: string) => Promise<Array<{ id: string; name: string; document: string | null }>>;
-  listDriversByCarrier: (carrierId: string) => Promise<Array<{ id: string; name: string; document: string | null; is_independent: number }>>;
-  listIndependentDrivers: () => Promise<Array<{ id: string; name: string; document: string | null }>>;
+  listCarriersByDriver: (
+    driverId: string
+  ) => Promise<Array<{ id: string; name: string; document: string | null }>>;
+  listDriversByCarrier: (
+    carrierId: string
+  ) => Promise<
+    Array<{ id: string; name: string; document: string | null; is_independent: number }>
+  >;
+  listIndependentDrivers: () => Promise<
+    Array<{ id: string; name: string; document: string | null }>
+  >;
   getOmieStatus: () => Promise<{
     configured: boolean;
     appKeyMasked: string | null;
@@ -264,7 +278,10 @@ export interface KyberRockDesktopApi {
     customersPushFailed: number;
     errors: string[];
   }>;
-  syncOmieDirect: (appKey: string, appSecret: string) => Promise<{
+  syncOmieDirect: (
+    appKey: string,
+    appSecret: string
+  ) => Promise<{
     customersPulled: number;
     customersPushed: number;
     productsSynced: number;
@@ -299,15 +316,17 @@ export interface KyberRockDesktopApi {
     mode: string;
     triggeredBy: string;
   } | null>;
-  getOmieSyncEntitiesByRun: (runId: string) => Promise<Array<{
-    entity: string;
-    success: boolean;
-    totalFetched: number;
-    totalCreated: number;
-    totalUpdated: number;
-    totalSkipped: number;
-    errorMessage: string | null;
-  }>>;
+  getOmieSyncEntitiesByRun: (runId: string) => Promise<
+    Array<{
+      entity: string;
+      success: boolean;
+      totalFetched: number;
+      totalCreated: number;
+      totalUpdated: number;
+      totalSkipped: number;
+      errorMessage: string | null;
+    }>
+  >;
   startOmieDataEntryLoop: () => Promise<{
     customersPulled: number;
     productsSynced: number;

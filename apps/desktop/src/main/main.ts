@@ -504,10 +504,7 @@ function registerIpcHandlers(): void {
     async (_event, startDate: string, endDate: string) => {
       if (!runtime) throw new Error("Desktop runtime is not ready.");
       const html = runtime.getReportHtml(startDate, endDate);
-      const filePath = await pickReportFilePath(
-        `relatorio-${startDate}-a-${endDate}.xls`,
-        ["xls"]
-      );
+      const filePath = await pickReportFilePath(`relatorio-${startDate}-a-${endDate}.xls`, ["xls"]);
       if (!filePath) return null;
       const fs = await import("node:fs/promises");
       await fs.writeFile(filePath, html, "utf8");
@@ -529,12 +526,23 @@ function registerIpcHandlers(): void {
         whatsappPhone?: string | null;
         sendEmail?: boolean;
         sendWhatsapp?: boolean;
+        scheduleFrequency?: string;
+        scheduleTime?: string;
         displayName?: string | null;
         isActive?: boolean;
       }
     ) => {
       if (!runtime) throw new Error("Desktop runtime is not ready.");
-      return runtime.createReportRecipient(input);
+      return runtime.createReportRecipient({
+        email: input.email,
+        whatsappPhone: input.whatsappPhone,
+        sendEmail: input.sendEmail,
+        sendWhatsapp: input.sendWhatsapp,
+        scheduleFrequency: input.scheduleFrequency as "daily" | "weekly" | "monthly" | undefined,
+        scheduleTime: input.scheduleTime,
+        displayName: input.displayName,
+        isActive: input.isActive
+      });
     }
   );
 
@@ -548,12 +556,23 @@ function registerIpcHandlers(): void {
         whatsappPhone?: string | null;
         sendEmail?: boolean;
         sendWhatsapp?: boolean;
+        scheduleFrequency?: string;
+        scheduleTime?: string;
         displayName?: string | null;
         isActive?: boolean;
       }
     ) => {
       if (!runtime) throw new Error("Desktop runtime is not ready.");
-      return runtime.updateReportRecipient(id, input);
+      return runtime.updateReportRecipient(id, {
+        email: input.email,
+        whatsappPhone: input.whatsappPhone,
+        sendEmail: input.sendEmail,
+        sendWhatsapp: input.sendWhatsapp,
+        scheduleFrequency: input.scheduleFrequency as "daily" | "weekly" | "monthly" | undefined,
+        scheduleTime: input.scheduleTime,
+        displayName: input.displayName,
+        isActive: input.isActive
+      });
     }
   );
 
@@ -598,7 +617,10 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "desktop:customer-special-prices-set",
-    (_event, input: { customerId: string; productId: string; unitPriceCents: number; unit?: string }) => {
+    (
+      _event,
+      input: { customerId: string; productId: string; unitPriceCents: number; unit?: string }
+    ) => {
       if (!runtime) throw new Error("Desktop runtime is not ready.");
       return runtime.setCustomerSpecialPrice(input);
     }
@@ -832,15 +854,21 @@ function registerIpcHandlers(): void {
     return runtime.getCarrierVehicles(carrierId);
   });
 
-  ipcMain.handle("desktop:link-customer-carrier", (_event, customerId: string, carrierId: string) => {
-    if (!runtime) throw new Error("Desktop runtime is not ready.");
-    return runtime.linkCustomerCarrier(customerId, carrierId);
-  });
+  ipcMain.handle(
+    "desktop:link-customer-carrier",
+    (_event, customerId: string, carrierId: string) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.linkCustomerCarrier(customerId, carrierId);
+    }
+  );
 
-  ipcMain.handle("desktop:unlink-customer-carrier", (_event, customerId: string, carrierId: string) => {
-    if (!runtime) throw new Error("Desktop runtime is not ready.");
-    return runtime.unlinkCustomerCarrier(customerId, carrierId);
-  });
+  ipcMain.handle(
+    "desktop:unlink-customer-carrier",
+    (_event, customerId: string, carrierId: string) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.unlinkCustomerCarrier(customerId, carrierId);
+    }
+  );
 
   ipcMain.handle("desktop:list-carriers-by-customer", (_event, customerId: string) => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
@@ -969,7 +997,9 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle("desktop:lookup-cep", async (_event, cep: string) => {
-    const digits = String(cep ?? "").replace(/\D/g, "").slice(0, 8);
+    const digits = String(cep ?? "")
+      .replace(/\D/g, "")
+      .slice(0, 8);
     if (digits.length !== 8) {
       throw new Error("CEP invalido. Informe 8 digitos.");
     }
@@ -997,7 +1027,9 @@ function registerIpcHandlers(): void {
       complement: String(payload.complemento ?? "").trim(),
       neighborhood: String(payload.bairro ?? "").trim(),
       city: String(payload.localidade ?? "").trim(),
-      state: String(payload.uf ?? "").trim().toUpperCase()
+      state: String(payload.uf ?? "")
+        .trim()
+        .toUpperCase()
     };
   });
 
@@ -1013,7 +1045,14 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle("desktop:sync-omie-master", async (_event, options: unknown) => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
-    return runtime.syncOmieMasterData(options as { mode?: "full" | "incremental"; triggeredBy?: "manual" | "automatic" | "startup"; appKey?: string; appSecret?: string });
+    return runtime.syncOmieMasterData(
+      options as {
+        mode?: "full" | "incremental";
+        triggeredBy?: "manual" | "automatic" | "startup";
+        appKey?: string;
+        appSecret?: string;
+      }
+    );
   });
 
   ipcMain.handle("desktop:get-last-omie-sync-run", () => {

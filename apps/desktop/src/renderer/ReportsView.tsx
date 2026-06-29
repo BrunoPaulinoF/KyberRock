@@ -8,6 +8,8 @@ interface RecipientRow {
   whatsappPhone: string | null;
   sendEmail: boolean;
   sendWhatsapp: boolean;
+  scheduleFrequency: string;
+  scheduleTime: string;
   displayName: string | null;
   isActive: boolean;
   syncStatus: "synced" | "pending" | "error";
@@ -19,6 +21,8 @@ interface RecipientFormState {
   email: string;
   whatsappPhone: string;
   deliveryChannel: "email" | "whatsapp" | "both";
+  scheduleFrequency: string;
+  scheduleTime: string;
   displayName: string;
   isActive: boolean;
 }
@@ -27,6 +31,8 @@ const initialForm: RecipientFormState = {
   email: "",
   whatsappPhone: "",
   deliveryChannel: "email",
+  scheduleFrequency: "daily",
+  scheduleTime: "20:00",
   displayName: "",
   isActive: true
 };
@@ -68,7 +74,7 @@ const styles = {
   formGrid: {
     display: "grid",
     gridTemplateColumns:
-      "minmax(180px, 1.2fr) minmax(160px, 1fr) minmax(150px, 0.8fr) minmax(150px, 1fr) 100px auto",
+      "minmax(180px, 1.2fr) minmax(160px, 1fr) minmax(130px, 0.7fr) minmax(120px, 0.6fr) minmax(120px, 0.6fr) minmax(130px, 0.8fr) 90px auto",
     gap: "10px",
     alignItems: "end"
   },
@@ -170,6 +176,16 @@ function badgeForStatus(status: RecipientRow["syncStatus"]) {
   return styles.badge("#b91c1c", "#fee2e2");
 }
 
+function scheduleLabel(frequency: string | null, time: string | null): string {
+  const freqMap: Record<string, string> = {
+    daily: "Diario",
+    weekly: "Semanal",
+    monthly: "Mensal"
+  };
+  const freq = freqMap[frequency ?? "daily"] ?? "Diario";
+  return `${freq} as ${time ?? "20:00"}h`;
+}
+
 export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | null }) {
   const [recipients, setRecipients] = useState<RecipientRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -238,6 +254,8 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
         whatsappPhone: form.whatsappPhone.trim() || null,
         sendEmail,
         sendWhatsapp,
+        scheduleFrequency: form.scheduleFrequency,
+        scheduleTime: form.scheduleTime,
         displayName: form.displayName.trim() || null,
         isActive: form.isActive
       };
@@ -266,6 +284,8 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
           : recipient.sendWhatsapp
             ? "whatsapp"
             : "email",
+      scheduleFrequency: recipient.scheduleFrequency ?? "daily",
+      scheduleTime: recipient.scheduleTime ?? "20:00",
       displayName: recipient.displayName ?? "",
       isActive: recipient.isActive
     });
@@ -292,8 +312,9 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
           <h2 style={styles.title}>Relatorios e fechamento diario</h2>
           <p style={styles.subtitle}>
             Cadastre os destinatarios que receberao o fechamento diario por e-mail, WhatsApp ou
-            ambos as 20h, conforme o PRD 24.6. Tambem e possivel exportar o periodo atual em PDF
-            (A4) e Excel pelo menu Insights.
+            ambos as 20h, conforme o PRD 24.6. Defina a frequencia (diario, semanal, mensal) e o
+            horario de envio para cada destinatario. Tambem e possivel exportar o periodo atual em
+            PDF (A4) e Excel pelo menu Insights.
           </p>
         </div>
       </header>
@@ -341,6 +362,27 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
             </select>
           </label>
           <label style={styles.fieldLabel}>
+            Frequencia
+            <select
+              value={form.scheduleFrequency}
+              onChange={(event) => setForm({ ...form, scheduleFrequency: event.target.value })}
+              style={styles.input}
+            >
+              <option value="daily">Diario</option>
+              <option value="weekly">Semanal</option>
+              <option value="monthly">Mensal</option>
+            </select>
+          </label>
+          <label style={styles.fieldLabel}>
+            Horario
+            <input
+              type="time"
+              value={form.scheduleTime}
+              onChange={(event) => setForm({ ...form, scheduleTime: event.target.value })}
+              style={styles.input}
+            />
+          </label>
+          <label style={styles.fieldLabel}>
             Nome (opcional)
             <input
               value={form.displayName}
@@ -376,8 +418,9 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
         {error ? <p style={{ ...styles.error, marginTop: "12px" }}>{error}</p> : null}
         {success ? <p style={{ ...styles.success, marginTop: "12px" }}>{success}</p> : null}
         <p style={{ ...styles.helperText, marginTop: "12px" }}>
-          O envio automatico ocorre as 20h via Edge Function. Para e-mail, configure SMTP_HOST,
-          SMTP_USER, SMTP_PASSWORD e DAILY_REPORT_SENDER. Para WhatsApp, configure
+          O envio automatico ocorre no horario agendado via Edge Function. Frequencia diaria envia
+          todos os dias; semanal toda segunda-feira; mensal no dia 1. Para e-mail, configure
+          SMTP_HOST, SMTP_USER, SMTP_PASSWORD e DAILY_REPORT_SENDER. Para WhatsApp, configure
           UAZAPI_INSTANCE_TOKEN e UAZAPI_WHATSAPP_URL.
         </p>
       </div>
@@ -410,6 +453,7 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
                   <th style={{ padding: "8px" }}>Canal</th>
                   <th style={{ padding: "8px" }}>E-mail</th>
                   <th style={{ padding: "8px" }}>WhatsApp</th>
+                  <th style={{ padding: "8px" }}>Agendamento</th>
                   <th style={{ padding: "8px" }}>Status</th>
                   <th style={{ padding: "8px" }}>Ultima sincronizacao</th>
                   <th style={{ padding: "8px" }}>Acoes</th>
@@ -428,6 +472,9 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
                     </td>
                     <td style={{ padding: "8px" }}>{recipient.email ?? "-"}</td>
                     <td style={{ padding: "8px" }}>{recipient.whatsappPhone ?? "-"}</td>
+                    <td style={{ padding: "8px" }}>
+                      {scheduleLabel(recipient.scheduleFrequency, recipient.scheduleTime)}
+                    </td>
                     <td style={{ padding: "8px" }}>
                       <span style={badgeForStatus(recipient.syncStatus)}>
                         {recipient.syncStatus === "synced"

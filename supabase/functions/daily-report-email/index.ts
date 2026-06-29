@@ -19,6 +19,8 @@ interface Recipient {
   whatsappPhone: string | null;
   sendEmail: boolean;
   sendWhatsapp: boolean;
+  scheduleFrequency: string;
+  scheduleTime: string;
   displayName: string | null;
 }
 
@@ -123,7 +125,9 @@ async function dispatchForUnit(params: {
 
   const { data: recipients, error: recipientsError } = await supabase
     .from("report_recipients")
-    .select("email, whatsapp_phone, send_email, send_whatsapp, display_name")
+    .select(
+      "email, whatsapp_phone, send_email, send_whatsapp, schedule_frequency, schedule_time, display_name"
+    )
     .eq("company_id", company.id)
     .eq("is_active", true);
 
@@ -176,6 +180,8 @@ async function dispatchForUnit(params: {
     whatsapp_phone: string | null;
     send_email: boolean | null;
     send_whatsapp: boolean | null;
+    schedule_frequency: string | null;
+    schedule_time: string | null;
     display_name: string | null;
   }>) {
     const recipient: Recipient = {
@@ -183,8 +189,20 @@ async function dispatchForUnit(params: {
       whatsappPhone: row.whatsapp_phone,
       sendEmail: row.send_email !== false,
       sendWhatsapp: row.send_whatsapp === true,
+      scheduleFrequency: row.schedule_frequency ?? "daily",
+      scheduleTime: row.schedule_time ?? "20:00",
       displayName: row.display_name
     };
+
+    if (
+      !shouldSendToday({
+        frequency: recipient.scheduleFrequency,
+        targetDate,
+        scheduleTime: recipient.scheduleTime
+      })
+    ) {
+      continue;
+    }
 
     if (recipient.sendEmail && recipient.email) {
       targets += 1;
@@ -365,6 +383,35 @@ function nextDay(date: string): string {
   const [year, month, day] = date.split("-").map(Number);
   const next = new Date(Date.UTC(year, month - 1, day + 1));
   return next.toISOString().slice(0, 10);
+}
+
+function shouldSendToday(input: {
+  frequency: string;
+  targetDate: string;
+  scheduleTime: string;
+}): boolean {
+  const now = new Date();
+  const [hourStr] = input.scheduleTime.split(":");
+  const scheduleHour = parseInt(hourStr ?? "20", 10);
+  const currentHour = now.getHours();
+
+  if (scheduleHour !== currentHour) return false;
+
+  const freq = input.frequency;
+  if (freq === "daily") return true;
+
+  const parts = input.targetDate.split("-").map(Number);
+  const target = new Date(Date.UTC(parts[0]!, (parts[1] ?? 1) - 1, parts[2]));
+
+  if (freq === "weekly") {
+    return target.getUTCDay() === 1;
+  }
+
+  if (freq === "monthly") {
+    return target.getUTCDate() === 1;
+  }
+
+  return false;
 }
 
 function renderEmailHtml(input: {

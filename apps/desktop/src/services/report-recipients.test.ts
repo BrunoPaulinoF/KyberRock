@@ -36,6 +36,8 @@ describe("report recipients", () => {
       expect(recipient.whatsappPhone).toBe("5511999999999");
       expect(recipient.sendEmail).toBe(false);
       expect(recipient.sendWhatsapp).toBe(true);
+      expect(recipient.scheduleFrequency).toBe("daily");
+      expect(recipient.scheduleTime).toBe("20:00");
       expect(listReportRecipients(db, "comp-1")).toHaveLength(1);
     } finally {
       db.close();
@@ -60,6 +62,32 @@ describe("report recipients", () => {
       expect(updated.whatsappPhone).toBe("5511988887777");
       expect(updated.sendEmail).toBe(true);
       expect(updated.sendWhatsapp).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("saves and reads custom schedule", () => {
+    const db = createDatabase();
+
+    try {
+      const recipient = createReportRecipient(db, {
+        companyId: "comp-1",
+        email: "dono@example.com",
+        scheduleFrequency: "weekly",
+        scheduleTime: "08:30"
+      });
+
+      expect(recipient.scheduleFrequency).toBe("weekly");
+      expect(recipient.scheduleTime).toBe("08:30");
+
+      const updated = updateReportRecipient(db, recipient.id, {
+        scheduleFrequency: "monthly",
+        scheduleTime: "09:00"
+      });
+
+      expect(updated.scheduleFrequency).toBe("monthly");
+      expect(updated.scheduleTime).toBe("09:00");
     } finally {
       db.close();
     }
