@@ -21,6 +21,10 @@ set "DB_FILE=%DB_DIR%\kyberrock.sqlite3"
 set "TOOLS_DIR=%USERPROFILE%\tools"
 set "SQLITE_EXE=%TOOLS_DIR%\sqlite3.exe"
 
+:: Pega o diretorio onde este .bat esta
+set "SCRIPT_DIR=%~dp0"
+set "SQL_FILE=%SCRIPT_DIR%clear-omie-queue.sql"
+
 :: 3. Verificar se o banco existe
 if not exist "%DB_FILE%" (
     echo [ERRO] Banco de dados nao encontrado em:
@@ -29,7 +33,15 @@ if not exist "%DB_FILE%" (
     exit /b 1
 )
 
-:: 4. Criar pasta tools e baixar sqlite3 se necessario
+:: 4. Verificar se o script SQL existe
+if not exist "%SQL_FILE%" (
+    echo [ERRO] Script SQL nao encontrado em:
+    echo %SQL_FILE%
+    pause
+    exit /b 1
+)
+
+:: 5. Criar pasta tools e baixar sqlite3 se necessario
 if not exist "%TOOLS_DIR%" mkdir "%TOOLS_DIR%"
 
 if not exist "%SQLITE_EXE%" (
@@ -47,7 +59,7 @@ if not exist "%SQLITE_EXE%" (
     echo [OK] sqlite3.exe ja existe.
 )
 
-:: 5. Fazer backup do banco
+:: 6. Fazer backup do banco
 echo [INFO] Criando backup do banco de dados...
 for /f "tokens=2-4 delims=/ " %%a in ('date /t') do (set mydate=%%c%%a%%b)
 for /f "tokens=1-2 delims=/:" %%a in ('time /t') do (set mytime=%%a%%b)
@@ -56,27 +68,11 @@ copy "%DB_FILE%" "%BACKUP_FILE%" >nul
 echo [OK] Backup salvo em:
 echo %BACKUP_FILE%
 
-:: 6. Criar arquivo SQL temporario com PowerShell (evita problemas de escape do .bat)
-set "SQL_FILE=%TEMP%\clear-omie-queue.sql"
-powershell -Command "$sql = @' 
-SELECT 'Jobs problematicos encontrados:' AS info;
-SELECT COUNT(*) AS total FROM sync_queue WHERE target = 'omie' AND LENGTH(idempotency_key) > 60;
-.mode column
-.headers on
-SELECT id, entity_id, action, LENGTH(idempotency_key) AS key_len, status FROM sync_queue WHERE target = 'omie' AND LENGTH(idempotency_key) > 60;
-DELETE FROM sync_queue WHERE target = 'omie' AND LENGTH(idempotency_key) > 60;
-SELECT 'Total jobs OMIE restantes:' AS info;
-SELECT COUNT(*) AS total FROM sync_queue WHERE target = 'omie';
-'@; $sql | Out-File -Encoding utf8 '%SQL_FILE%'"
-
 :: 7. Executar a limpeza no banco SQLite
 echo.
 echo [INFO] Limpando jobs OMIE com chave maior que 60 caracteres...
 echo.
 "%SQLITE_EXE%" "%DB_FILE%" < "%SQL_FILE%"
-
-:: 8. Limpar arquivo temporario
-del "%SQL_FILE%" 2>nul
 
 echo.
 echo ========================================
