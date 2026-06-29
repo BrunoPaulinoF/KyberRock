@@ -1096,6 +1096,11 @@ function registerIpcHandlers(): void {
     return runtime.runOmieDataEntryLoop();
   });
 
+  ipcMain.handle("desktop:reset-omie-master", async () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.resetOmieMasterData();
+  });
+
   ipcMain.handle("desktop:omie-loop-status", () => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.getOmieLoopStatus();

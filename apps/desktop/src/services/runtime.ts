@@ -1910,6 +1910,68 @@ export class DesktopRuntime {
       throw new Error(access.message);
     }
   }
+
+  /**
+   * Limpa todos os dados OMIE locais (clientes, transportadoras, estado de sync)
+   * e reseta o estado para forcar uma re-sincronizacao completa.
+   */
+  resetOmieMasterData(): {
+    customersCleared: number;
+    carriersCleared: number;
+    syncRunsCleared: number;
+    syncQueueCleared: number;
+  } {
+    const identity = this.ensureIdentity();
+    const companyId = identity.companyId;
+
+    const customersResult = this.database
+      .prepare(
+        `UPDATE customers
+         SET default_carrier_id = NULL,
+             deleted_at = datetime('now'),
+             is_active = 0,
+             updated_at = datetime('now')
+         WHERE company_id = ? AND deleted_at IS NULL`
+      )
+      .run(companyId);
+    const customersCleared = customersResult.changes;
+
+    const carriersResult = this.database
+      .prepare(
+        `UPDATE carriers
+         SET deleted_at = datetime('now'),
+             is_active = 0,
+             updated_at = datetime('now')
+         WHERE company_id = ? AND deleted_at IS NULL`
+      )
+      .run(companyId);
+    const carriersCleared = carriersResult.changes;
+
+    const syncRunsResult = this.database
+      .prepare(
+        `DELETE FROM omie_sync_runs WHERE company_id = ?`
+      )
+      .run(companyId);
+    const syncRunsCleared = syncRunsResult.changes;
+
+    this.database
+      .prepare(`DELETE FROM omie_sync_entities WHERE run_id NOT IN (SELECT id FROM omie_sync_runs)`)
+      .run();
+
+    this.database
+      .prepare(`DELETE FROM local_settings WHERE key IN ('omie_pull_state', 'omie_sync_lock')`)
+      .run();
+
+    const queueResult = this.database
+      .prepare(`DELETE FROM sync_queue WHERE target = 'omie'`)
+      .run();
+    const syncQueueCleared = queueResult.changes;
+
+    this.omieSyncInProgress = false;
+    this.cacheStore.invalidateAll(companyId);
+
+    return { customersCleared, carriersCleared, syncRunsCleared, syncQueueCleared };
+  }
 }
 
 function sleep(ms: number): Promise<void> {
