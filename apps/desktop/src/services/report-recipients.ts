@@ -5,7 +5,10 @@ import type { DesktopDatabase } from "../database/sqlite.js";
 export interface ReportRecipientRow {
   id: string;
   company_id: string;
-  email: string;
+  email: string | null;
+  whatsapp_phone: string | null;
+  send_email: number;
+  send_whatsapp: number;
   display_name: string | null;
   is_active: number;
   needs_push: number;
@@ -20,7 +23,10 @@ export interface ReportRecipientRow {
 export interface ReportRecipient {
   id: string;
   companyId: string;
-  email: string;
+  email: string | null;
+  whatsappPhone: string | null;
+  sendEmail: boolean;
+  sendWhatsapp: boolean;
   displayName: string | null;
   isActive: boolean;
   syncStatus: "synced" | "pending" | "error";
@@ -32,13 +38,19 @@ export interface ReportRecipient {
 
 export interface CreateReportRecipientInput {
   companyId: string;
-  email: string;
+  email?: string | null;
+  whatsappPhone?: string | null;
+  sendEmail?: boolean;
+  sendWhatsapp?: boolean;
   displayName?: string | null;
   isActive?: boolean;
 }
 
 export interface UpdateReportRecipientInput {
-  email?: string;
+  email?: string | null;
+  whatsappPhone?: string | null;
+  sendEmail?: boolean;
+  sendWhatsapp?: boolean;
   displayName?: string | null;
   isActive?: boolean;
 }
@@ -48,6 +60,9 @@ function mapRow(row: ReportRecipientRow): ReportRecipient {
     id: row.id,
     companyId: row.company_id,
     email: row.email,
+    whatsappPhone: row.whatsapp_phone,
+    sendEmail: row.send_email === 1,
+    sendWhatsapp: row.send_whatsapp === 1,
     displayName: row.display_name,
     isActive: row.is_active === 1,
     syncStatus: row.sync_status,
@@ -62,12 +77,47 @@ function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
+function normalizePhone(phone: string): string {
+  const digits = phone.replace(/\D/g, "");
+  if (digits.length === 10 || digits.length === 11) return `55${digits}`;
+  return digits;
+}
+
+function isValidWhatsappPhone(phone: string): boolean {
+  return /^\d{12,13}$/.test(phone);
+}
+
+function ensureValidRecipient(input: {
+  email?: string | null;
+  whatsappPhone?: string | null;
+  sendEmail: boolean;
+  sendWhatsapp: boolean;
+}): { email: string | null; whatsappPhone: string | null } {
+  const email = input.email?.trim().toLowerCase() || null;
+  const whatsappPhone = input.whatsappPhone ? normalizePhone(input.whatsappPhone) : null;
+
+  if (!input.sendEmail && !input.sendWhatsapp) {
+    throw new Error("Selecione pelo menos um canal de envio.");
+  }
+  if (input.sendEmail && (!email || !isValidEmail(email))) {
+    throw new Error("E-mail invalido.");
+  }
+  if (input.sendWhatsapp && (!whatsappPhone || !isValidWhatsappPhone(whatsappPhone))) {
+    throw new Error("WhatsApp invalido. Informe DDD e numero, ou o codigo do pais.");
+  }
+
+  return { email, whatsappPhone };
+}
+
 function ensureRecipientsTable(database: DesktopDatabase): void {
-  database.exec(`
+  const createTableSql = `
     CREATE TABLE IF NOT EXISTS report_recipients (
       id TEXT PRIMARY KEY,
       company_id TEXT NOT NULL REFERENCES companies(id),
-      email TEXT NOT NULL,
+      email TEXT,
+      whatsapp_phone TEXT,
+      send_email INTEGER NOT NULL DEFAULT 1 CHECK (send_email IN (0, 1)),
+      send_whatsapp INTEGER NOT NULL DEFAULT 0 CHECK (send_whatsapp IN (0, 1)),
       display_name TEXT,
       is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
       needs_push INTEGER NOT NULL DEFAULT 0,
@@ -78,10 +128,60 @@ function ensureRecipientsTable(database: DesktopDatabase): void {
       updated_at TEXT NOT NULL,
       deleted_at TEXT,
       UNIQUE(company_id, email)
-    );
+    );`;
+  database.exec(`
+    ${createTableSql}
     CREATE INDEX IF NOT EXISTS idx_report_recipients_company_active
       ON report_recipients(company_id, is_active, deleted_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_report_recipients_company_whatsapp
+      ON report_recipients(company_id, whatsapp_phone)
+      WHERE whatsapp_phone IS NOT NULL;
   `);
+  const columns = database.prepare("PRAGMA table_info(report_recipients)").all() as Array<{
+    name: string;
+  }>;
+  const existingColumns = new Set(columns.map((column) => column.name));
+  if (!existingColumns.has("whatsapp_phone")) {
+    database.prepare("ALTER TABLE report_recipients ADD COLUMN whatsapp_phone TEXT").run();
+  }
+  if (!existingColumns.has("send_email")) {
+    database
+      .prepare(
+        "ALTER TABLE report_recipients ADD COLUMN send_email INTEGER NOT NULL DEFAULT 1 CHECK (send_email IN (0, 1))"
+      )
+      .run();
+  }
+  if (!existingColumns.has("send_whatsapp")) {
+    database
+      .prepare(
+        "ALTER TABLE report_recipients ADD COLUMN send_whatsapp INTEGER NOT NULL DEFAULT 0 CHECK (send_whatsapp IN (0, 1))"
+      )
+      .run();
+  }
+  const currentColumns = database.prepare("PRAGMA table_info(report_recipients)").all() as Array<{
+    name: string;
+    notnull: number;
+  }>;
+  if (currentColumns.some((column) => column.name === "email" && column.notnull === 1)) {
+    database.exec(`
+      ALTER TABLE report_recipients RENAME TO report_recipients_old;
+      ${createTableSql}
+      INSERT INTO report_recipients (
+        id, company_id, email, whatsapp_phone, send_email, send_whatsapp, display_name, is_active,
+        needs_push, sync_status, last_synced_at, last_error, created_at, updated_at, deleted_at
+      )
+      SELECT
+        id, company_id, email, whatsapp_phone, send_email, send_whatsapp, display_name, is_active,
+        needs_push, sync_status, last_synced_at, last_error, created_at, updated_at, deleted_at
+      FROM report_recipients_old;
+      DROP TABLE report_recipients_old;
+      CREATE INDEX IF NOT EXISTS idx_report_recipients_company_active
+        ON report_recipients(company_id, is_active, deleted_at);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_report_recipients_company_whatsapp
+        ON report_recipients(company_id, whatsapp_phone)
+        WHERE whatsapp_phone IS NOT NULL;
+    `);
+  }
 }
 
 export function listReportRecipients(
@@ -93,7 +193,7 @@ export function listReportRecipients(
     .prepare(
       `SELECT * FROM report_recipients
        WHERE company_id = ? AND deleted_at IS NULL
-       ORDER BY is_active DESC, display_name ASC, email ASC`
+       ORDER BY is_active DESC, display_name ASC, email ASC, whatsapp_phone ASC`
     )
     .all(companyId) as ReportRecipientRow[];
   return rows.map(mapRow);
@@ -105,10 +205,14 @@ export function createReportRecipient(
   now: Date = new Date()
 ): ReportRecipient {
   ensureRecipientsTable(database);
-  const email = input.email.trim().toLowerCase();
-  if (!isValidEmail(email)) {
-    throw new Error("E-mail invalido.");
-  }
+  const sendEmail = input.sendEmail !== false;
+  const sendWhatsapp = input.sendWhatsapp === true;
+  const { email, whatsappPhone } = ensureValidRecipient({
+    email: input.email,
+    whatsappPhone: input.whatsappPhone,
+    sendEmail,
+    sendWhatsapp
+  });
   const displayName = input.displayName?.trim() || null;
   const isActive = input.isActive === false ? 0 : 1;
   const timestamp = now.toISOString();
@@ -119,19 +223,41 @@ export function createReportRecipient(
        WHERE company_id = ? AND email = ? AND deleted_at IS NULL`
     )
     .get(input.companyId, email) as { id: string } | undefined;
-  if (existing) {
+  if (email && existing) {
     throw new Error("Ja existe um destinatario com esse e-mail.");
+  }
+  const existingPhone = whatsappPhone
+    ? (database
+        .prepare(
+          `SELECT id FROM report_recipients
+           WHERE company_id = ? AND whatsapp_phone = ? AND deleted_at IS NULL`
+        )
+        .get(input.companyId, whatsappPhone) as { id: string } | undefined)
+    : undefined;
+  if (existingPhone) {
+    throw new Error("Ja existe um destinatario com esse WhatsApp.");
   }
 
   const id = randomUUID();
   database
     .prepare(
       `INSERT INTO report_recipients (
-        id, company_id, email, display_name, is_active,
+        id, company_id, email, whatsapp_phone, send_email, send_whatsapp, display_name, is_active,
         needs_push, sync_status, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, 1, 'pending', ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'pending', ?, ?)`
     )
-    .run(id, input.companyId, email, displayName, isActive, timestamp, timestamp);
+    .run(
+      id,
+      input.companyId,
+      email,
+      whatsappPhone,
+      sendEmail ? 1 : 0,
+      sendWhatsapp ? 1 : 0,
+      displayName,
+      isActive,
+      timestamp,
+      timestamp
+    );
 
   return mapRow(
     database.prepare("SELECT * FROM report_recipients WHERE id = ?").get(id) as ReportRecipientRow
@@ -156,11 +282,20 @@ export function updateReportRecipient(
   const sets: string[] = [];
   const values: unknown[] = [];
 
+  const candidateSendEmail = input.sendEmail ?? existing.send_email === 1;
+  const candidateSendWhatsapp = input.sendWhatsapp ?? existing.send_whatsapp === 1;
+  const candidateEmail = input.email !== undefined ? input.email : existing.email;
+  const candidateWhatsappPhone =
+    input.whatsappPhone !== undefined ? input.whatsappPhone : existing.whatsapp_phone;
+  const normalizedCandidate = ensureValidRecipient({
+    email: candidateEmail,
+    whatsappPhone: candidateWhatsappPhone,
+    sendEmail: candidateSendEmail,
+    sendWhatsapp: candidateSendWhatsapp
+  });
+
   if (input.email !== undefined) {
-    const email = input.email.trim().toLowerCase();
-    if (!isValidEmail(email)) {
-      throw new Error("E-mail invalido.");
-    }
+    const email = normalizedCandidate.email;
     if (email !== existing.email) {
       const conflict = database
         .prepare(
@@ -168,12 +303,41 @@ export function updateReportRecipient(
            WHERE company_id = ? AND email = ? AND id <> ? AND deleted_at IS NULL`
         )
         .get(existing.company_id, email, id) as { id: string } | undefined;
-      if (conflict) {
+      if (email && conflict) {
         throw new Error("Ja existe um destinatario com esse e-mail.");
       }
     }
     sets.push("email = ?");
     values.push(email);
+  }
+
+  if (input.whatsappPhone !== undefined) {
+    const whatsappPhone = normalizedCandidate.whatsappPhone;
+    if (whatsappPhone !== existing.whatsapp_phone) {
+      const conflict = whatsappPhone
+        ? (database
+            .prepare(
+              `SELECT id FROM report_recipients
+               WHERE company_id = ? AND whatsapp_phone = ? AND id <> ? AND deleted_at IS NULL`
+            )
+            .get(existing.company_id, whatsappPhone, id) as { id: string } | undefined)
+        : undefined;
+      if (conflict) {
+        throw new Error("Ja existe um destinatario com esse WhatsApp.");
+      }
+    }
+    sets.push("whatsapp_phone = ?");
+    values.push(whatsappPhone);
+  }
+
+  if (input.sendEmail !== undefined) {
+    sets.push("send_email = ?");
+    values.push(input.sendEmail ? 1 : 0);
+  }
+
+  if (input.sendWhatsapp !== undefined) {
+    sets.push("send_whatsapp = ?");
+    values.push(input.sendWhatsapp ? 1 : 0);
   }
 
   if (input.displayName !== undefined) {
@@ -235,11 +399,7 @@ export function markRecipientSynced(
     .run(now.toISOString(), now.toISOString(), id);
 }
 
-export function markRecipientSyncError(
-  database: DesktopDatabase,
-  id: string,
-  error: string
-): void {
+export function markRecipientSyncError(database: DesktopDatabase, id: string, error: string): void {
   database
     .prepare(
       `UPDATE report_recipients

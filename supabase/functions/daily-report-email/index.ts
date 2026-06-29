@@ -2,7 +2,8 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-admin-session",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-admin-session",
   "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS"
 };
 
@@ -14,7 +15,10 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 interface Recipient {
-  email: string;
+  email: string | null;
+  whatsappPhone: string | null;
+  sendEmail: boolean;
+  sendWhatsapp: boolean;
   displayName: string | null;
 }
 
@@ -36,13 +40,8 @@ Deno.serve(async (req) => {
   const smtpPassword = Deno.env.get("SMTP_PASSWORD") ?? "";
   const smtpPort = Number(Deno.env.get("SMTP_PORT") ?? "587");
   const senderEmail = Deno.env.get("DAILY_REPORT_SENDER") ?? smtpUser;
-
-  if (!smtpHost || !smtpUser || !smtpPassword || !senderEmail) {
-    return jsonResponse(
-      { error: "Provedor SMTP nao configurado. Defina SMTP_HOST, SMTP_USER, SMTP_PASSWORD." },
-      500
-    );
-  }
+  const uazapiInstanceToken = Deno.env.get("UAZAPI_INSTANCE_TOKEN") ?? "";
+  const uazapiWhatsappUrl = Deno.env.get("UAZAPI_WHATSAPP_URL") ?? "";
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
@@ -55,7 +54,9 @@ Deno.serve(async (req) => {
   };
   const targetDate = body.date ?? new Date().toISOString().slice(0, 10);
 
-  const companyFilter = body.companyId ? supabase.from("companies").select("id, name").eq("id", body.companyId) : supabase.from("companies").select("id, name").eq("is_active", true);
+  const companyFilter = body.companyId
+    ? supabase.from("companies").select("id, name").eq("id", body.companyId)
+    : supabase.from("companies").select("id, name").eq("is_active", true);
   const { data: companies, error: companiesError } = await companyFilter;
   if (companiesError) {
     return jsonResponse({ error: companiesError.message }, 500);
@@ -66,7 +67,11 @@ Deno.serve(async (req) => {
   for (const company of companies ?? []) {
     const unitFilter = body.unitId
       ? supabase.from("units").select("id, name").eq("id", body.unitId).eq("company_id", company.id)
-      : supabase.from("units").select("id, name").eq("company_id", company.id).eq("is_active", true);
+      : supabase
+          .from("units")
+          .select("id, name")
+          .eq("company_id", company.id)
+          .eq("is_active", true);
     const { data: units, error: unitsError } = await unitFilter;
     if (unitsError) {
       results.push({
@@ -90,7 +95,9 @@ Deno.serve(async (req) => {
         smtpHost,
         smtpPort,
         smtpUser,
-        smtpPassword
+        smtpPassword,
+        uazapiInstanceToken,
+        uazapiWhatsappUrl
       });
       results.push(result);
     }
@@ -109,12 +116,14 @@ async function dispatchForUnit(params: {
   smtpPort: number;
   smtpUser: string;
   smtpPassword: string;
+  uazapiInstanceToken: string;
+  uazapiWhatsappUrl: string;
 }): Promise<DispatchResult> {
   const { supabase, company, unit, targetDate, senderEmail } = params;
 
   const { data: recipients, error: recipientsError } = await supabase
     .from("report_recipients")
-    .select("email, display_name")
+    .select("email, whatsapp_phone, send_email, send_whatsapp, display_name")
     .eq("company_id", company.id)
     .eq("is_active", true);
 
@@ -152,33 +161,88 @@ async function dispatchForUnit(params: {
     date: targetDate,
     summary
   });
+  const whatsappText = renderWhatsappText({
+    companyName: company.name,
+    unitName: unit.name,
+    date: targetDate,
+    summary
+  });
 
   let dispatched = 0;
+  let targets = 0;
   let lastError: string | null = null;
-  for (const recipient of recipients as Recipient[]) {
-    try {
-      await sendSmtpEmail({
-        host: params.smtpHost,
-        port: params.smtpPort,
-        user: params.smtpUser,
-        password: params.smtpPassword,
-        from: senderEmail,
-        to: recipient.email,
-        subject: `Fechamento diario ${targetDate} - ${company.name}`,
-        html
-      });
-      dispatched += 1;
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : "Falha SMTP";
+  for (const row of recipients as Array<{
+    email: string | null;
+    whatsapp_phone: string | null;
+    send_email: boolean | null;
+    send_whatsapp: boolean | null;
+    display_name: string | null;
+  }>) {
+    const recipient: Recipient = {
+      email: row.email,
+      whatsappPhone: row.whatsapp_phone,
+      sendEmail: row.send_email !== false,
+      sendWhatsapp: row.send_whatsapp === true,
+      displayName: row.display_name
+    };
+
+    if (recipient.sendEmail && recipient.email) {
+      targets += 1;
+      try {
+        if (!params.smtpHost || !params.smtpUser || !params.smtpPassword || !senderEmail) {
+          throw new Error(
+            "Provedor SMTP nao configurado. Defina SMTP_HOST, SMTP_USER, SMTP_PASSWORD."
+          );
+        }
+        await sendSmtpEmail({
+          host: params.smtpHost,
+          port: params.smtpPort,
+          user: params.smtpUser,
+          password: params.smtpPassword,
+          from: senderEmail,
+          to: recipient.email,
+          subject: `Fechamento diario ${targetDate} - ${company.name}`,
+          html
+        });
+        dispatched += 1;
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : "Falha SMTP";
+      }
+    }
+
+    if (recipient.sendWhatsapp && recipient.whatsappPhone) {
+      targets += 1;
+      try {
+        if (!params.uazapiInstanceToken || !params.uazapiWhatsappUrl) {
+          throw new Error(
+            "WhatsApp nao configurado. Defina UAZAPI_INSTANCE_TOKEN e UAZAPI_WHATSAPP_URL."
+          );
+        }
+        await sendUazapiWhatsappMessage({
+          instanceToken: params.uazapiInstanceToken,
+          baseUrl: params.uazapiWhatsappUrl,
+          to: recipient.whatsappPhone,
+          text: whatsappText,
+          trackId: `daily-report:${company.id}:${unit.id}:${targetDate}:${recipient.whatsappPhone}`
+        });
+        dispatched += 1;
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : "Falha WhatsApp";
+      }
     }
   }
 
+  if (targets === 0) {
+    return recordError(supabase, {
+      companyId: company.id,
+      unitId: unit.id,
+      date: targetDate,
+      error: "Sem canais ativos para envio"
+    });
+  }
+
   const status: DispatchResult["status"] =
-    dispatched === recipients.length
-      ? "sent"
-      : dispatched > 0
-        ? "partial"
-        : "failed";
+    targets > 0 && dispatched === targets ? "sent" : dispatched > 0 ? "partial" : "failed";
 
   await supabase.from("daily_report_dispatches").insert({
     company_id: company.id,
@@ -211,7 +275,14 @@ function recordError(
     status: "failed",
     last_error: input.error
   });
-  return { companyId: input.companyId, unitId: input.unitId, date: input.date, recipients: 0, status: "failed", error: input.error };
+  return {
+    companyId: input.companyId,
+    unitId: input.unitId,
+    date: input.date,
+    recipients: 0,
+    status: "failed",
+    error: input.error
+  };
 }
 
 interface DailySummary {
@@ -232,7 +303,9 @@ async function buildDailySummary(
 ): Promise<DailySummary | null> {
   const { data, error } = await supabase
     .from("weighing_operations")
-    .select("net_weight_kg, product_total_cents, freight_total_cents, total_cents, product_description")
+    .select(
+      "net_weight_kg, product_total_cents, freight_total_cents, total_cents, product_description"
+    )
     .eq("company_id", companyId)
     .eq("unit_id", unitId)
     .eq("status", "closed_local")
@@ -244,10 +317,17 @@ async function buildDailySummary(
 
   const totalOperations = data.length;
   const totalNetWeightKg = data.reduce((sum, row) => sum + Number(row.net_weight_kg ?? 0), 0);
-  const totalProductCents = data.reduce((sum, row) => sum + Number(row.product_total_cents ?? 0), 0);
-  const totalFreightCents = data.reduce((sum, row) => sum + Number(row.freight_total_cents ?? 0), 0);
+  const totalProductCents = data.reduce(
+    (sum, row) => sum + Number(row.product_total_cents ?? 0),
+    0
+  );
+  const totalFreightCents = data.reduce(
+    (sum, row) => sum + Number(row.freight_total_cents ?? 0),
+    0
+  );
   const totalCents = data.reduce((sum, row) => sum + Number(row.total_cents ?? 0), 0);
-  const averagePricePerKgCents = totalNetWeightKg > 0 ? Math.round(totalCents / totalNetWeightKg) : 0;
+  const averagePricePerKgCents =
+    totalNetWeightKg > 0 ? Math.round(totalCents / totalNetWeightKg) : 0;
   const byProduct = aggregateProducts(
     data.map((row) => ({
       description: row.product_description,
@@ -303,6 +383,37 @@ function renderEmailHtml(input: {
     .join("");
 
   return `<!doctype html><html><head><meta charset="utf-8" /><title>Fechamento diario ${input.date}</title></head><body style="font-family:Arial,sans-serif;color:#0f172a;padding:24px;background:#f8fafc"><h1 style="margin:0 0 4px;font-size:22px">Fechamento diario ${input.date}</h1><p style="margin:0 0 16px;color:#475569">${escapeHtml(input.companyName)} - ${escapeHtml(input.unitName)}</p><table cellpadding="8" cellspacing="0" style="border-collapse:collapse;width:100%;background:#fff;border:1px solid #cbd5e1"><thead><tr style="background:#1e293b;color:#fff"><th>Carregamentos</th><th>Tonelagem</th><th>Produto</th><th>Frete</th><th>Total</th><th>Preco medio (kg)</th></tr></thead><tbody><tr><td>${input.summary.totalOperations}</td><td>${(input.summary.totalNetWeightKg / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} t</td><td>${centsToBRL(input.summary.totalProductCents)}</td><td>${centsToBRL(input.summary.totalFreightCents)}</td><td>${centsToBRL(input.summary.totalCents)}</td><td>${centsToBRL(input.summary.averagePricePerKgCents)}</td></tr></tbody></table><h2 style="margin:24px 0 8px;font-size:16px">Produtos vendidos</h2><table cellpadding="8" cellspacing="0" style="border-collapse:collapse;width:100%;background:#fff;border:1px solid #cbd5e1"><thead><tr style="background:#e2e8f0"><th>Produto</th><th>Peso</th><th>Valor</th></tr></thead><tbody>${productRows}</tbody></table></body></html>`;
+}
+
+function renderWhatsappText(input: {
+  companyName: string;
+  unitName: string;
+  date: string;
+  summary: DailySummary;
+}): string {
+  const centsToBRL = (cents: number) =>
+    new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents / 100);
+  const products = input.summary.byProduct
+    .slice(0, 8)
+    .map(
+      (product) =>
+        `- ${product.description}: ${(product.weightKg / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} t | ${centsToBRL(product.totalCents)}`
+    )
+    .join("\n");
+
+  return [
+    `Fechamento diario ${input.date}`,
+    `${input.companyName} - ${input.unitName}`,
+    `Carregamentos: ${input.summary.totalOperations}`,
+    `Tonelagem: ${(input.summary.totalNetWeightKg / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} t`,
+    `Produto: ${centsToBRL(input.summary.totalProductCents)}`,
+    `Frete: ${centsToBRL(input.summary.totalFreightCents)}`,
+    `Total: ${centsToBRL(input.summary.totalCents)}`,
+    `Preco medio/kg: ${centsToBRL(input.summary.averagePricePerKgCents)}`,
+    products ? `Produtos vendidos:\n${products}` : ""
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function escapeHtml(value: string): string {
@@ -368,11 +479,39 @@ async function sendSmtpEmail(input: {
     "MIME-Version: 1.0",
     'Content-Type: text/html; charset="utf-8"'
   ].join("\r\n");
-  await conn.write(
-    encoder.encode(`${headers}\r\n\r\n${input.html}\r\n.\r\n`)
-  );
+  await conn.write(encoder.encode(`${headers}\r\n\r\n${input.html}\r\n.\r\n`));
   const dataResponse = await readResponse();
   if (!dataResponse.startsWith("250")) throw new Error(`SMTP DATA falhou: ${dataResponse.trim()}`);
   await sendCommand("QUIT");
   conn.close();
+}
+
+async function sendUazapiWhatsappMessage(input: {
+  instanceToken: string;
+  baseUrl: string;
+  to: string;
+  text: string;
+  trackId: string;
+}): Promise<void> {
+  const baseUrl = input.baseUrl.replace(/\/+$/, "");
+  const response = await fetch(`${baseUrl}/send/text`, {
+    method: "POST",
+    headers: {
+      token: input.instanceToken,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      number: input.to,
+      text: input.text,
+      linkPreview: false,
+      async: false,
+      track_source: "kyberrock",
+      track_id: input.trackId
+    })
+  });
+
+  if (!response.ok) {
+    const details = await response.text().catch(() => "");
+    throw new Error(`UAZAPI WhatsApp falhou (${response.status}): ${details}`);
+  }
 }

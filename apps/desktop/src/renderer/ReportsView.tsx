@@ -4,7 +4,10 @@ import type { KyberRockDesktopApi } from "../preload/api-types";
 
 interface RecipientRow {
   id: string;
-  email: string;
+  email: string | null;
+  whatsappPhone: string | null;
+  sendEmail: boolean;
+  sendWhatsapp: boolean;
   displayName: string | null;
   isActive: boolean;
   syncStatus: "synced" | "pending" | "error";
@@ -14,12 +17,16 @@ interface RecipientRow {
 
 interface RecipientFormState {
   email: string;
+  whatsappPhone: string;
+  deliveryChannel: "email" | "whatsapp" | "both";
   displayName: string;
   isActive: boolean;
 }
 
 const initialForm: RecipientFormState = {
   email: "",
+  whatsappPhone: "",
+  deliveryChannel: "email",
   displayName: "",
   isActive: true
 };
@@ -60,7 +67,8 @@ const styles = {
   },
   formGrid: {
     display: "grid",
-    gridTemplateColumns: "minmax(220px, 1.5fr) minmax(170px, 1fr) 110px auto",
+    gridTemplateColumns:
+      "minmax(180px, 1.2fr) minmax(160px, 1fr) minmax(150px, 0.8fr) minmax(150px, 1fr) 100px auto",
     gap: "10px",
     alignItems: "end"
   },
@@ -200,18 +208,36 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
     return null;
   }
 
+  function validateWhatsapp(value: string): string | null {
+    const digits = value.replace(/\D/g, "");
+    const normalized = digits.length === 10 || digits.length === 11 ? `55${digits}` : digits;
+    if (!value.trim()) return "WhatsApp obrigatorio.";
+    if (!/^\d{12,13}$/.test(normalized)) return "WhatsApp invalido. Informe DDD e numero.";
+    return null;
+  }
+
   async function handleSave(): Promise<void> {
     if (!desktopApi) return;
-    const emailError = validateEmail(form.email);
-    if (emailError) {
-      setError(emailError);
+    const sendEmail = form.deliveryChannel === "email" || form.deliveryChannel === "both";
+    const sendWhatsapp = form.deliveryChannel === "whatsapp" || form.deliveryChannel === "both";
+    const validationError = sendEmail
+      ? validateEmail(form.email)
+      : sendWhatsapp
+        ? validateWhatsapp(form.whatsappPhone)
+        : null;
+    const whatsappError = sendWhatsapp ? validateWhatsapp(form.whatsappPhone) : null;
+    if (validationError || whatsappError) {
+      setError(validationError ?? whatsappError);
       return;
     }
     setError(null);
     setSuccess(null);
     try {
       const payload = {
-        email: form.email.trim().toLowerCase(),
+        email: form.email.trim().toLowerCase() || null,
+        whatsappPhone: form.whatsappPhone.trim() || null,
+        sendEmail,
+        sendWhatsapp,
         displayName: form.displayName.trim() || null,
         isActive: form.isActive
       };
@@ -232,7 +258,14 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
   function handleEdit(recipient: RecipientRow): void {
     setEditingId(recipient.id);
     setForm({
-      email: recipient.email,
+      email: recipient.email ?? "",
+      whatsappPhone: recipient.whatsappPhone ?? "",
+      deliveryChannel:
+        recipient.sendEmail && recipient.sendWhatsapp
+          ? "both"
+          : recipient.sendWhatsapp
+            ? "whatsapp"
+            : "email",
       displayName: recipient.displayName ?? "",
       isActive: recipient.isActive
     });
@@ -258,9 +291,9 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
         <div>
           <h2 style={styles.title}>Relatorios e fechamento diario</h2>
           <p style={styles.subtitle}>
-            Cadastre os destinatarios que receberao o fechamento diario por e-mail as 20h, conforme
-            o PRD 24.6. Tambem e possivel exportar o periodo atual em PDF (A4) e Excel pelo menu
-            Insights.
+            Cadastre os destinatarios que receberao o fechamento diario por e-mail, WhatsApp ou
+            ambos as 20h, conforme o PRD 24.6. Tambem e possivel exportar o periodo atual em PDF
+            (A4) e Excel pelo menu Insights.
           </p>
         </div>
       </header>
@@ -279,6 +312,33 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
               placeholder="dono@pedreira.com"
               style={styles.input}
             />
+          </label>
+          <label style={styles.fieldLabel}>
+            WhatsApp
+            <input
+              type="tel"
+              value={form.whatsappPhone}
+              onChange={(event) => setForm({ ...form, whatsappPhone: event.target.value })}
+              placeholder="(11) 99999-9999"
+              style={styles.input}
+            />
+          </label>
+          <label style={styles.fieldLabel}>
+            Enviar por
+            <select
+              value={form.deliveryChannel}
+              onChange={(event) =>
+                setForm({
+                  ...form,
+                  deliveryChannel: event.target.value as RecipientFormState["deliveryChannel"]
+                })
+              }
+              style={styles.input}
+            >
+              <option value="email">E-mail</option>
+              <option value="whatsapp">WhatsApp</option>
+              <option value="both">Ambos</option>
+            </select>
           </label>
           <label style={styles.fieldLabel}>
             Nome (opcional)
@@ -316,8 +376,9 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
         {error ? <p style={{ ...styles.error, marginTop: "12px" }}>{error}</p> : null}
         {success ? <p style={{ ...styles.success, marginTop: "12px" }}>{success}</p> : null}
         <p style={{ ...styles.helperText, marginTop: "12px" }}>
-          O envio automatico ocorre as 20h via Edge Function e SMTP. Configure
-          SMTP_HOST/SMTP_USER/SMTP_PASSWORD/DAILY_REPORT_SENDER nas variaveis de ambiente.
+          O envio automatico ocorre as 20h via Edge Function. Para e-mail, configure SMTP_HOST,
+          SMTP_USER, SMTP_PASSWORD e DAILY_REPORT_SENDER. Para WhatsApp, configure
+          UAZAPI_INSTANCE_TOKEN e UAZAPI_WHATSAPP_URL.
         </p>
       </div>
 
@@ -329,7 +390,7 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
           <p style={styles.helperText}>Carregando...</p>
         ) : recipients.length === 0 ? (
           <p style={styles.helperText}>
-            Nenhum destinatario cadastrado. Adicione pelo menos um e-mail acima.
+            Nenhum destinatario cadastrado. Adicione pelo menos um canal acima.
           </p>
         ) : (
           <div style={styles.tableScroll}>
@@ -346,7 +407,9 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
                   }}
                 >
                   <th style={{ padding: "8px" }}>Nome</th>
+                  <th style={{ padding: "8px" }}>Canal</th>
                   <th style={{ padding: "8px" }}>E-mail</th>
+                  <th style={{ padding: "8px" }}>WhatsApp</th>
                   <th style={{ padding: "8px" }}>Status</th>
                   <th style={{ padding: "8px" }}>Ultima sincronizacao</th>
                   <th style={{ padding: "8px" }}>Acoes</th>
@@ -356,7 +419,15 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
                 {recipients.map((recipient) => (
                   <tr key={recipient.id} style={{ borderTop: "1px solid var(--kr-border)" }}>
                     <td style={{ padding: "8px" }}>{recipient.displayName ?? "-"}</td>
-                    <td style={{ padding: "8px" }}>{recipient.email}</td>
+                    <td style={{ padding: "8px" }}>
+                      {recipient.sendEmail && recipient.sendWhatsapp
+                        ? "Ambos"
+                        : recipient.sendWhatsapp
+                          ? "WhatsApp"
+                          : "E-mail"}
+                    </td>
+                    <td style={{ padding: "8px" }}>{recipient.email ?? "-"}</td>
+                    <td style={{ padding: "8px" }}>{recipient.whatsappPhone ?? "-"}</td>
                     <td style={{ padding: "8px" }}>
                       <span style={badgeForStatus(recipient.syncStatus)}>
                         {recipient.syncStatus === "synced"
