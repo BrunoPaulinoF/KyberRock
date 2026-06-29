@@ -56,6 +56,12 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:update-report-recipient", id, input),
   deleteReportRecipient: (id: string) =>
     ipcRenderer.invoke("desktop:delete-report-recipient", id),
+  sendTestEmail: (to: string) => ipcRenderer.invoke("desktop:send-test-email", to),
+  sendDailyReportEmail: (email: string, date: string) =>
+    ipcRenderer.invoke("desktop:send-daily-report-email", email, date),
+  sendRangeReportEmail: (email: string, startDate: string, endDate: string) =>
+    ipcRenderer.invoke("desktop:send-range-report-email", email, startDate, endDate),
+  verifySmtpConfig: () => ipcRenderer.invoke("desktop:verify-smtp-config"),
   getReportByProduct: (startDate: string, endDate: string, limit?: number) =>
     ipcRenderer.invoke("desktop:get-report-by-product", startDate, endDate, limit),
   getReportByCustomer: (startDate: string, endDate: string, limit?: number) =>

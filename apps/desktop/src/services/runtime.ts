@@ -109,6 +109,7 @@ import {
 import { CacheStore, type CacheQueryOptions, type CacheQueryResult } from "./cache-store.js";
 import { readOmiePullState, writeOmiePullState } from "./supabase-sync.js";
 import { ReportService } from "./reports.js";
+import { sendEmail, verifySmtpConnection, type EmailSendInput, type EmailSendResult } from "./email.js";
 import {
   createReportRecipient,
   deleteReportRecipient,
@@ -1135,6 +1136,59 @@ export class DesktopRuntime {
     deleteReportRecipient(this.database, id);
   }
 
+  sendReportEmail(input: EmailSendInput): Promise<EmailSendResult> {
+    return sendEmail(input);
+  }
+
+  async sendTestEmail(to: string): Promise<EmailSendResult> {
+    return sendEmail({
+      to,
+      subject: "Teste de envio - KyberRock",
+      html: '<!doctype html><html><head><meta charset="utf-8" /></head><body style="font-family:Arial,sans-serif;padding:24px"><h1>KyberRock - Email configurado com sucesso!</h1><p>Este e um email de teste para verificar a conexao SMTP. Se voce esta lendo isso, o envio de relatorios por email esta funcionando.</p></body></html>'
+    });
+  }
+
+  async sendDailyReportEmail(email: string, date: string): Promise<EmailSendResult> {
+    const report = this.getDailyReport(date);
+    const identity = this.ensureIdentity();
+    const companyRow = this.database
+      .prepare("SELECT legal_name FROM companies WHERE id = ?")
+      .get(identity.companyId) as { legal_name: string | null } | undefined;
+    const companyName = companyRow?.legal_name || "KyberRock";
+    const html = renderDailyReportHtml({
+      companyName,
+      date,
+      report
+    });
+    return sendEmail({
+      to: email,
+      subject: `Fechamento diario ${date} - ${companyName}`,
+      html
+    });
+  }
+
+  async sendRangeReportEmail(
+    email: string,
+    startDate: string,
+    endDate: string
+  ): Promise<EmailSendResult> {
+    const identity = this.ensureIdentity();
+    const companyRow = this.database
+      .prepare("SELECT legal_name FROM companies WHERE id = ?")
+      .get(identity.companyId) as { legal_name: string | null } | undefined;
+    const companyName = companyRow?.legal_name || "KyberRock";
+    const html = this.getReportHtml(startDate, endDate);
+    return sendEmail({
+      to: email,
+      subject: `Relatorio ${startDate} a ${endDate} - ${companyName}`,
+      html
+    });
+  }
+
+  verifySmtpConfig(): Promise<EmailSendResult> {
+    return verifySmtpConnection();
+  }
+
   getPriceForCustomerProduct(customerId: string, productId: string): number | null {
     return new PricingService(this.database).getPriceForCustomerProduct(customerId, productId);
   }
@@ -1860,6 +1914,33 @@ export class DesktopRuntime {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function renderDailyReportHtml(input: {
+  companyName: string;
+  date: string;
+  report: { totalOperations: number; totalNetWeightKg: number; totalProductCents: number; totalFreightCents: number; totalCents: number; operations: Array<{ id: string; customerName: string; productDescription: string; netWeightKg: number; productTotalCents: number; freightTotalCents: number; totalCents: number }> };
+}): string {
+  const centsToBRL = (cents: number) =>
+    new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents / 100);
+
+  const rows = input.report.operations
+    .map(
+      (op) =>
+        `<tr><td>${escapeHtml(op.customerName)}</td><td>${escapeHtml(op.productDescription)}</td><td class="num">${(op.netWeightKg / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} t</td><td class="num">${centsToBRL(op.productTotalCents)}</td><td class="num">${centsToBRL(op.freightTotalCents)}</td><td class="num">${centsToBRL(op.totalCents)}</td></tr>`
+    )
+    .join("");
+
+  return `<!doctype html><html><head><meta charset="utf-8" /><title>Fechamento diario ${input.date}</title></head><body style="font-family:Arial,sans-serif;color:#0f172a;padding:24px;background:#f8fafc"><h1 style="margin:0 0 4px;font-size:22px">Fechamento diario ${input.date}</h1><p style="margin:0 0 16px;color:#475569">${escapeHtml(input.companyName)}</p><table cellpadding="8" cellspacing="0" style="border-collapse:collapse;width:100%;background:#fff;border:1px solid #cbd5e1;margin-bottom:24px"><thead><tr style="background:#1e293b;color:#fff"><th>Carregamentos</th><th>Tonelagem</th><th>Produto</th><th>Frete</th><th>Total</th><th>Preco medio</th></tr></thead><tbody><tr><td>${input.report.totalOperations}</td><td>${(input.report.totalNetWeightKg / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} t</td><td>${centsToBRL(input.report.totalProductCents)}</td><td>${centsToBRL(input.report.totalFreightCents)}</td><td>${centsToBRL(input.report.totalCents)}</td><td>${centsToBRL(input.report.totalNetWeightKg > 0 ? Math.round(input.report.totalCents / input.report.totalNetWeightKg) : 0)}</td></tr></tbody></table><table cellpadding="8" cellspacing="0" style="border-collapse:collapse;width:100%;background:#fff;border:1px solid #cbd5e1"><thead><tr style="background:#e2e8f0"><th>Cliente</th><th>Produto</th><th>Peso</th><th>Produto</th><th>Frete</th><th>Total</th></tr></thead><tbody>${rows}</tbody></table></body></html>`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 function buildScaleCaptureAudit(reading: ScaleReading): ScaleCaptureAudit {

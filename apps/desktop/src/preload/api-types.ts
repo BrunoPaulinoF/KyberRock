@@ -150,6 +150,17 @@ export interface KyberRockDesktopApi {
     }
   ) => Promise<unknown>;
   deleteReportRecipient: (id: string) => Promise<void>;
+  sendTestEmail: (to: string) => Promise<{ success: boolean; messageId?: string; error?: string }>;
+  sendDailyReportEmail: (
+    email: string,
+    date: string
+  ) => Promise<{ success: boolean; messageId?: string; error?: string }>;
+  sendRangeReportEmail: (
+    email: string,
+    startDate: string,
+    endDate: string
+  ) => Promise<{ success: boolean; messageId?: string; error?: string }>;
+  verifySmtpConfig: () => Promise<{ success: boolean; messageId?: string; error?: string }>;
   getReportByProduct: (
     startDate: string,
     endDate: string,

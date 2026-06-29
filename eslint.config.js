@@ -13,7 +13,8 @@ export default [
       "**/coverage/**",
       "release/**",
       "Simulador_Rodoviario_Rede/**",
-      "**/*.cjs"
+      "**/*.cjs",
+      "**/*.mjs"
     ]
   },
   js.configs.recommended,

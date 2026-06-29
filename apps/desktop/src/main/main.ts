@@ -581,6 +581,32 @@ function registerIpcHandlers(): void {
     runtime.deleteReportRecipient(id);
   });
 
+  ipcMain.handle("desktop:send-test-email", async (_event, to: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.sendTestEmail(to);
+  });
+
+  ipcMain.handle(
+    "desktop:send-daily-report-email",
+    async (_event, email: string, date: string) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.sendDailyReportEmail(email, date);
+    }
+  );
+
+  ipcMain.handle(
+    "desktop:send-range-report-email",
+    async (_event, email: string, startDate: string, endDate: string) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.sendRangeReportEmail(email, startDate, endDate);
+    }
+  );
+
+  ipcMain.handle("desktop:verify-smtp-config", async () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.verifySmtpConfig();
+  });
+
   ipcMain.handle("desktop:get-price", (_event, customerId: string, productId: string) => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");
