@@ -35,6 +35,7 @@ const desktopApi = {
   printTestReceipt: () => ipcRenderer.invoke("desktop:print-test-receipt"),
   billFiscalOperation: (operationId: string) =>
     ipcRenderer.invoke("desktop:bill-fiscal-operation", operationId),
+  bootstrapCloudData: () => ipcRenderer.invoke("desktop:bootstrap-cloud-data"),
   syncToCloud: () => ipcRenderer.invoke("desktop:sync-to-cloud"),
   getCloudStatus: () => ipcRenderer.invoke("desktop:get-cloud-status"),
   isCloudConnected: () => ipcRenderer.invoke("desktop:is-cloud-connected"),

@@ -12,7 +12,11 @@ import type {
   OperationType,
   WeighingOperationSummary
 } from "../services/weighing-operations";
-import type { FiscalBillingResult, SyncResult } from "../services/supabase-sync";
+import type {
+  CloudBootstrapResult,
+  FiscalBillingResult,
+  SyncResult
+} from "../services/supabase-sync";
 import type { PriceDetails } from "../services/pricing";
 import type {
   CustomerSpecialPriceSummary,
@@ -100,6 +104,7 @@ export interface KyberRockDesktopApi {
   reprintReceipt: (receiptId: string) => Promise<PrintReceiptSummary>;
   printTestReceipt: () => Promise<PrintReceiptSummary>;
   billFiscalOperation: (operationId: string) => Promise<FiscalBillingResult>;
+  bootstrapCloudData: () => Promise<CloudBootstrapResult>;
   syncToCloud: () => Promise<SyncResult>;
   getCloudStatus: () => Promise<{ totalOperations: number; lastSync: string | null }>;
   isCloudConnected: () => Promise<boolean>;
@@ -109,17 +114,39 @@ export interface KyberRockDesktopApi {
   getReportHtml: (startDate: string, endDate: string) => Promise<string>;
   exportReportPdf: (startDate: string, endDate: string) => Promise<{ path: string } | null>;
   exportReportExcel: (startDate: string, endDate: string) => Promise<{ path: string } | null>;
-  listReportRecipients: () => Promise<Array<{
-    id: string;
-    email: string;
-    displayName: string | null;
-    isActive: boolean;
-    syncStatus: "synced" | "pending" | "error";
-    lastError: string | null;
-    lastSyncedAt: string | null;
-  }>>;
-  createReportRecipient: (input: { email: string; displayName?: string | null; isActive?: boolean }) => Promise<unknown>;
-  updateReportRecipient: (id: string, input: { email?: string; displayName?: string | null; isActive?: boolean }) => Promise<unknown>;
+  listReportRecipients: () => Promise<
+    Array<{
+      id: string;
+      email: string | null;
+      whatsappPhone: string | null;
+      sendEmail: boolean;
+      sendWhatsapp: boolean;
+      displayName: string | null;
+      isActive: boolean;
+      syncStatus: "synced" | "pending" | "error";
+      lastError: string | null;
+      lastSyncedAt: string | null;
+    }>
+  >;
+  createReportRecipient: (input: {
+    email?: string | null;
+    whatsappPhone?: string | null;
+    sendEmail?: boolean;
+    sendWhatsapp?: boolean;
+    displayName?: string | null;
+    isActive?: boolean;
+  }) => Promise<unknown>;
+  updateReportRecipient: (
+    id: string,
+    input: {
+      email?: string | null;
+      whatsappPhone?: string | null;
+      sendEmail?: boolean;
+      sendWhatsapp?: boolean;
+      displayName?: string | null;
+      isActive?: boolean;
+    }
+  ) => Promise<unknown>;
   deleteReportRecipient: (id: string) => Promise<void>;
   getReportByProduct: (
     startDate: string,

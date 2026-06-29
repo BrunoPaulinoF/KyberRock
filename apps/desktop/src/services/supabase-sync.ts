@@ -16,6 +16,9 @@ let clientConfigKey: string | null = null;
 
 export const CLOUD_SUPABASE_URL_KEY = "cloud_supabase_url";
 export const CLOUD_PUBLISHABLE_KEY_KEY = "cloud_publishable_key";
+const OMIE_BATCH_DELAY_MS = 3_000;
+const OMIE_PUSH_CUSTOMER_BATCH_LIMIT = 10;
+const OMIE_QUEUE_BATCH_LIMIT = 10;
 
 export function readStoredSupabaseConfig(
   database: DesktopDatabase
@@ -56,6 +59,25 @@ export interface SyncResult {
   synced: number;
   failed: number;
   errors: string[];
+}
+
+export interface CloudBootstrapResult extends SyncResult {
+  mode: "cloud" | "local_emergency";
+  pulled: {
+    customers: number;
+    products: number;
+    operations: number;
+    loadingRequests: number;
+    printReceipts: number;
+  };
+}
+
+interface DesktopPullResponse {
+  customers?: Array<Record<string, unknown>>;
+  products?: Array<Record<string, unknown>>;
+  operations?: Array<Record<string, unknown>>;
+  loadingRequests?: Array<Record<string, unknown>>;
+  printReceipts?: Array<Record<string, unknown>>;
 }
 
 export interface OmieCloudSyncResult {
@@ -160,6 +182,15 @@ interface OmieReferenceSupplier {
   name: string;
   tradeName?: string | null;
   document?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  zipcode?: string | null;
+  addressStreet?: string | null;
+  addressNumber?: string | null;
+  addressComplement?: string | null;
+  neighborhood?: string | null;
+  city?: string | null;
+  state?: string | null;
   isActive?: boolean;
   tagsJson?: Record<string, unknown> | unknown[] | null;
 }
@@ -199,6 +230,10 @@ interface OmiePullState {
   productsPage: number;
   paymentTermsPage: number;
   suppliersPage: number;
+  customersFinished: boolean;
+  productsFinished: boolean;
+  paymentTermsFinished: boolean;
+  suppliersFinished: boolean;
   inProgress: boolean;
   lastUpdatedAt: string | null;
 }
@@ -212,6 +247,10 @@ export function readOmiePullState(database: DesktopDatabase): OmiePullState {
     productsPage: 1,
     paymentTermsPage: 1,
     suppliersPage: 1,
+    customersFinished: false,
+    productsFinished: false,
+    paymentTermsFinished: false,
+    suppliersFinished: false,
     inProgress: false,
     lastUpdatedAt: null,
     ...(stored ?? {})
@@ -228,10 +267,21 @@ export function writeOmiePullState(
     ...patch,
     lastUpdatedAt: new Date().toISOString()
   };
-  if (patch.markDone === "customers") next.customersPage = 1;
-  if (patch.markDone === "products") next.productsPage = 1;
-  if (patch.markDone === "paymentTerms") next.paymentTermsPage = 1;
-  if (next.customersPage === 1 && next.productsPage === 1 && next.paymentTermsPage === 1) {
+  if (patch.markDone === "customers") {
+    next.customersPage = 1;
+    next.suppliersPage = 1;
+    next.customersFinished = true;
+    next.suppliersFinished = true;
+  }
+  if (patch.markDone === "products") {
+    next.productsPage = 1;
+    next.productsFinished = true;
+  }
+  if (patch.markDone === "paymentTerms") {
+    next.paymentTermsPage = 1;
+    next.paymentTermsFinished = true;
+  }
+  if (next.customersFinished && next.productsFinished && next.paymentTermsFinished) {
     next.inProgress = false;
   }
   writeLocalSetting(database, OMIE_PULL_STATE_KEY, next);
@@ -411,6 +461,416 @@ export async function processCloudSyncQueue(
   return { processed, failed, errors };
 }
 
+export async function pullDesktopDataFromCloud(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity
+): Promise<CloudBootstrapResult["pulled"]> {
+  const settings = getCloudSettings(database, identity);
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.functions.invoke<DesktopPullResponse>("desktop-pull", {
+    body: { deviceId: settings.deviceId, deviceToken: settings.deviceToken }
+  });
+  if (error) throw new Error(await getFunctionErrorMessage(error));
+
+  const payload = data ?? {};
+  const apply = database.transaction(() => {
+    const customers = upsertCloudCustomers(database, settings.companyId, payload.customers ?? []);
+    const products = upsertCloudProducts(database, settings.companyId, payload.products ?? []);
+    const operations = upsertCloudOperations(database, settings, payload.operations ?? []);
+    const loadingRequests = upsertCloudLoadingRequests(database, settings, payload.loadingRequests ?? []);
+    const printReceipts = upsertCloudPrintReceipts(database, payload.printReceipts ?? []);
+    writeLocalSetting(database, "cloud_bootstrap_last_pull_at", new Date().toISOString());
+    return { customers, products, operations, loadingRequests, printReceipts };
+  });
+
+  return apply();
+}
+
+function upsertCloudCustomers(
+  database: DesktopDatabase,
+  companyId: string,
+  rows: Array<Record<string, unknown>>
+): number {
+  const upsert = database.prepare(`
+    INSERT INTO customers (
+      id, company_id, omie_customer_id, source, legal_name, trade_name, document, phone, email,
+      credit_limit_cents, open_receivables_cents, sync_status, is_active, created_at, updated_at,
+      deleted_at, last_synced_at, needs_push
+    ) VALUES (?, ?, ?, 'hybrid', ?, ?, ?, ?, ?, ?, ?, 'synced', ?, ?, ?, NULL, ?, 0)
+    ON CONFLICT(id) DO UPDATE SET
+      company_id = excluded.company_id,
+      omie_customer_id = excluded.omie_customer_id,
+      source = CASE WHEN customers.source = 'local' THEN 'hybrid' ELSE customers.source END,
+      legal_name = excluded.legal_name,
+      trade_name = excluded.trade_name,
+      document = excluded.document,
+      phone = excluded.phone,
+      email = excluded.email,
+      credit_limit_cents = excluded.credit_limit_cents,
+      open_receivables_cents = excluded.open_receivables_cents,
+      sync_status = 'synced',
+      is_active = excluded.is_active,
+      updated_at = excluded.updated_at,
+      deleted_at = NULL,
+      last_synced_at = excluded.last_synced_at,
+      needs_push = 0
+  `);
+
+  let count = 0;
+  for (const row of rows) {
+    const id = stringValue(row.id);
+    if (!id) continue;
+    const legalName = stringValue(row.legal_name) || stringValue(row.trade_name) || "Cliente";
+    const tradeName = stringValue(row.trade_name) || legalName;
+    const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
+    upsert.run(
+      id,
+      companyId,
+      integerValue(row.omie_customer_id),
+      legalName,
+      tradeName,
+      nullableStringValue(row.document),
+      nullableStringValue(row.phone),
+      nullableStringValue(row.email),
+      integerValue(row.credit_limit_cents),
+      integerValue(row.open_receivables_cents) ?? 0,
+      booleanToSql(row.is_active, true),
+      isoStringValue(row.created_at) || updatedAt,
+      updatedAt,
+      updatedAt
+    );
+    count++;
+  }
+  return count;
+}
+
+function upsertCloudProducts(
+  database: DesktopDatabase,
+  companyId: string,
+  rows: Array<Record<string, unknown>>
+): number {
+  const upsert = database.prepare(`
+    INSERT INTO products (
+      id, company_id, omie_product_id, code, description, unit, is_active, updated_from_omie_at,
+      created_at, updated_at, deleted_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+    ON CONFLICT(id) DO UPDATE SET
+      company_id = excluded.company_id,
+      omie_product_id = excluded.omie_product_id,
+      code = excluded.code,
+      description = excluded.description,
+      unit = excluded.unit,
+      is_active = excluded.is_active,
+      updated_from_omie_at = excluded.updated_from_omie_at,
+      updated_at = excluded.updated_at,
+      deleted_at = NULL
+  `);
+
+  let count = 0;
+  for (const row of rows) {
+    const id = stringValue(row.id);
+    if (!id) continue;
+    const description = stringValue(row.description) || "Produto";
+    const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
+    upsert.run(
+      id,
+      companyId,
+      integerValue(row.omie_product_id),
+      stringValue(row.code) || id,
+      description,
+      stringValue(row.unit) || "KG",
+      booleanToSql(row.is_active, true),
+      updatedAt,
+      isoStringValue(row.created_at) || updatedAt,
+      updatedAt
+    );
+    count++;
+  }
+  return count;
+}
+
+function upsertCloudOperations(
+  database: DesktopDatabase,
+  settings: CloudSettings,
+  rows: Array<Record<string, unknown>>
+): number {
+  const upsert = database.prepare(`
+    INSERT INTO weighing_operations (
+      id, company_id, unit_id, device_id, status, operation_type, customer_id, vehicle_id, driver_id,
+      product_id, payment_term_id, entry_weight_kg, entry_weight_captured_at, exit_weight_kg,
+      exit_weight_captured_at, net_weight_kg, unit_price_cents, product_total_cents,
+      freight_total_cents, total_cents, freight_json, omie_sales_order_id, omie_service_order_id,
+      cloud_synced_at, cancel_reason, created_at, updated_at, base_unit_price_cents,
+      applied_price_table_id, applied_price_table_name, applied_price_table_item_id, price_unit,
+      price_savings_percent, deduct_freight_from_credit, product_credit_debit_cents,
+      freight_credit_debit_cents, quotation_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      company_id = excluded.company_id,
+      unit_id = excluded.unit_id,
+      device_id = excluded.device_id,
+      status = excluded.status,
+      operation_type = excluded.operation_type,
+      customer_id = excluded.customer_id,
+      product_id = excluded.product_id,
+      payment_term_id = excluded.payment_term_id,
+      entry_weight_kg = excluded.entry_weight_kg,
+      entry_weight_captured_at = excluded.entry_weight_captured_at,
+      exit_weight_kg = excluded.exit_weight_kg,
+      exit_weight_captured_at = excluded.exit_weight_captured_at,
+      net_weight_kg = excluded.net_weight_kg,
+      unit_price_cents = excluded.unit_price_cents,
+      product_total_cents = excluded.product_total_cents,
+      freight_total_cents = excluded.freight_total_cents,
+      total_cents = excluded.total_cents,
+      freight_json = excluded.freight_json,
+      omie_sales_order_id = excluded.omie_sales_order_id,
+      omie_service_order_id = excluded.omie_service_order_id,
+      cloud_synced_at = excluded.cloud_synced_at,
+      cancel_reason = excluded.cancel_reason,
+      updated_at = excluded.updated_at,
+      base_unit_price_cents = excluded.base_unit_price_cents,
+      applied_price_table_id = excluded.applied_price_table_id,
+      applied_price_table_name = excluded.applied_price_table_name,
+      applied_price_table_item_id = excluded.applied_price_table_item_id,
+      price_unit = excluded.price_unit,
+      price_savings_percent = excluded.price_savings_percent,
+      deduct_freight_from_credit = excluded.deduct_freight_from_credit,
+      product_credit_debit_cents = excluded.product_credit_debit_cents,
+      freight_credit_debit_cents = excluded.freight_credit_debit_cents,
+      quotation_id = excluded.quotation_id
+  `);
+
+  let count = 0;
+  for (const row of rows) {
+    const id = stringValue(row.id);
+    if (!id) continue;
+    const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
+    const closedAt = isoStringValue(row.closed_at);
+    const customerId = existingId(database, "customers", row.customer_id);
+    const productId = existingId(database, "products", row.product_id);
+    upsert.run(
+      id,
+      settings.companyId,
+      settings.unitId,
+      stringValue(row.device_id) || settings.deviceId,
+      mapCloudOperationStatus(row.status),
+      mapCloudOperationType(row.operation_type),
+      customerId,
+      productId,
+      nullableStringValue(row.payment_term_id),
+      numberValue(row.entry_weight_kg),
+      isoStringValue(row.created_at) || updatedAt,
+      numberValue(row.exit_weight_kg),
+      closedAt,
+      numberValue(row.net_weight_kg),
+      integerValue(row.unit_price_cents),
+      integerValue(row.product_total_cents),
+      integerValue(row.freight_total_cents) ?? 0,
+      integerValue(row.total_cents),
+      jsonStringValue(row.freight_json),
+      integerValue(row.omie_sales_order_id),
+      integerValue(row.omie_service_order_id),
+      isoStringValue(row.synced_at) || updatedAt,
+      nullableStringValue(row.cancel_reason),
+      isoStringValue(row.created_at) || updatedAt,
+      updatedAt,
+      integerValue(row.base_unit_price_cents),
+      nullableStringValue(row.applied_price_table_id),
+      nullableStringValue(row.applied_price_table_name),
+      nullableStringValue(row.applied_price_table_item_id),
+      stringValue(row.price_unit) || "ton",
+      numberValue(row.price_savings_percent),
+      booleanToSql(row.deduct_freight_from_credit, false),
+      integerValue(row.product_credit_debit_cents) ?? 0,
+      integerValue(row.freight_credit_debit_cents) ?? 0,
+      existingId(database, "quotations", row.quotation_id)
+    );
+    count++;
+  }
+  return count;
+}
+
+function upsertCloudLoadingRequests(
+  database: DesktopDatabase,
+  settings: CloudSettings,
+  rows: Array<Record<string, unknown>>
+): number {
+  const upsert = database.prepare(`
+    INSERT INTO loading_requests (
+      id, operation_id, company_id, unit_id, status, plate, customer_name, driver_name,
+      product_description, created_at, updated_at, closed_at, loader_completed_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      operation_id = excluded.operation_id,
+      company_id = excluded.company_id,
+      unit_id = excluded.unit_id,
+      status = excluded.status,
+      plate = excluded.plate,
+      customer_name = excluded.customer_name,
+      driver_name = excluded.driver_name,
+      product_description = excluded.product_description,
+      updated_at = excluded.updated_at,
+      closed_at = excluded.closed_at,
+      loader_completed_at = excluded.loader_completed_at
+  `);
+
+  let count = 0;
+  for (const row of rows) {
+    const id = stringValue(row.id);
+    const operationId = existingId(database, "weighing_operations", row.operation_id);
+    if (!id || !operationId) continue;
+    const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
+    upsert.run(
+      id,
+      operationId,
+      settings.companyId,
+      settings.unitId,
+      mapLoadingRequestStatus(row.status),
+      stringValue(row.plate) || "SEMPLACA",
+      stringValue(row.customer_name) || "Cliente",
+      stringValue(row.driver_name) || "Motorista",
+      stringValue(row.product_description) || "Produto",
+      isoStringValue(row.created_at) || updatedAt,
+      updatedAt,
+      isoStringValue(row.closed_at),
+      isoStringValue(row.loader_completed_at)
+    );
+    count++;
+  }
+  return count;
+}
+
+function upsertCloudPrintReceipts(
+  database: DesktopDatabase,
+  rows: Array<Record<string, unknown>>
+): number {
+  const upsert = database.prepare(`
+    INSERT INTO print_receipts (
+      id, operation_id, unit_id, receipt_number, copy_number, content_snapshot_json, printed_at,
+      printer_name, status, error_message, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      operation_id = excluded.operation_id,
+      unit_id = excluded.unit_id,
+      receipt_number = excluded.receipt_number,
+      copy_number = excluded.copy_number,
+      content_snapshot_json = excluded.content_snapshot_json,
+      printed_at = excluded.printed_at,
+      printer_name = excluded.printer_name,
+      status = excluded.status,
+      error_message = excluded.error_message,
+      updated_at = excluded.updated_at
+  `);
+
+  let count = 0;
+  for (const row of rows) {
+    const id = stringValue(row.id);
+    const operationId = existingId(database, "weighing_operations", row.operation_id);
+    const unitId = stringValue(row.unit_id);
+    if (!id || !operationId || !unitId) continue;
+    const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
+    upsert.run(
+      id,
+      operationId,
+      unitId,
+      integerValue(row.receipt_number) ?? 0,
+      integerValue(row.copy_number) ?? 1,
+      jsonStringValue(row.content_snapshot_json) ?? "{}",
+      isoStringValue(row.printed_at) || updatedAt,
+      stringValue(row.printer_name) || "",
+      stringValue(row.status) === "failed" ? "failed" : "printed",
+      nullableStringValue(row.error_message),
+      isoStringValue(row.created_at) || updatedAt,
+      updatedAt
+    );
+    count++;
+  }
+  return count;
+}
+
+function mapCloudOperationStatus(value: unknown): string {
+  const status = stringValue(value);
+  if (status === "open") return "awaiting_exit";
+  if (
+    [
+      "draft",
+      "entry_registered",
+      "loading_requested",
+      "awaiting_exit",
+      "closed_local",
+      "pending_cloud",
+      "pending_omie",
+      "synced",
+      "sync_error",
+      "cancelled"
+    ].includes(status)
+  ) {
+    return status;
+  }
+  return "awaiting_exit";
+}
+
+function mapCloudOperationType(value: unknown): "invoice" | "internal" {
+  return stringValue(value) === "internal" ? "internal" : "invoice";
+}
+
+function mapLoadingRequestStatus(value: unknown): string {
+  const status = stringValue(value);
+  return status || "open";
+}
+
+function existingId(database: DesktopDatabase, table: string, value: unknown): string | null {
+  const id = nullableStringValue(value);
+  if (!id) return null;
+  const row = database.prepare(`SELECT id FROM ${table} WHERE id = ?`).get(id) as
+    | { id: string }
+    | undefined;
+  return row?.id ?? null;
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function nullableStringValue(value: unknown): string | null {
+  const text = stringValue(value);
+  return text || null;
+}
+
+function isoStringValue(value: unknown): string | null {
+  const text = nullableStringValue(value);
+  if (!text) return null;
+  const date = new Date(text);
+  return Number.isNaN(date.getTime()) ? text : date.toISOString();
+}
+
+function numberValue(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function integerValue(value: unknown): number | null {
+  const parsed = numberValue(value);
+  return parsed === null ? null : Math.trunc(parsed);
+}
+
+function booleanToSql(value: unknown, fallback: boolean): number {
+  if (typeof value === "boolean") return value ? 1 : 0;
+  if (typeof value === "number") return value === 0 ? 0 : 1;
+  return fallback ? 1 : 0;
+}
+
+function jsonStringValue(value: unknown): string | null {
+  if (typeof value === "string") return value;
+  if (value === null || value === undefined) return null;
+  return JSON.stringify(value);
+}
+
 const CLOUD_SYNC_JOB_ORDER: Record<string, number> = {
   upsert_customer: 0,
   upsert_product: 1,
@@ -529,6 +989,10 @@ export async function syncOmieReferenceDataFromCloud(
       productsPage: 1,
       paymentTermsPage: 1,
       suppliersPage: 1,
+      customersFinished: false,
+      productsFinished: false,
+      paymentTermsFinished: false,
+      suppliersFinished: false,
       inProgress: false
     });
   }
@@ -541,7 +1005,9 @@ export async function syncOmieReferenceDataFromCloud(
       customersPage: state.customersPage,
       productsPage: state.productsPage,
       paymentTermsPage: state.paymentTermsPage,
-      suppliersPage: state.suppliersPage
+      customersFinished: state.customersFinished,
+      productsFinished: state.productsFinished,
+      paymentTermsFinished: state.paymentTermsFinished
     }
   };
 
@@ -588,7 +1054,7 @@ export function applyOmieReferenceData(
   apply();
 
   if (pagination) {
-    const pageSize = data.pageSize ?? 50;
+    const pageSize = data.pageSize ?? 100;
     const isFinished = (
       page: number,
       returned: number,
@@ -620,16 +1086,16 @@ export function applyOmieReferenceData(
         pagination.paymentTermsTotalPages
       ),
       suppliers: isFinished(
-        pagination.suppliersPage ?? 1,
+        pagination.suppliersPage ?? pagination.customersPage,
         pagination.suppliersReturned ?? 0,
         pagination.suppliersFinished,
-        pagination.suppliersTotalPages
+        pagination.suppliersTotalPages ?? pagination.customersTotalPages
       )
     };
     const current = readOmiePullState(database);
     writeOmiePullState(database, {
       inProgress:
-        !finished.customers || !finished.products || !finished.paymentTerms || !finished.suppliers,
+        !finished.customers || !finished.products || !finished.paymentTerms,
       customersPage: !finished.customers
         ? Math.max(pagination.customersPage + 1, current.customersPage)
         : 1,
@@ -639,9 +1105,13 @@ export function applyOmieReferenceData(
       paymentTermsPage: !finished.paymentTerms
         ? Math.max(pagination.paymentTermsPage + 1, current.paymentTermsPage)
         : 1,
-      suppliersPage: !finished.suppliers
-        ? Math.max((pagination.suppliersPage ?? 1) + 1, current.suppliersPage)
-        : 1
+      suppliersPage: !finished.customers
+        ? Math.max(pagination.customersPage + 1, current.suppliersPage)
+        : 1,
+      customersFinished: finished.customers,
+      productsFinished: finished.products,
+      paymentTermsFinished: finished.paymentTerms,
+      suppliersFinished: finished.customers
     });
   } else {
     writeOmiePullState(database, {
@@ -649,6 +1119,10 @@ export function applyOmieReferenceData(
       productsPage: 1,
       paymentTermsPage: 1,
       suppliersPage: 1,
+      customersFinished: true,
+      productsFinished: true,
+      paymentTermsFinished: true,
+      suppliersFinished: true,
       inProgress: false
     });
   }
@@ -787,10 +1261,13 @@ function getLoadingRequestPayload(
 
 export async function pushOmieCustomersToCloud(
   database: DesktopDatabase,
-  identity: LocalDesktopIdentity
+  identity: LocalDesktopIdentity,
+  options: { limit?: number; delayMs?: number } = {}
 ): Promise<{ pushed: number; failed: number; errors: string[] }> {
   const settings = getCloudSettings(database, identity);
   const supabase = getSupabaseClient();
+  const limit = options.limit ?? OMIE_PUSH_CUSTOMER_BATCH_LIMIT;
+  const delayMs = options.delayMs ?? OMIE_BATCH_DELAY_MS;
 
   const pending = database
     .prepare(
@@ -799,9 +1276,10 @@ export async function pushOmieCustomersToCloud(
               default_payment_term_id
        FROM customers
        WHERE company_id = ? AND deleted_at IS NULL AND needs_push = 1 AND source IN ('local', 'hybrid')
-       ORDER BY updated_at ASC`
+       ORDER BY updated_at ASC
+       LIMIT ?`
     )
-    .all(identity.companyId) as Array<{
+    .all(identity.companyId, limit) as Array<{
     id: string;
     omie_customer_id: number | null;
     legal_name: string;
@@ -838,7 +1316,7 @@ export async function pushOmieCustomersToCloud(
     WHERE id = ?
   `);
 
-  for (const customer of pending) {
+  for (const [index, customer] of pending.entries()) {
     try {
       const phoneMatch = customer.phone?.match(/\(?(\d{2})\)?\s*(\d+)/);
       const { data, error } = await supabase.functions.invoke<{ omieCustomerId?: number }>(
@@ -887,6 +1365,10 @@ export async function pushOmieCustomersToCloud(
       markError.run(customer.id);
       failed++;
       errors.push(`Cliente ${customer.id}: ${message}`);
+    }
+
+    if (index < pending.length - 1) {
+      await sleep(delayMs);
     }
   }
 
@@ -1023,16 +1505,19 @@ function parseJsonValue(value: unknown): unknown {
 
 export async function processOmieSyncQueue(
   database: DesktopDatabase,
-  identity: LocalDesktopIdentity
+  identity: LocalDesktopIdentity,
+  options: { limit?: number; delayMs?: number } = {}
 ): Promise<{ processed: number; failed: number; errors: string[] }> {
   const settings = getCloudSettings(database, identity);
   const supabase = getSupabaseClient();
-  const jobs = listRunnableSyncJobs(database, { target: "omie", limit: 50 });
+  const limit = options.limit ?? OMIE_QUEUE_BATCH_LIMIT;
+  const delayMs = options.delayMs ?? OMIE_BATCH_DELAY_MS;
+  const jobs = listRunnableSyncJobs(database, { target: "omie", limit });
   let processed = 0;
   let failed = 0;
   const errors: string[] = [];
 
-  for (const job of jobs) {
+  for (const [index, job] of jobs.entries()) {
     const payload = job.payload as {
       operationId: string;
       operationType: "invoice" | "internal";
@@ -1118,9 +1603,17 @@ export async function processOmieSyncQueue(
       failed++;
       errors.push(`Job ${job.id}: ${message}`);
     }
+
+    if (index < jobs.length - 1) {
+      await sleep(delayMs);
+    }
   }
 
   return { processed, failed, errors };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export async function processFiscalBillingNow(
@@ -1642,13 +2135,26 @@ function upsertOmieSuppliers(
 ): void {
   const upsert = database.prepare(`
     INSERT INTO carriers (
-      id, company_id, omie_customer_id, name, document, source,
-      is_active, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, 'omie', ?, datetime('now'), datetime('now'))
+      id, company_id, omie_customer_id, omie_integration_code, name, document,
+      phone, email, zipcode, address_street, address_number, address_complement,
+      neighborhood, city, state, source, is_active, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'omie', ?, datetime('now'), datetime('now'))
     ON CONFLICT(id) DO UPDATE SET
+      omie_customer_id = excluded.omie_customer_id,
+      omie_integration_code = excluded.omie_integration_code,
       name = excluded.name,
       document = excluded.document,
+      phone = excluded.phone,
+      email = excluded.email,
+      zipcode = excluded.zipcode,
+      address_street = excluded.address_street,
+      address_number = excluded.address_number,
+      address_complement = excluded.address_complement,
+      neighborhood = excluded.neighborhood,
+      city = excluded.city,
+      state = excluded.state,
       is_active = excluded.is_active,
+      deleted_at = NULL,
       updated_at = datetime('now')
   `);
 
@@ -1661,8 +2167,18 @@ function upsertOmieSuppliers(
       localId,
       companyId,
       supplier.id,
+      supplier.integrationCode ?? null,
       supplier.name,
       supplier.document ?? null,
+      supplier.phone ?? null,
+      supplier.email ?? null,
+      supplier.zipcode ?? null,
+      supplier.addressStreet ?? null,
+      supplier.addressNumber ?? null,
+      supplier.addressComplement ?? null,
+      supplier.neighborhood ?? null,
+      supplier.city ?? null,
+      supplier.state ?? null,
       supplier.isActive === false ? 0 : 1
     );
   }

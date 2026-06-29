@@ -93,6 +93,8 @@ import {
   pullCustomerCarriersFromCloud,
   pullDriverCarriersFromCloud,
   pullLoaderCompletionsFromCloud,
+  pullDesktopDataFromCloud,
+  type CloudBootstrapResult,
   type FiscalBillingResult,
   type SyncResult
 } from "./supabase-sync.js";
@@ -164,6 +166,10 @@ export interface OmieLoopProgress {
 export interface FiscalDocumentPrinter {
   printDocument: (documentUrl: string) => Promise<{ printed: boolean; error: string | null }>;
 }
+
+const OMIE_AUTOMATIC_PULL_MAX_ITERATIONS = 10;
+const OMIE_PULL_PAGE_DELAY_MS = 3_000;
+
 import {
   createToledoTcpAdapter,
   createVirtualScaleAdapter,
@@ -271,6 +277,7 @@ export class DesktopRuntime {
   private omieScheduler: OmieSchedulerHandle | null = null;
   private cloudSyncScheduler: CloudSyncSchedulerHandle | null = null;
   private cloudSyncInProgress = false;
+  private omieSyncInProgress = false;
   private receiptPrinter: ReceiptPrinter = { printReceipt: async () => undefined };
   private fiscalDocumentPrinter: FiscalDocumentPrinter = {
     printDocument: async () => ({ printed: false, error: null })
@@ -359,7 +366,13 @@ export class DesktopRuntime {
       setLastPullAt: (isoString) => recordOmiePullRanAt(this.database, isoString),
       isPullInProgress: () => readOmiePullState(this.database).inProgress,
       runPull: async () => {
-        await this.runOmieDataEntryLoop({ maxIterations: 200 });
+        if (this.omieSyncInProgress) return;
+        this.omieSyncInProgress = true;
+        try {
+          await this.runOmieDataEntryLoop({ maxIterations: OMIE_AUTOMATIC_PULL_MAX_ITERATIONS });
+        } finally {
+          this.omieSyncInProgress = false;
+        }
       },
       onError: (error) => console.error("Pull OMIE automatico falhou", error)
     });
@@ -684,6 +697,64 @@ export class DesktopRuntime {
     return this.syncCloudNow();
   }
 
+  async bootstrapCloudData(): Promise<CloudBootstrapResult> {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    const emptyPulled = {
+      customers: 0,
+      products: 0,
+      operations: 0,
+      loadingRequests: 0,
+      printReceipts: 0
+    };
+
+    initializeSupabaseFromSettings(this.database);
+    if (!isSupabaseInitialized()) {
+      return {
+        mode: "local_emergency",
+        success: false,
+        synced: 0,
+        failed: 0,
+        pulled: emptyPulled,
+        errors: ["Supabase nao configurado. Entrando com dados locais de emergencia."]
+      };
+    }
+
+    const reachable = await pingSupabase();
+    if (!reachable) {
+      return {
+        mode: "local_emergency",
+        success: false,
+        synced: 0,
+        failed: 0,
+        pulled: emptyPulled,
+        errors: ["Sem conexao com Supabase. Entrando com dados locais de emergencia."]
+      };
+    }
+
+    const errors: string[] = [];
+    let synced = 0;
+    let failed = 0;
+
+    const queue = await processCloudSyncQueue(this.database, identity);
+    synced += queue.processed;
+    failed += queue.failed;
+    errors.push(...queue.errors);
+
+    const pulled = await pullDesktopDataFromCloud(this.database, identity);
+    recordCloudSyncRanAt(this.database);
+    this.cacheStore.loadAll(identity.companyId);
+
+    return {
+      mode: "cloud",
+      success: failed === 0,
+      synced,
+      failed,
+      pulled,
+      errors
+    };
+  }
+
   async syncCloudNow(): Promise<SyncResult> {
     this.assertDesktopAccess();
     if (this.cloudSyncInProgress) {
@@ -813,7 +884,22 @@ export class DesktopRuntime {
         );
       }
 
+      try {
+        const cloudPull = await pullDesktopDataFromCloud(this.database, identity);
+        synced +=
+          cloudPull.customers +
+          cloudPull.products +
+          cloudPull.operations +
+          cloudPull.loadingRequests +
+          cloudPull.printReceipts;
+      } catch (error) {
+        errors.push(
+          `Cloud pull: ${error instanceof Error ? error.message : "Unknown error"}`
+        );
+      }
+
       recordCloudSyncRanAt(this.database);
+      this.cacheStore.loadAll(identity.companyId);
       return { success: failed === 0, synced, failed, errors };
     } catch (error) {
       return {
@@ -1474,8 +1560,7 @@ export class DesktopRuntime {
     customersPushFailed: number;
     errors: string[];
   }> {
-    initializeSupabaseFromSettings(this.database);
-    if (!isSupabaseInitialized()) {
+    if (this.omieSyncInProgress) {
       return {
         customersPulled: 0,
         customersPushed: 0,
@@ -1485,28 +1570,47 @@ export class DesktopRuntime {
         ordersProcessed: 0,
         ordersFailed: 0,
         customersPushFailed: 0,
-        errors: [
-          "Supabase nao configurado. Defina SUPABASE_PUBLISHABLE_KEY na pedreira no admin (loader-web) e reative o desktop."
-        ]
+        errors: ["Sincronizacao OMIE ja em andamento."]
       };
     }
-    const identity = this.ensureIdentity();
-    const loop = await this.runOmieDataEntryLoop({ reset: true, maxIterations: 200 });
-    const customerPush = await pushOmieCustomersToCloud(this.database, identity);
-    const finalLoop = await this.runOmieDataEntryLoop({ reset: true, maxIterations: 200 });
-    const queue = await processOmieSyncQueue(this.database, identity);
-    this.cacheStore.invalidateAll(identity.companyId);
-    return {
-      customersPulled: loop.customersPulled + finalLoop.customersPulled,
-      customersPushed: customerPush.pushed,
-      productsSynced: loop.productsSynced + finalLoop.productsSynced,
-      paymentTermsSynced: loop.paymentTermsSynced + finalLoop.paymentTermsSynced,
-      suppliersSynced: loop.suppliersSynced + finalLoop.suppliersSynced,
-      ordersProcessed: queue.processed,
-      ordersFailed: queue.failed,
-      customersPushFailed: customerPush.failed,
-      errors: customerPush.errors.concat(loop.errors, finalLoop.errors, queue.errors)
-    };
+
+    this.omieSyncInProgress = true;
+    try {
+      initializeSupabaseFromSettings(this.database);
+      if (!isSupabaseInitialized()) {
+        return {
+          customersPulled: 0,
+          customersPushed: 0,
+          productsSynced: 0,
+          paymentTermsSynced: 0,
+          suppliersSynced: 0,
+          ordersProcessed: 0,
+          ordersFailed: 0,
+          customersPushFailed: 0,
+          errors: [
+            "Supabase nao configurado. Defina SUPABASE_PUBLISHABLE_KEY na pedreira no admin (loader-web) e reative o desktop."
+          ]
+        };
+      }
+      const identity = this.ensureIdentity();
+      const loop = await this.runOmieDataEntryLoop({ reset: true, maxIterations: 200 });
+      const customerPush = await pushOmieCustomersToCloud(this.database, identity);
+      const queue = await processOmieSyncQueue(this.database, identity);
+      this.cacheStore.invalidateAll(identity.companyId);
+      return {
+        customersPulled: loop.customersPulled,
+        customersPushed: customerPush.pushed,
+        productsSynced: loop.productsSynced,
+        paymentTermsSynced: loop.paymentTermsSynced,
+        suppliersSynced: loop.suppliersSynced,
+        ordersProcessed: queue.processed,
+        ordersFailed: queue.failed,
+        customersPushFailed: customerPush.failed,
+        errors: customerPush.errors.concat(loop.errors, queue.errors)
+      };
+    } finally {
+      this.omieSyncInProgress = false;
+    }
   }
 
   async syncOmieDirect(appKey: string, appSecret: string): Promise<{
@@ -1552,6 +1656,7 @@ export class DesktopRuntime {
     options: {
       reset?: boolean;
       maxIterations?: number;
+      delayBetweenPagesMs?: number;
       onProgress?: (progress: OmieLoopProgress) => void;
     } = {}
   ): Promise<{
@@ -1562,9 +1667,10 @@ export class DesktopRuntime {
     iterations: number;
     finished: boolean;
     errors: string[];
-  }> {
+    }> {
     const identity = this.ensureIdentity();
     const maxIterations = options.maxIterations ?? 200;
+    const delayBetweenPagesMs = options.delayBetweenPagesMs ?? OMIE_PULL_PAGE_DELAY_MS;
     let customersPulled = 0;
     let productsSynced = 0;
     let paymentTermsSynced = 0;
@@ -1572,12 +1678,17 @@ export class DesktopRuntime {
     const errors: string[] = [];
     let iterations = 0;
 
-    if (options.reset) {
+    const initialState = readOmiePullState(this.database);
+    if (options.reset || !initialState.inProgress) {
       writeOmiePullState(this.database, {
         customersPage: 1,
         productsPage: 1,
         paymentTermsPage: 1,
         suppliersPage: 1,
+        customersFinished: false,
+        productsFinished: false,
+        paymentTermsFinished: false,
+        suppliersFinished: false,
         inProgress: true
       });
     }
@@ -1611,9 +1722,9 @@ export class DesktopRuntime {
       options.onProgress?.(progress);
 
       const totalBefore =
-        before.customersPage + before.productsPage + before.paymentTermsPage + before.suppliersPage;
+        before.customersPage + before.productsPage + before.paymentTermsPage;
       const totalAfter =
-        after.customersPage + after.productsPage + after.paymentTermsPage + after.suppliersPage;
+        after.customersPage + after.productsPage + after.paymentTermsPage;
       const noProgress =
         totalAfter <= totalBefore &&
         result.customersPulled +
@@ -1633,6 +1744,10 @@ export class DesktopRuntime {
           finished: !after.inProgress,
           errors
         };
+      }
+
+      if (delayBetweenPagesMs > 0 && iterations < maxIterations) {
+        await sleep(delayBetweenPagesMs);
       }
     }
 
@@ -1741,6 +1856,10 @@ export class DesktopRuntime {
       throw new Error(access.message);
     }
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function buildScaleCaptureAudit(reading: ScaleReading): ScaleCaptureAudit {

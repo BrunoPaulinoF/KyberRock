@@ -133,7 +133,7 @@ const initialWeighingForm: WeighingFormState = {
 
 type RegistrationsTab = "customers" | "price_tables" | "products" | "payment_terms" | "transport";
 
-type AppPhase = "checking_access" | "locked" | "unlocked";
+type AppPhase = "checking_access" | "locked" | "bootstrapping_cloud" | "unlocked";
 type ThemeMode = "light" | "dark";
 type OperationsTab = "open" | "canceled" | "closed";
 type CanceledFilter = "all" | "day" | "week" | "month";
@@ -166,6 +166,15 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [message, setMessage] = useState("Inicializando desktop offline-first...");
   const [cloudConnected, setCloudConnected] = useState(false);
   const [cloudSyncing, setCloudSyncing] = useState(false);
+  const [cloudBootstrapStatus, setCloudBootstrapStatus] = useState<{
+    title: string;
+    detail: string;
+    mode: "running" | "cloud" | "local_emergency" | "error";
+  }>({
+    title: "Preparando sincronizacao",
+    detail: "Validando acesso ao Supabase antes de carregar os dados.",
+    mode: "running"
+  });
   const [cloudStatus, setCloudStatus] = useState<{
     totalOperations: number;
     lastSync: string | null;
@@ -376,7 +385,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         setCompanyName(access.companyName);
         setUnitName(access.unitName);
         if (access.canOperate) {
-          setPhase("unlocked");
+          setPhase("bootstrapping_cloud");
         } else {
           setPhase("locked");
         }
@@ -402,7 +411,77 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     };
   }, [desktopApi]);
 
-  const handleUnlocked = useCallback(() => setPhase("unlocked"), []);
+  const handleUnlocked = useCallback(() => setPhase("bootstrapping_cloud"), []);
+
+  useEffect(() => {
+    if (!desktopApi || phase !== "bootstrapping_cloud") return;
+
+    let active = true;
+    async function bootstrapCloud(): Promise<void> {
+      setCloudBootstrapStatus({
+        title: "Conectando ao Supabase",
+        detail: "Verificando internet, credenciais do dispositivo e dados pendentes locais.",
+        mode: "running"
+      });
+
+      try {
+        await new Promise((resolve) => window.setTimeout(resolve, 250));
+        if (!active || !desktopApi) return;
+        setCloudBootstrapStatus({
+          title: "Sincronizando dados",
+          detail: "Enviando pendencias locais e baixando operacoes, carregamentos e recibos da nuvem.",
+          mode: "running"
+        });
+        const result = await desktopApi.bootstrapCloudData();
+        if (!active) return;
+
+        if (result.mode === "cloud") {
+          const pulledTotal =
+            result.pulled.customers +
+            result.pulled.products +
+            result.pulled.operations +
+            result.pulled.loadingRequests +
+            result.pulled.printReceipts;
+          setCloudBootstrapStatus({
+            title: "Dados atualizados pelo Supabase",
+            detail: `${pulledTotal} registro(s) baixado(s) e ${result.synced} pendencia(s) enviada(s).`,
+            mode: "cloud"
+          });
+          setCloudConnected(true);
+          setMessage("Dados carregados do Supabase. Salvamento local mantido como cache/emergencia.");
+        } else {
+          setCloudBootstrapStatus({
+            title: "Modo emergencia local",
+            detail: result.errors[0] ?? "Nao foi possivel baixar dados do Supabase agora.",
+            mode: "local_emergency"
+          });
+          setCloudConnected(false);
+          setMessage("Sem Supabase no momento. Usando dados locais de emergencia ate reconectar.");
+        }
+
+        window.setTimeout(() => {
+          if (active) setPhase("unlocked");
+        }, 700);
+      } catch (error) {
+        if (!active) return;
+        setCloudBootstrapStatus({
+          title: "Modo emergencia local",
+          detail: error instanceof Error ? error.message : "Falha ao carregar dados do Supabase.",
+          mode: "error"
+        });
+        setCloudConnected(false);
+        setMessage("Falha ao baixar do Supabase. Usando dados locais de emergencia.");
+        window.setTimeout(() => {
+          if (active) setPhase("unlocked");
+        }, 1200);
+      }
+    }
+
+    void bootstrapCloud();
+    return () => {
+      active = false;
+    };
+  }, [desktopApi, phase]);
 
   // Efeito para monitorar bloqueio em tempo real (quando unlocked)
   useEffect(() => {
@@ -435,7 +514,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   }, [desktopApi, phase]);
 
   useEffect(() => {
-    if (!desktopApi) {
+    if (!desktopApi || phase !== "unlocked") {
       return;
     }
 
@@ -521,10 +600,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       if (active) {
         if (nextStatus.pendingSyncJobs > 0) {
           setMessage(
-            `Fila: ${nextStatus.pendingSyncJobs} item(ns) pendente(s) - envio automatico a cada ${cloudSchedulerStatus?.intervalMinutes ?? 20} min.`
+            `Fila: ${nextStatus.pendingSyncJobs} item(ns) pendente(s) - envio automatico a cada ${cloudSchedulerStatus?.intervalMinutes ?? 30} min.`
           );
         } else {
-          setMessage("Sincronizacao automatica ativa (OMIE + Supabase) a cada 20 min.");
+          setMessage("Sincronizacao automatica ativa (OMIE + Supabase) a cada 30 min.");
         }
       }
     }
@@ -536,7 +615,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       active = false;
       window.clearInterval(intervalId);
     };
-  }, [desktopApi]);
+  }, [desktopApi, phase]);
 
   const autoSyncCloud = useCallback(async () => {
     if (!desktopApi) return;
@@ -571,43 +650,24 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
   }, [desktopApi]);
 
-  const autoSyncOmie = useCallback(async () => {
-    if (!desktopApi) return;
-    if (!navigator.onLine) return;
-    setOmieSyncing(true);
-    try {
-      await desktopApi.omieSync();
-      const omieStatusResult = await desktopApi.getOmieStatus();
-      setOmieStatus(omieStatusResult);
-      setMessage("Sincronizacao OMIE automatica concluida.");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.warn("Auto-sync OMIE falhou", message);
-    } finally {
-      setOmieSyncing(false);
-    }
-  }, [desktopApi]);
-
   useEffect(() => {
     if (!desktopApi || phase !== "unlocked") return;
     let cancelled = false;
     const initial = window.setTimeout(() => {
       if (cancelled) return;
       void autoSyncCloud();
-      void autoSyncOmie();
     }, 1_500);
     return () => {
       cancelled = true;
       window.clearTimeout(initial);
     };
-  }, [desktopApi, phase, autoSyncCloud, autoSyncOmie]);
+  }, [desktopApi, phase, autoSyncCloud]);
 
   useEffect(() => {
     if (!desktopApi || phase !== "unlocked") return;
     const handleOnline = () => {
       setMessage("Internet disponivel novamente - drenando fila de sincronizacao.");
       void autoSyncCloud();
-      void autoSyncOmie();
     };
     const handleOffline = () => {
       setMessage(
@@ -625,20 +685,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
     };
-  }, [desktopApi, phase, autoSyncCloud, autoSyncOmie]);
-
-  useEffect(() => {
-    if (!desktopApi) return;
-    const id = window.setInterval(
-      () => {
-        if (navigator.onLine) {
-          void autoSyncCloud();
-        }
-      },
-      20 * 60 * 1000
-    );
-    return () => window.clearInterval(id);
-  }, [desktopApi, autoSyncCloud]);
+  }, [desktopApi, phase, autoSyncCloud]);
 
   async function refreshOpenOperations(): Promise<void> {
     if (!desktopApi) {
@@ -1193,6 +1240,53 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
 
     return <ActivationGate desktopApi={desktopApi} onUnlocked={handleUnlocked} />;
+  }
+
+  if (phase === "bootstrapping_cloud") {
+    return (
+      <main style={{ ...styles.page, ...getThemeVariables("light") }}>
+        <div style={{ ...styles.card, maxWidth: "480px", margin: "auto", marginTop: "40px", textAlign: "center" as const }}>
+          <h1 style={styles.title}>KyberRock</h1>
+          <p style={{ ...styles.subtitle, marginBottom: "24px" }}>{cloudBootstrapStatus.title}</p>
+          <div style={{
+            marginBottom: "16px",
+            width: "100%",
+            height: "4px",
+            borderRadius: "2px",
+            background: "var(--kr-border)",
+            overflow: "hidden"
+          }}>
+            <div style={{
+              width: "100%",
+              height: "4px",
+              borderRadius: "2px",
+              background: cloudBootstrapStatus.mode === "running"
+                ? "var(--kr-primary, #3b82f6)"
+                : cloudBootstrapStatus.mode === "cloud"
+                  ? "var(--kr-success, #22c55e)"
+                  : "var(--kr-warning, #f59e0b)",
+              animation: cloudBootstrapStatus.mode === "running" ? "krProgress 1.8s ease-in-out infinite" : "none"
+            }} />
+          </div>
+          <p style={{ fontSize: "12px", color: "var(--kr-muted)", marginBottom: "24px" }}>
+            {cloudBootstrapStatus.detail}
+          </p>
+          {cloudBootstrapStatus.mode !== "running" && (
+            <div style={{
+              background: "var(--kr-surface)",
+              padding: "10px 16px",
+              borderRadius: "8px",
+              fontSize: "12px",
+              color: cloudBootstrapStatus.mode === "error" ? "var(--kr-danger)" : "var(--kr-muted)"
+            }}>
+              {cloudBootstrapStatus.mode === "cloud"
+                ? "Dados carregados da nuvem. Abrindo sistema..."
+                : "Sem conexao com Supabase. Abrindo com dados de emergencia..."}
+            </div>
+          )}
+        </div>
+      </main>
+    );
   }
 
   if (!desktopApi) {
@@ -2305,7 +2399,7 @@ function ConnectivityBadge({
   } else {
     tone = "success";
     label = cloudSyncing ? "Sincronizando..." : "Conectado";
-    const interval = cloudScheduler?.intervalMinutes ?? 20;
+    const interval = cloudScheduler?.intervalMinutes ?? 30;
     const last = cloudScheduler?.lastRunAt
       ? new Date(cloudScheduler.lastRunAt).toLocaleTimeString("pt-BR")
       : "nunca";
@@ -2473,6 +2567,11 @@ function GlobalUiPolish() {
         background: var(--kr-scroll-thumb);
         border: 2px solid var(--kr-scroll-track);
         border-radius: 999px;
+      }
+
+      @keyframes krProgress {
+        0% { transform: translateX(-100%); }
+        100% { transform: translateX(400%); }
       }
     `}</style>
   );

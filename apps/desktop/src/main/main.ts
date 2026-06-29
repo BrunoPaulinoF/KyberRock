@@ -398,6 +398,14 @@ function registerIpcHandlers(): void {
     return runtime.processFiscalBilling(operationId);
   });
 
+  ipcMain.handle("desktop:bootstrap-cloud-data", async () => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.bootstrapCloudData();
+  });
+
   ipcMain.handle("desktop:sync-to-cloud", async () => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");
@@ -514,7 +522,17 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "desktop:create-report-recipient",
-    (_event, input: { email: string; displayName?: string | null; isActive?: boolean }) => {
+    (
+      _event,
+      input: {
+        email?: string | null;
+        whatsappPhone?: string | null;
+        sendEmail?: boolean;
+        sendWhatsapp?: boolean;
+        displayName?: string | null;
+        isActive?: boolean;
+      }
+    ) => {
       if (!runtime) throw new Error("Desktop runtime is not ready.");
       return runtime.createReportRecipient(input);
     }
@@ -525,7 +543,14 @@ function registerIpcHandlers(): void {
     (
       _event,
       id: string,
-      input: { email?: string; displayName?: string | null; isActive?: boolean }
+      input: {
+        email?: string | null;
+        whatsappPhone?: string | null;
+        sendEmail?: boolean;
+        sendWhatsapp?: boolean;
+        displayName?: string | null;
+        isActive?: boolean;
+      }
     ) => {
       if (!runtime) throw new Error("Desktop runtime is not ready.");
       return runtime.updateReportRecipient(id, input);
