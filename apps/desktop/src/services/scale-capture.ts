@@ -17,6 +17,7 @@ export interface ScaleCaptureAdapter {
 export interface ScaleCaptureServiceConfig {
   adapter: ScaleCaptureAdapter;
   stability: ScaleStabilityConfig;
+  captureMode?: "custom" | "default";
   adapterName?: string;
   deviceId?: string;
 }
@@ -24,17 +25,28 @@ export interface ScaleCaptureServiceConfig {
 export class ScaleCaptureService {
   private readonly adapter: ScaleCaptureAdapter;
   private readonly stability: ScaleStabilityConfig;
+  private readonly captureMode: "custom" | "default";
   private readonly adapterName?: string;
   private readonly deviceId?: string;
 
   constructor(config: ScaleCaptureServiceConfig) {
     this.adapter = config.adapter;
     this.stability = config.stability;
+    this.captureMode = config.captureMode ?? "custom";
     this.adapterName = config.adapterName;
     this.deviceId = config.deviceId;
   }
 
   async captureStableWeight(options: ScaleCaptureOptions): Promise<ScaleReading> {
+    if (this.captureMode === "default") {
+      const reading = normalizeReading(await this.adapter.read(), this.adapterName, this.deviceId);
+      const blockingMessage = getBlockingStatusMessage(reading.status);
+      if (blockingMessage) {
+        throw new Error(blockingMessage);
+      }
+      return { ...reading, capturedAt: new Date().toISOString() };
+    }
+
     const startedAt = Date.now();
     const timeoutMs = Math.max(500, options.timeoutMs ?? this.stability.sampleDurationMs);
     const pollIntervalMs = Math.max(50, this.stability.sampleIntervalMs);

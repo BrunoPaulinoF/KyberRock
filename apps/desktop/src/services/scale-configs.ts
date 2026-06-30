@@ -24,6 +24,7 @@ export interface ScaleStabilityConfig {
 export interface ScaleConfiguration {
   id: string | null;
   adapterType: "tcp" | "virtual";
+  captureMode: "custom" | "default";
   manufacturer: string;
   model: string;
   connection: ScaleConnectionConfig;
@@ -32,6 +33,7 @@ export interface ScaleConfiguration {
 
 export interface ScaleConfigurationInput {
   adapterType?: "tcp" | "virtual";
+  captureMode?: "custom" | "default";
   connection?: Partial<ScaleConnectionConfig>;
   stability?: Partial<ScaleStabilityConfig>;
 }
@@ -57,6 +59,7 @@ export const DEFAULT_SCALE_STABILITY_CONFIG: ScaleStabilityConfig = {
 interface ScaleConfigRow {
   id: string;
   adapter_type: string;
+  capture_mode: string;
   manufacturer: string | null;
   model: string | null;
   connection_config_json: string;
@@ -69,7 +72,7 @@ export function readScaleConfiguration(
 ): ScaleConfiguration {
   const row = database
     .prepare(
-      `SELECT id, adapter_type, manufacturer, model, connection_config_json, stability_config_json
+      `SELECT id, adapter_type, capture_mode, manufacturer, model, connection_config_json, stability_config_json
        FROM scale_configs
        WHERE device_id = ? AND is_active = 1
        ORDER BY updated_at DESC
@@ -84,6 +87,7 @@ export function readScaleConfiguration(
   return {
     id: row.id,
     adapterType: normalizeAdapterType(row.adapter_type),
+    captureMode: normalizeCaptureMode(row.capture_mode),
     manufacturer: row.manufacturer?.trim() || "Toledo",
     model: row.model?.trim() || (row.adapter_type === "virtual" ? "Virtual" : "TCP"),
     connection: normalizeScaleConnectionConfig(parseJsonObject(row.connection_config_json)),
@@ -101,6 +105,7 @@ export function writeScaleConfiguration(
   const next: ScaleConfiguration = {
     id: current.id ?? randomUUID(),
     adapterType: normalizeAdapterType(input.adapterType ?? current.adapterType),
+    captureMode: normalizeCaptureMode(input.captureMode ?? current.captureMode),
     manufacturer: "Toledo",
     model: input.adapterType === "virtual" || current.adapterType === "virtual" ? "Virtual" : "TCP",
     connection: normalizeScaleConnectionConfig({ ...current.connection, ...input.connection }),
@@ -123,6 +128,7 @@ export function writeScaleConfiguration(
            id,
            device_id,
            adapter_type,
+           capture_mode,
            manufacturer,
            model,
            connection_config_json,
@@ -135,7 +141,8 @@ export function writeScaleConfiguration(
          ) VALUES (
            @id,
            @deviceId,
-            @adapterType,
+           @adapterType,
+           @captureMode,
            @manufacturer,
            @model,
            @connectionConfigJson,
@@ -148,6 +155,7 @@ export function writeScaleConfiguration(
          )
          ON CONFLICT(id) DO UPDATE SET
            adapter_type = excluded.adapter_type,
+           capture_mode = excluded.capture_mode,
            manufacturer = excluded.manufacturer,
            model = excluded.model,
            connection_config_json = excluded.connection_config_json,
@@ -161,6 +169,7 @@ export function writeScaleConfiguration(
         id: next.id,
         deviceId: identity.deviceId,
         adapterType: next.adapterType,
+        captureMode: next.captureMode,
         manufacturer: next.manufacturer,
         model: next.model,
         connectionConfigJson: JSON.stringify(next.connection),
@@ -242,11 +251,17 @@ function createDefaultScaleConfiguration(id: string | null): ScaleConfiguration 
   return {
     id,
     adapterType: "tcp",
+    captureMode: "custom",
     manufacturer: "Toledo",
     model: "TCP",
     connection: { ...DEFAULT_SCALE_CONNECTION_CONFIG },
     stability: { ...DEFAULT_SCALE_STABILITY_CONFIG }
   };
+}
+
+function normalizeCaptureMode(value: string | null | undefined): "custom" | "default" {
+  if (value === "default") return "default";
+  return "custom";
 }
 
 function parseJsonObject(value: string): Record<string, unknown> | null {

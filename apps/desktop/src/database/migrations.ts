@@ -814,5 +814,12 @@ WHERE target = 'omie'
     sql: `
 ALTER TABLE weighing_operations ADD COLUMN manual_down_payment_cents INTEGER;
 `
+  },
+  {
+    version: 21,
+    name: "scale_config_capture_mode",
+    sql: `
+ALTER TABLE scale_configs ADD COLUMN capture_mode TEXT NOT NULL DEFAULT 'custom' CHECK (capture_mode IN ('custom', 'default'));
+`
   }
 ];

@@ -546,6 +546,7 @@ export class DesktopRuntime {
       const captureService = new ScaleCaptureService({
         adapter: this.activeScaleAdapter,
         stability: scaleConfig.stability,
+        captureMode: scaleConfig.captureMode,
         adapterName: scaleConfig.adapterType === "virtual" ? "virtual" : scaleConfig.model,
         deviceId: scaleConfig.id ?? this.ensureIdentity().deviceId
       });

@@ -6216,6 +6216,7 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   const [host, setHost] = useState("192.168.1.100");
   const [port, setPort] = useState("4001");
   const [adapterType, setAdapterType] = useState<"tcp" | "virtual">("tcp");
+  const [captureMode, setCaptureMode] = useState<"custom" | "default">("custom");
   const [autoConnect, setAutoConnect] = useState(false);
   const [sampleDurationSeconds, setSampleDurationSeconds] = useState("5");
   const [sampleIntervalMs, setSampleIntervalMs] = useState("250");
@@ -6471,6 +6472,7 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
 
   function applyScaleConfig(config: ScaleConfiguration): void {
     setAdapterType(config.adapterType);
+    setCaptureMode(config.captureMode);
     setHost(config.connection.host);
     setPort(String(config.connection.port));
     setAutoConnect(config.connection.autoConnect);
@@ -6487,6 +6489,7 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   function buildScaleConfigInput(): ScaleConfigurationInput {
     return {
       adapterType,
+      captureMode,
       connection: {
         host: host.trim() || "192.168.1.100",
         port: parseInteger(port, 4001),
@@ -6562,6 +6565,42 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
               }}
             >
               Virtual (Simulada)
+            </button>
+          </div>
+          <div style={{ display: "flex", gap: "12px", marginBottom: "16px", marginTop: "8px" }}>
+            <button
+              type="button"
+              onClick={() => setCaptureMode("custom")}
+              style={{
+                flex: 1,
+                padding: "10px 16px",
+                border: captureMode === "custom" ? "2px solid #2563eb" : "1px solid #e2e8f0",
+                borderRadius: "8px",
+                background: captureMode === "custom" ? "#eff6ff" : "#f8fafc",
+                color: captureMode === "custom" ? "#1e40af" : "#64748b",
+                fontWeight: captureMode === "custom" ? 700 : 500,
+                fontSize: "13px",
+                cursor: "pointer"
+              }}
+            >
+              Personalizado (estabilidade)
+            </button>
+            <button
+              type="button"
+              onClick={() => setCaptureMode("default")}
+              style={{
+                flex: 1,
+                padding: "10px 16px",
+                border: captureMode === "default" ? "2px solid #2563eb" : "1px solid #e2e8f0",
+                borderRadius: "8px",
+                background: captureMode === "default" ? "#eff6ff" : "#f8fafc",
+                color: captureMode === "default" ? "#1e40af" : "#64748b",
+                fontWeight: captureMode === "default" ? 700 : 500,
+                fontSize: "13px",
+                cursor: "pointer"
+              }}
+            >
+              Padrão (instantaneo)
             </button>
           </div>
           {adapterType === "tcp" ? (
