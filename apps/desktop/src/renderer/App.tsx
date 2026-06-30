@@ -196,6 +196,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [openingVideoExiting, setOpeningVideoExiting] = useState(false);
   const [bootstrapReady, setBootstrapReady] = useState(false);
   const openingVideoFallbackRef = useRef<number | null>(null);
+  const openingUnlockFallbackRef = useRef<number | null>(null);
   const [cloudStatus, setCloudStatus] = useState<{
     totalOperations: number;
     lastSync: string | null;
@@ -441,6 +442,14 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       openingVideoFallbackRef.current = null;
     }
     setOpeningVideoDone(true);
+
+    if (openingUnlockFallbackRef.current === null) {
+      openingUnlockFallbackRef.current = window.setTimeout(() => {
+        setOpeningVideoExiting(true);
+        setPhase("unlocked");
+        openingUnlockFallbackRef.current = null;
+      }, 4000);
+    }
   }, []);
 
   useEffect(() => {
@@ -448,6 +457,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     if (openingVideoFallbackRef.current !== null) {
       window.clearTimeout(openingVideoFallbackRef.current);
       openingVideoFallbackRef.current = null;
+    }
+    if (openingUnlockFallbackRef.current !== null) {
+      window.clearTimeout(openingUnlockFallbackRef.current);
+      openingUnlockFallbackRef.current = null;
     }
     setOpeningVideoDone(false);
     setOpeningVideoExiting(false);
@@ -462,6 +475,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       if (openingVideoFallbackRef.current !== null) {
         window.clearTimeout(openingVideoFallbackRef.current);
         openingVideoFallbackRef.current = null;
+      }
+      if (openingUnlockFallbackRef.current !== null) {
+        window.clearTimeout(openingUnlockFallbackRef.current);
+        openingUnlockFallbackRef.current = null;
       }
     };
   }, [phase]);
@@ -498,9 +515,20 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
 
     setOpeningVideoExiting(true);
-    const timeout = window.setTimeout(() => setPhase("unlocked"), 650);
-    return () => window.clearTimeout(timeout);
   }, [phase, openingVideoDone, bootstrapReady, openingVideoExiting]);
+
+  useEffect(() => {
+    if (phase !== "bootstrapping_cloud" || !openingVideoExiting) return;
+
+    const timeout = window.setTimeout(() => {
+      if (openingUnlockFallbackRef.current !== null) {
+        window.clearTimeout(openingUnlockFallbackRef.current);
+        openingUnlockFallbackRef.current = null;
+      }
+      setPhase("unlocked");
+    }, 650);
+    return () => window.clearTimeout(timeout);
+  }, [phase, openingVideoExiting]);
 
   useEffect(() => {
     if (!desktopApi || phase !== "bootstrapping_cloud") return;
