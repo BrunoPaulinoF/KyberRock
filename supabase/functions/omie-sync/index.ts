@@ -790,11 +790,7 @@ function computeFinished(
 }
 
 function hasClienteTag(customer: OmieCustomer): boolean {
-  // Se tiver tag explicita de transportadora ou fornecedor, NAO e cliente
-  // Caso contrario, considera cliente por padrao (inclui sem tag ou com tag "cliente")
-  if (hasOmieTag(customer.tagsJson, "transportadora")) return false;
-  if (hasOmieTag(customer.tagsJson, "fornecedor")) return false;
-  return true;
+  return hasOmieTag(customer.tagsJson, "cliente");
 }
 
 function hasTransportadoraTag(customer: OmieCustomer): boolean {

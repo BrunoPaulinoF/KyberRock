@@ -1818,7 +1818,10 @@ function upsertOmieCustomers(
   customers: OmieReferenceCustomer[]
 ): void {
   const findLocalId = database.prepare(
-    "SELECT id FROM customers WHERE company_id = ? AND omie_customer_id = ? AND deleted_at IS NULL LIMIT 1"
+    "SELECT id FROM customers WHERE company_id = ? AND omie_customer_id = ? LIMIT 1"
+  );
+  const findByIntegrationCode = database.prepare(
+    "SELECT id FROM customers WHERE company_id = ? AND omie_integration_code = ? LIMIT 1"
   );
   const findByDocument = database.prepare(
     "SELECT id FROM customers WHERE company_id = ? AND document = ? AND deleted_at IS NULL LIMIT 1"
@@ -1868,6 +1871,7 @@ function upsertOmieCustomers(
       salesperson_id = excluded.salesperson_id,
       default_payment_term_id = CASE WHEN customers.needs_push = 0 THEN excluded.default_payment_term_id ELSE customers.default_payment_term_id END,
       is_active = excluded.is_active,
+      deleted_at = NULL,
       sync_status = CASE WHEN customers.needs_push = 0 THEN 'synced' ELSE customers.sync_status END,
       last_synced_at = datetime('now'),
       omie_updated_at = datetime('now'),
@@ -1876,10 +1880,13 @@ function upsertOmieCustomers(
 
   for (const customer of customers) {
     const existing = findLocalId.get(companyId, customer.id) as { id: string } | undefined;
+    const byIntegrationCode = customer.integrationCode
+      ? (findByIntegrationCode.get(companyId, customer.integrationCode) as { id: string } | undefined)
+      : undefined;
     const byDocument = customer.document
       ? (findByDocument.get(companyId, customer.document) as { id: string } | undefined)
       : undefined;
-    const localId = existing?.id ?? byDocument?.id ?? `omie_${customer.id}`;
+    const localId = existing?.id ?? byIntegrationCode?.id ?? byDocument?.id ?? `omie_${customer.id}`;
     upsert.run(
       localId,
       companyId,
@@ -2161,7 +2168,7 @@ function upsertOmieSuppliers(
   for (const supplier of suppliers) {
     if (!Number.isFinite(supplier.id) || !supplier.name.trim()) continue;
     const localId =
-      findCarrierLocalIdByOmieId(database, companyId, supplier.id) ??
+      findCarrierLocalId(database, companyId, supplier) ??
       `omie_supplier_${supplier.id}`;
     upsert.run(
       localId,
@@ -2184,19 +2191,26 @@ function upsertOmieSuppliers(
   }
 }
 
-function findCarrierLocalIdByOmieId(
+function findCarrierLocalId(
   database: DesktopDatabase,
   companyId: string,
-  omieId: number
+  supplier: OmieReferenceSupplier
 ): string | null {
-  const row = database
-    .prepare(
-      `SELECT id FROM carriers
-       WHERE company_id = ? AND omie_customer_id = ? AND deleted_at IS NULL LIMIT 1`
-    )
-    .get(companyId, omieId) as { id: string } | undefined;
+  const byOmieId = database
+    .prepare(`SELECT id FROM carriers WHERE company_id = ? AND omie_customer_id = ? LIMIT 1`)
+    .get(companyId, supplier.id) as { id: string } | undefined;
 
-  return row?.id ?? null;
+  if (byOmieId?.id) return byOmieId.id;
+
+  if (supplier.integrationCode) {
+    const byIntegrationCode = database
+      .prepare(`SELECT id FROM carriers WHERE company_id = ? AND omie_integration_code = ? LIMIT 1`)
+      .get(companyId, supplier.integrationCode) as { id: string } | undefined;
+
+    if (byIntegrationCode?.id) return byIntegrationCode.id;
+  }
+
+  return null;
 }
 
 export async function pullCompanyPricePasswordFromCloud(

@@ -272,6 +272,61 @@ describe("supabase sync", () => {
     }
   });
 
+  it("restores soft-deleted OMIE customers by integration code", () => {
+    const database = createDatabase();
+
+    try {
+      createIdentity(database);
+      database
+        .prepare(
+          `INSERT INTO customers (
+            id, company_id, omie_customer_id, omie_integration_code, source,
+            legal_name, trade_name, is_active, deleted_at, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, 'omie', ?, ?, 0, datetime('now'), datetime('now'), datetime('now'))`
+        )
+        .run("omie_123", "company-1", 123, "CLI-001", "Cliente Antigo", "Cliente Antigo");
+
+      applyOmieReferenceData(database, "company-1", {
+        customers: [
+          {
+            id: 456,
+            integrationCode: "CLI-001",
+            name: "Cliente Restaurado",
+            tradeName: "Cliente Restaurado",
+            document: "12345678000195",
+            phone: null,
+            email: null
+          }
+        ],
+        products: [],
+        paymentTerms: [],
+        suppliers: []
+      });
+
+      const restored = database
+        .prepare(
+          `SELECT id, omie_customer_id, legal_name, deleted_at
+           FROM customers
+           WHERE company_id = ? AND omie_integration_code = ?`
+        )
+        .get("company-1", "CLI-001") as {
+        id: string;
+        omie_customer_id: number;
+        legal_name: string;
+        deleted_at: string | null;
+      };
+
+      expect(restored).toMatchObject({
+        id: "omie_123",
+        omie_customer_id: 456,
+        legal_name: "Cliente Restaurado",
+        deleted_at: null
+      });
+    } finally {
+      database.close();
+    }
+  });
+
   it("pulls OMIE reference data through the secure cloud bridge", async () => {
     const database = createDatabase();
 
