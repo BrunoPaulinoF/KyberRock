@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
   BarChart3,
@@ -5236,21 +5236,11 @@ function VehicleListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
     }
   }
 
-  async function handleLinkCarrier(vehicleId: string, carrierId: string): Promise<void> {
-    try {
-      await desktopApi.vehiclesLinkCarrier(vehicleId, carrierId);
-      await loadVehicles();
-      setMsg("Transportadora vinculada.");
-    } catch (err) {
-      setMsg(err instanceof Error ? err.message : "Erro ao vincular.");
-    }
-  }
-
   if (loading) return <p style={{ color: "#64748b" }}>Carregando veiculos...</p>;
 
   return (
     <div>
-      <div style={{ display: "flex", gap: "8px", marginBottom: "8px", flexWrap: "wrap" }}>
+      <div style={styles.crudToolbar}>
         <input
           placeholder="Buscar veiculo..."
           value={search}
@@ -5269,51 +5259,54 @@ function VehicleListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
       ) : null}
 
       {showForm ? (
-        <div style={{ ...styles.card, marginBottom: "12px", padding: "12px" }}>
-          <h3 style={{ margin: "0 0 8px 0", fontSize: "14px" }}>
-            {editingId ? "Editar Veiculo" : "Novo Veiculo"}
-          </h3>
-          {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-              gap: "8px"
-            }}
-          >
-            <PlateInput
-              label="Placa"
-              value={form.plate}
-              onChange={(plate) => setForm({ ...form, plate })}
-              required
-            />
-            <TextInput
-              label="Descricao"
-              value={form.description}
-              onChange={(description) => setForm({ ...form, description })}
-            />
+        <div style={styles.crudFormCard}>
+          <div style={styles.crudFormHeader}>
+            <h3 style={styles.crudFormTitle}>{editingId ? "Editar Veiculo" : "Novo Veiculo"}</h3>
+            {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
           </div>
-          <Field label="Transportadora">
-            <select
-              value={form.carrierId}
-              onChange={(e) => setForm({ ...form, carrierId: e.target.value })}
-              style={getInputStyle(false)}
-            >
-              <option value="">Selecione a transportadora</option>
-              {carriers.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
-            <button type="button" onClick={handleSave} style={styles.primaryButton}>
-              Salvar
-            </button>
-            <button type="button" onClick={() => setShowForm(false)} style={styles.secondaryButton}>
-              Cancelar
-            </button>
+          <div style={styles.crudFormGrid}>
+            <section style={styles.crudFormSection}>
+              <h4 style={styles.crudFormSectionTitle}>Identificacao</h4>
+              <PlateInput
+                label="Placa"
+                value={form.plate}
+                onChange={(plate) => setForm({ ...form, plate })}
+                required
+              />
+              <TextInput
+                label="Descricao"
+                value={form.description}
+                onChange={(description) => setForm({ ...form, description })}
+              />
+            </section>
+            <section style={styles.crudFormSection}>
+              <h4 style={styles.crudFormSectionTitle}>Vinculo</h4>
+              <Field label="Transportadora">
+                <select
+                  value={form.carrierId}
+                  onChange={(e) => setForm({ ...form, carrierId: e.target.value })}
+                  style={getInputStyle(false)}
+                >
+                  <option value="">Sem transportadora</option>
+                  {carriers.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </section>
+          </div>
+          <div style={styles.crudFormFooter}>
+            <span style={styles.muted}>Preencha os dados do veiculo e salve para atualizar a lista.</span>
+            <div style={{ display: "flex", gap: "6px" }}>
+              <button type="button" onClick={() => setShowForm(false)} style={styles.secondaryButton}>
+                Cancelar
+              </button>
+              <button type="button" onClick={handleSave} style={styles.primaryButton}>
+                Salvar
+              </button>
+            </div>
           </div>
         </div>
       ) : null}
@@ -5321,56 +5314,46 @@ function VehicleListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
       {vehicles.length === 0 ? (
         <p style={{ color: "#64748b" }}>Nenhum veiculo cadastrado.</p>
       ) : (
-        <div style={{ display: "grid", gap: "8px" }}>
+        <div style={styles.crudTable}>
+          <div
+            style={{
+              ...styles.crudTableRow,
+              ...styles.crudTableHead,
+              gridTemplateColumns: "130px minmax(180px, 1.2fr) minmax(220px, 1.4fr) 150px"
+            }}
+          >
+            <span>Placa</span>
+            <span>Descricao</span>
+            <span>Transportadora</span>
+            <span style={{ textAlign: "right" }}>Acoes</span>
+          </div>
           {vehicles.map((item) => {
             const plate = String(item.plate ?? "");
             const description = String(item.description ?? "");
             const currentCarrierId = String(item.carrier_id ?? "");
+            const carrierName = carriers.find((carrier) => carrier.id === currentCarrierId)?.name ?? "-";
             return (
-              <div key={String(item.id)} style={{ ...styles.card, padding: "12px 16px" }}>
-                <div
-                  style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}
-                >
-                  <div>
-                    <strong>{plate}</strong>
-                    {description ? (
-                      <span style={{ color: "#64748b", fontSize: "13px", marginLeft: "8px" }}>
-                        {description}
-                      </span>
-                    ) : null}
-                  </div>
-                  <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-                    <select
-                      value={currentCarrierId}
-                      onChange={(e) => handleLinkCarrier(String(item.id), e.target.value)}
-                      style={{ ...styles.input, width: "180px", fontSize: "13px" }}
-                    >
-                      <option value="">Sem transportadora</option>
-                      {carriers.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      onClick={() => openEdit(item)}
-                      style={styles.secondaryButton}
-                    >
-                      Editar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDelete(String(item.id))}
-                      style={{
-                        ...styles.secondaryButton,
-                        color: "#b91c1c",
-                        borderColor: "#fecaca"
-                      }}
-                    >
-                      Excluir
-                    </button>
-                  </div>
+              <div
+                key={String(item.id)}
+                style={{
+                  ...styles.crudTableRow,
+                  gridTemplateColumns: "130px minmax(180px, 1.2fr) minmax(220px, 1.4fr) 150px"
+                }}
+              >
+                <strong>{plate || "-"}</strong>
+                <span style={styles.muted}>{description || "-"}</span>
+                <span>{carrierName}</span>
+                <div style={styles.crudActions}>
+                  <button type="button" onClick={() => openEdit(item)} style={styles.secondaryButton}>
+                    Editar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(String(item.id))}
+                    style={{ ...styles.secondaryButton, color: "#b91c1c", borderColor: "#fecaca" }}
+                  >
+                    Excluir
+                  </button>
                 </div>
               </div>
             );
@@ -5598,7 +5581,7 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
 
   return (
     <div>
-      <div style={{ display: "flex", gap: "8px", marginBottom: "8px", flexWrap: "wrap" }}>
+      <div style={styles.crudToolbar}>
         <input
           placeholder="Buscar transportadora..."
           value={search}
@@ -5617,82 +5600,106 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
       ) : null}
 
       {showForm ? (
-        <div style={{ ...styles.card, marginBottom: "12px", padding: "12px" }}>
-          <h3 style={{ margin: "0 0 8px 0", fontSize: "14px" }}>
-            {editingId ? "Editar Transportadora" : "Nova Transportadora"}
-          </h3>
-          {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-              gap: "8px"
-            }}
-          >
-            <TextInput
-              label="Nome"
-              value={form.name}
-              onChange={(name) => setForm({ ...form, name })}
-              required
-            />
-            <DocumentInput
-              label="CNPJ/CPF"
-              value={form.document}
-              onChange={(document) => setForm({ ...form, document })}
-            />
-            <TextInput
-              label="Telefone"
-              value={form.phone}
-              onChange={(phone) => setForm({ ...form, phone })}
-            />
-            <TextInput
-              label="Email"
-              value={form.email}
-              onChange={(email) => setForm({ ...form, email })}
-            />
-            <TextInput
-              label="CEP"
-              value={form.zipcode}
-              onChange={(zipcode) => setForm({ ...form, zipcode })}
-            />
-            <TextInput
-              label="Endereco"
-              value={form.addressStreet}
-              onChange={(addressStreet) => setForm({ ...form, addressStreet })}
-            />
-            <TextInput
-              label="Numero"
-              value={form.addressNumber}
-              onChange={(addressNumber) => setForm({ ...form, addressNumber })}
-            />
-            <TextInput
-              label="Complemento"
-              value={form.addressComplement}
-              onChange={(addressComplement) => setForm({ ...form, addressComplement })}
-            />
-            <TextInput
-              label="Bairro"
-              value={form.neighborhood}
-              onChange={(neighborhood) => setForm({ ...form, neighborhood })}
-            />
-            <TextInput
-              label="Cidade"
-              value={form.city}
-              onChange={(city) => setForm({ ...form, city })}
-            />
-            <TextInput
-              label="Estado"
-              value={form.state}
-              onChange={(state) => setForm({ ...form, state })}
-            />
+        <div style={styles.crudFormCard}>
+          <div style={styles.crudFormHeader}>
+            <h3 style={styles.crudFormTitle}>
+              {editingId ? "Editar Transportadora" : "Nova Transportadora"}
+            </h3>
+            {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
           </div>
-          <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
-            <button type="button" onClick={handleSave} style={styles.primaryButton}>
-              Salvar
-            </button>
-            <button type="button" onClick={() => setShowForm(false)} style={styles.secondaryButton}>
-              Cancelar
-            </button>
+          <div style={styles.crudFormGrid}>
+            <section style={styles.crudFormSection}>
+              <h4 style={styles.crudFormSectionTitle}>Identificacao</h4>
+              <TextInput
+                label="Nome"
+                value={form.name}
+                onChange={(name) => setForm({ ...form, name })}
+                required
+              />
+              <DocumentInput
+                label="CNPJ/CPF"
+                value={form.document}
+                onChange={(document) => setForm({ ...form, document })}
+              />
+            </section>
+            <section style={styles.crudFormSection}>
+              <h4 style={styles.crudFormSectionTitle}>Contato</h4>
+              <TextInput
+                label="Telefone"
+                value={form.phone}
+                onChange={(phone) => setForm({ ...form, phone })}
+              />
+              <TextInput
+                label="Email"
+                value={form.email}
+                onChange={(email) => setForm({ ...form, email })}
+              />
+            </section>
+            <section style={styles.crudFormSection}>
+              <h4 style={styles.crudFormSectionTitle}>Endereco</h4>
+              <TextInput
+                label="CEP"
+                value={form.zipcode}
+                onChange={(zipcode) => setForm({ ...form, zipcode })}
+              />
+              <TextInput
+                label="Endereco"
+                value={form.addressStreet}
+                onChange={(addressStreet) => setForm({ ...form, addressStreet })}
+              />
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(90px, 0.7fr) minmax(140px, 1.3fr)",
+                  gap: "8px"
+                }}
+              >
+                <TextInput
+                  label="Numero"
+                  value={form.addressNumber}
+                  onChange={(addressNumber) => setForm({ ...form, addressNumber })}
+                />
+                <TextInput
+                  label="Complemento"
+                  value={form.addressComplement}
+                  onChange={(addressComplement) => setForm({ ...form, addressComplement })}
+                />
+              </div>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(130px, 1fr) minmax(130px, 1fr) 70px",
+                  gap: "8px"
+                }}
+              >
+                <TextInput
+                  label="Bairro"
+                  value={form.neighborhood}
+                  onChange={(neighborhood) => setForm({ ...form, neighborhood })}
+                />
+                <TextInput
+                  label="Cidade"
+                  value={form.city}
+                  onChange={(city) => setForm({ ...form, city })}
+                />
+                <TextInput
+                  label="UF"
+                  value={form.state}
+                  onChange={(state) => setForm({ ...form, state: state.toUpperCase().slice(0, 2) })}
+                />
+              </div>
+            </section>
+          </div>
+          <div style={styles.crudFormFooter}>
+            <span style={styles.muted}>Organize dados fiscais, contato e endereco antes de salvar.</span>
+            <div style={{ display: "flex", gap: "6px" }}>
+              <button type="button" onClick={() => setShowForm(false)} style={styles.secondaryButton}>
+                Cancelar
+              </button>
+              <button type="button" onClick={handleSave} style={styles.primaryButton}>
+                Salvar
+              </button>
+            </div>
           </div>
         </div>
       ) : null}
@@ -5700,60 +5707,72 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
       {carriers.length === 0 ? (
         <p style={{ color: "#64748b" }}>Nenhuma transportadora cadastrada.</p>
       ) : (
-        <div style={{ display: "grid", gap: "8px" }}>
+        <div style={styles.crudTable}>
+          <div
+            style={{
+              ...styles.crudTableRow,
+              ...styles.crudTableHead,
+              gridTemplateColumns:
+                "minmax(220px, 1.3fr) 140px minmax(170px, 1fr) minmax(150px, 0.9fr) 86px 180px"
+            }}
+          >
+            <span>Transportadora</span>
+            <span>Documento</span>
+            <span>Contato</span>
+            <span>Cidade/UF</span>
+            <span>Origem</span>
+            <span style={{ textAlign: "right" }}>Acoes</span>
+          </div>
           {carriers.map((carrier) => (
-            <div
-              key={carrier.id}
-              style={{ ...styles.card, padding: "12px 16px", cursor: "pointer" }}
-              onClick={() => setSelectedCarrier(carrier.id === selectedCarrier ? null : carrier.id)}
-            >
+            <Fragment key={carrier.id}>
               <div
-                style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}
+                style={{
+                  ...styles.crudTableRow,
+                  gridTemplateColumns:
+                    "minmax(220px, 1.3fr) 140px minmax(170px, 1fr) minmax(150px, 0.9fr) 86px 180px"
+                }}
               >
-                <div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedCarrier(carrier.id === selectedCarrier ? null : carrier.id)}
+                  style={{
+                    border: "none",
+                    background: "transparent",
+                    padding: 0,
+                    textAlign: "left",
+                    cursor: "pointer",
+                    color: "inherit"
+                  }}
+                >
                   <strong>{carrier.name}</strong>
-                  {carrier.document ? (
-                    <span style={{ color: "#64748b", fontSize: "13px", marginLeft: "8px" }}>
-                      {carrier.document}
-                    </span>
-                  ) : null}
-                  <span
-                    style={{
-                      fontSize: "11px",
-                      marginLeft: "8px",
-                      padding: "2px 6px",
-                      borderRadius: "4px",
-                      background: carrier.source === "omie" ? "#dbeafe" : "#dcfce7",
-                      color: carrier.source === "omie" ? "#1e40af" : "#166534"
-                    }}
-                  >
-                    {carrier.source === "omie" ? "OMIE" : "LOCAL"}
-                  </span>
-                  {[carrier.email, carrier.city, carrier.state].filter(Boolean).length > 0 ? (
-                    <div style={{ color: "#64748b", fontSize: "12px", marginTop: "4px" }}>
-                      {[carrier.email, [carrier.city, carrier.state].filter(Boolean).join("/")]
-                        .filter(Boolean)
-                        .join(" - ")}
-                    </div>
-                  ) : null}
+                  <span style={{ ...styles.muted, display: "block" }}>Clique para ver veiculos</span>
+                </button>
+                <span style={styles.muted}>{carrier.document || "-"}</span>
+                <div style={styles.crudCellStack}>
+                  <span>{carrier.phone || "-"}</span>
+                  <span style={styles.muted}>{carrier.email || "-"}</span>
                 </div>
-                <div style={{ display: "flex", gap: "6px" }}>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      openEdit(carrier);
-                    }}
-                    style={styles.secondaryButton}
-                  >
+                <span>{[carrier.city, carrier.state].filter(Boolean).join("/") || "-"}</span>
+                <span
+                  style={{
+                    justifySelf: "start",
+                    fontSize: "11px",
+                    padding: "2px 7px",
+                    borderRadius: "999px",
+                    background: carrier.source === "omie" ? "#dbeafe" : "#dcfce7",
+                    color: carrier.source === "omie" ? "#1e40af" : "#166534",
+                    fontWeight: 800
+                  }}
+                >
+                  {carrier.source === "omie" ? "OMIE" : "LOCAL"}
+                </span>
+                <div style={styles.crudActions}>
+                  <button type="button" onClick={() => openEdit(carrier)} style={styles.secondaryButton}>
                     Editar
                   </button>
                   <button
                     type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDelete(carrier.id);
-                    }}
+                    onClick={() => handleDelete(carrier.id)}
                     style={{ ...styles.secondaryButton, color: "#b91c1c", borderColor: "#fecaca" }}
                   >
                     Excluir
@@ -5762,11 +5781,13 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
               </div>
               {selectedCarrier === carrier.id ? (
                 <div
-                  style={{ marginTop: "12px", borderTop: "1px solid #e2e8f0", paddingTop: "12px" }}
+                  style={{
+                    ...styles.crudTableRow,
+                    gridTemplateColumns: "1fr",
+                    background: "var(--kr-surface-soft)"
+                  }}
                 >
-                  <h4 style={{ margin: "0 0 8px 0", fontSize: "14px", color: "#475569" }}>
-                    Veiculos vinculados
-                  </h4>
+                  <strong style={{ color: "var(--kr-text-strong)" }}>Veiculos vinculados</strong>
                   {carrierVehicles.length === 0 ? (
                     <p style={{ color: "#94a3b8", fontSize: "13px", margin: 0 }}>
                       Nenhum veiculo vinculado.
@@ -5778,21 +5799,22 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                           key={v.id}
                           style={{
                             fontSize: "13px",
-                            background: "#f1f5f9",
+                            background: "var(--kr-surface)",
+                            border: "1px solid var(--kr-border)",
                             padding: "4px 8px",
-                            borderRadius: "4px",
-                            color: "#0f172a"
+                            borderRadius: "8px",
+                            color: "var(--kr-text-strong)"
                           }}
                         >
                           {v.plate}
-                          {v.description ? ` — ${v.description}` : ""}
+                          {v.description ? ` - ${v.description}` : ""}
                         </span>
                       ))}
                     </div>
                   )}
                 </div>
               ) : null}
-            </div>
+            </Fragment>
           ))}
         </div>
       )}
@@ -6483,7 +6505,7 @@ function OmieViewer({
 
   return (
     <div>
-      <div style={{ display: "flex", gap: "8px", marginBottom: "8px", flexWrap: "wrap" }}>
+      <div style={styles.crudToolbar}>
         <input
           placeholder={`Buscar ${title.toLowerCase()}...`}
           value={search}
@@ -6565,6 +6587,7 @@ function SimpleCrudList({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState<string | null>(null);
+  const entityLabel = entityType === "vehicle" ? "Veiculo" : "Motorista";
 
   useEffect(() => {
     loadItems();
@@ -6644,7 +6667,7 @@ function SimpleCrudList({
       setShowForm(false);
       resetForm();
       await loadItems();
-      setMsg(`${entityType === "vehicle" ? "Veiculo" : "Motorista"} salvo.`);
+      setMsg(`${entityLabel} salvo.`);
     } catch (err) {
       setMsg(err instanceof Error ? err.message : "Erro");
     }
@@ -6697,49 +6720,61 @@ function SimpleCrudList({
       ) : null}
 
       {showForm ? (
-        <div style={{ ...styles.card, marginBottom: "12px", padding: "12px" }}>
-          <h3 style={{ margin: "0 0 8px 0", fontSize: "14px" }}>{editingId ? "Editar" : "Novo"}</h3>
-          {fields.map((f) => {
-            const value = formData[f.key] || "";
-            if (f.key === "document") {
-              return (
-                <DocumentInput
-                  key={f.key}
-                  label={f.label}
-                  value={value}
-                  required={f.required}
-                  onChange={(v) => setFormData({ ...formData, [f.key]: v })}
-                />
-              );
-            }
-            if (f.key === "phone") {
-              return (
-                <PhoneInput
-                  key={f.key}
-                  label={f.label}
-                  value={value}
-                  required={f.required}
-                  onChange={(v) => setFormData({ ...formData, [f.key]: v })}
-                />
-              );
-            }
-            return (
-              <TextInput
-                key={f.key}
-                label={f.label}
-                value={value}
-                required={f.required}
-                onChange={(v) => setFormData({ ...formData, [f.key]: v })}
-              />
-            );
-          })}
-          <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
-            <button type="button" onClick={handleSave} style={styles.primaryButton}>
-              Salvar
-            </button>
-            <button type="button" onClick={() => setShowForm(false)} style={styles.secondaryButton}>
-              Cancelar
-            </button>
+        <div style={styles.crudFormCard}>
+          <div style={styles.crudFormHeader}>
+            <h3 style={styles.crudFormTitle}>
+              {editingId ? `Editar ${entityLabel}` : `Novo ${entityLabel}`}
+            </h3>
+          </div>
+          <div style={styles.crudFormGrid}>
+            <section style={styles.crudFormSection}>
+              <h4 style={styles.crudFormSectionTitle}>Dados principais</h4>
+              {fields.map((f) => {
+                const value = formData[f.key] || "";
+                if (f.key === "document") {
+                  return (
+                    <DocumentInput
+                      key={f.key}
+                      label={f.label}
+                      value={value}
+                      required={f.required}
+                      onChange={(v) => setFormData({ ...formData, [f.key]: v })}
+                    />
+                  );
+                }
+                if (f.key === "phone") {
+                  return (
+                    <PhoneInput
+                      key={f.key}
+                      label={f.label}
+                      value={value}
+                      required={f.required}
+                      onChange={(v) => setFormData({ ...formData, [f.key]: v })}
+                    />
+                  );
+                }
+                return (
+                  <TextInput
+                    key={f.key}
+                    label={f.label}
+                    value={value}
+                    required={f.required}
+                    onChange={(v) => setFormData({ ...formData, [f.key]: v })}
+                  />
+                );
+              })}
+            </section>
+          </div>
+          <div style={styles.crudFormFooter}>
+            <span style={styles.muted}>Campos obrigatorios devem ser preenchidos antes de salvar.</span>
+            <div style={{ display: "flex", gap: "8px" }}>
+              <button type="button" onClick={() => setShowForm(false)} style={styles.secondaryButton}>
+                Cancelar
+              </button>
+              <button type="button" onClick={handleSave} style={styles.primaryButton}>
+                Salvar
+              </button>
+            </div>
           </div>
         </div>
       ) : null}
@@ -6747,30 +6782,43 @@ function SimpleCrudList({
       {items.length === 0 ? (
         <p style={{ color: "#64748b" }}>Nenhum registro encontrado.</p>
       ) : (
-        items.map((item) => (
-          <div key={item.id as string} style={styles.operationRow}>
-            <div>
-              <strong>{displayLabel(item)}</strong>
-              {displaySub(item) ? (
-                <p style={{ ...styles.muted, margin: "2px 0 0 0", fontSize: "13px" }}>
-                  {displaySub(item)}
-                </p>
-              ) : null}
-            </div>
-            <div style={{ display: "flex", gap: "8px" }}>
-              <button type="button" onClick={() => openEdit(item)} style={styles.secondaryButton}>
-                Editar
-              </button>
-              <button
-                type="button"
-                onClick={() => handleDelete(item.id as string)}
-                style={{ ...styles.secondaryButton, color: "#b91c1c", borderColor: "#fecaca" }}
-              >
-                Excluir
-              </button>
-            </div>
+        <div style={styles.crudTable}>
+          <div
+            style={{
+              ...styles.crudTableRow,
+              ...styles.crudTableHead,
+              gridTemplateColumns: "minmax(220px, 1.3fr) minmax(260px, 1.5fr) 150px"
+            }}
+          >
+            <span>{entityType === "vehicle" ? "Placa" : "Nome"}</span>
+            <span>Detalhes</span>
+            <span style={{ textAlign: "right" }}>Acoes</span>
           </div>
-        ))
+          {items.map((item) => (
+            <div
+              key={item.id as string}
+              style={{
+                ...styles.crudTableRow,
+                gridTemplateColumns: "minmax(220px, 1.3fr) minmax(260px, 1.5fr) 150px"
+              }}
+            >
+              <strong>{displayLabel(item)}</strong>
+              <span style={styles.muted}>{displaySub(item) || "-"}</span>
+              <div style={styles.crudActions}>
+                <button type="button" onClick={() => openEdit(item)} style={styles.secondaryButton}>
+                  Editar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDelete(item.id as string)}
+                  style={{ ...styles.secondaryButton, color: "#b91c1c", borderColor: "#fecaca" }}
+                >
+                  Excluir
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
@@ -7310,6 +7358,110 @@ const styles = {
     borderRadius: "12px",
     background: "var(--kr-surface)",
     borderColor: "var(--kr-border)"
+  },
+  crudToolbar: {
+    display: "flex",
+    gap: "8px",
+    marginBottom: "10px",
+    flexWrap: "wrap" as const,
+    alignItems: "center"
+  },
+  crudFormCard: {
+    marginBottom: "12px",
+    border: "1px solid var(--kr-border)",
+    borderRadius: "14px",
+    background: "var(--kr-surface)",
+    boxShadow: "var(--kr-shadow)",
+    overflow: "hidden" as const
+  },
+  crudFormHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "8px",
+    padding: "10px 12px",
+    borderBottom: "1px solid var(--kr-border)",
+    background: "var(--kr-surface-soft)",
+    flexWrap: "wrap" as const
+  },
+  crudFormTitle: {
+    margin: 0,
+    color: "var(--kr-text-strong)",
+    fontSize: "14px"
+  },
+  crudFormGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+    gap: "10px",
+    padding: "12px"
+  },
+  crudFormSection: {
+    display: "grid",
+    alignContent: "start",
+    gap: "8px",
+    padding: "10px",
+    border: "1px solid var(--kr-border)",
+    borderRadius: "12px",
+    background: "var(--kr-surface-soft)",
+    minWidth: 0
+  },
+  crudFormSectionTitle: {
+    margin: "0 0 2px 0",
+    fontSize: "11px",
+    fontWeight: 900,
+    textTransform: "uppercase" as const,
+    letterSpacing: "0.05em",
+    color: "var(--kr-muted)"
+  },
+  crudFormFooter: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "8px",
+    padding: "10px 12px",
+    borderTop: "1px solid var(--kr-border)",
+    flexWrap: "wrap" as const
+  },
+  crudTable: {
+    overflowX: "auto" as const,
+    border: "1px solid var(--kr-border)",
+    borderRadius: "14px",
+    background: "var(--kr-surface)",
+    boxShadow: "var(--kr-shadow)"
+  },
+  crudTableRow: {
+    display: "grid",
+    gap: "10px",
+    alignItems: "center",
+    minWidth: "720px",
+    padding: "9px 12px",
+    borderTop: "1px solid var(--kr-border)",
+    fontSize: "13px",
+    color: "var(--kr-text)"
+  },
+  crudTableHead: {
+    borderTop: "none",
+    background: "var(--kr-surface-soft)",
+    color: "var(--kr-muted)",
+    fontSize: "11px",
+    fontWeight: 900,
+    letterSpacing: "0.05em",
+    textTransform: "uppercase" as const,
+    position: "sticky" as const,
+    top: 0,
+    zIndex: 1
+  },
+  crudCellStack: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "2px",
+    minWidth: 0
+  },
+  crudActions: {
+    display: "flex",
+    gap: "6px",
+    justifyContent: "flex-end",
+    flexWrap: "wrap" as const
   },
   panel: {
     marginTop: 0,

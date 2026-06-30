@@ -134,17 +134,17 @@ const styles = {
   listRow: {
     display: "grid",
     gridTemplateColumns: "minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr) auto",
-    gap: "10px",
+    gap: 0,
     alignItems: "center",
-    padding: "8px 12px",
+    padding: 0,
     borderTop: "1px solid var(--kr-border)",
     fontSize: "13px"
   },
   listHeader: {
     display: "grid",
     gridTemplateColumns: "minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr) auto",
-    gap: "10px",
-    padding: "8px 12px",
+    gap: 0,
+    padding: 0,
     background: "var(--kr-surface-soft)",
     color: "var(--kr-muted)",
     fontSize: "11px",
@@ -154,6 +154,20 @@ const styles = {
     position: "sticky" as const,
     top: 0,
     zIndex: 1
+  },
+  listHeaderCell: {
+    padding: "8px 12px",
+    borderRight: "1px solid var(--kr-border)",
+    minHeight: "32px"
+  },
+  listCell: {
+    padding: "8px 12px",
+    borderRight: "1px solid var(--kr-border)",
+    minHeight: "44px",
+    display: "flex",
+    flexDirection: "column" as const,
+    justifyContent: "center",
+    minWidth: 0
   },
   cellPrimary: {
     fontWeight: 700,
@@ -982,11 +996,13 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
 
       <div style={{ ...styles.card, ...styles.listCard }}>
         <div style={styles.listHeader}>
-          <span>Cliente</span>
-          <span>Documento</span>
-          <span>Contato</span>
-          <span>Origem / status</span>
-          <span style={{ textAlign: "right" }}>Acoes</span>
+          <span style={styles.listHeaderCell}>Cliente</span>
+          <span style={styles.listHeaderCell}>Documento</span>
+          <span style={styles.listHeaderCell}>Contato</span>
+          <span style={styles.listHeaderCell}>Origem / status</span>
+          <span style={{ ...styles.listHeaderCell, textAlign: "right", borderRight: "none" }}>
+            Acoes
+          </span>
         </div>
         <div style={styles.listBody}>
           {loading ? (
@@ -1041,16 +1057,18 @@ function CustomerRow({
 }) {
   return (
     <div style={styles.listRow}>
-      <div>
+      <div style={styles.listCell}>
         <div style={styles.cellPrimary}>{customer.tradeName || customer.legalName}</div>
         <div style={styles.cellMuted}>{customer.legalName}</div>
       </div>
-      <div style={styles.cellMuted}>{formatDocument(customer.document ?? "") || "-"}</div>
-      <div>
+      <div style={{ ...styles.listCell, ...styles.cellMuted }}>
+        {formatDocument(customer.document ?? "") || "-"}
+      </div>
+      <div style={styles.listCell}>
         <div style={styles.cellPrimary}>{formatPhone(customer.phone ?? "") || "-"}</div>
         <div style={styles.cellMuted}>{customer.email || "-"}</div>
       </div>
-      <div>
+      <div style={styles.listCell}>
         <span style={styles.sourceBadge(customer.source)}>
           {customer.source === "omie" ? "OMIE" : "LOCAL"}
         </span>
@@ -1058,10 +1076,12 @@ function CustomerRow({
           <span style={{ ...styles.pill("#b91c1c", "#fee2e2"), marginLeft: "6px" }}>Bloqueado</span>
         ) : null}
       </div>
-      <div style={styles.rowActions}>
+      <div style={{ ...styles.listCell, borderRight: "none" }}>
+        <div style={styles.rowActions}>
         <button type="button" onClick={() => onEdit(customer)} style={styles.secondaryButton}>
           Editar
         </button>
+        </div>
       </div>
     </div>
   );
