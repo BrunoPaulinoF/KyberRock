@@ -25,8 +25,13 @@ import { desktopAppInfo } from "../app-info";
 import type {
   PrintProfileSummary,
   PrintReceiptSummary,
+  PrinterType,
   WindowsPrinterSummary
 } from "../services/printing";
+import {
+  DEFAULT_RECEIPT_TEMPLATE_CONFIG,
+  type ReceiptTemplateConfig
+} from "@kyberrock/print-templates";
 import type { DesktopAccessStatus } from "../services/desktop-activation";
 import type { DesktopStatusSnapshot } from "../services/status";
 import { createInitialUpdateState, type UpdateState } from "../services/update-flow";
@@ -157,6 +162,25 @@ type FiscalCloseProgress = {
   detail: string;
 };
 
+type ReceiptTemplateBooleanKey = {
+  [Key in keyof ReceiptTemplateConfig]: ReceiptTemplateConfig[Key] extends boolean ? Key : never;
+}[keyof ReceiptTemplateConfig];
+
+const receiptTemplateToggleOptions: Array<{ key: ReceiptTemplateBooleanKey; label: string }> = [
+  { key: "showCompanyHeader", label: "Cabecalho da empresa" },
+  { key: "showCopyInfo", label: "Numero do cupom e via" },
+  { key: "showCustomerInfo", label: "Dados do cliente" },
+  { key: "showProductDetail", label: "Produto e quantidade" },
+  { key: "showFreight", label: "Frete" },
+  { key: "showWeights", label: "Pesos" },
+  { key: "showEntryExitTimes", label: "Horarios de entrada/saida" },
+  { key: "showPermanence", label: "Permanencia" },
+  { key: "showFinancial", label: "Financeiro" },
+  { key: "showSignature", label: "Assinatura" },
+  { key: "showVehicleDriver", label: "Veiculo e motorista" },
+  { key: "showFooter", label: "Mensagem padrao de rodape" }
+];
+
 export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }: AppProps = {}) {
   const [phase, setPhase] = useState<AppPhase>("checking_access");
   const [status, setStatus] = useState<DesktopStatusSnapshot | null>(initialStatus);
@@ -170,13 +194,19 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [printers, setPrinters] = useState<WindowsPrinterSummary[]>([]);
   const [printProfiles, setPrintProfiles] = useState<PrintProfileSummary[]>([]);
   const [printReceipts, setPrintReceipts] = useState<PrintReceiptSummary[]>([]);
+  const [printerType, setPrinterType] = useState<PrinterType>("windows");
   const [selectedPrinterName, setSelectedPrinterName] = useState("");
+  const [networkPrinterHost, setNetworkPrinterHost] = useState("");
+  const [networkPrinterPort, setNetworkPrinterPort] = useState("9100");
   const [receiptLogoDataUrl, setReceiptLogoDataUrl] = useState<string | null>(null);
   const [receiptLogoWidthMm, setReceiptLogoWidthMm] = useState("24");
   const [receiptLogoHeightMm, setReceiptLogoHeightMm] = useState("16");
   const [receiptLogoFit, setReceiptLogoFit] = useState<PrintProfileSummary["receiptLogo"]["fit"]>(
     "contain"
   );
+  const [receiptTemplateConfig, setReceiptTemplateConfig] = useState<ReceiptTemplateConfig>({
+    ...DEFAULT_RECEIPT_TEMPLATE_CONFIG
+  });
   const [form, setForm] = useState<WeighingFormState>(initialWeighingForm);
   const [activeView, setActiveView] = useState<ActiveView>("new-weighing");
   const [formError, setFormError] = useState<string | null>(null);
@@ -843,10 +873,15 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       return;
     }
 
+    setPrinterType(profile.printerType);
+    setSelectedPrinterName(profile.windowsPrinterName);
+    setNetworkPrinterHost(profile.networkHost ?? "");
+    setNetworkPrinterPort(String(profile.networkPort ?? 9100));
     setReceiptLogoDataUrl(profile.receiptLogo.dataUrl);
     setReceiptLogoWidthMm(String(profile.receiptLogo.widthMm));
     setReceiptLogoHeightMm(String(profile.receiptLogo.heightMm));
     setReceiptLogoFit(profile.receiptLogo.fit);
+    setReceiptTemplateConfig(profile.templateConfig);
   }
 
   async function handleExportBackup(): Promise<void> {
@@ -1260,27 +1295,51 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
 
     const printerName = selectedPrinterName.trim();
+    const networkHost = networkPrinterHost.trim();
+    const networkPort = Number(networkPrinterPort || 9100);
 
-    if (!printerName) {
+    if (printerType === "windows" && !printerName) {
       setMessage("Selecione uma impressora do Windows antes de salvar o perfil.");
+      return;
+    }
+
+    if (printerType === "network" && !networkHost) {
+      setMessage("Informe o IP ou host da impressora de rede antes de salvar o perfil.");
+      return;
+    }
+
+    if (printerType === "network" && (!Number.isInteger(networkPort) || networkPort < 1 || networkPort > 65535)) {
+      setMessage("Informe uma porta TCP valida para a impressora de rede.");
       return;
     }
 
     try {
       const profile = await desktopApi.configureReceiptPrintProfile({
-        windowsPrinterName: printerName,
+        printerType,
+        windowsPrinterName: printerType === "windows" ? printerName : printerName || "NETWORK",
+        networkHost: printerType === "network" ? networkHost : null,
+        networkPort: printerType === "network" ? networkPort : null,
         paperWidthMm: 80,
         copies: 2,
         receiptLogoDataUrl: receiptLogoDataUrl,
         receiptLogoWidthMm: Number(receiptLogoWidthMm),
         receiptLogoHeightMm: Number(receiptLogoHeightMm),
-        receiptLogoFit
+        receiptLogoFit,
+        templateConfig: receiptTemplateConfig
       });
-      setMessage(`Impressora de cupom configurada: ${profile.windowsPrinterName}.`);
+      setMessage(
+        profile.printerType === "network"
+          ? `Impressora de rede configurada: ${profile.networkHost}:${profile.networkPort}.`
+          : `Impressora de cupom configurada: ${profile.windowsPrinterName}.`
+      );
       await refreshPrintData();
     } catch (error) {
       setMessage(getErrorMessage(error));
     }
+  }
+
+  function updateReceiptTemplateConfig(patch: Partial<ReceiptTemplateConfig>): void {
+    setReceiptTemplateConfig((current) => ({ ...current, ...patch }));
   }
 
   async function handleReceiptLogoFile(file: File | undefined): Promise<void> {
@@ -2311,25 +2370,73 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 <article style={styles.panel}>
                   <h2 style={styles.panelTitle}>Perfil de cupom 80 mm</h2>
                   <p style={styles.muted}>{TIPS.screens.printing}</p>
-                  <label style={styles.fieldLabel} title={TIPS.printing.selectPrinter}>
-                    Impressora Windows
+                  <label style={styles.fieldLabel}>
+                    Tipo de impressora
                     <select
-                      value={selectedPrinterName}
-                      onChange={(event) => setSelectedPrinterName(event.target.value)}
+                      value={printerType}
+                      onChange={(event) => setPrinterType(event.target.value as PrinterType)}
                       style={styles.input}
                     >
-                      <option value="">Selecione...</option>
-                      {printers.map((printer) => (
-                        <option key={printer.name} value={printer.name}>
-                          {printer.name}
-                          {printer.isDefault ? " (padrao)" : ""}
-                        </option>
-                      ))}
+                      <option value="windows">Windows instalada</option>
+                      <option value="network">Rede / WiFi ESC/POS</option>
                     </select>
                   </label>
-                  {printers.length === 0 ? (
-                    <p style={styles.errorMessage}>Nenhuma impressora instalada foi encontrada.</p>
-                  ) : null}
+                  {printerType === "windows" ? (
+                    <>
+                      <label style={styles.fieldLabel} title={TIPS.printing.selectPrinter}>
+                        Impressora Windows
+                        <select
+                          value={selectedPrinterName}
+                          onChange={(event) => setSelectedPrinterName(event.target.value)}
+                          style={styles.input}
+                        >
+                          <option value="">Selecione...</option>
+                          {printers.map((printer) => (
+                            <option key={printer.name} value={printer.name}>
+                              {printer.name}
+                              {printer.isDefault ? " (padrao)" : ""}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      {printers.length === 0 ? (
+                        <p style={styles.errorMessage}>Nenhuma impressora instalada foi encontrada.</p>
+                      ) : null}
+                    </>
+                  ) : (
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "minmax(0, 1fr) 120px",
+                        gap: "10px"
+                      }}
+                    >
+                      <label style={styles.fieldLabel}>
+                        IP ou host da impressora
+                        <input
+                          type="text"
+                          placeholder="192.168.0.50"
+                          value={networkPrinterHost}
+                          onChange={(event) => setNetworkPrinterHost(event.target.value)}
+                          style={styles.input}
+                        />
+                      </label>
+                      <label style={styles.fieldLabel}>
+                        Porta
+                        <input
+                          type="number"
+                          min="1"
+                          max="65535"
+                          value={networkPrinterPort}
+                          onChange={(event) => setNetworkPrinterPort(event.target.value)}
+                          style={styles.input}
+                        />
+                      </label>
+                      <p style={{ ...styles.muted, gridColumn: "1 / -1", marginTop: 0 }}>
+                        Use a porta 9100 para a maioria das impressoras termicas ESC/POS TCP/IP.
+                      </p>
+                    </div>
+                  )}
                   <div style={{ display: "grid", gap: "10px", margin: "12px 0" }}>
                     <label style={styles.fieldLabel}>
                       Logo do cupom
@@ -2426,6 +2533,85 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       </label>
                     </div>
                   </div>
+                  <div style={{ display: "grid", gap: "10px", margin: "12px 0" }}>
+                    <div style={styles.sectionHeader}>
+                      <span style={styles.sectionIcon}>N</span>
+                      <div>
+                        <h3 style={styles.sectionTitle}>Editor visual do cupom</h3>
+                        <p style={styles.sectionDescription}>
+                          Mantenha o modelo padrao ou personalize os blocos impressos.
+                        </p>
+                      </div>
+                    </div>
+                    <label style={styles.fieldLabel}>
+                      Modelo
+                      <select
+                        value={receiptTemplateConfig.mode}
+                        onChange={(event) =>
+                          updateReceiptTemplateConfig({
+                            mode: event.target.value as ReceiptTemplateConfig["mode"]
+                          })
+                        }
+                        style={styles.input}
+                      >
+                        <option value="default">Padrao KyberRock</option>
+                        <option value="custom">Personalizado</option>
+                      </select>
+                    </label>
+                    {receiptTemplateConfig.mode === "custom" ? (
+                      <>
+                        <label style={styles.fieldLabel}>
+                          Texto extra no cabecalho
+                          <textarea
+                            value={receiptTemplateConfig.customHeaderText}
+                            onChange={(event) =>
+                              updateReceiptTemplateConfig({ customHeaderText: event.target.value })
+                            }
+                            rows={2}
+                            style={styles.input}
+                            placeholder="Ex.: CUPOM NAO FISCAL"
+                          />
+                        </label>
+                        <div style={styles.compactInlineGrid}>
+                          {receiptTemplateToggleOptions.map((option) => (
+                            <label key={option.key} style={styles.compactCheckboxCard}>
+                              <input
+                                type="checkbox"
+                                checked={receiptTemplateConfig[option.key]}
+                                onChange={(event) =>
+                                  updateReceiptTemplateConfig({ [option.key]: event.target.checked })
+                                }
+                              />
+                              {option.label}
+                            </label>
+                          ))}
+                        </div>
+                        <label style={styles.fieldLabel}>
+                          Texto extra no rodape
+                          <textarea
+                            value={receiptTemplateConfig.customFooterText}
+                            onChange={(event) =>
+                              updateReceiptTemplateConfig({ customFooterText: event.target.value })
+                            }
+                            rows={2}
+                            style={styles.input}
+                            placeholder="Ex.: Obrigado pela preferencia"
+                          />
+                        </label>
+                      </>
+                    ) : (
+                      <p style={styles.muted}>
+                        O modelo padrao preserva o layout atual do cupom, incluindo pesos, horarios e valores.
+                      </p>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setReceiptTemplateConfig({ ...DEFAULT_RECEIPT_TEMPLATE_CONFIG })}
+                      style={styles.secondaryButton}
+                    >
+                      Restaurar modelo padrao
+                    </button>
+                  </div>
                   <button
                     type="button"
                     onClick={handleConfigureReceiptPrinter}
@@ -2449,8 +2635,11 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     <p style={styles.muted}>Nenhum perfil de impressao configurado.</p>
                   ) : (
                     <p>
-                      {printProfiles[0].windowsPrinterName} - {printProfiles[0].paperWidthMm} mm
+                      {printProfiles[0].printerType === "network"
+                        ? `${printProfiles[0].networkHost}:${printProfiles[0].networkPort ?? 9100}`
+                        : printProfiles[0].windowsPrinterName} - {printProfiles[0].paperWidthMm} mm
                       {` - ${printProfiles[0].copies} vias`}
+                      {printProfiles[0].templateConfig.mode === "custom" ? " - modelo personalizado" : ""}
                     </p>
                   )}
                 </article>

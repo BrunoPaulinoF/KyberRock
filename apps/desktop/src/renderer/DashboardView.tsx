@@ -160,7 +160,10 @@ function buildHealthPills(
     pills.push({
       id: "system-printer",
       label: "Impressora",
-      value: activePrinter.windowsPrinterName,
+      value:
+        activePrinter.printerType === "network"
+          ? `${activePrinter.networkHost}:${activePrinter.networkPort ?? 9100}`
+          : activePrinter.windowsPrinterName,
       tone: "success",
       detail: "Perfil ativo para cupom 80 mm",
       onClick: () => props.onNavigate("printing")

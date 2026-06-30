@@ -1,12 +1,19 @@
 import { randomUUID } from "node:crypto";
 
-import { buildReceiptLines, type ReceiptTemplateInput } from "@kyberrock/print-templates";
+import {
+  buildReceiptLinesWithConfig,
+  normalizeReceiptTemplateConfig,
+  DEFAULT_RECEIPT_TEMPLATE_CONFIG,
+  type ReceiptTemplateInput,
+  type ReceiptTemplateConfig
+} from "@kyberrock/print-templates";
 
 import type { DesktopDatabase } from "../database/sqlite.js";
 import type { LocalDesktopIdentity } from "./bootstrap.js";
 import { enqueueSyncJob } from "./sync-queue.js";
 
 export type PrintReceiptStatus = "printed" | "failed";
+export type PrinterType = "windows" | "network";
 
 export interface WindowsPrinterSummary {
   name: string;
@@ -23,6 +30,10 @@ export interface ConfigureReceiptPrintProfileInput {
   receiptLogoWidthMm?: number;
   receiptLogoHeightMm?: number;
   receiptLogoFit?: ReceiptLogoFit;
+  printerType?: PrinterType;
+  networkHost?: string | null;
+  networkPort?: number | null;
+  templateConfig?: Partial<ReceiptTemplateConfig> | null;
 }
 
 export type ReceiptLogoFit = "contain" | "cover" | "fill";
@@ -38,11 +49,15 @@ export interface PrintProfileSummary {
   id: string;
   deviceId: string;
   documentType: "receipt_80mm" | "report_a4";
+  printerType: PrinterType;
   windowsPrinterName: string;
+  networkHost: string | null;
+  networkPort: number | null;
   paperWidthMm: number;
   copies: number;
   cutPaper: boolean;
   receiptLogo: ReceiptLogoConfig;
+  templateConfig: ReceiptTemplateConfig;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -64,6 +79,9 @@ export interface PrintTestReceiptInput {
 
 export interface ReceiptPrintPayload {
   printerName: string;
+  printerType: PrinterType;
+  networkHost: string | null;
+  networkPort: number | null;
   paperWidthMm: number;
   lines: string[];
   contentText: string;
@@ -97,9 +115,13 @@ interface PrintProfileRow {
   id: string;
   device_id: string;
   document_type: "receipt_80mm" | "report_a4";
+  printer_type: string;
   windows_printer_name: string;
+  network_host: string | null;
+  network_port: number | null;
   paper_width_mm: number;
   font_config_json: string;
+  template_config_json: string;
   copies: number;
   cut_paper: number;
   is_active: number;
@@ -157,23 +179,40 @@ export function configureReceiptPrintProfile(
   input: ConfigureReceiptPrintProfileInput,
   now: Date = new Date()
 ): PrintProfileSummary {
-  validateRequired("Printer name", input.windowsPrinterName);
+  const printerType: PrinterType = input.printerType === "network" ? "network" : "windows";
+  if (printerType === "windows") {
+    validateRequired("Printer name", input.windowsPrinterName);
+  } else {
+    validateRequired("Network host", input.networkHost ?? "");
+  }
 
   const timestamp = now.toISOString();
   const existing = getActiveReceiptPrintProfile(database, input.identity.deviceId);
   const profileId = existing?.id ?? randomUUID();
   const receiptLogo = normalizeReceiptLogo(input, existing?.receiptLogo ?? defaultReceiptLogoConfig());
+  const templateConfig = normalizeReceiptTemplateConfig({
+    ...(existing?.templateConfig ?? DEFAULT_RECEIPT_TEMPLATE_CONFIG),
+    ...(input.templateConfig ?? {})
+  });
+  const windowsPrinterName = printerType === "windows" ? input.windowsPrinterName.trim() : (input.windowsPrinterName?.trim() || "NETWORK");
+  const networkHost = printerType === "network" ? (input.networkHost ?? "").trim() : null;
+  const networkPort = printerType === "network" ? (input.networkPort ?? 9100) : null;
 
   database
     .prepare(
       `INSERT INTO print_profiles (
-        id, device_id, document_type, windows_printer_name, paper_width_mm,
-        margin_json, font_config_json, copies, cut_paper, is_active, created_at, updated_at
-      ) VALUES (?, ?, 'receipt_80mm', ?, ?, '{}', ?, ?, ?, 1, ?, ?)
+        id, device_id, document_type, printer_type, windows_printer_name, network_host, network_port,
+        paper_width_mm, margin_json, font_config_json, template_config_json,
+        copies, cut_paper, is_active, created_at, updated_at
+      ) VALUES (?, ?, 'receipt_80mm', ?, ?, ?, ?, ?, '{}', ?, ?, ?, ?, 1, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
+        printer_type = excluded.printer_type,
         windows_printer_name = excluded.windows_printer_name,
+        network_host = excluded.network_host,
+        network_port = excluded.network_port,
         paper_width_mm = excluded.paper_width_mm,
         font_config_json = excluded.font_config_json,
+        template_config_json = excluded.template_config_json,
         copies = excluded.copies,
         cut_paper = excluded.cut_paper,
         is_active = 1,
@@ -182,9 +221,13 @@ export function configureReceiptPrintProfile(
     .run(
       profileId,
       input.identity.deviceId,
-      input.windowsPrinterName.trim(),
+      printerType,
+      windowsPrinterName,
+      networkHost,
+      networkPort,
       input.paperWidthMm ?? 80,
       JSON.stringify({ receiptLogo }),
+      JSON.stringify(templateConfig),
       input.copies ?? 2,
       input.cutPaper ? 1 : 0,
       timestamp,
@@ -280,9 +323,13 @@ export async function printTestReceipt(
 
   const timestamp = now.toISOString();
   const receiptId = randomUUID();
-  const testSnapshot = buildTestReceiptSnapshot(timestamp, profile.receiptLogo);
+  const printerName = getProfilePrinterName(profile);
+  const testSnapshot = buildTestReceiptSnapshot(timestamp, profile.receiptLogo, profile.templateConfig);
   const payload: ReceiptPrintPayload = {
-    printerName: profile.windowsPrinterName,
+    printerName,
+    printerType: profile.printerType,
+    networkHost: profile.networkHost,
+    networkPort: profile.networkPort,
     paperWidthMm: profile.paperWidthMm,
     lines: testSnapshot.lines,
     contentText: testSnapshot.lines.join("\n"),
@@ -349,7 +396,7 @@ export async function printTestReceipt(
       0,
       JSON.stringify(testSnapshot),
       timestamp,
-      profile.windowsPrinterName,
+      printerName,
       status,
       errorMessage,
       timestamp,
@@ -382,10 +429,14 @@ async function writeReceiptAttempt(
     receiptNumber,
     copyNumber,
     timestamp,
-    profile.receiptLogo
+    profile.receiptLogo,
+    profile.templateConfig
   );
   const payload: ReceiptPrintPayload = {
-    printerName: profile.windowsPrinterName,
+    printerName: getProfilePrinterName(profile),
+    printerType: profile.printerType,
+    networkHost: profile.networkHost,
+    networkPort: profile.networkPort,
     paperWidthMm: profile.paperWidthMm,
     lines: snapshot.lines,
     contentText: snapshot.lines.join("\n"),
@@ -423,7 +474,7 @@ async function writeReceiptAttempt(
         copyNumber,
         JSON.stringify(snapshot),
         timestamp,
-        profile.windowsPrinterName,
+        payload.printerName,
         status,
         errorMessage,
         timestamp,
@@ -436,7 +487,7 @@ async function writeReceiptAttempt(
       operation.id,
       originalReceipt ? "receipt_reprinted" : "receipt_printed",
       originalReceipt ?? null,
-      { receiptId, receiptNumber, copyNumber, printerName: profile.windowsPrinterName, status },
+      { receiptId, receiptNumber, copyNumber, printerName: payload.printerName, status },
       timestamp
     );
 
@@ -571,7 +622,8 @@ function buildReceiptSnapshot(
   receiptNumber: number,
   copyNumber: number,
   printedAt: string,
-  receiptLogo: ReceiptLogoConfig
+  receiptLogo: ReceiptLogoConfig,
+  templateConfig: ReceiptTemplateConfig
 ): ReceiptContentSnapshot {
   if (
     operation.entry_weight_captured_at === null ||
@@ -615,14 +667,15 @@ function buildReceiptSnapshot(
     freightTotalCents: operation.freight_total_cents,
     totalCents: operation.total_cents ?? 0
   };
-  const lines = buildReceiptLines(templateInput);
+  const lines = buildReceiptLinesWithConfig(templateInput, templateConfig);
 
   return { ...templateInput, lines, receiptLogo };
 }
 
 function buildTestReceiptSnapshot(
   printedAt: string,
-  receiptLogo: ReceiptLogoConfig = defaultReceiptLogoConfig()
+  receiptLogo: ReceiptLogoConfig = defaultReceiptLogoConfig(),
+  templateConfig: ReceiptTemplateConfig = DEFAULT_RECEIPT_TEMPLATE_CONFIG
 ): ReceiptContentSnapshot {
   const templateInput: ReceiptTemplateInput = {
     companyName: "Pedreira Teste LTDA",
@@ -656,11 +709,17 @@ function buildTestReceiptSnapshot(
     freightTotalCents: 0,
     totalCents: 78_000
   };
-  const lines = buildReceiptLines(templateInput);
+  const lines = buildReceiptLinesWithConfig(templateInput, templateConfig);
   lines.unshift("=== CUPOM DE TESTE ===");
   lines.push("", "Esta e uma impressao de teste.");
 
   return { ...templateInput, lines, receiptLogo };
+}
+
+function getProfilePrinterName(profile: PrintProfileSummary): string {
+  return profile.printerType === "network"
+    ? `${profile.networkHost ?? ""}:${profile.networkPort ?? 9100}`
+    : profile.windowsPrinterName;
 }
 
 function insertAuditLog(
@@ -695,11 +754,15 @@ function mapPrintProfileRow(row: PrintProfileRow): PrintProfileSummary {
     id: row.id,
     deviceId: row.device_id,
     documentType: row.document_type,
+    printerType: row.printer_type === "network" ? "network" : "windows",
     windowsPrinterName: row.windows_printer_name,
+    networkHost: row.network_host,
+    networkPort: row.network_port,
     paperWidthMm: row.paper_width_mm,
     copies: row.copies,
     cutPaper: row.cut_paper === 1,
     receiptLogo: parseReceiptLogoConfig(row.font_config_json),
+    templateConfig: normalizeReceiptTemplateConfig(parseJsonObject(row.template_config_json)),
     isActive: row.is_active === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -792,4 +855,16 @@ function validateRequired(fieldName: string, value: string): void {
 function sanitizeErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : "Printer failed.";
   return message.slice(0, 500);
+}
+
+function parseJsonObject(value: string | null | undefined): Record<string, unknown> | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
 }

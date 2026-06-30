@@ -31,57 +31,200 @@ export interface ReceiptTemplateInput {
   totalCents: number;
 }
 
+export interface ReceiptTemplateConfig {
+  mode: "default" | "custom";
+  showCompanyHeader: boolean;
+  showCopyInfo: boolean;
+  showCustomerInfo: boolean;
+  showProductDetail: boolean;
+  showFreight: boolean;
+  showWeights: boolean;
+  showEntryExitTimes: boolean;
+  showPermanence: boolean;
+  showFinancial: boolean;
+  showSignature: boolean;
+  showVehicleDriver: boolean;
+  showFooter: boolean;
+  customHeaderText: string;
+  customFooterText: string;
+}
+
+export const DEFAULT_RECEIPT_TEMPLATE_CONFIG: ReceiptTemplateConfig = {
+  mode: "default",
+  showCompanyHeader: true,
+  showCopyInfo: true,
+  showCustomerInfo: true,
+  showProductDetail: true,
+  showFreight: true,
+  showWeights: true,
+  showEntryExitTimes: true,
+  showPermanence: true,
+  showFinancial: true,
+  showSignature: true,
+  showVehicleDriver: true,
+  showFooter: true,
+  customHeaderText: "",
+  customFooterText: ""
+};
+
+export function normalizeReceiptTemplateConfig(
+  config: Partial<ReceiptTemplateConfig> | null | undefined
+): ReceiptTemplateConfig {
+  if (!config) return { ...DEFAULT_RECEIPT_TEMPLATE_CONFIG };
+  return {
+    mode: config.mode === "custom" ? "custom" : "default",
+    showCompanyHeader: config.showCompanyHeader ?? true,
+    showCopyInfo: config.showCopyInfo ?? true,
+    showCustomerInfo: config.showCustomerInfo ?? true,
+    showProductDetail: config.showProductDetail ?? true,
+    showFreight: config.showFreight ?? true,
+    showWeights: config.showWeights ?? true,
+    showEntryExitTimes: config.showEntryExitTimes ?? true,
+    showPermanence: config.showPermanence ?? true,
+    showFinancial: config.showFinancial ?? true,
+    showSignature: config.showSignature ?? true,
+    showVehicleDriver: config.showVehicleDriver ?? true,
+    showFooter: config.showFooter ?? true,
+    customHeaderText: config.customHeaderText ?? "",
+    customFooterText: config.customFooterText ?? ""
+  };
+}
+
 export function buildReceiptLines(input: ReceiptTemplateInput): string[] {
+  return buildReceiptLinesWithConfig(input, DEFAULT_RECEIPT_TEMPLATE_CONFIG);
+}
+
+export function buildReceiptLinesWithConfig(
+  input: ReceiptTemplateInput,
+  config: ReceiptTemplateConfig
+): string[] {
   const productLabel = [input.productCode, input.productDescription].filter(Boolean).join("-");
   const customerLocation = [input.customerZipCode, formatCityState(input.customerCity, input.customerState)]
     .filter(Boolean)
     .join("-");
   const quantityTon = input.netWeightKg / 1000;
-  const lines = [
-    input.companyName.toUpperCase(),
-    divider(),
-    input.unitName.toUpperCase(),
-    `DATA: ${formatDate(input.printedAt)}  HORA: ${formatTime(input.printedAt)}`,
-    `COPIA NRO ${input.receiptNumber.toString().padStart(9, "0")}`,
-    input.copyNumber > 1 ? `${input.copyNumber}a VIA` : "1a VIA",
-    divider(),
-    input.companyName.toUpperCase(),
-    formatCompanyDocuments(input.companyDocument, input.companyStateRegistration),
-    divider(),
-    `CODIGO.: ${input.operationId.slice(0, 13).toUpperCase()}`,
-    `Cliente: ${input.customerName}`,
-    customerLocation ? `CEP: ${customerLocation}` : "CEP:",
-    `Telefone: ${input.customerPhone ?? ""}`,
-    input.customerDocument ? `Documento: ${input.customerDocument}` : "Documento:",
-    divider(),
-    productLabel.toUpperCase(),
-    "  Quantidade |   Unitario R$ |   Total R$",
-    `  ${formatTon(quantityTon)} TN | ${formatDecimalMoney(input.unitPriceCents)} | ${formatNumber(input.productTotalCents / 100)}`,
-    divider(),
-    `TOTAL DA VENDA - Itens (1) R$ ${formatNumber(input.productTotalCents / 100)}`,
-    input.freightTotalCents > 0 ? `FRETE R$ ${formatNumber(input.freightTotalCents / 100)}` : null,
-    `Cond.Pagto.: ${input.paymentTermName ?? "NAO INFORMADA"}`,
-    divider(),
-    `ENTRADA <TARA>: ${formatTon(input.entryWeightKg / 1000)} <TON>` ,
-    `SAIDA <CARREGADO>: ${formatTon(input.exitWeightKg / 1000)} <TON>`,
-    `LIQUIDO: ${formatTon(input.netWeightKg / 1000)} <TON>`,
-    `Entrada: ${formatDateTime(input.entryCapturedAt)}`,
-    `Saida: ${formatDateTime(input.exitCapturedAt)}`,
-    `Permanencia: ${input.permanenceLabel}`,
-    divider(),
-    "FINANCEIRO",
-    `VENCTO: ${formatDate(input.printedAt)} - VALOR R$ ${formatNumber(input.totalCents / 100)}`,
-    divider(),
-    `Data: ${formatDateTime(input.printedAt)} | Assinatura do Recebimento`,
-    "",
-    `Veiculo: ${input.plate}`,
-    `Motorista: ${input.driverName}`,
-    dashed(),
-    "AGRADECEMOS PELA PREFERENCIA! VOLTE SEMPRE",
-    dashed()
-  ].filter((line): line is string => line !== null);
+  const lines: (string | null)[] = [];
 
-  return lines;
+  if (config.customHeaderText.trim()) {
+    lines.push(config.customHeaderText.trim().toUpperCase());
+  }
+
+  if (config.showCompanyHeader) {
+    lines.push(
+      input.companyName.toUpperCase(),
+      divider(),
+      input.unitName.toUpperCase(),
+      `DATA: ${formatDate(input.printedAt)}  HORA: ${formatTime(input.printedAt)}`
+    );
+  }
+
+  if (config.showCopyInfo) {
+    lines.push(
+      `COPIA NRO ${input.receiptNumber.toString().padStart(9, "0")}`,
+      input.copyNumber > 1 ? `${input.copyNumber}a VIA` : "1a VIA"
+    );
+  }
+
+  if (config.showCompanyHeader || config.showCopyInfo) {
+    lines.push(divider());
+  }
+
+  if (config.showCompanyHeader) {
+    lines.push(
+      input.companyName.toUpperCase(),
+      formatCompanyDocuments(input.companyDocument, input.companyStateRegistration),
+      divider()
+    );
+  }
+
+  if (config.showCustomerInfo) {
+    lines.push(
+      `CODIGO.: ${input.operationId.slice(0, 13).toUpperCase()}`,
+      `Cliente: ${input.customerName}`,
+      customerLocation ? `CEP: ${customerLocation}` : "CEP:",
+      `Telefone: ${input.customerPhone ?? ""}`,
+      input.customerDocument ? `Documento: ${input.customerDocument}` : "Documento:",
+      divider()
+    );
+  }
+
+  if (config.showProductDetail) {
+    lines.push(
+      productLabel.toUpperCase(),
+      "  Quantidade |   Unitario R$ |   Total R$",
+      `  ${formatTon(quantityTon)} TN | ${formatDecimalMoney(input.unitPriceCents)} | ${formatNumber(input.productTotalCents / 100)}`,
+      divider(),
+      `TOTAL DA VENDA - Itens (1) R$ ${formatNumber(input.productTotalCents / 100)}`
+    );
+  }
+
+  if (config.showFreight && input.freightTotalCents > 0) {
+    lines.push(`FRETE R$ ${formatNumber(input.freightTotalCents / 100)}`);
+  }
+
+  if (config.showProductDetail) {
+    lines.push(`Cond.Pagto.: ${input.paymentTermName ?? "NAO INFORMADA"}`);
+  }
+
+  if (config.showWeights || config.showProductDetail) {
+    lines.push(divider());
+  }
+
+  if (config.showWeights) {
+    lines.push(
+      `ENTRADA <TARA>: ${formatTon(input.entryWeightKg / 1000)} <TON>`,
+      `SAIDA <CARREGADO>: ${formatTon(input.exitWeightKg / 1000)} <TON>`,
+      `LIQUIDO: ${formatTon(input.netWeightKg / 1000)} <TON>`
+    );
+  }
+
+  if (config.showEntryExitTimes) {
+    lines.push(
+      `Entrada: ${formatDateTime(input.entryCapturedAt)}`,
+      `Saida: ${formatDateTime(input.exitCapturedAt)}`
+    );
+  }
+
+  if (config.showPermanence) {
+    lines.push(`Permanencia: ${input.permanenceLabel}`);
+  }
+
+  if (config.showFinancial) {
+    lines.push(
+      divider(),
+      "FINANCEIRO",
+      `VENCTO: ${formatDate(input.printedAt)} - VALOR R$ ${formatNumber(input.totalCents / 100)}`
+    );
+  }
+
+  if (config.showSignature) {
+    lines.push(
+      divider(),
+      `Data: ${formatDateTime(input.printedAt)} | Assinatura do Recebimento`,
+      ""
+    );
+  }
+
+  if (config.showVehicleDriver) {
+    lines.push(
+      `Veiculo: ${input.plate}`,
+      `Motorista: ${input.driverName}`
+    );
+  }
+
+  if (config.showFooter) {
+    lines.push(
+      dashed(),
+      "AGRADECEMOS PELA PREFERENCIA! VOLTE SEMPRE",
+      dashed()
+    );
+  }
+
+  if (config.customFooterText.trim()) {
+    lines.push(config.customFooterText.trim().toUpperCase());
+  }
+
+  return lines.filter((line): line is string => line !== null);
 }
 
 function divider(): string {

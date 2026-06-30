@@ -849,5 +849,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_freight_rules_customer_default
 CREATE INDEX IF NOT EXISTS idx_customer_freight_rules_customer_active
   ON customer_freight_rules(customer_id, is_active, deleted_at);
 `
+  },
+  {
+    version: 23,
+    name: "print_profile_network_and_template",
+    sql: `
+ALTER TABLE print_profiles ADD COLUMN printer_type TEXT NOT NULL DEFAULT 'windows' CHECK (printer_type IN ('windows', 'network'));
+ALTER TABLE print_profiles ADD COLUMN network_host TEXT;
+ALTER TABLE print_profiles ADD COLUMN network_port INTEGER;
+ALTER TABLE print_profiles ADD COLUMN template_config_json TEXT NOT NULL DEFAULT '{}';
+`
   }
 ];

@@ -28,6 +28,7 @@ import type {
   ReceiptPrinter,
   WindowsPrinterSummary
 } from "../services/printing.js";
+import { NetworkEscPosPrinter } from "../services/network-printer.js";
 import { createInitialUpdateState, type UpdateState } from "../services/update-flow.js";
 import type { OperationType } from "../services/weighing-operations.js";
 
@@ -1182,6 +1183,18 @@ function registerIpcHandlers(): void {
 function createElectronReceiptPrinter(parentWindow: BrowserWindow): ReceiptPrinter {
   return {
     async printReceipt(payload) {
+      if (payload.printerType === "network") {
+        if (!payload.networkHost) {
+          throw new Error("Host da impressora de rede nao configurado.");
+        }
+
+        await new NetworkEscPosPrinter({
+          host: payload.networkHost,
+          port: payload.networkPort ?? 9100
+        }).printReceipt(payload);
+        return;
+      }
+
       const printWindow = new BrowserWindow({
         show: false,
         parent: parentWindow,
