@@ -226,6 +226,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [registrationsTab, setRegistrationsTab] = useState<RegistrationsTab>("customers");
   const [closingOperation, setClosingOperation] = useState<WeighingOperationSummary | null>(null);
   const [cancelOperationId, setCancelOperationId] = useState<string | null>(null);
+  const [changeProductOperation, setChangeProductOperation] = useState<WeighingOperationSummary | null>(null);
+  const [changeProductOptions, setChangeProductOptions] = useState<Array<{ id: string; description: string }>>([]);
+  const [changeProductLoading, setChangeProductLoading] = useState(false);
   const [fiscalCloseProgress, setFiscalCloseProgress] = useState<FiscalCloseProgress | null>(null);
   const [retryingFiscalOperationId, setRetryingFiscalOperationId] = useState<string | null>(null);
   const [omieSyncing, setOmieSyncing] = useState(false);
@@ -378,13 +381,15 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
             showLogsModal ||
             showSettings ||
             closingOperation ||
-            cancelOperationId
+            cancelOperationId ||
+            changeProductOperation
           ) {
             setShowUpdateModal(false);
             setShowLogsModal(false);
             setShowSettings(false);
             setClosingOperation(null);
             setCancelOperationId(null);
+            setChangeProductOperation(null);
           } else {
             setActiveView("dashboard");
           }
@@ -393,7 +398,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [showUpdateModal, showLogsModal, showSettings, closingOperation, cancelOperationId]);
+  }, [showUpdateModal, showLogsModal, showSettings, closingOperation, cancelOperationId, changeProductOperation]);
 
   useEffect(() => {
     if (!desktopApi) {
@@ -1364,6 +1369,36 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
   }
 
+  async function handleOpenChangeProduct(operation: WeighingOperationSummary): Promise<void> {
+    if (!desktopApi) return;
+    setChangeProductOperation(operation);
+    setChangeProductLoading(true);
+    try {
+      const result = await desktopApi.queryCache({ entityType: "product", activeOnly: true, limit: 500 });
+      setChangeProductOptions(
+        (result.rows as Array<{ id: string; description: string }>)
+          .filter((p) => p.id !== operation.id)
+          .sort((a, b) => a.description.localeCompare(b.description))
+      );
+    } catch {
+      setChangeProductOptions([]);
+    } finally {
+      setChangeProductLoading(false);
+    }
+  }
+
+  async function handleConfirmChangeProduct(newProductId: string): Promise<void> {
+    if (!desktopApi || !changeProductOperation) return;
+    try {
+      await desktopApi.updateWeighingProduct(changeProductOperation.id, newProductId);
+      setMessage("Produto alterado com sucesso.");
+      setChangeProductOperation(null);
+      await refreshOpenOperations();
+    } catch (error) {
+      setMessage(getErrorMessage(error));
+    }
+  }
+
   if (phase === "checking_access") {
     return (
       <main style={{ ...styles.page, ...getThemeVariables("light") }}>
@@ -1998,6 +2033,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                           <span style={styles.rowActions}>
                             <button
                               type="button"
+                              onClick={() => void handleOpenChangeProduct(operation)}
+                              style={styles.smallSecondaryButton}
+                            >
+                              Alterar material
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => setClosingOperation(operation)}
                               style={styles.smallPrimaryButton}
                             >
@@ -2112,6 +2154,67 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 }}
                 onCancel={() => setCancelOperationId(null)}
               />
+            ) : null}
+
+            {changeProductOperation ? (
+              <CrudFormModal onClose={() => setChangeProductOperation(null)} maxWidth={480}>
+                <div style={{ padding: "18px" }}>
+                  <h3 style={{ margin: "0 0 12px 0", fontSize: "16px", fontWeight: 700 }}>
+                    Alterar material
+                  </h3>
+                  <p style={{ margin: "0 0 12px 0", fontSize: "13px", color: "var(--kr-muted)" }}>
+                    Operacao: {changeProductOperation.plate} — {changeProductOperation.customerName}
+                    <br />
+                    Produto atual: {changeProductOperation.productDescription}
+                  </p>
+                  <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontWeight: 700, fontSize: "13px" }}>
+                    Novo produto
+                    <select
+                      value={changeProductOptions.find((p) => p.id === changeProductOperation.id)?.id ?? ""}
+                      onChange={(e) => {
+                        setChangeProductOperation(null);
+                        void handleConfirmChangeProduct(e.target.value);
+                      }}
+                      disabled={changeProductLoading}
+                      style={{
+                        border: "1px solid var(--kr-input-border)",
+                        borderRadius: "10px",
+                        padding: "8px 10px",
+                        fontSize: "13px",
+                        background: "var(--kr-input-bg)",
+                        color: "var(--kr-text-strong)"
+                      }}
+                    >
+                      <option value="">
+                        {changeProductLoading ? "Carregando produtos..." : "Selecione o novo produto"}
+                      </option>
+                      {changeProductOptions.map((product) => (
+                        <option key={product.id} value={product.id}>
+                          {product.description}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "16px" }}>
+                    <button
+                      type="button"
+                      onClick={() => setChangeProductOperation(null)}
+                      style={{
+                        border: "1px solid var(--kr-border)",
+                        background: "var(--kr-surface)",
+                        color: "var(--kr-text-strong)",
+                        borderRadius: "10px",
+                        padding: "8px 12px",
+                        cursor: "pointer",
+                        fontWeight: 700,
+                        fontSize: "12px"
+                      }}
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              </CrudFormModal>
             ) : null}
 
             {fiscalCloseProgress ? (
@@ -8251,6 +8354,16 @@ const styles = {
     padding: "6px 8px",
     background: "#2563eb",
     color: "#ffffff",
+    cursor: "pointer",
+    fontWeight: 800,
+    fontSize: "11px"
+  },
+  smallSecondaryButton: {
+    border: "1px solid var(--kr-border)",
+    borderRadius: "8px",
+    padding: "6px 8px",
+    background: "var(--kr-surface)",
+    color: "var(--kr-text-strong)",
     cursor: "pointer",
     fontWeight: 800,
     fontSize: "11px"

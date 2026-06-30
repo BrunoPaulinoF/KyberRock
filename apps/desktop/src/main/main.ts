@@ -325,6 +325,14 @@ function registerIpcHandlers(): void {
     return runtime.cancelWeighing(operationId, reason);
   });
 
+  ipcMain.handle("desktop:update-weighing-product", (_event, operationId: string, newProductId: string) => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.updateWeighingProduct({ operationId, newProductId });
+  });
+
   ipcMain.handle("desktop:list-windows-printers", async () => {
     if (!mainWindow) {
       throw new Error("Desktop window is not ready.");

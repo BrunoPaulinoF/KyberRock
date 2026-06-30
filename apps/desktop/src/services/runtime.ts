@@ -58,10 +58,12 @@ import {
   listCanceledWeighingOperations,
   listClosedWeighingOperations,
   listOpenWeighingOperations,
+  updateWeighingOperationProduct,
   type OperationType,
   type OperationFreightInput,
   type ScaleCaptureAudit,
-  type WeighingOperationSummary
+  type WeighingOperationSummary,
+  type UpdateWeighingOperationProductInput
 } from "./weighing-operations.js";
 import {
   configureReceiptPrintProfile,
@@ -617,6 +619,13 @@ export class DesktopRuntime {
     this.assertDesktopAccess();
     const operation = cancelWeighingOperation(this.database, { operationId, reason });
     this.triggerBackgroundCloudSync("operation_cancelled", { operationId });
+    return operation;
+  }
+
+  updateWeighingProduct(input: UpdateWeighingOperationProductInput): WeighingOperationSummary {
+    this.assertDesktopAccess();
+    const operation = updateWeighingOperationProduct(this.database, input);
+    this.triggerBackgroundCloudSync("operation_product_changed", { operationId: input.operationId });
     return operation;
   }
 

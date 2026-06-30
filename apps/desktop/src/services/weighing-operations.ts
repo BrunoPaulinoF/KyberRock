@@ -1078,6 +1078,154 @@ export function getWeighingOperation(
   return mapOperationRow(row);
 }
 
+export interface UpdateWeighingOperationProductInput {
+  operationId: string;
+  newProductId: string;
+}
+
+export function updateWeighingOperationProduct(
+  database: DesktopDatabase,
+  input: UpdateWeighingOperationProductInput,
+  now: Date = new Date()
+): WeighingOperationSummary {
+  const operation = getWeighingOperation(database, input.operationId);
+
+  const openStatuses: OperationStatus[] = [
+    "draft",
+    "entry_registered",
+    "loading_requested",
+    "awaiting_exit"
+  ];
+  if (!openStatuses.includes(operation.status)) {
+    throw new Error("Somente operacoes abertas podem ter o produto alterado.");
+  }
+
+  const product = database
+    .prepare(
+      `SELECT description, omie_product_id, item_type, fiscal_recommendations_json, is_active, blocked
+       FROM products
+       WHERE id = ? AND deleted_at IS NULL`
+    )
+    .get(input.newProductId) as
+    | {
+        description: string;
+        omie_product_id: number | null;
+        item_type: string | null;
+        fiscal_recommendations_json: string | null;
+        is_active: number;
+        blocked: number;
+      }
+    | undefined;
+
+  if (!product) throw new Error("Produto selecionado nao foi encontrado.");
+  if (product.is_active !== 1 || product.blocked === 1) {
+    throw new Error("Produto inativo ou bloqueado nao pode ser selecionado.");
+  }
+  if (!isFinishedGoodsProduct(product)) {
+    throw new Error("Somente produtos OMIE tipo 04 - produtos acabados podem ser selecionados.");
+  }
+
+  const customerId = database
+    .prepare("SELECT customer_id FROM weighing_operations WHERE id = ?")
+    .pluck()
+    .get(input.operationId) as string | undefined;
+
+  if (!customerId) {
+    throw new Error("Operacao sem cliente vinculado.");
+  }
+
+  const priceDetails = new PricingService(database).getPriceDetailsForCustomerProduct(
+    customerId,
+    input.newProductId
+  );
+  if (!priceDetails || priceDetails.appliedUnitPriceCents === null) {
+    throw new Error(
+      "Sem preco cadastrado para este cliente/produto. Cadastre um preco padrao no produto ou um preco especial no cliente."
+    );
+  }
+
+  const timestamp = now.toISOString();
+
+  const updateProduct = database.transaction(() => {
+    database
+      .prepare(
+        `UPDATE weighing_operations
+         SET product_id = ?, unit_price_cents = ?, base_unit_price_cents = ?,
+             applied_price_table_id = NULL, applied_price_table_name = NULL,
+             applied_price_table_item_id = NULL, price_savings_percent = ?,
+             updated_at = ?
+         WHERE id = ?`
+      )
+      .run(
+        input.newProductId,
+        priceDetails.appliedUnitPriceCents,
+        priceDetails.baseUnitPriceCents ?? null,
+        priceDetails.savingsPercent ?? null,
+        timestamp,
+        input.operationId
+      );
+
+    database
+      .prepare(
+        `UPDATE loading_requests
+         SET product_description = ?, updated_at = ?
+         WHERE operation_id = ?`
+      )
+      .run(product.description, timestamp, input.operationId);
+
+    insertAuditLog(
+      database,
+      null,
+      input.operationId,
+      "product_changed",
+      { productId: operation.productDescription },
+      {
+        newProductId: input.newProductId,
+        newProductDescription: product.description,
+        unitPriceCents: priceDetails.appliedUnitPriceCents,
+        priceDetails: serializePriceDetails(priceDetails)
+      },
+      timestamp
+    );
+
+    enqueueSyncJob(
+      database,
+      {
+        target: "cloud",
+        action: "upsert_operation",
+        entityType: "operation",
+        entityId: input.operationId,
+        idempotencyKey: `cloud:operation:${input.operationId}:product_changed`,
+        payload: { operationId: input.operationId }
+      },
+      now
+    );
+
+    const loadingRequest = database
+      .prepare("SELECT id FROM loading_requests WHERE operation_id = ?")
+      .get(input.operationId) as { id: string } | undefined;
+
+    if (loadingRequest) {
+      enqueueSyncJob(
+        database,
+        {
+          target: "cloud",
+          action: "upsert_loading_request",
+          entityType: "loading_request",
+          entityId: loadingRequest.id,
+          idempotencyKey: `cloud:loading_request:${loadingRequest.id}:product_changed`,
+          payload: { operationId: input.operationId }
+        },
+        now
+      );
+    }
+  });
+
+  updateProduct();
+
+  return getWeighingOperation(database, input.operationId);
+}
+
 function calculateNetWeightKg(entryWeightKg: number, exitWeightKg: number): number {
   if (exitWeightKg <= entryWeightKg) {
     throw new Error("Exit weight must be greater than entry weight.");

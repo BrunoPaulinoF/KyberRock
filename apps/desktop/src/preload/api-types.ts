@@ -91,6 +91,7 @@ export interface KyberRockDesktopApi {
     scaleCaptureId?: string
   ) => Promise<WeighingOperationSummary>;
   cancelWeighing: (operationId: string, reason: string) => Promise<WeighingOperationSummary>;
+  updateWeighingProduct: (operationId: string, newProductId: string) => Promise<WeighingOperationSummary>;
   listWindowsPrinters: () => Promise<WindowsPrinterSummary[]>;
   configureReceiptPrintProfile: (
     input: Omit<ConfigureReceiptPrintProfileInput, "identity">

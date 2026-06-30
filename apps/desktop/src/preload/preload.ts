@@ -25,6 +25,8 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:close-weighing", operationId, operationType, scaleCaptureId),
   cancelWeighing: (operationId: string, reason: string) =>
     ipcRenderer.invoke("desktop:cancel-weighing", operationId, reason),
+  updateWeighingProduct: (operationId: string, newProductId: string) =>
+    ipcRenderer.invoke("desktop:update-weighing-product", operationId, newProductId),
   listWindowsPrinters: () => ipcRenderer.invoke("desktop:list-windows-printers"),
   configureReceiptPrintProfile: (input: unknown) =>
     ipcRenderer.invoke("desktop:configure-receipt-print-profile", input),
