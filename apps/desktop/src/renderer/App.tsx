@@ -189,6 +189,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [openingVideoDone, setOpeningVideoDone] = useState(false);
   const [openingVideoExiting, setOpeningVideoExiting] = useState(false);
   const [bootstrapReady, setBootstrapReady] = useState(false);
+  const openingVideoFallbackRef = useRef<number | null>(null);
   const [cloudStatus, setCloudStatus] = useState<{
     totalOperations: number;
     lastSync: string | null;
@@ -428,12 +429,45 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
   const handleUnlocked = useCallback(() => setPhase("bootstrapping_cloud"), []);
 
+  const finishOpeningVideo = useCallback(() => {
+    if (openingVideoFallbackRef.current !== null) {
+      window.clearTimeout(openingVideoFallbackRef.current);
+      openingVideoFallbackRef.current = null;
+    }
+    setOpeningVideoDone(true);
+  }, []);
+
   useEffect(() => {
     if (phase !== "bootstrapping_cloud") return;
+    if (openingVideoFallbackRef.current !== null) {
+      window.clearTimeout(openingVideoFallbackRef.current);
+      openingVideoFallbackRef.current = null;
+    }
     setOpeningVideoDone(false);
     setOpeningVideoExiting(false);
     setBootstrapReady(false);
   }, [phase]);
+
+  useEffect(() => {
+    if (phase !== "bootstrapping_cloud") return;
+
+    function handleOpeningKeyDown(event: KeyboardEvent): void {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        finishOpeningVideo();
+      }
+    }
+
+    window.addEventListener("keydown", handleOpeningKeyDown);
+    return () => window.removeEventListener("keydown", handleOpeningKeyDown);
+  }, [phase, finishOpeningVideo]);
+
+  useEffect(() => {
+    if (phase !== "bootstrapping_cloud" || !openingVideoDone || bootstrapReady) return;
+
+    const timeout = window.setTimeout(() => setBootstrapReady(true), 2500);
+    return () => window.clearTimeout(timeout);
+  }, [phase, openingVideoDone, bootstrapReady]);
 
   useEffect(() => {
     if (
@@ -1289,14 +1323,42 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
           muted
           playsInline
           preload="auto"
-          onEnded={() => setOpeningVideoDone(true)}
-          onError={() => setOpeningVideoDone(true)}
+          onLoadedMetadata={(event) => {
+            const duration = event.currentTarget.duration;
+            if (Number.isFinite(duration) && duration > 0) {
+              if (openingVideoFallbackRef.current !== null) {
+                window.clearTimeout(openingVideoFallbackRef.current);
+              }
+              openingVideoFallbackRef.current = window.setTimeout(
+                finishOpeningVideo,
+                Math.ceil(duration * 1000) + 600
+              );
+            }
+          }}
+          onTimeUpdate={(event) => {
+            const video = event.currentTarget;
+            if (Number.isFinite(video.duration) && video.duration > 0) {
+              if (video.currentTime >= video.duration - 0.12) finishOpeningVideo();
+            }
+          }}
+          onEnded={finishOpeningVideo}
+          onError={finishOpeningVideo}
           style={{
             ...styles.openingVideo,
             opacity: openingVideoExiting ? 0 : 1,
             transform: openingVideoExiting ? "scale(1.025)" : "scale(1)"
           }}
         />
+        <button
+          type="button"
+          onClick={finishOpeningVideo}
+          style={{
+            ...styles.openingSkipButton,
+            opacity: openingVideoExiting ? 0 : 1
+          }}
+        >
+          Aperte Enter para pular
+        </button>
         <div
           style={{
             ...styles.openingVideoFade,
@@ -7616,6 +7678,24 @@ const styles = {
     height: "100%",
     objectFit: "cover" as const,
     transition: "opacity 620ms ease, transform 620ms ease"
+  },
+  openingSkipButton: {
+    position: "absolute" as const,
+    left: "50%",
+    bottom: "28px",
+    transform: "translateX(-50%)",
+    border: "1px solid rgba(255,255,255,0.32)",
+    borderRadius: "999px",
+    padding: "10px 18px",
+    background: "rgba(2, 6, 23, 0.46)",
+    color: "#ffffff",
+    fontSize: "13px",
+    fontWeight: 800,
+    letterSpacing: "0.02em",
+    cursor: "pointer",
+    backdropFilter: "blur(10px)",
+    boxShadow: "0 14px 34px rgba(0,0,0,0.28)",
+    transition: "opacity 220ms ease, background 160ms ease"
   },
   openingVideoFade: {
     position: "absolute" as const,
