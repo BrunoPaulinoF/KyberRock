@@ -65,6 +65,7 @@ export interface CreateWeighingOperationInput {
   productId: string;
   paymentTermId?: string;
   manualInstallments?: number;
+  manualDownPaymentCents?: number;
   entryWeightKg: number;
   entryScaleCapture?: ScaleCaptureAudit | null;
   freight?: OperationFreightInput | null;
@@ -397,6 +398,12 @@ export function createWeighingOperation(
   ) {
     throw new Error("Numero de parcelas deve ser maior que zero.");
   }
+  if (
+    input.manualDownPaymentCents !== undefined &&
+    (!Number.isInteger(input.manualDownPaymentCents) || input.manualDownPaymentCents < 0)
+  ) {
+    throw new Error("Valor de entrada invalido.");
+  }
 
   const operationType = input.operationType ?? "invoice";
   validateOperationType(operationType);
@@ -484,11 +491,11 @@ export function createWeighingOperation(
       .prepare(
         `INSERT INTO weighing_operations (
           id, company_id, unit_id, device_id, status, operation_type, customer_id, vehicle_id, carrier_id, driver_id, product_id,
-          payment_term_id, manual_installments, entry_weight_kg, entry_weight_captured_at, unit_price_cents,
+          payment_term_id, manual_installments, manual_down_payment_cents, entry_weight_kg, entry_weight_captured_at, unit_price_cents,
           base_unit_price_cents, applied_price_table_id, applied_price_table_name, applied_price_table_item_id,
           price_unit, price_savings_percent, freight_total_cents, freight_json, deduct_freight_from_credit,
           product_credit_debit_cents, freight_credit_debit_cents, quotation_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, 'loading_requested', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0, 0, ?, ?, ?)`
+        ) VALUES (?, ?, ?, ?, 'loading_requested', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0, 0, ?, ?, ?)`
       )
       .run(
         operationId,
@@ -503,6 +510,7 @@ export function createWeighingOperation(
         input.productId,
         input.paymentTermId ?? null,
         input.manualInstallments ?? null,
+        input.manualDownPaymentCents ?? null,
         input.entryWeightKg,
         timestamp,
         unitPriceCents,
@@ -549,6 +557,7 @@ export function createWeighingOperation(
         scaleCapture: input.entryScaleCapture ?? null,
         operationType,
         manualInstallments: input.manualInstallments ?? null,
+        manualDownPaymentCents: input.manualDownPaymentCents ?? null,
         unitPriceCents,
         priceDetails: serializePriceDetails(priceDetails)
       },

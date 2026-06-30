@@ -86,6 +86,10 @@ interface WeighingFormState {
   driverId: string;
   productId: string;
   paymentTermId: string;
+  paymentMode: "registered" | "manual";
+  manualInstallments: string;
+  manualDownPaymentEnabled: boolean;
+  manualDownPaymentCents: number | null;
   quotationId: string;
   deductFreightFromCredit: boolean;
   freightEnabled: boolean;
@@ -96,6 +100,7 @@ interface WeighingFormState {
   freightMinValueCents: number | null;
   freightDistanceKm: string;
   freightDestination: string;
+  customerOwnTransport: boolean;
   driverIsIndependent: boolean;
 }
 
@@ -119,6 +124,10 @@ const initialWeighingForm: WeighingFormState = {
   driverId: "",
   productId: "",
   paymentTermId: "",
+  paymentMode: "registered",
+  manualInstallments: "",
+  manualDownPaymentEnabled: false,
+  manualDownPaymentCents: null,
   quotationId: "",
   deductFreightFromCredit: false,
   freightEnabled: false,
@@ -129,6 +138,7 @@ const initialWeighingForm: WeighingFormState = {
   freightMinValueCents: null,
   freightDistanceKm: "",
   freightDestination: "",
+  customerOwnTransport: false,
   driverIsIndependent: false
 };
 
@@ -164,7 +174,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [form, setForm] = useState<WeighingFormState>(initialWeighingForm);
   const [activeView, setActiveView] = useState<ActiveView>("new-weighing");
   const [formError, setFormError] = useState<string | null>(null);
-  const [message, setMessage] = useState("Inicializando desktop offline-first...");
+  const [message, setMessage] = useState("Iniciando KyberRock...");
   const [cloudConnected, setCloudConnected] = useState(false);
   const [cloudSyncing, setCloudSyncing] = useState(false);
   const [cloudBootstrapStatus, setCloudBootstrapStatus] = useState<{
@@ -173,9 +183,12 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     mode: "running" | "cloud" | "local_emergency" | "error";
   }>({
     title: "Preparando sincronizacao",
-    detail: "Validando acesso ao Supabase antes de carregar os dados.",
+    detail: "Validando acesso antes de carregar os dados.",
     mode: "running"
   });
+  const [openingVideoDone, setOpeningVideoDone] = useState(false);
+  const [openingVideoExiting, setOpeningVideoExiting] = useState(false);
+  const [bootstrapReady, setBootstrapReady] = useState(false);
   const [cloudStatus, setCloudStatus] = useState<{
     totalOperations: number;
     lastSync: string | null;
@@ -416,12 +429,34 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const handleUnlocked = useCallback(() => setPhase("bootstrapping_cloud"), []);
 
   useEffect(() => {
+    if (phase !== "bootstrapping_cloud") return;
+    setOpeningVideoDone(false);
+    setOpeningVideoExiting(false);
+    setBootstrapReady(false);
+  }, [phase]);
+
+  useEffect(() => {
+    if (
+      phase !== "bootstrapping_cloud" ||
+      !openingVideoDone ||
+      !bootstrapReady ||
+      openingVideoExiting
+    ) {
+      return;
+    }
+
+    setOpeningVideoExiting(true);
+    const timeout = window.setTimeout(() => setPhase("unlocked"), 650);
+    return () => window.clearTimeout(timeout);
+  }, [phase, openingVideoDone, bootstrapReady, openingVideoExiting]);
+
+  useEffect(() => {
     if (!desktopApi || phase !== "bootstrapping_cloud") return;
 
     let active = true;
     async function bootstrapCloud(): Promise<void> {
       setCloudBootstrapStatus({
-        title: "Conectando ao Supabase",
+        title: "Conectando à nuvem",
         detail: "Verificando internet, credenciais do dispositivo e dados pendentes locais.",
         mode: "running"
       });
@@ -431,7 +466,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         if (!active || !desktopApi) return;
         setCloudBootstrapStatus({
           title: "Sincronizando dados",
-          detail: "Enviando pendencias locais e baixando operacoes, carregamentos e recibos da nuvem.",
+          detail: "Sincronizando dados com a nuvem.",
           mode: "running"
         });
         const result = await desktopApi.bootstrapCloudData();
@@ -445,37 +480,33 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
             result.pulled.loadingRequests +
             result.pulled.printReceipts;
           setCloudBootstrapStatus({
-            title: "Dados atualizados pelo Supabase",
+            title: "Dados atualizados",
             detail: `${pulledTotal} registro(s) baixado(s) e ${result.synced} pendencia(s) enviada(s).`,
             mode: "cloud"
           });
           setCloudConnected(true);
-          setMessage("Dados carregados do Supabase. Salvamento local mantido como cache/emergencia.");
+          setMessage("Dados carregados da nuvem.");
         } else {
           setCloudBootstrapStatus({
             title: "Modo emergencia local",
-            detail: result.errors[0] ?? "Nao foi possivel baixar dados do Supabase agora.",
+            detail: result.errors[0] ?? "Nao foi possivel baixar os dados agora.",
             mode: "local_emergency"
           });
           setCloudConnected(false);
-          setMessage("Sem Supabase no momento. Usando dados locais de emergencia ate reconectar.");
+          setMessage("Sem conexao no momento. Usando dados locais ate reconectar.");
         }
 
-        window.setTimeout(() => {
-          if (active) setPhase("unlocked");
-        }, 700);
+        if (active) setBootstrapReady(true);
       } catch (error) {
         if (!active) return;
         setCloudBootstrapStatus({
           title: "Modo emergencia local",
-          detail: error instanceof Error ? error.message : "Falha ao carregar dados do Supabase.",
+          detail: error instanceof Error ? error.message : "Falha ao carregar os dados.",
           mode: "error"
         });
         setCloudConnected(false);
-        setMessage("Falha ao baixar do Supabase. Usando dados locais de emergencia.");
-        window.setTimeout(() => {
-          if (active) setPhase("unlocked");
-        }, 1200);
+        setMessage("Falha ao baixar dados. Usando dados locais.");
+        if (active) setBootstrapReady(true);
       }
     }
 
@@ -605,7 +636,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
             `Fila: ${nextStatus.pendingSyncJobs} item(ns) pendente(s) - envio automatico a cada ${cloudSchedulerStatus?.intervalMinutes ?? 30} min.`
           );
         } else {
-          setMessage("Sincronizacao automatica ativa (OMIE + Supabase) a cada 30 min.");
+          setMessage("Sincronizacao automatica ativa a cada 30 min.");
         }
       }
     }
@@ -932,14 +963,21 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     setMessage("Aguardando peso estavel da balanca. Aguarde...");
 
     try {
+      const manualInstallments =
+        form.paymentMode === "manual" ? Number(form.manualInstallments.trim()) : undefined;
       const operation = await desktopApi.startWeighing({
         operationType: form.operationType,
         customerId: form.customerId,
         vehicleId: form.vehicleId,
-        carrierId: form.carrierId || undefined,
+        carrierId: form.customerOwnTransport ? undefined : form.carrierId || undefined,
         driverId: form.driverId,
         productId: form.productId,
-        paymentTermId: form.paymentTermId || undefined,
+        paymentTermId: form.paymentMode === "registered" ? form.paymentTermId || undefined : undefined,
+        manualInstallments,
+        manualDownPaymentCents:
+          form.paymentMode === "manual" && form.manualDownPaymentEnabled
+            ? (form.manualDownPaymentCents ?? 0)
+            : undefined,
         freight: buildFreightInput(form),
         quotationId: form.quotationId || undefined,
         deductFreightFromCredit: form.deductFreightFromCredit,
@@ -1244,47 +1282,28 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
   if (phase === "bootstrapping_cloud") {
     return (
-      <main style={{ ...styles.page, ...getThemeVariables("light") }}>
-        <div style={{ ...styles.card, maxWidth: "480px", margin: "auto", marginTop: "40px", textAlign: "center" as const }}>
-          <h1 style={styles.title}>KyberRock</h1>
-          <p style={{ ...styles.subtitle, marginBottom: "24px" }}>{cloudBootstrapStatus.title}</p>
-          <div style={{
-            marginBottom: "16px",
-            width: "100%",
-            height: "4px",
-            borderRadius: "2px",
-            background: "var(--kr-border)",
-            overflow: "hidden"
-          }}>
-            <div style={{
-              width: "100%",
-              height: "4px",
-              borderRadius: "2px",
-              background: cloudBootstrapStatus.mode === "running"
-                ? "var(--kr-primary, #3b82f6)"
-                : cloudBootstrapStatus.mode === "cloud"
-                  ? "var(--kr-success, #22c55e)"
-                  : "var(--kr-warning, #f59e0b)",
-              animation: cloudBootstrapStatus.mode === "running" ? "krProgress 1.8s ease-in-out infinite" : "none"
-            }} />
-          </div>
-          <p style={{ fontSize: "12px", color: "var(--kr-muted)", marginBottom: "24px" }}>
-            {cloudBootstrapStatus.detail}
-          </p>
-          {cloudBootstrapStatus.mode !== "running" && (
-            <div style={{
-              background: "var(--kr-surface)",
-              padding: "10px 16px",
-              borderRadius: "8px",
-              fontSize: "12px",
-              color: cloudBootstrapStatus.mode === "error" ? "var(--kr-danger)" : "var(--kr-muted)"
-            }}>
-              {cloudBootstrapStatus.mode === "cloud"
-                ? "Dados carregados da nuvem. Abrindo sistema..."
-                : "Sem conexao com Supabase. Abrindo com dados de emergencia..."}
-            </div>
-          )}
-        </div>
+      <main style={styles.openingVideoScreen}>
+        <video
+          src="midia/kyberrockvideo.mp4"
+          autoPlay
+          muted
+          playsInline
+          preload="auto"
+          onEnded={() => setOpeningVideoDone(true)}
+          onError={() => setOpeningVideoDone(true)}
+          style={{
+            ...styles.openingVideo,
+            opacity: openingVideoExiting ? 0 : 1,
+            transform: openingVideoExiting ? "scale(1.025)" : "scale(1)"
+          }}
+        />
+        <div
+          style={{
+            ...styles.openingVideoFade,
+            opacity: openingVideoExiting ? 1 : 0
+          }}
+        />
+        <span style={styles.visuallyHidden}>{cloudBootstrapStatus.title}</span>
       </main>
     );
   }
@@ -2213,27 +2232,24 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                             </div>
                           ) : null}
                            <div style={{ marginTop: "12px" }}>
-                             <p style={{ ...styles.muted, fontSize: "12px", marginBottom: "8px" }}>
-                               Sincroniza clientes e transportadoras do OMIE. Transportadoras sao identificadas pela tag &quot;Transportadora&quot; na OMIE. Todos os outros cadastros sao considerados clientes.
-                             </p>
-                             <button
-                               type="button"
-                               onClick={handleSyncOmie}
-                               disabled={omieSyncing || omieResetting}
-                               style={{
-                                 ...styles.primaryButton,
-                                 opacity: omieSyncing || omieResetting ? 0.6 : 1,
-                                 cursor: omieSyncing || omieResetting ? "not-allowed" : "pointer"
-                               }}
-                             >
-                               {omieSyncing ? "Sincronizando..." : "Sincronizar OMIE (atualizar dados)"}
-                             </button>
-                             <HelpTooltip content="Busca novos clientes e transportadoras do OMIE e atualiza os existentes sem apagar dados locais." placement="top" />
-                           </div>
-                           <div style={{ marginTop: "12px" }}>
-                             <p style={{ ...styles.muted, fontSize: "12px", marginBottom: "8px" }}>
-                               Use apenas se os dados estiverem desatualizados ou corrompidos. Isso apagara todos os clientes e transportadoras locais e rebaixara tudo do OMIE do zero.
-                             </p>
+                              <button
+                                type="button"
+                                onClick={handleSyncOmie}
+                                disabled={omieSyncing || omieResetting}
+                                style={{
+                                  ...styles.primaryButton,
+                                  opacity: omieSyncing || omieResetting ? 0.6 : 1,
+                                  cursor: omieSyncing || omieResetting ? "not-allowed" : "pointer"
+                                }}
+                              >
+                                {omieSyncing ? "Sincronizando..." : "Sincronizar OMIE (atualizar dados)"}
+                              </button>
+                              <HelpTooltip content="Busca novos clientes e transportadoras do OMIE e atualiza os existentes sem apagar dados locais." placement="top" />
+                            </div>
+                            <div style={{ marginTop: "12px" }}>
+                              <p style={{ ...styles.muted, fontSize: "12px", marginBottom: "8px" }}>
+                                Apaga todos os clientes e transportadoras locais e baixa tudo novamente do OMIE.
+                              </p>
                              <button
                                type="button"
                                onClick={handleResetOmieMaster}
@@ -2318,18 +2334,18 @@ function ConnectivityBadge({
         : "Operacao local segue normalmente";
   } else if (!cloudReachable && !omieReachable) {
     tone = "danger";
-    label = "Integrações indisponíveis";
-    detail = "Supabase e OMIE não respondem - sincronização ficará pendente";
+    label = "Servicos indisponiveis";
+    detail = "Nuvem e faturamento nao respondem - sincronizacao ficara pendente";
   } else if (!cloudReachable) {
     tone = "warning";
-    label = "Supabase indisponível";
+    label = "Nuvem indisponivel";
     detail = omieReachable
-      ? "OMIE respondendo; Supabase offline - fila aguardando"
-      : "Supabase não responde - fila aguardando";
+      ? "Faturamento online; nuvem offline - fila aguardando"
+      : "Nuvem nao responde - fila aguardando";
   } else if (!omieReachable) {
     tone = "warning";
-    label = "OMIE indisponível";
-    detail = "Supabase OK; OMIE não responde - envio de pedidos aguardando";
+    label = "Faturamento indisponivel";
+    detail = "Nuvem online; faturamento nao responde - pedidos aguardando";
   } else {
     tone = "success";
     label = cloudSyncing ? "Sincronizando..." : "Conectado";
@@ -2337,7 +2353,7 @@ function ConnectivityBadge({
     const last = cloudScheduler?.lastRunAt
       ? new Date(cloudScheduler.lastRunAt).toLocaleTimeString("pt-BR")
       : "nunca";
-    detail = `Supabase + OMIE online · auto a cada ${interval} min · último: ${last}`;
+    detail = `Nuvem + faturamento online · auto a cada ${interval} min · ultimo: ${last}`;
   }
 
   const palette = badgePalette(tone);
@@ -2636,7 +2652,18 @@ function validateWeighingForm(form: WeighingFormState): string | null {
   if (!form.customerId) return "Selecione o cliente.";
   if (!form.driverId) return "Selecione o motorista.";
   if (!form.productId) return "Selecione o produto.";
-  if (!form.driverIsIndependent && !form.carrierId) return "Selecione a transportadora.";
+  if (!form.customerOwnTransport && !form.driverIsIndependent && !form.carrierId) {
+    return "Selecione a transportadora.";
+  }
+  if (form.paymentMode === "manual") {
+    const manualInstallments = Number(form.manualInstallments.trim());
+    if (!Number.isInteger(manualInstallments) || manualInstallments <= 0) {
+      return "Informe a quantidade de parcelas.";
+    }
+    if (form.manualDownPaymentEnabled && form.manualDownPaymentCents === null) {
+      return "Informe o valor de entrada.";
+    }
+  }
   if (form.freightEnabled) {
     if (form.freightBaseValueCents === null && form.freightFixedValueCents === null) {
       return "Informe o valor do frete.";
@@ -2749,7 +2776,7 @@ function CacheSelect({
           raw: item
         }));
         setOptions(
-          filterIds && filterIds.length > 0
+          filterIds !== undefined
             ? allOptions.filter((o) => filterIds.includes(o.id))
             : allOptions
         );
@@ -2833,6 +2860,14 @@ function CacheSelect({
     setSearch("");
   }
 
+  function getOptionMeta(option: CacheSelectOption): string | null {
+    if (entityType !== "payment_term") return null;
+    const rawCount = option.raw?.installmentCount;
+    return typeof rawCount === "number" && Number.isFinite(rawCount) && rawCount > 0
+      ? `${rawCount}x`
+      : null;
+  }
+
   return (
     <div ref={containerRef} style={{ position: "relative", marginBottom: "6px" }}>
       <label style={styles.fieldLabel}>
@@ -2904,19 +2939,40 @@ function CacheSelect({
                 type="button"
                 onClick={() => selectOption(option)}
                 style={{
-                  display: "block",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: "8px",
                   width: "100%",
                   textAlign: "left",
-                  padding: "8px 12px",
+                  padding: "7px 10px",
                   border: "none",
+                  borderBottom: "1px solid var(--kr-border)",
                   background: highlightedIndex === index ? "var(--kr-card-hover)" : "transparent",
                   cursor: "pointer",
-                  fontSize: "14px",
+                  fontSize: "13px",
                   color: "var(--kr-text-strong)"
                 }}
                 onMouseEnter={() => setHighlightedIndex(index)}
               >
-                {option.label}
+                <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {option.label}
+                </span>
+                {getOptionMeta(option) ? (
+                  <span
+                    style={{
+                      flexShrink: 0,
+                      borderRadius: "999px",
+                      background: "var(--kr-surface-soft)",
+                      color: "var(--kr-muted)",
+                      fontSize: "11px",
+                      fontWeight: 800,
+                      padding: "2px 6px"
+                    }}
+                  >
+                    {getOptionMeta(option)}
+                  </span>
+                ) : null}
               </button>
             ))
           )}
@@ -2988,10 +3044,8 @@ function WeighingForm({
   const [driverRefreshKey, setDriverRefreshKey] = useState(0);
   const [customerRefreshKey, setCustomerRefreshKey] = useState(0);
   const [carrierRefreshKey, setCarrierRefreshKey] = useState(0);
-  const [paymentTermInstallmentCount, setPaymentTermInstallmentCount] = useState<number | null>(
-    null
-  );
   const [availableCarrierIds, setAvailableCarrierIds] = useState<string[] | undefined>(undefined);
+  const [availableVehicleIds, setAvailableVehicleIds] = useState<string[] | undefined>(undefined);
   const [availableDriverIds, setAvailableDriverIds] = useState<string[] | undefined>(undefined);
 
   // Buscar transportadoras vinculadas ao cliente
@@ -3010,6 +3064,22 @@ function WeighingForm({
     }
     load();
   }, [desktopApi, form.customerId]);
+
+  useEffect(() => {
+    async function load() {
+      if (!desktopApi || !form.carrierId || form.customerOwnTransport) {
+        setAvailableVehicleIds(undefined);
+        return;
+      }
+      try {
+        const vehicles = await desktopApi.carriersGetVehicles(form.carrierId);
+        setAvailableVehicleIds(vehicles.map((vehicle) => vehicle.id));
+      } catch {
+        setAvailableVehicleIds(undefined);
+      }
+    }
+    load();
+  }, [desktopApi, form.carrierId, form.customerOwnTransport, vehicleRefreshKey]);
 
   // Buscar motoristas vinculados a transportadora + independentes
   useEffect(() => {
@@ -3196,34 +3266,17 @@ function WeighingForm({
     fetchPrice();
   }, [desktopApi, form.customerId, form.productId]);
 
-  useEffect(() => {
-    async function syncInstallmentCount() {
-      if (!form.paymentTermId || !desktopApi) {
-        setPaymentTermInstallmentCount(null);
-        return;
-      }
-      try {
-        const result = await desktopApi.queryCache({ entityType: "payment_term", limit: 500 });
-        const term = (result.rows as Array<{ id: string; installmentCount?: number }>).find(
-          (r) => r.id === form.paymentTermId
-        );
-        setPaymentTermInstallmentCount(term?.installmentCount ?? null);
-      } catch {
-        setPaymentTermInstallmentCount(null);
-      }
-    }
-    syncInstallmentCount();
-  }, [form.paymentTermId, desktopApi]);
+  const manualPayment = form.paymentMode === "manual";
+  const transportReady = form.customerOwnTransport || Boolean(form.carrierId);
 
   return (
     <section style={styles.entryShell}>
       <div style={styles.entryHero}>
         <div>
           <p style={styles.kicker}>Operacao de balanca</p>
-          <h2 style={{ ...styles.title, marginBottom: "6px" }}>Nova entrada</h2>
+          <h2 style={{ ...styles.title, marginBottom: "4px" }}>Nova entrada</h2>
           <p style={styles.subtitle}>
-            Selecione cliente, produto acabado OMIE, placa e motorista. O peso e capturado direto da
-            balanca.
+            Use Tab para avancar e Ctrl+Enter para capturar.
           </p>
         </div>
         <div style={{ display: "flex", gap: "16px", alignItems: "stretch" }}>
@@ -3407,7 +3460,7 @@ function WeighingForm({
           <SectionHeader
             iconSrc="midia/commerce.png"
             title="Dados comerciais"
-            description="Cliente, produto fiscal e condicao de pagamento"
+            description="Cliente, produto e pagamento"
           />
           <CacheSelect
             label="Cliente"
@@ -3418,6 +3471,7 @@ function WeighingForm({
                 ...prev,
                 customerId: id,
                 paymentTermId:
+                  prev.paymentMode === "registered" &&
                   typeof item?.defaultPaymentTermId === "string" && item.defaultPaymentTermId
                     ? item.defaultPaymentTermId
                     : prev.paymentTermId
@@ -3428,38 +3482,82 @@ function WeighingForm({
             refreshKey={customerRefreshKey}
           />
           <CacheSelect
-            label="Produto acabado OMIE"
+            label="Produto"
             entityType="product"
             value={form.productId}
             onChange={(id) => setForm({ ...form, productId: id })}
             desktopApi={desktopApi}
             productFiscalType="finished_goods"
           />
-          <p style={styles.helperText}>
-            Somente produtos OMIE com recomendacao fiscal tipo 04 - produtos acabados.
-          </p>
           <CacheSelect
             label="Condicao de pagamento"
             entityType="payment_term"
             value={form.paymentTermId}
-            onChange={(id, item) => {
-              const rawCount = item?.installmentCount;
-              const count =
-                typeof rawCount === "number" && Number.isFinite(rawCount) && rawCount > 0
-                  ? rawCount
-                  : null;
-              setPaymentTermInstallmentCount(count);
+            onChange={(id) => {
               setForm((prev) => ({
                 ...prev,
-                paymentTermId: id
+                paymentTermId: id,
+                paymentMode: "registered",
+                manualInstallments: "",
+                manualDownPaymentEnabled: false,
+                manualDownPaymentCents: null
               }));
             }}
             desktopApi={desktopApi}
+            disabled={manualPayment}
           />
-          {paymentTermInstallmentCount && paymentTermInstallmentCount > 1 ? (
-            <p style={styles.helperText}>
-              Condicao selecionada com {paymentTermInstallmentCount} parcelas.
-            </p>
+          <label style={styles.compactCheckboxCard}>
+            <input
+              type="checkbox"
+              checked={manualPayment}
+              onChange={(event) =>
+                setForm((prev) => ({
+                  ...prev,
+                  paymentMode: event.target.checked ? "manual" : "registered",
+                  paymentTermId: event.target.checked ? "" : prev.paymentTermId,
+                  manualInstallments: event.target.checked ? prev.manualInstallments : "",
+                  manualDownPaymentEnabled: event.target.checked ? prev.manualDownPaymentEnabled : false,
+                  manualDownPaymentCents: event.target.checked ? prev.manualDownPaymentCents : null
+                }))
+              }
+            />
+            Parcelamento manual
+          </label>
+          {manualPayment ? (
+            <div style={styles.compactInlineGrid}>
+              <NumberInput
+                label="Parcelas"
+                value={form.manualInstallments}
+                onChange={(manualInstallments) => setForm((prev) => ({ ...prev, manualInstallments }))}
+                placeholder="Ex: 3"
+                maxLength={2}
+                required
+              />
+              <label style={{ ...styles.checkboxLabel, alignSelf: "end", minHeight: "40px" }}>
+                <input
+                  type="checkbox"
+                  checked={form.manualDownPaymentEnabled}
+                  onChange={(event) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      manualDownPaymentEnabled: event.target.checked,
+                      manualDownPaymentCents: event.target.checked ? prev.manualDownPaymentCents : null
+                    }))
+                  }
+                />
+                Com entrada
+              </label>
+              {form.manualDownPaymentEnabled ? (
+                <MoneyCentsInput
+                  label="Valor de entrada"
+                  valueCents={form.manualDownPaymentCents}
+                  onChange={(manualDownPaymentCents) =>
+                    setForm((prev) => ({ ...prev, manualDownPaymentCents }))
+                  }
+                  allowZero
+                />
+              ) : null}
+            </div>
           ) : null}
         </article>
 
@@ -3467,26 +3565,42 @@ function WeighingForm({
           <SectionHeader
             iconSrc="midia/truck.png"
             title="Transporte"
-            description="Placa, transportadora e motorista"
+            description="Transportadora, placa e motorista"
           />
-          <CacheSelect
-            label="Placa"
-            entityType="vehicle"
-            value={form.vehicleId}
-            onChange={(id) => setForm((prev) => ({ ...prev, vehicleId: id, carrierId: "" }))}
-            onCreateNew={() => setShowVehicleModal(true)}
-            desktopApi={desktopApi}
-            refreshKey={vehicleRefreshKey}
-          />
+          <label style={styles.compactCheckboxCard}>
+            <input
+              type="checkbox"
+              checked={form.customerOwnTransport}
+              onChange={(event) =>
+                setForm((prev) => ({
+                  ...prev,
+                  customerOwnTransport: event.target.checked,
+                  carrierId: "",
+                  vehicleId: "",
+                  driverId: ""
+                }))
+              }
+            />
+            Transportadora propria do cliente
+          </label>
           <CacheSelect
             label="Transportadora"
             entityType="carrier"
             value={form.carrierId}
-            onChange={(id) => setForm((prev) => ({ ...prev, carrierId: id }))}
+            onChange={(id) =>
+              setForm((prev) => ({
+                ...prev,
+                carrierId: id,
+                customerOwnTransport: false,
+                vehicleId: "",
+                driverId: ""
+              }))
+            }
             onCreateNew={() => setShowCarrierModal(true)}
             desktopApi={desktopApi}
             refreshKey={carrierRefreshKey}
             filterIds={availableCarrierIds}
+            disabled={form.customerOwnTransport}
           />
           {form.customerId && availableCarrierIds && availableCarrierIds.length === 0 ? (
             <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" }}>
@@ -3502,16 +3616,30 @@ function WeighingForm({
               </button>
             </div>
           ) : null}
-          <CacheSelect
-            label="Motorista"
-            entityType="driver"
-            value={form.driverId}
-            onChange={(id) => setForm({ ...form, driverId: id })}
-            onCreateNew={() => setShowDriverModal(true)}
-            desktopApi={desktopApi}
-            refreshKey={driverRefreshKey}
-            filterIds={availableDriverIds}
-          />
+          <div style={styles.compactInlineGrid}>
+            <CacheSelect
+              label="Placa"
+              entityType="vehicle"
+              value={form.vehicleId}
+              onChange={(id) => setForm((prev) => ({ ...prev, vehicleId: id }))}
+              onCreateNew={() => setShowVehicleModal(true)}
+              desktopApi={desktopApi}
+              refreshKey={vehicleRefreshKey}
+              filterIds={form.customerOwnTransport ? undefined : availableVehicleIds}
+              disabled={!transportReady}
+            />
+            <CacheSelect
+              label="Motorista"
+              entityType="driver"
+              value={form.driverId}
+              onChange={(id) => setForm({ ...form, driverId: id })}
+              onCreateNew={() => setShowDriverModal(true)}
+              desktopApi={desktopApi}
+              refreshKey={driverRefreshKey}
+              filterIds={form.customerOwnTransport ? undefined : availableDriverIds}
+              disabled={!transportReady}
+            />
+          </div>
           {form.carrierId && availableDriverIds && availableDriverIds.length === 0 ? (
             <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" }}>
               <p style={{ ...styles.helperText, color: "#d97706", margin: 0 }}>
@@ -3532,7 +3660,7 @@ function WeighingForm({
           <SectionHeader
             iconComponent={BadgeDollarSign}
             title="Resumo da entrada"
-            description="Preco resolvido, frete e acao final"
+            description="Preco, frete e captura"
           />
           <PriceDetailsPanel details={priceDetails} />
           <div style={styles.freightBox}>
@@ -3547,9 +3675,9 @@ function WeighingForm({
               Operacao com frete
             </label>
             {form.freightEnabled ? (
-              <div style={{ display: "grid", gap: "10px" }}>
+              <div style={styles.freightCompactGrid}>
                 <label style={styles.fieldLabel}>
-                  Responsavel pelo frete
+                  Responsavel
                   <select
                     value={form.freightPayer}
                     onChange={(event) =>
@@ -3566,7 +3694,7 @@ function WeighingForm({
                   </select>
                 </label>
                 <label style={styles.fieldLabel}>
-                  Calculo do frete
+                  Calculo
                   <select
                     value={form.freightCalculationType}
                     onChange={(event) =>
@@ -3578,9 +3706,9 @@ function WeighingForm({
                     }
                     style={styles.input}
                   >
-                    <option value="per_ton">Valor por tonelada</option>
-                    <option value="per_ton_km">Valor por tonelada-km</option>
-                    <option value="fixed_plus_ton">Fixo + valor por tonelada</option>
+                    <option value="per_ton">Por tonelada</option>
+                    <option value="per_ton_km">Tonelada-km</option>
+                    <option value="fixed_plus_ton">Fixo + tonelada</option>
                   </select>
                 </label>
                 <PriceInput
@@ -3594,6 +3722,7 @@ function WeighingForm({
                   onChange={(cents) =>
                     setForm((prev) => ({ ...prev, freightBaseValueCents: cents }))
                   }
+                  compact
                 />
                 {form.freightCalculationType === "fixed_plus_ton" ? (
                   <PriceInput
@@ -3603,17 +3732,17 @@ function WeighingForm({
                     onChange={(cents) =>
                       setForm((prev) => ({ ...prev, freightFixedValueCents: cents }))
                     }
+                    compact
                   />
                 ) : null}
                 {form.freightCalculationType === "per_ton_km" ? (
                   <NumberInput
-                    label="Distancia (km)"
+                    label="Distancia km"
                     value={form.freightDistanceKm}
                     onChange={(freightDistanceKm) =>
                       setForm((prev) => ({ ...prev, freightDistanceKm }))
                     }
                     placeholder="Ex: 35"
-                    hint="Apenas numeros inteiros."
                   />
                 ) : null}
                 <PriceInput
@@ -3623,9 +3752,10 @@ function WeighingForm({
                   onChange={(cents) =>
                     setForm((prev) => ({ ...prev, freightMinValueCents: cents }))
                   }
+                  compact
                 />
                 <TextInput
-                  label="Destino/observacao do frete"
+                  label="Destino/obs."
                   value={form.freightDestination}
                   onChange={(freightDestination) =>
                     setForm((prev) => ({ ...prev, freightDestination }))
@@ -3645,10 +3775,6 @@ function WeighingForm({
                   />
                   Abater frete do credito do cliente
                 </label>
-                <p style={styles.helperText}>
-                  Por padrao, o credito abate apenas o produto. Marque esta opcao para que o frete
-                  tambem seja compensado do credito (exige saldo suficiente para produto + frete).
-                </p>
               </div>
             ) : null}
           </div>
@@ -3659,6 +3785,7 @@ function WeighingForm({
               disabled={isCapturing || scaleState !== "connected"}
               style={{
                 ...styles.captureButton,
+                flex: 1,
                 opacity: isCapturing || scaleState !== "connected" ? 0.55 : 1
               }}
             >
@@ -3666,7 +3793,7 @@ function WeighingForm({
               {isCapturing ? "Capturando..." : "Capturar peso"}
             </button>
             <HelpTooltip content={TIPS.form.start} placement="top" shortcut="Ctrl+Enter" />
-            <button type="button" onClick={onCancel} style={styles.secondaryButton}>
+            <button type="button" onClick={onCancel} style={{ ...styles.secondaryButton, height: "40px" }}>
               Limpar e voltar
             </button>
           </div>
@@ -3678,8 +3805,11 @@ function WeighingForm({
           desktopApi={desktopApi}
           onClose={() => setShowVehicleModal(false)}
           onCreated={(id) => {
-            setForm((prev) => ({ ...prev, vehicleId: id, carrierId: "" }));
+            setForm((prev) => ({ ...prev, vehicleId: id }));
             setShowVehicleModal(false);
+            if (desktopApi && form.carrierId) {
+              void desktopApi.vehiclesLinkCarrier(id, form.carrierId).catch(() => undefined);
+            }
             setVehicleRefreshKey((k) => k + 1);
           }}
         />
@@ -3714,7 +3844,7 @@ function WeighingForm({
           desktopApi={desktopApi}
           onClose={() => setShowCarrierModal(false)}
           onCreated={async (id) => {
-            setForm((prev) => ({ ...prev, carrierId: id }));
+            setForm((prev) => ({ ...prev, carrierId: id, customerOwnTransport: false }));
             setShowCarrierModal(false);
             if (desktopApi && form.vehicleId) {
               try {
@@ -4474,8 +4604,8 @@ function CloseOperationWeighingDialog({
             onChange={(event) => setOperationType(event.target.value as OperationType)}
             style={styles.input}
           >
-            <option value="invoice">Com nota (pedido de venda no OMIE)</option>
-            <option value="internal">Interna (sem OMIE, permite offline)</option>
+            <option value="invoice">Com nota fiscal</option>
+            <option value="internal">Interna (sem nota fiscal)</option>
           </select>
         </label>
 
@@ -4606,7 +4736,7 @@ function CancelOperationDialog({
         <h3 style={{ margin: "0 0 8px 0", color: "var(--kr-text-strong)", fontSize: "15px" }}>
           Cancelar operacao
         </h3>
-        <p style={styles.muted}>Informe o motivo. Ele ficara registrado na auditoria e no sync.</p>
+        <p style={styles.muted}>Informe o motivo do cancelamento.</p>
         {error ? <p style={styles.errorMessage}>{error}</p> : null}
         <label style={styles.fieldLabel}>
           Motivo
@@ -4820,12 +4950,14 @@ function PriceInput({
   valueCents,
   onChange,
   label = "Preco por tonelada",
-  suffix = "/ton"
+  suffix = "/ton",
+  compact = false
 }: {
   valueCents: number | null;
   onChange: (cents: number | null) => void;
   label?: string;
   suffix?: string;
+  compact?: boolean;
 }) {
   const centsToBRL = (cents: number) =>
     new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents / 100);
@@ -4837,9 +4969,9 @@ function PriceInput({
         valueCents={valueCents}
         onChange={onChange}
         allowZero
-        hint={`Use virgula para centavos. Ex: 125,50${suffix ? ` (${suffix})` : ""}`}
+        hint={compact ? undefined : `Use virgula para centavos. Ex: 125,50${suffix ? ` (${suffix})` : ""}`}
       />
-      {valueCents !== null ? (
+      {!compact && valueCents !== null ? (
         <span style={{ fontSize: "12px", color: "#64748b", marginTop: "2px", display: "block" }}>
           {centsToBRL(valueCents)}
           {suffix}
@@ -5299,7 +5431,7 @@ function VehicleListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
             </section>
           </div>
           <div style={styles.crudFormFooter}>
-            <span style={styles.muted}>Preencha os dados do veiculo e salve para atualizar a lista.</span>
+            <span style={styles.muted} />
             <div style={{ display: "flex", gap: "6px" }}>
               <button type="button" onClick={() => setShowForm(false)} style={styles.secondaryButton}>
                 Cancelar
@@ -5692,7 +5824,7 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
             </section>
           </div>
           <div style={styles.crudFormFooter}>
-            <span style={styles.muted}>Organize dados fiscais, contato e endereco antes de salvar.</span>
+            <span style={styles.muted} />
             <div style={{ display: "flex", gap: "6px" }}>
               <button type="button" onClick={() => setShowForm(false)} style={styles.secondaryButton}>
                 Cancelar
@@ -6767,7 +6899,7 @@ function SimpleCrudList({
             </section>
           </div>
           <div style={styles.crudFormFooter}>
-            <span style={styles.muted}>Campos obrigatorios devem ser preenchidos antes de salvar.</span>
+            <span style={styles.muted} />
             <div style={{ display: "flex", gap: "8px" }}>
               <button type="button" onClick={() => setShowForm(false)} style={styles.secondaryButton}>
                 Cancelar
@@ -7468,33 +7600,68 @@ const styles = {
     border: "1px solid var(--kr-border)",
     boxShadow: "var(--kr-shadow)"
   },
+  openingVideoScreen: {
+    position: "fixed" as const,
+    inset: 0,
+    width: "100vw",
+    height: "100vh",
+    overflow: "hidden" as const,
+    background: "#020617",
+    display: "grid",
+    placeItems: "center",
+    zIndex: 9999
+  },
+  openingVideo: {
+    width: "100%",
+    height: "100%",
+    objectFit: "cover" as const,
+    transition: "opacity 620ms ease, transform 620ms ease"
+  },
+  openingVideoFade: {
+    position: "absolute" as const,
+    inset: 0,
+    background: "#020617",
+    pointerEvents: "none" as const,
+    transition: "opacity 620ms ease"
+  },
+  visuallyHidden: {
+    position: "absolute" as const,
+    width: "1px",
+    height: "1px",
+    padding: 0,
+    margin: "-1px",
+    overflow: "hidden" as const,
+    clip: "rect(0, 0, 0, 0)",
+    whiteSpace: "nowrap" as const,
+    border: 0
+  },
   entryShell: {
     display: "flex",
     flexDirection: "column" as const,
-    gap: "10px",
+    gap: "8px",
     marginTop: 0,
     minHeight: 0
   },
   entryHero: {
     display: "grid",
-    gridTemplateColumns: "minmax(260px, 1fr) minmax(420px, 1.1fr)",
+    gridTemplateColumns: "minmax(220px, 0.7fr) minmax(360px, 1fr)",
     alignItems: "stretch",
-    gap: "12px",
-    padding: "14px",
-    borderRadius: "18px",
+    gap: "10px",
+    padding: "10px 12px",
+    borderRadius: "14px",
     background: "linear-gradient(135deg, #0f172a 0%, #1e293b 55%, #2563eb 100%)",
     color: "#ffffff",
-    boxShadow: "0 18px 45px rgba(15, 23, 42, 0.18)"
+    boxShadow: "0 12px 28px rgba(15, 23, 42, 0.16)"
   },
   liveWeightCard: {
     minWidth: "180px",
-    padding: "12px",
-    borderRadius: "14px",
+    padding: "8px 10px",
+    borderRadius: "12px",
     background: "rgba(255,255,255,0.12)",
     border: "1px solid rgba(255,255,255,0.22)",
     display: "flex",
     flexDirection: "column" as const,
-    gap: "4px"
+    gap: "2px"
   },
   metricHeader: {
     display: "flex",
@@ -7509,7 +7676,7 @@ const styles = {
     letterSpacing: "0.08em"
   },
   metricValue: {
-    fontSize: "24px",
+    fontSize: "20px",
     lineHeight: 1,
     color: "#ffffff"
   },
@@ -7519,19 +7686,19 @@ const styles = {
   },
   entryGrid: {
     display: "grid",
-    gridTemplateColumns: "minmax(260px, 1fr) minmax(260px, 1fr) minmax(280px, 0.95fr)",
-    gap: "10px",
+    gridTemplateColumns: "minmax(300px, 1fr) minmax(340px, 1fr) minmax(360px, 1.05fr)",
+    gap: "8px",
     alignItems: "start"
   },
   entryCard: {
-    padding: "12px",
+    padding: "10px",
     borderRadius: "14px",
     background: "var(--kr-surface)",
     border: "1px solid var(--kr-border)",
     boxShadow: "var(--kr-shadow)"
   },
   entrySummaryCard: {
-    padding: "12px",
+    padding: "10px",
     borderRadius: "14px",
     background: "var(--kr-surface-soft)",
     border: "1px solid var(--kr-input-border)",
@@ -7541,9 +7708,9 @@ const styles = {
   },
   freightBox: {
     display: "grid",
-    gap: "8px",
-    marginTop: "8px",
-    padding: "10px",
+    gap: "6px",
+    marginTop: "6px",
+    padding: "8px",
     borderRadius: "12px",
     background: "var(--kr-surface)",
     border: "1px solid var(--kr-border)"
@@ -7556,18 +7723,44 @@ const styles = {
     fontSize: "13px",
     color: "var(--kr-text-strong)"
   },
+  compactCheckboxCard: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    padding: "7px 9px",
+    border: "1px solid var(--kr-border)",
+    borderRadius: "10px",
+    background: "var(--kr-surface-soft)",
+    color: "var(--kr-text-strong)",
+    cursor: "pointer",
+    marginBottom: "6px",
+    fontSize: "12px",
+    fontWeight: 800
+  },
+  compactInlineGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
+    gap: "8px",
+    alignItems: "start"
+  },
+  freightCompactGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(138px, 1fr))",
+    gap: "8px",
+    alignItems: "start"
+  },
   sectionHeader: {
     display: "flex",
     alignItems: "center",
     gap: "8px",
-    marginBottom: "8px"
+    marginBottom: "6px"
   },
   sectionIcon: {
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
-    width: "30px",
-    height: "30px",
+    width: "26px",
+    height: "26px",
     borderRadius: "10px",
     background: "var(--kr-info-bg)",
     color: "var(--kr-info-text)",
@@ -7576,12 +7769,12 @@ const styles = {
   sectionTitle: {
     margin: 0,
     color: "var(--kr-text-strong)",
-    fontSize: "14px"
+    fontSize: "13px"
   },
   sectionDescription: {
     margin: "2px 0 0 0",
     color: "var(--kr-muted)",
-    fontSize: "12px"
+    fontSize: "11px"
   },
   helperText: {
     margin: "-2px 0 6px 0",
@@ -7603,14 +7796,15 @@ const styles = {
   },
   actionStack: {
     display: "flex",
-    flexDirection: "column" as const,
+    flexDirection: "row" as const,
     gap: "8px",
-    marginTop: "10px"
+    marginTop: "8px",
+    alignItems: "center"
   },
   captureButton: {
     border: "none",
     borderRadius: "12px",
-    padding: "12px 14px",
+    padding: "10px 12px",
     background: "linear-gradient(135deg, #16a34a, #15803d)",
     color: "#ffffff",
     cursor: "pointer",

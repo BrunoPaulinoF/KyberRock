@@ -460,6 +460,7 @@ export class DesktopRuntime {
     productId: string;
     paymentTermId?: string;
     manualInstallments?: number;
+    manualDownPaymentCents?: number;
     freight?: OperationFreightInput | null;
     quotationId?: string;
     deductFreightFromCredit?: boolean;
@@ -480,6 +481,7 @@ export class DesktopRuntime {
       productId: input.productId,
       paymentTermId: input.paymentTermId,
       manualInstallments: input.manualInstallments,
+      manualDownPaymentCents: input.manualDownPaymentCents,
       freight: input.freight,
       quotationId: input.quotationId,
       deductFreightFromCredit: input.deductFreightFromCredit,

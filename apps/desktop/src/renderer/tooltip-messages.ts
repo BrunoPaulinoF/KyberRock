@@ -9,11 +9,11 @@ export const TIPS = {
     scale:
       "Diagnostico da balanca: porta serial, leitura ao vivo e calibracao. Use para conferir a conexao com o hardware.",
     registrations:
-      "Cadastros: clientes, tabelas de preco, produtos OMIE, condicoes de pagamento e transporte.",
+      "Cadastros: clientes, produtos, condicoes de pagamento e transporte.",
     printing:
       "Impressao: selecione a impressora Windows que recebera os cupons de 80 mm apos cada pesagem.",
     cloud:
-      "Sincronizacao: status do Supabase, OMIE e da fila offline. Dispare envios manuais se precisar.",
+      "Sincronizacao dos dados com a nuvem. Dispare envios manuais se precisar.",
     insights:
       "Insights: KPIs, graficos de peso por dia, top produtos e mix de operacoes no periodo.",
     reports: "Relatorios: cadastre destinatarios que receberao os relatorios automaticos por e-mail.",
@@ -27,7 +27,7 @@ export const TIPS = {
     insights: "KPIs, graficos e status de sincronizacao. Atalho: F5.",
     scale: "Diagnostico e leitura da balanca. Atalho: F6.",
     printing: "Configure a impressora de cupom de 80 mm. Atalho: F7.",
-    cloud: "Sincronizacao manual com Supabase e OMIE. Atalho: F8.",
+    cloud: "Sincronizacao de dados com a nuvem. Atalho: F8.",
     reports: "Destinatarios dos relatorios automaticos por e-mail.",
     documentation: "Documentacao do produto (em breve)."
   },
@@ -36,26 +36,26 @@ export const TIPS = {
     settings: "Abrir configuracoes: balanca, impressao, cloud, logs, backup e sair.",
     settingsScale: "Abrir a tela de diagnostico da balanca.",
     settingsPrinting: "Configurar a impressora de cupom 80 mm.",
-    settingsCloud: "Abrir sincronizacao com Supabase e OMIE.",
+    settingsCloud: "Abrir sincronizacao de dados com a nuvem.",
     settingsLogs: "Ver logs de erro e aviso capturados pelo aplicativo. Atalho: F10.",
     settingsExport: "Exportar um backup do banco local para um arquivo .sqlite3.",
     settingsRestore: "Restaurar um backup do banco local.",
     settingsLogout: "Sair da conta atual (exige novo codigo de ativacao para voltar).",
-    syncNow: "Forcar sincronizacao com o Supabase agora.",
-    connectivity: "Status de internet, Supabase e OMIE. Clique em Sincronizar para forcar envio."
+    syncNow: "Enviar dados pendentes para a nuvem agora.",
+    connectivity: "Status de internet e sincronizacao. Clique em Sincronizar para enviar pendentes."
   },
   dashboard: {
     newEntry: "Iniciar uma nova pesagem de entrada (F2).",
     insights: "Abrir a tela de insights com KPIs e graficos (F5).",
     recent: "Ultimas pesagens. Clique para abrir a lista completa.",
-    pending: "Pendencias que pedem atencao: pesagens paradas, OMIE pendente, fila offline e logs."
+    pending: "Pendencias que pedem atencao: pesagens paradas, faturamento pendente e logs."
   },
   insights: {
     period: "Muda o periodo de analise dos KPIs e graficos.",
     exportPdf: "Exporta um relatorio em PDF para o periodo selecionado.",
     exportExcel: "Exporta a planilha detalhada em Excel para o periodo selecionado.",
-    syncCloud: "Forca sincronizacao com o Supabase (somente se conectado).",
-    syncOmie: "Forca sincronizacao com o OMIE (somente se credenciais configuradas)."
+    syncCloud: "Envia dados pendentes para a nuvem.",
+    syncOmie: "Atualiza clientes e produtos."
   },
   operations: {
     filterPeriod: "Filtra canceladas por periodo: hoje, 7 dias, mes atual ou todas.",
@@ -63,7 +63,7 @@ export const TIPS = {
     clearCanceled: "Apaga da lista todas as operacoes canceladas (somente a lista, o historico fica).",
     close: "Fecha a pesagem: captura a saida e finaliza a operacao (fiscal ou interna).",
     cancel: "Cancela esta pesagem. O motivo fica registrado para auditoria.",
-    retryOmie: "Retenta o faturamento no OMIE de uma operacao que falhou."
+    retryOmie: "Reenvia o faturamento de uma operacao que falhou."
   },
   printing: {
     selectPrinter: "Escolha a impressora Windows que vai emitir os cupons de 80 mm.",
@@ -72,9 +72,9 @@ export const TIPS = {
     reprint: "Reemite uma segunda via do cupom para o cliente."
   },
   cloud: {
-    syncNow: "Forca envio dos dados locais pendentes para o Supabase.",
-    syncOmie: "Envia pedidos pendentes ao OMIE e baixa clientes/produtos/condicoes novos.",
-    omieLoop: "Roda paginacao continua no OMIE para clonar todos os registros ainda nao sincronizados."
+    syncNow: "Envia os dados pendentes para a nuvem.",
+    syncOmie: "Atualiza pedidos, clientes e produtos.",
+    omieLoop: "Busca todos os registros restantes ainda nao trazidos."
   },
   activation: {
     code: "Codigo de 6 digitos gerado pelo admin no painel web. Necessario no primeiro acesso.",
@@ -94,7 +94,7 @@ export const TIPS = {
   form: {
     start: "Captura o peso atual da balanca usando os criterios configurados e abre a operacao de entrada.",
     cancel: "Limpa o formulario e volta para a tela inicial.",
-    operationType: "Tipo da operacao na saida: com nota (pedido OMIE) ou interna (sem fiscal).",
+    operationType: "Tipo da operacao na saida: com nota fiscal ou interna (sem nota).",
     confirmClose: "Fecha a operacao conforme o tipo selecionado.",
     back: "Volta para a tela anterior sem fechar a operacao."
   },

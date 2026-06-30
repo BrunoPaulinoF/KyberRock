@@ -807,5 +807,12 @@ DELETE FROM sync_queue
 WHERE target = 'omie'
   AND LENGTH(idempotency_key) > 60;
 `
+  },
+  {
+    version: 20,
+    name: "operation_manual_down_payment",
+    sql: `
+ALTER TABLE weighing_operations ADD COLUMN manual_down_payment_cents INTEGER;
+`
   }
 ];

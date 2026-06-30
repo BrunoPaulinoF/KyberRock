@@ -79,6 +79,7 @@ export interface KyberRockDesktopApi {
     productId: string;
     paymentTermId?: string;
     manualInstallments?: number;
+    manualDownPaymentCents?: number;
     freight?: OperationFreightInput | null;
     quotationId?: string;
     deductFreightFromCredit?: boolean;

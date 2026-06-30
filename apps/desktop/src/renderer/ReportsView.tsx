@@ -376,10 +376,7 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
         <div>
           <h2 style={styles.title}>Relatorios e fechamento diario</h2>
           <p style={styles.subtitle}>
-            Cadastre os destinatarios que receberao o fechamento diario por e-mail, WhatsApp ou
-            ambos as 20h, conforme o PRD 24.6. Defina a frequencia (diario, semanal, mensal) e o
-            horario de envio para cada destinatario. Tambem e possivel exportar o periodo atual em
-            PDF (A4) e Excel pelo menu Insights.
+            Cadastre quem deve receber o fechamento diario por e-mail ou WhatsApp.
           </p>
         </div>
         <button type="button" onClick={openCreateForm} style={styles.primaryButton}>
@@ -487,9 +484,6 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
           </section>
         </div>
         <div style={styles.formFooter}>
-          <p style={styles.helperText}>
-            O envio automatico ocorre no horario agendado via Edge Function.
-          </p>
           <div style={{ display: "flex", gap: "6px" }}>
             <button type="button" onClick={resetForm} style={styles.secondaryButton}>
               Cancelar
@@ -514,7 +508,7 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
           <p style={styles.helperText}>Carregando...</p>
         ) : recipients.length === 0 ? (
           <p style={styles.helperText}>
-            Nenhum destinatario cadastrado. Adicione pelo menos um canal acima.
+            Nenhum destinatario cadastrado.
           </p>
         ) : (
           <div style={styles.tableScroll}>

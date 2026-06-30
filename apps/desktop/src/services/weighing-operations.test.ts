@@ -274,6 +274,7 @@ describe("weighing operations", () => {
         driverId: "driver-1",
         productId: "product-1",
         manualInstallments: 3,
+        manualDownPaymentCents: 15000,
         entryWeightKg: 12_000
       });
 
@@ -284,6 +285,12 @@ describe("weighing operations", () => {
           .pluck()
           .get(operation.id)
       ).toBe(3);
+      expect(
+        database
+          .prepare("SELECT manual_down_payment_cents FROM weighing_operations WHERE id = ?")
+          .pluck()
+          .get(operation.id)
+      ).toBe(15000);
     } finally {
       database.close();
     }
