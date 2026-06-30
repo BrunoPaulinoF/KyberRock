@@ -446,6 +446,18 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     setOpeningVideoDone(false);
     setOpeningVideoExiting(false);
     setBootstrapReady(false);
+
+    openingVideoFallbackRef.current = window.setTimeout(() => {
+      setOpeningVideoDone(true);
+      openingVideoFallbackRef.current = null;
+    }, 10000);
+
+    return () => {
+      if (openingVideoFallbackRef.current !== null) {
+        window.clearTimeout(openingVideoFallbackRef.current);
+        openingVideoFallbackRef.current = null;
+      }
+    };
   }, [phase]);
 
   useEffect(() => {
