@@ -264,30 +264,14 @@ Deno.serve(async (req) => {
   try {
     if (action === "pull_reference_data") {
       const customersPage = resume.customersPage ?? 1;
-      const productsPage = resume.productsPage ?? 1;
-      const paymentTermsPage = resume.paymentTermsPage ?? 1;
       const customersResult = resume.customersFinished
         ? emptyCustomerPage(customersPage)
         : await listCustomersPage(credentials, customersPage);
-      const productsResult = resume.productsFinished
-        ? emptyPage<OmieProduct>(productsPage)
-        : await listProductsPage(credentials, productsPage);
-      let paymentTermsResult: PageResult<OmiePaymentTerm> = {
-        items: [],
-        page: paymentTermsPage,
-        finished: true,
-        totalPages: null,
-        totalRecords: null
-      };
-      let paymentTermsWarning: string | null = null;
-      if (!resume.paymentTermsFinished) {
-        try {
-          paymentTermsResult = await listPaymentTermsPage(credentials, paymentTermsPage);
-        } catch (error) {
-          paymentTermsWarning =
-            error instanceof Error ? error.message : "Falha ao listar parcelas OMIE";
-        }
-      }
+
+      // Produtos e condicoes de pagamento nao sao sincronizados do OMIE
+      // pois sao mantidos manualmente no KyberRock.
+      const productsResult = emptyPage<OmieProduct>(1);
+      const paymentTermsResult = emptyPage<OmiePaymentTerm>(1);
 
       const checkedAt = new Date().toISOString();
       await supabase
@@ -303,7 +287,6 @@ Deno.serve(async (req) => {
         products: productsResult.items,
         paymentTerms: paymentTermsResult.items,
         suppliers: customersResult.carriers,
-        ...(paymentTermsWarning ? { paymentTermsWarning } : {}),
         checkedAt,
         pageSize: PAGE_SIZE,
         pagination: {
@@ -313,15 +296,15 @@ Deno.serve(async (req) => {
           customersTotalPages: customersResult.totalPages,
           customersTotalRecords: customersResult.totalRecords,
           productsPage: productsResult.page,
-          productsReturned: productsResult.items.length,
-          productsFinished: productsResult.finished,
-          productsTotalPages: productsResult.totalPages,
-          productsTotalRecords: productsResult.totalRecords,
+          productsReturned: 0,
+          productsFinished: true,
+          productsTotalPages: null,
+          productsTotalRecords: null,
           paymentTermsPage: paymentTermsResult.page,
-          paymentTermsReturned: paymentTermsResult.items.length,
-          paymentTermsFinished: paymentTermsResult.finished,
-          paymentTermsTotalPages: paymentTermsResult.totalPages,
-          paymentTermsTotalRecords: paymentTermsResult.totalRecords,
+          paymentTermsReturned: 0,
+          paymentTermsFinished: true,
+          paymentTermsTotalPages: null,
+          paymentTermsTotalRecords: null,
           suppliersPage: customersResult.page,
           suppliersReturned: customersResult.returned,
           suppliersFinished: customersResult.finished,
@@ -601,6 +584,7 @@ function mapOmieCustomerRaw(item: OmieCustomerRaw): OmieCustomer | null {
   };
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function listProductsPage(
   credentials: OmieCredentials,
   page: number
@@ -806,7 +790,11 @@ function computeFinished(
 }
 
 function hasClienteTag(customer: OmieCustomer): boolean {
-  return hasOmieTag(customer.tagsJson, "cliente");
+  // Se tiver tag explicita de transportadora ou fornecedor, NAO e cliente
+  // Caso contrario, considera cliente por padrao (inclui sem tag ou com tag "cliente")
+  if (hasOmieTag(customer.tagsJson, "transportadora")) return false;
+  if (hasOmieTag(customer.tagsJson, "fornecedor")) return false;
+  return true;
 }
 
 function hasTransportadoraTag(customer: OmieCustomer): boolean {
@@ -861,6 +849,7 @@ function mapCustomerToCarrier(customer: OmieCustomer): OmieSupplier {
   };
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function listPaymentTermsPage(
   credentials: OmieCredentials,
   page: number
