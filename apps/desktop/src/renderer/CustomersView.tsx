@@ -347,6 +347,18 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
   const [pricePasswordError, setPricePasswordError] = useState<string | null>(null);
   const [savingSpecialPrice, setSavingSpecialPrice] = useState(false);
   const [linkedCarrierIds, setLinkedCarrierIds] = useState<string[]>([]);
+  const [customerFreightRules, setCustomerFreightRules] = useState<Array<{
+    id: string;
+    customerId: string;
+    productId: string | null;
+    productDescription: string | null;
+    rule: { id: string; name: string; type: string; baseValueCents: number; unit: string };
+    isActive: boolean;
+  }>>([]);
+  const [freightProductId, setFreightProductId] = useState("");
+  const [freightValueReais, setFreightValueReais] = useState("");
+  const [freightMode, setFreightMode] = useState<"default" | "product">("default");
+  const [savingFreight, setSavingFreight] = useState(false);
 
   const pageSize = 50;
 
@@ -404,6 +416,10 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
     setSpecialProductId("");
     setSpecialPriceReais("");
     setLinkedCarrierIds([]);
+    setCustomerFreightRules([]);
+    setFreightProductId("");
+    setFreightValueReais("");
+    setFreightMode("default");
   }
 
   function openCreateForm(): void {
@@ -440,6 +456,7 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
     setShowForm(true);
     void loadSpecialPrices(customer.id);
     void loadLinkedCarriers(customer.id);
+    void loadCustomerFreightRules(customer.id);
   }
 
   async function loadSpecialPrices(customerId: string): Promise<void> {
@@ -470,6 +487,60 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
       }
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Erro ao vincular transportadora");
+    }
+  }
+
+  async function loadCustomerFreightRules(customerId: string): Promise<void> {
+    if (!desktopApi) return;
+    try {
+      const rows = await desktopApi.getCustomerFreightRules(customerId);
+      setCustomerFreightRules(rows as typeof customerFreightRules);
+    } catch {
+      setCustomerFreightRules([]);
+    }
+  }
+
+  async function handleSaveFreightRule(): Promise<void> {
+    if (!desktopApi || !editingId) return;
+    const unitPriceCents = parseMoneyInputToCents(freightValueReais);
+    if (unitPriceCents === null) {
+      setFormError("Valor de frete invalido.");
+      return;
+    }
+    setSavingFreight(true);
+    try {
+      await desktopApi.setCustomerFreightRule({
+        customerId: editingId,
+        productId: freightMode === "product" ? freightProductId || null : null,
+          rule: {
+          id: crypto.randomUUID(),
+          name: freightMode === "product" && freightProductId
+            ? products.find((p) => p.id === freightProductId)?.description ?? "Frete por produto"
+            : "Frete fixo",
+          type: "per_ton",
+          baseValueCents: unitPriceCents,
+          unit: "ton"
+        }
+      });
+      setFreightValueReais("");
+      setFreightProductId("");
+      await loadCustomerFreightRules(editingId);
+      setFeedback("Frete salvo.");
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Erro ao salvar frete.");
+    } finally {
+      setSavingFreight(false);
+    }
+  }
+
+  async function handleRemoveFreightRule(ruleId: string): Promise<void> {
+    if (!desktopApi || !editingId) return;
+    try {
+      await desktopApi.removeCustomerFreightRule(ruleId);
+      await loadCustomerFreightRules(editingId);
+      setFeedback("Frete removido.");
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Erro ao remover frete.");
     }
   }
 
@@ -874,6 +945,115 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
                   </div>
                 ) : (
                   <p style={styles.cellMuted}>Salve o cliente antes de vincular transportadoras.</p>
+                )}
+              </div>
+              <div style={{ display: "grid", gap: "8px", marginTop: "8px" }}>
+                <h4 style={styles.formSectionTitle}>Frete do cliente</h4>
+                {editingId ? (
+                  <>
+                    <div style={{ display: "flex", gap: "8px" }}>
+                      <button
+                        type="button"
+                        onClick={() => setFreightMode("default")}
+                        style={{
+                          flex: 1,
+                          padding: "6px 10px",
+                          border: freightMode === "default" ? "2px solid #2563eb" : "1px solid var(--kr-border)",
+                          borderRadius: "8px",
+                          background: freightMode === "default" ? "#eff6ff" : "var(--kr-surface)",
+                          color: freightMode === "default" ? "#1e40af" : "var(--kr-muted)",
+                          fontWeight: freightMode === "default" ? 700 : 500,
+                          fontSize: "12px",
+                          cursor: "pointer"
+                        }}
+                      >
+                        Frete fixo
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setFreightMode("product")}
+                        style={{
+                          flex: 1,
+                          padding: "6px 10px",
+                          border: freightMode === "product" ? "2px solid #2563eb" : "1px solid var(--kr-border)",
+                          borderRadius: "8px",
+                          background: freightMode === "product" ? "#eff6ff" : "var(--kr-surface)",
+                          color: freightMode === "product" ? "#1e40af" : "var(--kr-muted)",
+                          fontWeight: freightMode === "product" ? 700 : 500,
+                          fontSize: "12px",
+                          cursor: "pointer"
+                        }}
+                      >
+                        Por produto
+                      </button>
+                    </div>
+                    <div style={styles.fieldRow}>
+                      {freightMode === "product" ? (
+                        <Field label="Produto">
+                          <select
+                            value={freightProductId}
+                            onChange={(e) => setFreightProductId(e.target.value)}
+                            style={getInputStyle(false)}
+                          >
+                            <option value="">Selecione</option>
+                            {products.map((product) => (
+                              <option key={product.id} value={product.id}>
+                                {product.code ? `${product.code} - ` : ""}
+                                {product.description}
+                              </option>
+                            ))}
+                          </select>
+                        </Field>
+                      ) : null}
+                      <MoneyInput
+                        label="Valor/ton (R$)"
+                        value={freightValueReais}
+                        onChange={setFreightValueReais}
+                        allowZero={false}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveFreightRule()}
+                      disabled={savingFreight}
+                      style={{ ...styles.secondaryButton, opacity: savingFreight ? 0.5 : 1 }}
+                    >
+                      {savingFreight ? "Salvando..." : "Salvar frete"}
+                    </button>
+                    {customerFreightRules.length === 0 ? (
+                      <p style={styles.cellMuted}>Nenhum frete cadastrado.</p>
+                    ) : (
+                      customerFreightRules.map((rule) => (
+                        <div
+                          key={rule.id}
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            gap: "8px",
+                            borderTop: "1px solid var(--kr-border)",
+                            paddingTop: "8px"
+                          }}
+                        >
+                          <span style={styles.cellMuted}>
+                            <strong>
+                              {rule.productId ? rule.productDescription ?? "Produto" : "Frete fixo"}
+                            </strong>
+                            : {formatMoney(rule.rule.baseValueCents)}/ton
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => void handleRemoveFreightRule(rule.id)}
+                            style={styles.dangerButton}
+                          >
+                            Remover
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </>
+                ) : (
+                  <p style={styles.cellMuted}>Salve o cliente antes de cadastrar frete.</p>
                 )}
               </div>
               <div style={{ display: "grid", gap: "8px", marginTop: "8px" }}>

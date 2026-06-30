@@ -27,6 +27,14 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:cancel-weighing", operationId, reason),
   updateWeighingProduct: (operationId: string, newProductId: string) =>
     ipcRenderer.invoke("desktop:update-weighing-product", operationId, newProductId),
+  getCustomerFreightRules: (customerId: string) =>
+    ipcRenderer.invoke("desktop:get-customer-freight-rules", customerId),
+  getCustomerFreightForProduct: (customerId: string, productId: string) =>
+    ipcRenderer.invoke("desktop:get-customer-freight-for-product", customerId, productId),
+  setCustomerFreightRule: (input: unknown) =>
+    ipcRenderer.invoke("desktop:set-customer-freight-rule", input),
+  removeCustomerFreightRule: (ruleId: string) =>
+    ipcRenderer.invoke("desktop:remove-customer-freight-rule", ruleId),
   listWindowsPrinters: () => ipcRenderer.invoke("desktop:list-windows-printers"),
   configureReceiptPrintProfile: (input: unknown) =>
     ipcRenderer.invoke("desktop:configure-receipt-print-profile", input),

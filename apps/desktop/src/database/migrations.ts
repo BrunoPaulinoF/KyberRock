@@ -821,5 +821,33 @@ ALTER TABLE weighing_operations ADD COLUMN manual_down_payment_cents INTEGER;
     sql: `
 ALTER TABLE scale_configs ADD COLUMN capture_mode TEXT NOT NULL DEFAULT 'custom' CHECK (capture_mode IN ('custom', 'default'));
 `
+  },
+  {
+    version: 22,
+    name: "customer_freight_rules",
+    sql: `
+CREATE TABLE IF NOT EXISTS customer_freight_rules (
+  id TEXT PRIMARY KEY,
+  customer_id TEXT NOT NULL REFERENCES customers(id),
+  product_id TEXT REFERENCES products(id),
+  rule_json TEXT NOT NULL,
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT,
+  sync_version INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_freight_rules_customer_product
+  ON customer_freight_rules(customer_id, product_id)
+  WHERE deleted_at IS NULL AND product_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_freight_rules_customer_default
+  ON customer_freight_rules(customer_id)
+  WHERE deleted_at IS NULL AND product_id IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_customer_freight_rules_customer_active
+  ON customer_freight_rules(customer_id, is_active, deleted_at);
+`
   }
 ];

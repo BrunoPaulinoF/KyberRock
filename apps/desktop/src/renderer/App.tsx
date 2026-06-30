@@ -3626,6 +3626,35 @@ function WeighingForm({
     fetchPrice();
   }, [desktopApi, form.customerId, form.productId]);
 
+  useEffect(() => {
+    if (!desktopApi || !form.customerId || !form.productId) return;
+
+    const api = desktopApi;
+    let canceled = false;
+
+    async function fetchCustomerFreight(): Promise<void> {
+      try {
+        const rule = await api.getCustomerFreightForProduct(form.customerId, form.productId);
+        if (canceled || !rule) return;
+        setForm((prev) => ({
+          ...prev,
+          freightEnabled: true,
+          freightPayer: "customer",
+          freightCalculationType: rule.rule.type as WeighingFormState["freightCalculationType"],
+          freightBaseValueCents: rule.rule.baseValueCents,
+          freightFixedValueCents: rule.rule.fixedValueCents ?? null
+        }));
+      } catch {
+        // ignore
+      }
+    }
+
+    void fetchCustomerFreight();
+    return () => {
+      canceled = true;
+    };
+  }, [desktopApi, form.customerId, form.productId]);
+
   const manualPayment = form.paymentMode === "manual";
   const transportReady = form.customerOwnTransport || Boolean(form.carrierId);
 

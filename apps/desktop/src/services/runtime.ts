@@ -66,6 +66,13 @@ import {
   type UpdateWeighingOperationProductInput
 } from "./weighing-operations.js";
 import {
+  getCustomerFreightRules,
+  getCustomerFreightRuleForProduct,
+  setCustomerFreightRule,
+  removeCustomerFreightRule,
+  type SetCustomerFreightRuleInput
+} from "./customer-freight-rules.js";
+import {
   configureReceiptPrintProfile,
   listPrintProfiles,
   listPrintReceipts,
@@ -647,6 +654,26 @@ export class DesktopRuntime {
   clearCanceledWeighingOperations(): number {
     this.assertDesktopAccess();
     return clearCanceledWeighingOperations(this.database);
+  }
+
+  getCustomerFreightRules(customerId: string) {
+    this.assertDesktopAccess();
+    return getCustomerFreightRules(this.database, customerId);
+  }
+
+  getCustomerFreightForProduct(customerId: string, productId: string) {
+    this.assertDesktopAccess();
+    return getCustomerFreightRuleForProduct(this.database, customerId, productId);
+  }
+
+  setCustomerFreightRule(input: SetCustomerFreightRuleInput) {
+    this.assertDesktopAccess();
+    return setCustomerFreightRule(this.database, input);
+  }
+
+  removeCustomerFreightRule(ruleId: string) {
+    this.assertDesktopAccess();
+    return removeCustomerFreightRule(this.database, ruleId);
   }
 
   configureReceiptPrintProfile(

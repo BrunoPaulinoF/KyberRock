@@ -333,6 +333,34 @@ function registerIpcHandlers(): void {
     return runtime.updateWeighingProduct({ operationId, newProductId });
   });
 
+  ipcMain.handle("desktop:get-customer-freight-rules", (_event, customerId: string) => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+    return runtime.getCustomerFreightRules(customerId);
+  });
+
+  ipcMain.handle("desktop:get-customer-freight-for-product", (_event, customerId: string, productId: string) => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+    return runtime.getCustomerFreightForProduct(customerId, productId);
+  });
+
+  ipcMain.handle("desktop:set-customer-freight-rule", (_event, input: unknown) => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+    return runtime.setCustomerFreightRule(input as Parameters<typeof runtime.setCustomerFreightRule>[0]);
+  });
+
+  ipcMain.handle("desktop:remove-customer-freight-rule", (_event, ruleId: string) => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+    return runtime.removeCustomerFreightRule(ruleId);
+  });
+
   ipcMain.handle("desktop:list-windows-printers", async () => {
     if (!mainWindow) {
       throw new Error("Desktop window is not ready.");

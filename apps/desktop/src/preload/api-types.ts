@@ -92,6 +92,67 @@ export interface KyberRockDesktopApi {
   ) => Promise<WeighingOperationSummary>;
   cancelWeighing: (operationId: string, reason: string) => Promise<WeighingOperationSummary>;
   updateWeighingProduct: (operationId: string, newProductId: string) => Promise<WeighingOperationSummary>;
+  getCustomerFreightRules: (customerId: string) => Promise<
+    Array<{
+      id: string;
+      customerId: string;
+      productId: string | null;
+      productDescription: string | null;
+      rule: {
+        id: string;
+        name: string;
+        type: "per_ton" | "per_ton_km" | "fixed_plus_ton" | "distance_range";
+        baseValueCents: number;
+        minValueCents?: number;
+        fixedValueCents?: number;
+        distanceKm?: number;
+        ranges?: Array<{ maxKm: number; valueCents: number }>;
+        unit: string;
+      };
+      isActive: boolean;
+      createdAt: string;
+      updatedAt: string;
+    }>
+  >;
+  getCustomerFreightForProduct: (
+    customerId: string,
+    productId: string
+  ) => Promise<{
+    id: string;
+    customerId: string;
+    productId: string | null;
+    productDescription: string | null;
+    rule: {
+      id: string;
+      name: string;
+      type: "per_ton" | "per_ton_km" | "fixed_plus_ton" | "distance_range";
+      baseValueCents: number;
+      minValueCents?: number;
+      fixedValueCents?: number;
+      distanceKm?: number;
+      ranges?: Array<{ maxKm: number; valueCents: number }>;
+      unit: string;
+    };
+    isActive: boolean;
+    createdAt: string;
+    updatedAt: string;
+  } | null>;
+  setCustomerFreightRule: (input: {
+    customerId: string;
+    productId?: string | null;
+    rule: {
+      id: string;
+      name: string;
+      type: "per_ton" | "per_ton_km" | "fixed_plus_ton" | "distance_range";
+      baseValueCents: number;
+      minValueCents?: number;
+      fixedValueCents?: number;
+      distanceKm?: number;
+      ranges?: Array<{ maxKm: number; valueCents: number }>;
+      unit: string;
+    };
+  }) => Promise<unknown>;
+  removeCustomerFreightRule: (ruleId: string) => Promise<void>;
   listWindowsPrinters: () => Promise<WindowsPrinterSummary[]>;
   configureReceiptPrintProfile: (
     input: Omit<ConfigureReceiptPrintProfileInput, "identity">
