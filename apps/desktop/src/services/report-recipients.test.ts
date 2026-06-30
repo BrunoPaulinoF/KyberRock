@@ -44,6 +44,48 @@ describe("report recipients", () => {
     }
   });
 
+  it("adds WhatsApp columns before creating indexes on legacy recipient tables", () => {
+    const db = openDesktopDatabase({ databasePath: ":memory:", fileMustExist: false });
+
+    try {
+      runDesktopMigrations(db);
+      db.prepare(
+        `
+        INSERT INTO companies (id, legal_name, trade_name, created_at, updated_at)
+        VALUES ('comp-1', 'Empresa', 'Empresa', datetime('now'), datetime('now'))
+      `
+      ).run();
+      db.exec(`
+        CREATE TABLE report_recipients (
+          id TEXT PRIMARY KEY,
+          company_id TEXT NOT NULL REFERENCES companies(id),
+          email TEXT,
+          display_name TEXT,
+          is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+          needs_push INTEGER NOT NULL DEFAULT 0,
+          sync_status TEXT NOT NULL DEFAULT 'pending' CHECK (sync_status IN ('synced', 'pending', 'error')),
+          last_synced_at TEXT,
+          last_error TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          deleted_at TEXT,
+          UNIQUE(company_id, email)
+        );
+      `);
+
+      const recipient = createReportRecipient(db, {
+        companyId: "comp-1",
+        whatsappPhone: "(11) 99999-9999",
+        sendEmail: false,
+        sendWhatsapp: true
+      });
+
+      expect(recipient.whatsappPhone).toBe("5511999999999");
+    } finally {
+      db.close();
+    }
+  });
+
   it("updates a recipient to send through both channels", () => {
     const db = createDatabase();
 

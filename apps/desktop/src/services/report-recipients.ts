@@ -143,14 +143,14 @@ function ensureRecipientsTable(database: DesktopDatabase): void {
       deleted_at TEXT,
       UNIQUE(company_id, email)
     );`;
-  database.exec(`
-    ${createTableSql}
+  const createIndexesSql = `
     CREATE INDEX IF NOT EXISTS idx_report_recipients_company_active
       ON report_recipients(company_id, is_active, deleted_at);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_report_recipients_company_whatsapp
       ON report_recipients(company_id, whatsapp_phone)
       WHERE whatsapp_phone IS NOT NULL;
-  `);
+  `;
+  database.exec(createTableSql);
   const columns = database.prepare("PRAGMA table_info(report_recipients)").all() as Array<{
     name: string;
   }>;
@@ -214,6 +214,7 @@ function ensureRecipientsTable(database: DesktopDatabase): void {
         WHERE whatsapp_phone IS NOT NULL;
     `);
   }
+  database.exec(createIndexesSql);
 }
 
 export function listReportRecipients(
