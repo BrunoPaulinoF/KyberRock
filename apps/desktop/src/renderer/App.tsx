@@ -48,6 +48,7 @@ import {
   parseMoneyInputToCents
 } from "@kyberrock/shared";
 import { ActivationGate } from "./ActivationGate";
+import { CrudFormModal } from "./CrudFormModal";
 import { BlockedScreen } from "./BlockedScreen";
 import { DashboardView } from "./DashboardView";
 import { DocumentationView } from "./DocumentationView";
@@ -5259,7 +5260,7 @@ function VehicleListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
       ) : null}
 
       {showForm ? (
-        <div style={styles.crudFormCard}>
+        <CrudFormModal onClose={() => setShowForm(false)}>
           <div style={styles.crudFormHeader}>
             <h3 style={styles.crudFormTitle}>{editingId ? "Editar Veiculo" : "Novo Veiculo"}</h3>
             {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
@@ -5308,7 +5309,7 @@ function VehicleListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
               </button>
             </div>
           </div>
-        </div>
+        </CrudFormModal>
       ) : null}
 
       {vehicles.length === 0 ? (
@@ -5600,7 +5601,7 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
       ) : null}
 
       {showForm ? (
-        <div style={styles.crudFormCard}>
+        <CrudFormModal onClose={() => setShowForm(false)} maxWidth={980}>
           <div style={styles.crudFormHeader}>
             <h3 style={styles.crudFormTitle}>
               {editingId ? "Editar Transportadora" : "Nova Transportadora"}
@@ -5701,7 +5702,7 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
               </button>
             </div>
           </div>
-        </div>
+        </CrudFormModal>
       ) : null}
 
       {carriers.length === 0 ? (
@@ -6720,7 +6721,7 @@ function SimpleCrudList({
       ) : null}
 
       {showForm ? (
-        <div style={styles.crudFormCard}>
+        <CrudFormModal onClose={() => setShowForm(false)}>
           <div style={styles.crudFormHeader}>
             <h3 style={styles.crudFormTitle}>
               {editingId ? `Editar ${entityLabel}` : `Novo ${entityLabel}`}
@@ -6776,7 +6777,7 @@ function SimpleCrudList({
               </button>
             </div>
           </div>
-        </div>
+        </CrudFormModal>
       ) : null}
 
       {items.length === 0 ? (
@@ -7366,20 +7367,12 @@ const styles = {
     flexWrap: "wrap" as const,
     alignItems: "center"
   },
-  crudFormCard: {
-    marginBottom: "12px",
-    border: "1px solid var(--kr-border)",
-    borderRadius: "14px",
-    background: "var(--kr-surface)",
-    boxShadow: "var(--kr-shadow)",
-    overflow: "hidden" as const
-  },
   crudFormHeader: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
     gap: "8px",
-    padding: "10px 12px",
+    padding: "14px 56px 14px 18px",
     borderBottom: "1px solid var(--kr-border)",
     background: "var(--kr-surface-soft)",
     flexWrap: "wrap" as const
@@ -7387,26 +7380,27 @@ const styles = {
   crudFormTitle: {
     margin: 0,
     color: "var(--kr-text-strong)",
-    fontSize: "14px"
+    fontSize: "16px",
+    fontWeight: 700
   },
   crudFormGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-    gap: "10px",
-    padding: "12px"
+    gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+    gap: "14px",
+    padding: "18px"
   },
   crudFormSection: {
     display: "grid",
     alignContent: "start",
-    gap: "8px",
-    padding: "10px",
+    gap: "10px",
+    padding: "14px",
     border: "1px solid var(--kr-border)",
     borderRadius: "12px",
     background: "var(--kr-surface-soft)",
     minWidth: 0
   },
   crudFormSectionTitle: {
-    margin: "0 0 2px 0",
+    margin: "0 0 4px 0",
     fontSize: "11px",
     fontWeight: 900,
     textTransform: "uppercase" as const,
@@ -7418,9 +7412,12 @@ const styles = {
     justifyContent: "space-between",
     alignItems: "center",
     gap: "8px",
-    padding: "10px 12px",
+    padding: "14px 18px",
     borderTop: "1px solid var(--kr-border)",
-    flexWrap: "wrap" as const
+    flexWrap: "wrap" as const,
+    background: "var(--kr-surface-soft)",
+    borderBottomLeftRadius: "16px",
+    borderBottomRightRadius: "16px"
   },
   crudTable: {
     overflowX: "auto" as const,

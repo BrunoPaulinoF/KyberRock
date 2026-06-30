@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 
 import type { KyberRockDesktopApi } from "../preload/api-types";
+import { CrudFormModal } from "./CrudFormModal";
 
 interface RecipientRow {
   id: string;
@@ -71,23 +72,40 @@ const styles = {
     overflow: "hidden" as const,
     minHeight: 0
   },
+  formHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "14px 56px 14px 18px",
+    borderBottom: "1px solid var(--kr-border)",
+    background: "var(--kr-surface-soft)",
+    flexWrap: "wrap" as const,
+    gap: "8px"
+  },
+  formTitle: {
+    margin: 0,
+    fontSize: "16px",
+    fontWeight: 700,
+    color: "var(--kr-text-strong)"
+  },
   formGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-    gap: "10px"
+    gap: "14px",
+    padding: "18px"
   },
   formSection: {
     display: "grid",
     gap: "10px",
     alignContent: "start",
-    padding: "10px",
+    padding: "14px",
     border: "1px solid var(--kr-border)",
     borderRadius: "12px",
     background: "var(--kr-surface-soft)",
     minWidth: 0
   },
   formSectionTitle: {
-    margin: 0,
+    margin: "0 0 4px 0",
     fontSize: "11px",
     fontWeight: 900,
     textTransform: "uppercase" as const,
@@ -99,10 +117,10 @@ const styles = {
     justifyContent: "space-between",
     alignItems: "center",
     gap: "8px",
-    marginTop: "12px",
-    paddingTop: "12px",
+    padding: "14px 18px",
     borderTop: "1px solid var(--kr-border)",
-    flexWrap: "wrap" as const
+    flexWrap: "wrap" as const,
+    background: "var(--kr-surface-soft)"
   },
   fieldLabel: {
     display: "flex",
@@ -370,10 +388,15 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
       </header>
 
       {showForm ? (
-      <div style={styles.card}>
-        <h3 style={{ margin: 0, marginBottom: "12px", fontSize: "15px" }}>
-          {editingId ? "Editar destinatario" : "Adicionar destinatario"}
-        </h3>
+      <CrudFormModal onClose={resetForm} maxWidth={920}>
+      <Fragment>
+        <div style={styles.formHeader}>
+          <h3 style={styles.formTitle}>
+            {editingId ? "Editar destinatario" : "Adicionar destinatario"}
+          </h3>
+          {error ? <p style={{ ...styles.error, margin: 0 }}>{error}</p> : null}
+          {success ? <p style={{ ...styles.success, margin: 0 }}>{success}</p> : null}
+        </div>
         <div style={styles.formGrid}>
           <section style={styles.formSection}>
             <h4 style={styles.formSectionTitle}>Identificacao</h4>
@@ -463,8 +486,6 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
             </label>
           </section>
         </div>
-        {error ? <p style={{ ...styles.error, marginTop: "12px" }}>{error}</p> : null}
-        {success ? <p style={{ ...styles.success, marginTop: "12px" }}>{success}</p> : null}
         <div style={styles.formFooter}>
           <p style={styles.helperText}>
             O envio automatico ocorre no horario agendado via Edge Function.
@@ -478,7 +499,8 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
             </button>
           </div>
         </div>
-      </div>
+      </Fragment>
+      </CrudFormModal>
       ) : null}
 
       {!showForm && success ? <p style={styles.success}>{success}</p> : null}

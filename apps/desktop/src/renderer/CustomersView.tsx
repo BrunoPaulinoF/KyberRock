@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   isValidDocument,
@@ -22,6 +22,7 @@ import {
 } from "./inputs";
 import type { CepLookupResult } from "./inputs";
 import type { CustomerCacheEntry, CustomerFormData } from "./customers.types";
+import { CrudFormModal } from "./CrudFormModal";
 import { PriceChangePasswordDialog } from "./PriceChangePasswordDialog";
 
 const initialForm: CustomerFormData = {
@@ -193,17 +194,17 @@ const styles = {
   }),
   formShell: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-    gap: "10px",
-    padding: "10px"
+    gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+    gap: "14px",
+    padding: "18px"
   },
   formSection: {
     display: "grid",
-    gap: "2px",
+    gap: "6px",
     alignContent: "start",
-    padding: "10px",
+    padding: "14px",
     border: "1px solid var(--kr-border)",
-    borderRadius: "10px",
+    borderRadius: "12px",
     background: "var(--kr-surface-soft)",
     minWidth: 0
   },
@@ -217,8 +218,8 @@ const styles = {
   },
   fieldRow: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
-    gap: "8px"
+    gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+    gap: "10px"
   },
   compactScrollList: {
     display: "grid",
@@ -231,16 +232,17 @@ const styles = {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    padding: "8px 12px",
+    padding: "14px 18px",
     borderTop: "1px solid var(--kr-border)",
     flexWrap: "wrap" as const,
-    gap: "8px"
+    gap: "8px",
+    background: "var(--kr-surface-soft)"
   },
   formHeader: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    padding: "8px 12px",
+    padding: "14px 56px 14px 18px",
     borderBottom: "1px solid var(--kr-border)",
     background: "var(--kr-surface-soft)",
     flexWrap: "wrap" as const,
@@ -248,7 +250,8 @@ const styles = {
   },
   formTitle: {
     margin: 0,
-    fontSize: "14px",
+    fontSize: "16px",
+    fontWeight: 700,
     color: "var(--kr-text-strong)"
   },
   pill: (color: string, bg: string) => ({
@@ -680,7 +683,8 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
       {feedback ? <p style={styles.message}>{feedback}</p> : null}
 
       {showForm ? (
-        <div style={styles.card}>
+        <CrudFormModal onClose={() => setShowForm(false)} maxWidth={1040}>
+        <Fragment>
           <div style={styles.formHeader}>
             <h3 style={styles.formTitle}>
               {editingId
@@ -979,7 +983,8 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
               </button>
             </div>
           </div>
-        </div>
+        </Fragment>
+        </CrudFormModal>
       ) : null}
 
       {pendingSpecialPriceAction ? (
