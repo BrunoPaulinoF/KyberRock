@@ -808,45 +808,7 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
             </section>
 
             <section style={styles.formSection}>
-              <h4 style={styles.formSectionTitle}>Transportadoras vinculadas</h4>
-              {editingId ? (
-                <div style={styles.compactScrollList}>
-                  {carriers.length === 0 ? (
-                    <p style={styles.cellMuted}>Nenhuma transportadora cadastrada.</p>
-                  ) : (
-                    carriers.map((carrier) => (
-                      <label key={carrier.id} style={styles.checkbox}>
-                        <input
-                          type="checkbox"
-                          checked={linkedCarrierIds.includes(carrier.id)}
-                          onChange={() => void handleToggleCarrier(carrier.id)}
-                        />
-                        {carrier.name}
-                      </label>
-                    ))
-                  )}
-                </div>
-              ) : (
-                <p style={styles.cellMuted}>Salve o cliente antes de vincular transportadoras.</p>
-              )}
-            </section>
-
-            <section style={styles.formSection}>
               <h4 style={styles.formSectionTitle}>Comercial</h4>
-              <Field label="Transportadora">
-                <select
-                  value={form.defaultCarrierId}
-                  onChange={(e) => setForm({ ...form, defaultCarrierId: e.target.value })}
-                  style={getInputStyle(false)}
-                >
-                  <option value="">Selecione</option>
-                  {carriers.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
               <Field label="Condicao de pagamento">
                 <select
                   value={form.defaultPaymentTermId}
@@ -891,6 +853,29 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
                   placeholder="Anotacoes internas"
                 />
               </Field>
+              <div style={{ display: "grid", gap: "8px", marginTop: "8px" }}>
+                <h4 style={styles.formSectionTitle}>Transportadoras vinculadas</h4>
+                {editingId ? (
+                  <div style={styles.compactScrollList}>
+                    {carriers.length === 0 ? (
+                      <p style={styles.cellMuted}>Nenhuma transportadora cadastrada.</p>
+                    ) : (
+                      carriers.map((carrier) => (
+                        <label key={carrier.id} style={styles.checkbox}>
+                          <input
+                            type="checkbox"
+                            checked={linkedCarrierIds.includes(carrier.id)}
+                            onChange={() => void handleToggleCarrier(carrier.id)}
+                          />
+                          {carrier.name}
+                        </label>
+                      ))
+                    )}
+                  </div>
+                ) : (
+                  <p style={styles.cellMuted}>Salve o cliente antes de vincular transportadoras.</p>
+                )}
+              </div>
               <div style={{ display: "grid", gap: "8px", marginTop: "8px" }}>
                 <h4 style={styles.formSectionTitle}>Precos especiais</h4>
                 {editingId ? (
