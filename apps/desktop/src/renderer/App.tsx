@@ -171,6 +171,12 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [printProfiles, setPrintProfiles] = useState<PrintProfileSummary[]>([]);
   const [printReceipts, setPrintReceipts] = useState<PrintReceiptSummary[]>([]);
   const [selectedPrinterName, setSelectedPrinterName] = useState("");
+  const [receiptLogoDataUrl, setReceiptLogoDataUrl] = useState<string | null>(null);
+  const [receiptLogoWidthMm, setReceiptLogoWidthMm] = useState("24");
+  const [receiptLogoHeightMm, setReceiptLogoHeightMm] = useState("16");
+  const [receiptLogoFit, setReceiptLogoFit] = useState<PrintProfileSummary["receiptLogo"]["fit"]>(
+    "contain"
+  );
   const [form, setForm] = useState<WeighingFormState>(initialWeighingForm);
   const [activeView, setActiveView] = useState<ActiveView>("new-weighing");
   const [formError, setFormError] = useState<string | null>(null);
@@ -635,6 +641,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       setPrinters(nextPrinters);
       setPrintProfiles(nextProfiles);
       setPrintReceipts(nextReceipts);
+      applyReceiptProfileForm(nextProfiles[0]);
       setSelectedPrinterName(
         (current) =>
           current ||
@@ -795,6 +802,18 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     ]);
     setPrintProfiles(nextProfiles);
     setPrintReceipts(nextReceipts);
+    applyReceiptProfileForm(nextProfiles[0]);
+  }
+
+  function applyReceiptProfileForm(profile: PrintProfileSummary | undefined): void {
+    if (!profile) {
+      return;
+    }
+
+    setReceiptLogoDataUrl(profile.receiptLogo.dataUrl);
+    setReceiptLogoWidthMm(String(profile.receiptLogo.widthMm));
+    setReceiptLogoHeightMm(String(profile.receiptLogo.heightMm));
+    setReceiptLogoFit(profile.receiptLogo.fit);
   }
 
   async function handleExportBackup(): Promise<void> {
@@ -1217,12 +1236,35 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     try {
       const profile = await desktopApi.configureReceiptPrintProfile({
         windowsPrinterName: printerName,
-        paperWidthMm: 80
+        paperWidthMm: 80,
+        copies: 2,
+        receiptLogoDataUrl: receiptLogoDataUrl,
+        receiptLogoWidthMm: Number(receiptLogoWidthMm),
+        receiptLogoHeightMm: Number(receiptLogoHeightMm),
+        receiptLogoFit
       });
       setMessage(`Impressora de cupom configurada: ${profile.windowsPrinterName}.`);
       await refreshPrintData();
     } catch (error) {
       setMessage(getErrorMessage(error));
+    }
+  }
+
+  async function handleReceiptLogoFile(file: File | undefined): Promise<void> {
+    if (!file) {
+      return;
+    }
+
+    if (!file.type.startsWith("image/")) {
+      setMessage("Selecione um arquivo de imagem para a logo do cupom.");
+      return;
+    }
+
+    try {
+      setReceiptLogoDataUrl(await readFileAsDataUrl(file));
+      setMessage("Logo carregada. Ajuste tamanho/formato e salve o perfil.");
+    } catch (error) {
+      setMessage(`Falha ao carregar logo: ${getErrorMessage(error)}.`);
     }
   }
 
@@ -2157,6 +2199,102 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   {printers.length === 0 ? (
                     <p style={styles.errorMessage}>Nenhuma impressora instalada foi encontrada.</p>
                   ) : null}
+                  <div style={{ display: "grid", gap: "10px", margin: "12px 0" }}>
+                    <label style={styles.fieldLabel}>
+                      Logo do cupom
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={(event) => {
+                          void handleReceiptLogoFile(event.currentTarget.files?.[0]);
+                          event.currentTarget.value = "";
+                        }}
+                        style={styles.input}
+                      />
+                    </label>
+                    {receiptLogoDataUrl ? (
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "12px",
+                          padding: "10px",
+                          border: "1px solid var(--kr-border)",
+                          borderRadius: "12px"
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: "96px",
+                            height: "64px",
+                            border: "1px dashed var(--kr-border)",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            overflow: "hidden",
+                            background: "#fff"
+                          }}
+                        >
+                          <img
+                            src={receiptLogoDataUrl}
+                            alt="Previa da logo do cupom"
+                            style={{ width: "100%", height: "100%", objectFit: receiptLogoFit }}
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setReceiptLogoDataUrl(null)}
+                          style={styles.secondaryButton}
+                        >
+                          Remover logo
+                        </button>
+                      </div>
+                    ) : (
+                      <p style={styles.muted}>
+                        Sem logo configurada. O cupom usara o nome da unidade no topo.
+                      </p>
+                    )}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "10px" }}>
+                      <label style={styles.fieldLabel}>
+                        Largura da logo (mm)
+                        <input
+                          type="number"
+                          min="10"
+                          max="60"
+                          value={receiptLogoWidthMm}
+                          onChange={(event) => setReceiptLogoWidthMm(event.target.value)}
+                          style={styles.input}
+                        />
+                      </label>
+                      <label style={styles.fieldLabel}>
+                        Altura da logo (mm)
+                        <input
+                          type="number"
+                          min="8"
+                          max="35"
+                          value={receiptLogoHeightMm}
+                          onChange={(event) => setReceiptLogoHeightMm(event.target.value)}
+                          style={styles.input}
+                        />
+                      </label>
+                      <label style={styles.fieldLabel}>
+                        Formato da logo
+                        <select
+                          value={receiptLogoFit}
+                          onChange={(event) =>
+                            setReceiptLogoFit(
+                              event.target.value as PrintProfileSummary["receiptLogo"]["fit"]
+                            )
+                          }
+                          style={styles.input}
+                        >
+                          <option value="contain">Ajustar sem cortar</option>
+                          <option value="cover">Preencher cortando</option>
+                          <option value="fill">Esticar no espaco</option>
+                        </select>
+                      </label>
+                    </div>
+                  </div>
                   <button
                     type="button"
                     onClick={handleConfigureReceiptPrinter}
@@ -2181,6 +2319,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   ) : (
                     <p>
                       {printProfiles[0].windowsPrinterName} - {printProfiles[0].paperWidthMm} mm
+                      {` - ${printProfiles[0].copies} vias`}
                     </p>
                   )}
                 </article>
@@ -2603,6 +2742,22 @@ function GlobalUiPolish() {
 
 function getWindowDesktopApi(): KyberRockDesktopApi | undefined {
   return typeof window === "undefined" ? undefined : window.kyberrockDesktop;
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+        return;
+      }
+
+      reject(new Error("Arquivo de imagem invalido."));
+    });
+    reader.addEventListener("error", () => reject(reader.error ?? new Error("Falha na leitura.")));
+    reader.readAsDataURL(file);
+  });
 }
 
 interface SidebarItemProps {

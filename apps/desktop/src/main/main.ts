@@ -1229,18 +1229,69 @@ function createElectronFiscalDocumentPrinter(parentWindow: BrowserWindow): Fisca
 }
 
 function buildReceiptHtml(payload: ReceiptPrintPayload): string {
+  const snapshot = payload.snapshot;
+  const logo = snapshot.receiptLogo;
+  const logoMarkup = logo.dataUrl
+    ? `<img src="${escapeHtml(logo.dataUrl)}" alt="Logo" />`
+    : `<div class="logo-fallback">${escapeHtml(snapshot.unitName)}</div>`;
+  const bodyLines = snapshot.lines.slice(6).join("\n");
+
   return `<!doctype html>
 <html lang="pt-BR">
   <head>
     <meta charset="utf-8" />
     <style>
       @page { size: ${payload.paperWidthMm}mm auto; margin: 4mm; }
-      body { margin: 0; font-family: Consolas, monospace; font-size: 11px; color: #000; }
-      pre { white-space: pre-wrap; margin: 0; }
+      body { margin: 0; font-family: Consolas, "Courier New", monospace; font-size: 11px; color: #000; }
+      .receipt { width: 100%; }
+      .top-company { font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+      .rule { border-top: 1px solid #000; margin: 4px 0 8px; }
+      .header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+      .logo-slot { width: ${logo.widthMm}mm; height: ${logo.heightMm}mm; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+      .logo-slot img { width: 100%; height: 100%; object-fit: ${logo.fit}; }
+      .logo-fallback { font-size: 18px; font-weight: 800; text-align: center; line-height: 1.05; }
+      .datetime { min-width: 30mm; font-size: 14px; font-weight: 700; line-height: 1.35; }
+      .copy { margin: 8px 0 2px; text-align: center; font-size: 17px; font-weight: 900; letter-spacing: 0.04em; }
+      .via { text-align: center; font-weight: 800; }
+      pre { white-space: pre-wrap; margin: 0; font: inherit; line-height: 1.28; }
     </style>
   </head>
-  <body><pre>${escapeHtml(payload.contentText)}</pre></body>
+  <body>
+    <div class="receipt">
+      <div class="top-company">${escapeHtml(snapshot.companyName)}</div>
+      <div class="rule"></div>
+      <div class="header">
+        <div class="logo-slot">${logoMarkup}</div>
+        <div class="datetime">
+          <div>DATA: ${escapeHtml(formatReceiptDate(snapshot.printedAt))}</div>
+          <div>HORA: ${escapeHtml(formatReceiptTime(snapshot.printedAt))}</div>
+        </div>
+      </div>
+      <div class="copy">COPIA NRO ${snapshot.receiptNumber.toString().padStart(9, "0")}</div>
+      <div class="via">${snapshot.copyNumber > 1 ? `${snapshot.copyNumber}a VIA` : "1a VIA"}</div>
+      <pre>${escapeHtml(bodyLines)}</pre>
+    </div>
+  </body>
 </html>`;
+}
+
+function formatReceiptDate(value: string): string {
+  return new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    timeZone: "America/Sao_Paulo"
+  }).format(new Date(value));
+}
+
+function formatReceiptTime(value: string): string {
+  return new Intl.DateTimeFormat("pt-BR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    timeZone: "America/Sao_Paulo"
+  }).format(new Date(value));
 }
 
 function escapeHtml(value: string): string {

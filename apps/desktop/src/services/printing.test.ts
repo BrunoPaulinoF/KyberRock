@@ -38,13 +38,14 @@ describe("printing", () => {
       expect(receipt).toMatchObject({
         operationId: operation.id,
         receiptNumber: 1,
-        copyNumber: 1,
+        copyNumber: 2,
         printerName: "TERMICA-80",
         status: "printed",
         errorMessage: null
       });
-      expect(printer.calls).toHaveLength(1);
-      expect(printer.calls[0].lines).toContain("Cupom: 1");
+      expect(printer.calls).toHaveLength(2);
+      expect(printer.calls[0].lines).toContain("COPIA NRO 000000001");
+      expect(printer.calls[1].lines).toContain("2a VIA");
       expect(printer.calls[0].lines).toContain("Cliente: Cliente Teste");
       expect(
         database
@@ -69,7 +70,7 @@ describe("printing", () => {
     }
   });
 
-  it("reprints a receipt as a second copy", async () => {
+  it("reprints a receipt as the next copy", async () => {
     const database = createDatabase();
     const printer = createFakePrinter();
 
@@ -93,12 +94,12 @@ describe("printing", () => {
       expect(reprint).toMatchObject({
         operationId: operation.id,
         receiptNumber: 1,
-        copyNumber: 2,
+        copyNumber: 3,
         status: "printed"
       });
-      expect(printer.calls).toHaveLength(2);
-      expect(printer.calls[1].lines).toContain("SEGUNDA VIA");
-      expect(database.prepare("SELECT COUNT(*) FROM print_receipts").pluck().get()).toBe(2);
+      expect(printer.calls).toHaveLength(3);
+      expect(printer.calls[2].lines).toContain("3a VIA");
+      expect(database.prepare("SELECT COUNT(*) FROM print_receipts").pluck().get()).toBe(3);
       expect(
         database
           .prepare("SELECT action FROM audit_logs WHERE action = 'receipt_reprinted'")
@@ -185,13 +186,13 @@ describe("printing", () => {
       expect(printer.calls).toHaveLength(1);
       expect(printer.calls[0].lines).toContain("=== CUPOM DE TESTE ===");
       expect(printer.calls[0].lines).toContain("Cliente: Cliente Exemplo");
-      expect(printer.calls[0].lines).toContain("Placa: ABC1D23");
+      expect(printer.calls[0].lines).toContain("Veiculo: ABC1D23");
       expect(printer.calls[0].lines).toContain("Motorista: Motorista Teste");
-      expect(printer.calls[0].lines).toContain("Produto: Brita 1 (Teste)");
-      expect(printer.calls[0].lines).toContain("Entrada: 12.000 kg");
-      expect(printer.calls[0].lines).toContain("Saida: 18.500 kg");
-      expect(printer.calls[0].lines).toContain("Liquido: 6.500 kg");
-      expect(printer.calls[0].lines.some(line => line.includes("R$") && line.includes("780,00"))).toBe(true);
+      expect(printer.calls[0].lines).toContain("0001-BRITA 1 (TESTE)");
+      expect(printer.calls[0].lines).toContain("ENTRADA <TARA>: 12,000 <TON>");
+      expect(printer.calls[0].lines).toContain("SAIDA <CARREGADO>: 18,500 <TON>");
+      expect(printer.calls[0].lines).toContain("LIQUIDO: 6,500 <TON>");
+      expect(printer.calls[0].lines.some((line) => line.includes("R$") && line.includes("780,00"))).toBe(true);
 
       // Nao deve criar operacao real
       expect(listPrintReceipts(database)).toHaveLength(1);
