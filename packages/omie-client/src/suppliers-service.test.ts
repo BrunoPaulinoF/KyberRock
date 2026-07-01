@@ -56,6 +56,8 @@ describe("suppliers-service", () => {
 
   it("classifies multiple tags without treating Fornecedor as Transportadora", () => {
     expect(hasClienteTag({ tags: [{ tag: "Cliente" }, { tag: "Fornecedor" }] })).toBe(true);
+    expect(hasClienteTag({})).toBe(true);
+    expect(hasClienteTag({ tags: [{ tag: "Fornecedor" }] })).toBe(false);
     expect(hasTransportadoraTag({ tags: [{ tag: "Cliente" }, { tag: "Fornecedor" }] })).toBe(
       false
     );

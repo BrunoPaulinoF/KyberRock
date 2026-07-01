@@ -265,14 +265,17 @@ Deno.serve(async (req) => {
   try {
     if (action === "pull_reference_data") {
       const customersPage = resume.customersPage ?? 1;
+      const productsPage = resume.productsPage ?? 1;
+      const paymentTermsPage = resume.paymentTermsPage ?? 1;
       const customersResult = resume.customersFinished
         ? emptyCustomerPage(customersPage)
         : await listCustomersPage(credentials, customersPage);
-
-      // Produtos e condicoes de pagamento nao sao sincronizados do OMIE
-      // pois sao mantidos manualmente no KyberRock.
-      const productsResult = emptyPage<OmieProduct>(1);
-      const paymentTermsResult = emptyPage<OmiePaymentTerm>(1);
+      const productsResult = resume.productsFinished
+        ? emptyPage<OmieProduct>(productsPage)
+        : await listProductsPage(credentials, productsPage);
+      const paymentTermsResult = resume.paymentTermsFinished
+        ? emptyPage<OmiePaymentTerm>(paymentTermsPage)
+        : await listPaymentTermsPage(credentials, paymentTermsPage);
 
       const checkedAt = new Date().toISOString();
       await supabase
@@ -297,15 +300,15 @@ Deno.serve(async (req) => {
           customersTotalPages: customersResult.totalPages,
           customersTotalRecords: customersResult.totalRecords,
           productsPage: productsResult.page,
-          productsReturned: 0,
-          productsFinished: true,
-          productsTotalPages: null,
-          productsTotalRecords: null,
+          productsReturned: productsResult.items.length,
+          productsFinished: productsResult.finished,
+          productsTotalPages: productsResult.totalPages,
+          productsTotalRecords: productsResult.totalRecords,
           paymentTermsPage: paymentTermsResult.page,
-          paymentTermsReturned: 0,
-          paymentTermsFinished: true,
-          paymentTermsTotalPages: null,
-          paymentTermsTotalRecords: null,
+          paymentTermsReturned: paymentTermsResult.items.length,
+          paymentTermsFinished: paymentTermsResult.finished,
+          paymentTermsTotalPages: paymentTermsResult.totalPages,
+          paymentTermsTotalRecords: paymentTermsResult.totalRecords,
           suppliersPage: customersResult.page,
           suppliersReturned: customersResult.returned,
           suppliersFinished: customersResult.finished,
@@ -585,7 +588,6 @@ function mapOmieCustomerRaw(item: OmieCustomerRaw): OmieCustomer | null {
   };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function listProductsPage(
   credentials: OmieCredentials,
   page: number
@@ -791,7 +793,7 @@ function computeFinished(
 }
 
 function hasClienteTag(customer: OmieCustomer): boolean {
-  return hasOmieTag(customer.tagsJson, "cliente");
+  return hasOmieTag(customer.tagsJson, "cliente") || getOmieTagValues(customer.tagsJson).length === 0;
 }
 
 function hasTransportadoraTag(customer: OmieCustomer): boolean {
@@ -799,7 +801,13 @@ function hasTransportadoraTag(customer: OmieCustomer): boolean {
 }
 
 function hasOmieTag(tagsJson: Record<string, unknown> | unknown[] | null, expected: string): boolean {
-  if (!tagsJson) return false;
+  const tagValues = getOmieTagValues(tagsJson);
+  const normalizedExpected = normalizeTag(expected);
+  return tagValues.some((tag) => normalizeTag(tag) === normalizedExpected);
+}
+
+function getOmieTagValues(tagsJson: Record<string, unknown> | unknown[] | null): string[] {
+  if (!tagsJson) return [];
   const tagValues: string[] = [];
   if (Array.isArray(tagsJson)) {
     tagValues.push(...tagsJson.map(readTagValue));
@@ -807,8 +815,7 @@ function hasOmieTag(tagsJson: Record<string, unknown> | unknown[] | null, expect
     const tags = tagsJson.tags;
     if (Array.isArray(tags)) tagValues.push(...tags.map(readTagValue));
   }
-  const normalizedExpected = normalizeTag(expected);
-  return tagValues.some((tag) => normalizeTag(tag) === normalizedExpected);
+  return tagValues;
 }
 
 function readTagValue(tag: unknown): string {
@@ -846,7 +853,6 @@ function mapCustomerToCarrier(customer: OmieCustomer): OmieSupplier {
   };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function listPaymentTermsPage(
   credentials: OmieCredentials,
   page: number

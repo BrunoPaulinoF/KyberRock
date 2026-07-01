@@ -123,11 +123,17 @@ export function hasTransportadoraTag(supplier: TaggedOmieEntity): boolean {
 }
 
 export function hasClienteTag(supplier: TaggedOmieEntity): boolean {
-  return hasSupplierTag(supplier, "cliente");
+  return hasSupplierTag(supplier, "cliente") || getSupplierTagValues(supplier).length === 0;
 }
 
 function hasSupplierTag(supplier: TaggedOmieEntity, expectedTag: string): boolean {
-  if (!supplier.tags) return false;
+  const tagValues = getSupplierTagValues(supplier);
+  const normalizedExpected = normalizeTag(expectedTag);
+  return tagValues.some((tag) => normalizeTag(tag) === normalizedExpected);
+}
+
+function getSupplierTagValues(supplier: TaggedOmieEntity): string[] {
+  if (!supplier.tags) return [];
   const tagValues: string[] = [];
   if (Array.isArray(supplier.tags)) {
     tagValues.push(...supplier.tags.map(readTagValue));
@@ -137,8 +143,7 @@ function hasSupplierTag(supplier: TaggedOmieEntity, expectedTag: string): boolea
       tagValues.push(...tagsArray.map(readTagValue));
     }
   }
-  const normalizedExpected = normalizeTag(expectedTag);
-  return tagValues.some((tag) => normalizeTag(tag) === normalizedExpected);
+  return tagValues;
 }
 
 function readTagValue(tag: unknown): string {
