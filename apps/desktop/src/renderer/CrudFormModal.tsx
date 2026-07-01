@@ -72,8 +72,9 @@ export function CrudFormModal({ onClose, children, maxWidth = 920 }: CrudFormMod
   }, [onClose]);
 
   return (
-    <div style={overlayStyle} onClick={onClose} role="presentation">
+    <div className="kr-modal-overlay" style={overlayStyle} onClick={onClose} role="presentation">
       <div
+        className="kr-modal-panel"
         style={{ ...panelBaseStyle, maxWidth }}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
@@ -104,6 +105,12 @@ export function CrudFormModal({ onClose, children, maxWidth = 920 }: CrudFormMod
         @keyframes krModalPop {
           from { opacity: 0; transform: translateY(8px) scale(0.98); }
           to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .kr-modal-overlay,
+          .kr-modal-panel {
+            animation: none !important;
+          }
         }
       `}</style>
     </div>

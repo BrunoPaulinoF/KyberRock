@@ -140,9 +140,7 @@ export function LoaderDashboard() {
     const optimisticTimestamp = new Date().toISOString();
     setOperations((current) =>
       current.map((item) =>
-        item.id === operation.id
-          ? { ...item, loaderCompletedAt: optimisticTimestamp }
-          : item
+        item.id === operation.id ? { ...item, loaderCompletedAt: optimisticTimestamp } : item
       )
     );
 
@@ -159,9 +157,7 @@ export function LoaderDashboard() {
     } catch (error) {
       console.error("Error completing loading operation:", error);
       setErrorMessage(
-        error instanceof Error
-          ? error.message
-          : "Nao foi possivel marcar a carga como concluida."
+        error instanceof Error ? error.message : "Nao foi possivel marcar a carga como concluida."
       );
       setOperations((current) =>
         current.map((item) =>
@@ -201,13 +197,18 @@ export function LoaderDashboard() {
               <h2 id="in-progress-title" style={styles.columnTitle}>
                 Cargas em andamento
               </h2>
-              <p style={styles.columnDescription}>Atenda de cima para baixo. Ao concluir, a carga sai desta lista.</p>
+              <p style={styles.columnDescription}>
+                Atenda de cima para baixo. Ao concluir, a carga sai desta lista.
+              </p>
             </div>
             <span style={styles.badge}>{inProgressOperations.length}</span>
           </div>
 
           {isLoading ? (
-            <EmptyState title="Carregando fila..." description="Buscando cargas em aberto da unidade." />
+            <EmptyState
+              title="Carregando fila..."
+              description="Buscando cargas em aberto da unidade."
+            />
           ) : inProgressOperations.length === 0 ? (
             <EmptyState
               title="Nenhuma carga aguardando"
@@ -426,8 +427,8 @@ const styles: Record<string, CSSProperties> = {
     margin: "16px 0 0"
   },
   detailLabel: {
-    color: "#94a3b8",
-    fontSize: "11px",
+    color: "#64748b",
+    fontSize: "12px",
     fontWeight: 900,
     letterSpacing: "0.08em",
     textTransform: "uppercase"

@@ -44,6 +44,10 @@ interface Device {
   updatedAt: string;
 }
 
+const TWO_COLUMN_GRID = "repeat(auto-fit, minmax(min(100%, 320px), 1fr))";
+const COMPACT_GRID = "repeat(auto-fit, minmax(min(100%, 240px), 1fr))";
+const MODAL_Z_INDEX = 1200;
+
 export function AdminDashboard() {
   const { logout } = useAuth();
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -55,7 +59,11 @@ export function AdminDashboard() {
   const [generatedCode, setGeneratedCode] = useState<string | null>(null);
   const [editingCompany, setEditingCompany] = useState<Company | null>(null);
   const [editingUnit, setEditingUnit] = useState<Unit | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<{ type: "company" | "unit"; id: string; name: string } | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<{
+    type: "company" | "unit";
+    id: string;
+    name: string;
+  } | null>(null);
   const [confirmPassword, setConfirmPassword] = useState("");
 
   useEffect(() => {
@@ -66,49 +74,90 @@ export function AdminDashboard() {
     setIsLoading(true);
     try {
       const data = await callAdminFunction<{
-        companies: Array<{ id: string; name: string; legal_name: string; document: string | null; is_active: boolean; created_at: string; omie_app_key?: string | null; omie_app_secret?: string | null }>;
-        units: Array<{ id: string; company_id: string; name: string; timezone: string; is_active: boolean; desktop_activation_code?: string; desktop_activation_code_rotated_at?: string }>;
-        users: Array<{ id: string; email: string; name: string; company_id: string; unit_id: string; is_active: boolean }>;
-        devices: Array<{ id: string; company_id: string; unit_id: string; name: string; is_active: boolean; last_seen_at: string | null; created_at: string; updated_at: string }>;
+        companies: Array<{
+          id: string;
+          name: string;
+          legal_name: string;
+          document: string | null;
+          is_active: boolean;
+          created_at: string;
+          omie_app_key?: string | null;
+          omie_app_secret?: string | null;
+        }>;
+        units: Array<{
+          id: string;
+          company_id: string;
+          name: string;
+          timezone: string;
+          is_active: boolean;
+          desktop_activation_code?: string;
+          desktop_activation_code_rotated_at?: string;
+        }>;
+        users: Array<{
+          id: string;
+          email: string;
+          name: string;
+          company_id: string;
+          unit_id: string;
+          is_active: boolean;
+        }>;
+        devices: Array<{
+          id: string;
+          company_id: string;
+          unit_id: string;
+          name: string;
+          is_active: boolean;
+          last_seen_at: string | null;
+          created_at: string;
+          updated_at: string;
+        }>;
       }>("admin-api", { action: "list" });
 
-      setCompanies(data.companies.map((company) => ({
-        id: company.id,
-        name: company.name,
-        legalName: company.legal_name,
-        document: company.document ?? "",
-        isActive: company.is_active,
-        createdAt: company.created_at,
-        omieAppKeyMasked: company.omie_app_key ?? null,
-        omieAppSecretConfigured: Boolean(company.omie_app_secret)
-      })));
-      setUnits(data.units.map((unit) => ({
-        id: unit.id,
-        companyId: unit.company_id,
-        name: unit.name,
-        timezone: unit.timezone,
-        isActive: unit.is_active,
-        desktopActivationCode: unit.desktop_activation_code,
-        desktopActivationCodeRotatedAt: unit.desktop_activation_code_rotated_at
-      })));
-      setUsers(data.users.map((user) => ({
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        companyId: user.company_id,
-        unitId: user.unit_id,
-        isActive: user.is_active
-      })));
-      setDevices((data.devices ?? []).map((device) => ({
-        id: device.id,
-        companyId: device.company_id,
-        unitId: device.unit_id,
-        name: device.name,
-        isActive: device.is_active,
-        lastSeenAt: device.last_seen_at,
-        createdAt: device.created_at,
-        updatedAt: device.updated_at
-      })));
+      setCompanies(
+        data.companies.map((company) => ({
+          id: company.id,
+          name: company.name,
+          legalName: company.legal_name,
+          document: company.document ?? "",
+          isActive: company.is_active,
+          createdAt: company.created_at,
+          omieAppKeyMasked: company.omie_app_key ?? null,
+          omieAppSecretConfigured: Boolean(company.omie_app_secret)
+        }))
+      );
+      setUnits(
+        data.units.map((unit) => ({
+          id: unit.id,
+          companyId: unit.company_id,
+          name: unit.name,
+          timezone: unit.timezone,
+          isActive: unit.is_active,
+          desktopActivationCode: unit.desktop_activation_code,
+          desktopActivationCodeRotatedAt: unit.desktop_activation_code_rotated_at
+        }))
+      );
+      setUsers(
+        data.users.map((user) => ({
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          companyId: user.company_id,
+          unitId: user.unit_id,
+          isActive: user.is_active
+        }))
+      );
+      setDevices(
+        (data.devices ?? []).map((device) => ({
+          id: device.id,
+          companyId: device.company_id,
+          unitId: device.unit_id,
+          name: device.name,
+          isActive: device.is_active,
+          lastSeenAt: device.last_seen_at,
+          createdAt: device.created_at,
+          updatedAt: device.updated_at
+        }))
+      );
     } catch (error) {
       console.error("Error loading data:", error);
     } finally {
@@ -183,7 +232,7 @@ export function AdminDashboard() {
     const formData = new FormData(form);
     const email = formData.get("email") as string;
     const password = formData.get("password") as string;
-    
+
     try {
       await callAdminFunction("admin-api", {
         action: "create_loader",
@@ -194,12 +243,14 @@ export function AdminDashboard() {
           unitId: formData.get("unitId")
         }
       });
-      
+
       form.reset();
       await loadData();
     } catch (error) {
       console.error("Error creating user:", error);
-      alert("Erro ao criar usuário: " + (error instanceof Error ? error.message : "Erro desconhecido"));
+      alert(
+        "Erro ao criar usuário: " + (error instanceof Error ? error.message : "Erro desconhecido")
+      );
     }
   }
 
@@ -347,10 +398,23 @@ export function AdminDashboard() {
   }
 
   return (
-    <main style={{ minHeight: "100vh", background: "#f8fafc", padding: "32px" }}>
-      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "32px" }}>
+    <main style={{ minHeight: "100vh", background: "#f8fafc", padding: "clamp(16px, 3vw, 32px)" }}>
+      <header
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: "16px",
+          flexWrap: "wrap",
+          marginBottom: "32px"
+        }}
+      >
         <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-          <img src="/kyberrocklogo.png" alt="KyberRock" style={{ width: "48px", height: "48px", objectFit: "contain" }} />
+          <img
+            src="/kyberrocklogo.png"
+            alt="KyberRock"
+            style={{ width: "48px", height: "48px", objectFit: "contain" }}
+          />
           <div>
             <h1 style={{ margin: 0, fontSize: "28px" }}>KyberRock Admin</h1>
             <p style={{ color: "#64748b", margin: "4px 0 0 0" }}>Gerenciamento de Pedreiras</p>
@@ -358,13 +422,20 @@ export function AdminDashboard() {
         </div>
         <button
           onClick={logout}
-          style={{ padding: "10px 20px", borderRadius: "10px", border: "1px solid #cbd5e1", background: "#fff", cursor: "pointer", fontWeight: 700 }}
+          style={{
+            padding: "10px 20px",
+            borderRadius: "10px",
+            border: "1px solid #cbd5e1",
+            background: "#fff",
+            cursor: "pointer",
+            fontWeight: 700
+          }}
         >
           Sair
         </button>
       </header>
 
-      <nav style={{ display: "flex", gap: "8px", marginBottom: "24px" }}>
+      <nav style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "24px" }}>
         <button
           onClick={() => setActiveTab("companies")}
           style={{
@@ -410,23 +481,39 @@ export function AdminDashboard() {
       </nav>
 
       {confirmDelete && (
-        <div style={{
-          position: "fixed",
-          top: 0, left: 0, right: 0, bottom: 0,
-          background: "rgba(0,0,0,0.5)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          zIndex: 2000
-        }}>
-          <div style={{ background: "#fff", padding: "24px", borderRadius: "16px", width: "100%", maxWidth: "400px" }}>
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: "rgba(0,0,0,0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: MODAL_Z_INDEX
+          }}
+        >
+          <div
+            style={{
+              background: "#fff",
+              padding: "24px",
+              borderRadius: "16px",
+              width: "100%",
+              maxWidth: "400px"
+            }}
+          >
             <h3 style={{ margin: "0 0 12px 0", color: "#dc2626" }}>Confirmar exclusao</h3>
             <p style={{ margin: "0 0 16px 0", fontSize: "14px", color: "#64748b" }}>
               {confirmDelete.type === "company"
                 ? `Tem certeza que deseja excluir a empresa "${confirmDelete.name}"? Todas as unidades vinculadas serao excluidas tambem.`
                 : `Tem certeza que deseja excluir a unidade "${confirmDelete.name}"?`}
             </p>
-            <form onSubmit={handleConfirmDelete} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+            <form
+              onSubmit={handleConfirmDelete}
+              style={{ display: "flex", flexDirection: "column", gap: "12px" }}
+            >
               <input
                 type="password"
                 placeholder="Senha do administrador"
@@ -436,10 +523,36 @@ export function AdminDashboard() {
                 style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
               />
               <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
-                <button type="submit" style={{ flex: 1, padding: "10px", borderRadius: "8px", border: "none", background: "#dc2626", color: "#fff", cursor: "pointer", fontWeight: 700 }}>
+                <button
+                  type="submit"
+                  style={{
+                    flex: 1,
+                    padding: "10px",
+                    borderRadius: "8px",
+                    border: "none",
+                    background: "#dc2626",
+                    color: "#fff",
+                    cursor: "pointer",
+                    fontWeight: 700
+                  }}
+                >
                   Confirmar exclusao
                 </button>
-                <button type="button" onClick={() => { setConfirmDelete(null); setConfirmPassword(""); }} style={{ flex: 1, padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1", background: "#fff", cursor: "pointer" }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConfirmDelete(null);
+                    setConfirmPassword("");
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: "10px",
+                    borderRadius: "8px",
+                    border: "1px solid #cbd5e1",
+                    background: "#fff",
+                    cursor: "pointer"
+                  }}
+                >
                   Cancelar
                 </button>
               </div>
@@ -453,75 +566,165 @@ export function AdminDashboard() {
       ) : (
         <>
           {activeTab === "companies" && (
-            <section style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
+            <section style={{ display: "grid", gridTemplateColumns: TWO_COLUMN_GRID, gap: "24px" }}>
               {/* Companies List */}
               <article style={{ background: "#fff", padding: "24px", borderRadius: "16px" }}>
                 <h2 style={{ margin: "0 0 16px 0" }}>Empresas</h2>
-                {companies.length === 0 && <p style={{ color: "#64748b" }}>Nenhuma empresa cadastrada.</p>}
-                {companies.map(company => (
-                  <div key={company.id} style={{ padding: "12px 0", borderBottom: "1px solid #e2e8f0" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                {companies.length === 0 && (
+                  <p style={{ color: "#64748b" }}>Nenhuma empresa cadastrada.</p>
+                )}
+                {companies.map((company) => (
+                  <div
+                    key={company.id}
+                    style={{ padding: "12px 0", borderBottom: "1px solid #e2e8f0" }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center"
+                      }}
+                    >
                       <div>
                         <strong>{company.name}</strong>
-                        <p style={{ margin: "2px 0 0 0", fontSize: "14px", color: "#64748b" }}>{company.legalName}</p>
+                        <p style={{ margin: "2px 0 0 0", fontSize: "14px", color: "#64748b" }}>
+                          {company.legalName}
+                        </p>
                         <p style={{ margin: "2px 0 0 0", fontSize: "12px", color: "#b91c1c" }}>
-                          {company.isActive ? "Desativar a empresa bloqueia o acesso de todos os desktops." : "Ativar a empresa libera o acesso de todos os desktops."}
+                          {company.isActive
+                            ? "Desativar a empresa bloqueia o acesso de todos os desktops."
+                            : "Ativar a empresa libera o acesso de todos os desktops."}
                         </p>
                       </div>
                       <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                        <span style={{
-                          padding: "4px 8px",
-                          borderRadius: "6px",
-                          fontSize: "12px",
-                          background: company.isActive ? "#dcfce7" : "#fee2e2",
-                          color: company.isActive ? "#166534" : "#991b1b"
-                        }}>
+                        <span
+                          style={{
+                            padding: "4px 8px",
+                            borderRadius: "6px",
+                            fontSize: "12px",
+                            background: company.isActive ? "#dcfce7" : "#fee2e2",
+                            color: company.isActive ? "#166534" : "#991b1b"
+                          }}
+                        >
                           {company.isActive ? "Ativa" : "Inativa"}
                         </span>
                         <button
                           onClick={() => handleToggleCompany(company.id, company.isActive)}
-                          style={{ padding: "6px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", background: "#fff", cursor: "pointer", fontSize: "12px" }}
+                          style={{
+                            padding: "6px 12px",
+                            borderRadius: "6px",
+                            border: "1px solid #cbd5e1",
+                            background: "#fff",
+                            cursor: "pointer",
+                            fontSize: "12px"
+                          }}
                         >
                           {company.isActive ? "Desativar" : "Ativar"}
                         </button>
                         <button
                           onClick={() => setEditingCompany(company)}
-                          style={{ padding: "6px 12px", borderRadius: "6px", border: "1px solid #e2e8f0", background: "#f8fafc", cursor: "pointer", fontSize: "12px" }}
+                          style={{
+                            padding: "6px 12px",
+                            borderRadius: "6px",
+                            border: "1px solid #e2e8f0",
+                            background: "#f8fafc",
+                            cursor: "pointer",
+                            fontSize: "12px"
+                          }}
                         >
                           Editar
                         </button>
                         <button
                           onClick={() => handleDeleteCompany(company)}
-                          style={{ padding: "6px 12px", borderRadius: "6px", border: "1px solid #fecaca", background: "#fef2f2", cursor: "pointer", fontSize: "12px", color: "#dc2626" }}
+                          style={{
+                            padding: "6px 12px",
+                            borderRadius: "6px",
+                            border: "1px solid #fecaca",
+                            background: "#fef2f2",
+                            cursor: "pointer",
+                            fontSize: "12px",
+                            color: "#dc2626"
+                          }}
                         >
                           Excluir
                         </button>
                       </div>
                     </div>
                     <p style={{ margin: "8px 0 0 0", fontSize: "12px", color: "#64748b" }}>
-                      Unidades: {units.filter(u => u.companyId === company.id).length}
+                      Unidades: {units.filter((u) => u.companyId === company.id).length}
                     </p>
                   </div>
                 ))}
 
                 {/* Edit Company Modal */}
                 {editingCompany && (
-                  <div style={{
-                    position: "fixed",
-                    top: 0, left: 0, right: 0, bottom: 0,
-                    background: "rgba(0,0,0,0.5)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    zIndex: 1000
-                  }}>
-                    <div style={{ background: "#fff", padding: "24px", borderRadius: "16px", width: "100%", maxWidth: "500px" }}>
+                  <div
+                    style={{
+                      position: "fixed",
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      background: "rgba(0,0,0,0.5)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      zIndex: MODAL_Z_INDEX
+                    }}
+                  >
+                    <div
+                      style={{
+                        background: "#fff",
+                        padding: "24px",
+                        borderRadius: "16px",
+                        width: "100%",
+                        maxWidth: "500px"
+                      }}
+                    >
                       <h3 style={{ margin: "0 0 16px 0" }}>Editar Empresa</h3>
-                      <form onSubmit={handleUpdateCompany} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                        <input name="name" defaultValue={editingCompany.name} placeholder="Nome fantasia" required style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
-                        <input name="legalName" defaultValue={editingCompany.legalName} placeholder="Razao social" required style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
-                        <input name="document" defaultValue={editingCompany.document} placeholder="CNPJ" style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
-                        <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: "12px", marginTop: "4px" }}>
+                      <form
+                        onSubmit={handleUpdateCompany}
+                        style={{ display: "flex", flexDirection: "column", gap: "12px" }}
+                      >
+                        <input
+                          name="name"
+                          defaultValue={editingCompany.name}
+                          placeholder="Nome fantasia"
+                          required
+                          style={{
+                            padding: "10px",
+                            borderRadius: "8px",
+                            border: "1px solid #cbd5e1"
+                          }}
+                        />
+                        <input
+                          name="legalName"
+                          defaultValue={editingCompany.legalName}
+                          placeholder="Razao social"
+                          required
+                          style={{
+                            padding: "10px",
+                            borderRadius: "8px",
+                            border: "1px solid #cbd5e1"
+                          }}
+                        />
+                        <input
+                          name="document"
+                          defaultValue={editingCompany.document}
+                          placeholder="CNPJ"
+                          style={{
+                            padding: "10px",
+                            borderRadius: "8px",
+                            border: "1px solid #cbd5e1"
+                          }}
+                        />
+                        <div
+                          style={{
+                            borderTop: "1px solid #e2e8f0",
+                            paddingTop: "12px",
+                            marginTop: "4px"
+                          }}
+                        >
                           <strong style={{ fontSize: "13px", color: "#475569" }}>Token OMIE</strong>
                           {editingCompany.omieAppKeyMasked ? (
                             <p style={{ margin: "4px 0", fontSize: "12px", color: "#16a34a" }}>
@@ -532,22 +735,88 @@ export function AdminDashboard() {
                               Nao configurado. Os desktops nao conectam ao OMIE.
                             </p>
                           )}
-                          <input name="omieAppKey" placeholder="Novo App Key (deixe vazio para manter)" style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1", marginTop: "8px" }} />
-                          <input name="omieAppSecret" type="password" placeholder="Novo App Secret (deixe vazio para manter)" style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1", marginTop: "8px" }} />
-                          <small style={{ color: "#64748b" }}>Ao preencher, o app key/secret e atualizado. Para limpar, salve com campos vazios.</small>
+                          <input
+                            name="omieAppKey"
+                            placeholder="Novo App Key (deixe vazio para manter)"
+                            style={{
+                              padding: "10px",
+                              borderRadius: "8px",
+                              border: "1px solid #cbd5e1",
+                              marginTop: "8px"
+                            }}
+                          />
+                          <input
+                            name="omieAppSecret"
+                            type="password"
+                            placeholder="Novo App Secret (deixe vazio para manter)"
+                            style={{
+                              padding: "10px",
+                              borderRadius: "8px",
+                              border: "1px solid #cbd5e1",
+                              marginTop: "8px"
+                            }}
+                          />
+                          <small style={{ color: "#64748b" }}>
+                            Ao preencher, o app key/secret e atualizado. Para limpar, salve com
+                            campos vazios.
+                          </small>
                         </div>
-                        <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: "12px", marginTop: "4px" }}>
-                          <strong style={{ fontSize: "13px", color: "#475569" }}>Senha para alterar precos</strong>
+                        <div
+                          style={{
+                            borderTop: "1px solid #e2e8f0",
+                            paddingTop: "12px",
+                            marginTop: "4px"
+                          }}
+                        >
+                          <strong style={{ fontSize: "13px", color: "#475569" }}>
+                            Senha para alterar precos
+                          </strong>
                           <p style={{ margin: "4px 0", fontSize: "12px", color: "#64748b" }}>
-                            Senha de 4 digitos que o operador deve informar no desktop para alterar precos padrao.
+                            Senha de 4 digitos que o operador deve informar no desktop para alterar
+                            precos padrao.
                           </p>
-                          <input name="priceChangePassword" type="password" maxLength={4} placeholder="0000 (deixe vazio para manter)" style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1", marginTop: "8px", width: "100%" }} />
+                          <input
+                            name="priceChangePassword"
+                            type="password"
+                            maxLength={4}
+                            placeholder="0000 (deixe vazio para manter)"
+                            style={{
+                              padding: "10px",
+                              borderRadius: "8px",
+                              border: "1px solid #cbd5e1",
+                              marginTop: "8px",
+                              width: "100%"
+                            }}
+                          />
                         </div>
                         <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
-                          <button type="submit" style={{ flex: 1, padding: "10px", borderRadius: "8px", border: "none", background: "#0f172a", color: "#fff", cursor: "pointer", fontWeight: 700 }}>
+                          <button
+                            type="submit"
+                            style={{
+                              flex: 1,
+                              padding: "10px",
+                              borderRadius: "8px",
+                              border: "none",
+                              background: "#0f172a",
+                              color: "#fff",
+                              cursor: "pointer",
+                              fontWeight: 700
+                            }}
+                          >
                             Salvar
                           </button>
-                          <button type="button" onClick={() => setEditingCompany(null)} style={{ flex: 1, padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1", background: "#fff", cursor: "pointer" }}>
+                          <button
+                            type="button"
+                            onClick={() => setEditingCompany(null)}
+                            style={{
+                              flex: 1,
+                              padding: "10px",
+                              borderRadius: "8px",
+                              border: "1px solid #cbd5e1",
+                              background: "#fff",
+                              cursor: "pointer"
+                            }}
+                          >
                             Cancelar
                           </button>
                         </div>
@@ -561,19 +830,76 @@ export function AdminDashboard() {
               <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
                 <article style={{ background: "#fff", padding: "24px", borderRadius: "16px" }}>
                   <h2 style={{ margin: "0 0 16px 0" }}>Nova Empresa</h2>
-                  <form onSubmit={handleCreateCompany} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                    <input name="name" placeholder="Nome fantasia" required style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
-                    <input name="legalName" placeholder="Razao social" required style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
-                    <input name="document" placeholder="CNPJ" style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
+                  <form
+                    onSubmit={handleCreateCompany}
+                    style={{ display: "flex", flexDirection: "column", gap: "12px" }}
+                  >
+                    <input
+                      name="name"
+                      placeholder="Nome fantasia"
+                      required
+                      style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
+                    />
+                    <input
+                      name="legalName"
+                      placeholder="Razao social"
+                      required
+                      style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
+                    />
+                    <input
+                      name="document"
+                      placeholder="CNPJ"
+                      style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
+                    />
                     <details style={{ marginTop: "4px" }}>
-                      <summary style={{ cursor: "pointer", color: "#475569", fontSize: "14px" }}>Token OMIE (opcional)</summary>
-                      <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "8px" }}>
-                        <input name="omieAppKey" placeholder="App Key OMIE" style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
-                        <input name="omieAppSecret" type="password" placeholder="App Secret OMIE" style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
-                        <small style={{ color: "#64748b" }}>Quando preenchido, os desktops desta empresa ja conectam ao OMIE automaticamente.</small>
+                      <summary style={{ cursor: "pointer", color: "#475569", fontSize: "14px" }}>
+                        Token OMIE (opcional)
+                      </summary>
+                      <div
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: "8px",
+                          marginTop: "8px"
+                        }}
+                      >
+                        <input
+                          name="omieAppKey"
+                          placeholder="App Key OMIE"
+                          style={{
+                            padding: "10px",
+                            borderRadius: "8px",
+                            border: "1px solid #cbd5e1"
+                          }}
+                        />
+                        <input
+                          name="omieAppSecret"
+                          type="password"
+                          placeholder="App Secret OMIE"
+                          style={{
+                            padding: "10px",
+                            borderRadius: "8px",
+                            border: "1px solid #cbd5e1"
+                          }}
+                        />
+                        <small style={{ color: "#64748b" }}>
+                          Quando preenchido, os desktops desta empresa ja conectam ao OMIE
+                          automaticamente.
+                        </small>
                       </div>
                     </details>
-                    <button type="submit" style={{ padding: "10px", borderRadius: "8px", border: "none", background: "#0f172a", color: "#fff", cursor: "pointer", fontWeight: 700 }}>
+                    <button
+                      type="submit"
+                      style={{
+                        padding: "10px",
+                        borderRadius: "8px",
+                        border: "none",
+                        background: "#0f172a",
+                        color: "#fff",
+                        cursor: "pointer",
+                        fontWeight: 700
+                      }}
+                    >
                       Criar Empresa
                     </button>
                   </form>
@@ -581,23 +907,49 @@ export function AdminDashboard() {
 
                 <article style={{ background: "#fff", padding: "24px", borderRadius: "16px" }}>
                   <h2 style={{ margin: "0 0 16px 0" }}>Nova Unidade</h2>
-                  <form onSubmit={handleCreateUnit} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                    <select name="companyId" required style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}>
+                  <form
+                    onSubmit={handleCreateUnit}
+                    style={{ display: "flex", flexDirection: "column", gap: "12px" }}
+                  >
+                    <select
+                      name="companyId"
+                      required
+                      style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
+                    >
                       <option value="">Selecione a empresa</option>
-                      {companies.map(c => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
+                      {companies.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
                       ))}
                     </select>
-                    <input name="name" placeholder="Nome da unidade" required style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
+                    <input
+                      name="name"
+                      placeholder="Nome da unidade"
+                      required
+                      style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
+                    />
                     <input
                       name="desktopPublishableKey"
                       placeholder="Publishable key do Supabase (opcional)"
                       style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
                     />
                     <p style={{ color: "#64748b", fontSize: "12px", margin: 0 }}>
-                      Necessario para o desktop acessar o Supabase. Copie do dashboard do projeto (Project API keys &gt; Publishable).
+                      Necessario para o desktop acessar o Supabase. Copie do dashboard do projeto
+                      (Project API keys &gt; Publishable).
                     </p>
-                    <button type="submit" style={{ padding: "10px", borderRadius: "8px", border: "none", background: "#0f172a", color: "#fff", cursor: "pointer", fontWeight: 700 }}>
+                    <button
+                      type="submit"
+                      style={{
+                        padding: "10px",
+                        borderRadius: "8px",
+                        border: "none",
+                        background: "#0f172a",
+                        color: "#fff",
+                        cursor: "pointer",
+                        fontWeight: 700
+                      }}
+                    >
                       Criar Unidade
                     </button>
                   </form>
@@ -607,37 +959,59 @@ export function AdminDashboard() {
           )}
 
           {activeTab === "users" && (
-            <section style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
+            <section style={{ display: "grid", gridTemplateColumns: TWO_COLUMN_GRID, gap: "24px" }}>
               <article style={{ background: "#fff", padding: "24px", borderRadius: "16px" }}>
                 <h2 style={{ margin: "0 0 16px 0" }}>Usuarios Carregadores</h2>
-                {users.length === 0 && <p style={{ color: "#64748b" }}>Nenhum usuario cadastrado.</p>}
-                {users.map(user => (
-                  <div key={user.id} style={{ padding: "12px 0", borderBottom: "1px solid #e2e8f0" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                {users.length === 0 && (
+                  <p style={{ color: "#64748b" }}>Nenhum usuario cadastrado.</p>
+                )}
+                {users.map((user) => (
+                  <div
+                    key={user.id}
+                    style={{ padding: "12px 0", borderBottom: "1px solid #e2e8f0" }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center"
+                      }}
+                    >
                       <div>
                         <strong>{user.name}</strong>
-                        <p style={{ margin: "2px 0 0 0", fontSize: "14px", color: "#64748b" }}>{user.email}</p>
+                        <p style={{ margin: "2px 0 0 0", fontSize: "14px", color: "#64748b" }}>
+                          {user.email}
+                        </p>
                       </div>
                       <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                        <span style={{
-                          padding: "4px 8px",
-                          borderRadius: "6px",
-                          fontSize: "12px",
-                          background: user.isActive ? "#dcfce7" : "#fee2e2",
-                          color: user.isActive ? "#166534" : "#991b1b"
-                        }}>
+                        <span
+                          style={{
+                            padding: "4px 8px",
+                            borderRadius: "6px",
+                            fontSize: "12px",
+                            background: user.isActive ? "#dcfce7" : "#fee2e2",
+                            color: user.isActive ? "#166534" : "#991b1b"
+                          }}
+                        >
                           {user.isActive ? "Ativo" : "Inativo"}
                         </span>
                         <button
                           onClick={() => handleToggleUser(user.id, user.isActive)}
-                          style={{ padding: "6px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", background: "#fff", cursor: "pointer", fontSize: "12px" }}
+                          style={{
+                            padding: "6px 12px",
+                            borderRadius: "6px",
+                            border: "1px solid #cbd5e1",
+                            background: "#fff",
+                            cursor: "pointer",
+                            fontSize: "12px"
+                          }}
                         >
                           {user.isActive ? "Bloquear" : "Liberar"}
                         </button>
                       </div>
                     </div>
                     <p style={{ margin: "8px 0 0 0", fontSize: "12px", color: "#64748b" }}>
-                      Unidade: {units.find(u => u.id === user.unitId)?.name || "N/A"}
+                      Unidade: {units.find((u) => u.id === user.unitId)?.name || "N/A"}
                     </p>
                   </div>
                 ))}
@@ -645,17 +1019,57 @@ export function AdminDashboard() {
 
               <article style={{ background: "#fff", padding: "24px", borderRadius: "16px" }}>
                 <h2 style={{ margin: "0 0 16px 0" }}>Novo Usuario</h2>
-                <form onSubmit={handleCreateUser} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                  <input name="name" placeholder="Nome completo" required style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
-                  <input name="email" type="email" placeholder="E-mail" required style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
-                  <input name="password" type="password" placeholder="Senha" required minLength={6} style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
-                  <select name="unitId" required style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}>
+                <form
+                  onSubmit={handleCreateUser}
+                  style={{ display: "flex", flexDirection: "column", gap: "12px" }}
+                >
+                  <input
+                    name="name"
+                    placeholder="Nome completo"
+                    required
+                    style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
+                  />
+                  <input
+                    name="email"
+                    type="email"
+                    placeholder="E-mail"
+                    required
+                    style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
+                  />
+                  <input
+                    name="password"
+                    type="password"
+                    placeholder="Senha"
+                    required
+                    minLength={6}
+                    style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
+                  />
+                  <select
+                    name="unitId"
+                    required
+                    style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
+                  >
                     <option value="">Selecione a unidade</option>
-                    {units.filter(u => u.isActive).map(u => (
-                      <option key={u.id} value={u.id}>{u.name}</option>
-                    ))}
+                    {units
+                      .filter((u) => u.isActive)
+                      .map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {u.name}
+                        </option>
+                      ))}
                   </select>
-                  <button type="submit" style={{ padding: "10px", borderRadius: "8px", border: "none", background: "#0f172a", color: "#fff", cursor: "pointer", fontWeight: 700 }}>
+                  <button
+                    type="submit"
+                    style={{
+                      padding: "10px",
+                      borderRadius: "8px",
+                      border: "none",
+                      background: "#0f172a",
+                      color: "#fff",
+                      cursor: "pointer",
+                      fontWeight: 700
+                    }}
+                  >
                     Criar Usuario
                   </button>
                 </form>
@@ -666,62 +1080,117 @@ export function AdminDashboard() {
           {activeTab === "devices" && (
             <section style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
               {generatedCode !== null ? (
-                <article style={{ background: "#dcfce7", padding: "24px", borderRadius: "16px", border: "2px solid #15803d" }}>
+                <article
+                  style={{
+                    background: "#dcfce7",
+                    padding: "24px",
+                    borderRadius: "16px",
+                    border: "2px solid #15803d"
+                  }}
+                >
                   <h2 style={{ margin: "0 0 12px 0", color: "#15803d" }}>Codigo Gerado</h2>
-                  <p style={{ fontSize: "32px", fontWeight: 700, letterSpacing: "8px", fontFamily: "monospace", margin: "12px 0" }}>
+                  <p
+                    style={{
+                      fontSize: "32px",
+                      fontWeight: 700,
+                      letterSpacing: "8px",
+                      fontFamily: "monospace",
+                      margin: "12px 0"
+                    }}
+                  >
                     {generatedCode}
                   </p>
                   <p style={{ color: "#166534", fontSize: "14px" }}>
-                    Copie este codigo e envie para o operador do desktop. Ele sera usado apenas como ativacao inicial.
+                    Copie este codigo e envie para o operador do desktop. Ele sera usado apenas como
+                    ativacao inicial.
                   </p>
                   <button
                     onClick={() => setGeneratedCode(null)}
-                    style={{ padding: "8px 16px", borderRadius: "8px", border: "1px solid #15803d", background: "#fff", color: "#15803d", cursor: "pointer", fontWeight: 700, fontSize: "14px" }}
+                    style={{
+                      padding: "8px 16px",
+                      borderRadius: "8px",
+                      border: "1px solid #15803d",
+                      background: "#fff",
+                      color: "#15803d",
+                      cursor: "pointer",
+                      fontWeight: 700,
+                      fontSize: "14px"
+                    }}
                   >
                     Fechar
                   </button>
                 </article>
               ) : null}
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: TWO_COLUMN_GRID, gap: "24px" }}>
                 <article style={{ background: "#fff", padding: "24px", borderRadius: "16px" }}>
                   <h2 style={{ margin: "0 0 16px 0" }}>Desktops Ativados</h2>
                   {devices.length === 0 ? (
                     <p style={{ color: "#64748b" }}>Nenhum desktop ativado ainda.</p>
                   ) : (
-                    devices.map(device => {
-                      const unit = units.find(u => u.id === device.unitId);
-                      const company = companies.find(c => c.id === device.companyId);
+                    devices.map((device) => {
+                      const unit = units.find((u) => u.id === device.unitId);
+                      const company = companies.find((c) => c.id === device.companyId);
                       return (
-                        <div key={device.id} style={{ padding: "12px 0", borderBottom: "1px solid #e2e8f0" }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                        <div
+                          key={device.id}
+                          style={{ padding: "12px 0", borderBottom: "1px solid #e2e8f0" }}
+                        >
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "flex-start"
+                            }}
+                          >
                             <div>
                               <strong>{device.name}</strong>
-                              <p style={{ margin: "2px 0 0 0", fontSize: "13px", color: "#64748b" }}>
+                              <p
+                                style={{ margin: "2px 0 0 0", fontSize: "13px", color: "#64748b" }}
+                              >
                                 {company?.name} / {unit?.name}
                               </p>
-                              <p style={{ margin: "2px 0 0 0", fontSize: "12px", color: "#94a3b8" }}>
-                                ID: {device.id.slice(0, 8)}... | Ativado em {new Date(device.createdAt).toLocaleDateString("pt-BR")}
+                              <p
+                                style={{ margin: "2px 0 0 0", fontSize: "12px", color: "#94a3b8" }}
+                              >
+                                ID: {device.id.slice(0, 8)}... | Ativado em{" "}
+                                {new Date(device.createdAt).toLocaleDateString("pt-BR")}
                               </p>
                               {device.lastSeenAt ? (
-                                <p style={{ margin: "2px 0 0 0", fontSize: "12px", color: "#94a3b8" }}>
-                                  Ultimo visto: {new Date(device.lastSeenAt).toLocaleString("pt-BR")}
+                                <p
+                                  style={{
+                                    margin: "2px 0 0 0",
+                                    fontSize: "12px",
+                                    color: "#94a3b8"
+                                  }}
+                                >
+                                  Ultimo visto:{" "}
+                                  {new Date(device.lastSeenAt).toLocaleString("pt-BR")}
                                 </p>
                               ) : null}
                             </div>
                             <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                              <span style={{
-                                padding: "4px 8px",
-                                borderRadius: "6px",
-                                fontSize: "12px",
-                                background: device.isActive ? "#dcfce7" : "#fee2e2",
-                                color: device.isActive ? "#166534" : "#991b1b"
-                              }}>
+                              <span
+                                style={{
+                                  padding: "4px 8px",
+                                  borderRadius: "6px",
+                                  fontSize: "12px",
+                                  background: device.isActive ? "#dcfce7" : "#fee2e2",
+                                  color: device.isActive ? "#166534" : "#991b1b"
+                                }}
+                              >
                                 {device.isActive ? "Ativo" : "Bloqueado"}
                               </span>
                               <button
                                 onClick={() => handleToggleDevice(device.id, device.isActive)}
-                                style={{ padding: "6px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", background: "#fff", cursor: "pointer", fontSize: "12px" }}
+                                style={{
+                                  padding: "6px 12px",
+                                  borderRadius: "6px",
+                                  border: "1px solid #cbd5e1",
+                                  background: "#fff",
+                                  cursor: "pointer",
+                                  fontSize: "12px"
+                                }}
                               >
                                 {device.isActive ? "Bloquear" : "Liberar"}
                               </button>
@@ -736,60 +1205,84 @@ export function AdminDashboard() {
                 <article style={{ background: "#fff", padding: "24px", borderRadius: "16px" }}>
                   <h2 style={{ margin: "0 0 16px 0" }}>Codigos de Ativacao</h2>
                   <p style={{ color: "#64748b", fontSize: "14px", marginBottom: "16px" }}>
-                    Cada unidade possui um unico codigo de ativacao. Ao gerar um novo, o anterior e invalidado.
+                    Cada unidade possui um unico codigo de ativacao. Ao gerar um novo, o anterior e
+                    invalidado.
                   </p>
                   {units.length === 0 ? (
                     <p style={{ color: "#b91c1c" }}>Nenhuma unidade cadastrada.</p>
                   ) : (
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
-                      {units.map(unit => {
-                        const company = companies.find(c => c.id === unit.companyId);
+                    <div
+                      style={{ display: "grid", gridTemplateColumns: COMPACT_GRID, gap: "16px" }}
+                    >
+                      {units.map((unit) => {
+                        const company = companies.find((c) => c.id === unit.companyId);
                         return (
-                          <div key={unit.id} style={{
-                            padding: "20px",
-                            borderRadius: "12px",
-                            background: "#f8fafc",
-                            border: "1px solid #e2e8f0",
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: "12px"
-                          }}>
+                          <div
+                            key={unit.id}
+                            style={{
+                              padding: "20px",
+                              borderRadius: "12px",
+                              background: "#f8fafc",
+                              border: "1px solid #e2e8f0",
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: "12px"
+                            }}
+                          >
                             <div>
-                              <strong style={{ fontSize: "16px", color: "#0f172a" }}>{unit.name}</strong>
-                              <p style={{ margin: "4px 0 0 0", fontSize: "13px", color: "#64748b" }}>
+                              <strong style={{ fontSize: "16px", color: "#0f172a" }}>
+                                {unit.name}
+                              </strong>
+                              <p
+                                style={{ margin: "4px 0 0 0", fontSize: "13px", color: "#64748b" }}
+                              >
                                 {company?.name || "Empresa desconhecida"}
                               </p>
                             </div>
 
                             {unit.desktopActivationCode ? (
-                              <div style={{
-                                padding: "12px",
-                                borderRadius: "10px",
-                                background: "#dcfce7",
-                                border: "1px solid #15803d",
-                                display: "flex",
-                                flexDirection: "column",
-                                gap: "8px"
-                              }}>
-                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                  <span style={{ fontSize: "11px", color: "#166534", fontWeight: 700 }}>
+                              <div
+                                style={{
+                                  padding: "12px",
+                                  borderRadius: "10px",
+                                  background: "#dcfce7",
+                                  border: "1px solid #15803d",
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  gap: "8px"
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    display: "flex",
+                                    justifyContent: "space-between",
+                                    alignItems: "center"
+                                  }}
+                                >
+                                  <span
+                                    style={{ fontSize: "11px", color: "#166534", fontWeight: 700 }}
+                                  >
                                     CODIGO ATIVO
                                   </span>
                                   <span style={{ fontSize: "11px", color: "#166534" }}>
                                     {unit.desktopActivationCodeRotatedAt
-                                      ? new Date(unit.desktopActivationCodeRotatedAt).toLocaleDateString("pt-BR")
+                                      ? new Date(
+                                          unit.desktopActivationCodeRotatedAt
+                                        ).toLocaleDateString("pt-BR")
                                       : ""}
                                   </span>
                                 </div>
-                                <p style={{
-                                  margin: 0,
-                                  fontSize: "22px",
-                                  fontWeight: 700,
-                                  letterSpacing: "6px",
-                                  fontFamily: "monospace",
-                                  color: "#15803d",
-                                  textAlign: "center"
-                                }}>
+                                <p
+                                  style={{
+                                    margin: 0,
+                                    fontSize: "22px",
+                                    fontWeight: 700,
+                                    letterSpacing: "6px",
+                                    fontFamily: "monospace",
+                                    color: "#15803d",
+                                    textAlign: "center"
+                                  }}
+                                >
                                   {unit.desktopActivationCode}
                                 </p>
                                 <button
@@ -813,13 +1306,15 @@ export function AdminDashboard() {
                                 </button>
                               </div>
                             ) : (
-                              <div style={{
-                                padding: "12px",
-                                borderRadius: "10px",
-                                background: "#fef2f2",
-                                border: "1px solid #fecaca",
-                                textAlign: "center"
-                              }}>
+                              <div
+                                style={{
+                                  padding: "12px",
+                                  borderRadius: "10px",
+                                  background: "#fef2f2",
+                                  border: "1px solid #fecaca",
+                                  textAlign: "center"
+                                }}
+                              >
                                 <p style={{ margin: 0, fontSize: "13px", color: "#b91c1c" }}>
                                   Nenhum codigo gerado
                                 </p>
@@ -890,33 +1385,87 @@ export function AdminDashboard() {
 
                       {/* Edit Unit Modal */}
                       {editingUnit && (
-                        <div style={{
-                          position: "fixed",
-                          top: 0, left: 0, right: 0, bottom: 0,
-                          background: "rgba(0,0,0,0.5)",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          zIndex: 1000
-                        }}>
-                          <div style={{ background: "#fff", padding: "24px", borderRadius: "16px", width: "100%", maxWidth: "400px" }}>
+                        <div
+                          style={{
+                            position: "fixed",
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            background: "rgba(0,0,0,0.5)",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            zIndex: MODAL_Z_INDEX
+                          }}
+                        >
+                          <div
+                            style={{
+                              background: "#fff",
+                              padding: "24px",
+                              borderRadius: "16px",
+                              width: "100%",
+                              maxWidth: "400px"
+                            }}
+                          >
                             <h3 style={{ margin: "0 0 16px 0" }}>Editar Unidade</h3>
-                            <form onSubmit={handleUpdateUnit} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                              <input name="name" defaultValue={editingUnit.name} placeholder="Nome da unidade" required style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
+                            <form
+                              onSubmit={handleUpdateUnit}
+                              style={{ display: "flex", flexDirection: "column", gap: "12px" }}
+                            >
+                              <input
+                                name="name"
+                                defaultValue={editingUnit.name}
+                                placeholder="Nome da unidade"
+                                required
+                                style={{
+                                  padding: "10px",
+                                  borderRadius: "8px",
+                                  border: "1px solid #cbd5e1"
+                                }}
+                              />
                               <input
                                 name="desktopPublishableKey"
                                 defaultValue={editingUnit.desktopPublishableKey ?? ""}
                                 placeholder="Publishable key do Supabase"
-                                style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
+                                style={{
+                                  padding: "10px",
+                                  borderRadius: "8px",
+                                  border: "1px solid #cbd5e1"
+                                }}
                               />
                               <p style={{ color: "#64748b", fontSize: "12px", margin: 0 }}>
-                                Vazio para remover. Copie do dashboard do projeto (Project API keys &gt; Publishable).
+                                Vazio para remover. Copie do dashboard do projeto (Project API keys
+                                &gt; Publishable).
                               </p>
                               <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
-                                <button type="submit" style={{ flex: 1, padding: "10px", borderRadius: "8px", border: "none", background: "#0f172a", color: "#fff", cursor: "pointer", fontWeight: 700 }}>
+                                <button
+                                  type="submit"
+                                  style={{
+                                    flex: 1,
+                                    padding: "10px",
+                                    borderRadius: "8px",
+                                    border: "none",
+                                    background: "#0f172a",
+                                    color: "#fff",
+                                    cursor: "pointer",
+                                    fontWeight: 700
+                                  }}
+                                >
                                   Salvar
                                 </button>
-                                <button type="button" onClick={() => setEditingUnit(null)} style={{ flex: 1, padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1", background: "#fff", cursor: "pointer" }}>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingUnit(null)}
+                                  style={{
+                                    flex: 1,
+                                    padding: "10px",
+                                    borderRadius: "8px",
+                                    border: "1px solid #cbd5e1",
+                                    background: "#fff",
+                                    cursor: "pointer"
+                                  }}
+                                >
                                   Cancelar
                                 </button>
                               </div>
