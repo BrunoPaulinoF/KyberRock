@@ -34,11 +34,15 @@ export function ensureInitialDesktopIdentity(
   validateInitialDesktopIdentityInput(input);
 
   const timestamp = now.toISOString();
+  const installationId = input.installationId?.trim() || randomUUID();
+  const existingDevice = database
+    .prepare("SELECT id FROM devices WHERE installation_id = ?")
+    .get(installationId) as { id: string } | undefined;
   const identity: LocalDesktopIdentity = {
     companyId: input.companyId.trim(),
     unitId: input.unitId.trim(),
-    deviceId: input.deviceId.trim(),
-    installationId: input.installationId?.trim() || randomUUID()
+    deviceId: existingDevice?.id ?? input.deviceId.trim(),
+    installationId
   };
 
   const writeIdentity = database.transaction(() => {
@@ -83,12 +87,11 @@ export function ensureInitialDesktopIdentity(
     database
       .prepare(
         `INSERT INTO devices (id, company_id, unit_id, name, device_type, installation_id, is_active, created_at, updated_at)
-         VALUES (@id, @companyId, @unitId, @name, 'desktop_scale', @installationId, 1, @createdAt, @updatedAt)
-         ON CONFLICT(installation_id) DO UPDATE SET
-           id = excluded.id,
-           company_id = excluded.company_id,
-           unit_id = excluded.unit_id,
-           name = excluded.name,
+          VALUES (@id, @companyId, @unitId, @name, 'desktop_scale', @installationId, 1, @createdAt, @updatedAt)
+          ON CONFLICT(installation_id) DO UPDATE SET
+            company_id = excluded.company_id,
+            unit_id = excluded.unit_id,
+            name = excluded.name,
            is_active = 1,
            updated_at = excluded.updated_at`
       )

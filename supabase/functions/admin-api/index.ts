@@ -42,11 +42,11 @@ Deno.serve(async (req) => {
       const [companies, units, users, devices] = await Promise.all([
         supabase
           .from("companies")
-          .select("id, name, legal_name, document, is_active, omie_app_key, omie_app_secret, created_at, updated_at")
+          .select("id, name, legal_name, document, is_active, omie_app_key, omie_app_secret, desktop_activation_code, desktop_activation_code_rotated_at, created_at, updated_at")
           .order("created_at", { ascending: false }),
         supabase
           .from("units")
-          .select("id, company_id, name, timezone, is_active, desktop_activation_code, desktop_activation_code_rotated_at, desktop_publishable_key, created_at, updated_at")
+          .select("id, company_id, name, timezone, is_active, created_at, updated_at")
           .order("created_at", { ascending: false }),
         supabase.from("user_profiles").select("*").order("created_at", { ascending: false }),
         supabase
@@ -91,13 +91,11 @@ Deno.serve(async (req) => {
     }
 
     if (body.action === "create_unit") {
-      const publishableKey = String(payload.desktopPublishableKey ?? "").trim();
       const { data, error } = await supabase.from("units").insert({
         company_id: String(payload.companyId),
         name: String(payload.name ?? ""),
         timezone: "America/Sao_Paulo",
-        is_active: true,
-        desktop_publishable_key: publishableKey.length > 0 ? publishableKey : null
+        is_active: true
       }).select("*").single();
       if (error) throw error;
       return jsonResponse({ unit: data });
@@ -113,16 +111,16 @@ Deno.serve(async (req) => {
     }
 
     if (body.action === "generate_desktop_activation_code") {
-      const unitId = String(payload.unitId ?? "");
+      const companyId = String(payload.companyId ?? "");
       const code = generateSixDigitCode();
       const codeHash = await sha256Hex(code);
       const rotatedAt = new Date().toISOString();
-      const { data, error } = await supabase.from("units").update({
+      const { data, error } = await supabase.from("companies").update({
         desktop_activation_code: code,
         desktop_activation_code_hash: codeHash,
         desktop_activation_code_rotated_at: rotatedAt,
         updated_at: rotatedAt
-      }).eq("id", unitId).select("id, desktop_activation_code, desktop_activation_code_rotated_at").single();
+      }).eq("id", companyId).select("id, desktop_activation_code, desktop_activation_code_rotated_at").single();
       if (error) throw error;
       return jsonResponse({ code, unit: data });
     }
@@ -209,10 +207,6 @@ Deno.serve(async (req) => {
         name: String(payload.name ?? ""),
         updated_at: new Date().toISOString()
       };
-      if (payload.desktopPublishableKey !== undefined) {
-        const key = String(payload.desktopPublishableKey ?? "").trim();
-        updatePayload.desktop_publishable_key = key.length > 0 ? key : null;
-      }
       const { error } = await supabase.from("units").update(updatePayload).eq("id", String(payload.unitId));
       if (error) throw error;
       return jsonResponse({ ok: true });

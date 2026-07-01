@@ -16,8 +16,6 @@ type UnitRow = {
   name: string;
   timezone: string;
   is_active: boolean;
-  desktop_publishable_key: string | null;
-  companies: CompanyRow | CompanyRow[] | null;
 };
 
 Deno.serve(async (req) => {
@@ -40,50 +38,82 @@ Deno.serve(async (req) => {
   }
 
   const activationCodeHash = await sha256Hex(activationCode);
-  const { data: unit, error: unitError } = await supabase
-    .from("units")
-    .select(
-      "id, company_id, name, timezone, is_active, desktop_publishable_key, companies(id, name, legal_name, document, is_active)"
-    )
+  const { data: company, error: companyError } = await supabase
+    .from("companies")
+    .select("id, name, legal_name, document, is_active")
     .eq("desktop_activation_code_hash", activationCodeHash)
     .single();
 
-  if (unitError || !unit) {
+  if (companyError || !company) {
     return jsonResponse({ error: "Codigo de ativacao invalido ou expirado" }, 401);
   }
 
-  const typedUnit = unit as UnitRow;
-  const company = Array.isArray(typedUnit.companies) ? typedUnit.companies[0] : typedUnit.companies;
+  const typedCompany = company as CompanyRow;
 
-  if (!company?.is_active) {
+  if (!typedCompany.is_active) {
     return jsonResponse({ error: "Não autorizado. Empresa bloqueada pelo administrador." }, 403);
   }
 
-  if (!typedUnit.is_active) {
-    return jsonResponse({ error: "Pedreira/unidade bloqueada pelo administrador" }, 403);
+  const { data: units, error: unitsError } = await supabase
+    .from("units")
+    .select("id, company_id, name, timezone, is_active")
+    .eq("company_id", typedCompany.id)
+    .eq("is_active", true)
+    .order("created_at", { ascending: true })
+    .limit(1);
+
+  if (unitsError) throw unitsError;
+  const typedUnit = (units?.[0] ?? null) as UnitRow | null;
+  if (!typedUnit) {
+    return jsonResponse({ error: "Pedreira sem unidade ativa cadastrada" }, 403);
   }
 
-  const deviceId = `desktop-${crypto.randomUUID()}`;
   const deviceToken = createDeviceToken();
   const tokenHash = await sha256Hex(deviceToken);
   const now = new Date().toISOString();
 
-  const { error: deviceError } = await supabase.from("device_registrations").insert({
-    id: deviceId,
-    company_id: company.id,
-    unit_id: typedUnit.id,
-    name: deviceName,
-    token_hash: tokenHash,
-    is_active: true,
-    last_seen_at: now,
-    created_at: now,
-    updated_at: now
-  });
+  const { data: existingDevices, error: existingDeviceError } = await supabase
+    .from("device_registrations")
+    .select("id")
+    .eq("company_id", typedCompany.id)
+    .order("last_seen_at", { ascending: false, nullsFirst: false })
+    .order("updated_at", { ascending: false, nullsFirst: false })
+    .limit(1);
 
-  if (deviceError) throw deviceError;
+  if (existingDeviceError) throw existingDeviceError;
+  const existingDevice = existingDevices?.[0] as { id: string } | undefined;
+  const deviceId = existingDevice?.id ?? `desktop-${crypto.randomUUID()}`;
+
+  if (existingDevice) {
+    const { error: updateDeviceError } = await supabase
+      .from("device_registrations")
+      .update({
+        unit_id: typedUnit.id,
+        name: deviceName,
+        token_hash: tokenHash,
+        is_active: true,
+        last_seen_at: now,
+        updated_at: now
+      })
+      .eq("id", deviceId);
+    if (updateDeviceError) throw updateDeviceError;
+  } else {
+    const { error: deviceError } = await supabase.from("device_registrations").insert({
+      id: deviceId,
+      company_id: typedCompany.id,
+      unit_id: typedUnit.id,
+      name: deviceName,
+      token_hash: tokenHash,
+      is_active: true,
+      last_seen_at: now,
+      created_at: now,
+      updated_at: now
+    });
+
+    if (deviceError) throw deviceError;
+  }
 
   const publishableKey =
-    typedUnit.desktop_publishable_key ??
     Deno.env.get("SUPABASE_PUBLISHABLE_KEY") ??
     Deno.env.get("SUPABASE_ANON_KEY") ??
     Deno.env.get("KYBERROCK_DESKTOP_PUBLISHABLE_KEY") ??
@@ -92,10 +122,10 @@ Deno.serve(async (req) => {
   return jsonResponse({
     status: "approved",
     message: "Desktop ativado com sucesso.",
-    companyId: company.id,
-    companyLegalName: company.legal_name,
-    companyTradeName: company.name,
-    companyDocument: company.document,
+    companyId: typedCompany.id,
+    companyLegalName: typedCompany.legal_name,
+    companyTradeName: typedCompany.name,
+    companyDocument: typedCompany.document,
     unitId: typedUnit.id,
     unitName: typedUnit.name,
     unitTimezone: typedUnit.timezone,
@@ -103,11 +133,6 @@ Deno.serve(async (req) => {
     deviceToken,
     supabaseUrl,
     publishableKey,
-    publishableKeySource: typedUnit.desktop_publishable_key
-      ? "unit"
-      : publishableKey
-        ? "env"
-        : "missing",
     checkedAt: now
   });
 });

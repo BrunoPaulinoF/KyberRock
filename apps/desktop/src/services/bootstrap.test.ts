@@ -73,4 +73,46 @@ describe("ensureInitialDesktopIdentity", () => {
       rmSync(tempDirectory, { recursive: true, force: true });
     }
   });
+
+  it("keeps the local device id stable during reactivation to preserve foreign keys", () => {
+    const database = openDesktopDatabase({ databasePath: ":memory:" });
+
+    try {
+      runDesktopMigrations(database);
+      const firstIdentity = ensureInitialDesktopIdentity(database, {
+        companyId: "company-1",
+        companyLegalName: "KyberRock Mineracao LTDA",
+        unitId: "unit-1",
+        unitName: "Pedreira Principal",
+        deviceId: "device-local-1",
+        deviceName: "PC Balanca",
+        installationId: "install-1"
+      });
+      database
+        .prepare(
+          `INSERT INTO scale_configs (
+             id, device_id, adapter_type, connection_config_json, stability_config_json, created_at, updated_at
+           ) VALUES (?, ?, 'virtual', '{}', '{}', ?, ?)`
+        )
+        .run("scale-config-1", firstIdentity.deviceId, "2026-06-06T12:00:00.000Z", "2026-06-06T12:00:00.000Z");
+
+      const reactivatedIdentity = ensureInitialDesktopIdentity(database, {
+        companyId: "company-1",
+        companyLegalName: "KyberRock Mineracao LTDA",
+        unitId: "unit-1",
+        unitName: "Pedreira Principal",
+        deviceId: "device-cloud-new",
+        deviceName: "PC Balanca",
+        installationId: "install-1"
+      });
+
+      expect(reactivatedIdentity.deviceId).toBe(firstIdentity.deviceId);
+      expect(getLocalDesktopIdentity(database)).toEqual(reactivatedIdentity);
+      expect(
+        database.prepare("SELECT device_id FROM scale_configs WHERE id = ?").pluck().get("scale-config-1")
+      ).toBe(firstIdentity.deviceId);
+    } finally {
+      database.close();
+    }
+  });
 });

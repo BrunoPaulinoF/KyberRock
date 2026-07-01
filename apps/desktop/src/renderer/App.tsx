@@ -150,7 +150,7 @@ const initialWeighingForm: WeighingFormState = {
 type RegistrationsTab = "customers" | "price_tables" | "products" | "payment_terms" | "transport";
 
 type AppPhase = "checking_access" | "locked" | "bootstrapping_cloud" | "unlocked";
-type ThemeMode = "light" | "dark";
+export type ThemeMode = "light" | "dark";
 type OperationsTab = "open" | "canceled" | "closed";
 type CanceledFilter = "all" | "day" | "week" | "month";
 type FiscalCloseStep = "weighing" | "billing" | "danfe" | "receipt";
@@ -180,6 +180,39 @@ const receiptTemplateToggleOptions: Array<{ key: ReceiptTemplateBooleanKey; labe
   { key: "showVehicleDriver", label: "Veiculo e motorista" },
   { key: "showFooter", label: "Mensagem padrao de rodape" }
 ];
+
+const THEME_MODE_STORAGE_KEY = "kyberrock.themeMode";
+
+type ThemeModeStorage = Pick<Storage, "getItem" | "setItem">;
+
+function getThemeModeStorage(): ThemeModeStorage | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+export function readStoredThemeMode(storage: Pick<Storage, "getItem"> | null = getThemeModeStorage()): ThemeMode {
+  try {
+    const value = storage?.getItem(THEME_MODE_STORAGE_KEY);
+    return value === "dark" || value === "light" ? value : "light";
+  } catch {
+    return "light";
+  }
+}
+
+export function writeStoredThemeMode(
+  themeMode: ThemeMode,
+  storage: Pick<Storage, "setItem"> | null = getThemeModeStorage()
+): void {
+  try {
+    storage?.setItem(THEME_MODE_STORAGE_KEY, themeMode);
+  } catch {
+    // Storage can be unavailable in restricted renderer contexts.
+  }
+}
 
 export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }: AppProps = {}) {
   const [phase, setPhase] = useState<AppPhase>("checking_access");
@@ -236,7 +269,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [availableVersion, setAvailableVersion] = useState<string | null>(null);
   const [showLogsModal, setShowLogsModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [themeMode, setThemeMode] = useState<ThemeMode>("light");
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => readStoredThemeMode());
   const [errorLogs, setErrorLogs] = useState<
     Array<{ timestamp: string; level: string; source: string; message: string; details?: string }>
   >([]);
@@ -295,6 +328,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         : closedOperations.filter((op) => op.productDescription === closedProductFilter),
     [closedOperations, closedProductFilter]
   );
+
+  useEffect(() => {
+    writeStoredThemeMode(themeMode);
+  }, [themeMode]);
 
   useEffect(() => {
     const captureLog =

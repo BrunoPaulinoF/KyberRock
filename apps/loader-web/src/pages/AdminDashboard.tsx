@@ -11,6 +11,8 @@ interface Company {
   createdAt: string;
   omieAppKeyMasked?: string | null;
   omieAppSecretConfigured?: boolean;
+  desktopActivationCode?: string;
+  desktopActivationCodeRotatedAt?: string;
 }
 
 interface Unit {
@@ -19,9 +21,6 @@ interface Unit {
   name: string;
   timezone: string;
   isActive: boolean;
-  desktopActivationCode?: string;
-  desktopActivationCodeRotatedAt?: string;
-  desktopPublishableKey?: string | null;
 }
 
 interface LoaderUser {
@@ -83,6 +82,8 @@ export function AdminDashboard() {
           created_at: string;
           omie_app_key?: string | null;
           omie_app_secret?: string | null;
+          desktop_activation_code?: string;
+          desktop_activation_code_rotated_at?: string;
         }>;
         units: Array<{
           id: string;
@@ -90,8 +91,6 @@ export function AdminDashboard() {
           name: string;
           timezone: string;
           is_active: boolean;
-          desktop_activation_code?: string;
-          desktop_activation_code_rotated_at?: string;
         }>;
         users: Array<{
           id: string;
@@ -122,7 +121,9 @@ export function AdminDashboard() {
           isActive: company.is_active,
           createdAt: company.created_at,
           omieAppKeyMasked: company.omie_app_key ?? null,
-          omieAppSecretConfigured: Boolean(company.omie_app_secret)
+          omieAppSecretConfigured: Boolean(company.omie_app_secret),
+          desktopActivationCode: company.desktop_activation_code,
+          desktopActivationCodeRotatedAt: company.desktop_activation_code_rotated_at
         }))
       );
       setUnits(
@@ -131,9 +132,7 @@ export function AdminDashboard() {
           companyId: unit.company_id,
           name: unit.name,
           timezone: unit.timezone,
-          isActive: unit.is_active,
-          desktopActivationCode: unit.desktop_activation_code,
-          desktopActivationCodeRotatedAt: unit.desktop_activation_code_rotated_at
+          isActive: unit.is_active
         }))
       );
       setUsers(
@@ -207,15 +206,13 @@ export function AdminDashboard() {
     event.preventDefault();
     const form = event.currentTarget;
     const formData = new FormData(form);
-    const publishableKey = String(formData.get("desktopPublishableKey") ?? "").trim();
 
     try {
       await callAdminFunction("admin-api", {
         action: "create_unit",
         payload: {
           companyId: formData.get("companyId"),
-          name: formData.get("name"),
-          desktopPublishableKey: publishableKey || null
+          name: formData.get("name")
         }
       });
       form.reset();
@@ -266,29 +263,17 @@ export function AdminDashboard() {
     }
   }
 
-  async function handleGenerateActivationCode(unitId: string): Promise<void> {
+  async function handleGenerateActivationCode(companyId: string): Promise<void> {
     try {
       const result = await callAdminFunction<{ code: string }>("admin-api", {
         action: "generate_desktop_activation_code",
-        payload: { unitId }
+        payload: { companyId }
       });
       setGeneratedCode(result.code);
       await loadData();
     } catch (error) {
       console.error("Error generating code:", error);
       alert("Erro ao gerar codigo de ativacao");
-    }
-  }
-
-  async function handleToggleUnit(unitId: string, currentStatus: boolean): Promise<void> {
-    try {
-      await callAdminFunction("admin-api", {
-        action: "toggle_unit",
-        payload: { unitId, isActive: !currentStatus }
-      });
-      await loadData();
-    } catch (error) {
-      console.error("Error toggling unit:", error);
     }
   }
 
@@ -306,11 +291,6 @@ export function AdminDashboard() {
 
   async function handleDeleteCompany(company: Company) {
     setConfirmDelete({ type: "company", id: company.id, name: company.name });
-    setConfirmPassword("");
-  }
-
-  async function handleDeleteUnit(unit: Unit) {
-    setConfirmDelete({ type: "unit", id: unit.id, name: unit.name });
     setConfirmPassword("");
   }
 
@@ -379,14 +359,12 @@ export function AdminDashboard() {
     if (!editingUnit) return;
     const form = event.currentTarget;
     const formData = new FormData(form);
-    const publishableKey = String(formData.get("desktopPublishableKey") ?? "").trim();
     try {
       await callAdminFunction("admin-api", {
         action: "update_unit",
         payload: {
           unitId: editingUnit.id,
-          name: formData.get("name"),
-          desktopPublishableKey: publishableKey || null
+          name: formData.get("name")
         }
       });
       setEditingUnit(null);
@@ -882,15 +860,6 @@ export function AdminDashboard() {
                       required
                       style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
                     />
-                    <input
-                      name="desktopPublishableKey"
-                      placeholder="Publishable key do Supabase (opcional)"
-                      style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
-                    />
-                    <p style={{ color: "#64748b", fontSize: "12px", margin: 0 }}>
-                      Necessario para o desktop acessar o Supabase. Copie do dashboard do projeto
-                      (Project API keys &gt; Publishable).
-                    </p>
                     <button
                       type="submit"
                       style={{
@@ -1158,20 +1127,22 @@ export function AdminDashboard() {
                 <article style={{ background: "#fff", padding: "24px", borderRadius: "16px" }}>
                   <h2 style={{ margin: "0 0 16px 0" }}>Codigos de Ativacao</h2>
                   <p style={{ color: "#64748b", fontSize: "14px", marginBottom: "16px" }}>
-                    Cada unidade possui um unico codigo de ativacao. Ao gerar um novo, o anterior e
-                    invalidado.
+                    Cada pedreira possui um unico codigo de ativacao para o desktop da balanca. Ao
+                    gerar um novo, o anterior e invalidado. Usuarios carregadores continuam por
+                    unidade.
                   </p>
-                  {units.length === 0 ? (
-                    <p style={{ color: "#b91c1c" }}>Nenhuma unidade cadastrada.</p>
+                  {companies.length === 0 ? (
+                    <p style={{ color: "#b91c1c" }}>Nenhuma pedreira cadastrada.</p>
                   ) : (
                     <div
                       style={{ display: "grid", gridTemplateColumns: COMPACT_GRID, gap: "16px" }}
                     >
-                      {units.map((unit) => {
-                        const company = companies.find((c) => c.id === unit.companyId);
+                      {companies.map((company) => {
+                        const companyUnits = units.filter((unit) => unit.companyId === company.id);
+                        const hasActiveUnit = companyUnits.some((unit) => unit.isActive);
                         return (
                           <div
-                            key={unit.id}
+                            key={company.id}
                             style={{
                               padding: "20px",
                               borderRadius: "12px",
@@ -1184,16 +1155,16 @@ export function AdminDashboard() {
                           >
                             <div>
                               <strong style={{ fontSize: "16px", color: "#0f172a" }}>
-                                {unit.name}
+                                {company.name}
                               </strong>
                               <p
                                 style={{ margin: "4px 0 0 0", fontSize: "13px", color: "#64748b" }}
                               >
-                                {company?.name || "Empresa desconhecida"}
+                                {companyUnits.length} unidade(s) cadastrada(s). Desktop unico por pedreira.
                               </p>
                             </div>
 
-                            {unit.desktopActivationCode ? (
+                            {company.desktopActivationCode ? (
                               <div
                                 style={{
                                   padding: "12px",
@@ -1218,9 +1189,9 @@ export function AdminDashboard() {
                                     CODIGO ATIVO
                                   </span>
                                   <span style={{ fontSize: "11px", color: "#166534" }}>
-                                    {unit.desktopActivationCodeRotatedAt
+                                    {company.desktopActivationCodeRotatedAt
                                       ? new Date(
-                                          unit.desktopActivationCodeRotatedAt
+                                          company.desktopActivationCodeRotatedAt
                                         ).toLocaleDateString("pt-BR")
                                       : ""}
                                   </span>
@@ -1236,11 +1207,11 @@ export function AdminDashboard() {
                                     textAlign: "center"
                                   }}
                                 >
-                                  {unit.desktopActivationCode}
+                                  {company.desktopActivationCode}
                                 </p>
                                 <button
                                   onClick={() => {
-                                    navigator.clipboard.writeText(unit.desktopActivationCode!);
+                                    navigator.clipboard.writeText(company.desktopActivationCode!);
                                     alert("Codigo copiado!");
                                   }}
                                   style={{
@@ -1276,60 +1247,22 @@ export function AdminDashboard() {
 
                             <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
                               <button
-                                onClick={() => handleGenerateActivationCode(unit.id)}
+                                onClick={() => handleGenerateActivationCode(company.id)}
+                                disabled={!hasActiveUnit}
                                 style={{
                                   flex: 1,
                                   padding: "8px 12px",
                                   borderRadius: "8px",
                                   border: "none",
-                                  background: "#0f172a",
+                                  background: hasActiveUnit ? "#0f172a" : "#94a3b8",
                                   color: "#fff",
-                                  cursor: "pointer",
+                                  cursor: hasActiveUnit ? "pointer" : "not-allowed",
                                   fontWeight: 700,
                                   fontSize: "12px"
                                 }}
+                                title={hasActiveUnit ? undefined : "Cadastre uma unidade ativa antes de gerar o codigo"}
                               >
                                 Gerar novo
-                              </button>
-                              <button
-                                onClick={() => handleToggleUnit(unit.id, unit.isActive)}
-                                style={{
-                                  padding: "8px 12px",
-                                  borderRadius: "8px",
-                                  border: "1px solid #cbd5e1",
-                                  background: "#fff",
-                                  cursor: "pointer",
-                                  fontSize: "12px"
-                                }}
-                              >
-                                {unit.isActive ? "Desativar" : "Ativar"}
-                              </button>
-                              <button
-                                onClick={() => setEditingUnit(unit)}
-                                style={{
-                                  padding: "8px 12px",
-                                  borderRadius: "8px",
-                                  border: "1px solid #e2e8f0",
-                                  background: "#f8fafc",
-                                  cursor: "pointer",
-                                  fontSize: "12px"
-                                }}
-                              >
-                                Editar
-                              </button>
-                              <button
-                                onClick={() => handleDeleteUnit(unit)}
-                                style={{
-                                  padding: "8px 12px",
-                                  borderRadius: "8px",
-                                  border: "1px solid #fecaca",
-                                  background: "#fef2f2",
-                                  cursor: "pointer",
-                                  fontSize: "12px",
-                                  color: "#dc2626"
-                                }}
-                              >
-                                Excluir
                               </button>
                             </div>
                           </div>
@@ -1377,20 +1310,6 @@ export function AdminDashboard() {
                                   border: "1px solid #cbd5e1"
                                 }}
                               />
-                              <input
-                                name="desktopPublishableKey"
-                                defaultValue={editingUnit.desktopPublishableKey ?? ""}
-                                placeholder="Publishable key do Supabase"
-                                style={{
-                                  padding: "10px",
-                                  borderRadius: "8px",
-                                  border: "1px solid #cbd5e1"
-                                }}
-                              />
-                              <p style={{ color: "#64748b", fontSize: "12px", margin: 0 }}>
-                                Vazio para remover. Copie do dashboard do projeto (Project API keys
-                                &gt; Publishable).
-                              </p>
                               <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
                                 <button
                                   type="submit"

@@ -5,6 +5,7 @@ import {
   buildFreightInput,
   getDriverFilterIds,
   isTransportReady,
+  readStoredThemeMode,
   shouldLinkCreatedDriverToCarrier
 } from "./App";
 
@@ -68,5 +69,12 @@ describe("App", () => {
       "independent-driver"
     ]);
     expect(isTransportReady(form)).toBe(true);
+  });
+
+  it("restores the last valid theme mode from storage", () => {
+    expect(readStoredThemeMode({ getItem: () => "dark" })).toBe("dark");
+    expect(readStoredThemeMode({ getItem: () => "light" })).toBe("light");
+    expect(readStoredThemeMode({ getItem: () => "invalid" })).toBe("light");
+    expect(readStoredThemeMode(null)).toBe("light");
   });
 });
