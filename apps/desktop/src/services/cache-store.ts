@@ -679,9 +679,7 @@ export class CacheStore {
     this.products.clear();
     for (const row of rows) {
       const product = mapProduct(row);
-      if (isFinishedGoodsProduct(product)) {
-        this.products.set(row.id, product);
-      }
+      this.products.set(row.id, product);
     }
   }
 

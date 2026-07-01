@@ -1078,7 +1078,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     try {
       const resetResult = await desktopApi.resetOmieMaster();
       setMessage(
-        `Dados OMIE limpos: ${resetResult.customersCleared} clientes, ${resetResult.carriersCleared} transportadoras, ${resetResult.syncRunsCleared} runs, ${resetResult.syncQueueCleared} jobs.`
+        `Dados OMIE limpos: ${resetResult.customersCleared} clientes, ${resetResult.carriersCleared} transportadoras, ${resetResult.productsCleared} produtos, ${resetResult.paymentTermsCleared} condicoes, ${resetResult.syncRunsCleared} runs, ${resetResult.syncQueueCleared} jobs.`
       );
 
       setOmieConnectionFeedback({

@@ -43,7 +43,7 @@ describe("DesktopRuntime OMIE status", () => {
     }
   });
 
-  it("resets OMIE master data, clearing customers, carriers and sync state", () => {
+  it("resets OMIE master data, clearing reference data and sync state", () => {
     const baseDirectory = mkdtempSync(path.join(tmpdir(), "kyberrock-runtime-"));
     tempDirectories.push(baseDirectory);
     const runtime = DesktopRuntime.initialize(baseDirectory);
@@ -64,6 +64,12 @@ describe("DesktopRuntime OMIE status", () => {
       // Insert local carriers
       database.prepare(`INSERT INTO carriers (id, company_id, name, source, is_active, created_at, updated_at)
         VALUES ('car-1', 'company-1', 'Transportadora A', 'local', 1, datetime('now'), datetime('now'))`).run();
+
+      database.prepare(`INSERT INTO products (id, company_id, omie_product_id, code, description, unit, is_active, created_at, updated_at)
+        VALUES ('prod-1', 'company-1', 123, 'P123', 'Produto A', 'UN', 1, datetime('now'), datetime('now'))`).run();
+
+      database.prepare(`INSERT INTO payment_terms (id, company_id, omie_code, name, rules_json, is_active, created_at, updated_at)
+        VALUES ('term-1', 'company-1', '30', '30 dias', '{}', 1, datetime('now'), datetime('now'))`).run();
 
       // Insert OMIE sync runs
       database.prepare(`INSERT INTO omie_sync_runs (id, company_id, started_at, mode, triggered_by, success, created_at, updated_at)
@@ -102,8 +108,12 @@ describe("DesktopRuntime OMIE status", () => {
       // Verify soft delete
       const activeCustomers = database.prepare(`SELECT COUNT(*) FROM customers WHERE company_id = 'company-1' AND deleted_at IS NULL`).pluck().get() as number;
       const activeCarriers = database.prepare(`SELECT COUNT(*) FROM carriers WHERE company_id = 'company-1' AND deleted_at IS NULL`).pluck().get() as number;
+      const activeProducts = database.prepare(`SELECT COUNT(*) FROM products WHERE company_id = 'company-1' AND deleted_at IS NULL`).pluck().get() as number;
+      const activePaymentTerms = database.prepare(`SELECT COUNT(*) FROM payment_terms WHERE company_id = 'company-1' AND deleted_at IS NULL`).pluck().get() as number;
       expect(activeCustomers).toBe(0);
       expect(activeCarriers).toBe(0);
+      expect(activeProducts).toBe(0);
+      expect(activePaymentTerms).toBe(0);
 
       // Verify sync state cleared
       const pullState = readLocalSetting<Record<string, unknown>>(database, "omie_pull_state");

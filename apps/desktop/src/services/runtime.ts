@@ -1995,6 +1995,8 @@ export class DesktopRuntime {
   resetOmieMasterData(): {
     customersCleared: number;
     carriersCleared: number;
+    productsCleared: number;
+    paymentTermsCleared: number;
     syncRunsCleared: number;
     syncQueueCleared: number;
   } {
@@ -2024,6 +2026,28 @@ export class DesktopRuntime {
       .run(companyId);
     const carriersCleared = carriersResult.changes;
 
+    const productsResult = this.database
+      .prepare(
+        `UPDATE products
+         SET deleted_at = datetime('now'),
+             is_active = 0,
+             updated_at = datetime('now')
+         WHERE company_id = ? AND deleted_at IS NULL`
+      )
+      .run(companyId);
+    const productsCleared = productsResult.changes;
+
+    const paymentTermsResult = this.database
+      .prepare(
+        `UPDATE payment_terms
+         SET deleted_at = datetime('now'),
+             is_active = 0,
+             updated_at = datetime('now')
+         WHERE company_id = ? AND deleted_at IS NULL`
+      )
+      .run(companyId);
+    const paymentTermsCleared = paymentTermsResult.changes;
+
     const syncRunsResult = this.database
       .prepare(`DELETE FROM omie_sync_runs WHERE company_id = ?`)
       .run(companyId);
@@ -2043,7 +2067,14 @@ export class DesktopRuntime {
     this.omieSyncInProgress = false;
     this.cacheStore.invalidateAll(companyId);
 
-    return { customersCleared, carriersCleared, syncRunsCleared, syncQueueCleared };
+    return {
+      customersCleared,
+      carriersCleared,
+      productsCleared,
+      paymentTermsCleared,
+      syncRunsCleared,
+      syncQueueCleared
+    };
   }
 }
 

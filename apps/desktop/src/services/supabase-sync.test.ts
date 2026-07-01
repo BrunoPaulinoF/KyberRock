@@ -590,6 +590,27 @@ describe("supabase sync", () => {
     }
   });
 
+  it("stores OMIE products even when they are not classified as finished goods", () => {
+    const database = createDatabase();
+
+    try {
+      createIdentity(database);
+      const result = applyOmieReferenceData(database, "company-1", {
+        customers: [],
+        products: [{ id: 456, code: "SERV", description: "Servico OMIE", unit: "UN", itemType: "99" }],
+        paymentTerms: [],
+        suppliers: []
+      });
+
+      expect(result.productsSynced).toBe(1);
+      expect(
+        database.prepare("SELECT description FROM products WHERE id = 'omie_456'").pluck().get()
+      ).toBe("Servico OMIE");
+    } finally {
+      database.close();
+    }
+  });
+
   it("keeps failed carrier pushes pending and visible for retry", async () => {
     const database = createDatabase();
 

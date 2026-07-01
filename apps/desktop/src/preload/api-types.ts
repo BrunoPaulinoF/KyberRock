@@ -371,6 +371,8 @@ export interface KyberRockDesktopApi {
   resetOmieMaster: () => Promise<{
     customersCleared: number;
     carriersCleared: number;
+    productsCleared: number;
+    paymentTermsCleared: number;
     syncRunsCleared: number;
     syncQueueCleared: number;
   }>;

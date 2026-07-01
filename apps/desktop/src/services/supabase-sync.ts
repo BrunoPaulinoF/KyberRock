@@ -2055,15 +2055,6 @@ function upsertOmieProducts(
   companyId: string,
   products: OmieReferenceProduct[]
 ): void {
-  const removeFromKyberRock = database.prepare(`
-    UPDATE products
-    SET is_active = 0,
-        deleted_at = datetime('now'),
-        updated_from_omie_at = datetime('now'),
-        updated_at = datetime('now')
-    WHERE company_id = ?
-      AND omie_product_id = ?
-  `);
   const upsert = database.prepare(`
     INSERT INTO products (
       id, company_id, omie_product_id, omie_integration_code, code, description,
@@ -2106,11 +2097,6 @@ function upsertOmieProducts(
   `);
 
   for (const product of products) {
-    if (!isFinishedGoodsOmieProduct(product)) {
-      removeFromKyberRock.run(companyId, product.id);
-      continue;
-    }
-
     upsert.run(
       `omie_${product.id}`,
       companyId,
@@ -2142,66 +2128,6 @@ function upsertOmieProducts(
       product.isActive === false ? 0 : 1
     );
   }
-}
-
-function isFinishedGoodsOmieProduct(product: OmieReferenceProduct): boolean {
-  const candidates = [
-    product.itemType ?? null,
-    ...extractFiscalRecommendationValues(product.fiscalRecommendations ?? null)
-  ];
-  return candidates.some((value) => matchesFinishedGoodsType(value));
-}
-
-function extractFiscalRecommendationValues(value: unknown): string[] {
-  const values: string[] = [];
-  collectFiscalRecommendationValues(value, values);
-  return values;
-}
-
-function collectFiscalRecommendationValues(value: unknown, output: string[]): void {
-  if (typeof value === "string" || typeof value === "number") {
-    output.push(String(value));
-    return;
-  }
-  if (Array.isArray(value)) {
-    for (const item of value) collectFiscalRecommendationValues(item, output);
-    return;
-  }
-  if (value && typeof value === "object") {
-    for (const [key, nested] of Object.entries(value)) {
-      const normalizedKey = normalizeFiscalTypeText(key);
-      if (
-        normalizedKey.includes("tipo") &&
-        (normalizedKey.includes("produto") || normalizedKey.includes("item"))
-      ) {
-        collectFiscalRecommendationValues(nested, output);
-      }
-      if (normalizedKey === "codigo" || normalizedKey === "cod" || normalizedKey === "code") {
-        collectFiscalRecommendationValues(nested, output);
-      }
-    }
-  }
-}
-
-function matchesFinishedGoodsType(value: string | null | undefined): boolean {
-  if (!value) return false;
-  const normalized = normalizeFiscalTypeText(value);
-  return (
-    normalized === "04" ||
-    normalized.startsWith("04 ") ||
-    normalized.includes("produtos acabados") ||
-    normalized.includes("produto acabado")
-  );
-}
-
-function normalizeFiscalTypeText(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[-_/.:]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
 }
 
 function upsertOmiePaymentTerms(

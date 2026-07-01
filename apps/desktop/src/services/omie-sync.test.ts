@@ -275,7 +275,7 @@ describe("OmieSyncService", () => {
     }
   });
 
-  it("removes non-finished products from KyberRock during OMIE sync", async () => {
+  it("keeps non-finished OMIE products visible in Cadastros during OMIE sync", async () => {
     const db = createMockDb();
     const client = createMockClient();
 
@@ -295,8 +295,8 @@ describe("OmieSyncService", () => {
 
     const count = await service.syncProducts("company-1");
 
-    expect(count).toBe(0);
-    expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining("UPDATE products"));
+    expect(count).toBe(1);
+    expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining("INSERT INTO products"));
   });
 
   it("syncs payment terms from OMIE to local database", async () => {

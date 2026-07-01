@@ -58,4 +58,30 @@ describe("customers", () => {
       database.close();
     }
   });
+
+  it("shows all products in product cache and filters finished goods only when requested", () => {
+    const database = createDatabase();
+
+    try {
+      database
+        .prepare(
+          `INSERT INTO products (
+            id, company_id, omie_product_id, code, description, unit, item_type, is_active, created_at, updated_at
+          ) VALUES
+            ('product-finished', 'company-1', 101, 'P101', 'Produto Acabado', 'UN', '04 - Produtos Acabados', 1, datetime('now'), datetime('now')),
+            ('product-service', 'company-1', 202, 'P202', 'Produto Sem Tipo Acabado', 'UN', '99', 1, datetime('now'), datetime('now'))`
+        )
+        .run();
+      const cacheStore = new CacheStore(database);
+
+      cacheStore.loadAll("company-1");
+
+      expect(cacheStore.query({ entityType: "product", activeOnly: true }).total).toBe(2);
+      expect(
+        cacheStore.query({ entityType: "product", activeOnly: true, productFiscalType: "finished_goods" }).total
+      ).toBe(1);
+    } finally {
+      database.close();
+    }
+  });
 });
