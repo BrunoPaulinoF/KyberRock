@@ -20,6 +20,18 @@ docs/*.zip
 *.pfx
 service-account*.json
 ui-debug.log
+*omie*kommo*.txt
+
+# Local operational/customer data
+planilhas/
+*.xlsx
+*.csv
+midia/Conversa*.txt
+*transcri*.txt
+
+# Local configuration/debug captures
+CONFIGS TESTE/
+loader-login-after-submit.png
 
 # Local databases and runtime files
 *.sqlite
