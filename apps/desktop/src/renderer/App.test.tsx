@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   App,
   buildFreightInput,
+  createCacheSelectOptions,
+  filterCacheSelectOptions,
   getDriverFilterIds,
   isTransportReady,
   readStoredThemeMode,
@@ -76,5 +78,17 @@ describe("App", () => {
     expect(readStoredThemeMode({ getItem: () => "light" })).toBe("light");
     expect(readStoredThemeMode({ getItem: () => "invalid" })).toBe("light");
     expect(readStoredThemeMode(null)).toBe("light");
+  });
+
+  it("builds and filters cache select modal options", () => {
+    const options = createCacheSelectOptions([
+      { id: "customer-1", tradeName: "Cliente A" },
+      { id: "vehicle-1", plate: "ABC1D23" },
+      { omieCode: "term-1", name: "A prazo" }
+    ]);
+
+    expect(options.map((option) => option.label)).toEqual(["Cliente A", "ABC1D23", "A prazo"]);
+    expect(filterCacheSelectOptions(options, ["vehicle-1"])).toEqual([options[1]]);
+    expect(filterCacheSelectOptions(options, undefined)).toEqual(options);
   });
 });

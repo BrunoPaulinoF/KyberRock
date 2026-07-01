@@ -282,6 +282,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     totalProducts: number;
     totalPaymentTerms: number;
     pendingPushCustomers: number;
+    pendingPushCarriers: number;
     pendingOmieJobs: number;
     lastSyncAt: string | null;
   } | null>(null);
@@ -2821,7 +2822,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                           <p>Clientes sincronizados: {omieStatus.totalCustomers}</p>
                           <p>Produtos sincronizados: {omieStatus.totalProducts}</p>
                           <p>Condicoes sincronizadas: {omieStatus.totalPaymentTerms}</p>
-                          <p>Pendentes de envio: {omieStatus.pendingPushCustomers} clientes</p>
+                          <p>
+                            Pendentes de envio: {omieStatus.pendingPushCustomers} clientes /{" "}
+                            {omieStatus.pendingPushCarriers} transportadoras
+                          </p>
                           <p>Pedidos OMIE na fila: {omieStatus.pendingOmieJobs}</p>
                           <p>
                             Ultima sincronizacao:{" "}
@@ -3376,10 +3380,27 @@ function parsePositiveNumber(value: string): number | null {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
-interface CacheSelectOption {
+export interface CacheSelectOption {
   id: string;
   label: string;
   raw?: Record<string, unknown>;
+}
+
+export function createCacheSelectOptions(
+  rows: Array<Record<string, unknown>>
+): CacheSelectOption[] {
+  return rows.map((item) => ({
+    id: String(item.id ?? item.omieCode ?? ""),
+    label: String(item.tradeName ?? item.plate ?? item.name ?? item.description ?? item.fullName ?? ""),
+    raw: item
+  }));
+}
+
+export function filterCacheSelectOptions(
+  options: CacheSelectOption[],
+  filterIds: string[] | undefined
+): CacheSelectOption[] {
+  return filterIds !== undefined ? options.filter((option) => filterIds.includes(option.id)) : options;
 }
 
 function CacheSelect({
@@ -3411,9 +3432,6 @@ function CacheSelect({
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
-  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
-  const containerRef = useRef<HTMLDivElement>(null);
-  const dropdownRef = useRef<HTMLDivElement>(null);
 
   const selectedLabel = useMemo(() => {
     return (
@@ -3442,16 +3460,8 @@ function CacheSelect({
           limit: 20,
           productFiscalType
         });
-        const allOptions = (result.rows as Array<Record<string, unknown>>).map((item) => ({
-          id: String(item.id ?? item.omieCode ?? ""),
-          label: String(
-            item.tradeName ?? item.plate ?? item.name ?? item.description ?? item.fullName ?? ""
-          ),
-          raw: item
-        }));
-        setOptions(
-          filterIds !== undefined ? allOptions.filter((o) => filterIds.includes(o.id)) : allOptions
-        );
+        const allOptions = createCacheSelectOptions(result.rows as Array<Record<string, unknown>>);
+        setOptions(filterCacheSelectOptions(allOptions, filterIds));
       } catch {
         setOptions([]);
       } finally {
@@ -3465,65 +3475,6 @@ function CacheSelect({
   useEffect(() => {
     setHighlightedIndex(0);
   }, [open, options.length]);
-
-  useEffect(() => {
-    function handleClick(event: MouseEvent) {
-      const target = event.target as Node;
-      if (containerRef.current?.contains(target)) return;
-      if (dropdownRef.current?.contains(target)) return;
-      setOpen(false);
-    }
-
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, []);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    const margin = 4;
-    const preferredMaxHeight = 240;
-    const minVisibleHeight = 80;
-    const flipThreshold = 160;
-
-    function recompute(): void {
-      if (!containerRef.current) return;
-      const rect = containerRef.current.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - rect.bottom - margin;
-      const spaceAbove = rect.top - margin;
-      const flip = spaceBelow < flipThreshold && spaceAbove > spaceBelow;
-      const available = Math.max(minVisibleHeight, flip ? spaceAbove : spaceBelow);
-      const maxHeight = Math.min(preferredMaxHeight, available);
-
-      if (flip) {
-        setDropdownStyle({
-          position: "fixed",
-          bottom: `${window.innerHeight - rect.top + margin}px`,
-          left: `${rect.left}px`,
-          width: `${rect.width}px`,
-          maxHeight: `${maxHeight}px`
-        });
-      } else {
-        setDropdownStyle({
-          position: "fixed",
-          top: `${rect.bottom + margin}px`,
-          left: `${rect.left}px`,
-          width: `${rect.width}px`,
-          maxHeight: `${maxHeight}px`
-        });
-      }
-    }
-
-    recompute();
-    window.addEventListener("resize", recompute);
-    window.addEventListener("scroll", recompute, true);
-    return () => {
-      window.removeEventListener("resize", recompute);
-      window.removeEventListener("scroll", recompute, true);
-    };
-  }, [open]);
 
   function selectOption(option: CacheSelectOption): void {
     setSelectedOption(option);
@@ -3541,138 +3492,232 @@ function CacheSelect({
   }
 
   return (
-    <div ref={containerRef} style={{ position: "relative", marginBottom: "6px" }}>
+    <div style={{ position: "relative", marginBottom: "6px" }}>
       <label style={styles.fieldLabel}>
         {label}
         <input
           type="text"
-          value={open ? search : selectedLabel}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            if (!open) setOpen(true);
-          }}
-          onFocus={() => {
+          value={selectedLabel}
+          onChange={() => undefined}
+          onClick={() => {
             setOpen(true);
             setSearch("");
           }}
           onKeyDown={(event) => {
-            if (event.key === "ArrowDown") {
+            if (event.key === "Enter" || event.key === " ") {
               event.preventDefault();
-              if (!open) setOpen(true);
-              setHighlightedIndex((index) => Math.min(Math.max(0, options.length - 1), index + 1));
-              return;
-            }
-            if (event.key === "ArrowUp") {
-              event.preventDefault();
-              setHighlightedIndex((index) => Math.max(0, index - 1));
-              return;
-            }
-            if (event.key === "Enter" && open && options[highlightedIndex]) {
-              event.preventDefault();
-              selectOption(options[highlightedIndex]);
-              return;
-            }
-            if (event.key === "Escape") {
-              event.preventDefault();
-              setOpen(false);
+              setOpen(true);
               setSearch("");
             }
           }}
           disabled={disabled}
-          placeholder={`Buscar ${label.toLowerCase()}...`}
-          style={styles.input}
+          placeholder={`Selecionar ${label.toLowerCase()}...`}
+          readOnly
+          style={{ ...styles.input, cursor: disabled ? "not-allowed" : "pointer" }}
         />
       </label>
       {open ? (
         <div
-          ref={dropdownRef}
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Selecionar ${label}`}
+          onMouseDown={(event) => {
+            if (event.currentTarget === event.target) {
+              setOpen(false);
+              setSearch("");
+            }
+          }}
           style={{
-            background: "var(--kr-surface)",
-            border: "1px solid var(--kr-border)",
-            borderRadius: "12px",
-            overflowY: "auto",
-            zIndex: 100,
-            boxShadow: "var(--kr-shadow)",
-            ...dropdownStyle
+            ...modalOverlayStyle,
+            zIndex: 900,
+            padding: "16px"
           }}
         >
-          {loading ? (
-            <div style={{ padding: "8px 12px", color: "#94a3b8", fontSize: "13px" }}>
-              Carregando...
-            </div>
-          ) : options.length === 0 ? (
-            <div style={{ padding: "8px 12px", color: "#94a3b8", fontSize: "13px" }}>
-              Nenhum resultado
-            </div>
-          ) : (
-            options.map((option, index) => (
-              <button
-                key={option.id}
-                type="button"
-                onClick={() => selectOption(option)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: "8px",
-                  width: "100%",
-                  textAlign: "left",
-                  padding: "7px 10px",
-                  border: "none",
-                  borderBottom: "1px solid var(--kr-border)",
-                  background: highlightedIndex === index ? "var(--kr-card-hover)" : "transparent",
-                  cursor: "pointer",
-                  fontSize: "13px",
-                  color: "var(--kr-text-strong)"
-                }}
-                onMouseEnter={() => setHighlightedIndex(index)}
-              >
-                <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {option.label}
-                </span>
-                {getOptionMeta(option) ? (
-                  <span
-                    style={{
-                      flexShrink: 0,
-                      borderRadius: "999px",
-                      background: "var(--kr-surface-soft)",
-                      color: "var(--kr-muted)",
-                      fontSize: "11px",
-                      fontWeight: 800,
-                      padding: "2px 6px"
-                    }}
-                  >
-                    {getOptionMeta(option)}
-                  </span>
-                ) : null}
-              </button>
-            ))
-          )}
-          {onCreateNew ? (
-            <button
-              type="button"
-              onClick={() => {
-                onCreateNew();
-                setOpen(false);
-                setSearch("");
-              }}
+          <div
+            style={{
+              ...modalContentStyle,
+              maxWidth: "760px",
+              width: "min(760px, 100%)",
+              padding: "0",
+              overflow: "hidden"
+            }}
+          >
+            <div
               style={{
-                display: "block",
-                width: "100%",
-                textAlign: "left",
-                padding: "8px 12px",
-                border: "none",
-                borderTop: "1px solid var(--kr-border)",
-                background: "var(--kr-surface-soft)",
-                cursor: "pointer",
-                fontSize: "13px",
-                color: "var(--kr-primary)",
-                fontWeight: 600
+                display: "flex",
+                justifyContent: "space-between",
+                gap: "12px",
+                alignItems: "flex-start",
+                padding: "16px",
+                borderBottom: "1px solid var(--kr-border)"
               }}
             >
-              + Cadastrar novo
-            </button>
-          ) : null}
+              <div>
+                <h3 style={{ margin: 0, color: "var(--kr-text-strong)", fontSize: "18px" }}>
+                  Selecionar {label}
+                </h3>
+                <p style={{ margin: "4px 0 0", color: "var(--kr-muted)", fontSize: "13px" }}>
+                  Pesquise por nome e escolha um item da lista disponível.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  setSearch("");
+                }}
+                style={{
+                  border: "1px solid var(--kr-border)",
+                  borderRadius: "10px",
+                  background: "var(--kr-surface-soft)",
+                  color: "var(--kr-text)",
+                  cursor: "pointer",
+                  fontWeight: 800,
+                  padding: "8px 10px"
+                }}
+              >
+                Fechar
+              </button>
+            </div>
+
+            <div style={{ display: "flex", flexWrap: "wrap", minHeight: "360px" }}>
+              <div style={{ flex: "1 1 360px", minWidth: 0, padding: "16px" }}>
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "ArrowDown") {
+                      event.preventDefault();
+                      setHighlightedIndex((index) =>
+                        Math.min(Math.max(0, options.length - 1), index + 1)
+                      );
+                      return;
+                    }
+                    if (event.key === "ArrowUp") {
+                      event.preventDefault();
+                      setHighlightedIndex((index) => Math.max(0, index - 1));
+                      return;
+                    }
+                    if (event.key === "Enter" && options[highlightedIndex]) {
+                      event.preventDefault();
+                      selectOption(options[highlightedIndex]);
+                      return;
+                    }
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      setOpen(false);
+                      setSearch("");
+                    }
+                  }}
+                  autoFocus
+                  placeholder={`Buscar ${label.toLowerCase()}...`}
+                  style={{ ...styles.input, marginBottom: "12px" }}
+                />
+
+                <div
+                  style={{
+                    border: "1px solid var(--kr-border)",
+                    borderRadius: "12px",
+                    overflowY: "auto",
+                    maxHeight: "300px",
+                    background: "var(--kr-surface-soft)"
+                  }}
+                >
+                  {loading ? (
+                    <div style={{ padding: "14px", color: "var(--kr-muted)", fontSize: "13px" }}>
+                      Carregando...
+                    </div>
+                  ) : options.length === 0 ? (
+                    <div style={{ padding: "14px", color: "var(--kr-muted)", fontSize: "13px" }}>
+                      Nenhum resultado encontrado.
+                    </div>
+                  ) : (
+                    options.map((option, index) => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        onClick={() => selectOption(option)}
+                        onMouseEnter={() => setHighlightedIndex(index)}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: "8px",
+                          width: "100%",
+                          textAlign: "left",
+                          padding: "10px 12px",
+                          border: "none",
+                          borderBottom: "1px solid var(--kr-border)",
+                          background:
+                            highlightedIndex === index ? "var(--kr-card-hover)" : "transparent",
+                          cursor: "pointer",
+                          fontSize: "13px",
+                          color: "var(--kr-text-strong)"
+                        }}
+                      >
+                        <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {option.label}
+                        </span>
+                        {getOptionMeta(option) ? (
+                          <span
+                            style={{
+                              flexShrink: 0,
+                              borderRadius: "999px",
+                              background: "var(--kr-surface)",
+                              color: "var(--kr-muted)",
+                              fontSize: "11px",
+                              fontWeight: 800,
+                              padding: "2px 6px"
+                            }}
+                          >
+                            {getOptionMeta(option)}
+                          </span>
+                        ) : null}
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {onCreateNew ? (
+                <aside
+                  style={{
+                    borderLeft: "1px solid var(--kr-border)",
+                    padding: "16px",
+                    background: "var(--kr-surface-soft)",
+                    display: "flex",
+                    flex: "1 1 220px",
+                    flexDirection: "column",
+                    justifyContent: "center",
+                    gap: "10px"
+                  }}
+                >
+                  <div style={{ color: "var(--kr-text-strong)", fontWeight: 900 }}>
+                    Não encontrou?
+                  </div>
+                  <div style={{ color: "var(--kr-muted)", fontSize: "13px", lineHeight: 1.4 }}>
+                    Cadastre um novo item agora e volte para selecionar na lista atualizada.
+                  </div>
+                  <button
+                    type="button"
+                    onClick={onCreateNew}
+                    style={{
+                      border: "none",
+                      borderRadius: "12px",
+                      background: "var(--kr-primary)",
+                      color: "white",
+                      cursor: "pointer",
+                      fontWeight: 800,
+                      padding: "10px 12px"
+                    }}
+                  >
+                    + Cadastrar novo
+                  </button>
+                </aside>
+              ) : null}
+            </div>
+          </div>
         </div>
       ) : null}
     </div>
@@ -5471,7 +5516,7 @@ function OmieDirectSyncDialog({
           Sincronizar OMIE direto
         </h3>
         <p style={styles.muted}>
-          Puxa clientes, produtos, condicoes e transportadoras diretamente do OMIE.
+          Puxa clientes, produtos e condicoes, alem de enviar transportadoras locais pendentes.
         </p>
         <TextInput
           label="OMIE App Key"

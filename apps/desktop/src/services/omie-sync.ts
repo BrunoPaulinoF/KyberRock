@@ -248,6 +248,105 @@ export class OmieSyncService {
     return pushed;
   }
 
+  async pushCarriersToOmie(companyId: string): Promise<number> {
+    const pending = this.db
+      .prepare(
+        `SELECT * FROM carriers
+         WHERE company_id = ? AND deleted_at IS NULL AND needs_push = 1 AND source = 'local'`
+      )
+      .all(companyId) as Array<{
+      id: string;
+      omie_customer_id: number | null;
+      name: string;
+      document: string | null;
+      phone: string | null;
+      email: string | null;
+    }>;
+
+    const markSynced = this.db.prepare(`
+      UPDATE carriers
+      SET needs_push = 0, last_synced_at = datetime('now'), sync_status = 'synced', updated_at = datetime('now')
+      WHERE id = ?
+    `);
+
+    const setOmieId = this.db.prepare(`
+      UPDATE carriers
+      SET omie_customer_id = ?, needs_push = 0, last_synced_at = datetime('now'), sync_status = 'synced', updated_at = datetime('now')
+      WHERE id = ?
+    `);
+
+    const markError = this.db.prepare(`
+      UPDATE carriers
+      SET sync_status = 'error', updated_at = datetime('now')
+      WHERE id = ?
+    `);
+
+    let omieCustomersByDocument: Map<string, Customer> | null = null;
+    let pushed = 0;
+    for (const carrier of pending) {
+      try {
+        const phoneMatch = carrier.phone?.match(/\(?(\d{2})\)?\s*(\d+)/);
+        const tags = [{ tag: "transportadora" }];
+        if (!omieCustomersByDocument && !carrier.omie_customer_id && carrier.document) {
+          omieCustomersByDocument = await this.listOmieCustomersByDocument();
+        }
+        const matchingOmieId =
+          carrier.omie_customer_id ??
+          (carrier.document
+            ? (omieCustomersByDocument?.get(normalizeDocument(carrier.document))?.id ?? null)
+            : null);
+
+        if (matchingOmieId) {
+          const updateInput: UpdateCustomerInput = {
+            codigoClienteOmie: matchingOmieId,
+            razaoSocial: carrier.name,
+            nomeFantasia: carrier.name,
+            tags
+          };
+          if (carrier.document) updateInput.cnpjCpf = carrier.document;
+          if (carrier.email) updateInput.email = carrier.email;
+          if (phoneMatch) {
+            updateInput.telefone1Ddd = phoneMatch[1];
+            updateInput.telefone1Numero = phoneMatch[2];
+          }
+          await this.customersService.update(updateInput);
+          if (carrier.omie_customer_id) markSynced.run(carrier.id);
+          else setOmieId.run(matchingOmieId, carrier.id);
+        } else {
+          const createInput: CreateCustomerInput = {
+            razaoSocial: carrier.name,
+            nomeFantasia: carrier.name,
+            cnpjCpf: carrier.document || "",
+            tags
+          };
+          if (carrier.email) createInput.email = carrier.email;
+          if (phoneMatch) {
+            createInput.telefone1Ddd = phoneMatch[1];
+            createInput.telefone1Numero = phoneMatch[2];
+          }
+          const omieId = await this.customersService.create(createInput);
+          setOmieId.run(omieId, carrier.id);
+        }
+        pushed++;
+      } catch {
+        markError.run(carrier.id);
+      }
+    }
+
+    return pushed;
+  }
+
+  private async listOmieCustomersByDocument(): Promise<Map<string, Customer>> {
+    const byDocument = new Map<string, Customer>();
+    const customers = await this.customersService.listAll();
+    for (const customer of customers) {
+      if (!customer.document) continue;
+      const normalized = normalizeDocument(customer.document);
+      if (normalized) byDocument.set(normalized, customer);
+    }
+    return byDocument;
+  }
+
   async reconcileCustomersByDocument(companyId: string): Promise<void> {
     const omieCustomers = await this.customersService.listAll();
 

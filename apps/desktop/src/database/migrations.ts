@@ -859,5 +859,17 @@ ALTER TABLE print_profiles ADD COLUMN network_host TEXT;
 ALTER TABLE print_profiles ADD COLUMN network_port INTEGER;
 ALTER TABLE print_profiles ADD COLUMN template_config_json TEXT NOT NULL DEFAULT '{}';
 `
+  },
+  {
+    version: 24,
+    name: "carrier_omie_push_state",
+    sql: `
+ALTER TABLE carriers ADD COLUMN sync_status TEXT NOT NULL DEFAULT 'synced' CHECK (sync_status IN ('synced', 'pending', 'error'));
+ALTER TABLE carriers ADD COLUMN needs_push INTEGER NOT NULL DEFAULT 0 CHECK (needs_push IN (0, 1));
+ALTER TABLE carriers ADD COLUMN last_synced_at TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_carriers_company_needs_push
+  ON carriers(company_id, needs_push, deleted_at);
+`
   }
 ];

@@ -327,6 +327,7 @@ export interface KyberRockDesktopApi {
     totalProducts: number;
     totalPaymentTerms: number;
     pendingPushCustomers: number;
+    pendingPushCarriers: number;
     pendingOmieJobs: number;
     lastSyncAt: string | null;
   }>;

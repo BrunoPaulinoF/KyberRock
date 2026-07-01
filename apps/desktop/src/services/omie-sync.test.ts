@@ -216,6 +216,56 @@ describe("OmieSyncService", () => {
     }
   });
 
+  it("pushes local carriers to OMIE as tagged customers and deduplicates by document", async () => {
+    const db = openDesktopDatabase({ databasePath: ":memory:" });
+
+    try {
+      runDesktopMigrations(db);
+      db.exec(`
+        INSERT INTO companies (id, legal_name, trade_name, created_at, updated_at)
+        VALUES ('company-1', 'Empresa Teste', 'Empresa', datetime('now'), datetime('now'));
+
+        INSERT INTO carriers (
+          id, company_id, name, document, source, sync_status, needs_push, is_active, created_at, updated_at
+        ) VALUES (
+          'carrier-1', 'company-1', 'Transportadora Local', '22222222000182', 'local', 'pending', 1, 1, datetime('now'), datetime('now')
+        );
+      `);
+
+      const service = new OmieSyncService(createMockClient(), db);
+      const customersService = (service as unknown as Record<string, unknown>).customersService as {
+        listAll: () => Promise<unknown[]>;
+        update: (input: unknown) => Promise<void>;
+      };
+      const listAll = vi.spyOn(customersService, "listAll").mockResolvedValue([
+        {
+          id: 654,
+          name: "Transportadora OMIE",
+          document: "22222222000182",
+          isActive: true,
+          tags: { tags: ["transportadora"] }
+        }
+      ]);
+      const update = vi.spyOn(customersService, "update").mockResolvedValue(undefined);
+
+      const pushed = await service.pushCarriersToOmie("company-1");
+
+      expect(pushed).toBe(1);
+      expect(listAll).toHaveBeenCalledTimes(1);
+      expect(update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          codigoClienteOmie: 654,
+          razaoSocial: "Transportadora Local",
+          tags: [{ tag: "transportadora" }]
+        })
+      );
+      expect(db.prepare("SELECT omie_customer_id FROM carriers WHERE id = 'carrier-1'").pluck().get()).toBe(654);
+      expect(db.prepare("SELECT needs_push FROM carriers WHERE id = 'carrier-1'").pluck().get()).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
+
   it("removes non-finished products from KyberRock during OMIE sync", async () => {
     const db = createMockDb();
     const client = createMockClient();

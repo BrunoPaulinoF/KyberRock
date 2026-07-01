@@ -91,6 +91,7 @@ import {
   syncOperationToSupabase,
   syncLoadingRequestToSupabase,
   syncOmieReferenceDataFromCloud,
+  pushOmieCarriersToCloud,
   pushOmieCustomersToCloud,
   processOmieSyncQueue,
   processFiscalBillingNow,
@@ -1593,6 +1594,7 @@ export class DesktopRuntime {
     totalProducts: number;
     totalPaymentTerms: number;
     pendingPushCustomers: number;
+    pendingPushCarriers: number;
     pendingOmieJobs: number;
     lastSyncAt: string | null;
   } {
@@ -1626,6 +1628,13 @@ export class DesktopRuntime {
       .pluck()
       .get(identity.companyId) as number;
 
+    const pendingPushCarriers = this.database
+      .prepare(
+        "SELECT COUNT(*) FROM carriers WHERE company_id = ? AND deleted_at IS NULL AND needs_push = 1"
+      )
+      .pluck()
+      .get(identity.companyId) as number;
+
     const pendingOmieJobs = this.database
       .prepare(
         "SELECT COUNT(*) FROM sync_queue WHERE target = 'omie' AND status IN ('pending', 'failed')"
@@ -1651,6 +1660,7 @@ export class DesktopRuntime {
       totalProducts,
       totalPaymentTerms,
       pendingPushCustomers,
+      pendingPushCarriers,
       pendingOmieJobs,
       lastSyncAt: lastSync
     };
@@ -1706,6 +1716,7 @@ export class DesktopRuntime {
       const identity = this.ensureIdentity();
       const loop = await this.runOmieDataEntryLoop({ reset: true, maxIterations: 200 });
       const customerPush = await pushOmieCustomersToCloud(this.database, identity);
+      const carrierPush = await pushOmieCarriersToCloud(this.database, identity);
       const queue = await processOmieSyncQueue(this.database, identity);
       this.cacheStore.invalidateAll(identity.companyId);
       return {
@@ -1716,8 +1727,8 @@ export class DesktopRuntime {
         suppliersSynced: loop.suppliersSynced,
         ordersProcessed: queue.processed,
         ordersFailed: queue.failed,
-        customersPushFailed: customerPush.failed,
-        errors: customerPush.errors.concat(loop.errors, queue.errors)
+        customersPushFailed: customerPush.failed + carrierPush.failed,
+        errors: customerPush.errors.concat(carrierPush.errors, loop.errors, queue.errors)
       };
     } finally {
       this.omieSyncInProgress = false;
@@ -1739,6 +1750,7 @@ export class DesktopRuntime {
     const identity = this.ensureIdentity();
     const client = createOmieClient({ appKey, appSecret });
     const service = new OmieSyncService(client, this.database);
+    await service.pushCarriersToOmie(identity.companyId);
     const result = await service.syncAll(identity.companyId);
     this.cacheStore.invalidateAll(identity.companyId);
     return {

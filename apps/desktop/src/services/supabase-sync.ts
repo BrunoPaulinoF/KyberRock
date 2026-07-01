@@ -1386,6 +1386,119 @@ export async function pushOmieCustomersToCloud(
   return { pushed, failed, errors };
 }
 
+export async function pushOmieCarriersToCloud(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity,
+  options: { limit?: number; delayMs?: number } = {}
+): Promise<{ pushed: number; failed: number; errors: string[] }> {
+  const settings = getCloudSettings(database, identity);
+  const supabase = getSupabaseClient();
+  const limit = options.limit ?? OMIE_PUSH_CUSTOMER_BATCH_LIMIT;
+  const delayMs = options.delayMs ?? OMIE_BATCH_DELAY_MS;
+
+  const pending = database
+    .prepare(
+      `SELECT id, omie_customer_id, name, document, phone, email,
+              zipcode, address_street, address_number, address_complement, neighborhood, city, state
+       FROM carriers
+       WHERE company_id = ? AND deleted_at IS NULL AND needs_push = 1 AND source = 'local'
+       ORDER BY updated_at ASC
+       LIMIT ?`
+    )
+    .all(identity.companyId, limit) as Array<{
+    id: string;
+    omie_customer_id: number | null;
+    name: string;
+    document: string | null;
+    phone: string | null;
+    email: string | null;
+    zipcode: string | null;
+    address_street: string | null;
+    address_number: string | null;
+    address_complement: string | null;
+    neighborhood: string | null;
+    city: string | null;
+    state: string | null;
+  }>;
+
+  let pushed = 0;
+  let failed = 0;
+  const errors: string[] = [];
+  const setOmieId = database.prepare(`
+    UPDATE carriers
+    SET omie_customer_id = ?, needs_push = 0, last_synced_at = datetime('now'), sync_status = 'synced', updated_at = datetime('now')
+    WHERE id = ?
+  `);
+  const markSynced = database.prepare(`
+    UPDATE carriers
+    SET needs_push = 0, last_synced_at = datetime('now'), sync_status = 'synced', updated_at = datetime('now')
+    WHERE id = ?
+  `);
+  const markError = database.prepare(`
+    UPDATE carriers
+    SET sync_status = 'error', updated_at = datetime('now')
+    WHERE id = ?
+  `);
+
+  for (const [index, carrier] of pending.entries()) {
+    try {
+      const phoneMatch = carrier.phone?.match(/\(?(\d{2})\)?\s*(\d+)/);
+      const { data, error } = await supabase.functions.invoke<{ omieCustomerId?: number }>(
+        "omie-sync",
+        {
+          body: {
+            deviceId: settings.deviceId,
+            deviceToken: settings.deviceToken,
+            action: "push_customer",
+            payload: {
+              localCustomerId: `carrier:${carrier.id}`,
+              omieCustomerId: carrier.omie_customer_id ?? undefined,
+              razaoSocial: carrier.name,
+              nomeFantasia: carrier.name,
+              cnpjCpf: carrier.document ?? undefined,
+              email: carrier.email ?? undefined,
+              telefone1Ddd: phoneMatch?.[1] ?? undefined,
+              telefone1Numero: phoneMatch?.[2] ?? undefined,
+              zipcode: carrier.zipcode ?? undefined,
+              addressStreet: carrier.address_street ?? undefined,
+              addressNumber: carrier.address_number ?? undefined,
+              neighborhood: carrier.neighborhood ?? undefined,
+              city: carrier.city ?? undefined,
+              state: carrier.state ?? undefined,
+              tags: ["transportadora"]
+            }
+          }
+        }
+      );
+
+      if (error) {
+        throw new Error(await getFunctionErrorMessage(error));
+      }
+      if (!data?.omieCustomerId) {
+        throw new Error("OMIE nao retornou omieCustomerId");
+      }
+
+      if (carrier.omie_customer_id) {
+        markSynced.run(carrier.id);
+      } else {
+        setOmieId.run(data.omieCustomerId, carrier.id);
+      }
+      pushed++;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Erro OMIE";
+      markError.run(carrier.id);
+      failed++;
+      errors.push(`Transportadora ${carrier.id}: ${message}`);
+    }
+
+    if (index < pending.length - 1) {
+      await sleep(delayMs);
+    }
+  }
+
+  return { pushed, failed, errors };
+}
+
 function getPrintReceiptPayload(
   database: DesktopDatabase,
   receiptId: string,
@@ -2155,8 +2268,9 @@ function upsertOmieSuppliers(
     INSERT INTO carriers (
       id, company_id, omie_customer_id, omie_integration_code, name, document,
       phone, email, zipcode, address_street, address_number, address_complement,
-      neighborhood, city, state, source, is_active, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'omie', ?, datetime('now'), datetime('now'))
+      neighborhood, city, state, source, sync_status, needs_push, last_synced_at,
+      is_active, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'omie', 'synced', 0, datetime('now'), ?, datetime('now'), datetime('now'))
     ON CONFLICT(id) DO UPDATE SET
       omie_customer_id = excluded.omie_customer_id,
       omie_integration_code = excluded.omie_integration_code,
@@ -2172,6 +2286,9 @@ function upsertOmieSuppliers(
       city = excluded.city,
       state = excluded.state,
       is_active = excluded.is_active,
+      sync_status = CASE WHEN carriers.needs_push = 0 THEN 'synced' ELSE carriers.sync_status END,
+      needs_push = CASE WHEN carriers.needs_push = 0 THEN 0 ELSE carriers.needs_push END,
+      last_synced_at = datetime('now'),
       deleted_at = NULL,
       updated_at = datetime('now')
   `);
@@ -2219,6 +2336,18 @@ function findCarrierLocalId(
       .get(companyId, supplier.integrationCode) as { id: string } | undefined;
 
     if (byIntegrationCode?.id) return byIntegrationCode.id;
+  }
+
+  if (supplier.document) {
+    const byDocument = database
+      .prepare(
+        `SELECT id FROM carriers
+         WHERE company_id = ? AND document = ? AND deleted_at IS NULL
+         LIMIT 1`
+      )
+      .get(companyId, supplier.document) as { id: string } | undefined;
+
+    if (byDocument?.id) return byDocument.id;
   }
 
   return null;

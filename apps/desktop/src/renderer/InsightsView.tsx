@@ -37,6 +37,7 @@ interface InsightsProps {
   omieStatus: {
     configured: boolean;
     pendingPushCustomers: number;
+    pendingPushCarriers: number;
     pendingOmieJobs: number;
     lastSyncAt: string | null;
   } | null;

@@ -19,6 +19,7 @@ import {
   processCloudSyncQueue,
   processFiscalBillingNow,
   processOmieSyncQueue,
+  pushOmieCarriersToCloud,
   pushOmieCustomersToCloud,
   readStoredSupabaseConfig,
   syncOmieReferenceDataFromCloud,
@@ -550,6 +551,94 @@ describe("supabase sync", () => {
     }
   });
 
+  it("pushes local carriers to OMIE as customers tagged as transportadora", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertLocalCarrier(database, "carrier-1");
+      invokeMock.mockResolvedValueOnce({ error: null, data: { omieCustomerId: 654 } });
+
+      const result = await pushOmieCarriersToCloud(database, identity);
+
+      expect(invokeMock).toHaveBeenCalledWith("omie-sync", {
+        body: expect.objectContaining({
+          deviceId: "device-1",
+          deviceToken: "device-token-1",
+          action: "push_customer",
+          payload: expect.objectContaining({
+            localCustomerId: "carrier:carrier-1",
+            razaoSocial: "Transportadora Local LTDA",
+            nomeFantasia: "Transportadora Local LTDA",
+            cnpjCpf: "22222222000182",
+            tags: ["transportadora"]
+          })
+        })
+      });
+      expect(result).toEqual({ pushed: 1, failed: 0, errors: [] });
+      expect(
+        database
+          .prepare("SELECT omie_customer_id FROM carriers WHERE id = 'carrier-1'")
+          .pluck()
+          .get()
+      ).toBe(654);
+      expect(database.prepare("SELECT needs_push FROM carriers WHERE id = 'carrier-1'").pluck().get()).toBe(0);
+      expect(database.prepare("SELECT sync_status FROM carriers WHERE id = 'carrier-1'").pluck().get()).toBe("synced");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("keeps failed carrier pushes pending and visible for retry", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertLocalCarrier(database, "carrier-1");
+      invokeMock.mockResolvedValueOnce({
+        error: { message: "Documento invalido" },
+        data: null
+      });
+
+      const result = await pushOmieCarriersToCloud(database, identity);
+
+      expect(result).toMatchObject({ pushed: 0, failed: 1 });
+      expect(result.errors[0]).toContain("Documento invalido");
+      expect(database.prepare("SELECT needs_push FROM carriers WHERE id = 'carrier-1'").pluck().get()).toBe(1);
+      expect(database.prepare("SELECT sync_status FROM carriers WHERE id = 'carrier-1'").pluck().get()).toBe("error");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("updates OMIE carriers when they already have omie_customer_id", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertLocalCarrier(database, "carrier-1", { omieCustomerId: 777 });
+      invokeMock.mockResolvedValueOnce({ error: null, data: { omieCustomerId: 777 } });
+
+      const result = await pushOmieCarriersToCloud(database, identity);
+
+      expect(invokeMock).toHaveBeenCalledWith("omie-sync", {
+        body: expect.objectContaining({
+          payload: expect.objectContaining({
+            omieCustomerId: 777,
+            tags: ["transportadora"]
+          })
+        })
+      });
+      expect(result).toMatchObject({ pushed: 1, failed: 0 });
+      expect(database.prepare("SELECT needs_push FROM carriers WHERE id = 'carrier-1'").pluck().get()).toBe(0);
+    } finally {
+      database.close();
+    }
+  });
+
   it("limits local customer push batches to avoid OMIE request bursts", async () => {
     const database = createDatabase();
 
@@ -1026,6 +1115,23 @@ function insertLocalCustomer(database: DesktopDatabase, id: string): void {
       ) VALUES (?, 'company-1', 'local', 'Cliente Local LTDA', 'Cliente Local', '12345678000195', '(11) 99999-9999', 'cliente@example.com', 'pending', ?, ?, 1)`
     )
     .run(id, now, now);
+}
+
+function insertLocalCarrier(
+  database: DesktopDatabase,
+  id: string,
+  options: { omieCustomerId?: number } = {}
+): void {
+  const now = "2026-06-12T12:00:00.000Z";
+  database
+    .prepare(
+      `INSERT INTO carriers (
+        id, company_id, omie_customer_id, name, document, phone, email,
+        source, is_active, sync_status, needs_push, created_at, updated_at
+      ) VALUES (?, 'company-1', ?, 'Transportadora Local LTDA', '22222222000182', '(19) 3333-4444', 'transporte@example.com',
+        'local', 1, 'pending', 1, ?, ?)`
+    )
+    .run(id, options.omieCustomerId ?? null, now, now);
 }
 
 function insertWeighingOperation(database: DesktopDatabase): void {

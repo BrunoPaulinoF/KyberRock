@@ -42,6 +42,7 @@ export interface CreateCustomerInput {
   email?: string;
   telefone1Ddd?: string;
   telefone1Numero?: string;
+  tags?: Array<{ tag: string }>;
 }
 
 export interface UpdateCustomerInput {
@@ -52,6 +53,7 @@ export interface UpdateCustomerInput {
   email?: string;
   telefone1Ddd?: string;
   telefone1Numero?: string;
+  tags?: Array<{ tag: string }>;
 }
 
 export interface ListCustomersParam {

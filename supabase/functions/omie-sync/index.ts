@@ -203,6 +203,7 @@ type PushCustomerPayload = {
   city?: string;
   state?: string;
   defaultPaymentTermId?: string;
+  tags?: string[];
 };
 
 Deno.serve(async (req) => {
@@ -992,7 +993,8 @@ async function pushCustomerToOmie(
     bairro: payload.neighborhood,
     cidade: payload.city,
     estado: payload.state,
-    cep: payload.zipcode
+    cep: payload.zipcode,
+    tags: payload.tags?.map((tag) => ({ tag }))
   };
 
   if (payload.omieCustomerId) {

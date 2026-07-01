@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { runDesktopMigrations } from "../database/migrate";
 import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite";
-import { createCarrier, deleteCarrier } from "./carriers";
+import { createCarrier, deleteCarrier, updateCarrier } from "./carriers";
 import { createDriver, deleteDriver } from "./drivers";
 import {
   listProductDefaultPriceSummaries,
@@ -41,6 +41,39 @@ describe("desktop cadastro CRUD behavior", () => {
       expect(readDeletedAt(database, "carriers", (carrier as { id: string }).id)).not.toBeNull();
       expect(readDeletedAt(database, "vehicles", vehicle.id)).not.toBeNull();
       expect(readDeletedAt(database, "drivers", driver.id)).not.toBeNull();
+    } finally {
+      database.close();
+    }
+  });
+
+  it("tracks carrier OMIE push state for create, update and delete", () => {
+    const database = createDatabase();
+
+    try {
+      const carrier = createCarrier(database, { companyId: "company-1", name: "Transporte A" }) as {
+        id: string;
+        sync_status: string;
+        needs_push: number;
+      };
+
+      expect(carrier.sync_status).toBe("pending");
+      expect(carrier.needs_push).toBe(1);
+
+      database
+        .prepare("UPDATE carriers SET needs_push = 0, sync_status = 'synced' WHERE id = ?")
+        .run(carrier.id);
+
+      const updated = updateCarrier(database, carrier.id, { name: "Transporte B" }) as {
+        sync_status: string;
+        needs_push: number;
+      };
+
+      expect(updated.sync_status).toBe("pending");
+      expect(updated.needs_push).toBe(1);
+
+      deleteCarrier(database, carrier.id);
+
+      expect(database.prepare("SELECT needs_push FROM carriers WHERE id = ?").pluck().get(carrier.id)).toBe(0);
     } finally {
       database.close();
     }

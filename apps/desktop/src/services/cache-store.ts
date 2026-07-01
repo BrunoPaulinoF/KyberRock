@@ -75,6 +75,9 @@ export interface CarrierCacheEntry {
   city: string | null;
   state: string | null;
   source: "omie" | "local";
+  syncStatus: "synced" | "pending" | "error";
+  needsPush: boolean;
+  lastSyncedAt: string | null;
   isActive: boolean;
 }
 
@@ -211,6 +214,9 @@ interface CarrierRow {
   city: string | null;
   state: string | null;
   source: "omie" | "local";
+  sync_status: "synced" | "pending" | "error";
+  needs_push: number;
+  last_synced_at: string | null;
   is_active: number;
 }
 
@@ -394,6 +400,9 @@ function mapCarrier(row: CarrierRow): CarrierCacheEntry {
     city: row.city,
     state: row.state,
     source: row.source,
+    syncStatus: row.sync_status,
+    needsPush: row.needs_push === 1,
+    lastSyncedAt: row.last_synced_at,
     isActive: row.is_active === 1
   };
 }
@@ -708,7 +717,8 @@ export class CacheStore {
     const rows = this.db
       .prepare(
         `SELECT id, omie_customer_id, name, document, phone, email, zipcode, address_street,
-                address_number, address_complement, neighborhood, city, state, source, is_active
+                address_number, address_complement, neighborhood, city, state, source,
+                sync_status, needs_push, last_synced_at, is_active
          FROM carriers WHERE company_id = ? AND deleted_at IS NULL`
       )
       .all(companyId) as CarrierRow[];

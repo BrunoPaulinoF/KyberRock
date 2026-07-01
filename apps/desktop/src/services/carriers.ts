@@ -46,8 +46,9 @@ export function createCarrier(
     .prepare(
       `INSERT INTO carriers (
         id, company_id, omie_customer_id, name, document, phone, email, zipcode, address_street,
-        address_number, address_complement, neighborhood, city, state, source, is_active, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'local', 1, ?, ?)`
+        address_number, address_complement, neighborhood, city, state, source, sync_status, needs_push,
+        is_active, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'local', 'pending', 1, 1, ?, ?)`
     )
     .run(
       id,
@@ -142,6 +143,8 @@ export function updateCarrier(
 
   if (sets.length === 0) return existing;
 
+  sets.push("sync_status = 'pending'");
+  sets.push("needs_push = 1");
   sets.push("updated_at = ?");
   values.push(nowIso);
   values.push(id);
@@ -159,7 +162,7 @@ export function deleteCarrier(database: DesktopDatabase, id: string, now: Date =
 
   database
     .prepare(
-      "UPDATE carriers SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL"
+      "UPDATE carriers SET deleted_at = ?, needs_push = 0, updated_at = ? WHERE id = ? AND deleted_at IS NULL"
     )
     .run(now.toISOString(), now.toISOString(), id);
 }
@@ -180,6 +183,9 @@ export interface CarrierRow {
   city: string | null;
   state: string | null;
   source: string;
+  sync_status: "synced" | "pending" | "error";
+  needs_push: number;
+  last_synced_at: string | null;
   is_active: number;
   created_at: string;
   updated_at: string;

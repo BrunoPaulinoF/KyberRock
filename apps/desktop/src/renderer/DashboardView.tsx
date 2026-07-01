@@ -30,6 +30,7 @@ type ActiveView =
 export interface DashboardOmieStatus {
   configured: boolean;
   pendingPushCustomers: number;
+  pendingPushCarriers: number;
   pendingOmieJobs: number;
   lastSyncAt: string | null;
 }
