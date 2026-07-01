@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 
+import { assertSupabaseConfig } from "../config/supabase-config";
 import { callAdminFunction, clearAdminSessionToken, getAdminSessionToken, setAdminSessionToken, getAdminSessionStatus } from "../lib/admin-api";
 import { supabase, auth } from "../lib/supabase";
 
@@ -22,6 +23,7 @@ interface AuthContextType {
   loginLoader: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   error: string | null;
+  clearError: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -140,12 +142,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function loginLoader(email: string, password: string): Promise<void> {
     setError(null);
     clearAdminSessionToken();
-    const { data, error: loginError } = await auth.signInWithPassword({ email, password });
-    if (loginError) {
-      setError(loginError.message);
-      throw loginError;
+    try {
+      assertSupabaseConfig();
+      const { data, error: loginError } = await auth.signInWithPassword({ email, password });
+      if (loginError) throw loginError;
+      if (!data.user) throw new Error("Login nao retornou um usuario valido. Tente novamente.");
+      await loadLoaderProfile(data.user.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro no login do carregador.");
+      throw err;
     }
-    if (data.user) await loadLoaderProfile(data.user.id);
   }
 
   async function logout(): Promise<void> {
@@ -154,8 +160,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }
 
+  function clearError(): void {
+    setError(null);
+  }
+
   return (
-    <AuthContext.Provider value={{ user, isLoading, isAdmin, isLoader, loginAdmin, loginLoader, logout, error }}>
+    <AuthContext.Provider value={{ user, isLoading, isAdmin, isLoader, loginAdmin, loginLoader, logout, error, clearError }}>
       {children}
     </AuthContext.Provider>
   );

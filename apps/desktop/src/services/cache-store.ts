@@ -9,6 +9,7 @@ export interface CustomerCacheEntry {
   phone: string | null;
   email: string | null;
   creditLimitCents: number | null;
+  creditMode: "normal" | "prepaid";
   openReceivablesCents: number;
   omieBillingBlocked: boolean;
   source: "omie" | "local" | "hybrid";
@@ -37,6 +38,8 @@ export interface ProductCacheEntry {
   ncm: string | null;
   ean: string | null;
   unitPriceCents: number | null;
+  itemType: string | null;
+  fiscalRecommendationsJson: string | null;
   isActive: boolean;
 }
 
@@ -61,6 +64,15 @@ export interface CarrierCacheEntry {
   omieCustomerId: number | null;
   name: string;
   document: string | null;
+  phone: string | null;
+  email: string | null;
+  zipcode: string | null;
+  addressStreet: string | null;
+  addressNumber: string | null;
+  addressComplement: string | null;
+  neighborhood: string | null;
+  city: string | null;
+  state: string | null;
   source: "omie" | "local";
   isActive: boolean;
 }
@@ -70,6 +82,7 @@ export interface PaymentTermCacheEntry {
   omieCode: string | null;
   name: string;
   rulesJson: string;
+  installmentCount: number | null;
   isActive: boolean;
 }
 
@@ -114,6 +127,7 @@ export interface CacheQueryOptions {
   limit?: number;
   offset?: number;
   activeOnly?: boolean;
+  productFiscalType?: "finished_goods";
 }
 
 export interface CacheQueryResult<T> {
@@ -130,6 +144,7 @@ interface CustomerRow {
   phone: string | null;
   email: string | null;
   credit_limit_cents: number | null;
+  credit_mode: "normal" | "prepaid";
   open_receivables_cents: number;
   omie_billing_blocked: number;
   source: "omie" | "local" | "hybrid";
@@ -158,6 +173,8 @@ interface ProductRow {
   ncm: string | null;
   ean: string | null;
   unit_price_cents: number | null;
+  item_type: string | null;
+  fiscal_recommendations_json: string | null;
   is_active: number;
 }
 
@@ -182,6 +199,15 @@ interface CarrierRow {
   omie_customer_id: number | null;
   name: string;
   document: string | null;
+  phone: string | null;
+  email: string | null;
+  zipcode: string | null;
+  address_street: string | null;
+  address_number: string | null;
+  address_complement: string | null;
+  neighborhood: string | null;
+  city: string | null;
+  state: string | null;
   source: "omie" | "local";
   is_active: number;
 }
@@ -191,6 +217,7 @@ interface PaymentTermRow {
   omie_code: string | null;
   name: string;
   rules_json: string;
+  installment_count: number | null;
   is_active: number;
 }
 
@@ -227,6 +254,7 @@ function mapCustomer(row: CustomerRow): CustomerCacheEntry {
     phone: row.phone,
     email: row.email,
     creditLimitCents: row.credit_limit_cents,
+    creditMode: row.credit_mode,
     openReceivablesCents: row.open_receivables_cents,
     omieBillingBlocked: row.omie_billing_blocked === 1,
     source: row.source,
@@ -257,8 +285,74 @@ function mapProduct(row: ProductRow): ProductCacheEntry {
     ncm: row.ncm,
     ean: row.ean,
     unitPriceCents: row.unit_price_cents,
+    itemType: row.item_type,
+    fiscalRecommendationsJson: row.fiscal_recommendations_json,
     isActive: row.is_active === 1
   };
+}
+
+function isFinishedGoodsProduct(product: ProductCacheEntry): boolean {
+  if (product.omieProductId === null) return false;
+
+  const candidates = [product.itemType, ...extractFiscalRecommendationValues(product.fiscalRecommendationsJson)];
+  return candidates.some((value) => matchesFinishedGoodsType(value));
+}
+
+function extractFiscalRecommendationValues(value: string | null): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    const values: string[] = [];
+    collectRecommendationValues(parsed, values);
+    return values;
+  } catch {
+    return [];
+  }
+}
+
+function collectRecommendationValues(value: unknown, output: string[]): void {
+  if (typeof value === "string" || typeof value === "number") {
+    output.push(String(value));
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) collectRecommendationValues(item, output);
+    return;
+  }
+
+  if (value && typeof value === "object") {
+    for (const [key, nested] of Object.entries(value)) {
+      const normalizedKey = normalizeFiscalTypeText(key);
+      if (normalizedKey.includes("tipo") && (normalizedKey.includes("produto") || normalizedKey.includes("item"))) {
+        collectRecommendationValues(nested, output);
+      }
+      if (normalizedKey === "codigo" || normalizedKey === "cod" || normalizedKey === "code") {
+        collectRecommendationValues(nested, output);
+      }
+    }
+  }
+}
+
+function matchesFinishedGoodsType(value: string | null | undefined): boolean {
+  if (!value) return false;
+  const normalized = normalizeFiscalTypeText(value);
+  return normalized === "04" || normalized.startsWith("04 ") || normalized.includes("produtos acabados") || normalized.includes("produto acabado");
+}
+
+function normalizeFiscalTypeText(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[-_/.:]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isManualInstallmentsPaymentTerm(term: PaymentTermCacheEntry): boolean {
+  const normalizedName = normalizeFiscalTypeText(term.name);
+  return normalizedName.includes("informe") && normalizedName.includes("numero") && normalizedName.includes("parcela");
 }
 
 function mapVehicle(row: VehicleRow): VehicleCacheEntry {
@@ -287,6 +381,15 @@ function mapCarrier(row: CarrierRow): CarrierCacheEntry {
     omieCustomerId: row.omie_customer_id,
     name: row.name,
     document: row.document,
+    phone: row.phone,
+    email: row.email,
+    zipcode: row.zipcode,
+    addressStreet: row.address_street,
+    addressNumber: row.address_number,
+    addressComplement: row.address_complement,
+    neighborhood: row.neighborhood,
+    city: row.city,
+    state: row.state,
     source: row.source,
     isActive: row.is_active === 1
   };
@@ -298,6 +401,7 @@ function mapPaymentTerm(row: PaymentTermRow): PaymentTermCacheEntry {
     omieCode: row.omie_code,
     name: row.name,
     rulesJson: row.rules_json,
+    installmentCount: row.installment_count,
     isActive: row.is_active === 1
   };
 }
@@ -422,13 +526,22 @@ export class CacheStore {
       search,
       limit = 100,
       offset = 0,
-      activeOnly = true
+      activeOnly = true,
+      productFiscalType
     } = options;
 
     let rows: unknown[] = this.getAllOfType(entityType);
 
     if (activeOnly) {
       rows = rows.filter((r) => (r as { isActive?: boolean }).isActive !== false);
+    }
+
+    if (entityType === "payment_term") {
+      rows = (rows as PaymentTermCacheEntry[]).filter((term) => !isManualInstallmentsPaymentTerm(term));
+    }
+
+    if (entityType === "product" && productFiscalType === "finished_goods") {
+      rows = (rows as ProductCacheEntry[]).filter((product) => isFinishedGoodsProduct(product));
     }
 
     if (search) {
@@ -513,7 +626,7 @@ export class CacheStore {
       case "driver":
         return ["name", "document"];
       case "carrier":
-        return ["name", "document"];
+        return ["name", "document", "zipcode", "addressStreet", "neighborhood", "city"];
       case "payment_term":
         return ["name", "omieCode"];
       case "price_table":
@@ -529,7 +642,7 @@ export class CacheStore {
     const rows = this.db
       .prepare(
         `SELECT id, omie_customer_id, legal_name, trade_name, document, phone, email,
-                credit_limit_cents, open_receivables_cents, omie_billing_blocked,
+                credit_limit_cents, credit_mode, open_receivables_cents, omie_billing_blocked,
                 source, sync_status, needs_push, last_synced_at, observations, default_carrier_id, default_payment_term_id,
                 zipcode, address_street, address_number, address_complement, neighborhood, city, state, is_active
          FROM customers WHERE company_id = ? AND deleted_at IS NULL`
@@ -545,14 +658,18 @@ export class CacheStore {
   private loadProducts(companyId: string): void {
     const rows = this.db
       .prepare(
-        `SELECT id, omie_product_id, code, description, unit, ncm, ean, unit_price_cents, is_active
+        `SELECT id, omie_product_id, code, description, unit, ncm, ean, unit_price_cents,
+                item_type, fiscal_recommendations_json, is_active
          FROM products WHERE company_id = ? AND deleted_at IS NULL`
       )
       .all(companyId) as ProductRow[];
 
     this.products.clear();
     for (const row of rows) {
-      this.products.set(row.id, mapProduct(row));
+      const product = mapProduct(row);
+      if (isFinishedGoodsProduct(product)) {
+        this.products.set(row.id, product);
+      }
     }
   }
 
@@ -587,7 +704,8 @@ export class CacheStore {
   private loadCarriers(companyId: string): void {
     const rows = this.db
       .prepare(
-        `SELECT id, omie_customer_id, name, document, source, is_active
+        `SELECT id, omie_customer_id, name, document, phone, email, zipcode, address_street,
+                address_number, address_complement, neighborhood, city, state, source, is_active
          FROM carriers WHERE company_id = ? AND deleted_at IS NULL`
       )
       .all(companyId) as CarrierRow[];
@@ -601,7 +719,7 @@ export class CacheStore {
   private loadPaymentTerms(companyId: string): void {
     const rows = this.db
       .prepare(
-        `SELECT id, omie_code, name, rules_json, is_active
+        `SELECT id, omie_code, name, rules_json, installment_count, is_active
          FROM payment_terms WHERE company_id = ? AND deleted_at IS NULL`
       )
       .all(companyId) as PaymentTermRow[];

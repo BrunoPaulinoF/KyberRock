@@ -3,8 +3,11 @@ import {
   OmieCustomersService,
   OmiePaymentTermsService,
   OmieProductsService,
-  OmieReceivablesService,
+  hasClienteTag,
+  hasTransportadoraTag,
   type CreateCustomerInput,
+  type Customer,
+  type Product,
   type UpdateCustomerInput
 } from "@kyberrock/omie-client";
 
@@ -20,7 +23,13 @@ export interface OmieSyncResult {
   customersPushed: number;
   productsSynced: number;
   paymentTermsSynced: number;
+  suppliersSynced: number;
   errors: string[];
+}
+
+export interface TaggedSupplierSyncResult {
+  customersPulled: number;
+  suppliersSynced: number;
 }
 
 export function createOmieClient(config: OmieSyncConfig): OmieClient {
@@ -34,7 +43,6 @@ export class OmieSyncService {
   private readonly customersService: OmieCustomersService;
   private readonly productsService: OmieProductsService;
   private readonly paymentTermsService: OmiePaymentTermsService;
-  private readonly receivablesService: OmieReceivablesService;
 
   constructor(
     private readonly client: OmieClient,
@@ -43,7 +51,6 @@ export class OmieSyncService {
     this.customersService = new OmieCustomersService(client);
     this.productsService = new OmieProductsService(client);
     this.paymentTermsService = new OmiePaymentTermsService(client);
-    this.receivablesService = new OmieReceivablesService(client);
   }
 
   async syncAll(companyId: string): Promise<OmieSyncResult> {
@@ -52,15 +59,16 @@ export class OmieSyncService {
       customersPushed: 0,
       productsSynced: 0,
       paymentTermsSynced: 0,
+      suppliersSynced: 0,
       errors: []
     };
 
     try {
-      const customerResult = await this.syncCustomersBidirectional(companyId);
-      result.customersPulled = customerResult.pulled;
-      result.customersPushed = customerResult.pushed;
+      const taggedResult = await this.rebuildCustomersAndCarriersFromOmie(companyId);
+      result.customersPulled = taggedResult.customersPulled;
+      result.suppliersSynced = taggedResult.suppliersSynced;
     } catch (err) {
-      result.errors.push(`Clientes: ${(err as Error).message}`);
+      result.errors.push(`Clientes/Transportadoras: ${(err as Error).message}`);
     }
 
     try {
@@ -78,25 +86,50 @@ export class OmieSyncService {
     return result;
   }
 
+  async rebuildCustomersAndCarriersFromOmie(companyId: string): Promise<TaggedSupplierSyncResult> {
+    const omieCustomers = await this.customersService.listAll();
+    const customers = omieCustomers.filter((customer) => hasClienteTag(customer));
+    const carriers = omieCustomers.filter((customer) => hasTransportadoraTag(customer));
+
+    this.runInTransaction(() => {
+      this.clearCustomerCarrierRegistrations(companyId);
+      this.upsertCustomersFromOmieCustomers(companyId, customers);
+      this.upsertCarriersFromOmieCustomers(companyId, carriers);
+    });
+
+    return {
+      customersPulled: customers.length,
+      suppliersSynced: carriers.length
+    };
+  }
+
   async syncCustomersBidirectional(companyId: string): Promise<{
     pulled: number;
     pushed: number;
   }> {
-    const pulled = await this.pullCustomersFromOmie(companyId);
-    const pushed = await this.pushCustomersToOmie(companyId);
-    await this.reconcileCustomersByDocument(companyId);
-    return { pulled, pushed };
+    const result = await this.rebuildCustomersAndCarriersFromOmie(companyId);
+    return { pulled: result.customersPulled, pushed: 0 };
   }
 
   async pullCustomersFromOmie(companyId: string): Promise<number> {
-    const omieCustomers = await this.customersService.listAll();
+    const listedCustomers = await this.customersService.listAll();
+    const omieCustomers = listedCustomers.filter((customer) => hasClienteTag(customer));
 
+    this.runInTransaction(() => {
+      this.clearCustomers(companyId);
+      this.upsertCustomersFromOmieCustomers(companyId, omieCustomers);
+    });
+    return omieCustomers.length;
+  }
+
+  private upsertCustomersFromOmieCustomers(companyId: string, customers: Customer[]): void {
     const upsert = this.db.prepare(`
       INSERT INTO customers (
         id, company_id, omie_customer_id, source, legal_name, trade_name,
-        document, phone, email, is_active, sync_status, last_synced_at,
+        document, phone, email, zipcode, address_street, address_number,
+        address_complement, neighborhood, city, state, is_active, sync_status, last_synced_at,
         omie_updated_at, needs_push, created_at, updated_at
-      ) VALUES (?, ?, ?, 'omie', ?, ?, ?, ?, ?, 1, 'synced', datetime('now'), datetime('now'), 0, datetime('now'), datetime('now'))
+      ) VALUES (?, ?, ?, 'omie', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced', datetime('now'), datetime('now'), 0, datetime('now'), datetime('now'))
       ON CONFLICT(id) DO UPDATE SET
         omie_customer_id = excluded.omie_customer_id,
         legal_name = CASE WHEN customers.needs_push = 0 THEN excluded.legal_name ELSE customers.legal_name END,
@@ -104,46 +137,40 @@ export class OmieSyncService {
         document = CASE WHEN customers.needs_push = 0 THEN excluded.document ELSE customers.document END,
         phone = CASE WHEN customers.needs_push = 0 THEN excluded.phone ELSE customers.phone END,
         email = CASE WHEN customers.needs_push = 0 THEN excluded.email ELSE customers.email END,
+        zipcode = CASE WHEN customers.needs_push = 0 THEN excluded.zipcode ELSE customers.zipcode END,
+        address_street = CASE WHEN customers.needs_push = 0 THEN excluded.address_street ELSE customers.address_street END,
+        address_number = CASE WHEN customers.needs_push = 0 THEN excluded.address_number ELSE customers.address_number END,
+        address_complement = CASE WHEN customers.needs_push = 0 THEN excluded.address_complement ELSE customers.address_complement END,
+        neighborhood = CASE WHEN customers.needs_push = 0 THEN excluded.neighborhood ELSE customers.neighborhood END,
+        city = CASE WHEN customers.needs_push = 0 THEN excluded.city ELSE customers.city END,
+        state = CASE WHEN customers.needs_push = 0 THEN excluded.state ELSE customers.state END,
+        is_active = excluded.is_active,
+        deleted_at = NULL,
         last_synced_at = datetime('now'),
         omie_updated_at = datetime('now'),
         updated_at = datetime('now')
     `);
 
-    const updateReceivables = this.db.prepare(`
-      UPDATE customers
-      SET open_receivables_cents = ?,
-          financial_cache_at = datetime('now'),
-          updated_at = datetime('now')
-      WHERE id = ? AND company_id = ?
-    `);
-
-    let count = 0;
-    for (const customer of omieCustomers) {
-      const localId = this.findLocalIdByOmieId(companyId, customer.id) ?? `omie_${customer.id}`;
-
+    for (const customer of customers) {
       upsert.run(
-        localId,
+        `omie_${customer.id}`,
         companyId,
         customer.id,
         customer.name,
         customer.tradeName || customer.name,
         customer.document || null,
         customer.phone || null,
-        customer.email || null
+        customer.email || null,
+        customer.zipcode || null,
+        customer.addressStreet || null,
+        customer.addressNumber || null,
+        customer.addressComplement || null,
+        customer.neighborhood || null,
+        customer.city || null,
+        customer.state || null,
+        customer.isActive ? 1 : 0
       );
-      count++;
-
-      if (customer.id) {
-        try {
-          const openAmount = await this.receivablesService.getTotalOpenAmountForClient(customer.id);
-          updateReceivables.run(Math.round(openAmount * 100), localId, companyId);
-        } catch {
-          // Continue even if receivables fail
-        }
-      }
     }
-
-    return count;
   }
 
   async pushCustomersToOmie(companyId: string): Promise<number> {
@@ -269,29 +296,94 @@ export class OmieSyncService {
   async syncProducts(companyId: string): Promise<number> {
     const products = await this.productsService.listAll();
 
+    const removeFromKyberRock = this.db.prepare(`
+      UPDATE products
+      SET is_active = 0,
+          deleted_at = datetime('now'),
+          updated_from_omie_at = datetime('now'),
+          updated_at = datetime('now')
+      WHERE company_id = ?
+        AND omie_product_id = ?
+    `);
+
     const insert = this.db.prepare(`
       INSERT INTO products (
-        id, company_id, omie_product_id, code, description, unit,
+        id, company_id, omie_product_id, omie_integration_code, code, description,
+        detailed_description, unit, ncm, ean, unit_price_cents,
+        family_code, family_description, brand, model, internal_notes,
+        gross_weight_kg, net_weight_kg, height_m, width_m, depth_m,
+        cest, item_type, icms_origin, blocked, tracks_stock, fiscal_recommendations_json,
         is_active, updated_from_omie_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, 1, datetime('now'), datetime('now'), datetime('now'))
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), datetime('now'))
       ON CONFLICT(id) DO UPDATE SET
+        omie_product_id = excluded.omie_product_id,
+        omie_integration_code = excluded.omie_integration_code,
         code = excluded.code,
         description = excluded.description,
+        detailed_description = excluded.detailed_description,
         unit = excluded.unit,
+        ncm = excluded.ncm,
+        ean = excluded.ean,
+        unit_price_cents = excluded.unit_price_cents,
+        family_code = excluded.family_code,
+        family_description = excluded.family_description,
+        brand = excluded.brand,
+        model = excluded.model,
+        internal_notes = excluded.internal_notes,
+        gross_weight_kg = excluded.gross_weight_kg,
+        net_weight_kg = excluded.net_weight_kg,
+        height_m = excluded.height_m,
+        width_m = excluded.width_m,
+        depth_m = excluded.depth_m,
+        cest = excluded.cest,
+        item_type = excluded.item_type,
+        icms_origin = excluded.icms_origin,
+        blocked = excluded.blocked,
+        tracks_stock = excluded.tracks_stock,
+        fiscal_recommendations_json = excluded.fiscal_recommendations_json,
+        is_active = excluded.is_active,
+        deleted_at = NULL,
         updated_from_omie_at = datetime('now'),
         updated_at = datetime('now')
     `);
 
     let count = 0;
     for (const product of products) {
+      if (!isFinishedGoodsProduct(product)) {
+        removeFromKyberRock.run(companyId, product.id);
+        continue;
+      }
+
       const id = `omie_${product.id}`;
       insert.run(
         id,
         companyId,
         product.id,
+        product.integrationCode ?? null,
         product.code || `PROD_${product.id}`,
         product.description,
-        product.unit || "UN"
+        product.detailedDescription ?? null,
+        product.unit || "UN",
+        product.ncm ?? null,
+        product.ean ?? null,
+        product.unitPriceCents ?? null,
+        product.familyCode ?? null,
+        product.familyDescription ?? null,
+        product.brand ?? null,
+        product.model ?? null,
+        product.internalNotes ?? null,
+        product.grossWeightKg ?? null,
+        product.netWeightKg ?? null,
+        product.heightM ?? null,
+        product.widthM ?? null,
+        product.depthM ?? null,
+        product.cest ?? null,
+        product.itemType ?? null,
+        product.icmsOrigin ?? null,
+        product.blocked ? 1 : 0,
+        1,
+        product.fiscalRecommendations ? JSON.stringify(product.fiscalRecommendations) : null,
+        product.isActive === false ? 0 : 1
       );
       count++;
     }
@@ -304,12 +396,24 @@ export class OmieSyncService {
 
     const insert = this.db.prepare(`
       INSERT INTO payment_terms (
-        id, company_id, omie_code, name, rules_json,
-        is_active, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, 1, datetime('now'), datetime('now'))
+        id, company_id, omie_code, omie_integration_code, name, rules_json,
+        first_installment_days, installment_interval_days, installment_count,
+        installment_type, installment_days_json, visible, is_active,
+        updated_from_omie_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), datetime('now'))
       ON CONFLICT(id) DO UPDATE SET
+        omie_code = excluded.omie_code,
+        omie_integration_code = excluded.omie_integration_code,
         name = excluded.name,
         rules_json = excluded.rules_json,
+        first_installment_days = excluded.first_installment_days,
+        installment_interval_days = excluded.installment_interval_days,
+        installment_count = excluded.installment_count,
+        installment_type = excluded.installment_type,
+        installment_days_json = excluded.installment_days_json,
+        visible = excluded.visible,
+        is_active = excluded.is_active,
+        updated_from_omie_at = datetime('now'),
         updated_at = datetime('now')
     `);
 
@@ -320,8 +424,24 @@ export class OmieSyncService {
         id,
         companyId,
         String(term.id),
+        term.integrationCode ?? null,
         term.description,
-        JSON.stringify({ omieId: term.id })
+        JSON.stringify({
+          omieId: term.id,
+          firstInstallmentDays: term.firstInstallmentDays ?? null,
+          installmentIntervalDays: term.installmentIntervalDays ?? null,
+          installmentCount: term.installmentCount ?? null,
+          installmentType: term.installmentType ?? null,
+          installmentDays: term.installmentDays ?? null,
+          visible: term.visible ?? true
+        }),
+        term.firstInstallmentDays ?? null,
+        term.installmentIntervalDays ?? null,
+        term.installmentCount ?? null,
+        term.installmentType ?? null,
+        term.installmentDays ? JSON.stringify(term.installmentDays) : null,
+        term.visible === false ? 0 : 1,
+        term.isActive === false ? 0 : 1
       );
       count++;
     }
@@ -329,16 +449,198 @@ export class OmieSyncService {
     return count;
   }
 
-  private findLocalIdByOmieId(companyId: string, omieCustomerId: number): string | null {
-    const row = this.db
-      .prepare(
-        `SELECT id FROM customers
-         WHERE company_id = ? AND omie_customer_id = ? AND deleted_at IS NULL LIMIT 1`
-      )
-      .get(companyId, omieCustomerId) as { id: string } | undefined;
+  async syncSuppliers(companyId: string): Promise<number> {
+    const customers = await this.customersService.listAll();
+    const transportadoras = customers.filter((customer) => hasTransportadoraTag(customer));
 
-    return row?.id ?? null;
+    this.runInTransaction(() => {
+      this.clearCarriers(companyId);
+      this.upsertCarriersFromOmieCustomers(companyId, transportadoras);
+    });
+
+    return transportadoras.length;
   }
+
+  private upsertCarriersFromOmieCustomers(companyId: string, carriers: Customer[]): void {
+    const upsert = this.db.prepare(`
+      INSERT INTO carriers (
+        id, company_id, omie_customer_id, omie_integration_code, name, document, phone, email,
+        zipcode, address_street, address_number, address_complement, neighborhood, city, state, source,
+        is_active, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'omie', ?, datetime('now'), datetime('now'))
+      ON CONFLICT(id) DO UPDATE SET
+        omie_customer_id = excluded.omie_customer_id,
+        omie_integration_code = excluded.omie_integration_code,
+        name = excluded.name,
+        document = excluded.document,
+        phone = excluded.phone,
+        email = excluded.email,
+        zipcode = excluded.zipcode,
+        address_street = excluded.address_street,
+        address_number = excluded.address_number,
+        address_complement = excluded.address_complement,
+        neighborhood = excluded.neighborhood,
+        city = excluded.city,
+        state = excluded.state,
+        is_active = excluded.is_active,
+        deleted_at = NULL,
+        updated_at = datetime('now')
+    `);
+
+    for (const supplier of carriers) {
+      upsert.run(
+        `omie_supplier_${supplier.id}`,
+        companyId,
+        supplier.id,
+        supplier.integrationCode || null,
+        supplier.name,
+        supplier.document || null,
+        supplier.phone || null,
+        supplier.email || null,
+        supplier.zipcode || null,
+        supplier.addressStreet || null,
+        supplier.addressNumber || null,
+        supplier.addressComplement || null,
+        supplier.neighborhood || null,
+        supplier.city || null,
+        supplier.state || null,
+        supplier.isActive ? 1 : 0
+      );
+    }
+  }
+
+  private clearCustomerCarrierRegistrations(companyId: string): void {
+    this.clearCustomers(companyId);
+    this.clearCarriers(companyId);
+  }
+
+  private clearCustomers(companyId: string): void {
+    this.db.prepare(`
+      UPDATE customer_carriers
+      SET deleted_at = datetime('now'),
+          is_active = 0,
+          updated_at = datetime('now')
+      WHERE deleted_at IS NULL
+        AND customer_id IN (SELECT id FROM customers WHERE company_id = ?)
+    `).run(companyId);
+
+    this.db.prepare(`
+      UPDATE customers
+      SET default_carrier_id = NULL,
+          deleted_at = datetime('now'),
+          is_active = 0,
+          updated_at = datetime('now')
+      WHERE company_id = ?
+        AND deleted_at IS NULL
+    `).run(companyId);
+  }
+
+  private clearCarriers(companyId: string): void {
+    this.db.prepare(`
+      UPDATE customer_carriers
+      SET deleted_at = datetime('now'),
+          is_active = 0,
+          updated_at = datetime('now')
+      WHERE deleted_at IS NULL
+        AND carrier_id IN (SELECT id FROM carriers WHERE company_id = ?)
+    `).run(companyId);
+
+    this.db.prepare(`
+      UPDATE driver_carriers
+      SET deleted_at = datetime('now'),
+          is_active = 0,
+          updated_at = datetime('now')
+      WHERE deleted_at IS NULL
+        AND carrier_id IN (SELECT id FROM carriers WHERE company_id = ?)
+    `).run(companyId);
+
+    this.db.prepare(`
+      UPDATE vehicle_carriers
+      SET deleted_at = datetime('now'),
+          is_active = 0,
+          updated_at = datetime('now')
+      WHERE deleted_at IS NULL
+        AND carrier_id IN (SELECT id FROM carriers WHERE company_id = ?)
+    `).run(companyId);
+
+    this.db.prepare(`
+      UPDATE vehicles
+      SET carrier_id = NULL,
+          updated_at = datetime('now')
+      WHERE company_id = ?
+        AND carrier_id IN (SELECT id FROM carriers WHERE company_id = ?)
+    `).run(companyId, companyId);
+
+    this.db.prepare(`
+      UPDATE customers
+      SET default_carrier_id = NULL,
+          updated_at = datetime('now')
+      WHERE company_id = ?
+        AND default_carrier_id IN (SELECT id FROM carriers WHERE company_id = ?)
+    `).run(companyId, companyId);
+
+    this.db.prepare(`
+      UPDATE carriers
+      SET deleted_at = datetime('now'),
+          is_active = 0,
+          updated_at = datetime('now')
+      WHERE company_id = ?
+        AND deleted_at IS NULL
+    `).run(companyId);
+  }
+
+  private runInTransaction<T>(action: () => T): T {
+    return this.db.transaction(action)();
+  }
+}
+
+function isFinishedGoodsProduct(product: Product): boolean {
+  const candidates = [product.itemType ?? null, ...extractFiscalRecommendationValues(product.fiscalRecommendations ?? null)];
+  return candidates.some((value) => matchesFinishedGoodsType(value));
+}
+
+function extractFiscalRecommendationValues(value: unknown): string[] {
+  const values: string[] = [];
+  collectFiscalRecommendationValues(value, values);
+  return values;
+}
+
+function collectFiscalRecommendationValues(value: unknown, output: string[]): void {
+  if (typeof value === "string" || typeof value === "number") {
+    output.push(String(value));
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectFiscalRecommendationValues(item, output);
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const [key, nested] of Object.entries(value)) {
+      const normalizedKey = normalizeFiscalTypeText(key);
+      if (normalizedKey.includes("tipo") && (normalizedKey.includes("produto") || normalizedKey.includes("item"))) {
+        collectFiscalRecommendationValues(nested, output);
+      }
+      if (normalizedKey === "codigo" || normalizedKey === "cod" || normalizedKey === "code") {
+        collectFiscalRecommendationValues(nested, output);
+      }
+    }
+  }
+}
+
+function matchesFinishedGoodsType(value: string | null | undefined): boolean {
+  if (!value) return false;
+  const normalized = normalizeFiscalTypeText(value);
+  return normalized === "04" || normalized.startsWith("04 ") || normalized.includes("produtos acabados") || normalized.includes("produto acabado");
+}
+
+function normalizeFiscalTypeText(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[-_/.:]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function normalizeDocument(doc: string): string {

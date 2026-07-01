@@ -1,57 +1,61 @@
 {
-  "name": "@kyberrock/desktop",
-  "version": "0.5.8",
-  "private": true,
-  "type": "module",
-  "main": "dist/main/main.js",
-  "types": "dist/index.d.ts",
-  "scripts": {
-    "build": "node -e \"const fs=require('node:fs'); fs.rmSync('dist',{recursive:true,force:true}); fs.rmSync('tsconfig.tsbuildinfo',{force:true})\" && tsc -b tsconfig.json && vite build --config vite.config.ts && node -e \"require('node:fs').cpSync('midia','dist/renderer/midia',{recursive:true})\" && node copy-workspace-packages.cjs",
-    "rebuild:native:electron": "node rebuild-native-for-electron.cjs",
-    "dist:win": "npm run build && npm run rebuild:native:electron && node -e \"const fs=require('fs'); fs.rmSync('release/win-unpacked',{recursive:true,force:true}); fs.rmSync('release/builder-debug.yml',{force:true});\" && electron-builder --win --publish never && npm rebuild better-sqlite3",
-    "dev": "vite --config vite.config.ts --host 0.0.0.0 --port 5174",
-    "start": "npm run build && electron ."
-  },
-  "dependencies": {
-    "@kyberrock/print-templates": "0.1.0",
-    "@supabase/supabase-js": "^2.107.0",
-    "better-sqlite3": "^12.10.0",
-    "electron-updater": "^6.8.9",
-    "react": "^19.2.7",
-    "react-dom": "^19.2.7"
-  },
-  "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
-    "electron": "40.10.2",
-    "electron-builder": "^26.15.0"
-  },
-  "build": {
-    "appId": "br.com.kyberrock.desktop",
-    "productName": "KyberRock Desktop",
-    "directories": {
-      "output": "release"
+    "name": "@kyberrock/desktop",
+    "version": "0.5.55",
+    "private": true,
+    "type": "module",
+    "main": "dist/main/main.js",
+    "types": "dist/index.d.ts",
+    "scripts": {
+        "build": "node -e \"const fs=require('node:fs'); fs.rmSync('dist',{recursive:true,force:true}); fs.rmSync('tsconfig.tsbuildinfo',{force:true})\" && tsc -b tsconfig.json && vite build --config vite.config.ts && node -e \"require('node:fs').cpSync('midia','dist/renderer/midia',{recursive:true})\" && node copy-workspace-packages.cjs",
+        "rebuild:native:electron": "node rebuild-native-for-electron.cjs",
+        "dist:win": "npm run build && npm run rebuild:native:electron && node -e \"const fs=require('fs'); fs.rmSync('release/win-unpacked',{recursive:true,force:true}); fs.rmSync('release/builder-debug.yml',{force:true});\" && electron-builder --win --publish never && npm rebuild better-sqlite3",
+        "dev": "vite --config vite.config.ts --host 0.0.0.0 --port 5174",
+        "start": "npm run build && electron ."
     },
-    "files": [
-      "dist/**/*",
-      "package.json",
-      "midia/**/*"
-    ],
-    "publish": [
-      {
-        "provider": "generic",
-        "url": "https://updates.kyberrock.com/desktop/win"
-      }
-    ],
-    "win": {
-      "target": "nsis",
-      "icon": "midia/icon.ico"
+    "dependencies": {
+        "@kyberrock/print-templates": "0.1.0",
+        "@supabase/supabase-js": "^2.107.0",
+        "better-sqlite3": "^12.10.0",
+        "electron-updater": "^6.8.9",
+        "lucide-react": "^1.21.0",
+        "nodemailer": "^9.0.1",
+        "react": "^19.2.7",
+        "react-dom": "^19.2.7",
+        "recharts": "^2.15.4"
     },
-    "nsis": {
-      "oneClick": false,
-      "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
-      "installerIcon": "midia/icon.ico",
-      "uninstallerIcon": "midia/icon.ico"
+    "devDependencies": {
+        "@types/better-sqlite3": "^7.6.13",
+        "@types/nodemailer": "^8.0.1",
+        "electron": "40.10.2",
+        "electron-builder": "^26.15.0"
+    },
+    "build": {
+        "appId": "br.com.kyberrock.desktop",
+        "productName": "KyberRock Desktop",
+        "directories": {
+            "output": "release"
+        },
+        "files": [
+            "dist/**/*",
+            "package.json",
+            "midia/**/*"
+        ],
+        "publish": [
+            {
+                "provider": "generic",
+                "url": "https://updates.kyberrock.com/desktop/win"
+            }
+        ],
+        "win": {
+            "target": "nsis",
+            "icon": "midia/icon.ico"
+        },
+        "nsis": {
+            "oneClick": false,
+            "perMachine": false,
+            "allowToChangeInstallationDirectory": true,
+            "installerIcon": "midia/icon.ico",
+            "uninstallerIcon": "midia/icon.ico"
+        }
     }
-  }
 }

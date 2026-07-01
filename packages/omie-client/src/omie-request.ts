@@ -1,9 +1,9 @@
 export const OMIE_ENDPOINTS = {
-  customers: "/api/v1/geral/clientes/",
-  products: "/api/v1/geral/produtos/",
-  salesOrders: "/api/v1/produtos/pedido/",
-  serviceOrders: "/api/v1/servicos/os/",
-  receivables: "/api/v1/financas/contareceber/"
+  customers: "/geral/clientes/",
+  products: "/geral/produtos/",
+  salesOrders: "/produtos/pedido/",
+  serviceOrders: "/servicos/os/",
+  receivables: "/financas/contareceber/"
 } as const;
 
 export type OmieEndpoint = (typeof OMIE_ENDPOINTS)[keyof typeof OMIE_ENDPOINTS];
@@ -28,5 +28,20 @@ export function createOmieRequestBody<TParam>(
 }
 
 export function buildOmieIntegrationCode(unitId: string, entityId: string, action: string): string {
-  return ["kyberrock", unitId, entityId, action].map((part) => part.replaceAll(":", "_")).join(":");
+  const raw = ["kyberrock", unitId, entityId, action].map((part) => part.replaceAll(":", "_")).join(":");
+  if (raw.length <= 60) {
+    return raw;
+  }
+  return `kr:${fnv1a64(raw)}`;
+}
+
+function fnv1a64(input: string): string {
+  let hash = BigInt("14695981039346656037");
+  const prime = BigInt("1099511628211");
+  for (let i = 0; i < input.length; i++) {
+    hash ^= BigInt(input.charCodeAt(i));
+    hash *= prime;
+  }
+  hash &= BigInt("0xFFFFFFFFFFFFFFFF");
+  return hash.toString(16).padStart(16, "0");
 }

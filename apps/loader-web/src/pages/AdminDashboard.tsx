@@ -21,6 +21,7 @@ interface Unit {
   isActive: boolean;
   desktopActivationCode?: string;
   desktopActivationCodeRotatedAt?: string;
+  desktopPublishableKey?: string | null;
 }
 
 interface LoaderUser {
@@ -157,13 +158,15 @@ export function AdminDashboard() {
     event.preventDefault();
     const form = event.currentTarget;
     const formData = new FormData(form);
-    
+    const publishableKey = String(formData.get("desktopPublishableKey") ?? "").trim();
+
     try {
       await callAdminFunction("admin-api", {
         action: "create_unit",
         payload: {
           companyId: formData.get("companyId"),
-          name: formData.get("name")
+          name: formData.get("name"),
+          desktopPublishableKey: publishableKey || null
         }
       });
       form.reset();
@@ -291,6 +294,7 @@ export function AdminDashboard() {
     const formData = new FormData(form);
     const omieAppKey = String(formData.get("omieAppKey") ?? "").trim();
     const omieAppSecret = String(formData.get("omieAppSecret") ?? "").trim();
+    const priceChangePassword = String(formData.get("priceChangePassword") ?? "").trim();
     const payload: Record<string, unknown> = {
       companyId: editingCompany.id,
       name: formData.get("name"),
@@ -301,6 +305,16 @@ export function AdminDashboard() {
     if (omieAppSecret) payload.omieAppSecret = omieAppSecret;
     try {
       await callAdminFunction("admin-api", { action: "update_company", payload });
+      if (priceChangePassword) {
+        if (!/^\d{4}$/.test(priceChangePassword)) {
+          alert("A senha para alterar precos deve ter exatamente 4 digitos");
+          return;
+        }
+        await callAdminFunction("admin-api", {
+          action: "update_company_price_password",
+          payload: { companyId: editingCompany.id, priceChangePassword }
+        });
+      }
       setEditingCompany(null);
       await loadData();
     } catch (error) {
@@ -314,12 +328,14 @@ export function AdminDashboard() {
     if (!editingUnit) return;
     const form = event.currentTarget;
     const formData = new FormData(form);
+    const publishableKey = String(formData.get("desktopPublishableKey") ?? "").trim();
     try {
       await callAdminFunction("admin-api", {
         action: "update_unit",
         payload: {
           unitId: editingUnit.id,
-          name: formData.get("name")
+          name: formData.get("name"),
+          desktopPublishableKey: publishableKey || null
         }
       });
       setEditingUnit(null);
@@ -520,6 +536,13 @@ export function AdminDashboard() {
                           <input name="omieAppSecret" type="password" placeholder="Novo App Secret (deixe vazio para manter)" style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1", marginTop: "8px" }} />
                           <small style={{ color: "#64748b" }}>Ao preencher, o app key/secret e atualizado. Para limpar, salve com campos vazios.</small>
                         </div>
+                        <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: "12px", marginTop: "4px" }}>
+                          <strong style={{ fontSize: "13px", color: "#475569" }}>Senha para alterar precos</strong>
+                          <p style={{ margin: "4px 0", fontSize: "12px", color: "#64748b" }}>
+                            Senha de 4 digitos que o operador deve informar no desktop para alterar precos padrao.
+                          </p>
+                          <input name="priceChangePassword" type="password" maxLength={4} placeholder="0000 (deixe vazio para manter)" style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1", marginTop: "8px", width: "100%" }} />
+                        </div>
                         <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
                           <button type="submit" style={{ flex: 1, padding: "10px", borderRadius: "8px", border: "none", background: "#0f172a", color: "#fff", cursor: "pointer", fontWeight: 700 }}>
                             Salvar
@@ -566,6 +589,14 @@ export function AdminDashboard() {
                       ))}
                     </select>
                     <input name="name" placeholder="Nome da unidade" required style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
+                    <input
+                      name="desktopPublishableKey"
+                      placeholder="Publishable key do Supabase (opcional)"
+                      style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
+                    />
+                    <p style={{ color: "#64748b", fontSize: "12px", margin: 0 }}>
+                      Necessario para o desktop acessar o Supabase. Copie do dashboard do projeto (Project API keys &gt; Publishable).
+                    </p>
                     <button type="submit" style={{ padding: "10px", borderRadius: "8px", border: "none", background: "#0f172a", color: "#fff", cursor: "pointer", fontWeight: 700 }}>
                       Criar Unidade
                     </button>
@@ -872,6 +903,15 @@ export function AdminDashboard() {
                             <h3 style={{ margin: "0 0 16px 0" }}>Editar Unidade</h3>
                             <form onSubmit={handleUpdateUnit} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
                               <input name="name" defaultValue={editingUnit.name} placeholder="Nome da unidade" required style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
+                              <input
+                                name="desktopPublishableKey"
+                                defaultValue={editingUnit.desktopPublishableKey ?? ""}
+                                placeholder="Publishable key do Supabase"
+                                style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
+                              />
+                              <p style={{ color: "#64748b", fontSize: "12px", margin: 0 }}>
+                                Vazio para remover. Copie do dashboard do projeto (Project API keys &gt; Publishable).
+                              </p>
                               <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
                                 <button type="submit" style={{ flex: 1, padding: "10px", borderRadius: "8px", border: "none", background: "#0f172a", color: "#fff", cursor: "pointer", fontWeight: 700 }}>
                                   Salvar

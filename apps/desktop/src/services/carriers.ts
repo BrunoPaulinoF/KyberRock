@@ -6,12 +6,30 @@ export interface CreateCarrierInput {
   companyId: string;
   name: string;
   document?: string;
+  phone?: string;
+  email?: string;
+  zipcode?: string;
+  addressStreet?: string;
+  addressNumber?: string;
+  addressComplement?: string;
+  neighborhood?: string;
+  city?: string;
+  state?: string;
   omieCustomerId?: number;
 }
 
 export interface UpdateCarrierInput {
   name?: string;
-  document?: string;
+  document?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  zipcode?: string | null;
+  addressStreet?: string | null;
+  addressNumber?: string | null;
+  addressComplement?: string | null;
+  neighborhood?: string | null;
+  city?: string | null;
+  state?: string | null;
   omieCustomerId?: number | null;
   isActive?: boolean;
 }
@@ -26,10 +44,29 @@ export function createCarrier(
 
   database
     .prepare(
-      `INSERT INTO carriers (id, company_id, omie_customer_id, name, document, source, is_active, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'local', 1, ?, ?)`
+      `INSERT INTO carriers (
+        id, company_id, omie_customer_id, name, document, phone, email, zipcode, address_street,
+        address_number, address_complement, neighborhood, city, state, source, is_active, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'local', 1, ?, ?)`
     )
-    .run(id, input.companyId, input.omieCustomerId ?? null, input.name, input.document ?? null, nowIso, nowIso);
+    .run(
+      id,
+      input.companyId,
+      input.omieCustomerId ?? null,
+      input.name,
+      input.document ?? null,
+      input.phone ?? null,
+      input.email ?? null,
+      input.zipcode ?? null,
+      input.addressStreet ?? null,
+      input.addressNumber ?? null,
+      input.addressComplement ?? null,
+      input.neighborhood ?? null,
+      input.city ?? null,
+      input.state ?? null,
+      nowIso,
+      nowIso
+    );
 
   return database.prepare("SELECT * FROM carriers WHERE id = ?").get(id);
 }
@@ -52,6 +89,15 @@ export function updateCarrier(
 
   if (input.name !== undefined) { sets.push("name = ?"); values.push(input.name); }
   if (input.document !== undefined) { sets.push("document = ?"); values.push(input.document); }
+  if (input.phone !== undefined) { sets.push("phone = ?"); values.push(input.phone); }
+  if (input.email !== undefined) { sets.push("email = ?"); values.push(input.email); }
+  if (input.zipcode !== undefined) { sets.push("zipcode = ?"); values.push(input.zipcode); }
+  if (input.addressStreet !== undefined) { sets.push("address_street = ?"); values.push(input.addressStreet); }
+  if (input.addressNumber !== undefined) { sets.push("address_number = ?"); values.push(input.addressNumber); }
+  if (input.addressComplement !== undefined) { sets.push("address_complement = ?"); values.push(input.addressComplement); }
+  if (input.neighborhood !== undefined) { sets.push("neighborhood = ?"); values.push(input.neighborhood); }
+  if (input.city !== undefined) { sets.push("city = ?"); values.push(input.city); }
+  if (input.state !== undefined) { sets.push("state = ?"); values.push(input.state); }
   if (input.omieCustomerId !== undefined) { sets.push("omie_customer_id = ?"); values.push(input.omieCustomerId); }
   if (input.isActive !== undefined) { sets.push("is_active = ?"); values.push(input.isActive ? 1 : 0); }
 
@@ -77,6 +123,15 @@ export interface CarrierRow {
   omie_customer_id: number | null;
   name: string;
   document: string | null;
+  phone: string | null;
+  email: string | null;
+  zipcode: string | null;
+  address_street: string | null;
+  address_number: string | null;
+  address_complement: string | null;
+  neighborhood: string | null;
+  city: string | null;
+  state: string | null;
   source: string;
   is_active: number;
   created_at: string;

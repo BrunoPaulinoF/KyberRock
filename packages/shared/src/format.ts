@@ -82,6 +82,85 @@ export function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 }
 
+export function normalizeCep(value: string): string {
+  return value.replace(/\D/g, "").slice(0, 8);
+}
+
+export function formatCep(value: string): string {
+  const digits = normalizeCep(value);
+  if (digits.length <= 5) return digits;
+  return `${digits.slice(0, 5)}-${digits.slice(5)}`;
+}
+
+export function isValidCep(value: string): boolean {
+  return normalizeCep(value).length === 8;
+}
+
+export function normalizeMoneyInput(value: string): string {
+  if (!value) return "";
+  const negative = value.trim().startsWith("-");
+  const cleaned = value.replace(/[^\d,.-]/g, "");
+  const hasComma = cleaned.includes(",");
+  const hasDot = cleaned.includes(".");
+  let result: string;
+  if (hasComma && hasDot) {
+    result = cleaned.replace(/\./g, "").replace(",", ".");
+  } else if (hasComma) {
+    result = cleaned.replace(",", ".");
+  } else if (hasDot) {
+    const [, fractional = ""] = cleaned.split(".");
+    if (fractional.length === 0 || fractional.length === 3) {
+      result = cleaned.replace(/\./g, "");
+    } else {
+      result = cleaned;
+    }
+  } else {
+    result = cleaned;
+  }
+  if (result.startsWith(".")) result = `0${result}`;
+  if (result.startsWith("-.")) result = result.replace("-.", "-0.");
+  const parts = result.replace(/^-/, "").split(".");
+  if (parts.length > 2) {
+    result = `${parts[0]}.${parts.slice(1).join("")}`;
+    if (negative) result = `-${result}`;
+  }
+  return result;
+}
+
+export function formatMoneyInput(value: string | number | null | undefined): string {
+  if (value === null || value === undefined || value === "") return "";
+  const raw = typeof value === "number" ? String(value) : value;
+  const negative = raw.trim().startsWith("-");
+  const digitsOnly = raw.replace(/[^\d,.]/g, "");
+  const normalized = normalizeMoneyInput(digitsOnly);
+  if (!normalized || normalized === "-") return negative ? "-" : "";
+  const abs = normalized.replace(/^-/, "");
+  const [intPart = "0", decPart = ""] = abs.split(".");
+  const intFormatted = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  const formatted = decPart
+    ? `${intFormatted},${decPart.slice(0, 2).padEnd(2, "0")}`
+    : intFormatted;
+  return negative ? `-${formatted}` : formatted;
+}
+
+export function parseMoneyInputToCents(value: string): number | null {
+  if (!value || !value.trim()) return null;
+  const normalized = normalizeMoneyInput(value);
+  if (!normalized || normalized === "-") return null;
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return Math.round(parsed * 100);
+}
+
+export function isValidMoneyInput(value: string): boolean {
+  if (!value.trim()) return true;
+  return parseMoneyInputToCents(value) !== null;
+}
+
+export function normalizeIntInput(value: string): string {
+  return value.replace(/\D/g, "");
+}
+
 function computeCheckDigit(base: string, weights: number[]): number {
   let sum = 0;
   for (let i = 0; i < base.length; i++) {

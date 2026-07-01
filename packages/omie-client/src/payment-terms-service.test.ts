@@ -22,7 +22,7 @@ describe("listPaymentTerms", () => {
     await listPaymentTerms(client, { pagina: 1 });
 
     expect(client.call).toHaveBeenCalledWith(
-      "/api/v1/geral/condicoespgto/",
+      "/geral/condicoespgto/",
       "ListarCondicoesPagamento",
       { pagina: 1 }
     );

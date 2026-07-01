@@ -1,20 +1,42 @@
-import { useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
+import { useNavigate } from "react-router-dom";
+
 import { useAuth } from "../contexts/AuthContext";
 
 export function LoaderLogin() {
-  const { loginLoader, error } = useAuth();
+  const { loginLoader, error, isLoader, clearError } = useAuth();
+  const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
-  async function handleSubmit(event: React.FormEvent) {
+  useEffect(() => {
+    if (isLoader) {
+      navigate("/loader", { replace: true });
+    }
+  }, [isLoader, navigate]);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setIsLoading(true);
     try {
       await loginLoader(email, password);
+      navigate("/loader", { replace: true });
+    } catch {
+      // O contexto de auth ja expoe a mensagem para a tela.
     } finally {
       setIsLoading(false);
     }
+  }
+
+  function handleEmailChange(value: string) {
+    setEmail(value);
+    if (error) clearError();
+  }
+
+  function handlePasswordChange(value: string) {
+    setPassword(value);
+    if (error) clearError();
   }
 
   return (
@@ -30,22 +52,28 @@ export function LoaderLogin() {
         )}
 
         <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-          <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontWeight: 700 }}>
+          <label htmlFor="loader-login-email" style={{ display: "flex", flexDirection: "column", gap: "6px", fontWeight: 700 }}>
             E-mail
             <input
+              id="loader-login-email"
+              name="email"
               type="email"
+              autoComplete="username"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => handleEmailChange(e.target.value)}
               required
               style={{ padding: "12px", borderRadius: "10px", border: "1px solid #cbd5e1", font: "inherit" }}
             />
           </label>
-          <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontWeight: 700 }}>
+          <label htmlFor="loader-login-password" style={{ display: "flex", flexDirection: "column", gap: "6px", fontWeight: 700 }}>
             Senha
             <input
+              id="loader-login-password"
+              name="password"
               type="password"
+              autoComplete="current-password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) => handlePasswordChange(e.target.value)}
               required
               style={{ padding: "12px", borderRadius: "10px", border: "1px solid #cbd5e1", font: "inherit" }}
             />

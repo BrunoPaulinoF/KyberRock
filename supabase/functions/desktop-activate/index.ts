@@ -8,8 +8,6 @@ type CompanyRow = {
   legal_name: string;
   document: string | null;
   is_active: boolean;
-  omie_app_key: string | null;
-  omie_app_secret: string | null;
 };
 
 type UnitRow = {
@@ -18,6 +16,7 @@ type UnitRow = {
   name: string;
   timezone: string;
   is_active: boolean;
+  desktop_publishable_key: string | null;
   companies: CompanyRow | CompanyRow[] | null;
 };
 
@@ -28,7 +27,7 @@ Deno.serve(async (req) => {
   const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
   const supabase = createClient(supabaseUrl, serviceRoleKey);
-  const body = await req.json().catch(() => ({})) as {
+  const body = (await req.json().catch(() => ({}))) as {
     activationCode?: string;
     deviceName?: string;
   };
@@ -43,7 +42,9 @@ Deno.serve(async (req) => {
   const activationCodeHash = await sha256Hex(activationCode);
   const { data: unit, error: unitError } = await supabase
     .from("units")
-    .select("id, company_id, name, timezone, is_active, companies(id, name, legal_name, document, is_active, omie_app_key, omie_app_secret)")
+    .select(
+      "id, company_id, name, timezone, is_active, desktop_publishable_key, companies(id, name, legal_name, document, is_active)"
+    )
     .eq("desktop_activation_code_hash", activationCodeHash)
     .single();
 
@@ -81,6 +82,13 @@ Deno.serve(async (req) => {
 
   if (deviceError) throw deviceError;
 
+  const publishableKey =
+    typedUnit.desktop_publishable_key ??
+    Deno.env.get("SUPABASE_PUBLISHABLE_KEY") ??
+    Deno.env.get("SUPABASE_ANON_KEY") ??
+    Deno.env.get("KYBERROCK_DESKTOP_PUBLISHABLE_KEY") ??
+    null;
+
   return jsonResponse({
     status: "approved",
     message: "Desktop ativado com sucesso.",
@@ -93,8 +101,13 @@ Deno.serve(async (req) => {
     unitTimezone: typedUnit.timezone,
     deviceId,
     deviceToken,
-    omieAppKey: company.omie_app_key ?? null,
-    omieAppSecret: company.omie_app_secret ?? null,
+    supabaseUrl,
+    publishableKey,
+    publishableKeySource: typedUnit.desktop_publishable_key
+      ? "unit"
+      : publishableKey
+        ? "env"
+        : "missing",
     checkedAt: now
   });
 });

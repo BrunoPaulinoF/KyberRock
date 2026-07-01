@@ -8,6 +8,7 @@ type AdminAction =
   | "create_company"
   | "toggle_company"
   | "update_company"
+  | "update_company_price_password"
   | "delete_company"
   | "create_unit"
   | "toggle_unit"
@@ -24,14 +25,11 @@ Deno.serve(async (req) => {
 
   const sessionSecret = Deno.env.get("KYBERROCK_ADMIN_SESSION_SECRET") ?? "";
   const sessionToken = req.headers.get("x-admin-session");
-  console.log("[admin-api] sessionToken present:", !!sessionToken, "secret length:", sessionSecret.length);
   
   const session = await verifyAdminSession(sessionToken, sessionSecret);
   if (!session) {
-    console.log("[admin-api] session verification failed");
     return jsonResponse({ error: "Sessao administrativa invalida" }, 401);
   }
-  console.log("[admin-api] session verified:", session.sub);
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
@@ -48,7 +46,7 @@ Deno.serve(async (req) => {
           .order("created_at", { ascending: false }),
         supabase
           .from("units")
-          .select("id, company_id, name, timezone, is_active, desktop_activation_code, desktop_activation_code_rotated_at, created_at, updated_at")
+          .select("id, company_id, name, timezone, is_active, desktop_activation_code, desktop_activation_code_rotated_at, desktop_publishable_key, created_at, updated_at")
           .order("created_at", { ascending: false }),
         supabase.from("user_profiles").select("*").order("created_at", { ascending: false }),
         supabase
@@ -93,11 +91,13 @@ Deno.serve(async (req) => {
     }
 
     if (body.action === "create_unit") {
+      const publishableKey = String(payload.desktopPublishableKey ?? "").trim();
       const { data, error } = await supabase.from("units").insert({
         company_id: String(payload.companyId),
         name: String(payload.name ?? ""),
         timezone: "America/Sao_Paulo",
-        is_active: true
+        is_active: true,
+        desktop_publishable_key: publishableKey.length > 0 ? publishableKey : null
       }).select("*").single();
       if (error) throw error;
       return jsonResponse({ unit: data });
@@ -191,11 +191,29 @@ Deno.serve(async (req) => {
       return jsonResponse({ ok: true });
     }
 
+    if (body.action === "update_company_price_password") {
+      const password = String(payload.priceChangePassword ?? "").trim();
+      if (!/^\d{4}$/.test(password)) {
+        return jsonResponse({ error: "A senha deve ter exatamente 4 digitos numericos" }, 400);
+      }
+      const { error } = await supabase.from("companies").update({
+        price_change_password: password,
+        updated_at: new Date().toISOString()
+      }).eq("id", String(payload.companyId));
+      if (error) throw error;
+      return jsonResponse({ ok: true });
+    }
+
     if (body.action === "update_unit") {
-      const { error } = await supabase.from("units").update({
+      const updatePayload: Record<string, unknown> = {
         name: String(payload.name ?? ""),
         updated_at: new Date().toISOString()
-      }).eq("id", String(payload.unitId));
+      };
+      if (payload.desktopPublishableKey !== undefined) {
+        const key = String(payload.desktopPublishableKey ?? "").trim();
+        updatePayload.desktop_publishable_key = key.length > 0 ? key : null;
+      }
+      const { error } = await supabase.from("units").update(updatePayload).eq("id", String(payload.unitId));
       if (error) throw error;
       return jsonResponse({ ok: true });
     }
@@ -221,9 +239,17 @@ Deno.serve(async (req) => {
 
     return jsonResponse({ error: "Invalid action" }, 400);
   } catch (error) {
-    return jsonResponse({ error: error instanceof Error ? error.message : "Erro inesperado" }, 400);
+    return jsonResponse({ error: getErrorMessage(error) }, 400);
   }
 });
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "object" && error !== null && "message" in error) {
+    return String((error as { message?: unknown }).message ?? "Erro inesperado");
+  }
+  return "Erro inesperado";
+}
 
 async function verifyAdminPassword(password: string): Promise<boolean> {
   const passwordHash = Deno.env.get("KYBERROCK_ADMIN_PASSWORD_HASH") ?? "";

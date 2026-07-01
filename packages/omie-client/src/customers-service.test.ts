@@ -23,7 +23,7 @@ describe("listCustomers", () => {
     await listCustomers(client, { pagina: 1, registrosPorPagina: 50 });
 
     expect(client.call).toHaveBeenCalledWith(
-      "/api/v1/geral/clientes/",
+      "/geral/clientes/",
       "ListarClientes",
       { pagina: 1, registrosPorPagina: 50 }
     );
@@ -67,7 +67,7 @@ describe("getCustomer", () => {
     const result = await getCustomer(client, 123);
 
     expect(client.call).toHaveBeenCalledWith(
-      "/api/v1/geral/clientes/",
+      "/geral/clientes/",
       "ConsultarCliente",
       { codigoClienteOmie: 123 }
     );

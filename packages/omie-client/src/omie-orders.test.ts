@@ -34,7 +34,7 @@ describe("createSalesOrder", () => {
     });
 
     expect(client.call).toHaveBeenCalledWith(
-      "/api/v1/produtos/pedido/",
+      "//produtos/pedido//",
       "IncluirPedido",
       expect.objectContaining({
         codigoPedidoIntegracao: "KR-001",
@@ -70,7 +70,7 @@ describe("createServiceOrder", () => {
     });
 
     expect(client.call).toHaveBeenCalledWith(
-      "/api/v1/servicos/os/",
+      "//servicos/os//",
       "IncluirOS",
       expect.objectContaining({
         codigoOSIntegracao: "KR-OS-001",
@@ -99,7 +99,7 @@ describe("cancelSalesOrder", () => {
     await cancelSalesOrder(client, { omieOrderId: 9876 });
 
     expect(client.call).toHaveBeenCalledWith(
-      "/api/v1/produtos/pedido/",
+      "/produtos/pedido/",
       "CancelarPedido",
       { codigoPedido: 9876 }
     );
@@ -117,7 +117,7 @@ describe("cancelServiceOrder", () => {
     await cancelServiceOrder(client, { omieOrderId: 5678 });
 
     expect(client.call).toHaveBeenCalledWith(
-      "/api/v1/servicos/os/",
+      "/servicos/os/",
       "CancelarOS",
       { codigoOS: 5678 }
     );

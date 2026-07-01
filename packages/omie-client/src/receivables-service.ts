@@ -19,7 +19,7 @@ export async function listReceivables(
   param: ListReceivablesParam
 ): Promise<Receivable[]> {
   const response = (await client.call(
-    "/api/v1/financas/contareceber/",
+    "//financas/contareceber//",
     "ListarContasReceber",
     param
   )) as {
@@ -47,7 +47,7 @@ export class OmieReceivablesService {
   async getTotalOpenAmountForClient(clientId: number): Promise<number> {
     const receivables = await listReceivables(this.client, {
       pagina: 1,
-      registrosPorPagina: 500,
+      registrosPorPagina: 100,
       codigoClienteOmie: clientId
     });
 

@@ -91,6 +91,6 @@ Every installer build **must** bump the version and be tagged:
 
 ## Subagents
 
-All subagents (`explore`, `qa-build`, `qa-lint`, `qa-test`) **must** use the model `deepseek-v4-flash`. Other models require explicit user approval.
+All subagents (`explore`, `qa-build`, `qa-lint`, `qa-test`) **must** use the model `minimax-m3`. Other models require explicit user approval.
 
 After any code change, run `qa-build` (`npm run build`), `qa-lint` (`npm run lint`) and `qa-test` (`npm test`) **in parallel**. Treat the task as done only when all three report OK.

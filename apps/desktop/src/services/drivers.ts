@@ -7,6 +7,7 @@ export interface CreateDriverInput {
   name: string;
   document?: string;
   phone?: string;
+  isIndependent?: boolean;
 }
 
 export interface UpdateDriverInput {
@@ -14,6 +15,7 @@ export interface UpdateDriverInput {
   document?: string;
   phone?: string;
   isActive?: boolean;
+  isIndependent?: boolean;
 }
 
 export interface DriverRow {
@@ -23,6 +25,7 @@ export interface DriverRow {
   document: string | null;
   phone: string | null;
   is_active: number;
+  is_independent: number;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -38,10 +41,10 @@ export function createDriver(
 
   database
     .prepare(
-      `INSERT INTO drivers (id, company_id, name, document, phone, is_active, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 1, ?, ?)`
+      `INSERT INTO drivers (id, company_id, name, document, phone, is_independent, is_active, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`
     )
-    .run(id, input.companyId, input.name, input.document ?? null, input.phone ?? null, nowIso, nowIso);
+    .run(id, input.companyId, input.name, input.document ?? null, input.phone ?? null, input.isIndependent ? 1 : 0, nowIso, nowIso);
 
   return database.prepare("SELECT * FROM drivers WHERE id = ?").get(id) as DriverRow;
 }
@@ -66,6 +69,7 @@ export function updateDriver(
   if (input.document !== undefined) { sets.push("document = ?"); values.push(input.document); }
   if (input.phone !== undefined) { sets.push("phone = ?"); values.push(input.phone); }
   if (input.isActive !== undefined) { sets.push("is_active = ?"); values.push(input.isActive ? 1 : 0); }
+  if (input.isIndependent !== undefined) { sets.push("is_independent = ?"); values.push(input.isIndependent ? 1 : 0); }
 
   if (sets.length === 0) return existing;
 

@@ -14,13 +14,15 @@ describe("PricingService", () => {
     } as unknown as DesktopDatabase;
   }
 
-  it("calculates price from price table for customer and product", () => {
+  it("uses the product default price when no special price exists", () => {
     const db = createMockDb();
     const service = new PricingService(db);
 
-    const mockGet = vi.fn().mockReturnValue({
-      unit_price_cents: 15000 // R$ 150,00
-    });
+    const mockGet = vi
+      .fn()
+      .mockReturnValueOnce({ id: "product-1", unit_price_cents: null })
+      .mockReturnValueOnce(undefined)
+      .mockReturnValueOnce({ id: "default-price-1", unit_price_cents: 15000 });
 
     (db.prepare as ReturnType<typeof vi.fn>).mockReturnValue({
       get: mockGet,
@@ -32,6 +34,32 @@ describe("PricingService", () => {
 
     expect(price).toBe(15000);
     expect(db.prepare).toHaveBeenCalled();
+  });
+
+  it("uses the customer special price before the product default price", () => {
+    const db = createMockDb();
+    const service = new PricingService(db);
+
+    const mockGet = vi
+      .fn()
+      .mockReturnValueOnce({ id: "product-1", unit_price_cents: null })
+      .mockReturnValueOnce({ id: "special-price-1", unit_price_cents: 12000 })
+      .mockReturnValueOnce({ id: "default-price-1", unit_price_cents: 15000 });
+
+    (db.prepare as ReturnType<typeof vi.fn>).mockReturnValue({
+      get: mockGet,
+      all: vi.fn().mockReturnValue([]),
+      run: vi.fn()
+    });
+
+    const details = service.getPriceDetailsForCustomerProduct("customer-1", "product-1");
+
+    expect(details).toMatchObject({
+      appliedUnitPriceCents: 12000,
+      baseUnitPriceCents: 15000,
+      source: "special",
+      savingsPercent: 20
+    });
   });
 
   it("returns null when no price table is found", () => {
@@ -56,7 +84,7 @@ describe("PricingService", () => {
     const service = new PricingService(db);
 
     // 6.5 toneladas a R$ 150,00/ton = R$ 975,00
-    const total = service.calculateTotal(6500, 15000); // kg, cents per kg
+    const total = service.calculateTotal(6500, 15000); // kg, cents per ton
 
     expect(total).toBe(97500); // R$ 975,00 em centavos
   });

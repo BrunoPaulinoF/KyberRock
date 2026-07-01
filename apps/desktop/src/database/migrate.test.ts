@@ -5,6 +5,7 @@ import {
   getAppliedMigrations,
   runDesktopMigrations
 } from "./migrate";
+import { DESKTOP_MIGRATIONS } from "./migrations";
 import { openDesktopDatabase } from "./sqlite";
 
 describe("runDesktopMigrations", () => {
@@ -22,28 +23,13 @@ describe("runDesktopMigrations", () => {
         .pluck()
         .all();
 
-      expect(migrations).toEqual([
-        {
-          version: 1,
-          name: "initial_offline_schema",
+      expect(migrations).toEqual(
+        DESKTOP_MIGRATIONS.map((migration) => ({
+          version: migration.version,
+          name: migration.name,
           appliedAt: "2026-06-06T12:00:00.000Z"
-        },
-        {
-          version: 2,
-          name: "sync_fields_and_search_indexes",
-          appliedAt: "2026-06-06T12:00:00.000Z"
-        },
-        {
-          version: 3,
-          name: "vehicle_carrier_links_and_customer_default_carrier",
-          appliedAt: "2026-06-06T12:00:00.000Z"
-        },
-        {
-          version: 4,
-          name: "customer_address_and_product_details",
-          appliedAt: "2026-06-06T12:00:00.000Z"
-        }
-      ]);
+        }))
+      );
       expect(tableNames).toContain("companies");
       expect(tableNames).toContain("devices");
       expect(tableNames).toContain("local_settings");
@@ -62,7 +48,7 @@ describe("runDesktopMigrations", () => {
       runDesktopMigrations(database, undefined, new Date("2026-06-06T12:00:00.000Z"));
       runDesktopMigrations(database, undefined, new Date("2026-06-06T13:00:00.000Z"));
 
-      expect(getAppliedMigrations(database)).toHaveLength(4);
+      expect(getAppliedMigrations(database)).toHaveLength(DESKTOP_MIGRATIONS.length);
     } finally {
       database.close();
     }

@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { supabaseConfig } from "../config/supabase-config";
+import {
+  isSupabaseConfigured,
+  resetSupabaseConfigCache,
+  setSupabaseConfigCache,
+  supabaseConfig
+} from "../config/supabase-config";
 import { runDesktopMigrations } from "../database/migrate";
 import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite";
 import { ensureInitialDesktopIdentity, type LocalDesktopIdentity } from "./bootstrap";
@@ -9,10 +14,15 @@ import { createSimulatedWeighingOperation } from "./weighing-operations";
 import {
   applyOmieReferenceData,
   initializeSupabase,
+  initializeSupabaseFromSettings,
   isSupabaseInitialized,
+  processCloudSyncQueue,
+  processFiscalBillingNow,
   processOmieSyncQueue,
   pushOmieCustomersToCloud,
-  syncOmieReferenceDataFromCloud
+  readStoredSupabaseConfig,
+  syncOmieReferenceDataFromCloud,
+  writeStoredSupabaseConfig
 } from "./supabase-sync";
 
 const invokeMock = vi.fn();
@@ -38,6 +48,77 @@ describe("supabase sync", () => {
 
   it("has a valid desktop publishable key without requiring a runtime .env file", () => {
     expect(supabaseConfig.publishableKey).toMatch(/^sb_publishable_/);
+  });
+
+  it("falls back to the bundled project URL when SUPABASE_URL is empty", () => {
+    const previous = process.env.SUPABASE_URL;
+    delete process.env.SUPABASE_URL;
+    setSupabaseConfigCache(null, null);
+    try {
+      expect(supabaseConfig.url).toMatch(/^https:\/\/vksihzfrgqoemcqpquit\.supabase\.co$/);
+    } finally {
+      if (previous) process.env.SUPABASE_URL = previous;
+      setSupabaseConfigCache(null, null);
+    }
+  });
+
+  it("persists the supabase url and publishable key in local_settings", () => {
+    const database = createDatabase();
+    try {
+      writeStoredSupabaseConfig(database, {
+        url: "https://pedreira.supabase.co",
+        publishableKey: "sb_publishable_pedreira_key"
+      });
+      const stored = readStoredSupabaseConfig(database);
+      expect(stored).toEqual({
+        url: "https://pedreira.supabase.co",
+        publishableKey: "sb_publishable_pedreira_key"
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("uses the stored publishable key when initializing from settings", () => {
+    const database = createDatabase();
+    const previousUrl = process.env.SUPABASE_URL;
+    const previousKey = process.env.SUPABASE_PUBLISHABLE_KEY;
+    delete process.env.SUPABASE_PUBLISHABLE_KEY;
+    process.env.SUPABASE_URL = "https://example.supabase.co";
+    setSupabaseConfigCache(null, null);
+    resetSupabaseConfigCache();
+    try {
+      writeStoredSupabaseConfig(database, {
+        url: "https://example.supabase.co",
+        publishableKey: "sb_publishable_pedreira"
+      });
+      initializeSupabaseFromSettings(database);
+      expect(isSupabaseInitialized()).toBe(true);
+      expect(supabaseConfig.publishableKey).toBe("sb_publishable_pedreira");
+    } finally {
+      if (previousUrl) process.env.SUPABASE_URL = previousUrl;
+      else delete process.env.SUPABASE_URL;
+      if (previousKey) process.env.SUPABASE_PUBLISHABLE_KEY = previousKey;
+      resetSupabaseConfigCache();
+      database.close();
+    }
+  });
+
+  it("reports not configured when neither env nor local_settings have a publishable key", () => {
+    const database = createDatabase();
+    const previousKey = process.env.SUPABASE_PUBLISHABLE_KEY;
+    delete process.env.SUPABASE_PUBLISHABLE_KEY;
+    resetSupabaseConfigCache();
+    try {
+      writeStoredSupabaseConfig(database, { publishableKey: null });
+      initializeSupabaseFromSettings(database);
+      expect(isSupabaseInitialized()).toBe(false);
+      expect(isSupabaseConfigured()).toBe(false);
+    } finally {
+      if (previousKey) process.env.SUPABASE_PUBLISHABLE_KEY = previousKey;
+      resetSupabaseConfigCache();
+      database.close();
+    }
   });
 
   it("includes the operation entry weight when syncing loading requests", async () => {
@@ -67,6 +148,59 @@ describe("supabase sync", () => {
           loadingRequests: [expect.objectContaining({ entry_weight_kg: 12_000 })]
         })
       });
+      const body = invokeMock.mock.calls[0]?.[1]?.body as {
+        loadingRequests?: Array<Record<string, unknown>>;
+      };
+      expect(body.loadingRequests?.[0]).not.toHaveProperty("customer_id");
+      expect(body.loadingRequests?.[0]).not.toHaveProperty("product_id");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("processes queued cloud jobs for operations and receipts", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertWeighingOperation(database);
+      insertPrintReceipt(database);
+      enqueueSyncJob(database, {
+        id: "cloud-operation-job",
+        target: "cloud",
+        action: "upsert_operation",
+        entityType: "operation",
+        entityId: "operation-1",
+        idempotencyKey: "cloud:operation:operation-1",
+        payload: { operationId: "operation-1" }
+      });
+      enqueueSyncJob(database, {
+        id: "cloud-receipt-job",
+        target: "cloud",
+        action: "upsert_print_receipt",
+        entityType: "print_receipt",
+        entityId: "receipt-1",
+        idempotencyKey: "cloud:print_receipt:receipt-1",
+        payload: { receiptId: "receipt-1" }
+      });
+
+      const result = await processCloudSyncQueue(database, identity);
+
+      expect(result).toEqual({ processed: 2, failed: 0, errors: [] });
+      expect(invokeMock).toHaveBeenCalledWith("desktop-sync", {
+        body: expect.objectContaining({
+          operations: [expect.objectContaining({ id: "operation-1" })]
+        })
+      });
+      expect(invokeMock).toHaveBeenCalledWith("desktop-sync", {
+        body: expect.objectContaining({
+          printReceipts: [expect.objectContaining({ id: "receipt-1" })]
+        })
+      });
+      expect(
+        database.prepare("SELECT COUNT(*) FROM sync_queue WHERE status = 'done'").pluck().get()
+      ).toBe(2);
     } finally {
       database.close();
     }
@@ -93,13 +227,22 @@ describe("supabase sync", () => {
             id: 456,
             code: "BRITA1",
             description: "Brita 1",
-            unit: "M3"
+            unit: "M3",
+            itemType: "04 - Produtos Acabados"
           }
         ],
         paymentTerms: [
           {
             id: 789,
             description: "30 dias"
+          }
+        ],
+        suppliers: [
+          {
+            id: 321,
+            name: "Transportadora OMIE",
+            document: "11222333000144",
+            isActive: true
           }
         ]
       });
@@ -109,11 +252,76 @@ describe("supabase sync", () => {
         customersPushed: 0,
         productsSynced: 1,
         paymentTermsSynced: 1,
+        suppliersSynced: 1,
         errors: []
       });
-      expect(database.prepare("SELECT legal_name FROM customers WHERE id = 'omie_123'").pluck().get()).toBe("Pedreira Cliente LTDA");
-      expect(database.prepare("SELECT description FROM products WHERE id = 'omie_456'").pluck().get()).toBe("Brita 1");
-      expect(database.prepare("SELECT name FROM payment_terms WHERE id = 'omie_789'").pluck().get()).toBe("30 dias");
+      expect(
+        database.prepare("SELECT legal_name FROM customers WHERE id = 'omie_123'").pluck().get()
+      ).toBe("Pedreira Cliente LTDA");
+      expect(
+        database.prepare("SELECT description FROM products WHERE id = 'omie_456'").pluck().get()
+      ).toBe("Brita 1");
+      expect(
+        database.prepare("SELECT name FROM payment_terms WHERE id = 'omie_789'").pluck().get()
+      ).toBe("30 dias");
+      expect(
+        database.prepare("SELECT name FROM carriers WHERE id = 'omie_supplier_321'").pluck().get()
+      ).toBe("Transportadora OMIE");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("restores soft-deleted OMIE customers by integration code", () => {
+    const database = createDatabase();
+
+    try {
+      createIdentity(database);
+      database
+        .prepare(
+          `INSERT INTO customers (
+            id, company_id, omie_customer_id, omie_integration_code, source,
+            legal_name, trade_name, is_active, deleted_at, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, 'omie', ?, ?, 0, datetime('now'), datetime('now'), datetime('now'))`
+        )
+        .run("omie_123", "company-1", 123, "CLI-001", "Cliente Antigo", "Cliente Antigo");
+
+      applyOmieReferenceData(database, "company-1", {
+        customers: [
+          {
+            id: 456,
+            integrationCode: "CLI-001",
+            name: "Cliente Restaurado",
+            tradeName: "Cliente Restaurado",
+            document: "12345678000195",
+            phone: null,
+            email: null
+          }
+        ],
+        products: [],
+        paymentTerms: [],
+        suppliers: []
+      });
+
+      const restored = database
+        .prepare(
+          `SELECT id, omie_customer_id, legal_name, deleted_at
+           FROM customers
+           WHERE company_id = ? AND omie_integration_code = ?`
+        )
+        .get("company-1", "CLI-001") as {
+        id: string;
+        omie_customer_id: number;
+        legal_name: string;
+        deleted_at: string | null;
+      };
+
+      expect(restored).toMatchObject({
+        id: "omie_123",
+        omie_customer_id: 456,
+        legal_name: "Cliente Restaurado",
+        deleted_at: null
+      });
     } finally {
       database.close();
     }
@@ -128,8 +336,17 @@ describe("supabase sync", () => {
       invokeMock.mockResolvedValueOnce({
         error: null,
         data: {
-          customers: [{ id: 123, name: "Cliente OMIE", tradeName: null, document: null, phone: null, email: null }],
-          products: [{ id: 456, code: "BRITA", description: "Brita", unit: "M3" }],
+          customers: [
+            {
+              id: 123,
+              name: "Cliente OMIE",
+              tradeName: null,
+              document: null,
+              phone: null,
+              email: null
+            }
+          ],
+          products: [{ id: 456, code: "BRITA", description: "Brita", unit: "M3", itemType: "04" }],
           paymentTerms: [{ id: 789, description: "30 dias" }]
         }
       });
@@ -144,12 +361,25 @@ describe("supabase sync", () => {
           resume: {
             customersPage: 1,
             productsPage: 1,
-            paymentTermsPage: 1
+            paymentTermsPage: 1,
+            customersFinished: false,
+            productsFinished: false,
+            paymentTermsFinished: false
           }
         }
       });
-      expect(result).toMatchObject({ customersPulled: 1, productsSynced: 1, paymentTermsSynced: 1 });
-      expect(database.prepare("SELECT COUNT(*) FROM customers WHERE omie_customer_id = 123").pluck().get()).toBe(1);
+      expect(result).toMatchObject({
+        customersPulled: 1,
+        productsSynced: 1,
+        paymentTermsSynced: 1,
+        suppliersSynced: 0
+      });
+      expect(
+        database
+          .prepare("SELECT COUNT(*) FROM customers WHERE omie_customer_id = 123")
+          .pluck()
+          .get()
+      ).toBe(1);
     } finally {
       database.close();
     }
@@ -170,6 +400,88 @@ describe("supabase sync", () => {
         "OMIE nao configurado para esta empresa"
       );
     } finally {
+      database.close();
+    }
+  });
+
+  it("retries on OMIE redundant error from the cloud bridge before throwing", async () => {
+    vi.useFakeTimers();
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+
+      invokeMock.mockResolvedValueOnce({
+        error: createFunctionHttpError(
+          "OMIE HTTP 500: Internal Server Error em ListarClientes (/geral/clientes/) - ERROR: Consumo redundante detectado. Aguarde 48 segundos para tentar novamente (REDUNDANT)"
+        ),
+        data: null
+      });
+      invokeMock.mockResolvedValueOnce({
+        error: null,
+        data: {
+          customers: [
+            {
+              id: 123,
+              name: "Cliente OMIE",
+              tradeName: null,
+              document: null,
+              phone: null,
+              email: null
+            }
+          ],
+          products: [{ id: 456, code: "BRITA", description: "Brita", unit: "M3", itemType: "04" }],
+          paymentTerms: [{ id: 789, description: "30 dias" }]
+        }
+      });
+
+      const promise = syncOmieReferenceDataFromCloud(database, identity);
+      await vi.runAllTimersAsync();
+      const result = await promise;
+
+      expect(invokeMock).toHaveBeenCalledTimes(2);
+      expect(result).toMatchObject({
+        customersPulled: 1,
+        productsSynced: 1,
+        paymentTermsSynced: 1,
+        suppliersSynced: 0
+      });
+    } finally {
+      vi.useRealTimers();
+      database.close();
+    }
+  });
+
+  it("throws after exhausting OMIE redundant retries on the desktop side", async () => {
+    vi.useFakeTimers();
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+
+      const redundantMessage =
+        "OMIE HTTP 500: Internal Server Error em ListarClientes (/geral/clientes/) - ERROR: Consumo redundante detectado. Aguarde 48 segundos para tentar novamente (REDUNDANT)";
+      invokeMock.mockResolvedValueOnce({
+        error: createFunctionHttpError(redundantMessage),
+        data: null
+      });
+      invokeMock.mockResolvedValueOnce({
+        error: createFunctionHttpError(redundantMessage),
+        data: null
+      });
+      invokeMock.mockResolvedValueOnce({
+        error: createFunctionHttpError(redundantMessage),
+        data: null
+      });
+
+      const promise = syncOmieReferenceDataFromCloud(database, identity);
+      const rejectionExpect = expect(promise).rejects.toThrow(/Consumo redundante|REDUNDANT/);
+      await vi.runAllTimersAsync();
+      await rejectionExpect;
+    } finally {
+      vi.useRealTimers();
       database.close();
     }
   });
@@ -199,8 +511,15 @@ describe("supabase sync", () => {
         })
       });
       expect(result).toEqual({ pushed: 1, failed: 0, errors: [] });
-      expect(database.prepare("SELECT omie_customer_id FROM customers WHERE id = 'customer-1'").pluck().get()).toBe(321);
-      expect(database.prepare("SELECT needs_push FROM customers WHERE id = 'customer-1'").pluck().get()).toBe(0);
+      expect(
+        database
+          .prepare("SELECT omie_customer_id FROM customers WHERE id = 'customer-1'")
+          .pluck()
+          .get()
+      ).toBe(321);
+      expect(
+        database.prepare("SELECT needs_push FROM customers WHERE id = 'customer-1'").pluck().get()
+      ).toBe(0);
     } finally {
       database.close();
     }
@@ -213,13 +532,41 @@ describe("supabase sync", () => {
       const identity = createIdentity(database);
       createCloudSettings(database);
       insertLocalCustomer(database, "customer-1");
-      invokeMock.mockResolvedValueOnce({ error: { message: "Credencial OMIE invalida" }, data: null });
+      invokeMock.mockResolvedValueOnce({
+        error: { message: "Credencial OMIE invalida" },
+        data: null
+      });
 
       const result = await pushOmieCustomersToCloud(database, identity);
 
       expect(result).toMatchObject({ pushed: 0, failed: 1 });
       expect(result.errors[0]).toContain("Credencial OMIE invalida");
-      expect(database.prepare("SELECT sync_status FROM customers WHERE id = 'customer-1'").pluck().get()).toBe("error");
+      expect(
+        database.prepare("SELECT sync_status FROM customers WHERE id = 'customer-1'").pluck().get()
+      ).toBe("error");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("limits local customer push batches to avoid OMIE request bursts", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      for (let index = 0; index < 12; index++) {
+        insertLocalCustomer(database, `customer-${index}`);
+      }
+      invokeMock.mockResolvedValue({ error: null, data: { omieCustomerId: 321 } });
+
+      const result = await pushOmieCustomersToCloud(database, identity, { delayMs: 0 });
+
+      expect(result).toMatchObject({ pushed: 10, failed: 0 });
+      expect(invokeMock).toHaveBeenCalledTimes(10);
+      expect(
+        database.prepare("SELECT COUNT(*) FROM customers WHERE needs_push = 1").pluck().get()
+      ).toBe(2);
     } finally {
       database.close();
     }
@@ -265,8 +612,131 @@ describe("supabase sync", () => {
         })
       });
       expect(result).toEqual({ processed: 1, failed: 0, errors: [] });
-      expect(database.prepare("SELECT omie_sales_order_id FROM weighing_operations WHERE id = 'operation-1'").pluck().get()).toBe(987);
-      expect(database.prepare("SELECT status FROM sync_queue WHERE id = 'omie-job-1'").pluck().get()).toBe("done");
+      expect(
+        database
+          .prepare("SELECT omie_sales_order_id FROM weighing_operations WHERE id = 'operation-1'")
+          .pluck()
+          .get()
+      ).toBe(987);
+      expect(
+        database.prepare("SELECT status FROM sync_queue WHERE id = 'omie-job-1'").pluck().get()
+      ).toBe("done");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("limits OMIE queue batches to avoid long request bursts", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertWeighingOperation(database);
+      for (let index = 0; index < 12; index++) {
+        enqueueSyncJob(database, {
+          id: `omie-job-${index}`,
+          target: "omie",
+          action: "create_order",
+          entityType: "weighing_operation",
+          entityId: `operation-${index}`,
+          idempotencyKey: `kyberrock:unit-1:operation-${index}:create_sales_order`,
+          payload: {
+            operationId: "operation-1",
+            operationType: "invoice",
+            customerOmieId: 123,
+            productOmieId: 456,
+            quantity: 10,
+            unitPrice: 25,
+            issueDate: "2026-06-12"
+          }
+        });
+      }
+      invokeMock.mockResolvedValue({ error: null, data: { orderId: 987 } });
+
+      const result = await processOmieSyncQueue(database, identity, { delayMs: 0 });
+
+      expect(result).toMatchObject({ processed: 10, failed: 0 });
+      expect(invokeMock).toHaveBeenCalledTimes(10);
+      expect(
+        database.prepare("SELECT COUNT(*) FROM sync_queue WHERE status = 'pending'").pluck().get()
+      ).toBe(2);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("processes immediate fiscal billing and prints returned document URL", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertWeighingOperation(database);
+      enqueueSyncJob(database, {
+        id: "omie-billing-job-1",
+        target: "omie",
+        action: "create_and_bill_order",
+        entityType: "weighing_operation",
+        entityId: "operation-1",
+        idempotencyKey: "kyberrock:unit-1:operation-1:create_sales_order",
+        payload: {
+          operationId: "operation-1",
+          operationType: "invoice",
+          customerOmieId: 123,
+          productOmieId: 456,
+          quantity: 10,
+          unitPrice: 25,
+          issueDate: "2026-06-12"
+        }
+      });
+      const printDocument = vi.fn().mockResolvedValue({ printed: true, error: null });
+      invokeMock.mockResolvedValueOnce({
+        error: null,
+        data: {
+          orderId: 987,
+          billed: true,
+          billingStatusCode: "0",
+          billingStatusMessage: "Pedido faturado",
+          documentUrl: "https://example.test/danfe.pdf"
+        }
+      });
+
+      const result = await processFiscalBillingNow(
+        database,
+        identity,
+        "operation-1",
+        printDocument
+      );
+
+      expect(invokeMock).toHaveBeenCalledWith("omie-sync", {
+        body: expect.objectContaining({
+          action: "create_and_bill_order",
+          payload: expect.objectContaining({
+            idempotencyKey: "kyberrock:unit-1:operation-1:create_sales_order"
+          })
+        })
+      });
+      expect(printDocument).toHaveBeenCalledWith("https://example.test/danfe.pdf");
+      expect(result).toMatchObject({ orderId: 987, billed: true, documentPrinted: true });
+      expect(
+        database
+          .prepare("SELECT omie_sales_order_id FROM weighing_operations WHERE id = 'operation-1'")
+          .pluck()
+          .get()
+      ).toBe(987);
+      expect(
+        database
+          .prepare("SELECT omie_billing_status FROM weighing_operations WHERE id = 'operation-1'")
+          .pluck()
+          .get()
+      ).toBe("billed");
+      expect(
+        database
+          .prepare("SELECT status FROM sync_queue WHERE id = 'omie-billing-job-1'")
+          .pluck()
+          .get()
+      ).toBe("done");
     } finally {
       database.close();
     }
@@ -298,7 +768,10 @@ describe("supabase sync", () => {
             paymentTermsPage: 1,
             customersReturned: 200,
             productsReturned: 0,
-            paymentTermsReturned: 0
+            paymentTermsReturned: 0,
+            customersFinished: false,
+            productsFinished: true,
+            paymentTermsFinished: true
           }
         }
       });
@@ -337,26 +810,33 @@ describe("supabase sync", () => {
             paymentTermsPage: 1,
             customersReturned: 200,
             productsReturned: 0,
-            paymentTermsReturned: 0
+            paymentTermsReturned: 0,
+            customersFinished: false,
+            productsFinished: true,
+            paymentTermsFinished: true
           }
         }
       });
       await syncOmieReferenceDataFromCloud(database, identity);
 
-      const resumeCall = invokeMock.mock.calls[1]?.[1] as { body: { resume: { customersPage: number } } };
+      const resumeCall = invokeMock.mock.calls[1]?.[1] as {
+        body: { resume: { customersPage: number } };
+      };
       expect(resumeCall.body.resume.customersPage).toBe(2);
     } finally {
       database.close();
     }
   });
 
-  it("marks the pull complete when a page comes back smaller than the page size", () => {
+  it("marks the pull complete when the cloud reports the page as finished", () => {
     const database = createDatabase();
 
     try {
       createIdentity(database);
       applyOmieReferenceData(database, "company-1", {
-        customers: [{ id: 1, name: "X", tradeName: null, document: null, email: null, phone: null }],
+        customers: [
+          { id: 1, name: "X", tradeName: null, document: null, email: null, phone: null }
+        ],
         products: [{ id: 1, code: "P", description: "P", unit: "UN" }],
         paymentTerms: [],
         pageSize: 200,
@@ -366,7 +846,10 @@ describe("supabase sync", () => {
           paymentTermsPage: 1,
           customersReturned: 1,
           productsReturned: 1,
-          paymentTermsReturned: 0
+          paymentTermsReturned: 0,
+          customersFinished: true,
+          productsFinished: true,
+          paymentTermsFinished: true
         }
       });
 
@@ -375,7 +858,12 @@ describe("supabase sync", () => {
           .prepare("SELECT value_json FROM local_settings WHERE key = 'omie_pull_state'")
           .pluck()
           .get() as string
-      ) as { customersPage: number; productsPage: number; paymentTermsPage: number; inProgress: boolean };
+      ) as {
+        customersPage: number;
+        productsPage: number;
+        paymentTermsPage: number;
+        inProgress: boolean;
+      };
       expect(state.customersPage).toBe(1);
       expect(state.productsPage).toBe(1);
       expect(state.inProgress).toBe(false);
@@ -407,7 +895,10 @@ describe("supabase sync", () => {
           paymentTermsPage: 2,
           customersReturned: 200,
           productsReturned: 1,
-          paymentTermsReturned: 0
+          paymentTermsReturned: 0,
+          customersFinished: false,
+          productsFinished: true,
+          paymentTermsFinished: true
         }
       });
 
@@ -416,11 +907,74 @@ describe("supabase sync", () => {
           .prepare("SELECT value_json FROM local_settings WHERE key = 'omie_pull_state'")
           .pluck()
           .get() as string
-      ) as { customersPage: number; productsPage: number; paymentTermsPage: number; inProgress: boolean };
+      ) as {
+        customersPage: number;
+        productsPage: number;
+        paymentTermsPage: number;
+        inProgress: boolean;
+      };
       expect(state.customersPage).toBe(2);
       expect(state.productsPage).toBe(1);
       expect(state.paymentTermsPage).toBe(1);
       expect(state.inProgress).toBe(true);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("finaliza entidades quando finished=true explicito mesmo com pagina cheia", () => {
+    const database = createDatabase();
+
+    try {
+      createIdentity(database);
+      applyOmieReferenceData(database, "company-1", {
+        customers: Array.from({ length: 200 }, (_, i) => ({
+          id: 100 + i,
+          name: `C${i}`,
+          tradeName: null,
+          document: null,
+          phone: null,
+          email: null
+        })),
+        products: Array.from({ length: 200 }, (_, i) => ({
+          id: 100 + i,
+          code: `P${i}`,
+          description: `P${i}`,
+          unit: "UN"
+        })),
+        paymentTerms: Array.from({ length: 200 }, (_, i) => ({
+          id: 100 + i,
+          description: `T${i}`
+        })),
+        pageSize: 200,
+        pagination: {
+          customersPage: 1,
+          productsPage: 1,
+          paymentTermsPage: 1,
+          customersReturned: 200,
+          productsReturned: 200,
+          paymentTermsReturned: 200,
+          customersFinished: true,
+          productsFinished: true,
+          paymentTermsFinished: true
+        }
+      });
+
+      const state = JSON.parse(
+        database
+          .prepare("SELECT value_json FROM local_settings WHERE key = 'omie_pull_state'")
+          .pluck()
+          .get() as string
+      ) as {
+        customersPage: number;
+        productsPage: number;
+        paymentTermsPage: number;
+        inProgress: boolean;
+      };
+      expect(state.customersPage).toBe(1);
+      expect(state.productsPage).toBe(1);
+      expect(state.paymentTermsPage).toBe(1);
+      expect(state.inProgress).toBe(false);
     } finally {
       database.close();
     }
@@ -487,6 +1041,21 @@ function insertWeighingOperation(database: DesktopDatabase): void {
       )`
     )
     .run(now, now);
+}
+
+function insertPrintReceipt(database: DesktopDatabase): void {
+  const now = "2026-06-12T12:00:00.000Z";
+  database
+    .prepare(
+      `INSERT INTO print_receipts (
+        id, operation_id, unit_id, receipt_number, copy_number, content_snapshot_json,
+        printed_at, printer_name, status, created_at, updated_at
+      ) VALUES (
+        'receipt-1', 'operation-1', 'unit-1', 1, 1, '{"lines":[]}',
+        ?, 'TERMICA-80', 'printed', ?, ?
+      )`
+    )
+    .run(now, now, now);
 }
 
 function createFunctionHttpError(message: string): Error & { context: unknown } {

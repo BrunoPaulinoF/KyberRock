@@ -1,8 +1,15 @@
 import { randomUUID } from "node:crypto";
+import type { ScaleStatus } from "@kyberrock/scale-adapters";
 
 import type { DesktopDatabase } from "../database/sqlite.js";
 import type { LocalDesktopIdentity } from "./bootstrap.js";
+import { FinancialBlockService } from "./financial-block.js";
+import { FreightCalculator, type FreightRule } from "./freight.js";
+import { PricingService, type PriceDetails } from "./pricing.js";
 import { enqueueSyncJob } from "./sync-queue.js";
+import { CreditService } from "./credit.js";
+import { buildOmieIntegrationCode } from "@kyberrock/omie-client";
+import { consumeQuotation } from "./quotations.js";
 
 type OperationStatus =
   | "draft"
@@ -17,6 +24,24 @@ type OperationStatus =
   | "cancelled";
 
 export type OperationType = "invoice" | "internal";
+export type FreightPayer = "customer" | "quarry" | "third_party";
+
+export interface OperationFreightInput {
+  payer: FreightPayer;
+  rule: FreightRule;
+  destination?: string | null;
+}
+
+export interface ScaleCaptureAudit {
+  weightKg: number;
+  status: ScaleStatus;
+  stable: boolean;
+  capturedAt: string;
+  receivedAt: string;
+  rawFrame?: string;
+  deviceId?: string;
+  adapterName?: string;
+}
 
 export interface CreateSimulatedWeighingOperationInput {
   identity: LocalDesktopIdentity;
@@ -39,13 +64,19 @@ export interface CreateWeighingOperationInput {
   driverId: string;
   productId: string;
   paymentTermId?: string;
-  unitPriceCents?: number;
+  manualInstallments?: number;
+  manualDownPaymentCents?: number;
   entryWeightKg: number;
+  entryScaleCapture?: ScaleCaptureAudit | null;
+  freight?: OperationFreightInput | null;
+  quotationId?: string;
+  deductFreightFromCredit?: boolean;
 }
 
 export interface CloseWeighingOperationInput {
   operationId: string;
   exitWeightKg: number;
+  exitScaleCapture?: ScaleCaptureAudit | null;
   operationType?: OperationType;
 }
 
@@ -67,9 +98,25 @@ export interface WeighingOperationSummary {
   exitWeightKg: number | null;
   netWeightKg: number | null;
   unitPriceCents: number | null;
+  baseUnitPriceCents: number | null;
+  appliedPriceTableId: string | null;
+  appliedPriceTableName: string | null;
+  appliedPriceTableItemId: string | null;
+  priceUnit: "ton";
+  priceSavingsPercent: number | null;
   productTotalCents: number | null;
   freightTotalCents: number;
+  freightJson: string | null;
   totalCents: number | null;
+  deductFreightFromCredit: boolean;
+  productCreditDebitCents: number;
+  freightCreditDebitCents: number;
+  quotationId: string | null;
+  omieSalesOrderId: number | null;
+  omieBillingStatus: string | null;
+  omieBillingMessage: string | null;
+  omieBilledAt: string | null;
+  omieDocumentUrl: string | null;
   cancelReason: string | null;
   createdAt: string;
   updatedAt: string;
@@ -83,9 +130,25 @@ interface OperationRow {
   exit_weight_kg: number | null;
   net_weight_kg: number | null;
   unit_price_cents: number | null;
+  base_unit_price_cents: number | null;
+  applied_price_table_id: string | null;
+  applied_price_table_name: string | null;
+  applied_price_table_item_id: string | null;
+  price_unit: "ton";
+  price_savings_percent: number | null;
   product_total_cents: number | null;
   freight_total_cents: number;
+  freight_json: string | null;
   total_cents: number | null;
+  deduct_freight_from_credit: number;
+  product_credit_debit_cents: number;
+  freight_credit_debit_cents: number;
+  quotation_id: string | null;
+  omie_sales_order_id: number | null;
+  omie_billing_status: string | null;
+  omie_billing_message: string | null;
+  omie_billed_at: string | null;
+  omie_document_url: string | null;
   cancel_reason: string | null;
   created_at: string;
   updated_at: string;
@@ -206,7 +269,7 @@ export function createSimulatedWeighingOperation(
       database
         .prepare(
           `INSERT INTO price_table_items (id, price_table_id, product_id, unit_price_cents, unit, created_at, updated_at)
-           VALUES (?, ?, ?, ?, 'kg', ?, ?)`
+           VALUES (?, ?, ?, ?, 'ton', ?, ?)`
         )
         .run(
           ids.priceTableItemId,
@@ -228,8 +291,10 @@ export function createSimulatedWeighingOperation(
       .prepare(
         `INSERT INTO weighing_operations (
           id, company_id, unit_id, device_id, status, operation_type, customer_id, vehicle_id, driver_id, product_id,
-          payment_term_id, entry_weight_kg, entry_weight_captured_at, unit_price_cents, freight_total_cents, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, 'loading_requested', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`
+          payment_term_id, entry_weight_kg, entry_weight_captured_at, unit_price_cents,
+          base_unit_price_cents, applied_price_table_id, applied_price_table_name, applied_price_table_item_id,
+          price_unit, price_savings_percent, freight_total_cents, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'loading_requested', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ton', ?, 0, ?, ?)`
       )
       .run(
         ids.operationId,
@@ -245,6 +310,11 @@ export function createSimulatedWeighingOperation(
         input.entryWeightKg,
         timestamp,
         input.unitPriceCents ?? null,
+        input.unitPriceCents ?? null,
+        ids.priceTableId,
+        ids.priceTableId ? "Tabela simulada" : null,
+        ids.priceTableItemId,
+        null,
         timestamp,
         timestamp
       );
@@ -286,10 +356,23 @@ export function createSimulatedWeighingOperation(
       database,
       {
         target: "cloud",
+        action: "upsert_operation",
+        entityType: "operation",
+        entityId: ids.operationId,
+        idempotencyKey: `cloud:operation:${ids.operationId}:entry`,
+        payload: { operationId: ids.operationId }
+      },
+      now
+    );
+
+    enqueueSyncJob(
+      database,
+      {
+        target: "cloud",
         action: "upsert_loading_request",
         entityType: "loading_request",
         entityId: ids.loadingRequestId,
-        idempotencyKey: `cloud:loading_request:${ids.loadingRequestId}`,
+        idempotencyKey: `cloud:loading_request:${ids.loadingRequestId}:open`,
         payload: { operationId: ids.operationId }
       },
       now
@@ -306,18 +389,99 @@ export function createWeighingOperation(
   input: CreateWeighingOperationInput,
   now: Date = new Date()
 ): WeighingOperationSummary {
-  if (input.entryWeightKg <= 0) {
+  if (!Number.isFinite(input.entryWeightKg) || input.entryWeightKg <= 0) {
     throw new Error("Peso de entrada deve ser maior que zero.");
+  }
+  if (
+    input.manualInstallments !== undefined &&
+    (!Number.isInteger(input.manualInstallments) || input.manualInstallments <= 0)
+  ) {
+    throw new Error("Numero de parcelas deve ser maior que zero.");
+  }
+  if (
+    input.manualDownPaymentCents !== undefined &&
+    (!Number.isInteger(input.manualDownPaymentCents) || input.manualDownPaymentCents < 0)
+  ) {
+    throw new Error("Valor de entrada invalido.");
   }
 
   const operationType = input.operationType ?? "invoice";
+  validateOperationType(operationType);
   const timestamp = now.toISOString();
 
-  // Lookup entity names for the loading_request
-  const customer = database.prepare("SELECT trade_name FROM customers WHERE id = ?").get(input.customerId) as { trade_name: string } | undefined;
-  const vehicle = database.prepare("SELECT plate FROM vehicles WHERE id = ?").get(input.vehicleId) as { plate: string } | undefined;
-  const driver = database.prepare("SELECT name FROM drivers WHERE id = ?").get(input.driverId) as { name: string } | undefined;
-  const product = database.prepare("SELECT description FROM products WHERE id = ?").get(input.productId) as { description: string } | undefined;
+  const customer = database
+    .prepare(
+      "SELECT trade_name, is_active, omie_billing_blocked FROM customers WHERE id = ? AND deleted_at IS NULL"
+    )
+    .get(input.customerId) as
+    | { trade_name: string; is_active: number; omie_billing_blocked: number }
+    | undefined;
+  const vehicle = database
+    .prepare("SELECT plate FROM vehicles WHERE id = ? AND deleted_at IS NULL")
+    .get(input.vehicleId) as { plate: string } | undefined;
+  const driver = database
+    .prepare("SELECT name FROM drivers WHERE id = ? AND deleted_at IS NULL")
+    .get(input.driverId) as { name: string } | undefined;
+  const product = database
+    .prepare(
+      `SELECT description, omie_product_id, item_type, fiscal_recommendations_json, is_active, blocked
+       FROM products
+       WHERE id = ? AND deleted_at IS NULL`
+    )
+    .get(input.productId) as
+    | {
+        description: string;
+        omie_product_id: number | null;
+        item_type: string | null;
+        fiscal_recommendations_json: string | null;
+        is_active: number;
+        blocked: number;
+      }
+    | undefined;
+
+  if (!customer) throw new Error("Cliente selecionado nao foi encontrado.");
+  if (customer.is_active !== 1) throw new Error("Cliente inativo nao pode iniciar pesagem.");
+  if (customer.omie_billing_blocked === 1)
+    throw new Error("Cliente bloqueado no OMIE nao pode iniciar pesagem.");
+  if (!vehicle) throw new Error("Placa selecionada nao foi encontrada.");
+  if (!driver) throw new Error("Motorista selecionado nao foi encontrado.");
+  if (!product) throw new Error("Produto selecionado nao foi encontrado.");
+  if (product.is_active !== 1 || product.blocked === 1) {
+    throw new Error("Produto inativo ou bloqueado nao pode iniciar pesagem.");
+  }
+  if (!isFinishedGoodsProduct(product)) {
+    throw new Error("Somente produtos OMIE tipo 04 - produtos acabados podem iniciar pesagem.");
+  }
+
+  const duplicateOpenOperation = database
+    .prepare(
+      `SELECT id
+       FROM weighing_operations
+       WHERE unit_id = ?
+         AND vehicle_id = ?
+         AND status IN ('draft', 'entry_registered', 'loading_requested', 'awaiting_exit')
+       LIMIT 1`
+    )
+    .get(input.identity.unitId, input.vehicleId) as { id: string } | undefined;
+
+  if (duplicateOpenOperation) {
+    throw new Error(`Ja existe uma operacao aberta para a placa ${vehicle.plate}.`);
+  }
+
+  const priceDetails = new PricingService(database).getPriceDetailsForCustomerProduct(
+    input.customerId,
+    input.productId
+  );
+  if (!priceDetails || priceDetails.appliedUnitPriceCents === null) {
+    throw new Error(
+      "Sem preco cadastrado para este cliente/produto. Cadastre um preco padrao no produto ou um preco especial no cliente."
+    );
+  }
+  const unitPriceCents = priceDetails.appliedUnitPriceCents;
+  const financialBlock = new FinancialBlockService(database).canStartLoading(input.customerId);
+  if (!financialBlock.allowed) {
+    throw new Error(financialBlock.message ?? "Cliente bloqueado por limite financeiro.");
+  }
 
   const operationId = randomUUID();
   const loadingRequestId = randomUUID();
@@ -327,8 +491,11 @@ export function createWeighingOperation(
       .prepare(
         `INSERT INTO weighing_operations (
           id, company_id, unit_id, device_id, status, operation_type, customer_id, vehicle_id, carrier_id, driver_id, product_id,
-          payment_term_id, entry_weight_kg, entry_weight_captured_at, unit_price_cents, freight_total_cents, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, 'loading_requested', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`
+          payment_term_id, manual_installments, manual_down_payment_cents, entry_weight_kg, entry_weight_captured_at, unit_price_cents,
+          base_unit_price_cents, applied_price_table_id, applied_price_table_name, applied_price_table_item_id,
+          price_unit, price_savings_percent, freight_total_cents, freight_json, deduct_freight_from_credit,
+          product_credit_debit_cents, freight_credit_debit_cents, quotation_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'loading_requested', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0, 0, ?, ?, ?)`
       )
       .run(
         operationId,
@@ -342,9 +509,20 @@ export function createWeighingOperation(
         input.driverId,
         input.productId,
         input.paymentTermId ?? null,
+        input.manualInstallments ?? null,
+        input.manualDownPaymentCents ?? null,
         input.entryWeightKg,
         timestamp,
-        input.unitPriceCents ?? null,
+        unitPriceCents,
+        priceDetails?.baseUnitPriceCents ?? null,
+        null,
+        null,
+        null,
+        priceDetails?.priceUnit ?? "ton",
+        priceDetails?.savingsPercent ?? null,
+        serializeOperationFreight(input.freight),
+        input.deductFreightFromCredit ? 1 : 0,
+        input.quotationId ?? null,
         timestamp,
         timestamp
       );
@@ -376,10 +554,27 @@ export function createWeighingOperation(
       null,
       {
         entryWeightKg: input.entryWeightKg,
+        scaleCapture: input.entryScaleCapture ?? null,
         operationType,
-        unitPriceCents: input.unitPriceCents ?? null
+        manualInstallments: input.manualInstallments ?? null,
+        manualDownPaymentCents: input.manualDownPaymentCents ?? null,
+        unitPriceCents,
+        priceDetails: serializePriceDetails(priceDetails)
       },
       timestamp
+    );
+
+    enqueueSyncJob(
+      database,
+      {
+        target: "cloud",
+        action: "upsert_operation",
+        entityType: "operation",
+        entityId: operationId,
+        idempotencyKey: `cloud:operation:${operationId}:entry`,
+        payload: { operationId }
+      },
+      now
     );
 
     enqueueSyncJob(
@@ -389,7 +584,7 @@ export function createWeighingOperation(
         action: "upsert_loading_request",
         entityType: "loading_request",
         entityId: loadingRequestId,
-        idempotencyKey: `cloud:loading_request:${loadingRequestId}`,
+        idempotencyKey: `cloud:loading_request:${loadingRequestId}:open`,
         payload: { operationId }
       },
       now
@@ -414,17 +609,49 @@ export function closeWeighingOperation(
 
   const netWeightKg = calculateNetWeightKg(operation.entryWeightKg, input.exitWeightKg);
   const productTotalCents = calculateProductTotalCents(netWeightKg, operation.unitPriceCents);
-  const totalCents =
-    productTotalCents === null ? null : productTotalCents + operation.freightTotalCents;
+  const freightTotalCents = calculateFreightTotalCents(operation.freightJson, netWeightKg);
+  const totalCents = productTotalCents === null ? null : productTotalCents + freightTotalCents;
   const timestamp = now.toISOString();
   const nextOperationType: OperationType = input.operationType ?? operation.operationType;
+
+  const opRow = database
+    .prepare(
+      `SELECT customer_id, deduct_freight_from_credit, quotation_id FROM weighing_operations WHERE id = ?`
+    )
+    .get(input.operationId) as
+    | { customer_id: string | null; deduct_freight_from_credit: number; quotation_id: string | null }
+    | undefined;
+
+  let productCreditDebitCents = 0;
+  let freightCreditDebitCents = 0;
+
+  if (opRow?.customer_id && productTotalCents !== null) {
+    const creditService = new CreditService(database);
+    const isPrepaid = creditService.isCustomerPrepaid(opRow.customer_id);
+
+    if (isPrepaid) {
+      const deductFreight = opRow.deduct_freight_from_credit === 1;
+      const required = deductFreight
+        ? productTotalCents + (freightTotalCents ?? 0)
+        : productTotalCents;
+
+      const validation = creditService.validateDebit(opRow.customer_id, required);
+      if (!validation.allowed) {
+        throw new Error(validation.message ?? "Crédito insuficiente.");
+      }
+
+      productCreditDebitCents = productTotalCents;
+      freightCreditDebitCents = deductFreight ? freightTotalCents ?? 0 : 0;
+    }
+  }
 
   const closeOperation = database.transaction(() => {
     if (input.operationType) {
       database
         .prepare(
           `UPDATE weighing_operations
-           SET status = 'closed_local', operation_type = ?, exit_weight_kg = ?, exit_weight_captured_at = ?, net_weight_kg = ?, product_total_cents = ?, total_cents = ?, updated_at = ?
+           SET status = 'closed_local', operation_type = ?, exit_weight_kg = ?, exit_weight_captured_at = ?, net_weight_kg = ?, product_total_cents = ?, freight_total_cents = ?, total_cents = ?,
+               product_credit_debit_cents = ?, freight_credit_debit_cents = ?, updated_at = ?
            WHERE id = ?`
         )
         .run(
@@ -433,7 +660,10 @@ export function closeWeighingOperation(
           timestamp,
           netWeightKg,
           productTotalCents,
+          freightTotalCents,
           totalCents,
+          productCreditDebitCents,
+          freightCreditDebitCents,
           timestamp,
           input.operationId
         );
@@ -441,7 +671,8 @@ export function closeWeighingOperation(
       database
         .prepare(
           `UPDATE weighing_operations
-           SET status = 'closed_local', exit_weight_kg = ?, exit_weight_captured_at = ?, net_weight_kg = ?, product_total_cents = ?, total_cents = ?, updated_at = ?
+           SET status = 'closed_local', exit_weight_kg = ?, exit_weight_captured_at = ?, net_weight_kg = ?, product_total_cents = ?, freight_total_cents = ?, total_cents = ?,
+               product_credit_debit_cents = ?, freight_credit_debit_cents = ?, updated_at = ?
            WHERE id = ?`
         )
         .run(
@@ -449,10 +680,28 @@ export function closeWeighingOperation(
           timestamp,
           netWeightKg,
           productTotalCents,
+          freightTotalCents,
           totalCents,
+          productCreditDebitCents,
+          freightCreditDebitCents,
           timestamp,
           input.operationId
         );
+    }
+
+    if (productCreditDebitCents > 0 || freightCreditDebitCents > 0) {
+      if (opRow?.customer_id) {
+        new CreditService(database).applyDebit(
+          opRow.customer_id,
+          input.operationId,
+          productCreditDebitCents,
+          freightCreditDebitCents
+        );
+      }
+    }
+
+    if (opRow?.quotation_id) {
+      consumeQuotation(database, opRow.quotation_id, input.operationId, now);
     }
 
     database
@@ -470,7 +719,9 @@ export function closeWeighingOperation(
       {
         exitWeightKg: input.exitWeightKg,
         netWeightKg,
+        scaleCapture: input.exitScaleCapture ?? null,
         productTotalCents,
+        freightTotalCents,
         totalCents,
         operationType: input.operationType ?? operation.operationType
       },
@@ -484,40 +735,77 @@ export function closeWeighingOperation(
         action: "upsert_operation",
         entityType: "operation",
         entityId: input.operationId,
-        idempotencyKey: `cloud:operation:${input.operationId}`,
+        idempotencyKey: `cloud:operation:${input.operationId}:closed`,
         payload: { operationId: input.operationId }
       },
       now
     );
 
+    const closedLoadingRequest = database
+      .prepare("SELECT id FROM loading_requests WHERE operation_id = ?")
+      .get(input.operationId) as { id: string } | undefined;
+
+    if (closedLoadingRequest) {
+      enqueueSyncJob(
+        database,
+        {
+          target: "cloud",
+          action: "upsert_loading_request",
+          entityType: "loading_request",
+          entityId: closedLoadingRequest.id,
+          idempotencyKey: `cloud:loading_request:${closedLoadingRequest.id}:closed`,
+          payload: { operationId: input.operationId }
+        },
+        now
+      );
+    }
+
     const operationIds = database
-      .prepare("SELECT customer_id, product_id FROM weighing_operations WHERE id = ?")
-      .get(input.operationId) as { customer_id: string | null; product_id: string | null } | undefined;
+      .prepare("SELECT customer_id, product_id, unit_id FROM weighing_operations WHERE id = ?")
+      .get(input.operationId) as
+      | { customer_id: string | null; product_id: string | null; unit_id: string }
+      | undefined;
 
     const omieCustomerId = operationIds?.customer_id
-      ? (database.prepare("SELECT omie_customer_id FROM customers WHERE id = ?").get(operationIds.customer_id) as { omie_customer_id: number | null } | undefined)?.omie_customer_id
+      ? (
+          database
+            .prepare("SELECT omie_customer_id FROM customers WHERE id = ?")
+            .get(operationIds.customer_id) as { omie_customer_id: number | null } | undefined
+        )?.omie_customer_id
       : null;
     const omieProductId = operationIds?.product_id
-      ? (database.prepare("SELECT omie_product_id FROM products WHERE id = ?").get(operationIds.product_id) as { omie_product_id: number | null } | undefined)?.omie_product_id
+      ? (
+          database
+            .prepare("SELECT omie_product_id FROM products WHERE id = ?")
+            .get(operationIds.product_id) as { omie_product_id: number | null } | undefined
+        )?.omie_product_id
       : null;
 
     if (omieCustomerId) {
+      const omieAction = nextOperationType === "invoice" ? "create_and_bill_order" : "create_order";
+      const idempotencyAction =
+        nextOperationType === "invoice" ? "create_sales_order" : "create_service_order";
       enqueueSyncJob(
         database,
         {
           target: "omie",
-          action: "create_order",
+          action: omieAction,
           entityType: "weighing_operation",
           entityId: input.operationId,
-          idempotencyKey: `omie:operation:${input.operationId}`,
+          idempotencyKey: buildOmieIntegrationCode(
+            operationIds?.unit_id ?? "unknown",
+            input.operationId,
+            idempotencyAction
+          ),
           payload: {
             operationId: input.operationId,
             operationType: nextOperationType,
             customerOmieId: omieCustomerId,
             productOmieId: omieProductId ?? null,
             serviceDescription: operation.productDescription,
-            quantity: netWeightKg,
+            quantity: netWeightKg / 1000,
             unitPrice: operation.unitPriceCents ? operation.unitPriceCents / 100 : 0,
+            freightTotalCents,
             issueDate: timestamp.slice(0, 10)
           }
         },
@@ -541,6 +829,19 @@ export function cancelWeighingOperation(
   const operation = getWeighingOperation(database, input.operationId);
   const timestamp = now.toISOString();
 
+  const opRow = database
+    .prepare(
+      `SELECT customer_id, product_credit_debit_cents, freight_credit_debit_cents, quotation_id FROM weighing_operations WHERE id = ?`
+    )
+    .get(input.operationId) as
+    | {
+        customer_id: string | null;
+        product_credit_debit_cents: number;
+        freight_credit_debit_cents: number;
+        quotation_id: string | null;
+      }
+    | undefined;
+
   const cancelOperation = database.transaction(() => {
     database
       .prepare(
@@ -552,6 +853,29 @@ export function cancelWeighingOperation(
         "UPDATE loading_requests SET status = 'cancelled', closed_at = ?, updated_at = ? WHERE operation_id = ?"
       )
       .run(timestamp, timestamp, input.operationId);
+
+    if (opRow?.customer_id) {
+      const productDebit = opRow.product_credit_debit_cents ?? 0;
+      const freightDebit = opRow.freight_credit_debit_cents ?? 0;
+      if (productDebit > 0 || freightDebit > 0) {
+        new CreditService(database).applyRefund(
+          opRow.customer_id,
+          input.operationId,
+          productDebit,
+          freightDebit,
+          input.reason.trim()
+        );
+      }
+
+      if (opRow.quotation_id) {
+        database
+          .prepare(
+            `UPDATE quotations SET status = 'open', consumed_operation_id = NULL, updated_at = ? WHERE id = ?`
+          )
+          .run(timestamp, opRow.quotation_id);
+      }
+    }
+
     insertAuditLog(
       database,
       null,
@@ -561,6 +885,38 @@ export function cancelWeighingOperation(
       { reason: input.reason.trim() },
       timestamp
     );
+
+    enqueueSyncJob(
+      database,
+      {
+        target: "cloud",
+        action: "upsert_operation",
+        entityType: "operation",
+        entityId: input.operationId,
+        idempotencyKey: `cloud:operation:${input.operationId}:cancelled`,
+        payload: { operationId: input.operationId }
+      },
+      now
+    );
+
+    const loadingRequest = database
+      .prepare("SELECT id FROM loading_requests WHERE operation_id = ?")
+      .get(input.operationId) as { id: string } | undefined;
+
+    if (loadingRequest) {
+      enqueueSyncJob(
+        database,
+        {
+          target: "cloud",
+          action: "upsert_loading_request",
+          entityType: "loading_request",
+          entityId: loadingRequest.id,
+          idempotencyKey: `cloud:loading_request:${loadingRequest.id}:cancelled`,
+          payload: { operationId: input.operationId }
+        },
+        now
+      );
+    }
   });
 
   cancelOperation();
@@ -573,21 +929,115 @@ export function listOpenWeighingOperations(database: DesktopDatabase): WeighingO
     .prepare(
       `SELECT
         o.id, o.status, o.operation_type, o.entry_weight_kg, o.exit_weight_kg, o.net_weight_kg,
-        o.unit_price_cents, o.product_total_cents, o.freight_total_cents, o.total_cents,
+        o.unit_price_cents, o.base_unit_price_cents, o.applied_price_table_id, o.applied_price_table_name,
+        o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
+        o.product_total_cents, o.freight_total_cents, o.freight_json, o.total_cents,
+        o.deduct_freight_from_credit, o.product_credit_debit_cents, o.freight_credit_debit_cents, o.quotation_id,
+        o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
+        o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
         c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
-        pt.name AS payment_term_name
+        CASE
+          WHEN o.manual_installments = 1 THEN '1 parcela'
+          WHEN o.manual_installments > 1 THEN CAST(o.manual_installments AS TEXT) || ' parcelas'
+          ELSE pt.name
+        END AS payment_term_name
        FROM weighing_operations o
        LEFT JOIN customers c ON c.id = o.customer_id
        LEFT JOIN vehicles v ON v.id = o.vehicle_id
        LEFT JOIN drivers d ON d.id = o.driver_id
        LEFT JOIN products p ON p.id = o.product_id
        LEFT JOIN payment_terms pt ON pt.id = o.payment_term_id
-       WHERE o.status IN ('loading_requested', 'awaiting_exit', 'entry_registered')
-       ORDER BY o.created_at DESC`
+        WHERE o.status IN ('loading_requested', 'awaiting_exit', 'entry_registered')
+          AND o.deleted_at IS NULL
+        ORDER BY o.created_at DESC`
     )
     .all()
     .map((row) => mapOperationRow(row as OperationRow));
+}
+
+export function listCanceledWeighingOperations(
+  database: DesktopDatabase
+): WeighingOperationSummary[] {
+  return database
+    .prepare(
+      `SELECT
+        o.id, o.status, o.operation_type, o.entry_weight_kg, o.exit_weight_kg, o.net_weight_kg,
+        o.unit_price_cents, o.base_unit_price_cents, o.applied_price_table_id, o.applied_price_table_name,
+        o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
+        o.product_total_cents, o.freight_total_cents, o.freight_json, o.total_cents,
+        o.deduct_freight_from_credit, o.product_credit_debit_cents, o.freight_credit_debit_cents, o.quotation_id,
+        o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
+        o.omie_billed_at, o.omie_document_url,
+        o.cancel_reason, o.created_at, o.updated_at,
+        c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
+        CASE
+          WHEN o.manual_installments = 1 THEN '1 parcela'
+          WHEN o.manual_installments > 1 THEN CAST(o.manual_installments AS TEXT) || ' parcelas'
+          ELSE pt.name
+        END AS payment_term_name
+       FROM weighing_operations o
+       LEFT JOIN customers c ON c.id = o.customer_id
+       LEFT JOIN vehicles v ON v.id = o.vehicle_id
+       LEFT JOIN drivers d ON d.id = o.driver_id
+       LEFT JOIN products p ON p.id = o.product_id
+       LEFT JOIN payment_terms pt ON pt.id = o.payment_term_id
+       WHERE o.status = 'cancelled'
+         AND o.deleted_at IS NULL
+       ORDER BY o.updated_at DESC`
+    )
+    .all()
+    .map((row) => mapOperationRow(row as OperationRow));
+}
+
+export function listClosedWeighingOperations(
+  database: DesktopDatabase
+): WeighingOperationSummary[] {
+  return database
+    .prepare(
+      `SELECT
+        o.id, o.status, o.operation_type, o.entry_weight_kg, o.exit_weight_kg, o.net_weight_kg,
+        o.unit_price_cents, o.base_unit_price_cents, o.applied_price_table_id, o.applied_price_table_name,
+        o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
+        o.product_total_cents, o.freight_total_cents, o.freight_json, o.total_cents,
+        o.deduct_freight_from_credit, o.product_credit_debit_cents, o.freight_credit_debit_cents, o.quotation_id,
+        o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
+        o.omie_billed_at, o.omie_document_url,
+        o.cancel_reason, o.created_at, o.updated_at,
+        c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
+        CASE
+          WHEN o.manual_installments = 1 THEN '1 parcela'
+          WHEN o.manual_installments > 1 THEN CAST(o.manual_installments AS TEXT) || ' parcelas'
+          ELSE pt.name
+        END AS payment_term_name
+       FROM weighing_operations o
+       LEFT JOIN customers c ON c.id = o.customer_id
+       LEFT JOIN vehicles v ON v.id = o.vehicle_id
+       LEFT JOIN drivers d ON d.id = o.driver_id
+       LEFT JOIN products p ON p.id = o.product_id
+       LEFT JOIN payment_terms pt ON pt.id = o.payment_term_id
+       WHERE o.status = 'closed_local'
+         AND o.deleted_at IS NULL
+       ORDER BY o.updated_at DESC`
+    )
+    .all()
+    .map((row) => mapOperationRow(row as OperationRow));
+}
+
+export function clearCanceledWeighingOperations(
+  database: DesktopDatabase,
+  now: Date = new Date()
+): number {
+  const timestamp = now.toISOString();
+  const result = database
+    .prepare(
+      `UPDATE weighing_operations
+       SET deleted_at = ?, updated_at = ?
+       WHERE status = 'cancelled' AND deleted_at IS NULL`
+    )
+    .run(timestamp, timestamp);
+
+  return result.changes;
 }
 
 export function getWeighingOperation(
@@ -598,10 +1048,19 @@ export function getWeighingOperation(
     .prepare(
       `SELECT
         o.id, o.status, o.operation_type, o.entry_weight_kg, o.exit_weight_kg, o.net_weight_kg,
-        o.unit_price_cents, o.product_total_cents, o.freight_total_cents, o.total_cents,
+        o.unit_price_cents, o.base_unit_price_cents, o.applied_price_table_id, o.applied_price_table_name,
+        o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
+        o.product_total_cents, o.freight_total_cents, o.freight_json, o.total_cents,
+        o.deduct_freight_from_credit, o.product_credit_debit_cents, o.freight_credit_debit_cents, o.quotation_id,
+        o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
+        o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
         c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
-        pt.name AS payment_term_name
+        CASE
+          WHEN o.manual_installments = 1 THEN '1 parcela'
+          WHEN o.manual_installments > 1 THEN CAST(o.manual_installments AS TEXT) || ' parcelas'
+          ELSE pt.name
+        END AS payment_term_name
        FROM weighing_operations o
        LEFT JOIN customers c ON c.id = o.customer_id
        LEFT JOIN vehicles v ON v.id = o.vehicle_id
@@ -619,6 +1078,154 @@ export function getWeighingOperation(
   return mapOperationRow(row);
 }
 
+export interface UpdateWeighingOperationProductInput {
+  operationId: string;
+  newProductId: string;
+}
+
+export function updateWeighingOperationProduct(
+  database: DesktopDatabase,
+  input: UpdateWeighingOperationProductInput,
+  now: Date = new Date()
+): WeighingOperationSummary {
+  const operation = getWeighingOperation(database, input.operationId);
+
+  const openStatuses: OperationStatus[] = [
+    "draft",
+    "entry_registered",
+    "loading_requested",
+    "awaiting_exit"
+  ];
+  if (!openStatuses.includes(operation.status)) {
+    throw new Error("Somente operacoes abertas podem ter o produto alterado.");
+  }
+
+  const product = database
+    .prepare(
+      `SELECT description, omie_product_id, item_type, fiscal_recommendations_json, is_active, blocked
+       FROM products
+       WHERE id = ? AND deleted_at IS NULL`
+    )
+    .get(input.newProductId) as
+    | {
+        description: string;
+        omie_product_id: number | null;
+        item_type: string | null;
+        fiscal_recommendations_json: string | null;
+        is_active: number;
+        blocked: number;
+      }
+    | undefined;
+
+  if (!product) throw new Error("Produto selecionado nao foi encontrado.");
+  if (product.is_active !== 1 || product.blocked === 1) {
+    throw new Error("Produto inativo ou bloqueado nao pode ser selecionado.");
+  }
+  if (!isFinishedGoodsProduct(product)) {
+    throw new Error("Somente produtos OMIE tipo 04 - produtos acabados podem ser selecionados.");
+  }
+
+  const customerId = database
+    .prepare("SELECT customer_id FROM weighing_operations WHERE id = ?")
+    .pluck()
+    .get(input.operationId) as string | undefined;
+
+  if (!customerId) {
+    throw new Error("Operacao sem cliente vinculado.");
+  }
+
+  const priceDetails = new PricingService(database).getPriceDetailsForCustomerProduct(
+    customerId,
+    input.newProductId
+  );
+  if (!priceDetails || priceDetails.appliedUnitPriceCents === null) {
+    throw new Error(
+      "Sem preco cadastrado para este cliente/produto. Cadastre um preco padrao no produto ou um preco especial no cliente."
+    );
+  }
+
+  const timestamp = now.toISOString();
+
+  const updateProduct = database.transaction(() => {
+    database
+      .prepare(
+        `UPDATE weighing_operations
+         SET product_id = ?, unit_price_cents = ?, base_unit_price_cents = ?,
+             applied_price_table_id = NULL, applied_price_table_name = NULL,
+             applied_price_table_item_id = NULL, price_savings_percent = ?,
+             updated_at = ?
+         WHERE id = ?`
+      )
+      .run(
+        input.newProductId,
+        priceDetails.appliedUnitPriceCents,
+        priceDetails.baseUnitPriceCents ?? null,
+        priceDetails.savingsPercent ?? null,
+        timestamp,
+        input.operationId
+      );
+
+    database
+      .prepare(
+        `UPDATE loading_requests
+         SET product_description = ?, updated_at = ?
+         WHERE operation_id = ?`
+      )
+      .run(product.description, timestamp, input.operationId);
+
+    insertAuditLog(
+      database,
+      null,
+      input.operationId,
+      "product_changed",
+      { productId: operation.productDescription },
+      {
+        newProductId: input.newProductId,
+        newProductDescription: product.description,
+        unitPriceCents: priceDetails.appliedUnitPriceCents,
+        priceDetails: serializePriceDetails(priceDetails)
+      },
+      timestamp
+    );
+
+    enqueueSyncJob(
+      database,
+      {
+        target: "cloud",
+        action: "upsert_operation",
+        entityType: "operation",
+        entityId: input.operationId,
+        idempotencyKey: `cloud:operation:${input.operationId}:product_changed`,
+        payload: { operationId: input.operationId }
+      },
+      now
+    );
+
+    const loadingRequest = database
+      .prepare("SELECT id FROM loading_requests WHERE operation_id = ?")
+      .get(input.operationId) as { id: string } | undefined;
+
+    if (loadingRequest) {
+      enqueueSyncJob(
+        database,
+        {
+          target: "cloud",
+          action: "upsert_loading_request",
+          entityType: "loading_request",
+          entityId: loadingRequest.id,
+          idempotencyKey: `cloud:loading_request:${loadingRequest.id}:product_changed`,
+          payload: { operationId: input.operationId }
+        },
+        now
+      );
+    }
+  });
+
+  updateProduct();
+
+  return getWeighingOperation(database, input.operationId);
+}
+
 function calculateNetWeightKg(entryWeightKg: number, exitWeightKg: number): number {
   if (exitWeightKg <= entryWeightKg) {
     throw new Error("Exit weight must be greater than entry weight.");
@@ -631,7 +1238,32 @@ function calculateProductTotalCents(
   netWeightKg: number,
   unitPriceCents: number | null
 ): number | null {
-  return unitPriceCents === null ? null : Math.round(netWeightKg * unitPriceCents);
+  return unitPriceCents === null ? null : Math.round((netWeightKg / 1000) * unitPriceCents);
+}
+
+function serializeOperationFreight(freight: OperationFreightInput | null | undefined): string | null {
+  if (!freight) return null;
+  if (!freight.payer) throw new Error("Responsavel pelo frete e obrigatorio.");
+  if (!freight.rule?.type) throw new Error("Regra de frete invalida.");
+  if (freight.rule.baseValueCents < 0) throw new Error("Valor de frete nao pode ser negativo.");
+  return JSON.stringify({
+    payer: freight.payer,
+    rule: freight.rule,
+    destination: freight.destination?.trim() || null
+  });
+}
+
+function calculateFreightTotalCents(freightJson: string | null, netWeightKg: number): number {
+  if (!freightJson) return 0;
+  try {
+    const freight = JSON.parse(freightJson) as { rule?: FreightRule };
+    if (!freight.rule) return 0;
+    return new FreightCalculator().calculate(netWeightKg, freight.rule);
+  } catch (error) {
+    throw new Error(
+      `Nao foi possivel calcular o frete: ${error instanceof Error ? error.message : "regra invalida"}.`
+    );
+  }
 }
 
 function insertAuditLog(
@@ -675,9 +1307,25 @@ function mapOperationRow(row: OperationRow): WeighingOperationSummary {
     exitWeightKg: row.exit_weight_kg,
     netWeightKg: row.net_weight_kg,
     unitPriceCents: row.unit_price_cents,
+    baseUnitPriceCents: row.base_unit_price_cents,
+    appliedPriceTableId: row.applied_price_table_id,
+    appliedPriceTableName: row.applied_price_table_name,
+    appliedPriceTableItemId: row.applied_price_table_item_id,
+    priceUnit: row.price_unit,
+    priceSavingsPercent: row.price_savings_percent,
     productTotalCents: row.product_total_cents,
     freightTotalCents: row.freight_total_cents,
+    freightJson: row.freight_json,
     totalCents: row.total_cents,
+    deductFreightFromCredit: row.deduct_freight_from_credit === 1,
+    productCreditDebitCents: row.product_credit_debit_cents ?? 0,
+    freightCreditDebitCents: row.freight_credit_debit_cents ?? 0,
+    quotationId: row.quotation_id,
+    omieSalesOrderId: row.omie_sales_order_id,
+    omieBillingStatus: row.omie_billing_status,
+    omieBillingMessage: row.omie_billing_message,
+    omieBilledAt: row.omie_billed_at,
+    omieDocumentUrl: row.omie_document_url,
     cancelReason: row.cancel_reason,
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -702,6 +1350,81 @@ function validateUnitPrice(unitPriceCents: number | undefined): void {
   }
 }
 
+function serializePriceDetails(priceDetails: PriceDetails | null): PriceDetails | null {
+  return priceDetails;
+}
+
 function normalizePlate(plate: string): string {
   return plate.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+}
+
+function isFinishedGoodsProduct(product: {
+  omie_product_id: number | null;
+  item_type: string | null;
+  fiscal_recommendations_json: string | null;
+}): boolean {
+  if (product.omie_product_id === null) return false;
+  const candidates = [
+    product.item_type,
+    ...extractFiscalRecommendationValues(product.fiscal_recommendations_json)
+  ];
+  return candidates.some((value) => matchesFinishedGoodsType(value));
+}
+
+function extractFiscalRecommendationValues(value: string | null): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    const values: string[] = [];
+    collectFiscalRecommendationValues(parsed, values);
+    return values;
+  } catch {
+    return [];
+  }
+}
+
+function collectFiscalRecommendationValues(value: unknown, output: string[]): void {
+  if (typeof value === "string" || typeof value === "number") {
+    output.push(String(value));
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectFiscalRecommendationValues(item, output);
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const [key, nested] of Object.entries(value)) {
+      const normalizedKey = normalizeFiscalTypeText(key);
+      if (
+        normalizedKey.includes("tipo") &&
+        (normalizedKey.includes("produto") || normalizedKey.includes("item"))
+      ) {
+        collectFiscalRecommendationValues(nested, output);
+      }
+      if (normalizedKey === "codigo" || normalizedKey === "cod" || normalizedKey === "code") {
+        collectFiscalRecommendationValues(nested, output);
+      }
+    }
+  }
+}
+
+function matchesFinishedGoodsType(value: string | null | undefined): boolean {
+  if (!value) return false;
+  const normalized = normalizeFiscalTypeText(value);
+  return (
+    normalized === "04" ||
+    normalized.startsWith("04 ") ||
+    normalized.includes("produtos acabados") ||
+    normalized.includes("produto acabado")
+  );
+}
+
+function normalizeFiscalTypeText(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[-_/.:]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }

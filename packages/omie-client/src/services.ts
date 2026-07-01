@@ -6,3 +6,4 @@ export * from "./products-service.js";
 export * from "./payment-terms-service.js";
 export * from "./receivables-service.js";
 export * from "./omie-orders.js";
+export * from "./suppliers-service.js";

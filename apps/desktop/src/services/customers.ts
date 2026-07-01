@@ -10,6 +10,7 @@ export interface CreateCustomerInput {
   phone?: string;
   email?: string;
   creditLimitCents?: number;
+  creditMode?: "normal" | "prepaid";
   omieBillingBlocked?: boolean;
   observations?: string;
   defaultCarrierId?: string;
@@ -30,6 +31,7 @@ export interface UpdateCustomerInput {
   phone?: string;
   email?: string;
   creditLimitCents?: number;
+  creditMode?: "normal" | "prepaid";
   omieBillingBlocked?: boolean;
   observations?: string;
   isActive?: boolean;
@@ -56,6 +58,7 @@ export interface CustomerRow {
   phone: string | null;
   email: string | null;
   credit_limit_cents: number | null;
+  credit_mode: "normal" | "prepaid";
   open_receivables_cents: number;
   omie_billing_blocked: number;
   observations: string | null;
@@ -118,11 +121,11 @@ export function createCustomer(
     .prepare(
       `INSERT INTO customers (
         id, company_id, source, legal_name, trade_name, document, phone, email,
-        credit_limit_cents, open_receivables_cents, omie_billing_blocked,
+        credit_limit_cents, credit_mode, open_receivables_cents, omie_billing_blocked,
         observations, default_carrier_id, default_payment_term_id, zipcode, address_street, address_number,
         address_complement, neighborhood, city, state, sync_status, needs_push, local_updated_at, is_active,
         created_at, updated_at
-      ) VALUES (?, ?, 'local', ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1, ?, 1, ?, ?)`
+      ) VALUES (?, ?, 'local', ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1, ?, 1, ?, ?)`
     )
     .run(
       id,
@@ -133,6 +136,7 @@ export function createCustomer(
       input.phone ?? null,
       input.email ?? null,
       input.creditLimitCents ?? null,
+      input.creditMode ?? "normal",
       input.omieBillingBlocked ? 1 : 0,
       input.observations ?? null,
       defaultCarrierId,
@@ -168,6 +172,29 @@ export function updateCustomer(
     throw new Error("Cliente nao encontrado.");
   }
 
+  if (existing.source === "omie") {
+    const protectedFields: Array<keyof UpdateCustomerInput> = [
+      "tradeName",
+      "legalName",
+      "document",
+      "phone",
+      "email",
+      "creditLimitCents",
+      "omieBillingBlocked",
+      "zipcode",
+      "addressStreet",
+      "addressNumber",
+      "addressComplement",
+      "neighborhood",
+      "city",
+      "state"
+    ];
+    const changedProtectedField = protectedFields.some((field) => input[field] !== undefined);
+    if (changedProtectedField) {
+      throw new Error("Campos vindos do OMIE nao podem ser alterados localmente.");
+    }
+  }
+
   const nowIso = now.toISOString();
   const sets: string[] = [];
   const values: unknown[] = [];
@@ -195,6 +222,10 @@ export function updateCustomer(
   if (input.creditLimitCents !== undefined) {
     sets.push("credit_limit_cents = ?");
     values.push(input.creditLimitCents);
+  }
+  if (input.creditMode !== undefined) {
+    sets.push("credit_mode = ?");
+    values.push(input.creditMode);
   }
   if (input.omieBillingBlocked !== undefined) {
     sets.push("omie_billing_blocked = ?");

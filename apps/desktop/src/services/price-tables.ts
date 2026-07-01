@@ -50,6 +50,16 @@ export interface PriceTableItemRow {
   deleted_at: string | null;
 }
 
+export interface PriceTableItemSummary {
+  id: string;
+  priceTableId: string;
+  productId: string;
+  productCode: string | null;
+  productDesc: string;
+  unitPriceCents: number;
+  unit: string;
+}
+
 export interface CustomerPriceTableRow {
   id: string;
   customer_id: string;
@@ -58,6 +68,13 @@ export interface CustomerPriceTableRow {
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+}
+
+export interface CustomerPriceTableSummary {
+  id: string;
+  customerId: string;
+  priceTableId: string;
+  customerTradeName: string;
 }
 
 export function createPriceTable(
@@ -254,18 +271,49 @@ export function listPriceTables(
 export function listPriceTableItems(
   database: DesktopDatabase,
   priceTableId: string
-): PriceTableItemRow[] {
+): PriceTableItemSummary[] {
   return database
     .prepare(
-      `SELECT * FROM price_table_items WHERE price_table_id = ? AND deleted_at IS NULL ORDER BY created_at ASC`
+      `SELECT
+         pti.id,
+         pti.price_table_id,
+         pti.product_id,
+         pti.unit_price_cents,
+         pti.unit,
+         p.code AS product_code,
+         p.description AS product_description
+       FROM price_table_items pti
+       LEFT JOIN products p ON p.id = pti.product_id
+       WHERE pti.price_table_id = ? AND pti.deleted_at IS NULL
+       ORDER BY pti.created_at ASC`
     )
-    .all(priceTableId) as PriceTableItemRow[];
+    .all(priceTableId)
+    .map((row) => {
+      const item = row as {
+        id: string;
+        price_table_id: string;
+        product_id: string;
+        unit_price_cents: number;
+        unit: string;
+        product_code: string | null;
+        product_description: string | null;
+      };
+      return {
+        id: item.id,
+        priceTableId: item.price_table_id,
+        productId: item.product_id,
+        productCode: item.product_code,
+        productDesc: item.product_description ?? item.product_id,
+        unitPriceCents: item.unit_price_cents,
+        unit: item.unit
+      };
+    });
 }
 
 export function listCustomerLinks(
   database: DesktopDatabase,
   priceTableId: string
-): Array<CustomerPriceTableRow & { customer_trade_name: string }> {
+): CustomerPriceTableSummary[] {
   return database
     .prepare(
       `SELECT cpt.*, c.trade_name as customer_trade_name
@@ -274,5 +322,14 @@ export function listCustomerLinks(
        WHERE cpt.price_table_id = ? AND cpt.deleted_at IS NULL AND cpt.is_active = 1
        ORDER BY c.trade_name ASC`
     )
-    .all(priceTableId) as Array<CustomerPriceTableRow & { customer_trade_name: string }>;
+    .all(priceTableId)
+    .map((row) => {
+      const link = row as CustomerPriceTableRow & { customer_trade_name: string };
+      return {
+        id: link.id,
+        customerId: link.customer_id,
+        priceTableId: link.price_table_id,
+        customerTradeName: link.customer_trade_name
+      };
+    });
 }

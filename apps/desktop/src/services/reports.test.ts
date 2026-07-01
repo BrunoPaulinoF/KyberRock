@@ -182,4 +182,77 @@ describe("ReportService", () => {
       db.close();
     }
   });
+
+  it("generates a daily series filling gaps with zero", () => {
+    const db = createDatabase();
+
+    try {
+      setupBaseData(db);
+      insertOperations(db);
+
+      const service = new ReportService(db);
+      const series = service.getDailySeries("2026-06-05", "2026-06-08", "unit-1");
+
+      expect(series).toHaveLength(4);
+      expect(series[0]).toMatchObject({ date: "2026-06-05", totalOperations: 0, totalNetWeightKg: 0 });
+      expect(series[1]).toMatchObject({ date: "2026-06-06", totalOperations: 2, totalNetWeightKg: 25000 });
+      expect(series[2]).toMatchObject({ date: "2026-06-07", totalOperations: 1, totalNetWeightKg: 10000 });
+      expect(series[3]).toMatchObject({ date: "2026-06-08", totalOperations: 0, totalNetWeightKg: 0 });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("returns empty series when range is invalid", () => {
+    const db = createDatabase();
+
+    try {
+      setupBaseData(db);
+      const service = new ReportService(db);
+
+      expect(service.getDailySeries("invalid", "2026-06-06", "unit-1")).toEqual([]);
+      expect(service.getDailySeries("2026-06-10", "2026-06-05", "unit-1")).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("groups operations by type for the mix", () => {
+    const db = createDatabase();
+
+    try {
+      setupBaseData(db);
+      insertOperations(db);
+
+      db.prepare(`
+        INSERT INTO weighing_operations (
+          id, company_id, unit_id, device_id, status, operation_type, customer_id, product_id,
+          net_weight_kg, total_cents, created_at, updated_at
+        ) VALUES (
+          'op-5', 'comp-1', 'unit-1', 'dev-1', 'closed_local', 'internal', 'cust-1', 'prod-1',
+          5000, 250000, datetime('2026-06-06'), datetime('2026-06-06')
+        )
+      `).run();
+
+      db.prepare(`
+        INSERT INTO weighing_operations (
+          id, company_id, unit_id, device_id, status, operation_type, cancel_reason, created_at, updated_at
+        ) VALUES (
+          'op-6', 'comp-1', 'unit-1', 'dev-1', 'cancelled', 'invoice', 'Erro do operador',
+          datetime('2026-06-06'), datetime('2026-06-06')
+        )
+      `).run();
+
+      const service = new ReportService(db);
+      const mix = service.getOperationMix("2026-06-01", "2026-06-30", "unit-1");
+
+      expect(mix.invoice.count).toBe(3);
+      expect(mix.internal.count).toBe(1);
+      expect(mix.cancelled.count).toBe(1);
+      expect(mix.invoice.totalCents).toBe(1_620_000 + 600_000);
+      expect(mix.internal.totalCents).toBe(250_000);
+    } finally {
+      db.close();
+    }
+  });
 });

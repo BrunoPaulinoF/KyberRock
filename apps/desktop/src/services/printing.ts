@@ -1,12 +1,19 @@
 import { randomUUID } from "node:crypto";
 
-import { buildReceiptLines, type ReceiptTemplateInput } from "@kyberrock/print-templates";
+import {
+  buildReceiptLinesWithConfig,
+  normalizeReceiptTemplateConfig,
+  DEFAULT_RECEIPT_TEMPLATE_CONFIG,
+  type ReceiptTemplateInput,
+  type ReceiptTemplateConfig
+} from "@kyberrock/print-templates";
 
 import type { DesktopDatabase } from "../database/sqlite.js";
 import type { LocalDesktopIdentity } from "./bootstrap.js";
 import { enqueueSyncJob } from "./sync-queue.js";
 
 export type PrintReceiptStatus = "printed" | "failed";
+export type PrinterType = "windows" | "network";
 
 export interface WindowsPrinterSummary {
   name: string;
@@ -19,16 +26,38 @@ export interface ConfigureReceiptPrintProfileInput {
   paperWidthMm?: number;
   copies?: number;
   cutPaper?: boolean;
+  receiptLogoDataUrl?: string | null;
+  receiptLogoWidthMm?: number;
+  receiptLogoHeightMm?: number;
+  receiptLogoFit?: ReceiptLogoFit;
+  printerType?: PrinterType;
+  networkHost?: string | null;
+  networkPort?: number | null;
+  templateConfig?: Partial<ReceiptTemplateConfig> | null;
+}
+
+export type ReceiptLogoFit = "contain" | "cover" | "fill";
+
+export interface ReceiptLogoConfig {
+  dataUrl: string | null;
+  widthMm: number;
+  heightMm: number;
+  fit: ReceiptLogoFit;
 }
 
 export interface PrintProfileSummary {
   id: string;
   deviceId: string;
   documentType: "receipt_80mm" | "report_a4";
+  printerType: PrinterType;
   windowsPrinterName: string;
+  networkHost: string | null;
+  networkPort: number | null;
   paperWidthMm: number;
   copies: number;
   cutPaper: boolean;
+  receiptLogo: ReceiptLogoConfig;
+  templateConfig: ReceiptTemplateConfig;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -50,6 +79,9 @@ export interface PrintTestReceiptInput {
 
 export interface ReceiptPrintPayload {
   printerName: string;
+  printerType: PrinterType;
+  networkHost: string | null;
+  networkPort: number | null;
   paperWidthMm: number;
   lines: string[];
   contentText: string;
@@ -76,14 +108,20 @@ export interface PrintReceiptSummary {
 
 interface ReceiptContentSnapshot extends ReceiptTemplateInput {
   lines: string[];
+  receiptLogo: ReceiptLogoConfig;
 }
 
 interface PrintProfileRow {
   id: string;
   device_id: string;
   document_type: "receipt_80mm" | "report_a4";
+  printer_type: string;
   windows_printer_name: string;
+  network_host: string | null;
+  network_port: number | null;
   paper_width_mm: number;
+  font_config_json: string;
+  template_config_json: string;
   copies: number;
   cut_paper: number;
   is_active: number;
@@ -94,18 +132,30 @@ interface PrintProfileRow {
 interface OperationReceiptRow {
   id: string;
   unit_id: string;
+  company_name: string;
+  company_document: string | null;
+  company_state_registration: string | null;
   unit_name: string;
   status: string;
   operation_type: "invoice" | "internal";
+  entry_weight_captured_at: string | null;
   entry_weight_kg: number | null;
+  exit_weight_captured_at: string | null;
   exit_weight_kg: number | null;
   net_weight_kg: number | null;
+  unit_price_cents: number | null;
   product_total_cents: number | null;
   freight_total_cents: number;
   total_cents: number | null;
   customer_name: string | null;
+  customer_document: string | null;
+  customer_phone: string | null;
+  customer_zipcode: string | null;
+  customer_city: string | null;
+  customer_state: string | null;
   plate: string | null;
   driver_name: string | null;
+  product_code: string | null;
   product_description: string | null;
   payment_term_name: string | null;
 }
@@ -129,21 +179,40 @@ export function configureReceiptPrintProfile(
   input: ConfigureReceiptPrintProfileInput,
   now: Date = new Date()
 ): PrintProfileSummary {
-  validateRequired("Printer name", input.windowsPrinterName);
+  const printerType: PrinterType = input.printerType === "network" ? "network" : "windows";
+  if (printerType === "windows") {
+    validateRequired("Printer name", input.windowsPrinterName);
+  } else {
+    validateRequired("Network host", input.networkHost ?? "");
+  }
 
   const timestamp = now.toISOString();
   const existing = getActiveReceiptPrintProfile(database, input.identity.deviceId);
   const profileId = existing?.id ?? randomUUID();
+  const receiptLogo = normalizeReceiptLogo(input, existing?.receiptLogo ?? defaultReceiptLogoConfig());
+  const templateConfig = normalizeReceiptTemplateConfig({
+    ...(existing?.templateConfig ?? DEFAULT_RECEIPT_TEMPLATE_CONFIG),
+    ...(input.templateConfig ?? {})
+  });
+  const windowsPrinterName = printerType === "windows" ? input.windowsPrinterName.trim() : (input.windowsPrinterName?.trim() || "NETWORK");
+  const networkHost = printerType === "network" ? (input.networkHost ?? "").trim() : null;
+  const networkPort = printerType === "network" ? (input.networkPort ?? 9100) : null;
 
   database
     .prepare(
       `INSERT INTO print_profiles (
-        id, device_id, document_type, windows_printer_name, paper_width_mm,
-        margin_json, font_config_json, copies, cut_paper, is_active, created_at, updated_at
-      ) VALUES (?, ?, 'receipt_80mm', ?, ?, '{}', '{}', ?, ?, 1, ?, ?)
+        id, device_id, document_type, printer_type, windows_printer_name, network_host, network_port,
+        paper_width_mm, margin_json, font_config_json, template_config_json,
+        copies, cut_paper, is_active, created_at, updated_at
+      ) VALUES (?, ?, 'receipt_80mm', ?, ?, ?, ?, ?, '{}', ?, ?, ?, ?, 1, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
+        printer_type = excluded.printer_type,
         windows_printer_name = excluded.windows_printer_name,
+        network_host = excluded.network_host,
+        network_port = excluded.network_port,
         paper_width_mm = excluded.paper_width_mm,
+        font_config_json = excluded.font_config_json,
+        template_config_json = excluded.template_config_json,
         copies = excluded.copies,
         cut_paper = excluded.cut_paper,
         is_active = 1,
@@ -152,9 +221,14 @@ export function configureReceiptPrintProfile(
     .run(
       profileId,
       input.identity.deviceId,
-      input.windowsPrinterName.trim(),
+      printerType,
+      windowsPrinterName,
+      networkHost,
+      networkPort,
       input.paperWidthMm ?? 80,
-      input.copies ?? 1,
+      JSON.stringify({ receiptLogo }),
+      JSON.stringify(templateConfig),
+      input.copies ?? 2,
       input.cutPaper ? 1 : 0,
       timestamp,
       timestamp
@@ -189,8 +263,28 @@ export async function printWeighingReceipt(
     throw new Error("Only closed operations can be printed.");
   }
 
+  const profile = getActiveReceiptPrintProfile(database, input.identity.deviceId);
+  const copies = Math.max(profile?.copies ?? 2, 2);
   const receiptNumber = getNextReceiptNumber(database, input.identity.unitId);
-  return writeReceiptAttempt(database, input.identity, operation, printer, receiptNumber, 1, now);
+  let lastReceipt: PrintReceiptSummary | null = null;
+
+  for (let copyNumber = 1; copyNumber <= copies; copyNumber += 1) {
+    lastReceipt = await writeReceiptAttempt(
+      database,
+      input.identity,
+      operation,
+      printer,
+      receiptNumber,
+      copyNumber,
+      now
+    );
+  }
+
+  if (!lastReceipt) {
+    throw new Error("No receipt copies were printed.");
+  }
+
+  return lastReceipt;
 }
 
 export async function reprintWeighingReceipt(
@@ -229,9 +323,13 @@ export async function printTestReceipt(
 
   const timestamp = now.toISOString();
   const receiptId = randomUUID();
-  const testSnapshot = buildTestReceiptSnapshot(timestamp);
+  const printerName = getProfilePrinterName(profile);
+  const testSnapshot = buildTestReceiptSnapshot(timestamp, profile.receiptLogo, profile.templateConfig);
   const payload: ReceiptPrintPayload = {
-    printerName: profile.windowsPrinterName,
+    printerName,
+    printerType: profile.printerType,
+    networkHost: profile.networkHost,
+    networkPort: profile.networkPort,
     paperWidthMm: profile.paperWidthMm,
     lines: testSnapshot.lines,
     contentText: testSnapshot.lines.join("\n"),
@@ -298,7 +396,7 @@ export async function printTestReceipt(
       0,
       JSON.stringify(testSnapshot),
       timestamp,
-      profile.windowsPrinterName,
+      printerName,
       status,
       errorMessage,
       timestamp,
@@ -326,9 +424,19 @@ async function writeReceiptAttempt(
 
   const timestamp = now.toISOString();
   const receiptId = randomUUID();
-  const snapshot = buildReceiptSnapshot(operation, receiptNumber, copyNumber, timestamp);
+  const snapshot = buildReceiptSnapshot(
+    operation,
+    receiptNumber,
+    copyNumber,
+    timestamp,
+    profile.receiptLogo,
+    profile.templateConfig
+  );
   const payload: ReceiptPrintPayload = {
-    printerName: profile.windowsPrinterName,
+    printerName: getProfilePrinterName(profile),
+    printerType: profile.printerType,
+    networkHost: profile.networkHost,
+    networkPort: profile.networkPort,
     paperWidthMm: profile.paperWidthMm,
     lines: snapshot.lines,
     contentText: snapshot.lines.join("\n"),
@@ -366,7 +474,7 @@ async function writeReceiptAttempt(
         copyNumber,
         JSON.stringify(snapshot),
         timestamp,
-        profile.windowsPrinterName,
+        payload.printerName,
         status,
         errorMessage,
         timestamp,
@@ -379,7 +487,7 @@ async function writeReceiptAttempt(
       operation.id,
       originalReceipt ? "receipt_reprinted" : "receipt_printed",
       originalReceipt ?? null,
-      { receiptId, receiptNumber, copyNumber, printerName: profile.windowsPrinterName, status },
+      { receiptId, receiptNumber, copyNumber, printerName: payload.printerName, status },
       timestamp
     );
 
@@ -455,13 +563,22 @@ function getOperationForReceipt(
   const row = database
     .prepare(
       `SELECT
-        o.id, o.unit_id, u.name AS unit_name, o.status, o.operation_type,
-        o.entry_weight_kg, o.exit_weight_kg, o.net_weight_kg,
-        o.product_total_cents, o.freight_total_cents, o.total_cents,
-        c.trade_name AS customer_name, v.plate, d.name AS driver_name,
-        p.description AS product_description, pt.name AS payment_term_name
+        o.id, o.unit_id, co.trade_name AS company_name, co.document AS company_document,
+        NULL AS company_state_registration, u.name AS unit_name, o.status, o.operation_type,
+        o.entry_weight_captured_at, o.entry_weight_kg, o.exit_weight_captured_at, o.exit_weight_kg,
+        o.net_weight_kg, o.unit_price_cents, o.product_total_cents, o.freight_total_cents,
+        o.total_cents, c.trade_name AS customer_name, c.document AS customer_document,
+        c.phone AS customer_phone, c.zipcode AS customer_zipcode, c.city AS customer_city,
+        c.state AS customer_state, v.plate, d.name AS driver_name, p.code AS product_code,
+        p.description AS product_description,
+        CASE
+          WHEN o.manual_installments = 1 THEN '1 parcela'
+          WHEN o.manual_installments > 1 THEN CAST(o.manual_installments AS TEXT) || ' parcelas'
+          ELSE pt.name
+        END AS payment_term_name
        FROM weighing_operations o
-       INNER JOIN units u ON u.id = o.unit_id
+        INNER JOIN companies co ON co.id = o.company_id
+        INNER JOIN units u ON u.id = o.unit_id
        LEFT JOIN customers c ON c.id = o.customer_id
        LEFT JOIN vehicles v ON v.id = o.vehicle_id
        LEFT JOIN drivers d ON d.id = o.driver_id
@@ -504,10 +621,14 @@ function buildReceiptSnapshot(
   operation: OperationReceiptRow,
   receiptNumber: number,
   copyNumber: number,
-  printedAt: string
+  printedAt: string,
+  receiptLogo: ReceiptLogoConfig,
+  templateConfig: ReceiptTemplateConfig
 ): ReceiptContentSnapshot {
   if (
+    operation.entry_weight_captured_at === null ||
     operation.entry_weight_kg === null ||
+    operation.exit_weight_captured_at === null ||
     operation.exit_weight_kg === null ||
     operation.net_weight_kg === null
   ) {
@@ -515,6 +636,9 @@ function buildReceiptSnapshot(
   }
 
   const templateInput: ReceiptTemplateInput = {
+    companyName: operation.company_name,
+    companyDocument: operation.company_document,
+    companyStateRegistration: operation.company_state_registration,
     unitName: operation.unit_name,
     receiptNumber,
     copyNumber,
@@ -522,24 +646,41 @@ function buildReceiptSnapshot(
     operationId: operation.id,
     operationType: operation.operation_type,
     customerName: operation.customer_name ?? "",
+    customerDocument: operation.customer_document,
+    customerPhone: operation.customer_phone,
+    customerZipCode: operation.customer_zipcode,
+    customerCity: operation.customer_city,
+    customerState: operation.customer_state,
+    productCode: operation.product_code,
     productDescription: operation.product_description ?? "",
     plate: operation.plate ?? "",
     driverName: operation.driver_name ?? "",
     paymentTermName: operation.payment_term_name,
+    entryCapturedAt: operation.entry_weight_captured_at,
+    exitCapturedAt: operation.exit_weight_captured_at,
+    permanenceLabel: formatPermanence(operation.entry_weight_captured_at, operation.exit_weight_captured_at),
     entryWeightKg: operation.entry_weight_kg,
     exitWeightKg: operation.exit_weight_kg,
     netWeightKg: operation.net_weight_kg,
+    unitPriceCents: operation.unit_price_cents,
     productTotalCents: operation.product_total_cents ?? 0,
     freightTotalCents: operation.freight_total_cents,
     totalCents: operation.total_cents ?? 0
   };
-  const lines = buildReceiptLines(templateInput);
+  const lines = buildReceiptLinesWithConfig(templateInput, templateConfig);
 
-  return { ...templateInput, lines };
+  return { ...templateInput, lines, receiptLogo };
 }
 
-function buildTestReceiptSnapshot(printedAt: string): ReceiptContentSnapshot {
+function buildTestReceiptSnapshot(
+  printedAt: string,
+  receiptLogo: ReceiptLogoConfig = defaultReceiptLogoConfig(),
+  templateConfig: ReceiptTemplateConfig = DEFAULT_RECEIPT_TEMPLATE_CONFIG
+): ReceiptContentSnapshot {
   const templateInput: ReceiptTemplateInput = {
+    companyName: "Pedreira Teste LTDA",
+    companyDocument: "00.000.000/0001-00",
+    companyStateRegistration: "000.000.000.000",
     unitName: "Pedreira Teste",
     receiptNumber: 0,
     copyNumber: 0,
@@ -547,22 +688,38 @@ function buildTestReceiptSnapshot(printedAt: string): ReceiptContentSnapshot {
     operationId: "test",
     operationType: "invoice",
     customerName: "Cliente Exemplo",
+    customerDocument: "11.111.111/0001-11",
+    customerPhone: "(11) 99999-0000",
+    customerZipCode: "00000-000",
+    customerCity: "Cidade",
+    customerState: "SP",
+    productCode: "0001",
     productDescription: "Brita 1 (Teste)",
     plate: "ABC1D23",
     driverName: "Motorista Teste",
     paymentTermName: "A vista",
+    entryCapturedAt: printedAt,
+    exitCapturedAt: printedAt,
+    permanenceLabel: "0min",
     entryWeightKg: 12_000,
     exitWeightKg: 18_500,
     netWeightKg: 6_500,
+    unitPriceCents: 12_000,
     productTotalCents: 78_000,
     freightTotalCents: 0,
     totalCents: 78_000
   };
-  const lines = buildReceiptLines(templateInput);
+  const lines = buildReceiptLinesWithConfig(templateInput, templateConfig);
   lines.unshift("=== CUPOM DE TESTE ===");
   lines.push("", "Esta e uma impressao de teste.");
 
-  return { ...templateInput, lines };
+  return { ...templateInput, lines, receiptLogo };
+}
+
+function getProfilePrinterName(profile: PrintProfileSummary): string {
+  return profile.printerType === "network"
+    ? `${profile.networkHost ?? ""}:${profile.networkPort ?? 9100}`
+    : profile.windowsPrinterName;
 }
 
 function insertAuditLog(
@@ -597,14 +754,80 @@ function mapPrintProfileRow(row: PrintProfileRow): PrintProfileSummary {
     id: row.id,
     deviceId: row.device_id,
     documentType: row.document_type,
+    printerType: row.printer_type === "network" ? "network" : "windows",
     windowsPrinterName: row.windows_printer_name,
+    networkHost: row.network_host,
+    networkPort: row.network_port,
     paperWidthMm: row.paper_width_mm,
     copies: row.copies,
     cutPaper: row.cut_paper === 1,
+    receiptLogo: parseReceiptLogoConfig(row.font_config_json),
+    templateConfig: normalizeReceiptTemplateConfig(parseJsonObject(row.template_config_json)),
     isActive: row.is_active === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
+}
+
+function defaultReceiptLogoConfig(): ReceiptLogoConfig {
+  return { dataUrl: null, widthMm: 24, heightMm: 16, fit: "contain" };
+}
+
+function normalizeReceiptLogo(
+  input: ConfigureReceiptPrintProfileInput,
+  current: ReceiptLogoConfig
+): ReceiptLogoConfig {
+  const dataUrl = input.receiptLogoDataUrl === undefined ? current.dataUrl : input.receiptLogoDataUrl;
+  return {
+    dataUrl: dataUrl && dataUrl.startsWith("data:image/") ? dataUrl : null,
+    widthMm: clampNumber(input.receiptLogoWidthMm ?? current.widthMm, 10, 60),
+    heightMm: clampNumber(input.receiptLogoHeightMm ?? current.heightMm, 8, 35),
+    fit: normalizeLogoFit(input.receiptLogoFit ?? current.fit)
+  };
+}
+
+function parseReceiptLogoConfig(value: string): ReceiptLogoConfig {
+  try {
+    const parsed = JSON.parse(value) as { receiptLogo?: Partial<ReceiptLogoConfig> };
+    const current = parsed.receiptLogo ?? {};
+    return normalizeReceiptLogo(
+      {
+        identity: {} as LocalDesktopIdentity,
+        windowsPrinterName: "ignored",
+        receiptLogoDataUrl: current.dataUrl ?? null,
+        receiptLogoWidthMm: current.widthMm,
+        receiptLogoHeightMm: current.heightMm,
+        receiptLogoFit: current.fit
+      },
+      defaultReceiptLogoConfig()
+    );
+  } catch {
+    return defaultReceiptLogoConfig();
+  }
+}
+
+function normalizeLogoFit(value: string): ReceiptLogoFit {
+  return value === "cover" || value === "fill" ? value : "contain";
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+function formatPermanence(entryAt: string, exitAt: string): string {
+  const milliseconds = Math.max(0, new Date(exitAt).getTime() - new Date(entryAt).getTime());
+  const totalMinutes = Math.round(milliseconds / 60_000);
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  return [
+    days > 0 ? `${days}d` : null,
+    hours > 0 ? `${hours}h` : null,
+    `${minutes}min`
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 function mapPrintReceiptRow(row: PrintReceiptRow): PrintReceiptSummary {
@@ -632,4 +855,16 @@ function validateRequired(fieldName: string, value: string): void {
 function sanitizeErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : "Printer failed.";
   return message.slice(0, 500);
+}
+
+function parseJsonObject(value: string | null | undefined): Record<string, unknown> | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
 }

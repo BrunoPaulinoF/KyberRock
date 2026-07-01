@@ -20,9 +20,31 @@ export interface NormalizedScaleReading {
   unit: "kg";
 }
 
+export type ScaleStatus =
+  | "stable"
+  | "unstable"
+  | "overload"
+  | "negative"
+  | "zero"
+  | "no_data"
+  | "error";
+
 export interface ScaleReading extends NormalizedScaleReading {
+  status: ScaleStatus;
   stable: boolean;
   capturedAt: string;
+  receivedAt: string;
+  rawFrame?: string;
+  deviceId?: string;
+  adapterName?: string;
+}
+
+export interface ScaleSamplingOptions {
+  durationMs?: number;
+  sampleIntervalMs?: number;
+  minStableMs?: number;
+  maxVariationKg?: number;
+  minWeightKg?: number;
 }
 
 export interface ScaleAdapter {
@@ -68,12 +90,17 @@ export class MockScaleAdapter implements ScaleAdapter {
   async read(now: Date = new Date()): Promise<ScaleReading> {
     const index = Math.min(this.cursor, this.readings.length - 1);
     this.cursor += 1;
+    const weightKg = this.readings[index] ?? this.readings[this.readings.length - 1] ?? 0;
+    const status: ScaleStatus = weightKg === 0 ? "zero" : "stable";
 
     return {
-      weightKg: this.readings[index],
+      weightKg,
       unit: "kg",
-      stable: true,
-      capturedAt: now.toISOString()
+      status,
+      stable: status === "stable",
+      capturedAt: now.toISOString(),
+      receivedAt: now.toISOString(),
+      adapterName: "mock"
     };
   }
 }

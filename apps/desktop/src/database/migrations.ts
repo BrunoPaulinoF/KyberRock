@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS devices (
 CREATE TABLE IF NOT EXISTS scale_configs (
   id TEXT PRIMARY KEY,
   device_id TEXT NOT NULL REFERENCES devices(id),
-  adapter_type TEXT NOT NULL CHECK (adapter_type IN ('serial', 'tcp', 'http', 'file', 'custom')),
+  adapter_type TEXT NOT NULL CHECK (adapter_type IN ('serial', 'tcp', 'http', 'file', 'custom', 'virtual')),
   manufacturer TEXT,
   model TEXT,
   connection_config_json TEXT NOT NULL,
@@ -399,6 +399,465 @@ ALTER TABLE products ADD COLUMN unit_price_cents INTEGER;
 CREATE INDEX IF NOT EXISTS idx_customers_company_zipcode ON customers(company_id, zipcode);
 CREATE INDEX IF NOT EXISTS idx_customers_default_payment_term ON customers(company_id, default_payment_term_id);
 CREATE INDEX IF NOT EXISTS idx_products_company_ncm ON products(company_id, ncm);
+`
+  },
+  {
+    version: 5,
+    name: "product_omie_full_attributes",
+    sql: `
+ALTER TABLE products ADD COLUMN family_code TEXT;
+ALTER TABLE products ADD COLUMN family_description TEXT;
+ALTER TABLE products ADD COLUMN brand TEXT;
+ALTER TABLE products ADD COLUMN model TEXT;
+ALTER TABLE products ADD COLUMN detailed_description TEXT;
+ALTER TABLE products ADD COLUMN internal_notes TEXT;
+ALTER TABLE products ADD COLUMN gross_weight_kg REAL;
+ALTER TABLE products ADD COLUMN net_weight_kg REAL;
+ALTER TABLE products ADD COLUMN height_m REAL;
+ALTER TABLE products ADD COLUMN width_m REAL;
+ALTER TABLE products ADD COLUMN depth_m REAL;
+ALTER TABLE products ADD COLUMN cest TEXT;
+ALTER TABLE products ADD COLUMN item_type TEXT;
+ALTER TABLE products ADD COLUMN icms_origin TEXT;
+ALTER TABLE products ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0 CHECK (blocked IN (0, 1));
+ALTER TABLE products ADD COLUMN fiscal_recommendations_json TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_products_company_family ON products(company_id, family_code);
+CREATE INDEX IF NOT EXISTS idx_products_company_brand ON products(company_id, brand);
+CREATE INDEX IF NOT EXISTS idx_products_company_active ON products(company_id, is_active, deleted_at);
+`
+  },
+  {
+    version: 6,
+    name: "omie_reference_full_attributes",
+    sql: `
+ALTER TABLE customers ADD COLUMN state_registration TEXT;
+ALTER TABLE customers ADD COLUMN municipal_registration TEXT;
+ALTER TABLE customers ADD COLUMN is_individual INTEGER NOT NULL DEFAULT 0 CHECK (is_individual IN (0, 1));
+ALTER TABLE customers ADD COLUMN homepage TEXT;
+ALTER TABLE customers ADD COLUMN contact_name TEXT;
+ALTER TABLE customers ADD COLUMN phone_secondary TEXT;
+ALTER TABLE customers ADD COLUMN ibge_city_code TEXT;
+ALTER TABLE customers ADD COLUMN ibge_state_code TEXT;
+ALTER TABLE customers ADD COLUMN country TEXT;
+ALTER TABLE customers ADD COLUMN country_code TEXT;
+ALTER TABLE customers ADD COLUMN customer_type TEXT;
+ALTER TABLE customers ADD COLUMN is_foreign INTEGER NOT NULL DEFAULT 0 CHECK (is_foreign IN (0, 1));
+ALTER TABLE customers ADD COLUMN tags_json TEXT;
+ALTER TABLE customers ADD COLUMN salesperson_id INTEGER;
+
+ALTER TABLE payment_terms ADD COLUMN omie_integration_code TEXT;
+ALTER TABLE payment_terms ADD COLUMN first_installment_days INTEGER;
+ALTER TABLE payment_terms ADD COLUMN installment_interval_days INTEGER;
+ALTER TABLE payment_terms ADD COLUMN installment_count INTEGER;
+ALTER TABLE payment_terms ADD COLUMN installment_type TEXT;
+ALTER TABLE payment_terms ADD COLUMN installment_days_json TEXT;
+ALTER TABLE payment_terms ADD COLUMN visible INTEGER NOT NULL DEFAULT 1 CHECK (visible IN (0, 1));
+ALTER TABLE payment_terms ADD COLUMN updated_from_omie_at TEXT;
+
+ALTER TABLE products ADD COLUMN tracks_stock INTEGER NOT NULL DEFAULT 1 CHECK (tracks_stock IN (0, 1));
+
+CREATE INDEX IF NOT EXISTS idx_customers_company_ibge ON customers(company_id, ibge_city_code);
+CREATE INDEX IF NOT EXISTS idx_customers_company_state_reg ON customers(company_id, state_registration);
+CREATE INDEX IF NOT EXISTS idx_customers_company_salesperson ON customers(company_id, salesperson_id);
+CREATE INDEX IF NOT EXISTS idx_payment_terms_active_visible ON payment_terms(company_id, is_active, visible);
+`
+  },
+  {
+    version: 7,
+    name: "operation_price_snapshot",
+    sql: `
+ALTER TABLE weighing_operations ADD COLUMN base_unit_price_cents INTEGER;
+ALTER TABLE weighing_operations ADD COLUMN applied_price_table_id TEXT;
+ALTER TABLE weighing_operations ADD COLUMN applied_price_table_name TEXT;
+ALTER TABLE weighing_operations ADD COLUMN applied_price_table_item_id TEXT;
+ALTER TABLE weighing_operations ADD COLUMN price_unit TEXT NOT NULL DEFAULT 'ton';
+ALTER TABLE weighing_operations ADD COLUMN price_savings_percent REAL;
+
+CREATE INDEX IF NOT EXISTS idx_operations_price_table ON weighing_operations(applied_price_table_id);
+`
+  },
+  {
+    version: 8,
+    name: "operation_manual_installments",
+    sql: `
+ALTER TABLE weighing_operations ADD COLUMN manual_installments INTEGER;
+`
+  },
+  {
+    version: 9,
+    name: "operation_omie_billing_status",
+    sql: `
+ALTER TABLE weighing_operations ADD COLUMN omie_billing_status TEXT;
+ALTER TABLE weighing_operations ADD COLUMN omie_billing_message TEXT;
+ALTER TABLE weighing_operations ADD COLUMN omie_billed_at TEXT;
+ALTER TABLE weighing_operations ADD COLUMN omie_document_url TEXT;
+`
+  },
+  {
+    version: 10,
+    name: "registration_internal_codes_and_missing_fields",
+    sql: `
+ALTER TABLE customers ADD COLUMN internal_code TEXT;
+ALTER TABLE products ADD COLUMN internal_code TEXT;
+ALTER TABLE drivers ADD COLUMN cnh TEXT;
+ALTER TABLE carriers ADD COLUMN phone TEXT;
+ALTER TABLE carriers ADD COLUMN omie_integration_code TEXT;
+ALTER TABLE products ADD COLUMN unit_type TEXT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_company_internal_code
+  ON customers(company_id, internal_code)
+  WHERE internal_code IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_products_company_internal_code
+  ON products(company_id, internal_code)
+  WHERE internal_code IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_drivers_company_cnh ON drivers(company_id, cnh);
+CREATE INDEX IF NOT EXISTS idx_carriers_company_phone ON carriers(company_id, phone);
+`
+  },
+  {
+    version: 11,
+    name: "customer_special_prices_and_default_prices",
+    sql: `
+CREATE TABLE IF NOT EXISTS product_default_prices (
+  id TEXT PRIMARY KEY,
+  company_id TEXT NOT NULL REFERENCES companies(id),
+  product_id TEXT NOT NULL REFERENCES products(id),
+  unit_price_cents INTEGER NOT NULL,
+  unit TEXT NOT NULL DEFAULT 'ton',
+  valid_from TEXT,
+  valid_to TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT,
+  sync_version INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS customer_special_prices (
+  id TEXT PRIMARY KEY,
+  company_id TEXT NOT NULL REFERENCES companies(id),
+  customer_id TEXT NOT NULL REFERENCES customers(id),
+  product_id TEXT NOT NULL REFERENCES products(id),
+  unit_price_cents INTEGER NOT NULL,
+  unit TEXT NOT NULL DEFAULT 'ton',
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT,
+  sync_version INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_special_prices_customer_product
+  ON customer_special_prices(customer_id, product_id)
+  WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_product_default_prices_product
+  ON product_default_prices(product_id, is_active)
+  WHERE deleted_at IS NULL;
+`
+  },
+  {
+    version: 12,
+    name: "customer_credit_balance_and_movements",
+    sql: `
+CREATE TABLE IF NOT EXISTS customer_credit_balances (
+  customer_id TEXT PRIMARY KEY REFERENCES customers(id),
+  balance_cents INTEGER NOT NULL DEFAULT 0,
+  omie_source_json TEXT,
+  last_synced_at TEXT,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS customer_credit_movements (
+  id TEXT PRIMARY KEY,
+  company_id TEXT NOT NULL REFERENCES companies(id),
+  customer_id TEXT NOT NULL REFERENCES customers(id),
+  operation_id TEXT REFERENCES weighing_operations(id),
+  movement_type TEXT NOT NULL CHECK (movement_type IN ('credit', 'debit_product', 'debit_freight', 'refund_product', 'refund_freight', 'manual_adjustment')),
+  amount_cents INTEGER NOT NULL,
+  balance_after_cents INTEGER NOT NULL,
+  reason TEXT,
+  created_at TEXT NOT NULL
+);
+
+ALTER TABLE customers ADD COLUMN credit_mode TEXT NOT NULL DEFAULT 'normal' CHECK (credit_mode IN ('normal', 'prepaid'));
+
+CREATE INDEX IF NOT EXISTS idx_customer_credit_movements_customer_created
+  ON customer_credit_movements(customer_id, created_at DESC);
+`
+  },
+  {
+    version: 13,
+    name: "quotations_and_operation_credit_fields",
+    sql: `
+CREATE TABLE IF NOT EXISTS quotations (
+  id TEXT PRIMARY KEY,
+  company_id TEXT NOT NULL REFERENCES companies(id),
+  customer_id TEXT NOT NULL REFERENCES customers(id),
+  product_id TEXT NOT NULL REFERENCES products(id),
+  payment_term_id TEXT REFERENCES payment_terms(id),
+  unit_price_cents INTEGER NOT NULL,
+  estimated_quantity_kg REAL NOT NULL,
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'consumed', 'cancelled')),
+  consumed_operation_id TEXT REFERENCES weighing_operations(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT,
+  sync_version INTEGER NOT NULL DEFAULT 0
+);
+
+ALTER TABLE weighing_operations ADD COLUMN deduct_freight_from_credit INTEGER NOT NULL DEFAULT 0 CHECK (deduct_freight_from_credit IN (0, 1));
+ALTER TABLE weighing_operations ADD COLUMN product_credit_debit_cents INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE weighing_operations ADD COLUMN freight_credit_debit_cents INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE weighing_operations ADD COLUMN quotation_id TEXT REFERENCES quotations(id);
+
+CREATE INDEX IF NOT EXISTS idx_quotations_customer_status
+  ON quotations(customer_id, status, created_at DESC)
+  WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_weighing_operations_quotation
+  ON weighing_operations(quotation_id);
+`
+  },
+  {
+    version: 14,
+    name: "customer_carrier_driver_carrier_links_and_price_password",
+    sql: `
+ALTER TABLE drivers ADD COLUMN is_independent INTEGER NOT NULL DEFAULT 0 CHECK (is_independent IN (0, 1));
+
+ALTER TABLE companies ADD COLUMN price_change_password TEXT NOT NULL DEFAULT '0000';
+
+CREATE TABLE IF NOT EXISTS customer_carriers (
+  id TEXT PRIMARY KEY,
+  customer_id TEXT NOT NULL REFERENCES customers(id),
+  carrier_id TEXT NOT NULL REFERENCES carriers(id),
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT,
+  sync_version INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS driver_carriers (
+  id TEXT PRIMARY KEY,
+  driver_id TEXT NOT NULL REFERENCES drivers(id),
+  carrier_id TEXT NOT NULL REFERENCES carriers(id),
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT,
+  sync_version INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_customer_carriers_customer ON customer_carriers(customer_id, is_active, deleted_at);
+CREATE INDEX IF NOT EXISTS idx_customer_carriers_carrier ON customer_carriers(carrier_id, is_active, deleted_at);
+CREATE INDEX IF NOT EXISTS idx_driver_carriers_driver ON driver_carriers(driver_id, is_active, deleted_at);
+CREATE INDEX IF NOT EXISTS idx_driver_carriers_carrier ON driver_carriers(carrier_id, is_active, deleted_at);
+`
+  },
+  {
+    version: 15,
+    name: "scale_config_virtual_adapter_type",
+    sql: `
+ALTER TABLE scale_configs RENAME TO scale_configs_old;
+
+CREATE TABLE scale_configs (
+  id TEXT PRIMARY KEY,
+  device_id TEXT NOT NULL REFERENCES devices(id),
+  adapter_type TEXT NOT NULL CHECK (adapter_type IN ('serial', 'tcp', 'http', 'file', 'custom', 'virtual')),
+  manufacturer TEXT,
+  model TEXT,
+  connection_config_json TEXT NOT NULL,
+  stability_config_json TEXT NOT NULL,
+  unit TEXT NOT NULL DEFAULT 'kg',
+  kg_factor REAL NOT NULL DEFAULT 1,
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+INSERT INTO scale_configs (
+  id,
+  device_id,
+  adapter_type,
+  manufacturer,
+  model,
+  connection_config_json,
+  stability_config_json,
+  unit,
+  kg_factor,
+  is_active,
+  created_at,
+  updated_at
+)
+SELECT
+  id,
+  device_id,
+  adapter_type,
+  manufacturer,
+  model,
+  connection_config_json,
+  stability_config_json,
+  unit,
+  kg_factor,
+  is_active,
+  created_at,
+  updated_at
+FROM scale_configs_old;
+
+DROP TABLE scale_configs_old;
+`
+  },
+  {
+    version: 16,
+    name: "omie_master_sync_and_driver_vehicle_omie_fields",
+    sql: `
+ALTER TABLE drivers ADD COLUMN omie_driver_id INTEGER;
+ALTER TABLE drivers ADD COLUMN source TEXT NOT NULL DEFAULT 'local' CHECK (source IN ('omie', 'local'));
+ALTER TABLE drivers ADD COLUMN last_synced_at TEXT;
+ALTER TABLE drivers ADD COLUMN raw_omie_payload_id TEXT;
+
+ALTER TABLE vehicles ADD COLUMN omie_vehicle_id INTEGER;
+ALTER TABLE vehicles ADD COLUMN source TEXT NOT NULL DEFAULT 'local' CHECK (source IN ('omie', 'local'));
+ALTER TABLE vehicles ADD COLUMN last_synced_at TEXT;
+ALTER TABLE vehicles ADD COLUMN raw_omie_payload_id TEXT;
+ALTER TABLE vehicles ADD COLUMN plate_normalized TEXT;
+
+UPDATE vehicles SET plate_normalized = UPPER(REPLACE(plate, ' ', '')) WHERE plate_normalized IS NULL;
+
+CREATE TABLE IF NOT EXISTS omie_sync_runs (
+  id TEXT PRIMARY KEY,
+  company_id TEXT NOT NULL REFERENCES companies(id),
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  mode TEXT NOT NULL CHECK (mode IN ('full', 'incremental')),
+  triggered_by TEXT NOT NULL CHECK (triggered_by IN ('manual', 'automatic', 'startup')),
+  success INTEGER NOT NULL DEFAULT 0 CHECK (success IN (0, 1)),
+  errors_json TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS omie_sync_entities (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES omie_sync_runs(id),
+  entity TEXT NOT NULL,
+  success INTEGER NOT NULL DEFAULT 0 CHECK (success IN (0, 1)),
+  total_fetched INTEGER NOT NULL DEFAULT 0,
+  total_created INTEGER NOT NULL DEFAULT 0,
+  total_updated INTEGER NOT NULL DEFAULT 0,
+  total_skipped INTEGER NOT NULL DEFAULT 0,
+  error_message TEXT,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS omie_raw_records (
+  id TEXT PRIMARY KEY,
+  company_id TEXT NOT NULL REFERENCES companies(id),
+  entity_type TEXT NOT NULL,
+  omie_id TEXT,
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_vehicles_company_plate_normalized ON vehicles(company_id, plate_normalized);
+CREATE INDEX IF NOT EXISTS idx_drivers_company_omie ON drivers(company_id, omie_driver_id);
+CREATE INDEX IF NOT EXISTS idx_vehicles_company_omie ON vehicles(company_id, omie_vehicle_id);
+CREATE INDEX IF NOT EXISTS idx_omie_sync_runs_company_started ON omie_sync_runs(company_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_omie_sync_entities_run ON omie_sync_entities(run_id);
+CREATE INDEX IF NOT EXISTS idx_omie_raw_records_company_entity ON omie_raw_records(company_id, entity_type);
+`
+  },
+  {
+    version: 17,
+    name: "loading_request_loader_completed_at",
+    sql: `
+ALTER TABLE loading_requests ADD COLUMN loader_completed_at TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_loading_requests_unit_loader_completed
+  ON loading_requests(unit_id, loader_completed_at);
+`
+  },
+  {
+    version: 18,
+    name: "carrier_contact_address_fields",
+    sql: `
+ALTER TABLE carriers ADD COLUMN email TEXT;
+ALTER TABLE carriers ADD COLUMN zipcode TEXT;
+ALTER TABLE carriers ADD COLUMN address_street TEXT;
+ALTER TABLE carriers ADD COLUMN address_number TEXT;
+ALTER TABLE carriers ADD COLUMN address_complement TEXT;
+ALTER TABLE carriers ADD COLUMN neighborhood TEXT;
+ALTER TABLE carriers ADD COLUMN city TEXT;
+ALTER TABLE carriers ADD COLUMN state TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_carriers_company_city ON carriers(company_id, city);
+`
+  },
+  {
+    version: 19,
+    name: "clear_omie_queue_long_keys",
+    sql: `
+-- Limpa jobs da fila OMIE com idempotency_key > 60 caracteres,
+-- que causam erro HTTP 500 por exceder o limite do campo cCodIntOS.
+DELETE FROM sync_queue
+WHERE target = 'omie'
+  AND LENGTH(idempotency_key) > 60;
+`
+  },
+  {
+    version: 20,
+    name: "operation_manual_down_payment",
+    sql: `
+ALTER TABLE weighing_operations ADD COLUMN manual_down_payment_cents INTEGER;
+`
+  },
+  {
+    version: 21,
+    name: "scale_config_capture_mode",
+    sql: `
+ALTER TABLE scale_configs ADD COLUMN capture_mode TEXT NOT NULL DEFAULT 'custom' CHECK (capture_mode IN ('custom', 'default'));
+`
+  },
+  {
+    version: 22,
+    name: "customer_freight_rules",
+    sql: `
+CREATE TABLE IF NOT EXISTS customer_freight_rules (
+  id TEXT PRIMARY KEY,
+  customer_id TEXT NOT NULL REFERENCES customers(id),
+  product_id TEXT REFERENCES products(id),
+  rule_json TEXT NOT NULL,
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT,
+  sync_version INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_freight_rules_customer_product
+  ON customer_freight_rules(customer_id, product_id)
+  WHERE deleted_at IS NULL AND product_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_freight_rules_customer_default
+  ON customer_freight_rules(customer_id)
+  WHERE deleted_at IS NULL AND product_id IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_customer_freight_rules_customer_active
+  ON customer_freight_rules(customer_id, is_active, deleted_at);
+`
+  },
+  {
+    version: 23,
+    name: "print_profile_network_and_template",
+    sql: `
+ALTER TABLE print_profiles ADD COLUMN printer_type TEXT NOT NULL DEFAULT 'windows' CHECK (printer_type IN ('windows', 'network'));
+ALTER TABLE print_profiles ADD COLUMN network_host TEXT;
+ALTER TABLE print_profiles ADD COLUMN network_port INTEGER;
+ALTER TABLE print_profiles ADD COLUMN template_config_json TEXT NOT NULL DEFAULT '{}';
 `
   }
 ];

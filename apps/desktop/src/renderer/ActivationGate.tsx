@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import type { DesktopAccessStatus } from "../services/desktop-activation";
 import type { KyberRockDesktopApi } from "./desktop-api";
+import { HelpTooltip } from "./Tooltip";
+import { TIPS } from "./tooltip-messages";
 
 type GateScreen = "checking" | "activate" | "blocked" | "error" | "offline";
 
@@ -146,7 +148,7 @@ export function ActivationGate({ desktopApi, onUnlocked }: ActivationGateProps) 
             O primeiro acesso exige conexao com a internet.
           </p>
 
-          <label style={styles.fieldLabel}>
+          <label style={styles.fieldLabel} title={TIPS.activation.code}>
             Codigo de ativacao
             <div style={styles.codeRow}>
               {activationCode.map((digit, index) => (
@@ -165,7 +167,7 @@ export function ActivationGate({ desktopApi, onUnlocked }: ActivationGateProps) 
             </div>
           </label>
 
-          <label style={styles.fieldLabel}>
+          <label style={styles.fieldLabel} title={TIPS.activation.deviceName}>
             Nome do equipamento (opcional)
             <input
               type="text"
@@ -179,17 +181,18 @@ export function ActivationGate({ desktopApi, onUnlocked }: ActivationGateProps) 
           {message ? <p style={styles.message}>{message}</p> : null}
 
           <button
-            type="button"
-            onClick={handleActivate}
-            disabled={activating || activationCode.join("").length !== 6}
-            style={{
-              ...styles.primaryButton,
-              opacity: activating || activationCode.join("").length !== 6 ? 0.5 : 1,
-              cursor: activating || activationCode.join("").length !== 6 ? "not-allowed" : "pointer"
-            }}
-          >
-            {activating ? "Ativando..." : "Ativar"}
-          </button>
+              type="button"
+              onClick={handleActivate}
+              disabled={activating || activationCode.join("").length !== 6}
+              style={{
+                ...styles.primaryButton,
+                opacity: activating || activationCode.join("").length !== 6 ? 0.5 : 1,
+                cursor: activating || activationCode.join("").length !== 6 ? "not-allowed" : "pointer"
+              }}
+            >
+              {activating ? "Ativando..." : "Ativar"}
+            </button>
+          <HelpTooltip content={TIPS.activation.code} placement="top" />
         </div>
       </main>
     );
@@ -222,14 +225,15 @@ export function ActivationGate({ desktopApi, onUnlocked }: ActivationGateProps) 
 
         <div style={styles.buttonColumn}>
           <button type="button" onClick={handleRetryValidation} style={styles.primaryButton}>
-            Tentar validar novamente
-          </button>
+              Tentar validar novamente
+            </button>
           <button type="button" onClick={() => setScreen("activate")} style={styles.secondaryButton}>
-            Ver diagnostico
-          </button>
+              Ver diagnostico
+            </button>
           <button type="button" onClick={handleExportBackup} style={styles.secondaryButton}>
-            Exportar backup
-          </button>
+              Exportar backup
+            </button>
+          <HelpTooltip content={TIPS.activation.export} placement="top" />
         </div>
       </div>
     </main>
