@@ -275,7 +275,7 @@ Deno.serve(async (req) => {
         : await listProductsPage(credentials, productsPage);
       const paymentTermsResult = resume.paymentTermsFinished
         ? emptyPage<OmiePaymentTerm>(paymentTermsPage)
-        : await listPaymentTermsPage(credentials, paymentTermsPage);
+        : await listOptionalPaymentTermsPage(credentials, paymentTermsPage);
 
       const checkedAt = new Date().toISOString();
       await supabase
@@ -905,6 +905,25 @@ async function listPaymentTermsPage(
 
   setCachedPage(cacheKey, items, finished, totalPages, totalRecords);
   return { items, page, finished, totalPages, totalRecords };
+}
+
+async function listOptionalPaymentTermsPage(
+  credentials: OmieCredentials,
+  page: number
+): Promise<PageResult<OmiePaymentTerm>> {
+  try {
+    return await listPaymentTermsPage(credentials, page);
+  } catch (error) {
+    if (isPaymentTermsUnavailableError(error)) {
+      return emptyPage<OmiePaymentTerm>(page);
+    }
+    throw error;
+  }
+}
+
+function isPaymentTermsUnavailableError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return /OMIE HTTP 404:.*ListarCondicoesPagamento|\/geral\/condicoespgto\//i.test(error.message);
 }
 
 type OmiePaymentTermRaw = {

@@ -21,9 +21,16 @@ describe("omie-sync Edge Function", () => {
     const block = getPullReferenceDataBlock();
 
     expect(block).toContain("listProductsPage(credentials, productsPage)");
-    expect(block).toContain("listPaymentTermsPage(credentials, paymentTermsPage)");
+    expect(block).toContain("listOptionalPaymentTermsPage(credentials, paymentTermsPage)");
     expect(block).not.toContain("const productsResult = emptyPage<OmieProduct>(1)");
     expect(block).not.toContain("const paymentTermsResult = emptyPage<OmiePaymentTerm>(1)");
+  });
+
+  it("does not abort pull_reference_data when payment terms endpoint is unavailable", () => {
+    const source = readFileSync(sourcePath, "utf8");
+
+    expect(source).toContain("function isPaymentTermsUnavailableError");
+    expect(source).toContain("return emptyPage<OmiePaymentTerm>(page)");
   });
 
   it("classifies untagged OMIE records as customers in the cloud path", () => {
