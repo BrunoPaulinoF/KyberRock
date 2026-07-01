@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type { DesktopDatabase } from "../database/sqlite.js";
+import { isSellableProduct } from "./product-classification.js";
 
 export interface ProductDefaultPriceRow {
   id: string;
@@ -246,11 +247,12 @@ export function listProductDefaultPriceSummaries(
 ): ProductDefaultPriceSummary[] {
   return database
     .prepare(
-      `SELECT
-         p.id AS product_id, p.code AS product_code, p.description AS product_description,
-         p.unit_price_cents AS product_unit_price_cents,
-         pdp.id AS default_price_id, pdp.unit_price_cents AS default_unit_price_cents,
-         COALESCE(pdp.unit, 'ton') AS unit
+       `SELECT
+          p.id AS product_id, p.code AS product_code, p.description AS product_description,
+          p.unit_price_cents AS product_unit_price_cents, p.omie_product_id, p.item_type,
+          p.fiscal_recommendations_json, p.is_active AS product_is_active,
+          pdp.id AS default_price_id, pdp.unit_price_cents AS default_unit_price_cents,
+          COALESCE(pdp.unit, 'ton') AS unit
        FROM products p
        LEFT JOIN product_default_prices pdp
          ON pdp.product_id = p.id
@@ -261,7 +263,21 @@ export function listProductDefaultPriceSummaries(
        WHERE p.company_id = ? AND p.deleted_at IS NULL AND p.is_active = 1
        ORDER BY p.description ASC`
     )
-    .all(companyId)
+     .all(companyId)
+    .filter((row) => {
+      const r = row as {
+        omie_product_id: number | null;
+        item_type: string | null;
+        fiscal_recommendations_json: string | null;
+        product_is_active: number;
+      };
+      return isSellableProduct({
+        omieProductId: r.omie_product_id,
+        itemType: r.item_type,
+        fiscalRecommendationsJson: r.fiscal_recommendations_json,
+        isActive: r.product_is_active === 1
+      });
+    })
     .map((row) => {
       const r = row as {
         product_id: string;

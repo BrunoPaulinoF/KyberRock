@@ -59,7 +59,7 @@ describe("customers", () => {
     }
   });
 
-  it("shows all products in product cache and filters finished goods only when requested", () => {
+  it("filters sellable products when requested by product selectors", () => {
     const database = createDatabase();
 
     try {

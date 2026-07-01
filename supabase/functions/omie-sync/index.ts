@@ -793,7 +793,7 @@ function computeFinished(
 }
 
 function hasClienteTag(customer: OmieCustomer): boolean {
-  return hasOmieTag(customer.tagsJson, "cliente") || getOmieTagValues(customer.tagsJson).length === 0;
+  return hasOmieTag(customer.tagsJson, "cliente");
 }
 
 function hasTransportadoraTag(customer: OmieCustomer): boolean {

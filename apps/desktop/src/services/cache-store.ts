@@ -1,4 +1,5 @@
 import type { DesktopDatabase } from "../database/sqlite.js";
+import { isSellableProduct } from "./product-classification.js";
 
 export interface CustomerCacheEntry {
   id: string;
@@ -300,52 +301,12 @@ function mapProduct(row: ProductRow): ProductCacheEntry {
 }
 
 function isFinishedGoodsProduct(product: ProductCacheEntry): boolean {
-  if (product.omieProductId === null) return false;
-
-  const candidates = [product.itemType, ...extractFiscalRecommendationValues(product.fiscalRecommendationsJson)];
-  return candidates.some((value) => matchesFinishedGoodsType(value));
-}
-
-function extractFiscalRecommendationValues(value: string | null): string[] {
-  if (!value) return [];
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    const values: string[] = [];
-    collectRecommendationValues(parsed, values);
-    return values;
-  } catch {
-    return [];
-  }
-}
-
-function collectRecommendationValues(value: unknown, output: string[]): void {
-  if (typeof value === "string" || typeof value === "number") {
-    output.push(String(value));
-    return;
-  }
-
-  if (Array.isArray(value)) {
-    for (const item of value) collectRecommendationValues(item, output);
-    return;
-  }
-
-  if (value && typeof value === "object") {
-    for (const [key, nested] of Object.entries(value)) {
-      const normalizedKey = normalizeFiscalTypeText(key);
-      if (normalizedKey.includes("tipo") && (normalizedKey.includes("produto") || normalizedKey.includes("item"))) {
-        collectRecommendationValues(nested, output);
-      }
-      if (normalizedKey === "codigo" || normalizedKey === "cod" || normalizedKey === "code") {
-        collectRecommendationValues(nested, output);
-      }
-    }
-  }
-}
-
-function matchesFinishedGoodsType(value: string | null | undefined): boolean {
-  if (!value) return false;
-  const normalized = normalizeFiscalTypeText(value);
-  return normalized === "04" || normalized.startsWith("04 ") || normalized.includes("produtos acabados") || normalized.includes("produto acabado");
+  return isSellableProduct({
+    omieProductId: product.omieProductId,
+    itemType: product.itemType,
+    fiscalRecommendationsJson: product.fiscalRecommendationsJson,
+    isActive: product.isActive
+  });
 }
 
 function normalizeFiscalTypeText(value: string): string {

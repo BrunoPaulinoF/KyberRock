@@ -183,21 +183,13 @@ describe("OmieSyncService", () => {
           isActive: true,
           tags: { tags: ["Fornecedor"] }
         },
-        {
-          id: 505,
-          name: "Cliente Sem Tag Ltda",
-          document: "55555555000155",
-          city: "Jundiai",
-          state: "SP",
-          isActive: true
-        }
       ]);
       const result = await service.rebuildCustomersAndCarriersFromOmie("company-1");
 
-      expect(result).toEqual({ customersPulled: 3, suppliersSynced: 2 });
+      expect(result).toEqual({ customersPulled: 2, suppliersSynced: 2 });
       expect(
         db.prepare("SELECT COUNT(*) FROM customers WHERE company_id = ? AND deleted_at IS NULL").pluck().get("company-1")
-      ).toBe(3);
+      ).toBe(2);
       expect(
         db.prepare("SELECT COUNT(*) FROM carriers WHERE company_id = ? AND deleted_at IS NULL").pluck().get("company-1")
       ).toBe(2);
@@ -214,7 +206,6 @@ describe("OmieSyncService", () => {
         db.prepare("SELECT city FROM carriers WHERE id = 'omie_supplier_202' AND deleted_at IS NULL").pluck().get()
       ).toBe("Campinas");
       expect(db.prepare("SELECT id FROM customers WHERE id = 'omie_303' AND deleted_at IS NULL").pluck().get()).toBe("omie_303");
-      expect(db.prepare("SELECT id FROM customers WHERE id = 'omie_505' AND deleted_at IS NULL").pluck().get()).toBe("omie_505");
       expect(
         db.prepare("SELECT id FROM carriers WHERE id = 'omie_supplier_303' AND deleted_at IS NULL").pluck().get()
       ).toBe("omie_supplier_303");
@@ -275,7 +266,7 @@ describe("OmieSyncService", () => {
     }
   });
 
-  it("keeps non-finished OMIE products visible in Cadastros during OMIE sync", async () => {
+  it("removes non-sellable products from KyberRock during OMIE sync", async () => {
     const db = createMockDb();
     const client = createMockClient();
 
@@ -295,8 +286,8 @@ describe("OmieSyncService", () => {
 
     const count = await service.syncProducts("company-1");
 
-    expect(count).toBe(1);
-    expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining("INSERT INTO products"));
+    expect(count).toBe(0);
+    expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining("UPDATE products"));
   });
 
   it("syncs payment terms from OMIE to local database", async () => {

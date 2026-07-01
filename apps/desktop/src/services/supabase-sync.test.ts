@@ -590,7 +590,7 @@ describe("supabase sync", () => {
     }
   });
 
-  it("stores OMIE products even when they are not classified as finished goods", () => {
+  it("does not store OMIE products when they are not sellable", () => {
     const database = createDatabase();
 
     try {
@@ -602,10 +602,10 @@ describe("supabase sync", () => {
         suppliers: []
       });
 
-      expect(result.productsSynced).toBe(1);
+      expect(result.productsSynced).toBe(0);
       expect(
         database.prepare("SELECT description FROM products WHERE id = 'omie_456'").pluck().get()
-      ).toBe("Servico OMIE");
+      ).toBeUndefined();
     } finally {
       database.close();
     }

@@ -123,7 +123,7 @@ export function hasTransportadoraTag(supplier: TaggedOmieEntity): boolean {
 }
 
 export function hasClienteTag(supplier: TaggedOmieEntity): boolean {
-  return hasSupplierTag(supplier, "cliente") || getSupplierTagValues(supplier).length === 0;
+  return hasSupplierTag(supplier, "cliente");
 }
 
 function hasSupplierTag(supplier: TaggedOmieEntity, expectedTag: string): boolean {

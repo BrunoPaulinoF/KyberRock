@@ -11,6 +11,7 @@ import {
 import type { DesktopDatabase } from "../database/sqlite.js";
 import type { LocalDesktopIdentity } from "./bootstrap.js";
 import { readLocalSetting, readStringLocalSetting, writeLocalSetting } from "./local-settings.js";
+import { isSellableProduct } from "./product-classification.js";
 import { listRunnableSyncJobs, markSyncJobDone, markSyncJobFailed } from "./sync-queue.js";
 
 let client: SupabaseClient | null = null;
@@ -1056,9 +1057,10 @@ export function applyOmieReferenceData(
   const suppliers = data.suppliers ?? [];
   const pagination = data.pagination;
 
+  let productsSynced = 0;
   const apply = database.transaction(() => {
     upsertOmieCustomers(database, companyId, customers);
-    upsertOmieProducts(database, companyId, products);
+    productsSynced = upsertOmieProducts(database, companyId, products);
     upsertOmiePaymentTerms(database, companyId, paymentTerms);
     upsertOmieSuppliers(database, companyId, suppliers);
   });
@@ -1141,7 +1143,7 @@ export function applyOmieReferenceData(
   return {
     customersPulled: customers.length,
     customersPushed: 0,
-    productsSynced: products.length,
+    productsSynced,
     paymentTermsSynced: paymentTerms.length,
     suppliersSynced: suppliers.length,
     errors: []
@@ -2054,7 +2056,16 @@ function upsertOmieProducts(
   database: DesktopDatabase,
   companyId: string,
   products: OmieReferenceProduct[]
-): void {
+): number {
+  const removeFromKyberRock = database.prepare(`
+    UPDATE products
+    SET is_active = 0,
+        deleted_at = datetime('now'),
+        updated_from_omie_at = datetime('now'),
+        updated_at = datetime('now')
+    WHERE company_id = ?
+      AND omie_product_id = ?
+  `);
   const upsert = database.prepare(`
     INSERT INTO products (
       id, company_id, omie_product_id, omie_integration_code, code, description,
@@ -2096,7 +2107,21 @@ function upsertOmieProducts(
       updated_at = datetime('now')
   `);
 
+  let synced = 0;
   for (const product of products) {
+    if (
+      !isSellableProduct({
+        omieProductId: product.id,
+        itemType: product.itemType ?? null,
+        fiscalRecommendations: product.fiscalRecommendations ?? null,
+        isActive: product.isActive !== false,
+        blocked: product.blocked === true
+      })
+    ) {
+      removeFromKyberRock.run(companyId, product.id);
+      continue;
+    }
+
     upsert.run(
       `omie_${product.id}`,
       companyId,
@@ -2127,7 +2152,9 @@ function upsertOmieProducts(
       product.fiscalRecommendations ? JSON.stringify(product.fiscalRecommendations) : null,
       product.isActive === false ? 0 : 1
     );
+    synced++;
   }
+  return synced;
 }
 
 function upsertOmiePaymentTerms(

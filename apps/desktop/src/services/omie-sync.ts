@@ -7,10 +7,12 @@ import {
   hasTransportadoraTag,
   type CreateCustomerInput,
   type Customer,
+  type Product,
   type UpdateCustomerInput
 } from "@kyberrock/omie-client";
 
 import type { DesktopDatabase } from "../database/sqlite.js";
+import { isSellableProduct } from "./product-classification.js";
 
 export interface OmieSyncConfig {
   appKey: string;
@@ -394,6 +396,16 @@ export class OmieSyncService {
   async syncProducts(companyId: string): Promise<number> {
     const products = await this.productsService.listAll();
 
+    const removeFromKyberRock = this.db.prepare(`
+      UPDATE products
+      SET is_active = 0,
+          deleted_at = datetime('now'),
+          updated_from_omie_at = datetime('now'),
+          updated_at = datetime('now')
+      WHERE company_id = ?
+        AND omie_product_id = ?
+    `);
+
     const insert = this.db.prepare(`
       INSERT INTO products (
         id, company_id, omie_product_id, omie_integration_code, code, description,
@@ -437,6 +449,11 @@ export class OmieSyncService {
 
     let count = 0;
     for (const product of products) {
+      if (!isSellableOmieProduct(product)) {
+        removeFromKyberRock.run(companyId, product.id);
+        continue;
+      }
+
       const id = `omie_${product.id}`;
       insert.run(
         id,
@@ -675,6 +692,16 @@ export class OmieSyncService {
   private runInTransaction<T>(action: () => T): T {
     return this.db.transaction(action)();
   }
+}
+
+function isSellableOmieProduct(product: Product): boolean {
+  return isSellableProduct({
+    omieProductId: product.id,
+    itemType: product.itemType ?? null,
+    fiscalRecommendations: product.fiscalRecommendations ?? null,
+    isActive: product.isActive !== false,
+    blocked: product.blocked === true
+  });
 }
 
 function normalizeDocument(doc: string): string {

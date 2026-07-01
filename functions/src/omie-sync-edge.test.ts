@@ -33,11 +33,10 @@ describe("omie-sync Edge Function", () => {
     expect(source).toContain("return emptyPage<OmiePaymentTerm>(page)");
   });
 
-  it("classifies untagged OMIE records as customers in the cloud path", () => {
+  it("classifies OMIE customers strictly by tag in the cloud path", () => {
     const source = readFileSync(sourcePath, "utf8");
 
-    expect(source).toContain(
-      'hasOmieTag(customer.tagsJson, "cliente") || getOmieTagValues(customer.tagsJson).length === 0'
-    );
+    expect(source).toContain('return hasOmieTag(customer.tagsJson, "cliente");');
+    expect(source).not.toContain('getOmieTagValues(customer.tagsJson).length === 0');
   });
 });

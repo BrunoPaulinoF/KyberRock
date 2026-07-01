@@ -2418,6 +2418,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       title="Produtos (OMIE)"
                       displayField="description"
                       subField="code"
+                      productFiscalType="finished_goods"
                     />
                   ) : null}
                   {registrationsTab === "payment_terms" ? (
@@ -7510,13 +7511,15 @@ function OmieViewer({
   entityType,
   title,
   displayField,
-  subField
+  subField,
+  productFiscalType
 }: {
   desktopApi: KyberRockDesktopApi;
   entityType: "product" | "payment_term";
   title: string;
   displayField: string;
   subField: string;
+  productFiscalType?: "finished_goods";
 }) {
   const pageSize = entityType === "product" ? 50 : 200;
   const [items, setItems] = useState<Array<Record<string, unknown>>>([]);
@@ -7536,6 +7539,7 @@ function OmieViewer({
     const result = await desktopApi.queryCache({
       entityType: entityType as unknown as "product" | "payment_term",
       search: search || undefined,
+      productFiscalType,
       limit: pageSize,
       offset: page * pageSize
     });

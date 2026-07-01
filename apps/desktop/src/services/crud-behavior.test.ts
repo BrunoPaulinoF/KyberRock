@@ -104,6 +104,27 @@ describe("desktop cadastro CRUD behavior", () => {
       database.close();
     }
   });
+
+  it("lists default prices only for sellable products", () => {
+    const database = createDatabase();
+
+    try {
+      insertProduct(database);
+      database
+        .prepare(
+          `INSERT INTO products (
+            id, company_id, omie_product_id, code, description, unit, item_type, created_at, updated_at
+          ) VALUES ('raw-material-1', 'company-1', 202, 'MP001', 'Materia Prima', 'UN', '99', datetime('now'), datetime('now'))`
+        )
+        .run();
+
+      const summaries = listProductDefaultPriceSummaries(database, "company-1");
+
+      expect(summaries.map((summary) => summary.productId)).toEqual(["product-1"]);
+    } finally {
+      database.close();
+    }
+  });
 });
 
 function createDatabase(): DesktopDatabase {
