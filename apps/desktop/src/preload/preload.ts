@@ -64,8 +64,7 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:create-report-recipient", input),
   updateReportRecipient: (id: string, input: unknown) =>
     ipcRenderer.invoke("desktop:update-report-recipient", id, input),
-  deleteReportRecipient: (id: string) =>
-    ipcRenderer.invoke("desktop:delete-report-recipient", id),
+  deleteReportRecipient: (id: string) => ipcRenderer.invoke("desktop:delete-report-recipient", id),
   sendTestEmail: (to: string) => ipcRenderer.invoke("desktop:send-test-email", to),
   sendDailyReportEmail: (email: string, date: string) =>
     ipcRenderer.invoke("desktop:send-daily-report-email", email, date),
@@ -87,6 +86,8 @@ const desktopApi = {
   productDefaultPricesList: () => ipcRenderer.invoke("desktop:product-default-prices-list"),
   productDefaultPricesUpsert: (input: unknown) =>
     ipcRenderer.invoke("desktop:product-default-prices-upsert", input),
+  productDefaultPricesRemove: (productId: string) =>
+    ipcRenderer.invoke("desktop:product-default-prices-remove", productId),
   customerSpecialPricesList: (customerId: string) =>
     ipcRenderer.invoke("desktop:customer-special-prices-list", customerId),
   customerSpecialPricesSet: (input: unknown) =>
@@ -169,22 +170,27 @@ const desktopApi = {
   scaleDisconnect: () => ipcRenderer.invoke("desktop:scale-disconnect"),
   scaleRead: () => ipcRenderer.invoke("desktop:scale-read"),
   scaleReadSampled: () => ipcRenderer.invoke("desktop:scale-read-sampled"),
-  scaleCaptureStable: (options: unknown) => ipcRenderer.invoke("desktop:scale-capture-stable", options),
+  scaleCaptureStable: (options: unknown) =>
+    ipcRenderer.invoke("desktop:scale-capture-stable", options),
   scaleDiscover: () => ipcRenderer.invoke("desktop:scale-discover"),
   scaleGetStatus: () => ipcRenderer.invoke("desktop:scale-get-status"),
   scaleGetConfig: () => ipcRenderer.invoke("desktop:scale-get-config"),
   scaleSaveConfig: (input: unknown) => ipcRenderer.invoke("desktop:scale-save-config", input),
-  virtualScaleSetWeight: (weightKg: unknown) => ipcRenderer.invoke("desktop:virtual-scale-set-weight", weightKg),
+  virtualScaleSetWeight: (weightKg: unknown) =>
+    ipcRenderer.invoke("desktop:virtual-scale-set-weight", weightKg),
   virtualScaleConnect: () => ipcRenderer.invoke("desktop:virtual-scale-connect"),
-  verifyPriceChangePassword: (password: string) => ipcRenderer.invoke("desktop:verify-price-password", password),
+  verifyPriceChangePassword: (password: string) =>
+    ipcRenderer.invoke("desktop:verify-price-password", password),
   omieConfig: () => ipcRenderer.invoke("desktop:omie-config"),
   lookupCep: (cep: string) => ipcRenderer.invoke("desktop:lookup-cep", cep),
   omieSync: () => ipcRenderer.invoke("desktop:omie-sync"),
   syncOmieDirect: (appKey: string, appSecret: string) =>
     ipcRenderer.invoke("desktop:sync-omie-direct", appKey, appSecret),
-  syncOmieMasterData: (options?: unknown) => ipcRenderer.invoke("desktop:sync-omie-master", options),
+  syncOmieMasterData: (options?: unknown) =>
+    ipcRenderer.invoke("desktop:sync-omie-master", options),
   getLastOmieSyncRun: () => ipcRenderer.invoke("desktop:get-last-omie-sync-run"),
-  getOmieSyncEntitiesByRun: (runId: string) => ipcRenderer.invoke("desktop:get-omie-sync-entities", runId),
+  getOmieSyncEntitiesByRun: (runId: string) =>
+    ipcRenderer.invoke("desktop:get-omie-sync-entities", runId),
   resetOmieMaster: () => ipcRenderer.invoke("desktop:reset-omie-master"),
   startOmieDataEntryLoop: () => ipcRenderer.invoke("desktop:omie-data-entry-loop"),
   getOmieLoopStatus: () => ipcRenderer.invoke("desktop:omie-loop-status"),

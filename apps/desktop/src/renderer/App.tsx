@@ -83,7 +83,7 @@ export interface AppProps {
   initialStatus?: DesktopStatusSnapshot | null;
 }
 
-interface WeighingFormState {
+export interface WeighingFormState {
   operationType: OperationType;
   vehicleId: string;
   carrierId: string;
@@ -201,9 +201,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [receiptLogoDataUrl, setReceiptLogoDataUrl] = useState<string | null>(null);
   const [receiptLogoWidthMm, setReceiptLogoWidthMm] = useState("24");
   const [receiptLogoHeightMm, setReceiptLogoHeightMm] = useState("16");
-  const [receiptLogoFit, setReceiptLogoFit] = useState<PrintProfileSummary["receiptLogo"]["fit"]>(
-    "contain"
-  );
+  const [receiptLogoFit, setReceiptLogoFit] =
+    useState<PrintProfileSummary["receiptLogo"]["fit"]>("contain");
   const [receiptTemplateConfig, setReceiptTemplateConfig] = useState<ReceiptTemplateConfig>({
     ...DEFAULT_RECEIPT_TEMPLATE_CONFIG
   });
@@ -256,8 +255,11 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [registrationsTab, setRegistrationsTab] = useState<RegistrationsTab>("customers");
   const [closingOperation, setClosingOperation] = useState<WeighingOperationSummary | null>(null);
   const [cancelOperationId, setCancelOperationId] = useState<string | null>(null);
-  const [changeProductOperation, setChangeProductOperation] = useState<WeighingOperationSummary | null>(null);
-  const [changeProductOptions, setChangeProductOptions] = useState<Array<{ id: string; description: string }>>([]);
+  const [changeProductOperation, setChangeProductOperation] =
+    useState<WeighingOperationSummary | null>(null);
+  const [changeProductOptions, setChangeProductOptions] = useState<
+    Array<{ id: string; description: string }>
+  >([]);
   const [changeProductLoading, setChangeProductLoading] = useState(false);
   const [fiscalCloseProgress, setFiscalCloseProgress] = useState<FiscalCloseProgress | null>(null);
   const [retryingFiscalOperationId, setRetryingFiscalOperationId] = useState<string | null>(null);
@@ -428,7 +430,14 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [showUpdateModal, showLogsModal, showSettings, closingOperation, cancelOperationId, changeProductOperation]);
+  }, [
+    showUpdateModal,
+    showLogsModal,
+    showSettings,
+    closingOperation,
+    cancelOperationId,
+    changeProductOperation
+  ]);
 
   useEffect(() => {
     if (!desktopApi) {
@@ -1042,7 +1051,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       // Trigger a full sync after reset
       const syncResult = await desktopApi.omieSync();
       const parts: string[] = [];
-      if (syncResult.customersPushed > 0) parts.push(`${syncResult.customersPushed} clientes enviados`);
+      if (syncResult.customersPushed > 0)
+        parts.push(`${syncResult.customersPushed} clientes enviados`);
       if (syncResult.customersPushFailed > 0)
         parts.push(`${syncResult.customersPushFailed} clientes com falha`);
       parts.push(
@@ -1059,7 +1069,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       const summary = `OMIE re-sync: ${parts.join(" | ")}`;
       setMessage(summary);
       const hasFailures =
-        syncResult.errors.length > 0 || syncResult.ordersFailed > 0 || syncResult.customersPushFailed > 0;
+        syncResult.errors.length > 0 ||
+        syncResult.ordersFailed > 0 ||
+        syncResult.customersPushFailed > 0;
       setOmieConnectionFeedback({
         status: hasFailures ? "warning" : "success",
         message: hasFailures
@@ -1105,7 +1117,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         carrierId: form.customerOwnTransport ? undefined : form.carrierId || undefined,
         driverId: form.driverId,
         productId: form.productId,
-        paymentTermId: form.paymentMode === "registered" ? form.paymentTermId || undefined : undefined,
+        paymentTermId:
+          form.paymentMode === "registered" ? form.paymentTermId || undefined : undefined,
         manualInstallments,
         manualDownPaymentCents:
           form.paymentMode === "manual" && form.manualDownPaymentEnabled
@@ -1308,7 +1321,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       return;
     }
 
-    if (printerType === "network" && (!Number.isInteger(networkPort) || networkPort < 1 || networkPort > 65535)) {
+    if (
+      printerType === "network" &&
+      (!Number.isInteger(networkPort) || networkPort < 1 || networkPort > 65535)
+    ) {
       setMessage("Informe uma porta TCP valida para a impressora de rede.");
       return;
     }
@@ -1433,7 +1449,11 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     setChangeProductOperation(operation);
     setChangeProductLoading(true);
     try {
-      const result = await desktopApi.queryCache({ entityType: "product", activeOnly: true, limit: 500 });
+      const result = await desktopApi.queryCache({
+        entityType: "product",
+        activeOnly: true,
+        limit: 500
+      });
       setChangeProductOptions(
         (result.rows as Array<{ id: string; description: string }>)
           .filter((p) => p.id !== operation.id)
@@ -2226,10 +2246,21 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     <br />
                     Produto atual: {changeProductOperation.productDescription}
                   </p>
-                  <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontWeight: 700, fontSize: "13px" }}>
+                  <label
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "6px",
+                      fontWeight: 700,
+                      fontSize: "13px"
+                    }}
+                  >
                     Novo produto
                     <select
-                      value={changeProductOptions.find((p) => p.id === changeProductOperation.id)?.id ?? ""}
+                      value={
+                        changeProductOptions.find((p) => p.id === changeProductOperation.id)?.id ??
+                        ""
+                      }
                       onChange={(e) => {
                         setChangeProductOperation(null);
                         void handleConfirmChangeProduct(e.target.value);
@@ -2245,7 +2276,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       }}
                     >
                       <option value="">
-                        {changeProductLoading ? "Carregando produtos..." : "Selecione o novo produto"}
+                        {changeProductLoading
+                          ? "Carregando produtos..."
+                          : "Selecione o novo produto"}
                       </option>
                       {changeProductOptions.map((product) => (
                         <option key={product.id} value={product.id}>
@@ -2400,7 +2433,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                         </select>
                       </label>
                       {printers.length === 0 ? (
-                        <p style={styles.errorMessage}>Nenhuma impressora instalada foi encontrada.</p>
+                        <p style={styles.errorMessage}>
+                          Nenhuma impressora instalada foi encontrada.
+                        </p>
                       ) : null}
                     </>
                   ) : (
@@ -2492,7 +2527,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                         Sem logo configurada. O cupom usara o nome da unidade no topo.
                       </p>
                     )}
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "10px" }}>
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                        gap: "10px"
+                      }}
+                    >
                       <label style={styles.fieldLabel}>
                         Largura da logo (mm)
                         <input
@@ -2579,7 +2620,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                                 type="checkbox"
                                 checked={receiptTemplateConfig[option.key]}
                                 onChange={(event) =>
-                                  updateReceiptTemplateConfig({ [option.key]: event.target.checked })
+                                  updateReceiptTemplateConfig({
+                                    [option.key]: event.target.checked
+                                  })
                                 }
                               />
                               {option.label}
@@ -2601,12 +2644,15 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       </>
                     ) : (
                       <p style={styles.muted}>
-                        O modelo padrao preserva o layout atual do cupom, incluindo pesos, horarios e valores.
+                        O modelo padrao preserva o layout atual do cupom, incluindo pesos, horarios
+                        e valores.
                       </p>
                     )}
                     <button
                       type="button"
-                      onClick={() => setReceiptTemplateConfig({ ...DEFAULT_RECEIPT_TEMPLATE_CONFIG })}
+                      onClick={() =>
+                        setReceiptTemplateConfig({ ...DEFAULT_RECEIPT_TEMPLATE_CONFIG })
+                      }
                       style={styles.secondaryButton}
                     >
                       Restaurar modelo padrao
@@ -2637,9 +2683,12 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     <p>
                       {printProfiles[0].printerType === "network"
                         ? `${printProfiles[0].networkHost}:${printProfiles[0].networkPort ?? 9100}`
-                        : printProfiles[0].windowsPrinterName} - {printProfiles[0].paperWidthMm} mm
+                        : printProfiles[0].windowsPrinterName}{" "}
+                      - {printProfiles[0].paperWidthMm} mm
                       {` - ${printProfiles[0].copies} vias`}
-                      {printProfiles[0].templateConfig.mode === "custom" ? " - modelo personalizado" : ""}
+                      {printProfiles[0].templateConfig.mode === "custom"
+                        ? " - modelo personalizado"
+                        : ""}
                     </p>
                   )}
                 </article>
@@ -2764,56 +2813,64 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                               ) : null}
                             </div>
                           ) : null}
-                           <div style={{ marginTop: "12px" }}>
-                              <button
-                                type="button"
-                                onClick={handleSyncOmie}
-                                disabled={omieSyncing || omieResetting}
-                                style={{
-                                  ...styles.primaryButton,
-                                  opacity: omieSyncing || omieResetting ? 0.6 : 1,
-                                  cursor: omieSyncing || omieResetting ? "not-allowed" : "pointer"
-                                }}
-                              >
-                                {omieSyncing ? "Sincronizando..." : "Sincronizar OMIE (atualizar dados)"}
-                              </button>
-                              <HelpTooltip content="Busca novos clientes e transportadoras do OMIE e atualiza os existentes sem apagar dados locais." placement="top" />
-                            </div>
-                            <div style={{ marginTop: "12px" }}>
-                              <p style={{ ...styles.muted, fontSize: "12px", marginBottom: "8px" }}>
-                                Apaga todos os clientes e transportadoras locais e baixa tudo novamente do OMIE.
-                              </p>
-                             <button
-                               type="button"
-                               onClick={handleResetOmieMaster}
-                               disabled={omieResetting || omieSyncing}
-                               style={{
-                                 ...styles.dangerButton,
-                                 opacity: omieResetting || omieSyncing ? 0.6 : 1,
-                                 cursor: omieResetting || omieSyncing ? "not-allowed" : "pointer"
-                               }}
-                             >
-                               {omieResetting ? "Limpando e sincronizando..." : "Limpar tudo e Re-sincronizar OMIE"}
-                             </button>
-                             <HelpTooltip
-                               content="APAGA todos os clientes e transportadoras locais e rebaixa tudo do OMIE. Use com cuidado!"
-                               placement="top"
-                             />
-                            </div>
-                          </>
-                        ) : (
-                          <p style={styles.muted}>
-                            Cadastre o App Key e App Secret OMIE no painel administrativo e aguarde a
-                            proxima validacao online do desktop.
-                          </p>
-                        )}
-                      </>
-                    ) : (
-                      <p style={{ color: "#64748b" }}>Carregando status OMIE...</p>
-                    )}
-                  </article>
-                </section>
-              ) : null}
+                          <div style={{ marginTop: "12px" }}>
+                            <button
+                              type="button"
+                              onClick={handleSyncOmie}
+                              disabled={omieSyncing || omieResetting}
+                              style={{
+                                ...styles.primaryButton,
+                                opacity: omieSyncing || omieResetting ? 0.6 : 1,
+                                cursor: omieSyncing || omieResetting ? "not-allowed" : "pointer"
+                              }}
+                            >
+                              {omieSyncing
+                                ? "Sincronizando..."
+                                : "Sincronizar OMIE (atualizar dados)"}
+                            </button>
+                            <HelpTooltip
+                              content="Busca novos clientes e transportadoras do OMIE e atualiza os existentes sem apagar dados locais."
+                              placement="top"
+                            />
+                          </div>
+                          <div style={{ marginTop: "12px" }}>
+                            <p style={{ ...styles.muted, fontSize: "12px", marginBottom: "8px" }}>
+                              Apaga todos os clientes e transportadoras locais e baixa tudo
+                              novamente do OMIE.
+                            </p>
+                            <button
+                              type="button"
+                              onClick={handleResetOmieMaster}
+                              disabled={omieResetting || omieSyncing}
+                              style={{
+                                ...styles.dangerButton,
+                                opacity: omieResetting || omieSyncing ? 0.6 : 1,
+                                cursor: omieResetting || omieSyncing ? "not-allowed" : "pointer"
+                              }}
+                            >
+                              {omieResetting
+                                ? "Limpando e sincronizando..."
+                                : "Limpar tudo e Re-sincronizar OMIE"}
+                            </button>
+                            <HelpTooltip
+                              content="APAGA todos os clientes e transportadoras locais e rebaixa tudo do OMIE. Use com cuidado!"
+                              placement="top"
+                            />
+                          </div>
+                        </>
+                      ) : (
+                        <p style={styles.muted}>
+                          Cadastre o App Key e App Secret OMIE no painel administrativo e aguarde a
+                          proxima validacao online do desktop.
+                        </p>
+                      )}
+                    </>
+                  ) : (
+                    <p style={{ color: "#64748b" }}>Carregando status OMIE...</p>
+                  )}
+                </article>
+              </section>
+            ) : null}
             {activeView === "insights" ? (
               <InsightsView
                 desktopApi={desktopApi}
@@ -3213,7 +3270,7 @@ function validateWeighingForm(form: WeighingFormState): string | null {
       return "Informe o valor de entrada.";
     }
   }
-  if (form.freightEnabled) {
+  if (form.freightEnabled && !form.customerOwnTransport) {
     if (form.freightBaseValueCents === null && form.freightFixedValueCents === null) {
       return "Informe o valor do frete.";
     }
@@ -3227,8 +3284,8 @@ function validateWeighingForm(form: WeighingFormState): string | null {
   return null;
 }
 
-function buildFreightInput(form: WeighingFormState): OperationFreightInput | null {
-  if (!form.freightEnabled) return null;
+export function buildFreightInput(form: WeighingFormState): OperationFreightInput | null {
+  if (!form.freightEnabled || form.customerOwnTransport) return null;
   const distanceKm = parsePositiveNumber(form.freightDistanceKm);
   return {
     payer: form.freightPayer,
@@ -3244,6 +3301,37 @@ function buildFreightInput(form: WeighingFormState): OperationFreightInput | nul
       unit: "ton"
     }
   };
+}
+
+export function shouldLinkCreatedDriverToCarrier(
+  form: Pick<WeighingFormState, "carrierId" | "customerOwnTransport" | "driverIsIndependent">,
+  createdDriverIsIndependent: boolean
+): string | null {
+  if (
+    createdDriverIsIndependent ||
+    form.driverIsIndependent ||
+    form.customerOwnTransport ||
+    !form.carrierId
+  ) {
+    return null;
+  }
+  return form.carrierId;
+}
+
+export function getDriverFilterIds(
+  form: Pick<WeighingFormState, "customerOwnTransport" | "driverIsIndependent">,
+  availableDriverIds: string[] | undefined,
+  independentDriverIds: string[] | undefined
+): string[] | undefined {
+  if (form.customerOwnTransport) return undefined;
+  if (form.driverIsIndependent) return independentDriverIds ?? [];
+  return availableDriverIds;
+}
+
+export function isTransportReady(
+  form: Pick<WeighingFormState, "carrierId" | "customerOwnTransport" | "driverIsIndependent">
+): boolean {
+  return form.customerOwnTransport || form.driverIsIndependent || Boolean(form.carrierId);
 }
 
 function parsePositiveNumber(value: string): number | null {
@@ -3325,9 +3413,7 @@ function CacheSelect({
           raw: item
         }));
         setOptions(
-          filterIds !== undefined
-            ? allOptions.filter((o) => filterIds.includes(o.id))
-            : allOptions
+          filterIds !== undefined ? allOptions.filter((o) => filterIds.includes(o.id)) : allOptions
         );
       } catch {
         setOptions([]);
@@ -3596,6 +3682,7 @@ function WeighingForm({
   const [availableCarrierIds, setAvailableCarrierIds] = useState<string[] | undefined>(undefined);
   const [availableVehicleIds, setAvailableVehicleIds] = useState<string[] | undefined>(undefined);
   const [availableDriverIds, setAvailableDriverIds] = useState<string[] | undefined>(undefined);
+  const [independentDriverIds, setIndependentDriverIds] = useState<string[] | undefined>(undefined);
 
   // Buscar transportadoras vinculadas ao cliente
   useEffect(() => {
@@ -3616,7 +3703,7 @@ function WeighingForm({
 
   useEffect(() => {
     async function load() {
-      if (!desktopApi || !form.carrierId || form.customerOwnTransport) {
+      if (!desktopApi || !form.carrierId || form.customerOwnTransport || form.driverIsIndependent) {
         setAvailableVehicleIds(undefined);
         return;
       }
@@ -3628,7 +3715,13 @@ function WeighingForm({
       }
     }
     load();
-  }, [desktopApi, form.carrierId, form.customerOwnTransport, vehicleRefreshKey]);
+  }, [
+    desktopApi,
+    form.carrierId,
+    form.customerOwnTransport,
+    form.driverIsIndependent,
+    vehicleRefreshKey
+  ]);
 
   // Buscar motoristas vinculados a transportadora + independentes
   useEffect(() => {
@@ -3640,8 +3733,11 @@ function WeighingForm({
       try {
         const independent = await desktopApi.listIndependentDrivers();
         const independentIds = independent.map((d) => d.id);
+        setIndependentDriverIds(independentIds);
 
-        if (form.carrierId) {
+        if (form.driverIsIndependent) {
+          setAvailableDriverIds(independentIds);
+        } else if (form.carrierId) {
           const linked = await desktopApi.listDriversByCarrier(form.carrierId);
           const linkedIds = linked.map((d) => d.id);
           setAvailableDriverIds([...new Set([...linkedIds, ...independentIds])]);
@@ -3650,25 +3746,25 @@ function WeighingForm({
         }
       } catch {
         setAvailableDriverIds(undefined);
+        setIndependentDriverIds(undefined);
       }
     }
     load();
-  }, [desktopApi, form.carrierId]);
+  }, [desktopApi, form.carrierId, form.driverIsIndependent, driverRefreshKey]);
 
   // Quando motorista muda, verificar se tem 1 transportadora e preencher
   useEffect(() => {
     async function load() {
       if (!desktopApi || !form.driverId) {
-        setForm((prev) => ({ ...prev, driverIsIndependent: false }));
         return;
       }
       try {
         const carriers = await desktopApi.listCarriersByDriver(form.driverId);
-        const driverData = await desktopApi.queryCache({ entityType: "driver", limit: 1 });
+        const driverData = await desktopApi.queryCache({ entityType: "driver", limit: 200 });
         const driver = (driverData.rows as Array<Record<string, unknown>>).find(
           (d) => d.id === form.driverId
         );
-        const isIndependent = Boolean(driver?.is_independent);
+        const isIndependent = Boolean(driver?.isIndependent);
         setForm((prev) => ({ ...prev, driverIsIndependent: isIndependent }));
 
         if (carriers.length === 1 && !isIndependent) {
@@ -3845,7 +3941,7 @@ function WeighingForm({
   }, [desktopApi, form.customerId, form.productId]);
 
   const manualPayment = form.paymentMode === "manual";
-  const transportReady = form.customerOwnTransport || Boolean(form.carrierId);
+  const transportReady = isTransportReady(form);
 
   return (
     <section style={styles.entryShell}>
@@ -3853,9 +3949,7 @@ function WeighingForm({
         <div>
           <p style={styles.kicker}>Operacao de balanca</p>
           <h2 style={{ ...styles.title, marginBottom: "4px" }}>Nova entrada</h2>
-          <p style={styles.subtitle}>
-            Use Tab para avancar e Ctrl+Enter para capturar.
-          </p>
+          <p style={styles.subtitle}>Use Tab para avancar e Ctrl+Enter para capturar.</p>
         </div>
         <div style={{ display: "flex", gap: "16px", alignItems: "stretch" }}>
           <div style={{ ...styles.liveWeightCard, flex: 1 }}>
@@ -4050,7 +4144,8 @@ function WeighingForm({
                 customerId: id,
                 paymentTermId:
                   prev.paymentMode === "registered" &&
-                  typeof item?.defaultPaymentTermId === "string" && item.defaultPaymentTermId
+                  typeof item?.defaultPaymentTermId === "string" &&
+                  item.defaultPaymentTermId
                     ? item.defaultPaymentTermId
                     : prev.paymentTermId
               }))
@@ -4094,7 +4189,9 @@ function WeighingForm({
                   paymentMode: event.target.checked ? "manual" : "registered",
                   paymentTermId: event.target.checked ? "" : prev.paymentTermId,
                   manualInstallments: event.target.checked ? prev.manualInstallments : "",
-                  manualDownPaymentEnabled: event.target.checked ? prev.manualDownPaymentEnabled : false,
+                  manualDownPaymentEnabled: event.target.checked
+                    ? prev.manualDownPaymentEnabled
+                    : false,
                   manualDownPaymentCents: event.target.checked ? prev.manualDownPaymentCents : null
                 }))
               }
@@ -4106,7 +4203,9 @@ function WeighingForm({
               <NumberInput
                 label="Parcelas"
                 value={form.manualInstallments}
-                onChange={(manualInstallments) => setForm((prev) => ({ ...prev, manualInstallments }))}
+                onChange={(manualInstallments) =>
+                  setForm((prev) => ({ ...prev, manualInstallments }))
+                }
                 placeholder="Ex: 3"
                 maxLength={2}
                 required
@@ -4119,7 +4218,9 @@ function WeighingForm({
                     setForm((prev) => ({
                       ...prev,
                       manualDownPaymentEnabled: event.target.checked,
-                      manualDownPaymentCents: event.target.checked ? prev.manualDownPaymentCents : null
+                      manualDownPaymentCents: event.target.checked
+                        ? prev.manualDownPaymentCents
+                        : null
                     }))
                   }
                 />
@@ -4153,14 +4254,39 @@ function WeighingForm({
                 setForm((prev) => ({
                   ...prev,
                   customerOwnTransport: event.target.checked,
+                  driverIsIndependent: event.target.checked ? false : prev.driverIsIndependent,
                   carrierId: "",
                   vehicleId: "",
+                  driverId: "",
+                  freightEnabled: event.target.checked ? false : prev.freightEnabled,
+                  deductFreightFromCredit: event.target.checked
+                    ? false
+                    : prev.deductFreightFromCredit
+                }))
+              }
+            />
+            <span>Transportadora propria do cliente</span>
+          </label>
+          <label style={styles.compactCheckboxCard}>
+            <input
+              type="checkbox"
+              checked={form.driverIsIndependent}
+              onChange={(event) =>
+                setForm((prev) => ({
+                  ...prev,
+                  driverIsIndependent: event.target.checked,
+                  customerOwnTransport: event.target.checked ? false : prev.customerOwnTransport,
+                  carrierId: event.target.checked ? "" : prev.carrierId,
                   driverId: ""
                 }))
               }
             />
-            Transportadora propria do cliente
+            <span>Motorista independente</span>
           </label>
+          <p style={{ ...styles.helperText, margin: "-2px 0 8px 0" }}>
+            Marque quando o motorista nao pertence a uma transportadora. A transportadora fica
+            bloqueada e a lista mostra somente motoristas independentes.
+          </p>
           <CacheSelect
             label="Transportadora"
             entityType="carrier"
@@ -4170,6 +4296,7 @@ function WeighingForm({
                 ...prev,
                 carrierId: id,
                 customerOwnTransport: false,
+                driverIsIndependent: false,
                 vehicleId: "",
                 driverId: ""
               }))
@@ -4178,7 +4305,7 @@ function WeighingForm({
             desktopApi={desktopApi}
             refreshKey={carrierRefreshKey}
             filterIds={availableCarrierIds}
-            disabled={form.customerOwnTransport}
+            disabled={form.customerOwnTransport || form.driverIsIndependent}
           />
           {form.customerId && availableCarrierIds && availableCarrierIds.length === 0 ? (
             <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" }}>
@@ -4214,10 +4341,24 @@ function WeighingForm({
               onCreateNew={() => setShowDriverModal(true)}
               desktopApi={desktopApi}
               refreshKey={driverRefreshKey}
-              filterIds={form.customerOwnTransport ? undefined : availableDriverIds}
+              filterIds={getDriverFilterIds(form, availableDriverIds, independentDriverIds)}
               disabled={!transportReady}
             />
           </div>
+          {form.driverIsIndependent && independentDriverIds && independentDriverIds.length === 0 ? (
+            <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" }}>
+              <p style={{ ...styles.helperText, color: "#d97706", margin: 0 }}>
+                Nenhum motorista independente cadastrado.
+              </p>
+              <button
+                type="button"
+                onClick={() => setShowDriverModal(true)}
+                style={{ ...styles.secondaryButton, fontSize: "11px", padding: "4px 8px" }}
+              >
+                + Cadastrar motorista independente
+              </button>
+            </div>
+          ) : null}
           {form.carrierId && availableDriverIds && availableDriverIds.length === 0 ? (
             <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" }}>
               <p style={{ ...styles.helperText, color: "#d97706", margin: 0 }}>
@@ -4245,14 +4386,15 @@ function WeighingForm({
             <label style={styles.checkboxLabel}>
               <input
                 type="checkbox"
-                checked={form.freightEnabled}
+                checked={form.freightEnabled && !form.customerOwnTransport}
+                disabled={form.customerOwnTransport}
                 onChange={(event) =>
                   setForm((prev) => ({ ...prev, freightEnabled: event.target.checked }))
                 }
               />
               Operacao com frete
             </label>
-            {form.freightEnabled ? (
+            {form.freightEnabled && !form.customerOwnTransport ? (
               <div style={styles.freightCompactGrid}>
                 <label style={styles.fieldLabel}>
                   Responsavel
@@ -4371,7 +4513,11 @@ function WeighingForm({
               {isCapturing ? "Capturando..." : "Capturar peso"}
             </button>
             <HelpTooltip content={TIPS.form.start} placement="top" shortcut="Ctrl+Enter" />
-            <button type="button" onClick={onCancel} style={{ ...styles.secondaryButton, height: "40px" }}>
+            <button
+              type="button"
+              onClick={onCancel}
+              style={{ ...styles.secondaryButton, height: "40px" }}
+            >
               Limpar e voltar
             </button>
           </div>
@@ -4397,9 +4543,21 @@ function WeighingForm({
         <QuickDriverModal
           desktopApi={desktopApi}
           onClose={() => setShowDriverModal(false)}
-          onCreated={(id) => {
+          defaultIsIndependent={form.driverIsIndependent}
+          onCreated={async (id, options) => {
+            const carrierId = shouldLinkCreatedDriverToCarrier(
+              form,
+              options?.isIndependent ?? false
+            );
             setForm((prev) => ({ ...prev, driverId: id }));
             setShowDriverModal(false);
+            if (desktopApi && carrierId) {
+              try {
+                await desktopApi.linkDriverCarrier(id, carrierId);
+              } catch {
+                /* ignore */
+              }
+            }
             setDriverRefreshKey((k) => k + 1);
           }}
         />
@@ -4482,6 +4640,11 @@ interface QuickModalProps {
   onCreated: (id: string) => void;
 }
 
+interface QuickDriverModalProps extends Omit<QuickModalProps, "onCreated"> {
+  defaultIsIndependent?: boolean;
+  onCreated: (id: string, options?: { isIndependent: boolean }) => void;
+}
+
 function QuickVehicleModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
   const [plateInput, setPlateInput] = useState("");
   const [description, setDescription] = useState("");
@@ -4540,11 +4703,16 @@ function QuickVehicleModal({ desktopApi, onClose, onCreated }: QuickModalProps) 
   );
 }
 
-function QuickDriverModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
+function QuickDriverModal({
+  desktopApi,
+  onClose,
+  onCreated,
+  defaultIsIndependent = false
+}: QuickDriverModalProps) {
   const [name, setName] = useState("");
   const [documentInput, setDocumentInput] = useState("");
   const [phone, setPhone] = useState("");
-  const [isIndependent, setIsIndependent] = useState(false);
+  const [isIndependent, setIsIndependent] = useState(defaultIsIndependent);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -4572,7 +4740,7 @@ function QuickDriverModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
         phone: normalizedPhone || undefined,
         isIndependent
       });
-      onCreated((result as { id: string }).id);
+      onCreated((result as { id: string }).id, { isIndependent });
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -4607,8 +4775,12 @@ function QuickDriverModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
             checked={isIndependent}
             onChange={(e) => setIsIndependent(e.target.checked)}
           />
-          Motorista independente (frete proprio)
+          Motorista independente
         </label>
+        <p style={{ ...styles.helperText, marginTop: "-4px" }}>
+          Use para motorista sem transportadora. Ele aparecera quando a opcao "Motorista
+          independente" estiver marcada na nova entrada.
+        </p>
         <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
           <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
             {saving ? "Salvando..." : "Salvar"}
@@ -5547,7 +5719,11 @@ function PriceInput({
         valueCents={valueCents}
         onChange={onChange}
         allowZero
-        hint={compact ? undefined : `Use virgula para centavos. Ex: 125,50${suffix ? ` (${suffix})` : ""}`}
+        hint={
+          compact
+            ? undefined
+            : `Use virgula para centavos. Ex: 125,50${suffix ? ` (${suffix})` : ""}`
+        }
       />
       {!compact && valueCents !== null ? (
         <span style={{ fontSize: "12px", color: "#64748b", marginTop: "2px", display: "block" }}>
@@ -6011,7 +6187,11 @@ function VehicleListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
           <div style={styles.crudFormFooter}>
             <span style={styles.muted} />
             <div style={{ display: "flex", gap: "6px" }}>
-              <button type="button" onClick={() => setShowForm(false)} style={styles.secondaryButton}>
+              <button
+                type="button"
+                onClick={() => setShowForm(false)}
+                style={styles.secondaryButton}
+              >
                 Cancelar
               </button>
               <button type="button" onClick={handleSave} style={styles.primaryButton}>
@@ -6033,16 +6213,17 @@ function VehicleListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
               gridTemplateColumns: "130px minmax(180px, 1.2fr) minmax(220px, 1.4fr) 150px"
             }}
           >
-            <span>Placa</span>
-            <span>Descricao</span>
-            <span>Transportadora</span>
-            <span style={{ textAlign: "right" }}>Acoes</span>
+            <span style={styles.crudTableHeaderCell}>Placa</span>
+            <span style={styles.crudTableHeaderCell}>Descricao</span>
+            <span style={styles.crudTableHeaderCell}>Transportadora</span>
+            <span style={{ ...styles.crudTableHeaderCell, justifyContent: "flex-end" }}>Acoes</span>
           </div>
           {vehicles.map((item) => {
             const plate = String(item.plate ?? "");
             const description = String(item.description ?? "");
             const currentCarrierId = String(item.carrier_id ?? "");
-            const carrierName = carriers.find((carrier) => carrier.id === currentCarrierId)?.name ?? "-";
+            const carrierName =
+              carriers.find((carrier) => carrier.id === currentCarrierId)?.name ?? "-";
             return (
               <div
                 key={String(item.id)}
@@ -6051,11 +6232,19 @@ function VehicleListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                   gridTemplateColumns: "130px minmax(180px, 1.2fr) minmax(220px, 1.4fr) 150px"
                 }}
               >
-                <strong>{plate || "-"}</strong>
-                <span style={styles.muted}>{description || "-"}</span>
-                <span>{carrierName}</span>
-                <div style={styles.crudActions}>
-                  <button type="button" onClick={() => openEdit(item)} style={styles.secondaryButton}>
+                <span style={{ ...styles.crudTableCell, ...styles.crudCellPrimary }}>
+                  {plate || "-"}
+                </span>
+                <span style={{ ...styles.crudTableCell, ...styles.crudCellMuted }}>
+                  {description || "-"}
+                </span>
+                <span style={styles.crudTableCell}>{carrierName}</span>
+                <div style={styles.crudTableActionsCell}>
+                  <button
+                    type="button"
+                    onClick={() => openEdit(item)}
+                    style={styles.secondaryButton}
+                  >
                     Editar
                   </button>
                   <button
@@ -6113,7 +6302,14 @@ function TransportView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
             fields={[
               { key: "name", label: "Nome", required: true },
               { key: "document", label: "CPF", required: false },
-              { key: "phone", label: "Telefone", required: false }
+              { key: "phone", label: "Telefone", required: false },
+              {
+                key: "isIndependent",
+                label: "Motorista independente",
+                required: false,
+                type: "checkbox",
+                helper: "Marque quando este motorista nao pertence a uma transportadora."
+              }
             ]}
           />
         ) : null}
@@ -6404,7 +6600,11 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
           <div style={styles.crudFormFooter}>
             <span style={styles.muted} />
             <div style={{ display: "flex", gap: "6px" }}>
-              <button type="button" onClick={() => setShowForm(false)} style={styles.secondaryButton}>
+              <button
+                type="button"
+                onClick={() => setShowForm(false)}
+                style={styles.secondaryButton}
+              >
                 Cancelar
               </button>
               <button type="button" onClick={handleSave} style={styles.primaryButton}>
@@ -6445,7 +6645,9 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
               >
                 <button
                   type="button"
-                  onClick={() => setSelectedCarrier(carrier.id === selectedCarrier ? null : carrier.id)}
+                  onClick={() =>
+                    setSelectedCarrier(carrier.id === selectedCarrier ? null : carrier.id)
+                  }
                   style={{
                     border: "none",
                     background: "transparent",
@@ -6456,7 +6658,9 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                   }}
                 >
                   <strong>{carrier.name}</strong>
-                  <span style={{ ...styles.muted, display: "block" }}>Clique para ver veiculos</span>
+                  <span style={{ ...styles.muted, display: "block" }}>
+                    Clique para ver veiculos
+                  </span>
                 </button>
                 <span style={styles.muted}>{carrier.document || "-"}</span>
                 <div style={styles.crudCellStack}>
@@ -6478,7 +6682,11 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                   {carrier.source === "omie" ? "OMIE" : "LOCAL"}
                 </span>
                 <div style={styles.crudActions}>
-                  <button type="button" onClick={() => openEdit(carrier)} style={styles.secondaryButton}>
+                  <button
+                    type="button"
+                    onClick={() => openEdit(carrier)}
+                    style={styles.secondaryButton}
+                  >
                     Editar
                   </button>
                   <button
@@ -7262,27 +7470,39 @@ function OmieViewer({
           onChange={(e) => setSearch(e.target.value)}
           style={{ ...styles.input, flex: 1, minWidth: "160px" }}
         />
+        <button type="button" onClick={() => void loadItems()} style={styles.secondaryButton}>
+          Atualizar
+        </button>
       </div>
       {items.length === 0 ? (
         <p style={{ color: "#64748b" }}>
           Nenhum registro encontrado. Execute a sincronizacao OMIE.
         </p>
       ) : (
-        items.map((item) => (
+        <div style={styles.crudTable}>
           <div
-            key={String(item.id)}
-            style={{ ...styles.operationRow, borderTop: "1px solid #e2e8f0" }}
+            style={{
+              ...styles.crudTableRow,
+              ...styles.crudTableHead,
+              gridTemplateColumns: "minmax(260px, 1fr)"
+            }}
           >
-            <div>
-              <strong>{String(item[displayField] ?? "")}</strong>
-              {subField && item[subField] ? (
-                <p style={{ ...styles.muted, margin: "2px 0 0 0", fontSize: "13px" }}>
-                  {String(item[subField])}
-                </p>
-              ) : null}
-            </div>
+            <span style={styles.crudTableHeaderCell}>Registro</span>
           </div>
-        ))
+          {items.map((item) => (
+            <div
+              key={String(item.id)}
+              style={{ ...styles.crudTableRow, gridTemplateColumns: "minmax(260px, 1fr)" }}
+            >
+              <div style={styles.crudTableCell}>
+                <strong style={styles.crudCellPrimary}>{String(item[displayField] ?? "")}</strong>
+                {subField && item[subField] ? (
+                  <span style={styles.crudCellMuted}>{String(item[subField])}</span>
+                ) : null}
+              </div>
+            </div>
+          ))}
+        </div>
       )}
       <div
         style={{
@@ -7320,6 +7540,14 @@ function OmieViewer({
   );
 }
 
+interface SimpleCrudField {
+  key: string;
+  label: string;
+  required: boolean;
+  type?: "checkbox";
+  helper?: string;
+}
+
 function SimpleCrudList({
   desktopApi,
   entityType,
@@ -7329,14 +7557,15 @@ function SimpleCrudList({
   desktopApi: KyberRockDesktopApi;
   entityType: "vehicle" | "driver";
   title: string;
-  fields: Array<{ key: string; label: string; required: boolean }>;
+  fields: SimpleCrudField[];
 }) {
-  const [items, setItems] = useState<Array<Record<string, string | null>>>([]);
+  const [items, setItems] = useState<Array<Record<string, unknown>>>([]);
   const [search, setSearch] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
   const entityLabel = entityType === "vehicle" ? "Veiculo" : "Motorista";
 
   useEffect(() => {
@@ -7349,14 +7578,15 @@ function SimpleCrudList({
       search: search || undefined,
       limit: 200
     });
-    setItems(result.rows as Array<Record<string, string | null>>);
+    setItems(result.rows as Array<Record<string, unknown>>);
   }
 
   function resetForm(): void {
     const init: Record<string, string> = {};
-    for (const f of fields) init[f.key] = "";
+    for (const f of fields) init[f.key] = f.type === "checkbox" ? "false" : "";
     setFormData(init);
     setEditingId(null);
+    setFormError(null);
   }
 
   function openCreate(): void {
@@ -7364,34 +7594,48 @@ function SimpleCrudList({
     setShowForm(true);
   }
 
-  function openEdit(item: Record<string, string | null>): void {
+  function openEdit(item: Record<string, unknown>): void {
     const data: Record<string, string> = {};
-    for (const f of fields) data[f.key] = item[f.key] ?? "";
+    for (const f of fields) {
+      data[f.key] =
+        f.type === "checkbox" ? (item[f.key] ? "true" : "false") : String(item[f.key] ?? "");
+    }
     setFormData(data);
     setEditingId(item.id as string);
+    setFormError(null);
     setShowForm(true);
   }
 
   async function handleSave(): Promise<void> {
-    const requiredField = fields.find((f) => f.required && !formData[f.key].trim());
-    if (requiredField) return;
+    const requiredField = fields.find(
+      (f) => f.required && f.type !== "checkbox" && !formData[f.key].trim()
+    );
+    if (requiredField) {
+      setFormError(`Campo obrigatorio: ${requiredField.label}`);
+      return;
+    }
 
     try {
-      const input: Record<string, string> = {};
+      setFormError(null);
+      const input: Record<string, string | boolean> = {};
       for (const f of fields) {
         const raw = formData[f.key].trim();
+        if (f.type === "checkbox") {
+          input[f.key] = raw === "true";
+          continue;
+        }
         if (!raw) continue;
         if (f.key === "document") {
           const normalized = normalizeDocument(raw);
           if (!isValidDocument(normalized)) {
-            setMsg(f.label + " invalido.");
+            setFormError(f.label + " invalido.");
             return;
           }
           input[f.key] = normalized;
         } else if (f.key === "phone") {
           const normalized = normalizePhone(raw);
           if (normalized.length !== 10 && normalized.length !== 11) {
-            setMsg("Telefone invalido. Informe com DDD (11 digitos).");
+            setFormError("Telefone invalido. Informe com DDD (11 digitos).");
             return;
           }
           input[f.key] = normalized;
@@ -7419,7 +7663,7 @@ function SimpleCrudList({
       await loadItems();
       setMsg(`${entityLabel} salvo.`);
     } catch (err) {
-      setMsg(err instanceof Error ? err.message : "Erro");
+      setFormError(err instanceof Error ? err.message : "Erro");
     }
   }
 
@@ -7434,18 +7678,19 @@ function SimpleCrudList({
     setMsg("Excluido.");
   }
 
-  function displayLabel(item: Record<string, string | null>): string {
-    if (entityType === "vehicle") return item.plate ?? item.id ?? "";
-    return item.name ?? item.document ?? item.id ?? "";
+  function displayLabel(item: Record<string, unknown>): string {
+    if (entityType === "vehicle") return String(item.plate ?? item.id ?? "");
+    return String(item.name ?? item.document ?? item.id ?? "");
   }
 
-  function displaySub(item: Record<string, string | null>): string {
+  function displaySub(item: Record<string, unknown>): string {
     if (entityType === "vehicle") {
-      return item.description ? `Desc: ${item.description}` : "";
+      return item.description ? `Desc: ${String(item.description)}` : "";
     }
     const parts: string[] = [];
-    if (item.document) parts.push(`CPF: ${item.document}`);
-    if (item.phone) parts.push(item.phone);
+    if (item.isIndependent) parts.push("Independente: sem transportadora");
+    if (item.document) parts.push(`CPF: ${String(item.document)}`);
+    if (item.phone) parts.push(String(item.phone));
     return parts.join(" | ");
   }
 
@@ -7475,12 +7720,42 @@ function SimpleCrudList({
             <h3 style={styles.crudFormTitle}>
               {editingId ? `Editar ${entityLabel}` : `Novo ${entityLabel}`}
             </h3>
+            {formError ? <p style={{ ...styles.errorMessage, margin: 0 }}>{formError}</p> : null}
           </div>
           <div style={styles.crudFormGrid}>
             <section style={styles.crudFormSection}>
               <h4 style={styles.crudFormSectionTitle}>Dados principais</h4>
               {fields.map((f) => {
                 const value = formData[f.key] || "";
+                if (f.type === "checkbox") {
+                  return (
+                    <label
+                      key={f.key}
+                      style={{ ...styles.checkboxLabel, alignItems: "flex-start" }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={value === "true"}
+                        onChange={(event) =>
+                          setFormData({
+                            ...formData,
+                            [f.key]: event.target.checked ? "true" : "false"
+                          })
+                        }
+                      />
+                      <span>
+                        {f.label}
+                        {f.helper ? (
+                          <small
+                            style={{ ...styles.helperText, display: "block", marginTop: "2px" }}
+                          >
+                            {f.helper}
+                          </small>
+                        ) : null}
+                      </span>
+                    </label>
+                  );
+                }
                 if (f.key === "document") {
                   return (
                     <DocumentInput
@@ -7518,7 +7793,11 @@ function SimpleCrudList({
           <div style={styles.crudFormFooter}>
             <span style={styles.muted} />
             <div style={{ display: "flex", gap: "8px" }}>
-              <button type="button" onClick={() => setShowForm(false)} style={styles.secondaryButton}>
+              <button
+                type="button"
+                onClick={() => setShowForm(false)}
+                style={styles.secondaryButton}
+              >
                 Cancelar
               </button>
               <button type="button" onClick={handleSave} style={styles.primaryButton}>
@@ -7540,9 +7819,11 @@ function SimpleCrudList({
               gridTemplateColumns: "minmax(220px, 1.3fr) minmax(260px, 1.5fr) 150px"
             }}
           >
-            <span>{entityType === "vehicle" ? "Placa" : "Nome"}</span>
-            <span>Detalhes</span>
-            <span style={{ textAlign: "right" }}>Acoes</span>
+            <span style={styles.crudTableHeaderCell}>
+              {entityType === "vehicle" ? "Placa" : "Nome"}
+            </span>
+            <span style={styles.crudTableHeaderCell}>Detalhes</span>
+            <span style={{ ...styles.crudTableHeaderCell, justifyContent: "flex-end" }}>Acoes</span>
           </div>
           {items.map((item) => (
             <div
@@ -7552,9 +7833,13 @@ function SimpleCrudList({
                 gridTemplateColumns: "minmax(220px, 1.3fr) minmax(260px, 1.5fr) 150px"
               }}
             >
-              <strong>{displayLabel(item)}</strong>
-              <span style={styles.muted}>{displaySub(item) || "-"}</span>
-              <div style={styles.crudActions}>
+              <span style={{ ...styles.crudTableCell, ...styles.crudCellPrimary }}>
+                {displayLabel(item)}
+              </span>
+              <span style={{ ...styles.crudTableCell, ...styles.crudCellMuted }}>
+                {displaySub(item) || "-"}
+              </span>
+              <div style={styles.crudTableActionsCell}>
                 <button type="button" onClick={() => openEdit(item)} style={styles.secondaryButton}>
                   Editar
                 </button>
@@ -7588,10 +7873,11 @@ function PriceTableListView({ desktopApi }: { desktopApi: KyberRockDesktopApi })
   const [selectedProductId, setSelectedProductId] = useState("");
   const [priceReais, setPriceReais] = useState("");
   const [message, setPriceMessage] = useState<string | null>(null);
-  const [pendingDefaultPrice, setPendingDefaultPrice] = useState<{
-    productId: string;
-    unitPriceCents: number;
-  } | null>(null);
+  const [pendingDefaultPrice, setPendingDefaultPrice] = useState<
+    | { action: "save"; productId: string; unitPriceCents: number }
+    | { action: "remove"; productId: string; productDescription: string }
+    | null
+  >(null);
   const [pricePasswordError, setPricePasswordError] = useState<string | null>(null);
   const [savingDefaultPrice, setSavingDefaultPrice] = useState(false);
 
@@ -7610,7 +7896,21 @@ function PriceTableListView({ desktopApi }: { desktopApi: KyberRockDesktopApi })
     if (unitPriceCents === null) return;
 
     setPricePasswordError(null);
-    setPendingDefaultPrice({ productId: selectedProductId, unitPriceCents });
+    setPendingDefaultPrice({ action: "save", productId: selectedProductId, unitPriceCents });
+  }
+
+  function handleRemoveDefaultPrice(item: {
+    productId: string;
+    productDescription: string;
+    unitPriceCents: number | null;
+  }): void {
+    if (item.unitPriceCents === null) return;
+    setPricePasswordError(null);
+    setPendingDefaultPrice({
+      action: "remove",
+      productId: item.productId,
+      productDescription: item.productDescription
+    });
   }
 
   async function handleConfirmDefaultPrice(password: string): Promise<void> {
@@ -7623,17 +7923,22 @@ function PriceTableListView({ desktopApi }: { desktopApi: KyberRockDesktopApi })
         return;
       }
 
-      await desktopApi.productDefaultPricesUpsert({
-        productId: pendingDefaultPrice.productId,
-        unitPriceCents: pendingDefaultPrice.unitPriceCents,
-        unit: "ton"
-      });
+      if (pendingDefaultPrice.action === "save") {
+        await desktopApi.productDefaultPricesUpsert({
+          productId: pendingDefaultPrice.productId,
+          unitPriceCents: pendingDefaultPrice.unitPriceCents,
+          unit: "ton"
+        });
+        setSelectedProductId("");
+        setPriceReais("");
+        setPriceMessage("Preco padrao salvo.");
+      } else {
+        await desktopApi.productDefaultPricesRemove(pendingDefaultPrice.productId);
+        setPriceMessage("Preco padrao removido.");
+      }
       await loadPrices();
       setPendingDefaultPrice(null);
       setPricePasswordError(null);
-      setSelectedProductId("");
-      setPriceReais("");
-      setPriceMessage("Preco padrao salvo.");
     } catch (err) {
       setPricePasswordError(err instanceof Error ? err.message : "Erro ao salvar preco padrao.");
     } finally {
@@ -7691,24 +7996,61 @@ function PriceTableListView({ desktopApi }: { desktopApi: KyberRockDesktopApi })
       {items.length === 0 ? (
         <p style={{ color: "#64748b", marginBottom: "24px" }}>Nenhum produto encontrado.</p>
       ) : (
-        <div style={{ marginBottom: "24px" }}>
+        <div style={{ ...styles.crudTable, marginBottom: "24px" }}>
+          <div
+            style={{
+              ...styles.crudTableRow,
+              ...styles.crudTableHead,
+              gridTemplateColumns: "minmax(260px, 1fr) 180px 150px"
+            }}
+          >
+            <span style={styles.crudTableHeaderCell}>Produto</span>
+            <span style={{ ...styles.crudTableHeaderCell, justifyContent: "flex-end" }}>
+              Preco padrao
+            </span>
+            <span style={{ ...styles.crudTableHeaderCell, justifyContent: "flex-end" }}>Acoes</span>
+          </div>
           {items.map((item) => (
             <div
               key={item.productId}
               style={{
-                display: "flex",
-                justifyContent: "space-between",
+                ...styles.crudTableRow,
+                gridTemplateColumns: "minmax(260px, 1fr) 180px 150px",
                 alignItems: "center",
-                gap: "12px",
-                padding: "8px 0",
-                borderTop: "1px solid #e2e8f0"
+                gap: 0
               }}
             >
-              <span>
-                <strong>{item.productDescription}</strong>
-                {item.productCode ? ` (${item.productCode})` : ""}
+              <span style={styles.crudTableCell}>
+                <strong style={styles.crudCellPrimary}>{item.productDescription}</strong>
+                {item.productCode ? (
+                  <span style={styles.crudCellMuted}>{item.productCode}</span>
+                ) : null}
               </span>
-              <span style={{ fontWeight: 700 }}>{formatMoney(item.unitPriceCents)}/ton</span>
+              <span
+                style={{
+                  ...styles.crudTableCell,
+                  ...styles.crudCellPrimary,
+                  alignItems: "flex-end"
+                }}
+              >
+                {formatMoney(item.unitPriceCents)}/ton
+              </span>
+              <div style={styles.crudTableActionsCell}>
+                <button
+                  type="button"
+                  onClick={() => handleRemoveDefaultPrice(item)}
+                  disabled={item.unitPriceCents === null}
+                  style={{
+                    ...styles.secondaryButton,
+                    color: "#b91c1c",
+                    borderColor: "#fecaca",
+                    opacity: item.unitPriceCents === null ? 0.55 : 1,
+                    cursor: item.unitPriceCents === null ? "not-allowed" : "pointer"
+                  }}
+                >
+                  Remover
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -7716,6 +8058,16 @@ function PriceTableListView({ desktopApi }: { desktopApi: KyberRockDesktopApi })
 
       {pendingDefaultPrice ? (
         <PriceChangePasswordDialog
+          title={
+            pendingDefaultPrice.action === "remove"
+              ? "Confirmar remocao do preco padrao"
+              : "Confirmar alteracao de preco"
+          }
+          description={
+            pendingDefaultPrice.action === "remove"
+              ? `Digite a senha de 4 digitos para remover o preco padrao de ${pendingDefaultPrice.productDescription}.`
+              : "Digite a senha de 4 digitos para alterar precos."
+          }
           error={pricePasswordError}
           submitting={savingDefaultPrice}
           onCancel={() => {
@@ -8173,14 +8525,15 @@ const styles = {
     border: "1px solid var(--kr-border)",
     borderRadius: "14px",
     background: "var(--kr-surface)",
-    boxShadow: "var(--kr-shadow)"
+    boxShadow: "var(--kr-shadow)",
+    minHeight: 0
   },
   crudTableRow: {
     display: "grid",
-    gap: "10px",
+    gap: 0,
     alignItems: "center",
     minWidth: "720px",
-    padding: "9px 12px",
+    padding: 0,
     borderTop: "1px solid var(--kr-border)",
     fontSize: "13px",
     color: "var(--kr-text)"
@@ -8197,11 +8550,47 @@ const styles = {
     top: 0,
     zIndex: 1
   },
+  crudTableHeaderCell: {
+    padding: "8px 12px",
+    borderRight: "1px solid var(--kr-border)",
+    minHeight: "32px",
+    display: "flex",
+    alignItems: "center",
+    minWidth: 0
+  },
+  crudTableCell: {
+    padding: "8px 12px",
+    borderRight: "1px solid var(--kr-border)",
+    minHeight: "44px",
+    display: "flex",
+    flexDirection: "column" as const,
+    justifyContent: "center",
+    minWidth: 0
+  },
+  crudTableActionsCell: {
+    padding: "8px 12px",
+    borderRight: "1px solid var(--kr-border)",
+    minHeight: "44px",
+    display: "flex",
+    gap: "6px",
+    justifyContent: "flex-end",
+    alignItems: "center",
+    flexWrap: "wrap" as const,
+    minWidth: 0
+  },
   crudCellStack: {
     display: "flex",
     flexDirection: "column" as const,
     gap: "2px",
     minWidth: 0
+  },
+  crudCellPrimary: {
+    fontWeight: 700,
+    color: "var(--kr-text-strong)"
+  },
+  crudCellMuted: {
+    color: "var(--kr-muted)",
+    fontSize: "12px"
   },
   crudActions: {
     display: "flex",

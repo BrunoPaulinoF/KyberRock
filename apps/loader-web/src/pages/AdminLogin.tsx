@@ -33,110 +33,95 @@ export function AdminLogin() {
   }
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "#f8fafc"
-      }}
-    >
-      <section
-        style={{
-          background: "#fff",
-          padding: "48px",
-          borderRadius: "20px",
-          boxShadow: "0 18px 60px rgba(15, 23, 42, 0.08)",
-          maxWidth: "420px",
-          width: "100%"
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: "14px", marginBottom: "24px" }}>
-          <img
-            src="/kyberrocklogo.png"
-            alt="KyberRock"
-            style={{ width: "44px", height: "44px", objectFit: "contain" }}
-          />
+    <main className="auth-shell">
+      <section className="auth-brand-panel" aria-hidden="true">
+        <div className="auth-logo-row">
+          <span className="auth-logo-mark">
+            <img src="/kyberrocklogo.png" alt="" />
+          </span>
           <div>
-            <h1 style={{ margin: "0 0 4px 0", fontSize: "32px", lineHeight: 1 }}>KyberRock</h1>
-            <p style={{ color: "#64748b", margin: 0 }}>Portal do Administrador</p>
+            <p className="auth-kicker">Painel administrativo</p>
+            <strong className="auth-brand-name">KyberRock Admin</strong>
+          </div>
+        </div>
+        <div>
+          <p className="auth-kicker">Gestao centralizada</p>
+          <h2 className="auth-brand-title">Empresas, usuarios e licencas em uma tela mais segura.</h2>
+          <p className="auth-brand-copy">
+            Interface administrativa com foco em leitura, decisao rapida e menor risco operacional.
+          </p>
+        </div>
+        <div className="auth-metrics">
+          <div className="auth-metric">
+            <strong>ADM</strong>
+            <span>acesso restrito</span>
+          </div>
+          <div className="auth-metric">
+            <strong>API</strong>
+            <span>segredos no Supabase</span>
+          </div>
+          <div className="auth-metric">
+            <strong>WEB</strong>
+            <span>controle por unidade</span>
+          </div>
+        </div>
+      </section>
+
+      <section className="auth-card" aria-labelledby="admin-login-title">
+        <div className="auth-card-header">
+          <img className="auth-card-logo" src="/kyberrocklogo.png" alt="KyberRock" />
+          <div>
+            <h1 id="admin-login-title" className="auth-card-title">
+              Portal do administrador
+            </h1>
+            <p className="auth-card-subtitle">Gerencie empresas, unidades e acessos.</p>
           </div>
         </div>
 
-        <div
-          style={{
-            background: "#fef3c7",
-            border: "1px solid #f59e0b",
-            borderRadius: "12px",
-            padding: "16px",
-            marginBottom: "24px"
-          }}
-        >
-          <p style={{ margin: 0, fontSize: "14px", color: "#92400e" }}>
-            <strong>Acesso restrito</strong>
-            <br />
+        <div className="auth-notice">
+          <strong>!</strong>
+          <p>
+            <strong>Acesso restrito.</strong> <br />
             Usuario e senha configurados nas variaveis seguras do Supabase.
           </p>
         </div>
 
         {error && (
-          <div
-            style={{
-              background: "#fee2e2",
-              border: "1px solid #ef4444",
-              borderRadius: "12px",
-              padding: "12px",
-              marginBottom: "16px",
-              color: "#991b1b",
-              fontSize: "14px"
-            }}
-          >
-            {error}
+          <div className="auth-alert" role="alert">
+            <strong>!</strong>
+            <span>{error}</span>
           </div>
         )}
 
-        <form
-          onSubmit={handleSubmit}
-          style={{ display: "flex", flexDirection: "column", gap: "12px" }}
-        >
-          <input
-            name="username"
-            placeholder="Usuario admin"
-            autoComplete="username"
-            required
-            style={{ padding: "12px", borderRadius: "10px", border: "1px solid #cbd5e1" }}
-          />
-          <input
-            name="password"
-            type="password"
-            placeholder="Senha"
-            autoComplete="current-password"
-            required
-            style={{ padding: "12px", borderRadius: "10px", border: "1px solid #cbd5e1" }}
-          />
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            style={{
-              width: "100%",
-              padding: "14px",
-              borderRadius: "12px",
-              border: "none",
-              background: "#0f172a",
-              color: "#fff",
-              fontWeight: 700,
-              cursor: "pointer"
-            }}
-          >
+        <form className="auth-form" onSubmit={handleSubmit}>
+          <label className="field-label">
+            Usuario
+            <input
+              className="field-input"
+              name="username"
+              placeholder="Usuario admin"
+              autoComplete="username"
+              required
+            />
+          </label>
+          <label className="field-label">
+            Senha
+            <input
+              className="field-input"
+              name="password"
+              type="password"
+              placeholder="Senha"
+              autoComplete="current-password"
+              required
+            />
+          </label>
+          <button type="submit" disabled={isSubmitting} className="primary-action">
             {isSubmitting ? "Entrando..." : "Entrar"}
           </button>
         </form>
 
-        <p style={{ textAlign: "center", marginTop: "24px", fontSize: "14px", color: "#64748b" }}>
-          <a href="/login" style={{ color: "#0f172a", textDecoration: "none", fontWeight: 700 }}>
-            Sou carregador
-          </a>
+        <p className="auth-switch">
+          Operacao de patio? <a href="/login">Entrar como carregador</a>
         </p>
       </section>
     </main>

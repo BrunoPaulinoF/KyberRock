@@ -3,7 +3,11 @@ import {
   ensureInitialDesktopIdentity,
   getLocalDesktopIdentity
 } from "./bootstrap.js";
-import { getSupabaseClient, writeStoredSupabaseConfig } from "./supabase-sync.js";
+import {
+  getSupabaseActivationClient,
+  getSupabaseClient,
+  writeStoredSupabaseConfig
+} from "./supabase-sync.js";
 import { readStringLocalSetting, writeLocalSetting } from "./local-settings.js";
 
 export const DESKTOP_ACCESS_GRACE_PERIOD_MS = 7 * 24 * 60 * 60 * 1000;
@@ -84,7 +88,7 @@ export async function activateDesktop(
     throw new Error("Informe o codigo de 6 digitos da pedreira.");
   }
 
-  const supabase = getSupabaseClient();
+  const supabase = getSupabaseActivationClient();
   const { data, error } = await supabase.functions.invoke<ActivateDesktopResponse>(
     "desktop-activate",
     {
@@ -367,8 +371,6 @@ export function logoutDesktop(database: DesktopDatabase, now: Date = new Date())
     "cloud_device_id",
     "cloud_device_token",
     "cloud_configured",
-    "cloud_supabase_url",
-    "cloud_publishable_key",
     "last_license_check_at",
     "desktop_access_status",
     "desktop_access_message",

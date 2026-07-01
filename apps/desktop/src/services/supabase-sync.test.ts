@@ -104,7 +104,7 @@ describe("supabase sync", () => {
     }
   });
 
-  it("reports not configured when neither env nor local_settings have a publishable key", () => {
+  it("uses the bundled bootstrap key when neither env nor local_settings have a publishable key", () => {
     const database = createDatabase();
     const previousKey = process.env.SUPABASE_PUBLISHABLE_KEY;
     delete process.env.SUPABASE_PUBLISHABLE_KEY;
@@ -112,8 +112,9 @@ describe("supabase sync", () => {
     try {
       writeStoredSupabaseConfig(database, { publishableKey: null });
       initializeSupabaseFromSettings(database);
-      expect(isSupabaseInitialized()).toBe(false);
-      expect(isSupabaseConfigured()).toBe(false);
+      expect(isSupabaseInitialized()).toBe(true);
+      expect(isSupabaseConfigured()).toBe(true);
+      expect(supabaseConfig.publishableKey).toMatch(/^sb_publishable_/);
     } finally {
       if (previousKey) process.env.SUPABASE_PUBLISHABLE_KEY = previousKey;
       resetSupabaseConfigCache();

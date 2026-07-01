@@ -398,83 +398,36 @@ export function AdminDashboard() {
   }
 
   return (
-    <main style={{ minHeight: "100vh", background: "#f8fafc", padding: "clamp(16px, 3vw, 32px)" }}>
-      <header
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: "16px",
-          flexWrap: "wrap",
-          marginBottom: "32px"
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-          <img
-            src="/kyberrocklogo.png"
-            alt="KyberRock"
-            style={{ width: "48px", height: "48px", objectFit: "contain" }}
-          />
+    <main className="admin-page">
+      <header className="admin-shell-header">
+        <div className="admin-brand">
+          <img className="admin-logo" src="/kyberrocklogo.png" alt="KyberRock" />
           <div>
-            <h1 style={{ margin: 0, fontSize: "28px" }}>KyberRock Admin</h1>
-            <p style={{ color: "#64748b", margin: "4px 0 0 0" }}>Gerenciamento de Pedreiras</p>
+            <h1 className="admin-title">KyberRock Admin</h1>
+            <p className="admin-subtitle">Gerenciamento de pedreiras, unidades e acessos</p>
           </div>
         </div>
-        <button
-          onClick={logout}
-          style={{
-            padding: "10px 20px",
-            borderRadius: "10px",
-            border: "1px solid #cbd5e1",
-            background: "#fff",
-            cursor: "pointer",
-            fontWeight: 700
-          }}
-        >
+        <button onClick={logout} className="secondary-action">
           Sair
         </button>
       </header>
 
-      <nav style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "24px" }}>
+      <nav className="admin-tabs" aria-label="Secoes administrativas">
         <button
           onClick={() => setActiveTab("companies")}
-          style={{
-            padding: "10px 20px",
-            borderRadius: "10px",
-            border: "none",
-            background: activeTab === "companies" ? "#0f172a" : "#e2e8f0",
-            color: activeTab === "companies" ? "#fff" : "#0f172a",
-            cursor: "pointer",
-            fontWeight: 700
-          }}
+          className={`admin-tab ${activeTab === "companies" ? "admin-tab-active" : ""}`}
         >
           Empresas e Unidades
         </button>
         <button
           onClick={() => setActiveTab("users")}
-          style={{
-            padding: "10px 20px",
-            borderRadius: "10px",
-            border: "none",
-            background: activeTab === "users" ? "#0f172a" : "#e2e8f0",
-            color: activeTab === "users" ? "#fff" : "#0f172a",
-            cursor: "pointer",
-            fontWeight: 700
-          }}
+          className={`admin-tab ${activeTab === "users" ? "admin-tab-active" : ""}`}
         >
           Usuarios Carregadores
         </button>
         <button
           onClick={() => setActiveTab("devices")}
-          style={{
-            padding: "10px 20px",
-            borderRadius: "10px",
-            border: "none",
-            background: activeTab === "devices" ? "#0f172a" : "#e2e8f0",
-            color: activeTab === "devices" ? "#fff" : "#0f172a",
-            cursor: "pointer",
-            fontWeight: 700
-          }}
+          className={`admin-tab ${activeTab === "devices" ? "admin-tab-active" : ""}`}
         >
           Dispositivos e Licencas
         </button>

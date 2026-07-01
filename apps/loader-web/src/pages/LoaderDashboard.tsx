@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useState } from "react";
 
 import { useAuth } from "../contexts/AuthContext";
 import { supabase } from "../lib/supabase";
@@ -174,60 +174,88 @@ export function LoaderDashboard() {
   }
 
   const inProgressOperations = operations.filter((operation) => !operation.loaderCompletedAt);
+  const operatorName = user?.name ?? "Carregador";
 
   return (
-    <main style={styles.page}>
-      <header style={styles.header}>
-        <span style={styles.userName}>{user?.name ?? "Carregador"}</span>
-        <button onClick={logout} style={styles.logoutButton}>
+    <main className="loader-page">
+      <header className="loader-header">
+        <div className="operator-chip" aria-label={`Operador ${operatorName}`}>
+          <span className="operator-avatar" aria-hidden="true">
+            {operatorName.slice(0, 1).toUpperCase()}
+          </span>
+          <span>
+            <span className="operator-name">{operatorName}</span>
+            <span className="operator-role">Carregador</span>
+          </span>
+        </div>
+        <button onClick={logout} className="secondary-action">
           Sair
         </button>
       </header>
 
+      <section className="loader-hero" aria-labelledby="loader-dashboard-title">
+        <div>
+          <p className="loader-eyebrow">Fila operacional</p>
+          <h1 id="loader-dashboard-title" className="loader-title">
+            Cargas prontas para atendimento
+          </h1>
+          <p className="loader-description">
+            Atenda a fila em ordem de chegada. Marque a carga como concluida assim que o veiculo
+            terminar o carregamento.
+          </p>
+        </div>
+        <div className="queue-stat" aria-label={`${inProgressOperations.length} cargas abertas`}>
+          <strong>{inProgressOperations.length}</strong>
+          <span>em aberto</span>
+        </div>
+      </section>
+
       {errorMessage ? (
-        <div style={styles.errorBanner} role="alert">
-          {errorMessage}
+        <div className="error-banner" role="alert">
+          <span>{errorMessage}</span>
+          <button
+            type="button"
+            className="secondary-action"
+            onClick={() => void loadOperations({ preserveLoading: true })}
+          >
+            Tentar novamente
+          </button>
         </div>
       ) : null}
 
-      <section style={styles.board}>
-        <section style={styles.column} aria-labelledby="in-progress-title">
-          <div style={styles.columnHeader}>
-            <div>
-              <h2 id="in-progress-title" style={styles.columnTitle}>
-                Cargas em andamento
-              </h2>
-              <p style={styles.columnDescription}>
-                Atenda de cima para baixo. Ao concluir, a carga sai desta lista.
-              </p>
-            </div>
-            <span style={styles.badge}>{inProgressOperations.length}</span>
+      <section className="queue-panel" aria-labelledby="in-progress-title">
+        <div className="queue-panel-header">
+          <div>
+            <h2 id="in-progress-title" className="queue-panel-title">
+              Cargas em andamento
+            </h2>
+            <p className="queue-panel-subtitle">
+              Atenda de cima para baixo. Ao concluir, a carga sai desta lista.
+            </p>
           </div>
+          <span className="queue-count-badge">{inProgressOperations.length}</span>
+        </div>
 
-          {isLoading ? (
-            <EmptyState
-              title="Carregando fila..."
-              description="Buscando cargas em aberto da unidade."
-            />
-          ) : inProgressOperations.length === 0 ? (
-            <EmptyState
-              title="Nenhuma carga aguardando"
-              description="Quando uma operação entrar na fila, ela aparecerá aqui."
-            />
-          ) : (
-            <div style={styles.cardList}>
-              {inProgressOperations.map((operation, index) => (
-                <LoadingCard
-                  key={operation.id}
-                  operation={operation}
-                  position={index + 1}
-                  isSubmitting={pendingCompletions.has(operation.id)}
-                  onComplete={() => void handleCompleteOperation(operation)}
-                />
-              ))}
-            </div>
-          )}
-        </section>
+        {isLoading ? (
+          <EmptyState title="Carregando fila..." description="Buscando cargas em aberto da unidade." />
+        ) : inProgressOperations.length === 0 ? (
+          <EmptyState
+            title="Nenhuma carga aguardando"
+            description="Quando uma operacao entrar na fila, ela aparecera aqui."
+          />
+        ) : (
+          <div className="card-list">
+            {inProgressOperations.map((operation, index) => (
+              <LoadingCard
+                key={operation.id}
+                operation={operation}
+                position={index + 1}
+                isSubmitting={pendingCompletions.has(operation.id)}
+                onComplete={() => void handleCompleteOperation(operation)}
+              />
+            ))}
+          </div>
+        )}
       </section>
     </main>
   );
@@ -245,31 +273,24 @@ function LoadingCard({
   onComplete: () => void;
 }) {
   return (
-    <article style={styles.operationCard}>
-      <div style={styles.operationTopRow}>
-        <span style={styles.queuePosition}>{position}º</span>
-        <div style={styles.operationIdentity}>
-          <h3 style={styles.plate}>{operation.plate}</h3>
-          <p style={styles.customer}>{operation.customerName}</p>
+    <article className="operation-card">
+      <div className="operation-top-row">
+        <span className="queue-position">{position}º</span>
+        <div className="operation-identity">
+          <h3 className="operation-plate">{operation.plate}</h3>
+          <p className="operation-customer">{operation.customerName}</p>
         </div>
-        <span style={styles.waitingPill}>Aguardando</span>
+        <span className="waiting-pill">Aguardando</span>
       </div>
 
-      <dl style={styles.detailsGrid}>
+      <dl className="details-grid">
         <InfoItem label="Motorista" value={operation.driverName} />
         <InfoItem label="Produto" value={operation.productDescription} />
         <InfoItem label="Quantidade" value={formatWeight(operation.entryWeightKg)} />
         <InfoItem label="Chegada" value={formatDateTime(operation.createdAt)} />
       </dl>
 
-      <button
-        onClick={onComplete}
-        disabled={isSubmitting}
-        style={{
-          ...styles.completeButton,
-          ...(isSubmitting ? styles.completeButtonDisabled : null)
-        }}
-      >
+      <button onClick={onComplete} disabled={isSubmitting} className="primary-action complete-button">
         {isSubmitting ? "Enviando..." : "Concluir carga"}
       </button>
     </article>
@@ -278,215 +299,23 @@ function LoadingCard({
 
 function InfoItem({ label, value }: { label: string; value: string }) {
   return (
-    <div>
-      <dt style={styles.detailLabel}>{label}</dt>
-      <dd style={styles.detailValue}>{value}</dd>
+    <div className="detail-card">
+      <dt className="detail-label">{label}</dt>
+      <dd className="detail-value">{value}</dd>
     </div>
   );
 }
 
 function EmptyState({ title, description }: { title: string; description: string }) {
   return (
-    <div style={styles.emptyState}>
-      <strong style={styles.emptyTitle}>{title}</strong>
-      <span style={styles.emptyDescription}>{description}</span>
+    <div className="empty-state">
+      <div className="empty-state-inner">
+        <span className="empty-icon" aria-hidden="true">
+          KR
+        </span>
+        <strong className="empty-title">{title}</strong>
+        <span className="empty-description">{description}</span>
+      </div>
     </div>
   );
 }
-
-const styles: Record<string, CSSProperties> = {
-  page: {
-    minHeight: "100vh",
-    background: "linear-gradient(135deg, #f8fafc 0%, #eef2ff 100%)",
-    color: "#0f172a",
-    padding: "32px",
-    boxSizing: "border-box"
-  },
-  header: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: "12px",
-    margin: "0 auto 20px",
-    maxWidth: "1280px"
-  },
-  userName: {
-    color: "#334155",
-    fontSize: "14px",
-    fontWeight: 700
-  },
-  logoutButton: {
-    padding: "9px 16px",
-    borderRadius: "999px",
-    border: "1px solid #cbd5e1",
-    background: "#fff",
-    color: "#0f172a",
-    cursor: "pointer",
-    fontWeight: 800
-  },
-  board: {
-    display: "block",
-    maxWidth: "1280px",
-    margin: "0 auto"
-  },
-  column: {
-    minHeight: "680px",
-    background: "rgba(255, 255, 255, 0.92)",
-    border: "1px solid #e2e8f0",
-    borderRadius: "24px",
-    padding: "20px",
-    boxShadow: "0 18px 60px rgba(15, 23, 42, 0.08)",
-    boxSizing: "border-box"
-  },
-  columnHeader: {
-    display: "flex",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: "14px",
-    marginBottom: "16px"
-  },
-  columnTitle: {
-    margin: 0,
-    fontSize: "22px",
-    letterSpacing: "-0.02em"
-  },
-  columnDescription: {
-    margin: "6px 0 0",
-    color: "#64748b",
-    fontSize: "14px"
-  },
-  badge: {
-    minWidth: "34px",
-    height: "34px",
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: "999px",
-    background: "#dbeafe",
-    color: "#1d4ed8",
-    fontWeight: 900
-  },
-  cardList: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "14px"
-  },
-  operationCard: {
-    background: "#fff",
-    border: "1px solid #e2e8f0",
-    borderRadius: "18px",
-    padding: "16px",
-    boxShadow: "0 12px 34px rgba(15, 23, 42, 0.06)"
-  },
-  operationTopRow: {
-    display: "flex",
-    alignItems: "flex-start",
-    gap: "12px"
-  },
-  queuePosition: {
-    minWidth: "42px",
-    height: "42px",
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: "14px",
-    background: "#0f172a",
-    color: "#fff",
-    fontSize: "15px",
-    fontWeight: 900
-  },
-  operationIdentity: {
-    flex: 1,
-    minWidth: 0
-  },
-  plate: {
-    margin: 0,
-    fontSize: "24px",
-    lineHeight: 1,
-    letterSpacing: "0.04em"
-  },
-  customer: {
-    margin: "6px 0 0",
-    color: "#64748b",
-    fontSize: "14px",
-    fontWeight: 700
-  },
-  waitingPill: {
-    borderRadius: "999px",
-    background: "#fef3c7",
-    color: "#92400e",
-    padding: "6px 10px",
-    fontSize: "12px",
-    fontWeight: 900,
-    whiteSpace: "nowrap"
-  },
-  detailsGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
-    gap: "12px",
-    margin: "16px 0 0"
-  },
-  detailLabel: {
-    color: "#64748b",
-    fontSize: "12px",
-    fontWeight: 900,
-    letterSpacing: "0.08em",
-    textTransform: "uppercase"
-  },
-  detailValue: {
-    margin: "4px 0 0",
-    color: "#0f172a",
-    fontSize: "14px",
-    fontWeight: 800
-  },
-  completeButton: {
-    width: "100%",
-    marginTop: "16px",
-    border: 0,
-    borderRadius: "14px",
-    background: "#0f172a",
-    color: "#fff",
-    padding: "13px 16px",
-    cursor: "pointer",
-    fontSize: "15px",
-    fontWeight: 900
-  },
-  completeButtonDisabled: {
-    background: "#475569",
-    cursor: "not-allowed",
-    opacity: 0.7
-  },
-  errorBanner: {
-    maxWidth: "1280px",
-    margin: "0 auto 16px",
-    background: "#fee2e2",
-    border: "1px solid #ef4444",
-    borderRadius: "12px",
-    padding: "12px 16px",
-    color: "#991b1b",
-    fontSize: "14px"
-  },
-  emptyState: {
-    minHeight: "220px",
-    border: "1px dashed #cbd5e1",
-    borderRadius: "18px",
-    background: "#f8fafc",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "column",
-    textAlign: "center",
-    padding: "24px",
-    boxSizing: "border-box"
-  },
-  emptyTitle: {
-    color: "#334155",
-    fontSize: "16px"
-  },
-  emptyDescription: {
-    color: "#64748b",
-    fontSize: "14px",
-    marginTop: "6px",
-    maxWidth: "300px"
-  }
-};

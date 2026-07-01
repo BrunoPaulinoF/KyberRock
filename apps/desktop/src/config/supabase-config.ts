@@ -1,4 +1,5 @@
 const DEFAULT_SUPABASE_URL = "https://vksihzfrgqoemcqpquit.supabase.co";
+const DEFAULT_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_Wbp8y7lARYTAPEQCCU-vfA_MXobcikv";
 
 let cachedUrl: string | null = null;
 let cachedPublishableKey: string | null = null;
@@ -12,7 +13,9 @@ export const supabaseConfig = {
   },
   get publishableKey(): string {
     if (cachedPublishableKey !== null) return cachedPublishableKey;
-    return process.env.SUPABASE_PUBLISHABLE_KEY?.trim() ?? "";
+    const fromEnv = process.env.SUPABASE_PUBLISHABLE_KEY?.trim();
+    if (fromEnv) return fromEnv;
+    return DEFAULT_SUPABASE_PUBLISHABLE_KEY;
   }
 };
 
@@ -40,4 +43,8 @@ export function resetSupabaseConfigCache(): void {
 
 export function getDefaultSupabaseUrl(): string {
   return DEFAULT_SUPABASE_URL;
+}
+
+export function getDefaultSupabasePublishableKey(): string {
+  return DEFAULT_SUPABASE_PUBLISHABLE_KEY;
 }

@@ -1,6 +1,8 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 import {
+  getDefaultSupabasePublishableKey,
+  getDefaultSupabaseUrl,
   isSupabaseConfigured,
   resetSupabaseConfigCache,
   setSupabaseConfigCache,
@@ -372,6 +374,15 @@ export function getSupabaseClient(): SupabaseClient {
     );
   }
   return client;
+}
+
+export function getSupabaseActivationClient(): SupabaseClient {
+  const url = process.env.SUPABASE_URL?.trim() || getDefaultSupabaseUrl();
+  const publishableKey =
+    process.env.SUPABASE_PUBLISHABLE_KEY?.trim() || getDefaultSupabasePublishableKey();
+  return createClient(url, publishableKey, {
+    auth: { persistSession: false, autoRefreshToken: false }
+  });
 }
 
 export async function syncOperationToSupabase(

@@ -87,19 +87,58 @@ export function updateCarrier(
   const sets: string[] = [];
   const values: unknown[] = [];
 
-  if (input.name !== undefined) { sets.push("name = ?"); values.push(input.name); }
-  if (input.document !== undefined) { sets.push("document = ?"); values.push(input.document); }
-  if (input.phone !== undefined) { sets.push("phone = ?"); values.push(input.phone); }
-  if (input.email !== undefined) { sets.push("email = ?"); values.push(input.email); }
-  if (input.zipcode !== undefined) { sets.push("zipcode = ?"); values.push(input.zipcode); }
-  if (input.addressStreet !== undefined) { sets.push("address_street = ?"); values.push(input.addressStreet); }
-  if (input.addressNumber !== undefined) { sets.push("address_number = ?"); values.push(input.addressNumber); }
-  if (input.addressComplement !== undefined) { sets.push("address_complement = ?"); values.push(input.addressComplement); }
-  if (input.neighborhood !== undefined) { sets.push("neighborhood = ?"); values.push(input.neighborhood); }
-  if (input.city !== undefined) { sets.push("city = ?"); values.push(input.city); }
-  if (input.state !== undefined) { sets.push("state = ?"); values.push(input.state); }
-  if (input.omieCustomerId !== undefined) { sets.push("omie_customer_id = ?"); values.push(input.omieCustomerId); }
-  if (input.isActive !== undefined) { sets.push("is_active = ?"); values.push(input.isActive ? 1 : 0); }
+  if (input.name !== undefined) {
+    sets.push("name = ?");
+    values.push(input.name);
+  }
+  if (input.document !== undefined) {
+    sets.push("document = ?");
+    values.push(input.document);
+  }
+  if (input.phone !== undefined) {
+    sets.push("phone = ?");
+    values.push(input.phone);
+  }
+  if (input.email !== undefined) {
+    sets.push("email = ?");
+    values.push(input.email);
+  }
+  if (input.zipcode !== undefined) {
+    sets.push("zipcode = ?");
+    values.push(input.zipcode);
+  }
+  if (input.addressStreet !== undefined) {
+    sets.push("address_street = ?");
+    values.push(input.addressStreet);
+  }
+  if (input.addressNumber !== undefined) {
+    sets.push("address_number = ?");
+    values.push(input.addressNumber);
+  }
+  if (input.addressComplement !== undefined) {
+    sets.push("address_complement = ?");
+    values.push(input.addressComplement);
+  }
+  if (input.neighborhood !== undefined) {
+    sets.push("neighborhood = ?");
+    values.push(input.neighborhood);
+  }
+  if (input.city !== undefined) {
+    sets.push("city = ?");
+    values.push(input.city);
+  }
+  if (input.state !== undefined) {
+    sets.push("state = ?");
+    values.push(input.state);
+  }
+  if (input.omieCustomerId !== undefined) {
+    sets.push("omie_customer_id = ?");
+    values.push(input.omieCustomerId);
+  }
+  if (input.isActive !== undefined) {
+    sets.push("is_active = ?");
+    values.push(input.isActive ? 1 : 0);
+  }
 
   if (sets.length === 0) return existing;
 
@@ -112,8 +151,16 @@ export function updateCarrier(
 }
 
 export function deleteCarrier(database: DesktopDatabase, id: string, now: Date = new Date()): void {
+  const existing = database
+    .prepare("SELECT id FROM carriers WHERE id = ? AND deleted_at IS NULL")
+    .get(id) as { id: string } | undefined;
+
+  if (!existing) throw new Error("Transportadora nao encontrada.");
+
   database
-    .prepare("UPDATE carriers SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL")
+    .prepare(
+      "UPDATE carriers SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL"
+    )
     .run(now.toISOString(), now.toISOString(), id);
 }
 
@@ -189,7 +236,13 @@ export function ensureCustomerDefaultCarrier(
   const customer = database
     .prepare("SELECT * FROM customers WHERE id = ? AND deleted_at IS NULL")
     .get(customerId) as
-    | { id: string; company_id: string; trade_name: string; legal_name: string; default_carrier_id: string | null }
+    | {
+        id: string;
+        company_id: string;
+        trade_name: string;
+        legal_name: string;
+        default_carrier_id: string | null;
+      }
     | undefined;
 
   if (!customer) return null;

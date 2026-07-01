@@ -40,63 +40,63 @@ export function LoaderLogin() {
   }
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "#f8fafc"
-      }}
-    >
-      <section
-        style={{
-          background: "#fff",
-          padding: "48px",
-          borderRadius: "20px",
-          boxShadow: "0 18px 60px rgba(15, 23, 42, 0.08)",
-          maxWidth: "420px",
-          width: "100%"
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: "14px", marginBottom: "24px" }}>
-          <img
-            src="/kyberrocklogo.png"
-            alt="KyberRock"
-            style={{ width: "44px", height: "44px", objectFit: "contain" }}
-          />
+    <main className="auth-shell">
+      <section className="auth-brand-panel" aria-hidden="true">
+        <div className="auth-logo-row">
+          <span className="auth-logo-mark">
+            <img src="/kyberrocklogo.png" alt="" />
+          </span>
           <div>
-            <h1 style={{ margin: "0 0 4px 0", fontSize: "32px", lineHeight: 1 }}>KyberRock</h1>
-            <p style={{ color: "#64748b", margin: 0 }}>Acesso do Carregador</p>
+            <p className="auth-kicker">Operacao em tempo real</p>
+            <strong className="auth-brand-name">KyberRock Loader</strong>
+          </div>
+        </div>
+        <div>
+          <p className="auth-kicker">Fila de carregamento</p>
+          <h2 className="auth-brand-title">Controle a fila sem perder o ritmo da balanca.</h2>
+          <p className="auth-brand-copy">
+            Visual limpo para patio, foco na placa, motorista, produto e confirmacao rapida de carga.
+          </p>
+        </div>
+        <div className="auth-metrics">
+          <div className="auth-metric">
+            <strong>1</strong>
+            <span>fila priorizada por chegada</span>
+          </div>
+          <div className="auth-metric">
+            <strong>15s</strong>
+            <span>atualizacao automatica</span>
+          </div>
+          <div className="auth-metric">
+            <strong>0</strong>
+            <span>complexidade no operador</span>
+          </div>
+        </div>
+      </section>
+
+      <section className="auth-card" aria-labelledby="loader-login-title">
+        <div className="auth-card-header">
+          <img className="auth-card-logo" src="/kyberrocklogo.png" alt="KyberRock" />
+          <div>
+            <h1 id="loader-login-title" className="auth-card-title">
+              Acesso do carregador
+            </h1>
+            <p className="auth-card-subtitle">Entre para acompanhar as cargas da sua unidade.</p>
           </div>
         </div>
 
         {error && (
-          <div
-            style={{
-              background: "#fee2e2",
-              border: "1px solid #ef4444",
-              borderRadius: "12px",
-              padding: "12px",
-              marginBottom: "16px",
-              color: "#991b1b",
-              fontSize: "14px"
-            }}
-          >
-            {error}
+          <div className="auth-alert" role="alert">
+            <strong>!</strong>
+            <span>{error}</span>
           </div>
         )}
 
-        <form
-          onSubmit={handleSubmit}
-          style={{ display: "flex", flexDirection: "column", gap: "16px" }}
-        >
-          <label
-            htmlFor="loader-login-email"
-            style={{ display: "flex", flexDirection: "column", gap: "6px", fontWeight: 700 }}
-          >
+        <form className="auth-form" onSubmit={handleSubmit}>
+          <label htmlFor="loader-login-email" className="field-label">
             E-mail
             <input
+              className="field-input"
               id="loader-login-email"
               name="email"
               type="email"
@@ -104,20 +104,12 @@ export function LoaderLogin() {
               value={email}
               onChange={(e) => handleEmailChange(e.target.value)}
               required
-              style={{
-                padding: "12px",
-                borderRadius: "10px",
-                border: "1px solid #cbd5e1",
-                font: "inherit"
-              }}
             />
           </label>
-          <label
-            htmlFor="loader-login-password"
-            style={{ display: "flex", flexDirection: "column", gap: "6px", fontWeight: 700 }}
-          >
+          <label htmlFor="loader-login-password" className="field-label">
             Senha
             <input
+              className="field-input"
               id="loader-login-password"
               name="password"
               type="password"
@@ -125,39 +117,15 @@ export function LoaderLogin() {
               value={password}
               onChange={(e) => handlePasswordChange(e.target.value)}
               required
-              style={{
-                padding: "12px",
-                borderRadius: "10px",
-                border: "1px solid #cbd5e1",
-                font: "inherit"
-              }}
             />
           </label>
-          <button
-            type="submit"
-            disabled={isLoading}
-            style={{
-              padding: "14px",
-              borderRadius: "12px",
-              border: "none",
-              background: "#0f172a",
-              color: "#fff",
-              fontWeight: 700,
-              cursor: isLoading ? "not-allowed" : "pointer",
-              opacity: isLoading ? 0.6 : 1
-            }}
-          >
+          <button type="submit" disabled={isLoading} className="primary-action">
             {isLoading ? "Entrando..." : "Entrar"}
           </button>
         </form>
 
-        <p style={{ textAlign: "center", marginTop: "24px", fontSize: "14px", color: "#64748b" }}>
-          <a
-            href="/admin/login"
-            style={{ color: "#0f172a", textDecoration: "none", fontWeight: 700 }}
-          >
-            Sou administrador
-          </a>
+        <p className="auth-switch">
+          Area administrativa? <a href="/admin/login">Entrar como administrador</a>
         </p>
       </section>
     </main>

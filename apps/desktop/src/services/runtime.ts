@@ -118,7 +118,12 @@ import {
 import { CacheStore, type CacheQueryOptions, type CacheQueryResult } from "./cache-store.js";
 import { readOmiePullState, writeOmiePullState } from "./supabase-sync.js";
 import { ReportService } from "./reports.js";
-import { sendEmail, verifySmtpConnection, type EmailSendInput, type EmailSendResult } from "./email.js";
+import {
+  sendEmail,
+  verifySmtpConnection,
+  type EmailSendInput,
+  type EmailSendResult
+} from "./email.js";
 import {
   createReportRecipient,
   deleteReportRecipient,
@@ -133,6 +138,7 @@ import {
   listCustomerSpecialPrices,
   listProductDefaultPriceSummaries,
   removeCustomerSpecialPrice,
+  removeProductDefaultPrice,
   setCustomerSpecialPrice,
   upsertProductDefaultPrice,
   type CustomerSpecialPriceSummary,
@@ -294,7 +300,8 @@ export class DesktopRuntime {
   };
   private cacheStore: CacheStore;
   private tcpScaleAdapter: ToledoTcpAdapter = createToledoTcpAdapter();
-  private virtualScaleAdapter: ReturnType<typeof createVirtualScaleAdapter> = createVirtualScaleAdapter();
+  private virtualScaleAdapter: ReturnType<typeof createVirtualScaleAdapter> =
+    createVirtualScaleAdapter();
   private activeScaleAdapter: ToledoTcpAdapter = this.tcpScaleAdapter;
   private readonly pendingScaleCaptures = new Map<
     string,
@@ -632,7 +639,9 @@ export class DesktopRuntime {
   updateWeighingProduct(input: UpdateWeighingOperationProductInput): WeighingOperationSummary {
     this.assertDesktopAccess();
     const operation = updateWeighingOperationProduct(this.database, input);
-    this.triggerBackgroundCloudSync("operation_product_changed", { operationId: input.operationId });
+    this.triggerBackgroundCloudSync("operation_product_changed", {
+      operationId: input.operationId
+    });
     return operation;
   }
 
@@ -933,9 +942,7 @@ export class DesktopRuntime {
           cloudPull.loadingRequests +
           cloudPull.printReceipts;
       } catch (error) {
-        errors.push(
-          `Cloud pull: ${error instanceof Error ? error.message : "Unknown error"}`
-        );
+        errors.push(`Cloud pull: ${error instanceof Error ? error.message : "Unknown error"}`);
       }
 
       recordCloudSyncRanAt(this.database);
@@ -1149,11 +1156,7 @@ export class DesktopRuntime {
   }
 
   getReportHtml(startDate: string, endDate: string): string {
-    return this.reportService.exportRangeToHtml(
-      startDate,
-      endDate,
-      this.ensureIdentity().unitId
-    );
+    return this.reportService.exportRangeToHtml(startDate, endDate, this.ensureIdentity().unitId);
   }
 
   listReportRecipients(): ReportRecipient[] {
@@ -1257,6 +1260,13 @@ export class DesktopRuntime {
     });
     this.cacheStore.invalidate("product", identity.companyId);
     return result;
+  }
+
+  removeProductDefaultPrice(productId: string): void {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    removeProductDefaultPrice(this.database, identity.companyId, productId);
+    this.cacheStore.invalidate("product", identity.companyId);
   }
 
   listCustomerSpecialPrices(customerId: string): CustomerSpecialPriceSummary[] {
@@ -1536,11 +1546,15 @@ export class DesktopRuntime {
     unlinkCustomerCarrier(this.database, customerId, carrierId);
   }
 
-  listCarriersByCustomer(customerId: string): Array<{ id: string; name: string; document: string | null }> {
+  listCarriersByCustomer(
+    customerId: string
+  ): Array<{ id: string; name: string; document: string | null }> {
     return listCarriersByCustomer(this.database, customerId);
   }
 
-  listCustomersByCarrier(carrierId: string): Array<{ id: string; trade_name: string; legal_name: string }> {
+  listCustomersByCarrier(
+    carrierId: string
+  ): Array<{ id: string; trade_name: string; legal_name: string }> {
     return listCustomersByCarrier(this.database, carrierId);
   }
 
@@ -1554,11 +1568,15 @@ export class DesktopRuntime {
     unlinkDriverCarrier(this.database, driverId, carrierId);
   }
 
-  listCarriersByDriver(driverId: string): Array<{ id: string; name: string; document: string | null }> {
+  listCarriersByDriver(
+    driverId: string
+  ): Array<{ id: string; name: string; document: string | null }> {
     return listCarriersByDriver(this.database, driverId);
   }
 
-  listDriversByCarrier(carrierId: string): Array<{ id: string; name: string; document: string | null; is_independent: number }> {
+  listDriversByCarrier(
+    carrierId: string
+  ): Array<{ id: string; name: string; document: string | null; is_independent: number }> {
     return listDriversByCarrier(this.database, carrierId);
   }
 
@@ -1706,7 +1724,10 @@ export class DesktopRuntime {
     }
   }
 
-  async syncOmieDirect(appKey: string, appSecret: string): Promise<{
+  async syncOmieDirect(
+    appKey: string,
+    appSecret: string
+  ): Promise<{
     customersPulled: number;
     customersPushed: number;
     productsSynced: number;
@@ -1760,7 +1781,7 @@ export class DesktopRuntime {
     iterations: number;
     finished: boolean;
     errors: string[];
-    }> {
+  }> {
     const identity = this.ensureIdentity();
     const maxIterations = options.maxIterations ?? 200;
     const delayBetweenPagesMs = options.delayBetweenPagesMs ?? OMIE_PULL_PAGE_DELAY_MS;
@@ -1814,10 +1835,8 @@ export class DesktopRuntime {
       };
       options.onProgress?.(progress);
 
-      const totalBefore =
-        before.customersPage + before.productsPage + before.paymentTermsPage;
-      const totalAfter =
-        after.customersPage + after.productsPage + after.paymentTermsPage;
+      const totalBefore = before.customersPage + before.productsPage + before.paymentTermsPage;
+      const totalAfter = after.customersPage + after.productsPage + after.paymentTermsPage;
       const noProgress =
         totalAfter <= totalBefore &&
         result.customersPulled +
@@ -1937,7 +1956,14 @@ export class DesktopRuntime {
           `INSERT INTO technical_logs (id, level, source, message, context_json, created_at)
            VALUES (?, ?, ?, ?, ?, ?)`
         )
-        .run(randomUUID(), level, source, message, JSON.stringify(context), new Date().toISOString());
+        .run(
+          randomUUID(),
+          level,
+          source,
+          message,
+          JSON.stringify(context),
+          new Date().toISOString()
+        );
     } catch (error) {
       console.error("Failed to record technical log", error);
     }
@@ -1987,9 +2013,7 @@ export class DesktopRuntime {
     const carriersCleared = carriersResult.changes;
 
     const syncRunsResult = this.database
-      .prepare(
-        `DELETE FROM omie_sync_runs WHERE company_id = ?`
-      )
+      .prepare(`DELETE FROM omie_sync_runs WHERE company_id = ?`)
       .run(companyId);
     const syncRunsCleared = syncRunsResult.changes;
 
@@ -2001,9 +2025,7 @@ export class DesktopRuntime {
       .prepare(`DELETE FROM local_settings WHERE key IN ('omie_pull_state', 'omie_sync_lock')`)
       .run();
 
-    const queueResult = this.database
-      .prepare(`DELETE FROM sync_queue WHERE target = 'omie'`)
-      .run();
+    const queueResult = this.database.prepare(`DELETE FROM sync_queue WHERE target = 'omie'`).run();
     const syncQueueCleared = queueResult.changes;
 
     this.omieSyncInProgress = false;
@@ -2020,7 +2042,22 @@ function sleep(ms: number): Promise<void> {
 function renderDailyReportHtml(input: {
   companyName: string;
   date: string;
-  report: { totalOperations: number; totalNetWeightKg: number; totalProductCents: number; totalFreightCents: number; totalCents: number; operations: Array<{ id: string; customerName: string; productDescription: string; netWeightKg: number; productTotalCents: number; freightTotalCents: number; totalCents: number }> };
+  report: {
+    totalOperations: number;
+    totalNetWeightKg: number;
+    totalProductCents: number;
+    totalFreightCents: number;
+    totalCents: number;
+    operations: Array<{
+      id: string;
+      customerName: string;
+      productDescription: string;
+      netWeightKg: number;
+      productTotalCents: number;
+      freightTotalCents: number;
+      totalCents: number;
+    }>;
+  };
 }): string {
   const centsToBRL = (cents: number) =>
     new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents / 100);

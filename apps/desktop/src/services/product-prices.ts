@@ -104,6 +104,31 @@ export function upsertProductDefaultPrice(
     .get(id) as ProductDefaultPriceRow;
 }
 
+export function removeProductDefaultPrice(
+  database: DesktopDatabase,
+  companyId: string,
+  productId: string,
+  now: Date = new Date()
+): void {
+  const existing = database
+    .prepare(
+      `SELECT id FROM product_default_prices
+       WHERE company_id = ? AND product_id = ? AND deleted_at IS NULL AND is_active = 1
+       LIMIT 1`
+    )
+    .get(companyId, productId) as { id: string } | undefined;
+
+  if (!existing) return;
+
+  database
+    .prepare(
+      `UPDATE product_default_prices
+       SET deleted_at = ?, updated_at = ?, is_active = 0
+       WHERE id = ?`
+    )
+    .run(now.toISOString(), now.toISOString(), existing.id);
+}
+
 export function setCustomerSpecialPrice(
   database: DesktopDatabase,
   input: {

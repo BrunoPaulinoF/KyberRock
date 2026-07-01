@@ -56,6 +56,7 @@ export interface DriverCacheEntry {
   name: string;
   document: string | null;
   phone: string | null;
+  isIndependent: boolean;
   isActive: boolean;
 }
 
@@ -191,6 +192,7 @@ interface DriverRow {
   name: string;
   document: string | null;
   phone: string | null;
+  is_independent: number;
   is_active: number;
 }
 
@@ -371,6 +373,7 @@ function mapDriver(row: DriverRow): DriverCacheEntry {
     name: row.name,
     document: row.document,
     phone: row.phone,
+    isIndependent: row.is_independent === 1,
     isActive: row.is_active === 1
   };
 }
@@ -690,7 +693,7 @@ export class CacheStore {
   private loadDrivers(companyId: string): void {
     const rows = this.db
       .prepare(
-        `SELECT id, name, document, phone, is_active
+        `SELECT id, name, document, phone, is_independent, is_active
          FROM drivers WHERE company_id = ? AND deleted_at IS NULL`
       )
       .all(companyId) as DriverRow[];

@@ -91,7 +91,10 @@ export interface KyberRockDesktopApi {
     scaleCaptureId?: string
   ) => Promise<WeighingOperationSummary>;
   cancelWeighing: (operationId: string, reason: string) => Promise<WeighingOperationSummary>;
-  updateWeighingProduct: (operationId: string, newProductId: string) => Promise<WeighingOperationSummary>;
+  updateWeighingProduct: (
+    operationId: string,
+    newProductId: string
+  ) => Promise<WeighingOperationSummary>;
   getCustomerFreightRules: (customerId: string) => Promise<
     Array<{
       id: string;
@@ -247,6 +250,7 @@ export interface KyberRockDesktopApi {
     unitPriceCents: number;
     unit?: string;
   }) => Promise<unknown>;
+  productDefaultPricesRemove: (productId: string) => Promise<void>;
   customerSpecialPricesList: (customerId: string) => Promise<CustomerSpecialPriceSummary[]>;
   customerSpecialPricesSet: (input: {
     customerId: string;

@@ -326,13 +326,16 @@ function registerIpcHandlers(): void {
     return runtime.cancelWeighing(operationId, reason);
   });
 
-  ipcMain.handle("desktop:update-weighing-product", (_event, operationId: string, newProductId: string) => {
-    if (!runtime) {
-      throw new Error("Desktop runtime is not ready.");
-    }
+  ipcMain.handle(
+    "desktop:update-weighing-product",
+    (_event, operationId: string, newProductId: string) => {
+      if (!runtime) {
+        throw new Error("Desktop runtime is not ready.");
+      }
 
-    return runtime.updateWeighingProduct({ operationId, newProductId });
-  });
+      return runtime.updateWeighingProduct({ operationId, newProductId });
+    }
+  );
 
   ipcMain.handle("desktop:get-customer-freight-rules", (_event, customerId: string) => {
     if (!runtime) {
@@ -341,18 +344,23 @@ function registerIpcHandlers(): void {
     return runtime.getCustomerFreightRules(customerId);
   });
 
-  ipcMain.handle("desktop:get-customer-freight-for-product", (_event, customerId: string, productId: string) => {
-    if (!runtime) {
-      throw new Error("Desktop runtime is not ready.");
+  ipcMain.handle(
+    "desktop:get-customer-freight-for-product",
+    (_event, customerId: string, productId: string) => {
+      if (!runtime) {
+        throw new Error("Desktop runtime is not ready.");
+      }
+      return runtime.getCustomerFreightForProduct(customerId, productId);
     }
-    return runtime.getCustomerFreightForProduct(customerId, productId);
-  });
+  );
 
   ipcMain.handle("desktop:set-customer-freight-rule", (_event, input: unknown) => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");
     }
-    return runtime.setCustomerFreightRule(input as Parameters<typeof runtime.setCustomerFreightRule>[0]);
+    return runtime.setCustomerFreightRule(
+      input as Parameters<typeof runtime.setCustomerFreightRule>[0]
+    );
   });
 
   ipcMain.handle("desktop:remove-customer-freight-rule", (_event, ruleId: string) => {
@@ -623,13 +631,10 @@ function registerIpcHandlers(): void {
     return runtime.sendTestEmail(to);
   });
 
-  ipcMain.handle(
-    "desktop:send-daily-report-email",
-    async (_event, email: string, date: string) => {
-      if (!runtime) throw new Error("Desktop runtime is not ready.");
-      return runtime.sendDailyReportEmail(email, date);
-    }
-  );
+  ipcMain.handle("desktop:send-daily-report-email", async (_event, email: string, date: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.sendDailyReportEmail(email, date);
+  });
 
   ipcMain.handle(
     "desktop:send-range-report-email",
@@ -672,6 +677,11 @@ function registerIpcHandlers(): void {
       return runtime.upsertProductDefaultPrice(input);
     }
   );
+
+  ipcMain.handle("desktop:product-default-prices-remove", (_event, productId: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    runtime.removeProductDefaultPrice(productId);
+  });
 
   ipcMain.handle("desktop:customer-special-prices-list", (_event, customerId: string) => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");

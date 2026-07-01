@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
 interface PriceChangePasswordDialogProps {
+  title?: string;
+  description?: string;
   error: string | null;
   submitting?: boolean;
   onCancel: () => void;
@@ -8,6 +10,8 @@ interface PriceChangePasswordDialogProps {
 }
 
 export function PriceChangePasswordDialog({
+  title = "Confirmar alteracao de preco",
+  description = "Digite a senha de 4 digitos para alterar precos.",
   error,
   submitting = false,
   onCancel,
@@ -29,12 +33,17 @@ export function PriceChangePasswordDialog({
   }
 
   return (
-    <div style={styles.overlay} role="dialog" aria-modal="true" aria-labelledby="price-password-title">
+    <div
+      style={styles.overlay}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="price-password-title"
+    >
       <form style={styles.modal} onSubmit={handleSubmit}>
         <h2 id="price-password-title" style={styles.title}>
-          Confirmar alteracao de preco
+          {title}
         </h2>
-        <p style={styles.text}>Digite a senha de 4 digitos para alterar precos.</p>
+        <p style={styles.text}>{description}</p>
         <input
           ref={inputRef}
           type="password"
@@ -47,10 +56,19 @@ export function PriceChangePasswordDialog({
         />
         {error ? <p style={styles.error}>{error}</p> : null}
         <div style={styles.actions}>
-          <button type="button" onClick={onCancel} style={styles.secondaryButton} disabled={submitting}>
+          <button
+            type="button"
+            onClick={onCancel}
+            style={styles.secondaryButton}
+            disabled={submitting}
+          >
             Cancelar
           </button>
-          <button type="submit" style={styles.primaryButton} disabled={submitting || !password.trim()}>
+          <button
+            type="submit"
+            style={styles.primaryButton}
+            disabled={submitting || !password.trim()}
+          >
             {submitting ? "Validando..." : "Confirmar"}
           </button>
         </div>

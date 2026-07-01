@@ -41,7 +41,15 @@ export function createVehicle(
       `INSERT INTO vehicles (id, company_id, plate, description, carrier_id, is_active, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, 1, ?, ?)`
     )
-    .run(id, input.companyId, input.plate.toUpperCase(), input.description ?? null, input.carrierId ?? null, nowIso, nowIso);
+    .run(
+      id,
+      input.companyId,
+      input.plate.toUpperCase(),
+      input.description ?? null,
+      input.carrierId ?? null,
+      nowIso,
+      nowIso
+    );
 
   return database.prepare("SELECT * FROM vehicles WHERE id = ?").get(id) as VehicleRow;
 }
@@ -62,10 +70,22 @@ export function updateVehicle(
   const sets: string[] = [];
   const values: unknown[] = [];
 
-  if (input.plate !== undefined) { sets.push("plate = ?"); values.push(input.plate.toUpperCase()); }
-  if (input.description !== undefined) { sets.push("description = ?"); values.push(input.description); }
-  if (input.carrierId !== undefined) { sets.push("carrier_id = ?"); values.push(input.carrierId); }
-  if (input.isActive !== undefined) { sets.push("is_active = ?"); values.push(input.isActive ? 1 : 0); }
+  if (input.plate !== undefined) {
+    sets.push("plate = ?");
+    values.push(input.plate.toUpperCase());
+  }
+  if (input.description !== undefined) {
+    sets.push("description = ?");
+    values.push(input.description);
+  }
+  if (input.carrierId !== undefined) {
+    sets.push("carrier_id = ?");
+    values.push(input.carrierId);
+  }
+  if (input.isActive !== undefined) {
+    sets.push("is_active = ?");
+    values.push(input.isActive ? 1 : 0);
+  }
 
   if (sets.length === 0) return existing;
 
@@ -77,13 +97,17 @@ export function updateVehicle(
   return database.prepare("SELECT * FROM vehicles WHERE id = ?").get(id) as VehicleRow;
 }
 
-export function deleteVehicle(
-  database: DesktopDatabase,
-  id: string,
-  now: Date = new Date()
-): void {
+export function deleteVehicle(database: DesktopDatabase, id: string, now: Date = new Date()): void {
+  const existing = database
+    .prepare("SELECT id FROM vehicles WHERE id = ? AND deleted_at IS NULL")
+    .get(id) as { id: string } | undefined;
+
+  if (!existing) throw new Error("Veiculo nao encontrado.");
+
   database
-    .prepare("UPDATE vehicles SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL")
+    .prepare(
+      "UPDATE vehicles SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL"
+    )
     .run(now.toISOString(), now.toISOString(), id);
 }
 
@@ -123,7 +147,9 @@ export function linkVehicleToCarrier(
   const id = randomUUID();
 
   const existing = database
-    .prepare("SELECT * FROM vehicle_carriers WHERE vehicle_id = ? AND carrier_id = ? AND deleted_at IS NULL")
+    .prepare(
+      "SELECT * FROM vehicle_carriers WHERE vehicle_id = ? AND carrier_id = ? AND deleted_at IS NULL"
+    )
     .get(vehicleId, carrierId) as VehicleCarrierRow | undefined;
 
   if (existing) {
@@ -140,7 +166,9 @@ export function linkVehicleToCarrier(
     )
     .run(id, vehicleId, carrierId, nowIso, nowIso);
 
-  return database.prepare("SELECT * FROM vehicle_carriers WHERE id = ?").get(id) as VehicleCarrierRow;
+  return database
+    .prepare("SELECT * FROM vehicle_carriers WHERE id = ?")
+    .get(id) as VehicleCarrierRow;
 }
 
 export function unlinkVehicleFromCarrier(
@@ -150,7 +178,9 @@ export function unlinkVehicleFromCarrier(
   now: Date = new Date()
 ): void {
   database
-    .prepare("UPDATE vehicle_carriers SET deleted_at = ?, updated_at = ? WHERE vehicle_id = ? AND carrier_id = ? AND deleted_at IS NULL")
+    .prepare(
+      "UPDATE vehicle_carriers SET deleted_at = ?, updated_at = ? WHERE vehicle_id = ? AND carrier_id = ? AND deleted_at IS NULL"
+    )
     .run(now.toISOString(), now.toISOString(), vehicleId, carrierId);
 }
 
@@ -166,11 +196,17 @@ export function getVehicleCarriers(
        WHERE vc.vehicle_id = ? AND vc.deleted_at IS NULL AND vc.is_active = 1
        ORDER BY c.name ASC`
     )
-    .all(vehicleId) as Array<{ carrierId: string; carrierName: string; carrierDocument: string | null }>;
+    .all(vehicleId) as Array<{
+    carrierId: string;
+    carrierName: string;
+    carrierDocument: string | null;
+  }>;
 }
 
 export function listVehicles(database: DesktopDatabase, companyId: string): VehicleRow[] {
   return database
-    .prepare("SELECT * FROM vehicles WHERE company_id = ? AND deleted_at IS NULL ORDER BY plate ASC")
+    .prepare(
+      "SELECT * FROM vehicles WHERE company_id = ? AND deleted_at IS NULL ORDER BY plate ASC"
+    )
     .all(companyId) as VehicleRow[];
 }

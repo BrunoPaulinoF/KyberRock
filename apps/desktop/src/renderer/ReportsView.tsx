@@ -172,20 +172,24 @@ const styles = {
     fontSize: "13px"
   },
   tableHeadCell: {
-    padding: "8px",
+    padding: "8px 12px",
     borderRight: "1px solid var(--kr-border)",
+    minHeight: "32px",
     whiteSpace: "nowrap" as const
   },
   tableCell: {
-    padding: "8px",
+    padding: "8px 12px",
     borderRight: "1px solid var(--kr-border)",
+    minHeight: "44px",
     verticalAlign: "middle" as const
   },
   tableScroll: {
     overflow: "auto" as const,
     maxHeight: "calc(100vh - 390px)",
     border: "1px solid var(--kr-border)",
-    borderRadius: "12px"
+    borderRadius: "14px",
+    background: "var(--kr-surface)",
+    boxShadow: "var(--kr-shadow)"
   },
   badge: (color: string, background: string) => ({
     display: "inline-flex",
@@ -300,14 +304,10 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
     if (!desktopApi) return;
     const sendEmail = form.deliveryChannel === "email" || form.deliveryChannel === "both";
     const sendWhatsapp = form.deliveryChannel === "whatsapp" || form.deliveryChannel === "both";
-    const validationError = sendEmail
-      ? validateEmail(form.email)
-      : sendWhatsapp
-        ? validateWhatsapp(form.whatsappPhone)
-        : null;
+    const emailError = sendEmail ? validateEmail(form.email) : null;
     const whatsappError = sendWhatsapp ? validateWhatsapp(form.whatsappPhone) : null;
-    if (validationError || whatsappError) {
-      setError(validationError ?? whatsappError);
+    if (emailError || whatsappError) {
+      setError(emailError ?? whatsappError);
       return;
     }
     setError(null);
@@ -360,6 +360,7 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
 
   async function handleDelete(id: string): Promise<void> {
     if (!desktopApi) return;
+    if (!window.confirm("Confirmar exclusao do destinatario?")) return;
     try {
       await desktopApi.deleteReportRecipient(id);
       setSuccess("Destinatario removido.");
@@ -385,116 +386,120 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
       </header>
 
       {showForm ? (
-      <CrudFormModal onClose={resetForm} maxWidth={920}>
-      <Fragment>
-        <div style={styles.formHeader}>
-          <h3 style={styles.formTitle}>
-            {editingId ? "Editar destinatario" : "Adicionar destinatario"}
-          </h3>
-          {error ? <p style={{ ...styles.error, margin: 0 }}>{error}</p> : null}
-          {success ? <p style={{ ...styles.success, margin: 0 }}>{success}</p> : null}
-        </div>
-        <div style={styles.formGrid}>
-          <section style={styles.formSection}>
-            <h4 style={styles.formSectionTitle}>Identificacao</h4>
-            <label style={styles.fieldLabel}>
-              Nome (opcional)
-              <input
-                value={form.displayName}
-                onChange={(event) => setForm({ ...form, displayName: event.target.value })}
-                placeholder="Dono ou responsavel"
-                style={styles.input}
-              />
-            </label>
-            <label style={styles.fieldLabel}>
-              Ativo
-              <select
-                value={form.isActive ? "yes" : "no"}
-                onChange={(event) => setForm({ ...form, isActive: event.target.value === "yes" })}
-                style={styles.input}
-              >
-                <option value="yes">Sim</option>
-                <option value="no">Nao</option>
-              </select>
-            </label>
-          </section>
-          <section style={styles.formSection}>
-            <h4 style={styles.formSectionTitle}>Canais</h4>
-            <label style={styles.fieldLabel}>
-              Enviar por
-              <select
-                value={form.deliveryChannel}
-                onChange={(event) =>
-                  setForm({
-                    ...form,
-                    deliveryChannel: event.target.value as RecipientFormState["deliveryChannel"]
-                  })
-                }
-                style={styles.input}
-              >
-                <option value="email">E-mail</option>
-                <option value="whatsapp">WhatsApp</option>
-                <option value="both">Ambos</option>
-              </select>
-            </label>
-            <label style={styles.fieldLabel}>
-              E-mail
-              <input
-                type="email"
-                value={form.email}
-                onChange={(event) => setForm({ ...form, email: event.target.value })}
-                placeholder="dono@pedreira.com"
-                style={styles.input}
-              />
-            </label>
-            <label style={styles.fieldLabel}>
-              WhatsApp
-              <input
-                type="tel"
-                value={form.whatsappPhone}
-                onChange={(event) => setForm({ ...form, whatsappPhone: event.target.value })}
-                placeholder="(11) 99999-9999"
-                style={styles.input}
-              />
-            </label>
-          </section>
-          <section style={styles.formSection}>
-            <h4 style={styles.formSectionTitle}>Agendamento</h4>
-            <label style={styles.fieldLabel}>
-              Frequencia
-              <select
-                value={form.scheduleFrequency}
-                onChange={(event) => setForm({ ...form, scheduleFrequency: event.target.value })}
-                style={styles.input}
-              >
-                <option value="daily">Diario</option>
-                <option value="weekly">Semanal</option>
-                <option value="monthly">Mensal</option>
-              </select>
-            </label>
-            <label style={styles.fieldLabel}>
-              Horario
-              <input
-                type="time"
-                value={form.scheduleTime}
-                onChange={(event) => setForm({ ...form, scheduleTime: event.target.value })}
-                style={styles.input}
-              />
-            </label>
-          </section>
-        </div>
-        <div style={styles.formFooter}>
-          <div style={{ display: "flex", gap: "6px" }}>
-            <button type="button" onClick={resetForm} style={styles.secondaryButton}>
-              Cancelar
-            </button>
-            <button type="button" onClick={handleSave} style={styles.primaryButton}>
-              {editingId ? "Salvar" : "Adicionar"}
-            </button>
-          </div>
-        </div>
-      </Fragment>
-      </CrudFormModal>
+        <CrudFormModal onClose={resetForm} maxWidth={920}>
+          <Fragment>
+            <div style={styles.formHeader}>
+              <h3 style={styles.formTitle}>
+                {editingId ? "Editar destinatario" : "Adicionar destinatario"}
+              </h3>
+              {error ? <p style={{ ...styles.error, margin: 0 }}>{error}</p> : null}
+              {success ? <p style={{ ...styles.success, margin: 0 }}>{success}</p> : null}
+            </div>
+            <div style={styles.formGrid}>
+              <section style={styles.formSection}>
+                <h4 style={styles.formSectionTitle}>Identificacao</h4>
+                <label style={styles.fieldLabel}>
+                  Nome (opcional)
+                  <input
+                    value={form.displayName}
+                    onChange={(event) => setForm({ ...form, displayName: event.target.value })}
+                    placeholder="Dono ou responsavel"
+                    style={styles.input}
+                  />
+                </label>
+                <label style={styles.fieldLabel}>
+                  Ativo
+                  <select
+                    value={form.isActive ? "yes" : "no"}
+                    onChange={(event) =>
+                      setForm({ ...form, isActive: event.target.value === "yes" })
+                    }
+                    style={styles.input}
+                  >
+                    <option value="yes">Sim</option>
+                    <option value="no">Nao</option>
+                  </select>
+                </label>
+              </section>
+              <section style={styles.formSection}>
+                <h4 style={styles.formSectionTitle}>Canais</h4>
+                <label style={styles.fieldLabel}>
+                  Enviar por
+                  <select
+                    value={form.deliveryChannel}
+                    onChange={(event) =>
+                      setForm({
+                        ...form,
+                        deliveryChannel: event.target.value as RecipientFormState["deliveryChannel"]
+                      })
+                    }
+                    style={styles.input}
+                  >
+                    <option value="email">E-mail</option>
+                    <option value="whatsapp">WhatsApp</option>
+                    <option value="both">Ambos</option>
+                  </select>
+                </label>
+                <label style={styles.fieldLabel}>
+                  E-mail
+                  <input
+                    type="email"
+                    value={form.email}
+                    onChange={(event) => setForm({ ...form, email: event.target.value })}
+                    placeholder="dono@pedreira.com"
+                    style={styles.input}
+                  />
+                </label>
+                <label style={styles.fieldLabel}>
+                  WhatsApp
+                  <input
+                    type="tel"
+                    value={form.whatsappPhone}
+                    onChange={(event) => setForm({ ...form, whatsappPhone: event.target.value })}
+                    placeholder="(11) 99999-9999"
+                    style={styles.input}
+                  />
+                </label>
+              </section>
+              <section style={styles.formSection}>
+                <h4 style={styles.formSectionTitle}>Agendamento</h4>
+                <label style={styles.fieldLabel}>
+                  Frequencia
+                  <select
+                    value={form.scheduleFrequency}
+                    onChange={(event) =>
+                      setForm({ ...form, scheduleFrequency: event.target.value })
+                    }
+                    style={styles.input}
+                  >
+                    <option value="daily">Diario</option>
+                    <option value="weekly">Semanal</option>
+                    <option value="monthly">Mensal</option>
+                  </select>
+                </label>
+                <label style={styles.fieldLabel}>
+                  Horario
+                  <input
+                    type="time"
+                    value={form.scheduleTime}
+                    onChange={(event) => setForm({ ...form, scheduleTime: event.target.value })}
+                    style={styles.input}
+                  />
+                </label>
+              </section>
+            </div>
+            <div style={styles.formFooter}>
+              <div style={{ display: "flex", gap: "6px" }}>
+                <button type="button" onClick={resetForm} style={styles.secondaryButton}>
+                  Cancelar
+                </button>
+                <button type="button" onClick={handleSave} style={styles.primaryButton}>
+                  {editingId ? "Salvar" : "Adicionar"}
+                </button>
+              </div>
+            </div>
+          </Fragment>
+        </CrudFormModal>
       ) : null}
 
       {!showForm && success ? <p style={styles.success}>{success}</p> : null}
@@ -507,9 +512,7 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
         {loading ? (
           <p style={styles.helperText}>Carregando...</p>
         ) : recipients.length === 0 ? (
-          <p style={styles.helperText}>
-            Nenhum destinatario cadastrado.
-          </p>
+          <p style={styles.helperText}>Nenhum destinatario cadastrado.</p>
         ) : (
           <div style={styles.tableScroll}>
             <table style={styles.table}>
@@ -571,7 +574,14 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
                         ? new Date(recipient.lastSyncedAt).toLocaleString("pt-BR")
                         : "-"}
                     </td>
-                    <td style={{ ...styles.tableCell, display: "flex", gap: "6px", justifyContent: "flex-end" }}>
+                    <td
+                      style={{
+                        ...styles.tableCell,
+                        display: "flex",
+                        gap: "6px",
+                        justifyContent: "flex-end"
+                      }}
+                    >
                       <button
                         type="button"
                         onClick={() => handleEdit(recipient)}
