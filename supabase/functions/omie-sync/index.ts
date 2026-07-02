@@ -1,11 +1,14 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import {
+  OmieQueueManager,
+  buildCustomerPayload,
+  pushCarrierToOmie as pushCarrierToOmieCore,
+  type OmieCredentials
+} from "./omie-sync-core.ts";
 
-const OMIE_BASE_URL = "https://app.omie.com.br/api/v1";
 const PAGE_SIZE = 100;
-const OMIE_REQUEST_DELAY_MS = 3_000;
-const OMIE_REDUNDANT_MAX_RETRIES = 2;
-const OMIE_REDUNDANT_DEFAULT_WAIT_MS = 60_000;
-const OMIE_REDUNDANT_MAX_WAIT_MS = 65_000;
+const PUSH_PAGE_SIZE = 25;
+const omieQueue = new OmieQueueManager();
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -37,10 +40,12 @@ async function sha256Hex(value: string): Promise<string> {
 }
 
 type OmieAction =
+  | "sync"
   | "pull_reference_data"
   | "create_order"
   | "create_and_bill_order"
-  | "push_customer";
+  | "push_customer"
+  | "push_carrier";
 
 type PullResume = {
   customersPage?: number;
@@ -64,11 +69,6 @@ type CompanyRow = {
   is_active: boolean;
   omie_app_key: string | null;
   omie_app_secret: string | null;
-};
-
-type OmieCredentials = {
-  appKey: string;
-  appSecret: string;
 };
 
 type OmieCustomer = {
@@ -168,6 +168,7 @@ type OmieSupplier = {
 };
 
 type CreateOrderPayload = {
+  localOperationId?: string;
   operationType: "invoice" | "internal";
   customerOmieId: number;
   productOmieId?: number;
@@ -176,6 +177,7 @@ type CreateOrderPayload = {
   unitPrice: number;
   freightTotalCents?: number;
   issueDate: string;
+  createdAt?: string;
   idempotencyKey: string;
 };
 
@@ -204,6 +206,49 @@ type PushCustomerPayload = {
   state?: string;
   defaultPaymentTermId?: string;
   tags?: string[];
+};
+
+type PushCarrierPayload = Omit<PushCustomerPayload, "razaoSocial" | "nomeFantasia"> & {
+  name: string;
+  razaoSocial?: string;
+  nomeFantasia?: string;
+};
+
+type SyncPayload = {
+  customers?: PushCustomerPayload[];
+  carriers?: PushCarrierPayload[];
+  orders?: CreateOrderPayload[];
+};
+
+type PushItemSuccess = {
+  localId: string;
+  omieId: number;
+};
+
+type PushItemFailure = {
+  localId: string;
+  error: string;
+};
+
+type PushQueuePageResult = {
+  customers: PushItemSuccess[];
+  carriers: PushItemSuccess[];
+  orders: PushItemSuccess[];
+  failures: PushItemFailure[];
+  processed: number;
+  failed: number;
+  pageSize: number;
+  pagination: {
+    customersAccepted: number;
+    customersReceived: number;
+    customersHasMore: boolean;
+    carriersAccepted: number;
+    carriersReceived: number;
+    carriersHasMore: boolean;
+    ordersAccepted: number;
+    ordersReceived: number;
+    ordersHasMore: boolean;
+  };
 };
 
 Deno.serve(async (req) => {
@@ -263,20 +308,9 @@ Deno.serve(async (req) => {
   };
 
   try {
-    if (action === "pull_reference_data") {
-      const customersPage = resume.customersPage ?? 1;
-      const productsPage = resume.productsPage ?? 1;
-      const paymentTermsPage = resume.paymentTermsPage ?? 1;
-      const customersResult = resume.customersFinished
-        ? emptyCustomerPage(customersPage)
-        : await listCustomersPage(credentials, customersPage);
-      const productsResult = resume.productsFinished
-        ? emptyPage<OmieProduct>(productsPage)
-        : await listProductsPage(credentials, productsPage);
-      const paymentTermsResult = resume.paymentTermsFinished
-        ? emptyPage<OmiePaymentTerm>(paymentTermsPage)
-        : await listOptionalPaymentTermsPage(credentials, paymentTermsPage);
-
+    if (action === "sync") {
+      const pull = await pullReferenceDataPage(credentials, resume);
+      const push = await pushLocalQueuePage(credentials, body.payload as SyncPayload);
       const checkedAt = new Date().toISOString();
       await supabase
         .from("device_registrations")
@@ -287,34 +321,31 @@ Deno.serve(async (req) => {
         ok: true,
         companyId: typedDevice.company_id,
         unitId: typedDevice.unit_id,
-        customers: customersResult.items,
-        products: productsResult.items,
-        paymentTerms: paymentTermsResult.items,
-        suppliers: customersResult.carriers,
         checkedAt,
-        pageSize: PAGE_SIZE,
-        pagination: {
-          customersPage: customersResult.page,
-          customersReturned: customersResult.returned,
-          customersFinished: customersResult.finished,
-          customersTotalPages: customersResult.totalPages,
-          customersTotalRecords: customersResult.totalRecords,
-          productsPage: productsResult.page,
-          productsReturned: productsResult.items.length,
-          productsFinished: productsResult.finished,
-          productsTotalPages: productsResult.totalPages,
-          productsTotalRecords: productsResult.totalRecords,
-          paymentTermsPage: paymentTermsResult.page,
-          paymentTermsReturned: paymentTermsResult.items.length,
-          paymentTermsFinished: paymentTermsResult.finished,
-          paymentTermsTotalPages: paymentTermsResult.totalPages,
-          paymentTermsTotalRecords: paymentTermsResult.totalRecords,
-          suppliersPage: customersResult.page,
-          suppliersReturned: customersResult.returned,
-          suppliersFinished: customersResult.finished,
-          suppliersTotalPages: customersResult.totalPages,
-          suppliersTotalRecords: customersResult.totalRecords
-        }
+        pull,
+        push
+      });
+    }
+
+    if (action === "pull_reference_data") {
+      const pull = await pullReferenceDataPage(credentials, resume);
+      const checkedAt = new Date().toISOString();
+      await supabase
+        .from("device_registrations")
+        .update({ last_seen_at: checkedAt, updated_at: checkedAt })
+        .eq("id", typedDevice.id);
+
+      return jsonResponse({
+        ok: true,
+        companyId: typedDevice.company_id,
+        unitId: typedDevice.unit_id,
+        customers: pull.customers,
+        products: pull.products,
+        paymentTerms: pull.paymentTerms,
+        suppliers: pull.suppliers,
+        checkedAt,
+        pageSize: pull.pageSize,
+        pagination: pull.pagination
       });
     }
 
@@ -333,6 +364,12 @@ Deno.serve(async (req) => {
     if (action === "push_customer") {
       const payload = body.payload as PushCustomerPayload;
       const omieCustomerId = await pushCustomerToOmie(credentials, payload);
+      return jsonResponse({ ok: true, omieCustomerId });
+    }
+
+    if (action === "push_carrier") {
+      const payload = body.payload as PushCarrierPayload;
+      const omieCustomerId = await pushCarrierToOmie(credentials, payload);
       return jsonResponse({ ok: true, omieCustomerId });
     }
 
@@ -364,6 +401,147 @@ function emptyPage<T>(page: number): PageResult<T> {
 
 function emptyCustomerPage(page: number): CustomersPageResult {
   return { ...emptyPage<OmieCustomer>(page), carriers: [], returned: 0 };
+}
+
+async function pullReferenceDataPage(
+  credentials: OmieCredentials,
+  resume: PullResume
+): Promise<{
+  customers: OmieCustomer[];
+  products: OmieProduct[];
+  paymentTerms: OmiePaymentTerm[];
+  suppliers: OmieSupplier[];
+  pageSize: number;
+  pagination: Record<string, number | boolean | null>;
+}> {
+  const customersPage = resume.customersPage ?? 1;
+  const productsPage = resume.productsPage ?? 1;
+  const paymentTermsPage = resume.paymentTermsPage ?? 1;
+  const customersResult = resume.customersFinished
+    ? emptyCustomerPage(customersPage)
+    : await listCustomersPage(credentials, customersPage);
+  const productsResult = resume.productsFinished
+    ? emptyPage<OmieProduct>(productsPage)
+    : await listProductsPage(credentials, productsPage);
+  const paymentTermsResult = resume.paymentTermsFinished
+    ? emptyPage<OmiePaymentTerm>(paymentTermsPage)
+    : await listOptionalPaymentTermsPage(credentials, paymentTermsPage);
+
+  return {
+    customers: customersResult.items,
+    products: productsResult.items,
+    paymentTerms: paymentTermsResult.items,
+    suppliers: customersResult.carriers,
+    pageSize: PAGE_SIZE,
+    pagination: {
+      customersPage: customersResult.page,
+      customersReturned: customersResult.returned,
+      customersFinished: customersResult.finished,
+      customersTotalPages: customersResult.totalPages,
+      customersTotalRecords: customersResult.totalRecords,
+      productsPage: productsResult.page,
+      productsReturned: productsResult.items.length,
+      productsFinished: productsResult.finished,
+      productsTotalPages: productsResult.totalPages,
+      productsTotalRecords: productsResult.totalRecords,
+      paymentTermsPage: paymentTermsResult.page,
+      paymentTermsReturned: paymentTermsResult.items.length,
+      paymentTermsFinished: paymentTermsResult.finished,
+      paymentTermsTotalPages: paymentTermsResult.totalPages,
+      paymentTermsTotalRecords: paymentTermsResult.totalRecords,
+      suppliersPage: customersResult.page,
+      suppliersReturned: customersResult.returned,
+      suppliersFinished: customersResult.finished,
+      suppliersTotalPages: customersResult.totalPages,
+      suppliersTotalRecords: customersResult.totalRecords
+    }
+  };
+}
+
+async function pushLocalQueuePage(
+  credentials: OmieCredentials,
+  payload: SyncPayload
+): Promise<PushQueuePageResult> {
+  const customers = takePushPage(payload.customers);
+  const carriers = takePushPage(payload.carriers);
+  const orders = takePushPage(payload.orders).sort(comparePushOrdersChronologically);
+  const result: PushQueuePageResult = {
+    customers: [],
+    carriers: [],
+    orders: [],
+    failures: [],
+    processed: 0,
+    failed: 0,
+    pageSize: PUSH_PAGE_SIZE,
+    pagination: {
+      customersAccepted: customers.length,
+      customersReceived: payload.customers?.length ?? 0,
+      customersHasMore: (payload.customers?.length ?? 0) > customers.length,
+      carriersAccepted: carriers.length,
+      carriersReceived: payload.carriers?.length ?? 0,
+      carriersHasMore: (payload.carriers?.length ?? 0) > carriers.length,
+      ordersAccepted: orders.length,
+      ordersReceived: payload.orders?.length ?? 0,
+      ordersHasMore: (payload.orders?.length ?? 0) > orders.length
+    }
+  };
+
+  for (const customer of customers) {
+    try {
+      const omieId = await pushCustomerToOmie(credentials, customer);
+      result.customers.push({ localId: customer.localCustomerId, omieId });
+      result.processed++;
+    } catch (error) {
+      result.failures.push({ localId: customer.localCustomerId, error: getErrorMessage(error) });
+      result.failed++;
+    }
+  }
+
+  for (const carrier of carriers) {
+    try {
+      const omieId = await pushCarrierToOmie(credentials, carrier);
+      result.carriers.push({ localId: carrier.localCustomerId, omieId });
+      result.processed++;
+    } catch (error) {
+      result.failures.push({ localId: carrier.localCustomerId, error: getErrorMessage(error) });
+      result.failed++;
+    }
+  }
+
+  for (const order of orders) {
+    try {
+      const omieId =
+        order.operationType === "invoice"
+          ? (await createAndBillOmieOrder(credentials, order)).orderId
+          : await createOmieOrder(credentials, order);
+      result.orders.push({ localId: order.localOperationId ?? order.idempotencyKey, omieId });
+      result.processed++;
+    } catch (error) {
+      result.failures.push({
+        localId: order.localOperationId ?? order.idempotencyKey,
+        error: getErrorMessage(error)
+      });
+      result.failed++;
+    }
+  }
+
+  return result;
+}
+
+function takePushPage<T>(items: T[] | undefined): T[] {
+  return (items ?? []).slice(0, PUSH_PAGE_SIZE);
+}
+
+function comparePushOrdersChronologically(a: CreateOrderPayload, b: CreateOrderPayload): number {
+  return getOrderTimestamp(a).localeCompare(getOrderTimestamp(b));
+}
+
+function getOrderTimestamp(order: CreateOrderPayload): string {
+  return order.createdAt ?? order.issueDate ?? "";
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Erro OMIE inesperado";
 }
 
 const OMIE_PAGE_CACHE_TTL_MS = 60_000;
@@ -800,7 +978,10 @@ function hasTransportadoraTag(customer: OmieCustomer): boolean {
   return hasOmieTag(customer.tagsJson, "transportadora");
 }
 
-function hasOmieTag(tagsJson: Record<string, unknown> | unknown[] | null, expected: string): boolean {
+function hasOmieTag(
+  tagsJson: Record<string, unknown> | unknown[] | null,
+  expected: string
+): boolean {
   const tagValues = getOmieTagValues(tagsJson);
   const normalizedExpected = normalizeTag(expected);
   return tagValues.some((tag) => normalizeTag(tag) === normalizedExpected);
@@ -1004,23 +1185,7 @@ async function pushCustomerToOmie(
   credentials: OmieCredentials,
   payload: PushCustomerPayload
 ): Promise<number> {
-  const body = {
-    codigo_cliente_omie: payload.omieCustomerId,
-    codigo_cliente_integracao: payload.localCustomerId,
-    razao_social: payload.razaoSocial,
-    nome_fantasia: payload.nomeFantasia,
-    cnpj_cpf: payload.cnpjCpf,
-    email: payload.email,
-    telefone1_ddd: payload.telefone1Ddd,
-    telefone1_numero: payload.telefone1Numero,
-    endereco: payload.addressStreet,
-    endereco_numero: payload.addressNumber,
-    bairro: payload.neighborhood,
-    cidade: payload.city,
-    estado: payload.state,
-    cep: payload.zipcode,
-    tags: payload.tags?.map((tag) => ({ tag }))
-  };
+  const body = buildCustomerPayload(payload);
 
   if (payload.omieCustomerId) {
     await callOmie<unknown, unknown>(credentials, "/geral/clientes/", "AlterarCliente", body);
@@ -1051,6 +1216,13 @@ async function pushCustomerToOmie(
     throw new Error("OMIE nao retornou codigoClienteOmie");
   }
   return omieCustomerId;
+}
+
+async function pushCarrierToOmie(
+  credentials: OmieCredentials,
+  payload: PushCarrierPayload
+): Promise<number> {
+  return pushCarrierToOmieCore(omieQueue, credentials, payload);
 }
 
 async function findCustomerByDocument(
@@ -1293,100 +1465,5 @@ async function callOmie<TParam, TResponse>(
   call: string,
   param: TParam
 ): Promise<TResponse> {
-  for (let attempt = 0; attempt <= OMIE_REDUNDANT_MAX_RETRIES; attempt++) {
-    const release = await acquireOmieRequestSlot();
-    let response: Response | null = null;
-    let data: unknown;
-    try {
-      response = await fetch(`${OMIE_BASE_URL}${endpoint}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          call,
-          param: [param],
-          app_key: credentials.appKey,
-          app_secret: credentials.appSecret
-        })
-      });
-      data = await readOmieResponseBody(response);
-    } finally {
-      release();
-    }
-    if (!response) throw new Error(`Falha de transporte OMIE em ${call} (${endpoint})`);
-    const detail = getOmieFaultString(data);
-
-    if (!response.ok) {
-      if (detail && isRedundantOmieError(detail) && attempt < OMIE_REDUNDANT_MAX_RETRIES) {
-        await sleep(parseRedundantWaitMs(detail));
-        continue;
-      }
-      const suffix = detail ? ` - ${detail}` : "";
-      throw new Error(
-        `OMIE HTTP ${response.status}: ${response.statusText} em ${call} (${endpoint})${suffix}`
-      );
-    }
-
-    if (detail) {
-      if (isRedundantOmieError(detail) && attempt < OMIE_REDUNDANT_MAX_RETRIES) {
-        await sleep(parseRedundantWaitMs(detail));
-        continue;
-      }
-      throw new Error(`OMIE faultstring em ${call} (${endpoint}): ${detail}`);
-    }
-
-    return data as TResponse;
-  }
-
-  throw new Error(`OMIE redundant retry exhausted em ${call} (${endpoint})`);
-}
-
-let omieRequestGate: Promise<void> = Promise.resolve();
-let lastOmieRequestFinishedAt = 0;
-
-async function acquireOmieRequestSlot(): Promise<() => void> {
-  let releaseSlot: () => void = () => undefined;
-  const nextSlot = new Promise<void>((resolve) => {
-    releaseSlot = resolve;
-  });
-  const previousSlot = omieRequestGate;
-  omieRequestGate = previousSlot.then(() => nextSlot);
-  await previousSlot;
-
-  const elapsedMs = Date.now() - lastOmieRequestFinishedAt;
-  if (lastOmieRequestFinishedAt > 0 && elapsedMs >= 0 && elapsedMs < OMIE_REQUEST_DELAY_MS) {
-    await sleep(OMIE_REQUEST_DELAY_MS - elapsedMs);
-  }
-
-  return () => {
-    lastOmieRequestFinishedAt = Date.now();
-    releaseSlot();
-  };
-}
-
-async function readOmieResponseBody(response: Response): Promise<unknown> {
-  try {
-    return await response.json();
-  } catch {
-    return null;
-  }
-}
-
-function getOmieFaultString(data: unknown): string | null {
-  if (!data || typeof data !== "object" || !("faultstring" in data)) return null;
-  return String((data as { faultstring?: unknown }).faultstring ?? "Falha OMIE");
-}
-
-function isRedundantOmieError(message: string): boolean {
-  return /REDUNDANT|Consumo redundante/i.test(message);
-}
-
-function parseRedundantWaitMs(message: string): number {
-  const match = /Aguarde\s+(\d+)\s+segundos?/i.exec(message);
-  const seconds = match ? Number(match[1]) : NaN;
-  if (!Number.isFinite(seconds) || seconds <= 0) return OMIE_REDUNDANT_DEFAULT_WAIT_MS;
-  return Math.min(seconds * 1000 + 1000, OMIE_REDUNDANT_MAX_WAIT_MS);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return omieQueue.request<TParam, TResponse>({ credentials, endpoint, call, param });
 }
