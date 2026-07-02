@@ -23,6 +23,19 @@ import {
 import type { CepLookupResult } from "./inputs";
 import type { CustomerCacheEntry, CustomerFormData } from "./customers.types";
 import { CrudFormModal } from "./CrudFormModal";
+import {
+  CellMuted,
+  CellPrimary,
+  ConfirmDialog,
+  CrudSearchBar,
+  CrudSectionHeader,
+  DataTable,
+  DeleteRowButton,
+  EditRowButton,
+  FlashBanner,
+  SourceBadge,
+  useFlash
+} from "./crud-ui";
 import { PriceChangePasswordDialog } from "./PriceChangePasswordDialog";
 
 const initialForm: CustomerFormData = {
@@ -47,27 +60,6 @@ const initialForm: CustomerFormData = {
 };
 
 const styles = {
-  page: {
-    display: "grid",
-    gap: "10px",
-    minHeight: 0
-  },
-  toolbar: {
-    display: "flex",
-    gap: "8px",
-    flexWrap: "wrap" as const,
-    alignItems: "center"
-  },
-  search: {
-    flex: 1,
-    minWidth: "180px",
-    border: "1px solid var(--kr-input-border)",
-    borderRadius: "10px",
-    padding: "9px 11px",
-    fontSize: "13px",
-    background: "var(--kr-input-bg)",
-    color: "var(--kr-text-strong)"
-  },
   primaryButton: {
     border: "none",
     background: "var(--kr-primary-strong)",
@@ -98,14 +90,6 @@ const styles = {
     fontWeight: 700,
     fontSize: "12px"
   },
-  message: {
-    color: "#166534",
-    background: "#dcfce7",
-    border: "1px solid #bbf7d0",
-    padding: "6px 10px",
-    borderRadius: "8px",
-    fontSize: "12px"
-  },
   errorMessage: {
     color: "#b91c1c",
     background: "#fef2f2",
@@ -114,86 +98,10 @@ const styles = {
     borderRadius: "8px",
     fontSize: "12px"
   },
-  card: {
-    background: "var(--kr-surface)",
-    border: "1px solid var(--kr-border)",
-    borderRadius: "14px",
-    boxShadow: "var(--kr-shadow)",
-    overflow: "hidden" as const,
-    minHeight: 0
-  },
-  listCard: {
-    display: "flex",
-    flexDirection: "column" as const,
-    minHeight: 0
-  },
-  listBody: {
-    overflow: "auto" as const,
-    maxHeight: "calc(100vh - 380px)",
-    minHeight: "180px"
-  },
-  listRow: {
-    display: "grid",
-    gridTemplateColumns: "minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr) auto",
-    gap: 0,
-    alignItems: "center",
-    padding: 0,
-    borderTop: "1px solid var(--kr-border)",
-    fontSize: "13px"
-  },
-  listHeader: {
-    display: "grid",
-    gridTemplateColumns: "minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr) auto",
-    gap: 0,
-    padding: 0,
-    background: "var(--kr-surface-soft)",
-    color: "var(--kr-muted)",
-    fontSize: "11px",
-    fontWeight: 800,
-    textTransform: "uppercase" as const,
-    letterSpacing: "0.04em",
-    position: "sticky" as const,
-    top: 0,
-    zIndex: 1
-  },
-  listHeaderCell: {
-    padding: "8px 12px",
-    borderRight: "1px solid var(--kr-border)",
-    minHeight: "32px"
-  },
-  listCell: {
-    padding: "8px 12px",
-    borderRight: "1px solid var(--kr-border)",
-    minHeight: "44px",
-    display: "flex",
-    flexDirection: "column" as const,
-    justifyContent: "center",
-    minWidth: 0
-  },
-  cellPrimary: {
-    fontWeight: 700,
-    color: "var(--kr-text-strong)"
-  },
   cellMuted: {
     color: "var(--kr-muted)",
     fontSize: "12px"
   },
-  rowActions: {
-    display: "flex",
-    gap: "6px"
-  },
-  sourceBadge: (source: string) => ({
-    display: "inline-flex",
-    alignItems: "center",
-    padding: "1px 8px",
-    borderRadius: "999px",
-    fontSize: "10px",
-    fontWeight: 800,
-    border: "1px solid",
-    color: source === "omie" ? "var(--kr-info-text)" : "var(--kr-success)",
-    background: source === "omie" ? "var(--kr-info-bg)" : "var(--kr-success-soft)",
-    borderColor: source === "omie" ? "var(--kr-info-border)" : "var(--kr-success-border)"
-  }),
   formShell: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
@@ -270,8 +178,6 @@ const styles = {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    padding: "8px 14px",
-    borderTop: "1px solid var(--kr-border)",
     color: "var(--kr-muted)",
     fontSize: "12px",
     flexWrap: "wrap" as const,
@@ -336,7 +242,10 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
   const [editingSource, setEditingSource] = useState<string | null>(null);
   const [form, setForm] = useState<CustomerFormData>(initialForm);
   const [formError, setFormError] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [flash, showFlash] = useFlash();
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const [carriers, setCarriers] = useState<CarrierOption[]>([]);
   const [paymentTerms, setPaymentTerms] = useState<PaymentTermOption[]>([]);
@@ -527,7 +436,7 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
       setFreightValueReais("");
       setFreightProductId("");
       await loadCustomerFreightRules(editingId);
-      setFeedback("Frete salvo.");
+      showFlash("success", "Frete salvo.");
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Erro ao salvar frete.");
     } finally {
@@ -540,7 +449,7 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
     try {
       await desktopApi.removeCustomerFreightRule(ruleId);
       await loadCustomerFreightRules(editingId);
-      setFeedback("Frete removido.");
+      showFlash("success", "Frete removido.");
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Erro ao remover frete.");
     }
@@ -553,7 +462,7 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
   }
 
   async function handleSave(): Promise<void> {
-    if (!desktopApi) return;
+    if (!desktopApi || saving) return;
     const error = validateForm();
     if (error) {
       setFormError(error);
@@ -579,6 +488,7 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
       : undefined;
     const normalizedZipcode = form.zipcode.replace(/\D/g, "");
 
+    setSaving(true);
     try {
       if (editingId) {
         const localPatch = {
@@ -608,7 +518,7 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
           editingId,
           editingSource === "omie" ? localPatch : fullPatch
         );
-        setFeedback("Cliente atualizado.");
+        showFlash("success", "Cliente atualizado.");
       } else {
         await desktopApi.customersCreate({
           tradeName: form.tradeName.trim(),
@@ -630,13 +540,15 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
           city: form.city.trim() || undefined,
           state: form.state.trim().toUpperCase() || undefined
         });
-        setFeedback("Cliente criado.");
+        showFlash("success", "Cliente criado.");
       }
       setShowForm(false);
       resetForm();
       await loadCustomers();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Erro ao salvar cliente.");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -677,14 +589,14 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
         setSpecialProductId("");
         setSpecialPriceReais("");
         await loadSpecialPrices(pendingSpecialPriceAction.customerId);
-        setFeedback("Preco especial salvo.");
+        showFlash("success", "Preco especial salvo.");
       } else {
         await desktopApi.customerSpecialPricesRemove(
           pendingSpecialPriceAction.customerId,
           pendingSpecialPriceAction.productId
         );
         await loadSpecialPrices(pendingSpecialPriceAction.customerId);
-        setFeedback("Preco especial removido.");
+        showFlash("success", "Preco especial removido.");
       }
       setPendingSpecialPriceAction(null);
       setPricePasswordError(null);
@@ -701,15 +613,23 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
     setPendingSpecialPriceAction({ type: "remove", customerId: editingId, productId });
   }
 
-  async function handleDelete(id: string): Promise<void> {
-    if (!desktopApi) return;
-    if (!window.confirm("Deseja realmente excluir este cliente?")) return;
+  async function handleConfirmDelete(): Promise<void> {
+    if (!desktopApi || !pendingDeleteId) return;
+    setDeleting(true);
     try {
-      await desktopApi.customersDelete(id);
-      setFeedback("Cliente excluido.");
+      await desktopApi.customersDelete(pendingDeleteId);
+      if (pendingDeleteId === editingId) {
+        setShowForm(false);
+        resetForm();
+      }
+      setPendingDeleteId(null);
       await loadCustomers();
+      showFlash("success", "Cliente excluido.");
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : "Erro ao excluir cliente.");
+      setPendingDeleteId(null);
+      showFlash("error", err instanceof Error ? err.message : "Erro ao excluir cliente.");
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -739,21 +659,21 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
   const isOmie = editingSource === "omie";
 
   return (
-    <div style={styles.page}>
-      <div style={styles.toolbar}>
-        <input
-          placeholder="Buscar cliente por nome, fantasia ou CNPJ..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          style={styles.search}
-          title="Filtrar clientes por nome, fantasia ou CNPJ"
-        />
-        <button type="button" onClick={openCreateForm} style={styles.primaryButton}>
-          + Novo cliente
-        </button>
-      </div>
-
-      {feedback ? <p style={styles.message}>{feedback}</p> : null}
+    <div>
+      <CrudSectionHeader
+        title="Clientes"
+        description="Clientes sincronizados do OMIE ou criados localmente. Clientes locais sao enviados ao OMIE no proximo sync."
+        count={total}
+        actionLabel="Novo cliente"
+        onAction={openCreateForm}
+      />
+      <CrudSearchBar
+        value={search}
+        onChange={setSearch}
+        placeholder="Buscar cliente por nome, fantasia ou CNPJ..."
+        onRefresh={() => void loadCustomers()}
+      />
+      <FlashBanner flash={flash} />
 
       {showForm ? (
         <CrudFormModal onClose={() => setShowForm(false)} maxWidth={1040}>
@@ -1135,23 +1055,40 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
             </button>
             <div style={{ display: "flex", gap: "8px" }}>
               {editingId ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => void handleDelete(editingId)}
-                    style={styles.dangerButton}
-                  >
-                    Excluir
-                  </button>
-                </>
+                <button
+                  type="button"
+                  onClick={() => setPendingDeleteId(editingId)}
+                  style={styles.dangerButton}
+                >
+                  Excluir
+                </button>
               ) : null}
-              <button type="button" onClick={() => void handleSave()} style={styles.primaryButton}>
-                {editingId ? "Salvar alteracoes" : "Cadastrar cliente"}
+              <button
+                type="button"
+                onClick={() => void handleSave()}
+                disabled={saving}
+                style={{
+                  ...styles.primaryButton,
+                  opacity: saving ? 0.7 : 1,
+                  cursor: saving ? "wait" : "pointer"
+                }}
+              >
+                {saving ? "Salvando..." : editingId ? "Salvar alteracoes" : "Cadastrar cliente"}
               </button>
             </div>
           </div>
         </Fragment>
         </CrudFormModal>
+      ) : null}
+
+      {pendingDeleteId ? (
+        <ConfirmDialog
+          title="Excluir cliente"
+          description="O cliente sera removido dos cadastros locais. Operacoes ja registradas nao sao afetadas."
+          busy={deleting}
+          onCancel={() => setPendingDeleteId(null)}
+          onConfirm={() => void handleConfirmDelete()}
+        />
       ) : null}
 
       {pendingSpecialPriceAction ? (
@@ -1166,95 +1103,114 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
         />
       ) : null}
 
-      <div style={{ ...styles.card, ...styles.listCard }}>
-        <div style={styles.listHeader}>
-          <span style={styles.listHeaderCell}>Cliente</span>
-          <span style={styles.listHeaderCell}>Documento</span>
-          <span style={styles.listHeaderCell}>Contato</span>
-          <span style={styles.listHeaderCell}>Origem / status</span>
-          <span style={{ ...styles.listHeaderCell, textAlign: "right", borderRight: "none" }}>
-            Acoes
-          </span>
-        </div>
-        <div style={styles.listBody}>
-          {loading ? (
-            <p style={{ ...styles.cellMuted, padding: "14px" }}>Carregando clientes...</p>
-          ) : customers.length === 0 ? (
-            <p style={{ ...styles.cellMuted, padding: "14px" }}>Nenhum cliente encontrado.</p>
-          ) : (
-            customers.map((customer) => (
-              <CustomerRow key={customer.id} customer={customer} onEdit={openEditForm} />
-            ))
-          )}
-        </div>
-        <div style={styles.pagination}>
-          <span>
-            {total === 0
-              ? "0 clientes"
-              : `${page * pageSize + 1}-${Math.min(total, (page + 1) * pageSize)} de ${total}`}
-          </span>
-          <div style={{ display: "flex", gap: "6px" }}>
-            <button
-              type="button"
-              onClick={() => setPage((p) => Math.max(0, p - 1))}
-              disabled={page === 0}
-              style={styles.secondaryButton}
-            >
-              Anterior
-            </button>
+      <DataTable
+        columns={[
+          {
+            key: "customer",
+            header: "Cliente",
+            width: "minmax(200px, 1.4fr)",
+            render: (customer: CustomerCacheEntry) => (
+              <>
+                <CellPrimary>{customer.tradeName || customer.legalName}</CellPrimary>
+                <CellMuted>{customer.legalName}</CellMuted>
+              </>
+            )
+          },
+          {
+            key: "document",
+            header: "Documento",
+            width: "minmax(140px, 1fr)",
+            render: (customer) => (
+              <CellMuted>{formatDocument(customer.document ?? "") || "-"}</CellMuted>
+            )
+          },
+          {
+            key: "contact",
+            header: "Contato",
+            width: "minmax(180px, 1.4fr)",
+            render: (customer) => (
+              <>
+                <CellPrimary>{formatPhone(customer.phone ?? "") || "-"}</CellPrimary>
+                <CellMuted>{customer.email || "-"}</CellMuted>
+              </>
+            )
+          },
+          {
+            key: "source",
+            header: "Origem / status",
+            width: "minmax(130px, 1fr)",
+            render: (customer) => (
+              <>
+                <SourceBadge source={customer.source} />
+                {customer.omieBillingBlocked ? (
+                  <span
+                    style={{
+                      ...styles.pill("#b91c1c", "#fee2e2"),
+                      width: "fit-content",
+                      alignSelf: "start"
+                    }}
+                  >
+                    Bloqueado
+                  </span>
+                ) : null}
+              </>
+            )
+          },
+          {
+            key: "actions",
+            header: "Acoes",
+            width: "170px",
+            align: "right",
+            render: (customer) => (
+              <>
+                <EditRowButton onClick={() => openEditForm(customer)} />
+                <DeleteRowButton onClick={() => setPendingDeleteId(customer.id)} />
+              </>
+            )
+          }
+        ]}
+        rows={customers}
+        rowKey={(customer) => customer.id}
+        loading={loading}
+        emptyTitle={search ? "Nenhum cliente encontrado." : "Nenhum cliente cadastrado."}
+        emptyHint={
+          search
+            ? "Ajuste o termo de busca."
+            : "Sincronize com o OMIE ou cadastre o primeiro cliente pelo botao 'Novo cliente'."
+        }
+        minWidth="820px"
+        maxHeight="calc(100vh - 380px)"
+        footer={
+          <div style={styles.pagination}>
             <span>
-              {page + 1}/{totalPages}
+              {total === 0
+                ? "0 clientes"
+                : `${page * pageSize + 1}-${Math.min(total, (page + 1) * pageSize)} de ${total}`}
             </span>
-            <button
-              type="button"
-              onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-              disabled={page >= totalPages - 1}
-              style={styles.secondaryButton}
-            >
-              Proxima
-            </button>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+                disabled={page === 0}
+                style={styles.secondaryButton}
+              >
+                Anterior
+              </button>
+              <span>
+                {page + 1}/{totalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                disabled={page >= totalPages - 1}
+                style={styles.secondaryButton}
+              >
+                Proxima
+              </button>
+            </div>
           </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function CustomerRow({
-  customer,
-  onEdit
-}: {
-  customer: CustomerCacheEntry;
-  onEdit: (customer: CustomerCacheEntry) => void;
-}) {
-  return (
-    <div style={styles.listRow}>
-      <div style={styles.listCell}>
-        <div style={styles.cellPrimary}>{customer.tradeName || customer.legalName}</div>
-        <div style={styles.cellMuted}>{customer.legalName}</div>
-      </div>
-      <div style={{ ...styles.listCell, ...styles.cellMuted }}>
-        {formatDocument(customer.document ?? "") || "-"}
-      </div>
-      <div style={styles.listCell}>
-        <div style={styles.cellPrimary}>{formatPhone(customer.phone ?? "") || "-"}</div>
-        <div style={styles.cellMuted}>{customer.email || "-"}</div>
-      </div>
-      <div style={styles.listCell}>
-        <span style={styles.sourceBadge(customer.source)}>
-          {customer.source === "omie" ? "OMIE" : "LOCAL"}
-        </span>
-        {customer.omieBillingBlocked ? (
-          <span style={{ ...styles.pill("#b91c1c", "#fee2e2"), marginLeft: "6px" }}>Bloqueado</span>
-        ) : null}
-      </div>
-      <div style={{ ...styles.listCell, borderRight: "none" }}>
-        <div style={styles.rowActions}>
-        <button type="button" onClick={() => onEdit(customer)} style={styles.secondaryButton}>
-          Editar
-        </button>
-        </div>
-      </div>
+        }
+      />
     </div>
   );
 }

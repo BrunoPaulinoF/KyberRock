@@ -54,6 +54,21 @@ import {
 } from "@kyberrock/shared";
 import { ActivationGate } from "./ActivationGate";
 import { CrudFormModal } from "./CrudFormModal";
+import {
+  CellMuted,
+  CellPrimary,
+  ConfirmDialog,
+  CrudFormShell,
+  CrudSearchBar,
+  CrudSectionHeader,
+  DataTable,
+  DeleteRowButton,
+  EditRowButton,
+  FlashBanner,
+  FormSection,
+  SourceBadge,
+  useFlash
+} from "./crud-ui";
 import { BlockedScreen } from "./BlockedScreen";
 import { DashboardView } from "./DashboardView";
 import { DocumentationView } from "./DocumentationView";
@@ -6162,22 +6177,32 @@ function VehicleListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<VehicleFormData>({ plate: "", description: "", carrierId: "" });
-  const [msg, setMsg] = useState<string | null>(null);
+  const [flash, showFlash] = useFlash();
   const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
-    loadVehicles();
-    loadCarriers();
+    void loadVehicles();
   }, [search]);
 
+  useEffect(() => {
+    void loadCarriers();
+  }, []);
+
   async function loadVehicles(): Promise<void> {
-    const result = await desktopApi.queryCache({
-      entityType: "vehicle",
-      search: search || undefined,
-      limit: 200
-    });
-    setVehicles(result.rows as Array<Record<string, unknown>>);
-    setLoading(false);
+    setLoading(true);
+    try {
+      const result = await desktopApi.queryCache({
+        entityType: "vehicle",
+        search: search || undefined,
+        limit: 200
+      });
+      setVehicles(result.rows as Array<Record<string, unknown>>);
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function loadCarriers(): Promise<void> {
@@ -6196,6 +6221,7 @@ function VehicleListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
 
   function openCreate(): void {
     resetForm();
+    void loadCarriers();
     setShowForm(true);
   }
 
@@ -6206,6 +6232,7 @@ function VehicleListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
       carrierId: String(item.carrier_id ?? "")
     });
     setEditingId(String(item.id));
+    setFormError(null);
     setShowForm(true);
   }
 
@@ -6219,6 +6246,7 @@ function VehicleListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
       setFormError("Placa invalida. Use o formato ABC1234 ou ABC1D23.");
       return;
     }
+    setSaving(true);
     try {
       if (editingId) {
         await desktopApi.vehiclesUpdate(editingId, {
@@ -6236,160 +6264,148 @@ function VehicleListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
       setShowForm(false);
       resetForm();
       await loadVehicles();
-      setMsg("Veiculo salvo.");
+      showFlash("success", editingId ? "Veiculo atualizado." : "Veiculo criado.");
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Erro ao salvar.");
+    } finally {
+      setSaving(false);
     }
   }
 
-  async function handleDelete(id: string): Promise<void> {
-    if (!window.confirm("Confirmar exclusao?")) return;
+  async function handleConfirmDelete(): Promise<void> {
+    if (!pendingDeleteId) return;
+    setDeleting(true);
     try {
-      await desktopApi.vehiclesDelete(id);
+      await desktopApi.vehiclesDelete(pendingDeleteId);
+      setPendingDeleteId(null);
       await loadVehicles();
-      setMsg("Excluido.");
+      showFlash("success", "Veiculo excluido.");
     } catch (err) {
-      setMsg(err instanceof Error ? err.message : "Erro.");
+      setPendingDeleteId(null);
+      showFlash("error", err instanceof Error ? err.message : "Erro ao excluir.");
+    } finally {
+      setDeleting(false);
     }
   }
-
-  if (loading) return <p style={{ color: "#64748b" }}>Carregando veiculos...</p>;
 
   return (
     <div>
-      <div style={styles.crudToolbar}>
-        <input
-          placeholder="Buscar veiculo..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          style={{ ...styles.input, flex: 1, minWidth: "160px" }}
-        />
-        <button type="button" onClick={openCreate} style={styles.primaryButton}>
-          + Novo Veiculo
-        </button>
-      </div>
-
-      {msg ? (
-        <p style={{ color: "#16a34a", fontWeight: 700, marginBottom: "6px", fontSize: "13px" }}>
-          {msg}
-        </p>
-      ) : null}
+      <CrudSectionHeader
+        title="Veiculos"
+        description="Caminhoes identificados pela placa. Vincule a transportadora quando houver."
+        count={vehicles.length}
+        actionLabel="Novo veiculo"
+        onAction={openCreate}
+      />
+      <CrudSearchBar
+        value={search}
+        onChange={setSearch}
+        placeholder="Buscar por placa..."
+        onRefresh={() => void loadVehicles()}
+      />
+      <FlashBanner flash={flash} />
 
       {showForm ? (
-        <CrudFormModal onClose={() => setShowForm(false)}>
-          <div style={styles.crudFormHeader}>
-            <h3 style={styles.crudFormTitle}>{editingId ? "Editar Veiculo" : "Novo Veiculo"}</h3>
-            {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
-          </div>
-          <div style={styles.crudFormGrid}>
-            <section style={styles.crudFormSection}>
-              <h4 style={styles.crudFormSectionTitle}>Identificacao</h4>
-              <PlateInput
-                label="Placa"
-                value={form.plate}
-                onChange={(plate) => setForm({ ...form, plate })}
-                required
-              />
-              <TextInput
-                label="Descricao"
-                value={form.description}
-                onChange={(description) => setForm({ ...form, description })}
-              />
-            </section>
-            <section style={styles.crudFormSection}>
-              <h4 style={styles.crudFormSectionTitle}>Vinculo</h4>
-              <Field label="Transportadora">
-                <select
-                  value={form.carrierId}
-                  onChange={(e) => setForm({ ...form, carrierId: e.target.value })}
-                  style={getInputStyle(false)}
-                >
-                  <option value="">Sem transportadora</option>
-                  {carriers.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            </section>
-          </div>
-          <div style={styles.crudFormFooter}>
-            <span style={styles.muted} />
-            <div style={{ display: "flex", gap: "6px" }}>
-              <button
-                type="button"
-                onClick={() => setShowForm(false)}
-                style={styles.secondaryButton}
+        <CrudFormShell
+          title={editingId ? "Editar veiculo" : "Novo veiculo"}
+          subtitle="Placa no formato ABC1234 ou ABC1D23."
+          error={formError}
+          saving={saving}
+          onClose={() => setShowForm(false)}
+          onSubmit={() => void handleSave()}
+        >
+          <FormSection title="Identificacao">
+            <PlateInput
+              label="Placa"
+              value={form.plate}
+              onChange={(plate) => setForm({ ...form, plate })}
+              required
+            />
+            <TextInput
+              label="Descricao"
+              value={form.description}
+              onChange={(description) => setForm({ ...form, description })}
+            />
+          </FormSection>
+          <FormSection title="Vinculo">
+            <Field label="Transportadora">
+              <select
+                value={form.carrierId}
+                onChange={(e) => setForm({ ...form, carrierId: e.target.value })}
+                style={getInputStyle(false)}
               >
-                Cancelar
-              </button>
-              <button type="button" onClick={handleSave} style={styles.primaryButton}>
-                Salvar
-              </button>
-            </div>
-          </div>
-        </CrudFormModal>
+                <option value="">Sem transportadora</option>
+                {carriers.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </FormSection>
+        </CrudFormShell>
       ) : null}
 
-      {vehicles.length === 0 ? (
-        <p style={{ color: "#64748b" }}>Nenhum veiculo cadastrado.</p>
-      ) : (
-        <div style={styles.crudTable}>
-          <div
-            style={{
-              ...styles.crudTableRow,
-              ...styles.crudTableHead,
-              gridTemplateColumns: "130px minmax(180px, 1.2fr) minmax(220px, 1.4fr) 150px"
-            }}
-          >
-            <span style={styles.crudTableHeaderCell}>Placa</span>
-            <span style={styles.crudTableHeaderCell}>Descricao</span>
-            <span style={styles.crudTableHeaderCell}>Transportadora</span>
-            <span style={{ ...styles.crudTableHeaderCell, justifyContent: "flex-end" }}>Acoes</span>
-          </div>
-          {vehicles.map((item) => {
-            const plate = String(item.plate ?? "");
-            const description = String(item.description ?? "");
-            const currentCarrierId = String(item.carrier_id ?? "");
-            const carrierName =
-              carriers.find((carrier) => carrier.id === currentCarrierId)?.name ?? "-";
-            return (
-              <div
-                key={String(item.id)}
-                style={{
-                  ...styles.crudTableRow,
-                  gridTemplateColumns: "130px minmax(180px, 1.2fr) minmax(220px, 1.4fr) 150px"
-                }}
-              >
-                <span style={{ ...styles.crudTableCell, ...styles.crudCellPrimary }}>
-                  {plate || "-"}
-                </span>
-                <span style={{ ...styles.crudTableCell, ...styles.crudCellMuted }}>
-                  {description || "-"}
-                </span>
-                <span style={styles.crudTableCell}>{carrierName}</span>
-                <div style={styles.crudTableActionsCell}>
-                  <button
-                    type="button"
-                    onClick={() => openEdit(item)}
-                    style={styles.secondaryButton}
-                  >
-                    Editar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleDelete(String(item.id))}
-                    style={{ ...styles.secondaryButton, color: "#b91c1c", borderColor: "#fecaca" }}
-                  >
-                    Excluir
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
+      {pendingDeleteId ? (
+        <ConfirmDialog
+          title="Excluir veiculo"
+          description="O veiculo sera removido dos cadastros. Operacoes ja registradas nao sao afetadas."
+          busy={deleting}
+          onCancel={() => setPendingDeleteId(null)}
+          onConfirm={() => void handleConfirmDelete()}
+        />
+      ) : null}
+
+      <DataTable
+        columns={[
+          {
+            key: "plate",
+            header: "Placa",
+            width: "130px",
+            render: (item: Record<string, unknown>) => (
+              <span style={styles.plateBadge}>{String(item.plate ?? "") || "-"}</span>
+            )
+          },
+          {
+            key: "description",
+            header: "Descricao",
+            width: "minmax(180px, 1.2fr)",
+            render: (item) => <CellMuted>{String(item.description ?? "") || "-"}</CellMuted>
+          },
+          {
+            key: "carrier",
+            header: "Transportadora",
+            width: "minmax(200px, 1.3fr)",
+            render: (item) => (
+              <span>
+                {carriers.find((carrier) => carrier.id === String(item.carrier_id ?? ""))?.name ??
+                  "-"}
+              </span>
+            )
+          },
+          {
+            key: "actions",
+            header: "Acoes",
+            width: "170px",
+            align: "right",
+            render: (item) => (
+              <>
+                <EditRowButton onClick={() => openEdit(item)} />
+                <DeleteRowButton onClick={() => setPendingDeleteId(String(item.id))} />
+              </>
+            )
+          }
+        ]}
+        rows={vehicles}
+        rowKey={(item) => String(item.id)}
+        loading={loading}
+        emptyTitle={search ? "Nenhum veiculo encontrado." : "Nenhum veiculo cadastrado."}
+        emptyHint={
+          search
+            ? "Ajuste o termo de busca."
+            : "Cadastre o primeiro veiculo pelo botao \"Novo veiculo\"."
+        }
+      />
     </div>
   );
 }
@@ -6485,14 +6501,17 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<CarrierFormData>(emptyCarrierForm);
   const [formError, setFormError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [flash, showFlash] = useFlash();
+  const [saving, setSaving] = useState(false);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [selectedCarrier, setSelectedCarrier] = useState<string | null>(null);
   const [carrierVehicles, setCarrierVehicles] = useState<
     Array<{ id: string; plate: string; description: string | null }>
   >([]);
 
   useEffect(() => {
-    loadCarriers();
+    void loadCarriers();
   }, [search]);
 
   useEffect(() => {
@@ -6509,6 +6528,7 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   }, [selectedCarrier, desktopApi]);
 
   async function loadCarriers(): Promise<void> {
+    setLoading(true);
     try {
       const result = await desktopApi.queryCache({
         entityType: "carrier",
@@ -6516,8 +6536,7 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
         limit: 200
       });
       setCarriers(result.rows as CarrierCacheEntry[]);
-      setLoading(false);
-    } catch {
+    } finally {
       setLoading(false);
     }
   }
@@ -6562,6 +6581,7 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
       setFormError("CPF/CNPJ invalido.");
       return;
     }
+    setSaving(true);
     try {
       if (editingId) {
         await desktopApi.carriersUpdate(editingId, {
@@ -6577,7 +6597,7 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
           city: form.city.trim() || null,
           state: form.state.trim() || null
         });
-        setMessage("Transportadora atualizada.");
+        showFlash("success", "Transportadora atualizada.");
       } else {
         await desktopApi.carriersCreate({
           name: form.name.trim(),
@@ -6592,287 +6612,272 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
           city: form.city.trim() || undefined,
           state: form.state.trim() || undefined
         });
-        setMessage("Transportadora criada.");
+        showFlash("success", "Transportadora criada.");
       }
       setShowForm(false);
       resetForm();
-      setLoading(true);
       await loadCarriers();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Erro ao salvar.");
+    } finally {
+      setSaving(false);
     }
   }
 
-  async function handleDelete(id: string): Promise<void> {
-    if (!window.confirm("Deseja excluir esta transportadora?")) return;
+  async function handleConfirmDelete(): Promise<void> {
+    if (!pendingDeleteId) return;
+    setDeleting(true);
     try {
-      await desktopApi.carriersDelete(id);
-      setMessage("Transportadora excluida.");
+      await desktopApi.carriersDelete(pendingDeleteId);
+      setPendingDeleteId(null);
       await loadCarriers();
+      showFlash("success", "Transportadora excluida.");
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Erro ao excluir.");
+      setPendingDeleteId(null);
+      showFlash("error", err instanceof Error ? err.message : "Erro ao excluir.");
+    } finally {
+      setDeleting(false);
     }
   }
-
-  if (loading) return <p style={{ color: "#64748b" }}>Carregando transportadoras...</p>;
 
   return (
     <div>
-      <div style={styles.crudToolbar}>
-        <input
-          placeholder="Buscar transportadora..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          style={{ ...styles.input, flex: 1, minWidth: "160px" }}
-        />
-        <button type="button" onClick={openCreate} style={styles.primaryButton}>
-          + Nova Transportadora
-        </button>
-      </div>
-
-      {message ? (
-        <p style={{ color: "#16a34a", fontWeight: 700, marginBottom: "6px", fontSize: "13px" }}>
-          {message}
-        </p>
-      ) : null}
+      <CrudSectionHeader
+        title="Transportadoras"
+        description="Sincronizadas do OMIE pela tag 'transportadora' ou criadas localmente. Clique no nome para ver os veiculos vinculados."
+        count={carriers.length}
+        actionLabel="Nova transportadora"
+        onAction={openCreate}
+      />
+      <CrudSearchBar
+        value={search}
+        onChange={setSearch}
+        placeholder="Buscar por nome, documento ou cidade..."
+        onRefresh={() => void loadCarriers()}
+      />
+      <FlashBanner flash={flash} />
 
       {showForm ? (
-        <CrudFormModal onClose={() => setShowForm(false)} maxWidth={980}>
-          <div style={styles.crudFormHeader}>
-            <h3 style={styles.crudFormTitle}>
-              {editingId ? "Editar Transportadora" : "Nova Transportadora"}
-            </h3>
-            {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
-          </div>
-          <div style={styles.crudFormGrid}>
-            <section style={styles.crudFormSection}>
-              <h4 style={styles.crudFormSectionTitle}>Identificacao</h4>
+        <CrudFormShell
+          title={editingId ? "Editar transportadora" : "Nova transportadora"}
+          subtitle="Transportadoras criadas aqui sao enviadas ao OMIE com a tag 'transportadora'."
+          error={formError}
+          saving={saving}
+          maxWidth={980}
+          onClose={() => setShowForm(false)}
+          onSubmit={() => void handleSave()}
+        >
+          <FormSection title="Identificacao">
+            <TextInput
+              label="Nome"
+              value={form.name}
+              onChange={(name) => setForm({ ...form, name })}
+              required
+            />
+            <DocumentInput
+              label="CNPJ/CPF"
+              value={form.document}
+              onChange={(document) => setForm({ ...form, document })}
+            />
+          </FormSection>
+          <FormSection title="Contato">
+            <TextInput
+              label="Telefone"
+              value={form.phone}
+              onChange={(phone) => setForm({ ...form, phone })}
+            />
+            <TextInput
+              label="Email"
+              value={form.email}
+              onChange={(email) => setForm({ ...form, email })}
+            />
+          </FormSection>
+          <FormSection title="Endereco">
+            <TextInput
+              label="CEP"
+              value={form.zipcode}
+              onChange={(zipcode) => setForm({ ...form, zipcode })}
+            />
+            <TextInput
+              label="Endereco"
+              value={form.addressStreet}
+              onChange={(addressStreet) => setForm({ ...form, addressStreet })}
+            />
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "minmax(90px, 0.7fr) minmax(140px, 1.3fr)",
+                gap: "8px"
+              }}
+            >
               <TextInput
-                label="Nome"
-                value={form.name}
-                onChange={(name) => setForm({ ...form, name })}
-                required
-              />
-              <DocumentInput
-                label="CNPJ/CPF"
-                value={form.document}
-                onChange={(document) => setForm({ ...form, document })}
-              />
-            </section>
-            <section style={styles.crudFormSection}>
-              <h4 style={styles.crudFormSectionTitle}>Contato</h4>
-              <TextInput
-                label="Telefone"
-                value={form.phone}
-                onChange={(phone) => setForm({ ...form, phone })}
+                label="Numero"
+                value={form.addressNumber}
+                onChange={(addressNumber) => setForm({ ...form, addressNumber })}
               />
               <TextInput
-                label="Email"
-                value={form.email}
-                onChange={(email) => setForm({ ...form, email })}
+                label="Complemento"
+                value={form.addressComplement}
+                onChange={(addressComplement) => setForm({ ...form, addressComplement })}
               />
-            </section>
-            <section style={styles.crudFormSection}>
-              <h4 style={styles.crudFormSectionTitle}>Endereco</h4>
-              <TextInput
-                label="CEP"
-                value={form.zipcode}
-                onChange={(zipcode) => setForm({ ...form, zipcode })}
-              />
-              <TextInput
-                label="Endereco"
-                value={form.addressStreet}
-                onChange={(addressStreet) => setForm({ ...form, addressStreet })}
-              />
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "minmax(90px, 0.7fr) minmax(140px, 1.3fr)",
-                  gap: "8px"
-                }}
-              >
-                <TextInput
-                  label="Numero"
-                  value={form.addressNumber}
-                  onChange={(addressNumber) => setForm({ ...form, addressNumber })}
-                />
-                <TextInput
-                  label="Complemento"
-                  value={form.addressComplement}
-                  onChange={(addressComplement) => setForm({ ...form, addressComplement })}
-                />
-              </div>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "minmax(130px, 1fr) minmax(130px, 1fr) 70px",
-                  gap: "8px"
-                }}
-              >
-                <TextInput
-                  label="Bairro"
-                  value={form.neighborhood}
-                  onChange={(neighborhood) => setForm({ ...form, neighborhood })}
-                />
-                <TextInput
-                  label="Cidade"
-                  value={form.city}
-                  onChange={(city) => setForm({ ...form, city })}
-                />
-                <TextInput
-                  label="UF"
-                  value={form.state}
-                  onChange={(state) => setForm({ ...form, state: state.toUpperCase().slice(0, 2) })}
-                />
-              </div>
-            </section>
-          </div>
-          <div style={styles.crudFormFooter}>
-            <span style={styles.muted} />
-            <div style={{ display: "flex", gap: "6px" }}>
-              <button
-                type="button"
-                onClick={() => setShowForm(false)}
-                style={styles.secondaryButton}
-              >
-                Cancelar
-              </button>
-              <button type="button" onClick={handleSave} style={styles.primaryButton}>
-                Salvar
-              </button>
             </div>
-          </div>
-        </CrudFormModal>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "minmax(130px, 1fr) minmax(130px, 1fr) 70px",
+                gap: "8px"
+              }}
+            >
+              <TextInput
+                label="Bairro"
+                value={form.neighborhood}
+                onChange={(neighborhood) => setForm({ ...form, neighborhood })}
+              />
+              <TextInput
+                label="Cidade"
+                value={form.city}
+                onChange={(city) => setForm({ ...form, city })}
+              />
+              <TextInput
+                label="UF"
+                value={form.state}
+                onChange={(state) => setForm({ ...form, state: state.toUpperCase().slice(0, 2) })}
+              />
+            </div>
+          </FormSection>
+        </CrudFormShell>
       ) : null}
 
-      {carriers.length === 0 ? (
-        <p style={{ color: "#64748b" }}>Nenhuma transportadora cadastrada.</p>
-      ) : (
-        <div style={styles.crudTable}>
-          <div
-            style={{
-              ...styles.crudTableRow,
-              ...styles.crudTableHead,
-              gridTemplateColumns:
-                "minmax(220px, 1.3fr) 140px minmax(170px, 1fr) minmax(150px, 0.9fr) 86px 180px"
-            }}
-          >
-            <span>Transportadora</span>
-            <span>Documento</span>
-            <span>Contato</span>
-            <span>Cidade/UF</span>
-            <span>Origem</span>
-            <span style={{ textAlign: "right" }}>Acoes</span>
-          </div>
-          {carriers.map((carrier) => (
-            <Fragment key={carrier.id}>
-              <div
+      {pendingDeleteId ? (
+        <ConfirmDialog
+          title="Excluir transportadora"
+          description="A transportadora sera removida dos cadastros locais. Veiculos vinculados ficam sem transportadora."
+          busy={deleting}
+          onCancel={() => setPendingDeleteId(null)}
+          onConfirm={() => void handleConfirmDelete()}
+        />
+      ) : null}
+
+      <DataTable
+        columns={[
+          {
+            key: "name",
+            header: "Transportadora",
+            width: "minmax(220px, 1.3fr)",
+            render: (carrier: CarrierCacheEntry) => (
+              <button
+                type="button"
+                onClick={() =>
+                  setSelectedCarrier(carrier.id === selectedCarrier ? null : carrier.id)
+                }
+                title="Ver veiculos vinculados"
                 style={{
-                  ...styles.crudTableRow,
-                  gridTemplateColumns:
-                    "minmax(220px, 1.3fr) 140px minmax(170px, 1fr) minmax(150px, 0.9fr) 86px 180px"
+                  border: "none",
+                  background: "transparent",
+                  padding: 0,
+                  textAlign: "left",
+                  cursor: "pointer",
+                  color: "inherit",
+                  minWidth: 0
                 }}
               >
-                <button
-                  type="button"
-                  onClick={() =>
-                    setSelectedCarrier(carrier.id === selectedCarrier ? null : carrier.id)
-                  }
-                  style={{
-                    border: "none",
-                    background: "transparent",
-                    padding: 0,
-                    textAlign: "left",
-                    cursor: "pointer",
-                    color: "inherit"
-                  }}
-                >
-                  <strong>{carrier.name}</strong>
-                  <span style={{ ...styles.muted, display: "block" }}>
-                    Clique para ver veiculos
-                  </span>
-                </button>
-                <span style={styles.muted}>{carrier.document || "-"}</span>
-                <div style={styles.crudCellStack}>
-                  <span>{carrier.phone || "-"}</span>
-                  <span style={styles.muted}>{carrier.email || "-"}</span>
+                <CellPrimary>{carrier.name}</CellPrimary>
+                <CellMuted>
+                  {selectedCarrier === carrier.id ? "Ocultar veiculos" : "Ver veiculos vinculados"}
+                </CellMuted>
+              </button>
+            )
+          },
+          {
+            key: "document",
+            header: "Documento",
+            width: "140px",
+            render: (carrier) => <CellMuted>{carrier.document || "-"}</CellMuted>
+          },
+          {
+            key: "contact",
+            header: "Contato",
+            width: "minmax(170px, 1fr)",
+            render: (carrier) => (
+              <>
+                <span>{carrier.phone || "-"}</span>
+                <CellMuted>{carrier.email || "-"}</CellMuted>
+              </>
+            )
+          },
+          {
+            key: "city",
+            header: "Cidade/UF",
+            width: "minmax(130px, 0.8fr)",
+            render: (carrier) => (
+              <span>{[carrier.city, carrier.state].filter(Boolean).join("/") || "-"}</span>
+            )
+          },
+          {
+            key: "source",
+            header: "Origem",
+            width: "90px",
+            render: (carrier) => <SourceBadge source={carrier.source} />
+          },
+          {
+            key: "actions",
+            header: "Acoes",
+            width: "170px",
+            align: "right",
+            render: (carrier) => (
+              <>
+                <EditRowButton onClick={() => openEdit(carrier)} />
+                <DeleteRowButton onClick={() => setPendingDeleteId(carrier.id)} />
+              </>
+            )
+          }
+        ]}
+        rows={carriers}
+        rowKey={(carrier) => carrier.id}
+        loading={loading}
+        minWidth="920px"
+        emptyTitle={
+          search ? "Nenhuma transportadora encontrada." : "Nenhuma transportadora cadastrada."
+        }
+        emptyHint={
+          search
+            ? "Ajuste o termo de busca."
+            : "Sincronize o OMIE na tela Cloud ou cadastre pelo botao \"Nova transportadora\"."
+        }
+        expandedRow={(carrier) =>
+          selectedCarrier === carrier.id ? (
+            <div style={{ display: "grid", gap: "6px" }}>
+              <strong style={{ color: "var(--kr-text-strong)", fontSize: "13px" }}>
+                Veiculos vinculados
+              </strong>
+              {carrierVehicles.length === 0 ? (
+                <p style={{ color: "var(--kr-muted)", fontSize: "13px", margin: 0 }}>
+                  Nenhum veiculo vinculado.
+                </p>
+              ) : (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                  {carrierVehicles.map((v) => (
+                    <span
+                      key={v.id}
+                      style={{
+                        fontSize: "13px",
+                        background: "var(--kr-surface)",
+                        border: "1px solid var(--kr-border)",
+                        padding: "4px 8px",
+                        borderRadius: "8px",
+                        color: "var(--kr-text-strong)"
+                      }}
+                    >
+                      {v.plate}
+                      {v.description ? ` - ${v.description}` : ""}
+                    </span>
+                  ))}
                 </div>
-                <span>{[carrier.city, carrier.state].filter(Boolean).join("/") || "-"}</span>
-                <span
-                  style={{
-                    justifySelf: "start",
-                    fontSize: "11px",
-                    padding: "2px 7px",
-                    borderRadius: "999px",
-                    border: "1px solid",
-                    background:
-                      carrier.source === "omie" ? "var(--kr-info-bg)" : "var(--kr-success-soft)",
-                    color: carrier.source === "omie" ? "var(--kr-info-text)" : "var(--kr-success)",
-                    borderColor:
-                      carrier.source === "omie"
-                        ? "var(--kr-info-border)"
-                        : "var(--kr-success-border)",
-                    fontWeight: 800
-                  }}
-                >
-                  {carrier.source === "omie" ? "OMIE" : "LOCAL"}
-                </span>
-                <div style={styles.crudActions}>
-                  <button
-                    type="button"
-                    onClick={() => openEdit(carrier)}
-                    style={styles.secondaryButton}
-                  >
-                    Editar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleDelete(carrier.id)}
-                    style={{ ...styles.secondaryButton, color: "#b91c1c", borderColor: "#fecaca" }}
-                  >
-                    Excluir
-                  </button>
-                </div>
-              </div>
-              {selectedCarrier === carrier.id ? (
-                <div
-                  style={{
-                    ...styles.crudTableRow,
-                    gridTemplateColumns: "1fr",
-                    background: "var(--kr-surface-soft)"
-                  }}
-                >
-                  <strong style={{ color: "var(--kr-text-strong)" }}>Veiculos vinculados</strong>
-                  {carrierVehicles.length === 0 ? (
-                    <p style={{ color: "#94a3b8", fontSize: "13px", margin: 0 }}>
-                      Nenhum veiculo vinculado.
-                    </p>
-                  ) : (
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                      {carrierVehicles.map((v) => (
-                        <span
-                          key={v.id}
-                          style={{
-                            fontSize: "13px",
-                            background: "var(--kr-surface)",
-                            border: "1px solid var(--kr-border)",
-                            padding: "4px 8px",
-                            borderRadius: "8px",
-                            color: "var(--kr-text-strong)"
-                          }}
-                        >
-                          {v.plate}
-                          {v.description ? ` - ${v.description}` : ""}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ) : null}
-            </Fragment>
-          ))}
-        </div>
-      )}
+              )}
+            </div>
+          ) : null
+        }
+      />
     </div>
   );
 }
@@ -7602,79 +7607,75 @@ function OmieViewer({
 
   return (
     <div>
-      <div style={styles.crudToolbar}>
-        <input
-          placeholder={`Buscar ${title.toLowerCase()}...`}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          style={{ ...styles.input, flex: 1, minWidth: "160px" }}
-        />
-        <button type="button" onClick={() => void loadItems()} style={styles.secondaryButton}>
-          Atualizar
-        </button>
-      </div>
-      {items.length === 0 ? (
-        <p style={{ color: "#64748b" }}>
-          Nenhum registro encontrado. Execute a sincronizacao OMIE.
-        </p>
-      ) : (
-        <div style={styles.crudTable}>
+      <CrudSectionHeader
+        title={title}
+        description="Somente leitura: o cadastro principal e mantido no OMIE e sincronizado para ca."
+        count={total}
+      />
+      <CrudSearchBar
+        value={search}
+        onChange={setSearch}
+        placeholder={`Buscar ${title.toLowerCase()}...`}
+        onRefresh={() => void loadItems()}
+      />
+      <DataTable
+        columns={[
+          {
+            key: "record",
+            header: "Registro",
+            width: "minmax(260px, 1fr)",
+            render: (item: Record<string, unknown>) => (
+              <>
+                <CellPrimary>{String(item[displayField] ?? "")}</CellPrimary>
+                {subField && item[subField] ? (
+                  <CellMuted>{String(item[subField])}</CellMuted>
+                ) : null}
+              </>
+            )
+          }
+        ]}
+        rows={items}
+        rowKey={(item) => String(item.id)}
+        minWidth="320px"
+        emptyTitle="Nenhum registro encontrado."
+        emptyHint="Execute a sincronizacao OMIE na tela Cloud."
+        footer={
           <div
             style={{
-              ...styles.crudTableRow,
-              ...styles.crudTableHead,
-              gridTemplateColumns: "minmax(260px, 1fr)"
+              display: "flex",
+              gap: "8px",
+              alignItems: "center",
+              justifyContent: "space-between"
             }}
           >
-            <span style={styles.crudTableHeaderCell}>Registro</span>
-          </div>
-          {items.map((item) => (
-            <div
-              key={String(item.id)}
-              style={{ ...styles.crudTableRow, gridTemplateColumns: "minmax(260px, 1fr)" }}
-            >
-              <div style={styles.crudTableCell}>
-                <strong style={styles.crudCellPrimary}>{String(item[displayField] ?? "")}</strong>
-                {subField && item[subField] ? (
-                  <span style={styles.crudCellMuted}>{String(item[subField])}</span>
-                ) : null}
-              </div>
+            <span style={styles.muted}>
+              Mostrando {total === 0 ? 0 : page * pageSize + 1}-
+              {Math.min(total, (page + 1) * pageSize)} de {total}
+            </span>
+            <div style={{ display: "flex", gap: "8px" }}>
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+                disabled={page === 0}
+                style={{ ...styles.smallSecondaryButton, opacity: page === 0 ? 0.55 : 1 }}
+              >
+                Anterior
+              </button>
+              <button
+                type="button"
+                onClick={() => setPage((p) => p + 1)}
+                disabled={(page + 1) * pageSize >= total}
+                style={{
+                  ...styles.smallSecondaryButton,
+                  opacity: (page + 1) * pageSize >= total ? 0.55 : 1
+                }}
+              >
+                Proximos {pageSize}
+              </button>
             </div>
-          ))}
-        </div>
-      )}
-      <div
-        style={{
-          display: "flex",
-          gap: "8px",
-          alignItems: "center",
-          justifyContent: "space-between",
-          marginTop: "10px"
-        }}
-      >
-        <span style={styles.muted}>
-          Mostrando {total === 0 ? 0 : page * pageSize + 1}-{Math.min(total, (page + 1) * pageSize)}{" "}
-          de {total}
-        </span>
-        <div style={{ display: "flex", gap: "8px" }}>
-          <button
-            type="button"
-            onClick={() => setPage((p) => Math.max(0, p - 1))}
-            disabled={page === 0}
-            style={styles.secondaryButton}
-          >
-            Anterior
-          </button>
-          <button
-            type="button"
-            onClick={() => setPage((p) => p + 1)}
-            disabled={(page + 1) * pageSize >= total}
-            style={styles.secondaryButton}
-          >
-            Proximos {pageSize}
-          </button>
-        </div>
-      </div>
+          </div>
+        }
+      />
     </div>
   );
 }
@@ -7700,24 +7701,33 @@ function SimpleCrudList({
 }) {
   const [items, setItems] = useState<Array<Record<string, unknown>>>([]);
   const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formData, setFormData] = useState<Record<string, string>>({});
-  const [msg, setMsg] = useState<string | null>(null);
+  const [flash, showFlash] = useFlash();
   const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const entityLabel = entityType === "vehicle" ? "Veiculo" : "Motorista";
 
   useEffect(() => {
-    loadItems();
+    void loadItems();
   }, [search]);
 
   async function loadItems(): Promise<void> {
-    const result = await desktopApi.queryCache({
-      entityType: entityType,
-      search: search || undefined,
-      limit: 200
-    });
-    setItems(result.rows as Array<Record<string, unknown>>);
+    setLoading(true);
+    try {
+      const result = await desktopApi.queryCache({
+        entityType: entityType,
+        search: search || undefined,
+        limit: 200
+      });
+      setItems(result.rows as Array<Record<string, unknown>>);
+    } finally {
+      setLoading(false);
+    }
   }
 
   function resetForm(): void {
@@ -7754,11 +7764,12 @@ function SimpleCrudList({
       return;
     }
 
+    setSaving(true);
     try {
       setFormError(null);
       const input: Record<string, string | boolean> = {};
       for (const f of fields) {
-        const raw = formData[f.key].trim();
+        const raw = (formData[f.key] ?? "").trim();
         if (f.type === "checkbox") {
           input[f.key] = raw === "true";
           continue;
@@ -7800,21 +7811,32 @@ function SimpleCrudList({
       setShowForm(false);
       resetForm();
       await loadItems();
-      setMsg(`${entityLabel} salvo.`);
+      showFlash("success", editingId ? `${entityLabel} atualizado.` : `${entityLabel} criado.`);
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : "Erro");
+      setFormError(err instanceof Error ? err.message : "Erro ao salvar.");
+    } finally {
+      setSaving(false);
     }
   }
 
-  async function handleDelete(id: string): Promise<void> {
-    if (!window.confirm("Confirmar exclusao?")) return;
-    if (entityType === "vehicle") {
-      await desktopApi.vehiclesDelete(id);
-    } else {
-      await desktopApi.driversDelete(id);
+  async function handleConfirmDelete(): Promise<void> {
+    if (!pendingDeleteId) return;
+    setDeleting(true);
+    try {
+      if (entityType === "vehicle") {
+        await desktopApi.vehiclesDelete(pendingDeleteId);
+      } else {
+        await desktopApi.driversDelete(pendingDeleteId);
+      }
+      setPendingDeleteId(null);
+      await loadItems();
+      showFlash("success", `${entityLabel} excluido.`);
+    } catch (err) {
+      setPendingDeleteId(null);
+      showFlash("error", err instanceof Error ? err.message : "Erro ao excluir.");
+    } finally {
+      setDeleting(false);
     }
-    await loadItems();
-    setMsg("Excluido.");
   }
 
   function displayLabel(item: Record<string, unknown>): string {
@@ -7835,36 +7857,35 @@ function SimpleCrudList({
 
   return (
     <div>
-      <div style={{ display: "flex", gap: "8px", marginBottom: "8px", flexWrap: "wrap" }}>
-        <input
-          placeholder={`Buscar ${title.toLowerCase()}...`}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          style={{ ...styles.input, flex: 1, minWidth: "160px" }}
-        />
-        <button type="button" onClick={openCreate} style={styles.primaryButton}>
-          + Novo
-        </button>
-      </div>
-
-      {msg ? (
-        <p style={{ color: "#16a34a", fontWeight: 700, marginBottom: "6px", fontSize: "13px" }}>
-          {msg}
-        </p>
-      ) : null}
+      <CrudSectionHeader
+        title={title}
+        description={
+          entityType === "driver"
+            ? "Motoristas usados na identificacao do caminhao e impressos no cupom."
+            : undefined
+        }
+        count={items.length}
+        actionLabel={`Novo ${entityLabel.toLowerCase()}`}
+        onAction={openCreate}
+      />
+      <CrudSearchBar
+        value={search}
+        onChange={setSearch}
+        placeholder={`Buscar ${title.toLowerCase()}...`}
+        onRefresh={() => void loadItems()}
+      />
+      <FlashBanner flash={flash} />
 
       {showForm ? (
-        <CrudFormModal onClose={() => setShowForm(false)}>
-          <div style={styles.crudFormHeader}>
-            <h3 style={styles.crudFormTitle}>
-              {editingId ? `Editar ${entityLabel}` : `Novo ${entityLabel}`}
-            </h3>
-            {formError ? <p style={{ ...styles.errorMessage, margin: 0 }}>{formError}</p> : null}
-          </div>
-          <div style={styles.crudFormGrid}>
-            <section style={styles.crudFormSection}>
-              <h4 style={styles.crudFormSectionTitle}>Dados principais</h4>
-              {fields.map((f) => {
+        <CrudFormShell
+          title={editingId ? `Editar ${entityLabel.toLowerCase()}` : `Novo ${entityLabel.toLowerCase()}`}
+          error={formError}
+          saving={saving}
+          onClose={() => setShowForm(false)}
+          onSubmit={() => void handleSave()}
+        >
+          <FormSection title="Dados principais">
+            {fields.map((f) => {
                 const value = formData[f.key] || "";
                 if (f.type === "checkbox") {
                   return (
@@ -7927,73 +7948,59 @@ function SimpleCrudList({
                   />
                 );
               })}
-            </section>
-          </div>
-          <div style={styles.crudFormFooter}>
-            <span style={styles.muted} />
-            <div style={{ display: "flex", gap: "8px" }}>
-              <button
-                type="button"
-                onClick={() => setShowForm(false)}
-                style={styles.secondaryButton}
-              >
-                Cancelar
-              </button>
-              <button type="button" onClick={handleSave} style={styles.primaryButton}>
-                Salvar
-              </button>
-            </div>
-          </div>
-        </CrudFormModal>
+          </FormSection>
+        </CrudFormShell>
       ) : null}
 
-      {items.length === 0 ? (
-        <p style={{ color: "#64748b" }}>Nenhum registro encontrado.</p>
-      ) : (
-        <div style={styles.crudTable}>
-          <div
-            style={{
-              ...styles.crudTableRow,
-              ...styles.crudTableHead,
-              gridTemplateColumns: "minmax(220px, 1.3fr) minmax(260px, 1.5fr) 150px"
-            }}
-          >
-            <span style={styles.crudTableHeaderCell}>
-              {entityType === "vehicle" ? "Placa" : "Nome"}
-            </span>
-            <span style={styles.crudTableHeaderCell}>Detalhes</span>
-            <span style={{ ...styles.crudTableHeaderCell, justifyContent: "flex-end" }}>Acoes</span>
-          </div>
-          {items.map((item) => (
-            <div
-              key={item.id as string}
-              style={{
-                ...styles.crudTableRow,
-                gridTemplateColumns: "minmax(220px, 1.3fr) minmax(260px, 1.5fr) 150px"
-              }}
-            >
-              <span style={{ ...styles.crudTableCell, ...styles.crudCellPrimary }}>
-                {displayLabel(item)}
-              </span>
-              <span style={{ ...styles.crudTableCell, ...styles.crudCellMuted }}>
-                {displaySub(item) || "-"}
-              </span>
-              <div style={styles.crudTableActionsCell}>
-                <button type="button" onClick={() => openEdit(item)} style={styles.secondaryButton}>
-                  Editar
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleDelete(item.id as string)}
-                  style={{ ...styles.secondaryButton, color: "#b91c1c", borderColor: "#fecaca" }}
-                >
-                  Excluir
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      {pendingDeleteId ? (
+        <ConfirmDialog
+          title={`Excluir ${entityLabel.toLowerCase()}`}
+          description="O registro sera removido dos cadastros. Operacoes ja registradas nao sao afetadas."
+          busy={deleting}
+          onCancel={() => setPendingDeleteId(null)}
+          onConfirm={() => void handleConfirmDelete()}
+        />
+      ) : null}
+
+      <DataTable
+        columns={[
+          {
+            key: "label",
+            header: entityType === "vehicle" ? "Placa" : "Nome",
+            width: "minmax(220px, 1.3fr)",
+            render: (item: Record<string, unknown>) => (
+              <CellPrimary>{displayLabel(item)}</CellPrimary>
+            )
+          },
+          {
+            key: "details",
+            header: "Detalhes",
+            width: "minmax(260px, 1.5fr)",
+            render: (item) => <CellMuted>{displaySub(item) || "-"}</CellMuted>
+          },
+          {
+            key: "actions",
+            header: "Acoes",
+            width: "170px",
+            align: "right",
+            render: (item) => (
+              <>
+                <EditRowButton onClick={() => openEdit(item)} />
+                <DeleteRowButton onClick={() => setPendingDeleteId(item.id as string)} />
+              </>
+            )
+          }
+        ]}
+        rows={items}
+        rowKey={(item) => item.id as string}
+        loading={loading}
+        emptyTitle={search ? "Nenhum registro encontrado." : `Nenhum ${entityLabel.toLowerCase()} cadastrado.`}
+        emptyHint={
+          search
+            ? "Ajuste o termo de busca."
+            : `Cadastre pelo botao "Novo ${entityLabel.toLowerCase()}".`
+        }
+      />
     </div>
   );
 }
@@ -8012,7 +8019,7 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   const [search, setSearch] = useState("");
   const [selectedProductId, setSelectedProductId] = useState("");
   const [priceReais, setPriceReais] = useState("");
-  const [message, setPriceMessage] = useState<string | null>(null);
+  const [flash, showFlash] = useFlash();
   const [pendingDefaultPrice, setPendingDefaultPrice] = useState<
     | { action: "save"; productId: string; unitPriceCents: number }
     | { action: "remove"; productId: string; productDescription: string }
@@ -8071,10 +8078,10 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
         });
         setSelectedProductId("");
         setPriceReais("");
-        setPriceMessage("Preco padrao salvo.");
+        showFlash("success", "Preco padrao salvo.");
       } else {
         await desktopApi.productDefaultPricesRemove(pendingDefaultPrice.productId);
-        setPriceMessage("Preco padrao removido.");
+        showFlash("success", "Preco padrao removido.");
       }
       await loadPrices();
       setPendingDefaultPrice(null);
@@ -8096,20 +8103,27 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   });
 
   return (
-    <div style={{ display: "grid", gap: "16px" }}>
-      <div>
-        <h3 style={{ marginTop: 0, color: "var(--kr-text-strong)" }}>Produtos</h3>
-        <p style={styles.muted}>
-          Produtos sincronizados do OMIE com o preco padrao usado na pesagem. Clientes com preco
-          especial cadastrado tem prioridade sobre o preco padrao.
-        </p>
-      </div>
+    <div>
+      <CrudSectionHeader
+        title="Produtos"
+        description="Produtos sincronizados do OMIE com o preco padrao usado na pesagem. Preco especial do cliente tem prioridade sobre o preco padrao."
+        count={items.length}
+      />
+      <FlashBanner flash={flash} />
 
-      {message ? (
-        <p style={{ color: "var(--kr-success)", fontWeight: 700, marginBottom: "8px" }}>{message}</p>
-      ) : null}
-
-      <div style={{ display: "flex", gap: "8px", alignItems: "flex-end", flexWrap: "wrap" }}>
+      <div
+        style={{
+          display: "flex",
+          gap: "8px",
+          alignItems: "flex-end",
+          flexWrap: "wrap",
+          padding: "12px",
+          borderRadius: "12px",
+          border: "1px solid var(--kr-border)",
+          background: "var(--kr-surface-soft)",
+          marginBottom: "12px"
+        }}
+      >
         <Field label="Produto" style={{ flex: 1, minWidth: "260px", marginBottom: 0 }}>
           <select
             value={selectedProductId}
@@ -8137,83 +8151,61 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
         <button
           type="button"
           onClick={() => void handleSaveDefaultPrice()}
-          style={{ ...styles.primaryButton, padding: "10px 14px" }}
+          disabled={!selectedProductId || !priceReais.trim()}
+          style={{
+            ...styles.primaryButton,
+            padding: "10px 14px",
+            opacity: !selectedProductId || !priceReais.trim() ? 0.55 : 1
+          }}
         >
           Salvar preco
         </button>
       </div>
 
-      <div style={styles.crudToolbar}>
-        <input
-          placeholder="Buscar produto por nome ou codigo..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          style={{ ...styles.input, flex: 1, minWidth: "220px" }}
-        />
-        <button type="button" onClick={() => void loadPrices()} style={styles.secondaryButton}>
-          Atualizar
-        </button>
-      </div>
+      <CrudSearchBar
+        value={search}
+        onChange={setSearch}
+        placeholder="Buscar produto por nome ou codigo..."
+        onRefresh={() => void loadPrices()}
+      />
 
-      {visibleItems.length === 0 ? (
-        <div style={styles.emptyState}>
-          <strong style={{ color: "var(--kr-text-strong)" }}>
-            {items.length === 0 ? "Nenhum produto sincronizado." : "Nenhum produto encontrado."}
-          </strong>
-          <span>
-            {items.length === 0
-              ? "Execute a sincronizacao OMIE na tela Cloud para baixar os produtos."
-              : "Ajuste o termo de busca para localizar o produto."}
-          </span>
-        </div>
-      ) : (
-        <div style={{ ...styles.crudTable, marginBottom: "24px" }}>
-          <div
-            style={{
-              ...styles.crudTableRow,
-              ...styles.crudTableHead,
-              gridTemplateColumns: "minmax(240px, 1fr) 120px 160px 200px"
-            }}
-          >
-            <span style={styles.crudTableHeaderCell}>Produto</span>
-            <span style={styles.crudTableHeaderCell}>Codigo</span>
-            <span style={{ ...styles.crudTableHeaderCell, justifyContent: "flex-end" }}>
-              Preco padrao
-            </span>
-            <span style={{ ...styles.crudTableHeaderCell, justifyContent: "flex-end" }}>Acoes</span>
-          </div>
-          {visibleItems.map((item) => (
-            <div
-              key={item.productId}
-              style={{
-                ...styles.crudTableRow,
-                gridTemplateColumns: "minmax(240px, 1fr) 120px 160px 200px",
-                alignItems: "center",
-                gap: 0
-              }}
-            >
-              <span style={styles.crudTableCell}>
-                <strong style={styles.crudCellPrimary}>{item.productDescription}</strong>
-              </span>
-              <span style={styles.crudTableCell}>
-                <span style={styles.crudCellMuted}>{item.productCode ?? "-"}</span>
-              </span>
-              <span
-                style={{
-                  ...styles.crudTableCell,
-                  ...styles.crudCellPrimary,
-                  alignItems: "flex-end"
-                }}
-              >
-                {item.unitPriceCents === null ? (
-                  <span style={{ color: "var(--kr-warning)", fontWeight: 700 }}>Sem preco</span>
-                ) : (
-                  `${formatMoney(item.unitPriceCents)}/ton`
-                )}
-              </span>
-              <div style={styles.crudTableActionsCell}>
-                <button
-                  type="button"
+      <DataTable
+        columns={[
+          {
+            key: "product",
+            header: "Produto",
+            width: "minmax(240px, 1fr)",
+            render: (item: (typeof items)[number]) => (
+              <CellPrimary>{item.productDescription}</CellPrimary>
+            )
+          },
+          {
+            key: "code",
+            header: "Codigo",
+            width: "130px",
+            render: (item) => <CellMuted>{item.productCode ?? "-"}</CellMuted>
+          },
+          {
+            key: "price",
+            header: "Preco padrao",
+            width: "160px",
+            align: "right",
+            render: (item) =>
+              item.unitPriceCents === null ? (
+                <span style={{ color: "var(--kr-warning)", fontWeight: 700 }}>Sem preco</span>
+              ) : (
+                <CellPrimary>{`${formatMoney(item.unitPriceCents)}/ton`}</CellPrimary>
+              )
+          },
+          {
+            key: "actions",
+            header: "Acoes",
+            width: "210px",
+            align: "right",
+            render: (item) => (
+              <>
+                <EditRowButton
+                  label={item.unitPriceCents === null ? "Definir preco" : "Alterar"}
                   onClick={() => {
                     setSelectedProductId(item.productId);
                     setPriceReais(
@@ -8222,27 +8214,25 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                         : (item.unitPriceCents / 100).toFixed(2).replace(".", ",")
                     );
                   }}
-                  style={styles.smallSecondaryButton}
-                >
-                  {item.unitPriceCents === null ? "Definir preco" : "Alterar"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleRemoveDefaultPrice(item)}
+                />
+                <DeleteRowButton
+                  label="Remover"
                   disabled={item.unitPriceCents === null}
-                  style={{
-                    ...styles.smallDangerButton,
-                    opacity: item.unitPriceCents === null ? 0.55 : 1,
-                    cursor: item.unitPriceCents === null ? "not-allowed" : "pointer"
-                  }}
-                >
-                  Remover
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+                  onClick={() => handleRemoveDefaultPrice(item)}
+                />
+              </>
+            )
+          }
+        ]}
+        rows={visibleItems}
+        rowKey={(item) => item.productId}
+        emptyTitle={items.length === 0 ? "Nenhum produto sincronizado." : "Nenhum produto encontrado."}
+        emptyHint={
+          items.length === 0
+            ? "Execute a sincronizacao OMIE na tela Cloud para baixar os produtos."
+            : "Ajuste o termo de busca para localizar o produto."
+        }
+      />
 
       {pendingDefaultPrice ? (
         <PriceChangePasswordDialog
