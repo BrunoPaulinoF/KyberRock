@@ -1,0 +1,71 @@
+{
+  "version": "5",
+  "specifiers": {
+    "jsr:@std/assert@*": "1.0.19",
+    "jsr:@std/internal@^1.0.12": "1.0.14"
+  },
+  "jsr": {
+    "@std/assert@1.0.19": {
+      "integrity": "eaada96ee120cb980bc47e040f82814d786fe8162ecc53c91d8df60b8755991e",
+      "dependencies": [
+        "jsr:@std/internal"
+      ]
+    },
+    "@std/internal@1.0.14": {
+      "integrity": "291516b3d4c35024d6ffbc0a9df5bf4c64116e05b50012cf846710152d2ffdf7"
+    }
+  },
+  "workspace": {
+    "packageJson": {
+      "dependencies": [
+        "npm:@eslint/js@^9.39.1",
+        "npm:@supabase/supabase-js@^2.107.0",
+        "npm:@types/node@^24.10.1",
+        "npm:@types/react-dom@^19.2.3",
+        "npm:@types/react@^19.2.7",
+        "npm:@vitejs/plugin-react@^5.1.1",
+        "npm:app-builder-lib@^26.15.0",
+        "npm:electron-builder@^23.6.0",
+        "npm:eslint@^9.39.1",
+        "npm:prettier@^3.7.3",
+        "npm:typescript-eslint@^8.49.0",
+        "npm:typescript@^5.9.3",
+        "npm:vite@^7.2.6",
+        "npm:vitest@^4.0.15"
+      ]
+    },
+    "members": {
+      "apps/desktop": {
+        "packageJson": {
+          "dependencies": [
+            "npm:@kyberrock/print-templates@0.1.0",
+            "npm:@supabase/supabase-js@^2.107.0",
+            "npm:@types/better-sqlite3@^7.6.13",
+            "npm:@types/nodemailer@^8.0.1",
+            "npm:better-sqlite3@^12.10.0",
+            "npm:electron-builder@^26.15.0",
+            "npm:electron-updater@^6.8.9",
+            "npm:electron@40.10.2",
+            "npm:lucide-react@^1.21.0",
+            "npm:nodemailer@^9.0.1",
+            "npm:react-dom@^19.2.7",
+            "npm:react@^19.2.7",
+            "npm:recharts@^2.15.4"
+          ]
+        }
+      },
+      "apps/loader-web": {
+        "packageJson": {
+          "dependencies": [
+            "npm:@supabase/supabase-js@^2.107.0",
+            "npm:@vitejs/plugin-react@^5.1.1",
+            "npm:react-dom@^19.2.1",
+            "npm:react-router-dom@^7.17.0",
+            "npm:react@^19.2.1",
+            "npm:vite@^7.2.6"
+          ]
+        }
+      }
+    }
+  }
+}

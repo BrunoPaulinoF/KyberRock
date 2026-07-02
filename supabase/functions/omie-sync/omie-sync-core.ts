@@ -26,6 +26,8 @@ export type OmieRequestInput<TParam> = {
   param: TParam;
 };
 
+export type OmieRequester = Pick<OmieQueueManager, "request">;
+
 export type PushCustomerPayload = {
   localCustomerId: string;
   omieCustomerId?: number;
@@ -87,7 +89,9 @@ export class OmieQueueManager {
       try {
         return await this.requestOnce<TParam, TResponse>(input);
       } catch (error) {
-        if (!isOmieLimitError(error) || attempt >= this.maxRetries) throw error;
+        if (!isOmieLimitError(error) || !(error instanceof OmieHttpError) || attempt >= this.maxRetries) {
+          throw error;
+        }
         const retryDelayMs = getRetryDelayMs(error, attempt, this.baseBackoffMs);
         await this.sleepFn(retryDelayMs);
       }
@@ -190,7 +194,7 @@ export function buildCarrierPayload(payload: PushCarrierPayload): Record<string,
 }
 
 export async function pushCustomerToOmieCore(
-  queue: OmieQueueManager,
+  queue: OmieRequester,
   credentials: OmieCredentials,
   payload: PushCustomerPayload
 ): Promise<number> {
@@ -203,7 +207,7 @@ export async function pushCustomerToOmieCore(
 }
 
 export async function pushCarrierToOmie(
-  queue: OmieQueueManager,
+  queue: OmieRequester,
   credentials: OmieCredentials,
   payload: PushCarrierPayload
 ): Promise<number> {
@@ -257,7 +261,7 @@ function getRetryDelayMs(error: OmieHttpError, attempt: number, baseBackoffMs: n
 }
 
 async function pushCustomerBodyToOmie(
-  queue: OmieQueueManager,
+  queue: OmieRequester,
   credentials: OmieCredentials,
   body: Record<string, unknown>,
   omieCustomerId?: number

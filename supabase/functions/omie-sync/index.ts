@@ -1,14 +1,16 @@
-import { createClient } from "jsr:@supabase/supabase-js@2";
+import { createClient as createSupabaseClient } from "jsr:@supabase/supabase-js@2";
 import {
   OmieQueueManager,
   buildCustomerPayload,
   pushCarrierToOmie as pushCarrierToOmieCore,
-  type OmieCredentials
+  type OmieCredentials,
+  type OmieRequester
 } from "./omie-sync-core.ts";
 
 const PAGE_SIZE = 100;
 const PUSH_PAGE_SIZE = 25;
-const omieQueue = new OmieQueueManager();
+const defaultOmieQueue = new OmieQueueManager();
+let activeOmieQueue: OmieRequester = defaultOmieQueue;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -220,6 +222,24 @@ type SyncPayload = {
   orders?: CreateOrderPayload[];
 };
 
+type SupabaseQueryLike = {
+  select(columns: string): SupabaseQueryLike;
+  update(values: Record<string, unknown>): SupabaseQueryLike;
+  eq(column: string, value: string): SupabaseQueryLike;
+  single(): Promise<{ data: unknown; error: unknown }>;
+};
+
+type SupabaseClientLike = {
+  from(table: string): SupabaseQueryLike;
+};
+
+type CreateSupabaseClient = (url: string, serviceRoleKey: string) => SupabaseClientLike;
+
+export type OmieSyncHandlerDependencies = {
+  createClient?: CreateSupabaseClient;
+  omieQueue?: OmieRequester;
+};
+
 type PushItemSuccess = {
   localId: string;
   omieId: number;
@@ -251,12 +271,16 @@ type PushQueuePageResult = {
   };
 };
 
-Deno.serve(async (req) => {
+export async function handleOmieSyncRequest(
+  req: Request,
+  dependencies: OmieSyncHandlerDependencies = {}
+): Promise<Response> {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  const createClient = dependencies.createClient ?? createSupabaseClient;
   const supabase = createClient(supabaseUrl, serviceRoleKey);
   const body = (await req.json().catch(() => ({}))) as {
     deviceId?: string;
@@ -277,11 +301,12 @@ Deno.serve(async (req) => {
     .eq("id", deviceId)
     .single();
 
-  if (deviceError || !device?.is_active) {
+  const deviceRow = device as Partial<DeviceRow> | null;
+  if (deviceError || !deviceRow?.is_active) {
     return jsonResponse({ error: "Dispositivo nao autorizado" }, 401);
   }
 
-  const typedDevice = device as DeviceRow;
+  const typedDevice = deviceRow as DeviceRow;
   const tokenHash = await sha256Hex(deviceToken);
   if (!safeEqual(tokenHash, typedDevice.token_hash)) {
     return jsonResponse({ error: "Token de dispositivo invalido" }, 401);
@@ -293,11 +318,12 @@ Deno.serve(async (req) => {
     .eq("id", typedDevice.company_id)
     .single();
 
-  if (companyError || !company?.is_active) {
+  const companyRow = company as Partial<CompanyRow> | null;
+  if (companyError || !companyRow?.is_active) {
     return jsonResponse({ error: "Empresa bloqueada ou inexistente" }, 403);
   }
 
-  const typedCompany = company as CompanyRow;
+  const typedCompany = companyRow as CompanyRow;
   if (!typedCompany.omie_app_key || !typedCompany.omie_app_secret) {
     return jsonResponse({ error: "OMIE nao configurado para esta empresa" }, 400);
   }
@@ -306,6 +332,9 @@ Deno.serve(async (req) => {
     appKey: typedCompany.omie_app_key,
     appSecret: typedCompany.omie_app_secret
   };
+
+  const previousOmieQueue = activeOmieQueue;
+  if (dependencies.omieQueue) activeOmieQueue = dependencies.omieQueue;
 
   try {
     if (action === "sync") {
@@ -379,8 +408,14 @@ Deno.serve(async (req) => {
       { error: error instanceof Error ? error.message : "Erro OMIE inesperado" },
       400
     );
+  } finally {
+    activeOmieQueue = previousOmieQueue;
   }
-});
+}
+
+if (import.meta.main) {
+  Deno.serve((req) => handleOmieSyncRequest(req));
+}
 
 type PageResult<T> = {
   items: T[];
@@ -1222,7 +1257,7 @@ async function pushCarrierToOmie(
   credentials: OmieCredentials,
   payload: PushCarrierPayload
 ): Promise<number> {
-  return pushCarrierToOmieCore(omieQueue, credentials, payload);
+  return pushCarrierToOmieCore(activeOmieQueue, credentials, payload);
 }
 
 async function findCustomerByDocument(
@@ -1242,7 +1277,14 @@ async function findCustomerByDocument(
     );
     const customers = (response.clientes ?? []) as Array<Record<string, unknown>>;
     const id = customers
-      .map((row) => toNumber(pickFirst(row.codigo_cliente_omie, row.codigoClienteOmie)))
+      .map((row) =>
+        toNumber(
+          pickFirst(
+            row.codigo_cliente_omie as string | number | null | undefined,
+            row.codigoClienteOmie as string | number | null | undefined
+          )
+        )
+      )
       .find((value) => value !== null);
     return id ?? null;
   } catch {
@@ -1416,13 +1458,24 @@ async function consultSalesOrderByIntegrationCode(
 function extractSalesOrderId(value: unknown): number | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
-  const direct = toNumber(pickFirst(record.codigo_pedido, record.codigoPedido, record.nCodPed));
+  const direct = toNumber(
+    pickFirst(
+      record.codigo_pedido as string | number | null | undefined,
+      record.codigoPedido as string | number | null | undefined,
+      record.nCodPed as string | number | null | undefined
+    )
+  );
   if (direct !== null) return direct;
   const header =
     record.cabecalho && typeof record.cabecalho === "object"
       ? (record.cabecalho as Record<string, unknown>)
       : null;
-  return toNumber(pickFirst(header?.codigo_pedido, header?.codigoPedido));
+  return toNumber(
+    pickFirst(
+      header?.codigo_pedido as string | number | null | undefined,
+      header?.codigoPedido as string | number | null | undefined
+    )
+  );
 }
 
 async function getSalesOrderDocument(
@@ -1465,5 +1518,5 @@ async function callOmie<TParam, TResponse>(
   call: string,
   param: TParam
 ): Promise<TResponse> {
-  return omieQueue.request<TParam, TResponse>({ credentials, endpoint, call, param });
+  return activeOmieQueue.request<TParam, TResponse>({ credentials, endpoint, call, param });
 }
