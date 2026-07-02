@@ -1,6 +1,6 @@
 {
     "name": "@kyberrock/desktop",
-    "version": "0.5.63",
+    "version": "0.5.64",
     "private": true,
     "type": "module",
     "main": "dist/main/main.js",
@@ -37,6 +37,8 @@
         },
         "files": [
             "dist/**/*",
+            "!dist/**/*.d.ts",
+            "!dist/**/*.d.ts.map",
             "package.json",
             "midia/**/*"
         ],
