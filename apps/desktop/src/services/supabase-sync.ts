@@ -1040,7 +1040,10 @@ export async function syncOmieReferenceDataFromCloud(
 
     if (!data) throw new Error("Resposta OMIE vazia.");
 
-    return applyOmieReferenceData(database, settings.companyId, data);
+    // Persistir com o MESMO company_id que as telas de cadastro consultam
+    // (identidade local ativa). Usar o id da nuvem aqui deixaria os registros
+    // invisiveis na UI caso as duas chaves divirjam.
+    return applyOmieReferenceData(database, identity.companyId, data);
   }
 
   throw new Error("OMIE sync redundant retry exhausted.");
@@ -1057,12 +1060,17 @@ export function applyOmieReferenceData(
   const suppliers = data.suppliers ?? [];
   const pagination = data.pagination;
 
+  // Contadores refletem linhas realmente gravadas no SQLite (nao o tamanho do payload),
+  // para o log de sync nao reportar sucesso quando nada ficou visivel nas telas.
+  let customersPersisted = 0;
   let productsSynced = 0;
+  let paymentTermsPersisted = 0;
+  let suppliersPersisted = 0;
   const apply = database.transaction(() => {
-    upsertOmieCustomers(database, companyId, customers);
+    customersPersisted = upsertOmieCustomers(database, companyId, customers);
     productsSynced = upsertOmieProducts(database, companyId, products);
-    upsertOmiePaymentTerms(database, companyId, paymentTerms);
-    upsertOmieSuppliers(database, companyId, suppliers);
+    paymentTermsPersisted = upsertOmiePaymentTerms(database, companyId, paymentTerms);
+    suppliersPersisted = upsertOmieSuppliers(database, companyId, suppliers);
   });
   apply();
 
@@ -1141,11 +1149,11 @@ export function applyOmieReferenceData(
   }
 
   return {
-    customersPulled: customers.length,
+    customersPulled: customersPersisted,
     customersPushed: 0,
     productsSynced,
-    paymentTermsSynced: paymentTerms.length,
-    suppliersSynced: suppliers.length,
+    paymentTermsSynced: paymentTermsPersisted,
+    suppliersSynced: suppliersPersisted,
     errors: []
   };
 }
@@ -1942,7 +1950,7 @@ function upsertOmieCustomers(
   database: DesktopDatabase,
   companyId: string,
   customers: OmieReferenceCustomer[]
-): void {
+): number {
   const findLocalId = database.prepare(
     "SELECT id FROM customers WHERE company_id = ? AND omie_customer_id = ? LIMIT 1"
   );
@@ -1965,6 +1973,7 @@ function upsertOmieCustomers(
       omie_updated_at, needs_push, created_at, updated_at
     ) VALUES (?, ?, ?, ?, 'omie', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced', datetime('now'), datetime('now'), 0, datetime('now'), datetime('now'))
     ON CONFLICT(id) DO UPDATE SET
+      company_id = excluded.company_id,
       omie_customer_id = excluded.omie_customer_id,
       omie_integration_code = excluded.omie_integration_code,
       legal_name = CASE WHEN customers.needs_push = 0 THEN excluded.legal_name ELSE customers.legal_name END,
@@ -2004,6 +2013,7 @@ function upsertOmieCustomers(
       updated_at = datetime('now')
   `);
 
+  let persisted = 0;
   for (const customer of customers) {
     const existing = findLocalId.get(companyId, customer.id) as { id: string } | undefined;
     const byIntegrationCode = customer.integrationCode
@@ -2049,7 +2059,9 @@ function upsertOmieCustomers(
       customer.defaultPaymentTermId,
       customer.isActive === false ? 0 : 1
     );
+    persisted++;
   }
+  return persisted;
 }
 
 function upsertOmieProducts(
@@ -2076,6 +2088,7 @@ function upsertOmieProducts(
       is_active, updated_from_omie_at, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), datetime('now'))
     ON CONFLICT(id) DO UPDATE SET
+      company_id = excluded.company_id,
       omie_product_id = excluded.omie_product_id,
       omie_integration_code = excluded.omie_integration_code,
       code = excluded.code,
@@ -2161,7 +2174,7 @@ function upsertOmiePaymentTerms(
   database: DesktopDatabase,
   companyId: string,
   paymentTerms: OmieReferencePaymentTerm[]
-): void {
+): number {
   const upsert = database.prepare(`
     INSERT INTO payment_terms (
       id, company_id, omie_code, omie_integration_code, name, rules_json,
@@ -2170,6 +2183,7 @@ function upsertOmiePaymentTerms(
       updated_from_omie_at, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), datetime('now'))
     ON CONFLICT(id) DO UPDATE SET
+      company_id = excluded.company_id,
       omie_code = excluded.omie_code,
       omie_integration_code = excluded.omie_integration_code,
       name = excluded.name,
@@ -2185,6 +2199,7 @@ function upsertOmiePaymentTerms(
       updated_at = datetime('now')
   `);
 
+  let persisted = 0;
   for (const paymentTerm of paymentTerms) {
     upsert.run(
       `omie_${paymentTerm.id}`,
@@ -2209,14 +2224,16 @@ function upsertOmiePaymentTerms(
       paymentTerm.visible === false ? 0 : 1,
       paymentTerm.isActive === false ? 0 : 1
     );
+    persisted++;
   }
+  return persisted;
 }
 
 function upsertOmieSuppliers(
   database: DesktopDatabase,
   companyId: string,
   suppliers: OmieReferenceSupplier[]
-): void {
+): number {
   const upsert = database.prepare(`
     INSERT INTO carriers (
       id, company_id, omie_customer_id, omie_integration_code, name, document,
@@ -2225,6 +2242,7 @@ function upsertOmieSuppliers(
       is_active, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'omie', 'synced', 0, datetime('now'), ?, datetime('now'), datetime('now'))
     ON CONFLICT(id) DO UPDATE SET
+      company_id = excluded.company_id,
       omie_customer_id = excluded.omie_customer_id,
       omie_integration_code = excluded.omie_integration_code,
       name = excluded.name,
@@ -2246,6 +2264,7 @@ function upsertOmieSuppliers(
       updated_at = datetime('now')
   `);
 
+  let persisted = 0;
   for (const supplier of suppliers) {
     if (!Number.isFinite(supplier.id) || !supplier.name.trim()) continue;
     const localId =
@@ -2269,7 +2288,9 @@ function upsertOmieSuppliers(
       supplier.state ?? null,
       supplier.isActive === false ? 0 : 1
     );
+    persisted++;
   }
+  return persisted;
 }
 
 function findCarrierLocalId(

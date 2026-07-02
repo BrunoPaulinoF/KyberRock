@@ -274,6 +274,66 @@ describe("supabase sync", () => {
     }
   });
 
+  it("re-keys OMIE rows saved under a stale company id so registration screens see them", () => {
+    const database = createDatabase();
+
+    try {
+      createIdentity(database);
+      // Simula instalacao antiga: registros OMIE gravados sob a identidade
+      // provisoria antes da ativacao do dispositivo.
+      const now = "2026-06-12T12:00:00.000Z";
+      database
+        .prepare(
+          `INSERT INTO companies (id, legal_name, trade_name, created_at, updated_at)
+           VALUES ('setup-company', 'Config Inicial', 'Config Inicial', ?, ?)`
+        )
+        .run(now, now);
+      database
+        .prepare(
+          `INSERT INTO customers (
+            id, company_id, omie_customer_id, source, legal_name, trade_name,
+            sync_status, needs_push, is_active, created_at, updated_at
+          ) VALUES ('omie_123', 'setup-company', 123, 'omie', 'Cliente Antigo', 'Cliente Antigo', 'synced', 0, 1, ?, ?)`
+        )
+        .run(now, now);
+      database
+        .prepare(
+          `INSERT INTO products (
+            id, company_id, omie_product_id, code, description, unit, is_active, created_at, updated_at
+          ) VALUES ('omie_456', 'setup-company', 456, 'BRITA1', 'Brita 1', 'M3', 1, ?, ?)`
+        )
+        .run(now, now);
+
+      const result = applyOmieReferenceData(database, "company-1", {
+        customers: [
+          {
+            id: 123,
+            name: "Cliente Atual",
+            tradeName: "Cliente Atual",
+            document: null,
+            phone: null,
+            email: null
+          }
+        ],
+        products: [
+          { id: 456, code: "BRITA1", description: "Brita 1", unit: "M3", itemType: "04" }
+        ],
+        paymentTerms: [],
+        suppliers: []
+      });
+
+      expect(result).toMatchObject({ customersPulled: 1, productsSynced: 1 });
+      expect(
+        database.prepare("SELECT company_id FROM customers WHERE id = 'omie_123'").pluck().get()
+      ).toBe("company-1");
+      expect(
+        database.prepare("SELECT company_id FROM products WHERE id = 'omie_456'").pluck().get()
+      ).toBe("company-1");
+    } finally {
+      database.close();
+    }
+  });
+
   it("restores soft-deleted OMIE customers by integration code", () => {
     const database = createDatabase();
 
