@@ -58,8 +58,8 @@ export interface UpdateCustomerInput {
 
 export interface ListCustomersParam {
   pagina: number;
-  registrosPorPagina?: number;
-  apenasImportadoApi?: "S" | "N";
+  registros_por_pagina?: number;
+  apenas_importado_api?: "S" | "N";
 }
 
 interface OmieCustomerRaw {
@@ -192,8 +192,8 @@ export class OmieCustomersService {
     while (hasMore) {
       const customers = await listCustomers(this.client, {
         pagina: page,
-        registrosPorPagina: pageSize,
-        apenasImportadoApi: "N"
+        registros_por_pagina: pageSize,
+        apenas_importado_api: "N"
       });
 
       if (customers.length === 0) break;

@@ -62,5 +62,14 @@ describe("OmiePaymentTermsService", () => {
     const terms = await service.listAll();
 
     expect(terms).toHaveLength(1);
+    expect(client.call).toHaveBeenCalledWith(
+      "/geral/condicoespgto/",
+      "ListarCondicoesPagamento",
+      expect.objectContaining({
+        pagina: 1,
+        registros_por_pagina: 100,
+        apenas_importado_api: "N"
+      })
+    );
   });
 });

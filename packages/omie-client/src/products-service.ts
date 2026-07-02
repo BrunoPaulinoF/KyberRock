@@ -31,11 +31,11 @@ export interface Product {
 
 export interface ListProductsParam {
   pagina: number;
-  registrosPorPagina?: number;
-  apenasImportadoApi?: "S" | "N";
-  filtrarApenasOmiepdv?: "S" | "N";
-  exibirCaracteristicas?: "S" | "N";
-  exibirObs?: "S" | "N";
+  registros_por_pagina?: number;
+  apenas_importado_api?: "S" | "N";
+  filtrar_apenas_omiepdv?: "S" | "N";
+  exibir_caracteristicas?: "S" | "N";
+  exibir_obs?: "S" | "N";
 }
 
 interface OmieProductRaw {
@@ -107,11 +107,11 @@ export class OmieProductsService {
     while (hasMore) {
       const products = await listProducts(this.client, {
         pagina: page,
-        registrosPorPagina: pageSize,
-        apenasImportadoApi: "N",
-        filtrarApenasOmiepdv: "N",
-        exibirCaracteristicas: "N",
-        exibirObs: "S"
+        registros_por_pagina: pageSize,
+        apenas_importado_api: "N",
+        filtrar_apenas_omiepdv: "N",
+        exibir_caracteristicas: "N",
+        exibir_obs: "S"
       });
 
       if (products.length === 0) break;

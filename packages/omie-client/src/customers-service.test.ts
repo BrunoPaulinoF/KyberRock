@@ -20,12 +20,12 @@ describe("listCustomers", () => {
       nRegistros: 0
     });
 
-    await listCustomers(client, { pagina: 1, registrosPorPagina: 50 });
+    await listCustomers(client, { pagina: 1, registros_por_pagina: 50 });
 
     expect(client.call).toHaveBeenCalledWith(
       "/geral/clientes/",
       "ListarClientes",
-      { pagina: 1, registrosPorPagina: 50 }
+      { pagina: 1, registros_por_pagina: 50 }
     );
   });
 
@@ -89,5 +89,14 @@ describe("OmieCustomersService", () => {
 
     expect(customers).toHaveLength(1);
     expect(client.call).toHaveBeenCalledTimes(1);
+    expect(client.call).toHaveBeenCalledWith(
+      "/geral/clientes/",
+      "ListarClientes",
+      expect.objectContaining({
+        pagina: 1,
+        registros_por_pagina: 100,
+        apenas_importado_api: "N"
+      })
+    );
   });
 });

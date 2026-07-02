@@ -15,8 +15,8 @@ export interface PaymentTerm {
 
 export interface ListPaymentTermsParam {
   pagina: number;
-  registrosPorPagina?: number;
-  apenasImportadoApi?: "S" | "N";
+  registros_por_pagina?: number;
+  apenas_importado_api?: "S" | "N";
 }
 
 interface OmiePaymentTermRaw {
@@ -88,8 +88,8 @@ export class OmiePaymentTermsService {
     while (hasMore) {
       const terms = await listPaymentTerms(this.client, {
         pagina: page,
-        registrosPorPagina: pageSize,
-        apenasImportadoApi: "N"
+        registros_por_pagina: pageSize,
+        apenas_importado_api: "N"
       });
 
       if (terms.length === 0) break;

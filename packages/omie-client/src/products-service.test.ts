@@ -159,10 +159,11 @@ describe("OmieProductsService", () => {
       "ListarProdutos",
       expect.objectContaining({
         pagina: 1,
-        apenasImportadoApi: "N",
-        filtrarApenasOmiepdv: "N",
-        exibirCaracteristicas: "N",
-        exibirObs: "S"
+        registros_por_pagina: 100,
+        apenas_importado_api: "N",
+        filtrar_apenas_omiepdv: "N",
+        exibir_caracteristicas: "N",
+        exibir_obs: "S"
       })
     );
   });
