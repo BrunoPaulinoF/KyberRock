@@ -189,8 +189,10 @@ const styles = {
     borderRadius: "999px",
     fontSize: "10px",
     fontWeight: 800,
-    color: source === "omie" ? "#1e40af" : "#166534",
-    background: source === "omie" ? "#dbeafe" : "#dcfce7"
+    border: "1px solid",
+    color: source === "omie" ? "var(--kr-info-text)" : "var(--kr-success)",
+    background: source === "omie" ? "var(--kr-info-bg)" : "var(--kr-success-soft)",
+    borderColor: source === "omie" ? "var(--kr-info-border)" : "var(--kr-success-border)"
   }),
   formShell: {
     display: "grid",
@@ -958,10 +960,10 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
                         style={{
                           flex: 1,
                           padding: "6px 10px",
-                          border: freightMode === "default" ? "2px solid #2563eb" : "1px solid var(--kr-border)",
+                          border: freightMode === "default" ? "2px solid var(--kr-accent)" : "1px solid var(--kr-border)",
                           borderRadius: "8px",
-                          background: freightMode === "default" ? "#eff6ff" : "var(--kr-surface)",
-                          color: freightMode === "default" ? "#1e40af" : "var(--kr-muted)",
+                          background: freightMode === "default" ? "var(--kr-accent-soft)" : "var(--kr-surface)",
+                          color: freightMode === "default" ? "var(--kr-info-text)" : "var(--kr-muted)",
                           fontWeight: freightMode === "default" ? 700 : 500,
                           fontSize: "12px",
                           cursor: "pointer"
@@ -975,10 +977,10 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
                         style={{
                           flex: 1,
                           padding: "6px 10px",
-                          border: freightMode === "product" ? "2px solid #2563eb" : "1px solid var(--kr-border)",
+                          border: freightMode === "product" ? "2px solid var(--kr-accent)" : "1px solid var(--kr-border)",
                           borderRadius: "8px",
-                          background: freightMode === "product" ? "#eff6ff" : "var(--kr-surface)",
-                          color: freightMode === "product" ? "#1e40af" : "var(--kr-muted)",
+                          background: freightMode === "product" ? "var(--kr-accent-soft)" : "var(--kr-surface)",
+                          color: freightMode === "product" ? "var(--kr-info-text)" : "var(--kr-muted)",
                           fontWeight: freightMode === "product" ? 700 : 500,
                           fontSize: "12px",
                           cursor: "pointer"

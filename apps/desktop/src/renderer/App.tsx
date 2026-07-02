@@ -147,7 +147,7 @@ const initialWeighingForm: WeighingFormState = {
   driverIsIndependent: false
 };
 
-type RegistrationsTab = "customers" | "price_tables" | "products" | "payment_terms" | "transport";
+type RegistrationsTab = "customers" | "products" | "payment_terms" | "transport";
 
 type AppPhase = "checking_access" | "locked" | "bootstrapping_cloud" | "unlocked";
 export type ThemeMode = "light" | "dark";
@@ -2376,13 +2376,6 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   </button>
                   <button
                     type="button"
-                    onClick={() => setRegistrationsTab("price_tables")}
-                    style={subTabStyle(registrationsTab === "price_tables")}
-                  >
-                    Precos Padrao
-                  </button>
-                  <button
-                    type="button"
                     onClick={() => setRegistrationsTab("products")}
                     style={subTabStyle(registrationsTab === "products")}
                   >
@@ -2408,18 +2401,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   {registrationsTab === "customers" ? (
                     <CustomersView desktopApi={desktopApi} />
                   ) : null}
-                  {registrationsTab === "price_tables" ? (
-                    <PriceTableListView desktopApi={desktopApi} />
-                  ) : null}
                   {registrationsTab === "products" ? (
-                    <OmieViewer
-                      desktopApi={desktopApi}
-                      entityType="product"
-                      title="Produtos (OMIE)"
-                      displayField="description"
-                      subField="code"
-                      productFiscalType="finished_goods"
-                    />
+                    <ProductsView desktopApi={desktopApi} />
                   ) : null}
                   {registrationsTab === "payment_terms" ? (
                     <OmieViewer
@@ -3108,6 +3091,12 @@ function GlobalUiPolish() {
         box-sizing: border-box;
       }
 
+      [data-theme] {
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+        font-variant-numeric: tabular-nums;
+      }
+
       [data-theme] button,
       [data-theme] input,
       [data-theme] select,
@@ -3115,12 +3104,31 @@ function GlobalUiPolish() {
         font-family: inherit;
       }
 
+      [data-theme] button {
+        transition: filter 140ms ease, background-color 140ms ease, border-color 140ms ease,
+          box-shadow 140ms ease, transform 60ms ease;
+      }
+
+      [data-theme] button:not(:disabled):hover {
+        filter: brightness(0.96);
+      }
+
+      [data-theme] button:not(:disabled):active {
+        transform: translateY(1px);
+      }
+
+      [data-theme] input,
+      [data-theme] select,
+      [data-theme] textarea {
+        transition: border-color 140ms ease, box-shadow 140ms ease;
+      }
+
       [data-theme] button:focus-visible,
       [data-theme] input:focus-visible,
       [data-theme] select:focus-visible,
       [data-theme] textarea:focus-visible,
       [data-theme] [tabindex]:focus-visible {
-        outline: 3px solid var(--kr-focus-ring);
+        outline: 2px solid var(--kr-focus-ring);
         outline-offset: 2px;
       }
 
@@ -3213,7 +3221,7 @@ function SidebarItem({
     color: disabled ? "var(--kr-muted)" : isActive ? "var(--kr-primary-text)" : "var(--kr-muted)",
     background: isActive ? "var(--kr-primary-strong)" : "transparent",
     border: "none",
-    borderLeft: isActive ? "3px solid var(--kr-primary)" : "3px solid transparent",
+    borderLeft: isActive ? "3px solid var(--kr-accent)" : "3px solid transparent",
     borderRadius: "0 10px 10px 0",
     cursor: disabled ? "not-allowed" : "pointer",
     textAlign: "left"
@@ -5397,12 +5405,18 @@ function CloseOperationWeighingDialog({
             style={{
               textAlign: "center",
               padding: "12px",
-              background: "#eff6ff",
-              borderRadius: "8px",
+              background: "var(--kr-info-bg)",
+              border: "1px solid var(--kr-info-border)",
+              borderRadius: "10px",
               marginBottom: "16px"
             }}
           >
-            <span style={{ fontSize: "14px", color: invalidNetWeight ? "#b91c1c" : "#1e40af" }}>
+            <span
+              style={{
+                fontSize: "14px",
+                color: invalidNetWeight ? "var(--kr-danger)" : "var(--kr-info-text)"
+              }}
+            >
               Peso líquido:{" "}
               <strong style={{ fontSize: "20px" }}>{formatWeightKg(netWeight)}</strong>
             </span>
@@ -5857,13 +5871,13 @@ function getErrorMessage(error: unknown): string {
 function subTabStyle(active: boolean) {
   return {
     border: "none",
-    borderBottom: active ? "2px solid var(--kr-text-strong)" : "2px solid transparent",
+    borderBottom: active ? "2px solid var(--kr-accent)" : "2px solid transparent",
     borderRadius: "0",
-    padding: "6px 12px",
+    padding: "7px 12px",
     background: "transparent",
     color: active ? "var(--kr-text-strong)" : "var(--kr-muted)",
     cursor: "pointer",
-    fontWeight: active ? 700 : 400,
+    fontWeight: active ? 700 : 500,
     fontSize: "12px"
   };
 }
@@ -5884,10 +5898,10 @@ function operationsTabStyle(active: boolean): React.CSSProperties {
 function fiscalProgressBadgeStyle(status: FiscalCloseProgress["status"]): React.CSSProperties {
   const tone =
     status === "success"
-      ? { background: "#dcfce7", color: "#166534" }
+      ? { background: "var(--kr-success-soft)", color: "var(--kr-success)" }
       : status === "error"
-        ? { background: "#fee2e2", color: "#991b1b" }
-        : { background: "#dbeafe", color: "#1e40af" };
+        ? { background: "var(--kr-danger-soft)", color: "var(--kr-danger)" }
+        : { background: "var(--kr-info-bg)", color: "var(--kr-info-text)" };
   return {
     ...tone,
     padding: "6px 10px",
@@ -5903,11 +5917,15 @@ function fiscalStepDotStyle(input: {
   failed: boolean;
 }): React.CSSProperties {
   const tone = input.failed
-    ? { background: "#b91c1c", color: "#ffffff", borderColor: "#b91c1c" }
+    ? { background: "var(--kr-danger-strong)", color: "#ffffff", borderColor: "var(--kr-danger-strong)" }
     : input.done
       ? { background: "#16a34a", color: "#ffffff", borderColor: "#16a34a" }
       : input.active
-        ? { background: "#2563eb", color: "#ffffff", borderColor: "#2563eb" }
+        ? {
+            background: "var(--kr-primary-strong)",
+            color: "var(--kr-primary-text)",
+            borderColor: "var(--kr-primary-strong)"
+          }
         : {
             background: "var(--kr-surface)",
             color: "var(--kr-muted)",
@@ -6001,103 +6019,132 @@ function fiscalBillingPillStyle(
   };
 }
 
+// Identidade visual KyberRock: grafite (logo) + ambar (sinalizacao de patio/mineracao)
+// sobre neutros da familia "stone". Tokens semanticos (success/danger/warning/accent)
+// permitem que os dois temas compartilhem os mesmos estilos de componente.
 function getThemeVariables(themeMode: ThemeMode): React.CSSProperties {
   if (themeMode === "dark") {
     return {
-      "--kr-bg": "#020617",
-      "--kr-surface": "#0f172a",
-      "--kr-surface-soft": "#111827",
-      "--kr-surface-elevated": "#172033",
-      "--kr-border": "#1e293b",
-      "--kr-text": "#e5e7eb",
-      "--kr-text-strong": "#f8fafc",
-      "--kr-muted": "#94a3b8",
-      "--kr-input-bg": "#020617",
-      "--kr-input-border": "#334155",
-      "--kr-input-disabled-bg": "#111827",
-      "--kr-input-disabled-text": "#64748b",
-      "--kr-primary": "#60a5fa",
-      "--kr-primary-strong": "#2563eb",
-      "--kr-primary-text": "#eff6ff",
-      "--kr-focus-ring": "rgba(96, 165, 250, 0.58)",
-      "--kr-selection-bg": "#1d4ed8",
-      "--kr-selection-text": "#eff6ff",
-      "--kr-scroll-track": "#020617",
-      "--kr-scroll-thumb": "#334155",
-      "--kr-shadow": "0 12px 36px rgba(0,0,0,0.35)",
-      "--kr-card-bg": "#0b1326",
-      "--kr-card-border": "#1e293b",
-      "--kr-card-hover": "#111c38",
-      "--kr-chart-1": "#60a5fa",
-      "--kr-chart-2": "#38bdf8",
-      "--kr-chart-3": "#fbbf24",
+      "--kr-bg": "#0c0a09",
+      "--kr-surface": "#171412",
+      "--kr-surface-soft": "#1c1917",
+      "--kr-surface-elevated": "#221e1b",
+      "--kr-border": "#2e2925",
+      "--kr-text": "#e7e5e4",
+      "--kr-text-strong": "#fafaf9",
+      "--kr-muted": "#a8a29e",
+      "--kr-input-bg": "#0c0a09",
+      "--kr-input-border": "#44403c",
+      "--kr-input-disabled-bg": "#1c1917",
+      "--kr-input-disabled-text": "#78716c",
+      "--kr-primary": "#fbbf24",
+      "--kr-primary-strong": "#f59e0b",
+      "--kr-primary-text": "#1c1206",
+      "--kr-accent": "#fbbf24",
+      "--kr-accent-soft": "#451a03",
+      "--kr-accent-border": "#92400e",
+      "--kr-focus-ring": "rgba(251, 191, 36, 0.5)",
+      "--kr-selection-bg": "#b45309",
+      "--kr-selection-text": "#fffbeb",
+      "--kr-scroll-track": "#0c0a09",
+      "--kr-scroll-thumb": "#44403c",
+      "--kr-shadow": "0 1px 2px rgba(0,0,0,0.4), 0 10px 30px rgba(0,0,0,0.45)",
+      "--kr-card-bg": "#171412",
+      "--kr-card-border": "#2e2925",
+      "--kr-card-hover": "#221e1b",
+      "--kr-success": "#4ade80",
+      "--kr-success-soft": "#052e16",
+      "--kr-success-border": "#166534",
+      "--kr-danger": "#f87171",
+      "--kr-danger-strong": "#dc2626",
+      "--kr-danger-soft": "#450a0a",
+      "--kr-danger-border": "#991b1b",
+      "--kr-warning": "#fbbf24",
+      "--kr-warning-soft": "#451a03",
+      "--kr-warning-border": "#92400e",
+      "--kr-chart-1": "#fbbf24",
+      "--kr-chart-2": "#2dd4bf",
+      "--kr-chart-3": "#a8a29e",
       "--kr-chart-4": "#f87171",
-      "--kr-chart-5": "#34d399",
+      "--kr-chart-5": "#4ade80",
       "--kr-chart-6": "#a78bfa",
       "--kr-chart-7": "#f472b6",
-      "--kr-chart-axis": "#64748b",
-      "--kr-chart-grid": "#1e293b",
-      "--kr-chart-tooltip-bg": "#0f172a",
-      "--kr-chart-tooltip-border": "#334155",
-      "--kr-chart-tooltip-text": "#e5e7eb",
-      "--kr-info-bg": "#172554",
-      "--kr-info-border": "#1e40af",
-      "--kr-info-text": "#bfdbfe",
-      "--kr-tooltip-bg": "#1e3a8a",
-      "--kr-tooltip-text": "#eff6ff",
-      "--kr-tooltip-border": "#3b82f6",
-      "--kr-tooltip-kbd-bg": "#172554",
-      "--kr-tooltip-kbd-border": "#3b82f6",
-      "--kr-tooltip-shortcut": "#bfdbfe"
+      "--kr-chart-axis": "#78716c",
+      "--kr-chart-grid": "#2e2925",
+      "--kr-chart-tooltip-bg": "#1c1917",
+      "--kr-chart-tooltip-border": "#44403c",
+      "--kr-chart-tooltip-text": "#e7e5e4",
+      "--kr-info-bg": "#451a03",
+      "--kr-info-border": "#92400e",
+      "--kr-info-text": "#fde68a",
+      "--kr-tooltip-bg": "#292524",
+      "--kr-tooltip-text": "#fafaf9",
+      "--kr-tooltip-border": "#57534e",
+      "--kr-tooltip-kbd-bg": "#1c1917",
+      "--kr-tooltip-kbd-border": "#57534e",
+      "--kr-tooltip-shortcut": "#d6d3d1"
     } as React.CSSProperties;
   }
 
   return {
-    "--kr-bg": "#f8fafc",
+    "--kr-bg": "#f5f5f4",
     "--kr-surface": "#ffffff",
-    "--kr-surface-soft": "#f8fafc",
+    "--kr-surface-soft": "#fafaf9",
     "--kr-surface-elevated": "#ffffff",
-    "--kr-border": "#e2e8f0",
-    "--kr-text": "#0f172a",
-    "--kr-text-strong": "#0f172a",
-    "--kr-muted": "#64748b",
+    "--kr-border": "#e7e5e4",
+    "--kr-text": "#292524",
+    "--kr-text-strong": "#1c1917",
+    "--kr-muted": "#78716c",
     "--kr-input-bg": "#ffffff",
-    "--kr-input-border": "#cbd5e1",
-    "--kr-input-disabled-bg": "#f1f5f9",
-    "--kr-input-disabled-text": "#64748b",
-    "--kr-primary": "#2563eb",
-    "--kr-primary-strong": "#1d4ed8",
-    "--kr-primary-text": "#ffffff",
-    "--kr-focus-ring": "rgba(37, 99, 235, 0.38)",
-    "--kr-selection-bg": "#bfdbfe",
-    "--kr-selection-text": "#0f172a",
-    "--kr-scroll-track": "#f8fafc",
-    "--kr-scroll-thumb": "#cbd5e1",
-    "--kr-shadow": "0 12px 36px rgba(15, 23, 42, 0.08)",
+    "--kr-input-border": "#d6d3d1",
+    "--kr-input-disabled-bg": "#f5f5f4",
+    "--kr-input-disabled-text": "#78716c",
+    "--kr-primary": "#292524",
+    "--kr-primary-strong": "#1c1917",
+    "--kr-primary-text": "#fafaf9",
+    "--kr-accent": "#d97706",
+    "--kr-accent-soft": "#fef3c7",
+    "--kr-accent-border": "#fcd34d",
+    "--kr-focus-ring": "rgba(217, 119, 6, 0.4)",
+    "--kr-selection-bg": "#fde68a",
+    "--kr-selection-text": "#1c1917",
+    "--kr-scroll-track": "#f5f5f4",
+    "--kr-scroll-thumb": "#d6d3d1",
+    "--kr-shadow": "0 1px 2px rgba(28, 25, 23, 0.05), 0 8px 24px rgba(28, 25, 23, 0.06)",
     "--kr-card-bg": "#ffffff",
-    "--kr-card-border": "#e2e8f0",
-    "--kr-card-hover": "#f1f5f9",
-    "--kr-chart-1": "#2563eb",
-    "--kr-chart-2": "#0ea5e9",
-    "--kr-chart-3": "#f59e0b",
-    "--kr-chart-4": "#ef4444",
-    "--kr-chart-5": "#10b981",
-    "--kr-chart-6": "#8b5cf6",
-    "--kr-chart-7": "#ec4899",
-    "--kr-chart-axis": "#64748b",
-    "--kr-chart-grid": "#e2e8f0",
+    "--kr-card-border": "#e7e5e4",
+    "--kr-card-hover": "#fafaf9",
+    "--kr-success": "#15803d",
+    "--kr-success-soft": "#f0fdf4",
+    "--kr-success-border": "#bbf7d0",
+    "--kr-danger": "#b91c1c",
+    "--kr-danger-strong": "#dc2626",
+    "--kr-danger-soft": "#fef2f2",
+    "--kr-danger-border": "#fecaca",
+    "--kr-warning": "#b45309",
+    "--kr-warning-soft": "#fffbeb",
+    "--kr-warning-border": "#fde68a",
+    "--kr-chart-1": "#d97706",
+    "--kr-chart-2": "#0d9488",
+    "--kr-chart-3": "#57534e",
+    "--kr-chart-4": "#dc2626",
+    "--kr-chart-5": "#16a34a",
+    "--kr-chart-6": "#7c3aed",
+    "--kr-chart-7": "#db2777",
+    "--kr-chart-axis": "#78716c",
+    "--kr-chart-grid": "#e7e5e4",
     "--kr-chart-tooltip-bg": "#ffffff",
-    "--kr-chart-tooltip-border": "#e2e8f0",
-    "--kr-chart-tooltip-text": "#0f172a",
-    "--kr-info-bg": "#eff6ff",
-    "--kr-info-border": "#bfdbfe",
-    "--kr-info-text": "#1d4ed8",
-    "--kr-tooltip-bg": "#1e3a8a",
-    "--kr-tooltip-text": "#eff6ff",
-    "--kr-tooltip-border": "#3b82f6",
-    "--kr-tooltip-kbd-bg": "#1e293b",
-    "--kr-tooltip-kbd-border": "#334155",
-    "--kr-tooltip-shortcut": "#cbd5e1"
+    "--kr-chart-tooltip-border": "#e7e5e4",
+    "--kr-chart-tooltip-text": "#292524",
+    "--kr-info-bg": "#fef3c7",
+    "--kr-info-border": "#fde68a",
+    "--kr-info-text": "#92400e",
+    "--kr-tooltip-bg": "#1c1917",
+    "--kr-tooltip-text": "#fafaf9",
+    "--kr-tooltip-border": "#44403c",
+    "--kr-tooltip-kbd-bg": "#292524",
+    "--kr-tooltip-kbd-border": "#57534e",
+    "--kr-tooltip-shortcut": "#d6d3d1"
   } as React.CSSProperties;
 }
 
@@ -6757,8 +6804,14 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                     fontSize: "11px",
                     padding: "2px 7px",
                     borderRadius: "999px",
-                    background: carrier.source === "omie" ? "#dbeafe" : "#dcfce7",
-                    color: carrier.source === "omie" ? "#1e40af" : "#166534",
+                    border: "1px solid",
+                    background:
+                      carrier.source === "omie" ? "var(--kr-info-bg)" : "var(--kr-success-soft)",
+                    color: carrier.source === "omie" ? "var(--kr-info-text)" : "var(--kr-success)",
+                    borderColor:
+                      carrier.source === "omie"
+                        ? "var(--kr-info-border)"
+                        : "var(--kr-success-border)",
                     fontWeight: 800
                   }}
                 >
@@ -7144,10 +7197,10 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
               style={{
                 flex: 1,
                 padding: "10px 16px",
-                border: adapterType === "tcp" ? "2px solid #2563eb" : "1px solid #e2e8f0",
+                border: adapterType === "tcp" ? "2px solid var(--kr-accent)" : "1px solid var(--kr-border)",
                 borderRadius: "8px",
-                background: adapterType === "tcp" ? "#eff6ff" : "#f8fafc",
-                color: adapterType === "tcp" ? "#1e40af" : "#64748b",
+                background: adapterType === "tcp" ? "var(--kr-accent-soft)" : "var(--kr-surface-soft)",
+                color: adapterType === "tcp" ? "var(--kr-info-text)" : "var(--kr-muted)",
                 fontWeight: adapterType === "tcp" ? 700 : 500,
                 fontSize: "13px",
                 cursor: "pointer"
@@ -7167,10 +7220,10 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
               style={{
                 flex: 1,
                 padding: "10px 16px",
-                border: adapterType === "virtual" ? "2px solid #2563eb" : "1px solid #e2e8f0",
+                border: adapterType === "virtual" ? "2px solid var(--kr-accent)" : "1px solid var(--kr-border)",
                 borderRadius: "8px",
-                background: adapterType === "virtual" ? "#eff6ff" : "#f8fafc",
-                color: adapterType === "virtual" ? "#1e40af" : "#64748b",
+                background: adapterType === "virtual" ? "var(--kr-accent-soft)" : "var(--kr-surface-soft)",
+                color: adapterType === "virtual" ? "var(--kr-info-text)" : "var(--kr-muted)",
                 fontWeight: adapterType === "virtual" ? 700 : 500,
                 fontSize: "13px",
                 cursor: "pointer"
@@ -7186,10 +7239,10 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
               style={{
                 flex: 1,
                 padding: "10px 16px",
-                border: captureMode === "custom" ? "2px solid #2563eb" : "1px solid #e2e8f0",
+                border: captureMode === "custom" ? "2px solid var(--kr-accent)" : "1px solid var(--kr-border)",
                 borderRadius: "8px",
-                background: captureMode === "custom" ? "#eff6ff" : "#f8fafc",
-                color: captureMode === "custom" ? "#1e40af" : "#64748b",
+                background: captureMode === "custom" ? "var(--kr-accent-soft)" : "var(--kr-surface-soft)",
+                color: captureMode === "custom" ? "var(--kr-info-text)" : "var(--kr-muted)",
                 fontWeight: captureMode === "custom" ? 700 : 500,
                 fontSize: "13px",
                 cursor: "pointer"
@@ -7203,10 +7256,10 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
               style={{
                 flex: 1,
                 padding: "10px 16px",
-                border: captureMode === "default" ? "2px solid #2563eb" : "1px solid #e2e8f0",
+                border: captureMode === "default" ? "2px solid var(--kr-accent)" : "1px solid var(--kr-border)",
                 borderRadius: "8px",
-                background: captureMode === "default" ? "#eff6ff" : "#f8fafc",
-                color: captureMode === "default" ? "#1e40af" : "#64748b",
+                background: captureMode === "default" ? "var(--kr-accent-soft)" : "var(--kr-surface-soft)",
+                color: captureMode === "default" ? "var(--kr-info-text)" : "var(--kr-muted)",
                 fontWeight: captureMode === "default" ? 700 : 500,
                 fontSize: "13px",
                 cursor: "pointer"
@@ -7945,7 +7998,7 @@ function SimpleCrudList({
   );
 }
 
-function PriceTableListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
+function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   const [items, setItems] = useState<
     Array<{
       id: string | null;
@@ -7956,6 +8009,7 @@ function PriceTableListView({ desktopApi }: { desktopApi: KyberRockDesktopApi })
       unit: string;
     }>
   >([]);
+  const [search, setSearch] = useState("");
   const [selectedProductId, setSelectedProductId] = useState("");
   const [priceReais, setPriceReais] = useState("");
   const [message, setPriceMessage] = useState<string | null>(null);
@@ -8032,17 +8086,27 @@ function PriceTableListView({ desktopApi }: { desktopApi: KyberRockDesktopApi })
     }
   }
 
+  const visibleItems = items.filter((item) => {
+    const term = search.trim().toLowerCase();
+    if (!term) return true;
+    return (
+      item.productDescription.toLowerCase().includes(term) ||
+      (item.productCode ?? "").toLowerCase().includes(term)
+    );
+  });
+
   return (
     <div style={{ display: "grid", gap: "16px" }}>
       <div>
-        <h3 style={{ marginTop: 0 }}>Preco padrao por produto</h3>
+        <h3 style={{ marginTop: 0, color: "var(--kr-text-strong)" }}>Produtos</h3>
         <p style={styles.muted}>
-          Este preco e usado quando o cliente nao tem preco especial cadastrado.
+          Produtos sincronizados do OMIE com o preco padrao usado na pesagem. Clientes com preco
+          especial cadastrado tem prioridade sobre o preco padrao.
         </p>
       </div>
 
       {message ? (
-        <p style={{ color: "#16a34a", fontWeight: 700, marginBottom: "8px" }}>{message}</p>
+        <p style={{ color: "var(--kr-success)", fontWeight: 700, marginBottom: "8px" }}>{message}</p>
       ) : null}
 
       <div style={{ display: "flex", gap: "8px", alignItems: "flex-end", flexWrap: "wrap" }}>
@@ -8079,38 +8143,60 @@ function PriceTableListView({ desktopApi }: { desktopApi: KyberRockDesktopApi })
         </button>
       </div>
 
-      {items.length === 0 ? (
-        <p style={{ color: "#64748b", marginBottom: "24px" }}>Nenhum produto encontrado.</p>
+      <div style={styles.crudToolbar}>
+        <input
+          placeholder="Buscar produto por nome ou codigo..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{ ...styles.input, flex: 1, minWidth: "220px" }}
+        />
+        <button type="button" onClick={() => void loadPrices()} style={styles.secondaryButton}>
+          Atualizar
+        </button>
+      </div>
+
+      {visibleItems.length === 0 ? (
+        <div style={styles.emptyState}>
+          <strong style={{ color: "var(--kr-text-strong)" }}>
+            {items.length === 0 ? "Nenhum produto sincronizado." : "Nenhum produto encontrado."}
+          </strong>
+          <span>
+            {items.length === 0
+              ? "Execute a sincronizacao OMIE na tela Cloud para baixar os produtos."
+              : "Ajuste o termo de busca para localizar o produto."}
+          </span>
+        </div>
       ) : (
         <div style={{ ...styles.crudTable, marginBottom: "24px" }}>
           <div
             style={{
               ...styles.crudTableRow,
               ...styles.crudTableHead,
-              gridTemplateColumns: "minmax(260px, 1fr) 180px 150px"
+              gridTemplateColumns: "minmax(240px, 1fr) 120px 160px 200px"
             }}
           >
             <span style={styles.crudTableHeaderCell}>Produto</span>
+            <span style={styles.crudTableHeaderCell}>Codigo</span>
             <span style={{ ...styles.crudTableHeaderCell, justifyContent: "flex-end" }}>
               Preco padrao
             </span>
             <span style={{ ...styles.crudTableHeaderCell, justifyContent: "flex-end" }}>Acoes</span>
           </div>
-          {items.map((item) => (
+          {visibleItems.map((item) => (
             <div
               key={item.productId}
               style={{
                 ...styles.crudTableRow,
-                gridTemplateColumns: "minmax(260px, 1fr) 180px 150px",
+                gridTemplateColumns: "minmax(240px, 1fr) 120px 160px 200px",
                 alignItems: "center",
                 gap: 0
               }}
             >
               <span style={styles.crudTableCell}>
                 <strong style={styles.crudCellPrimary}>{item.productDescription}</strong>
-                {item.productCode ? (
-                  <span style={styles.crudCellMuted}>{item.productCode}</span>
-                ) : null}
+              </span>
+              <span style={styles.crudTableCell}>
+                <span style={styles.crudCellMuted}>{item.productCode ?? "-"}</span>
               </span>
               <span
                 style={{
@@ -8119,17 +8205,33 @@ function PriceTableListView({ desktopApi }: { desktopApi: KyberRockDesktopApi })
                   alignItems: "flex-end"
                 }}
               >
-                {formatMoney(item.unitPriceCents)}/ton
+                {item.unitPriceCents === null ? (
+                  <span style={{ color: "var(--kr-warning)", fontWeight: 700 }}>Sem preco</span>
+                ) : (
+                  `${formatMoney(item.unitPriceCents)}/ton`
+                )}
               </span>
               <div style={styles.crudTableActionsCell}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedProductId(item.productId);
+                    setPriceReais(
+                      item.unitPriceCents === null
+                        ? ""
+                        : (item.unitPriceCents / 100).toFixed(2).replace(".", ",")
+                    );
+                  }}
+                  style={styles.smallSecondaryButton}
+                >
+                  {item.unitPriceCents === null ? "Definir preco" : "Alterar"}
+                </button>
                 <button
                   type="button"
                   onClick={() => handleRemoveDefaultPrice(item)}
                   disabled={item.unitPriceCents === null}
                   style={{
-                    ...styles.secondaryButton,
-                    color: "#b91c1c",
-                    borderColor: "#fecaca",
+                    ...styles.smallDangerButton,
                     opacity: item.unitPriceCents === null ? 0.55 : 1,
                     cursor: item.unitPriceCents === null ? "not-allowed" : "pointer"
                   }}
@@ -8173,7 +8275,8 @@ const styles = {
     minHeight: "100vh",
     margin: 0,
     padding: "10px 10px 34px",
-    fontFamily: "Segoe UI, Arial, sans-serif",
+    fontFamily:
+      '"Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif',
     color: "var(--kr-text)",
     background: "var(--kr-bg)",
     overflow: "hidden" as const,
@@ -8518,7 +8621,7 @@ const styles = {
     border: "none",
     borderRadius: "10px",
     padding: "8px 12px",
-    background: "#dc2626",
+    background: "var(--kr-danger-strong)",
     color: "#fff",
     cursor: "pointer",
     fontWeight: 700,
@@ -8759,9 +8862,9 @@ const styles = {
     gap: "10px",
     padding: "10px 12px",
     borderRadius: "14px",
-    background: "linear-gradient(135deg, #0f172a 0%, #1e293b 55%, #2563eb 100%)",
+    background: "linear-gradient(135deg, #171412 0%, #292524 58%, #b45309 100%)",
     color: "#ffffff",
-    boxShadow: "0 12px 28px rgba(15, 23, 42, 0.16)"
+    boxShadow: "0 12px 28px rgba(28, 25, 23, 0.2)"
   },
   liveWeightCard: {
     minWidth: "180px",
@@ -8779,7 +8882,7 @@ const styles = {
     gap: "6px"
   },
   metricLabel: {
-    color: "#bfdbfe",
+    color: "#fde68a",
     fontSize: "11px",
     fontWeight: 800,
     textTransform: "uppercase" as const,
@@ -8788,10 +8891,11 @@ const styles = {
   metricValue: {
     fontSize: "20px",
     lineHeight: 1,
+    fontWeight: 700,
     color: "#ffffff"
   },
   metricHint: {
-    color: "#dbeafe",
+    color: "#e7e5e4",
     fontSize: "12px"
   },
   entryGrid: {
@@ -8945,8 +9049,9 @@ const styles = {
   countBadge: {
     padding: "6px 10px",
     borderRadius: "999px",
-    background: "#e0f2fe",
-    color: "#075985",
+    background: "var(--kr-info-bg)",
+    border: "1px solid var(--kr-info-border)",
+    color: "var(--kr-info-text)",
     fontWeight: 800,
     fontSize: "12px"
   },
@@ -9030,11 +9135,14 @@ const styles = {
   },
   plateBadge: {
     justifySelf: "start",
-    padding: "5px 8px",
+    padding: "5px 9px",
     borderRadius: "8px",
-    background: "#0f172a",
-    color: "#ffffff",
-    letterSpacing: "0.04em"
+    background: "#1c1917",
+    border: "1px solid #44403c",
+    color: "#fafaf9",
+    letterSpacing: "0.08em",
+    fontFamily: '"Cascadia Mono", Consolas, monospace',
+    fontWeight: 700
   },
   rowActions: {
     display: "flex",
@@ -9045,8 +9153,8 @@ const styles = {
     border: "none",
     borderRadius: "8px",
     padding: "6px 8px",
-    background: "#2563eb",
-    color: "#ffffff",
+    background: "var(--kr-primary-strong)",
+    color: "var(--kr-primary-text)",
     cursor: "pointer",
     fontWeight: 800,
     fontSize: "11px"
@@ -9062,11 +9170,11 @@ const styles = {
     fontSize: "11px"
   },
   smallDangerButton: {
-    border: "1px solid #fecaca",
+    border: "1px solid var(--kr-danger-border)",
     borderRadius: "8px",
     padding: "6px 8px",
-    background: "#fef2f2",
-    color: "#b91c1c",
+    background: "var(--kr-danger-soft)",
+    color: "var(--kr-danger)",
     cursor: "pointer",
     fontWeight: 800,
     fontSize: "11px"
@@ -9082,7 +9190,7 @@ const styles = {
     fontSize: "13px"
   },
   errorMessage: {
-    color: "#b91c1c",
+    color: "var(--kr-danger)",
     fontWeight: 700,
     fontSize: "13px"
   },
@@ -9094,24 +9202,24 @@ const styles = {
     fontSize: "13px"
   },
   omieFeedbackSuccess: {
-    color: "#166534",
-    background: "#f0fdf4",
-    borderColor: "#bbf7d0"
+    color: "var(--kr-success)",
+    background: "var(--kr-success-soft)",
+    borderColor: "var(--kr-success-border)"
   },
   omieFeedbackWarning: {
-    color: "#92400e",
-    background: "#fffbeb",
-    borderColor: "#fde68a"
+    color: "var(--kr-warning)",
+    background: "var(--kr-warning-soft)",
+    borderColor: "var(--kr-warning-border)"
   },
   omieFeedbackChecking: {
-    color: "#1d4ed8",
-    background: "#eff6ff",
-    borderColor: "#bfdbfe"
+    color: "var(--kr-info-text)",
+    background: "var(--kr-info-bg)",
+    borderColor: "var(--kr-info-border)"
   },
   omieFeedbackError: {
-    color: "#b91c1c",
-    background: "#fef2f2",
-    borderColor: "#fecaca"
+    color: "var(--kr-danger)",
+    background: "var(--kr-danger-soft)",
+    borderColor: "var(--kr-danger-border)"
   },
   fieldLabel: {
     display: "flex",

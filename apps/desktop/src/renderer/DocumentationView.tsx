@@ -576,9 +576,9 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "stretch",
     padding: "18px",
     borderRadius: "18px",
-    background: "linear-gradient(135deg, #0f172a 0%, #1e293b 52%, #2563eb 100%)",
+    background: "linear-gradient(135deg, #171412 0%, #292524 55%, #b45309 100%)",
     color: "#ffffff",
-    boxShadow: "0 18px 45px rgba(15, 23, 42, 0.18)"
+    boxShadow: "0 18px 45px rgba(28, 25, 23, 0.2)"
   },
   heroText: {
     display: "flex",
@@ -588,7 +588,7 @@ const styles: Record<string, CSSProperties> = {
   },
   kicker: {
     margin: 0,
-    color: "#bfdbfe",
+    color: "#fde68a",
     fontSize: "12px",
     fontWeight: 900,
     letterSpacing: "0.08em",
@@ -602,7 +602,7 @@ const styles: Record<string, CSSProperties> = {
   },
   subtitle: {
     margin: 0,
-    color: "#dbeafe",
+    color: "#e7e5e4",
     fontSize: "14px",
     lineHeight: 1.45,
     maxWidth: "760px"
@@ -615,7 +615,7 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: "16px",
     background: "rgba(255,255,255,0.12)",
     border: "1px solid rgba(255,255,255,0.22)",
-    color: "#eff6ff",
+    color: "#fafaf9",
     fontSize: "13px",
     lineHeight: 1.4
   },
