@@ -8,6 +8,12 @@ name: desktop-installer
 #      o instalador via git e remontar com: cat installer.exe.part.* > installer.exe
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - claude/carrier-ui-layout-fixes-30ekm0
+    paths:
+      - ".github/workflows/desktop-installer.yml"
+      - "apps/desktop/package.json"
 
 permissions:
   contents: write
