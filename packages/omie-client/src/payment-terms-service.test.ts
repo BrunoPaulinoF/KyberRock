@@ -13,49 +13,62 @@ function mockClient(response: unknown) {
 }
 
 describe("listPaymentTerms", () => {
-  it("calls ListarCondicoesPagamento", async () => {
+  it("calls ListarParcelas no endpoint /geral/parcelas/", async () => {
     const client = mockClient({
-      condicoesPagamentoCadastro: [],
-      nRegistros: 0
+      cadastros: [],
+      total_de_registros: 0
     });
 
     await listPaymentTerms(client, { pagina: 1 });
 
     expect(client.call).toHaveBeenCalledWith(
-      "/geral/condicoespgto/",
-      "ListarCondicoesPagamento",
+      "/geral/parcelas/",
+      "ListarParcelas",
       { pagina: 1 }
     );
   });
 
-  it("returns formatted payment terms", async () => {
+  it("mapeia os campos do ListarParcelas (nCodigo, cDescricao, nParcelas)", async () => {
     const client = mockClient({
-      condicoesPagamentoCadastro: [
+      cadastros: [
         {
-          codigoCondicaoPagamentoOmie: 789,
-          descricaoCondicaoPagamento: "30/60/90 dias"
+          nCodigo: "000",
+          cDescricao: "A vista",
+          nParcelas: 1
         }
       ],
-      nRegistros: 1
+      total_de_registros: 1
     });
 
     const result = await listPaymentTerms(client, { pagina: 1 });
 
     expect(result).toHaveLength(1);
     expect(result[0]).toMatchObject({
-      id: 789,
-      description: "30/60/90 dias"
+      id: 0,
+      code: "000",
+      description: "A vista",
+      installmentCount: 1
     });
+  });
+
+  it("preserva zeros a esquerda do codigo da parcela", async () => {
+    const client = mockClient({
+      cadastros: [{ nCodigo: "030", cDescricao: "30 dias", nParcelas: 1 }],
+      total_de_registros: 1
+    });
+
+    const [term] = await listPaymentTerms(client, { pagina: 1 });
+
+    expect(term.code).toBe("030");
+    expect(term.id).toBe(30);
   });
 });
 
 describe("OmiePaymentTermsService", () => {
   it("lists all payment terms", async () => {
     const client = mockClient({
-      condicoesPagamentoCadastro: [
-        { codigoCondicaoPagamentoOmie: 1, descricaoCondicaoPagamento: "A vista" }
-      ],
-      nRegistros: 1
+      cadastros: [{ nCodigo: "000", cDescricao: "A vista", nParcelas: 1 }],
+      total_de_registros: 1
     });
 
     const service = new OmiePaymentTermsService(client);
@@ -63,8 +76,8 @@ describe("OmiePaymentTermsService", () => {
 
     expect(terms).toHaveLength(1);
     expect(client.call).toHaveBeenCalledWith(
-      "/geral/condicoespgto/",
-      "ListarCondicoesPagamento",
+      "/geral/parcelas/",
+      "ListarParcelas",
       expect.objectContaining({
         pagina: 1,
         registros_por_pagina: 100,

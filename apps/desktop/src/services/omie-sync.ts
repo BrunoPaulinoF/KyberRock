@@ -523,11 +523,12 @@ export class OmieSyncService {
       insert.run(
         id,
         companyId,
-        String(term.id),
+        term.code ?? String(term.id),
         term.integrationCode ?? null,
         term.description,
         JSON.stringify({
           omieId: term.id,
+          code: term.code ?? null,
           firstInstallmentDays: term.firstInstallmentDays ?? null,
           installmentIntervalDays: term.installmentIntervalDays ?? null,
           installmentCount: term.installmentCount ?? null,

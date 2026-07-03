@@ -2,6 +2,8 @@ import type { OmieClient } from "./omie-client.js";
 
 export interface PaymentTerm {
   id: number;
+  /** Codigo original da condicao no OMIE (ex.: "000", "015"), usado em codigo_parcela de pedidos. */
+  code?: string;
   integrationCode?: string;
   description: string;
   firstInstallmentDays?: number;
@@ -20,6 +22,10 @@ export interface ListPaymentTermsParam {
 }
 
 interface OmiePaymentTermRaw {
+  // Campos do endpoint atual /geral/parcelas/ (ListarParcelas)
+  nCodigo?: number | string;
+  nParcelas?: number | string;
+  // Campos legados / variacoes mantidos por resiliencia
   codigoCondicaoPagamentoOmie?: number | string;
   codigo_condicao_pagamento_omie?: number | string;
   codigoCondicaoPagamentoIntegracao?: string;
@@ -52,20 +58,22 @@ export async function listPaymentTerms(
   param: ListPaymentTermsParam
 ): Promise<PaymentTerm[]> {
   const response = (await client.call(
-    "/geral/condicoespgto/",
-    "ListarCondicoesPagamento",
+    "/geral/parcelas/",
+    "ListarParcelas",
     param
   )) as {
+    cadastros?: OmiePaymentTermRaw[];
+    parcela_cadastro?: OmiePaymentTermRaw[];
     condicoesPagamentoCadastro?: OmiePaymentTermRaw[];
     condicoes_pagamento_cadastro?: OmiePaymentTermRaw[];
-    cadastros?: OmiePaymentTermRaw[];
     listaCondicoesPagamento?: OmiePaymentTermRaw[];
   };
 
   const raw =
+    response.cadastros ??
+    response.parcela_cadastro ??
     response.condicoesPagamentoCadastro ??
     response.condicoes_pagamento_cadastro ??
-    response.cadastros ??
     response.listaCondicoesPagamento ??
     [];
 
@@ -106,6 +114,7 @@ export class OmiePaymentTermsService {
 function mapOmiePaymentTermRaw(item: OmiePaymentTermRaw | null | undefined): PaymentTerm | null {
   if (!item) return null;
   const idValue = pickFirst(
+    item.nCodigo,
     item.codigoCondicaoPagamentoOmie,
     item.codigo_condicao_pagamento_omie,
     item.nCodCondicao,
@@ -137,6 +146,11 @@ function mapOmiePaymentTermRaw(item: OmiePaymentTermRaw | null | undefined): Pay
     isActive: !isYesFlag(pickFirst(item.cInativo, item.inativo))
   };
 
+  // Preserva o codigo original da parcela (ex.: "000"), mantendo zeros a esquerda
+  // que sao perdidos ao converter para numero e sao exigidos no codigo_parcela do pedido.
+  const code = pickFirst(item.nCodigo, item.codigo, item.codigoParcela);
+  if (code) term.code = code;
+
   const integrationCode = pickFirst(
     item.codigoCondicaoPagamentoIntegracao,
     item.codigo_condicao_pagamento_integracao
@@ -149,7 +163,7 @@ function mapOmiePaymentTermRaw(item: OmiePaymentTermRaw | null | undefined): Pay
   const installmentIntervalDays = toNumber(pickFirst(item.nIntervaloParcelas, item.intervalo_parcelas));
   if (installmentIntervalDays !== null) term.installmentIntervalDays = installmentIntervalDays;
 
-  const installmentCount = toNumber(pickFirst(item.nNumeroParcelas, item.numero_parcelas));
+  const installmentCount = toNumber(pickFirst(item.nParcelas, item.nNumeroParcelas, item.numero_parcelas));
   if (installmentCount !== null) term.installmentCount = installmentCount;
 
   const installmentType = pickFirst(item.cTipoParcelas, item.tipo_parcelas);
