@@ -106,6 +106,16 @@ const desktopApi = {
   customersUpdate: (id: string, input: unknown) =>
     ipcRenderer.invoke("desktop:customers-update", id, input),
   customersDelete: (id: string) => ipcRenderer.invoke("desktop:customers-delete", id),
+  paymentMethodsCreate: (input: unknown) =>
+    ipcRenderer.invoke("desktop:payment-methods-create", input),
+  paymentMethodsUpdate: (id: string, input: unknown) =>
+    ipcRenderer.invoke("desktop:payment-methods-update", id, input),
+  paymentMethodsDelete: (id: string) => ipcRenderer.invoke("desktop:payment-methods-delete", id),
+  paymentTermsCreate: (input: unknown) =>
+    ipcRenderer.invoke("desktop:payment-terms-create", input),
+  paymentTermsUpdate: (id: string, input: unknown) =>
+    ipcRenderer.invoke("desktop:payment-terms-update", id, input),
+  paymentTermsDelete: (id: string) => ipcRenderer.invoke("desktop:payment-terms-delete", id),
   priceTablesCreate: (input: unknown) => ipcRenderer.invoke("desktop:price-tables-create", input),
   priceTablesUpdateName: (id: string, name: string) =>
     ipcRenderer.invoke("desktop:price-tables-update-name", id, name),

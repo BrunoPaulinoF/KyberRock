@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
   BarChart3,
@@ -90,7 +90,11 @@ import {
   TextInput,
   getInputStyle
 } from "./inputs";
-import type { CarrierCacheEntry } from "./customers.types";
+import type {
+  CarrierCacheEntry,
+  PaymentMethodCacheEntry,
+  PaymentTermCacheEntry
+} from "./customers.types";
 import type { KyberRockDesktopApi } from "./desktop-api";
 import type { ScaleConfiguration, ScaleConfigurationInput } from "../services/scale-configs";
 export interface AppProps {
@@ -105,6 +109,8 @@ export interface WeighingFormState {
   customerId: string;
   driverId: string;
   productId: string;
+  paymentMethodId: string;
+  paymentMethodIsCredit: boolean;
   paymentTermId: string;
   paymentMode: "registered" | "manual";
   manualInstallments: string;
@@ -143,6 +149,8 @@ const initialWeighingForm: WeighingFormState = {
   customerId: "",
   driverId: "",
   productId: "",
+  paymentMethodId: "",
+  paymentMethodIsCredit: false,
   paymentTermId: "",
   paymentMode: "registered",
   manualInstallments: "",
@@ -161,6 +169,15 @@ const initialWeighingForm: WeighingFormState = {
   customerOwnTransport: false,
   driverIsIndependent: false
 };
+
+/**
+ * Regra de frete na fatura: quando a Pedreira paga o frete e a forma de pagamento
+ * e "credito do cliente" (fiado), o valor do frete obrigatoriamente entra na fatura
+ * do cliente (abate do credito).
+ */
+function freightGoesToCustomerInvoice(form: WeighingFormState): boolean {
+  return form.freightEnabled && form.freightPayer === "quarry" && form.paymentMethodIsCredit;
+}
 
 type RegistrationsTab = "customers" | "products" | "payment_terms" | "transport";
 
@@ -255,6 +272,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     ...DEFAULT_RECEIPT_TEMPLATE_CONFIG
   });
   const [form, setForm] = useState<WeighingFormState>(initialWeighingForm);
+  const [creditMethodIds, setCreditMethodIds] = useState<string[]>([]);
   const [activeView, setActiveView] = useState<ActiveView>("new-weighing");
   const [formError, setFormError] = useState<string | null>(null);
   const [message, setMessage] = useState("Iniciando KyberRock...");
@@ -348,6 +366,41 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   useEffect(() => {
     writeStoredThemeMode(themeMode);
   }, [themeMode]);
+
+  // Carrega os ids das formas de pagamento marcadas como "credito do cliente" (fiado),
+  // usadas para a regra de frete na fatura.
+  useEffect(() => {
+    if (!desktopApi) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await desktopApi.queryCache({
+          entityType: "payment_method",
+          activeOnly: false,
+          limit: 200
+        });
+        if (cancelled) return;
+        const ids = (result.rows as Array<{ id: string; isCustomerCredit?: boolean }>)
+          .filter((m) => m.isCustomerCredit)
+          .map((m) => m.id);
+        setCreditMethodIds(ids);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [desktopApi]);
+
+  // Mantem paymentMethodIsCredit sincronizado com a forma selecionada (inclusive quando
+  // ela e puxada automaticamente do padrao do cliente).
+  useEffect(() => {
+    const isCredit = form.paymentMethodId ? creditMethodIds.includes(form.paymentMethodId) : false;
+    setForm((prev) =>
+      prev.paymentMethodIsCredit === isCredit ? prev : { ...prev, paymentMethodIsCredit: isCredit }
+    );
+  }, [creditMethodIds, form.paymentMethodId]);
 
   useEffect(() => {
     const captureLog =
@@ -1179,7 +1232,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
             : undefined,
         freight: buildFreightInput(form),
         quotationId: form.quotationId || undefined,
-        deductFreightFromCredit: form.deductFreightFromCredit,
+        deductFreightFromCredit: form.deductFreightFromCredit || freightGoesToCustomerInvoice(form),
         scaleCaptureId
       });
       setMessage(`Entrada registrada com peso estavel capturado: ${operation.entryWeightKg} kg.`);
@@ -2401,7 +2454,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     onClick={() => setRegistrationsTab("payment_terms")}
                     style={subTabStyle(registrationsTab === "payment_terms")}
                   >
-                    Condicoes
+                    Pagamento
                   </button>
                   <button
                     type="button"
@@ -2420,13 +2473,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     <ProductsView desktopApi={desktopApi} />
                   ) : null}
                   {registrationsTab === "payment_terms" ? (
-                    <OmieViewer
-                      desktopApi={desktopApi}
-                      entityType="payment_term"
-                      title="Condicoes de Pagamento (OMIE)"
-                      displayField="name"
-                      subField="omieCode"
-                    />
+                    <PaymentRegistrationsView desktopApi={desktopApi} />
                   ) : null}
                   {registrationsTab === "transport" ? (
                     <TransportView desktopApi={desktopApi} />
@@ -4248,6 +4295,10 @@ function WeighingForm({
               setForm((prev) => ({
                 ...prev,
                 customerId: id,
+                paymentMethodId:
+                  typeof item?.defaultPaymentMethodId === "string" && item.defaultPaymentMethodId
+                    ? item.defaultPaymentMethodId
+                    : prev.paymentMethodId,
                 paymentTermId:
                   prev.paymentMode === "registered" &&
                   typeof item?.defaultPaymentTermId === "string" &&
@@ -4267,6 +4318,13 @@ function WeighingForm({
             onChange={(id) => setForm({ ...form, productId: id })}
             desktopApi={desktopApi}
             productFiscalType="finished_goods"
+          />
+          <CacheSelect
+            label="Forma de pagamento"
+            entityType="payment_method"
+            value={form.paymentMethodId}
+            onChange={(id) => setForm((prev) => ({ ...prev, paymentMethodId: id }))}
+            desktopApi={desktopApi}
           />
           <CacheSelect
             label="Condicao de pagamento"
@@ -4591,7 +4649,8 @@ function WeighingForm({
                 <label style={styles.checkboxLabel}>
                   <input
                     type="checkbox"
-                    checked={form.deductFreightFromCredit}
+                    checked={form.deductFreightFromCredit || freightGoesToCustomerInvoice(form)}
+                    disabled={freightGoesToCustomerInvoice(form)}
                     onChange={(event) =>
                       setForm((prev) => ({
                         ...prev,
@@ -4601,6 +4660,12 @@ function WeighingForm({
                   />
                   Abater frete do credito do cliente
                 </label>
+                {freightGoesToCustomerInvoice(form) ? (
+                  <p style={styles.muted}>
+                    Frete pago pela Pedreira e forma de pagamento no credito do cliente: o frete
+                    entra automaticamente na fatura.
+                  </p>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -6493,6 +6558,410 @@ const emptyCarrierForm: CarrierFormData = {
   state: ""
 };
 
+function paymentConditionSummary(term: PaymentTermCacheEntry): string {
+  try {
+    const rules = JSON.parse(term.rulesJson || "{}") as { summary?: string; raw?: string };
+    return rules.summary || rules.raw || "-";
+  } catch {
+    return "-";
+  }
+}
+
+function paymentConditionRaw(term: PaymentTermCacheEntry): string {
+  try {
+    const rules = JSON.parse(term.rulesJson || "{}") as { raw?: string };
+    return rules.raw ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
+  const [methods, setMethods] = useState<PaymentMethodCacheEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const [isCustomerCredit, setIsCustomerCredit] = useState(false);
+  const [isActive, setIsActive] = useState(true);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [flash, showFlash] = useFlash();
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const loadMethods = useCallback(async () => {
+    setLoading(true);
+    try {
+      const result = await desktopApi.queryCache({
+        entityType: "payment_method",
+        activeOnly: false,
+        limit: 200
+      });
+      setMethods(result.rows as PaymentMethodCacheEntry[]);
+    } finally {
+      setLoading(false);
+    }
+  }, [desktopApi]);
+
+  useEffect(() => {
+    void loadMethods();
+  }, [loadMethods]);
+
+  function openCreate(): void {
+    setEditingId(null);
+    setName("");
+    setIsCustomerCredit(false);
+    setIsActive(true);
+    setFormError(null);
+    setShowForm(true);
+  }
+
+  function openEdit(method: PaymentMethodCacheEntry): void {
+    setEditingId(method.id);
+    setName(method.name);
+    setIsCustomerCredit(method.isCustomerCredit);
+    setIsActive(method.isActive);
+    setFormError(null);
+    setShowForm(true);
+  }
+
+  async function handleSave(): Promise<void> {
+    if (!name.trim()) {
+      setFormError("Informe o nome da forma de pagamento.");
+      return;
+    }
+    setSaving(true);
+    try {
+      if (editingId) {
+        await desktopApi.paymentMethodsUpdate(editingId, { name: name.trim(), isActive });
+        showFlash("success", "Forma de pagamento atualizada.");
+      } else {
+        await desktopApi.paymentMethodsCreate({ name: name.trim(), isCustomerCredit });
+        showFlash("success", "Forma de pagamento criada.");
+      }
+      setShowForm(false);
+      await loadMethods();
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Erro ao salvar.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleConfirmDelete(): Promise<void> {
+    if (!pendingDeleteId) return;
+    setDeleting(true);
+    try {
+      await desktopApi.paymentMethodsDelete(pendingDeleteId);
+      setPendingDeleteId(null);
+      await loadMethods();
+      showFlash("success", "Forma de pagamento excluida.");
+    } catch (err) {
+      setPendingDeleteId(null);
+      showFlash("error", err instanceof Error ? err.message : "Erro ao excluir.");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  return (
+    <div>
+      <CrudSectionHeader
+        title="Formas de pagamento"
+        description="Dinheiro, Pix, cartoes, boleto e credito do cliente ja vem cadastrados. Adicione outras formas se precisar."
+        count={methods.length}
+        actionLabel="Nova forma"
+        onAction={openCreate}
+      />
+      <FlashBanner flash={flash} />
+
+      {showForm ? (
+        <CrudFormShell
+          title={editingId ? "Editar forma de pagamento" : "Nova forma de pagamento"}
+          error={formError}
+          saving={saving}
+          maxWidth={520}
+          onClose={() => setShowForm(false)}
+          onSubmit={() => void handleSave()}
+        >
+          <FormSection title="Dados">
+            <TextInput label="Nome" value={name} onChange={setName} required />
+            {editingId ? (
+              <label style={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={isActive}
+                  onChange={(e) => setIsActive(e.target.checked)}
+                />
+                Ativa
+              </label>
+            ) : (
+              <label style={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={isCustomerCredit}
+                  onChange={(e) => setIsCustomerCredit(e.target.checked)}
+                />
+                E credito do cliente (fiado)
+              </label>
+            )}
+          </FormSection>
+        </CrudFormShell>
+      ) : null}
+
+      {pendingDeleteId ? (
+        <ConfirmDialog
+          title="Excluir forma de pagamento"
+          description="A forma de pagamento sera removida dos cadastros."
+          busy={deleting}
+          onCancel={() => setPendingDeleteId(null)}
+          onConfirm={() => void handleConfirmDelete()}
+        />
+      ) : null}
+
+      <DataTable
+        columns={[
+          {
+            key: "name",
+            header: "Forma",
+            width: "minmax(200px, 1.2fr)",
+            render: (m: PaymentMethodCacheEntry) => (
+              <>
+                <CellPrimary>{m.name}</CellPrimary>
+                {m.isCustomerCredit ? <CellMuted>Credito do cliente (fiado)</CellMuted> : null}
+              </>
+            )
+          },
+          {
+            key: "type",
+            header: "Origem",
+            width: "120px",
+            render: (m: PaymentMethodCacheEntry) => (
+              <CellMuted>{m.isSystem ? "Sistema" : "Personalizada"}</CellMuted>
+            )
+          },
+          {
+            key: "status",
+            header: "Status",
+            width: "100px",
+            render: (m: PaymentMethodCacheEntry) => (
+              <CellMuted>{m.isActive ? "Ativa" : "Inativa"}</CellMuted>
+            )
+          },
+          {
+            key: "actions",
+            header: "Acoes",
+            width: "150px",
+            align: "right",
+            render: (m: PaymentMethodCacheEntry) => (
+              <>
+                <EditRowButton onClick={() => openEdit(m)} />
+                {m.isSystem ? null : <DeleteRowButton onClick={() => setPendingDeleteId(m.id)} />}
+              </>
+            )
+          }
+        ]}
+        rows={methods}
+        rowKey={(m) => m.id}
+        loading={loading}
+        minWidth="640px"
+        emptyTitle="Nenhuma forma de pagamento."
+        emptyHint="As formas padrao sao criadas automaticamente."
+      />
+    </div>
+  );
+}
+
+function PaymentConditionsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
+  const [terms, setTerms] = useState<PaymentTermCacheEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const [condition, setCondition] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [flash, showFlash] = useFlash();
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const loadTerms = useCallback(async () => {
+    setLoading(true);
+    try {
+      const result = await desktopApi.queryCache({
+        entityType: "payment_term",
+        activeOnly: false,
+        limit: 500
+      });
+      setTerms(result.rows as PaymentTermCacheEntry[]);
+    } finally {
+      setLoading(false);
+    }
+  }, [desktopApi]);
+
+  useEffect(() => {
+    void loadTerms();
+  }, [loadTerms]);
+
+  function openCreate(): void {
+    setEditingId(null);
+    setName("");
+    setCondition("");
+    setFormError(null);
+    setShowForm(true);
+  }
+
+  function openEdit(term: PaymentTermCacheEntry): void {
+    setEditingId(term.id);
+    setName(term.name);
+    setCondition(paymentConditionRaw(term));
+    setFormError(null);
+    setShowForm(true);
+  }
+
+  async function handleSave(): Promise<void> {
+    if (!name.trim()) {
+      setFormError("Informe o nome da condicao.");
+      return;
+    }
+    if (!condition.trim()) {
+      setFormError("Informe o parcelamento (ex: 10/20/30/40).");
+      return;
+    }
+    setSaving(true);
+    try {
+      if (editingId) {
+        await desktopApi.paymentTermsUpdate(editingId, { name: name.trim(), condition: condition.trim() });
+        showFlash("success", "Condicao atualizada.");
+      } else {
+        await desktopApi.paymentTermsCreate({ name: name.trim(), condition: condition.trim() });
+        showFlash("success", "Condicao criada.");
+      }
+      setShowForm(false);
+      await loadTerms();
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Erro ao salvar.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleConfirmDelete(): Promise<void> {
+    if (!pendingDeleteId) return;
+    setDeleting(true);
+    try {
+      await desktopApi.paymentTermsDelete(pendingDeleteId);
+      setPendingDeleteId(null);
+      await loadTerms();
+      showFlash("success", "Condicao excluida.");
+    } catch (err) {
+      setPendingDeleteId(null);
+      showFlash("error", err instanceof Error ? err.message : "Erro ao excluir.");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  return (
+    <div style={{ marginTop: "28px" }}>
+      <CrudSectionHeader
+        title="Condicoes de pagamento"
+        description="Cadastradas no KyberRock no padrao de parcelas do OMIE: 10/20/30/40, A Vista/40/60, Para 93 dias, 50 ou 50 Parcelas."
+        count={terms.length}
+        actionLabel="Nova condicao"
+        onAction={openCreate}
+      />
+      <FlashBanner flash={flash} />
+
+      {showForm ? (
+        <CrudFormShell
+          title={editingId ? "Editar condicao" : "Nova condicao"}
+          subtitle="Parcelas: 10/20/30/40 (dias fixos), A Vista/40/60, Para 93 dias (1 parcela), 50 ou 50 Parcelas (parcelas mensais)."
+          error={formError}
+          saving={saving}
+          maxWidth={560}
+          onClose={() => setShowForm(false)}
+          onSubmit={() => void handleSave()}
+        >
+          <FormSection title="Dados">
+            <TextInput label="Nome" value={name} onChange={setName} required />
+            <TextInput
+              label="Parcelamento"
+              value={condition}
+              onChange={setCondition}
+              required
+              placeholder="Ex: 10/20/30/40"
+            />
+          </FormSection>
+        </CrudFormShell>
+      ) : null}
+
+      {pendingDeleteId ? (
+        <ConfirmDialog
+          title="Excluir condicao"
+          description="A condicao sera removida dos cadastros."
+          busy={deleting}
+          onCancel={() => setPendingDeleteId(null)}
+          onConfirm={() => void handleConfirmDelete()}
+        />
+      ) : null}
+
+      <DataTable
+        columns={[
+          {
+            key: "name",
+            header: "Condicao",
+            width: "minmax(200px, 1.2fr)",
+            render: (t: PaymentTermCacheEntry) => <CellPrimary>{t.name}</CellPrimary>
+          },
+          {
+            key: "parcelas",
+            header: "Parcelamento",
+            width: "minmax(180px, 1fr)",
+            render: (t: PaymentTermCacheEntry) => <CellMuted>{paymentConditionSummary(t)}</CellMuted>
+          },
+          {
+            key: "status",
+            header: "Status",
+            width: "100px",
+            render: (t: PaymentTermCacheEntry) => (
+              <CellMuted>{t.isActive ? "Ativa" : "Inativa"}</CellMuted>
+            )
+          },
+          {
+            key: "actions",
+            header: "Acoes",
+            width: "150px",
+            align: "right",
+            render: (t: PaymentTermCacheEntry) => (
+              <>
+                <EditRowButton onClick={() => openEdit(t)} />
+                <DeleteRowButton onClick={() => setPendingDeleteId(t.id)} />
+              </>
+            )
+          }
+        ]}
+        rows={terms}
+        rowKey={(t) => t.id}
+        loading={loading}
+        minWidth="680px"
+        emptyTitle="Nenhuma condicao cadastrada."
+        emptyHint='Crie uma condicao pelo botao "Nova condicao".'
+      />
+    </div>
+  );
+}
+
+function PaymentRegistrationsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
+  return (
+    <div>
+      <PaymentMethodsCrud desktopApi={desktopApi} />
+      <PaymentConditionsCrud desktopApi={desktopApi} />
+    </div>
+  );
+}
+
 function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   const [carriers, setCarriers] = useState<CarrierCacheEntry[]>([]);
   const [search, setSearch] = useState("");
@@ -7560,122 +8029,6 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
           </div>
         </article>
       </section>
-    </div>
-  );
-}
-
-function OmieViewer({
-  desktopApi,
-  entityType,
-  title,
-  displayField,
-  subField,
-  productFiscalType
-}: {
-  desktopApi: KyberRockDesktopApi;
-  entityType: "product" | "payment_term";
-  title: string;
-  displayField: string;
-  subField: string;
-  productFiscalType?: "finished_goods";
-}) {
-  const pageSize = entityType === "product" ? 50 : 200;
-  const [items, setItems] = useState<Array<Record<string, unknown>>>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(0);
-  const [search, setSearch] = useState("");
-
-  useEffect(() => {
-    setPage(0);
-  }, [search]);
-
-  useEffect(() => {
-    loadItems();
-  }, [search, page]);
-
-  async function loadItems(): Promise<void> {
-    const result = await desktopApi.queryCache({
-      entityType: entityType as unknown as "product" | "payment_term",
-      search: search || undefined,
-      productFiscalType,
-      limit: pageSize,
-      offset: page * pageSize
-    });
-    setItems(result.rows as Array<Record<string, unknown>>);
-    setTotal(result.total);
-  }
-
-  return (
-    <div>
-      <CrudSectionHeader
-        title={title}
-        description="Somente leitura: o cadastro principal e mantido no OMIE e sincronizado para ca."
-        count={total}
-      />
-      <CrudSearchBar
-        value={search}
-        onChange={setSearch}
-        placeholder={`Buscar ${title.toLowerCase()}...`}
-        onRefresh={() => void loadItems()}
-      />
-      <DataTable
-        columns={[
-          {
-            key: "record",
-            header: "Registro",
-            width: "minmax(260px, 1fr)",
-            render: (item: Record<string, unknown>) => (
-              <>
-                <CellPrimary>{String(item[displayField] ?? "")}</CellPrimary>
-                {subField && item[subField] ? (
-                  <CellMuted>{String(item[subField])}</CellMuted>
-                ) : null}
-              </>
-            )
-          }
-        ]}
-        rows={items}
-        rowKey={(item) => String(item.id)}
-        minWidth="320px"
-        emptyTitle="Nenhum registro encontrado."
-        emptyHint="Execute a sincronizacao OMIE na tela Cloud."
-        footer={
-          <div
-            style={{
-              display: "flex",
-              gap: "8px",
-              alignItems: "center",
-              justifyContent: "space-between"
-            }}
-          >
-            <span style={styles.muted}>
-              Mostrando {total === 0 ? 0 : page * pageSize + 1}-
-              {Math.min(total, (page + 1) * pageSize)} de {total}
-            </span>
-            <div style={{ display: "flex", gap: "8px" }}>
-              <button
-                type="button"
-                onClick={() => setPage((p) => Math.max(0, p - 1))}
-                disabled={page === 0}
-                style={{ ...styles.smallSecondaryButton, opacity: page === 0 ? 0.55 : 1 }}
-              >
-                Anterior
-              </button>
-              <button
-                type="button"
-                onClick={() => setPage((p) => p + 1)}
-                disabled={(page + 1) * pageSize >= total}
-                style={{
-                  ...styles.smallSecondaryButton,
-                  opacity: (page + 1) * pageSize >= total ? 0.55 : 1
-                }}
-              >
-                Proximos {pageSize}
-              </button>
-            </div>
-          </div>
-        }
-      />
     </div>
   );
 }

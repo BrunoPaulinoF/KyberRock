@@ -1056,7 +1056,6 @@ export function applyOmieReferenceData(
 ): OmieCloudSyncResult {
   const customers = data.customers ?? [];
   const products = data.products ?? [];
-  const paymentTerms = data.paymentTerms ?? [];
   const suppliers = data.suppliers ?? [];
   const pagination = data.pagination;
 
@@ -1064,12 +1063,12 @@ export function applyOmieReferenceData(
   // para o log de sync nao reportar sucesso quando nada ficou visivel nas telas.
   let customersPersisted = 0;
   let productsSynced = 0;
-  let paymentTermsPersisted = 0;
+  // Condicoes de pagamento sao cadastradas localmente: o pull nao as persiste mais.
+  const paymentTermsPersisted = 0;
   let suppliersPersisted = 0;
   const apply = database.transaction(() => {
     customersPersisted = upsertOmieCustomers(database, companyId, customers);
     productsSynced = upsertOmieProducts(database, companyId, products);
-    paymentTermsPersisted = upsertOmiePaymentTerms(database, companyId, paymentTerms);
     suppliersPersisted = upsertOmieSuppliers(database, companyId, suppliers);
   });
   apply();
@@ -2168,65 +2167,6 @@ function upsertOmieProducts(
     synced++;
   }
   return synced;
-}
-
-function upsertOmiePaymentTerms(
-  database: DesktopDatabase,
-  companyId: string,
-  paymentTerms: OmieReferencePaymentTerm[]
-): number {
-  const upsert = database.prepare(`
-    INSERT INTO payment_terms (
-      id, company_id, omie_code, omie_integration_code, name, rules_json,
-      first_installment_days, installment_interval_days, installment_count,
-      installment_type, installment_days_json, visible, is_active,
-      updated_from_omie_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), datetime('now'))
-    ON CONFLICT(id) DO UPDATE SET
-      company_id = excluded.company_id,
-      omie_code = excluded.omie_code,
-      omie_integration_code = excluded.omie_integration_code,
-      name = excluded.name,
-      rules_json = excluded.rules_json,
-      first_installment_days = excluded.first_installment_days,
-      installment_interval_days = excluded.installment_interval_days,
-      installment_count = excluded.installment_count,
-      installment_type = excluded.installment_type,
-      installment_days_json = excluded.installment_days_json,
-      visible = excluded.visible,
-      is_active = excluded.is_active,
-      updated_from_omie_at = datetime('now'),
-      updated_at = datetime('now')
-  `);
-
-  let persisted = 0;
-  for (const paymentTerm of paymentTerms) {
-    upsert.run(
-      `omie_${paymentTerm.id}`,
-      companyId,
-      String(paymentTerm.id),
-      paymentTerm.integrationCode ?? null,
-      paymentTerm.description,
-      JSON.stringify({
-        omieId: paymentTerm.id,
-        firstInstallmentDays: paymentTerm.firstInstallmentDays ?? null,
-        installmentIntervalDays: paymentTerm.installmentIntervalDays ?? null,
-        installmentCount: paymentTerm.installmentCount ?? null,
-        installmentType: paymentTerm.installmentType ?? null,
-        installmentDays: paymentTerm.installmentDaysJson ?? null,
-        visible: paymentTerm.visible ?? true
-      }),
-      paymentTerm.firstInstallmentDays ?? null,
-      paymentTerm.installmentIntervalDays ?? null,
-      paymentTerm.installmentCount ?? null,
-      paymentTerm.installmentType ?? null,
-      paymentTerm.installmentDaysJson ? JSON.stringify(paymentTerm.installmentDaysJson) : null,
-      paymentTerm.visible === false ? 0 : 1,
-      paymentTerm.isActive === false ? 0 : 1
-    );
-    persisted++;
-  }
-  return persisted;
 }
 
 function upsertOmieSuppliers(

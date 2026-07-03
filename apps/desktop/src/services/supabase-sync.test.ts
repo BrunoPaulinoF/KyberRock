@@ -253,7 +253,8 @@ describe("supabase sync", () => {
         customersPulled: 1,
         customersPushed: 0,
         productsSynced: 1,
-        paymentTermsSynced: 1,
+        // Condicoes de pagamento sao locais: o pull nao as persiste mais.
+        paymentTermsSynced: 0,
         suppliersSynced: 1,
         errors: []
       });
@@ -265,7 +266,7 @@ describe("supabase sync", () => {
       ).toBe("Brita 1");
       expect(
         database.prepare("SELECT name FROM payment_terms WHERE id = 'omie_789'").pluck().get()
-      ).toBe("30 dias");
+      ).toBeUndefined();
       expect(
         database.prepare("SELECT name FROM carriers WHERE id = 'omie_supplier_321'").pluck().get()
       ).toBe("Transportadora OMIE");
@@ -433,7 +434,7 @@ describe("supabase sync", () => {
       expect(result).toMatchObject({
         customersPulled: 1,
         productsSynced: 1,
-        paymentTermsSynced: 1,
+        paymentTermsSynced: 0,
         suppliersSynced: 0
       });
       expect(
@@ -506,7 +507,7 @@ describe("supabase sync", () => {
       expect(result).toMatchObject({
         customersPulled: 1,
         productsSynced: 1,
-        paymentTermsSynced: 1,
+        paymentTermsSynced: 0,
         suppliersSynced: 0
       });
     } finally {

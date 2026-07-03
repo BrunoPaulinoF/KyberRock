@@ -1,7 +1,6 @@
 import {
   OmieClient,
   OmieCustomersService,
-  OmiePaymentTermsService,
   OmieProductsService,
   hasClienteTag,
   hasTransportadoraTag,
@@ -43,7 +42,6 @@ export function createOmieClient(config: OmieSyncConfig): OmieClient {
 export class OmieSyncService {
   private readonly customersService: OmieCustomersService;
   private readonly productsService: OmieProductsService;
-  private readonly paymentTermsService: OmiePaymentTermsService;
 
   constructor(
     private readonly client: OmieClient,
@@ -51,7 +49,6 @@ export class OmieSyncService {
   ) {
     this.customersService = new OmieCustomersService(client);
     this.productsService = new OmieProductsService(client);
-    this.paymentTermsService = new OmiePaymentTermsService(client);
   }
 
   async syncAll(companyId: string): Promise<OmieSyncResult> {
@@ -78,11 +75,8 @@ export class OmieSyncService {
       result.errors.push(`Produtos: ${(err as Error).message}`);
     }
 
-    try {
-      result.paymentTermsSynced = await this.syncPaymentTerms(companyId);
-    } catch (err) {
-      result.errors.push(`Condicoes: ${(err as Error).message}`);
-    }
+    // Condicoes de pagamento sao cadastradas localmente e nao vem mais do OMIE.
+    result.paymentTermsSynced = await this.syncPaymentTerms();
 
     return result;
   }
@@ -491,62 +485,13 @@ export class OmieSyncService {
     return count;
   }
 
-  async syncPaymentTerms(companyId: string): Promise<number> {
-    const terms = await this.paymentTermsService.listAll();
-
-    const insert = this.db.prepare(`
-      INSERT INTO payment_terms (
-        id, company_id, omie_code, omie_integration_code, name, rules_json,
-        first_installment_days, installment_interval_days, installment_count,
-        installment_type, installment_days_json, visible, is_active,
-        updated_from_omie_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), datetime('now'))
-      ON CONFLICT(id) DO UPDATE SET
-        omie_code = excluded.omie_code,
-        omie_integration_code = excluded.omie_integration_code,
-        name = excluded.name,
-        rules_json = excluded.rules_json,
-        first_installment_days = excluded.first_installment_days,
-        installment_interval_days = excluded.installment_interval_days,
-        installment_count = excluded.installment_count,
-        installment_type = excluded.installment_type,
-        installment_days_json = excluded.installment_days_json,
-        visible = excluded.visible,
-        is_active = excluded.is_active,
-        updated_from_omie_at = datetime('now'),
-        updated_at = datetime('now')
-    `);
-
-    let count = 0;
-    for (const term of terms) {
-      const id = `omie_${term.id}`;
-      insert.run(
-        id,
-        companyId,
-        String(term.id),
-        term.integrationCode ?? null,
-        term.description,
-        JSON.stringify({
-          omieId: term.id,
-          firstInstallmentDays: term.firstInstallmentDays ?? null,
-          installmentIntervalDays: term.installmentIntervalDays ?? null,
-          installmentCount: term.installmentCount ?? null,
-          installmentType: term.installmentType ?? null,
-          installmentDays: term.installmentDays ?? null,
-          visible: term.visible ?? true
-        }),
-        term.firstInstallmentDays ?? null,
-        term.installmentIntervalDays ?? null,
-        term.installmentCount ?? null,
-        term.installmentType ?? null,
-        term.installmentDays ? JSON.stringify(term.installmentDays) : null,
-        term.visible === false ? 0 : 1,
-        term.isActive === false ? 0 : 1
-      );
-      count++;
-    }
-
-    return count;
+  /**
+   * As condicoes de pagamento passaram a ser cadastradas localmente no KyberRock
+   * e nao vem mais do OMIE. Mantido como no-op apenas por compatibilidade da
+   * assinatura usada pelos testes e orquestradores de sync.
+   */
+  async syncPaymentTerms(): Promise<number> {
+    return 0;
   }
 
   async syncSuppliers(companyId: string): Promise<number> {

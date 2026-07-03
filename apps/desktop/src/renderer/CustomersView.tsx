@@ -50,6 +50,10 @@ const initialForm: CustomerFormData = {
   observations: "",
   defaultCarrierId: "",
   defaultPaymentTermId: "",
+  defaultPaymentMethodId: "",
+  creditAccountEnabled: false,
+  creditClosingDay: "",
+  creditBoletoDays: "",
   zipcode: "",
   addressStreet: "",
   addressNumber: "",
@@ -202,6 +206,11 @@ interface PaymentTermOption {
   id: string;
   name: string;
 }
+interface PaymentMethodOption {
+  id: string;
+  name: string;
+  isCustomerCredit: boolean;
+}
 interface ProductOption {
   id: string;
   code: string | null;
@@ -249,6 +258,7 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
 
   const [carriers, setCarriers] = useState<CarrierOption[]>([]);
   const [paymentTerms, setPaymentTerms] = useState<PaymentTermOption[]>([]);
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethodOption[]>([]);
   const [products, setProducts] = useState<ProductOption[]>([]);
   const [specialPrices, setSpecialPrices] = useState<CustomerSpecialPriceEntry[]>([]);
   const [specialProductId, setSpecialProductId] = useState("");
@@ -276,13 +286,15 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
   const loadOptions = useCallback(async () => {
     if (!desktopApi) return;
     try {
-      const [carriersResult, termsResult, productsResult] = await Promise.all([
+      const [carriersResult, termsResult, methodsResult, productsResult] = await Promise.all([
         desktopApi.queryCache({ entityType: "carrier", limit: 200 }),
         desktopApi.queryCache({ entityType: "payment_term", limit: 500 }),
+        desktopApi.queryCache({ entityType: "payment_method", limit: 200 }),
         desktopApi.queryCache({ entityType: "product", activeOnly: true, limit: 500 })
       ]);
       setCarriers((carriersResult.rows as CarrierOption[]) ?? []);
       setPaymentTerms((termsResult.rows as PaymentTermOption[]) ?? []);
+      setPaymentMethods((methodsResult.rows as PaymentMethodOption[]) ?? []);
       setProducts((productsResult.rows as ProductOption[]) ?? []);
     } catch {
       /* ignore */
@@ -353,6 +365,12 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
       observations: customer.observations ?? "",
       defaultCarrierId: customer.defaultCarrierId ?? "",
       defaultPaymentTermId: customer.defaultPaymentTermId ?? "",
+      defaultPaymentMethodId: customer.defaultPaymentMethodId ?? "",
+      creditAccountEnabled: customer.creditAccountEnabled,
+      creditClosingDay:
+        customer.creditClosingDay != null ? String(customer.creditClosingDay) : "",
+      creditBoletoDays:
+        customer.creditBoletoDays != null ? String(customer.creditBoletoDays) : "",
       zipcode: customer.zipcode ?? "",
       addressStreet: customer.addressStreet ?? "",
       addressNumber: customer.addressNumber ?? "",
@@ -486,6 +504,19 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
     const creditLimitCents = form.creditLimitReais.trim()
       ? (parseMoneyInputToCents(form.creditLimitReais) ?? undefined)
       : undefined;
+
+    const creditClosingDay = form.creditAccountEnabled ? Number(form.creditClosingDay) : null;
+    const creditBoletoDays = form.creditAccountEnabled ? Number(form.creditBoletoDays) : null;
+    if (form.creditAccountEnabled) {
+      if (!Number.isInteger(creditClosingDay) || creditClosingDay! < 1 || creditClosingDay! > 31) {
+        setFormError("Informe o dia de fechamento (1 a 31) para o credito do cliente.");
+        return;
+      }
+      if (!Number.isInteger(creditBoletoDays) || creditBoletoDays! < 0) {
+        setFormError("Informe os dias apos o fechamento para o vencimento do boleto.");
+        return;
+      }
+    }
     const normalizedZipcode = form.zipcode.replace(/\D/g, "");
 
     setSaving(true);
@@ -495,7 +526,11 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
           observations: form.observations.trim() || undefined,
           creditMode: form.creditMode,
           defaultCarrierId: form.defaultCarrierId || null,
-          defaultPaymentTermId: form.defaultPaymentTermId || null
+          defaultPaymentTermId: form.defaultPaymentTermId || null,
+          defaultPaymentMethodId: form.defaultPaymentMethodId || null,
+          creditAccountEnabled: form.creditAccountEnabled,
+          creditClosingDay,
+          creditBoletoDays
         };
         const fullPatch = {
           tradeName: form.tradeName.trim(),
@@ -532,6 +567,10 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
           observations: form.observations.trim() || undefined,
           defaultCarrierId: form.defaultCarrierId || undefined,
           defaultPaymentTermId: form.defaultPaymentTermId || undefined,
+          defaultPaymentMethodId: form.defaultPaymentMethodId || undefined,
+          creditAccountEnabled: form.creditAccountEnabled,
+          creditClosingDay: creditClosingDay ?? undefined,
+          creditBoletoDays: creditBoletoDays ?? undefined,
           zipcode: normalizedZipcode || undefined,
           addressStreet: form.addressStreet.trim() || undefined,
           addressNumber: form.addressNumber.trim() || undefined,
@@ -802,7 +841,24 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
 
             <section style={styles.formSection}>
               <h4 style={styles.formSectionTitle}>Comercial</h4>
-              <Field label="Condicao de pagamento">
+              <Field
+                label="Forma de pagamento padrao"
+                hint="Puxada automaticamente na Nova entrada (pode ser trocada)"
+              >
+                <select
+                  value={form.defaultPaymentMethodId}
+                  onChange={(e) => setForm({ ...form, defaultPaymentMethodId: e.target.value })}
+                  style={getInputStyle(false)}
+                >
+                  <option value="">Selecione</option>
+                  {paymentMethods.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Condicao de pagamento padrao">
                 <select
                   value={form.defaultPaymentTermId}
                   onChange={(e) => setForm({ ...form, defaultPaymentTermId: e.target.value })}
@@ -816,6 +872,39 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
                   ))}
                 </select>
               </Field>
+              <label style={styles.checkbox}>
+                <input
+                  type="checkbox"
+                  checked={form.creditAccountEnabled}
+                  onChange={(e) => setForm({ ...form, creditAccountEnabled: e.target.checked })}
+                />
+                Habilitar credito do cliente (fiado)
+              </label>
+              {form.creditAccountEnabled ? (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                  <Field label="Dia de fechamento" hint="Dia do mes (1 a 31)">
+                    <input
+                      type="number"
+                      min={1}
+                      max={31}
+                      value={form.creditClosingDay}
+                      onChange={(e) => setForm({ ...form, creditClosingDay: e.target.value })}
+                      style={getInputStyle(false)}
+                      placeholder="Ex: 30"
+                    />
+                  </Field>
+                  <Field label="Dias p/ vencimento do boleto" hint="Apos o fechamento">
+                    <input
+                      type="number"
+                      min={0}
+                      value={form.creditBoletoDays}
+                      onChange={(e) => setForm({ ...form, creditBoletoDays: e.target.value })}
+                      style={getInputStyle(false)}
+                      placeholder="Ex: 10"
+                    />
+                  </Field>
+                </div>
+              ) : null}
               <Field label="Uso de credito OMIE">
                 <select
                   value={form.creditMode}
