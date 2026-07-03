@@ -19,6 +19,7 @@ export interface CreateCustomerInput {
   creditAccountEnabled?: boolean;
   creditClosingDay?: number | null;
   creditBoletoDays?: number | null;
+  nfRequired?: boolean;
   zipcode?: string;
   addressStreet?: string;
   addressNumber?: string;
@@ -45,6 +46,7 @@ export interface UpdateCustomerInput {
   creditAccountEnabled?: boolean;
   creditClosingDay?: number | null;
   creditBoletoDays?: number | null;
+  nfRequired?: boolean;
   zipcode?: string | null;
   addressStreet?: string | null;
   addressNumber?: string | null;
@@ -76,6 +78,7 @@ export interface CustomerRow {
   credit_account_enabled: number;
   credit_closing_day: number | null;
   credit_boleto_days: number | null;
+  nf_required: number;
   zipcode: string | null;
   address_street: string | null;
   address_number: string | null;
@@ -135,11 +138,11 @@ export function createCustomer(
         id, company_id, source, legal_name, trade_name, document, phone, email,
         credit_limit_cents, credit_mode, open_receivables_cents, omie_billing_blocked,
         observations, default_carrier_id, default_payment_term_id, default_payment_method_id,
-        credit_account_enabled, credit_closing_day, credit_boleto_days,
+        credit_account_enabled, credit_closing_day, credit_boleto_days, nf_required,
         zipcode, address_street, address_number,
         address_complement, neighborhood, city, state, sync_status, needs_push, local_updated_at, is_active,
         created_at, updated_at
-      ) VALUES (?, ?, 'local', ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1, ?, 1, ?, ?)`
+      ) VALUES (?, ?, 'local', ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1, ?, 1, ?, ?)`
     )
     .run(
       id,
@@ -159,6 +162,7 @@ export function createCustomer(
       input.creditAccountEnabled ? 1 : 0,
       input.creditClosingDay ?? null,
       input.creditBoletoDays ?? null,
+      input.nfRequired === false ? 0 : 1,
       input.zipcode ?? null,
       input.addressStreet ?? null,
       input.addressNumber ?? null,
@@ -276,6 +280,10 @@ export function updateCustomer(
   if (input.creditBoletoDays !== undefined) {
     sets.push("credit_boleto_days = ?");
     values.push(input.creditBoletoDays);
+  }
+  if (input.nfRequired !== undefined) {
+    sets.push("nf_required = ?");
+    values.push(input.nfRequired ? 1 : 0);
   }
   if (input.zipcode !== undefined) {
     sets.push("zipcode = ?");

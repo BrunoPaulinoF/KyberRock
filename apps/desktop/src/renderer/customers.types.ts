@@ -20,6 +20,7 @@ export interface CustomerCacheEntry {
   creditAccountEnabled: boolean;
   creditClosingDay: number | null;
   creditBoletoDays: number | null;
+  nfRequired: boolean;
   zipcode: string | null;
   addressStreet: string | null;
   addressNumber: string | null;
@@ -43,6 +44,7 @@ export interface CarrierCacheEntry {
   neighborhood: string | null;
   city: string | null;
   state: string | null;
+  nfRequired: boolean;
   source: string;
   isActive: boolean;
 }
@@ -82,6 +84,7 @@ export interface CustomerFormData {
   creditAccountEnabled: boolean;
   creditClosingDay: string;
   creditBoletoDays: string;
+  nfRequired: boolean;
   zipcode: string;
   addressStreet: string;
   addressNumber: string;

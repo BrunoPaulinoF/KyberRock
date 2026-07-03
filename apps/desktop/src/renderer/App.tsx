@@ -4295,6 +4295,14 @@ function WeighingForm({
               setForm((prev) => ({
                 ...prev,
                 customerId: id,
+                // Pre-seleciona gerar (ou nao) nota fiscal conforme o cadastro do cliente;
+                // o operador ainda pode trocar antes de fechar.
+                operationType:
+                  item?.nfRequired === false
+                    ? "internal"
+                    : item?.nfRequired === true
+                      ? "invoice"
+                      : prev.operationType,
                 paymentMethodId:
                   typeof item?.defaultPaymentMethodId === "string" && item.defaultPaymentMethodId
                     ? item.defaultPaymentMethodId
@@ -6542,6 +6550,7 @@ interface CarrierFormData {
   neighborhood: string;
   city: string;
   state: string;
+  nfRequired: boolean;
 }
 
 const emptyCarrierForm: CarrierFormData = {
@@ -6555,7 +6564,8 @@ const emptyCarrierForm: CarrierFormData = {
   addressComplement: "",
   neighborhood: "",
   city: "",
-  state: ""
+  state: "",
+  nfRequired: false
 };
 
 function paymentConditionSummary(term: PaymentTermCacheEntry): string {
@@ -7033,7 +7043,8 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
       addressComplement: carrier.addressComplement ?? "",
       neighborhood: carrier.neighborhood ?? "",
       city: carrier.city ?? "",
-      state: carrier.state ?? ""
+      state: carrier.state ?? "",
+      nfRequired: carrier.nfRequired
     });
     setEditingId(carrier.id);
     setFormError(null);
@@ -7064,7 +7075,8 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
           addressComplement: form.addressComplement.trim() || null,
           neighborhood: form.neighborhood.trim() || null,
           city: form.city.trim() || null,
-          state: form.state.trim() || null
+          state: form.state.trim() || null,
+          nfRequired: form.nfRequired
         });
         showFlash("success", "Transportadora atualizada.");
       } else {
@@ -7079,7 +7091,8 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
           addressComplement: form.addressComplement.trim() || undefined,
           neighborhood: form.neighborhood.trim() || undefined,
           city: form.city.trim() || undefined,
-          state: form.state.trim() || undefined
+          state: form.state.trim() || undefined,
+          nfRequired: form.nfRequired
         });
         showFlash("success", "Transportadora criada.");
       }
@@ -7148,6 +7161,14 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
               value={form.document}
               onChange={(document) => setForm({ ...form, document })}
             />
+            <label style={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                checked={form.nfRequired}
+                onChange={(e) => setForm({ ...form, nfRequired: e.target.checked })}
+              />
+              Exige informar os dados na nota fiscal
+            </label>
           </FormSection>
           <FormSection title="Contato">
             <TextInput

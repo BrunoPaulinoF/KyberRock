@@ -15,6 +15,7 @@ export interface CreateCarrierInput {
   neighborhood?: string;
   city?: string;
   state?: string;
+  nfRequired?: boolean;
   omieCustomerId?: number;
 }
 
@@ -30,6 +31,7 @@ export interface UpdateCarrierInput {
   neighborhood?: string | null;
   city?: string | null;
   state?: string | null;
+  nfRequired?: boolean;
   omieCustomerId?: number | null;
   isActive?: boolean;
 }
@@ -46,9 +48,9 @@ export function createCarrier(
     .prepare(
       `INSERT INTO carriers (
         id, company_id, omie_customer_id, name, document, phone, email, zipcode, address_street,
-        address_number, address_complement, neighborhood, city, state, source, sync_status, needs_push,
+        address_number, address_complement, neighborhood, city, state, nf_required, source, sync_status, needs_push,
         is_active, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'local', 'pending', 1, 1, ?, ?)`
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'local', 'pending', 1, 1, ?, ?)`
     )
     .run(
       id,
@@ -65,6 +67,7 @@ export function createCarrier(
       input.neighborhood ?? null,
       input.city ?? null,
       input.state ?? null,
+      input.nfRequired ? 1 : 0,
       nowIso,
       nowIso
     );
@@ -132,6 +135,10 @@ export function updateCarrier(
     sets.push("state = ?");
     values.push(input.state);
   }
+  if (input.nfRequired !== undefined) {
+    sets.push("nf_required = ?");
+    values.push(input.nfRequired ? 1 : 0);
+  }
   if (input.omieCustomerId !== undefined) {
     sets.push("omie_customer_id = ?");
     values.push(input.omieCustomerId);
@@ -182,6 +189,7 @@ export interface CarrierRow {
   neighborhood: string | null;
   city: string | null;
   state: string | null;
+  nf_required: number;
   source: string;
   sync_status: "synced" | "pending" | "error";
   needs_push: number;

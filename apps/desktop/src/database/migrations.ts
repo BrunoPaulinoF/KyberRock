@@ -930,5 +930,16 @@ SET deleted_at = datetime('now'), is_active = 0, updated_at = datetime('now')
 WHERE deleted_at IS NULL
   AND (omie_code IS NOT NULL OR id LIKE 'omie_%');
 `
+  },
+  {
+    version: 26,
+    name: "nf_required_flags_on_carriers_and_customers",
+    sql: `
+-- Transportadora: informa se e obrigatorio informar seus dados na nota fiscal.
+ALTER TABLE carriers ADD COLUMN nf_required INTEGER NOT NULL DEFAULT 0 CHECK (nf_required IN (0, 1));
+
+-- Cliente: informa se exige nota fiscal (reflete na pre-selecao do fechamento).
+ALTER TABLE customers ADD COLUMN nf_required INTEGER NOT NULL DEFAULT 1 CHECK (nf_required IN (0, 1));
+`
   }
 ];

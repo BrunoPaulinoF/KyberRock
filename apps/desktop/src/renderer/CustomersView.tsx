@@ -54,6 +54,7 @@ const initialForm: CustomerFormData = {
   creditAccountEnabled: false,
   creditClosingDay: "",
   creditBoletoDays: "",
+  nfRequired: true,
   zipcode: "",
   addressStreet: "",
   addressNumber: "",
@@ -371,6 +372,7 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
         customer.creditClosingDay != null ? String(customer.creditClosingDay) : "",
       creditBoletoDays:
         customer.creditBoletoDays != null ? String(customer.creditBoletoDays) : "",
+      nfRequired: customer.nfRequired,
       zipcode: customer.zipcode ?? "",
       addressStreet: customer.addressStreet ?? "",
       addressNumber: customer.addressNumber ?? "",
@@ -530,7 +532,8 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
           defaultPaymentMethodId: form.defaultPaymentMethodId || null,
           creditAccountEnabled: form.creditAccountEnabled,
           creditClosingDay,
-          creditBoletoDays
+          creditBoletoDays,
+          nfRequired: form.nfRequired
         };
         const fullPatch = {
           tradeName: form.tradeName.trim(),
@@ -571,6 +574,7 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
           creditAccountEnabled: form.creditAccountEnabled,
           creditClosingDay: creditClosingDay ?? undefined,
           creditBoletoDays: creditBoletoDays ?? undefined,
+          nfRequired: form.nfRequired,
           zipcode: normalizedZipcode || undefined,
           addressStreet: form.addressStreet.trim() || undefined,
           addressNumber: form.addressNumber.trim() || undefined,
@@ -917,6 +921,14 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
                   <option value="prepaid">Debitar credito pre-pago</option>
                 </select>
               </Field>
+              <label style={styles.checkbox}>
+                <input
+                  type="checkbox"
+                  checked={form.nfRequired}
+                  onChange={(e) => setForm({ ...form, nfRequired: e.target.checked })}
+                />
+                Exige nota fiscal
+              </label>
               <label style={styles.checkbox}>
                 <input
                   type="checkbox"

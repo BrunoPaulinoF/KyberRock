@@ -24,6 +24,7 @@ export interface CustomerCacheEntry {
   creditAccountEnabled: boolean;
   creditClosingDay: number | null;
   creditBoletoDays: number | null;
+  nfRequired: boolean;
   zipcode: string | null;
   addressStreet: string | null;
   addressNumber: string | null;
@@ -79,6 +80,7 @@ export interface CarrierCacheEntry {
   neighborhood: string | null;
   city: string | null;
   state: string | null;
+  nfRequired: boolean;
   source: "omie" | "local";
   syncStatus: "synced" | "pending" | "error";
   needsPush: boolean;
@@ -178,6 +180,7 @@ interface CustomerRow {
   credit_account_enabled: number;
   credit_closing_day: number | null;
   credit_boleto_days: number | null;
+  nf_required: number;
   zipcode: string | null;
   address_street: string | null;
   address_number: string | null;
@@ -233,6 +236,7 @@ interface CarrierRow {
   neighborhood: string | null;
   city: string | null;
   state: string | null;
+  nf_required: number;
   source: "omie" | "local";
   sync_status: "synced" | "pending" | "error";
   needs_push: number;
@@ -306,6 +310,7 @@ function mapCustomer(row: CustomerRow): CustomerCacheEntry {
     creditAccountEnabled: row.credit_account_enabled === 1,
     creditClosingDay: row.credit_closing_day,
     creditBoletoDays: row.credit_boleto_days,
+    nfRequired: row.nf_required === 1,
     zipcode: row.zipcode,
     addressStreet: row.address_street,
     addressNumber: row.address_number,
@@ -393,6 +398,7 @@ function mapCarrier(row: CarrierRow): CarrierCacheEntry {
     neighborhood: row.neighborhood,
     city: row.city,
     state: row.state,
+    nfRequired: row.nf_required === 1,
     source: row.source,
     syncStatus: row.sync_status,
     needsPush: row.needs_push === 1,
@@ -671,7 +677,7 @@ export class CacheStore {
         `SELECT id, omie_customer_id, legal_name, trade_name, document, phone, email,
                 credit_limit_cents, credit_mode, open_receivables_cents, omie_billing_blocked,
                 source, sync_status, needs_push, last_synced_at, observations, default_carrier_id, default_payment_term_id,
-                default_payment_method_id, credit_account_enabled, credit_closing_day, credit_boleto_days,
+                default_payment_method_id, credit_account_enabled, credit_closing_day, credit_boleto_days, nf_required,
                 zipcode, address_street, address_number, address_complement, neighborhood, city, state, is_active
          FROM customers WHERE company_id = ? AND deleted_at IS NULL`
       )
@@ -731,7 +737,7 @@ export class CacheStore {
     const rows = this.db
       .prepare(
         `SELECT id, omie_customer_id, name, document, phone, email, zipcode, address_street,
-                address_number, address_complement, neighborhood, city, state, source,
+                address_number, address_complement, neighborhood, city, state, nf_required, source,
                 sync_status, needs_push, last_synced_at, is_active
          FROM carriers WHERE company_id = ? AND deleted_at IS NULL`
       )
