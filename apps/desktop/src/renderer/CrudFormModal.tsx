@@ -33,6 +33,7 @@ const panelBaseStyle: CSSProperties = {
   width: "100%",
   maxHeight: "92vh",
   overflowY: "auto",
+  overflowX: "hidden",
   animation: "krModalPop 140ms ease-out"
 };
 

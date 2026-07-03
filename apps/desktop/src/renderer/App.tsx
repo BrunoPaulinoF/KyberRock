@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
   BarChart3,
@@ -16,6 +16,7 @@ import {
   Printer,
   Scale,
   ScrollText,
+  Search,
   Settings,
   Sun,
   Upload
@@ -239,6 +240,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [operationsTab, setOperationsTab] = useState<OperationsTab>("open");
   const [canceledFilter, setCanceledFilter] = useState<CanceledFilter>("all");
   const [closedProductFilter, setClosedProductFilter] = useState<string>("all");
+  const [operationsSearch, setOperationsSearch] = useState("");
+  const [selectedOperationIndex, setSelectedOperationIndex] = useState(0);
+  const operationsSearchRef = useRef<HTMLInputElement | null>(null);
   const [printers, setPrinters] = useState<WindowsPrinterSummary[]>([]);
   const [printProfiles, setPrintProfiles] = useState<PrintProfileSummary[]>([]);
   const [printReceipts, setPrintReceipts] = useState<PrintReceiptSummary[]>([]);
@@ -333,17 +337,124 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     omieReachable: boolean;
   } | null>(null);
   const themeVars = useMemo(() => getThemeVariables(themeMode), [themeMode]);
+  const filteredOpenOperations = useMemo(
+    () => openOperations.filter((op) => matchesOperationsSearch(op, operationsSearch)),
+    [openOperations, operationsSearch]
+  );
   const filteredCanceledOperations = useMemo(
-    () => filterCanceledOperations(canceledOperations, canceledFilter),
-    [canceledOperations, canceledFilter]
+    () =>
+      filterCanceledOperations(canceledOperations, canceledFilter).filter((op) =>
+        matchesOperationsSearch(op, operationsSearch)
+      ),
+    [canceledOperations, canceledFilter, operationsSearch]
   );
   const filteredClosedOperations = useMemo(
     () =>
-      closedProductFilter === "all"
+      (closedProductFilter === "all"
         ? closedOperations
-        : closedOperations.filter((op) => op.productDescription === closedProductFilter),
-    [closedOperations, closedProductFilter]
+        : closedOperations.filter((op) => op.productDescription === closedProductFilter)
+      ).filter((op) => matchesOperationsSearch(op, operationsSearch)),
+    [closedOperations, closedProductFilter, operationsSearch]
   );
+  const visibleOperations =
+    operationsTab === "open"
+      ? filteredOpenOperations
+      : operationsTab === "canceled"
+        ? filteredCanceledOperations
+        : filteredClosedOperations;
+
+  useEffect(() => {
+    setSelectedOperationIndex(0);
+  }, [operationsTab, operationsSearch]);
+
+  useEffect(() => {
+    setSelectedOperationIndex((index) =>
+      Math.min(index, Math.max(0, visibleOperations.length - 1))
+    );
+  }, [visibleOperations.length]);
+
+  // Operacao 100% via teclado na tela Operacoes: "/" busca, setas navegam,
+  // Enter fecha, Delete cancela e M troca o material da operacao selecionada.
+  useEffect(() => {
+    if (activeView !== "open-operations") return;
+
+    function handleOperationsKeyDown(event: KeyboardEvent): void {
+      if (
+        closingOperation ||
+        cancelOperationId ||
+        changeProductOperation ||
+        showLogsModal ||
+        showUpdateModal ||
+        showSettings
+      ) {
+        return;
+      }
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName ?? "";
+      const isFormField = tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA";
+      const isSearchField = target === operationsSearchRef.current;
+
+      if (!isFormField && (event.key === "/" || (event.ctrlKey && event.key === "f"))) {
+        event.preventDefault();
+        operationsSearchRef.current?.focus();
+        operationsSearchRef.current?.select();
+        return;
+      }
+      if (isFormField && !isSearchField) return;
+
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setSelectedOperationIndex((index) =>
+          Math.min(Math.max(0, visibleOperations.length - 1), index + 1)
+        );
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setSelectedOperationIndex((index) => Math.max(0, index - 1));
+        return;
+      }
+
+      if (operationsTab !== "open") return;
+      const selected = filteredOpenOperations[selectedOperationIndex];
+      if (!selected) return;
+
+      if (event.key === "Enter") {
+        event.preventDefault();
+        setClosingOperation(selected);
+        return;
+      }
+      if (!isSearchField && event.key === "Delete") {
+        event.preventDefault();
+        setCancelOperationId(selected.id);
+        return;
+      }
+      if (!isSearchField && (event.key === "m" || event.key === "M")) {
+        event.preventDefault();
+        void handleOpenChangeProduct(selected);
+      }
+    }
+
+    window.addEventListener("keydown", handleOperationsKeyDown);
+    return () => window.removeEventListener("keydown", handleOperationsKeyDown);
+  }, [
+    activeView,
+    operationsTab,
+    visibleOperations.length,
+    filteredOpenOperations,
+    selectedOperationIndex,
+    closingOperation,
+    cancelOperationId,
+    changeProductOperation,
+    showLogsModal,
+    showUpdateModal,
+    showSettings
+  ]);
+
+  useEffect(() => {
+    const row = document.querySelector('[data-operation-selected="true"]');
+    row?.scrollIntoView({ block: "nearest" });
+  }, [selectedOperationIndex, operationsTab]);
 
   useEffect(() => {
     writeStoredThemeMode(themeMode);
@@ -1769,7 +1880,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       <Cloud size={14} />
                       Cloud
                     </button>
-                    <div style={{ height: "1px", background: "#e2e8f0", margin: "4px 0" }} />
+                    <div style={{ height: "1px", background: "var(--kr-border)", margin: "4px 0" }} />
                     <button
                       type="button"
                       onClick={() => {
@@ -1808,7 +1919,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       <Upload size={14} />
                       Restaurar
                     </button>
-                    <div style={{ height: "1px", background: "#e2e8f0", margin: "4px 0" }} />
+                    <div style={{ height: "1px", background: "var(--kr-border)", margin: "4px 0" }} />
                     <button
                       type="button"
                       onClick={() => {
@@ -2028,7 +2139,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   </div>
                   <span style={styles.countBadge}>
                     {operationsTab === "open"
-                      ? `${openOperations.length} abertas`
+                      ? `${filteredOpenOperations.length} abertas`
                       : operationsTab === "canceled"
                         ? `${filteredCanceledOperations.length} canceladas`
                         : `${filteredClosedOperations.length} concluidas`}
@@ -2058,6 +2169,39 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     >
                       Concluidas
                     </button>
+                  </div>
+
+                  <div
+                    style={{
+                      position: "relative",
+                      flex: "1 1 220px",
+                      minWidth: "200px",
+                      maxWidth: "380px"
+                    }}
+                  >
+                    <Search
+                      size={14}
+                      style={{
+                        position: "absolute",
+                        left: "10px",
+                        top: "50%",
+                        transform: "translateY(-50%)",
+                        color: "var(--kr-muted)",
+                        pointerEvents: "none"
+                      }}
+                    />
+                    <input
+                      ref={operationsSearchRef}
+                      value={operationsSearch}
+                      onChange={(event) => setOperationsSearch(event.target.value)}
+                      placeholder="Buscar placa, cliente, produto ou motorista  ( / )"
+                      style={{
+                        ...styles.input,
+                        width: "100%",
+                        paddingLeft: "30px",
+                        boxSizing: "border-box" as const
+                      }}
+                    />
                   </div>
 
                   {operationsTab === "canceled" ? (
@@ -2135,11 +2279,17 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 </div>
 
                 {operationsTab === "open" ? (
-                  openOperations.length === 0 ? (
+                  filteredOpenOperations.length === 0 ? (
                     <div style={styles.emptyState}>
-                      <strong>Nenhuma operacao aberta</strong>
+                      <strong>
+                        {operationsSearch.trim()
+                          ? "Nenhuma operacao encontrada na busca"
+                          : "Nenhuma operacao aberta"}
+                      </strong>
                       <span>
-                        As entradas capturadas pela balanca aparecem aqui para fechamento.
+                        {operationsSearch.trim()
+                          ? "Ajuste o termo de busca ou limpe o campo."
+                          : "As entradas capturadas pela balanca aparecem aqui para fechamento."}
                       </span>
                     </div>
                   ) : (
@@ -2150,8 +2300,20 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                         <span>Entrada / Preco</span>
                         <span>Acoes</span>
                       </div>
-                      {openOperations.map((operation) => (
-                        <div key={operation.id} style={styles.operationsTableRow}>
+                      {filteredOpenOperations.map((operation, operationIndex) => (
+                        <div
+                          key={operation.id}
+                          data-operation-selected={
+                            operationIndex === selectedOperationIndex ? "true" : undefined
+                          }
+                          onClick={() => setSelectedOperationIndex(operationIndex)}
+                          style={{
+                            ...styles.operationsTableRow,
+                            ...(operationIndex === selectedOperationIndex
+                              ? styles.operationsSelectedRow
+                              : null)
+                          }}
+                        >
                           <strong style={styles.plateBadge}>{operation.plate}</strong>
                           <span style={styles.operationCellStack}>
                             <strong>{operation.customerName}</strong>
@@ -2189,6 +2351,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                           </span>
                         </div>
                       ))}
+                      <p style={styles.operationsKeyboardHint}>
+                        ↑↓ navegar · Enter fechar · Delete cancelar · M alterar material · /
+                        buscar
+                      </p>
                     </div>
                   )
                 ) : operationsTab === "canceled" ? (
@@ -2210,8 +2376,20 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                         <span>Cancelada em</span>
                         <span>Motivo</span>
                       </div>
-                      {filteredCanceledOperations.map((operation) => (
-                        <div key={operation.id} style={styles.canceledOperationsTableRow}>
+                      {filteredCanceledOperations.map((operation, operationIndex) => (
+                        <div
+                          key={operation.id}
+                          data-operation-selected={
+                            operationIndex === selectedOperationIndex ? "true" : undefined
+                          }
+                          onClick={() => setSelectedOperationIndex(operationIndex)}
+                          style={{
+                            ...styles.canceledOperationsTableRow,
+                            ...(operationIndex === selectedOperationIndex
+                              ? styles.operationsSelectedRow
+                              : null)
+                          }}
+                        >
                           <strong style={styles.plateBadge}>{operation.plate || "--"}</strong>
                           <span style={styles.operationCellStack}>
                             <strong>{operation.customerName || "Cliente nao informado"}</strong>
@@ -2239,8 +2417,20 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       <span>Concluida em</span>
                       <span>Fiscal OMIE</span>
                     </div>
-                    {filteredClosedOperations.map((operation) => (
-                      <div key={operation.id} style={styles.closedOperationsTableRow}>
+                    {filteredClosedOperations.map((operation, operationIndex) => (
+                      <div
+                        key={operation.id}
+                        data-operation-selected={
+                          operationIndex === selectedOperationIndex ? "true" : undefined
+                        }
+                        onClick={() => setSelectedOperationIndex(operationIndex)}
+                        style={{
+                          ...styles.closedOperationsTableRow,
+                          ...(operationIndex === selectedOperationIndex
+                            ? styles.operationsSelectedRow
+                            : null)
+                        }}
+                      >
                         <strong style={styles.plateBadge}>{operation.plate || "--"}</strong>
                         <span style={styles.operationCellStack}>
                           <strong>{operation.customerName || "Cliente nao informado"}</strong>
@@ -2906,7 +3096,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       )}
                     </>
                   ) : (
-                    <p style={{ color: "#64748b" }}>Carregando status OMIE...</p>
+                    <p style={{ color: "var(--kr-muted)" }}>Carregando status OMIE...</p>
                   )}
                 </article>
               </section>
@@ -3084,7 +3274,8 @@ function KeyboardShortcutsLegend() {
     { key: "F10", label: "Logs" },
     { key: "F11", label: "Tema" },
     { key: "Esc", label: "Voltar" },
-    { key: "Ctrl+Enter", label: "Confirmar" }
+    { key: "Ctrl+Enter", label: "Confirmar" },
+    { key: "/", label: "Buscar" }
   ];
 
   return (
@@ -3261,8 +3452,8 @@ function SidebarItem({
               fontSize: "10px",
               fontWeight: 700,
               padding: "2px 6px",
-              background: "#f1f5f9",
-              color: "#475569",
+              background: "var(--kr-surface-soft)",
+              color: "var(--kr-muted)",
               borderRadius: "999px"
             }}
           >
@@ -3437,7 +3628,8 @@ function CacheSelect({
   disabled = false,
   refreshKey = 0,
   productFiscalType,
-  filterIds
+  filterIds,
+  autoFocus = false
 }: {
   label: string;
   entityType: CacheEntityType;
@@ -3449,6 +3641,7 @@ function CacheSelect({
   refreshKey?: number;
   productFiscalType?: "finished_goods";
   filterIds?: string[];
+  autoFocus?: boolean;
 }) {
   const [search, setSearch] = useState("");
   const [options, setOptions] = useState<CacheSelectOption[]>([]);
@@ -3456,6 +3649,8 @@ function CacheSelect({
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
+  const triggerRef = useRef<HTMLInputElement | null>(null);
+  const optionsListRef = useRef<HTMLDivElement | null>(null);
 
   const selectedLabel = useMemo(() => {
     return (
@@ -3500,11 +3695,23 @@ function CacheSelect({
     setHighlightedIndex(0);
   }, [open, options.length]);
 
+  useEffect(() => {
+    if (!open) return;
+    const highlighted = optionsListRef.current?.querySelector('[data-highlighted="true"]');
+    highlighted?.scrollIntoView({ block: "nearest" });
+  }, [open, highlightedIndex]);
+
+  function closePicker(): void {
+    setOpen(false);
+    setSearch("");
+    // Devolve o foco ao campo para o operador seguir com Tab sem usar o mouse.
+    window.setTimeout(() => triggerRef.current?.focus(), 0);
+  }
+
   function selectOption(option: CacheSelectOption): void {
     setSelectedOption(option);
     onChange(option.id, option.raw);
-    setOpen(false);
-    setSearch("");
+    closePicker();
   }
 
   function getOptionMeta(option: CacheSelectOption): string | null {
@@ -3521,6 +3728,8 @@ function CacheSelect({
         {label}
         <input
           type="text"
+          ref={triggerRef}
+          autoFocus={autoFocus}
           value={selectedLabel}
           onChange={() => undefined}
           onClick={() => {
@@ -3528,10 +3737,23 @@ function CacheSelect({
             setSearch("");
           }}
           onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") {
+            if (event.key === "Enter" || event.key === " " || event.key === "ArrowDown") {
               event.preventDefault();
               setOpen(true);
               setSearch("");
+              return;
+            }
+            // Digitar direto no campo abre o seletor ja pesquisando pelo texto.
+            if (
+              event.key.length === 1 &&
+              !event.ctrlKey &&
+              !event.metaKey &&
+              !event.altKey &&
+              event.key !== " "
+            ) {
+              event.preventDefault();
+              setOpen(true);
+              setSearch(event.key);
             }
           }}
           disabled={disabled}
@@ -3545,10 +3767,16 @@ function CacheSelect({
           role="dialog"
           aria-modal="true"
           aria-label={`Selecionar ${label}`}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              event.stopPropagation();
+              closePicker();
+            }
+          }}
           onMouseDown={(event) => {
             if (event.currentTarget === event.target) {
-              setOpen(false);
-              setSearch("");
+              closePicker();
             }
           }}
           style={{
@@ -3586,10 +3814,7 @@ function CacheSelect({
               </div>
               <button
                 type="button"
-                onClick={() => {
-                  setOpen(false);
-                  setSearch("");
-                }}
+                onClick={closePicker}
                 style={{
                   border: "1px solid var(--kr-border)",
                   borderRadius: "10px",
@@ -3630,8 +3855,8 @@ function CacheSelect({
                     }
                     if (event.key === "Escape") {
                       event.preventDefault();
-                      setOpen(false);
-                      setSearch("");
+                      event.stopPropagation();
+                      closePicker();
                     }
                   }}
                   autoFocus
@@ -3640,6 +3865,7 @@ function CacheSelect({
                 />
 
                 <div
+                  ref={optionsListRef}
                   style={{
                     border: "1px solid var(--kr-border)",
                     borderRadius: "12px",
@@ -3661,6 +3887,7 @@ function CacheSelect({
                       <button
                         key={option.id}
                         type="button"
+                        data-highlighted={highlightedIndex === index ? "true" : undefined}
                         onClick={() => selectOption(option)}
                         onMouseEnter={() => setHighlightedIndex(index)}
                         style={{
@@ -3702,6 +3929,16 @@ function CacheSelect({
                     ))
                   )}
                 </div>
+                <p
+                  style={{
+                    margin: "10px 0 0 0",
+                    color: "var(--kr-muted)",
+                    fontSize: "11px",
+                    fontWeight: 600
+                  }}
+                >
+                  ↑↓ navegar · Enter selecionar · Esc fechar
+                </p>
               </div>
 
               {onCreateNew ? (
@@ -4055,7 +4292,20 @@ function WeighingForm({
         <div>
           <p style={styles.kicker}>Operacao de balanca</p>
           <h2 style={{ ...styles.title, marginBottom: "4px" }}>Nova entrada</h2>
-          <p style={styles.subtitle}>Use Tab para avancar e Ctrl+Enter para capturar.</p>
+          <p style={styles.subtitle}>
+            Digite no campo para buscar, Tab avanca entre os campos.
+          </p>
+          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "8px" }}>
+            <span style={styles.heroKbdChip}>
+              <kbd style={styles.heroKbd}>Enter</kbd> abre o seletor
+            </span>
+            <span style={styles.heroKbdChip}>
+              <kbd style={styles.heroKbd}>Ctrl+Enter</kbd> captura o peso
+            </span>
+            <span style={styles.heroKbdChip}>
+              <kbd style={styles.heroKbd}>Esc</kbd> limpa e volta
+            </span>
+          </div>
         </div>
         <div style={{ display: "flex", gap: "16px", alignItems: "stretch" }}>
           <div style={{ ...styles.liveWeightCard, flex: 1 }}>
@@ -4125,8 +4375,8 @@ function WeighingForm({
             style={{
               ...styles.liveWeightCard,
               flex: 1,
-              backgroundColor: capturedWeight !== null ? "#f0fdf4" : undefined,
-              borderColor: capturedWeight !== null ? "#86efac" : undefined
+              backgroundColor: capturedWeight !== null ? "rgba(34, 197, 94, 0.16)" : undefined,
+              borderColor: capturedWeight !== null ? "rgba(74, 222, 128, 0.55)" : undefined
             }}
           >
             <div style={styles.metricHeader}>
@@ -4140,7 +4390,7 @@ function WeighingForm({
             <strong
               style={{
                 ...styles.metricValue,
-                color: capturedWeight !== null ? "#15803d" : undefined
+                color: capturedWeight !== null ? "#4ade80" : undefined
               }}
             >
               {capturedWeight !== null ? formatWeightKg(capturedWeight) : "-- kg"}
@@ -4157,7 +4407,7 @@ function WeighingForm({
                 style={{
                   fontSize: "12px",
                   fontWeight: 600,
-                  color: "#475569",
+                  color: "#e7e5e4",
                   display: "block",
                   marginBottom: "4px"
                 }}
@@ -4243,6 +4493,7 @@ function WeighingForm({
           <CacheSelect
             label="Cliente"
             entityType="customer"
+            autoFocus
             value={form.customerId}
             onChange={(id, item) =>
               setForm((prev) => ({
@@ -5035,6 +5286,7 @@ const modalOverlayStyle: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
+  padding: "24px",
   zIndex: 1000
 };
 
@@ -5046,6 +5298,9 @@ const modalContentStyle: React.CSSProperties = {
   padding: "14px",
   width: "100%",
   maxWidth: "380px",
+  maxHeight: "92vh",
+  overflowY: "auto",
+  overflowX: "hidden",
   boxShadow: "var(--kr-shadow)"
 };
 
@@ -5170,6 +5425,24 @@ function CloseOperationWeighingDialog({
       : null;
   const invalidNetWeight = netWeight !== null && netWeight <= 0;
 
+  // Ctrl+Enter faz o proximo passo do fechamento: captura o peso de saida e,
+  // com o peso ja capturado e valido, confirma a operacao.
+  useEffect(() => {
+    function handleDialogKeyDown(event: KeyboardEvent): void {
+      if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (capturedExitCaptureId && !invalidNetWeight) {
+          onConfirm(operationType, capturedExitCaptureId);
+        } else if (!isCapturing && scaleState === "connected") {
+          void handleCaptureExitWeight();
+        }
+      }
+    }
+    window.addEventListener("keydown", handleDialogKeyDown, true);
+    return () => window.removeEventListener("keydown", handleDialogKeyDown, true);
+  });
+
   return (
     <div style={modalOverlayStyle}>
       <div style={{ ...modalContentStyle, maxWidth: "720px", width: "90%" }}>
@@ -5190,35 +5463,36 @@ function CloseOperationWeighingDialog({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "1fr 1fr 1fr",
+              gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
               gap: "12px",
-              fontSize: "13px"
+              fontSize: "13px",
+              overflowWrap: "anywhere"
             }}
           >
             <div>
-              <div style={{ color: "#64748b", fontSize: "11px" }}>Placa</div>
+              <div style={{ color: "var(--kr-muted)", fontSize: "11px" }}>Placa</div>
               <strong>{operation.plate}</strong>
             </div>
             <div>
-              <div style={{ color: "#64748b", fontSize: "11px" }}>Cliente</div>
+              <div style={{ color: "var(--kr-muted)", fontSize: "11px" }}>Cliente</div>
               <strong>{operation.customerName}</strong>
             </div>
             <div>
-              <div style={{ color: "#64748b", fontSize: "11px" }}>Produto</div>
+              <div style={{ color: "var(--kr-muted)", fontSize: "11px" }}>Produto</div>
               <strong>{operation.productDescription}</strong>
             </div>
             <div>
-              <div style={{ color: "#64748b", fontSize: "11px" }}>Motorista</div>
+              <div style={{ color: "var(--kr-muted)", fontSize: "11px" }}>Motorista</div>
               <strong>{operation.driverName}</strong>
             </div>
             <div>
-              <div style={{ color: "#64748b", fontSize: "11px" }}>Peso de entrada</div>
+              <div style={{ color: "var(--kr-muted)", fontSize: "11px" }}>Peso de entrada</div>
               <strong style={{ color: "#15803d" }}>
                 {formatWeightKg(operation.entryWeightKg ?? 0)}
               </strong>
             </div>
             <div>
-              <div style={{ color: "#64748b", fontSize: "11px" }}>Preço</div>
+              <div style={{ color: "var(--kr-muted)", fontSize: "11px" }}>Preço</div>
               <strong>{formatMoney(operation.unitPriceCents)}/ton</strong>
             </div>
           </div>
@@ -5245,7 +5519,7 @@ function CloseOperationWeighingDialog({
                 marginBottom: "8px"
               }}
             >
-              <span style={{ fontSize: "13px", color: "#64748b" }}>Peso ao vivo</span>
+              <span style={{ fontSize: "13px", color: "var(--kr-muted)" }}>Peso ao vivo</span>
               <span
                 style={{
                   width: "10px",
@@ -5308,19 +5582,19 @@ function CloseOperationWeighingDialog({
             style={{
               flex: 1,
               padding: "16px",
-              background: capturedExitWeight !== null ? "#f0fdf4" : "#f8fafc",
+              background: capturedExitWeight !== null ? "var(--kr-success-soft)" : "var(--kr-surface-soft)",
               borderRadius: "12px",
-              border: `2px solid ${capturedExitWeight !== null ? "#86efac" : "#e2e8f0"}`,
+              border: `2px solid ${capturedExitWeight !== null ? "var(--kr-success-border)" : "var(--kr-border)"}`,
               textAlign: "center"
             }}
           >
-            <div style={{ fontSize: "13px", color: "#64748b", marginBottom: "8px" }}>
+            <div style={{ fontSize: "13px", color: "var(--kr-muted)", marginBottom: "8px" }}>
               Peso de saida capturado
             </div>
             <strong
               style={{
                 fontSize: "32px",
-                color: capturedExitWeight !== null ? "#15803d" : "#0f172a",
+                color: capturedExitWeight !== null ? "var(--kr-success)" : "var(--kr-text-strong)",
                 fontFamily: "monospace"
               }}
             >
@@ -5343,7 +5617,7 @@ function CloseOperationWeighingDialog({
                 style={{
                   fontSize: "12px",
                   fontWeight: 600,
-                  color: "#475569",
+                  color: "var(--kr-muted)",
                   display: "block",
                   marginBottom: "4px"
                 }}
@@ -5493,6 +5767,17 @@ function CloseOperationWeighingDialog({
             Cancelar
           </button>
         </div>
+        <p
+          style={{
+            margin: "10px 0 0 0",
+            textAlign: "center",
+            color: "var(--kr-muted)",
+            fontSize: "11px",
+            fontWeight: 600
+          }}
+        >
+          Ctrl+Enter captura e confirma · Esc cancela
+        </p>
       </div>
     </div>
   );
@@ -5838,7 +6123,7 @@ function PriceInput({
         }
       />
       {!compact && valueCents !== null ? (
-        <span style={{ fontSize: "12px", color: "#64748b", marginTop: "2px", display: "block" }}>
+        <span style={{ fontSize: "12px", color: "var(--kr-muted)", marginTop: "2px", display: "block" }}>
           {centsToBRL(valueCents)}
           {suffix}
         </span>
@@ -5881,6 +6166,17 @@ function filterCanceledOperations(
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Falha inesperada.";
+}
+
+function matchesOperationsSearch(operation: WeighingOperationSummary, term: string): boolean {
+  const normalized = term.trim().toLowerCase();
+  if (!normalized) return true;
+  return [
+    operation.plate,
+    operation.customerName,
+    operation.productDescription,
+    operation.driverName
+  ].some((value) => (value ?? "").toLowerCase().includes(normalized));
 }
 
 function subTabStyle(active: boolean) {
@@ -6706,7 +7002,7 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "minmax(90px, 0.7fr) minmax(140px, 1.3fr)",
+                gridTemplateColumns: "minmax(0, 0.7fr) minmax(0, 1.3fr)",
                 gap: "8px"
               }}
             >
@@ -6724,7 +7020,7 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "minmax(130px, 1fr) minmax(130px, 1fr) 70px",
+                gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr) 56px",
                 gap: "8px"
               }}
             >
@@ -6770,7 +7066,7 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                 onClick={() =>
                   setSelectedCarrier(carrier.id === selectedCarrier ? null : carrier.id)
                 }
-                title="Ver veiculos vinculados"
+                title={`${carrier.name} — ver veiculos vinculados`}
                 style={{
                   border: "none",
                   background: "transparent",
@@ -6778,7 +7074,13 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                   textAlign: "left",
                   cursor: "pointer",
                   color: "inherit",
-                  minWidth: 0
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "stretch",
+                  gap: "2px",
+                  width: "100%",
+                  minWidth: 0,
+                  overflow: "hidden"
                 }}
               >
                 <CellPrimary>{carrier.name}</CellPrimary>
@@ -7360,7 +7662,7 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
             style={{
               marginTop: "16px",
               padding: "40px 20px",
-              background: connected ? "#f0fdf4" : "#f8fafc",
+              background: connected ? "var(--kr-success-soft)" : "var(--kr-surface-soft)",
               borderRadius: "16px",
               border: `3px solid ${connected && reading?.stable ? "#16a34a" : connected ? "#d97706" : "#e2e8f0"}`,
               textAlign: "center"
@@ -7371,13 +7673,13 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                 fontSize: "48px",
                 fontWeight: 700,
                 margin: 0,
-                color: connected ? "#0f172a" : "#94a3b8",
+                color: connected ? "var(--kr-text-strong)" : "var(--kr-muted)",
                 fontFamily: "monospace"
               }}
             >
               {reading ? new Intl.NumberFormat("pt-BR").format(reading.weightKg) : "----"}
             </p>
-            <p style={{ fontSize: "20px", color: "#64748b", margin: "8px 0 0 0" }}>
+            <p style={{ fontSize: "20px", color: "var(--kr-muted)", margin: "8px 0 0 0" }}>
               {connected ? "kg" : ""}
             </p>
             {reading ? (
@@ -7396,63 +7698,63 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
 
           {connected && stats.count > 0 && (
             <div style={{ marginTop: "16px", display: "grid", gap: "8px" }}>
-              <h4 style={{ margin: "0", fontSize: "13px", color: "#0f172a" }}>
+              <h4 style={{ margin: "0", fontSize: "13px", color: "var(--kr-text-strong)" }}>
                 Estatisticas (ultimas 100 leituras)
               </h4>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
                 <div
                   style={{
-                    background: "#f8fafc",
+                    background: "var(--kr-surface-soft)",
                     padding: "8px",
                     borderRadius: "8px",
                     textAlign: "center"
                   }}
                 >
-                  <div style={{ fontSize: "11px", color: "#64748b" }}>Minimo</div>
-                  <div style={{ fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>
+                  <div style={{ fontSize: "11px", color: "var(--kr-muted)" }}>Minimo</div>
+                  <div style={{ fontSize: "16px", fontWeight: 700, color: "var(--kr-text-strong)" }}>
                     {new Intl.NumberFormat("pt-BR").format(stats.min)} kg
                   </div>
                 </div>
                 <div
                   style={{
-                    background: "#f8fafc",
+                    background: "var(--kr-surface-soft)",
                     padding: "8px",
                     borderRadius: "8px",
                     textAlign: "center"
                   }}
                 >
-                  <div style={{ fontSize: "11px", color: "#64748b" }}>Maximo</div>
-                  <div style={{ fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>
+                  <div style={{ fontSize: "11px", color: "var(--kr-muted)" }}>Maximo</div>
+                  <div style={{ fontSize: "16px", fontWeight: 700, color: "var(--kr-text-strong)" }}>
                     {new Intl.NumberFormat("pt-BR").format(stats.max)} kg
                   </div>
                 </div>
                 <div
                   style={{
-                    background: "#f8fafc",
+                    background: "var(--kr-surface-soft)",
                     padding: "8px",
                     borderRadius: "8px",
                     textAlign: "center"
                   }}
                 >
-                  <div style={{ fontSize: "11px", color: "#64748b" }}>Media</div>
-                  <div style={{ fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>
+                  <div style={{ fontSize: "11px", color: "var(--kr-muted)" }}>Media</div>
+                  <div style={{ fontSize: "16px", fontWeight: 700, color: "var(--kr-text-strong)" }}>
                     {new Intl.NumberFormat("pt-BR").format(stats.avg)} kg
                   </div>
                 </div>
                 <div
                   style={{
-                    background: "#f8fafc",
+                    background: "var(--kr-surface-soft)",
                     padding: "8px",
                     borderRadius: "8px",
                     textAlign: "center"
                   }}
                 >
-                  <div style={{ fontSize: "11px", color: "#64748b" }}>Variacao</div>
+                  <div style={{ fontSize: "11px", color: "var(--kr-muted)" }}>Variacao</div>
                   <div
                     style={{
                       fontSize: "16px",
                       fontWeight: 700,
-                      color: stats.variation > parseInt(maxVariationKg, 10) ? "#dc2626" : "#0f172a"
+                      color: stats.variation > parseInt(maxVariationKg, 10) ? "var(--kr-danger)" : "var(--kr-text-strong)"
                     }}
                   >
                     {new Intl.NumberFormat("pt-BR").format(stats.variation)} kg
@@ -8856,6 +9158,28 @@ const styles = {
     color: "#ffffff",
     boxShadow: "0 12px 28px rgba(28, 25, 23, 0.2)"
   },
+  heroKbdChip: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "5px",
+    padding: "3px 8px",
+    borderRadius: "999px",
+    background: "rgba(255,255,255,0.1)",
+    border: "1px solid rgba(255,255,255,0.18)",
+    color: "#e7e5e4",
+    fontSize: "11px",
+    fontWeight: 600
+  },
+  heroKbd: {
+    fontFamily: '"Cascadia Mono", Consolas, monospace',
+    fontSize: "10px",
+    fontWeight: 700,
+    padding: "1px 5px",
+    borderRadius: "5px",
+    background: "rgba(0,0,0,0.35)",
+    border: "1px solid rgba(255,255,255,0.25)",
+    color: "#fde68a"
+  },
   liveWeightCard: {
     minWidth: "180px",
     padding: "8px 10px",
@@ -8890,8 +9214,8 @@ const styles = {
   },
   entryGrid: {
     display: "grid",
-    gridTemplateColumns: "minmax(300px, 1fr) minmax(340px, 1fr) minmax(360px, 1.05fr)",
-    gap: "8px",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(340px, 100%), 1fr))",
+    gap: "10px",
     alignItems: "start"
   },
   entryCard: {
@@ -9109,7 +9433,22 @@ const styles = {
     display: "flex",
     flexDirection: "column" as const,
     gap: "2px",
-    minWidth: 0
+    minWidth: 0,
+    overflow: "hidden" as const,
+    overflowWrap: "anywhere" as const
+  },
+  operationsSelectedRow: {
+    background: "var(--kr-accent-soft)",
+    boxShadow: "inset 3px 0 0 var(--kr-accent)"
+  },
+  operationsKeyboardHint: {
+    margin: 0,
+    padding: "7px 12px",
+    borderTop: "1px solid var(--kr-border)",
+    background: "var(--kr-surface-soft)",
+    color: "var(--kr-muted)",
+    fontSize: "11px",
+    fontWeight: 600
   },
   operationsTableHead: {
     borderTop: "none",
