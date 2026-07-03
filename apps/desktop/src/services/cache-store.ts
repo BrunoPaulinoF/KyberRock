@@ -20,6 +20,10 @@ export interface CustomerCacheEntry {
   observations: string | null;
   defaultCarrierId: string | null;
   defaultPaymentTermId: string | null;
+  defaultPaymentMethodId: string | null;
+  creditAccountEnabled: boolean;
+  creditClosingDay: number | null;
+  creditBoletoDays: number | null;
   zipcode: string | null;
   addressStreet: string | null;
   addressNumber: string | null;
@@ -91,6 +95,16 @@ export interface PaymentTermCacheEntry {
   isActive: boolean;
 }
 
+export interface PaymentMethodCacheEntry {
+  id: string;
+  code: string;
+  name: string;
+  isSystem: boolean;
+  isCustomerCredit: boolean;
+  sortOrder: number;
+  isActive: boolean;
+}
+
 export interface PriceTableCacheEntry {
   id: string;
   name: string;
@@ -121,6 +135,7 @@ export type CacheEntityType =
   | "driver"
   | "carrier"
   | "payment_term"
+  | "payment_method"
   | "price_table"
   | "price_table_item"
   | "customer_price_table";
@@ -159,6 +174,10 @@ interface CustomerRow {
   observations: string | null;
   default_carrier_id: string | null;
   default_payment_term_id: string | null;
+  default_payment_method_id: string | null;
+  credit_account_enabled: number;
+  credit_closing_day: number | null;
+  credit_boleto_days: number | null;
   zipcode: string | null;
   address_street: string | null;
   address_number: string | null;
@@ -230,6 +249,16 @@ interface PaymentTermRow {
   is_active: number;
 }
 
+interface PaymentMethodRow {
+  id: string;
+  code: string;
+  name: string;
+  is_system: number;
+  is_customer_credit: number;
+  sort_order: number;
+  is_active: number;
+}
+
 interface PriceTableRow {
   id: string;
   name: string;
@@ -273,6 +302,10 @@ function mapCustomer(row: CustomerRow): CustomerCacheEntry {
     observations: row.observations,
     defaultCarrierId: row.default_carrier_id,
     defaultPaymentTermId: row.default_payment_term_id,
+    defaultPaymentMethodId: row.default_payment_method_id,
+    creditAccountEnabled: row.credit_account_enabled === 1,
+    creditClosingDay: row.credit_closing_day,
+    creditBoletoDays: row.credit_boleto_days,
     zipcode: row.zipcode,
     addressStreet: row.address_street,
     addressNumber: row.address_number,
@@ -379,6 +412,18 @@ function mapPaymentTerm(row: PaymentTermRow): PaymentTermCacheEntry {
   };
 }
 
+function mapPaymentMethod(row: PaymentMethodRow): PaymentMethodCacheEntry {
+  return {
+    id: row.id,
+    code: row.code,
+    name: row.name,
+    isSystem: row.is_system === 1,
+    isCustomerCredit: row.is_customer_credit === 1,
+    sortOrder: row.sort_order,
+    isActive: row.is_active === 1
+  };
+}
+
 function mapPriceTable(row: PriceTableRow): PriceTableCacheEntry {
   return {
     id: row.id,
@@ -430,6 +475,7 @@ export class CacheStore {
   private drivers: Map<string, DriverCacheEntry> = new Map();
   private carriers: Map<string, CarrierCacheEntry> = new Map();
   private paymentTerms: Map<string, PaymentTermCacheEntry> = new Map();
+  private paymentMethods: Map<string, PaymentMethodCacheEntry> = new Map();
   private priceTables: Map<string, PriceTableCacheEntry> = new Map();
   private priceTableItems: Map<string, PriceTableItemCacheEntry> = new Map();
   private customerPriceTables: Map<string, CustomerPriceTableEntry> = new Map();
@@ -444,6 +490,7 @@ export class CacheStore {
     this.loadDrivers(companyId);
     this.loadCarriers(companyId);
     this.loadPaymentTerms(companyId);
+    this.loadPaymentMethods(companyId);
     this.loadPriceTables(companyId);
     this.loadPriceTableItems();
     this.loadCustomerPriceTables();
@@ -473,6 +520,9 @@ export class CacheStore {
         break;
       case "payment_term":
         if (companyId) this.loadPaymentTerms(companyId);
+        break;
+      case "payment_method":
+        if (companyId) this.loadPaymentMethods(companyId);
         break;
       case "price_table":
         if (companyId) this.loadPriceTables(companyId);
@@ -579,6 +629,8 @@ export class CacheStore {
         return Array.from(this.carriers.values());
       case "payment_term":
         return Array.from(this.paymentTerms.values());
+      case "payment_method":
+        return Array.from(this.paymentMethods.values());
       case "price_table":
         return Array.from(this.priceTables.values());
       case "price_table_item":
@@ -602,6 +654,8 @@ export class CacheStore {
         return ["name", "document", "zipcode", "addressStreet", "neighborhood", "city"];
       case "payment_term":
         return ["name", "omieCode"];
+      case "payment_method":
+        return ["name", "code"];
       case "price_table":
         return ["name"];
       case "price_table_item":
@@ -617,6 +671,7 @@ export class CacheStore {
         `SELECT id, omie_customer_id, legal_name, trade_name, document, phone, email,
                 credit_limit_cents, credit_mode, open_receivables_cents, omie_billing_blocked,
                 source, sync_status, needs_push, last_synced_at, observations, default_carrier_id, default_payment_term_id,
+                default_payment_method_id, credit_account_enabled, credit_closing_day, credit_boleto_days,
                 zipcode, address_street, address_number, address_complement, neighborhood, city, state, is_active
          FROM customers WHERE company_id = ? AND deleted_at IS NULL`
       )
@@ -699,6 +754,20 @@ export class CacheStore {
     this.paymentTerms.clear();
     for (const row of rows) {
       this.paymentTerms.set(row.id, mapPaymentTerm(row));
+    }
+  }
+
+  private loadPaymentMethods(companyId: string): void {
+    const rows = this.db
+      .prepare(
+        `SELECT id, code, name, is_system, is_customer_credit, sort_order, is_active
+         FROM payment_methods WHERE company_id = ? AND deleted_at IS NULL`
+      )
+      .all(companyId) as PaymentMethodRow[];
+
+    this.paymentMethods.clear();
+    for (const row of rows) {
+      this.paymentMethods.set(row.id, mapPaymentMethod(row));
     }
   }
 

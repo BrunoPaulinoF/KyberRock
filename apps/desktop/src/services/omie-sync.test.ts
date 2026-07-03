@@ -290,24 +290,18 @@ describe("OmieSyncService", () => {
     expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining("UPDATE products"));
   });
 
-  it("syncs payment terms from OMIE to local database", async () => {
+  it("no longer imports payment terms from OMIE (now managed locally)", async () => {
     const db = createMockDb();
     const client = createMockClient();
 
     const service = new OmieSyncService(client, db);
 
-     
-    vi.spyOn((service as unknown as Record<string, unknown>).paymentTermsService as unknown as { listAll: () => Promise<unknown[]> }, "listAll").mockResolvedValue([
-      {
-        id: 789,
-        description: "30/60/90 dias"
-      }
-    ]);
+    const count = await service.syncPaymentTerms();
 
-    const count = await service.syncPaymentTerms("company-1");
-
-    expect(count).toBe(1);
-    expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining("INSERT INTO payment_terms"));
+    expect(count).toBe(0);
+    expect(db.prepare).not.toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO payment_terms")
+    );
   });
 
   it("syncAll returns counts and collects errors", async () => {

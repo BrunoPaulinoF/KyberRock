@@ -871,5 +871,64 @@ ALTER TABLE carriers ADD COLUMN last_synced_at TEXT;
 CREATE INDEX IF NOT EXISTS idx_carriers_company_needs_push
   ON carriers(company_id, needs_push, deleted_at);
 `
+  },
+  {
+    version: 25,
+    name: "local_payment_methods_and_customer_credit_account",
+    sql: `
+-- Formas de pagamento cadastradas localmente no KyberRock (nao mais vindas do OMIE).
+CREATE TABLE IF NOT EXISTS payment_methods (
+  id TEXT PRIMARY KEY,
+  company_id TEXT NOT NULL REFERENCES companies(id),
+  code TEXT NOT NULL,
+  name TEXT NOT NULL,
+  is_system INTEGER NOT NULL DEFAULT 0 CHECK (is_system IN (0, 1)),
+  is_customer_credit INTEGER NOT NULL DEFAULT 0 CHECK (is_customer_credit IN (0, 1)),
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT,
+  sync_version INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_methods_company_code
+  ON payment_methods(company_id, code)
+  WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_payment_methods_company_active
+  ON payment_methods(company_id, is_active, deleted_at);
+
+-- Semeia as formas padrao para todas as empresas ja existentes.
+INSERT INTO payment_methods (id, company_id, code, name, is_system, is_customer_credit, sort_order, is_active, created_at, updated_at)
+SELECT lower(hex(randomblob(16))), c.id, m.code, m.name, 1, m.is_customer_credit, m.sort_order, 1, datetime('now'), datetime('now')
+FROM companies c
+CROSS JOIN (
+  SELECT 'cash' AS code, 'Dinheiro' AS name, 0 AS is_customer_credit, 1 AS sort_order
+  UNION ALL SELECT 'pix', 'Pix', 0, 2
+  UNION ALL SELECT 'credit_card', 'Cartao de credito', 0, 3
+  UNION ALL SELECT 'debit_card', 'Cartao de debito', 0, 4
+  UNION ALL SELECT 'boleto', 'Boleto', 0, 5
+  UNION ALL SELECT 'customer_credit', 'Credito do cliente', 1, 6
+) m
+WHERE NOT EXISTS (
+  SELECT 1 FROM payment_methods pm
+  WHERE pm.company_id = c.id AND pm.code = m.code AND pm.deleted_at IS NULL
+);
+
+-- Forma de pagamento padrao e configuracao de credito do cliente (fiado) no cadastro.
+ALTER TABLE customers ADD COLUMN default_payment_method_id TEXT;
+ALTER TABLE customers ADD COLUMN credit_account_enabled INTEGER NOT NULL DEFAULT 0 CHECK (credit_account_enabled IN (0, 1));
+ALTER TABLE customers ADD COLUMN credit_closing_day INTEGER;
+ALTER TABLE customers ADD COLUMN credit_boleto_days INTEGER;
+
+CREATE INDEX IF NOT EXISTS idx_customers_default_payment_method
+  ON customers(company_id, default_payment_method_id);
+
+-- Condicoes de pagamento nao vem mais do OMIE: remove (soft delete) as ja sincronizadas.
+UPDATE payment_terms
+SET deleted_at = datetime('now'), is_active = 0, updated_at = datetime('now')
+WHERE deleted_at IS NULL
+  AND (omie_code IS NOT NULL OR id LIKE 'omie_%');
+`
   }
 ];

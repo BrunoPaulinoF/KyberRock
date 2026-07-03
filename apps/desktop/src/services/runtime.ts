@@ -271,6 +271,21 @@ import {
   listDriversByCarrier,
   listIndependentDrivers
 } from "./driver-carriers.js";
+import {
+  createPaymentMethod,
+  deletePaymentMethod,
+  ensureDefaultPaymentMethods,
+  updatePaymentMethod,
+  type CreatePaymentMethodInput,
+  type UpdatePaymentMethodInput
+} from "./payment-methods.js";
+import {
+  createPaymentTerm,
+  deletePaymentTerm,
+  updatePaymentTerm,
+  type CreatePaymentTermInput,
+  type UpdatePaymentTermInput
+} from "./payment-terms.js";
 
 export interface StartSimulatedWeighingInput {
   operationType: OperationType;
@@ -316,6 +331,7 @@ export class DesktopRuntime {
     this.cacheStore = new CacheStore(this.database);
     this.reportService = new ReportService(this.database);
     this.ensureIdentity();
+    ensureDefaultPaymentMethods(this.database, this.ensureIdentity().companyId);
     this.cacheStore.loadAll(this.ensureIdentity().companyId);
     initializeSupabaseFromSettings(this.database);
   }
@@ -793,6 +809,7 @@ export class DesktopRuntime {
 
     const pulled = await pullDesktopDataFromCloud(this.database, identity);
     recordCloudSyncRanAt(this.database);
+    ensureDefaultPaymentMethods(this.database, identity.companyId);
     this.cacheStore.loadAll(identity.companyId);
 
     return {
@@ -947,6 +964,7 @@ export class DesktopRuntime {
       }
 
       recordCloudSyncRanAt(this.database);
+      ensureDefaultPaymentMethods(this.database, identity.companyId);
       this.cacheStore.loadAll(identity.companyId);
       return { success: failed === 0, synced, failed, errors };
     } catch (error) {
@@ -1353,6 +1371,52 @@ export class DesktopRuntime {
     const identity = this.ensureIdentity();
     deleteCustomer(this.database, id);
     this.cacheStore.invalidate("customer", identity.companyId);
+  }
+
+  createPaymentMethod(input: Omit<CreatePaymentMethodInput, "companyId">): unknown {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    const result = createPaymentMethod(this.database, { ...input, companyId: identity.companyId });
+    this.cacheStore.invalidate("payment_method", identity.companyId);
+    return result;
+  }
+
+  updatePaymentMethod(id: string, input: UpdatePaymentMethodInput): unknown {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    const result = updatePaymentMethod(this.database, id, input);
+    this.cacheStore.invalidate("payment_method", identity.companyId);
+    return result;
+  }
+
+  deletePaymentMethod(id: string): void {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    deletePaymentMethod(this.database, id);
+    this.cacheStore.invalidate("payment_method", identity.companyId);
+  }
+
+  createPaymentTerm(input: Omit<CreatePaymentTermInput, "companyId">): unknown {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    const result = createPaymentTerm(this.database, { ...input, companyId: identity.companyId });
+    this.cacheStore.invalidate("payment_term", identity.companyId);
+    return result;
+  }
+
+  updatePaymentTerm(id: string, input: UpdatePaymentTermInput): unknown {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    const result = updatePaymentTerm(this.database, id, input);
+    this.cacheStore.invalidate("payment_term", identity.companyId);
+    return result;
+  }
+
+  deletePaymentTerm(id: string): void {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    deletePaymentTerm(this.database, id);
+    this.cacheStore.invalidate("payment_term", identity.companyId);
   }
 
   createPriceTable(input: Omit<CreatePriceTableInput, "companyId">): unknown {

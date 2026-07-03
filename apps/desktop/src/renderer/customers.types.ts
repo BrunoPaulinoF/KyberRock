@@ -16,6 +16,10 @@ export interface CustomerCacheEntry {
   observations: string | null;
   defaultCarrierId: string | null;
   defaultPaymentTermId: string | null;
+  defaultPaymentMethodId: string | null;
+  creditAccountEnabled: boolean;
+  creditClosingDay: number | null;
+  creditBoletoDays: number | null;
   zipcode: string | null;
   addressStreet: string | null;
   addressNumber: string | null;
@@ -47,6 +51,18 @@ export interface PaymentTermCacheEntry {
   id: string;
   name: string;
   omieCode: string | null;
+  rulesJson: string;
+  installmentCount: number | null;
+  isActive: boolean;
+}
+
+export interface PaymentMethodCacheEntry {
+  id: string;
+  code: string;
+  name: string;
+  isSystem: boolean;
+  isCustomerCredit: boolean;
+  sortOrder: number;
   isActive: boolean;
 }
 
@@ -62,6 +78,10 @@ export interface CustomerFormData {
   observations: string;
   defaultCarrierId: string;
   defaultPaymentTermId: string;
+  defaultPaymentMethodId: string;
+  creditAccountEnabled: boolean;
+  creditClosingDay: string;
+  creditBoletoDays: string;
   zipcode: string;
   addressStreet: string;
   addressNumber: string;

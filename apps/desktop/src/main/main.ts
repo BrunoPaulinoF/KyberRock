@@ -11,6 +11,14 @@ import type { ActivateDesktopInput } from "../services/desktop-activation.js";
 import type { CacheQueryOptions } from "../services/cache-store.js";
 import type { CreateCustomerInput, UpdateCustomerInput } from "../services/customers.js";
 import type {
+  CreatePaymentMethodInput,
+  UpdatePaymentMethodInput
+} from "../services/payment-methods.js";
+import type {
+  CreatePaymentTermInput,
+  UpdatePaymentTermInput
+} from "../services/payment-terms.js";
+import type {
   AddPriceTableItemInput,
   CreatePriceTableInput,
   LinkCustomerToPriceTableInput,
@@ -763,6 +771,48 @@ function registerIpcHandlers(): void {
     }
 
     runtime.deleteCustomer(id);
+  });
+
+  ipcMain.handle(
+    "desktop:payment-methods-create",
+    (_event, input: Omit<CreatePaymentMethodInput, "companyId">) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.createPaymentMethod(input);
+    }
+  );
+
+  ipcMain.handle(
+    "desktop:payment-methods-update",
+    (_event, id: string, input: UpdatePaymentMethodInput) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.updatePaymentMethod(id, input);
+    }
+  );
+
+  ipcMain.handle("desktop:payment-methods-delete", (_event, id: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    runtime.deletePaymentMethod(id);
+  });
+
+  ipcMain.handle(
+    "desktop:payment-terms-create",
+    (_event, input: Omit<CreatePaymentTermInput, "companyId">) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.createPaymentTerm(input);
+    }
+  );
+
+  ipcMain.handle(
+    "desktop:payment-terms-update",
+    (_event, id: string, input: UpdatePaymentTermInput) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.updatePaymentTerm(id, input);
+    }
+  );
+
+  ipcMain.handle("desktop:payment-terms-delete", (_event, id: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    runtime.deletePaymentTerm(id);
   });
 
   ipcMain.handle(

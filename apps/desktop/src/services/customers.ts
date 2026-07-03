@@ -15,6 +15,10 @@ export interface CreateCustomerInput {
   observations?: string;
   defaultCarrierId?: string;
   defaultPaymentTermId?: string;
+  defaultPaymentMethodId?: string;
+  creditAccountEnabled?: boolean;
+  creditClosingDay?: number | null;
+  creditBoletoDays?: number | null;
   zipcode?: string;
   addressStreet?: string;
   addressNumber?: string;
@@ -37,6 +41,10 @@ export interface UpdateCustomerInput {
   isActive?: boolean;
   defaultCarrierId?: string | null;
   defaultPaymentTermId?: string | null;
+  defaultPaymentMethodId?: string | null;
+  creditAccountEnabled?: boolean;
+  creditClosingDay?: number | null;
+  creditBoletoDays?: number | null;
   zipcode?: string | null;
   addressStreet?: string | null;
   addressNumber?: string | null;
@@ -64,6 +72,10 @@ export interface CustomerRow {
   observations: string | null;
   default_carrier_id: string | null;
   default_payment_term_id: string | null;
+  default_payment_method_id: string | null;
+  credit_account_enabled: number;
+  credit_closing_day: number | null;
+  credit_boleto_days: number | null;
   zipcode: string | null;
   address_street: string | null;
   address_number: string | null;
@@ -122,10 +134,12 @@ export function createCustomer(
       `INSERT INTO customers (
         id, company_id, source, legal_name, trade_name, document, phone, email,
         credit_limit_cents, credit_mode, open_receivables_cents, omie_billing_blocked,
-        observations, default_carrier_id, default_payment_term_id, zipcode, address_street, address_number,
+        observations, default_carrier_id, default_payment_term_id, default_payment_method_id,
+        credit_account_enabled, credit_closing_day, credit_boleto_days,
+        zipcode, address_street, address_number,
         address_complement, neighborhood, city, state, sync_status, needs_push, local_updated_at, is_active,
         created_at, updated_at
-      ) VALUES (?, ?, 'local', ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1, ?, 1, ?, ?)`
+      ) VALUES (?, ?, 'local', ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1, ?, 1, ?, ?)`
     )
     .run(
       id,
@@ -141,6 +155,10 @@ export function createCustomer(
       input.observations ?? null,
       defaultCarrierId,
       input.defaultPaymentTermId ?? null,
+      input.defaultPaymentMethodId ?? null,
+      input.creditAccountEnabled ? 1 : 0,
+      input.creditClosingDay ?? null,
+      input.creditBoletoDays ?? null,
       input.zipcode ?? null,
       input.addressStreet ?? null,
       input.addressNumber ?? null,
@@ -242,6 +260,22 @@ export function updateCustomer(
   if (input.defaultPaymentTermId !== undefined) {
     sets.push("default_payment_term_id = ?");
     values.push(input.defaultPaymentTermId);
+  }
+  if (input.defaultPaymentMethodId !== undefined) {
+    sets.push("default_payment_method_id = ?");
+    values.push(input.defaultPaymentMethodId);
+  }
+  if (input.creditAccountEnabled !== undefined) {
+    sets.push("credit_account_enabled = ?");
+    values.push(input.creditAccountEnabled ? 1 : 0);
+  }
+  if (input.creditClosingDay !== undefined) {
+    sets.push("credit_closing_day = ?");
+    values.push(input.creditClosingDay);
+  }
+  if (input.creditBoletoDays !== undefined) {
+    sets.push("credit_boleto_days = ?");
+    values.push(input.creditBoletoDays);
   }
   if (input.zipcode !== undefined) {
     sets.push("zipcode = ?");

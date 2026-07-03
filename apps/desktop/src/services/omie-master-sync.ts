@@ -180,14 +180,8 @@ export async function syncOmieMasterData(
       return { fetched: 0, created: 0, updated: 0, skipped: 0 };
     }));
 
-    // 3. Payment terms
+    // 3. Payment terms — cadastradas localmente no KyberRock, nao vem mais do OMIE.
     entities.push(await syncEntity("condicoes_pagamento", async () => {
-      if (options.appKey && options.appSecret) {
-        const client = createOmieClient({ appKey: options.appKey, appSecret: options.appSecret });
-        const service = new OmieSyncService(client, database);
-        const fetched = await service.syncPaymentTerms(companyId);
-        return { fetched, created: fetched, updated: 0, skipped: 0 };
-      }
       return { fetched: 0, created: 0, updated: 0, skipped: 0 };
     }));
 
