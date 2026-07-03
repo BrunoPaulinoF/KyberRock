@@ -1,0 +1,46 @@
+name: Instalador Windows (Desktop)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - "claude/**"
+    paths:
+      - "apps/desktop/**"
+      - "packages/**"
+      - ".github/workflows/desktop-installer.yml"
+
+jobs:
+  build-windows:
+    name: Gerar instalador NSIS
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Build dos pacotes compartilhados
+        run: npm run build -w packages/shared -w packages/scale-adapters -w packages/omie-client -w packages/print-templates
+
+      - name: Gerar instalador (electron-builder)
+        run: npm run dist:win -w apps/desktop
+
+      - name: Publicar instalador como artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: KyberRock-Desktop-Setup-Windows
+          path: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/latest.yml
+            apps/desktop/release/*.blockmap
+          if-no-files-found: error
+          retention-days: 30
