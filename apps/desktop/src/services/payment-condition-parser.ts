@@ -94,9 +94,7 @@ export function parsePaymentCondition(raw: string): ParsedPaymentCondition {
   if (value.includes("/")) {
     const tokens = value.split("/").map((t) => t.trim());
     if (tokens.some((t) => t.length === 0)) {
-      throw new PaymentConditionParseError(
-        `Condicao invalida: "${value}". Remova barras vazias.`
-      );
+      throw new PaymentConditionParseError(`Condicao invalida: "${value}". Remova barras vazias.`);
     }
     const installments = tokens.map((token, index) => ({
       number: index + 1,

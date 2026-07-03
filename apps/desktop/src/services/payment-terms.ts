@@ -55,10 +55,7 @@ function buildRules(parsed: ParsedPaymentCondition): PaymentTermRules {
   };
 }
 
-export function listPaymentTerms(
-  database: DesktopDatabase,
-  companyId: string
-): PaymentTermRow[] {
+export function listPaymentTerms(database: DesktopDatabase, companyId: string): PaymentTermRow[] {
   return database
     .prepare(
       `SELECT * FROM payment_terms

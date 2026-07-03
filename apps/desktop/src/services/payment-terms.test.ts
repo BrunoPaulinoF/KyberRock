@@ -89,7 +89,9 @@ describe("payment-terms service", () => {
   it("migration purges OMIE-sourced conditions on upgrade", () => {
     // As condicoes vindas do OMIE devem estar ausentes apos as migracoes (soft delete v25).
     const rows = database
-      .prepare("SELECT COUNT(*) AS c FROM payment_terms WHERE deleted_at IS NULL AND omie_code IS NOT NULL")
+      .prepare(
+        "SELECT COUNT(*) AS c FROM payment_terms WHERE deleted_at IS NULL AND omie_code IS NOT NULL"
+      )
       .get() as { c: number };
     expect(rows.c).toBe(0);
   });

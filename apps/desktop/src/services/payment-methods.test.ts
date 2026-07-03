@@ -62,14 +62,20 @@ describe("payment-methods service", () => {
   });
 
   it("creates a custom method with a slugified code", () => {
-    const created = createPaymentMethod(database, { companyId: COMPANY_ID, name: "Cheque à vista" });
+    const created = createPaymentMethod(database, {
+      companyId: COMPANY_ID,
+      name: "Cheque à vista"
+    });
     expect(created.code).toBe("cheque_a_vista");
     expect(created.is_system).toBe(0);
   });
 
   it("renames and deactivates a method", () => {
     const created = createPaymentMethod(database, { companyId: COMPANY_ID, name: "Vale" });
-    const updated = updatePaymentMethod(database, created.id, { name: "Vale-compra", isActive: false });
+    const updated = updatePaymentMethod(database, created.id, {
+      name: "Vale-compra",
+      isActive: false
+    });
     expect(updated.name).toBe("Vale-compra");
     expect(updated.is_active).toBe(0);
   });
@@ -81,6 +87,8 @@ describe("payment-methods service", () => {
 
     const custom = createPaymentMethod(database, { companyId: COMPANY_ID, name: "Permuta" });
     deletePaymentMethod(database, custom.id);
-    expect(listPaymentMethods(database, COMPANY_ID).find((m) => m.id === custom.id)).toBeUndefined();
+    expect(
+      listPaymentMethods(database, COMPANY_ID).find((m) => m.id === custom.id)
+    ).toBeUndefined();
   });
 });

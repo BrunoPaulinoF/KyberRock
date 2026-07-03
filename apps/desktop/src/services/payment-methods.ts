@@ -139,14 +139,13 @@ export function createPaymentMethod(
 
   const sortOrder =
     input.sortOrder ??
-    ((
+    (
       database
         .prepare(
           "SELECT COALESCE(MAX(sort_order), 0) AS max FROM payment_methods WHERE company_id = ? AND deleted_at IS NULL"
         )
         .get(input.companyId) as { max: number }
-    ).max +
-      1);
+    ).max + 1;
 
   database
     .prepare(
@@ -154,7 +153,16 @@ export function createPaymentMethod(
          (id, company_id, code, name, is_system, is_customer_credit, sort_order, is_active, created_at, updated_at)
        VALUES (?, ?, ?, ?, 0, ?, ?, 1, ?, ?)`
     )
-    .run(id, input.companyId, code, name, input.isCustomerCredit ? 1 : 0, sortOrder, nowIso, nowIso);
+    .run(
+      id,
+      input.companyId,
+      code,
+      name,
+      input.isCustomerCredit ? 1 : 0,
+      sortOrder,
+      nowIso,
+      nowIso
+    );
 
   return database.prepare("SELECT * FROM payment_methods WHERE id = ?").get(id) as PaymentMethodRow;
 }
@@ -220,6 +228,8 @@ export function deletePaymentMethod(
 
   const nowIso = now.toISOString();
   database
-    .prepare("UPDATE payment_methods SET deleted_at = ?, is_active = 0, updated_at = ? WHERE id = ?")
+    .prepare(
+      "UPDATE payment_methods SET deleted_at = ?, is_active = 0, updated_at = ? WHERE id = ?"
+    )
     .run(nowIso, nowIso, id);
 }
