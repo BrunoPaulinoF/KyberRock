@@ -1,0 +1,67 @@
+name: desktop-installer
+
+# Gera o instalador NSIS do KyberRock Desktop em um runner Windows.
+# Disparo manual (workflow_dispatch). O resultado e publicado de duas formas:
+#   1. Artifact "kyberrock-desktop-installer" na execucao do workflow.
+#   2. Branch orfa "installer-v<versao>" com o .exe dividido em partes de 80 MB
+#      (limite de arquivo do GitHub), latest.yml e SHA256SUMS — permite baixar
+#      o instalador via git e remontar com: cat installer.exe.part.* > installer.exe
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Gerar instalador NSIS
+        run: npm run dist:win -w @kyberrock/desktop
+
+      - name: Upload do artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kyberrock-desktop-installer
+          path: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.blockmap
+            apps/desktop/release/latest.yml
+          if-no-files-found: error
+
+      - name: Publicar na branch installer-v<versao>
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./apps/desktop/package.json').version")
+          SRC="apps/desktop/release"
+          EXE="$SRC/KyberRock Desktop Setup $VERSION.exe"
+          OUT="$RUNNER_TEMP/installer-pub"
+          mkdir -p "$OUT"
+          cp "$EXE" "$OUT/installer.exe"
+          [ -f "$EXE.blockmap" ] && cp "$EXE.blockmap" "$OUT/installer.exe.blockmap"
+          [ -f "$SRC/latest.yml" ] && cp "$SRC/latest.yml" "$OUT/latest.yml"
+          cd "$OUT"
+          sha256sum installer.exe > SHA256SUMS
+          split -b 80m -d installer.exe installer.exe.part.
+          rm installer.exe
+          printf '%s\n' "KyberRock Desktop Setup $VERSION" \
+            "Remontar com: cat installer.exe.part.* > 'KyberRock Desktop Setup $VERSION.exe'" \
+            "Conferir com: sha256sum -c SHA256SUMS (apos renomear para installer.exe)" > README.txt
+          git init -b "installer-v$VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "KyberRock Desktop Setup $VERSION (instalador dividido em partes de 80 MB)"
+          git push --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "installer-v$VERSION"
