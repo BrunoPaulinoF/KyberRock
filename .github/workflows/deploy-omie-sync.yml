@@ -1,0 +1,37 @@
+name: Deploy edge function omie-sync (Supabase)
+
+# Redeploya a edge function omie-sync (caminho usado pelo botao principal
+# "Sincronizar OMIE"). Necessario apos alterar o codigo da funcao para que
+# a correcao das condicoes de pagamento valha em producao.
+#
+# Pre-requisito (uma vez): criar um Access Token do Supabase em
+# https://supabase.com/dashboard/account/tokens e salva-lo em
+# Settings > Secrets and variables > Actions com o nome SUPABASE_ACCESS_TOKEN.
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_ref:
+        description: "Ref do projeto Supabase (KyberRock)"
+        required: true
+        default: "vksihzfrgqoemcqpquit"
+
+jobs:
+  deploy:
+    name: supabase functions deploy omie-sync
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Instalar Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Deploy omie-sync
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          supabase functions deploy omie-sync \
+            --project-ref "${{ inputs.project_ref }}"

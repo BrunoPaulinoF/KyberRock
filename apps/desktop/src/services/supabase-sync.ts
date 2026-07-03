@@ -168,6 +168,7 @@ interface OmieReferenceProduct {
 
 interface OmieReferencePaymentTerm {
   id: number;
+  code?: string | null;
   integrationCode?: string | null;
   description: string;
   firstInstallmentDays?: number | null;
@@ -2204,11 +2205,12 @@ function upsertOmiePaymentTerms(
     upsert.run(
       `omie_${paymentTerm.id}`,
       companyId,
-      String(paymentTerm.id),
+      paymentTerm.code ?? String(paymentTerm.id),
       paymentTerm.integrationCode ?? null,
       paymentTerm.description,
       JSON.stringify({
         omieId: paymentTerm.id,
+        code: paymentTerm.code ?? null,
         firstInstallmentDays: paymentTerm.firstInstallmentDays ?? null,
         installmentIntervalDays: paymentTerm.installmentIntervalDays ?? null,
         installmentCount: paymentTerm.installmentCount ?? null,

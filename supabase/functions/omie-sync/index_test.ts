@@ -152,12 +152,12 @@ function defaultOmieListResponse(input: OmieRequestInput<unknown>): unknown {
     };
   }
 
-  if (input.call === "ListarCondicoesPagamento") {
+  if (input.call === "ListarParcelas") {
     return {
       pagina: param.pagina,
       total_de_paginas: 0,
       total_de_registros: 0,
-      condicoesPagamentoCadastro: []
+      cadastros: []
     };
   }
 
@@ -448,5 +448,67 @@ Deno.test("fluxo pull processa paginas e mapeia clientes OMIE com tag transporta
     name: "Transportadora Pagina 1",
     city: "Campinas",
     state: "SP"
+  });
+});
+
+Deno.test("pull de parcelas usa ListarParcelas em /geral/parcelas/ e mapeia nCodigo/cDescricao/nParcelas", async () => {
+  const deviceToken = "token-parcelas";
+  const supabase = createSupabaseDependencies({
+    devices: {
+      "device-parcelas": {
+        id: "device-parcelas",
+        company_id: "company-parcelas",
+        unit_id: "unit-parcelas",
+        token_hash: await sha256Hex(deviceToken),
+        is_active: true
+      }
+    },
+    companies: {
+      "company-parcelas": {
+        id: "company-parcelas",
+        is_active: true,
+        omie_app_key: "key-parcelas",
+        omie_app_secret: "secret-parcelas"
+      }
+    }
+  });
+  const omieQueue = createOmieQueueStub((input) => {
+    if (input.call !== "ListarParcelas") return defaultOmieListResponse(input);
+    return {
+      pagina: getParam(input).pagina,
+      total_de_paginas: 1,
+      total_de_registros: 2,
+      cadastros: [
+        { nCodigo: "000", cDescricao: "A vista", nParcelas: 1 },
+        { nCodigo: "030", cDescricao: "30 dias", nParcelas: 1 }
+      ]
+    };
+  });
+
+  const response = await postOmieSync(
+    {
+      deviceId: "device-parcelas",
+      deviceToken,
+      action: "pull_reference_data",
+      resume: { customersFinished: true, productsFinished: true }
+    },
+    { createClient: supabase.createClient, omieQueue }
+  );
+
+  const parcelasRequest = omieQueue.requests.find((request) => request.call === "ListarParcelas");
+  assertEquals(parcelasRequest?.endpoint, "/geral/parcelas/");
+
+  const paymentTerms = response.paymentTerms as Record<string, unknown>[];
+  assertEquals(paymentTerms.length, 2);
+  assertObjectMatch(paymentTerms[0], {
+    id: 0,
+    code: "000",
+    description: "A vista",
+    installmentCount: 1
+  });
+  assertObjectMatch(paymentTerms[1], {
+    id: 30,
+    code: "030",
+    description: "30 dias"
   });
 });
