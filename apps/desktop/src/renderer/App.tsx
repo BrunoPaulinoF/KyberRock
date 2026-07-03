@@ -6149,299 +6149,10 @@ function getThemeVariables(themeMode: ThemeMode): React.CSSProperties {
   } as React.CSSProperties;
 }
 
-interface VehicleFormData {
-  plate: string;
-  description: string;
-  carrierId: string;
-}
-
-function VehicleListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
-  const [vehicles, setVehicles] = useState<Array<Record<string, unknown>>>([]);
-  const [carriers, setCarriers] = useState<CarrierCacheEntry[]>([]);
-  const [search, setSearch] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState<VehicleFormData>({ plate: "", description: "", carrierId: "" });
-  const [flash, showFlash] = useFlash();
-  const [formError, setFormError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState(false);
-
-  useEffect(() => {
-    void loadVehicles();
-  }, [search]);
-
-  useEffect(() => {
-    void loadCarriers();
-  }, []);
-
-  async function loadVehicles(): Promise<void> {
-    setLoading(true);
-    try {
-      const result = await desktopApi.queryCache({
-        entityType: "vehicle",
-        search: search || undefined,
-        limit: 200
-      });
-      setVehicles(result.rows as Array<Record<string, unknown>>);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function loadCarriers(): Promise<void> {
-    const result = await desktopApi.queryCache({
-      entityType: "carrier",
-      limit: 200
-    });
-    setCarriers(result.rows as CarrierCacheEntry[]);
-  }
-
-  function resetForm(): void {
-    setForm({ plate: "", description: "", carrierId: "" });
-    setEditingId(null);
-    setFormError(null);
-  }
-
-  function openCreate(): void {
-    resetForm();
-    void loadCarriers();
-    setShowForm(true);
-  }
-
-  function openEdit(item: Record<string, unknown>): void {
-    setForm({
-      plate: String(item.plate ?? ""),
-      description: String(item.description ?? ""),
-      carrierId: String(item.carrier_id ?? "")
-    });
-    setEditingId(String(item.id));
-    setFormError(null);
-    setShowForm(true);
-  }
-
-  async function handleSave(): Promise<void> {
-    const normalizedPlate = normalizePlate(form.plate);
-    if (!normalizedPlate) {
-      setFormError("Placa e obrigatoria.");
-      return;
-    }
-    if (!isValidPlate(normalizedPlate)) {
-      setFormError("Placa invalida. Use o formato ABC1234 ou ABC1D23.");
-      return;
-    }
-    setSaving(true);
-    try {
-      if (editingId) {
-        await desktopApi.vehiclesUpdate(editingId, {
-          plate: normalizedPlate,
-          description: form.description.trim() || undefined,
-          carrierId: form.carrierId || null
-        });
-      } else {
-        await desktopApi.vehiclesCreate({
-          plate: normalizedPlate,
-          description: form.description.trim() || undefined,
-          carrierId: form.carrierId || undefined
-        });
-      }
-      setShowForm(false);
-      resetForm();
-      await loadVehicles();
-      showFlash("success", editingId ? "Veiculo atualizado." : "Veiculo criado.");
-    } catch (err) {
-      setFormError(err instanceof Error ? err.message : "Erro ao salvar.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleConfirmDelete(): Promise<void> {
-    if (!pendingDeleteId) return;
-    setDeleting(true);
-    try {
-      await desktopApi.vehiclesDelete(pendingDeleteId);
-      setPendingDeleteId(null);
-      await loadVehicles();
-      showFlash("success", "Veiculo excluido.");
-    } catch (err) {
-      setPendingDeleteId(null);
-      showFlash("error", err instanceof Error ? err.message : "Erro ao excluir.");
-    } finally {
-      setDeleting(false);
-    }
-  }
-
-  return (
-    <div>
-      <CrudSectionHeader
-        title="Veiculos"
-        description="Caminhoes identificados pela placa. Vincule a transportadora quando houver."
-        count={vehicles.length}
-        actionLabel="Novo veiculo"
-        onAction={openCreate}
-      />
-      <CrudSearchBar
-        value={search}
-        onChange={setSearch}
-        placeholder="Buscar por placa..."
-        onRefresh={() => void loadVehicles()}
-      />
-      <FlashBanner flash={flash} />
-
-      {showForm ? (
-        <CrudFormShell
-          title={editingId ? "Editar veiculo" : "Novo veiculo"}
-          subtitle="Placa no formato ABC1234 ou ABC1D23."
-          error={formError}
-          saving={saving}
-          onClose={() => setShowForm(false)}
-          onSubmit={() => void handleSave()}
-        >
-          <FormSection title="Identificacao">
-            <PlateInput
-              label="Placa"
-              value={form.plate}
-              onChange={(plate) => setForm({ ...form, plate })}
-              required
-            />
-            <TextInput
-              label="Descricao"
-              value={form.description}
-              onChange={(description) => setForm({ ...form, description })}
-            />
-          </FormSection>
-          <FormSection title="Vinculo">
-            <Field label="Transportadora">
-              <select
-                value={form.carrierId}
-                onChange={(e) => setForm({ ...form, carrierId: e.target.value })}
-                style={getInputStyle(false)}
-              >
-                <option value="">Sem transportadora</option>
-                {carriers.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          </FormSection>
-        </CrudFormShell>
-      ) : null}
-
-      {pendingDeleteId ? (
-        <ConfirmDialog
-          title="Excluir veiculo"
-          description="O veiculo sera removido dos cadastros. Operacoes ja registradas nao sao afetadas."
-          busy={deleting}
-          onCancel={() => setPendingDeleteId(null)}
-          onConfirm={() => void handleConfirmDelete()}
-        />
-      ) : null}
-
-      <DataTable
-        columns={[
-          {
-            key: "plate",
-            header: "Placa",
-            width: "130px",
-            render: (item: Record<string, unknown>) => (
-              <span style={styles.plateBadge}>{String(item.plate ?? "") || "-"}</span>
-            )
-          },
-          {
-            key: "description",
-            header: "Descricao",
-            width: "minmax(180px, 1.2fr)",
-            render: (item) => <CellMuted>{String(item.description ?? "") || "-"}</CellMuted>
-          },
-          {
-            key: "carrier",
-            header: "Transportadora",
-            width: "minmax(200px, 1.3fr)",
-            render: (item) => (
-              <span>
-                {carriers.find((carrier) => carrier.id === String(item.carrier_id ?? ""))?.name ??
-                  "-"}
-              </span>
-            )
-          },
-          {
-            key: "actions",
-            header: "Acoes",
-            width: "170px",
-            align: "right",
-            render: (item) => (
-              <>
-                <EditRowButton onClick={() => openEdit(item)} />
-                <DeleteRowButton onClick={() => setPendingDeleteId(String(item.id))} />
-              </>
-            )
-          }
-        ]}
-        rows={vehicles}
-        rowKey={(item) => String(item.id)}
-        loading={loading}
-        emptyTitle={search ? "Nenhum veiculo encontrado." : "Nenhum veiculo cadastrado."}
-        emptyHint={
-          search
-            ? "Ajuste o termo de busca."
-            : "Cadastre o primeiro veiculo pelo botao \"Novo veiculo\"."
-        }
-      />
-    </div>
-  );
-}
-
 function TransportView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
-  const [transportTab, setTransportTab] = useState<"vehicles" | "drivers" | "carriers">("vehicles");
-
-  return (
-    <div>
-      <nav style={{ ...styles.subTabs, marginTop: 0 }}>
-        <button
-          type="button"
-          onClick={() => setTransportTab("vehicles")}
-          style={subTabStyle(transportTab === "vehicles")}
-        >
-          Veiculos
-        </button>
-        <button
-          type="button"
-          onClick={() => setTransportTab("drivers")}
-          style={subTabStyle(transportTab === "drivers")}
-        >
-          Motoristas
-        </button>
-        <button
-          type="button"
-          onClick={() => setTransportTab("carriers")}
-          style={subTabStyle(transportTab === "carriers")}
-        >
-          Transportadoras
-        </button>
-      </nav>
-      <div style={{ marginTop: "20px" }}>
-        {transportTab === "vehicles" ? <VehicleListView desktopApi={desktopApi} /> : null}
-        {transportTab === "drivers" ? (
-          <SimpleCrudList
-            desktopApi={desktopApi}
-            entityType="driver"
-            title="Motoristas"
-            fields={[
-              { key: "name", label: "Nome", required: true },
-              { key: "document", label: "CPF", required: false },
-              { key: "phone", label: "Telefone", required: false }
-            ]}
-          />
-        ) : null}
-        {transportTab === "carriers" ? <CarrierListView desktopApi={desktopApi} /> : null}
-      </div>
-    </div>
-  );
+  // Tudo do transporte fica dentro da transportadora: expanda uma transportadora
+  // para cadastrar seus veiculos e motoristas.
+  return <CarrierListView desktopApi={desktopApi} />;
 }
 
 interface CarrierFormData {
@@ -6894,23 +6605,51 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   const [carrierVehicles, setCarrierVehicles] = useState<
     Array<{ id: string; plate: string; description: string | null }>
   >([]);
+  const [carrierDrivers, setCarrierDrivers] = useState<
+    Array<{ id: string; name: string; document: string | null }>
+  >([]);
+  const [showAddVehicle, setShowAddVehicle] = useState(false);
+  const [showAddDriver, setShowAddDriver] = useState(false);
 
   useEffect(() => {
     void loadCarriers();
   }, [search]);
 
-  useEffect(() => {
-    async function loadVehicles() {
-      if (!selectedCarrier || !desktopApi) return;
+  const loadCarrierMembers = useCallback(
+    async (carrierId: string) => {
+      if (!desktopApi) return;
       try {
-        const vehicles = await desktopApi.carriersGetVehicles(selectedCarrier);
+        const [vehicles, drivers] = await Promise.all([
+          desktopApi.carriersGetVehicles(carrierId),
+          desktopApi.listDriversByCarrier(carrierId)
+        ]);
         setCarrierVehicles(vehicles);
+        setCarrierDrivers(
+          (drivers as Array<{ id: string; name: string; document: string | null }>) ?? []
+        );
       } catch {
         setCarrierVehicles([]);
+        setCarrierDrivers([]);
       }
+    },
+    [desktopApi]
+  );
+
+  useEffect(() => {
+    if (!selectedCarrier) return;
+    void loadCarrierMembers(selectedCarrier);
+  }, [selectedCarrier, loadCarrierMembers]);
+
+  async function handleUnlinkDriver(driverId: string): Promise<void> {
+    if (!desktopApi || !selectedCarrier) return;
+    try {
+      await desktopApi.unlinkDriverCarrier(driverId, selectedCarrier);
+      await loadCarrierMembers(selectedCarrier);
+      showFlash("success", "Motorista desvinculado.");
+    } catch (err) {
+      showFlash("error", err instanceof Error ? err.message : "Erro ao desvincular.");
     }
-    loadVehicles();
-  }, [selectedCarrier, desktopApi]);
+  }
 
   async function loadCarriers(): Promise<void> {
     setLoading(true);
@@ -7242,38 +6981,139 @@ function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
         }
         expandedRow={(carrier) =>
           selectedCarrier === carrier.id ? (
-            <div style={{ display: "grid", gap: "6px" }}>
-              <strong style={{ color: "var(--kr-text-strong)", fontSize: "13px" }}>
-                Veiculos vinculados
-              </strong>
-              {carrierVehicles.length === 0 ? (
-                <p style={{ color: "var(--kr-muted)", fontSize: "13px", margin: 0 }}>
-                  Nenhum veiculo vinculado.
-                </p>
-              ) : (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                  {carrierVehicles.map((v) => (
-                    <span
-                      key={v.id}
-                      style={{
-                        fontSize: "13px",
-                        background: "var(--kr-surface)",
-                        border: "1px solid var(--kr-border)",
-                        padding: "4px 8px",
-                        borderRadius: "8px",
-                        color: "var(--kr-text-strong)"
-                      }}
-                    >
-                      {v.plate}
-                      {v.description ? ` - ${v.description}` : ""}
-                    </span>
-                  ))}
+            <div style={{ display: "grid", gap: "12px" }}>
+              <div style={{ display: "grid", gap: "6px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <strong style={{ color: "var(--kr-text-strong)", fontSize: "13px" }}>
+                    Veiculos
+                  </strong>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddVehicle(true)}
+                    style={{ ...styles.secondaryButton, fontSize: "11px", padding: "3px 8px" }}
+                  >
+                    + Adicionar veiculo
+                  </button>
                 </div>
-              )}
+                {carrierVehicles.length === 0 ? (
+                  <p style={{ color: "var(--kr-muted)", fontSize: "13px", margin: 0 }}>
+                    Nenhum veiculo vinculado.
+                  </p>
+                ) : (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                    {carrierVehicles.map((v) => (
+                      <span
+                        key={v.id}
+                        style={{
+                          fontSize: "13px",
+                          background: "var(--kr-surface)",
+                          border: "1px solid var(--kr-border)",
+                          padding: "4px 8px",
+                          borderRadius: "8px",
+                          color: "var(--kr-text-strong)"
+                        }}
+                      >
+                        {v.plate}
+                        {v.description ? ` - ${v.description}` : ""}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div style={{ display: "grid", gap: "6px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <strong style={{ color: "var(--kr-text-strong)", fontSize: "13px" }}>
+                    Motoristas
+                  </strong>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddDriver(true)}
+                    style={{ ...styles.secondaryButton, fontSize: "11px", padding: "3px 8px" }}
+                  >
+                    + Adicionar motorista
+                  </button>
+                </div>
+                {carrierDrivers.length === 0 ? (
+                  <p style={{ color: "var(--kr-muted)", fontSize: "13px", margin: 0 }}>
+                    Nenhum motorista vinculado.
+                  </p>
+                ) : (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                    {carrierDrivers.map((d) => (
+                      <span
+                        key={d.id}
+                        style={{
+                          fontSize: "13px",
+                          background: "var(--kr-surface)",
+                          border: "1px solid var(--kr-border)",
+                          padding: "4px 8px",
+                          borderRadius: "8px",
+                          color: "var(--kr-text-strong)",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "6px"
+                        }}
+                      >
+                        {d.name}
+                        <button
+                          type="button"
+                          onClick={() => void handleUnlinkDriver(d.id)}
+                          title="Desvincular motorista"
+                          style={{
+                            border: "none",
+                            background: "transparent",
+                            color: "var(--kr-muted)",
+                            cursor: "pointer",
+                            padding: 0,
+                            fontSize: "14px",
+                            lineHeight: 1
+                          }}
+                        >
+                          &times;
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           ) : null
         }
       />
+
+      {showAddVehicle && selectedCarrier ? (
+        <QuickVehicleModal
+          desktopApi={desktopApi}
+          onClose={() => setShowAddVehicle(false)}
+          onCreated={async (id) => {
+            setShowAddVehicle(false);
+            try {
+              await desktopApi.vehiclesLinkCarrier(id, selectedCarrier);
+              await loadCarrierMembers(selectedCarrier);
+              showFlash("success", "Veiculo adicionado.");
+            } catch (err) {
+              showFlash("error", err instanceof Error ? err.message : "Erro ao vincular veiculo.");
+            }
+          }}
+        />
+      ) : null}
+
+      {showAddDriver && selectedCarrier ? (
+        <QuickDriverModal
+          desktopApi={desktopApi}
+          onClose={() => setShowAddDriver(false)}
+          onCreated={async (id) => {
+            setShowAddDriver(false);
+            try {
+              await desktopApi.linkDriverCarrier(id, selectedCarrier);
+              await loadCarrierMembers(selectedCarrier);
+              showFlash("success", "Motorista adicionado.");
+            } catch (err) {
+              showFlash("error", err instanceof Error ? err.message : "Erro ao vincular motorista.");
+            }
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -7956,330 +7796,6 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
           </div>
         </article>
       </section>
-    </div>
-  );
-}
-
-interface SimpleCrudField {
-  key: string;
-  label: string;
-  required: boolean;
-  type?: "checkbox";
-  helper?: string;
-}
-
-function SimpleCrudList({
-  desktopApi,
-  entityType,
-  title,
-  fields
-}: {
-  desktopApi: KyberRockDesktopApi;
-  entityType: "vehicle" | "driver";
-  title: string;
-  fields: SimpleCrudField[];
-}) {
-  const [items, setItems] = useState<Array<Record<string, unknown>>>([]);
-  const [search, setSearch] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [formData, setFormData] = useState<Record<string, string>>({});
-  const [flash, showFlash] = useFlash();
-  const [formError, setFormError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState(false);
-  const entityLabel = entityType === "vehicle" ? "Veiculo" : "Motorista";
-
-  useEffect(() => {
-    void loadItems();
-  }, [search]);
-
-  async function loadItems(): Promise<void> {
-    setLoading(true);
-    try {
-      const result = await desktopApi.queryCache({
-        entityType: entityType,
-        search: search || undefined,
-        limit: 200
-      });
-      setItems(result.rows as Array<Record<string, unknown>>);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function resetForm(): void {
-    const init: Record<string, string> = {};
-    for (const f of fields) init[f.key] = f.type === "checkbox" ? "false" : "";
-    setFormData(init);
-    setEditingId(null);
-    setFormError(null);
-  }
-
-  function openCreate(): void {
-    resetForm();
-    setShowForm(true);
-  }
-
-  function openEdit(item: Record<string, unknown>): void {
-    const data: Record<string, string> = {};
-    for (const f of fields) {
-      data[f.key] =
-        f.type === "checkbox" ? (item[f.key] ? "true" : "false") : String(item[f.key] ?? "");
-    }
-    setFormData(data);
-    setEditingId(item.id as string);
-    setFormError(null);
-    setShowForm(true);
-  }
-
-  async function handleSave(): Promise<void> {
-    const requiredField = fields.find(
-      (f) => f.required && f.type !== "checkbox" && !formData[f.key].trim()
-    );
-    if (requiredField) {
-      setFormError(`Campo obrigatorio: ${requiredField.label}`);
-      return;
-    }
-
-    setSaving(true);
-    try {
-      setFormError(null);
-      const input: Record<string, string | boolean> = {};
-      for (const f of fields) {
-        const raw = (formData[f.key] ?? "").trim();
-        if (f.type === "checkbox") {
-          input[f.key] = raw === "true";
-          continue;
-        }
-        if (!raw) continue;
-        if (f.key === "document") {
-          const normalized = normalizeDocument(raw);
-          if (!isValidDocument(normalized)) {
-            setFormError(f.label + " invalido.");
-            return;
-          }
-          input[f.key] = normalized;
-        } else if (f.key === "phone") {
-          const normalized = normalizePhone(raw);
-          if (normalized.length !== 10 && normalized.length !== 11) {
-            setFormError("Telefone invalido. Informe com DDD (11 digitos).");
-            return;
-          }
-          input[f.key] = normalized;
-        } else {
-          input[f.key] = raw;
-        }
-      }
-
-      if (editingId) {
-        if (entityType === "vehicle") {
-          await desktopApi.vehiclesUpdate(editingId, input as unknown as { plate?: string });
-        } else {
-          await desktopApi.driversUpdate(editingId, input as unknown as { name?: string });
-        }
-      } else {
-        if (entityType === "vehicle") {
-          await desktopApi.vehiclesCreate(input as unknown as { plate: string });
-        } else {
-          await desktopApi.driversCreate(input as unknown as { name: string });
-        }
-      }
-
-      setShowForm(false);
-      resetForm();
-      await loadItems();
-      showFlash("success", editingId ? `${entityLabel} atualizado.` : `${entityLabel} criado.`);
-    } catch (err) {
-      setFormError(err instanceof Error ? err.message : "Erro ao salvar.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleConfirmDelete(): Promise<void> {
-    if (!pendingDeleteId) return;
-    setDeleting(true);
-    try {
-      if (entityType === "vehicle") {
-        await desktopApi.vehiclesDelete(pendingDeleteId);
-      } else {
-        await desktopApi.driversDelete(pendingDeleteId);
-      }
-      setPendingDeleteId(null);
-      await loadItems();
-      showFlash("success", `${entityLabel} excluido.`);
-    } catch (err) {
-      setPendingDeleteId(null);
-      showFlash("error", err instanceof Error ? err.message : "Erro ao excluir.");
-    } finally {
-      setDeleting(false);
-    }
-  }
-
-  function displayLabel(item: Record<string, unknown>): string {
-    if (entityType === "vehicle") return String(item.plate ?? item.id ?? "");
-    return String(item.name ?? item.document ?? item.id ?? "");
-  }
-
-  function displaySub(item: Record<string, unknown>): string {
-    if (entityType === "vehicle") {
-      return item.description ? `Desc: ${String(item.description)}` : "";
-    }
-    const parts: string[] = [];
-    if (item.document) parts.push(`CPF: ${String(item.document)}`);
-    if (item.phone) parts.push(String(item.phone));
-    return parts.join(" | ");
-  }
-
-  return (
-    <div>
-      <CrudSectionHeader
-        title={title}
-        description={
-          entityType === "driver"
-            ? "Motoristas usados na identificacao do caminhao e impressos no cupom."
-            : undefined
-        }
-        count={items.length}
-        actionLabel={`Novo ${entityLabel.toLowerCase()}`}
-        onAction={openCreate}
-      />
-      <CrudSearchBar
-        value={search}
-        onChange={setSearch}
-        placeholder={`Buscar ${title.toLowerCase()}...`}
-        onRefresh={() => void loadItems()}
-      />
-      <FlashBanner flash={flash} />
-
-      {showForm ? (
-        <CrudFormShell
-          title={editingId ? `Editar ${entityLabel.toLowerCase()}` : `Novo ${entityLabel.toLowerCase()}`}
-          error={formError}
-          saving={saving}
-          onClose={() => setShowForm(false)}
-          onSubmit={() => void handleSave()}
-        >
-          <FormSection title="Dados principais">
-            {fields.map((f) => {
-                const value = formData[f.key] || "";
-                if (f.type === "checkbox") {
-                  return (
-                    <label
-                      key={f.key}
-                      style={{ ...styles.checkboxLabel, alignItems: "flex-start" }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={value === "true"}
-                        onChange={(event) =>
-                          setFormData({
-                            ...formData,
-                            [f.key]: event.target.checked ? "true" : "false"
-                          })
-                        }
-                      />
-                      <span>
-                        {f.label}
-                        {f.helper ? (
-                          <small
-                            style={{ ...styles.helperText, display: "block", marginTop: "2px" }}
-                          >
-                            {f.helper}
-                          </small>
-                        ) : null}
-                      </span>
-                    </label>
-                  );
-                }
-                if (f.key === "document") {
-                  return (
-                    <DocumentInput
-                      key={f.key}
-                      label={f.label}
-                      value={value}
-                      required={f.required}
-                      onChange={(v) => setFormData({ ...formData, [f.key]: v })}
-                    />
-                  );
-                }
-                if (f.key === "phone") {
-                  return (
-                    <PhoneInput
-                      key={f.key}
-                      label={f.label}
-                      value={value}
-                      required={f.required}
-                      onChange={(v) => setFormData({ ...formData, [f.key]: v })}
-                    />
-                  );
-                }
-                return (
-                  <TextInput
-                    key={f.key}
-                    label={f.label}
-                    value={value}
-                    required={f.required}
-                    onChange={(v) => setFormData({ ...formData, [f.key]: v })}
-                  />
-                );
-              })}
-          </FormSection>
-        </CrudFormShell>
-      ) : null}
-
-      {pendingDeleteId ? (
-        <ConfirmDialog
-          title={`Excluir ${entityLabel.toLowerCase()}`}
-          description="O registro sera removido dos cadastros. Operacoes ja registradas nao sao afetadas."
-          busy={deleting}
-          onCancel={() => setPendingDeleteId(null)}
-          onConfirm={() => void handleConfirmDelete()}
-        />
-      ) : null}
-
-      <DataTable
-        columns={[
-          {
-            key: "label",
-            header: entityType === "vehicle" ? "Placa" : "Nome",
-            width: "minmax(220px, 1.3fr)",
-            render: (item: Record<string, unknown>) => (
-              <CellPrimary>{displayLabel(item)}</CellPrimary>
-            )
-          },
-          {
-            key: "details",
-            header: "Detalhes",
-            width: "minmax(260px, 1.5fr)",
-            render: (item) => <CellMuted>{displaySub(item) || "-"}</CellMuted>
-          },
-          {
-            key: "actions",
-            header: "Acoes",
-            width: "170px",
-            align: "right",
-            render: (item) => (
-              <>
-                <EditRowButton onClick={() => openEdit(item)} />
-                <DeleteRowButton onClick={() => setPendingDeleteId(item.id as string)} />
-              </>
-            )
-          }
-        ]}
-        rows={items}
-        rowKey={(item) => item.id as string}
-        loading={loading}
-        emptyTitle={search ? "Nenhum registro encontrado." : `Nenhum ${entityLabel.toLowerCase()} cadastrado.`}
-        emptyHint={
-          search
-            ? "Ajuste o termo de busca."
-            : `Cadastre pelo botao "Novo ${entityLabel.toLowerCase()}".`
-        }
-      />
     </div>
   );
 }

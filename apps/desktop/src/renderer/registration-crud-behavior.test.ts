@@ -10,7 +10,7 @@ describe("registration CRUD behavior", () => {
   it("keeps secondary cadastro forms actionable and recoverable", () => {
     const source = readFileSync(resolve(rendererDir, "App.tsx"), "utf8");
 
-    expect(source).toContain("Campo obrigatorio");
+    expect(source).toContain("Nome e obrigatorio.");
     expect(source).toContain("Atualizar");
     expect(source).toContain("productDefaultPricesRemove");
     expect(source).toContain("Confirmar remocao do preco padrao");
