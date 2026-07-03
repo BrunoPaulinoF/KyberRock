@@ -31,6 +31,11 @@ jobs:
       - name: Instalar dependencias
         run: npm ci
 
+      # Compila os workspaces compartilhados (shared, scale-adapters,
+      # omie-client, print-templates) que o desktop importa como @kyberrock/*.
+      - name: Build da raiz (todos os workspaces)
+        run: npm run build
+
       - name: Gerar instalador NSIS
         run: npm run dist:win -w @kyberrock/desktop
 
