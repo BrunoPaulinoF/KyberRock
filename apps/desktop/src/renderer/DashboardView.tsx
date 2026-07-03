@@ -921,7 +921,8 @@ const styles: Record<string, CSSProperties> = {
   },
   recentRow: {
     display: "grid",
-    gridTemplateColumns: "70px 1.4fr 1.4fr 1fr 0.8fr 0.8fr",
+    gridTemplateColumns:
+      "70px minmax(0, 1.4fr) minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 0.8fr) minmax(0, 0.8fr)",
     gap: "10px",
     alignItems: "center",
     padding: "7px 10px",

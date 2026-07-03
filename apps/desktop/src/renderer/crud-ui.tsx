@@ -405,7 +405,8 @@ export function DataTable<T>({
                         alignItems: column.align === "right" ? "center" : "stretch",
                         justifyContent: column.align === "right" ? "flex-end" : "center",
                         gap: column.align === "right" ? "6px" : "2px",
-                        minWidth: 0
+                        minWidth: 0,
+                        overflow: "hidden"
                       }}
                     >
                       {column.render(row)}
@@ -448,7 +449,11 @@ export function DataTable<T>({
 export function CellPrimary({ children }: { children: ReactNode }) {
   return (
     <span
+      title={typeof children === "string" ? children : undefined}
       style={{
+        display: "block",
+        minWidth: 0,
+        maxWidth: "100%",
         fontWeight: 700,
         color: "var(--kr-text-strong)",
         overflow: "hidden",
@@ -464,7 +469,11 @@ export function CellPrimary({ children }: { children: ReactNode }) {
 export function CellMuted({ children }: { children: ReactNode }) {
   return (
     <span
+      title={typeof children === "string" ? children : undefined}
       style={{
+        display: "block",
+        minWidth: 0,
+        maxWidth: "100%",
         color: "var(--kr-muted)",
         fontSize: "12px",
         overflow: "hidden",
