@@ -5,7 +5,6 @@ import {
   buildFreightInput,
   createCacheSelectOptions,
   filterCacheSelectOptions,
-  getDriverFilterIds,
   isTransportReady,
   readStoredThemeMode,
   shouldLinkCreatedDriverToCarrier
@@ -21,6 +20,8 @@ function createWeighingForm(overrides: Partial<WeighingFormForTest> = {}): Weigh
     customerId: "customer-1",
     driverId: "driver-1",
     productId: "product-1",
+    paymentMethodId: "",
+    paymentMethodIsCredit: false,
     paymentTermId: "",
     paymentMode: "registered",
     manualInstallments: "",
@@ -28,16 +29,16 @@ function createWeighingForm(overrides: Partial<WeighingFormForTest> = {}): Weigh
     manualDownPaymentCents: null,
     quotationId: "",
     deductFreightFromCredit: false,
+    freightModality: "cif",
+    chargeFreight: true,
     freightEnabled: true,
-    freightPayer: "customer",
+    freightPayer: "quarry",
     freightCalculationType: "per_ton",
     freightBaseValueCents: 12_500,
     freightFixedValueCents: null,
     freightMinValueCents: null,
     freightDistanceKm: "",
     freightDestination: "",
-    customerOwnTransport: false,
-    driverIsIndependent: false,
     ...overrides
   };
 }
@@ -49,28 +50,31 @@ describe("App", () => {
     expect(element.type).toBe(App);
   });
 
-  it("does not build freight input when the customer uses its own carrier", () => {
-    const form = createWeighingForm({ customerOwnTransport: true });
+  it("does not build freight input when freight is not being charged (FOB)", () => {
+    const form = createWeighingForm({
+      freightModality: "fob",
+      chargeFreight: false,
+      freightEnabled: false
+    });
 
     expect(buildFreightInput(form)).toBeNull();
   });
 
-  it("links a newly created non-independent driver to the selected carrier", () => {
-    const form = createWeighingForm({ carrierId: "carrier-1", customerOwnTransport: false });
-
-    expect(shouldLinkCreatedDriverToCarrier(form, false)).toBe("carrier-1");
-    expect(shouldLinkCreatedDriverToCarrier(form, true)).toBeNull();
-    expect(shouldLinkCreatedDriverToCarrier({ ...form, customerOwnTransport: true }, false)).toBeNull();
-    expect(shouldLinkCreatedDriverToCarrier({ ...form, driverIsIndependent: true }, false)).toBeNull();
+  it("uses the quarry as the freight payer when charging freight (CIF)", () => {
+    const freight = buildFreightInput(createWeighingForm());
+    expect(freight?.payer).toBe("quarry");
   });
 
-  it("uses only independent drivers when independent driver mode is active", () => {
-    const form = createWeighingForm({ driverIsIndependent: true, customerOwnTransport: false });
+  it("links a newly created driver to the selected carrier", () => {
+    expect(shouldLinkCreatedDriverToCarrier(createWeighingForm({ carrierId: "carrier-1" }))).toBe(
+      "carrier-1"
+    );
+    expect(shouldLinkCreatedDriverToCarrier(createWeighingForm({ carrierId: "" }))).toBeNull();
+  });
 
-    expect(getDriverFilterIds(form, ["linked-driver"], ["independent-driver"])).toEqual([
-      "independent-driver"
-    ]);
-    expect(isTransportReady(form)).toBe(true);
+  it("is transport ready only when a carrier is selected", () => {
+    expect(isTransportReady(createWeighingForm({ carrierId: "carrier-1" }))).toBe(true);
+    expect(isTransportReady(createWeighingForm({ carrierId: "" }))).toBe(false);
   });
 
   it("restores the last valid theme mode from storage", () => {

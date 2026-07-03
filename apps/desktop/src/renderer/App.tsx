@@ -118,6 +118,10 @@ export interface WeighingFormState {
   manualDownPaymentCents: number | null;
   quotationId: string;
   deductFreightFromCredit: boolean;
+  // Modalidade do frete: CIF = por conta da Pedreira (vendedor); FOB = por conta do cliente.
+  freightModality: "cif" | "fob";
+  // Quando CIF: se o frete sera cobrado do cliente (senao vai gratis).
+  chargeFreight: boolean;
   freightEnabled: boolean;
   freightPayer: "customer" | "quarry" | "third_party";
   freightCalculationType: "per_ton" | "per_ton_km" | "fixed_plus_ton";
@@ -126,8 +130,6 @@ export interface WeighingFormState {
   freightMinValueCents: number | null;
   freightDistanceKm: string;
   freightDestination: string;
-  customerOwnTransport: boolean;
-  driverIsIndependent: boolean;
 }
 
 type ActiveView =
@@ -158,6 +160,8 @@ const initialWeighingForm: WeighingFormState = {
   manualDownPaymentCents: null,
   quotationId: "",
   deductFreightFromCredit: false,
+  freightModality: "fob",
+  chargeFreight: false,
   freightEnabled: false,
   freightPayer: "customer",
   freightCalculationType: "per_ton",
@@ -165,9 +169,7 @@ const initialWeighingForm: WeighingFormState = {
   freightFixedValueCents: null,
   freightMinValueCents: null,
   freightDistanceKm: "",
-  freightDestination: "",
-  customerOwnTransport: false,
-  driverIsIndependent: false
+  freightDestination: ""
 };
 
 /**
@@ -1220,7 +1222,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         operationType: form.operationType,
         customerId: form.customerId,
         vehicleId: form.vehicleId,
-        carrierId: form.customerOwnTransport ? undefined : form.carrierId || undefined,
+        carrierId: form.carrierId || undefined,
         driverId: form.driverId,
         productId: form.productId,
         paymentTermId:
@@ -3370,7 +3372,7 @@ function validateWeighingForm(form: WeighingFormState): string | null {
   if (!form.customerId) return "Selecione o cliente.";
   if (!form.driverId) return "Selecione o motorista.";
   if (!form.productId) return "Selecione o produto.";
-  if (!form.customerOwnTransport && !form.driverIsIndependent && !form.carrierId) {
+  if (!form.carrierId) {
     return "Selecione a transportadora.";
   }
   if (form.paymentMode === "manual") {
@@ -3382,7 +3384,7 @@ function validateWeighingForm(form: WeighingFormState): string | null {
       return "Informe o valor de entrada.";
     }
   }
-  if (form.freightEnabled && !form.customerOwnTransport) {
+  if (form.freightEnabled) {
     if (form.freightBaseValueCents === null && form.freightFixedValueCents === null) {
       return "Informe o valor do frete.";
     }
@@ -3397,7 +3399,7 @@ function validateWeighingForm(form: WeighingFormState): string | null {
 }
 
 export function buildFreightInput(form: WeighingFormState): OperationFreightInput | null {
-  if (!form.freightEnabled || form.customerOwnTransport) return null;
+  if (!form.freightEnabled) return null;
   const distanceKm = parsePositiveNumber(form.freightDistanceKm);
   return {
     payer: form.freightPayer,
@@ -3416,34 +3418,13 @@ export function buildFreightInput(form: WeighingFormState): OperationFreightInpu
 }
 
 export function shouldLinkCreatedDriverToCarrier(
-  form: Pick<WeighingFormState, "carrierId" | "customerOwnTransport" | "driverIsIndependent">,
-  createdDriverIsIndependent: boolean
+  form: Pick<WeighingFormState, "carrierId">
 ): string | null {
-  if (
-    createdDriverIsIndependent ||
-    form.driverIsIndependent ||
-    form.customerOwnTransport ||
-    !form.carrierId
-  ) {
-    return null;
-  }
-  return form.carrierId;
+  return form.carrierId || null;
 }
 
-export function getDriverFilterIds(
-  form: Pick<WeighingFormState, "customerOwnTransport" | "driverIsIndependent">,
-  availableDriverIds: string[] | undefined,
-  independentDriverIds: string[] | undefined
-): string[] | undefined {
-  if (form.customerOwnTransport) return undefined;
-  if (form.driverIsIndependent) return independentDriverIds ?? [];
-  return availableDriverIds;
-}
-
-export function isTransportReady(
-  form: Pick<WeighingFormState, "carrierId" | "customerOwnTransport" | "driverIsIndependent">
-): boolean {
-  return form.customerOwnTransport || form.driverIsIndependent || Boolean(form.carrierId);
+export function isTransportReady(form: Pick<WeighingFormState, "carrierId">): boolean {
+  return Boolean(form.carrierId);
 }
 
 function parsePositiveNumber(value: string): number | null {
@@ -3835,9 +3816,8 @@ function WeighingForm({
   const [availableCarrierIds, setAvailableCarrierIds] = useState<string[] | undefined>(undefined);
   const [availableVehicleIds, setAvailableVehicleIds] = useState<string[] | undefined>(undefined);
   const [availableDriverIds, setAvailableDriverIds] = useState<string[] | undefined>(undefined);
-  const [independentDriverIds, setIndependentDriverIds] = useState<string[] | undefined>(undefined);
 
-  // Buscar transportadoras vinculadas ao cliente
+  // Buscar transportadoras vinculadas ao cliente; se houver apenas uma, ja preenche.
   useEffect(() => {
     async function load() {
       if (!desktopApi || !form.customerId) {
@@ -3846,7 +3826,11 @@ function WeighingForm({
       }
       try {
         const carriers = await desktopApi.listCarriersByCustomer(form.customerId);
-        setAvailableCarrierIds(carriers.map((c) => c.id));
+        const ids = carriers.map((c) => c.id);
+        setAvailableCarrierIds(ids);
+        if (ids.length === 1) {
+          setForm((prev) => (prev.carrierId ? prev : { ...prev, carrierId: ids[0] }));
+        }
       } catch {
         setAvailableCarrierIds(undefined);
       }
@@ -3854,58 +3838,49 @@ function WeighingForm({
     load();
   }, [desktopApi, form.customerId]);
 
+  // Veiculos da transportadora; se houver apenas um, ja preenche a placa.
   useEffect(() => {
     async function load() {
-      if (!desktopApi || !form.carrierId || form.customerOwnTransport || form.driverIsIndependent) {
+      if (!desktopApi || !form.carrierId) {
         setAvailableVehicleIds(undefined);
         return;
       }
       try {
         const vehicles = await desktopApi.carriersGetVehicles(form.carrierId);
-        setAvailableVehicleIds(vehicles.map((vehicle) => vehicle.id));
+        const ids = vehicles.map((vehicle) => vehicle.id);
+        setAvailableVehicleIds(ids);
+        if (ids.length === 1) {
+          setForm((prev) => (prev.vehicleId ? prev : { ...prev, vehicleId: ids[0] }));
+        }
       } catch {
         setAvailableVehicleIds(undefined);
       }
     }
     load();
-  }, [
-    desktopApi,
-    form.carrierId,
-    form.customerOwnTransport,
-    form.driverIsIndependent,
-    vehicleRefreshKey
-  ]);
+  }, [desktopApi, form.carrierId, vehicleRefreshKey]);
 
-  // Buscar motoristas vinculados a transportadora + independentes
+  // Motoristas da transportadora; se houver apenas um, ja preenche o motorista.
   useEffect(() => {
     async function load() {
-      if (!desktopApi) {
+      if (!desktopApi || !form.carrierId) {
         setAvailableDriverIds(undefined);
         return;
       }
       try {
-        const independent = await desktopApi.listIndependentDrivers();
-        const independentIds = independent.map((d) => d.id);
-        setIndependentDriverIds(independentIds);
-
-        if (form.driverIsIndependent) {
-          setAvailableDriverIds(independentIds);
-        } else if (form.carrierId) {
-          const linked = await desktopApi.listDriversByCarrier(form.carrierId);
-          const linkedIds = linked.map((d) => d.id);
-          setAvailableDriverIds([...new Set([...linkedIds, ...independentIds])]);
-        } else {
-          setAvailableDriverIds(independentIds.length > 0 ? independentIds : undefined);
+        const linked = await desktopApi.listDriversByCarrier(form.carrierId);
+        const ids = linked.map((d) => d.id);
+        setAvailableDriverIds(ids);
+        if (ids.length === 1) {
+          setForm((prev) => (prev.driverId ? prev : { ...prev, driverId: ids[0] }));
         }
       } catch {
         setAvailableDriverIds(undefined);
-        setIndependentDriverIds(undefined);
       }
     }
     load();
-  }, [desktopApi, form.carrierId, form.driverIsIndependent, driverRefreshKey]);
+  }, [desktopApi, form.carrierId, driverRefreshKey]);
 
-  // Quando motorista muda, verificar se tem 1 transportadora e preencher
+  // Quando o motorista muda e pertence a exatamente uma transportadora, preenche-a.
   useEffect(() => {
     async function load() {
       if (!desktopApi || !form.driverId) {
@@ -3913,22 +3888,11 @@ function WeighingForm({
       }
       try {
         const carriers = await desktopApi.listCarriersByDriver(form.driverId);
-        const driverData = await desktopApi.queryCache({ entityType: "driver", limit: 200 });
-        const driver = (driverData.rows as Array<Record<string, unknown>>).find(
-          (d) => d.id === form.driverId
-        );
-        const isIndependent = Boolean(driver?.isIndependent);
-        setForm((prev) => ({ ...prev, driverIsIndependent: isIndependent }));
-
-        if (carriers.length === 1 && !isIndependent) {
-          // Motorista tem exatamente 1 transportadora - preencher automaticamente
-          setForm((prev) => ({ ...prev, carrierId: carriers[0].id }));
-        } else if (isIndependent) {
-          // Motorista independente - limpar transportadora
-          setForm((prev) => ({ ...prev, carrierId: "" }));
+        if (carriers.length === 1) {
+          setForm((prev) => (prev.carrierId ? prev : { ...prev, carrierId: carriers[0].id }));
         }
       } catch {
-        setForm((prev) => ({ ...prev, driverIsIndependent: false }));
+        // ignore
       }
     }
     load();
@@ -4074,10 +4038,13 @@ function WeighingForm({
       try {
         const rule = await api.getCustomerFreightForProduct(form.customerId, form.productId);
         if (canceled || !rule) return;
+        // Frete pre-cadastrado do cliente => cobrar frete (CIF, por conta da Pedreira).
         setForm((prev) => ({
           ...prev,
+          freightModality: "cif",
+          chargeFreight: true,
           freightEnabled: true,
-          freightPayer: "customer",
+          freightPayer: "quarry",
           freightCalculationType: rule.rule.type as WeighingFormState["freightCalculationType"],
           freightBaseValueCents: rule.rule.baseValueCents,
           freightFixedValueCents: rule.rule.fixedValueCents ?? null
@@ -4295,6 +4262,10 @@ function WeighingForm({
               setForm((prev) => ({
                 ...prev,
                 customerId: id,
+                // Troca de cliente reinicia o transporte para reavaliar o auto-preenchimento.
+                carrierId: "",
+                vehicleId: "",
+                driverId: "",
                 // Pre-seleciona gerar (ou nao) nota fiscal conforme o cadastro do cliente;
                 // o operador ainda pode trocar antes de fechar.
                 operationType:
@@ -4418,46 +4389,40 @@ function WeighingForm({
             title="Transporte"
             description="Transportadora, placa e motorista"
           />
-          <label style={styles.compactCheckboxCard}>
-            <input
-              type="checkbox"
-              checked={form.customerOwnTransport}
-              onChange={(event) =>
-                setForm((prev) => ({
-                  ...prev,
-                  customerOwnTransport: event.target.checked,
-                  driverIsIndependent: event.target.checked ? false : prev.driverIsIndependent,
-                  carrierId: "",
-                  vehicleId: "",
-                  driverId: "",
-                  freightEnabled: event.target.checked ? false : prev.freightEnabled,
-                  deductFreightFromCredit: event.target.checked
-                    ? false
-                    : prev.deductFreightFromCredit
-                }))
-              }
-            />
-            <span>Transportadora propria do cliente</span>
-          </label>
-          <label style={styles.compactCheckboxCard}>
-            <input
-              type="checkbox"
-              checked={form.driverIsIndependent}
-              onChange={(event) =>
-                setForm((prev) => ({
-                  ...prev,
-                  driverIsIndependent: event.target.checked,
-                  customerOwnTransport: event.target.checked ? false : prev.customerOwnTransport,
-                  carrierId: event.target.checked ? "" : prev.carrierId,
-                  driverId: ""
-                }))
-              }
-            />
-            <span>Motorista independente</span>
+          <label style={styles.fieldLabel}>
+            <span>Modalidade do frete</span>
+            <select
+              value={form.freightModality}
+              onChange={(event) => {
+                const modality = event.target.value as WeighingFormState["freightModality"];
+                setForm((prev) =>
+                  modality === "cif"
+                    ? {
+                        ...prev,
+                        freightModality: "cif",
+                        freightPayer: "quarry",
+                        freightEnabled: prev.chargeFreight
+                      }
+                    : {
+                        ...prev,
+                        freightModality: "fob",
+                        chargeFreight: false,
+                        freightEnabled: false,
+                        freightPayer: "customer",
+                        deductFreightFromCredit: false
+                      }
+                );
+              }}
+              style={getInputStyle(false)}
+            >
+              <option value="fob">FOB - por conta do cliente (ele busca/paga o frete)</option>
+              <option value="cif">CIF - por conta da Pedreira (nos entregamos)</option>
+            </select>
           </label>
           <p style={{ ...styles.helperText, margin: "-2px 0 8px 0" }}>
-            Marque quando o motorista nao pertence a uma transportadora. A transportadora fica
-            bloqueada e a lista mostra somente motoristas independentes.
+            {form.freightModality === "cif"
+              ? "CIF: a entrega e por conta da Pedreira. Voce pode enviar sem cobrar frete ou cobrar do cliente."
+              : "FOB: o cliente busca o produto e paga o proprio frete."}
           </p>
           <CacheSelect
             label="Transportadora"
@@ -4467,8 +4432,6 @@ function WeighingForm({
               setForm((prev) => ({
                 ...prev,
                 carrierId: id,
-                customerOwnTransport: false,
-                driverIsIndependent: false,
                 vehicleId: "",
                 driverId: ""
               }))
@@ -4477,7 +4440,6 @@ function WeighingForm({
             desktopApi={desktopApi}
             refreshKey={carrierRefreshKey}
             filterIds={availableCarrierIds}
-            disabled={form.customerOwnTransport || form.driverIsIndependent}
           />
           {form.customerId && availableCarrierIds && availableCarrierIds.length === 0 ? (
             <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" }}>
@@ -4502,7 +4464,7 @@ function WeighingForm({
               onCreateNew={() => setShowVehicleModal(true)}
               desktopApi={desktopApi}
               refreshKey={vehicleRefreshKey}
-              filterIds={form.customerOwnTransport ? undefined : availableVehicleIds}
+              filterIds={availableVehicleIds}
               disabled={!transportReady}
             />
             <CacheSelect
@@ -4513,24 +4475,10 @@ function WeighingForm({
               onCreateNew={() => setShowDriverModal(true)}
               desktopApi={desktopApi}
               refreshKey={driverRefreshKey}
-              filterIds={getDriverFilterIds(form, availableDriverIds, independentDriverIds)}
+              filterIds={availableDriverIds}
               disabled={!transportReady}
             />
           </div>
-          {form.driverIsIndependent && independentDriverIds && independentDriverIds.length === 0 ? (
-            <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" }}>
-              <p style={{ ...styles.helperText, color: "#d97706", margin: 0 }}>
-                Nenhum motorista independente cadastrado.
-              </p>
-              <button
-                type="button"
-                onClick={() => setShowDriverModal(true)}
-                style={{ ...styles.secondaryButton, fontSize: "11px", padding: "4px 8px" }}
-              >
-                + Cadastrar motorista independente
-              </button>
-            </div>
-          ) : null}
           {form.carrierId && availableDriverIds && availableDriverIds.length === 0 ? (
             <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" }}>
               <p style={{ ...styles.helperText, color: "#d97706", margin: 0 }}>
@@ -4555,36 +4503,29 @@ function WeighingForm({
           />
           <PriceDetailsPanel details={priceDetails} />
           <div style={styles.freightBox}>
-            <label style={styles.checkboxLabel}>
-              <input
-                type="checkbox"
-                checked={form.freightEnabled && !form.customerOwnTransport}
-                disabled={form.customerOwnTransport}
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, freightEnabled: event.target.checked }))
-                }
-              />
-              Operacao com frete
-            </label>
-            {form.freightEnabled && !form.customerOwnTransport ? (
+            {form.freightModality === "fob" ? (
+              <p style={{ ...styles.helperText, margin: 0 }}>
+                Frete por conta do cliente (FOB) - nada a cobrar.
+              </p>
+            ) : (
+              <label style={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={form.chargeFreight}
+                  onChange={(event) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      chargeFreight: event.target.checked,
+                      freightEnabled: event.target.checked,
+                      freightPayer: "quarry"
+                    }))
+                  }
+                />
+                Cobrar frete do cliente
+              </label>
+            )}
+            {form.freightEnabled ? (
               <div style={styles.freightCompactGrid}>
-                <label style={styles.fieldLabel}>
-                  Responsavel
-                  <select
-                    value={form.freightPayer}
-                    onChange={(event) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        freightPayer: event.target.value as WeighingFormState["freightPayer"]
-                      }))
-                    }
-                    style={styles.input}
-                  >
-                    <option value="customer">Cliente</option>
-                    <option value="quarry">Pedreira</option>
-                    <option value="third_party">Terceiro</option>
-                  </select>
-                </label>
                 <label style={styles.fieldLabel}>
                   Calculo
                   <select
@@ -4722,12 +4663,8 @@ function WeighingForm({
         <QuickDriverModal
           desktopApi={desktopApi}
           onClose={() => setShowDriverModal(false)}
-          defaultIsIndependent={form.driverIsIndependent}
-          onCreated={async (id, options) => {
-            const carrierId = shouldLinkCreatedDriverToCarrier(
-              form,
-              options?.isIndependent ?? false
-            );
+          onCreated={async (id) => {
+            const carrierId = shouldLinkCreatedDriverToCarrier(form);
             setForm((prev) => ({ ...prev, driverId: id }));
             setShowDriverModal(false);
             if (desktopApi && carrierId) {
@@ -4759,7 +4696,7 @@ function WeighingForm({
           desktopApi={desktopApi}
           onClose={() => setShowCarrierModal(false)}
           onCreated={async (id) => {
-            setForm((prev) => ({ ...prev, carrierId: id, customerOwnTransport: false }));
+            setForm((prev) => ({ ...prev, carrierId: id }));
             setShowCarrierModal(false);
             if (desktopApi && form.vehicleId) {
               try {
@@ -4817,11 +4754,6 @@ interface QuickModalProps {
   desktopApi: KyberRockDesktopApi | null;
   onClose: () => void;
   onCreated: (id: string) => void;
-}
-
-interface QuickDriverModalProps extends Omit<QuickModalProps, "onCreated"> {
-  defaultIsIndependent?: boolean;
-  onCreated: (id: string, options?: { isIndependent: boolean }) => void;
 }
 
 function QuickVehicleModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
@@ -4882,16 +4814,10 @@ function QuickVehicleModal({ desktopApi, onClose, onCreated }: QuickModalProps) 
   );
 }
 
-function QuickDriverModal({
-  desktopApi,
-  onClose,
-  onCreated,
-  defaultIsIndependent = false
-}: QuickDriverModalProps) {
+function QuickDriverModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
   const [name, setName] = useState("");
   const [documentInput, setDocumentInput] = useState("");
   const [phone, setPhone] = useState("");
-  const [isIndependent, setIsIndependent] = useState(defaultIsIndependent);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -4916,10 +4842,9 @@ function QuickDriverModal({
       const result = await desktopApi.driversCreate({
         name: name.trim(),
         document: normalizedDocument || undefined,
-        phone: normalizedPhone || undefined,
-        isIndependent
+        phone: normalizedPhone || undefined
       });
-      onCreated((result as { id: string }).id, { isIndependent });
+      onCreated((result as { id: string }).id);
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -4948,18 +4873,6 @@ function QuickDriverModal({
           placeholder="000.000.000-00"
         />
         <PhoneInput label="Telefone" value={phone} onChange={setPhone} />
-        <label style={styles.checkboxLabel}>
-          <input
-            type="checkbox"
-            checked={isIndependent}
-            onChange={(e) => setIsIndependent(e.target.checked)}
-          />
-          Motorista independente
-        </label>
-        <p style={{ ...styles.helperText, marginTop: "-4px" }}>
-          Use para motorista sem transportadora. Ele aparecera quando a opcao "Motorista
-          independente" estiver marcada na nova entrada.
-        </p>
         <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
           <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
             {saving ? "Salvando..." : "Salvar"}
@@ -6521,14 +6434,7 @@ function TransportView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
             fields={[
               { key: "name", label: "Nome", required: true },
               { key: "document", label: "CPF", required: false },
-              { key: "phone", label: "Telefone", required: false },
-              {
-                key: "isIndependent",
-                label: "Motorista independente",
-                required: false,
-                type: "checkbox",
-                helper: "Marque quando este motorista nao pertence a uma transportadora."
-              }
+              { key: "phone", label: "Telefone", required: false }
             ]}
           />
         ) : null}
@@ -8223,7 +8129,6 @@ function SimpleCrudList({
       return item.description ? `Desc: ${String(item.description)}` : "";
     }
     const parts: string[] = [];
-    if (item.isIndependent) parts.push("Independente: sem transportadora");
     if (item.document) parts.push(`CPF: ${String(item.document)}`);
     if (item.phone) parts.push(String(item.phone));
     return parts.join(" | ");
