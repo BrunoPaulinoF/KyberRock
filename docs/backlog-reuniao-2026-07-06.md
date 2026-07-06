@@ -18,9 +18,9 @@ financeiro · **P1** essencial para o piloto · **P2** melhoria/escalabilidade.
 - [ ] **P0** Campo **dia de fechamento** + **dias para vencimento do boleto**: no dia de fechamento
       o sistema gera uma fatura que entra no OMIE como *contas a receber* com vencimento em
       `data_fechamento + X dias`.
-- [ ] **P1** Suportar periodicidades de fechamento configuráveis: **semanal** (toda segunda/terça/…),
-      **quinzenal** (1ª quinzena = dia 1→15; 2ª quinzena = dia 16→último dia do mês) e **mensal**,
-      além de "1ª/2ª/3ª/4ª semana". Cada período soma "mais X dias" para a data de vencimento.
+- [x] **P1** Suportar periodicidades de fechamento configuráveis: **semanal** (por semana),
+      **quinzenal** (dois dias de fechamento + dias de boleto por fechamento) e **mensal**.
+      *(Implementado: config no cliente + `computeCreditInvoiceSchedule` testado.)*
 - [ ] **P1** Disponibilizar a fatura gerada para **download/envio** (para o cliente poder receber).
 - [ ] **P1** Testar de ponta a ponta a geração da fatura e sua entrada no OMIE como contas a receber.
 - [ ] **P2** Decidir/avaliar o uso do **limite de crédito do OMIE** ("uso do crédito"): pré-pago vs. não.
