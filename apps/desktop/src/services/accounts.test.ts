@@ -116,7 +116,8 @@ describe("accounts service", () => {
     expect(byCode.get("boleto")?.account_id).toBe(idByCode.get("omie_cash"));
     expect(byCode.get("debit_card")?.account_id).toBe(idByCode.get("getnet"));
     expect(byCode.get("credit_card")?.account_id).toBe(idByCode.get("getnet"));
-    expect(byCode.get("customer_credit")?.account_id).toBeNull();
+    // Fiado e lancado uma unica vez no OMIE pela OMIE Cash.
+    expect(byCode.get("customer_credit")?.account_id).toBe(idByCode.get("omie_cash"));
   });
 
   it("does not override an existing binding", () => {

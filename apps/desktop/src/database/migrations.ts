@@ -1005,5 +1005,20 @@ UPDATE payment_methods SET
   updated_at = datetime('now')
 WHERE code IN ('debit_card', 'credit_card') AND account_id IS NULL AND deleted_at IS NULL;
 `
+  },
+  {
+    version: 27,
+    name: "bind_customer_credit_to_omie_cash",
+    sql: `
+-- Credito do cliente (fiado) e lancado uma unica vez no OMIE pela conta OMIE Cash
+-- (nao mais pela caixinha), no fechamento da fatura.
+UPDATE payment_methods SET
+  account_id = (
+    SELECT ac.id FROM accounts ac
+    WHERE ac.company_id = payment_methods.company_id AND ac.code = 'omie_cash' AND ac.deleted_at IS NULL
+  ),
+  updated_at = datetime('now')
+WHERE code = 'customer_credit' AND account_id IS NULL AND deleted_at IS NULL;
+`
   }
 ];

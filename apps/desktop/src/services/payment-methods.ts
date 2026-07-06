@@ -272,7 +272,9 @@ const DEFAULT_METHOD_ACCOUNT_BINDINGS: ReadonlyArray<{ methodCode: string; accou
   { methodCode: "pix", accountCode: "omie_cash" },
   { methodCode: "boleto", accountCode: "omie_cash" },
   { methodCode: "debit_card", accountCode: "getnet" },
-  { methodCode: "credit_card", accountCode: "getnet" }
+  { methodCode: "credit_card", accountCode: "getnet" },
+  // Credito do cliente (fiado) e lancado uma unica vez no OMIE pela OMIE Cash.
+  { methodCode: "customer_credit", accountCode: "omie_cash" }
 ];
 
 /**
