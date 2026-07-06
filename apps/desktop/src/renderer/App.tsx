@@ -94,6 +94,7 @@ import {
   getInputStyle
 } from "./inputs";
 import type {
+  AccountCacheEntry,
   CarrierCacheEntry,
   PaymentMethodCacheEntry,
   PaymentTermCacheEntry
@@ -6337,7 +6338,7 @@ type CrudPayloadResult = { error: string } | { value: Record<string, unknown> };
 
 interface ResourceCrudProps {
   desktopApi: KyberRockDesktopApi;
-  entityType: "vehicle" | "driver" | "carrier";
+  entityType: "vehicle" | "driver" | "carrier" | "account";
   singular: string;
   gender: "m" | "f";
   title: string;
@@ -7254,10 +7255,14 @@ function paymentConditionRaw(term: PaymentTermCacheEntry): string {
 
 function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   const [methods, setMethods] = useState<PaymentMethodCacheEntry[]>([]);
+  const [accounts, setAccounts] = useState<AccountCacheEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState("");
+  const [alias, setAlias] = useState("");
+  const [omieCode, setOmieCode] = useState("");
+  const [accountId, setAccountId] = useState("");
   const [isCustomerCredit, setIsCustomerCredit] = useState(false);
   const [isActive, setIsActive] = useState(true);
   const [formError, setFormError] = useState<string | null>(null);
@@ -7269,12 +7274,12 @@ function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi })
   const loadMethods = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await desktopApi.queryCache({
-        entityType: "payment_method",
-        activeOnly: false,
-        limit: 200
-      });
-      setMethods(result.rows as PaymentMethodCacheEntry[]);
+      const [methodResult, accountResult] = await Promise.all([
+        desktopApi.queryCache({ entityType: "payment_method", activeOnly: false, limit: 200 }),
+        desktopApi.queryCache({ entityType: "account", activeOnly: false, limit: 200 })
+      ]);
+      setMethods(methodResult.rows as PaymentMethodCacheEntry[]);
+      setAccounts(accountResult.rows as AccountCacheEntry[]);
     } finally {
       setLoading(false);
     }
@@ -7287,6 +7292,9 @@ function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi })
   function openCreate(): void {
     setEditingId(null);
     setName("");
+    setAlias("");
+    setOmieCode("");
+    setAccountId("");
     setIsCustomerCredit(false);
     setIsActive(true);
     setFormError(null);
@@ -7296,6 +7304,9 @@ function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi })
   function openEdit(method: PaymentMethodCacheEntry): void {
     setEditingId(method.id);
     setName(method.name);
+    setAlias(method.alias ?? "");
+    setOmieCode(method.omieCode ?? "");
+    setAccountId(method.accountId ?? "");
     setIsCustomerCredit(method.isCustomerCredit);
     setIsActive(method.isActive);
     setFormError(null);
@@ -7310,10 +7321,22 @@ function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi })
     setSaving(true);
     try {
       if (editingId) {
-        await desktopApi.paymentMethodsUpdate(editingId, { name: name.trim(), isActive });
+        await desktopApi.paymentMethodsUpdate(editingId, {
+          name: name.trim(),
+          alias: alias.trim() || null,
+          omieCode: omieCode.trim() || null,
+          accountId: accountId || null,
+          isActive
+        });
         showFlash("success", "Forma de pagamento atualizada.");
       } else {
-        await desktopApi.paymentMethodsCreate({ name: name.trim(), isCustomerCredit });
+        await desktopApi.paymentMethodsCreate({
+          name: name.trim(),
+          alias: alias.trim() || null,
+          omieCode: omieCode.trim() || null,
+          accountId: accountId || null,
+          isCustomerCredit
+        });
         showFlash("success", "Forma de pagamento criada.");
       }
       setShowForm(false);
@@ -7363,6 +7386,12 @@ function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi })
         >
           <FormSection title="Dados">
             <TextInput label="Nome" value={name} onChange={setName} required />
+            <TextInput
+              label="Apelido"
+              value={alias}
+              onChange={setAlias}
+              placeholder="Rotulo exibido (opcional)"
+            />
             {editingId ? (
               <label style={styles.checkboxLabel}>
                 <input
@@ -7383,6 +7412,31 @@ function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi })
               </label>
             )}
           </FormSection>
+          <FormSection title="Integracao financeira">
+            <Field
+              label="Conta"
+              hint="Conta usada no fechamento (ex.: Caixinha, OMIE Cash, GetNet)."
+            >
+              <select
+                value={accountId}
+                onChange={(e) => setAccountId(e.target.value)}
+                style={getInputStyle(false)}
+              >
+                <option value="">Sem conta</option>
+                {accounts.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <TextInput
+              label="Codigo OMIE"
+              value={omieCode}
+              onChange={setOmieCode}
+              placeholder="Codigo da forma no OMIE (opcional)"
+            />
+          </FormSection>
         </CrudFormShell>
       ) : null}
 
@@ -7401,26 +7455,34 @@ function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi })
           {
             key: "name",
             header: "Forma",
-            width: "minmax(200px, 1.2fr)",
+            width: "minmax(190px, 1.2fr)",
             render: (m: PaymentMethodCacheEntry) => (
               <>
-                <CellPrimary>{m.name}</CellPrimary>
-                {m.isCustomerCredit ? <CellMuted>Credito do cliente (fiado)</CellMuted> : null}
+                <CellPrimary>{m.displayName}</CellPrimary>
+                <CellMuted>
+                  {[m.alias ? m.name : null, m.isCustomerCredit ? "Credito do cliente (fiado)" : null]
+                    .filter(Boolean)
+                    .join(" | ") || "-"}
+                </CellMuted>
               </>
             )
           },
           {
-            key: "type",
-            header: "Origem",
-            width: "120px",
-            render: (m: PaymentMethodCacheEntry) => (
-              <CellMuted>{m.isSystem ? "Sistema" : "Personalizada"}</CellMuted>
-            )
+            key: "account",
+            header: "Conta",
+            width: "minmax(130px, 0.9fr)",
+            render: (m: PaymentMethodCacheEntry) => <CellText>{m.accountName ?? "-"}</CellText>
+          },
+          {
+            key: "omie",
+            header: "Cod. OMIE",
+            width: "110px",
+            render: (m: PaymentMethodCacheEntry) => <CellMuted>{m.omieCode ?? "-"}</CellMuted>
           },
           {
             key: "status",
             header: "Status",
-            width: "100px",
+            width: "90px",
             render: (m: PaymentMethodCacheEntry) => (
               <CellMuted>{m.isActive ? "Ativa" : "Inativa"}</CellMuted>
             )
@@ -7441,7 +7503,7 @@ function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi })
         rows={methods}
         rowKey={(m) => m.id}
         loading={loading}
-        minWidth="640px"
+        minWidth="760px"
         emptyTitle="Nenhuma forma de pagamento."
         emptyHint="As formas padrao sao criadas automaticamente."
       />
@@ -7629,10 +7691,85 @@ function PaymentConditionsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi
   );
 }
 
+function AccountsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
+  const fields: CrudField[] = [
+    { key: "name", label: "Nome", required: true },
+    {
+      key: "omieCode",
+      label: "Codigo OMIE",
+      helper: "Codigo da conta corrente no OMIE (opcional)."
+    }
+  ];
+
+  const columns: Array<DataTableColumn<Record<string, unknown>>> = [
+    {
+      key: "name",
+      header: "Conta",
+      width: "minmax(200px, 1.3fr)",
+      render: (item) => <CellPrimary>{String(item.name ?? "")}</CellPrimary>
+    },
+    {
+      key: "omie",
+      header: "Cod. OMIE",
+      width: "140px",
+      render: (item) => <CellMuted>{String(item.omieCode ?? "") || "-"}</CellMuted>
+    },
+    {
+      key: "type",
+      header: "Origem",
+      width: "120px",
+      render: (item) => <CellMuted>{item.isSystem ? "Sistema" : "Personalizada"}</CellMuted>
+    }
+  ];
+
+  return (
+    <ResourceCrud
+      desktopApi={desktopApi}
+      entityType="account"
+      singular="Conta"
+      gender="f"
+      title="Contas"
+      description="Contas usadas no fechamento financeiro. Vincule as formas de pagamento a elas."
+      searchPlaceholder="Buscar contas..."
+      emptyHint={'Cadastre pelo botao "Nova conta".'}
+      modalMaxWidth={520}
+      fields={fields}
+      columns={columns}
+      rowToForm={(item) => ({
+        name: String(item.name ?? ""),
+        omieCode: String(item.omieCode ?? "")
+      })}
+      buildPayload={(form) => {
+        if (!form.name.trim()) return { error: "Informe o nome da conta." };
+        return { value: { name: form.name.trim(), omieCode: form.omieCode.trim() } };
+      }}
+      create={(payload) =>
+        desktopApi
+          .accountsCreate({
+            name: payload.name as string,
+            omieCode: (payload.omieCode as string) || undefined
+          })
+          .then(() => undefined)
+      }
+      update={(id, payload) =>
+        desktopApi
+          .accountsUpdate(id, {
+            name: payload.name as string,
+            omieCode: (payload.omieCode as string) || null
+          })
+          .then(() => undefined)
+      }
+      remove={(id) => desktopApi.accountsDelete(id)}
+      deleteDescription="A conta sera removida. Formas de pagamento vinculadas ficam sem conta."
+    />
+  );
+}
+
 function PaymentRegistrationsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   return (
-    <div>
+    <div style={{ display: "grid", gap: "28px" }}>
       <PaymentMethodsCrud desktopApi={desktopApi} />
+      <AccountsCrud desktopApi={desktopApi} />
       <PaymentConditionsCrud desktopApi={desktopApi} />
     </div>
   );

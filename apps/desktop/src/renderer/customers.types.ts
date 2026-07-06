@@ -60,8 +60,23 @@ export interface PaymentMethodCacheEntry {
   id: string;
   code: string;
   name: string;
+  alias: string | null;
+  displayName: string;
+  omieCode: string | null;
+  accountId: string | null;
+  accountName: string | null;
   isSystem: boolean;
   isCustomerCredit: boolean;
+  sortOrder: number;
+  isActive: boolean;
+}
+
+export interface AccountCacheEntry {
+  id: string;
+  code: string | null;
+  name: string;
+  omieCode: string | null;
+  isSystem: boolean;
   sortOrder: number;
   isActive: boolean;
 }

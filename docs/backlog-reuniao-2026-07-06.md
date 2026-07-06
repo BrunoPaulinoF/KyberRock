@@ -35,10 +35,11 @@ financeiro · **P1** essencial para o piloto · **P2** melhoria/escalabilidade.
       venda, antes de amarrar a lógica de envio.
 - [ ] **P1** Botão **ativar/desativar** por forma de pagamento (algumas do OMIE são só para
       transferência interna e não devem aparecer).
-- [ ] **P1** Permitir **apelido (alias)** por forma de pagamento — o apelido é o que aparece na UI
-      (os nomes vindos do OMIE ficam "bugados").
-- [ ] **P0** **Vincular forma de pagamento → conta** no cadastro (dinheiro→caixinha; boleto/PIX→Home
+- [x] **P1** Permitir **apelido (alias)** por forma de pagamento — o apelido é o que aparece na UI
+      (os nomes vindos do OMIE ficam "bugados"). *(Implementado, incl. campo de código OMIE por forma.)*
+- [x] **P0** **Vincular forma de pagamento → conta** no cadastro (dinheiro→caixinha; boleto/PIX→OMIE
       Cash; débito→GetNet), para o pedido de venda já sair com a conta correta.
+      *(Implementado: cadastro de contas, apelido e código OMIE por forma, vínculos pré-configurados.)*
 - [ ] **P0** **Boleto bancário deve usar obrigatoriamente a conta Home Cash** (banco digital) — o boleto
       é faturado lá para ter conciliação automática no retorno.
 - [ ] **P1** Deixar a **condição de pagamento pré-cadastrada no cliente**, mas **editável na hora** da
