@@ -5,6 +5,7 @@ import {
   buildFreightInput,
   createCacheSelectOptions,
   filterCacheSelectOptions,
+  formatElapsedSince,
   isTransportReady,
   readStoredThemeMode,
   shouldLinkCreatedDriverToCarrier
@@ -82,6 +83,16 @@ describe("App", () => {
     expect(readStoredThemeMode({ getItem: () => "light" })).toBe("light");
     expect(readStoredThemeMode({ getItem: () => "invalid" })).toBe("light");
     expect(readStoredThemeMode(null)).toBe("light");
+  });
+
+  it("formats how long ago the truck entered", () => {
+    const now = new Date("2026-07-06T12:00:00Z");
+    expect(formatElapsedSince("2026-07-06T11:59:30Z", now)).toBe("agora mesmo");
+    expect(formatElapsedSince("2026-07-06T11:48:00Z", now)).toBe("ha 12 min");
+    expect(formatElapsedSince("2026-07-06T09:55:00Z", now)).toBe("ha 2 h 05 min");
+    expect(formatElapsedSince("2026-07-04T10:00:00Z", now)).toBe("ha 2 d 2 h");
+    expect(formatElapsedSince(null, now)).toBe("-");
+    expect(formatElapsedSince("not-a-date", now)).toBe("-");
   });
 
   it("builds and filters cache select modal options", () => {
