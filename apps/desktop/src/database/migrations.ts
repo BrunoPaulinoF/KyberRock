@@ -930,5 +930,80 @@ SET deleted_at = datetime('now'), is_active = 0, updated_at = datetime('now')
 WHERE deleted_at IS NULL
   AND (omie_code IS NOT NULL OR id LIKE 'omie_%');
 `
+  },
+  {
+    version: 26,
+    name: "payment_accounts_and_method_binding",
+    sql: `
+-- Contas (conta corrente) usadas para o fechamento financeiro. Cada forma de
+-- pagamento aponta para uma conta, permitindo espelhar recebimento x faturamento.
+CREATE TABLE IF NOT EXISTS accounts (
+  id TEXT PRIMARY KEY,
+  company_id TEXT NOT NULL REFERENCES companies(id),
+  code TEXT,
+  name TEXT NOT NULL,
+  omie_code TEXT,
+  is_system INTEGER NOT NULL DEFAULT 0 CHECK (is_system IN (0, 1)),
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT,
+  sync_version INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_company_code
+  ON accounts(company_id, code)
+  WHERE deleted_at IS NULL AND code IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_accounts_company_active
+  ON accounts(company_id, is_active, deleted_at);
+
+-- Semeia as contas padrao para empresas ja existentes.
+INSERT INTO accounts (id, company_id, code, name, is_system, sort_order, is_active, created_at, updated_at)
+SELECT lower(hex(randomblob(16))), c.id, a.code, a.name, 1, a.sort_order, 1, datetime('now'), datetime('now')
+FROM companies c
+CROSS JOIN (
+  SELECT 'caixinha' AS code, 'Caixinha' AS name, 1 AS sort_order
+  UNION ALL SELECT 'omie_cash', 'OMIE Cash', 2
+  UNION ALL SELECT 'getnet', 'GetNet', 3
+) a
+WHERE NOT EXISTS (
+  SELECT 1 FROM accounts ac
+  WHERE ac.company_id = c.id AND ac.code = a.code AND ac.deleted_at IS NULL
+);
+
+-- Forma de pagamento: apelido, codigo OMIE e vinculo com a conta.
+ALTER TABLE payment_methods ADD COLUMN alias TEXT;
+ALTER TABLE payment_methods ADD COLUMN omie_code TEXT;
+ALTER TABLE payment_methods ADD COLUMN account_id TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_payment_methods_company_account
+  ON payment_methods(company_id, account_id);
+
+-- Vinculos padrao forma -> conta, pre-configurados conforme operacao.
+UPDATE payment_methods SET
+  account_id = (
+    SELECT ac.id FROM accounts ac
+    WHERE ac.company_id = payment_methods.company_id AND ac.code = 'caixinha' AND ac.deleted_at IS NULL
+  ),
+  updated_at = datetime('now')
+WHERE code = 'cash' AND account_id IS NULL AND deleted_at IS NULL;
+
+UPDATE payment_methods SET
+  account_id = (
+    SELECT ac.id FROM accounts ac
+    WHERE ac.company_id = payment_methods.company_id AND ac.code = 'omie_cash' AND ac.deleted_at IS NULL
+  ),
+  updated_at = datetime('now')
+WHERE code IN ('pix', 'boleto') AND account_id IS NULL AND deleted_at IS NULL;
+
+UPDATE payment_methods SET
+  account_id = (
+    SELECT ac.id FROM accounts ac
+    WHERE ac.company_id = payment_methods.company_id AND ac.code = 'getnet' AND ac.deleted_at IS NULL
+  ),
+  updated_at = datetime('now')
+WHERE code IN ('debit_card', 'credit_card') AND account_id IS NULL AND deleted_at IS NULL;
+`
   }
 ];

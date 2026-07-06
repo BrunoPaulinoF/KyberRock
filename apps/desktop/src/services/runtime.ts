@@ -272,6 +272,7 @@ import {
   listIndependentDrivers
 } from "./driver-carriers.js";
 import {
+  applyDefaultAccountBindings,
   createPaymentMethod,
   deletePaymentMethod,
   ensureDefaultPaymentMethods,
@@ -279,6 +280,15 @@ import {
   type CreatePaymentMethodInput,
   type UpdatePaymentMethodInput
 } from "./payment-methods.js";
+import {
+  createAccount,
+  deleteAccount,
+  ensureDefaultAccounts,
+  listAccounts,
+  updateAccount,
+  type CreateAccountInput,
+  type UpdateAccountInput
+} from "./accounts.js";
 import {
   createPaymentTerm,
   deletePaymentTerm,
@@ -331,7 +341,9 @@ export class DesktopRuntime {
     this.cacheStore = new CacheStore(this.database);
     this.reportService = new ReportService(this.database);
     this.ensureIdentity();
+    ensureDefaultAccounts(this.database, this.ensureIdentity().companyId);
     ensureDefaultPaymentMethods(this.database, this.ensureIdentity().companyId);
+    applyDefaultAccountBindings(this.database, this.ensureIdentity().companyId);
     this.cacheStore.loadAll(this.ensureIdentity().companyId);
     initializeSupabaseFromSettings(this.database);
   }
@@ -809,7 +821,9 @@ export class DesktopRuntime {
 
     const pulled = await pullDesktopDataFromCloud(this.database, identity);
     recordCloudSyncRanAt(this.database);
+    ensureDefaultAccounts(this.database, identity.companyId);
     ensureDefaultPaymentMethods(this.database, identity.companyId);
+    applyDefaultAccountBindings(this.database, identity.companyId);
     this.cacheStore.loadAll(identity.companyId);
 
     return {
@@ -964,7 +978,9 @@ export class DesktopRuntime {
       }
 
       recordCloudSyncRanAt(this.database);
+      ensureDefaultAccounts(this.database, identity.companyId);
       ensureDefaultPaymentMethods(this.database, identity.companyId);
+      applyDefaultAccountBindings(this.database, identity.companyId);
       this.cacheStore.loadAll(identity.companyId);
       return { success: failed === 0, synced, failed, errors };
     } catch (error) {
@@ -1393,6 +1409,36 @@ export class DesktopRuntime {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
     deletePaymentMethod(this.database, id);
+    this.cacheStore.invalidate("payment_method", identity.companyId);
+  }
+
+  listAccounts(): unknown {
+    this.assertDesktopAccess();
+    return listAccounts(this.database, this.ensureIdentity().companyId);
+  }
+
+  createAccount(input: Omit<CreateAccountInput, "companyId">): unknown {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    const result = createAccount(this.database, { ...input, companyId: identity.companyId });
+    this.cacheStore.invalidate("account", identity.companyId);
+    return result;
+  }
+
+  updateAccount(id: string, input: UpdateAccountInput): unknown {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    const result = updateAccount(this.database, id, input);
+    this.cacheStore.invalidate("account", identity.companyId);
+    return result;
+  }
+
+  deleteAccount(id: string): void {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    deleteAccount(this.database, id);
+    // A exclusao desvincula formas de pagamento; recarrega ambos os caches.
+    this.cacheStore.invalidate("account", identity.companyId);
     this.cacheStore.invalidate("payment_method", identity.companyId);
   }
 

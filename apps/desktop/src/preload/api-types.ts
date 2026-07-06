@@ -39,6 +39,7 @@ import type {
   CreatePaymentMethodInput,
   UpdatePaymentMethodInput
 } from "../services/payment-methods";
+import type { CreateAccountInput, UpdateAccountInput } from "../services/accounts";
 import type { CreatePaymentTermInput, UpdatePaymentTermInput } from "../services/payment-terms";
 import type {
   AddPriceTableItemInput,
@@ -277,6 +278,10 @@ export interface KyberRockDesktopApi {
   ) => Promise<unknown>;
   paymentMethodsUpdate: (id: string, input: UpdatePaymentMethodInput) => Promise<unknown>;
   paymentMethodsDelete: (id: string) => Promise<void>;
+  accountsList: () => Promise<unknown[]>;
+  accountsCreate: (input: Omit<CreateAccountInput, "companyId">) => Promise<unknown>;
+  accountsUpdate: (id: string, input: UpdateAccountInput) => Promise<unknown>;
+  accountsDelete: (id: string) => Promise<void>;
   paymentTermsCreate: (input: Omit<CreatePaymentTermInput, "companyId">) => Promise<unknown>;
   paymentTermsUpdate: (id: string, input: UpdatePaymentTermInput) => Promise<unknown>;
   paymentTermsDelete: (id: string) => Promise<void>;
