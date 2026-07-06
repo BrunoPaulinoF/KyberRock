@@ -477,6 +477,21 @@ export function CellMuted({ children }: { children: ReactNode }) {
   );
 }
 
+export function CellText({ children }: { children: ReactNode }) {
+  return (
+    <span
+      style={{
+        color: "var(--kr-text)",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap"
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
 export function SourceBadge({ source }: { source: string }) {
   const isOmie = source === "omie";
   return (
