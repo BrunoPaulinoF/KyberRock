@@ -35,6 +35,7 @@ import {
 import type { DesktopAccessStatus } from "../services/desktop-activation";
 import type { DesktopStatusSnapshot } from "../services/status";
 import { createInitialUpdateState, type UpdateState } from "../services/update-flow";
+import { validatePaymentMethodCondition } from "../services/payment-method-condition-guard";
 import type {
   OperationFreightInput,
   OperationType,
@@ -1209,6 +1210,14 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     const validationError = validateWeighingForm(form);
     if (validationError) {
       setFormError(validationError);
+      return;
+    }
+
+    const paymentGuard = await resolvePaymentConditionGuard(desktopApi, form);
+    if (!paymentGuard.allowed) {
+      setFormError(
+        paymentGuard.message ?? "Combinacao de forma e condicao de pagamento invalida."
+      );
       return;
     }
 
@@ -3365,6 +3374,50 @@ function describeUpdateState(state: UpdateState): string {
   }
 
   return "Sem atualizacao pendente.";
+}
+
+function extractConditionRaw(rulesJson: string): string {
+  try {
+    const rules = JSON.parse(rulesJson || "{}") as { raw?: string };
+    return typeof rules.raw === "string" ? rules.raw : "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Resolve a forma e a condicao de pagamento selecionadas (via cache) e aplica
+ * a trava de compatibilidade. Retorna `{ allowed: true }` quando nao ha forma
+ * definida ou quando ela nao existe mais no cache.
+ */
+async function resolvePaymentConditionGuard(
+  desktopApi: KyberRockDesktopApi,
+  form: WeighingFormState
+): Promise<{ allowed: boolean; message?: string }> {
+  if (!form.paymentMethodId) return { allowed: true };
+  const methodResult = await desktopApi.queryCache({ entityType: "payment_method", limit: 200 });
+  const method = (methodResult.rows as PaymentMethodCacheEntry[]).find(
+    (m) => m.id === form.paymentMethodId
+  );
+  if (!method) return { allowed: true };
+  const methodLike = { code: method.code, isCustomerCredit: method.isCustomerCredit };
+
+  if (form.paymentMode === "manual") {
+    const installmentCount = Number(form.manualInstallments.trim());
+    return validatePaymentMethodCondition(methodLike, {
+      installmentCount: Number.isFinite(installmentCount) ? installmentCount : 0
+    });
+  }
+
+  let raw = "";
+  if (form.paymentTermId) {
+    const termResult = await desktopApi.queryCache({ entityType: "payment_term", limit: 200 });
+    const term = (termResult.rows as PaymentTermCacheEntry[]).find(
+      (t) => t.id === form.paymentTermId
+    );
+    if (term) raw = extractConditionRaw(term.rulesJson);
+  }
+  return validatePaymentMethodCondition(methodLike, { raw });
 }
 
 function validateWeighingForm(form: WeighingFormState): string | null {

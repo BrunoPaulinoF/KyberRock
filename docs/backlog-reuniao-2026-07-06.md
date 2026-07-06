@@ -48,8 +48,9 @@ financeiro · **P1** essencial para o piloto · **P2** melhoria/escalabilidade.
 
 ### Travas / validações de pagamento
 
-- [ ] **P0** Impedir combinações inválidas: **dinheiro (à vista) não pode ter parcelamento** 7/14/21/28.
-      Dinheiro/crédito precisam assumir a condição específica correspondente.
+- [x] **P0** Impedir combinações inválidas: **dinheiro (à vista) não pode ter parcelamento** 7/14/21/28.
+      *(Implementado: validador puro `payment-method-condition-guard` + trava no submit da Nova Entrada.)*
+- [ ] **P0** Dinheiro/crédito precisam assumir a condição específica correspondente (regra de crédito/fiado pendente).
 - [ ] **P0** Fiado sem forma definida sobe o pedido de venda ao OMIE com **conta caixinha** (ainda não se
       sabe como o cliente vai pagar); se sair já com boleto, usa Home Cash.
 
