@@ -24,6 +24,10 @@ export interface CustomerCacheEntry {
   creditAccountEnabled: boolean;
   creditClosingDay: number | null;
   creditBoletoDays: number | null;
+  creditPeriodicity: "monthly" | "biweekly" | "weekly";
+  creditSecondClosingDay: number | null;
+  creditSecondBoletoDays: number | null;
+  creditClosingWeekday: number | null;
   zipcode: string | null;
   addressStreet: string | null;
   addressNumber: string | null;
@@ -196,6 +200,10 @@ interface CustomerRow {
   credit_account_enabled: number;
   credit_closing_day: number | null;
   credit_boleto_days: number | null;
+  credit_periodicity: "monthly" | "biweekly" | "weekly";
+  credit_second_closing_day: number | null;
+  credit_second_boleto_days: number | null;
+  credit_closing_weekday: number | null;
   zipcode: string | null;
   address_street: string | null;
   address_number: string | null;
@@ -338,6 +346,10 @@ function mapCustomer(row: CustomerRow): CustomerCacheEntry {
     creditAccountEnabled: row.credit_account_enabled === 1,
     creditClosingDay: row.credit_closing_day,
     creditBoletoDays: row.credit_boleto_days,
+    creditPeriodicity: row.credit_periodicity,
+    creditSecondClosingDay: row.credit_second_closing_day,
+    creditSecondBoletoDays: row.credit_second_boleto_days,
+    creditClosingWeekday: row.credit_closing_weekday,
     zipcode: row.zipcode,
     addressStreet: row.address_street,
     addressNumber: row.address_number,
@@ -735,6 +747,7 @@ export class CacheStore {
                 credit_limit_cents, credit_mode, open_receivables_cents, omie_billing_blocked,
                 source, sync_status, needs_push, last_synced_at, observations, default_carrier_id, default_payment_term_id,
                 default_payment_method_id, credit_account_enabled, credit_closing_day, credit_boleto_days,
+                credit_periodicity, credit_second_closing_day, credit_second_boleto_days, credit_closing_weekday,
                 zipcode, address_street, address_number, address_complement, neighborhood, city, state, is_active
          FROM customers WHERE company_id = ? AND deleted_at IS NULL`
       )

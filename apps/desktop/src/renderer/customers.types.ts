@@ -20,6 +20,10 @@ export interface CustomerCacheEntry {
   creditAccountEnabled: boolean;
   creditClosingDay: number | null;
   creditBoletoDays: number | null;
+  creditPeriodicity: "monthly" | "biweekly" | "weekly";
+  creditSecondClosingDay: number | null;
+  creditSecondBoletoDays: number | null;
+  creditClosingWeekday: number | null;
   zipcode: string | null;
   addressStreet: string | null;
   addressNumber: string | null;
@@ -97,6 +101,10 @@ export interface CustomerFormData {
   creditAccountEnabled: boolean;
   creditClosingDay: string;
   creditBoletoDays: string;
+  creditPeriodicity: "monthly" | "biweekly" | "weekly";
+  creditSecondClosingDay: string;
+  creditSecondBoletoDays: string;
+  creditClosingWeekday: string;
   zipcode: string;
   addressStreet: string;
   addressNumber: string;

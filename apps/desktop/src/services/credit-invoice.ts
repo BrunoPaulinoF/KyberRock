@@ -177,3 +177,46 @@ export function computeCreditInvoiceSchedule(
       return computeWeekly(config, operationDate);
   }
 }
+
+/** Campos de credito do cliente (fiado) usados para montar a periodicidade. */
+export interface CustomerCreditFields {
+  creditAccountEnabled: boolean;
+  creditPeriodicity: "monthly" | "biweekly" | "weekly";
+  creditClosingDay: number | null;
+  creditBoletoDays: number | null;
+  creditSecondClosingDay: number | null;
+  creditSecondBoletoDays: number | null;
+  creditClosingWeekday: number | null;
+}
+
+/**
+ * Monta a configuracao de fechamento a partir dos campos de credito do cliente.
+ * Retorna `null` quando o cliente nao tem conta de credito (fiado) habilitada.
+ */
+export function creditClosingConfigFromCustomer(
+  customer: CustomerCreditFields
+): CreditClosingConfig | null {
+  if (!customer.creditAccountEnabled) return null;
+  switch (customer.creditPeriodicity) {
+    case "weekly":
+      return {
+        periodicity: "weekly",
+        closingWeekday: customer.creditClosingWeekday ?? 0,
+        boletoDays: customer.creditBoletoDays ?? 0
+      };
+    case "biweekly":
+      return {
+        periodicity: "biweekly",
+        firstClosingDay: customer.creditClosingDay ?? 1,
+        secondClosingDay: customer.creditSecondClosingDay ?? 16,
+        firstBoletoDays: customer.creditBoletoDays ?? 0,
+        secondBoletoDays: customer.creditSecondBoletoDays ?? 0
+      };
+    default:
+      return {
+        periodicity: "monthly",
+        closingDay: customer.creditClosingDay ?? 1,
+        boletoDays: customer.creditBoletoDays ?? 0
+      };
+  }
+}

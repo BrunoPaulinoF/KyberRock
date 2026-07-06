@@ -1020,5 +1020,20 @@ UPDATE payment_methods SET
   updated_at = datetime('now')
 WHERE code = 'customer_credit' AND account_id IS NULL AND deleted_at IS NULL;
 `
+  },
+  {
+    version: 28,
+    name: "customer_credit_periodicity",
+    sql: `
+-- Periodicidade do fechamento do credito do cliente (fiado):
+--  monthly  -> credit_closing_day + credit_boleto_days;
+--  biweekly -> credit_closing_day/credit_boleto_days (1o) + credit_second_closing_day/credit_second_boleto_days (2o);
+--  weekly   -> credit_closing_weekday (0=domingo..6=sabado) + credit_boleto_days.
+ALTER TABLE customers ADD COLUMN credit_periodicity TEXT NOT NULL DEFAULT 'monthly'
+  CHECK (credit_periodicity IN ('monthly', 'biweekly', 'weekly'));
+ALTER TABLE customers ADD COLUMN credit_second_closing_day INTEGER;
+ALTER TABLE customers ADD COLUMN credit_second_boleto_days INTEGER;
+ALTER TABLE customers ADD COLUMN credit_closing_weekday INTEGER;
+`
   }
 ];

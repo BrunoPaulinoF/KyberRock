@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { computeCreditInvoiceSchedule } from "./credit-invoice.js";
+import {
+  computeCreditInvoiceSchedule,
+  creditClosingConfigFromCustomer
+} from "./credit-invoice.js";
 
 describe("computeCreditInvoiceSchedule - monthly", () => {
   const monthly = (closingDay: number, boletoDays: number) =>
@@ -127,5 +130,57 @@ describe("computeCreditInvoiceSchedule - weekly", () => {
 
   it("rejects an invalid weekday", () => {
     expect(() => computeCreditInvoiceSchedule(weekly(7, 0), new Date())).toThrow(/semana/i);
+  });
+});
+
+describe("creditClosingConfigFromCustomer", () => {
+  const base = {
+    creditAccountEnabled: true,
+    creditPeriodicity: "monthly" as const,
+    creditClosingDay: 15,
+    creditBoletoDays: 7,
+    creditSecondClosingDay: null,
+    creditSecondBoletoDays: null,
+    creditClosingWeekday: null
+  };
+
+  it("returns null when the credit account is disabled", () => {
+    expect(creditClosingConfigFromCustomer({ ...base, creditAccountEnabled: false })).toBeNull();
+  });
+
+  it("maps a monthly customer", () => {
+    expect(creditClosingConfigFromCustomer(base)).toEqual({
+      periodicity: "monthly",
+      closingDay: 15,
+      boletoDays: 7
+    });
+  });
+
+  it("maps a biweekly customer", () => {
+    const config = creditClosingConfigFromCustomer({
+      ...base,
+      creditPeriodicity: "biweekly",
+      creditClosingDay: 1,
+      creditBoletoDays: 5,
+      creditSecondClosingDay: 16,
+      creditSecondBoletoDays: 10
+    });
+    expect(config).toEqual({
+      periodicity: "biweekly",
+      firstClosingDay: 1,
+      secondClosingDay: 16,
+      firstBoletoDays: 5,
+      secondBoletoDays: 10
+    });
+  });
+
+  it("maps a weekly customer", () => {
+    const config = creditClosingConfigFromCustomer({
+      ...base,
+      creditPeriodicity: "weekly",
+      creditClosingWeekday: 5,
+      creditBoletoDays: 2
+    });
+    expect(config).toEqual({ periodicity: "weekly", closingWeekday: 5, boletoDays: 2 });
   });
 });

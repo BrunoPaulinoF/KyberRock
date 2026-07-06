@@ -54,6 +54,10 @@ const initialForm: CustomerFormData = {
   creditAccountEnabled: false,
   creditClosingDay: "",
   creditBoletoDays: "",
+  creditPeriodicity: "monthly",
+  creditSecondClosingDay: "",
+  creditSecondBoletoDays: "",
+  creditClosingWeekday: "",
   zipcode: "",
   addressStreet: "",
   addressNumber: "",
@@ -371,6 +375,13 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
         customer.creditClosingDay != null ? String(customer.creditClosingDay) : "",
       creditBoletoDays:
         customer.creditBoletoDays != null ? String(customer.creditBoletoDays) : "",
+      creditPeriodicity: customer.creditPeriodicity ?? "monthly",
+      creditSecondClosingDay:
+        customer.creditSecondClosingDay != null ? String(customer.creditSecondClosingDay) : "",
+      creditSecondBoletoDays:
+        customer.creditSecondBoletoDays != null ? String(customer.creditSecondBoletoDays) : "",
+      creditClosingWeekday:
+        customer.creditClosingWeekday != null ? String(customer.creditClosingWeekday) : "",
       zipcode: customer.zipcode ?? "",
       addressStreet: customer.addressStreet ?? "",
       addressNumber: customer.addressNumber ?? "",
@@ -505,16 +516,54 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
       ? (parseMoneyInputToCents(form.creditLimitReais) ?? undefined)
       : undefined;
 
-    const creditClosingDay = form.creditAccountEnabled ? Number(form.creditClosingDay) : null;
-    const creditBoletoDays = form.creditAccountEnabled ? Number(form.creditBoletoDays) : null;
+    const creditPeriodicity = form.creditAccountEnabled ? form.creditPeriodicity : "monthly";
+    let creditClosingDay: number | null = null;
+    let creditBoletoDays: number | null = null;
+    let creditSecondClosingDay: number | null = null;
+    let creditSecondBoletoDays: number | null = null;
+    let creditClosingWeekday: number | null = null;
     if (form.creditAccountEnabled) {
-      if (!Number.isInteger(creditClosingDay) || creditClosingDay! < 1 || creditClosingDay! > 31) {
-        setFormError("Informe o dia de fechamento (1 a 31) para o credito do cliente.");
-        return;
-      }
-      if (!Number.isInteger(creditBoletoDays) || creditBoletoDays! < 0) {
+      creditBoletoDays = Number(form.creditBoletoDays);
+      if (!Number.isInteger(creditBoletoDays) || creditBoletoDays < 0) {
         setFormError("Informe os dias apos o fechamento para o vencimento do boleto.");
         return;
+      }
+      if (creditPeriodicity === "weekly") {
+        creditClosingWeekday = Number(form.creditClosingWeekday);
+        if (
+          !Number.isInteger(creditClosingWeekday) ||
+          creditClosingWeekday < 0 ||
+          creditClosingWeekday > 6
+        ) {
+          setFormError("Selecione o dia da semana do fechamento.");
+          return;
+        }
+      } else {
+        creditClosingDay = Number(form.creditClosingDay);
+        if (!Number.isInteger(creditClosingDay) || creditClosingDay < 1 || creditClosingDay > 31) {
+          setFormError("Informe o dia de fechamento (1 a 31) para o credito do cliente.");
+          return;
+        }
+        if (creditPeriodicity === "biweekly") {
+          creditSecondClosingDay = Number(form.creditSecondClosingDay);
+          creditSecondBoletoDays = Number(form.creditSecondBoletoDays);
+          if (
+            !Number.isInteger(creditSecondClosingDay) ||
+            creditSecondClosingDay < 1 ||
+            creditSecondClosingDay > 31
+          ) {
+            setFormError("Informe o segundo dia de fechamento (1 a 31).");
+            return;
+          }
+          if (creditSecondClosingDay <= creditClosingDay) {
+            setFormError("O segundo dia de fechamento deve ser maior que o primeiro.");
+            return;
+          }
+          if (!Number.isInteger(creditSecondBoletoDays) || creditSecondBoletoDays < 0) {
+            setFormError("Informe os dias para o vencimento do segundo fechamento.");
+            return;
+          }
+        }
       }
     }
     const normalizedZipcode = form.zipcode.replace(/\D/g, "");
@@ -530,7 +579,11 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
           defaultPaymentMethodId: form.defaultPaymentMethodId || null,
           creditAccountEnabled: form.creditAccountEnabled,
           creditClosingDay,
-          creditBoletoDays
+          creditBoletoDays,
+          creditPeriodicity,
+          creditSecondClosingDay,
+          creditSecondBoletoDays,
+          creditClosingWeekday
         };
         const fullPatch = {
           tradeName: form.tradeName.trim(),
@@ -571,6 +624,10 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
           creditAccountEnabled: form.creditAccountEnabled,
           creditClosingDay: creditClosingDay ?? undefined,
           creditBoletoDays: creditBoletoDays ?? undefined,
+          creditPeriodicity,
+          creditSecondClosingDay: creditSecondClosingDay ?? undefined,
+          creditSecondBoletoDays: creditSecondBoletoDays ?? undefined,
+          creditClosingWeekday: creditClosingWeekday ?? undefined,
           zipcode: normalizedZipcode || undefined,
           addressStreet: form.addressStreet.trim() || undefined,
           addressNumber: form.addressNumber.trim() || undefined,
@@ -881,28 +938,127 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
                 Habilitar credito do cliente (fiado)
               </label>
               {form.creditAccountEnabled ? (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-                  <Field label="Dia de fechamento" hint="Dia do mes (1 a 31)">
-                    <input
-                      type="number"
-                      min={1}
-                      max={31}
-                      value={form.creditClosingDay}
-                      onChange={(e) => setForm({ ...form, creditClosingDay: e.target.value })}
+                <div style={{ display: "grid", gap: "8px" }}>
+                  <Field label="Periodicidade do fechamento">
+                    <select
+                      value={form.creditPeriodicity}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          creditPeriodicity: e.target.value as
+                            | "monthly"
+                            | "biweekly"
+                            | "weekly"
+                        })
+                      }
                       style={getInputStyle(false)}
-                      placeholder="Ex: 30"
-                    />
+                    >
+                      <option value="monthly">Mensal</option>
+                      <option value="biweekly">Quinzenal</option>
+                      <option value="weekly">Semanal</option>
+                    </select>
                   </Field>
-                  <Field label="Dias p/ vencimento do boleto" hint="Apos o fechamento">
-                    <input
-                      type="number"
-                      min={0}
-                      value={form.creditBoletoDays}
-                      onChange={(e) => setForm({ ...form, creditBoletoDays: e.target.value })}
-                      style={getInputStyle(false)}
-                      placeholder="Ex: 10"
-                    />
-                  </Field>
+
+                  {form.creditPeriodicity === "weekly" ? (
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                      <Field label="Dia da semana do fechamento">
+                        <select
+                          value={form.creditClosingWeekday}
+                          onChange={(e) =>
+                            setForm({ ...form, creditClosingWeekday: e.target.value })
+                          }
+                          style={getInputStyle(false)}
+                        >
+                          <option value="">Selecione...</option>
+                          <option value="1">Segunda-feira</option>
+                          <option value="2">Terca-feira</option>
+                          <option value="3">Quarta-feira</option>
+                          <option value="4">Quinta-feira</option>
+                          <option value="5">Sexta-feira</option>
+                          <option value="6">Sabado</option>
+                          <option value="0">Domingo</option>
+                        </select>
+                      </Field>
+                      <Field label="Dias p/ vencimento do boleto" hint="Apos o fechamento">
+                        <input
+                          type="number"
+                          min={0}
+                          value={form.creditBoletoDays}
+                          onChange={(e) => setForm({ ...form, creditBoletoDays: e.target.value })}
+                          style={getInputStyle(false)}
+                          placeholder="Ex: 3"
+                        />
+                      </Field>
+                    </div>
+                  ) : (
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                      <Field
+                        label={
+                          form.creditPeriodicity === "biweekly"
+                            ? "1o dia de fechamento"
+                            : "Dia de fechamento"
+                        }
+                        hint="Dia do mes (1 a 31)"
+                      >
+                        <input
+                          type="number"
+                          min={1}
+                          max={31}
+                          value={form.creditClosingDay}
+                          onChange={(e) => setForm({ ...form, creditClosingDay: e.target.value })}
+                          style={getInputStyle(false)}
+                          placeholder={form.creditPeriodicity === "biweekly" ? "Ex: 1" : "Ex: 30"}
+                        />
+                      </Field>
+                      <Field
+                        label={
+                          form.creditPeriodicity === "biweekly"
+                            ? "Dias p/ vencimento (1o)"
+                            : "Dias p/ vencimento do boleto"
+                        }
+                        hint="Apos o fechamento"
+                      >
+                        <input
+                          type="number"
+                          min={0}
+                          value={form.creditBoletoDays}
+                          onChange={(e) => setForm({ ...form, creditBoletoDays: e.target.value })}
+                          style={getInputStyle(false)}
+                          placeholder="Ex: 10"
+                        />
+                      </Field>
+
+                      {form.creditPeriodicity === "biweekly" ? (
+                        <>
+                          <Field label="2o dia de fechamento" hint="Dia do mes (1 a 31)">
+                            <input
+                              type="number"
+                              min={1}
+                              max={31}
+                              value={form.creditSecondClosingDay}
+                              onChange={(e) =>
+                                setForm({ ...form, creditSecondClosingDay: e.target.value })
+                              }
+                              style={getInputStyle(false)}
+                              placeholder="Ex: 16"
+                            />
+                          </Field>
+                          <Field label="Dias p/ vencimento (2o)" hint="Apos o segundo fechamento">
+                            <input
+                              type="number"
+                              min={0}
+                              value={form.creditSecondBoletoDays}
+                              onChange={(e) =>
+                                setForm({ ...form, creditSecondBoletoDays: e.target.value })
+                              }
+                              style={getInputStyle(false)}
+                              placeholder="Ex: 10"
+                            />
+                          </Field>
+                        </>
+                      ) : null}
+                    </div>
+                  )}
                 </div>
               ) : null}
               <Field label="Uso de credito OMIE">
