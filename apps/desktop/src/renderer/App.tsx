@@ -3530,7 +3530,10 @@ function CacheSelect({
         const result = await desktopApi.queryCache({
           entityType,
           search: search.trim(),
-          limit: 20,
+          // Quando ha um filtro por vinculo (ex.: transportadoras do cliente),
+          // buscamos mais linhas para nao perder itens vinculados fora das 20
+          // primeiras antes de aplicar o filtro client-side.
+          limit: filterIds !== undefined ? 200 : 20,
           productFiscalType
         });
         const allOptions = createCacheSelectOptions(result.rows as Array<Record<string, unknown>>);
@@ -3856,6 +3859,15 @@ function WeighingForm({
       try {
         const carriers = await desktopApi.listCarriersByCustomer(form.customerId);
         setAvailableCarrierIds(carriers.map((c) => c.id));
+        // Se o cliente tem exatamente uma transportadora vinculada e nenhuma
+        // foi definida pelo padrao, ja preenchemos para agilizar a entrada.
+        if (carriers.length === 1) {
+          setForm((prev) =>
+            prev.carrierId || prev.customerOwnTransport
+              ? prev
+              : { ...prev, carrierId: carriers[0].id }
+          );
+        }
       } catch {
         setAvailableCarrierIds(undefined);
       }
@@ -4304,6 +4316,12 @@ function WeighingForm({
               setForm((prev) => ({
                 ...prev,
                 customerId: id,
+                // Ao trocar de cliente, puxamos os vinculos padrao dele e
+                // limpamos a transportadora anterior (que pode nao ser dele).
+                carrierId:
+                  typeof item?.defaultCarrierId === "string" && item.defaultCarrierId
+                    ? item.defaultCarrierId
+                    : "",
                 paymentMethodId:
                   typeof item?.defaultPaymentMethodId === "string" && item.defaultPaymentMethodId
                     ? item.defaultPaymentMethodId
