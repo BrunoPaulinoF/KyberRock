@@ -21,6 +21,10 @@ export interface CustomerCacheEntry {
   creditClosingDay: number | null;
   creditBoletoDays: number | null;
   nfRequired: boolean;
+  creditPeriodicity: "monthly" | "biweekly" | "weekly";
+  creditSecondClosingDay: number | null;
+  creditSecondBoletoDays: number | null;
+  creditClosingWeekday: number | null;
   zipcode: string | null;
   addressStreet: string | null;
   addressNumber: string | null;
@@ -62,8 +66,23 @@ export interface PaymentMethodCacheEntry {
   id: string;
   code: string;
   name: string;
+  alias: string | null;
+  displayName: string;
+  omieCode: string | null;
+  accountId: string | null;
+  accountName: string | null;
   isSystem: boolean;
   isCustomerCredit: boolean;
+  sortOrder: number;
+  isActive: boolean;
+}
+
+export interface AccountCacheEntry {
+  id: string;
+  code: string | null;
+  name: string;
+  omieCode: string | null;
+  isSystem: boolean;
   sortOrder: number;
   isActive: boolean;
 }
@@ -85,6 +104,10 @@ export interface CustomerFormData {
   creditClosingDay: string;
   creditBoletoDays: string;
   nfRequired: boolean;
+  creditPeriodicity: "monthly" | "biweekly" | "weekly";
+  creditSecondClosingDay: string;
+  creditSecondBoletoDays: string;
+  creditClosingWeekday: string;
   zipcode: string;
   addressStreet: string;
   addressNumber: string;

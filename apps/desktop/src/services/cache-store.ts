@@ -25,6 +25,10 @@ export interface CustomerCacheEntry {
   creditClosingDay: number | null;
   creditBoletoDays: number | null;
   nfRequired: boolean;
+  creditPeriodicity: "monthly" | "biweekly" | "weekly";
+  creditSecondClosingDay: number | null;
+  creditSecondBoletoDays: number | null;
+  creditClosingWeekday: number | null;
   zipcode: string | null;
   addressStreet: string | null;
   addressNumber: string | null;
@@ -101,8 +105,25 @@ export interface PaymentMethodCacheEntry {
   id: string;
   code: string;
   name: string;
+  /** Apelido opcional; quando presente, e o rotulo exibido. */
+  alias: string | null;
+  /** Nome exibido: apelido quando definido, senao o nome. */
+  displayName: string;
+  omieCode: string | null;
+  accountId: string | null;
+  accountName: string | null;
   isSystem: boolean;
   isCustomerCredit: boolean;
+  sortOrder: number;
+  isActive: boolean;
+}
+
+export interface AccountCacheEntry {
+  id: string;
+  code: string | null;
+  name: string;
+  omieCode: string | null;
+  isSystem: boolean;
   sortOrder: number;
   isActive: boolean;
 }
@@ -138,6 +159,7 @@ export type CacheEntityType =
   | "carrier"
   | "payment_term"
   | "payment_method"
+  | "account"
   | "price_table"
   | "price_table_item"
   | "customer_price_table";
@@ -181,6 +203,10 @@ interface CustomerRow {
   credit_closing_day: number | null;
   credit_boleto_days: number | null;
   nf_required: number;
+  credit_periodicity: "monthly" | "biweekly" | "weekly";
+  credit_second_closing_day: number | null;
+  credit_second_boleto_days: number | null;
+  credit_closing_weekday: number | null;
   zipcode: string | null;
   address_street: string | null;
   address_number: string | null;
@@ -257,8 +283,22 @@ interface PaymentMethodRow {
   id: string;
   code: string;
   name: string;
+  alias: string | null;
+  omie_code: string | null;
+  account_id: string | null;
+  account_name: string | null;
   is_system: number;
   is_customer_credit: number;
+  sort_order: number;
+  is_active: number;
+}
+
+interface AccountRow {
+  id: string;
+  code: string | null;
+  name: string;
+  omie_code: string | null;
+  is_system: number;
   sort_order: number;
   is_active: number;
 }
@@ -311,6 +351,10 @@ function mapCustomer(row: CustomerRow): CustomerCacheEntry {
     creditClosingDay: row.credit_closing_day,
     creditBoletoDays: row.credit_boleto_days,
     nfRequired: row.nf_required === 1,
+    creditPeriodicity: row.credit_periodicity,
+    creditSecondClosingDay: row.credit_second_closing_day,
+    creditSecondBoletoDays: row.credit_second_boleto_days,
+    creditClosingWeekday: row.credit_closing_weekday,
     zipcode: row.zipcode,
     addressStreet: row.address_street,
     addressNumber: row.address_number,
@@ -419,12 +463,30 @@ function mapPaymentTerm(row: PaymentTermRow): PaymentTermCacheEntry {
 }
 
 function mapPaymentMethod(row: PaymentMethodRow): PaymentMethodCacheEntry {
+  const alias = row.alias?.trim() ?? "";
   return {
     id: row.id,
     code: row.code,
     name: row.name,
+    alias: row.alias,
+    displayName: alias.length > 0 ? alias : row.name,
+    omieCode: row.omie_code,
+    accountId: row.account_id,
+    accountName: row.account_name,
     isSystem: row.is_system === 1,
     isCustomerCredit: row.is_customer_credit === 1,
+    sortOrder: row.sort_order,
+    isActive: row.is_active === 1
+  };
+}
+
+function mapAccount(row: AccountRow): AccountCacheEntry {
+  return {
+    id: row.id,
+    code: row.code,
+    name: row.name,
+    omieCode: row.omie_code,
+    isSystem: row.is_system === 1,
     sortOrder: row.sort_order,
     isActive: row.is_active === 1
   };
@@ -482,6 +544,7 @@ export class CacheStore {
   private carriers: Map<string, CarrierCacheEntry> = new Map();
   private paymentTerms: Map<string, PaymentTermCacheEntry> = new Map();
   private paymentMethods: Map<string, PaymentMethodCacheEntry> = new Map();
+  private accounts: Map<string, AccountCacheEntry> = new Map();
   private priceTables: Map<string, PriceTableCacheEntry> = new Map();
   private priceTableItems: Map<string, PriceTableItemCacheEntry> = new Map();
   private customerPriceTables: Map<string, CustomerPriceTableEntry> = new Map();
@@ -497,6 +560,7 @@ export class CacheStore {
     this.loadCarriers(companyId);
     this.loadPaymentTerms(companyId);
     this.loadPaymentMethods(companyId);
+    this.loadAccounts(companyId);
     this.loadPriceTables(companyId);
     this.loadPriceTableItems();
     this.loadCustomerPriceTables();
@@ -529,6 +593,13 @@ export class CacheStore {
         break;
       case "payment_method":
         if (companyId) this.loadPaymentMethods(companyId);
+        break;
+      case "account":
+        if (companyId) {
+          this.loadAccounts(companyId);
+          // O nome da conta e projetado na forma de pagamento.
+          this.loadPaymentMethods(companyId);
+        }
         break;
       case "price_table":
         if (companyId) this.loadPriceTables(companyId);
@@ -637,6 +708,8 @@ export class CacheStore {
         return Array.from(this.paymentTerms.values());
       case "payment_method":
         return Array.from(this.paymentMethods.values());
+      case "account":
+        return Array.from(this.accounts.values());
       case "price_table":
         return Array.from(this.priceTables.values());
       case "price_table_item":
@@ -661,7 +734,9 @@ export class CacheStore {
       case "payment_term":
         return ["name", "omieCode"];
       case "payment_method":
-        return ["name", "code"];
+        return ["name", "code", "alias"];
+      case "account":
+        return ["name", "code", "omieCode"];
       case "price_table":
         return ["name"];
       case "price_table_item":
@@ -678,6 +753,7 @@ export class CacheStore {
                 credit_limit_cents, credit_mode, open_receivables_cents, omie_billing_blocked,
                 source, sync_status, needs_push, last_synced_at, observations, default_carrier_id, default_payment_term_id,
                 default_payment_method_id, credit_account_enabled, credit_closing_day, credit_boleto_days, nf_required,
+                credit_periodicity, credit_second_closing_day, credit_second_boleto_days, credit_closing_weekday,
                 zipcode, address_street, address_number, address_complement, neighborhood, city, state, is_active
          FROM customers WHERE company_id = ? AND deleted_at IS NULL`
       )
@@ -766,14 +842,32 @@ export class CacheStore {
   private loadPaymentMethods(companyId: string): void {
     const rows = this.db
       .prepare(
-        `SELECT id, code, name, is_system, is_customer_credit, sort_order, is_active
-         FROM payment_methods WHERE company_id = ? AND deleted_at IS NULL`
+        `SELECT pm.id, pm.code, pm.name, pm.alias, pm.omie_code, pm.account_id,
+                ac.name AS account_name,
+                pm.is_system, pm.is_customer_credit, pm.sort_order, pm.is_active
+         FROM payment_methods pm
+         LEFT JOIN accounts ac ON ac.id = pm.account_id AND ac.deleted_at IS NULL
+         WHERE pm.company_id = ? AND pm.deleted_at IS NULL`
       )
       .all(companyId) as PaymentMethodRow[];
 
     this.paymentMethods.clear();
     for (const row of rows) {
       this.paymentMethods.set(row.id, mapPaymentMethod(row));
+    }
+  }
+
+  private loadAccounts(companyId: string): void {
+    const rows = this.db
+      .prepare(
+        `SELECT id, code, name, omie_code, is_system, sort_order, is_active
+         FROM accounts WHERE company_id = ? AND deleted_at IS NULL`
+      )
+      .all(companyId) as AccountRow[];
+
+    this.accounts.clear();
+    for (const row of rows) {
+      this.accounts.set(row.id, mapAccount(row));
     }
   }
 

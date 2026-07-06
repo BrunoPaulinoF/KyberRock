@@ -20,6 +20,10 @@ export interface CreateCustomerInput {
   creditClosingDay?: number | null;
   creditBoletoDays?: number | null;
   nfRequired?: boolean;
+  creditPeriodicity?: "monthly" | "biweekly" | "weekly";
+  creditSecondClosingDay?: number | null;
+  creditSecondBoletoDays?: number | null;
+  creditClosingWeekday?: number | null;
   zipcode?: string;
   addressStreet?: string;
   addressNumber?: string;
@@ -47,6 +51,10 @@ export interface UpdateCustomerInput {
   creditClosingDay?: number | null;
   creditBoletoDays?: number | null;
   nfRequired?: boolean;
+  creditPeriodicity?: "monthly" | "biweekly" | "weekly";
+  creditSecondClosingDay?: number | null;
+  creditSecondBoletoDays?: number | null;
+  creditClosingWeekday?: number | null;
   zipcode?: string | null;
   addressStreet?: string | null;
   addressNumber?: string | null;
@@ -79,6 +87,10 @@ export interface CustomerRow {
   credit_closing_day: number | null;
   credit_boleto_days: number | null;
   nf_required: number;
+  credit_periodicity: "monthly" | "biweekly" | "weekly";
+  credit_second_closing_day: number | null;
+  credit_second_boleto_days: number | null;
+  credit_closing_weekday: number | null;
   zipcode: string | null;
   address_street: string | null;
   address_number: string | null;
@@ -139,10 +151,11 @@ export function createCustomer(
         credit_limit_cents, credit_mode, open_receivables_cents, omie_billing_blocked,
         observations, default_carrier_id, default_payment_term_id, default_payment_method_id,
         credit_account_enabled, credit_closing_day, credit_boleto_days, nf_required,
+        credit_periodicity, credit_second_closing_day, credit_second_boleto_days, credit_closing_weekday,
         zipcode, address_street, address_number,
         address_complement, neighborhood, city, state, sync_status, needs_push, local_updated_at, is_active,
         created_at, updated_at
-      ) VALUES (?, ?, 'local', ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1, ?, 1, ?, ?)`
+      ) VALUES (?, ?, 'local', ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1, ?, 1, ?, ?)`
     )
     .run(
       id,
@@ -163,6 +176,10 @@ export function createCustomer(
       input.creditClosingDay ?? null,
       input.creditBoletoDays ?? null,
       input.nfRequired === false ? 0 : 1,
+      input.creditPeriodicity ?? "monthly",
+      input.creditSecondClosingDay ?? null,
+      input.creditSecondBoletoDays ?? null,
+      input.creditClosingWeekday ?? null,
       input.zipcode ?? null,
       input.addressStreet ?? null,
       input.addressNumber ?? null,
@@ -284,6 +301,22 @@ export function updateCustomer(
   if (input.nfRequired !== undefined) {
     sets.push("nf_required = ?");
     values.push(input.nfRequired ? 1 : 0);
+  }
+  if (input.creditPeriodicity !== undefined) {
+    sets.push("credit_periodicity = ?");
+    values.push(input.creditPeriodicity);
+  }
+  if (input.creditSecondClosingDay !== undefined) {
+    sets.push("credit_second_closing_day = ?");
+    values.push(input.creditSecondClosingDay);
+  }
+  if (input.creditSecondBoletoDays !== undefined) {
+    sets.push("credit_second_boleto_days = ?");
+    values.push(input.creditSecondBoletoDays);
+  }
+  if (input.creditClosingWeekday !== undefined) {
+    sets.push("credit_closing_weekday = ?");
+    values.push(input.creditClosingWeekday);
   }
   if (input.zipcode !== undefined) {
     sets.push("zipcode = ?");

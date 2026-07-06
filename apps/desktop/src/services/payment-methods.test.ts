@@ -9,6 +9,7 @@ import {
   DEFAULT_PAYMENT_METHODS,
   ensureDefaultPaymentMethods,
   listPaymentMethods,
+  paymentMethodDisplayName,
   updatePaymentMethod
 } from "./payment-methods.js";
 
@@ -90,5 +91,42 @@ describe("payment-methods service", () => {
     expect(
       listPaymentMethods(database, COMPANY_ID).find((m) => m.id === custom.id)
     ).toBeUndefined();
+  });
+
+  it("stores alias, omie code and account binding on create", () => {
+    const created = createPaymentMethod(database, {
+      companyId: COMPANY_ID,
+      name: "Boleto Santander",
+      alias: "Boleto",
+      omieCode: "BOL-1",
+      accountId: "acc-123"
+    });
+    expect(created.alias).toBe("Boleto");
+    expect(created.omie_code).toBe("BOL-1");
+    expect(created.account_id).toBe("acc-123");
+  });
+
+  it("updates and clears alias / omie code / account", () => {
+    const created = createPaymentMethod(database, {
+      companyId: COMPANY_ID,
+      name: "Pix",
+      alias: "Pix loja",
+      omieCode: "PIX-9",
+      accountId: "acc-1"
+    });
+    const updated = updatePaymentMethod(database, created.id, {
+      alias: "",
+      omieCode: null,
+      accountId: null
+    });
+    expect(updated.alias).toBeNull();
+    expect(updated.omie_code).toBeNull();
+    expect(updated.account_id).toBeNull();
+  });
+
+  it("derives the display name from the alias when present", () => {
+    expect(paymentMethodDisplayName({ alias: "Apelido", name: "Nome real" })).toBe("Apelido");
+    expect(paymentMethodDisplayName({ alias: "  ", name: "Nome real" })).toBe("Nome real");
+    expect(paymentMethodDisplayName({ alias: null, name: "Nome real" })).toBe("Nome real");
   });
 });

@@ -7,6 +7,9 @@ export interface PaymentMethodRow {
   company_id: string;
   code: string;
   name: string;
+  alias: string | null;
+  omie_code: string | null;
+  account_id: string | null;
   is_system: number;
   is_customer_credit: number;
   sort_order: number;
@@ -21,14 +24,29 @@ export interface CreatePaymentMethodInput {
   companyId: string;
   code?: string;
   name: string;
+  alias?: string | null;
+  omieCode?: string | null;
+  accountId?: string | null;
   isCustomerCredit?: boolean;
   sortOrder?: number;
 }
 
 export interface UpdatePaymentMethodInput {
   name?: string;
+  alias?: string | null;
+  omieCode?: string | null;
+  accountId?: string | null;
   isActive?: boolean;
   sortOrder?: number;
+}
+
+/** Nome exibido da forma de pagamento: o apelido quando definido, senao o nome. */
+export function paymentMethodDisplayName(row: {
+  alias: string | null;
+  name: string;
+}): string {
+  const alias = row.alias?.trim();
+  return alias && alias.length > 0 ? alias : row.name;
 }
 
 interface DefaultPaymentMethod {
@@ -150,14 +168,17 @@ export function createPaymentMethod(
   database
     .prepare(
       `INSERT INTO payment_methods
-         (id, company_id, code, name, is_system, is_customer_credit, sort_order, is_active, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 0, ?, ?, 1, ?, ?)`
+         (id, company_id, code, name, alias, omie_code, account_id, is_system, is_customer_credit, sort_order, is_active, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 1, ?, ?)`
     )
     .run(
       id,
       input.companyId,
       code,
       name,
+      input.alias?.trim() || null,
+      input.omieCode?.trim() || null,
+      input.accountId || null,
       input.isCustomerCredit ? 1 : 0,
       sortOrder,
       nowIso,
@@ -188,6 +209,18 @@ export function updatePaymentMethod(
     if (!name) throw new Error("Informe o nome da forma de pagamento.");
     sets.push("name = ?");
     values.push(name);
+  }
+  if (input.alias !== undefined) {
+    sets.push("alias = ?");
+    values.push(input.alias?.trim() || null);
+  }
+  if (input.omieCode !== undefined) {
+    sets.push("omie_code = ?");
+    values.push(input.omieCode?.trim() || null);
+  }
+  if (input.accountId !== undefined) {
+    sets.push("account_id = ?");
+    values.push(input.accountId || null);
   }
   if (input.isActive !== undefined) {
     sets.push("is_active = ?");
@@ -232,4 +265,43 @@ export function deletePaymentMethod(
       "UPDATE payment_methods SET deleted_at = ?, is_active = 0, updated_at = ? WHERE id = ?"
     )
     .run(nowIso, nowIso, id);
+}
+
+/** Mapa padrao codigo-da-forma -> codigo-da-conta usado no pre-vinculo. */
+const DEFAULT_METHOD_ACCOUNT_BINDINGS: ReadonlyArray<{ methodCode: string; accountCode: string }> = [
+  { methodCode: "cash", accountCode: "caixinha" },
+  { methodCode: "pix", accountCode: "omie_cash" },
+  { methodCode: "boleto", accountCode: "omie_cash" },
+  { methodCode: "debit_card", accountCode: "getnet" },
+  { methodCode: "credit_card", accountCode: "getnet" },
+  // Credito do cliente (fiado) e lancado uma unica vez no OMIE pela OMIE Cash.
+  { methodCode: "customer_credit", accountCode: "omie_cash" }
+];
+
+/**
+ * Aplica os vinculos padrao forma -> conta para uma empresa (idempotente: so
+ * preenche formas que ainda estao sem conta). Espelha a migracao para empresas
+ * criadas apos ela.
+ */
+export function applyDefaultAccountBindings(
+  database: DesktopDatabase,
+  companyId: string,
+  now: Date = new Date()
+): void {
+  const nowIso = now.toISOString();
+  const bind = database.prepare(
+    `UPDATE payment_methods SET
+       account_id = (
+         SELECT ac.id FROM accounts ac
+         WHERE ac.company_id = ? AND ac.code = ? AND ac.deleted_at IS NULL
+       ),
+       updated_at = ?
+     WHERE company_id = ? AND code = ? AND account_id IS NULL AND deleted_at IS NULL`
+  );
+  const apply = database.transaction(() => {
+    for (const binding of DEFAULT_METHOD_ACCOUNT_BINDINGS) {
+      bind.run(companyId, binding.accountCode, nowIso, companyId, binding.methodCode);
+    }
+  });
+  apply();
 }

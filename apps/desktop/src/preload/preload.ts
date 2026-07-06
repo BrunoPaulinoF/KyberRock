@@ -111,6 +111,11 @@ const desktopApi = {
   paymentMethodsUpdate: (id: string, input: unknown) =>
     ipcRenderer.invoke("desktop:payment-methods-update", id, input),
   paymentMethodsDelete: (id: string) => ipcRenderer.invoke("desktop:payment-methods-delete", id),
+  accountsList: () => ipcRenderer.invoke("desktop:accounts-list"),
+  accountsCreate: (input: unknown) => ipcRenderer.invoke("desktop:accounts-create", input),
+  accountsUpdate: (id: string, input: unknown) =>
+    ipcRenderer.invoke("desktop:accounts-update", id, input),
+  accountsDelete: (id: string) => ipcRenderer.invoke("desktop:accounts-delete", id),
   paymentTermsCreate: (input: unknown) =>
     ipcRenderer.invoke("desktop:payment-terms-create", input),
   paymentTermsUpdate: (id: string, input: unknown) =>
