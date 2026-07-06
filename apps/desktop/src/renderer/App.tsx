@@ -71,6 +71,7 @@ import {
   SourceBadge,
   useFlash
 } from "./crud-ui";
+import type { DataTableColumn } from "./crud-ui";
 import { BlockedScreen } from "./BlockedScreen";
 import { DashboardView } from "./DashboardView";
 import { DocumentationView } from "./DocumentationView";
@@ -121,10 +122,6 @@ export interface WeighingFormState {
   manualDownPaymentCents: number | null;
   quotationId: string;
   deductFreightFromCredit: boolean;
-  // Modalidade do frete: CIF = por conta da Pedreira (vendedor); FOB = por conta do cliente.
-  freightModality: "cif" | "fob";
-  // Quando CIF: se o frete sera cobrado do cliente (senao vai gratis).
-  chargeFreight: boolean;
   freightEnabled: boolean;
   freightPayer: "customer" | "quarry" | "third_party";
   freightCalculationType: "per_ton" | "per_ton_km" | "fixed_plus_ton";
@@ -133,6 +130,8 @@ export interface WeighingFormState {
   freightMinValueCents: number | null;
   freightDistanceKm: string;
   freightDestination: string;
+  customerOwnTransport: boolean;
+  driverIsIndependent: boolean;
 }
 
 type ActiveView =
@@ -163,8 +162,6 @@ const initialWeighingForm: WeighingFormState = {
   manualDownPaymentCents: null,
   quotationId: "",
   deductFreightFromCredit: false,
-  freightModality: "fob",
-  chargeFreight: false,
   freightEnabled: false,
   freightPayer: "customer",
   freightCalculationType: "per_ton",
@@ -172,7 +169,9 @@ const initialWeighingForm: WeighingFormState = {
   freightFixedValueCents: null,
   freightMinValueCents: null,
   freightDistanceKm: "",
-  freightDestination: ""
+  freightDestination: "",
+  customerOwnTransport: false,
+  driverIsIndependent: false
 };
 
 /**
@@ -1233,7 +1232,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         operationType: form.operationType,
         customerId: form.customerId,
         vehicleId: form.vehicleId,
-        carrierId: form.carrierId || undefined,
+        carrierId: form.customerOwnTransport ? undefined : form.carrierId || undefined,
         driverId: form.driverId,
         productId: form.productId,
         paymentTermId:
@@ -3427,7 +3426,7 @@ function validateWeighingForm(form: WeighingFormState): string | null {
   if (!form.customerId) return "Selecione o cliente.";
   if (!form.driverId) return "Selecione o motorista.";
   if (!form.productId) return "Selecione o produto.";
-  if (!form.carrierId) {
+  if (!form.customerOwnTransport && !form.driverIsIndependent && !form.carrierId) {
     return "Selecione a transportadora.";
   }
   if (form.paymentMode === "manual") {
@@ -3439,7 +3438,7 @@ function validateWeighingForm(form: WeighingFormState): string | null {
       return "Informe o valor de entrada.";
     }
   }
-  if (form.freightEnabled) {
+  if (form.freightEnabled && !form.customerOwnTransport) {
     if (form.freightBaseValueCents === null && form.freightFixedValueCents === null) {
       return "Informe o valor do frete.";
     }
@@ -3454,7 +3453,7 @@ function validateWeighingForm(form: WeighingFormState): string | null {
 }
 
 export function buildFreightInput(form: WeighingFormState): OperationFreightInput | null {
-  if (!form.freightEnabled) return null;
+  if (!form.freightEnabled || form.customerOwnTransport) return null;
   const distanceKm = parsePositiveNumber(form.freightDistanceKm);
   return {
     payer: form.freightPayer,
@@ -3473,13 +3472,34 @@ export function buildFreightInput(form: WeighingFormState): OperationFreightInpu
 }
 
 export function shouldLinkCreatedDriverToCarrier(
-  form: Pick<WeighingFormState, "carrierId">
+  form: Pick<WeighingFormState, "carrierId" | "customerOwnTransport" | "driverIsIndependent">,
+  createdDriverIsIndependent: boolean
 ): string | null {
-  return form.carrierId || null;
+  if (
+    createdDriverIsIndependent ||
+    form.driverIsIndependent ||
+    form.customerOwnTransport ||
+    !form.carrierId
+  ) {
+    return null;
+  }
+  return form.carrierId;
 }
 
-export function isTransportReady(form: Pick<WeighingFormState, "carrierId">): boolean {
-  return Boolean(form.carrierId);
+export function getDriverFilterIds(
+  form: Pick<WeighingFormState, "customerOwnTransport" | "driverIsIndependent">,
+  availableDriverIds: string[] | undefined,
+  independentDriverIds: string[] | undefined
+): string[] | undefined {
+  if (form.customerOwnTransport) return undefined;
+  if (form.driverIsIndependent) return independentDriverIds ?? [];
+  return availableDriverIds;
+}
+
+export function isTransportReady(
+  form: Pick<WeighingFormState, "carrierId" | "customerOwnTransport" | "driverIsIndependent">
+): boolean {
+  return form.customerOwnTransport || form.driverIsIndependent || Boolean(form.carrierId);
 }
 
 function parsePositiveNumber(value: string): number | null {
@@ -3881,8 +3901,9 @@ function WeighingForm({
   const [availableCarrierIds, setAvailableCarrierIds] = useState<string[] | undefined>(undefined);
   const [availableVehicleIds, setAvailableVehicleIds] = useState<string[] | undefined>(undefined);
   const [availableDriverIds, setAvailableDriverIds] = useState<string[] | undefined>(undefined);
+  const [independentDriverIds, setIndependentDriverIds] = useState<string[] | undefined>(undefined);
 
-  // Buscar transportadoras vinculadas ao cliente; se houver apenas uma, ja preenche.
+  // Buscar transportadoras vinculadas ao cliente
   useEffect(() => {
     async function load() {
       if (!desktopApi || !form.customerId) {
@@ -3891,10 +3912,15 @@ function WeighingForm({
       }
       try {
         const carriers = await desktopApi.listCarriersByCustomer(form.customerId);
-        const ids = carriers.map((c) => c.id);
-        setAvailableCarrierIds(ids);
-        if (ids.length === 1) {
-          setForm((prev) => (prev.carrierId ? prev : { ...prev, carrierId: ids[0] }));
+        setAvailableCarrierIds(carriers.map((c) => c.id));
+        // Se o cliente tem exatamente uma transportadora vinculada e nenhuma
+        // foi definida pelo padrao, ja preenchemos para agilizar a entrada.
+        if (carriers.length === 1) {
+          setForm((prev) =>
+            prev.carrierId || prev.customerOwnTransport
+              ? prev
+              : { ...prev, carrierId: carriers[0].id }
+          );
         }
       } catch {
         setAvailableCarrierIds(undefined);
@@ -3903,49 +3929,58 @@ function WeighingForm({
     load();
   }, [desktopApi, form.customerId]);
 
-  // Veiculos da transportadora; se houver apenas um, ja preenche a placa.
   useEffect(() => {
     async function load() {
-      if (!desktopApi || !form.carrierId) {
+      if (!desktopApi || !form.carrierId || form.customerOwnTransport || form.driverIsIndependent) {
         setAvailableVehicleIds(undefined);
         return;
       }
       try {
         const vehicles = await desktopApi.carriersGetVehicles(form.carrierId);
-        const ids = vehicles.map((vehicle) => vehicle.id);
-        setAvailableVehicleIds(ids);
-        if (ids.length === 1) {
-          setForm((prev) => (prev.vehicleId ? prev : { ...prev, vehicleId: ids[0] }));
-        }
+        setAvailableVehicleIds(vehicles.map((vehicle) => vehicle.id));
       } catch {
         setAvailableVehicleIds(undefined);
       }
     }
     load();
-  }, [desktopApi, form.carrierId, vehicleRefreshKey]);
+  }, [
+    desktopApi,
+    form.carrierId,
+    form.customerOwnTransport,
+    form.driverIsIndependent,
+    vehicleRefreshKey
+  ]);
 
-  // Motoristas da transportadora; se houver apenas um, ja preenche o motorista.
+  // Buscar motoristas vinculados a transportadora + independentes
   useEffect(() => {
     async function load() {
-      if (!desktopApi || !form.carrierId) {
+      if (!desktopApi) {
         setAvailableDriverIds(undefined);
         return;
       }
       try {
-        const linked = await desktopApi.listDriversByCarrier(form.carrierId);
-        const ids = linked.map((d) => d.id);
-        setAvailableDriverIds(ids);
-        if (ids.length === 1) {
-          setForm((prev) => (prev.driverId ? prev : { ...prev, driverId: ids[0] }));
+        const independent = await desktopApi.listIndependentDrivers();
+        const independentIds = independent.map((d) => d.id);
+        setIndependentDriverIds(independentIds);
+
+        if (form.driverIsIndependent) {
+          setAvailableDriverIds(independentIds);
+        } else if (form.carrierId) {
+          const linked = await desktopApi.listDriversByCarrier(form.carrierId);
+          const linkedIds = linked.map((d) => d.id);
+          setAvailableDriverIds([...new Set([...linkedIds, ...independentIds])]);
+        } else {
+          setAvailableDriverIds(independentIds.length > 0 ? independentIds : undefined);
         }
       } catch {
         setAvailableDriverIds(undefined);
+        setIndependentDriverIds(undefined);
       }
     }
     load();
-  }, [desktopApi, form.carrierId, driverRefreshKey]);
+  }, [desktopApi, form.carrierId, form.driverIsIndependent, driverRefreshKey]);
 
-  // Quando o motorista muda e pertence a exatamente uma transportadora, preenche-a.
+  // Quando motorista muda, verificar se tem 1 transportadora e preencher
   useEffect(() => {
     async function load() {
       if (!desktopApi || !form.driverId) {
@@ -3953,11 +3988,22 @@ function WeighingForm({
       }
       try {
         const carriers = await desktopApi.listCarriersByDriver(form.driverId);
-        if (carriers.length === 1) {
-          setForm((prev) => (prev.carrierId ? prev : { ...prev, carrierId: carriers[0].id }));
+        const driverData = await desktopApi.queryCache({ entityType: "driver", limit: 200 });
+        const driver = (driverData.rows as Array<Record<string, unknown>>).find(
+          (d) => d.id === form.driverId
+        );
+        const isIndependent = Boolean(driver?.isIndependent);
+        setForm((prev) => ({ ...prev, driverIsIndependent: isIndependent }));
+
+        if (carriers.length === 1 && !isIndependent) {
+          // Motorista tem exatamente 1 transportadora - preencher automaticamente
+          setForm((prev) => ({ ...prev, carrierId: carriers[0].id }));
+        } else if (isIndependent) {
+          // Motorista independente - limpar transportadora
+          setForm((prev) => ({ ...prev, carrierId: "" }));
         }
       } catch {
-        // ignore
+        setForm((prev) => ({ ...prev, driverIsIndependent: false }));
       }
     }
     load();
@@ -4103,13 +4149,10 @@ function WeighingForm({
       try {
         const rule = await api.getCustomerFreightForProduct(form.customerId, form.productId);
         if (canceled || !rule) return;
-        // Frete pre-cadastrado do cliente => cobrar frete (CIF, por conta da Pedreira).
         setForm((prev) => ({
           ...prev,
-          freightModality: "cif",
-          chargeFreight: true,
           freightEnabled: true,
-          freightPayer: "quarry",
+          freightPayer: "customer",
           freightCalculationType: rule.rule.type as WeighingFormState["freightCalculationType"],
           freightBaseValueCents: rule.rule.baseValueCents,
           freightFixedValueCents: rule.rule.fixedValueCents ?? null
@@ -4327,18 +4370,12 @@ function WeighingForm({
               setForm((prev) => ({
                 ...prev,
                 customerId: id,
-                // Troca de cliente reinicia o transporte para reavaliar o auto-preenchimento.
-                carrierId: "",
-                vehicleId: "",
-                driverId: "",
-                // Pre-seleciona gerar (ou nao) nota fiscal conforme o cadastro do cliente;
-                // o operador ainda pode trocar antes de fechar.
-                operationType:
-                  item?.nfRequired === false
-                    ? "internal"
-                    : item?.nfRequired === true
-                      ? "invoice"
-                      : prev.operationType,
+                // Ao trocar de cliente, puxamos os vinculos padrao dele e
+                // limpamos a transportadora anterior (que pode nao ser dele).
+                carrierId:
+                  typeof item?.defaultCarrierId === "string" && item.defaultCarrierId
+                    ? item.defaultCarrierId
+                    : "",
                 paymentMethodId:
                   typeof item?.defaultPaymentMethodId === "string" && item.defaultPaymentMethodId
                     ? item.defaultPaymentMethodId
@@ -4454,40 +4491,46 @@ function WeighingForm({
             title="Transporte"
             description="Transportadora, placa e motorista"
           />
-          <label style={styles.fieldLabel}>
-            <span>Modalidade do frete</span>
-            <select
-              value={form.freightModality}
-              onChange={(event) => {
-                const modality = event.target.value as WeighingFormState["freightModality"];
-                setForm((prev) =>
-                  modality === "cif"
-                    ? {
-                        ...prev,
-                        freightModality: "cif",
-                        freightPayer: "quarry",
-                        freightEnabled: prev.chargeFreight
-                      }
-                    : {
-                        ...prev,
-                        freightModality: "fob",
-                        chargeFreight: false,
-                        freightEnabled: false,
-                        freightPayer: "customer",
-                        deductFreightFromCredit: false
-                      }
-                );
-              }}
-              style={getInputStyle(false)}
-            >
-              <option value="fob">FOB - por conta do cliente (ele busca/paga o frete)</option>
-              <option value="cif">CIF - por conta da Pedreira (nos entregamos)</option>
-            </select>
+          <label style={styles.compactCheckboxCard}>
+            <input
+              type="checkbox"
+              checked={form.customerOwnTransport}
+              onChange={(event) =>
+                setForm((prev) => ({
+                  ...prev,
+                  customerOwnTransport: event.target.checked,
+                  driverIsIndependent: event.target.checked ? false : prev.driverIsIndependent,
+                  carrierId: "",
+                  vehicleId: "",
+                  driverId: "",
+                  freightEnabled: event.target.checked ? false : prev.freightEnabled,
+                  deductFreightFromCredit: event.target.checked
+                    ? false
+                    : prev.deductFreightFromCredit
+                }))
+              }
+            />
+            <span>Transportadora propria do cliente</span>
+          </label>
+          <label style={styles.compactCheckboxCard}>
+            <input
+              type="checkbox"
+              checked={form.driverIsIndependent}
+              onChange={(event) =>
+                setForm((prev) => ({
+                  ...prev,
+                  driverIsIndependent: event.target.checked,
+                  customerOwnTransport: event.target.checked ? false : prev.customerOwnTransport,
+                  carrierId: event.target.checked ? "" : prev.carrierId,
+                  driverId: ""
+                }))
+              }
+            />
+            <span>Motorista independente</span>
           </label>
           <p style={{ ...styles.helperText, margin: "-2px 0 8px 0" }}>
-            {form.freightModality === "cif"
-              ? "CIF: a entrega e por conta da Pedreira. Voce pode enviar sem cobrar frete ou cobrar do cliente."
-              : "FOB: o cliente busca o produto e paga o proprio frete."}
+            Marque quando o motorista nao pertence a uma transportadora. A transportadora fica
+            bloqueada e a lista mostra somente motoristas independentes.
           </p>
           <CacheSelect
             label="Transportadora"
@@ -4497,6 +4540,8 @@ function WeighingForm({
               setForm((prev) => ({
                 ...prev,
                 carrierId: id,
+                customerOwnTransport: false,
+                driverIsIndependent: false,
                 vehicleId: "",
                 driverId: ""
               }))
@@ -4505,6 +4550,7 @@ function WeighingForm({
             desktopApi={desktopApi}
             refreshKey={carrierRefreshKey}
             filterIds={availableCarrierIds}
+            disabled={form.customerOwnTransport || form.driverIsIndependent}
           />
           {form.customerId && availableCarrierIds && availableCarrierIds.length === 0 ? (
             <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" }}>
@@ -4529,7 +4575,7 @@ function WeighingForm({
               onCreateNew={() => setShowVehicleModal(true)}
               desktopApi={desktopApi}
               refreshKey={vehicleRefreshKey}
-              filterIds={availableVehicleIds}
+              filterIds={form.customerOwnTransport ? undefined : availableVehicleIds}
               disabled={!transportReady}
             />
             <CacheSelect
@@ -4540,10 +4586,24 @@ function WeighingForm({
               onCreateNew={() => setShowDriverModal(true)}
               desktopApi={desktopApi}
               refreshKey={driverRefreshKey}
-              filterIds={availableDriverIds}
+              filterIds={getDriverFilterIds(form, availableDriverIds, independentDriverIds)}
               disabled={!transportReady}
             />
           </div>
+          {form.driverIsIndependent && independentDriverIds && independentDriverIds.length === 0 ? (
+            <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" }}>
+              <p style={{ ...styles.helperText, color: "#d97706", margin: 0 }}>
+                Nenhum motorista independente cadastrado.
+              </p>
+              <button
+                type="button"
+                onClick={() => setShowDriverModal(true)}
+                style={{ ...styles.secondaryButton, fontSize: "11px", padding: "4px 8px" }}
+              >
+                + Cadastrar motorista independente
+              </button>
+            </div>
+          ) : null}
           {form.carrierId && availableDriverIds && availableDriverIds.length === 0 ? (
             <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" }}>
               <p style={{ ...styles.helperText, color: "#d97706", margin: 0 }}>
@@ -4568,29 +4628,36 @@ function WeighingForm({
           />
           <PriceDetailsPanel details={priceDetails} />
           <div style={styles.freightBox}>
-            {form.freightModality === "fob" ? (
-              <p style={{ ...styles.helperText, margin: 0 }}>
-                Frete por conta do cliente (FOB) - nada a cobrar.
-              </p>
-            ) : (
-              <label style={styles.checkboxLabel}>
-                <input
-                  type="checkbox"
-                  checked={form.chargeFreight}
-                  onChange={(event) =>
-                    setForm((prev) => ({
-                      ...prev,
-                      chargeFreight: event.target.checked,
-                      freightEnabled: event.target.checked,
-                      freightPayer: "quarry"
-                    }))
-                  }
-                />
-                Cobrar frete do cliente
-              </label>
-            )}
-            {form.freightEnabled ? (
+            <label style={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                checked={form.freightEnabled && !form.customerOwnTransport}
+                disabled={form.customerOwnTransport}
+                onChange={(event) =>
+                  setForm((prev) => ({ ...prev, freightEnabled: event.target.checked }))
+                }
+              />
+              Operacao com frete
+            </label>
+            {form.freightEnabled && !form.customerOwnTransport ? (
               <div style={styles.freightCompactGrid}>
+                <label style={styles.fieldLabel}>
+                  Responsavel
+                  <select
+                    value={form.freightPayer}
+                    onChange={(event) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        freightPayer: event.target.value as WeighingFormState["freightPayer"]
+                      }))
+                    }
+                    style={styles.input}
+                  >
+                    <option value="customer">Cliente</option>
+                    <option value="quarry">Pedreira</option>
+                    <option value="third_party">Terceiro</option>
+                  </select>
+                </label>
                 <label style={styles.fieldLabel}>
                   Calculo
                   <select
@@ -4728,8 +4795,12 @@ function WeighingForm({
         <QuickDriverModal
           desktopApi={desktopApi}
           onClose={() => setShowDriverModal(false)}
-          onCreated={async (id) => {
-            const carrierId = shouldLinkCreatedDriverToCarrier(form);
+          defaultIsIndependent={form.driverIsIndependent}
+          onCreated={async (id, options) => {
+            const carrierId = shouldLinkCreatedDriverToCarrier(
+              form,
+              options?.isIndependent ?? false
+            );
             setForm((prev) => ({ ...prev, driverId: id }));
             setShowDriverModal(false);
             if (desktopApi && carrierId) {
@@ -4761,7 +4832,7 @@ function WeighingForm({
           desktopApi={desktopApi}
           onClose={() => setShowCarrierModal(false)}
           onCreated={async (id) => {
-            setForm((prev) => ({ ...prev, carrierId: id }));
+            setForm((prev) => ({ ...prev, carrierId: id, customerOwnTransport: false }));
             setShowCarrierModal(false);
             if (desktopApi && form.vehicleId) {
               try {
@@ -4819,6 +4890,11 @@ interface QuickModalProps {
   desktopApi: KyberRockDesktopApi | null;
   onClose: () => void;
   onCreated: (id: string) => void;
+}
+
+interface QuickDriverModalProps extends Omit<QuickModalProps, "onCreated"> {
+  defaultIsIndependent?: boolean;
+  onCreated: (id: string, options?: { isIndependent: boolean }) => void;
 }
 
 function QuickVehicleModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
@@ -4879,10 +4955,16 @@ function QuickVehicleModal({ desktopApi, onClose, onCreated }: QuickModalProps) 
   );
 }
 
-function QuickDriverModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
+function QuickDriverModal({
+  desktopApi,
+  onClose,
+  onCreated,
+  defaultIsIndependent = false
+}: QuickDriverModalProps) {
   const [name, setName] = useState("");
   const [documentInput, setDocumentInput] = useState("");
   const [phone, setPhone] = useState("");
+  const [isIndependent, setIsIndependent] = useState(defaultIsIndependent);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -4907,9 +4989,10 @@ function QuickDriverModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
       const result = await desktopApi.driversCreate({
         name: name.trim(),
         document: normalizedDocument || undefined,
-        phone: normalizedPhone || undefined
+        phone: normalizedPhone || undefined,
+        isIndependent
       });
-      onCreated((result as { id: string }).id);
+      onCreated((result as { id: string }).id, { isIndependent });
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -4938,6 +5021,18 @@ function QuickDriverModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
           placeholder="000.000.000-00"
         />
         <PhoneInput label="Telefone" value={phone} onChange={setPhone} />
+        <label style={styles.checkboxLabel}>
+          <input
+            type="checkbox"
+            checked={isIndependent}
+            onChange={(e) => setIsIndependent(e.target.checked)}
+          />
+          Motorista independente
+        </label>
+        <p style={{ ...styles.helperText, marginTop: "-4px" }}>
+          Use para motorista sem transportadora. Ele aparecera quando a opcao "Motorista
+          independente" estiver marcada na nova entrada.
+        </p>
         <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
           <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
             {saving ? "Salvando..." : "Salvar"}
@@ -6214,41 +6309,931 @@ function getThemeVariables(themeMode: ThemeMode): React.CSSProperties {
   } as React.CSSProperties;
 }
 
+// ---------------------------------------------------------------------------
+// Cadastro de transporte - CRUD unificado (motoristas, transportadoras, placas)
+// Um unico componente/modal reaproveitado pelas tres abas: nao duplica o
+// scaffolding de estado, formulario, tabela nem a confirmacao de exclusao.
+// ---------------------------------------------------------------------------
+
+type CrudFieldType = "text" | "document" | "phone" | "plate" | "checkbox" | "select";
+
+interface CrudSelectOption {
+  value: string;
+  label: string;
+}
+
+interface CrudField {
+  key: string;
+  label: string;
+  required?: boolean;
+  type?: CrudFieldType;
+  helper?: string;
+  section?: string;
+  options?: CrudSelectOption[];
+  emptyOption?: string;
+  uppercaseMax?: number;
+}
+
+type CrudPayloadResult = { error: string } | { value: Record<string, unknown> };
+
+interface ResourceCrudProps {
+  desktopApi: KyberRockDesktopApi;
+  entityType: "vehicle" | "driver" | "carrier" | "account";
+  singular: string;
+  gender: "m" | "f";
+  title: string;
+  description?: string;
+  searchPlaceholder: string;
+  emptyHint?: string;
+  modalMaxWidth?: number;
+  minWidth?: string;
+  fields: CrudField[];
+  columns: Array<DataTableColumn<Record<string, unknown>>>;
+  rowToForm: (item: Record<string, unknown>) => Record<string, string>;
+  enrichForm?: (item: Record<string, unknown>) => Promise<Record<string, string>>;
+  buildPayload: (form: Record<string, string>, editing: boolean) => CrudPayloadResult;
+  create: (payload: Record<string, unknown>) => Promise<void>;
+  update: (id: string, payload: Record<string, unknown>) => Promise<void>;
+  remove: (id: string) => Promise<void>;
+  deleteDescription: string;
+  expandedRow?: (item: Record<string, unknown>) => React.ReactNode;
+  onChanged?: () => void;
+}
+
+const CRUD_DEFAULT_SECTION = "Dados principais";
+
+async function reconcileDriverCarrier(
+  desktopApi: KyberRockDesktopApi,
+  driverId: string,
+  isIndependent: boolean,
+  carrierId: string
+): Promise<void> {
+  const current = await desktopApi.listCarriersByDriver(driverId);
+  const currentIds = current.map((carrier) => carrier.id);
+  const targetIds = isIndependent || !carrierId ? [] : [carrierId];
+  for (const id of currentIds) {
+    if (!targetIds.includes(id)) await desktopApi.unlinkDriverCarrier(driverId, id);
+  }
+  for (const id of targetIds) {
+    if (!currentIds.includes(id)) await desktopApi.linkDriverCarrier(driverId, id);
+  }
+}
+
+function driverDetails(item: Record<string, unknown>): string {
+  const parts: string[] = [];
+  if (item.isIndependent) parts.push("Independente: sem transportadora");
+  if (item.document) parts.push(`CPF: ${String(item.document)}`);
+  if (item.phone) parts.push(String(item.phone));
+  return parts.join(" | ");
+}
+
+function ResourceCrud({
+  desktopApi,
+  entityType,
+  singular,
+  gender,
+  title,
+  description,
+  searchPlaceholder,
+  emptyHint,
+  modalMaxWidth,
+  minWidth,
+  fields,
+  columns,
+  rowToForm,
+  enrichForm,
+  buildPayload,
+  create,
+  update,
+  remove,
+  deleteDescription,
+  expandedRow,
+  onChanged
+}: ResourceCrudProps) {
+  const [items, setItems] = useState<Array<Record<string, unknown>>>([]);
+  const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [formData, setFormData] = useState<Record<string, string>>({});
+  const [flash, showFlash] = useFlash();
+  const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const article = gender === "f" ? "a" : "o";
+  const newLabel = gender === "f" ? "Nova" : "Novo";
+  const lower = singular.toLowerCase();
+
+  const loadItems = useCallback(async (): Promise<void> => {
+    setLoading(true);
+    try {
+      const result = await desktopApi.queryCache({
+        entityType,
+        search: search || undefined,
+        limit: 200
+      });
+      setItems(result.rows as Array<Record<string, unknown>>);
+    } finally {
+      setLoading(false);
+    }
+  }, [desktopApi, entityType, search]);
+
+  useEffect(() => {
+    void loadItems();
+  }, [loadItems]);
+
+  const emptyForm = useCallback((): Record<string, string> => {
+    const init: Record<string, string> = {};
+    for (const field of fields) init[field.key] = field.type === "checkbox" ? "false" : "";
+    return init;
+  }, [fields]);
+
+  function openCreate(): void {
+    setFormData(emptyForm());
+    setEditingId(null);
+    setFormError(null);
+    setShowForm(true);
+  }
+
+  async function openEdit(item: Record<string, unknown>): Promise<void> {
+    setFormData({ ...emptyForm(), ...rowToForm(item) });
+    setEditingId(String(item.id));
+    setFormError(null);
+    setShowForm(true);
+    if (enrichForm) {
+      try {
+        const extra = await enrichForm(item);
+        setFormData((prev) => ({ ...prev, ...extra }));
+      } catch {
+        // mantem o formulario base se o enriquecimento assincrono falhar
+      }
+    }
+  }
+
+  async function handleSave(): Promise<void> {
+    const result = buildPayload(formData, editingId !== null);
+    if ("error" in result) {
+      setFormError(result.error);
+      return;
+    }
+    setSaving(true);
+    setFormError(null);
+    try {
+      if (editingId) {
+        await update(editingId, result.value);
+      } else {
+        await create(result.value);
+      }
+      setShowForm(false);
+      setEditingId(null);
+      await loadItems();
+      onChanged?.();
+      showFlash(
+        "success",
+        editingId ? `${singular} atualizad${article}.` : `${singular} criad${article}.`
+      );
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Erro ao salvar.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleConfirmDelete(): Promise<void> {
+    if (!pendingDeleteId) return;
+    setDeleting(true);
+    try {
+      await remove(pendingDeleteId);
+      setPendingDeleteId(null);
+      await loadItems();
+      onChanged?.();
+      showFlash("success", `${singular} excluid${article}.`);
+    } catch (err) {
+      setPendingDeleteId(null);
+      showFlash("error", err instanceof Error ? err.message : "Erro ao excluir.");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  const sections = useMemo(() => {
+    const order: string[] = [];
+    const grouped = new Map<string, CrudField[]>();
+    for (const field of fields) {
+      const section = field.section ?? CRUD_DEFAULT_SECTION;
+      if (!grouped.has(section)) {
+        grouped.set(section, []);
+        order.push(section);
+      }
+      grouped.get(section)?.push(field);
+    }
+    return order.map((name) => ({ name, fields: grouped.get(name) ?? [] }));
+  }, [fields]);
+
+  function setFieldValue(key: string, value: string): void {
+    setFormData((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function renderField(field: CrudField): React.ReactNode {
+    const value = formData[field.key] ?? "";
+    if (field.type === "checkbox") {
+      return (
+        <label key={field.key} style={{ ...styles.checkboxLabel, alignItems: "flex-start" }}>
+          <input
+            type="checkbox"
+            checked={value === "true"}
+            onChange={(event) => setFieldValue(field.key, event.target.checked ? "true" : "false")}
+          />
+          <span>
+            {field.label}
+            {field.helper ? (
+              <small style={{ ...styles.helperText, display: "block", marginTop: "2px" }}>
+                {field.helper}
+              </small>
+            ) : null}
+          </span>
+        </label>
+      );
+    }
+    if (field.type === "select") {
+      return (
+        <Field key={field.key} label={field.label} required={field.required} hint={field.helper}>
+          <select
+            value={value}
+            onChange={(event) => setFieldValue(field.key, event.target.value)}
+            style={getInputStyle(false)}
+          >
+            <option value="">{field.emptyOption ?? "Selecione..."}</option>
+            {(field.options ?? []).map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+      );
+    }
+    if (field.type === "document") {
+      return (
+        <DocumentInput
+          key={field.key}
+          label={field.label}
+          value={value}
+          required={field.required}
+          onChange={(v) => setFieldValue(field.key, v)}
+        />
+      );
+    }
+    if (field.type === "phone") {
+      return (
+        <PhoneInput
+          key={field.key}
+          label={field.label}
+          value={value}
+          required={field.required}
+          onChange={(v) => setFieldValue(field.key, v)}
+        />
+      );
+    }
+    if (field.type === "plate") {
+      return (
+        <PlateInput
+          key={field.key}
+          label={field.label}
+          value={value}
+          required={field.required}
+          onChange={(v) => setFieldValue(field.key, v)}
+        />
+      );
+    }
+    return (
+      <TextInput
+        key={field.key}
+        label={field.label}
+        value={value}
+        required={field.required}
+        onChange={(v) =>
+          setFieldValue(
+            field.key,
+            field.uppercaseMax ? v.toUpperCase().slice(0, field.uppercaseMax) : v
+          )
+        }
+      />
+    );
+  }
+
+  return (
+    <div>
+      <CrudSectionHeader
+        title={title}
+        description={description}
+        count={items.length}
+        actionLabel={`${newLabel} ${lower}`}
+        onAction={openCreate}
+      />
+      <CrudSearchBar
+        value={search}
+        onChange={setSearch}
+        placeholder={searchPlaceholder}
+        onRefresh={() => void loadItems()}
+      />
+      <FlashBanner flash={flash} />
+
+      {showForm ? (
+        <CrudFormShell
+          title={editingId ? `Editar ${lower}` : `${newLabel} ${lower}`}
+          error={formError}
+          saving={saving}
+          maxWidth={modalMaxWidth}
+          onClose={() => setShowForm(false)}
+          onSubmit={() => void handleSave()}
+        >
+          {sections.map((section) => (
+            <FormSection key={section.name} title={section.name}>
+              {section.fields.map((field) => renderField(field))}
+            </FormSection>
+          ))}
+        </CrudFormShell>
+      ) : null}
+
+      {pendingDeleteId ? (
+        <ConfirmDialog
+          title={`Excluir ${lower}`}
+          description={deleteDescription}
+          busy={deleting}
+          onCancel={() => setPendingDeleteId(null)}
+          onConfirm={() => void handleConfirmDelete()}
+        />
+      ) : null}
+
+      <DataTable
+        columns={[
+          ...columns,
+          {
+            key: "actions",
+            header: "Acoes",
+            width: "170px",
+            align: "right",
+            render: (item: Record<string, unknown>) => (
+              <>
+                <EditRowButton onClick={() => void openEdit(item)} />
+                <DeleteRowButton onClick={() => setPendingDeleteId(String(item.id))} />
+              </>
+            )
+          }
+        ]}
+        rows={items}
+        rowKey={(item) => String(item.id)}
+        loading={loading}
+        minWidth={minWidth}
+        emptyTitle={
+          search ? "Nenhum registro encontrado." : `Nenhum${article} ${lower} cadastrad${article}.`
+        }
+        emptyHint={search ? "Ajuste o termo de busca." : emptyHint}
+        expandedRow={expandedRow}
+      />
+    </div>
+  );
+}
+
+function DriverCrud({
+  desktopApi,
+  carrierOptions
+}: {
+  desktopApi: KyberRockDesktopApi;
+  carrierOptions: CrudSelectOption[];
+}) {
+  const fields: CrudField[] = [
+    { key: "name", label: "Nome", required: true },
+    { key: "document", label: "CPF", type: "document" },
+    { key: "phone", label: "Telefone", type: "phone" },
+    {
+      key: "carrierId",
+      label: "Transportadora",
+      type: "select",
+      options: carrierOptions,
+      emptyOption: "Sem transportadora",
+      helper: "Vincule o motorista a uma transportadora para agilizar a nova entrada."
+    },
+    {
+      key: "isIndependent",
+      label: "Motorista independente",
+      type: "checkbox",
+      helper: "Marque quando este motorista nao pertence a uma transportadora."
+    }
+  ];
+
+  const columns: Array<DataTableColumn<Record<string, unknown>>> = [
+    {
+      key: "name",
+      header: "Nome",
+      width: "minmax(220px, 1.3fr)",
+      render: (item) => <CellPrimary>{String(item.name ?? item.document ?? item.id ?? "")}</CellPrimary>
+    },
+    {
+      key: "details",
+      header: "Detalhes",
+      width: "minmax(260px, 1.5fr)",
+      render: (item) => <CellMuted>{driverDetails(item) || "-"}</CellMuted>
+    }
+  ];
+
+  return (
+    <ResourceCrud
+      desktopApi={desktopApi}
+      entityType="driver"
+      singular="Motorista"
+      gender="m"
+      title="Motoristas"
+      description="Motoristas usados na identificacao do caminhao e impressos no cupom."
+      searchPlaceholder="Buscar motoristas..."
+      emptyHint={'Cadastre pelo botao "Novo motorista".'}
+      fields={fields}
+      columns={columns}
+      rowToForm={(item) => ({
+        name: String(item.name ?? ""),
+        document: String(item.document ?? ""),
+        phone: String(item.phone ?? ""),
+        carrierId: "",
+        isIndependent: item.isIndependent ? "true" : "false"
+      })}
+      enrichForm={async (item) => {
+        const linked = await desktopApi.listCarriersByDriver(String(item.id));
+        return { carrierId: linked.length > 0 ? linked[0].id : "" };
+      }}
+      buildPayload={(form) => {
+        if (!form.name.trim()) return { error: "Campo obrigatorio: Nome" };
+        let document = "";
+        if (form.document.trim()) {
+          const normalized = normalizeDocument(form.document);
+          if (!isValidDocument(normalized)) return { error: "CPF invalido." };
+          document = normalized;
+        }
+        let phone = "";
+        if (form.phone.trim()) {
+          const normalized = normalizePhone(form.phone);
+          if (normalized.length !== 10 && normalized.length !== 11) {
+            return { error: "Telefone invalido. Informe com DDD (11 digitos)." };
+          }
+          phone = normalized;
+        }
+        const isIndependent = form.isIndependent === "true";
+        return {
+          value: {
+            name: form.name.trim(),
+            document,
+            phone,
+            isIndependent,
+            carrierId: isIndependent ? "" : form.carrierId
+          }
+        };
+      }}
+      create={async (payload) => {
+        const created = await desktopApi.driversCreate({
+          name: payload.name as string,
+          document: (payload.document as string) || undefined,
+          phone: (payload.phone as string) || undefined,
+          isIndependent: payload.isIndependent as boolean
+        });
+        const id = (created as { id?: string } | null)?.id;
+        if (id) {
+          await reconcileDriverCarrier(
+            desktopApi,
+            id,
+            payload.isIndependent as boolean,
+            payload.carrierId as string
+          );
+        }
+      }}
+      update={async (id, payload) => {
+        await desktopApi.driversUpdate(id, {
+          name: payload.name as string,
+          document: (payload.document as string) || undefined,
+          phone: (payload.phone as string) || undefined,
+          isIndependent: payload.isIndependent as boolean
+        });
+        await reconcileDriverCarrier(
+          desktopApi,
+          id,
+          payload.isIndependent as boolean,
+          payload.carrierId as string
+        );
+      }}
+      remove={(id) => desktopApi.driversDelete(id)}
+      deleteDescription="O registro sera removido dos cadastros. Operacoes ja registradas nao sao afetadas."
+    />
+  );
+}
+
+function CarrierCrud({
+  desktopApi,
+  onChanged
+}: {
+  desktopApi: KyberRockDesktopApi;
+  onChanged: () => void;
+}) {
+  const [selectedCarrier, setSelectedCarrier] = useState<string | null>(null);
+  const [carrierVehicles, setCarrierVehicles] = useState<
+    Array<{ id: string; plate: string; description: string | null }>
+  >([]);
+
+  useEffect(() => {
+    let active = true;
+    async function load(): Promise<void> {
+      if (!selectedCarrier) {
+        setCarrierVehicles([]);
+        return;
+      }
+      try {
+        const vehicles = await desktopApi.carriersGetVehicles(selectedCarrier);
+        if (active) setCarrierVehicles(vehicles);
+      } catch {
+        if (active) setCarrierVehicles([]);
+      }
+    }
+    void load();
+    return () => {
+      active = false;
+    };
+  }, [desktopApi, selectedCarrier]);
+
+  const fields: CrudField[] = [
+    { key: "name", label: "Nome", required: true, section: "Identificacao" },
+    { key: "document", label: "CNPJ/CPF", type: "document", section: "Identificacao" },
+    { key: "phone", label: "Telefone", section: "Contato" },
+    { key: "email", label: "Email", section: "Contato" },
+    { key: "zipcode", label: "CEP", section: "Endereco" },
+    { key: "addressStreet", label: "Endereco", section: "Endereco" },
+    { key: "addressNumber", label: "Numero", section: "Endereco" },
+    { key: "addressComplement", label: "Complemento", section: "Endereco" },
+    { key: "neighborhood", label: "Bairro", section: "Endereco" },
+    { key: "city", label: "Cidade", section: "Endereco" },
+    { key: "state", label: "UF", uppercaseMax: 2, section: "Endereco" }
+  ];
+
+  const columns: Array<DataTableColumn<Record<string, unknown>>> = [
+    {
+      key: "name",
+      header: "Transportadora",
+      width: "minmax(220px, 1.3fr)",
+      render: (item) => {
+        const id = String(item.id);
+        return (
+          <button
+            type="button"
+            onClick={() => setSelectedCarrier(id === selectedCarrier ? null : id)}
+            title="Ver veiculos vinculados"
+            style={{
+              border: "none",
+              background: "transparent",
+              padding: 0,
+              textAlign: "left",
+              cursor: "pointer",
+              color: "inherit",
+              minWidth: 0
+            }}
+          >
+            <CellPrimary>{String(item.name ?? "")}</CellPrimary>
+            <CellMuted>
+              {selectedCarrier === id ? "Ocultar veiculos" : "Ver veiculos vinculados"}
+            </CellMuted>
+          </button>
+        );
+      }
+    },
+    {
+      key: "document",
+      header: "Documento",
+      width: "140px",
+      render: (item) => <CellMuted>{String(item.document ?? "") || "-"}</CellMuted>
+    },
+    {
+      key: "contact",
+      header: "Contato",
+      width: "minmax(170px, 1fr)",
+      render: (item) => (
+        <>
+          <CellText>{String(item.phone ?? "") || "-"}</CellText>
+          <CellMuted>{String(item.email ?? "") || "-"}</CellMuted>
+        </>
+      )
+    },
+    {
+      key: "city",
+      header: "Cidade/UF",
+      width: "minmax(130px, 0.8fr)",
+      render: (item) => (
+        <CellText>
+          {[item.city, item.state].filter(Boolean).join("/") || "-"}
+        </CellText>
+      )
+    },
+    {
+      key: "source",
+      header: "Origem",
+      width: "90px",
+      render: (item) => <SourceBadge source={String(item.source ?? "local")} />
+    }
+  ];
+
+  return (
+    <ResourceCrud
+      desktopApi={desktopApi}
+      entityType="carrier"
+      singular="Transportadora"
+      gender="f"
+      title="Transportadoras"
+      description="Sincronizadas do OMIE pela tag 'transportadora' ou criadas localmente. Clique no nome para ver os veiculos vinculados."
+      searchPlaceholder="Buscar por nome, documento ou cidade..."
+      emptyHint={'Sincronize o OMIE na tela Cloud ou cadastre pelo botao "Nova transportadora".'}
+      modalMaxWidth={980}
+      minWidth="920px"
+      fields={fields}
+      columns={columns}
+      rowToForm={(item) => ({
+        name: String(item.name ?? ""),
+        document: String(item.document ?? ""),
+        phone: String(item.phone ?? ""),
+        email: String(item.email ?? ""),
+        zipcode: String(item.zipcode ?? ""),
+        addressStreet: String(item.addressStreet ?? ""),
+        addressNumber: String(item.addressNumber ?? ""),
+        addressComplement: String(item.addressComplement ?? ""),
+        neighborhood: String(item.neighborhood ?? ""),
+        city: String(item.city ?? ""),
+        state: String(item.state ?? "")
+      })}
+      buildPayload={(form) => {
+        if (!form.name.trim()) return { error: "Nome e obrigatorio." };
+        let document = "";
+        if (form.document.trim()) {
+          const normalized = normalizeDocument(form.document);
+          if (!isValidDocument(normalized)) return { error: "CPF/CNPJ invalido." };
+          document = normalized;
+        }
+        return {
+          value: {
+            name: form.name.trim(),
+            document,
+            phone: form.phone.trim(),
+            email: form.email.trim(),
+            zipcode: form.zipcode.trim(),
+            addressStreet: form.addressStreet.trim(),
+            addressNumber: form.addressNumber.trim(),
+            addressComplement: form.addressComplement.trim(),
+            neighborhood: form.neighborhood.trim(),
+            city: form.city.trim(),
+            state: form.state.trim()
+          }
+        };
+      }}
+      create={(payload) =>
+        desktopApi
+          .carriersCreate({
+            name: payload.name as string,
+            document: (payload.document as string) || undefined,
+            phone: (payload.phone as string) || undefined,
+            email: (payload.email as string) || undefined,
+            zipcode: (payload.zipcode as string) || undefined,
+            addressStreet: (payload.addressStreet as string) || undefined,
+            addressNumber: (payload.addressNumber as string) || undefined,
+            addressComplement: (payload.addressComplement as string) || undefined,
+            neighborhood: (payload.neighborhood as string) || undefined,
+            city: (payload.city as string) || undefined,
+            state: (payload.state as string) || undefined
+          })
+          .then(() => undefined)
+      }
+      update={(id, payload) =>
+        desktopApi
+          .carriersUpdate(id, {
+            name: payload.name as string,
+            document: (payload.document as string) || null,
+            phone: (payload.phone as string) || null,
+            email: (payload.email as string) || null,
+            zipcode: (payload.zipcode as string) || null,
+            addressStreet: (payload.addressStreet as string) || null,
+            addressNumber: (payload.addressNumber as string) || null,
+            addressComplement: (payload.addressComplement as string) || null,
+            neighborhood: (payload.neighborhood as string) || null,
+            city: (payload.city as string) || null,
+            state: (payload.state as string) || null
+          })
+          .then(() => undefined)
+      }
+      remove={(id) => desktopApi.carriersDelete(id)}
+      deleteDescription="A transportadora sera removida dos cadastros locais. Veiculos vinculados ficam sem transportadora."
+      onChanged={onChanged}
+      expandedRow={(item) =>
+        selectedCarrier === String(item.id) ? (
+          <div style={{ display: "grid", gap: "6px" }}>
+            <strong style={{ color: "var(--kr-text-strong)", fontSize: "13px" }}>
+              Veiculos vinculados
+            </strong>
+            {carrierVehicles.length === 0 ? (
+              <p style={{ color: "var(--kr-muted)", fontSize: "13px", margin: 0 }}>
+                Nenhum veiculo vinculado.
+              </p>
+            ) : (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                {carrierVehicles.map((vehicle) => (
+                  <span
+                    key={vehicle.id}
+                    style={{
+                      fontSize: "13px",
+                      background: "var(--kr-surface)",
+                      border: "1px solid var(--kr-border)",
+                      padding: "4px 8px",
+                      borderRadius: "8px",
+                      color: "var(--kr-text-strong)"
+                    }}
+                  >
+                    {vehicle.plate}
+                    {vehicle.description ? ` - ${vehicle.description}` : ""}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : null
+      }
+    />
+  );
+}
+
+function VehicleCrud({
+  desktopApi,
+  carrierOptions,
+  carrierNameById
+}: {
+  desktopApi: KyberRockDesktopApi;
+  carrierOptions: CrudSelectOption[];
+  carrierNameById: Map<string, string>;
+}) {
+  const fields: CrudField[] = [
+    { key: "plate", label: "Placa", type: "plate", required: true, section: "Identificacao" },
+    { key: "description", label: "Descricao", section: "Identificacao" },
+    {
+      key: "carrierId",
+      label: "Transportadora",
+      type: "select",
+      options: carrierOptions,
+      emptyOption: "Sem transportadora",
+      section: "Vinculo",
+      helper: "Vincule a placa a transportadora quando houver."
+    }
+  ];
+
+  const columns: Array<DataTableColumn<Record<string, unknown>>> = [
+    {
+      key: "plate",
+      header: "Placa",
+      width: "130px",
+      render: (item) => <span style={styles.plateBadge}>{String(item.plate ?? "") || "-"}</span>
+    },
+    {
+      key: "description",
+      header: "Descricao",
+      width: "minmax(180px, 1.2fr)",
+      render: (item) => <CellMuted>{String(item.description ?? "") || "-"}</CellMuted>
+    },
+    {
+      key: "carrier",
+      header: "Transportadora",
+      width: "minmax(200px, 1.3fr)",
+      render: (item) => (
+        <CellText>{carrierNameById.get(String(item.carrier_id ?? "")) ?? "-"}</CellText>
+      )
+    }
+  ];
+
+  return (
+    <ResourceCrud
+      desktopApi={desktopApi}
+      entityType="vehicle"
+      singular="Veiculo"
+      gender="m"
+      title="Placas"
+      description="Caminhoes identificados pela placa. Vincule a transportadora quando houver."
+      searchPlaceholder="Buscar por placa..."
+      emptyHint={'Cadastre a primeira placa pelo botao "Novo veiculo".'}
+      fields={fields}
+      columns={columns}
+      rowToForm={(item) => ({
+        plate: String(item.plate ?? ""),
+        description: String(item.description ?? ""),
+        carrierId: String(item.carrier_id ?? "")
+      })}
+      buildPayload={(form) => {
+        const normalizedPlate = normalizePlate(form.plate);
+        if (!normalizedPlate) return { error: "Placa e obrigatoria." };
+        if (!isValidPlate(normalizedPlate)) {
+          return { error: "Placa invalida. Use o formato ABC1234 ou ABC1D23." };
+        }
+        return {
+          value: {
+            plate: normalizedPlate,
+            description: form.description.trim(),
+            carrierId: form.carrierId
+          }
+        };
+      }}
+      create={(payload) =>
+        desktopApi
+          .vehiclesCreate({
+            plate: payload.plate as string,
+            description: (payload.description as string) || undefined,
+            carrierId: (payload.carrierId as string) || undefined
+          })
+          .then(() => undefined)
+      }
+      update={(id, payload) =>
+        desktopApi
+          .vehiclesUpdate(id, {
+            plate: payload.plate as string,
+            description: (payload.description as string) || undefined,
+            carrierId: (payload.carrierId as string) || null
+          })
+          .then(() => undefined)
+      }
+      remove={(id) => desktopApi.vehiclesDelete(id)}
+      deleteDescription="O veiculo sera removido dos cadastros. Operacoes ja registradas nao sao afetadas."
+    />
+  );
+}
+
 function TransportView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
-  // Tudo do transporte fica dentro da transportadora: expanda uma transportadora
-  // para cadastrar seus veiculos e motoristas.
-  return <CarrierListView desktopApi={desktopApi} />;
-}
+  const [transportTab, setTransportTab] = useState<"drivers" | "carriers" | "vehicles">("drivers");
+  const [carriers, setCarriers] = useState<CarrierCacheEntry[]>([]);
 
-interface CarrierFormData {
-  name: string;
-  document: string;
-  phone: string;
-  email: string;
-  zipcode: string;
-  addressStreet: string;
-  addressNumber: string;
-  addressComplement: string;
-  neighborhood: string;
-  city: string;
-  state: string;
-  nfRequired: boolean;
-}
+  const loadCarriers = useCallback(async () => {
+    try {
+      const result = await desktopApi.queryCache({ entityType: "carrier", limit: 200 });
+      setCarriers(result.rows as CarrierCacheEntry[]);
+    } catch {
+      setCarriers([]);
+    }
+  }, [desktopApi]);
 
-const emptyCarrierForm: CarrierFormData = {
-  name: "",
-  document: "",
-  phone: "",
-  email: "",
-  zipcode: "",
-  addressStreet: "",
-  addressNumber: "",
-  addressComplement: "",
-  neighborhood: "",
-  city: "",
-  state: "",
-  nfRequired: false
-};
+  useEffect(() => {
+    void loadCarriers();
+  }, [loadCarriers]);
+
+  const carrierOptions = useMemo(
+    () => carriers.map((carrier) => ({ value: carrier.id, label: carrier.name })),
+    [carriers]
+  );
+  const carrierNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const carrier of carriers) map.set(carrier.id, carrier.name);
+    return map;
+  }, [carriers]);
+
+  return (
+    <div>
+      <nav style={{ ...styles.subTabs, marginTop: 0 }}>
+        <button
+          type="button"
+          onClick={() => setTransportTab("drivers")}
+          style={subTabStyle(transportTab === "drivers")}
+        >
+          Motoristas
+        </button>
+        <button
+          type="button"
+          onClick={() => setTransportTab("carriers")}
+          style={subTabStyle(transportTab === "carriers")}
+        >
+          Transportadoras
+        </button>
+        <button
+          type="button"
+          onClick={() => setTransportTab("vehicles")}
+          style={subTabStyle(transportTab === "vehicles")}
+        >
+          Placas
+        </button>
+      </nav>
+      <div style={{ marginTop: "20px" }}>
+        {transportTab === "drivers" ? (
+          <DriverCrud desktopApi={desktopApi} carrierOptions={carrierOptions} />
+        ) : null}
+        {transportTab === "carriers" ? (
+          <CarrierCrud desktopApi={desktopApi} onChanged={() => void loadCarriers()} />
+        ) : null}
+        {transportTab === "vehicles" ? (
+          <VehicleCrud
+            desktopApi={desktopApi}
+            carrierOptions={carrierOptions}
+            carrierNameById={carrierNameById}
+          />
+        ) : null}
+      </div>
+    </div>
+  );
+}
 
 function paymentConditionSummary(term: PaymentTermCacheEntry): string {
   try {
@@ -6707,711 +7692,76 @@ function PaymentConditionsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi
 }
 
 function AccountsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
-  const [accounts, setAccounts] = useState<AccountCacheEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [name, setName] = useState("");
-  const [omieCode, setOmieCode] = useState("");
-  const [formError, setFormError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [flash, showFlash] = useFlash();
-  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState(false);
-
-  const loadAccounts = useCallback(async () => {
-    setLoading(true);
-    try {
-      const result = await desktopApi.queryCache({
-        entityType: "account",
-        activeOnly: false,
-        limit: 200
-      });
-      setAccounts(result.rows as AccountCacheEntry[]);
-    } finally {
-      setLoading(false);
+  const fields: CrudField[] = [
+    { key: "name", label: "Nome", required: true },
+    {
+      key: "omieCode",
+      label: "Codigo OMIE",
+      helper: "Codigo da conta corrente no OMIE (opcional)."
     }
-  }, [desktopApi]);
+  ];
 
-  useEffect(() => {
-    void loadAccounts();
-  }, [loadAccounts]);
-
-  function openCreate(): void {
-    setEditingId(null);
-    setName("");
-    setOmieCode("");
-    setFormError(null);
-    setShowForm(true);
-  }
-
-  function openEdit(account: AccountCacheEntry): void {
-    setEditingId(account.id);
-    setName(account.name);
-    setOmieCode(account.omieCode ?? "");
-    setFormError(null);
-    setShowForm(true);
-  }
-
-  async function handleSave(): Promise<void> {
-    if (!name.trim()) {
-      setFormError("Informe o nome da conta.");
-      return;
-    }
-    setSaving(true);
-    try {
-      if (editingId) {
-        await desktopApi.accountsUpdate(editingId, {
-          name: name.trim(),
-          omieCode: omieCode.trim() || null
-        });
-        showFlash("success", "Conta atualizada.");
-      } else {
-        await desktopApi.accountsCreate({
-          name: name.trim(),
-          omieCode: omieCode.trim() || undefined
-        });
-        showFlash("success", "Conta criada.");
-      }
-      setShowForm(false);
-      await loadAccounts();
-    } catch (err) {
-      setFormError(err instanceof Error ? err.message : "Erro ao salvar.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleConfirmDelete(): Promise<void> {
-    if (!pendingDeleteId) return;
-    setDeleting(true);
-    try {
-      await desktopApi.accountsDelete(pendingDeleteId);
-      setPendingDeleteId(null);
-      await loadAccounts();
-      showFlash("success", "Conta excluida.");
-    } catch (err) {
-      setPendingDeleteId(null);
-      showFlash("error", err instanceof Error ? err.message : "Erro ao excluir.");
-    } finally {
-      setDeleting(false);
-    }
-  }
-
-  return (
-    <div>
-      <CrudSectionHeader
-        title="Contas"
-        description="Contas usadas no fechamento financeiro. Vincule as formas de pagamento a elas."
-        count={accounts.length}
-        actionLabel="Nova conta"
-        onAction={openCreate}
-      />
-      <FlashBanner flash={flash} />
-
-      {showForm ? (
-        <CrudFormShell
-          title={editingId ? "Editar conta" : "Nova conta"}
-          error={formError}
-          saving={saving}
-          maxWidth={520}
-          onClose={() => setShowForm(false)}
-          onSubmit={() => void handleSave()}
-        >
-          <FormSection title="Dados">
-            <TextInput label="Nome" value={name} onChange={setName} required />
-            <TextInput
-              label="Codigo OMIE"
-              value={omieCode}
-              onChange={setOmieCode}
-              placeholder="Codigo da conta corrente no OMIE (opcional)"
-            />
-          </FormSection>
-        </CrudFormShell>
-      ) : null}
-
-      {pendingDeleteId ? (
-        <ConfirmDialog
-          title="Excluir conta"
-          description="A conta sera removida. Formas de pagamento vinculadas ficam sem conta."
-          busy={deleting}
-          onCancel={() => setPendingDeleteId(null)}
-          onConfirm={() => void handleConfirmDelete()}
-        />
-      ) : null}
-
-      <DataTable
-        columns={[
-          {
-            key: "name",
-            header: "Conta",
-            width: "minmax(200px, 1.3fr)",
-            render: (a: AccountCacheEntry) => <CellPrimary>{a.name}</CellPrimary>
-          },
-          {
-            key: "omie",
-            header: "Cod. OMIE",
-            width: "140px",
-            render: (a: AccountCacheEntry) => <CellMuted>{a.omieCode || "-"}</CellMuted>
-          },
-          {
-            key: "type",
-            header: "Origem",
-            width: "120px",
-            render: (a: AccountCacheEntry) => (
-              <CellMuted>{a.isSystem ? "Sistema" : "Personalizada"}</CellMuted>
-            )
-          },
-          {
-            key: "actions",
-            header: "Acoes",
-            width: "150px",
-            align: "right",
-            render: (a: AccountCacheEntry) => (
-              <>
-                <EditRowButton onClick={() => openEdit(a)} />
-                {a.isSystem ? null : <DeleteRowButton onClick={() => setPendingDeleteId(a.id)} />}
-              </>
-            )
-          }
-        ]}
-        rows={accounts}
-        rowKey={(a) => a.id}
-        loading={loading}
-        minWidth="620px"
-        emptyTitle="Nenhuma conta cadastrada."
-        emptyHint="As contas padrao sao criadas automaticamente."
-      />
-    </div>
-  );
-}
-
-function CarrierListView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
-  const [carriers, setCarriers] = useState<CarrierCacheEntry[]>([]);
-  const [search, setSearch] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState<CarrierFormData>(emptyCarrierForm);
-  const [formError, setFormError] = useState<string | null>(null);
-  const [flash, showFlash] = useFlash();
-  const [saving, setSaving] = useState(false);
-  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState(false);
-  const [selectedCarrier, setSelectedCarrier] = useState<string | null>(null);
-  const [carrierVehicles, setCarrierVehicles] = useState<
-    Array<{ id: string; plate: string; description: string | null }>
-  >([]);
-  const [carrierDrivers, setCarrierDrivers] = useState<
-    Array<{ id: string; name: string; document: string | null }>
-  >([]);
-  const [showAddVehicle, setShowAddVehicle] = useState(false);
-  const [showAddDriver, setShowAddDriver] = useState(false);
-
-  useEffect(() => {
-    void loadCarriers();
-  }, [search]);
-
-  const loadCarrierMembers = useCallback(
-    async (carrierId: string) => {
-      if (!desktopApi) return;
-      try {
-        const [vehicles, drivers] = await Promise.all([
-          desktopApi.carriersGetVehicles(carrierId),
-          desktopApi.listDriversByCarrier(carrierId)
-        ]);
-        setCarrierVehicles(vehicles);
-        setCarrierDrivers(
-          (drivers as Array<{ id: string; name: string; document: string | null }>) ?? []
-        );
-      } catch {
-        setCarrierVehicles([]);
-        setCarrierDrivers([]);
-      }
+  const columns: Array<DataTableColumn<Record<string, unknown>>> = [
+    {
+      key: "name",
+      header: "Conta",
+      width: "minmax(200px, 1.3fr)",
+      render: (item) => <CellPrimary>{String(item.name ?? "")}</CellPrimary>
     },
-    [desktopApi]
-  );
-
-  useEffect(() => {
-    if (!selectedCarrier) return;
-    void loadCarrierMembers(selectedCarrier);
-  }, [selectedCarrier, loadCarrierMembers]);
-
-  async function handleUnlinkDriver(driverId: string): Promise<void> {
-    if (!desktopApi || !selectedCarrier) return;
-    try {
-      await desktopApi.unlinkDriverCarrier(driverId, selectedCarrier);
-      await loadCarrierMembers(selectedCarrier);
-      showFlash("success", "Motorista desvinculado.");
-    } catch (err) {
-      showFlash("error", err instanceof Error ? err.message : "Erro ao desvincular.");
+    {
+      key: "omie",
+      header: "Cod. OMIE",
+      width: "140px",
+      render: (item) => <CellMuted>{String(item.omieCode ?? "") || "-"}</CellMuted>
+    },
+    {
+      key: "type",
+      header: "Origem",
+      width: "120px",
+      render: (item) => <CellMuted>{item.isSystem ? "Sistema" : "Personalizada"}</CellMuted>
     }
-  }
-
-  async function loadCarriers(): Promise<void> {
-    setLoading(true);
-    try {
-      const result = await desktopApi.queryCache({
-        entityType: "carrier",
-        search: search || undefined,
-        limit: 200
-      });
-      setCarriers(result.rows as CarrierCacheEntry[]);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function resetForm(): void {
-    setForm(emptyCarrierForm);
-    setEditingId(null);
-    setFormError(null);
-  }
-
-  function openCreate(): void {
-    resetForm();
-    setShowForm(true);
-  }
-
-  function openEdit(carrier: CarrierCacheEntry): void {
-    setForm({
-      name: carrier.name,
-      document: carrier.document ?? "",
-      phone: carrier.phone ?? "",
-      email: carrier.email ?? "",
-      zipcode: carrier.zipcode ?? "",
-      addressStreet: carrier.addressStreet ?? "",
-      addressNumber: carrier.addressNumber ?? "",
-      addressComplement: carrier.addressComplement ?? "",
-      neighborhood: carrier.neighborhood ?? "",
-      city: carrier.city ?? "",
-      state: carrier.state ?? "",
-      nfRequired: carrier.nfRequired
-    });
-    setEditingId(carrier.id);
-    setFormError(null);
-    setShowForm(true);
-  }
-
-  async function handleSave(): Promise<void> {
-    if (!form.name.trim()) {
-      setFormError("Nome e obrigatorio.");
-      return;
-    }
-    const normalizedDocument = normalizeDocument(form.document);
-    if (form.document.trim() && !isValidDocument(normalizedDocument)) {
-      setFormError("CPF/CNPJ invalido.");
-      return;
-    }
-    setSaving(true);
-    try {
-      if (editingId) {
-        await desktopApi.carriersUpdate(editingId, {
-          name: form.name.trim(),
-          document: normalizedDocument || null,
-          phone: form.phone.trim() || null,
-          email: form.email.trim() || null,
-          zipcode: form.zipcode.trim() || null,
-          addressStreet: form.addressStreet.trim() || null,
-          addressNumber: form.addressNumber.trim() || null,
-          addressComplement: form.addressComplement.trim() || null,
-          neighborhood: form.neighborhood.trim() || null,
-          city: form.city.trim() || null,
-          state: form.state.trim() || null,
-          nfRequired: form.nfRequired
-        });
-        showFlash("success", "Transportadora atualizada.");
-      } else {
-        await desktopApi.carriersCreate({
-          name: form.name.trim(),
-          document: normalizedDocument || undefined,
-          phone: form.phone.trim() || undefined,
-          email: form.email.trim() || undefined,
-          zipcode: form.zipcode.trim() || undefined,
-          addressStreet: form.addressStreet.trim() || undefined,
-          addressNumber: form.addressNumber.trim() || undefined,
-          addressComplement: form.addressComplement.trim() || undefined,
-          neighborhood: form.neighborhood.trim() || undefined,
-          city: form.city.trim() || undefined,
-          state: form.state.trim() || undefined,
-          nfRequired: form.nfRequired
-        });
-        showFlash("success", "Transportadora criada.");
-      }
-      setShowForm(false);
-      resetForm();
-      await loadCarriers();
-    } catch (err) {
-      setFormError(err instanceof Error ? err.message : "Erro ao salvar.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleConfirmDelete(): Promise<void> {
-    if (!pendingDeleteId) return;
-    setDeleting(true);
-    try {
-      await desktopApi.carriersDelete(pendingDeleteId);
-      setPendingDeleteId(null);
-      await loadCarriers();
-      showFlash("success", "Transportadora excluida.");
-    } catch (err) {
-      setPendingDeleteId(null);
-      showFlash("error", err instanceof Error ? err.message : "Erro ao excluir.");
-    } finally {
-      setDeleting(false);
-    }
-  }
+  ];
 
   return (
-    <div>
-      <CrudSectionHeader
-        title="Transportadoras"
-        description="Sincronizadas do OMIE pela tag 'transportadora' ou criadas localmente. Clique no nome para ver os veiculos vinculados."
-        count={carriers.length}
-        actionLabel="Nova transportadora"
-        onAction={openCreate}
-      />
-      <CrudSearchBar
-        value={search}
-        onChange={setSearch}
-        placeholder="Buscar por nome, documento ou cidade..."
-        onRefresh={() => void loadCarriers()}
-      />
-      <FlashBanner flash={flash} />
-
-      {showForm ? (
-        <CrudFormShell
-          title={editingId ? "Editar transportadora" : "Nova transportadora"}
-          subtitle="Transportadoras criadas aqui sao enviadas ao OMIE com a tag 'transportadora'."
-          error={formError}
-          saving={saving}
-          maxWidth={980}
-          onClose={() => setShowForm(false)}
-          onSubmit={() => void handleSave()}
-        >
-          <FormSection title="Identificacao">
-            <TextInput
-              label="Nome"
-              value={form.name}
-              onChange={(name) => setForm({ ...form, name })}
-              required
-            />
-            <DocumentInput
-              label="CNPJ/CPF"
-              value={form.document}
-              onChange={(document) => setForm({ ...form, document })}
-            />
-            <label style={styles.checkboxLabel}>
-              <input
-                type="checkbox"
-                checked={form.nfRequired}
-                onChange={(e) => setForm({ ...form, nfRequired: e.target.checked })}
-              />
-              Exige informar os dados na nota fiscal
-            </label>
-          </FormSection>
-          <FormSection title="Contato">
-            <TextInput
-              label="Telefone"
-              value={form.phone}
-              onChange={(phone) => setForm({ ...form, phone })}
-            />
-            <TextInput
-              label="Email"
-              value={form.email}
-              onChange={(email) => setForm({ ...form, email })}
-            />
-          </FormSection>
-          <FormSection title="Endereco">
-            <TextInput
-              label="CEP"
-              value={form.zipcode}
-              onChange={(zipcode) => setForm({ ...form, zipcode })}
-            />
-            <TextInput
-              label="Endereco"
-              value={form.addressStreet}
-              onChange={(addressStreet) => setForm({ ...form, addressStreet })}
-            />
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "minmax(90px, 0.7fr) minmax(140px, 1.3fr)",
-                gap: "8px"
-              }}
-            >
-              <TextInput
-                label="Numero"
-                value={form.addressNumber}
-                onChange={(addressNumber) => setForm({ ...form, addressNumber })}
-              />
-              <TextInput
-                label="Complemento"
-                value={form.addressComplement}
-                onChange={(addressComplement) => setForm({ ...form, addressComplement })}
-              />
-            </div>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "minmax(130px, 1fr) minmax(130px, 1fr) 70px",
-                gap: "8px"
-              }}
-            >
-              <TextInput
-                label="Bairro"
-                value={form.neighborhood}
-                onChange={(neighborhood) => setForm({ ...form, neighborhood })}
-              />
-              <TextInput
-                label="Cidade"
-                value={form.city}
-                onChange={(city) => setForm({ ...form, city })}
-              />
-              <TextInput
-                label="UF"
-                value={form.state}
-                onChange={(state) => setForm({ ...form, state: state.toUpperCase().slice(0, 2) })}
-              />
-            </div>
-          </FormSection>
-        </CrudFormShell>
-      ) : null}
-
-      {pendingDeleteId ? (
-        <ConfirmDialog
-          title="Excluir transportadora"
-          description="A transportadora sera removida dos cadastros locais. Veiculos vinculados ficam sem transportadora."
-          busy={deleting}
-          onCancel={() => setPendingDeleteId(null)}
-          onConfirm={() => void handleConfirmDelete()}
-        />
-      ) : null}
-
-      <DataTable
-        columns={[
-          {
-            key: "name",
-            header: "Transportadora",
-            width: "minmax(220px, 1.3fr)",
-            render: (carrier: CarrierCacheEntry) => (
-              <button
-                type="button"
-                onClick={() =>
-                  setSelectedCarrier(carrier.id === selectedCarrier ? null : carrier.id)
-                }
-                title="Ver veiculos vinculados"
-                style={{
-                  border: "none",
-                  background: "transparent",
-                  padding: 0,
-                  textAlign: "left",
-                  cursor: "pointer",
-                  color: "inherit",
-                  minWidth: 0
-                }}
-              >
-                <CellPrimary>{carrier.name}</CellPrimary>
-                <CellMuted>
-                  {selectedCarrier === carrier.id ? "Ocultar veiculos" : "Ver veiculos vinculados"}
-                </CellMuted>
-              </button>
-            )
-          },
-          {
-            key: "document",
-            header: "Documento",
-            width: "140px",
-            render: (carrier) => <CellMuted>{carrier.document || "-"}</CellMuted>
-          },
-          {
-            key: "contact",
-            header: "Contato",
-            width: "minmax(170px, 1fr)",
-            render: (carrier) => (
-              <>
-                <span>{carrier.phone || "-"}</span>
-                <CellMuted>{carrier.email || "-"}</CellMuted>
-              </>
-            )
-          },
-          {
-            key: "city",
-            header: "Cidade/UF",
-            width: "minmax(130px, 0.8fr)",
-            render: (carrier) => (
-              <span>{[carrier.city, carrier.state].filter(Boolean).join("/") || "-"}</span>
-            )
-          },
-          {
-            key: "source",
-            header: "Origem",
-            width: "90px",
-            render: (carrier) => <SourceBadge source={carrier.source} />
-          },
-          {
-            key: "actions",
-            header: "Acoes",
-            width: "170px",
-            align: "right",
-            render: (carrier) => (
-              <>
-                <EditRowButton onClick={() => openEdit(carrier)} />
-                <DeleteRowButton onClick={() => setPendingDeleteId(carrier.id)} />
-              </>
-            )
-          }
-        ]}
-        rows={carriers}
-        rowKey={(carrier) => carrier.id}
-        loading={loading}
-        minWidth="920px"
-        emptyTitle={
-          search ? "Nenhuma transportadora encontrada." : "Nenhuma transportadora cadastrada."
-        }
-        emptyHint={
-          search
-            ? "Ajuste o termo de busca."
-            : "Sincronize o OMIE na tela Cloud ou cadastre pelo botao \"Nova transportadora\"."
-        }
-        expandedRow={(carrier) =>
-          selectedCarrier === carrier.id ? (
-            <div style={{ display: "grid", gap: "12px" }}>
-              <div style={{ display: "grid", gap: "6px" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <strong style={{ color: "var(--kr-text-strong)", fontSize: "13px" }}>
-                    Veiculos
-                  </strong>
-                  <button
-                    type="button"
-                    onClick={() => setShowAddVehicle(true)}
-                    style={{ ...styles.secondaryButton, fontSize: "11px", padding: "3px 8px" }}
-                  >
-                    + Adicionar veiculo
-                  </button>
-                </div>
-                {carrierVehicles.length === 0 ? (
-                  <p style={{ color: "var(--kr-muted)", fontSize: "13px", margin: 0 }}>
-                    Nenhum veiculo vinculado.
-                  </p>
-                ) : (
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                    {carrierVehicles.map((v) => (
-                      <span
-                        key={v.id}
-                        style={{
-                          fontSize: "13px",
-                          background: "var(--kr-surface)",
-                          border: "1px solid var(--kr-border)",
-                          padding: "4px 8px",
-                          borderRadius: "8px",
-                          color: "var(--kr-text-strong)"
-                        }}
-                      >
-                        {v.plate}
-                        {v.description ? ` - ${v.description}` : ""}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <div style={{ display: "grid", gap: "6px" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <strong style={{ color: "var(--kr-text-strong)", fontSize: "13px" }}>
-                    Motoristas
-                  </strong>
-                  <button
-                    type="button"
-                    onClick={() => setShowAddDriver(true)}
-                    style={{ ...styles.secondaryButton, fontSize: "11px", padding: "3px 8px" }}
-                  >
-                    + Adicionar motorista
-                  </button>
-                </div>
-                {carrierDrivers.length === 0 ? (
-                  <p style={{ color: "var(--kr-muted)", fontSize: "13px", margin: 0 }}>
-                    Nenhum motorista vinculado.
-                  </p>
-                ) : (
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                    {carrierDrivers.map((d) => (
-                      <span
-                        key={d.id}
-                        style={{
-                          fontSize: "13px",
-                          background: "var(--kr-surface)",
-                          border: "1px solid var(--kr-border)",
-                          padding: "4px 8px",
-                          borderRadius: "8px",
-                          color: "var(--kr-text-strong)",
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: "6px"
-                        }}
-                      >
-                        {d.name}
-                        <button
-                          type="button"
-                          onClick={() => void handleUnlinkDriver(d.id)}
-                          title="Desvincular motorista"
-                          style={{
-                            border: "none",
-                            background: "transparent",
-                            color: "var(--kr-muted)",
-                            cursor: "pointer",
-                            padding: 0,
-                            fontSize: "14px",
-                            lineHeight: 1
-                          }}
-                        >
-                          &times;
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          ) : null
-        }
-      />
-
-      {showAddVehicle && selectedCarrier ? (
-        <QuickVehicleModal
-          desktopApi={desktopApi}
-          onClose={() => setShowAddVehicle(false)}
-          onCreated={async (id) => {
-            setShowAddVehicle(false);
-            try {
-              await desktopApi.vehiclesLinkCarrier(id, selectedCarrier);
-              await loadCarrierMembers(selectedCarrier);
-              showFlash("success", "Veiculo adicionado.");
-            } catch (err) {
-              showFlash("error", err instanceof Error ? err.message : "Erro ao vincular veiculo.");
-            }
-          }}
-        />
-      ) : null}
-
-      {showAddDriver && selectedCarrier ? (
-        <QuickDriverModal
-          desktopApi={desktopApi}
-          onClose={() => setShowAddDriver(false)}
-          onCreated={async (id) => {
-            setShowAddDriver(false);
-            try {
-              await desktopApi.linkDriverCarrier(id, selectedCarrier);
-              await loadCarrierMembers(selectedCarrier);
-              showFlash("success", "Motorista adicionado.");
-            } catch (err) {
-              showFlash("error", err instanceof Error ? err.message : "Erro ao vincular motorista.");
-            }
-          }}
-        />
-      ) : null}
-    </div>
+    <ResourceCrud
+      desktopApi={desktopApi}
+      entityType="account"
+      singular="Conta"
+      gender="f"
+      title="Contas"
+      description="Contas usadas no fechamento financeiro. Vincule as formas de pagamento a elas."
+      searchPlaceholder="Buscar contas..."
+      emptyHint={'Cadastre pelo botao "Nova conta".'}
+      modalMaxWidth={520}
+      fields={fields}
+      columns={columns}
+      rowToForm={(item) => ({
+        name: String(item.name ?? ""),
+        omieCode: String(item.omieCode ?? "")
+      })}
+      buildPayload={(form) => {
+        if (!form.name.trim()) return { error: "Informe o nome da conta." };
+        return { value: { name: form.name.trim(), omieCode: form.omieCode.trim() } };
+      }}
+      create={(payload) =>
+        desktopApi
+          .accountsCreate({
+            name: payload.name as string,
+            omieCode: (payload.omieCode as string) || undefined
+          })
+          .then(() => undefined)
+      }
+      update={(id, payload) =>
+        desktopApi
+          .accountsUpdate(id, {
+            name: payload.name as string,
+            omieCode: (payload.omieCode as string) || null
+          })
+          .then(() => undefined)
+      }
+      remove={(id) => desktopApi.accountsDelete(id)}
+      deleteDescription="A conta sera removida. Formas de pagamento vinculadas ficam sem conta."
+    />
   );
 }
 
