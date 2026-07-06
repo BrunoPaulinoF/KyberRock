@@ -4370,6 +4370,14 @@ function WeighingForm({
               setForm((prev) => ({
                 ...prev,
                 customerId: id,
+                // Pre-seleciona gerar (ou nao) nota fiscal conforme o cadastro do
+                // cliente; o operador ainda pode trocar antes de fechar.
+                operationType:
+                  item?.nfRequired === false
+                    ? "internal"
+                    : item?.nfRequired === true
+                      ? "invoice"
+                      : prev.operationType,
                 // Ao trocar de cliente, puxamos os vinculos padrao dele e
                 // limpamos a transportadora anterior (que pode nao ser dele).
                 carrierId:
