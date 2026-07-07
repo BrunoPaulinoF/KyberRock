@@ -1,4 +1,11 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import {
+  buildTruckReport,
+  renderTruckReportHtml,
+  renderTruckReportWhatsapp,
+  type TruckReport,
+  type TruckReportRow
+} from "./truck-report.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -14,6 +21,8 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+type ReportType = "sales" | "trucks" | "both";
+
 interface Recipient {
   email: string | null;
   whatsappPhone: string | null;
@@ -21,6 +30,7 @@ interface Recipient {
   sendWhatsapp: boolean;
   scheduleFrequency: string;
   scheduleTime: string;
+  reportTypes: ReportType;
   displayName: string | null;
 }
 
@@ -126,7 +136,7 @@ async function dispatchForUnit(params: {
   const { data: recipients, error: recipientsError } = await supabase
     .from("report_recipients")
     .select(
-      "email, whatsapp_phone, send_email, send_whatsapp, schedule_frequency, schedule_time, display_name"
+      "email, whatsapp_phone, send_email, send_whatsapp, schedule_frequency, schedule_time, report_types, display_name"
     )
     .eq("company_id", company.id)
     .eq("is_active", true);
@@ -150,7 +160,10 @@ async function dispatchForUnit(params: {
   }
 
   const summary = await buildDailySummary(supabase, company.id, unit.id, targetDate);
-  if (!summary) {
+  const truckReport = await buildTruckSummary(supabase, company.id, unit.id, targetDate);
+  const hasSales = summary !== null;
+  const hasTrucks = truckReport.totalOperations > 0;
+  if (!hasSales && !hasTrucks) {
     return recordError(supabase, {
       companyId: company.id,
       unitId: unit.id,
@@ -159,18 +172,28 @@ async function dispatchForUnit(params: {
     });
   }
 
-  const html = renderEmailHtml({
-    companyName: company.name,
-    unitName: unit.name,
-    date: targetDate,
-    summary
-  });
-  const whatsappText = renderWhatsappText({
-    companyName: company.name,
-    unitName: unit.name,
-    date: targetDate,
-    summary
-  });
+  const salesHtml = summary
+    ? renderEmailHtml({ companyName: company.name, unitName: unit.name, date: targetDate, summary })
+    : null;
+  const salesWhatsapp = summary
+    ? renderWhatsappText({
+        companyName: company.name,
+        unitName: unit.name,
+        date: targetDate,
+        summary
+      })
+    : null;
+  const truckHtml = hasTrucks
+    ? renderTruckReportHtml({
+        companyName: company.name,
+        unitName: unit.name,
+        date: targetDate,
+        report: truckReport
+      })
+    : null;
+  const truckWhatsapp = hasTrucks
+    ? renderTruckReportWhatsapp({ date: targetDate, report: truckReport })
+    : null;
 
   let dispatched = 0;
   let targets = 0;
@@ -182,8 +205,11 @@ async function dispatchForUnit(params: {
     send_whatsapp: boolean | null;
     schedule_frequency: string | null;
     schedule_time: string | null;
+    report_types: string | null;
     display_name: string | null;
   }>) {
+    const reportTypes: ReportType =
+      row.report_types === "trucks" || row.report_types === "both" ? row.report_types : "sales";
     const recipient: Recipient = {
       email: row.email,
       whatsappPhone: row.whatsapp_phone,
@@ -191,6 +217,7 @@ async function dispatchForUnit(params: {
       sendWhatsapp: row.send_whatsapp === true,
       scheduleFrequency: row.schedule_frequency ?? "daily",
       scheduleTime: row.schedule_time ?? "20:00",
+      reportTypes,
       displayName: row.display_name
     };
 
@@ -204,7 +231,22 @@ async function dispatchForUnit(params: {
       continue;
     }
 
-    if (recipient.sendEmail && recipient.email) {
+    // Monta o conteudo conforme os relatorios que este destinatario recebe.
+    const wantsSales = reportTypes === "sales" || reportTypes === "both";
+    const wantsTrucks = reportTypes === "trucks" || reportTypes === "both";
+    const emailHtml =
+      [wantsSales ? salesHtml : null, wantsTrucks ? truckHtml : null]
+        .filter((part): part is string => Boolean(part))
+        .join('<hr style="margin:28px 0;border:none;border-top:1px solid #cbd5e1" />') || null;
+    const whatsappBody =
+      [wantsSales ? salesWhatsapp : null, wantsTrucks ? truckWhatsapp : null]
+        .filter((part): part is string => Boolean(part))
+        .join("\n\n") || null;
+    const subject = wantsSales
+      ? `Fechamento diario ${targetDate} - ${company.name}`
+      : `Controle de caminhoes ${targetDate} - ${company.name}`;
+
+    if (recipient.sendEmail && recipient.email && emailHtml) {
       targets += 1;
       try {
         if (!params.smtpHost || !params.smtpUser || !params.smtpPassword || !senderEmail) {
@@ -219,8 +261,8 @@ async function dispatchForUnit(params: {
           password: params.smtpPassword,
           from: senderEmail,
           to: recipient.email,
-          subject: `Fechamento diario ${targetDate} - ${company.name}`,
-          html
+          subject,
+          html: emailHtml
         });
         dispatched += 1;
       } catch (error) {
@@ -228,7 +270,7 @@ async function dispatchForUnit(params: {
       }
     }
 
-    if (recipient.sendWhatsapp && recipient.whatsappPhone) {
+    if (recipient.sendWhatsapp && recipient.whatsappPhone && whatsappBody) {
       targets += 1;
       try {
         if (!params.uazapiInstanceToken || !params.uazapiWhatsappUrl) {
@@ -240,7 +282,7 @@ async function dispatchForUnit(params: {
           instanceToken: params.uazapiInstanceToken,
           baseUrl: params.uazapiWhatsappUrl,
           to: recipient.whatsappPhone,
-          text: whatsappText,
+          text: whatsappBody,
           trackId: `daily-report:${company.id}:${unit.id}:${targetDate}:${recipient.whatsappPhone}`
         });
         dispatched += 1;
@@ -363,6 +405,35 @@ async function buildDailySummary(
     averagePricePerKgCents,
     byProduct
   };
+}
+
+async function buildTruckSummary(
+  supabase: ReturnType<typeof createClient>,
+  companyId: string,
+  unitId: string,
+  date: string
+): Promise<TruckReport> {
+  const { data, error } = await supabase
+    .from("weighing_operations")
+    .select("plate, driver_name, product_description, net_weight_kg, created_at, closed_at")
+    .eq("company_id", companyId)
+    .eq("unit_id", unitId)
+    .eq("status", "closed_local")
+    .not("closed_at", "is", null)
+    .gte("created_at", `${date}T00:00:00Z`)
+    .lt("created_at", nextDay(date));
+
+  if (error || !data) return buildTruckReport([]);
+
+  const rows: TruckReportRow[] = data.map((row) => ({
+    plate: row.plate as string | null,
+    driverName: row.driver_name as string | null,
+    productDescription: row.product_description as string | null,
+    netWeightKg: Number(row.net_weight_kg ?? 0),
+    createdAt: row.created_at as string | null,
+    closedAt: row.closed_at as string | null
+  }));
+  return buildTruckReport(rows);
 }
 
 function aggregateProducts(

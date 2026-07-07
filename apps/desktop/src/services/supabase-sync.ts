@@ -12,6 +12,11 @@ import type { DesktopDatabase } from "../database/sqlite.js";
 import type { LocalDesktopIdentity } from "./bootstrap.js";
 import { readLocalSetting, readStringLocalSetting, writeLocalSetting } from "./local-settings.js";
 import { ReportService } from "./reports.js";
+import {
+  markRecipientSynced,
+  markRecipientSyncError,
+  type ReportRecipientRow
+} from "./report-recipients.js";
 import { isSellableProduct } from "./product-classification.js";
 import { listRunnableSyncJobs, markSyncJobDone, markSyncJobFailed } from "./sync-queue.js";
 
@@ -1949,6 +1954,49 @@ export async function processFiscalBillingNow(
       `Nao foi possivel faturar no OMIE. Verifique a internet conectada e a configuracao da API OMIE. Detalhe: ${message}`
     );
   }
+}
+
+// Empurra os destinatarios de relatorio pendentes (needs_push) para o Supabase,
+// para o envio automatico (daily-report-email) enxergar quem recebe o que.
+// Destinatarios removidos localmente sao enviados como inativos.
+export async function pushPendingReportRecipients(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity
+): Promise<number> {
+  const settings = getCloudSettings(database, identity);
+  const rows = database
+    .prepare(
+      `SELECT * FROM report_recipients WHERE company_id = ? AND needs_push = 1
+       ORDER BY updated_at ASC LIMIT 100`
+    )
+    .all(settings.companyId) as ReportRecipientRow[];
+  if (rows.length === 0) return 0;
+
+  const recipients = rows.map((row) => ({
+    id: row.id,
+    company_id: settings.companyId,
+    email: row.email,
+    whatsapp_phone: row.whatsapp_phone,
+    send_email: row.send_email === 1,
+    send_whatsapp: row.send_whatsapp === 1,
+    schedule_frequency: row.schedule_frequency,
+    schedule_time: row.schedule_time,
+    report_types: row.report_types || "sales",
+    display_name: row.display_name,
+    is_active: row.is_active === 1 && row.deleted_at === null,
+    updated_at: new Date().toISOString()
+  }));
+
+  try {
+    await invokeDesktopSync(settings, { reportRecipients: recipients });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Falha ao sincronizar destinatarios.";
+    for (const row of rows) markRecipientSyncError(database, row.id, message);
+    throw error;
+  }
+
+  for (const row of rows) markRecipientSynced(database, row.id);
+  return rows.length;
 }
 
 async function invokeDesktopSync(

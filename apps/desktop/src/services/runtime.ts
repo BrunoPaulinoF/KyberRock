@@ -88,6 +88,7 @@ import {
   initializeSupabaseFromSettings,
   pingSupabase,
   processCloudSyncQueue,
+  pushPendingReportRecipients,
   syncOperationToSupabase,
   syncLoadingRequestToSupabase,
   syncOmieReferenceDataFromCloud,
@@ -902,6 +903,16 @@ export class DesktopRuntime {
             `Loading request ${request.id}: ${error instanceof Error ? error.message : "Unknown error"}`
           );
         }
+      }
+
+      // Sync report recipients (quem recebe o envio automatico) to cloud
+      try {
+        synced += await pushPendingReportRecipients(this.database, identity);
+      } catch (error) {
+        failed++;
+        errors.push(
+          `Report recipients sync: ${error instanceof Error ? error.message : "Unknown error"}`
+        );
       }
 
       // Pull company price_change_password from cloud

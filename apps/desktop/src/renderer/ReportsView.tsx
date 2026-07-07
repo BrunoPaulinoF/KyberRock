@@ -3,6 +3,8 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 import type { KyberRockDesktopApi } from "../preload/api-types";
 import { CrudFormModal } from "./CrudFormModal";
 
+type ReportType = "sales" | "trucks" | "both";
+
 interface RecipientRow {
   id: string;
   email: string | null;
@@ -11,6 +13,7 @@ interface RecipientRow {
   sendWhatsapp: boolean;
   scheduleFrequency: string;
   scheduleTime: string;
+  reportTypes: ReportType;
   displayName: string | null;
   isActive: boolean;
   syncStatus: "synced" | "pending" | "error";
@@ -24,6 +27,7 @@ interface RecipientFormState {
   deliveryChannel: "email" | "whatsapp" | "both";
   scheduleFrequency: string;
   scheduleTime: string;
+  reportTypes: ReportType;
   displayName: string;
   isActive: boolean;
 }
@@ -34,8 +38,15 @@ const initialForm: RecipientFormState = {
   deliveryChannel: "email",
   scheduleFrequency: "daily",
   scheduleTime: "20:00",
+  reportTypes: "sales",
   displayName: "",
   isActive: true
+};
+
+const REPORT_TYPE_LABEL: Record<ReportType, string> = {
+  sales: "Vendas",
+  trucks: "Caminhoes",
+  both: "Vendas + Caminhoes"
 };
 
 const styles = {
@@ -320,6 +331,7 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
         sendWhatsapp,
         scheduleFrequency: form.scheduleFrequency,
         scheduleTime: form.scheduleTime,
+        reportTypes: form.reportTypes,
         displayName: form.displayName.trim() || null,
         isActive: form.isActive
       };
@@ -350,6 +362,7 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
             : "email",
       scheduleFrequency: recipient.scheduleFrequency ?? "daily",
       scheduleTime: recipient.scheduleTime ?? "20:00",
+      reportTypes: recipient.reportTypes ?? "sales",
       displayName: recipient.displayName ?? "",
       isActive: recipient.isActive
     });
@@ -486,6 +499,20 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
                     style={styles.input}
                   />
                 </label>
+                <label style={styles.fieldLabel}>
+                  Relatorios enviados
+                  <select
+                    value={form.reportTypes}
+                    onChange={(event) =>
+                      setForm({ ...form, reportTypes: event.target.value as ReportType })
+                    }
+                    style={styles.input}
+                  >
+                    <option value="sales">Vendas</option>
+                    <option value="trucks">Caminhoes</option>
+                    <option value="both">Vendas + Caminhoes</option>
+                  </select>
+                </label>
               </section>
             </div>
             <div style={styles.formFooter}>
@@ -532,6 +559,7 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
                   <th style={styles.tableHeadCell}>E-mail</th>
                   <th style={styles.tableHeadCell}>WhatsApp</th>
                   <th style={styles.tableHeadCell}>Agendamento</th>
+                  <th style={styles.tableHeadCell}>Relatorios</th>
                   <th style={styles.tableHeadCell}>Status</th>
                   <th style={styles.tableHeadCell}>Ultima sincronizacao</th>
                   <th style={{ ...styles.tableHeadCell, textAlign: "right" }}>Acoes</th>
@@ -552,6 +580,9 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
                     <td style={styles.tableCell}>{recipient.whatsappPhone ?? "-"}</td>
                     <td style={styles.tableCell}>
                       {scheduleLabel(recipient.scheduleFrequency, recipient.scheduleTime)}
+                    </td>
+                    <td style={styles.tableCell}>
+                      {REPORT_TYPE_LABEL[recipient.reportTypes ?? "sales"]}
                     </td>
                     <td style={styles.tableCell}>
                       <span style={badgeForStatus(recipient.syncStatus)}>
