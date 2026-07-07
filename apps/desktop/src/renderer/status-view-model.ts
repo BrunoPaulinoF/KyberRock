@@ -3,6 +3,7 @@ import type {
   IntegrationStatus,
   ScaleRuntimeStatus
 } from "../services/status";
+import { parseDbTimestamp } from "./format-datetime";
 
 export type StatusIndicatorTone = "success" | "warning" | "danger" | "neutral";
 
@@ -127,5 +128,5 @@ function formatDateTime(value: string): string {
   return new Intl.DateTimeFormat("pt-BR", {
     dateStyle: "short",
     timeStyle: "medium"
-  }).format(new Date(value));
+  }).format(parseDbTimestamp(value));
 }

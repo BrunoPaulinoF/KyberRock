@@ -139,6 +139,35 @@ describe("omie-sync contratos de requisicao", () => {
   });
 });
 
+describe("cliente ja cadastrado no OMIE", () => {
+  it("converte IncluirCliente em AlterarCliente quando o CPF/CNPJ ja existe", async () => {
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          faultstring:
+            "ERROR: Cliente já cadastrado para o CPF/CNPJ [456.487.238-90] com o Id [11474590160] e código de integração [f5f664d2-7243-4a90-936a-f285fbd7df97] ! (add)"
+        })
+      )
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+    const queue = new OmieQueueManager({ fetchFn, minDelayMs: 0, sleepFn: async () => undefined });
+
+    const id = await pushCarrierToOmie(queue, credentials, {
+      localCustomerId: "dbaa8355-2eb2-4cff-a040-a7025dbd1d07",
+      name: "Transportadora Existente",
+      cnpjCpf: "45648723890"
+    });
+
+    expect(id).toBe(11474590160);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    const secondBody = readRequestBody(fetchFn, 1);
+    expect(secondBody.call).toBe("AlterarCliente");
+    expect(secondBody.param).toEqual([
+      expect.objectContaining({ codigo_cliente_omie: 11474590160 })
+    ]);
+  });
+});
+
 describe("toOmieIntegrationCode", () => {
   it("mantem codigos curtos que ja sao alfanumericos", () => {
     expect(toOmieIntegrationCode("cliente1")).toBe("cliente1");

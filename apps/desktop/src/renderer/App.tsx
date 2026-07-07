@@ -60,6 +60,7 @@ import {
   parseMoneyInputToCents
 } from "@kyberrock/shared";
 import { ActivationGate } from "./ActivationGate";
+import { formatDbDateTime } from "./format-datetime";
 import { CrudFormModal } from "./CrudFormModal";
 import {
   CellMuted,
@@ -2077,7 +2078,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                                 color: "var(--kr-muted)"
                               }}
                             >
-                              <span>{new Date(log.timestamp).toLocaleString("pt-BR")}</span>
+                              <span>{formatDbDateTime(log.timestamp)}</span>
                               <span
                                 style={{
                                   padding: "1px 6px",
@@ -2363,7 +2364,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                                 color: isOvertime ? "#b91c1c" : "var(--kr-muted)",
                                 fontWeight: isOvertime ? 700 : undefined
                               }}
-                              title={new Date(operation.createdAt).toLocaleString("pt-BR")}
+                              title={formatDbDateTime(operation.createdAt)}
                             >
                               Entrou {formatElapsedSince(operation.createdAt)}
                               {isOvertime ? " · acima da media ▲" : ""}
@@ -2425,7 +2426,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                             <strong>{operation.customerName || "Cliente nao informado"}</strong>
                             <span>{operation.productDescription || "Produto nao informado"}</span>
                           </span>
-                          <span>{new Date(operation.updatedAt).toLocaleString("pt-BR")}</span>
+                          <span>{formatDbDateTime(operation.updatedAt)}</span>
                           <span>{operation.cancelReason || "Sem motivo registrado"}</span>
                         </div>
                       ))}
@@ -2459,7 +2460,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                           <strong>{formatWeightKg(operation.netWeightKg ?? 0)}</strong>
                           <span>{formatMoney(operation.totalCents)}</span>
                         </span>
-                        <span>{new Date(operation.updatedAt).toLocaleString("pt-BR")}</span>
+                        <span>{formatDbDateTime(operation.updatedAt)}</span>
                         <FiscalBillingStatus
                           operation={operation}
                           retrying={retryingFiscalOperationId === operation.id}
@@ -2982,7 +2983,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                         <p>
                           Ultima sincronizacao:{" "}
                           {cloudStatus.lastSync
-                            ? new Date(cloudStatus.lastSync).toLocaleString("pt-BR")
+                            ? formatDbDateTime(cloudStatus.lastSync)
                             : "Nunca"}
                         </p>
                       </>
@@ -3031,7 +3032,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                           <p>
                             Ultima sincronizacao:{" "}
                             {omieStatus.lastSyncAt
-                              ? new Date(omieStatus.lastSyncAt).toLocaleString("pt-BR")
+                              ? formatDbDateTime(omieStatus.lastSyncAt)
                               : "Nunca"}
                           </p>
                           {omieConnectionFeedback.status !== "idle" ? (
