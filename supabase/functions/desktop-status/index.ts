@@ -56,11 +56,15 @@ Deno.serve(async (req) => {
 
   const { data: company, error: companyError } = await supabase
     .from("companies")
-    .select("id, name, is_active")
+    .select("id, name, is_active, payment_blocked")
     .eq("id", typedDevice.company_id)
     .single();
   if (companyError || !company?.is_active) {
     return jsonResponse({ status: "company_blocked", allowed: false, message: "Não autorizado. Empresa bloqueada pelo administrador." });
+  }
+
+  if (company.payment_blocked === true) {
+    return jsonResponse({ status: "payment_blocked", allowed: false, message: "Acesso bloqueado por falta de pagamento. Regularize a pendência para reativar o acesso." });
   }
 
   const checkedAt = new Date().toISOString();

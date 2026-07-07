@@ -19,6 +19,7 @@ export type DesktopAccessStatusCode =
   | "offline_grace"
   | "validation_expired"
   | "company_blocked"
+  | "payment_blocked"
   | "unit_blocked"
   | "device_blocked"
   | "invalid_device"
@@ -409,5 +410,5 @@ export function logoutDesktop(database: DesktopDatabase, now: Date = new Date())
 }
 
 function isBlockingStatus(status: DesktopAccessStatusCode): boolean {
-  return ["company_blocked", "unit_blocked", "device_blocked", "invalid_device"].includes(status);
+  return ["company_blocked", "payment_blocked", "unit_blocked", "device_blocked", "invalid_device"].includes(status);
 }

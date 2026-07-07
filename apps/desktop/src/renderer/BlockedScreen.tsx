@@ -44,7 +44,7 @@ export function BlockedScreen({ desktopApi, onUnlocked }: BlockedScreenProps) {
       <div style={styles.content}>
         <h1 style={styles.title}>Acesso Bloqueado</h1>
         <p style={styles.message}>
-          {status?.message ?? "Sistema temporariamente bloqueado pelo administrador."}
+          {resolveBlockedMessage(status)}
         </p>
         {checking && (
           <p style={styles.checking}>Verificando status...</p>
@@ -52,6 +52,18 @@ export function BlockedScreen({ desktopApi, onUnlocked }: BlockedScreenProps) {
       </div>
     </main>
   );
+}
+
+const BLOCKED_STATUS_MESSAGES: Partial<Record<DesktopAccessStatus["status"], string>> = {
+  payment_blocked:
+    "Acesso bloqueado por falta de pagamento. Regularize a pendência para reativar o acesso.",
+};
+
+function resolveBlockedMessage(status: DesktopAccessStatus | null): string {
+  if (status && BLOCKED_STATUS_MESSAGES[status.status]) {
+    return BLOCKED_STATUS_MESSAGES[status.status] as string;
+  }
+  return status?.message ?? "Sistema temporariamente bloqueado pelo administrador.";
 }
 
 const styles = {
