@@ -14,14 +14,9 @@ name: Desktop release
 #      usando o GITHUB_TOKEN automatico do Actions (escopo de escrita fica no CI).
 
 on:
+  # Todo push na main (ou seja, todo merge de PR) gera uma versao nova e publica.
   push:
     branches: [main]
-    paths:
-      - "apps/desktop/**"
-      - "packages/**"
-      - "package.json"
-      - "package-lock.json"
-      - ".github/workflows/desktop-release.yml"
   workflow_dispatch:
     inputs:
       reason:
