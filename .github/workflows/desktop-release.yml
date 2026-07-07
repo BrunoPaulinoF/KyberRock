@@ -34,7 +34,10 @@ permissions:
 jobs:
   release:
     name: Build and publish Windows installer
-    runs-on: windows-latest
+    # windows-2022 traz o Visual Studio 2022, que o node-gyp reconhece. O
+    # windows-latest passou a trazer um VS mais novo (v18) que o node-gyp
+    # empacotado nao detecta, quebrando a compilacao nativa do better-sqlite3.
+    runs-on: windows-2022
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -42,11 +45,14 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        # --ignore-scripts evita o postinstall do better-sqlite3 tentar compilar
+        # para o runtime de Node. O binario para o Electron e produzido depois
+        # pelo rebuild:native:electron (dentro de dist:win:publish).
+        run: npm ci --ignore-scripts
 
       - name: Resolve version (MAJOR.MINOR.run_number)
         id: version

@@ -52,6 +52,7 @@
                 "releaseType": "release"
             }
         ],
+        "npmRebuild": false,
         "win": {
             "target": "nsis",
             "icon": "midia/icon.ico"
