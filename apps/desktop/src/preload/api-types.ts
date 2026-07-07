@@ -32,7 +32,8 @@ import type {
   MonthlyReport,
   OperationMix,
   ProductReport,
-  CustomerReport
+  CustomerReport,
+  TruckControlReport
 } from "../services/reports";
 import type { CreateCustomerInput, UpdateCustomerInput } from "../services/customers";
 import type {
@@ -181,6 +182,11 @@ export interface KyberRockDesktopApi {
   getMonthlyReport: (year: number, month: number) => Promise<MonthlyReport>;
   getReportHtml: (startDate: string, endDate: string) => Promise<string>;
   exportReportPdf: (startDate: string, endDate: string) => Promise<{ path: string } | null>;
+  getTruckControl: (startDate: string, endDate: string) => Promise<TruckControlReport>;
+  exportTruckControlPdf: (
+    startDate: string,
+    endDate: string
+  ) => Promise<{ path: string } | null>;
   exportReportExcel: (startDate: string, endDate: string) => Promise<{ path: string } | null>;
   listReportRecipients: () => Promise<
     Array<{

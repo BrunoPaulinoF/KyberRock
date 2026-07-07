@@ -90,6 +90,96 @@ function insertOperations(db: ReturnType<typeof createDatabase>) {
   }
 }
 
+function insertTruckOperations(db: ReturnType<typeof createDatabase>) {
+  db.prepare(`
+    INSERT INTO vehicles (id, company_id, plate, created_at, updated_at)
+    VALUES ('veh-abc', 'comp-1', 'ABC1D23', datetime('now'), datetime('now'))
+  `).run();
+  db.prepare(`
+    INSERT INTO vehicles (id, company_id, plate, created_at, updated_at)
+    VALUES ('veh-xyz', 'comp-1', 'XYZ4E56', datetime('now'), datetime('now'))
+  `).run();
+  db.prepare(`
+    INSERT INTO drivers (id, company_id, name, created_at, updated_at)
+    VALUES ('drv-1', 'comp-1', 'Joao', datetime('now'), datetime('now'))
+  `).run();
+
+  const ops = [
+    // ABC1D23: 30 min (prod-1, 15000 kg)
+    { id: "t1", veh: "veh-abc", drv: "drv-1", prod: "prod-1", net: 15000, entry: "2026-06-06 08:00:00", exit: "2026-06-06 08:30:00" },
+    // ABC1D23: 60 min (prod-2, 10000 kg)
+    { id: "t2", veh: "veh-abc", drv: "drv-1", prod: "prod-2", net: 10000, entry: "2026-06-06 09:00:00", exit: "2026-06-06 10:00:00" },
+    // XYZ4E56: 90 min (prod-1, 20000 kg)
+    { id: "t3", veh: "veh-xyz", drv: "drv-1", prod: "prod-1", net: 20000, entry: "2026-06-07 08:00:00", exit: "2026-06-07 09:30:00" },
+    // Fora do periodo (maio) - nao deve contar
+    { id: "t4", veh: "veh-abc", drv: "drv-1", prod: "prod-1", net: 5000, entry: "2026-05-01 08:00:00", exit: "2026-05-01 08:20:00" }
+  ];
+
+  for (const op of ops) {
+    db.prepare(`
+      INSERT INTO weighing_operations (
+        id, company_id, unit_id, device_id, status, operation_type, vehicle_id, driver_id, product_id,
+        net_weight_kg, entry_weight_captured_at, exit_weight_captured_at, created_at, updated_at
+      ) VALUES (
+        ?, 'comp-1', 'unit-1', 'dev-1', 'closed_local', 'invoice', ?, ?, ?,
+        ?, datetime(?), datetime(?), datetime(?), datetime(?)
+      )
+    `).run(op.id, op.veh, op.drv, op.prod, op.net, op.entry, op.exit, op.entry, op.exit);
+  }
+}
+
+describe("ReportService truck control", () => {
+  it("aggregates per-truck stats, weight per product and the average", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      insertTruckOperations(db);
+
+      const service = new ReportService(db);
+      const report = service.getTruckControlReport("2026-06-01", "2026-06-30", "unit-1");
+
+      expect(report.totalOperations).toBe(3);
+      expect(report.averageMinutes).toBe(60); // (30 + 60 + 90) / 3
+      expect(report.trucks).toHaveLength(2);
+
+      const abc = report.trucks.find((t) => t.plate === "ABC1D23");
+      expect(abc?.operations).toBe(2);
+      expect(abc?.avgMinutes).toBe(45); // (30 + 60) / 2
+      expect(abc?.totalMinutes).toBe(90);
+      expect(abc?.totalNetWeightKg).toBe(25000);
+      expect(abc?.driverName).toBe("Joao");
+      expect(abc?.products).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ productDescription: "Brita 0", totalNetWeightKg: 15000 }),
+          expect.objectContaining({ productDescription: "Brita 1", totalNetWeightKg: 10000 })
+        ])
+      );
+
+      const xyz = report.trucks.find((t) => t.plate === "XYZ4E56");
+      expect(xyz?.avgMinutes).toBe(90);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("renders the truck control report as HTML", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      insertTruckOperations(db);
+
+      const service = new ReportService(db);
+      const html = service.exportTruckControlToHtml("2026-06-01", "2026-06-30", "unit-1");
+
+      expect(html).toContain("Controle de caminhoes");
+      expect(html).toContain("ABC1D23");
+      expect(html).toContain("Brita 0");
+    } finally {
+      db.close();
+    }
+  });
+});
+
 describe("ReportService", () => {
   it("generates daily report with totals", () => {
     const db = createDatabase();

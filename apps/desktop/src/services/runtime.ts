@@ -1196,6 +1196,25 @@ export class DesktopRuntime {
     return this.reportService.exportRangeToHtml(startDate, endDate, this.ensureIdentity().unitId);
   }
 
+  getTruckControlReport(
+    startDate: string,
+    endDate: string
+  ): ReturnType<ReportService["getTruckControlReport"]> {
+    return this.reportService.getTruckControlReport(
+      startDate,
+      endDate,
+      this.ensureIdentity().unitId
+    );
+  }
+
+  getTruckControlHtml(startDate: string, endDate: string): string {
+    return this.reportService.exportTruckControlToHtml(
+      startDate,
+      endDate,
+      this.ensureIdentity().unitId
+    );
+  }
+
   listReportRecipients(): ReportRecipient[] {
     return listReportRecipients(this.database, this.ensureIdentity().companyId);
   }

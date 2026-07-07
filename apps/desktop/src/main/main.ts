@@ -533,6 +533,28 @@ function registerIpcHandlers(): void {
     return runtime.getReportHtml(startDate, endDate);
   });
 
+  ipcMain.handle("desktop:get-truck-control", (_event, startDate: string, endDate: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.getTruckControlReport(startDate, endDate);
+  });
+
+  ipcMain.handle(
+    "desktop:export-truck-control-pdf",
+    async (_event, startDate: string, endDate: string) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      const html = runtime.getTruckControlHtml(startDate, endDate);
+      const filePath = await pickReportFilePath(
+        `controle-caminhoes-${startDate}-a-${endDate}.pdf`,
+        ["pdf"]
+      );
+      if (!filePath) return null;
+      const data = await renderHtmlToPdf(html);
+      const fs = await import("node:fs/promises");
+      await fs.writeFile(filePath, data);
+      return { path: filePath };
+    }
+  );
+
   ipcMain.handle(
     "desktop:export-report-pdf",
     async (_event, startDate: string, endDate: string) => {
@@ -1487,6 +1509,27 @@ function writeStartupLog(step: string, detail?: unknown): void {
     appendFileSync(logPath, `[${new Date().toISOString()}] ${step}${serializedDetail}\n`);
   } catch {
     // Startup logging must never prevent the app from opening.
+  }
+}
+
+// Renderiza um HTML de relatorio em uma janela oculta e exporta como PDF A4.
+async function renderHtmlToPdf(html: string): Promise<Buffer> {
+  const fs = await import("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const tmpFile = path.join(os.tmpdir(), `kyberrock-report-${Date.now()}.html`);
+  await fs.writeFile(tmpFile, html, "utf8");
+  const win = new BrowserWindow({ show: false, webPreferences: { offscreen: true } });
+  try {
+    await win.loadFile(tmpFile);
+    return await win.webContents.printToPDF({
+      pageSize: "A4",
+      printBackground: true,
+      margins: { top: 0.5, bottom: 0.5, left: 0.5, right: 0.5 }
+    });
+  } finally {
+    win.destroy();
+    await fs.unlink(tmpFile).catch(() => {});
   }
 }
 
