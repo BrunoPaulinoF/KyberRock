@@ -10,6 +10,7 @@ type CloudPayload = {
   printReceipts?: Record<string, unknown>[];
   customers?: Record<string, unknown>[];
   products?: Record<string, unknown>[];
+  reportRecipients?: Record<string, unknown>[];
   avgQuarryMinutes?: number;
 };
 
@@ -54,7 +55,8 @@ Deno.serve(async (req) => {
       products: 0,
       operations: 0,
       loadingRequests: 0,
-      printReceipts: 0
+      printReceipts: 0,
+      reportRecipients: 0
     };
     const stepErrors: string[] = [];
 
@@ -105,6 +107,16 @@ Deno.serve(async (req) => {
         stepErrors.push(`print_receipts: ${error.message} (code=${error.code ?? "n/a"})`);
       } else {
         counts.printReceipts = body.printReceipts.length;
+      }
+    }
+    if (body.reportRecipients?.length) {
+      const { error } = await supabase
+        .from("report_recipients")
+        .upsert(body.reportRecipients, { onConflict: "id" });
+      if (error) {
+        stepErrors.push(`report_recipients: ${error.message} (code=${error.code ?? "n/a"})`);
+      } else {
+        counts.reportRecipients = body.reportRecipients.length;
       }
     }
 
