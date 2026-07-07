@@ -1435,7 +1435,7 @@ async function createOmieOrder(
     return orderId;
   }
 
-  const municipalServiceCode = await resolveOmieMunicipalServiceCode(credentials);
+  const serviceCodes = await resolveOmieServiceCodes(credentials);
   const response = await callOmie<
     unknown,
     {
@@ -1458,7 +1458,8 @@ async function createOmieOrder(
         cDescServ: payload.serviceDescription || "Servico",
         // Obrigatorio no IncluirOS: "01" = tributado no municipio (padrao).
         cTribServ: "01",
-        ...(municipalServiceCode !== null ? { cCodServMun: municipalServiceCode } : {}),
+        ...(serviceCodes.municipal !== null ? { cCodServMun: serviceCodes.municipal } : {}),
+        ...(serviceCodes.lc116 !== null ? { cCodServLC116: serviceCodes.lc116 } : {}),
         nQtde: payload.quantity,
         nValUnit: payload.unitPrice
       }
@@ -1527,16 +1528,16 @@ function extractFirstAccountCode(response: Record<string, unknown> | null): numb
   return null;
 }
 
-// O IncluirOS tambem exige o Codigo do Servico Municipal (cCodServMun), que e
-// especifico do tenant (cadastro de servicos do OMIE). Buscamos o primeiro servico
-// cadastrado via ListarCadastroServico e cacheamos por app_key; falhas nao sao
-// cacheadas para permitir nova tentativa no proximo job.
-const omieServiceCodeCache = new Map<string, string>();
+// O IncluirOS tambem exige o Codigo do Servico Municipal (cCodServMun) e o Codigo
+// do Servico LC116 (cCodServLC116), ambos especificos do tenant (cadastro de
+// servicos do OMIE). Buscamos o primeiro servico cadastrado via ListarCadastroServico
+// e cacheamos por app_key; falhas nao sao cacheadas para permitir nova tentativa.
+type OmieServiceCodes = { municipal: string | null; lc116: string | null };
 
-async function resolveOmieMunicipalServiceCode(
-  credentials: OmieCredentials
-): Promise<string | null> {
-  const cached = omieServiceCodeCache.get(credentials.appKey);
+const omieServiceCodesCache = new Map<string, OmieServiceCodes>();
+
+async function resolveOmieServiceCodes(credentials: OmieCredentials): Promise<OmieServiceCodes> {
+  const cached = omieServiceCodesCache.get(credentials.appKey);
   if (cached !== undefined) return cached;
 
   try {
@@ -1546,13 +1547,16 @@ async function resolveOmieMunicipalServiceCode(
       "ListarCadastroServico",
       { nPagina: 1, nRegPorPagina: 50 }
     );
-    const code = findStringByKey(response, "cCodServMun");
-    if (code !== null) {
-      omieServiceCodeCache.set(credentials.appKey, code);
+    const codes: OmieServiceCodes = {
+      municipal: findStringByKey(response, "cCodServMun"),
+      lc116: findStringByKey(response, "cCodLC116") ?? findStringByKey(response, "cCodServLC116")
+    };
+    if (codes.municipal !== null || codes.lc116 !== null) {
+      omieServiceCodesCache.set(credentials.appKey, codes);
     }
-    return code;
+    return codes;
   } catch {
-    return null;
+    return { municipal: null, lc116: null };
   }
 }
 
