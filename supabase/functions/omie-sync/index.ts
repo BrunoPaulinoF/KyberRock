@@ -140,6 +140,7 @@ type OmieProduct = {
 
 type OmiePaymentTerm = {
   id: number;
+  code: string | null;
   integrationCode: string | null;
   description: string;
   firstInstallmentDays: number | null;
@@ -1098,21 +1099,23 @@ async function listPaymentTermsPage(
       total_de_paginas?: number;
       registros?: number;
       total_de_registros?: number;
+      cadastros?: OmiePaymentTermRaw[];
+      parcela_cadastro?: OmiePaymentTermRaw[];
       condicoesPagamentoCadastro?: OmiePaymentTermRaw[];
       condicoes_pagamento_cadastro?: OmiePaymentTermRaw[];
-      cadastros?: OmiePaymentTermRaw[];
       listaCondicoesPagamento?: OmiePaymentTermRaw[];
     }
-  >(credentials, "/geral/condicoespgto/", "ListarCondicoesPagamento", {
+  >(credentials, "/geral/parcelas/", "ListarParcelas", {
     pagina: page,
     registros_por_pagina: PAGE_SIZE,
     apenas_importado_api: "N"
   });
 
   const rawItems =
+    response.cadastros ??
+    response.parcela_cadastro ??
     response.condicoesPagamentoCadastro ??
     response.condicoes_pagamento_cadastro ??
-    response.cadastros ??
     response.listaCondicoesPagamento ??
     [];
   const items: OmiePaymentTerm[] = [];
@@ -1145,10 +1148,14 @@ async function listOptionalPaymentTermsPage(
 
 function isPaymentTermsUnavailableError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
-  return /OMIE HTTP 404:.*ListarCondicoesPagamento|\/geral\/condicoespgto\//i.test(error.message);
+  return /OMIE HTTP 404:.*ListarParcelas|\/geral\/parcelas\//i.test(error.message);
 }
 
 type OmiePaymentTermRaw = {
+  // Campos do endpoint atual /geral/parcelas/ (ListarParcelas)
+  nCodigo?: number | string;
+  nParcelas?: number | string;
+  // Campos legados / variacoes mantidos por resiliencia
   codigoCondicaoPagamentoOmie?: number | string;
   codigo_condicao_pagamento_omie?: number | string;
   codigoCondicaoPagamentoIntegracao?: string;
@@ -1178,6 +1185,7 @@ type OmiePaymentTermRaw = {
 
 function mapOmiePaymentTermRaw(item: OmiePaymentTermRaw): OmiePaymentTerm | null {
   const idValue = pickFirst(
+    item.nCodigo,
     item.codigoCondicaoPagamentoOmie,
     item.codigo_condicao_pagamento_omie,
     item.nCodCondicao,
@@ -1203,8 +1211,13 @@ function mapOmiePaymentTermRaw(item: OmiePaymentTermRaw): OmiePaymentTerm | null
         .filter((value): value is number => value !== null)
     : null;
 
+  // Preserva o codigo original da parcela (ex.: "000"), mantendo zeros a esquerda
+  // exigidos no codigo_parcela do pedido e perdidos na conversao para numero.
+  const code = pickFirst(item.nCodigo, item.codigo, item.codigoParcela);
+
   return {
     id,
+    code,
     integrationCode: pickFirst(
       item.codigoCondicaoPagamentoIntegracao,
       item.codigo_condicao_pagamento_integracao
@@ -1214,7 +1227,7 @@ function mapOmiePaymentTermRaw(item: OmiePaymentTermRaw): OmiePaymentTerm | null
       pickFirst(item.nDiasPrimeiraParcela, item.dias_primeira_parcela)
     ),
     installmentIntervalDays: toNumber(pickFirst(item.nIntervaloParcelas, item.intervalo_parcelas)),
-    installmentCount: toNumber(pickFirst(item.nNumeroParcelas, item.numero_parcelas)),
+    installmentCount: toNumber(pickFirst(item.nParcelas, item.nNumeroParcelas, item.numero_parcelas)),
     installmentType: pickFirst(item.cTipoParcelas, item.tipo_parcelas),
     installmentDaysJson: days && days.length > 0 ? days : null,
     isActive: !isYesFlag(pickFirst(item.cInativo, item.inativo)),
