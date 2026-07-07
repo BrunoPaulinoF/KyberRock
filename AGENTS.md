@@ -98,6 +98,9 @@ builds still publish, but installed apps cannot authenticate to download the upd
   keep it read-only + single-repo, and rotate it by updating the secret and re-running the workflow.
 - To cut a new **minor/major** line, bump `apps/desktop/package.json` (`MAJOR.MINOR`) in a PR;
   the patch keeps coming from `run_number`.
+- **Fixed public download link**: `supabase/functions/desktop-download` (public, `verify_jwt=false`,
+  needs `GH_RELEASES_TOKEN`) redirects to the latest release's `.exe`; loader-web nginx exposes it as
+  `GET /download`. Always serves the newest installer for fresh installs.
 - Code signing for external pilots is still pending (see `docs/phase-3.1/README.md`).
 
 **Manual build (local / offline fallback):**

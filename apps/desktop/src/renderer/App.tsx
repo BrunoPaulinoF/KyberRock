@@ -14,6 +14,7 @@ import {
   Moon,
   PlusCircle,
   Printer,
+  RefreshCw,
   Scale,
   ScrollText,
   Settings,
@@ -35,7 +36,11 @@ import {
 } from "@kyberrock/print-templates";
 import type { DesktopAccessStatus } from "../services/desktop-activation";
 import type { DesktopStatusSnapshot } from "../services/status";
-import { createInitialUpdateState, type UpdateState } from "../services/update-flow";
+import {
+  createInitialUpdateState,
+  getManualUpdateButtonLabel,
+  type UpdateState
+} from "../services/update-flow";
 import { validatePaymentMethodCondition } from "../services/payment-method-condition-guard";
 import type {
   OperationFreightInput,
@@ -308,6 +313,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [unitName, setUnitName] = useState<string | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [availableVersion, setAvailableVersion] = useState<string | null>(null);
+  const updateReady =
+    updateState.status === "available" || updateState.status === "downloaded";
   const [showLogsModal, setShowLogsModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => readStoredThemeMode());
@@ -1833,9 +1840,25 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   type="button"
                   onClick={() => setShowSettings((s) => !s)}
                   style={styles.headerBtn}
-                  title="Configuracoes"
+                  title={
+                    updateReady ? "Atualizacao disponivel" : "Configuracoes"
+                  }
                 >
                   <Settings size={17} />
+                  {updateReady ? (
+                    <span
+                      style={{
+                        position: "absolute",
+                        top: "4px",
+                        right: "4px",
+                        width: "8px",
+                        height: "8px",
+                        borderRadius: "50%",
+                        background: "#16a34a",
+                        border: "1px solid #ffffff"
+                      }}
+                    />
+                  ) : null}
                 </button>
                 {showSettings ? (
                   <div style={styles.settingsDropdown}>
@@ -1871,6 +1894,34 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     >
                       <Cloud size={14} />
                       Cloud
+                    </button>
+                    <div style={{ height: "1px", background: "#e2e8f0", margin: "4px 0" }} />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void handleUpdateAction();
+                        setShowSettings(false);
+                      }}
+                      style={{
+                        ...styles.settingsItem,
+                        color: updateReady ? "#16a34a" : styles.settingsItem.color,
+                        fontWeight: updateReady ? 600 : styles.settingsItem.fontWeight
+                      }}
+                      title="Verificar / instalar atualizacao do KyberRock Desktop"
+                    >
+                      <RefreshCw size={14} />
+                      {getManualUpdateButtonLabel(updateState.status)}
+                      {updateReady ? (
+                        <span
+                          style={{
+                            marginLeft: "auto",
+                            width: "8px",
+                            height: "8px",
+                            borderRadius: "50%",
+                            background: "#16a34a"
+                          }}
+                        />
+                      ) : null}
                     </button>
                     <div style={{ height: "1px", background: "#e2e8f0", margin: "4px 0" }} />
                     <button
