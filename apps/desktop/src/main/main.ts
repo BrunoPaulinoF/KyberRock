@@ -38,7 +38,12 @@ import type {
   WindowsPrinterSummary
 } from "../services/printing.js";
 import { NetworkEscPosPrinter } from "../services/network-printer.js";
-import { createInitialUpdateState, type UpdateState } from "../services/update-flow.js";
+import {
+  AUTO_DOWNLOAD_UPDATES,
+  AUTO_INSTALL_ON_QUIT,
+  createInitialUpdateState,
+  type UpdateState
+} from "../services/update-flow.js";
 import type { OperationType } from "../services/weighing-operations.js";
 
 const require = createRequire(import.meta.url);
@@ -251,13 +256,19 @@ function registerIpcHandlers(): void {
       return updateState;
     }
 
-    if (updateState.status !== "available" && updateState.status !== "downloaded") {
+    if (
+      updateState.status !== "available" &&
+      updateState.status !== "downloading" &&
+      updateState.status !== "downloaded"
+    ) {
       return updateState;
     }
 
     try {
-      if (updateState.status === "available") {
+      if (updateState.status !== "downloaded") {
         updateState = { ...updateState, status: "downloading" };
+        // Se o autoDownload ja iniciou o download, esta chamada apenas aguarda
+        // o mesmo download em andamento concluir antes de instalar.
         await autoUpdater.downloadUpdate();
       }
       autoUpdater.quitAndInstall(false, true);
@@ -1464,18 +1475,34 @@ function escapeHtml(value: string): string {
 }
 
 function configureAutoUpdater(): void {
-  autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = false;
+  // Atualizacao automatica: assim que uma versao nova e detectada, o app baixa
+  // em segundo plano e instala na proxima vez que o operador fechar o app. Nao
+  // interrompe a operacao em andamento. O operador ainda pode forcar o download
+  // e a reinstalacao pelos botoes de update.
+  autoUpdater.autoDownload = AUTO_DOWNLOAD_UPDATES;
+  autoUpdater.autoInstallOnAppQuit = AUTO_INSTALL_ON_QUIT;
 
   autoUpdater.on("update-available", (info) => {
-    updateState = { status: "available", availableVersion: info.version, errorMessage: null };
+    // autoDownload esta ligado, entao o download comeca automaticamente aqui.
+    updateState = { status: "downloading", availableVersion: info.version, errorMessage: null };
     mainWindow?.webContents.send("desktop:update-available", info.version);
   });
   autoUpdater.on("update-not-available", () => {
     updateState = createInitialUpdateState();
   });
+  autoUpdater.on("download-progress", (progress) => {
+    if (updateState.status !== "downloaded") {
+      updateState = {
+        status: "downloading",
+        availableVersion: updateState.availableVersion,
+        errorMessage: null
+      };
+    }
+    mainWindow?.webContents.send("desktop:update-download-progress", progress.percent);
+  });
   autoUpdater.on("update-downloaded", (info) => {
     updateState = { status: "downloaded", availableVersion: info.version, errorMessage: null };
+    mainWindow?.webContents.send("desktop:update-downloaded", info.version);
   });
   autoUpdater.on("error", (error) => {
     updateState = { status: "error", availableVersion: null, errorMessage: error.message };
