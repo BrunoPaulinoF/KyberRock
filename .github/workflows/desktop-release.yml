@@ -86,19 +86,37 @@ jobs:
         # "Cannot find module '@kyberrock/...'".
         run: npm run build
 
-      - name: Create and push the release tag
+      - name: Create the GitHub release (tag + release) up front
         shell: bash
-        # O electron-builder publica um Release NAO-draft; o GitHub recusa criar
-        # um release publicado se a tag ainda nao existe ("Published releases must
-        # have a valid tag"). Entao criamos e empurramos a tag vX.Y.Z antes. Push
-        # de tag nao dispara o workflow (o gatilho e so branches: [main]).
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Criamos a release (e a tag) via API ANTES do electron-builder. Assim ele
+        # so anexa os assets a uma release existente. Sem isto, o electron-builder
+        # dispara duas criacoes concorrentes de release (uma por asset): a primeira
+        # cria e a segunda falha com 422 "already_exists", abortando o upload do
+        # .exe/latest.yml. Passo idempotente. Criar release ja cria a tag; push de
+        # tag/release nao dispara o workflow (o gatilho e so branches: [main]).
         run: |
+          set -euo pipefail
           TAG="v${{ steps.version.outputs.version }}"
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "Tag $TAG ja existe, seguindo."
+          REPO="${{ github.repository }}"
+          code=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$REPO/releases/tags/$TAG")
+          if [ "$code" = "200" ]; then
+            echo "Release $TAG ja existe, seguindo."
           else
-            git tag "$TAG"
-            git push origin "$TAG"
+            echo "Criando release $TAG..."
+            curl -s -f -X POST \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$REPO/releases" \
+              -d "{\"tag_name\":\"$TAG\",\"target_commitish\":\"${{ github.sha }}\",\"name\":\"KyberRock Desktop ${{ steps.version.outputs.version }}\",\"draft\":false,\"prerelease\":false}" \
+              > /dev/null
+            echo "Release $TAG criada."
           fi
 
       - name: Build and publish to GitHub Releases

@@ -35,20 +35,33 @@ Deno.serve(async (req) => {
   };
 
   // 1) Descobrir o release mais recente publicado.
-  const releaseRes = await fetch(
-    `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`,
+  // Lista os releases (mais novos primeiro) e escolhe o mais recente que
+  // realmente tenha um instalador .exe. Assim, um release parcial/quebrado (ex.:
+  // upload interrompido) nao derruba o link -- caimos no proximo valido.
+  const releasesRes = await fetch(
+    `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases?per_page=30`,
     { headers: apiHeaders }
   );
-  if (!releaseRes.ok) {
-    return textResponse(`Falha ao consultar o release mais recente (${releaseRes.status}).`, 502);
+  if (!releasesRes.ok) {
+    return textResponse(`Falha ao consultar os releases (${releasesRes.status}).`, 502);
   }
-  const release = (await releaseRes.json()) as { assets?: Array<{ id: number; name?: string }> };
-  const assets = Array.isArray(release.assets) ? release.assets : [];
-  const installer = assets.find(
-    (asset) => typeof asset.name === "string" && asset.name.toLowerCase().endsWith(".exe")
-  );
+  const releases = (await releasesRes.json()) as Array<{
+    draft?: boolean;
+    assets?: Array<{ id: number; name?: string }>;
+  }>;
+  let installer: { id: number; name?: string } | undefined;
+  for (const release of Array.isArray(releases) ? releases : []) {
+    if (release.draft) continue;
+    const found = (release.assets ?? []).find(
+      (asset) => typeof asset.name === "string" && asset.name.toLowerCase().endsWith(".exe")
+    );
+    if (found) {
+      installer = found;
+      break;
+    }
+  }
   if (!installer) {
-    return textResponse("Nenhum instalador .exe encontrado no release mais recente.", 404);
+    return textResponse("Nenhum instalador .exe encontrado nos releases.", 404);
   }
 
   // 2) Resolver a URL assinada do asset (octet-stream, sem seguir o redirect).
