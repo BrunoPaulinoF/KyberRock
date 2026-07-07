@@ -79,6 +79,13 @@ jobs:
           fi
           node -e "const f='apps/desktop/src/main/updater-config.ts';const fs=require('fs');let s=fs.readFileSync(f,'utf8');s=s.replace(/export const GITHUB_UPDATER_TOKEN = \"\";/, 'export const GITHUB_UPDATER_TOKEN = '+JSON.stringify(process.env.GH_UPDATER_TOKEN||'')+';');fs.writeFileSync(f,s);"
 
+      - name: Build workspaces (packages before desktop)
+        # O tsconfig do desktop nao referencia os pacotes @kyberrock/*, entao eles
+        # precisam ser compilados antes (dist/*.d.ts). O build da raiz compila
+        # todos os workspaces na ordem certa. Sem isto, o tsc do desktop falha com
+        # "Cannot find module '@kyberrock/...'".
+        run: npm run build
+
       - name: Build and publish to GitHub Releases
         shell: bash
         env:
