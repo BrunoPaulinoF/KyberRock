@@ -1458,6 +1458,8 @@ async function createOmieOrder(
         cDescServ: payload.serviceDescription || "Servico",
         // Obrigatorio no IncluirOS: "01" = tributado no municipio (padrao).
         cTribServ: "01",
+        // Obrigatorio no IncluirOS: "N" = ISS nao retido (padrao para a operacao interna).
+        cRetemISS: "N",
         ...(serviceCodes.municipal !== null ? { cCodServMun: serviceCodes.municipal } : {}),
         ...(serviceCodes.lc116 !== null ? { cCodServLC116: serviceCodes.lc116 } : {}),
         nQtde: payload.quantity,
