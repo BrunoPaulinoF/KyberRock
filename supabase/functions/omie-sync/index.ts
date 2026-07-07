@@ -47,8 +47,10 @@ async function sha256Hex(value: string): Promise<string> {
 type OmieAction =
   | "sync"
   | "pull_reference_data"
+  | "list_document_types"
   | "create_order"
   | "create_and_bill_order"
+  | "cancel_order"
   | "push_customer"
   | "push_carrier";
 
@@ -179,11 +181,21 @@ type CreateOrderPayload = {
   customerOmieId: number;
   productOmieId?: number;
   serviceDescription?: string;
+  /** Quantidade em toneladas (mesma unidade do preco unitario). */
   quantity: number;
+  /** Preco unitario em reais (ja convertido de centavos no desktop). */
   unitPrice: number;
+  /** Frete total em centavos (convertido para reais no edge, ver buildOmieFreight). */
   freightTotalCents?: number;
   issueDate: string;
   createdAt?: string;
+  /**
+   * Codigo de parcela do OMIE (codigo_parcela/cCodParc). String, preserva zeros a
+   * esquerda (ex: "000", "030"). Ausente -> padrao "000" (a vista).
+   */
+  paymentTermOmieCode?: string;
+  /** Numero de parcelas da OS (nQtdeParc). Ausente/invalido -> 1. */
+  installmentCount?: number;
   idempotencyKey: string;
 };
 
@@ -397,6 +409,14 @@ export async function handleOmieSyncRequest(
       const payload = body.payload as CreateOrderPayload;
       const result = await createAndBillOmieOrder(credentials, payload);
       return jsonResponse({ ok: true, ...result });
+    }
+
+    if (action === "cancel_order") {
+      const payload = body.payload as CancelOrderPayload;
+      // Retorna 200 mesmo para "blocked" para o desktop marcar o job como done (sem retry
+      // infinito) e manter o cancelamento local com o erro visivel.
+      const result = await cancelOmieOrder(credentials, payload);
+      return jsonResponse(result);
     }
 
     if (action === "push_customer") {
@@ -1373,12 +1393,26 @@ async function findCustomerByDocument(
   }
 }
 
+// O codigo de parcela do OMIE e uma string com zeros a esquerda significativos ("000",
+// "030"). Nunca converter para numero. Retorna null quando vazio/invalido para o chamador
+// cair no padrao "000".
+function normalizeParcelaCode(value: string | undefined): string | null {
+  const text = (value ?? "").trim();
+  if (!text) return null;
+  return /^[0-9A-Za-z]+$/.test(text) ? text : null;
+}
+
 async function createOmieOrder(
   credentials: OmieCredentials,
   payload: CreateOrderPayload
 ): Promise<number> {
   const integrationCode = toOmieIntegrationCode(payload.idempotencyKey);
   const accountCode = await resolveOmieAccountCode(credentials);
+  const parcelaCode = normalizeParcelaCode(payload.paymentTermOmieCode) ?? "000";
+  const installmentCount =
+    typeof payload.installmentCount === "number" && payload.installmentCount > 0
+      ? Math.floor(payload.installmentCount)
+      : 1;
 
   if (payload.operationType === "invoice") {
     if (!payload.productOmieId) {
@@ -1394,7 +1428,7 @@ async function createOmieOrder(
           codigo_cliente: payload.customerOmieId,
           data_previsao: toOmieDate(payload.issueDate),
           etapa: "10",
-          codigo_parcela: "000",
+          codigo_parcela: parcelaCode,
           quantidade_itens: 1
         },
         det: [
@@ -1450,8 +1484,8 @@ async function createOmieOrder(
       nCodCli: payload.customerOmieId,
       dDtPrevisao: toOmieDate(payload.issueDate),
       cEtapa: "10",
-      cCodParc: "000",
-      nQtdeParc: 1
+      cCodParc: parcelaCode,
+      nQtdeParc: installmentCount
     },
     ServicosPrestados: [
       {
@@ -1470,12 +1504,56 @@ async function createOmieOrder(
       cCodCateg: "1.01.01",
       ...(accountCode !== null ? { nCodCC: accountCode } : {})
     }
+  }).catch(async (error) => {
+    // Idempotencia: se a OS ja existe (reenvio apos erro desconhecido), consulta por
+    // cCodIntOS e reaproveita o nCodOS; caso contrario propaga o erro original.
+    const existing = await consultServiceOrderByIntegrationCode(credentials, integrationCode).catch(
+      () => null
+    );
+    const existingId = extractServiceOrderId(existing);
+    if (existingId !== null) return { nCodOS: existingId } as { nCodOS?: number; codigoOS?: number };
+    throw error;
   });
   const orderId = response.nCodOS ?? response.codigoOS;
   if (!orderId) {
     throw new Error("OMIE nao retornou codigoOS");
   }
   return orderId;
+}
+
+async function consultServiceOrderByIntegrationCode(
+  credentials: OmieCredentials,
+  integrationCode: string
+): Promise<unknown> {
+  return callOmie<unknown, unknown>(credentials, "/servicos/os/", "ConsultarOS", {
+    cCodIntOS: integrationCode
+  });
+}
+
+function extractServiceOrderId(value: unknown): number | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const direct = toNumber(
+    pickFirst(
+      record.nCodOS as string | number | null | undefined,
+      record.codigoOS as string | number | null | undefined
+    )
+  );
+  if (direct !== null) return direct;
+  // ConsultarOS pode aninhar a OS em Cabecalho/cabecalho.
+  const header =
+    (record.Cabecalho as Record<string, unknown> | undefined) ??
+    (record.cabecalho as Record<string, unknown> | undefined);
+  if (header) {
+    const fromHeader = toNumber(
+      pickFirst(
+        header.nCodOS as string | number | null | undefined,
+        header.codigoOS as string | number | null | undefined
+      )
+    );
+    if (fromHeader !== null) return fromHeader;
+  }
+  return null;
 }
 
 // O OMIE exige uma conta corrente valida em informacoes_adicionais (enviar 0 gera
@@ -1655,6 +1733,108 @@ async function consultSalesOrder(credentials: OmieCredentials, orderId: number):
   return callOmie<unknown, unknown>(credentials, "/produtos/pedido/", "ConsultarPedido", {
     codigo_pedido: orderId
   });
+}
+
+async function consultServiceOrder(credentials: OmieCredentials, orderId: number): Promise<unknown> {
+  return callOmie<unknown, unknown>(credentials, "/servicos/os/", "ConsultarOS", {
+    nCodOS: orderId
+  });
+}
+
+// Faults do OMIE quando o registro ja nao existe (cancelamento idempotente).
+function isOmieNotFoundFault(message: string): boolean {
+  return /nao cadastrad|nao encontrad|not found|inexistente|nao existe/i.test(message);
+}
+
+// Faults que indicam que o pedido/OS nao pode ser excluido pelo estado (ja faturado,
+// etapa avancada, NF emitida) — nao devem virar retry infinito.
+function isOmieBlockedCancelFault(message: string): boolean {
+  return /faturad|nota fiscal|nf-?e|etapa|nao pode ser excluid|cancelad[ao] no omie|ja faturado/i.test(
+    message
+  );
+}
+
+// Etapa >= "60" no OMIE indica pedido faturado; nesse caso nao tentamos excluir.
+function isSalesOrderBilled(consult: unknown): boolean {
+  const etapa = findStringByKey(consult, "etapa") ?? findStringByKey(consult, "cEtapa");
+  if (etapa && /^\d+$/.test(etapa.trim())) {
+    return Number(etapa.trim()) >= 60;
+  }
+  // Sinais de NF emitida no bloco de informacoes.
+  const nfKey =
+    findStringByKey(consult, "numero_nfe") ??
+    findStringByKey(consult, "nNF") ??
+    findStringByKey(consult, "chave_nfe");
+  return nfKey !== null && nfKey.trim().length > 0;
+}
+
+type CancelOrderPayload = {
+  operationId?: string;
+  orderType: "sales" | "service";
+  omieOrderId: number;
+  reason?: string;
+};
+
+type CancelOrderResult = {
+  ok: true;
+  cancelled: boolean;
+  alreadyCancelled?: boolean;
+  blocked?: boolean;
+  blockedReason?: string | null;
+};
+
+async function cancelOmieOrder(
+  credentials: OmieCredentials,
+  payload: CancelOrderPayload
+): Promise<CancelOrderResult> {
+  const isSales = payload.orderType === "sales";
+
+  // 1) Consulta primeiro: idempotencia (ja excluido) e deteccao de faturamento.
+  let consult: unknown = null;
+  try {
+    consult = isSales
+      ? await consultSalesOrder(credentials, payload.omieOrderId)
+      : await consultServiceOrder(credentials, payload.omieOrderId);
+  } catch (error) {
+    const message = getErrorMessage(error);
+    if (isOmieNotFoundFault(message)) {
+      return { ok: true, cancelled: false, alreadyCancelled: true };
+    }
+    throw error;
+  }
+
+  if (isSales && isSalesOrderBilled(consult)) {
+    return {
+      ok: true,
+      cancelled: false,
+      blocked: true,
+      blockedReason:
+        "Pedido faturado no OMIE (etapa 60 ou NF emitida); cancelamento/estorno manual necessario."
+    };
+  }
+
+  // 2) Exclui o pedido/OS.
+  try {
+    if (isSales) {
+      await callOmie<unknown, unknown>(credentials, "/produtos/pedido/", "ExcluirPedido", {
+        codigo_pedido: payload.omieOrderId
+      });
+    } else {
+      await callOmie<unknown, unknown>(credentials, "/servicos/os/", "ExcluirOS", {
+        nCodOS: payload.omieOrderId
+      });
+    }
+    return { ok: true, cancelled: true };
+  } catch (error) {
+    const message = getErrorMessage(error);
+    if (isOmieNotFoundFault(message)) {
+      return { ok: true, cancelled: false, alreadyCancelled: true };
+    }
+    if (isOmieBlockedCancelFault(message)) {
+      return { ok: true, cancelled: false, blocked: true, blockedReason: message };
+    }
+    throw error;
+  }
 }
 
 async function consultSalesOrderByIntegrationCode(

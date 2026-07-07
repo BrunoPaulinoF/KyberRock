@@ -133,6 +133,26 @@ describe("listProducts", () => {
 
     expect(result[0]).toMatchObject({ isActive: false, blocked: true });
   });
+
+  it("derives tracksStock from nao_movimentar_estoque", async () => {
+    const client = mockClient({
+      produto_servico_cadastro: [
+        { codigo_produto: 1, descricao: "Controla", codigo: "C1", inativo: "N" },
+        {
+          codigo_produto: 2,
+          descricao: "Nao controla",
+          codigo: "N1",
+          inativo: "N",
+          nao_movimentar_estoque: "S"
+        }
+      ]
+    });
+
+    const result = await listProducts(client, { pagina: 1 });
+
+    expect(result[0].tracksStock).toBe(true);
+    expect(result[1].tracksStock).toBe(false);
+  });
 });
 
 describe("OmieProductsService", () => {

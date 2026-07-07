@@ -18,7 +18,12 @@ import {
   type ReportRecipientRow
 } from "./report-recipients.js";
 import { isSellableProduct } from "./product-classification.js";
-import { listRunnableSyncJobs, markSyncJobDone, markSyncJobFailed } from "./sync-queue.js";
+import {
+  enqueueSyncJob,
+  listRunnableSyncJobs,
+  markSyncJobDone,
+  markSyncJobFailed
+} from "./sync-queue.js";
 
 let client: SupabaseClient | null = null;
 let clientConfigKey: string | null = null;
@@ -174,6 +179,7 @@ interface OmieReferenceProduct {
 
 interface OmieReferencePaymentTerm {
   id: number;
+  code?: string | null;
   integrationCode?: string | null;
   description: string;
   firstInstallmentDays?: number | null;
@@ -1127,19 +1133,22 @@ export function applyOmieReferenceData(
   const customers = data.customers ?? [];
   const products = data.products ?? [];
   const suppliers = data.suppliers ?? [];
+  const paymentTerms = data.paymentTerms ?? [];
   const pagination = data.pagination;
 
   // Contadores refletem linhas realmente gravadas no SQLite (nao o tamanho do payload),
   // para o log de sync nao reportar sucesso quando nada ficou visivel nas telas.
   let customersPersisted = 0;
   let productsSynced = 0;
-  // Condicoes de pagamento sao cadastradas localmente: o pull nao as persiste mais.
-  const paymentTermsPersisted = 0;
+  // As condicoes locais (payment_terms) continuam sendo cadastradas manualmente; aqui
+  // apenas espelhamos os codigos de parcela do OMIE (omie_payment_terms) para vinculo.
+  let paymentTermsPersisted = 0;
   let suppliersPersisted = 0;
   const apply = database.transaction(() => {
     customersPersisted = upsertOmieCustomers(database, companyId, customers);
     productsSynced = upsertOmieProducts(database, companyId, products);
     suppliersPersisted = upsertOmieSuppliers(database, companyId, suppliers);
+    paymentTermsPersisted = upsertOmiePaymentTerms(database, companyId, paymentTerms);
   });
   apply();
 
@@ -1706,6 +1715,112 @@ function parseJsonValue(value: unknown): unknown {
   }
 }
 
+function reconcileCancelledAfterCreate(
+  database: DesktopDatabase,
+  operationId: string,
+  orderId: number,
+  operationType: "invoice" | "internal"
+): void {
+  const row = database
+    .prepare("SELECT status, cancel_reason FROM weighing_operations WHERE id = ?")
+    .get(operationId) as { status: string; cancel_reason: string | null } | undefined;
+  if (!row || row.status !== "cancelled") return;
+
+  // O update de sucesso do create sobrescreveu o status; devolve para 'cancelled'.
+  database
+    .prepare("UPDATE weighing_operations SET status = 'cancelled', updated_at = datetime('now') WHERE id = ?")
+    .run(operationId);
+
+  enqueueSyncJob(database, {
+    target: "omie",
+    action: "cancel_order",
+    entityType: "weighing_operation",
+    entityId: operationId,
+    idempotencyKey: `omie:cancel:${operationId}`,
+    payload: {
+      operationId,
+      orderType: operationType === "invoice" ? "sales" : "service",
+      omieOrderId: orderId,
+      reason: row.cancel_reason ?? "Operacao cancelada localmente."
+    }
+  });
+}
+
+async function processOmieCancelJob(
+  database: DesktopDatabase,
+  supabase: SupabaseClient,
+  settings: CloudSettings,
+  job: { id: string; payload: unknown }
+): Promise<"processed" | "failed"> {
+  const payload = job.payload as {
+    operationId: string;
+    orderType: "sales" | "service";
+    omieOrderId: number;
+    reason?: string;
+  };
+
+  try {
+    const { data, error } = await supabase.functions.invoke<{
+      cancelled?: boolean;
+      alreadyCancelled?: boolean;
+      blocked?: boolean;
+      blockedReason?: string | null;
+    }>("omie-sync", {
+      body: {
+        deviceId: settings.deviceId,
+        deviceToken: settings.deviceToken,
+        action: "cancel_order",
+        payload: {
+          operationId: payload.operationId,
+          orderType: payload.orderType,
+          omieOrderId: payload.omieOrderId,
+          reason: payload.reason
+        }
+      }
+    });
+
+    if (error) {
+      throw new Error(await getFunctionErrorMessage(error));
+    }
+
+    if (data?.blocked) {
+      // Pedido faturado ou em estado que impede exclusao: mantem operacao cancelada
+      // localmente com o erro visivel, sem retry (docs/phase-1/sync-strategy.md).
+      database
+        .prepare(
+          `UPDATE weighing_operations
+           SET omie_billing_status = 'cancel_blocked',
+               omie_billing_message = ?,
+               updated_at = datetime('now')
+           WHERE id = ?`
+        )
+        .run(data.blockedReason ?? "Cancelamento negado pelo OMIE.", payload.operationId);
+      markSyncJobDone(database, job.id);
+      return "processed";
+    }
+
+    // cancelled ou alreadyCancelled: registra o cancelamento no OMIE.
+    database
+      .prepare(
+        `UPDATE weighing_operations
+         SET omie_billing_status = 'cancelled_in_omie',
+             omie_billing_message = ?,
+             updated_at = datetime('now')
+         WHERE id = ?`
+      )
+      .run(
+        data?.alreadyCancelled ? "Pedido ja nao existia no OMIE." : "Pedido cancelado no OMIE.",
+        payload.operationId
+      );
+    markSyncJobDone(database, job.id);
+    return "processed";
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Erro OMIE";
+    markSyncJobFailed(database, job.id, message);
+    return "failed";
+  }
+}
+
 export async function processOmieSyncQueue(
   database: DesktopDatabase,
   identity: LocalDesktopIdentity,
@@ -1721,6 +1836,19 @@ export async function processOmieSyncQueue(
   const errors: string[] = [];
 
   for (const [index, job] of jobs.entries()) {
+    if (job.action === "cancel_order") {
+      const outcome = await processOmieCancelJob(database, supabase, settings, job);
+      if (outcome === "processed") processed++;
+      else {
+        failed++;
+        errors.push(`Job ${job.id}: falha ao cancelar pedido OMIE`);
+      }
+      if (index < jobs.length - 1) {
+        await sleep(delayMs);
+      }
+      continue;
+    }
+
     const payload = job.payload as {
       operationId: string;
       operationType: "invoice" | "internal";
@@ -1731,6 +1859,8 @@ export async function processOmieSyncQueue(
       unitPrice: number;
       freightTotalCents?: number;
       issueDate: string;
+      paymentTermOmieCode?: string | null;
+      paymentTermInstallmentCount?: number | null;
     };
 
     try {
@@ -1756,6 +1886,8 @@ export async function processOmieSyncQueue(
             unitPrice: payload.unitPrice,
             freightTotalCents: payload.freightTotalCents,
             issueDate: payload.issueDate,
+            paymentTermOmieCode: payload.paymentTermOmieCode ?? undefined,
+            installmentCount: payload.paymentTermInstallmentCount ?? undefined,
             idempotencyKey: job.idempotencyKey
           }
         }
@@ -1799,6 +1931,10 @@ export async function processOmieSyncQueue(
         database.prepare(updateSql).run(data.orderId, payload.operationId);
       }
       markSyncJobDone(database, job.id);
+      // Corrida create x cancel: se a operacao foi cancelada localmente enquanto o pedido
+      // era criado, o update acima marcou 'synced' por engano. Restaura o cancelamento e
+      // solicita o cancelamento do pedido recem-criado no OMIE.
+      reconcileCancelledAfterCreate(database, payload.operationId, data.orderId, payload.operationType);
       processed++;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Erro OMIE";
@@ -1864,6 +2000,8 @@ export async function processFiscalBillingNow(
     unitPrice: number;
     freightTotalCents?: number;
     issueDate: string;
+    paymentTermOmieCode?: string | null;
+    paymentTermInstallmentCount?: number | null;
   };
 
   if (payload.operationType !== "invoice") {
@@ -1890,6 +2028,8 @@ export async function processFiscalBillingNow(
           unitPrice: payload.unitPrice,
           freightTotalCents: payload.freightTotalCents,
           issueDate: payload.issueDate,
+          paymentTermOmieCode: payload.paymentTermOmieCode ?? undefined,
+          installmentCount: payload.paymentTermInstallmentCount ?? undefined,
           idempotencyKey: job.idempotency_key
         }
       }
@@ -2340,6 +2480,56 @@ function upsertOmieSuppliers(
       supplier.city ?? null,
       supplier.state ?? null,
       supplier.isActive === false ? 0 : 1
+    );
+    persisted++;
+  }
+  return persisted;
+}
+
+function upsertOmiePaymentTerms(
+  database: DesktopDatabase,
+  companyId: string,
+  paymentTerms: OmieReferencePaymentTerm[]
+): number {
+  const upsert = database.prepare(`
+    INSERT INTO omie_payment_terms (
+      id, company_id, omie_id, code, description,
+      first_installment_days, installment_interval_days, installment_count,
+      installment_type, installment_days_json, is_active, visible,
+      updated_from_omie_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), datetime('now'))
+    ON CONFLICT(company_id, code) DO UPDATE SET
+      omie_id = excluded.omie_id,
+      description = excluded.description,
+      first_installment_days = excluded.first_installment_days,
+      installment_interval_days = excluded.installment_interval_days,
+      installment_count = excluded.installment_count,
+      installment_type = excluded.installment_type,
+      installment_days_json = excluded.installment_days_json,
+      is_active = excluded.is_active,
+      visible = excluded.visible,
+      updated_from_omie_at = datetime('now'),
+      updated_at = datetime('now')
+  `);
+
+  let persisted = 0;
+  for (const term of paymentTerms) {
+    // code e o identificador do codigo_parcela do OMIE; preserva zeros a esquerda (TEXT).
+    const code = (term.code ?? "").trim();
+    if (!code) continue;
+    upsert.run(
+      `omie_parcela_${code}`,
+      companyId,
+      Number.isFinite(term.id) ? term.id : null,
+      code,
+      term.description?.trim() || code,
+      term.firstInstallmentDays ?? null,
+      term.installmentIntervalDays ?? null,
+      term.installmentCount ?? null,
+      term.installmentType ?? null,
+      term.installmentDaysJson ? JSON.stringify(term.installmentDaysJson) : null,
+      term.isActive === false ? 0 : 1,
+      term.visible === false ? 0 : 1
     );
     persisted++;
   }

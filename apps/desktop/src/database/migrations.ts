@@ -1046,5 +1046,45 @@ ALTER TABLE customers ADD COLUMN credit_second_closing_day INTEGER;
 ALTER TABLE customers ADD COLUMN credit_second_boleto_days INTEGER;
 ALTER TABLE customers ADD COLUMN credit_closing_weekday INTEGER;
 `
+  },
+  {
+    version: 30,
+    name: "omie_payment_terms_registry_and_link",
+    sql: `
+-- Condicoes de parcelamento (parcelas) espelhadas do OMIE, apenas para consulta/vinculo.
+-- O KyberRock continua dono das condicoes locais (payment_terms); esta tabela guarda os
+-- codigos de parcela do OMIE (ex: "000", "030") para que uma condicao local possa ser
+-- vinculada e enviada no codigo_parcela/cCodParc do pedido/OS.
+CREATE TABLE IF NOT EXISTS omie_payment_terms (
+  id TEXT PRIMARY KEY,
+  company_id TEXT NOT NULL REFERENCES companies(id),
+  omie_id INTEGER,
+  code TEXT NOT NULL,
+  description TEXT NOT NULL,
+  first_installment_days INTEGER,
+  installment_interval_days INTEGER,
+  installment_count INTEGER,
+  installment_type TEXT,
+  installment_days_json TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+  visible INTEGER NOT NULL DEFAULT 1 CHECK (visible IN (0, 1)),
+  updated_from_omie_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_omie_payment_terms_company_code
+  ON omie_payment_terms(company_id, code);
+CREATE INDEX IF NOT EXISTS idx_omie_payment_terms_company_active
+  ON omie_payment_terms(company_id, is_active);
+
+-- Vinculo opcional de uma condicao local ao codigo de parcela do OMIE. Distinto de
+-- payment_terms.omie_code (legado, marca condicoes importadas e nao editaveis): aqui o
+-- usuario associa manualmente sua condicao local a um codigo do OMIE.
+ALTER TABLE payment_terms ADD COLUMN omie_parcela_code TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_payment_terms_omie_parcela
+  ON payment_terms(company_id, omie_parcela_code);
+`
   }
 ];

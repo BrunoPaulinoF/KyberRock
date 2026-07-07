@@ -121,6 +121,16 @@ Financeiro:
 - Enviar frete no bloco `frete` quando aplicavel, incluindo modalidade, transportadora, peso e valor.
 - Salvar `codigo_pedido` retornado.
 
+#### Condicao de pagamento (implementado)
+
+- A condicao local (`payment_terms`) pode ser vinculada a um codigo de parcela do OMIE via
+  `payment_terms.omie_parcela_code` (ex: "000", "030"). Os codigos disponiveis sao espelhados
+  do OMIE (`ListarParcelas`) em `omie_payment_terms` no pull.
+- No fechamento, o desktop resolve o codigo vinculado e o envia no payload do job
+  (`paymentTermOmieCode`, `paymentTermInstallmentCount`).
+- A Edge Function usa esse codigo em `codigo_parcela` (pedido) / `cCodParc` + `nQtdeParc` (OS).
+  Sem vinculo, cai no padrao `"000"` (a vista). O codigo e string e preserva zeros a esquerda.
+
 ### Operacao Interna
 
 - Criar OS com `IncluirOS` em `/api/v1/servicos/os/`.
@@ -144,6 +154,20 @@ Financeiro:
   - pedido: avaliar `ExcluirPedido`, status e etapa antes de cancelar;
   - OS: avaliar `ExcluirOS`, status e etapa antes de cancelar.
 - Se OMIE negar, manter operacao local com erro de sincronizacao visivel.
+
+#### Implementado: acao `cancel_order`
+
+- `cancelWeighingOperation` neutraliza (dead_letter) jobs `create_order`/`create_and_bill_order`
+  ainda pendentes da operacao ("Antes Do OMIE") e, se ja existe `omie_sales_order_id`/
+  `omie_service_order_id`, enfileira um job `cancel_order` (idempotencyKey `omie:cancel:{operationId}`).
+- A Edge Function `cancel_order` consulta primeiro (`ConsultarPedido`/`ConsultarOS`):
+  - "nao cadastrado" -> `alreadyCancelled` (idempotente);
+  - faturado (etapa >= 60 ou NF emitida) -> `blocked`, sem excluir (estorno/cancelamento de NF
+    fica fora de escopo, sinalizado ao operador);
+  - caso contrario, `ExcluirPedido`/`ExcluirOS`.
+- Resposta `blocked` retorna HTTP 200 para o desktop marcar o job como concluido (sem retry
+  infinito) e gravar `omie_billing_status = 'cancel_blocked'` com a mensagem visivel.
+- Sucesso grava `omie_billing_status = 'cancelled_in_omie'`.
 
 ## Conflitos
 

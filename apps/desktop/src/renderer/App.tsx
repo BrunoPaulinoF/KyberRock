@@ -7661,11 +7661,15 @@ function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi })
 
 function PaymentConditionsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   const [terms, setTerms] = useState<PaymentTermCacheEntry[]>([]);
+  const [omieTerms, setOmieTerms] = useState<
+    Array<{ code: string; description: string; installment_count: number | null }>
+  >([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [condition, setCondition] = useState("");
+  const [omieParcelaCode, setOmieParcelaCode] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [flash, showFlash] = useFlash();
@@ -7675,12 +7679,18 @@ function PaymentConditionsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi
   const loadTerms = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await desktopApi.queryCache({
-        entityType: "payment_term",
-        activeOnly: false,
-        limit: 500
-      });
+      const [result, omie] = await Promise.all([
+        desktopApi.queryCache({
+          entityType: "payment_term",
+          activeOnly: false,
+          limit: 500
+        }),
+        desktopApi.paymentTermsListOmie().catch(() => [])
+      ]);
       setTerms(result.rows as PaymentTermCacheEntry[]);
+      setOmieTerms(
+        omie as Array<{ code: string; description: string; installment_count: number | null }>
+      );
     } finally {
       setLoading(false);
     }
@@ -7694,6 +7704,7 @@ function PaymentConditionsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi
     setEditingId(null);
     setName("");
     setCondition("");
+    setOmieParcelaCode("");
     setFormError(null);
     setShowForm(true);
   }
@@ -7702,6 +7713,7 @@ function PaymentConditionsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi
     setEditingId(term.id);
     setName(term.name);
     setCondition(paymentConditionRaw(term));
+    setOmieParcelaCode(term.omieParcelaCode ?? "");
     setFormError(null);
     setShowForm(true);
   }
@@ -7717,11 +7729,20 @@ function PaymentConditionsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi
     }
     setSaving(true);
     try {
+      const parcelaCode = omieParcelaCode.trim() || null;
       if (editingId) {
-        await desktopApi.paymentTermsUpdate(editingId, { name: name.trim(), condition: condition.trim() });
+        await desktopApi.paymentTermsUpdate(editingId, {
+          name: name.trim(),
+          condition: condition.trim(),
+          omieParcelaCode: parcelaCode
+        });
         showFlash("success", "Condicao atualizada.");
       } else {
-        await desktopApi.paymentTermsCreate({ name: name.trim(), condition: condition.trim() });
+        await desktopApi.paymentTermsCreate({
+          name: name.trim(),
+          condition: condition.trim(),
+          omieParcelaCode: parcelaCode
+        });
         showFlash("success", "Condicao criada.");
       }
       setShowForm(false);
@@ -7780,6 +7801,37 @@ function PaymentConditionsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi
               placeholder="Ex: 10/20/30/40"
             />
           </FormSection>
+          <FormSection title="Integracao OMIE">
+            <Field
+              label="Codigo OMIE (parcela)"
+              hint="Codigo de parcela enviado no pedido/OS. Sem vinculo, o OMIE recebe 000 (a vista)."
+            >
+              {omieTerms.length > 0 ? (
+                <select
+                  value={omieParcelaCode}
+                  onChange={(e) => setOmieParcelaCode(e.target.value)}
+                  style={getInputStyle(false)}
+                >
+                  <option value="">Sem vinculo (usara 000)</option>
+                  {omieParcelaCode && !omieTerms.some((t) => t.code === omieParcelaCode) ? (
+                    <option value={omieParcelaCode}>{omieParcelaCode} (atual)</option>
+                  ) : null}
+                  {omieTerms.map((t) => (
+                    <option key={t.code} value={t.code}>
+                      {t.code} - {t.description}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <TextInput
+                  label=""
+                  value={omieParcelaCode}
+                  onChange={setOmieParcelaCode}
+                  placeholder="Codigo de parcela do OMIE (opcional, ex: 030)"
+                />
+              )}
+            </Field>
+          </FormSection>
         </CrudFormShell>
       ) : null}
 
@@ -7808,6 +7860,14 @@ function PaymentConditionsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi
             render: (t: PaymentTermCacheEntry) => <CellMuted>{paymentConditionSummary(t)}</CellMuted>
           },
           {
+            key: "omie",
+            header: "Cod. OMIE",
+            width: "120px",
+            render: (t: PaymentTermCacheEntry) => (
+              <CellMuted>{t.omieParcelaCode || "000"}</CellMuted>
+            )
+          },
+          {
             key: "status",
             header: "Status",
             width: "100px",
@@ -7831,7 +7891,7 @@ function PaymentConditionsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi
         rows={terms}
         rowKey={(t) => t.id}
         loading={loading}
-        minWidth="680px"
+        minWidth="800px"
         emptyTitle="Nenhuma condicao cadastrada."
         emptyHint='Crie uma condicao pelo botao "Nova condicao".'
       />

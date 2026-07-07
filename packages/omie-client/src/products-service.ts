@@ -26,6 +26,8 @@ export interface Product {
   icmsOrigin?: string;
   isActive: boolean;
   blocked: boolean;
+  /** Controla estoque: derivado de nao_movimentar_estoque ("S" => nao controla). */
+  tracksStock: boolean;
   fiscalRecommendations?: Record<string, unknown>;
 }
 
@@ -74,6 +76,8 @@ interface OmieProductRaw {
   origemMercadoria?: string;
   inativo?: string;
   bloqueado?: string;
+  nao_movimentar_estoque?: string;
+  naoMovimentarEstoque?: string;
   recomendacoes_fiscais?: Record<string, unknown>;
   recomendacoesFiscais?: Record<string, unknown>;
 }
@@ -147,7 +151,8 @@ function mapOmieProductRaw(item: OmieProductRaw): Product | null {
     id: productId,
     description: item.descricao,
     isActive: !isYesFlag(item.inativo),
-    blocked: isYesFlag(item.bloqueado)
+    blocked: isYesFlag(item.bloqueado),
+    tracksStock: !isYesFlag(item.nao_movimentar_estoque ?? item.naoMovimentarEstoque)
   };
 
   assign(product, "code", pickFirst(item.codigo));

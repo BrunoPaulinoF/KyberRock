@@ -6,7 +6,7 @@ import type { LocalDesktopIdentity } from "./bootstrap.js";
 import { FinancialBlockService } from "./financial-block.js";
 import { FreightCalculator, type FreightRule } from "./freight.js";
 import { PricingService, type PriceDetails } from "./pricing.js";
-import { enqueueSyncJob } from "./sync-queue.js";
+import { cancelPendingOmieJobs, enqueueSyncJob } from "./sync-queue.js";
 import { CreditService } from "./credit.js";
 import { buildOmieIntegrationCode } from "@kyberrock/omie-client";
 import { consumeQuotation } from "./quotations.js";
@@ -761,9 +761,16 @@ export function closeWeighingOperation(
     }
 
     const operationIds = database
-      .prepare("SELECT customer_id, product_id, unit_id FROM weighing_operations WHERE id = ?")
+      .prepare(
+        "SELECT customer_id, product_id, unit_id, payment_term_id FROM weighing_operations WHERE id = ?"
+      )
       .get(input.operationId) as
-      | { customer_id: string | null; product_id: string | null; unit_id: string }
+      | {
+          customer_id: string | null;
+          product_id: string | null;
+          unit_id: string;
+          payment_term_id: string | null;
+        }
       | undefined;
 
     const omieCustomerId = operationIds?.customer_id
@@ -780,6 +787,24 @@ export function closeWeighingOperation(
             .get(operationIds.product_id) as { omie_product_id: number | null } | undefined
         )?.omie_product_id
       : null;
+
+    // Codigo de parcela do OMIE vinculado a condicao local da operacao. Sem vinculo, o
+    // edge function cai no padrao "000" (a vista) — comportamento historico.
+    const omieParcela = operationIds?.payment_term_id
+      ? (database
+          .prepare(
+            `SELECT pt.omie_parcela_code AS code, opt.installment_count AS installment_count
+             FROM payment_terms pt
+             LEFT JOIN omie_payment_terms opt
+               ON opt.company_id = pt.company_id AND opt.code = pt.omie_parcela_code AND opt.is_active = 1
+             WHERE pt.id = ?`
+          )
+          .get(operationIds.payment_term_id) as
+          | { code: string | null; installment_count: number | null }
+          | undefined)
+      : undefined;
+    const paymentTermOmieCode = omieParcela?.code ?? null;
+    const paymentTermInstallmentCount = omieParcela?.installment_count ?? null;
 
     if (omieCustomerId) {
       const omieAction = nextOperationType === "invoice" ? "create_and_bill_order" : "create_order";
@@ -806,7 +831,9 @@ export function closeWeighingOperation(
             quantity: netWeightKg / 1000,
             unitPrice: operation.unitPriceCents ? operation.unitPriceCents / 100 : 0,
             freightTotalCents,
-            issueDate: timestamp.slice(0, 10)
+            issueDate: timestamp.slice(0, 10),
+            paymentTermOmieCode,
+            paymentTermInstallmentCount
           }
         },
         now
@@ -831,7 +858,9 @@ export function cancelWeighingOperation(
 
   const opRow = database
     .prepare(
-      `SELECT customer_id, product_credit_debit_cents, freight_credit_debit_cents, quotation_id FROM weighing_operations WHERE id = ?`
+      `SELECT customer_id, product_credit_debit_cents, freight_credit_debit_cents, quotation_id,
+              omie_sales_order_id, omie_service_order_id, omie_billing_status
+       FROM weighing_operations WHERE id = ?`
     )
     .get(input.operationId) as
     | {
@@ -839,6 +868,9 @@ export function cancelWeighingOperation(
         product_credit_debit_cents: number;
         freight_credit_debit_cents: number;
         quotation_id: string | null;
+        omie_sales_order_id: number | null;
+        omie_service_order_id: number | null;
+        omie_billing_status: string | null;
       }
     | undefined;
 
@@ -885,6 +917,42 @@ export function cancelWeighingOperation(
       { reason: input.reason.trim() },
       timestamp
     );
+
+    // "Antes Do OMIE": neutraliza jobs de criacao ainda pendentes para nao criar/faturar
+    // um pedido no OMIE depois do cancelamento local (docs/phase-1/sync-strategy.md).
+    cancelPendingOmieJobs(database, input.operationId, now);
+
+    // "Depois Do OMIE": se ja existe pedido/OS no OMIE, solicita o cancelamento la.
+    const omieOrderId = opRow?.omie_sales_order_id ?? opRow?.omie_service_order_id ?? null;
+    if (omieOrderId) {
+      const orderType = opRow?.omie_sales_order_id ? "sales" : "service";
+      enqueueSyncJob(
+        database,
+        {
+          target: "omie",
+          action: "cancel_order",
+          entityType: "weighing_operation",
+          entityId: input.operationId,
+          idempotencyKey: `omie:cancel:${input.operationId}`,
+          payload: {
+            operationId: input.operationId,
+            orderType,
+            omieOrderId,
+            reason: input.reason.trim()
+          }
+        },
+        now
+      );
+      insertAuditLog(
+        database,
+        null,
+        input.operationId,
+        "omie_cancel_requested",
+        operation,
+        { orderType, omieOrderId, reason: input.reason.trim() },
+        timestamp
+      );
+    }
 
     enqueueSyncJob(
       database,

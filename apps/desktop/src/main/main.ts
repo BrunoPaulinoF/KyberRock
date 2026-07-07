@@ -873,6 +873,11 @@ function registerIpcHandlers(): void {
     runtime.deletePaymentTerm(id);
   });
 
+  ipcMain.handle("desktop:payment-terms-list-omie", () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.listOmiePaymentTerms();
+  });
+
   ipcMain.handle(
     "desktop:price-tables-create",
     (_event, input: Omit<CreatePriceTableInput, "companyId">) => {
