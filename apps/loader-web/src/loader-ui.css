@@ -601,34 +601,35 @@ select {
 }
 
 /* The truck overlay sits on top of the card content and only becomes visible
-   while the row is driving off screen. */
+   while the row is driving off screen. An inline SVG is used (instead of an
+   emoji) so the truck renders identically on every OS/browser. */
 .operation-card__truck {
   position: absolute;
   inset: 0;
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding-left: 28px;
+  gap: 10px;
+  padding: 0 20px;
   opacity: 0;
   pointer-events: none;
 }
 
-.operation-card__truck-icon {
-  font-size: 56px;
-  line-height: 1;
-  transform: scaleX(-1); /* face the truck to the right, the way it drives */
+.operation-card__truck-svg {
+  flex: 0 0 auto;
+  width: clamp(96px, 22vw, 132px);
+  height: auto;
 }
 
 .operation-card__truck-trail {
   flex: 1;
-  height: 3px;
+  height: 4px;
   border-radius: 999px;
   background: repeating-linear-gradient(
     90deg,
-    rgba(148, 163, 184, 0.55) 0,
-    rgba(148, 163, 184, 0.55) 14px,
-    transparent 14px,
-    transparent 30px
+    rgba(148, 163, 184, 0.6) 0,
+    rgba(148, 163, 184, 0.6) 16px,
+    transparent 16px,
+    transparent 34px
   );
 }
 
@@ -706,6 +707,24 @@ select {
   100% {
     transform: translateX(130vw); /* drive straight off the right edge */
     opacity: 0;
+  }
+}
+
+/* Concluding a load is a core, user-facing confirmation, so keep the truck
+   driving off even when the viewer prefers reduced motion — just make it
+   quicker and drop the repetitive wheel bob. This intentionally overrides the
+   global reduced-motion rule below (higher specificity + !important). */
+@media (prefers-reduced-motion: reduce) {
+  .operation-card--departing {
+    animation: truck-drive-off 900ms cubic-bezier(0.4, 0, 0.2, 1) forwards !important;
+  }
+
+  .operation-card--departing .operation-card__content {
+    animation: content-morph 260ms ease forwards !important;
+  }
+
+  .operation-card--departing .operation-card__truck {
+    animation: truck-reveal 300ms ease forwards !important;
   }
 }
 

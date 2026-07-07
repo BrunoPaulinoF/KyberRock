@@ -365,10 +365,41 @@ function LoadingCard({
       </div>
 
       <div className="operation-card__truck" aria-hidden="true">
-        <span className="operation-card__truck-icon">🚚</span>
+        <TruckIcon />
         <span className="operation-card__truck-trail" />
       </div>
     </article>
+  );
+}
+
+function TruckIcon() {
+  // Side-view delivery truck facing right (the direction it drives off).
+  return (
+    <svg
+      className="operation-card__truck-svg"
+      viewBox="0 0 132 72"
+      role="img"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {/* cargo box */}
+      <rect x="4" y="14" width="72" height="38" rx="4" fill="#1d4ed8" />
+      <rect x="12" y="22" width="56" height="22" rx="2" fill="#3b82f6" opacity="0.55" />
+      {/* cab: hood + cabin */}
+      <path
+        d="M76 24h18l14 16v12H76z"
+        fill="#0f172a"
+      />
+      {/* windshield */}
+      <path d="M80 28h11l9 10H80z" fill="#93c5fd" />
+      {/* headlight */}
+      <rect x="104" y="44" width="6" height="5" rx="1.5" fill="#fde68a" />
+      {/* wheels */}
+      <circle cx="30" cy="56" r="10" fill="#0f172a" />
+      <circle cx="30" cy="56" r="4" fill="#cbd5e1" />
+      <circle cx="92" cy="56" r="10" fill="#0f172a" />
+      <circle cx="92" cy="56" r="4" fill="#cbd5e1" />
+    </svg>
   );
 }
 
