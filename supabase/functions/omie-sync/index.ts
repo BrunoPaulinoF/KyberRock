@@ -4,6 +4,7 @@ import {
   buildCustomerPayload,
   extractExistingCustomerId,
   pushCarrierToOmie as pushCarrierToOmieCore,
+  toCustomerUpdateBody,
   toOmieIntegrationCode,
   type OmieCredentials,
   type OmieRequester
@@ -1283,17 +1284,24 @@ async function pushCustomerToOmie(
   const body = buildCustomerPayload(payload);
 
   if (payload.omieCustomerId) {
-    await callOmie<unknown, unknown>(credentials, "/geral/clientes/", "AlterarCliente", body);
+    await callOmie<unknown, unknown>(
+      credentials,
+      "/geral/clientes/",
+      "AlterarCliente",
+      toCustomerUpdateBody(body, payload.omieCustomerId)
+    );
     return payload.omieCustomerId;
   }
 
   if (payload.cnpjCpf) {
     const existing = await findCustomerByDocument(credentials, payload.cnpjCpf);
     if (existing) {
-      await callOmie<unknown, unknown>(credentials, "/geral/clientes/", "AlterarCliente", {
-        ...body,
-        codigo_cliente_omie: existing
-      });
+      await callOmie<unknown, unknown>(
+        credentials,
+        "/geral/clientes/",
+        "AlterarCliente",
+        toCustomerUpdateBody(body, existing)
+      );
       return existing;
     }
   }
@@ -1310,10 +1318,12 @@ async function pushCustomerToOmie(
   } catch (error) {
     const existingId = extractExistingCustomerId(error);
     if (existingId === null) throw error;
-    await callOmie<unknown, unknown>(credentials, "/geral/clientes/", "AlterarCliente", {
-      ...body,
-      codigo_cliente_omie: existingId
-    });
+    await callOmie<unknown, unknown>(
+      credentials,
+      "/geral/clientes/",
+      "AlterarCliente",
+      toCustomerUpdateBody(body, existingId)
+    );
     return existingId;
   }
 
@@ -1406,11 +1416,15 @@ async function createOmieOrder(
         }
       }
     ).catch(async (error) => {
+      // So aceita a consulta como fallback se ela realmente devolver o pedido;
+      // caso contrario propaga o erro original do IncluirPedido (antes, uma
+      // resposta vazia da consulta mascarava a causa real com
+      // "OMIE nao retornou codigoPedido").
       const existing = await consultSalesOrderByIntegrationCode(
         credentials,
         integrationCode
       ).catch(() => null);
-      if (existing) return existing;
+      if (existing && extractSalesOrderId(existing) !== null) return existing;
       throw error;
     });
 
@@ -1421,6 +1435,7 @@ async function createOmieOrder(
     return orderId;
   }
 
+  const municipalServiceCode = await resolveOmieMunicipalServiceCode(credentials);
   const response = await callOmie<
     unknown,
     {
@@ -1443,6 +1458,7 @@ async function createOmieOrder(
         cDescServ: payload.serviceDescription || "Servico",
         // Obrigatorio no IncluirOS: "01" = tributado no municipio (padrao).
         cTribServ: "01",
+        ...(municipalServiceCode !== null ? { cCodServMun: municipalServiceCode } : {}),
         nQtde: payload.quantity,
         nValUnit: payload.unitPrice
       }
@@ -1506,6 +1522,57 @@ function extractFirstAccountCode(response: Record<string, unknown> | null): numb
         )
       );
       if (code !== null && code > 0) return code;
+    }
+  }
+  return null;
+}
+
+// O IncluirOS tambem exige o Codigo do Servico Municipal (cCodServMun), que e
+// especifico do tenant (cadastro de servicos do OMIE). Buscamos o primeiro servico
+// cadastrado via ListarCadastroServico e cacheamos por app_key; falhas nao sao
+// cacheadas para permitir nova tentativa no proximo job.
+const omieServiceCodeCache = new Map<string, string>();
+
+async function resolveOmieMunicipalServiceCode(
+  credentials: OmieCredentials
+): Promise<string | null> {
+  const cached = omieServiceCodeCache.get(credentials.appKey);
+  if (cached !== undefined) return cached;
+
+  try {
+    const response = await callOmie<unknown, unknown>(
+      credentials,
+      "/servicos/servico/",
+      "ListarCadastroServico",
+      { nPagina: 1, nRegPorPagina: 50 }
+    );
+    const code = findStringByKey(response, "cCodServMun");
+    if (code !== null) {
+      omieServiceCodeCache.set(credentials.appKey, code);
+    }
+    return code;
+  } catch {
+    return null;
+  }
+}
+
+function findStringByKey(value: unknown, key: string): string | null {
+  if (!value || typeof value !== "object") return null;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findStringByKey(item, key);
+      if (found !== null) return found;
+    }
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const direct = record[key];
+  if (typeof direct === "string" && direct.trim().length > 0) return direct.trim();
+  if (typeof direct === "number" && Number.isFinite(direct)) return String(direct);
+  for (const nested of Object.values(record)) {
+    if (nested && typeof nested === "object") {
+      const found = findStringByKey(nested, key);
+      if (found !== null) return found;
     }
   }
   return null;
@@ -1608,12 +1675,25 @@ function extractSalesOrderId(value: unknown): number | null {
     record.cabecalho && typeof record.cabecalho === "object"
       ? (record.cabecalho as Record<string, unknown>)
       : null;
-  return toNumber(
+  const fromHeader = toNumber(
     pickFirst(
       header?.codigo_pedido as string | number | null | undefined,
       header?.codigoPedido as string | number | null | undefined
     )
   );
+  if (fromHeader !== null) return fromHeader;
+  // ConsultarPedido devolve o pedido aninhado em pedido_venda_produto.
+  const nested = record.pedido_venda_produto ?? record.pedidoVendaProduto;
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    return extractSalesOrderId(nested);
+  }
+  if (Array.isArray(nested)) {
+    for (const item of nested) {
+      const found = extractSalesOrderId(item);
+      if (found !== null) return found;
+    }
+  }
+  return null;
 }
 
 async function getSalesOrderDocument(

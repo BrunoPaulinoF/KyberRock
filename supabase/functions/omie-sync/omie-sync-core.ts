@@ -297,6 +297,19 @@ export function extractExistingCustomerId(error: unknown): number | null {
   return match ? Number(match[1]) : null;
 }
 
+// O AlterarCliente localiza o registro pelo codigo_cliente_integracao quando presente.
+// Para cadastros adotados (criados fora do KyberRock) o codigo nao confere e o OMIE
+// responde "Cliente nao cadastrado para o Codigo de Integracao [...]". Em updates,
+// identificamos apenas pelo codigo_cliente_omie.
+export function toCustomerUpdateBody(
+  body: Record<string, unknown>,
+  omieCustomerId: number
+): Record<string, unknown> {
+  const updateBody = { ...body, codigo_cliente_omie: omieCustomerId };
+  delete updateBody.codigo_cliente_integracao;
+  return updateBody;
+}
+
 async function pushCustomerBodyToOmie(
   queue: OmieRequester,
   credentials: OmieCredentials,
@@ -308,7 +321,7 @@ async function pushCustomerBodyToOmie(
       credentials,
       endpoint: "/geral/clientes/",
       call: "AlterarCliente",
-      param: body
+      param: toCustomerUpdateBody(body, omieCustomerId)
     });
     return omieCustomerId;
   }
@@ -331,7 +344,7 @@ async function pushCustomerBodyToOmie(
       credentials,
       endpoint: "/geral/clientes/",
       call: "AlterarCliente",
-      param: { ...body, codigo_cliente_omie: existingId }
+      param: toCustomerUpdateBody(body, existingId)
     });
     return existingId;
   }
