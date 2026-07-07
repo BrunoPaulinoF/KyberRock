@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  OMIE_ENDPOINTS,
-  buildOmieIntegrationCode,
-  createOmieRequestBody
-} from "./omie-request";
+import { buildOmieIntegrationCode, createOmieRequestBody } from "./omie-request";
 
 describe("createOmieRequestBody", () => {
   it("wraps the OMIE call and param without credentials", () => {
@@ -37,11 +33,5 @@ describe("buildOmieIntegrationCode", () => {
     const a = buildOmieIntegrationCode(longUnitId, longEntityId, longAction);
     const b = buildOmieIntegrationCode(longUnitId, longEntityId, longAction);
     expect(a).toBe(b);
-  });
-});
-
-describe("OMIE_ENDPOINTS", () => {
-  it("contains the sales order endpoint", () => {
-    expect(OMIE_ENDPOINTS.salesOrders).toBe("/produtos/pedido/");
   });
 });

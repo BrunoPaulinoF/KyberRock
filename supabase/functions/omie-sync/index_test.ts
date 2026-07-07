@@ -450,3 +450,317 @@ Deno.test("fluxo pull processa paginas e mapeia clientes OMIE com tag transporta
     state: "SP"
   });
 });
+
+function orderQueueStub() {
+  return createOmieQueueStub((input) => {
+    if (input.call === "ListarContasCorrentes") {
+      return { conta_corrente_lista: [{ nCodCC: 7 }] };
+    }
+    if (input.call === "ListarCadastroServico") {
+      return { cadastros: [{ cCodServMun: "1.07" }] };
+    }
+    if (input.call === "IncluirPedido") {
+      return { codigo_pedido: 12345 };
+    }
+    if (input.call === "IncluirOS") {
+      return { nCodOS: 555 };
+    }
+    return defaultOmieListResponse(input);
+  });
+}
+
+function findRequest(
+  omieQueue: { requests: OmieRequestInput<unknown>[] },
+  call: string
+): OmieRequestInput<unknown> {
+  const request = omieQueue.requests.find((r) => r.call === call);
+  if (!request) throw new Error(`Nenhuma chamada ${call} capturada`);
+  return request;
+}
+
+Deno.test("create_order envia o codigo_parcela vinculado no pedido de venda", async () => {
+  const deviceToken = "token-order-invoice";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-order-invoice": {
+        id: "device-order-invoice",
+        company_id: "company-order-invoice",
+        unit_id: "unit-order-invoice",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-order-invoice": {
+        id: "company-order-invoice",
+        is_active: true,
+        omie_app_key: "order-invoice",
+        omie_app_secret: "secret-order-invoice"
+      }
+    }
+  });
+  const omieQueue = orderQueueStub();
+
+  const response = await postOmieSync(
+    {
+      deviceId: "device-order-invoice",
+      deviceToken,
+      action: "create_order",
+      payload: {
+        operationType: "invoice",
+        customerOmieId: 100,
+        productOmieId: 200,
+        quantity: 30.5,
+        unitPrice: 85,
+        issueDate: "2026-07-07",
+        idempotencyKey: "kyberrock:unit:op1:create_sales_order",
+        paymentTermOmieCode: "030"
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  assertObjectMatch(response, { ok: true, orderId: 12345 });
+  const cabecalho = getParam(findRequest(omieQueue, "IncluirPedido")).cabecalho as Record<
+    string,
+    unknown
+  >;
+  assertEquals(cabecalho.codigo_parcela, "030");
+});
+
+Deno.test("create_order usa 000 quando nao ha codigo de parcela vinculado", async () => {
+  const deviceToken = "token-order-default";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-order-default": {
+        id: "device-order-default",
+        company_id: "company-order-default",
+        unit_id: "unit-order-default",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-order-default": {
+        id: "company-order-default",
+        is_active: true,
+        omie_app_key: "order-default",
+        omie_app_secret: "secret-order-default"
+      }
+    }
+  });
+  const omieQueue = orderQueueStub();
+
+  await postOmieSync(
+    {
+      deviceId: "device-order-default",
+      deviceToken,
+      action: "create_order",
+      payload: {
+        operationType: "invoice",
+        customerOmieId: 100,
+        productOmieId: 200,
+        quantity: 10,
+        unitPrice: 50,
+        issueDate: "2026-07-07",
+        idempotencyKey: "kyberrock:unit:op2:create_sales_order"
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  const cabecalho = getParam(findRequest(omieQueue, "IncluirPedido")).cabecalho as Record<
+    string,
+    unknown
+  >;
+  assertEquals(cabecalho.codigo_parcela, "000");
+});
+
+Deno.test("create_order envia cCodParc e nQtdeParc na ordem de servico", async () => {
+  const deviceToken = "token-order-os";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-order-os": {
+        id: "device-order-os",
+        company_id: "company-order-os",
+        unit_id: "unit-order-os",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-order-os": {
+        id: "company-order-os",
+        is_active: true,
+        omie_app_key: "order-os",
+        omie_app_secret: "secret-order-os"
+      }
+    }
+  });
+  const omieQueue = orderQueueStub();
+
+  const response = await postOmieSync(
+    {
+      deviceId: "device-order-os",
+      deviceToken,
+      action: "create_order",
+      payload: {
+        operationType: "internal",
+        customerOmieId: 100,
+        serviceDescription: "Pesagem interna",
+        quantity: 12,
+        unitPrice: 40,
+        issueDate: "2026-07-07",
+        idempotencyKey: "kyberrock:unit:op3:create_service_order",
+        paymentTermOmieCode: "030",
+        installmentCount: 3
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  assertObjectMatch(response, { ok: true, orderId: 555 });
+  const cabecalho = getParam(findRequest(omieQueue, "IncluirOS")).Cabecalho as Record<
+    string,
+    unknown
+  >;
+  assertEquals(cabecalho.cCodParc, "030");
+  assertEquals(cabecalho.nQtdeParc, 3);
+});
+
+Deno.test("cancel_order consulta e exclui um pedido de venda nao faturado", async () => {
+  const deviceToken = "token-cancel-ok";
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-cancel-ok": {
+        id: "device-cancel-ok",
+        company_id: "company-cancel-ok",
+        unit_id: "unit-cancel-ok",
+        token_hash: await sha256Hex(deviceToken),
+        is_active: true
+      }
+    },
+    companies: {
+      "company-cancel-ok": {
+        id: "company-cancel-ok",
+        is_active: true,
+        omie_app_key: "cancel-ok",
+        omie_app_secret: "secret-cancel-ok"
+      }
+    }
+  });
+  const omieQueue = createOmieQueueStub((input) => {
+    if (input.call === "ConsultarPedido") {
+      return { pedido_venda_produto: { cabecalho: { codigo_pedido: 9876, etapa: "10" } } };
+    }
+    if (input.call === "ExcluirPedido") {
+      return { codigo_status: "0", descricao_status: "pedido excluido" };
+    }
+    return null;
+  });
+
+  const response = await postOmieSync(
+    {
+      deviceId: "device-cancel-ok",
+      deviceToken,
+      action: "cancel_order",
+      payload: { operationId: "op1", orderType: "sales", omieOrderId: 9876, reason: "erro" }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  assertObjectMatch(response, { ok: true, cancelled: true });
+  assertEquals(
+    omieQueue.requests.some((r) => r.call === "ExcluirPedido"),
+    true
+  );
+});
+
+Deno.test("cancel_order nao exclui um pedido ja faturado (blocked)", async () => {
+  const deviceToken = "token-cancel-billed";
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-cancel-billed": {
+        id: "device-cancel-billed",
+        company_id: "company-cancel-billed",
+        unit_id: "unit-cancel-billed",
+        token_hash: await sha256Hex(deviceToken),
+        is_active: true
+      }
+    },
+    companies: {
+      "company-cancel-billed": {
+        id: "company-cancel-billed",
+        is_active: true,
+        omie_app_key: "cancel-billed",
+        omie_app_secret: "secret-cancel-billed"
+      }
+    }
+  });
+  const omieQueue = createOmieQueueStub((input) => {
+    if (input.call === "ConsultarPedido") {
+      return { pedido_venda_produto: { cabecalho: { codigo_pedido: 9876, etapa: "60" } } };
+    }
+    return null;
+  });
+
+  const response = await postOmieSync(
+    {
+      deviceId: "device-cancel-billed",
+      deviceToken,
+      action: "cancel_order",
+      payload: { operationId: "op1", orderType: "sales", omieOrderId: 9876, reason: "erro" }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  assertObjectMatch(response, { ok: true, cancelled: false, blocked: true });
+  assertEquals(
+    omieQueue.requests.some((r) => r.call === "ExcluirPedido"),
+    false
+  );
+});
+
+Deno.test("cancel_order trata pedido inexistente como ja cancelado (idempotente)", async () => {
+  const deviceToken = "token-cancel-missing";
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-cancel-missing": {
+        id: "device-cancel-missing",
+        company_id: "company-cancel-missing",
+        unit_id: "unit-cancel-missing",
+        token_hash: await sha256Hex(deviceToken),
+        is_active: true
+      }
+    },
+    companies: {
+      "company-cancel-missing": {
+        id: "company-cancel-missing",
+        is_active: true,
+        omie_app_key: "cancel-missing",
+        omie_app_secret: "secret-cancel-missing"
+      }
+    }
+  });
+  const omieQueue = createOmieQueueStub((input) => {
+    if (input.call === "ConsultarPedido") {
+      throw new Error("SOAP-ENV: Pedido nao cadastrado para o codigo informado");
+    }
+    return null;
+  });
+
+  const response = await postOmieSync(
+    {
+      deviceId: "device-cancel-missing",
+      deviceToken,
+      action: "cancel_order",
+      payload: { operationId: "op1", orderType: "sales", omieOrderId: 9876, reason: "erro" }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  assertObjectMatch(response, { ok: true, cancelled: false, alreadyCancelled: true });
+});

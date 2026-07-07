@@ -105,7 +105,7 @@ describe("OmieSyncService", () => {
     expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining("INSERT INTO products"));
   });
 
-  it("rebuilds customers and carriers from ListarClientes tags after clearing local registrations", async () => {
+  it("rebuilds customers and carriers from ListarClientes tags while preserving local registrations", async () => {
     const db = openDesktopDatabase({ databasePath: ":memory:" });
 
     try {
@@ -187,18 +187,22 @@ describe("OmieSyncService", () => {
       const result = await service.rebuildCustomersAndCarriersFromOmie("company-1");
 
       expect(result).toEqual({ customersPulled: 2, suppliersSynced: 2 });
+      // 2 clientes OMIE (101, 303) + 1 cliente local preservado.
       expect(
         db.prepare("SELECT COUNT(*) FROM customers WHERE company_id = ? AND deleted_at IS NULL").pluck().get("company-1")
-      ).toBe(2);
+      ).toBe(3);
+      // 2 transportadoras OMIE (202, 303) + 1 transportadora local preservada.
       expect(
         db.prepare("SELECT COUNT(*) FROM carriers WHERE company_id = ? AND deleted_at IS NULL").pluck().get("company-1")
-      ).toBe(2);
-      expect(db.prepare("SELECT deleted_at IS NOT NULL FROM customers WHERE id = 'local-customer'").pluck().get()).toBe(1);
-      expect(db.prepare("SELECT deleted_at IS NOT NULL FROM carriers WHERE id = 'local-carrier'").pluck().get()).toBe(1);
-      expect(db.prepare("SELECT carrier_id FROM vehicles WHERE id = 'vehicle-1'").pluck().get()).toBeNull();
-      expect(db.prepare("SELECT deleted_at IS NOT NULL FROM customer_carriers WHERE id = 'cc-1'").pluck().get()).toBe(1);
-      expect(db.prepare("SELECT deleted_at IS NOT NULL FROM vehicle_carriers WHERE id = 'vc-1'").pluck().get()).toBe(1);
-      expect(db.prepare("SELECT deleted_at IS NOT NULL FROM driver_carriers WHERE id = 'dc-1'").pluck().get()).toBe(1);
+      ).toBe(3);
+      // Registros locais NAO sao apagados na reconciliacao.
+      expect(db.prepare("SELECT deleted_at IS NOT NULL FROM customers WHERE id = 'local-customer'").pluck().get()).toBe(0);
+      expect(db.prepare("SELECT deleted_at IS NOT NULL FROM carriers WHERE id = 'local-carrier'").pluck().get()).toBe(0);
+      // Relacoes de uma transportadora local sao preservadas (nao apontam para transportadora OMIE removida).
+      expect(db.prepare("SELECT carrier_id FROM vehicles WHERE id = 'vehicle-1'").pluck().get()).toBe("local-carrier");
+      expect(db.prepare("SELECT deleted_at IS NOT NULL FROM customer_carriers WHERE id = 'cc-1'").pluck().get()).toBe(0);
+      expect(db.prepare("SELECT deleted_at IS NOT NULL FROM vehicle_carriers WHERE id = 'vc-1'").pluck().get()).toBe(0);
+      expect(db.prepare("SELECT deleted_at IS NOT NULL FROM driver_carriers WHERE id = 'dc-1'").pluck().get()).toBe(0);
       expect(
         db.prepare("SELECT email FROM customers WHERE id = 'omie_101' AND deleted_at IS NULL").pluck().get()
       ).toBe("cliente@example.com");

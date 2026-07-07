@@ -295,6 +295,7 @@ import {
 import {
   createPaymentTerm,
   deletePaymentTerm,
+  listOmiePaymentTerms,
   updatePaymentTerm,
   type CreatePaymentTermInput,
   type UpdatePaymentTermInput
@@ -1495,6 +1496,12 @@ export class DesktopRuntime {
     const identity = this.ensureIdentity();
     deletePaymentTerm(this.database, id);
     this.cacheStore.invalidate("payment_term", identity.companyId);
+  }
+
+  listOmiePaymentTerms(): unknown {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    return listOmiePaymentTerms(this.database, identity.companyId);
   }
 
   createPriceTable(input: Omit<CreatePriceTableInput, "companyId">): unknown {

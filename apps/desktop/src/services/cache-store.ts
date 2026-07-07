@@ -95,6 +95,7 @@ export interface CarrierCacheEntry {
 export interface PaymentTermCacheEntry {
   id: string;
   omieCode: string | null;
+  omieParcelaCode: string | null;
   name: string;
   rulesJson: string;
   installmentCount: number | null;
@@ -273,6 +274,7 @@ interface CarrierRow {
 interface PaymentTermRow {
   id: string;
   omie_code: string | null;
+  omie_parcela_code: string | null;
   name: string;
   rules_json: string;
   installment_count: number | null;
@@ -455,6 +457,7 @@ function mapPaymentTerm(row: PaymentTermRow): PaymentTermCacheEntry {
   return {
     id: row.id,
     omieCode: row.omie_code,
+    omieParcelaCode: row.omie_parcela_code,
     name: row.name,
     rulesJson: row.rules_json,
     installmentCount: row.installment_count,
@@ -828,7 +831,7 @@ export class CacheStore {
   private loadPaymentTerms(companyId: string): void {
     const rows = this.db
       .prepare(
-        `SELECT id, omie_code, name, rules_json, installment_count, is_active
+        `SELECT id, omie_code, omie_parcela_code, name, rules_json, installment_count, is_active
          FROM payment_terms WHERE company_id = ? AND deleted_at IS NULL`
       )
       .all(companyId) as PaymentTermRow[];

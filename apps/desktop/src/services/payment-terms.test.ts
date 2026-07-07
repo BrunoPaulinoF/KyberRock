@@ -5,6 +5,7 @@ import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite.js
 import {
   createPaymentTerm,
   deletePaymentTerm,
+  listOmiePaymentTerms,
   listPaymentTerms,
   updatePaymentTerm
 } from "./payment-terms.js";
@@ -94,5 +95,37 @@ describe("payment-terms service", () => {
       )
       .get() as { c: number };
     expect(rows.c).toBe(0);
+  });
+
+  it("stores and preserves the OMIE parcela code (with leading zeros)", () => {
+    const term = createPaymentTerm(database, {
+      companyId: COMPANY_ID,
+      name: "A prazo 30",
+      condition: "Para 30 dias",
+      omieParcelaCode: "030"
+    });
+    expect(term.omie_parcela_code).toBe("030");
+
+    const cleared = updatePaymentTerm(database, term.id, { omieParcelaCode: null });
+    expect(cleared.omie_parcela_code).toBeNull();
+
+    const relinked = updatePaymentTerm(database, term.id, { omieParcelaCode: "  000  " });
+    expect(relinked.omie_parcela_code).toBe("000");
+  });
+
+  it("lists active OMIE payment terms for linking", () => {
+    const nowIso = new Date().toISOString();
+    database
+      .prepare(
+        `INSERT INTO omie_payment_terms (id, company_id, omie_id, code, description, installment_count, is_active, visible, created_at, updated_at)
+         VALUES ('omie_parcela_000', ?, 0, '000', 'A vista', 1, 1, 1, ?, ?),
+                ('omie_parcela_030', ?, 30, '030', '30 dias', 1, 1, 1, ?, ?),
+                ('omie_parcela_060', ?, 60, '060', 'Inativa', 2, 0, 1, ?, ?)`
+      )
+      .run(COMPANY_ID, nowIso, nowIso, COMPANY_ID, nowIso, nowIso, COMPANY_ID, nowIso, nowIso);
+
+    const options = listOmiePaymentTerms(database, COMPANY_ID);
+    expect(options.map((o) => o.code)).toEqual(["000", "030"]);
+    expect(options[0].description).toBe("A vista");
   });
 });

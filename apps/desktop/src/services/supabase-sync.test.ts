@@ -275,6 +275,51 @@ describe("supabase sync", () => {
     }
   });
 
+  it("persists OMIE payment terms with a code, preserving leading zeros and skipping code-less", () => {
+    const database = createDatabase();
+
+    try {
+      createIdentity(database);
+      const result = applyOmieReferenceData(database, "company-1", {
+        paymentTerms: [
+          { id: 0, code: "000", description: "A vista", installmentCount: 1 },
+          { id: 30, code: "030", description: "30 dias", installmentCount: 1 },
+          { id: 99, description: "Sem codigo (ignorada)" }
+        ]
+      });
+
+      expect(result.paymentTermsSynced).toBe(2);
+      const rows = database
+        .prepare(
+          "SELECT code, description FROM omie_payment_terms WHERE company_id = 'company-1' ORDER BY code"
+        )
+        .all() as Array<{ code: string; description: string }>;
+      expect(rows).toEqual([
+        { code: "000", description: "A vista" },
+        { code: "030", description: "30 dias" }
+      ]);
+
+      // Idempotente: reprocessar nao duplica nem altera contagem de linhas.
+      applyOmieReferenceData(database, "company-1", {
+        paymentTerms: [{ id: 30, code: "030", description: "30 dias (novo texto)", installmentCount: 1 }]
+      });
+      expect(
+        database
+          .prepare("SELECT COUNT(*) FROM omie_payment_terms WHERE company_id = 'company-1'")
+          .pluck()
+          .get()
+      ).toBe(2);
+      expect(
+        database
+          .prepare("SELECT description FROM omie_payment_terms WHERE id = 'omie_parcela_030'")
+          .pluck()
+          .get()
+      ).toBe("30 dias (novo texto)");
+    } finally {
+      database.close();
+    }
+  });
+
   it("re-keys OMIE rows saved under a stale company id so registration screens see them", () => {
     const database = createDatabase();
 

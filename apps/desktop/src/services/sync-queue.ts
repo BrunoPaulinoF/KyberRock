@@ -132,6 +132,31 @@ export function listRunnableSyncJobs(
   return rows.map((row) => mapSyncQueueJobRow(row as SyncQueueJobRow));
 }
 
+/**
+ * Neutraliza jobs de criacao OMIE ainda nao enviados de uma operacao cancelada localmente,
+ * evitando que a fila crie/fature um pedido apos o cancelamento. Move para dead_letter (nao
+ * remove) para preservar auditoria. Retorna quantos jobs foram neutralizados.
+ */
+export function cancelPendingOmieJobs(
+  database: DesktopDatabase,
+  operationId: string,
+  now: Date = new Date()
+): number {
+  const result = database
+    .prepare(
+      `UPDATE sync_queue
+       SET status = 'dead_letter',
+           last_error = 'Operacao cancelada localmente antes do envio ao OMIE',
+           updated_at = ?
+       WHERE target = 'omie'
+         AND action IN ('create_order', 'create_and_bill_order')
+         AND entity_id = ?
+         AND status IN ('pending', 'failed')`
+    )
+    .run(now.toISOString(), operationId);
+  return result.changes;
+}
+
 export function markSyncJobDone(
   database: DesktopDatabase,
   id: string,

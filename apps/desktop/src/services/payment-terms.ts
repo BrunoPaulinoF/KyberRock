@@ -14,6 +14,7 @@ export interface PaymentTermRow {
   installment_count: number | null;
   installment_type: string | null;
   installment_days_json: string | null;
+  omie_parcela_code: string | null;
   visible: number;
   is_active: number;
   created_at: string;
@@ -22,17 +23,32 @@ export interface PaymentTermRow {
   sync_version: number;
 }
 
+export interface OmiePaymentTermOption {
+  id: string;
+  code: string;
+  description: string;
+  installment_count: number | null;
+}
+
 export interface CreatePaymentTermInput {
   companyId: string;
   name: string;
   /** Texto da condicao no padrao OMIE, ex: "10/20/30/40", "A Vista/40/60", "Para 93 dias", "50". */
   condition: string;
+  /** Codigo de parcela do OMIE a enviar no pedido/OS (ex: "000", "030"). Preserva zeros a esquerda. */
+  omieParcelaCode?: string | null;
 }
 
 export interface UpdatePaymentTermInput {
   name?: string;
   condition?: string;
   isActive?: boolean;
+  omieParcelaCode?: string | null;
+}
+
+function normalizeParcelaCode(value: string | null | undefined): string | null {
+  const text = (value ?? "").trim();
+  return text.length > 0 ? text : null;
 }
 
 interface PaymentTermRules {
@@ -85,9 +101,9 @@ export function createPaymentTerm(
       `INSERT INTO payment_terms (
         id, company_id, omie_code, name, rules_json,
         first_installment_days, installment_interval_days, installment_count,
-        installment_type, installment_days_json, visible, is_active,
+        installment_type, installment_days_json, omie_parcela_code, visible, is_active,
         created_at, updated_at
-      ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)`
+      ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)`
     )
     .run(
       id,
@@ -99,6 +115,7 @@ export function createPaymentTerm(
       parsed.installmentCount,
       parsed.kind,
       JSON.stringify(parsed.installments.map((i) => i.dueDays)),
+      normalizeParcelaCode(input.omieParcelaCode),
       nowIso,
       nowIso
     );
@@ -150,6 +167,10 @@ export function updatePaymentTerm(
     sets.push("is_active = ?");
     values.push(input.isActive ? 1 : 0);
   }
+  if (input.omieParcelaCode !== undefined) {
+    sets.push("omie_parcela_code = ?");
+    values.push(normalizeParcelaCode(input.omieParcelaCode));
+  }
 
   if (sets.length === 0) return existing;
 
@@ -177,4 +198,19 @@ export function deletePaymentTerm(
   database
     .prepare("UPDATE payment_terms SET deleted_at = ?, is_active = 0, updated_at = ? WHERE id = ?")
     .run(nowIso, nowIso, id);
+}
+
+/** Codigos de parcela espelhados do OMIE, para o usuario vincular a uma condicao local. */
+export function listOmiePaymentTerms(
+  database: DesktopDatabase,
+  companyId: string
+): OmiePaymentTermOption[] {
+  return database
+    .prepare(
+      `SELECT id, code, description, installment_count
+       FROM omie_payment_terms
+       WHERE company_id = ? AND is_active = 1
+       ORDER BY code ASC`
+    )
+    .all(companyId) as OmiePaymentTermOption[];
 }

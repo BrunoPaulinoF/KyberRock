@@ -125,6 +125,7 @@ const desktopApi = {
   paymentTermsUpdate: (id: string, input: unknown) =>
     ipcRenderer.invoke("desktop:payment-terms-update", id, input),
   paymentTermsDelete: (id: string) => ipcRenderer.invoke("desktop:payment-terms-delete", id),
+  paymentTermsListOmie: () => ipcRenderer.invoke("desktop:payment-terms-list-omie"),
   priceTablesCreate: (input: unknown) => ipcRenderer.invoke("desktop:price-tables-create", input),
   priceTablesUpdateName: (id: string, name: string) =>
     ipcRenderer.invoke("desktop:price-tables-update-name", id, name),

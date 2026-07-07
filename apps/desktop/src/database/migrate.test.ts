@@ -54,6 +54,27 @@ describe("runDesktopMigrations", () => {
     }
   });
 
+  it("creates the OMIE payment-term registry and link column (v30)", () => {
+    const database = openDesktopDatabase({ databasePath: ":memory:" });
+
+    try {
+      runDesktopMigrations(database);
+      const tableNames = database
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+        .pluck()
+        .all();
+      expect(tableNames).toContain("omie_payment_terms");
+
+      const columns = database
+        .prepare("SELECT name FROM pragma_table_info('payment_terms')")
+        .pluck()
+        .all();
+      expect(columns).toContain("omie_parcela_code");
+    } finally {
+      database.close();
+    }
+  });
+
   it("uses cloud naming instead of legacy provider names in the local schema", () => {
     const database = openDesktopDatabase({ databasePath: ":memory:" });
 

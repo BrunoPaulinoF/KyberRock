@@ -475,7 +475,7 @@ export class OmieSyncService {
         product.itemType ?? null,
         product.icmsOrigin ?? null,
         product.blocked ? 1 : 0,
-        1,
+        product.tracksStock === false ? 0 : 1,
         product.fiscalRecommendations ? JSON.stringify(product.fiscalRecommendations) : null,
         product.isActive === false ? 0 : 1
       );
@@ -560,13 +560,20 @@ export class OmieSyncService {
   }
 
   private clearCustomers(companyId: string): void {
+    // Reconcilia em vez de zerar: soft-delete apenas de clientes vindos do OMIE que nao
+    // tem edicao local pendente (needs_push=0). Clientes locais/hibridos ou com push
+    // pendente sao preservados. Os que continuarem no OMIE sao "ressuscitados" pelo upsert
+    // (deleted_at = NULL); os removidos no OMIE permanecem soft-deletados.
     this.db.prepare(`
       UPDATE customer_carriers
       SET deleted_at = datetime('now'),
           is_active = 0,
           updated_at = datetime('now')
       WHERE deleted_at IS NULL
-        AND customer_id IN (SELECT id FROM customers WHERE company_id = ?)
+        AND customer_id IN (
+          SELECT id FROM customers
+          WHERE company_id = ? AND source = 'omie' AND needs_push = 0
+        )
     `).run(companyId);
 
     this.db.prepare(`
@@ -577,17 +584,24 @@ export class OmieSyncService {
           updated_at = datetime('now')
       WHERE company_id = ?
         AND deleted_at IS NULL
+        AND source = 'omie'
+        AND needs_push = 0
     `).run(companyId);
   }
 
   private clearCarriers(companyId: string): void {
+    // Mesma regra de reconciliacao dos clientes: mexe apenas em transportadoras vindas do
+    // OMIE sem push pendente. As relacoes sao resetadas somente para essas transportadoras.
+    const omieCarrierFilter =
+      "carrier_id IN (SELECT id FROM carriers WHERE company_id = ? AND source = 'omie' AND needs_push = 0)";
+
     this.db.prepare(`
       UPDATE customer_carriers
       SET deleted_at = datetime('now'),
           is_active = 0,
           updated_at = datetime('now')
       WHERE deleted_at IS NULL
-        AND carrier_id IN (SELECT id FROM carriers WHERE company_id = ?)
+        AND ${omieCarrierFilter}
     `).run(companyId);
 
     this.db.prepare(`
@@ -596,7 +610,7 @@ export class OmieSyncService {
           is_active = 0,
           updated_at = datetime('now')
       WHERE deleted_at IS NULL
-        AND carrier_id IN (SELECT id FROM carriers WHERE company_id = ?)
+        AND ${omieCarrierFilter}
     `).run(companyId);
 
     this.db.prepare(`
@@ -605,7 +619,7 @@ export class OmieSyncService {
           is_active = 0,
           updated_at = datetime('now')
       WHERE deleted_at IS NULL
-        AND carrier_id IN (SELECT id FROM carriers WHERE company_id = ?)
+        AND ${omieCarrierFilter}
     `).run(companyId);
 
     this.db.prepare(`
@@ -613,7 +627,7 @@ export class OmieSyncService {
       SET carrier_id = NULL,
           updated_at = datetime('now')
       WHERE company_id = ?
-        AND carrier_id IN (SELECT id FROM carriers WHERE company_id = ?)
+        AND ${omieCarrierFilter}
     `).run(companyId, companyId);
 
     this.db.prepare(`
@@ -621,7 +635,9 @@ export class OmieSyncService {
       SET default_carrier_id = NULL,
           updated_at = datetime('now')
       WHERE company_id = ?
-        AND default_carrier_id IN (SELECT id FROM carriers WHERE company_id = ?)
+        AND default_carrier_id IN (
+          SELECT id FROM carriers WHERE company_id = ? AND source = 'omie' AND needs_push = 0
+        )
     `).run(companyId, companyId);
 
     this.db.prepare(`
@@ -631,6 +647,8 @@ export class OmieSyncService {
           updated_at = datetime('now')
       WHERE company_id = ?
         AND deleted_at IS NULL
+        AND source = 'omie'
+        AND needs_push = 0
     `).run(companyId);
   }
 
