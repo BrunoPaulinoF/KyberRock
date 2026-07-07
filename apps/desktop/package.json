@@ -53,6 +53,9 @@
             }
         ],
         "npmRebuild": false,
+        "asarUnpack": [
+            "**/node_modules/better-sqlite3/**"
+        ],
         "win": {
             "target": "nsis",
             "icon": "midia/icon.ico"
