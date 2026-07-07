@@ -2226,6 +2226,12 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                           <span style={styles.operationCellStack}>
                             <strong>{formatWeightKg(operation.entryWeightKg ?? 0)}</strong>
                             <span>{formatMoney(operation.unitPriceCents)}/ton</span>
+                            <small
+                              style={{ color: "var(--kr-muted)" }}
+                              title={new Date(operation.createdAt).toLocaleString("pt-BR")}
+                            >
+                              Entrou {formatElapsedSince(operation.createdAt)}
+                            </small>
                           </span>
                           <span style={styles.rowActions}>
                             <button
@@ -3988,22 +3994,12 @@ function WeighingForm({
       }
       try {
         const carriers = await desktopApi.listCarriersByDriver(form.driverId);
-        const driverData = await desktopApi.queryCache({ entityType: "driver", limit: 200 });
-        const driver = (driverData.rows as Array<Record<string, unknown>>).find(
-          (d) => d.id === form.driverId
-        );
-        const isIndependent = Boolean(driver?.isIndependent);
-        setForm((prev) => ({ ...prev, driverIsIndependent: isIndependent }));
-
-        if (carriers.length === 1 && !isIndependent) {
+        if (carriers.length === 1) {
           // Motorista tem exatamente 1 transportadora - preencher automaticamente
           setForm((prev) => ({ ...prev, carrierId: carriers[0].id }));
-        } else if (isIndependent) {
-          // Motorista independente - limpar transportadora
-          setForm((prev) => ({ ...prev, carrierId: "" }));
         }
       } catch {
-        setForm((prev) => ({ ...prev, driverIsIndependent: false }));
+        // ignore
       }
     }
     load();
@@ -4168,7 +4164,6 @@ function WeighingForm({
     };
   }, [desktopApi, form.customerId, form.productId]);
 
-  const manualPayment = form.paymentMode === "manual";
   const transportReady = isTransportReady(form);
 
   return (
@@ -4422,75 +4417,11 @@ function WeighingForm({
             onChange={(id) => {
               setForm((prev) => ({
                 ...prev,
-                paymentTermId: id,
-                paymentMode: "registered",
-                manualInstallments: "",
-                manualDownPaymentEnabled: false,
-                manualDownPaymentCents: null
+                paymentTermId: id
               }));
             }}
             desktopApi={desktopApi}
-            disabled={manualPayment}
           />
-          <label style={styles.compactCheckboxCard}>
-            <input
-              type="checkbox"
-              checked={manualPayment}
-              onChange={(event) =>
-                setForm((prev) => ({
-                  ...prev,
-                  paymentMode: event.target.checked ? "manual" : "registered",
-                  paymentTermId: event.target.checked ? "" : prev.paymentTermId,
-                  manualInstallments: event.target.checked ? prev.manualInstallments : "",
-                  manualDownPaymentEnabled: event.target.checked
-                    ? prev.manualDownPaymentEnabled
-                    : false,
-                  manualDownPaymentCents: event.target.checked ? prev.manualDownPaymentCents : null
-                }))
-              }
-            />
-            Parcelamento manual
-          </label>
-          {manualPayment ? (
-            <div style={styles.compactInlineGrid}>
-              <NumberInput
-                label="Parcelas"
-                value={form.manualInstallments}
-                onChange={(manualInstallments) =>
-                  setForm((prev) => ({ ...prev, manualInstallments }))
-                }
-                placeholder="Ex: 3"
-                maxLength={2}
-                required
-              />
-              <label style={{ ...styles.checkboxLabel, alignSelf: "end", minHeight: "40px" }}>
-                <input
-                  type="checkbox"
-                  checked={form.manualDownPaymentEnabled}
-                  onChange={(event) =>
-                    setForm((prev) => ({
-                      ...prev,
-                      manualDownPaymentEnabled: event.target.checked,
-                      manualDownPaymentCents: event.target.checked
-                        ? prev.manualDownPaymentCents
-                        : null
-                    }))
-                  }
-                />
-                Com entrada
-              </label>
-              {form.manualDownPaymentEnabled ? (
-                <MoneyCentsInput
-                  label="Valor de entrada"
-                  valueCents={form.manualDownPaymentCents}
-                  onChange={(manualDownPaymentCents) =>
-                    setForm((prev) => ({ ...prev, manualDownPaymentCents }))
-                  }
-                  allowZero
-                />
-              ) : null}
-            </div>
-          ) : null}
         </article>
 
         <article style={styles.entryCard}>
@@ -4520,26 +4451,6 @@ function WeighingForm({
             />
             <span>Transportadora propria do cliente</span>
           </label>
-          <label style={styles.compactCheckboxCard}>
-            <input
-              type="checkbox"
-              checked={form.driverIsIndependent}
-              onChange={(event) =>
-                setForm((prev) => ({
-                  ...prev,
-                  driverIsIndependent: event.target.checked,
-                  customerOwnTransport: event.target.checked ? false : prev.customerOwnTransport,
-                  carrierId: event.target.checked ? "" : prev.carrierId,
-                  driverId: ""
-                }))
-              }
-            />
-            <span>Motorista independente</span>
-          </label>
-          <p style={{ ...styles.helperText, margin: "-2px 0 8px 0" }}>
-            Marque quando o motorista nao pertence a uma transportadora. A transportadora fica
-            bloqueada e a lista mostra somente motoristas independentes.
-          </p>
           <CacheSelect
             label="Transportadora"
             entityType="carrier"
@@ -4598,20 +4509,6 @@ function WeighingForm({
               disabled={!transportReady}
             />
           </div>
-          {form.driverIsIndependent && independentDriverIds && independentDriverIds.length === 0 ? (
-            <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" }}>
-              <p style={{ ...styles.helperText, color: "#d97706", margin: 0 }}>
-                Nenhum motorista independente cadastrado.
-              </p>
-              <button
-                type="button"
-                onClick={() => setShowDriverModal(true)}
-                style={{ ...styles.secondaryButton, fontSize: "11px", padding: "4px 8px" }}
-              >
-                + Cadastrar motorista independente
-              </button>
-            </div>
-          ) : null}
           {form.carrierId && availableDriverIds && availableDriverIds.length === 0 ? (
             <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" }}>
               <p style={{ ...styles.helperText, color: "#d97706", margin: 0 }}>
@@ -6013,6 +5910,26 @@ function formatWeightKg(value: number): string {
   return `${value.toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 0 })} kg`;
 }
 
+// Tempo decorrido desde a entrada do caminhao (ex.: "ha 12 min", "ha 2 h 05 min").
+export function formatElapsedSince(iso: string | null | undefined, now = new Date()): string {
+  if (!iso) return "-";
+  const then = new Date(iso);
+  if (Number.isNaN(then.getTime())) return "-";
+  const diffMs = now.getTime() - then.getTime();
+  if (diffMs < 0) return "agora mesmo";
+  const totalMinutes = Math.floor(diffMs / 60_000);
+  if (totalMinutes < 1) return "agora mesmo";
+  if (totalMinutes < 60) return `ha ${totalMinutes} min`;
+  const totalHours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (totalHours < 24) {
+    return `ha ${totalHours} h ${String(minutes).padStart(2, "0")} min`;
+  }
+  const days = Math.floor(totalHours / 24);
+  const hours = totalHours % 24;
+  return `ha ${days} d ${hours} h`;
+}
+
 function filterCanceledOperations(
   operations: WeighingOperationSummary[],
   filter: CanceledFilter,
@@ -6900,7 +6817,12 @@ function CarrierCrud({
               textAlign: "left",
               cursor: "pointer",
               color: "inherit",
-              minWidth: 0
+              display: "flex",
+              flexDirection: "column",
+              gap: "2px",
+              width: "100%",
+              minWidth: 0,
+              overflow: "hidden"
             }}
           >
             <CellPrimary>{String(item.name ?? "")}</CellPrimary>
