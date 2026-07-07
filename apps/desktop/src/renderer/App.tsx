@@ -18,6 +18,7 @@ import {
   ScrollText,
   Settings,
   Sun,
+  Truck,
   Upload
 } from "lucide-react";
 
@@ -77,6 +78,7 @@ import { DashboardView } from "./DashboardView";
 import { DocumentationView } from "./DocumentationView";
 import { InsightsView } from "./InsightsView";
 import { ReportsView } from "./ReportsView";
+import { TruckControlView, formatMinutes } from "./TruckControlView";
 import { CustomersView } from "./CustomersView";
 import { HelpTooltip } from "./Tooltip";
 import { PriceChangePasswordDialog } from "./PriceChangePasswordDialog";
@@ -143,6 +145,7 @@ type ActiveView =
   | "printing"
   | "cloud"
   | "insights"
+  | "truck-control"
   | "reports"
   | "documentation";
 
@@ -255,6 +258,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [status, setStatus] = useState<DesktopStatusSnapshot | null>(initialStatus);
   const [updateState, setUpdateState] = useState<UpdateState>(createInitialUpdateState());
   const [openOperations, setOpenOperations] = useState<WeighingOperationSummary[]>([]);
+  const [truckAverageMinutes, setTruckAverageMinutes] = useState(0);
   const [canceledOperations, setCanceledOperations] = useState<WeighingOperationSummary[]>([]);
   const [closedOperations, setClosedOperations] = useState<WeighingOperationSummary[]>([]);
   const [operationsTab, setOperationsTab] = useState<OperationsTab>("open");
@@ -365,6 +369,18 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         ? closedOperations
         : closedOperations.filter((op) => op.productDescription === closedProductFilter),
     [closedOperations, closedProductFilter]
+  );
+  // Operacoes abertas cujo caminhao ja passou do tempo medio dentro da pedreira.
+  const overtimeOpenOperations = useMemo(() => {
+    if (truckAverageMinutes <= 0) return [] as WeighingOperationSummary[];
+    const now = Date.now();
+    return openOperations.filter(
+      (op) => (now - new Date(op.createdAt).getTime()) / 60_000 > truckAverageMinutes
+    );
+  }, [openOperations, truckAverageMinutes]);
+  const overtimeOpenIds = useMemo(
+    () => new Set(overtimeOpenOperations.map((op) => op.id)),
+    [overtimeOpenOperations]
   );
 
   useEffect(() => {
@@ -849,6 +865,21 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
           );
           setCloudConnected(false);
         }
+      }
+
+      try {
+        // Media de tempo dentro da pedreira (ultimos 30 dias) para o alerta de
+        // caminhoes acima da media. Best-effort: nao bloqueia o refresh.
+        const to = new Date();
+        const from = new Date();
+        from.setDate(from.getDate() - 30);
+        const truck = await desktopApi.getTruckControl(
+          from.toISOString().slice(0, 10),
+          to.toISOString().slice(0, 10)
+        );
+        if (active) setTruckAverageMinutes(truck.averageMinutes);
+      } catch {
+        // media indisponivel (ex.: sem identidade) - alerta apenas nao aparece
       }
 
       try {
@@ -1746,6 +1777,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 tooltip={TIPS.nav.insights}
               />
               <SidebarItem
+                id="truck-control"
+                label="Controle de caminhoes"
+                icon={Truck}
+                activeView={activeView}
+                onSelect={setActiveView}
+              />
+              <SidebarItem
                 id="reports"
                 label="Relatorios"
                 icon={FileText}
@@ -2209,14 +2247,57 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     </div>
                   ) : (
                     <div style={styles.operationsTable}>
+                      {overtimeOpenOperations.length > 0 ? (
+                        <div
+                          role="alert"
+                          style={{
+                            display: "flex",
+                            flexWrap: "wrap",
+                            alignItems: "center",
+                            gap: "8px",
+                            padding: "10px 12px",
+                            marginBottom: "8px",
+                            borderRadius: "10px",
+                            border: "1px solid #fca5a5",
+                            background: "#fef2f2",
+                            color: "#b91c1c",
+                            fontSize: "13px",
+                            fontWeight: 700
+                          }}
+                        >
+                          <span>⚠ Acima do tempo medio ({formatMinutes(truckAverageMinutes)}):</span>
+                          {overtimeOpenOperations.map((op) => (
+                            <span
+                              key={op.id}
+                              style={{
+                                background: "#fff",
+                                border: "1px solid #fca5a5",
+                                borderRadius: "8px",
+                                padding: "2px 8px",
+                                letterSpacing: "0.06em"
+                              }}
+                            >
+                              {op.plate || "SEM PLACA"} · {formatElapsedSince(op.createdAt)}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
                       <div style={{ ...styles.operationsTableRow, ...styles.operationsTableHead }}>
                         <span>Placa</span>
                         <span>Cliente / Produto</span>
                         <span>Entrada / Preco</span>
                         <span>Acoes</span>
                       </div>
-                      {openOperations.map((operation) => (
-                        <div key={operation.id} style={styles.operationsTableRow}>
+                      {openOperations.map((operation) => {
+                        const isOvertime = overtimeOpenIds.has(operation.id);
+                        return (
+                        <div
+                          key={operation.id}
+                          style={{
+                            ...styles.operationsTableRow,
+                            ...(isOvertime ? { background: "#fef2f2" } : {})
+                          }}
+                        >
                           <strong style={styles.plateBadge}>{operation.plate}</strong>
                           <span style={styles.operationCellStack}>
                             <strong>{operation.customerName}</strong>
@@ -2227,10 +2308,14 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                             <strong>{formatWeightKg(operation.entryWeightKg ?? 0)}</strong>
                             <span>{formatMoney(operation.unitPriceCents)}/ton</span>
                             <small
-                              style={{ color: "var(--kr-muted)" }}
+                              style={{
+                                color: isOvertime ? "#b91c1c" : "var(--kr-muted)",
+                                fontWeight: isOvertime ? 700 : undefined
+                              }}
                               title={new Date(operation.createdAt).toLocaleString("pt-BR")}
                             >
                               Entrou {formatElapsedSince(operation.createdAt)}
+                              {isOvertime ? " · acima da media ▲" : ""}
                             </small>
                           </span>
                           <span style={styles.rowActions}>
@@ -2259,7 +2344,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                             <HelpTooltip content={TIPS.operations.cancel} placement="left" />
                           </span>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )
                 ) : operationsTab === "canceled" ? (
@@ -2986,6 +3072,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 onSyncOmie={handleSyncOmie}
                 onSyncCloud={handleSyncToCloud}
               />
+            ) : null}
+            {activeView === "truck-control" ? (
+              <TruckControlView desktopApi={desktopApi} />
             ) : null}
             {activeView === "reports" ? <ReportsView desktopApi={desktopApi} /> : null}
             {activeView === "documentation" ? <DocumentationView /> : null}
