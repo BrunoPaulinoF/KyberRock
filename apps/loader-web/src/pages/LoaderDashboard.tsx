@@ -85,6 +85,29 @@ export function getRenderedOperations(
   );
 }
 
+/** Minutos desde a chegada do caminhao (created_at). */
+export function minutesSinceArrival(createdAt: string, now: number): number {
+  const arrived = new Date(createdAt).getTime();
+  if (Number.isNaN(arrived)) return 0;
+  return Math.max(0, (now - arrived) / 60_000);
+}
+
+/**
+ * Operacoes em andamento cujo caminhao ja passou do tempo medio dentro da
+ * pedreira (projetado pelo desktop na unidade). Vazio se nao ha media.
+ */
+export function getOvertimeOperations(
+  operations: WeighingOperation[],
+  avgMinutes: number | null,
+  now: number
+): WeighingOperation[] {
+  if (!avgMinutes || avgMinutes <= 0) return [];
+  return operations.filter(
+    (operation) =>
+      !operation.loaderCompletedAt && minutesSinceArrival(operation.createdAt, now) > avgMinutes
+  );
+}
+
 export function LoaderDashboard() {
   const { user, logout } = useAuth();
   const [operations, setOperations] = useState<WeighingOperation[]>([]);
@@ -92,6 +115,14 @@ export function LoaderDashboard() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [pendingCompletions, setPendingCompletions] = useState<Set<string>>(new Set());
   const [departingIds, setDepartingIds] = useState<Set<string>>(new Set());
+  const [avgQuarryMinutes, setAvgQuarryMinutes] = useState<number | null>(null);
+  const [now, setNow] = useState<number>(() => Date.now());
+
+  // Relogio para recalcular o tempo decorrido sem depender do polling.
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
 
   useEffect(() => {
     void loadOperations();
@@ -143,6 +174,16 @@ export function LoaderDashboard() {
       if (error) throw error;
       setOperations((data ?? []).map(mapRow));
       setErrorMessage(null);
+
+      // Media de tempo dentro da pedreira (projetada pelo desktop na unidade),
+      // usada para destacar caminhoes acima da media. Best-effort.
+      const { data: unitData } = await supabase
+        .from("units")
+        .select("avg_quarry_minutes")
+        .eq("id", user.unitId)
+        .maybeSingle();
+      const avg = Number((unitData as { avg_quarry_minutes?: number | null } | null)?.avg_quarry_minutes ?? 0);
+      setAvgQuarryMinutes(Number.isFinite(avg) && avg > 0 ? avg : null);
     } catch (error) {
       console.error("Error loading operations:", error);
       setErrorMessage(
@@ -223,6 +264,8 @@ export function LoaderDashboard() {
 
   const inProgressOperations = getInProgressOperations(operations);
   const renderedOperations = getRenderedOperations(operations, departingIds);
+  const overtimeOperations = getOvertimeOperations(inProgressOperations, avgQuarryMinutes, now);
+  const overtimeIds = new Set(overtimeOperations.map((operation) => operation.id));
   const operatorName = user?.name ?? "Carregador";
 
   return (
@@ -272,6 +315,21 @@ export function LoaderDashboard() {
         </div>
       ) : null}
 
+      {overtimeOperations.length > 0 ? (
+        <div className="overtime-banner" role="alert">
+          <span className="overtime-banner__label">
+            ⚠ Acima do tempo medio ({Math.round(avgQuarryMinutes ?? 0)}min):
+          </span>
+          <span className="overtime-banner__plates">
+            {overtimeOperations.map((operation) => (
+              <span key={operation.id} className="overtime-plate">
+                {operation.plate || "SEM PLACA"}
+              </span>
+            ))}
+          </span>
+        </div>
+      ) : null}
+
       <section className="queue-panel" aria-labelledby="in-progress-title">
         <div className="queue-panel-header">
           <div>
@@ -301,6 +359,7 @@ export function LoaderDashboard() {
                 position={index + 1}
                 isSubmitting={pendingCompletions.has(operation.id)}
                 isDeparting={departingIds.has(operation.id)}
+                isOvertime={overtimeIds.has(operation.id)}
                 onComplete={() => void handleCompleteOperation(operation)}
                 onDeparted={() => finalizeDeparture(operation.id)}
               />
@@ -317,6 +376,7 @@ function LoadingCard({
   position,
   isSubmitting,
   isDeparting,
+  isOvertime,
   onComplete,
   onDeparted
 }: {
@@ -324,12 +384,15 @@ function LoadingCard({
   position: number;
   isSubmitting: boolean;
   isDeparting: boolean;
+  isOvertime: boolean;
   onComplete: () => void;
   onDeparted: () => void;
 }) {
   return (
     <article
-      className={`operation-card${isDeparting ? " operation-card--departing" : ""}`}
+      className={`operation-card${isDeparting ? " operation-card--departing" : ""}${
+        isOvertime ? " operation-card--overtime" : ""
+      }`}
       aria-hidden={isDeparting ? true : undefined}
       onAnimationEnd={(event) => {
         // Ignore animation events bubbling up from child elements (truck reveal
@@ -345,7 +408,9 @@ function LoadingCard({
             <h3 className="operation-plate">{operation.plate}</h3>
             <p className="operation-customer">{operation.customerName}</p>
           </div>
-          <span className="waiting-pill">Aguardando</span>
+          <span className={`waiting-pill${isOvertime ? " waiting-pill--overtime" : ""}`}>
+            {isOvertime ? "Acima da media" : "Aguardando"}
+          </span>
         </div>
 
         <dl className="details-grid">

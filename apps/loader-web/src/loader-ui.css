@@ -764,6 +764,49 @@ select {
   box-shadow: 0 14px 34px rgba(153, 27, 27, 0.08);
 }
 
+.waiting-pill--overtime {
+  border-color: #fca5a5;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.operation-card--overtime {
+  border-color: #fca5a5;
+  box-shadow: 0 14px 34px rgba(185, 28, 28, 0.12);
+}
+
+.overtime-banner {
+  max-width: 1240px;
+  margin: 0 auto 18px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 13px 14px;
+  border: 1px solid #fca5a5;
+  border-radius: 18px;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 14px;
+  font-weight: 800;
+  box-shadow: 0 14px 34px rgba(185, 28, 28, 0.08);
+}
+
+.overtime-banner__plates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.overtime-plate {
+  border: 1px solid #fca5a5;
+  border-radius: 999px;
+  background: #fff;
+  padding: 3px 10px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+}
+
 .admin-page {
   min-height: 100vh;
   padding: clamp(16px, 3vw, 34px);
