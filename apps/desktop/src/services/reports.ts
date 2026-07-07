@@ -506,6 +506,28 @@ export class ReportService {
     };
   }
 
+  // Media (minutos) de tempo dentro da pedreira no periodo. Usada para o alerta
+  // de caminhoes acima da media (desktop e carregador).
+  getAverageQuarryMinutes(startDate: string, endDate: string, unitId: string): number {
+    const row = this.db
+      .prepare(
+        `
+      SELECT AVG((julianday(exit_weight_captured_at) - julianday(entry_weight_captured_at)) * 1440) AS avg_min
+      FROM weighing_operations
+      WHERE unit_id = ?
+        AND status != 'cancelled'
+        AND entry_weight_captured_at IS NOT NULL
+        AND exit_weight_captured_at IS NOT NULL
+        AND exit_weight_captured_at >= entry_weight_captured_at
+        AND date(entry_weight_captured_at) >= date(?)
+        AND date(entry_weight_captured_at) <= date(?)
+    `
+      )
+      .get(unitId, startDate, endDate) as { avg_min: number | null } | undefined;
+    const avg = row?.avg_min ?? 0;
+    return Number.isFinite(avg) && avg > 0 ? Math.round(avg) : 0;
+  }
+
   exportTruckControlToHtml(startDate: string, endDate: string, unitId: string): string {
     const report = this.getTruckControlReport(startDate, endDate, unitId);
     const truckRows = report.trucks

@@ -10,6 +10,7 @@ type CloudPayload = {
   printReceipts?: Record<string, unknown>[];
   customers?: Record<string, unknown>[];
   products?: Record<string, unknown>[];
+  avgQuarryMinutes?: number;
 };
 
 Deno.serve(async (req) => {
@@ -36,7 +37,7 @@ Deno.serve(async (req) => {
 
     const { data: device, error: deviceError } = await supabase
       .from("device_registrations")
-      .select("id, token_hash, is_active")
+      .select("id, token_hash, is_active, unit_id")
       .eq("id", deviceId)
       .single();
     if (deviceError || !device?.is_active) {
@@ -104,6 +105,23 @@ Deno.serve(async (req) => {
         stepErrors.push(`print_receipts: ${error.message} (code=${error.code ?? "n/a"})`);
       } else {
         counts.printReceipts = body.printReceipts.length;
+      }
+    }
+
+    // Media de tempo dentro da pedreira: projetada na unidade para o alerta do
+    // carregador. So atualiza quando o desktop envia um numero valido.
+    if (
+      typeof body.avgQuarryMinutes === "number" &&
+      Number.isFinite(body.avgQuarryMinutes) &&
+      body.avgQuarryMinutes > 0 &&
+      device.unit_id
+    ) {
+      const { error } = await supabase
+        .from("units")
+        .update({ avg_quarry_minutes: Math.round(body.avgQuarryMinutes) })
+        .eq("id", device.unit_id);
+      if (error) {
+        stepErrors.push(`units.avg_quarry_minutes: ${error.message} (code=${error.code ?? "n/a"})`);
       }
     }
 

@@ -11,6 +11,7 @@ import {
 import type { DesktopDatabase } from "../database/sqlite.js";
 import type { LocalDesktopIdentity } from "./bootstrap.js";
 import { readLocalSetting, readStringLocalSetting, writeLocalSetting } from "./local-settings.js";
+import { ReportService } from "./reports.js";
 import { isSellableProduct } from "./product-classification.js";
 import { listRunnableSyncJobs, markSyncJobDone, markSyncJobFailed } from "./sync-queue.js";
 
@@ -398,6 +399,24 @@ export async function syncOperationToSupabase(
   return true;
 }
 
+// Media (30 dias) de tempo dentro da pedreira, projetada na unidade para o
+// alerta do carregador. Best-effort: nunca deve quebrar o sync.
+function computeAvgQuarryMinutes(database: DesktopDatabase, unitId: string): number | undefined {
+  try {
+    const to = new Date();
+    const from = new Date();
+    from.setDate(from.getDate() - 30);
+    const avg = new ReportService(database).getAverageQuarryMinutes(
+      from.toISOString().slice(0, 10),
+      to.toISOString().slice(0, 10),
+      unitId
+    );
+    return avg > 0 ? avg : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function syncLoadingRequestToSupabase(
   database: DesktopDatabase,
   requestId: string,
@@ -413,7 +432,12 @@ export async function syncLoadingRequestToSupabase(
     customer_id: customerId,
     product_id: productId
   });
-  await invokeDesktopSync(settings, { loadingRequests: [request], ...dependencies });
+  const avgQuarryMinutes = computeAvgQuarryMinutes(database, identity.unitId);
+  await invokeDesktopSync(settings, {
+    loadingRequests: [request],
+    ...dependencies,
+    ...(avgQuarryMinutes !== undefined ? { avgQuarryMinutes } : {})
+  });
   return true;
 }
 
