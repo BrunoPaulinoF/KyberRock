@@ -86,6 +86,21 @@ jobs:
         # "Cannot find module '@kyberrock/...'".
         run: npm run build
 
+      - name: Create and push the release tag
+        shell: bash
+        # O electron-builder publica um Release NAO-draft; o GitHub recusa criar
+        # um release publicado se a tag ainda nao existe ("Published releases must
+        # have a valid tag"). Entao criamos e empurramos a tag vX.Y.Z antes. Push
+        # de tag nao dispara o workflow (o gatilho e so branches: [main]).
+        run: |
+          TAG="v${{ steps.version.outputs.version }}"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG ja existe, seguindo."
+          else
+            git tag "$TAG"
+            git push origin "$TAG"
+          fi
+
       - name: Build and publish to GitHub Releases
         shell: bash
         env:
