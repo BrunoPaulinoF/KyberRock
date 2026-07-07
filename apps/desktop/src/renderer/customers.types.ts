@@ -57,6 +57,7 @@ export interface PaymentTermCacheEntry {
   id: string;
   name: string;
   omieCode: string | null;
+  omieParcelaCode: string | null;
   rulesJson: string;
   installmentCount: number | null;
   isActive: boolean;
