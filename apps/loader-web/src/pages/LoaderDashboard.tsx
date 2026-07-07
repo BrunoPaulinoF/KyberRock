@@ -15,6 +15,10 @@ export interface WeighingOperation {
   loaderCompletedAt: string | null;
 }
 
+// Duration of the truck departure animation. Keep in sync with the
+// `truck-drive-off` keyframes duration in loader-ui.css.
+const DEPART_ANIMATION_MS = 1150;
+
 function formatWeight(weightKg: number): string {
   if (!weightKg) {
     return "A definir";
@@ -59,12 +63,35 @@ function mapRow(row: LoadingRequestRow): WeighingOperation {
   };
 }
 
+/**
+ * Operations still awaiting the loader (used for counters). A departing
+ * operation already has `loaderCompletedAt` set, so it is excluded here.
+ */
+export function getInProgressOperations(operations: WeighingOperation[]): WeighingOperation[] {
+  return operations.filter((operation) => !operation.loaderCompletedAt);
+}
+
+/**
+ * Operations that should be rendered as cards: everything still in progress
+ * plus any concluded operation whose truck is still driving off screen, so the
+ * departure animation can play before the row disappears.
+ */
+export function getRenderedOperations(
+  operations: WeighingOperation[],
+  departingIds: ReadonlySet<string>
+): WeighingOperation[] {
+  return operations.filter(
+    (operation) => !operation.loaderCompletedAt || departingIds.has(operation.id)
+  );
+}
+
 export function LoaderDashboard() {
   const { user, logout } = useAuth();
   const [operations, setOperations] = useState<WeighingOperation[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [pendingCompletions, setPendingCompletions] = useState<Set<string>>(new Set());
+  const [departingIds, setDepartingIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     void loadOperations();
@@ -126,12 +153,34 @@ export function LoaderDashboard() {
     }
   }
 
+  function finalizeDeparture(operationId: string) {
+    setDepartingIds((current) => {
+      if (!current.has(operationId)) return current;
+      const next = new Set(current);
+      next.delete(operationId);
+      return next;
+    });
+    setPendingCompletions((current) => {
+      if (!current.has(operationId)) return current;
+      const next = new Set(current);
+      next.delete(operationId);
+      return next;
+    });
+  }
+
   async function handleCompleteOperation(operation: WeighingOperation) {
     if (!user?.unitId) return;
     if (operation.loaderCompletedAt) return;
     if (pendingCompletions.has(operation.id)) return;
 
     setPendingCompletions((current) => {
+      const next = new Set(current);
+      next.add(operation.id);
+      return next;
+    });
+    // Trigger the truck animation. The row keeps rendering while it drives off
+    // because `getRenderedOperations` includes departing ids.
+    setDepartingIds((current) => {
       const next = new Set(current);
       next.add(operation.id);
       return next;
@@ -154,26 +203,26 @@ export function LoaderDashboard() {
 
       if (error) throw error;
       setErrorMessage(null);
+      // Success: let the truck finish driving off. `onDeparted` (or the safety
+      // timeout below) removes the row once the animation ends.
+      window.setTimeout(() => finalizeDeparture(operation.id), DEPART_ANIMATION_MS + 250);
     } catch (error) {
       console.error("Error completing loading operation:", error);
       setErrorMessage(
         error instanceof Error ? error.message : "Nao foi possivel marcar a carga como concluida."
       );
+      // Revert everything: the truck stops and the row returns to the queue.
       setOperations((current) =>
         current.map((item) =>
           item.id === operation.id ? { ...item, loaderCompletedAt: null } : item
         )
       );
-    } finally {
-      setPendingCompletions((current) => {
-        const next = new Set(current);
-        next.delete(operation.id);
-        return next;
-      });
+      finalizeDeparture(operation.id);
     }
   }
 
-  const inProgressOperations = operations.filter((operation) => !operation.loaderCompletedAt);
+  const inProgressOperations = getInProgressOperations(operations);
+  const renderedOperations = getRenderedOperations(operations, departingIds);
   const operatorName = user?.name ?? "Carregador";
 
   return (
@@ -238,20 +287,22 @@ export function LoaderDashboard() {
 
         {isLoading ? (
           <EmptyState title="Carregando fila..." description="Buscando cargas em aberto da unidade." />
-        ) : inProgressOperations.length === 0 ? (
+        ) : renderedOperations.length === 0 ? (
           <EmptyState
             title="Nenhuma carga aguardando"
             description="Quando uma operacao entrar na fila, ela aparecera aqui."
           />
         ) : (
-          <div className="card-list">
-            {inProgressOperations.map((operation, index) => (
+          <div className={`card-list${departingIds.size > 0 ? " card-list--departing" : ""}`}>
+            {renderedOperations.map((operation, index) => (
               <LoadingCard
                 key={operation.id}
                 operation={operation}
                 position={index + 1}
                 isSubmitting={pendingCompletions.has(operation.id)}
+                isDeparting={departingIds.has(operation.id)}
                 onComplete={() => void handleCompleteOperation(operation)}
+                onDeparted={() => finalizeDeparture(operation.id)}
               />
             ))}
           </div>
@@ -265,34 +316,58 @@ function LoadingCard({
   operation,
   position,
   isSubmitting,
-  onComplete
+  isDeparting,
+  onComplete,
+  onDeparted
 }: {
   operation: WeighingOperation;
   position: number;
   isSubmitting: boolean;
+  isDeparting: boolean;
   onComplete: () => void;
+  onDeparted: () => void;
 }) {
   return (
-    <article className="operation-card">
-      <div className="operation-top-row">
-        <span className="queue-position">{position}º</span>
-        <div className="operation-identity">
-          <h3 className="operation-plate">{operation.plate}</h3>
-          <p className="operation-customer">{operation.customerName}</p>
+    <article
+      className={`operation-card${isDeparting ? " operation-card--departing" : ""}`}
+      aria-hidden={isDeparting ? true : undefined}
+      onAnimationEnd={(event) => {
+        // Ignore animation events bubbling up from child elements (truck reveal
+        // / bob) — only react to the card's own drive-off animation ending.
+        if (event.target !== event.currentTarget) return;
+        if (isDeparting) onDeparted();
+      }}
+    >
+      <div className="operation-card__content">
+        <div className="operation-top-row">
+          <span className="queue-position">{position}º</span>
+          <div className="operation-identity">
+            <h3 className="operation-plate">{operation.plate}</h3>
+            <p className="operation-customer">{operation.customerName}</p>
+          </div>
+          <span className="waiting-pill">Aguardando</span>
         </div>
-        <span className="waiting-pill">Aguardando</span>
+
+        <dl className="details-grid">
+          <InfoItem label="Motorista" value={operation.driverName} />
+          <InfoItem label="Produto" value={operation.productDescription} />
+          <InfoItem label="Quantidade" value={formatWeight(operation.entryWeightKg)} />
+          <InfoItem label="Chegada" value={formatDateTime(operation.createdAt)} />
+        </dl>
+
+        <button
+          onClick={onComplete}
+          disabled={isSubmitting}
+          className="primary-action complete-button"
+        >
+          {isSubmitting ? "Enviando..." : "Concluir carga"}
+        </button>
       </div>
 
-      <dl className="details-grid">
-        <InfoItem label="Motorista" value={operation.driverName} />
-        <InfoItem label="Produto" value={operation.productDescription} />
-        <InfoItem label="Quantidade" value={formatWeight(operation.entryWeightKg)} />
-        <InfoItem label="Chegada" value={formatDateTime(operation.createdAt)} />
-      </dl>
-
-      <button onClick={onComplete} disabled={isSubmitting} className="primary-action complete-button">
-        {isSubmitting ? "Enviando..." : "Concluir carga"}
-      </button>
+      <div className="operation-card__truck" aria-hidden="true">
+        <span className="operation-card__truck-icon">🚚</span>
+        <span className="operation-card__truck-trail" />
+      </div>
     </article>
   );
 }

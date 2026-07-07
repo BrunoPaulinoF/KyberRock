@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { getInProgressOperations, getRenderedOperations } from "./LoaderDashboard";
 import type { WeighingOperation } from "./LoaderDashboard";
 
 function makeOperation(
@@ -41,5 +42,34 @@ describe("LoaderDashboard visible operations", () => {
     const visible = getVisibleLoaderOperations([first, second]);
 
     expect(visible).toEqual([second]);
+  });
+});
+
+describe("LoaderDashboard departure animation", () => {
+  it("excludes concluded operations from the in-progress count", () => {
+    const first = makeOperation("1", "2026-06-25T10:00:00.000Z", "2026-06-25T10:20:00.000Z");
+    const second = makeOperation("2", "2026-06-25T10:05:00.000Z");
+
+    expect(getInProgressOperations([first, second])).toEqual([second]);
+  });
+
+  it("keeps a concluded operation rendered in place while its truck drives off", () => {
+    const first = makeOperation("1", "2026-06-25T10:00:00.000Z", "2026-06-25T10:20:00.000Z");
+    const second = makeOperation("2", "2026-06-25T10:05:00.000Z");
+
+    const rendered = getRenderedOperations([first, second], new Set(["1"]));
+
+    // The departing row stays visible (and in its original position) so the
+    // animation can play, alongside the still-open rows.
+    expect(rendered).toEqual([first, second]);
+  });
+
+  it("drops a concluded operation once its departure animation has finished", () => {
+    const first = makeOperation("1", "2026-06-25T10:00:00.000Z", "2026-06-25T10:20:00.000Z");
+    const second = makeOperation("2", "2026-06-25T10:05:00.000Z");
+
+    const rendered = getRenderedOperations([first, second], new Set());
+
+    expect(rendered).toEqual([second]);
   });
 });

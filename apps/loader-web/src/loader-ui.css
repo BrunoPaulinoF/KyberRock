@@ -325,6 +325,8 @@ select {
 .loader-page {
   min-height: 100vh;
   padding: clamp(16px, 3vw, 34px);
+  /* Keep the truck departure animation from spawning a horizontal scrollbar. */
+  overflow-x: hidden;
   background:
     radial-gradient(circle at 18% 8%, rgba(37, 99, 235, 0.14), transparent 32%),
     linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
@@ -589,6 +591,122 @@ select {
 
 .complete-button {
   width: 100%;
+}
+
+/* --- Truck departure animation ------------------------------------------- */
+
+.operation-card__content {
+  display: grid;
+  gap: 16px;
+}
+
+/* The truck overlay sits on top of the card content and only becomes visible
+   while the row is driving off screen. */
+.operation-card__truck {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 28px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.operation-card__truck-icon {
+  font-size: 56px;
+  line-height: 1;
+  transform: scaleX(-1); /* face the truck to the right, the way it drives */
+}
+
+.operation-card__truck-trail {
+  flex: 1;
+  height: 3px;
+  border-radius: 999px;
+  background: repeating-linear-gradient(
+    90deg,
+    rgba(148, 163, 184, 0.55) 0,
+    rgba(148, 163, 184, 0.55) 14px,
+    transparent 14px,
+    transparent 30px
+  );
+}
+
+/* When a card is departing, let the truck escape the (otherwise clipped) panel. */
+.queue-panel:has(.card-list--departing) {
+  overflow: visible;
+}
+
+.operation-card--departing {
+  z-index: 3;
+  overflow: visible;
+  pointer-events: none;
+  will-change: transform, opacity;
+  animation: truck-drive-off 1150ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+.operation-card--departing .operation-card__content {
+  animation: content-morph 340ms ease forwards;
+}
+
+.operation-card--departing .operation-card__truck {
+  animation:
+    truck-reveal 420ms ease forwards,
+    truck-bob 460ms 420ms ease-in-out infinite;
+}
+
+@keyframes content-morph {
+  to {
+    opacity: 0;
+    transform: scale(0.92);
+    filter: blur(1px);
+  }
+}
+
+@keyframes truck-reveal {
+  0% {
+    opacity: 0;
+    transform: scale(0.55) translateY(8px);
+  }
+  60% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes truck-bob {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  50% {
+    translate: 0 -4px;
+  }
+}
+
+@keyframes truck-drive-off {
+  0% {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  12% {
+    transform: translateX(-20px); /* wind-up: back up before pulling out */
+    opacity: 1;
+  }
+  26% {
+    transform: translateX(-14px);
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(130vw); /* drive straight off the right edge */
+    opacity: 0;
+  }
 }
 
 .empty-state {
