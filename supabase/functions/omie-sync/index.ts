@@ -3,6 +3,7 @@ import {
   OmieQueueManager,
   buildCustomerPayload,
   pushCarrierToOmie as pushCarrierToOmieCore,
+  toOmieIntegrationCode,
   type OmieCredentials,
   type OmieRequester
 } from "./omie-sync-core.ts";
@@ -1341,6 +1342,9 @@ async function createOmieOrder(
   credentials: OmieCredentials,
   payload: CreateOrderPayload
 ): Promise<number> {
+  const integrationCode = toOmieIntegrationCode(payload.idempotencyKey);
+  const accountCode = await resolveOmieAccountCode(credentials);
+
   if (payload.operationType === "invoice") {
     if (!payload.productOmieId) {
       throw new Error("productOmieId obrigatorio para pedido de venda");
@@ -1351,7 +1355,7 @@ async function createOmieOrder(
       "IncluirPedido",
       {
         cabecalho: {
-          codigo_pedido_integracao: payload.idempotencyKey,
+          codigo_pedido_integracao: integrationCode,
           codigo_cliente: payload.customerOmieId,
           data_previsao: toOmieDate(payload.issueDate),
           etapa: "10",
@@ -1360,7 +1364,7 @@ async function createOmieOrder(
         },
         det: [
           {
-            ide: { codigo_item_integracao: `${payload.idempotencyKey}:1` },
+            ide: { codigo_item_integracao: toOmieIntegrationCode(`${payload.idempotencyKey}:1`) },
             produto: {
               codigo_produto: payload.productOmieId,
               quantidade: payload.quantity,
@@ -1371,12 +1375,15 @@ async function createOmieOrder(
           }
         ],
         frete: buildOmieFreight(payload.freightTotalCents),
-        informacoes_adicionais: { codigo_categoria: "1.01.01", codigo_conta_corrente: 0 }
+        informacoes_adicionais: {
+          codigo_categoria: "1.01.01",
+          ...(accountCode !== null ? { codigo_conta_corrente: accountCode } : {})
+        }
       }
     ).catch(async (error) => {
       const existing = await consultSalesOrderByIntegrationCode(
         credentials,
-        payload.idempotencyKey
+        integrationCode
       ).catch(() => null);
       if (existing) return existing;
       throw error;
@@ -1399,7 +1406,7 @@ async function createOmieOrder(
     }
   >(credentials, "/servicos/os/", "IncluirOS", {
     Cabecalho: {
-      cCodIntOS: payload.idempotencyKey,
+      cCodIntOS: integrationCode,
       nCodCli: payload.customerOmieId,
       dDtPrevisao: toOmieDate(payload.issueDate),
       cEtapa: "10",
@@ -1413,13 +1420,68 @@ async function createOmieOrder(
         nValUnit: payload.unitPrice
       }
     ],
-    InformacoesAdicionais: { cCodCateg: "1.01.01", nCodCC: 0 }
+    InformacoesAdicionais: {
+      cCodCateg: "1.01.01",
+      ...(accountCode !== null ? { nCodCC: accountCode } : {})
+    }
   });
   const orderId = response.nCodOS ?? response.codigoOS;
   if (!orderId) {
     throw new Error("OMIE nao retornou codigoOS");
   }
   return orderId;
+}
+
+// O OMIE exige uma conta corrente valida em informacoes_adicionais (enviar 0 gera
+// "ERROR: - tag: [codigo_conta_corrente]"). Como a conta varia por tenant, resolvemos a
+// primeira conta corrente cadastrada via ListarContasCorrentes e cacheamos por app_key.
+// Falhas de consulta nao sao cacheadas para permitir nova tentativa no proximo job.
+const omieAccountCodeCache = new Map<string, number>();
+
+async function resolveOmieAccountCode(credentials: OmieCredentials): Promise<number | null> {
+  const cached = omieAccountCodeCache.get(credentials.appKey);
+  if (cached !== undefined) return cached;
+
+  try {
+    const response = await callOmie<unknown, Record<string, unknown>>(
+      credentials,
+      "/geral/contacorrente/",
+      "ListarContasCorrentes",
+      { pagina: 1, registros_por_pagina: 50 }
+    );
+    const accountCode = extractFirstAccountCode(response);
+    if (accountCode !== null) {
+      omieAccountCodeCache.set(credentials.appKey, accountCode);
+    }
+    return accountCode;
+  } catch {
+    return null;
+  }
+}
+
+function extractFirstAccountCode(response: Record<string, unknown> | null): number | null {
+  if (!response || typeof response !== "object") return null;
+  const knownKeys = ["ListarContasCorrentes", "conta_corrente_lista", "contaCorrenteLista"];
+  const lists = [
+    ...knownKeys.map((key) => response[key]),
+    ...Object.values(response).filter((value) => Array.isArray(value))
+  ];
+  for (const list of lists) {
+    if (!Array.isArray(list)) continue;
+    for (const entry of list) {
+      if (!entry || typeof entry !== "object") continue;
+      const row = entry as Record<string, unknown>;
+      const code = toNumber(
+        pickFirst(
+          row.nCodCC as string | number | null | undefined,
+          row.codigo_conta_corrente as string | number | null | undefined,
+          row.codigoContaCorrente as string | number | null | undefined
+        )
+      );
+      if (code !== null && code > 0) return code;
+    }
+  }
+  return null;
 }
 
 function buildOmieFreight(freightTotalCents: number | null | undefined): Record<string, unknown> {
@@ -1441,7 +1503,11 @@ async function createAndBillOmieOrder(
   }
 
   const orderId = await createOmieOrder(credentials, payload);
-  const billing = await billSalesOrder(credentials, orderId, payload.idempotencyKey);
+  const billing = await billSalesOrder(
+    credentials,
+    orderId,
+    toOmieIntegrationCode(payload.idempotencyKey)
+  );
   const consultedOrder = await consultSalesOrder(credentials, orderId).catch(() => null);
   const orderDocument = await getSalesOrderDocument(credentials, orderId).catch(() => null);
   const documentUrl =

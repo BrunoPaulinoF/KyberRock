@@ -162,10 +162,36 @@ export class OmieQueueManager {
   }
 }
 
+// O OMIE rejeita codigos de integracao com caracteres especiais (hifens de UUID,
+// ":" das chaves de idempotencia) — "caracteres especiais nao permitidos para um codigo".
+// Esta funcao mapeia qualquer valor para um codigo aceito: mantem valores curtos que ja
+// sao alfanumericos e, para o resto, deriva um hash estavel (mesma entrada => mesmo
+// codigo, preservando a idempotencia no OMIE).
+export const OMIE_INTEGRATION_CODE_MAX_LENGTH = 20;
+
+export function toOmieIntegrationCode(value: string): string {
+  const trimmed = value.trim();
+  if (/^[A-Za-z0-9]+$/.test(trimmed) && trimmed.length <= OMIE_INTEGRATION_CODE_MAX_LENGTH) {
+    return trimmed;
+  }
+  return `KR${fnv1a64(trimmed).toString(36).toUpperCase()}`;
+}
+
+function fnv1a64(input: string): bigint {
+  let hash = BigInt("14695981039346656037");
+  const prime = BigInt("1099511628211");
+  const mask = BigInt("0xFFFFFFFFFFFFFFFF");
+  for (let i = 0; i < input.length; i++) {
+    hash ^= BigInt(input.charCodeAt(i));
+    hash = (hash * prime) & mask;
+  }
+  return hash;
+}
+
 export function buildCustomerPayload(payload: PushCustomerPayload): Record<string, unknown> {
   return {
     codigo_cliente_omie: payload.omieCustomerId,
-    codigo_cliente_integracao: payload.localCustomerId,
+    codigo_cliente_integracao: toOmieIntegrationCode(payload.localCustomerId),
     razao_social: payload.razaoSocial,
     nome_fantasia: payload.nomeFantasia,
     cnpj_cpf: payload.cnpjCpf,

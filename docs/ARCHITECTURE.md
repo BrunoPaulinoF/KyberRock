@@ -112,6 +112,13 @@ Exemplos:
 - `kyberrock:unit_abc:op_123:create_sales_order`
 - `kyberrock:unit_abc:op_123:create_service_order`
 
+Importante: os campos de codigo do OMIE (`codigo_cliente_integracao`, `codigo_pedido_integracao`,
+`cCodIntOS`, `cCodIntPed`) rejeitam caracteres especiais (`:`, `-`, etc.). A Edge Function
+`omie-sync` converte a chave idempotente (e UUIDs locais) em um codigo alfanumerico deterministico
+via `toOmieIntegrationCode` (`supabase/functions/omie-sync/omie-sync-core.ts`) antes de enviar ao
+OMIE — a mesma chave sempre gera o mesmo codigo, preservando a idempotencia. A chave no formato
+acima continua sendo usada nas filas locais e no Supabase.
+
 ## Status Da Operacao
 
 | Status              | Significado                                   |
