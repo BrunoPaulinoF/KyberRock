@@ -38,7 +38,7 @@ npm run dist:win -w @kyberrock/desktop      # NSIS installer -> apps/desktop/rel
 - **better-sqlite3 (native)**: must be rebuilt against Electron. `dist:win` calls `rebuild:native:electron` automatically; for plain `npm run start` after a fresh `npm install` or after bumping Electron, run `npm run rebuild:native:electron -w @kyberrock/desktop`. Requires Python 3 + MSVC build tools on Windows.
 - **Workspace imports inside Electron**: `apps/desktop/build` runs `copy-workspace-packages.cjs`, which copies `packages/*/dist` into `apps/desktop/dist/node_modules/@kyberrock/*`. If `@kyberrock/<pkg>` fails to resolve at runtime, run `npm run build` at the root first.
 - **Electron security**: `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`. All Node / IPC flows through `src/preload/preload.ts` and `ipcMain.handle("desktop:*", …)` in `src/main/main.ts`.
-- **Auto-update** (`electron-updater`): `autoDownload: true`, `autoInstallOnAppQuit: true` (see `AUTO_DOWNLOAD_UPDATES` / `AUTO_INSTALL_ON_QUIT` in `src/services/update-flow.ts`). Generic HTTPS provider at `https://updates.kyberrock.com/desktop/win`. Checks every 30 min **only when `app.isPackaged`**, downloads new versions in the background, and installs them the next time the operator quits the app — no mid-operation interruption. The manual "check / install now" buttons still work as an override. The installer itself is generated and published automatically by CI (see "Desktop versioning").
+- **Auto-update** (`electron-updater`): `autoDownload: true`, `autoInstallOnAppQuit: true` (see `AUTO_DOWNLOAD_UPDATES` / `AUTO_INSTALL_ON_QUIT` in `src/services/update-flow.ts`). Provider is **GitHub Releases** on this (private) repo. Because the repo is private, the app carries a read-only token to fetch the release; the token is **not** in Git — it lives in the `GH_UPDATER_TOKEN` secret and is injected into `src/main/updater-config.ts` at build time by CI, then set as `process.env.GH_TOKEN` at runtime (`configureAutoUpdater`). Checks every 30 min **only when `app.isPackaged`**, downloads new versions in the background, and installs them the next time the operator quits the app — no mid-operation interruption. The manual "check / install now" buttons still work as an override. The installer itself is generated and published automatically by CI (see "Desktop versioning").
 - **SQLite path**: `%ProgramData%\\KyberRock\\data\\kyberrock.sqlite3` (see `src/database/paths.ts`).
 - **Startup log**: `%LOCALAPPDATA%\\KyberRock Desktop\\startup.log`. Check here first when the window fails to open.
 - **Icon**: `apps/desktop/midia/icon.ico` (source PNG: `apps/desktop/midia/kyberrocklogo.png`); consumed by `electron-builder` for the executable and the NSIS installer.
@@ -77,22 +77,25 @@ Every OMIE call uses a key of the form `kyberrock:{unitId}:{operationId}:{action
 ## Desktop versioning
 
 **Automated (default).** `.github/workflows/desktop-release.yml` builds and publishes the
-Windows installer on every push to `main` that touches `apps/desktop/**`, `packages/**` or the
-root manifest (also runnable via **workflow_dispatch**). The pipeline:
+Windows installer to **GitHub Releases** on every push to `main` that touches `apps/desktop/**`,
+`packages/**` or the root manifest (also runnable via **workflow_dispatch**). The pipeline:
 
 1. Derives the release version as `MAJOR.MINOR.<github.run_number>` from `apps/desktop/package.json`
    (monotonically increasing, so `electron-updater` always sees a newer version — **no manual
    bump needed**). The bump is done only in the build checkout; it is not committed back.
-2. Runs `npm run dist:win -w @kyberrock/desktop` on a Windows runner.
-3. Uploads `latest.yml` + `*.exe` + `*.blockmap` as a run artifact (always available for manual download).
-4. Publishes those files to `updates.kyberrock.com/desktop/win` via rsync/SSH **when the deploy
-   secrets are set**; otherwise the deploy step is skipped with a notice.
+2. Injects the read-only updater token (`GH_UPDATER_TOKEN` secret) into `src/main/updater-config.ts`.
+3. Runs `npm run dist:win:publish -w @kyberrock/desktop` on a Windows runner, which builds the
+   NSIS installer and `electron-builder --publish always` creates a **published** (non-draft)
+   Release `vX.Y.Z` with `latest.yml` + `*.exe` + `*.blockmap`. Publishing uses the automatic
+   `GITHUB_TOKEN` (write scope stays in CI). A copy is also uploaded as a run artifact.
 
-Required repo secrets for the auto-publish step (Settings → Secrets and variables → Actions):
-`UPDATE_SSH_HOST`, `UPDATE_SSH_USER`, `UPDATE_SSH_KEY` (private key), `UPDATE_DEPLOY_PATH`
-(server dir mapped to the `/desktop/win` URL), and optional `UPDATE_SSH_PORT` (default 22).
-Until they exist, builds still run and the installer is downloadable from the Actions run.
+Required repo secret (Settings → Secrets and variables → Actions):
+`GH_UPDATER_TOKEN` — a **fine-grained PAT scoped to this repo only, `Contents: read`**. This is the
+token embedded in the installed app so it can download releases from the private repo. Without it,
+builds still publish, but installed apps cannot authenticate to download the update.
 
+- **Security note**: the read token ships inside the app (`.asar`), so treat it as low-trust —
+  keep it read-only + single-repo, and rotate it by updating the secret and re-running the workflow.
 - To cut a new **minor/major** line, bump `apps/desktop/package.json` (`MAJOR.MINOR`) in a PR;
   the patch keeps coming from `run_number`.
 - Code signing for external pilots is still pending (see `docs/phase-3.1/README.md`).
@@ -103,8 +106,10 @@ Until they exist, builds still run and the installer is downloadable from the Ac
    → `apps/desktop/release/KyberRock Desktop Setup X.Y.Z.exe`.
 2. Optionally tag `git tag -a desktop-vX.Y.Z -m "Desktop release X.Y.Z"` for a manual rollback point.
 3. **Never overwrite an existing tag** — bump the patch for a hotfix.
-4. **Rollback**: check out an older tag/commit and re-run `dist:win`, or re-publish an older `.exe`
-   (kept on the update server since the pipeline does not delete old versions).
+4. **Rollback**: each release stays on GitHub Releases. To roll operators back, delete/mark as
+   pre-release the bad `vX.Y.Z` release (electron-updater then serves the previous published one),
+   or re-run the workflow from an older commit to publish a higher version built from good code.
+   `dist:win:publish` (used by CI) is the publishing variant of `dist:win`.
 
 ## Subagents
 

@@ -44,6 +44,7 @@ import {
   createInitialUpdateState,
   type UpdateState
 } from "../services/update-flow.js";
+import { GITHUB_UPDATER_TOKEN } from "./updater-config.js";
 import type { OperationType } from "../services/weighing-operations.js";
 
 const require = createRequire(import.meta.url);
@@ -1481,6 +1482,13 @@ function configureAutoUpdater(): void {
   // e a reinstalacao pelos botoes de update.
   autoUpdater.autoDownload = AUTO_DOWNLOAD_UPDATES;
   autoUpdater.autoInstallOnAppQuit = AUTO_INSTALL_ON_QUIT;
+
+  // Repo privado no GitHub Releases: o electron-updater usa GH_TOKEN para ler e
+  // baixar os assets do release. O token (somente leitura) e embutido no build
+  // pelo CI; em dev fica vazio e o updater nem roda (so quando app.isPackaged).
+  if (GITHUB_UPDATER_TOKEN) {
+    process.env.GH_TOKEN = GITHUB_UPDATER_TOKEN;
+  }
 
   autoUpdater.on("update-available", (info) => {
     // autoDownload esta ligado, entao o download comeca automaticamente aqui.
