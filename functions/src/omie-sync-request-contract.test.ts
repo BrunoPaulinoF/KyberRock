@@ -165,6 +165,29 @@ describe("cliente ja cadastrado no OMIE", () => {
     expect(secondBody.param).toEqual([
       expect.objectContaining({ codigo_cliente_omie: 11474590160 })
     ]);
+    // O cadastro adotado tem outro codigo de integracao no OMIE; enviar o nosso
+    // faria o AlterarCliente falhar com "Cliente nao cadastrado para o Codigo
+    // de Integracao". O update deve identificar apenas pelo codigo_cliente_omie.
+    const updateParam = (secondBody.param as Array<Record<string, unknown>>)[0];
+    expect(updateParam).not.toHaveProperty("codigo_cliente_integracao");
+  });
+
+  it("nao envia codigo_cliente_integracao em updates de cliente com omieCustomerId", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse({ ok: true }));
+    const queue = new OmieQueueManager({ fetchFn, minDelayMs: 0, sleepFn: async () => undefined });
+
+    const id = await pushCustomerToOmieCore(queue, credentials, {
+      localCustomerId: "cliente-adotado",
+      omieCustomerId: 777,
+      razaoSocial: "Cliente Adotado"
+    });
+
+    expect(id).toBe(777);
+    const body = readRequestBody(fetchFn);
+    expect(body.call).toBe("AlterarCliente");
+    const param = (body.param as Array<Record<string, unknown>>)[0];
+    expect(param.codigo_cliente_omie).toBe(777);
+    expect(param).not.toHaveProperty("codigo_cliente_integracao");
   });
 });
 
