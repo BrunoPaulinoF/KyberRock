@@ -2,6 +2,7 @@ import { createClient as createSupabaseClient } from "jsr:@supabase/supabase-js@
 import {
   OmieQueueManager,
   buildCustomerPayload,
+  extractExistingCustomerId,
   pushCarrierToOmie as pushCarrierToOmieCore,
   toOmieIntegrationCode,
   type OmieCredentials,
@@ -1297,13 +1298,24 @@ async function pushCustomerToOmie(
     }
   }
 
-  const response = await callOmie<
-    unknown,
-    {
-      codigo_cliente_omie?: number;
-      codigoClienteOmie?: number;
-    }
-  >(credentials, "/geral/clientes/", "IncluirCliente", body);
+  let response: { codigo_cliente_omie?: number; codigoClienteOmie?: number };
+  try {
+    response = await callOmie<
+      unknown,
+      {
+        codigo_cliente_omie?: number;
+        codigoClienteOmie?: number;
+      }
+    >(credentials, "/geral/clientes/", "IncluirCliente", body);
+  } catch (error) {
+    const existingId = extractExistingCustomerId(error);
+    if (existingId === null) throw error;
+    await callOmie<unknown, unknown>(credentials, "/geral/clientes/", "AlterarCliente", {
+      ...body,
+      codigo_cliente_omie: existingId
+    });
+    return existingId;
+  }
 
   const omieCustomerId = response.codigo_cliente_omie ?? response.codigoClienteOmie;
   if (!omieCustomerId) {
@@ -1429,6 +1441,8 @@ async function createOmieOrder(
     ServicosPrestados: [
       {
         cDescServ: payload.serviceDescription || "Servico",
+        // Obrigatorio no IncluirOS: "01" = tributado no municipio (padrao).
+        cTribServ: "01",
         nQtde: payload.quantity,
         nValUnit: payload.unitPrice
       }

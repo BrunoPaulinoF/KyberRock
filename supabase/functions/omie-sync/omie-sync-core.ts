@@ -286,6 +286,17 @@ function getRetryDelayMs(error: OmieHttpError, attempt: number, baseBackoffMs: n
   return Math.min(error.retryAfterMs ?? baseBackoffMs * Math.pow(2, attempt), OMIE_MAX_BACKOFF_MS);
 }
 
+// Quando o CPF/CNPJ ja existe no OMIE, o IncluirCliente falha com
+// "Cliente ja cadastrado para o CPF/CNPJ [...] com o Id [123] ...".
+// Extraimos o Id existente para converter o insert em update.
+export function extractExistingCustomerId(error: unknown): number | null {
+  if (!(error instanceof OmieHttpError)) return null;
+  const text = error.detail ?? error.message;
+  if (!/j[aá] cadastrad/i.test(text)) return null;
+  const match = /\bId\s*\[(\d+)\]/i.exec(text);
+  return match ? Number(match[1]) : null;
+}
+
 async function pushCustomerBodyToOmie(
   queue: OmieRequester,
   credentials: OmieCredentials,
@@ -302,15 +313,28 @@ async function pushCustomerBodyToOmie(
     return omieCustomerId;
   }
 
-  const response = await queue.request<
-    unknown,
-    { codigo_cliente_omie?: number; codigoClienteOmie?: number }
-  >({
-    credentials,
-    endpoint: "/geral/clientes/",
-    call: "IncluirCliente",
-    param: body
-  });
+  let response: { codigo_cliente_omie?: number; codigoClienteOmie?: number };
+  try {
+    response = await queue.request<
+      unknown,
+      { codigo_cliente_omie?: number; codigoClienteOmie?: number }
+    >({
+      credentials,
+      endpoint: "/geral/clientes/",
+      call: "IncluirCliente",
+      param: body
+    });
+  } catch (error) {
+    const existingId = extractExistingCustomerId(error);
+    if (existingId === null) throw error;
+    await queue.request<unknown, unknown>({
+      credentials,
+      endpoint: "/geral/clientes/",
+      call: "AlterarCliente",
+      param: { ...body, codigo_cliente_omie: existingId }
+    });
+    return existingId;
+  }
   const id = response.codigo_cliente_omie ?? response.codigoClienteOmie;
   if (!id) throw new Error("OMIE nao retornou codigoClienteOmie");
   return id;

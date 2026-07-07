@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 
 import type { KyberRockDesktopApi } from "../preload/api-types";
 import { CrudFormModal } from "./CrudFormModal";
+import { formatDbDateTime } from "./format-datetime";
 
 type ReportType = "sales" | "trucks" | "both";
 
@@ -602,7 +603,7 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
                     </td>
                     <td style={styles.tableCell}>
                       {recipient.lastSyncedAt
-                        ? new Date(recipient.lastSyncedAt).toLocaleString("pt-BR")
+                        ? formatDbDateTime(recipient.lastSyncedAt)
                         : "-"}
                     </td>
                     <td
