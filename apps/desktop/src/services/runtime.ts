@@ -91,6 +91,8 @@ import {
   syncOperationToSupabase,
   syncLoadingRequestToSupabase,
   syncOmieReferenceDataFromCloud,
+  listOmieDocumentTypesFromCloud,
+  type OmieDocumentTypeOption,
   pushOmieCarriersToCloud,
   pushOmieCustomersToCloud,
   processOmieSyncQueue,
@@ -1886,6 +1888,11 @@ export class DesktopRuntime {
 
   getOmieSyncEntitiesByRun(runId: string): ReturnType<typeof getSyncEntitiesByRun> {
     return getSyncEntitiesByRun(this.database, runId);
+  }
+
+  async listOmieDocumentTypes(): Promise<OmieDocumentTypeOption[]> {
+    const identity = this.ensureIdentity();
+    return listOmieDocumentTypesFromCloud(this.database, identity);
   }
 
   async runOmieDataEntryLoop(

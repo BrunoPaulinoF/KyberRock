@@ -1207,6 +1207,11 @@ function registerIpcHandlers(): void {
     return runtime.getLastOmieSyncRun();
   });
 
+  ipcMain.handle("desktop:omie-list-document-types", async () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.listOmieDocumentTypes();
+  });
+
   ipcMain.handle("desktop:get-omie-sync-entities", (_event, runId: string) => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.getOmieSyncEntitiesByRun(runId);

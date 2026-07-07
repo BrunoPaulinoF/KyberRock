@@ -7200,6 +7200,34 @@ function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi })
   const [flash, showFlash] = useFlash();
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [documentTypes, setDocumentTypes] = useState<
+    Array<{ code: string; description: string }> | null
+  >(null);
+  const [documentTypesLoading, setDocumentTypesLoading] = useState(false);
+  const [documentTypesError, setDocumentTypesError] = useState<string | null>(null);
+
+  const loadDocumentTypes = useCallback(async () => {
+    setDocumentTypesLoading(true);
+    setDocumentTypesError(null);
+    try {
+      const types = await desktopApi.listOmieDocumentTypes();
+      setDocumentTypes(types);
+    } catch (err) {
+      setDocumentTypes(null);
+      setDocumentTypesError(
+        err instanceof Error ? err.message : "Nao foi possivel buscar as formas do OMIE."
+      );
+    } finally {
+      setDocumentTypesLoading(false);
+    }
+  }, [desktopApi]);
+
+  // Busca as formas do OMIE quando o formulario abre (uma vez; fica em cache).
+  useEffect(() => {
+    if (showForm && documentTypes === null && !documentTypesLoading && !documentTypesError) {
+      void loadDocumentTypes();
+    }
+  }, [showForm, documentTypes, documentTypesLoading, documentTypesError, loadDocumentTypes]);
 
   const loadMethods = useCallback(async () => {
     setLoading(true);
@@ -7360,12 +7388,61 @@ function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi })
                 ))}
               </select>
             </Field>
-            <TextInput
+            <Field
               label="Codigo OMIE"
-              value={omieCode}
-              onChange={setOmieCode}
-              placeholder="Codigo da forma no OMIE (opcional)"
-            />
+              hint="Forma de pagamento no OMIE. Puxada direto do OMIE (tipos de documento)."
+            >
+              {documentTypes && documentTypes.length > 0 ? (
+                <select
+                  value={omieCode}
+                  onChange={(e) => setOmieCode(e.target.value)}
+                  style={getInputStyle(false)}
+                >
+                  <option value="">Sem codigo OMIE</option>
+                  {omieCode && !documentTypes.some((t) => t.code === omieCode) ? (
+                    <option value={omieCode}>{omieCode} (atual)</option>
+                  ) : null}
+                  {documentTypes.map((t) => (
+                    <option key={t.code} value={t.code}>
+                      {t.code} - {t.description}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <>
+                  <TextInput
+                    label=""
+                    value={omieCode}
+                    onChange={setOmieCode}
+                    placeholder="Codigo da forma no OMIE (opcional)"
+                  />
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: "8px",
+                      alignItems: "center",
+                      marginTop: "6px"
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => void loadDocumentTypes()}
+                      disabled={documentTypesLoading}
+                      style={{ ...styles.secondaryButton, fontSize: "11px", padding: "4px 8px" }}
+                    >
+                      {documentTypesLoading ? "Buscando..." : "Buscar formas do OMIE"}
+                    </button>
+                    <p style={{ ...styles.helperText, margin: 0 }}>
+                      {documentTypesError
+                        ? documentTypesError
+                        : documentTypesLoading
+                          ? "Consultando o OMIE..."
+                          : "Ou informe o codigo manualmente."}
+                    </p>
+                  </div>
+                </>
+              )}
+            </Field>
           </FormSection>
         </CrudFormShell>
       ) : null}

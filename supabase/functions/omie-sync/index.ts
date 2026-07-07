@@ -378,6 +378,11 @@ export async function handleOmieSyncRequest(
       });
     }
 
+    if (action === "list_document_types") {
+      const documentTypes = await listDocumentTypes(credentials);
+      return jsonResponse({ ok: true, documentTypes });
+    }
+
     if (action === "create_order") {
       const payload = body.payload as CreateOrderPayload;
       const orderId = await createOmieOrder(credentials, payload);
@@ -1214,6 +1219,46 @@ function mapOmiePaymentTermRaw(item: OmiePaymentTermRaw): OmiePaymentTerm | null
     isActive: !isYesFlag(pickFirst(item.cInativo, item.inativo)),
     visible: !isNoFlag(pickFirst(item.cVisualizar, item.visualizar))
   };
+}
+
+interface OmieDocumentTypeRaw {
+  cCodigo?: string;
+  codigo?: string;
+  cDescricao?: string;
+  descricao?: string;
+}
+
+interface OmieDocumentType {
+  code: string;
+  description: string;
+}
+
+// Formas de pagamento no OMIE = "tipos de documento" (ListarTiposDocumento).
+// Cada um traz um codigo (cCodigo) e uma descricao (cDescricao), que alimentam
+// o campo "Codigo OMIE" das formas de pagamento locais.
+async function listDocumentTypes(credentials: OmieCredentials): Promise<OmieDocumentType[]> {
+  const response = await callOmie<
+    Record<string, never>,
+    {
+      tipo_documento_cadastro?: OmieDocumentTypeRaw[];
+      tipoDocumentoCadastro?: OmieDocumentTypeRaw[];
+      cadastros?: OmieDocumentTypeRaw[];
+    }
+  >(credentials, "/geral/tiposdoc/", "ListarTiposDocumento", {});
+
+  const raw =
+    response.tipo_documento_cadastro ?? response.tipoDocumentoCadastro ?? response.cadastros ?? [];
+
+  const types: OmieDocumentType[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    const code = pickFirst(item.cCodigo, item.codigo);
+    if (!code || seen.has(code)) continue;
+    seen.add(code);
+    const description = pickFirst(item.cDescricao, item.descricao);
+    types.push({ code, description: description ?? code });
+  }
+  return types;
 }
 
 async function pushCustomerToOmie(
