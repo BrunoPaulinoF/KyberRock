@@ -1,7 +1,7 @@
 import { assertEquals, assertObjectMatch } from "jsr:@std/assert";
 
 import { handleOmieSyncRequest, type OmieSyncHandlerDependencies } from "./index.ts";
-import type { OmieRequestInput, OmieRequester } from "./omie-sync-core.ts";
+import { toOmieIntegrationCode, type OmieRequestInput, type OmieRequester } from "./omie-sync-core.ts";
 
 type DeviceFixture = {
   id: string;
@@ -233,8 +233,8 @@ Deno.test("handleOmieSyncRequest busca credenciais OMIE por companyId e isola co
     { appKey: "key-company-b", appSecret: "secret-company-b" }
   ]);
   assertEquals(pushRequests.map((request) => getParam(request).codigo_cliente_integracao), [
-    "cliente-a",
-    "cliente-b"
+    toOmieIntegrationCode("cliente-a"),
+    toOmieIntegrationCode("cliente-b")
   ]);
 });
 
@@ -319,13 +319,13 @@ Deno.test("fluxo push envia clientes e transportadoras formatados e permite limp
   const customerPayload = getParam(includedCustomers[0]);
   const carrierPayload = getParam(includedCustomers[1]);
   assertObjectMatch(customerPayload, {
-    codigo_cliente_integracao: "customer-local-1",
+    codigo_cliente_integracao: toOmieIntegrationCode("customer-local-1"),
     razao_social: "Cliente Local Ltda",
     nome_fantasia: "Cliente Local",
     cnpj_cpf: "11111111000191"
   });
   assertObjectMatch(carrierPayload, {
-    codigo_cliente_integracao: "carrier-local-1",
+    codigo_cliente_integracao: toOmieIntegrationCode("carrier-local-1"),
     razao_social: "Transportadora Local",
     nome_fantasia: "Transportadora Local",
     cnpj_cpf: "22222222000182"
