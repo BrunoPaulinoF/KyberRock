@@ -1,31 +1,50 @@
 # Fase 3.1 - Instalador E Atualizacoes
 
-Status: base implementada.
+Status: pipeline automatico implementado.
 
 ## Entregue
 
 - `electron-builder` configurado para gerar instalador Windows NSIS;
 - script `npm run dist:win --workspace @kyberrock/desktop`;
-- `electron-updater` configurado sem download automatico;
-- botao no desktop para verificar atualizacao;
-- botao para baixar e instalar somente quando houver update disponivel;
-- provider generico HTTPS configurado como `https://updates.kyberrock.com/desktop/win`.
+- `electron-updater` com **download automatico** e **instalacao ao fechar o app**
+  (`AUTO_DOWNLOAD_UPDATES` / `AUTO_INSTALL_ON_QUIT` em `src/services/update-flow.ts`);
+- botoes de verificar / instalar agora continuam disponiveis como override manual;
+- provider generico HTTPS configurado como `https://updates.kyberrock.com/desktop/win`;
+- **pipeline CI** `.github/workflows/desktop-release.yml` que gera e publica o instalador
+  automaticamente a cada push na `main`.
 
-## Como O Update Deve Funcionar
+## Como O Update Funciona Hoje
 
-1. Fazemos push para o GitHub.
-2. Um pipeline de release gera o instalador e os arquivos `latest.yml`/artefatos do `electron-builder`.
-3. O pipeline publica esses arquivos em uma URL HTTPS acessivel pelo desktop.
-4. O desktop verifica se existe versao nova.
-5. Se houver, aparece o botao para instalar.
-6. Ao clicar, o app baixa o update e chama a instalacao.
+1. Merge/push na `main` (tocando `apps/desktop/**`, `packages/**` ou o manifest raiz).
+2. O workflow define a versao como `MAJOR.MINOR.<run_number>` (sempre crescente, sem bump manual)
+   e roda `npm run dist:win` num runner Windows.
+3. O workflow publica `latest.yml` + `.exe` + `.blockmap` em
+   `updates.kyberrock.com/desktop/win` via rsync/SSH (quando os secrets estao configurados).
+   Os artefatos tambem ficam disponiveis para download direto no run do Actions.
+4. O desktop instalado verifica a cada 30 min e detecta a versao nova.
+5. Baixa em segundo plano automaticamente.
+6. Instala na proxima vez que o operador fechar o app (sem interromper a operacao).
+
+## Secrets Do Deploy (GitHub Actions)
+
+Configurar em *Settings -> Secrets and variables -> Actions*:
+
+- `UPDATE_SSH_HOST` - host do servidor de updates;
+- `UPDATE_SSH_USER` - usuario SSH;
+- `UPDATE_SSH_KEY` - chave privada SSH (conteudo do arquivo);
+- `UPDATE_DEPLOY_PATH` - diretorio no servidor mapeado para a URL `/desktop/win`;
+- `UPDATE_SSH_PORT` - opcional, padrao `22`.
+
+Enquanto esses secrets nao existem, o build ainda roda e o instalador fica baixavel no run;
+so o passo de publicar no servidor e pulado (com aviso).
 
 ## Decisao De Seguranca
 
-O app nao deve carregar token do GitHub privado. Para repo privado, publicar updates diretamente do GitHub Releases exigiria token no runtime ou outro proxy autenticado. A abordagem mais segura para o app instalado e publicar os artefatos em endpoint HTTPS controlado, por exemplo VPS/EasyPanel.
+O app nao carrega token do GitHub privado. Para repo privado, publicar updates diretamente do
+GitHub Releases exigiria token no runtime ou proxy autenticado; por isso os artefatos vao para o
+endpoint HTTPS controlado (`updates.kyberrock.com`, VPS/EasyPanel).
 
 ## Pendente Para Release Real
 
-- Definir URL final de updates;
-- configurar pipeline GitHub Actions com secrets de deploy da VPS;
+- Provisionar o servidor de updates e preencher os secrets de deploy acima;
 - decidir assinatura de codigo Windows antes do piloto externo.

@@ -500,6 +500,10 @@ export interface KyberRockDesktopApi {
   }>;
   onUpdateAvailable: (callback: (event: unknown, version: string) => void) => void;
   offUpdateAvailable: (callback: (event: unknown, version: string) => void) => void;
+  onUpdateDownloadProgress: (callback: (event: unknown, percent: number) => void) => void;
+  offUpdateDownloadProgress: (callback: (event: unknown, percent: number) => void) => void;
+  onUpdateDownloaded: (callback: (event: unknown, version: string) => void) => void;
+  offUpdateDownloaded: (callback: (event: unknown, version: string) => void) => void;
   onPlateScanned: (callback: (plate: string) => void) => void;
   onScaleReading: (callback: (reading: ParsedToledoReading) => void) => void;
   offScaleReading: (callback: (reading: ParsedToledoReading) => void) => void;

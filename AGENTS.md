@@ -38,7 +38,7 @@ npm run dist:win -w @kyberrock/desktop      # NSIS installer -> apps/desktop/rel
 - **better-sqlite3 (native)**: must be rebuilt against Electron. `dist:win` calls `rebuild:native:electron` automatically; for plain `npm run start` after a fresh `npm install` or after bumping Electron, run `npm run rebuild:native:electron -w @kyberrock/desktop`. Requires Python 3 + MSVC build tools on Windows.
 - **Workspace imports inside Electron**: `apps/desktop/build` runs `copy-workspace-packages.cjs`, which copies `packages/*/dist` into `apps/desktop/dist/node_modules/@kyberrock/*`. If `@kyberrock/<pkg>` fails to resolve at runtime, run `npm run build` at the root first.
 - **Electron security**: `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`. All Node / IPC flows through `src/preload/preload.ts` and `ipcMain.handle("desktop:*", …)` in `src/main/main.ts`.
-- **Auto-update** (`electron-updater`): `autoDownload: false`, `autoInstallOnAppQuit: false`. Generic HTTPS provider at `https://updates.kyberrock.com/desktop/win`. Checks every 30 min, **only when `app.isPackaged`** — the operator must explicitly trigger download and install.
+- **Auto-update** (`electron-updater`): `autoDownload: true`, `autoInstallOnAppQuit: true` (see `AUTO_DOWNLOAD_UPDATES` / `AUTO_INSTALL_ON_QUIT` in `src/services/update-flow.ts`). Generic HTTPS provider at `https://updates.kyberrock.com/desktop/win`. Checks every 30 min **only when `app.isPackaged`**, downloads new versions in the background, and installs them the next time the operator quits the app — no mid-operation interruption. The manual "check / install now" buttons still work as an override. The installer itself is generated and published automatically by CI (see "Desktop versioning").
 - **SQLite path**: `%ProgramData%\\KyberRock\\data\\kyberrock.sqlite3` (see `src/database/paths.ts`).
 - **Startup log**: `%LOCALAPPDATA%\\KyberRock Desktop\\startup.log`. Check here first when the window fails to open.
 - **Icon**: `apps/desktop/midia/icon.ico` (source PNG: `apps/desktop/midia/kyberrocklogo.png`); consumed by `electron-builder` for the executable and the NSIS installer.
@@ -76,18 +76,35 @@ Every OMIE call uses a key of the form `kyberrock:{unitId}:{operationId}:{action
 
 ## Desktop versioning
 
-Every installer build **must** bump the version and be tagged:
+**Automated (default).** `.github/workflows/desktop-release.yml` builds and publishes the
+Windows installer on every push to `main` that touches `apps/desktop/**`, `packages/**` or the
+root manifest (also runnable via **workflow_dispatch**). The pipeline:
 
-1. Bump `apps/desktop/package.json` (SemVer: patch / minor / major).
-2. `npm run dist:win -w @kyberrock/desktop` → `apps/desktop/release/KyberRock Desktop Setup X.Y.Z.exe`.
-3. Commit `package.json` (+ `package-lock.json` if it changed).
-4. `git tag -a desktop-vX.Y.Z -m "Desktop release X.Y.Z"`.
-5. Push the tag only when the user asks.
-6. Optional: attach the `.exe` to the GitHub Release for the tag.
+1. Derives the release version as `MAJOR.MINOR.<github.run_number>` from `apps/desktop/package.json`
+   (monotonically increasing, so `electron-updater` always sees a newer version — **no manual
+   bump needed**). The bump is done only in the build checkout; it is not committed back.
+2. Runs `npm run dist:win -w @kyberrock/desktop` on a Windows runner.
+3. Uploads `latest.yml` + `*.exe` + `*.blockmap` as a run artifact (always available for manual download).
+4. Publishes those files to `updates.kyberrock.com/desktop/win` via rsync/SSH **when the deploy
+   secrets are set**; otherwise the deploy step is skipped with a notice.
 
-- **Never overwrite an existing tag** — bump the patch for a hotfix.
-- **Rollback**: `git checkout desktop-vX.Y.Z && npm run dist:win -w @kyberrock/desktop` regenerates the old installer.
-- Find the current released tag with `git tag -l 'desktop-v*' --sort=-v:refname | head -1`.
+Required repo secrets for the auto-publish step (Settings → Secrets and variables → Actions):
+`UPDATE_SSH_HOST`, `UPDATE_SSH_USER`, `UPDATE_SSH_KEY` (private key), `UPDATE_DEPLOY_PATH`
+(server dir mapped to the `/desktop/win` URL), and optional `UPDATE_SSH_PORT` (default 22).
+Until they exist, builds still run and the installer is downloadable from the Actions run.
+
+- To cut a new **minor/major** line, bump `apps/desktop/package.json` (`MAJOR.MINOR`) in a PR;
+  the patch keeps coming from `run_number`.
+- Code signing for external pilots is still pending (see `docs/phase-3.1/README.md`).
+
+**Manual build (local / offline fallback):**
+
+1. Bump `apps/desktop/package.json` if needed, then `npm run dist:win -w @kyberrock/desktop`
+   → `apps/desktop/release/KyberRock Desktop Setup X.Y.Z.exe`.
+2. Optionally tag `git tag -a desktop-vX.Y.Z -m "Desktop release X.Y.Z"` for a manual rollback point.
+3. **Never overwrite an existing tag** — bump the patch for a hotfix.
+4. **Rollback**: check out an older tag/commit and re-run `dist:win`, or re-publish an older `.exe`
+   (kept on the update server since the pipeline does not delete old versions).
 
 ## Subagents
 

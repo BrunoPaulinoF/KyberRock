@@ -222,6 +222,14 @@ const desktopApi = {
     ipcRenderer.on("desktop:update-available", callback),
   offUpdateAvailable: (callback: (event: unknown, version: string) => void) =>
     ipcRenderer.off("desktop:update-available", callback),
+  onUpdateDownloadProgress: (callback: (event: unknown, percent: number) => void) =>
+    ipcRenderer.on("desktop:update-download-progress", callback),
+  offUpdateDownloadProgress: (callback: (event: unknown, percent: number) => void) =>
+    ipcRenderer.off("desktop:update-download-progress", callback),
+  onUpdateDownloaded: (callback: (event: unknown, version: string) => void) =>
+    ipcRenderer.on("desktop:update-downloaded", callback),
+  offUpdateDownloaded: (callback: (event: unknown, version: string) => void) =>
+    ipcRenderer.off("desktop:update-downloaded", callback),
   onPlateScanned: (callback: (plate: string) => void) =>
     ipcRenderer.on("desktop:plate-scanned", (_event: unknown, plate: string) => callback(plate)),
   onScaleReading: (callback: (reading: unknown) => void) =>
