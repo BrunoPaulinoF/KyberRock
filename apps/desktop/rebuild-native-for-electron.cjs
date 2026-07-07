@@ -5,36 +5,34 @@ const path = require("node:path");
 const desktopPackageJsonPath = path.resolve(__dirname, "package.json");
 const desktopPackageJson = JSON.parse(fs.readFileSync(desktopPackageJsonPath, "utf8"));
 const electronVersion = desktopPackageJson.devDependencies.electron;
-const betterSqlitePath = path.resolve(__dirname, "../../node_modules/better-sqlite3");
+const repoRoot = path.resolve(__dirname, "../..");
+const betterSqlitePath = path.join(repoRoot, "node_modules", "better-sqlite3");
 
 if (!fs.existsSync(betterSqlitePath)) {
   throw new Error(`better-sqlite3 not found at ${betterSqlitePath}. Run npm install first.`);
 }
 
-const prebuildInstallExecutable = path.resolve(
-  __dirname,
-  process.platform === "win32"
-    ? "../../node_modules/.bin/prebuild-install.cmd"
-    : "../../node_modules/.bin/prebuild-install"
-);
+// better-sqlite3 nao publica prebuild para toda versao de Electron (ex.: Electron
+// 40 = ABI 143, enquanto os prebuilds vao ate ~136). Por isso compilamos o modulo
+// nativo do fonte contra o Electron alvo usando @electron/rebuild, que funciona
+// com ou sem prebuild disponivel. Requer toolchain de C++ (no Windows, Visual
+// Studio com "Desktop development with C++" — os runners windows-2022 tem).
+const electronRebuildCli = path.join(repoRoot, "node_modules", "@electron", "rebuild", "lib", "cli.js");
 
 const result = spawnSync(
-  prebuildInstallExecutable,
+  process.execPath,
   [
-    "--runtime",
-    "electron",
-    "--target",
+    electronRebuildCli,
+    "--force",
+    "--version",
     electronVersion,
-    "--arch",
-    "x64",
-    "--platform",
-    "win32"
+    "--only",
+    "better-sqlite3",
+    "--module-dir",
+    repoRoot,
+    "--build-from-source"
   ],
-  {
-    cwd: betterSqlitePath,
-    shell: true,
-    stdio: "inherit"
-  }
+  { stdio: "inherit" }
 );
 
 if (result.status !== 0) {
