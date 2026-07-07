@@ -204,6 +204,7 @@ const desktopApi = {
   syncOmieMasterData: (options?: unknown) =>
     ipcRenderer.invoke("desktop:sync-omie-master", options),
   getLastOmieSyncRun: () => ipcRenderer.invoke("desktop:get-last-omie-sync-run"),
+  listOmieDocumentTypes: () => ipcRenderer.invoke("desktop:omie-list-document-types"),
   getOmieSyncEntitiesByRun: (runId: string) =>
     ipcRenderer.invoke("desktop:get-omie-sync-entities", runId),
   resetOmieMaster: () => ipcRenderer.invoke("desktop:reset-omie-master"),

@@ -432,6 +432,7 @@ export interface KyberRockDesktopApi {
       errorMessage: string | null;
     }>
   >;
+  listOmieDocumentTypes: () => Promise<Array<{ code: string; description: string }>>;
   startOmieDataEntryLoop: () => Promise<{
     customersPulled: number;
     productsSynced: number;

@@ -1049,6 +1049,47 @@ export async function syncOmieReferenceDataFromCloud(
   throw new Error("OMIE sync redundant retry exhausted.");
 }
 
+export interface OmieDocumentTypeOption {
+  code: string;
+  description: string;
+}
+
+// Busca as formas de pagamento (tipos de documento) do OMIE sob demanda, para
+// o seletor de "Codigo OMIE" das formas de pagamento locais. Nao persiste nada:
+// o codigo escolhido e gravado na propria forma de pagamento.
+export async function listOmieDocumentTypesFromCloud(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity
+): Promise<OmieDocumentTypeOption[]> {
+  const settings = getCloudSettings(database, identity);
+  const supabase = getSupabaseClient();
+  const body = {
+    deviceId: settings.deviceId,
+    deviceToken: settings.deviceToken,
+    action: "list_document_types"
+  };
+
+  for (let attempt = 0; attempt <= OMIE_SYNC_REDUNDANT_MAX_RETRIES; attempt++) {
+    const { data, error } = await supabase.functions.invoke<{
+      documentTypes?: OmieDocumentTypeOption[];
+    }>("omie-sync", { body });
+
+    if (error) {
+      const message = await getFunctionErrorMessage(error);
+      if (isOmieSyncRedundantError(message) && attempt < OMIE_SYNC_REDUNDANT_MAX_RETRIES) {
+        await new Promise((resolve) => setTimeout(resolve, parseOmieSyncRedundantWaitMs(message)));
+        continue;
+      }
+      throw new Error(message);
+    }
+
+    if (!data) throw new Error("Resposta OMIE vazia.");
+    return data.documentTypes ?? [];
+  }
+
+  throw new Error("OMIE sync redundant retry exhausted.");
+}
+
 export function applyOmieReferenceData(
   database: DesktopDatabase,
   companyId: string,
