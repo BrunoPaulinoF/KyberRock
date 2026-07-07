@@ -52,8 +52,8 @@
                 "releaseType": "release"
             }
         ],
-        "npmRebuild": false,
         "asarUnpack": [
+            "**/*.node",
             "**/node_modules/better-sqlite3/**"
         ],
         "win": {
