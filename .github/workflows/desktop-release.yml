@@ -1,17 +1,17 @@
 name: Desktop release
 
-# Gera e publica o instalador Windows do KyberRock Desktop automaticamente
-# sempre que a `main` muda. O `electron-updater` no app dos operadores baixa a
-# nova versao em segundo plano e instala ao fechar o app (ver
-# `apps/desktop/src/main/main.ts` -> configureAutoUpdater).
+# Gera e publica o instalador Windows do KyberRock Desktop no GitHub Releases
+# automaticamente sempre que a `main` muda. O `electron-updater` no app dos
+# operadores baixa a nova versao em segundo plano e instala ao fechar o app
+# (ver `apps/desktop/src/main/main.ts` -> configureAutoUpdater).
 #
 # Fluxo:
 #   1. push na main (tocando o desktop) ou disparo manual;
 #   2. a versao vira MAJOR.MINOR.<run_number> (sempre crescente, sem bump manual);
-#   3. build do instalador NSIS + latest.yml + .blockmap;
-#   4. publish para o servidor de updates (updates.kyberrock.com/desktop/win)
-#      via rsync/SSH, quando os secrets estiverem configurados;
-#   5. os artefatos ficam sempre disponiveis para download manual no run.
+#   3. o token de LEITURA (secret GH_UPDATER_TOKEN) e injetado no app;
+#   4. build do instalador NSIS + latest.yml + .blockmap;
+#   5. electron-builder publica um GitHub Release `vX.Y.Z` com esses arquivos,
+#      usando o GITHUB_TOKEN automatico do Actions (escopo de escrita fica no CI).
 
 on:
   push:
@@ -33,12 +33,13 @@ concurrency:
   group: desktop-release
   cancel-in-progress: false
 
+permissions:
+  contents: write # necessario para o electron-builder criar o GitHub Release
+
 jobs:
-  build:
-    name: Build Windows installer
+  release:
+    name: Build and publish Windows installer
     runs-on: windows-latest
-    outputs:
-      version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -67,72 +68,31 @@ jobs:
           node -e "const f='apps/desktop/package.json';const fs=require('fs');const p=JSON.parse(fs.readFileSync(f,'utf8'));p.version=process.env.VERSION;fs.writeFileSync(f, JSON.stringify(p,null,4)+'\n');"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Build installer
-        run: npm run dist:win --workspace @kyberrock/desktop
-
-      - name: Collect release artifacts
+      - name: Inject updater read-token into the app
         shell: bash
+        env:
+          GH_UPDATER_TOKEN: ${{ secrets.GH_UPDATER_TOKEN }}
         run: |
-          mkdir -p installer
-          # electron-updater precisa do latest.yml, do instalador e do blockmap.
-          # Diretorio plano: o caminho /desktop/win e recriado so no destino.
-          cp apps/desktop/release/latest.yml installer/
-          cp apps/desktop/release/*.exe installer/
-          cp apps/desktop/release/*.blockmap installer/ 2>/dev/null || true
-          ls -la installer
+          if [ -z "${GH_UPDATER_TOKEN:-}" ]; then
+            echo "::warning title=Token de update ausente::Secret GH_UPDATER_TOKEN nao configurado. O release sera publicado, mas os apps instalados NAO conseguirao autenticar para baixar a atualizacao (repo privado). Crie um PAT fine-grained (Contents: read neste repo) e salve como GH_UPDATER_TOKEN."
+          fi
+          node -e "const f='apps/desktop/src/main/updater-config.ts';const fs=require('fs');let s=fs.readFileSync(f,'utf8');s=s.replace(/export const GITHUB_UPDATER_TOKEN = \"\";/, 'export const GITHUB_UPDATER_TOKEN = '+JSON.stringify(process.env.GH_UPDATER_TOKEN||'')+';');fs.writeFileSync(f,s);"
 
-      - name: Upload build output
+      - name: Build and publish to GitHub Releases
+        shell: bash
+        env:
+          # Token de PUBLICACAO (escrita) -- o GITHUB_TOKEN automatico do Actions,
+          # limitado a este repo e ao run. Distinto do token de leitura embutido.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run dist:win:publish --workspace @kyberrock/desktop
+
+      - name: Upload installer as run artifact (backup)
         uses: actions/upload-artifact@v4
         with:
           name: kyberrock-desktop-${{ steps.version.outputs.version }}
-          path: installer/
+          path: |
+            apps/desktop/release/latest.yml
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.blockmap
           if-no-files-found: error
           retention-days: 30
-
-  publish:
-    name: Publish to update server
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download build output
-        uses: actions/download-artifact@v4
-        with:
-          name: kyberrock-desktop-${{ needs.build.outputs.version }}
-          path: installer
-
-      - name: Check deploy secrets
-        id: secrets
-        env:
-          UPDATE_SSH_HOST: ${{ secrets.UPDATE_SSH_HOST }}
-        run: |
-          if [ -n "$UPDATE_SSH_HOST" ]; then
-            echo "configured=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=Update deploy pulado::Secrets de SSH nao configurados. O instalador ${{ needs.build.outputs.version }} esta disponivel como artefato deste run, mas nao foi publicado no servidor de updates. Configure UPDATE_SSH_HOST/USER/KEY/PATH para publicar automaticamente."
-          fi
-
-      - name: Deploy via rsync/SSH
-        if: steps.secrets.outputs.configured == 'true'
-        env:
-          UPDATE_SSH_HOST: ${{ secrets.UPDATE_SSH_HOST }}
-          UPDATE_SSH_USER: ${{ secrets.UPDATE_SSH_USER }}
-          UPDATE_SSH_KEY: ${{ secrets.UPDATE_SSH_KEY }}
-          UPDATE_SSH_PORT: ${{ secrets.UPDATE_SSH_PORT }}
-          UPDATE_DEPLOY_PATH: ${{ secrets.UPDATE_DEPLOY_PATH }}
-        run: |
-          set -euo pipefail
-          PORT="${UPDATE_SSH_PORT:-22}"
-          mkdir -p ~/.ssh
-          echo "$UPDATE_SSH_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -p "$PORT" -H "$UPDATE_SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
-          # installer/ -> <deploy_path>/desktop/win/ (UPDATE_DEPLOY_PATH e o
-          # docroot mapeado por updates.kyberrock.com; o pipeline acrescenta
-          # /desktop/win). Sem --delete: versoes antigas continuam servidas para
-          # downloads diretos/rollback.
-          rsync -avz \
-            -e "ssh -i ~/.ssh/deploy_key -p $PORT -o StrictHostKeyChecking=yes" \
-            installer/ \
-            "${UPDATE_SSH_USER}@${UPDATE_SSH_HOST}:${UPDATE_DEPLOY_PATH%/}/desktop/win/"
-          echo "::notice title=Update publicado::Versao ${{ needs.build.outputs.version }} publicada em updates.kyberrock.com/desktop/win"

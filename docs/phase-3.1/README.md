@@ -9,42 +9,45 @@ Status: pipeline automatico implementado.
 - `electron-updater` com **download automatico** e **instalacao ao fechar o app**
   (`AUTO_DOWNLOAD_UPDATES` / `AUTO_INSTALL_ON_QUIT` em `src/services/update-flow.ts`);
 - botoes de verificar / instalar agora continuam disponiveis como override manual;
-- provider generico HTTPS configurado como `https://updates.kyberrock.com/desktop/win`;
+- provider **GitHub Releases** (repo privado) configurado no `build.publish` do
+  `apps/desktop/package.json`;
 - **pipeline CI** `.github/workflows/desktop-release.yml` que gera e publica o instalador
   automaticamente a cada push na `main`.
 
 ## Como O Update Funciona Hoje
 
 1. Merge/push na `main` (tocando `apps/desktop/**`, `packages/**` ou o manifest raiz).
-2. O workflow define a versao como `MAJOR.MINOR.<run_number>` (sempre crescente, sem bump manual)
-   e roda `npm run dist:win` num runner Windows.
-3. O workflow publica `latest.yml` + `.exe` + `.blockmap` em
-   `updates.kyberrock.com/desktop/win` via rsync/SSH (quando os secrets estao configurados).
-   Os artefatos tambem ficam disponiveis para download direto no run do Actions.
-4. O desktop instalado verifica a cada 30 min e detecta a versao nova.
-5. Baixa em segundo plano automaticamente.
-6. Instala na proxima vez que o operador fechar o app (sem interromper a operacao).
+2. O workflow define a versao como `MAJOR.MINOR.<run_number>` (sempre crescente, sem bump manual).
+3. Injeta o token de leitura (`GH_UPDATER_TOKEN`) no app e roda `npm run dist:win:publish` num
+   runner Windows.
+4. O `electron-builder --publish always` cria um GitHub Release `vX.Y.Z` (publicado, nao draft)
+   com `latest.yml` + `.exe` + `.blockmap`, usando o `GITHUB_TOKEN` automatico do Actions. Uma
+   copia tambem fica como artefato do run.
+5. O desktop instalado verifica a cada 30 min, autentica com o token de leitura embutido e detecta
+   a versao nova.
+6. Baixa em segundo plano automaticamente.
+7. Instala na proxima vez que o operador fechar o app (sem interromper a operacao).
 
-## Secrets Do Deploy (GitHub Actions)
+## Secret Necessario (GitHub Actions)
 
 Configurar em *Settings -> Secrets and variables -> Actions*:
 
-- `UPDATE_SSH_HOST` - host do servidor de updates;
-- `UPDATE_SSH_USER` - usuario SSH;
-- `UPDATE_SSH_KEY` - chave privada SSH (conteudo do arquivo);
-- `UPDATE_DEPLOY_PATH` - diretorio no servidor mapeado para a URL `/desktop/win`;
-- `UPDATE_SSH_PORT` - opcional, padrao `22`.
+- `GH_UPDATER_TOKEN` - PAT **fine-grained**, com escopo **apenas neste repositorio** e permissao
+  **`Contents: read`**. E o token embutido no app instalado para baixar os releases do repo privado.
 
-Enquanto esses secrets nao existem, o build ainda roda e o instalador fica baixavel no run;
-so o passo de publicar no servidor e pulado (com aviso).
+Sem esse secret, o release ainda e publicado, mas os apps instalados nao conseguem autenticar para
+baixar a atualizacao.
 
 ## Decisao De Seguranca
 
-O app nao carrega token do GitHub privado. Para repo privado, publicar updates diretamente do
-GitHub Releases exigiria token no runtime ou proxy autenticado; por isso os artefatos vao para o
-endpoint HTTPS controlado (`updates.kyberrock.com`, VPS/EasyPanel).
+Como o repo e privado, o app precisa de um token para ler os releases. Optou-se por **embutir um
+token somente-leitura** (escopo unico repo, `Contents: read`) no build via CI, em vez de rodar um
+servidor HTTPS proprio. O token nunca e commitado (fica no secret `GH_UPDATER_TOKEN` e e injetado
+em `src/main/updater-config.ts` no build). Como ele viaja dentro do `.asar`, deve ser tratado como
+baixa-confianca: manter read-only + unico repo e rotacionar atualizando o secret e re-rodando o
+workflow. A publicacao (escrita) usa o `GITHUB_TOKEN` do Actions, que nunca sai do CI.
 
 ## Pendente Para Release Real
 
-- Provisionar o servidor de updates e preencher os secrets de deploy acima;
+- Criar o secret `GH_UPDATER_TOKEN`;
 - decidir assinatura de codigo Windows antes do piloto externo.
