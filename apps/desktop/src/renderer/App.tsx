@@ -1276,6 +1276,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         productId: form.productId,
         paymentTermId:
           form.paymentMode === "registered" ? form.paymentTermId || undefined : undefined,
+        paymentMethodId: form.paymentMethodId || undefined,
         manualInstallments,
         manualDownPaymentCents:
           form.paymentMode === "manual" && form.manualDownPaymentEnabled
@@ -7366,41 +7367,10 @@ function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi })
   const [alias, setAlias] = useState("");
   const [omieCode, setOmieCode] = useState("");
   const [accountId, setAccountId] = useState("");
-  const [isCustomerCredit, setIsCustomerCredit] = useState(false);
   const [isActive, setIsActive] = useState(true);
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [flash, showFlash] = useFlash();
-  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState(false);
-  const [documentTypes, setDocumentTypes] = useState<
-    Array<{ code: string; description: string }> | null
-  >(null);
-  const [documentTypesLoading, setDocumentTypesLoading] = useState(false);
-  const [documentTypesError, setDocumentTypesError] = useState<string | null>(null);
-
-  const loadDocumentTypes = useCallback(async () => {
-    setDocumentTypesLoading(true);
-    setDocumentTypesError(null);
-    try {
-      const types = await desktopApi.listOmieDocumentTypes();
-      setDocumentTypes(types);
-    } catch (err) {
-      setDocumentTypes(null);
-      setDocumentTypesError(
-        err instanceof Error ? err.message : "Nao foi possivel buscar as formas do OMIE."
-      );
-    } finally {
-      setDocumentTypesLoading(false);
-    }
-  }, [desktopApi]);
-
-  // Busca as formas do OMIE quando o formulario abre (uma vez; fica em cache).
-  useEffect(() => {
-    if (showForm && documentTypes === null && !documentTypesLoading && !documentTypesError) {
-      void loadDocumentTypes();
-    }
-  }, [showForm, documentTypes, documentTypesLoading, documentTypesError, loadDocumentTypes]);
 
   const loadMethods = useCallback(async () => {
     setLoading(true);
@@ -7420,56 +7390,29 @@ function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi })
     void loadMethods();
   }, [loadMethods]);
 
-  function openCreate(): void {
-    setEditingId(null);
-    setName("");
-    setAlias("");
-    setOmieCode("");
-    setAccountId("");
-    setIsCustomerCredit(false);
-    setIsActive(true);
-    setFormError(null);
-    setShowForm(true);
-  }
-
   function openEdit(method: PaymentMethodCacheEntry): void {
     setEditingId(method.id);
     setName(method.name);
     setAlias(method.alias ?? "");
     setOmieCode(method.omieCode ?? "");
     setAccountId(method.accountId ?? "");
-    setIsCustomerCredit(method.isCustomerCredit);
     setIsActive(method.isActive);
     setFormError(null);
     setShowForm(true);
   }
 
+  // As formas vem do OMIE (sincronizacao) ou do seed padrao. Localmente so e
+  // permitido ativar/desativar, apelidar e vincular a conta.
   async function handleSave(): Promise<void> {
-    if (!name.trim()) {
-      setFormError("Informe o nome da forma de pagamento.");
-      return;
-    }
+    if (!editingId) return;
     setSaving(true);
     try {
-      if (editingId) {
-        await desktopApi.paymentMethodsUpdate(editingId, {
-          name: name.trim(),
-          alias: alias.trim() || null,
-          omieCode: omieCode.trim() || null,
-          accountId: accountId || null,
-          isActive
-        });
-        showFlash("success", "Forma de pagamento atualizada.");
-      } else {
-        await desktopApi.paymentMethodsCreate({
-          name: name.trim(),
-          alias: alias.trim() || null,
-          omieCode: omieCode.trim() || null,
-          accountId: accountId || null,
-          isCustomerCredit
-        });
-        showFlash("success", "Forma de pagamento criada.");
-      }
+      await desktopApi.paymentMethodsUpdate(editingId, {
+        alias: alias.trim() || null,
+        accountId: accountId || null,
+        isActive
+      });
+      showFlash("success", "Forma de pagamento atualizada.");
       setShowForm(false);
       await loadMethods();
     } catch (err) {
@@ -7479,36 +7422,18 @@ function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi })
     }
   }
 
-  async function handleConfirmDelete(): Promise<void> {
-    if (!pendingDeleteId) return;
-    setDeleting(true);
-    try {
-      await desktopApi.paymentMethodsDelete(pendingDeleteId);
-      setPendingDeleteId(null);
-      await loadMethods();
-      showFlash("success", "Forma de pagamento excluida.");
-    } catch (err) {
-      setPendingDeleteId(null);
-      showFlash("error", err instanceof Error ? err.message : "Erro ao excluir.");
-    } finally {
-      setDeleting(false);
-    }
-  }
-
   return (
     <div>
       <CrudSectionHeader
         title="Formas de pagamento"
-        description="Dinheiro, Pix, cartoes, boleto e credito do cliente ja vem cadastrados. Adicione outras formas se precisar."
+        description="As formas vem do OMIE na sincronizacao (nome e codigo). Aqui voce ativa/desativa, apelida e vincula cada forma a uma conta."
         count={methods.length}
-        actionLabel="Nova forma"
-        onAction={openCreate}
       />
       <FlashBanner flash={flash} />
 
       {showForm ? (
         <CrudFormShell
-          title={editingId ? "Editar forma de pagamento" : "Nova forma de pagamento"}
+          title="Editar forma de pagamento"
           error={formError}
           saving={saving}
           maxWidth={520}
@@ -7516,32 +7441,26 @@ function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi })
           onSubmit={() => void handleSave()}
         >
           <FormSection title="Dados">
-            <TextInput label="Nome" value={name} onChange={setName} required />
+            <Field label="Forma" hint="Nome e codigo vem do OMIE e nao sao editaveis aqui.">
+              <p style={{ ...styles.helperText, margin: 0 }}>
+                {name}
+                {omieCode ? ` | Cod. OMIE ${omieCode}` : " | Sem codigo OMIE (sincronize com o OMIE)"}
+              </p>
+            </Field>
             <TextInput
               label="Apelido"
               value={alias}
               onChange={setAlias}
               placeholder="Rotulo exibido (opcional)"
             />
-            {editingId ? (
-              <label style={styles.checkboxLabel}>
-                <input
-                  type="checkbox"
-                  checked={isActive}
-                  onChange={(e) => setIsActive(e.target.checked)}
-                />
-                Ativa
-              </label>
-            ) : (
-              <label style={styles.checkboxLabel}>
-                <input
-                  type="checkbox"
-                  checked={isCustomerCredit}
-                  onChange={(e) => setIsCustomerCredit(e.target.checked)}
-                />
-                E credito do cliente (fiado)
-              </label>
-            )}
+            <label style={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                checked={isActive}
+                onChange={(e) => setIsActive(e.target.checked)}
+              />
+              Ativa
+            </label>
           </FormSection>
           <FormSection title="Integracao financeira">
             <Field
@@ -7561,73 +7480,8 @@ function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi })
                 ))}
               </select>
             </Field>
-            <Field
-              label="Codigo OMIE"
-              hint="Forma de pagamento no OMIE. Puxada direto do OMIE (tipos de documento)."
-            >
-              {documentTypes && documentTypes.length > 0 ? (
-                <select
-                  value={omieCode}
-                  onChange={(e) => setOmieCode(e.target.value)}
-                  style={getInputStyle(false)}
-                >
-                  <option value="">Sem codigo OMIE</option>
-                  {omieCode && !documentTypes.some((t) => t.code === omieCode) ? (
-                    <option value={omieCode}>{omieCode} (atual)</option>
-                  ) : null}
-                  {documentTypes.map((t) => (
-                    <option key={t.code} value={t.code}>
-                      {t.code} - {t.description}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <>
-                  <TextInput
-                    label=""
-                    value={omieCode}
-                    onChange={setOmieCode}
-                    placeholder="Codigo da forma no OMIE (opcional)"
-                  />
-                  <div
-                    style={{
-                      display: "flex",
-                      gap: "8px",
-                      alignItems: "center",
-                      marginTop: "6px"
-                    }}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => void loadDocumentTypes()}
-                      disabled={documentTypesLoading}
-                      style={{ ...styles.secondaryButton, fontSize: "11px", padding: "4px 8px" }}
-                    >
-                      {documentTypesLoading ? "Buscando..." : "Buscar formas do OMIE"}
-                    </button>
-                    <p style={{ ...styles.helperText, margin: 0 }}>
-                      {documentTypesError
-                        ? documentTypesError
-                        : documentTypesLoading
-                          ? "Consultando o OMIE..."
-                          : "Ou informe o codigo manualmente."}
-                    </p>
-                  </div>
-                </>
-              )}
-            </Field>
           </FormSection>
         </CrudFormShell>
-      ) : null}
-
-      {pendingDeleteId ? (
-        <ConfirmDialog
-          title="Excluir forma de pagamento"
-          description="A forma de pagamento sera removida dos cadastros."
-          busy={deleting}
-          onCancel={() => setPendingDeleteId(null)}
-          onConfirm={() => void handleConfirmDelete()}
-        />
       ) : null}
 
       <DataTable
@@ -7672,12 +7526,7 @@ function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi })
             header: "Acoes",
             width: "150px",
             align: "right",
-            render: (m: PaymentMethodCacheEntry) => (
-              <>
-                <EditRowButton onClick={() => openEdit(m)} />
-                {m.isSystem ? null : <DeleteRowButton onClick={() => setPendingDeleteId(m.id)} />}
-              </>
-            )
+            render: (m: PaymentMethodCacheEntry) => <EditRowButton onClick={() => openEdit(m)} />
           }
         ]}
         rows={methods}
@@ -7685,7 +7534,7 @@ function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi })
         loading={loading}
         minWidth="760px"
         emptyTitle="Nenhuma forma de pagamento."
-        emptyHint="As formas padrao sao criadas automaticamente."
+        emptyHint="Sincronize com o OMIE para puxar os meios de pagamento."
       />
     </div>
   );
@@ -7932,76 +7781,104 @@ function PaymentConditionsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi
 }
 
 function AccountsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
-  const fields: CrudField[] = [
-    { key: "name", label: "Nome", required: true },
-    {
-      key: "omieCode",
-      label: "Codigo OMIE",
-      helper: "Codigo da conta corrente no OMIE (opcional)."
-    }
-  ];
+  const [accounts, setAccounts] = useState<AccountCacheEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [flash, showFlash] = useFlash();
 
-  const columns: Array<DataTableColumn<Record<string, unknown>>> = [
-    {
-      key: "name",
-      header: "Conta",
-      width: "minmax(200px, 1.3fr)",
-      render: (item) => <CellPrimary>{String(item.name ?? "")}</CellPrimary>
-    },
-    {
-      key: "omie",
-      header: "Cod. OMIE",
-      width: "140px",
-      render: (item) => <CellMuted>{String(item.omieCode ?? "") || "-"}</CellMuted>
-    },
-    {
-      key: "type",
-      header: "Origem",
-      width: "120px",
-      render: (item) => <CellMuted>{item.isSystem ? "Sistema" : "Personalizada"}</CellMuted>
+  const loadAccounts = useCallback(async () => {
+    setLoading(true);
+    try {
+      const result = await desktopApi.queryCache({
+        entityType: "account",
+        activeOnly: false,
+        limit: 200
+      });
+      setAccounts(result.rows as AccountCacheEntry[]);
+    } finally {
+      setLoading(false);
     }
-  ];
+  }, [desktopApi]);
+
+  useEffect(() => {
+    void loadAccounts();
+  }, [loadAccounts]);
+
+  // Contas vem do OMIE (sincronizacao); localmente so ativar/desativar.
+  async function toggleActive(account: AccountCacheEntry): Promise<void> {
+    setTogglingId(account.id);
+    try {
+      await desktopApi.accountsUpdate(account.id, { isActive: !account.isActive });
+      await loadAccounts();
+      showFlash("success", account.isActive ? "Conta desativada." : "Conta ativada.");
+    } catch (err) {
+      showFlash("error", err instanceof Error ? err.message : "Erro ao atualizar a conta.");
+    } finally {
+      setTogglingId(null);
+    }
+  }
 
   return (
-    <ResourceCrud
-      desktopApi={desktopApi}
-      entityType="account"
-      singular="Conta"
-      gender="f"
-      title="Contas"
-      description="Contas usadas no fechamento financeiro. Vincule as formas de pagamento a elas."
-      searchPlaceholder="Buscar contas..."
-      emptyHint={'Cadastre pelo botao "Nova conta".'}
-      modalMaxWidth={520}
-      fields={fields}
-      columns={columns}
-      rowToForm={(item) => ({
-        name: String(item.name ?? ""),
-        omieCode: String(item.omieCode ?? "")
-      })}
-      buildPayload={(form) => {
-        if (!form.name.trim()) return { error: "Informe o nome da conta." };
-        return { value: { name: form.name.trim(), omieCode: form.omieCode.trim() } };
-      }}
-      create={(payload) =>
-        desktopApi
-          .accountsCreate({
-            name: payload.name as string,
-            omieCode: (payload.omieCode as string) || undefined
-          })
-          .then(() => undefined)
-      }
-      update={(id, payload) =>
-        desktopApi
-          .accountsUpdate(id, {
-            name: payload.name as string,
-            omieCode: (payload.omieCode as string) || null
-          })
-          .then(() => undefined)
-      }
-      remove={(id) => desktopApi.accountsDelete(id)}
-      deleteDescription="A conta sera removida. Formas de pagamento vinculadas ficam sem conta."
-    />
+    <div>
+      <CrudSectionHeader
+        title="Contas"
+        description="As contas correntes vem do OMIE na sincronizacao (nome e codigo). Ative/desative as que devem aparecer e vincule as formas de pagamento a elas."
+        count={accounts.length}
+      />
+      <FlashBanner flash={flash} />
+      <DataTable
+        columns={[
+          {
+            key: "name",
+            header: "Conta",
+            width: "minmax(200px, 1.3fr)",
+            render: (account: AccountCacheEntry) => <CellPrimary>{account.name}</CellPrimary>
+          },
+          {
+            key: "omie",
+            header: "Cod. OMIE",
+            width: "140px",
+            render: (account: AccountCacheEntry) => (
+              <CellMuted>{account.omieCode ?? "-"}</CellMuted>
+            )
+          },
+          {
+            key: "status",
+            header: "Status",
+            width: "90px",
+            render: (account: AccountCacheEntry) => (
+              <CellMuted>{account.isActive ? "Ativa" : "Inativa"}</CellMuted>
+            )
+          },
+          {
+            key: "actions",
+            header: "Acoes",
+            width: "150px",
+            align: "right",
+            render: (account: AccountCacheEntry) => (
+              <button
+                type="button"
+                onClick={() => void toggleActive(account)}
+                disabled={togglingId === account.id}
+                style={{ ...styles.secondaryButton, fontSize: "11px", padding: "4px 10px" }}
+              >
+                {togglingId === account.id
+                  ? "Salvando..."
+                  : account.isActive
+                    ? "Desativar"
+                    : "Ativar"}
+              </button>
+            )
+          }
+        ]}
+        rows={accounts}
+        rowKey={(account) => account.id}
+        loading={loading}
+        minWidth="600px"
+        emptyTitle="Nenhuma conta."
+        emptyHint="Sincronize com o OMIE para puxar as contas correntes."
+      />
+    </div>
   );
 }
 

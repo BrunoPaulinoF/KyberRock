@@ -110,16 +110,13 @@ const desktopApi = {
   customersUpdate: (id: string, input: unknown) =>
     ipcRenderer.invoke("desktop:customers-update", id, input),
   customersDelete: (id: string) => ipcRenderer.invoke("desktop:customers-delete", id),
-  paymentMethodsCreate: (input: unknown) =>
-    ipcRenderer.invoke("desktop:payment-methods-create", input),
+  // Meios de pagamento e contas vem do OMIE (sincronizacao); localmente so ha
+  // atualizacao restrita (ativar/desativar, apelido, vinculo forma -> conta).
   paymentMethodsUpdate: (id: string, input: unknown) =>
     ipcRenderer.invoke("desktop:payment-methods-update", id, input),
-  paymentMethodsDelete: (id: string) => ipcRenderer.invoke("desktop:payment-methods-delete", id),
   accountsList: () => ipcRenderer.invoke("desktop:accounts-list"),
-  accountsCreate: (input: unknown) => ipcRenderer.invoke("desktop:accounts-create", input),
   accountsUpdate: (id: string, input: unknown) =>
     ipcRenderer.invoke("desktop:accounts-update", id, input),
-  accountsDelete: (id: string) => ipcRenderer.invoke("desktop:accounts-delete", id),
   paymentTermsCreate: (input: unknown) =>
     ipcRenderer.invoke("desktop:payment-terms-create", input),
   paymentTermsUpdate: (id: string, input: unknown) =>

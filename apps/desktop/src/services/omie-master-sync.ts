@@ -206,6 +206,26 @@ export async function syncOmieMasterData(
       return result;
     }));
 
+    // 7. Payment methods (meios de pagamento) — nome + codigo OMIE, idempotente.
+    entities.push(await syncEntity("meios_pagamento", async () => {
+      if (options.appKey && options.appSecret) {
+        const client = createOmieClient({ appKey: options.appKey, appSecret: options.appSecret });
+        const service = new OmieSyncService(client, database);
+        return await service.syncPaymentMethods(companyId);
+      }
+      return { fetched: 0, created: 0, updated: 0, skipped: 0 };
+    }));
+
+    // 8. Checking accounts (contas correntes) — nome + nCodCC, idempotente.
+    entities.push(await syncEntity("contas_correntes", async () => {
+      if (options.appKey && options.appSecret) {
+        const client = createOmieClient({ appKey: options.appKey, appSecret: options.appSecret });
+        const service = new OmieSyncService(client, database);
+        return await service.syncCheckingAccounts(companyId);
+      }
+      return { fetched: 0, created: 0, updated: 0, skipped: 0 };
+    }));
+
     const success = entities.every((e) => e.success);
     const finishedAt = new Date();
 

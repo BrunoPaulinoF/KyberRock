@@ -631,6 +631,114 @@ Deno.test("create_order envia cCodParc e nQtdeParc na ordem de servico", async (
   assertEquals(cabecalho.nQtdeParc, 3);
 });
 
+Deno.test("create_order usa a conta corrente selecionada no desktop no pedido de venda", async () => {
+  const deviceToken = "token-order-account";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-order-account": {
+        id: "device-order-account",
+        company_id: "company-order-account",
+        unit_id: "unit-order-account",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-order-account": {
+        id: "company-order-account",
+        is_active: true,
+        omie_app_key: "order-account",
+        omie_app_secret: "secret-order-account"
+      }
+    }
+  });
+  const omieQueue = orderQueueStub();
+
+  const response = await postOmieSync(
+    {
+      deviceId: "device-order-account",
+      deviceToken,
+      action: "create_order",
+      payload: {
+        operationType: "invoice",
+        customerOmieId: 100,
+        productOmieId: 200,
+        quantity: 30.5,
+        unitPrice: 85,
+        issueDate: "2026-07-07",
+        idempotencyKey: "kyberrock:unit:op4:create_sales_order",
+        paymentMethodOmieCode: "17",
+        accountOmieCode: "4321"
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  assertObjectMatch(response, { ok: true, orderId: 12345 });
+  const infos = getParam(findRequest(omieQueue, "IncluirPedido")).informacoes_adicionais as Record<
+    string,
+    unknown
+  >;
+  assertEquals(infos.codigo_conta_corrente, 4321);
+  // A conta veio do desktop; nao ha resolucao automatica da primeira conta do tenant.
+  assertEquals(
+    omieQueue.requests.some((request) => request.call === "ListarContasCorrentes"),
+    false
+  );
+});
+
+Deno.test("create_order usa a conta corrente selecionada no desktop na ordem de servico", async () => {
+  const deviceToken = "token-order-os-account";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-order-os-account": {
+        id: "device-order-os-account",
+        company_id: "company-order-os-account",
+        unit_id: "unit-order-os-account",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-order-os-account": {
+        id: "company-order-os-account",
+        is_active: true,
+        omie_app_key: "order-os-account",
+        omie_app_secret: "secret-order-os-account"
+      }
+    }
+  });
+  const omieQueue = orderQueueStub();
+
+  const response = await postOmieSync(
+    {
+      deviceId: "device-order-os-account",
+      deviceToken,
+      action: "create_order",
+      payload: {
+        operationType: "internal",
+        customerOmieId: 100,
+        serviceDescription: "Pesagem interna",
+        quantity: 12,
+        unitPrice: 40,
+        issueDate: "2026-07-07",
+        idempotencyKey: "kyberrock:unit:op5:create_service_order",
+        accountOmieCode: 4321
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  assertObjectMatch(response, { ok: true, orderId: 555 });
+  const infos = getParam(findRequest(omieQueue, "IncluirOS")).InformacoesAdicionais as Record<
+    string,
+    unknown
+  >;
+  assertEquals(infos.nCodCC, 4321);
+});
+
 Deno.test("cancel_order consulta e exclui um pedido de venda nao faturado", async () => {
   const deviceToken = "token-cancel-ok";
   const fixtures = createSupabaseDependencies({

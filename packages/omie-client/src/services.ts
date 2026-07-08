@@ -3,4 +3,6 @@ export * from "./constants.js";
 export * from "./omie-request.js";
 export * from "./customers-service.js";
 export * from "./products-service.js";
+export * from "./payment-methods-service.js";
+export * from "./checking-accounts-service.js";
 export * from "./omie-tags.js";

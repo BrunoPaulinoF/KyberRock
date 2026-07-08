@@ -36,11 +36,8 @@ import type {
   TruckControlReport
 } from "../services/reports";
 import type { CreateCustomerInput, UpdateCustomerInput } from "../services/customers";
-import type {
-  CreatePaymentMethodInput,
-  UpdatePaymentMethodInput
-} from "../services/payment-methods";
-import type { CreateAccountInput, UpdateAccountInput } from "../services/accounts";
+import type { UpdatePaymentMethodInput } from "../services/payment-methods";
+import type { UpdateAccountInput } from "../services/accounts";
 import type {
   CreatePaymentTermInput,
   OmiePaymentTermOption,
@@ -89,6 +86,7 @@ export interface KyberRockDesktopApi {
     driverId: string;
     productId: string;
     paymentTermId?: string;
+    paymentMethodId?: string;
     manualInstallments?: number;
     manualDownPaymentCents?: number;
     freight?: OperationFreightInput | null;
@@ -283,15 +281,11 @@ export interface KyberRockDesktopApi {
   customersCreate: (input: Omit<CreateCustomerInput, "companyId">) => Promise<unknown>;
   customersUpdate: (id: string, input: UpdateCustomerInput) => Promise<unknown>;
   customersDelete: (id: string) => Promise<void>;
-  paymentMethodsCreate: (
-    input: Omit<CreatePaymentMethodInput, "companyId">
-  ) => Promise<unknown>;
+  // Meios de pagamento e contas vem do OMIE (sincronizacao); localmente so ha
+  // atualizacao restrita (ativar/desativar, apelido, vinculo forma -> conta).
   paymentMethodsUpdate: (id: string, input: UpdatePaymentMethodInput) => Promise<unknown>;
-  paymentMethodsDelete: (id: string) => Promise<void>;
   accountsList: () => Promise<unknown[]>;
-  accountsCreate: (input: Omit<CreateAccountInput, "companyId">) => Promise<unknown>;
   accountsUpdate: (id: string, input: UpdateAccountInput) => Promise<unknown>;
-  accountsDelete: (id: string) => Promise<void>;
   paymentTermsCreate: (input: Omit<CreatePaymentTermInput, "companyId">) => Promise<unknown>;
   paymentTermsUpdate: (id: string, input: UpdatePaymentTermInput) => Promise<unknown>;
   paymentTermsDelete: (id: string) => Promise<void>;

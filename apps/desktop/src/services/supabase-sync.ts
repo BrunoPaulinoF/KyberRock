@@ -1872,6 +1872,8 @@ export async function processOmieSyncQueue(
       issueDate: string;
       paymentTermOmieCode?: string | null;
       paymentTermInstallmentCount?: number | null;
+      paymentMethodOmieCode?: string | null;
+      accountOmieCode?: string | null;
     };
 
     try {
@@ -1899,6 +1901,8 @@ export async function processOmieSyncQueue(
             issueDate: payload.issueDate,
             paymentTermOmieCode: payload.paymentTermOmieCode ?? undefined,
             installmentCount: payload.paymentTermInstallmentCount ?? undefined,
+            paymentMethodOmieCode: payload.paymentMethodOmieCode ?? undefined,
+            accountOmieCode: payload.accountOmieCode ?? undefined,
             idempotencyKey: job.idempotencyKey
           }
         }
@@ -2082,6 +2086,8 @@ export async function processFiscalBillingNow(
     issueDate: string;
     paymentTermOmieCode?: string | null;
     paymentTermInstallmentCount?: number | null;
+    paymentMethodOmieCode?: string | null;
+    accountOmieCode?: string | null;
   };
 
   if (payload.operationType !== "invoice") {
@@ -2110,6 +2116,8 @@ export async function processFiscalBillingNow(
           issueDate: payload.issueDate,
           paymentTermOmieCode: payload.paymentTermOmieCode ?? undefined,
           installmentCount: payload.paymentTermInstallmentCount ?? undefined,
+          paymentMethodOmieCode: payload.paymentMethodOmieCode ?? undefined,
+          accountOmieCode: payload.accountOmieCode ?? undefined,
           idempotencyKey: job.idempotency_key
         }
       }

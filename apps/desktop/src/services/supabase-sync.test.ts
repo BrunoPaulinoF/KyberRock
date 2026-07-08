@@ -1351,14 +1351,23 @@ function insertLocalCarrier(
 
 function insertWeighingOperation(database: DesktopDatabase): void {
   const now = "2026-06-12T12:00:00.000Z";
+  // Cliente com cadastro fiscal completo (email + numero do endereco), exigido pelo
+  // gate de pre-validacao de NF-e do faturamento imediato.
+  database
+    .prepare(
+      `INSERT OR IGNORE INTO customers (
+        id, company_id, source, legal_name, trade_name, email, address_number, created_at, updated_at
+      ) VALUES ('sync-customer-1', 'company-1', 'omie', 'Cliente Sync LTDA', 'Cliente Sync', 'sync@example.com', '10', ?, ?)`
+    )
+    .run(now, now);
   database
     .prepare(
       `INSERT INTO weighing_operations (
-        id, company_id, unit_id, device_id, status, operation_type,
+        id, company_id, unit_id, device_id, status, operation_type, customer_id,
         entry_weight_kg, exit_weight_kg, net_weight_kg, unit_price_cents,
         product_total_cents, total_cents, created_at, updated_at
       ) VALUES (
-        'operation-1', 'company-1', 'unit-1', 'device-1', 'pending_omie', 'invoice',
+        'operation-1', 'company-1', 'unit-1', 'device-1', 'pending_omie', 'invoice', 'sync-customer-1',
         20, 10, 10, 2500, 25000, 25000, ?, ?
       )`
     )

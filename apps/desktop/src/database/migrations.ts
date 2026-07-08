@@ -1086,5 +1086,18 @@ ALTER TABLE payment_terms ADD COLUMN omie_parcela_code TEXT;
 CREATE INDEX IF NOT EXISTS idx_payment_terms_omie_parcela
   ON payment_terms(company_id, omie_parcela_code);
 `
+  },
+  {
+    version: 31,
+    name: "weighing_operation_payment_method",
+    sql: `
+-- Meio de pagamento escolhido na operacao. No fechamento, o codigo OMIE do meio e o
+-- codigo OMIE da conta vinculada (payment_methods.account_id -> accounts.omie_code)
+-- seguem no job de criacao do pedido/OS para o OMIE.
+ALTER TABLE weighing_operations ADD COLUMN payment_method_id TEXT REFERENCES payment_methods(id);
+
+CREATE INDEX IF NOT EXISTS idx_weighing_operations_payment_method
+  ON weighing_operations(payment_method_id);
+`
   }
 ];

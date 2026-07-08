@@ -10,11 +10,8 @@ import { DesktopRuntime, type FiscalDocumentPrinter } from "../services/runtime.
 import type { ActivateDesktopInput } from "../services/desktop-activation.js";
 import type { CacheQueryOptions } from "../services/cache-store.js";
 import type { CreateCustomerInput, UpdateCustomerInput } from "../services/customers.js";
-import type {
-  CreatePaymentMethodInput,
-  UpdatePaymentMethodInput
-} from "../services/payment-methods.js";
-import type { CreateAccountInput, UpdateAccountInput } from "../services/accounts.js";
+import type { UpdatePaymentMethodInput } from "../services/payment-methods.js";
+import type { UpdateAccountInput } from "../services/accounts.js";
 import type {
   CreatePaymentTermInput,
   UpdatePaymentTermInput
@@ -808,14 +805,8 @@ function registerIpcHandlers(): void {
     runtime.deleteCustomer(id);
   });
 
-  ipcMain.handle(
-    "desktop:payment-methods-create",
-    (_event, input: Omit<CreatePaymentMethodInput, "companyId">) => {
-      if (!runtime) throw new Error("Desktop runtime is not ready.");
-      return runtime.createPaymentMethod(input);
-    }
-  );
-
+  // Meios de pagamento e contas vem do OMIE (sincronizacao) — nao ha handlers de
+  // criacao/exclusao no desktop, apenas atualizacao restrita.
   ipcMain.handle(
     "desktop:payment-methods-update",
     (_event, id: string, input: UpdatePaymentMethodInput) => {
@@ -824,32 +815,14 @@ function registerIpcHandlers(): void {
     }
   );
 
-  ipcMain.handle("desktop:payment-methods-delete", (_event, id: string) => {
-    if (!runtime) throw new Error("Desktop runtime is not ready.");
-    runtime.deletePaymentMethod(id);
-  });
-
   ipcMain.handle("desktop:accounts-list", () => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.listAccounts();
   });
 
-  ipcMain.handle(
-    "desktop:accounts-create",
-    (_event, input: Omit<CreateAccountInput, "companyId">) => {
-      if (!runtime) throw new Error("Desktop runtime is not ready.");
-      return runtime.createAccount(input);
-    }
-  );
-
   ipcMain.handle("desktop:accounts-update", (_event, id: string, input: UpdateAccountInput) => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.updateAccount(id, input);
-  });
-
-  ipcMain.handle("desktop:accounts-delete", (_event, id: string) => {
-    if (!runtime) throw new Error("Desktop runtime is not ready.");
-    runtime.deleteAccount(id);
   });
 
   ipcMain.handle(

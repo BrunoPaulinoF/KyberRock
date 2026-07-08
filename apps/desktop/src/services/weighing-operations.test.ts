@@ -652,6 +652,8 @@ describe("weighing operations", () => {
     const database = createDatabase();
 
     try {
+      // insertCatalog referencia company-1; a identidade cria a empresa (FK).
+      createIdentity(database);
       insertCatalog(database);
       expect(validateCustomerFiscalReadiness(database, "customer-1").ready).toBe(true);
 
@@ -796,6 +798,96 @@ describe("weighing operations", () => {
       };
       expect(payload.paymentTermOmieCode).toBe("030");
       expect(payload.paymentTermInstallmentCount).toBe(2);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("sends the OMIE codes of the selected payment method and its linked account", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET omie_customer_id = 456 WHERE id = 'customer-1'").run();
+      const now = "2026-06-06T12:00:00.000Z";
+      database
+        .prepare(
+          `INSERT INTO accounts (id, company_id, code, name, omie_code, is_system, sort_order, is_active, created_at, updated_at)
+           VALUES ('account-getnet', 'company-1', NULL, 'GetNet', '4321', 0, 1, 1, ?, ?)`
+        )
+        .run(now, now);
+      database
+        .prepare(
+          `INSERT INTO payment_methods (id, company_id, code, name, omie_code, account_id, is_system, is_customer_credit, sort_order, is_active, created_at, updated_at)
+           VALUES ('method-debit', 'company-1', 'debit_card', 'Cartao de debito', '04', 'account-getnet', 0, 0, 1, 1, ?, ?)`
+        )
+        .run(now, now);
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        paymentMethodId: "method-debit",
+        entryWeightKg: 12_000
+      });
+
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      const payloadJson = database
+        .prepare("SELECT payload_json FROM sync_queue WHERE target = 'omie'")
+        .pluck()
+        .get() as string;
+      const payload = JSON.parse(payloadJson) as {
+        paymentMethodOmieCode: string | null;
+        accountOmieCode: string | null;
+      };
+      expect(payload.paymentMethodOmieCode).toBe("04");
+      expect(payload.accountOmieCode).toBe("4321");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("sends null payment method/account codes when no method was selected", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET omie_customer_id = 456 WHERE id = 'customer-1'").run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      const payloadJson = database
+        .prepare("SELECT payload_json FROM sync_queue WHERE target = 'omie'")
+        .pluck()
+        .get() as string;
+      const payload = JSON.parse(payloadJson) as {
+        paymentMethodOmieCode: string | null;
+        accountOmieCode: string | null;
+      };
+      expect(payload.paymentMethodOmieCode).toBeNull();
+      expect(payload.accountOmieCode).toBeNull();
     } finally {
       database.close();
     }

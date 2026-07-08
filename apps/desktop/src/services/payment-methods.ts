@@ -31,10 +31,12 @@ export interface CreatePaymentMethodInput {
   sortOrder?: number;
 }
 
+/**
+ * Campos editaveis localmente. Nome e codigo OMIE sao de propriedade do OMIE
+ * (chegam pela sincronizacao) e nao podem ser alterados no desktop.
+ */
 export interface UpdatePaymentMethodInput {
-  name?: string;
   alias?: string | null;
-  omieCode?: string | null;
   accountId?: string | null;
   isActive?: boolean;
   sortOrder?: number;
@@ -204,19 +206,9 @@ export function updatePaymentMethod(
   const sets: string[] = [];
   const values: unknown[] = [];
 
-  if (input.name !== undefined) {
-    const name = input.name.trim();
-    if (!name) throw new Error("Informe o nome da forma de pagamento.");
-    sets.push("name = ?");
-    values.push(name);
-  }
   if (input.alias !== undefined) {
     sets.push("alias = ?");
     values.push(input.alias?.trim() || null);
-  }
-  if (input.omieCode !== undefined) {
-    sets.push("omie_code = ?");
-    values.push(input.omieCode?.trim() || null);
   }
   if (input.accountId !== undefined) {
     sets.push("account_id = ?");
