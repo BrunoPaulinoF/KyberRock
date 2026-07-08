@@ -191,16 +191,24 @@ type CreateOrderPayload = {
   createdAt?: string;
   /**
    * Codigo de parcela do OMIE (codigo_parcela/cCodParc). String, preserva zeros a
-   * esquerda (ex: "000", "030"). Ausente -> padrao "000" (a vista).
+   * esquerda (ex: "000", "030"). Ausente -> a condicao e resolvida/criada no
+   * cadastro de parcelas do OMIE a partir de installmentDays/installmentCount
+   * (ensureOmieParcelaCode); em ultimo caso "000" (a vista).
    */
   paymentTermOmieCode?: string;
   /** Numero de parcelas da OS (nQtdeParc). Ausente/invalido -> 1. */
   installmentCount?: number;
   /**
+   * Dias de vencimento das parcelas da condicao escolhida no desktop (ex: [7,14,21]).
+   * Usados para localizar/criar a parcela no cadastro do OMIE quando nao ha codigo.
+   */
+  installmentDays?: number[];
+  /**
    * Codigo NFe/OMIE do meio de pagamento selecionado no desktop ("01" dinheiro,
-   * "17" PIX...). Transportado no payload; a insercao no corpo do pedido depende
-   * de parcelamento customizado (codigo_parcela "999" + lista_parcelas), contrato
-   * ainda a validar com credenciais reais — ver backlog 2026-07-06 (item 2, P0).
+   * "17" PIX...). Transportado no payload; como o pedido/OS referencia a condicao
+   * pelo codigo do cadastro de parcelas, o meio (tPag da NF-e) ainda nao entra no
+   * corpo do pedido — exigiria parcelamento informado (codigo_parcela "999" +
+   * lista_parcelas), a validar com credenciais reais.
    */
   paymentMethodOmieCode?: string;
   /**
@@ -1415,6 +1423,122 @@ function normalizeParcelaCode(value: string | undefined): string | null {
   return /^[0-9A-Za-z]+$/.test(text) ? text : null;
 }
 
+// Codigos de parcela criados/descobertos no cadastro do OMIE, por app_key + condicao.
+const omieParcelaCodeCache = new Map<string, string>();
+
+/** Dias de vencimento de uma parcela do cadastro OMIE (json explicito ou 1o dia + intervalo). */
+function paymentTermDueDays(term: OmiePaymentTerm): number[] | null {
+  if (term.installmentDaysJson && term.installmentDaysJson.length > 0) {
+    return term.installmentDaysJson;
+  }
+  const count = term.installmentCount;
+  const first = term.firstInstallmentDays;
+  if (!count || count < 1 || first === null || first < 0) return null;
+  const interval = term.installmentIntervalDays ?? 0;
+  return Array.from({ length: count }, (_, index) => first + index * interval);
+}
+
+function sameDays(a: number[], b: number[]): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+/**
+ * Garante que a condicao de pagamento da operacao exista no cadastro de parcelas do
+ * OMIE (/geral/parcelas/) e retorna o codigo dela. Fluxo: procura por dias de
+ * vencimento iguais em ListarParcelas; se nao existir, cria via IncluirParcela no
+ * formato aceito pelo OMIE ("7/14/21", "93 dias" ou "5") e usa o cCodParcela
+ * retornado. Qualquer falha retorna null e o chamador cai no comportamento
+ * historico ("000"/codigo vinculado) — a criacao do pedido/OS nunca trava aqui.
+ */
+async function ensureOmieParcelaCode(
+  credentials: OmieCredentials,
+  payload: CreateOrderPayload
+): Promise<string | null> {
+  const days = (payload.installmentDays ?? [])
+    .map((value) => toNumber(value))
+    .filter((value): value is number => value !== null && value >= 0);
+  const count =
+    typeof payload.installmentCount === "number" && payload.installmentCount > 0
+      ? Math.floor(payload.installmentCount)
+      : days.length;
+
+  // A vista (sem parcelamento util): mantem o padrao "000" do chamador.
+  const isAVista = days.length === 0 ? count <= 1 : days.length === 1 && days[0] === 0;
+  if (isAVista) return null;
+
+  const conditionText =
+    days.length > 1
+      ? days.join("/")
+      : days.length === 1
+        ? `${days[0]} dias`
+        : String(count);
+
+  const cacheKey = `${credentials.appKey}:${conditionText}`;
+  const cached = omieParcelaCodeCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
+  try {
+    // 1. Procura no cadastro por dias de vencimento equivalentes.
+    const desiredDays = days.length > 0 ? days : null;
+    let page = 1;
+    let finished = false;
+    while (!finished) {
+      const result = await listPaymentTermsPage(credentials, page);
+      for (const term of result.items) {
+        if (!term.code || !term.isActive) continue;
+        const termDays = paymentTermDueDays(term);
+        if (desiredDays !== null) {
+          if (termDays !== null && sameDays(termDays, desiredDays)) {
+            omieParcelaCodeCache.set(cacheKey, term.code);
+            return term.code;
+          }
+        } else if (termDays === null && term.installmentCount === count) {
+          // Sem dias dos dois lados: casa pela quantidade de parcelas.
+          omieParcelaCodeCache.set(cacheKey, term.code);
+          return term.code;
+        }
+      }
+      finished = result.finished || result.items.length === 0;
+      page++;
+    }
+
+    // 2. Nao existe: cria no cadastro do OMIE. O nome do campo de descricao varia na
+    // documentacao publica; tenta os dois aliases conhecidos (sem risco de duplicar:
+    // uma tentativa rejeitada por tag invalida nao cria nada).
+    let response: Record<string, unknown> | null = null;
+    try {
+      response = await callOmie<unknown, Record<string, unknown>>(
+        credentials,
+        "/geral/parcelas/",
+        "IncluirParcela",
+        { cDescricao: conditionText }
+      );
+    } catch {
+      response = await callOmie<unknown, Record<string, unknown>>(
+        credentials,
+        "/geral/parcelas/",
+        "IncluirParcela",
+        { descricao: conditionText }
+      );
+    }
+
+    const createdCode = normalizeParcelaCode(
+      findStringByKey(response, "cCodParcela") ??
+        findStringByKey(response, "nCodigo") ??
+        findStringByKey(response, "codigo") ??
+        undefined
+    );
+    if (createdCode) {
+      omieParcelaCodeCache.set(cacheKey, createdCode);
+      return createdCode;
+    }
+    return null;
+  } catch {
+    // Falhas de consulta/criacao nao sao cacheadas para permitir nova tentativa.
+    return null;
+  }
+}
+
 async function createOmieOrder(
   credentials: OmieCredentials,
   payload: CreateOrderPayload
@@ -1427,7 +1551,13 @@ async function createOmieOrder(
     selectedAccountCode !== null && selectedAccountCode > 0
       ? selectedAccountCode
       : await resolveOmieAccountCode(credentials);
-  const parcelaCode = normalizeParcelaCode(payload.paymentTermOmieCode) ?? "000";
+  // Codigo de parcela: usa o vinculado quando existe; sem vinculo, garante a condicao
+  // da operacao no cadastro de parcelas do OMIE (criando-a se preciso); em ultimo
+  // caso cai no "000" (a vista) — comportamento historico.
+  const parcelaCode =
+    normalizeParcelaCode(payload.paymentTermOmieCode) ??
+    (await ensureOmieParcelaCode(credentials, payload)) ??
+    "000";
   const installmentCount =
     typeof payload.installmentCount === "number" && payload.installmentCount > 0
       ? Math.floor(payload.installmentCount)

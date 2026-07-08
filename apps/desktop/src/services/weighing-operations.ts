@@ -886,6 +886,8 @@ export interface OmieBillingJobPayload {
   issueDate: string;
   paymentTermOmieCode: string | null;
   paymentTermInstallmentCount: number | null;
+  /** Dias de vencimento das parcelas da condicao OMIE (ex: [7,14,21]); null = a vista. */
+  paymentTermInstallmentDays: number[] | null;
   /** Codigo NFe/OMIE do meio de pagamento escolhido na operacao ("01", "17"...). */
   paymentMethodOmieCode: string | null;
   /** nCodCC (OMIE) da conta vinculada ao meio escolhido; vai em codigo_conta_corrente/nCodCC. */
@@ -942,17 +944,30 @@ export function buildOmieBillingJob(
       )?.omie_product_id ?? null
     : null;
 
+  // Espelho OMIE (quando a condicao local esta vinculada a um codigo) tem precedencia;
+  // sem vinculo, os campos da propria condicao local (parse do texto digitado) valem —
+  // e a edge cria a parcela no cadastro do OMIE a partir deles.
   const omieParcela = row.payment_term_id
     ? (database
         .prepare(
-          `SELECT pt.omie_parcela_code AS code, opt.installment_count AS installment_count
+          `SELECT pt.omie_parcela_code AS code,
+                  COALESCE(opt.installment_count, pt.installment_count) AS installment_count,
+                  COALESCE(opt.installment_days_json, pt.installment_days_json) AS installment_days_json,
+                  COALESCE(opt.first_installment_days, pt.first_installment_days) AS first_installment_days,
+                  COALESCE(opt.installment_interval_days, pt.installment_interval_days) AS installment_interval_days
            FROM payment_terms pt
            LEFT JOIN omie_payment_terms opt
              ON opt.company_id = pt.company_id AND opt.code = pt.omie_parcela_code AND opt.is_active = 1
            WHERE pt.id = ?`
         )
         .get(row.payment_term_id) as
-        | { code: string | null; installment_count: number | null }
+        | {
+            code: string | null;
+            installment_count: number | null;
+            installment_days_json: string | null;
+            first_installment_days: number | null;
+            installment_interval_days: number | null;
+          }
         | undefined)
     : undefined;
 
@@ -993,10 +1008,49 @@ export function buildOmieBillingJob(
       issueDate: (row.exit_weight_captured_at ?? "").slice(0, 10),
       paymentTermOmieCode: omieParcela?.code ?? null,
       paymentTermInstallmentCount: omieParcela?.installment_count ?? null,
+      paymentTermInstallmentDays: resolveInstallmentDays(omieParcela),
       paymentMethodOmieCode: omiePayment?.method_code ?? null,
       accountOmieCode: omiePayment?.account_code ?? null
     }
   };
+}
+
+/**
+ * Dias de vencimento das parcelas da condicao OMIE vinculada: usa o JSON explicito
+ * (ex: [7,14,21]) quando presente, senao deriva de primeiro dia + intervalo + quantidade.
+ * Retorna null quando a condicao nao informa dias (edge trata como a vista).
+ */
+function resolveInstallmentDays(
+  omieParcela:
+    | {
+        installment_days_json: string | null;
+        first_installment_days: number | null;
+        installment_interval_days: number | null;
+        installment_count: number | null;
+      }
+    | undefined
+): number[] | null {
+  if (!omieParcela) return null;
+
+  if (omieParcela.installment_days_json) {
+    try {
+      const parsed = JSON.parse(omieParcela.installment_days_json) as unknown;
+      if (Array.isArray(parsed)) {
+        const days = parsed
+          .map((value) => Number(value))
+          .filter((value) => Number.isInteger(value) && value >= 0);
+        if (days.length > 0) return days;
+      }
+    } catch {
+      // JSON invalido no espelho OMIE: cai na derivacao abaixo.
+    }
+  }
+
+  const count = omieParcela.installment_count;
+  const first = omieParcela.first_installment_days;
+  if (!count || count < 1 || first === null || first < 0) return null;
+  const interval = omieParcela.installment_interval_days ?? 0;
+  return Array.from({ length: count }, (_, index) => first + index * interval);
 }
 
 /** Enfileira o job de faturamento/pedido OMIE reconstruido por buildOmieBillingJob. */

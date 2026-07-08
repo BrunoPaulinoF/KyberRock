@@ -86,4 +86,17 @@ describe("omie-sync Edge Function", () => {
     expect(source).toContain("? selectedAccountCode");
     expect(source).toContain(": await resolveOmieAccountCode(credentials);");
   });
+
+  it("ensures the operation's payment condition exists in the OMIE parcelas cadastro", () => {
+    const source = getOmieSyncSource();
+
+    // Sem codigo vinculado, a condicao e localizada/criada no cadastro (/geral/parcelas/).
+    expect(source).toContain("async function ensureOmieParcelaCode");
+    expect(source).toContain("installmentDays?: number[];");
+    expect(source).toContain('"IncluirParcela"');
+    expect(source).toContain("await ensureOmieParcelaCode(credentials, payload)");
+    // A vista continua caindo no padrao "000" (comportamento historico).
+    expect(source).toContain("normalizeParcelaCode(payload.paymentTermOmieCode) ??");
+    expect(source).toContain('"000";');
+  });
 });

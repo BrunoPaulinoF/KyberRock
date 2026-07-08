@@ -767,8 +767,8 @@ describe("weighing operations", () => {
         .run(now, now);
       database
         .prepare(
-          `INSERT INTO omie_payment_terms (id, company_id, omie_id, code, description, installment_count, is_active, visible, created_at, updated_at)
-           VALUES ('omie_parcela_030', 'company-1', 30, '030', '30 dias', 2, 1, 1, ?, ?)`
+          `INSERT INTO omie_payment_terms (id, company_id, omie_id, code, description, installment_count, installment_days_json, is_active, visible, created_at, updated_at)
+           VALUES ('omie_parcela_030', 'company-1', 30, '030', '30 dias', 2, '[15,30]', 1, 1, ?, ?)`
         )
         .run(now, now);
 
@@ -795,9 +795,11 @@ describe("weighing operations", () => {
       const payload = JSON.parse(payloadJson) as {
         paymentTermOmieCode: string | null;
         paymentTermInstallmentCount: number | null;
+        paymentTermInstallmentDays: number[] | null;
       };
       expect(payload.paymentTermOmieCode).toBe("030");
       expect(payload.paymentTermInstallmentCount).toBe(2);
+      expect(payload.paymentTermInstallmentDays).toEqual([15, 30]);
     } finally {
       database.close();
     }

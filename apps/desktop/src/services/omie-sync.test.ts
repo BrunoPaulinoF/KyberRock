@@ -375,6 +375,70 @@ describe("OmieSyncService", () => {
     }
   });
 
+  it("pulls payment conditions from OMIE into the omie_payment_terms mirror without duplicating", async () => {
+    const db = openDesktopDatabase({ databasePath: ":memory:" });
+
+    try {
+      runDesktopMigrations(db);
+      db.exec(`
+        INSERT INTO companies (id, legal_name, trade_name, created_at, updated_at)
+        VALUES ('company-1', 'Empresa Teste', 'Empresa', datetime('now'), datetime('now'));
+      `);
+
+      const service = new OmieSyncService(createMockClient(), db);
+      vi.spyOn(
+        (service as unknown as Record<string, unknown>)
+          .parcelasService as { listAll: () => Promise<unknown[]> },
+        "listAll"
+      ).mockResolvedValue([
+        {
+          id: 0,
+          code: "000",
+          description: "A Vista",
+          firstInstallmentDays: 0,
+          installmentIntervalDays: null,
+          installmentCount: 1,
+          installmentType: null,
+          installmentDays: null,
+          isActive: true,
+          visible: true
+        },
+        {
+          id: 212,
+          code: "212",
+          description: "7/14/21",
+          firstInstallmentDays: 7,
+          installmentIntervalDays: 7,
+          installmentCount: 3,
+          installmentType: null,
+          installmentDays: [7, 14, 21],
+          isActive: true,
+          visible: true
+        }
+      ]);
+
+      const first = await service.syncPaymentConditions("company-1");
+      expect(first.fetched).toBe(2);
+      expect(
+        db.prepare("SELECT COUNT(*) FROM omie_payment_terms WHERE company_id = 'company-1'").pluck().get()
+      ).toBe(2);
+      expect(
+        db
+          .prepare("SELECT installment_days_json FROM omie_payment_terms WHERE code = '212'")
+          .pluck()
+          .get()
+      ).toBe("[7,14,21]");
+
+      // Re-sincronizar nao duplica (upsert por company_id + code).
+      await service.syncPaymentConditions("company-1");
+      expect(
+        db.prepare("SELECT COUNT(*) FROM omie_payment_terms WHERE company_id = 'company-1'").pluck().get()
+      ).toBe(2);
+    } finally {
+      db.close();
+    }
+  });
+
   it("pulls checking accounts from OMIE adopting same-name locals and skipping existing codes", async () => {
     const db = openDesktopDatabase({ databasePath: ":memory:" });
 

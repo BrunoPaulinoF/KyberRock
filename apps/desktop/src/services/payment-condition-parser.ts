@@ -85,9 +85,14 @@ function buildSummary(kind: PaymentConditionKind, installments: ParsedInstallmen
  * Lanca {@link PaymentConditionParseError} quando o formato e invalido.
  */
 export function parsePaymentCondition(raw: string): ParsedPaymentCondition {
-  const value = normalize(raw ?? "");
+  let value = normalize(raw ?? "");
   if (!value) {
     throw new PaymentConditionParseError("Informe a condicao de pagamento.");
+  }
+
+  // Dias separados por espaco ("7 14 21") equivalem a lista com barras ("7/14/21").
+  if (/^\d+(?: \d+)+$/.test(value)) {
+    value = value.replace(/ /g, "/");
   }
 
   // Formato 1 e 2: lista separada por barras (dias fixos, com "A Vista" opcional).

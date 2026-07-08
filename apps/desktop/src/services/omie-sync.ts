@@ -4,6 +4,7 @@ import {
   OmieClient,
   OmieCheckingAccountsService,
   OmieCustomersService,
+  OmieParcelasService,
   OmiePaymentMethodsService,
   OmieProductsService,
   hasClienteTag,
@@ -16,6 +17,10 @@ import {
 
 import type { DesktopDatabase } from "../database/sqlite.js";
 import { isSellableProduct } from "./product-classification.js";
+import {
+  upsertOmiePaymentTerms,
+  type OmieReferencePaymentTerm
+} from "./supabase-sync.js";
 
 export interface OmieSyncConfig {
   appKey: string;
@@ -55,6 +60,7 @@ export class OmieSyncService {
   private readonly productsService: OmieProductsService;
   private readonly paymentMethodsService: OmiePaymentMethodsService;
   private readonly checkingAccountsService: OmieCheckingAccountsService;
+  private readonly parcelasService: OmieParcelasService;
 
   constructor(
     private readonly client: OmieClient,
@@ -64,6 +70,7 @@ export class OmieSyncService {
     this.productsService = new OmieProductsService(client);
     this.paymentMethodsService = new OmiePaymentMethodsService(client);
     this.checkingAccountsService = new OmieCheckingAccountsService(client);
+    this.parcelasService = new OmieParcelasService(client);
   }
 
   async syncAll(companyId: string): Promise<OmieSyncResult> {
@@ -572,6 +579,36 @@ export class OmieSyncService {
     });
 
     return counters;
+  }
+
+  /**
+   * Puxa as condicoes de pagamento (parcelas) do OMIE para o espelho
+   * omie_payment_terms (codigo, descricao, dias). Idempotente: upsert por
+   * (company_id, code) — re-sincronizar nao duplica nada.
+   */
+  async syncPaymentConditions(companyId: string): Promise<MasterEntitySyncCounters> {
+    const parcelas = await this.parcelasService.listAll();
+    const mapped: OmieReferencePaymentTerm[] = parcelas.map((parcela) => ({
+      id: parcela.id,
+      code: parcela.code,
+      integrationCode: null,
+      description: parcela.description,
+      firstInstallmentDays: parcela.firstInstallmentDays,
+      installmentIntervalDays: parcela.installmentIntervalDays,
+      installmentCount: parcela.installmentCount,
+      installmentType: parcela.installmentType,
+      installmentDaysJson: parcela.installmentDays,
+      isActive: parcela.isActive,
+      visible: parcela.visible
+    }));
+
+    const upserted = upsertOmiePaymentTerms(this.db, companyId, mapped);
+    return {
+      fetched: parcelas.length,
+      created: 0,
+      updated: upserted,
+      skipped: parcelas.length - upserted
+    };
   }
 
   /**
