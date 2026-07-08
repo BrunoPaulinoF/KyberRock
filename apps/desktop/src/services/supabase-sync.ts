@@ -2062,7 +2062,21 @@ export async function processFiscalBillingNow(
   if (!job) {
     const built = buildOmieBillingJob(database, operationId);
     if (built && built.action === "create_and_bill_order") {
-      enqueueOmieBillingJob(database, operationId, built);
+      // Fechamento com cadastro incompleto sobe o pedido sem faturar (create_order com a
+      // MESMA chave de idempotencia). Promove esse job para faturamento em vez de tentar
+      // inserir outra linha com a chave ja usada (INSERT OR IGNORE seria descartado).
+      const nowIso = new Date().toISOString();
+      const promoted = database
+        .prepare(
+          `UPDATE sync_queue
+           SET action = 'create_and_bill_order', status = 'pending', payload_json = ?,
+               next_attempt_at = ?, updated_at = ?
+           WHERE target = 'omie' AND action = 'create_order' AND idempotency_key = ?`
+        )
+        .run(JSON.stringify(built.payload), nowIso, nowIso, built.idempotencyKey);
+      if (promoted.changes === 0) {
+        enqueueOmieBillingJob(database, operationId, built);
+      }
       job = findBillingJob();
     }
   }
