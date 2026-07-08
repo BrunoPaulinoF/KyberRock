@@ -8,6 +8,8 @@ import {
   createOmieClient,
   OmieSyncService
 } from "./omie-sync";
+import { ensureDefaultPaymentMethods } from "./payment-methods.js";
+import { ensureDefaultAccounts } from "./accounts.js";
 
 describe("createOmieClient", () => {
   it("creates client with credentials", () => {
@@ -306,6 +308,119 @@ describe("OmieSyncService", () => {
     expect(db.prepare).not.toHaveBeenCalledWith(
       expect.stringContaining("INSERT INTO payment_terms")
     );
+  });
+
+  it("pulls payment methods from OMIE adopting seeds and inserting new ones idempotently", async () => {
+    const db = openDesktopDatabase({ databasePath: ":memory:" });
+
+    try {
+      runDesktopMigrations(db);
+      db.exec(`
+        INSERT INTO companies (id, legal_name, trade_name, created_at, updated_at)
+        VALUES ('company-1', 'Empresa Teste', 'Empresa', datetime('now'), datetime('now'));
+      `);
+      ensureDefaultPaymentMethods(db, "company-1");
+      // Simula vinculo local existente para garantir que o adote preserva campos locais.
+      db.exec(`
+        UPDATE payment_methods SET alias = 'PIX rapidinho' WHERE company_id = 'company-1' AND code = 'pix';
+      `);
+
+      const service = new OmieSyncService(createMockClient(), db);
+      const listAll = vi
+        .spyOn(
+          (service as unknown as Record<string, unknown>)
+            .paymentMethodsService as { listAll: () => Promise<unknown[]> },
+          "listAll"
+        )
+        .mockResolvedValue([
+          { code: "01", description: "Dinheiro", type: null },
+          { code: "17", description: "PIX", type: null },
+          { code: "90", description: "Sem pagamento", type: null }
+        ]);
+
+      const first = await service.syncPaymentMethods("company-1");
+
+      // "cash" e "pix" (seeds) adotam os codigos; "90" entra como forma nova do OMIE.
+      expect(first).toEqual({ fetched: 3, created: 1, updated: 2, skipped: 0 });
+      expect(
+        db.prepare(
+          "SELECT omie_code FROM payment_methods WHERE company_id = 'company-1' AND code = 'cash'"
+        ).pluck().get()
+      ).toBe("01");
+      expect(
+        db.prepare(
+          "SELECT alias FROM payment_methods WHERE company_id = 'company-1' AND code = 'pix'"
+        ).pluck().get()
+      ).toBe("PIX rapidinho");
+      expect(
+        db.prepare(
+          "SELECT name FROM payment_methods WHERE company_id = 'company-1' AND omie_code = '90'"
+        ).pluck().get()
+      ).toBe("Sem pagamento");
+
+      const countAfterFirst = db
+        .prepare("SELECT COUNT(*) FROM payment_methods WHERE company_id = 'company-1'")
+        .pluck()
+        .get();
+
+      // Segunda sincronizacao: nada acontece (idempotente).
+      const second = await service.syncPaymentMethods("company-1");
+      expect(second).toEqual({ fetched: 3, created: 0, updated: 0, skipped: 3 });
+      expect(
+        db.prepare("SELECT COUNT(*) FROM payment_methods WHERE company_id = 'company-1'").pluck().get()
+      ).toBe(countAfterFirst);
+      expect(listAll).toHaveBeenCalledTimes(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("pulls checking accounts from OMIE adopting same-name locals and skipping existing codes", async () => {
+    const db = openDesktopDatabase({ databasePath: ":memory:" });
+
+    try {
+      runDesktopMigrations(db);
+      db.exec(`
+        INSERT INTO companies (id, legal_name, trade_name, created_at, updated_at)
+        VALUES ('company-1', 'Empresa Teste', 'Empresa', datetime('now'), datetime('now'));
+      `);
+      ensureDefaultAccounts(db, "company-1");
+
+      const service = new OmieSyncService(createMockClient(), db);
+      vi.spyOn(
+        (service as unknown as Record<string, unknown>)
+          .checkingAccountsService as { listAll: () => Promise<unknown[]> },
+        "listAll"
+      ).mockResolvedValue([
+        { code: 111, integrationCode: null, name: "caixinha", type: null, isActive: true },
+        { code: 222, integrationCode: null, name: "Home Cash", type: null, isActive: true }
+      ]);
+
+      const first = await service.syncCheckingAccounts("company-1");
+
+      // "Caixinha" (seed) adota o codigo por nome; "Home Cash" entra como conta nova.
+      expect(first).toEqual({ fetched: 2, created: 1, updated: 1, skipped: 0 });
+      expect(
+        db.prepare(
+          "SELECT omie_code FROM accounts WHERE company_id = 'company-1' AND code = 'caixinha'"
+        ).pluck().get()
+      ).toBe("111");
+      expect(
+        db.prepare(
+          "SELECT name FROM accounts WHERE company_id = 'company-1' AND omie_code = '222'"
+        ).pluck().get()
+      ).toBe("Home Cash");
+
+      const second = await service.syncCheckingAccounts("company-1");
+      expect(second).toEqual({ fetched: 2, created: 0, updated: 0, skipped: 2 });
+      expect(
+        db.prepare(
+          "SELECT COUNT(*) FROM accounts WHERE company_id = 'company-1' AND deleted_at IS NULL"
+        ).pluck().get()
+      ).toBe(4); // caixinha, omie_cash, getnet + Home Cash
+    } finally {
+      db.close();
+    }
   });
 
   it("syncAll returns counts and collects errors", async () => {

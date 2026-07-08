@@ -196,6 +196,19 @@ type CreateOrderPayload = {
   paymentTermOmieCode?: string;
   /** Numero de parcelas da OS (nQtdeParc). Ausente/invalido -> 1. */
   installmentCount?: number;
+  /**
+   * Codigo NFe/OMIE do meio de pagamento selecionado no desktop ("01" dinheiro,
+   * "17" PIX...). Transportado no payload; a insercao no corpo do pedido depende
+   * de parcelamento customizado (codigo_parcela "999" + lista_parcelas), contrato
+   * ainda a validar com credenciais reais — ver backlog 2026-07-06 (item 2, P0).
+   */
+  paymentMethodOmieCode?: string;
+  /**
+   * nCodCC da conta corrente vinculada ao meio selecionado no desktop. Quando
+   * presente e valido, vai em codigo_conta_corrente (pedido) / nCodCC (OS) no
+   * lugar da resolucao automatica da primeira conta do tenant.
+   */
+  accountOmieCode?: string | number;
   idempotencyKey: string;
 };
 
@@ -1407,7 +1420,13 @@ async function createOmieOrder(
   payload: CreateOrderPayload
 ): Promise<number> {
   const integrationCode = toOmieIntegrationCode(payload.idempotencyKey);
-  const accountCode = await resolveOmieAccountCode(credentials);
+  // Conta corrente escolhida na operacao (meio de pagamento -> conta). Sem ela,
+  // mantem o fallback historico: primeira conta corrente do tenant.
+  const selectedAccountCode = toNumber(payload.accountOmieCode ?? null);
+  const accountCode =
+    selectedAccountCode !== null && selectedAccountCode > 0
+      ? selectedAccountCode
+      : await resolveOmieAccountCode(credentials);
   const parcelaCode = normalizeParcelaCode(payload.paymentTermOmieCode) ?? "000";
   const installmentCount =
     typeof payload.installmentCount === "number" && payload.installmentCount > 0

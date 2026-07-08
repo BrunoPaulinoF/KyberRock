@@ -29,12 +29,14 @@ financeiro · **P1** essencial para o piloto · **P2** melhoria/escalabilidade.
 
 ## 2. Formas e condições de pagamento (integração OMIE)
 
-- [ ] **P0** Sincronizar do OMIE os **meios/formas de pagamento** (cada um com seu código OMIE) e as
+- [x] **P0** Sincronizar do OMIE os **meios/formas de pagamento** (cada um com seu código OMIE) e as
       **condições de pagamento** (nº de parcelas, à vista, prazos: 7/14/21 etc.).
+      *(Implementado: entidades `meios_pagamento` e `contas_correntes` no sync OMIE — idempotente,
+      seeds adotam o código OMIE; criação/exclusão local travada, só ativar/desativar + vínculo.)*
 - [ ] **P0** Entender e documentar **o que o OMIE exige de forma de pagamento** ao criar o pedido de
       venda, antes de amarrar a lógica de envio.
-- [ ] **P1** Botão **ativar/desativar** por forma de pagamento (algumas do OMIE são só para
-      transferência interna e não devem aparecer).
+- [x] **P1** Botão **ativar/desativar** por forma de pagamento (algumas do OMIE são só para
+      transferência interna e não devem aparecer). *(Implementado, incl. ativar/desativar contas.)*
 - [x] **P1** Permitir **apelido (alias)** por forma de pagamento — o apelido é o que aparece na UI
       (os nomes vindos do OMIE ficam "bugados"). *(Implementado, incl. campo de código OMIE por forma.)*
 - [x] **P0** **Vincular forma de pagamento → conta** no cadastro (dinheiro→caixinha; boleto/PIX→OMIE

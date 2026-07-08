@@ -276,20 +276,14 @@ import {
 } from "./driver-carriers.js";
 import {
   applyDefaultAccountBindings,
-  createPaymentMethod,
-  deletePaymentMethod,
   ensureDefaultPaymentMethods,
   updatePaymentMethod,
-  type CreatePaymentMethodInput,
   type UpdatePaymentMethodInput
 } from "./payment-methods.js";
 import {
-  createAccount,
-  deleteAccount,
   ensureDefaultAccounts,
   listAccounts,
   updateAccount,
-  type CreateAccountInput,
   type UpdateAccountInput
 } from "./accounts.js";
 import {
@@ -508,6 +502,7 @@ export class DesktopRuntime {
     driverId: string;
     productId: string;
     paymentTermId?: string;
+    paymentMethodId?: string;
     manualInstallments?: number;
     manualDownPaymentCents?: number;
     freight?: OperationFreightInput | null;
@@ -529,6 +524,7 @@ export class DesktopRuntime {
       driverId: input.driverId,
       productId: input.productId,
       paymentTermId: input.paymentTermId,
+      paymentMethodId: input.paymentMethodId,
       manualInstallments: input.manualInstallments,
       manualDownPaymentCents: input.manualDownPaymentCents,
       freight: input.freight,
@@ -1422,27 +1418,20 @@ export class DesktopRuntime {
     this.cacheStore.invalidate("customer", identity.companyId);
   }
 
-  createPaymentMethod(input: Omit<CreatePaymentMethodInput, "companyId">): unknown {
-    this.assertDesktopAccess();
-    const identity = this.ensureIdentity();
-    const result = createPaymentMethod(this.database, { ...input, companyId: identity.companyId });
-    this.cacheStore.invalidate("payment_method", identity.companyId);
-    return result;
-  }
-
+  // Meios de pagamento e contas nao sao criados nem excluidos no desktop: o
+  // cadastro vem do OMIE via sincronizacao. Localmente so ha atualizacao
+  // restrita (ativar/desativar, apelido e vinculo forma -> conta).
   updatePaymentMethod(id: string, input: UpdatePaymentMethodInput): unknown {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
-    const result = updatePaymentMethod(this.database, id, input);
+    const result = updatePaymentMethod(this.database, id, {
+      alias: input.alias,
+      accountId: input.accountId,
+      isActive: input.isActive,
+      sortOrder: input.sortOrder
+    });
     this.cacheStore.invalidate("payment_method", identity.companyId);
     return result;
-  }
-
-  deletePaymentMethod(id: string): void {
-    this.assertDesktopAccess();
-    const identity = this.ensureIdentity();
-    deletePaymentMethod(this.database, id);
-    this.cacheStore.invalidate("payment_method", identity.companyId);
   }
 
   listAccounts(): unknown {
@@ -1450,29 +1439,15 @@ export class DesktopRuntime {
     return listAccounts(this.database, this.ensureIdentity().companyId);
   }
 
-  createAccount(input: Omit<CreateAccountInput, "companyId">): unknown {
-    this.assertDesktopAccess();
-    const identity = this.ensureIdentity();
-    const result = createAccount(this.database, { ...input, companyId: identity.companyId });
-    this.cacheStore.invalidate("account", identity.companyId);
-    return result;
-  }
-
   updateAccount(id: string, input: UpdateAccountInput): unknown {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
-    const result = updateAccount(this.database, id, input);
+    const result = updateAccount(this.database, id, {
+      isActive: input.isActive,
+      sortOrder: input.sortOrder
+    });
     this.cacheStore.invalidate("account", identity.companyId);
     return result;
-  }
-
-  deleteAccount(id: string): void {
-    this.assertDesktopAccess();
-    const identity = this.ensureIdentity();
-    deleteAccount(this.database, id);
-    // A exclusao desvincula formas de pagamento; recarrega ambos os caches.
-    this.cacheStore.invalidate("account", identity.companyId);
-    this.cacheStore.invalidate("payment_method", identity.companyId);
   }
 
   createPaymentTerm(input: Omit<CreatePaymentTermInput, "companyId">): unknown {

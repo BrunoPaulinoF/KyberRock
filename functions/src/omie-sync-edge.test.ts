@@ -74,4 +74,16 @@ describe("omie-sync Edge Function", () => {
     expect(source).toContain('forceOmieTag(payload.tags, "transportadora")');
     expect(source).toContain("buildCarrierPayload(payload)");
   });
+
+  it("uses the account selected on desktop before falling back to the first tenant account", () => {
+    const source = getOmieSyncSource();
+
+    // Payload carrega o meio e a conta escolhidos na operacao do desktop.
+    expect(source).toContain("paymentMethodOmieCode?: string;");
+    expect(source).toContain("accountOmieCode?: string | number;");
+    // A conta selecionada tem precedencia sobre resolveOmieAccountCode (fallback historico).
+    expect(source).toContain("const selectedAccountCode = toNumber(payload.accountOmieCode ?? null);");
+    expect(source).toContain("? selectedAccountCode");
+    expect(source).toContain(": await resolveOmieAccountCode(credentials);");
+  });
 });

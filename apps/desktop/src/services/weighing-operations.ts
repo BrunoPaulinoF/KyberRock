@@ -64,6 +64,7 @@ export interface CreateWeighingOperationInput {
   driverId: string;
   productId: string;
   paymentTermId?: string;
+  paymentMethodId?: string;
   manualInstallments?: number;
   manualDownPaymentCents?: number;
   entryWeightKg: number;
@@ -453,6 +454,18 @@ export function createWeighingOperation(
     throw new Error("Somente produtos OMIE tipo 04 - produtos acabados podem iniciar pesagem.");
   }
 
+  if (input.paymentMethodId) {
+    const paymentMethod = database
+      .prepare(
+        "SELECT is_active FROM payment_methods WHERE id = ? AND deleted_at IS NULL"
+      )
+      .get(input.paymentMethodId) as { is_active: number } | undefined;
+    if (!paymentMethod) throw new Error("Forma de pagamento selecionada nao foi encontrada.");
+    if (paymentMethod.is_active !== 1) {
+      throw new Error("Forma de pagamento inativa nao pode ser usada na operacao.");
+    }
+  }
+
   const duplicateOpenOperation = database
     .prepare(
       `SELECT id
@@ -491,11 +504,11 @@ export function createWeighingOperation(
       .prepare(
         `INSERT INTO weighing_operations (
           id, company_id, unit_id, device_id, status, operation_type, customer_id, vehicle_id, carrier_id, driver_id, product_id,
-          payment_term_id, manual_installments, manual_down_payment_cents, entry_weight_kg, entry_weight_captured_at, unit_price_cents,
+          payment_term_id, payment_method_id, manual_installments, manual_down_payment_cents, entry_weight_kg, entry_weight_captured_at, unit_price_cents,
           base_unit_price_cents, applied_price_table_id, applied_price_table_name, applied_price_table_item_id,
           price_unit, price_savings_percent, freight_total_cents, freight_json, deduct_freight_from_credit,
           product_credit_debit_cents, freight_credit_debit_cents, quotation_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, 'loading_requested', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0, 0, ?, ?, ?)`
+        ) VALUES (?, ?, ?, ?, 'loading_requested', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0, 0, ?, ?, ?)`
       )
       .run(
         operationId,
@@ -509,6 +522,7 @@ export function createWeighingOperation(
         input.driverId,
         input.productId,
         input.paymentTermId ?? null,
+        input.paymentMethodId ?? null,
         input.manualInstallments ?? null,
         input.manualDownPaymentCents ?? null,
         input.entryWeightKg,
@@ -872,6 +886,10 @@ export interface OmieBillingJobPayload {
   issueDate: string;
   paymentTermOmieCode: string | null;
   paymentTermInstallmentCount: number | null;
+  /** Codigo NFe/OMIE do meio de pagamento escolhido na operacao ("01", "17"...). */
+  paymentMethodOmieCode: string | null;
+  /** nCodCC (OMIE) da conta vinculada ao meio escolhido; vai em codigo_conta_corrente/nCodCC. */
+  accountOmieCode: string | null;
 }
 
 export interface BuiltOmieBillingJob {
@@ -893,7 +911,7 @@ export function buildOmieBillingJob(
 ): BuiltOmieBillingJob | null {
   const row = database
     .prepare(
-      "SELECT unit_id, customer_id, product_id, payment_term_id, exit_weight_captured_at FROM weighing_operations WHERE id = ?"
+      "SELECT unit_id, customer_id, product_id, payment_term_id, payment_method_id, exit_weight_captured_at FROM weighing_operations WHERE id = ?"
     )
     .get(operationId) as
     | {
@@ -901,6 +919,7 @@ export function buildOmieBillingJob(
         customer_id: string | null;
         product_id: string | null;
         payment_term_id: string | null;
+        payment_method_id: string | null;
         exit_weight_captured_at: string | null;
       }
     | undefined;
@@ -937,6 +956,22 @@ export function buildOmieBillingJob(
         | undefined)
     : undefined;
 
+  // Codigos OMIE do meio de pagamento escolhido e da conta vinculada a ele
+  // (payment_methods.account_id -> accounts.omie_code). Vao no job para o pedido/OS
+  // ja nascer no OMIE com o meio e a conta corrente da operacao.
+  const omiePayment = row.payment_method_id
+    ? (database
+        .prepare(
+          `SELECT pm.omie_code AS method_code, ac.omie_code AS account_code
+           FROM payment_methods pm
+           LEFT JOIN accounts ac ON ac.id = pm.account_id AND ac.deleted_at IS NULL
+           WHERE pm.id = ?`
+        )
+        .get(row.payment_method_id) as
+        | { method_code: string | null; account_code: string | null }
+        | undefined)
+    : undefined;
+
   const operation = getWeighingOperation(database, operationId);
   const action = operation.operationType === "invoice" ? "create_and_bill_order" : "create_order";
   const idempotencyAction =
@@ -957,7 +992,9 @@ export function buildOmieBillingJob(
       freightTotalCents: operation.freightTotalCents,
       issueDate: (row.exit_weight_captured_at ?? "").slice(0, 10),
       paymentTermOmieCode: omieParcela?.code ?? null,
-      paymentTermInstallmentCount: omieParcela?.installment_count ?? null
+      paymentTermInstallmentCount: omieParcela?.installment_count ?? null,
+      paymentMethodOmieCode: omiePayment?.method_code ?? null,
+      accountOmieCode: omiePayment?.account_code ?? null
     }
   };
 }

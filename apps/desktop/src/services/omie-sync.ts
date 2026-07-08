@@ -1,6 +1,10 @@
+import { randomUUID } from "node:crypto";
+
 import {
   OmieClient,
+  OmieCheckingAccountsService,
   OmieCustomersService,
+  OmiePaymentMethodsService,
   OmieProductsService,
   hasClienteTag,
   hasTransportadoraTag,
@@ -39,9 +43,18 @@ export function createOmieClient(config: OmieSyncConfig): OmieClient {
   });
 }
 
+export interface MasterEntitySyncCounters {
+  fetched: number;
+  created: number;
+  updated: number;
+  skipped: number;
+}
+
 export class OmieSyncService {
   private readonly customersService: OmieCustomersService;
   private readonly productsService: OmieProductsService;
+  private readonly paymentMethodsService: OmiePaymentMethodsService;
+  private readonly checkingAccountsService: OmieCheckingAccountsService;
 
   constructor(
     private readonly client: OmieClient,
@@ -49,6 +62,8 @@ export class OmieSyncService {
   ) {
     this.customersService = new OmieCustomersService(client);
     this.productsService = new OmieProductsService(client);
+    this.paymentMethodsService = new OmiePaymentMethodsService(client);
+    this.checkingAccountsService = new OmieCheckingAccountsService(client);
   }
 
   async syncAll(companyId: string): Promise<OmieSyncResult> {
@@ -494,6 +509,147 @@ export class OmieSyncService {
     return 0;
   }
 
+  /**
+   * Puxa os meios de pagamento do OMIE (nome + codigo) para payment_methods.
+   * Idempotente: quem ja tem o omie_code local nao muda; formas padrao do seed
+   * (dinheiro, pix, ...) sem codigo sao "adotadas" (recebem o codigo OMIE) em vez
+   * de gerar duplicata; o resto e inserido como forma vinda do OMIE.
+   */
+  async syncPaymentMethods(companyId: string): Promise<MasterEntitySyncCounters> {
+    const omieMethods = await this.paymentMethodsService.listAll();
+    const counters: MasterEntitySyncCounters = {
+      fetched: omieMethods.length,
+      created: 0,
+      updated: 0,
+      skipped: 0
+    };
+
+    const existsByOmieCode = this.db.prepare(
+      "SELECT 1 FROM payment_methods WHERE company_id = ? AND omie_code = ?"
+    );
+    const adopt = this.db.prepare(
+      `UPDATE payment_methods SET omie_code = ?, updated_at = datetime('now')
+       WHERE company_id = ? AND code = ? AND omie_code IS NULL AND deleted_at IS NULL`
+    );
+    const insert = this.db.prepare(
+      `INSERT INTO payment_methods
+         (id, company_id, code, name, omie_code, is_system, is_customer_credit, sort_order,
+          is_active, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 0, 0, ?, 1, datetime('now'), datetime('now'))`
+    );
+    const maxSort = this.db.prepare(
+      "SELECT COALESCE(MAX(sort_order), 0) AS max FROM payment_methods WHERE company_id = ?"
+    );
+
+    this.runInTransaction(() => {
+      let nextSort = (maxSort.get(companyId) as { max: number }).max;
+      for (const method of omieMethods) {
+        if (existsByOmieCode.get(companyId, method.code)) {
+          counters.skipped++;
+          continue;
+        }
+
+        const seedCode = SEED_METHOD_CODES_BY_OMIE_CODE.get(method.code);
+        if (seedCode) {
+          const adopted = adopt.run(method.code, companyId, seedCode);
+          if (adopted.changes > 0) {
+            counters.updated++;
+            continue;
+          }
+        }
+
+        nextSort++;
+        insert.run(
+          randomUUID(),
+          companyId,
+          `omie_${method.code}`,
+          method.description,
+          method.code,
+          nextSort
+        );
+        counters.created++;
+      }
+    });
+
+    return counters;
+  }
+
+  /**
+   * Puxa as contas correntes do OMIE (nome + nCodCC) para accounts. Idempotente:
+   * contas ja puxadas (mesmo omie_code) nao mudam; contas locais sem codigo com o
+   * mesmo nome sao adotadas; as demais entram como novas contas vindas do OMIE.
+   */
+  async syncCheckingAccounts(companyId: string): Promise<MasterEntitySyncCounters> {
+    const omieAccounts = await this.checkingAccountsService.listAll();
+    const counters: MasterEntitySyncCounters = {
+      fetched: omieAccounts.length,
+      created: 0,
+      updated: 0,
+      skipped: 0
+    };
+
+    const existsByOmieCode = this.db.prepare(
+      "SELECT 1 FROM accounts WHERE company_id = ? AND omie_code = ?"
+    );
+    const findAdoptable = this.db.prepare(
+      `SELECT id FROM accounts
+       WHERE company_id = ? AND omie_code IS NULL AND deleted_at IS NULL`
+    );
+    const adopt = this.db.prepare(
+      "UPDATE accounts SET omie_code = ?, updated_at = datetime('now') WHERE id = ?"
+    );
+    const insert = this.db.prepare(
+      `INSERT INTO accounts
+         (id, company_id, code, name, omie_code, is_system, sort_order, is_active, created_at, updated_at)
+       VALUES (?, ?, NULL, ?, ?, 0, ?, ?, datetime('now'), datetime('now'))`
+    );
+    const maxSort = this.db.prepare(
+      "SELECT COALESCE(MAX(sort_order), 0) AS max FROM accounts WHERE company_id = ?"
+    );
+
+    this.runInTransaction(() => {
+      let nextSort = (maxSort.get(companyId) as { max: number }).max;
+      const adoptable = (findAdoptable.all(companyId) as Array<{ id: string }>).map(
+        (row) => row.id
+      );
+      const adoptableByName = new Map<string, string>();
+      const nameOf = this.db.prepare("SELECT name FROM accounts WHERE id = ?");
+      for (const id of adoptable) {
+        const row = nameOf.get(id) as { name: string } | undefined;
+        if (row) adoptableByName.set(normalizeAccountName(row.name), id);
+      }
+
+      for (const account of omieAccounts) {
+        const omieCode = String(account.code);
+        if (existsByOmieCode.get(companyId, omieCode)) {
+          counters.skipped++;
+          continue;
+        }
+
+        const adoptId = adoptableByName.get(normalizeAccountName(account.name));
+        if (adoptId) {
+          adopt.run(omieCode, adoptId);
+          adoptableByName.delete(normalizeAccountName(account.name));
+          counters.updated++;
+          continue;
+        }
+
+        nextSort++;
+        insert.run(
+          randomUUID(),
+          companyId,
+          account.name,
+          omieCode,
+          nextSort,
+          account.isActive ? 1 : 0
+        );
+        counters.created++;
+      }
+    });
+
+    return counters;
+  }
+
   async syncSuppliers(companyId: string): Promise<number> {
     const customers = await this.customersService.listAll();
     const transportadoras = customers.filter((customer) => hasTransportadoraTag(customer));
@@ -669,4 +825,24 @@ function isSellableOmieProduct(product: Product): boolean {
 
 function normalizeDocument(doc: string): string {
   return doc.replace(/\D/g, "");
+}
+
+// Formas padrao do seed local -> codigo NFe/OMIE correspondente. Na primeira
+// sincronizacao a forma seed "adota" o codigo do OMIE em vez de duplicar a lista.
+// customer_credit (fiado) e conceito do KyberRock e fica fora do mapeamento.
+const SEED_METHOD_CODES_BY_OMIE_CODE = new Map<string, string>([
+  ["01", "cash"],
+  ["03", "credit_card"],
+  ["04", "debit_card"],
+  ["15", "boleto"],
+  ["17", "pix"]
+]);
+
+function normalizeAccountName(name: string): string {
+  return name
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
 }
