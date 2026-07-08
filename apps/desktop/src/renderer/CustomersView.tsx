@@ -816,7 +816,7 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
       <FlashBanner flash={flash} />
 
       {showForm ? (
-        <CrudFormModal onClose={() => setShowForm(false)} maxWidth={1040}>
+        <CrudFormModal onClose={() => setShowForm(false)} maxWidth={1040} fixedHeight>
         <Fragment>
           <div style={styles.formHeader}>
             <h3 style={styles.formTitle}>
@@ -850,7 +850,18 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
               );
             })}
           </div>
-          <div style={{ ...styles.formShell, gridTemplateColumns: "1fr" }}>
+          <div
+            style={{
+              ...styles.formShell,
+              gridTemplateColumns: "1fr",
+              // O modal tem altura fixa: o miolo da aba rola por dentro, mantendo
+              // cabecalho, botoes de secao e rodape sempre visiveis.
+              flex: 1,
+              minHeight: 0,
+              overflowY: "auto",
+              alignContent: "start"
+            }}
+          >
           {activeFormSection === "identificacao" ? (
             <section style={styles.formSection}>
               <h4 style={styles.formSectionTitle}>Identificacao</h4>
