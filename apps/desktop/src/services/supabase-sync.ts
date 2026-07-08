@@ -188,7 +188,7 @@ interface OmieReferenceProduct {
   fiscalRecommendations?: Record<string, unknown> | null;
 }
 
-interface OmieReferencePaymentTerm {
+export interface OmieReferencePaymentTerm {
   id: number;
   code?: string | null;
   integrationCode?: string | null;
@@ -1872,6 +1872,7 @@ export async function processOmieSyncQueue(
       issueDate: string;
       paymentTermOmieCode?: string | null;
       paymentTermInstallmentCount?: number | null;
+      paymentTermInstallmentDays?: number[] | null;
       paymentMethodOmieCode?: string | null;
       accountOmieCode?: string | null;
     };
@@ -1901,6 +1902,7 @@ export async function processOmieSyncQueue(
             issueDate: payload.issueDate,
             paymentTermOmieCode: payload.paymentTermOmieCode ?? undefined,
             installmentCount: payload.paymentTermInstallmentCount ?? undefined,
+            installmentDays: payload.paymentTermInstallmentDays ?? undefined,
             paymentMethodOmieCode: payload.paymentMethodOmieCode ?? undefined,
             accountOmieCode: payload.accountOmieCode ?? undefined,
             idempotencyKey: job.idempotencyKey
@@ -2086,6 +2088,7 @@ export async function processFiscalBillingNow(
     issueDate: string;
     paymentTermOmieCode?: string | null;
     paymentTermInstallmentCount?: number | null;
+    paymentTermInstallmentDays?: number[] | null;
     paymentMethodOmieCode?: string | null;
     accountOmieCode?: string | null;
   };
@@ -2116,6 +2119,7 @@ export async function processFiscalBillingNow(
           issueDate: payload.issueDate,
           paymentTermOmieCode: payload.paymentTermOmieCode ?? undefined,
           installmentCount: payload.paymentTermInstallmentCount ?? undefined,
+          installmentDays: payload.paymentTermInstallmentDays ?? undefined,
           paymentMethodOmieCode: payload.paymentMethodOmieCode ?? undefined,
           accountOmieCode: payload.accountOmieCode ?? undefined,
           idempotencyKey: job.idempotency_key
@@ -2599,7 +2603,7 @@ function upsertOmieSuppliers(
   return persisted;
 }
 
-function upsertOmiePaymentTerms(
+export function upsertOmiePaymentTerms(
   database: DesktopDatabase,
   companyId: string,
   paymentTerms: OmieReferencePaymentTerm[]

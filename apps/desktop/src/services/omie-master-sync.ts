@@ -180,8 +180,15 @@ export async function syncOmieMasterData(
       return { fetched: 0, created: 0, updated: 0, skipped: 0 };
     }));
 
-    // 3. Payment terms — cadastradas localmente no KyberRock, nao vem mais do OMIE.
+    // 3. Payment terms (parcelas) — espelho omie_payment_terms puxado do cadastro OMIE.
+    // As condicoes locais continuam do KyberRock; o espelho fornece os codigos de
+    // parcela para vinculo e envio no pedido/OS.
     entities.push(await syncEntity("condicoes_pagamento", async () => {
+      if (options.appKey && options.appSecret) {
+        const client = createOmieClient({ appKey: options.appKey, appSecret: options.appSecret });
+        const service = new OmieSyncService(client, database);
+        return await service.syncPaymentConditions(companyId);
+      }
       return { fetched: 0, created: 0, updated: 0, skipped: 0 };
     }));
 

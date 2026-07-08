@@ -739,6 +739,206 @@ Deno.test("create_order usa a conta corrente selecionada no desktop na ordem de 
   assertEquals(infos.nCodCC, 4321);
 });
 
+function parcelaAwareOrderStub(options: {
+  existingParcelas?: Array<Record<string, unknown>>;
+  createdParcelaCode?: string;
+}) {
+  return createOmieQueueStub((input) => {
+    if (input.call === "ListarParcelas") {
+      return {
+        pagina: 1,
+        total_de_paginas: 1,
+        cadastros: options.existingParcelas ?? []
+      };
+    }
+    if (input.call === "IncluirParcela") {
+      return { cCodParcela: options.createdParcelaCode ?? "212" };
+    }
+    if (input.call === "ListarContasCorrentes") {
+      return { conta_corrente_lista: [{ nCodCC: 7 }] };
+    }
+    if (input.call === "ListarCadastroServico") {
+      return { cadastros: [{ cCodServMun: "1.07" }] };
+    }
+    if (input.call === "IncluirPedido") {
+      return { codigo_pedido: 12345 };
+    }
+    if (input.call === "IncluirOS") {
+      return { nCodOS: 555 };
+    }
+    return defaultOmieListResponse(input);
+  });
+}
+
+Deno.test("create_order cria a condicao no cadastro OMIE quando ela nao existe", async () => {
+  const deviceToken = "token-order-new-parcela";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-order-new-parcela": {
+        id: "device-order-new-parcela",
+        company_id: "company-order-new-parcela",
+        unit_id: "unit-order-new-parcela",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-order-new-parcela": {
+        id: "company-order-new-parcela",
+        is_active: true,
+        omie_app_key: "order-new-parcela",
+        omie_app_secret: "secret-order-new-parcela"
+      }
+    }
+  });
+  const omieQueue = parcelaAwareOrderStub({
+    existingParcelas: [{ nCodigo: "000", cDescricao: "A Vista", nParcelas: 1 }],
+    createdParcelaCode: "212"
+  });
+
+  const response = await postOmieSync(
+    {
+      deviceId: "device-order-new-parcela",
+      deviceToken,
+      action: "create_order",
+      payload: {
+        operationType: "invoice",
+        customerOmieId: 100,
+        productOmieId: 200,
+        quantity: 30.5,
+        unitPrice: 85,
+        issueDate: "2026-07-07",
+        idempotencyKey: "kyberrock:unit:op6:create_sales_order",
+        installmentDays: [7, 14, 21]
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  assertObjectMatch(response, { ok: true, orderId: 12345 });
+  const incluirParcela = getParam(findRequest(omieQueue, "IncluirParcela"));
+  assertEquals(incluirParcela.cDescricao, "7/14/21");
+  const cabecalho = getParam(findRequest(omieQueue, "IncluirPedido")).cabecalho as Record<
+    string,
+    unknown
+  >;
+  assertEquals(cabecalho.codigo_parcela, "212");
+});
+
+Deno.test("create_order reusa parcela existente no OMIE com os mesmos dias", async () => {
+  const deviceToken = "token-order-reuse-parcela";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-order-reuse-parcela": {
+        id: "device-order-reuse-parcela",
+        company_id: "company-order-reuse-parcela",
+        unit_id: "unit-order-reuse-parcela",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-order-reuse-parcela": {
+        id: "company-order-reuse-parcela",
+        is_active: true,
+        omie_app_key: "order-reuse-parcela",
+        omie_app_secret: "secret-order-reuse-parcela"
+      }
+    }
+  });
+  const omieQueue = parcelaAwareOrderStub({
+    existingParcelas: [
+      { nCodigo: "000", cDescricao: "A Vista", nParcelas: 1 },
+      { nCodigo: "215", cDescricao: "7/14/21", nParcelas: 3, aparcela_dias: [7, 14, 21] }
+    ]
+  });
+
+  await postOmieSync(
+    {
+      deviceId: "device-order-reuse-parcela",
+      deviceToken,
+      action: "create_order",
+      payload: {
+        operationType: "invoice",
+        customerOmieId: 100,
+        productOmieId: 200,
+        quantity: 10,
+        unitPrice: 50,
+        issueDate: "2026-07-07",
+        idempotencyKey: "kyberrock:unit:op7:create_sales_order",
+        installmentDays: [7, 14, 21]
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  // Reusa o codigo existente sem criar parcela nova.
+  assertEquals(
+    omieQueue.requests.some((request) => request.call === "IncluirParcela"),
+    false
+  );
+  const cabecalho = getParam(findRequest(omieQueue, "IncluirPedido")).cabecalho as Record<
+    string,
+    unknown
+  >;
+  assertEquals(cabecalho.codigo_parcela, "215");
+});
+
+Deno.test("create_order aplica a condicao criada tambem na ordem de servico", async () => {
+  const deviceToken = "token-order-os-parcela";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-order-os-parcela": {
+        id: "device-order-os-parcela",
+        company_id: "company-order-os-parcela",
+        unit_id: "unit-order-os-parcela",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-order-os-parcela": {
+        id: "company-order-os-parcela",
+        is_active: true,
+        omie_app_key: "order-os-parcela",
+        omie_app_secret: "secret-order-os-parcela"
+      }
+    }
+  });
+  const omieQueue = parcelaAwareOrderStub({ createdParcelaCode: "310" });
+
+  const response = await postOmieSync(
+    {
+      deviceId: "device-order-os-parcela",
+      deviceToken,
+      action: "create_order",
+      payload: {
+        operationType: "internal",
+        customerOmieId: 100,
+        serviceDescription: "Pesagem interna",
+        quantity: 12,
+        unitPrice: 40,
+        issueDate: "2026-07-07",
+        idempotencyKey: "kyberrock:unit:op8:create_service_order",
+        installmentDays: [30, 60],
+        installmentCount: 2
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  assertObjectMatch(response, { ok: true, orderId: 555 });
+  const cabecalho = getParam(findRequest(omieQueue, "IncluirOS")).Cabecalho as Record<
+    string,
+    unknown
+  >;
+  assertEquals(cabecalho.cCodParc, "310");
+  assertEquals(cabecalho.nQtdeParc, 2);
+});
+
 Deno.test("cancel_order consulta e exclui um pedido de venda nao faturado", async () => {
   const deviceToken = "token-cancel-ok";
   const fixtures = createSupabaseDependencies({
