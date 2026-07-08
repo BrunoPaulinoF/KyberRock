@@ -20,7 +20,8 @@ npx vitest run <path>    # single test file
 npm run format           # prettier . --write
 ```
 
-After a code change, build + lint + test must all pass before treating the task as done.
+After a code change, build + lint + test must all pass before treating the task as done — see
+AGENTS.md "Subagents" for the required parallel `qa-build`/`qa-lint`/`qa-test` gate.
 Tests live next to the code they cover (`*.test.ts` / `*.test.tsx`).
 
 ## The big picture
@@ -49,11 +50,13 @@ apps/loader-web (React)  --read-only-->  Supabase Postgres   (loader sees open l
   workspace-copy gotchas.
 - **`apps/loader-web`** — read-only React site where the loader (carregador) sees open loading
   requests projected into Supabase Postgres. Served via nginx in Docker.
-- **`supabase/functions/*`** — Deno Edge Functions, the *only* place sensitive integrations run
-  (OMIE calls, admin auth, sync endpoints `desktop-sync`/`desktop-pull`/`desktop-status`,
-  scheduled `daily-report-*`). `_shared/` holds code common to them. Never call OMIE or use the
-  service-role key from desktop or web. Note: this is distinct from the `functions/`
-  workspace (`@kyberrock/functions`), which is a plain TypeScript utils library.
+- **`supabase/functions/*`** — Deno Edge Functions, the *only* place sensitive integrations run:
+  admin surface (`admin-api`, `admin-auth`), OMIE bridge (`omie-sync`), desktop sync/lifecycle
+  (`desktop-sync`, `desktop-pull`, `desktop-status`, `desktop-activate`, `desktop-download`) and
+  scheduled reporting (`daily-report-scheduler`, `daily-report-email`). `_shared/` holds code
+  common to them. Never call OMIE or use the service-role key from desktop or web. Note: this is
+  distinct from the `functions/` workspace (`@kyberrock/functions`), which is a plain TypeScript
+  utils library.
 - **`packages/*`** — shared building blocks consumed by the apps: `shared` (domain types, enums,
   ID + format helpers), `scale-adapters` (one adapter contract, e.g. Toledo + a virtual test
   adapter), `omie-client` (typed OMIE client with idempotency), `print-templates` (80 mm coupon
