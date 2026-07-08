@@ -959,6 +959,66 @@ describe("supabase sync", () => {
     }
   });
 
+  it("promotes an unbilled create_order job to billing on refature (same idempotency key)", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertWeighingOperation(database);
+      // Fechamento com cadastro incompleto subiu o pedido sem faturar (job done).
+      enqueueSyncJob(database, {
+        id: "omie-create-only-1",
+        target: "omie",
+        action: "create_order",
+        entityType: "weighing_operation",
+        entityId: "operation-1",
+        idempotencyKey: "kyberrock:unit-1:operation-1:create_sales_order",
+        payload: {
+          operationId: "operation-1",
+          operationType: "invoice",
+          customerOmieId: 777,
+          quantity: 10,
+          unitPrice: 25,
+          issueDate: "2026-06-12"
+        }
+      });
+      database
+        .prepare("UPDATE sync_queue SET status = 'done' WHERE id = 'omie-create-only-1'")
+        .run();
+      invokeMock.mockResolvedValueOnce({
+        error: null,
+        data: { orderId: 777, billed: true, billingStatusCode: "0", billingStatusMessage: "ok" }
+      });
+
+      const result = await processFiscalBillingNow(database, identity, "operation-1");
+
+      // O MESMO job (mesma chave) foi promovido para faturamento e processado.
+      expect(result).toMatchObject({ orderId: 777, billed: true });
+      expect(invokeMock).toHaveBeenCalledWith("omie-sync", {
+        body: expect.objectContaining({
+          action: "create_and_bill_order",
+          payload: expect.objectContaining({
+            idempotencyKey: "kyberrock:unit-1:operation-1:create_sales_order"
+          })
+        })
+      });
+      expect(
+        database
+          .prepare("SELECT COUNT(*) FROM sync_queue WHERE target = 'omie'")
+          .pluck()
+          .get()
+      ).toBe(1);
+      expect(
+        database
+          .prepare("SELECT action, status FROM sync_queue WHERE id = 'omie-create-only-1'")
+          .get()
+      ).toMatchObject({ action: "create_and_bill_order", status: "done" });
+    } finally {
+      database.close();
+    }
+  });
+
   it("resumes the OMIE pull from the checkpoint on the next call", async () => {
     const database = createDatabase();
 
@@ -1356,8 +1416,8 @@ function insertWeighingOperation(database: DesktopDatabase): void {
   database
     .prepare(
       `INSERT OR IGNORE INTO customers (
-        id, company_id, source, legal_name, trade_name, email, address_number, created_at, updated_at
-      ) VALUES ('sync-customer-1', 'company-1', 'omie', 'Cliente Sync LTDA', 'Cliente Sync', 'sync@example.com', '10', ?, ?)`
+        id, company_id, source, omie_customer_id, legal_name, trade_name, email, address_number, created_at, updated_at
+      ) VALUES ('sync-customer-1', 'company-1', 'omie', 777, 'Cliente Sync LTDA', 'Cliente Sync', 'sync@example.com', '10', ?, ?)`
     )
     .run(now, now);
   database

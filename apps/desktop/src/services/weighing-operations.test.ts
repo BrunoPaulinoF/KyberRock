@@ -601,7 +601,7 @@ describe("weighing operations", () => {
     }
   });
 
-  it("blocks fiscal billing enqueue when the customer is missing NF-e fields", () => {
+  it("sends the sales order without billing when the customer is missing NF-e fields", () => {
     const database = createDatabase();
 
     try {
@@ -629,14 +629,16 @@ describe("weighing operations", () => {
         operationType: "invoice"
       });
 
-      // Fecha localmente, mas nao enfileira faturamento condenado.
+      // Fecha localmente e sobe o PEDIDO (sem faturar): criar pedido nao exige NF-e.
       expect(closed.status).toBe("closed_local");
-      expect(
-        database
-          .prepare("SELECT COUNT(*) FROM sync_queue WHERE target = 'omie'")
-          .pluck()
-          .get()
-      ).toBe(0);
+      const omieJob = database
+        .prepare("SELECT action, idempotency_key FROM sync_queue WHERE target = 'omie'")
+        .get() as { action: string; idempotency_key: string };
+      expect(omieJob.action).toBe("create_order");
+      expect(omieJob.idempotency_key).toBe(
+        buildOmieIntegrationCode("unit-1", operation.id, "create_sales_order")
+      );
+      // A emissao da NF-e fica pendente ate corrigir o cadastro.
       expect(
         database
           .prepare("SELECT omie_billing_status FROM weighing_operations WHERE id = ?")

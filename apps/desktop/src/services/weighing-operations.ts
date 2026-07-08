@@ -815,6 +815,22 @@ export function closeWeighingOperation(
                WHERE id = ?`
             )
             .run(readiness.message, timestamp, input.operationId);
+          // O pedido de venda sobe ao OMIE mesmo assim: criar pedido nao exige os
+          // campos de NF-e (so o FaturarPedidoVenda exige). Fica pendente apenas a
+          // emissao — apos corrigir o cadastro, o refaturamento promove este mesmo
+          // job (mesma chave de idempotencia) para create_and_bill_order.
+          enqueueSyncJob(
+            database,
+            {
+              target: "omie",
+              action: "create_order",
+              entityType: "weighing_operation",
+              entityId: input.operationId,
+              idempotencyKey: billingJob.idempotencyKey,
+              payload: billingJob.payload
+            },
+            now
+          );
         } else {
           enqueueOmieBillingJob(database, input.operationId, billingJob, now);
         }
