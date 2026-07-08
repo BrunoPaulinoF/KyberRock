@@ -1339,7 +1339,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       }
       const billingStatus =
         operationType === "invoice" ? await desktopApi.billFiscalOperation(operation.id) : null;
-      if (operationType === "invoice") {
+      // Pendencia de cadastro (Numero do Endereco + E-mail para NF-e): a operacao fechou
+      // localmente, mas o faturamento nao ocorreu. Mostra aviso acionavel (nao erro).
+      const billingBlocked = billingStatus?.blocked === true;
+      if (operationType === "invoice" && !billingBlocked) {
         setFiscalCloseProgress({
           operationId: operation.id,
           status: "running",
@@ -1369,15 +1372,17 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       } catch (error) {
         receiptStatus = `Cupom nao impresso: ${getErrorMessage(error)}.`;
       }
-      const fiscalStatus = billingStatus
-        ? `Pedido fiscal OMIE ${billingStatus.orderId} faturado.${
-            billingStatus.documentUrl
-              ? billingStatus.documentPrinted
-                ? " DANFE enviado para impressora."
-                : ` DANFE disponivel, mas nao foi impresso automaticamente: ${billingStatus.documentPrintError ?? "sem detalhe"}.`
-              : " DANFE ainda nao foi retornado pela OMIE; imprima pelo portal OMIE se necessario."
-          } `
-        : "";
+      const fiscalStatus = billingBlocked
+        ? `Faturamento pendente: ${billingStatus?.blockReason ?? "cadastro do cliente incompleto para NF-e."} `
+        : billingStatus
+          ? `Pedido fiscal OMIE ${billingStatus.orderId} faturado.${
+              billingStatus.documentUrl
+                ? billingStatus.documentPrinted
+                  ? " DANFE enviado para impressora."
+                  : ` DANFE disponivel, mas nao foi impresso automaticamente: ${billingStatus.documentPrintError ?? "sem detalhe"}.`
+                : " DANFE ainda nao foi retornado pela OMIE; imprima pelo portal OMIE se necessario."
+            } `
+          : "";
       const operationLabel =
         operationType === "invoice" ? "Operacao fiscal fechada" : "Operacao interna fechada";
       setMessage(
@@ -1388,7 +1393,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
           operationId: operation.id,
           status: "success",
           step: "receipt",
-          title: "Saida fiscal concluida",
+          title: billingBlocked ? "Saida fiscal fechada — pendencia de cadastro" : "Saida fiscal concluida",
           detail: fiscalStatus.trim() || "Pedido fiscal faturado no OMIE."
         });
       }
@@ -1429,6 +1434,22 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
     try {
       const billingStatus = await desktopApi.billFiscalOperation(operationId);
+      if (billingStatus.blocked) {
+        // Cadastro ainda incompleto: aviso acionavel, nao erro. O job segue re-executavel.
+        const reason =
+          billingStatus.blockReason ??
+          "Cadastro do cliente incompleto para NF-e (Numero do Endereco + E-mail).";
+        setFiscalCloseProgress({
+          operationId,
+          status: "success",
+          step: "billing",
+          title: "Faturamento pendente — cadastro incompleto",
+          detail: reason
+        });
+        setMessage(reason);
+        await refreshOpenOperations();
+        return;
+      }
       const danfeStatus = billingStatus.documentUrl
         ? billingStatus.documentPrinted
           ? "DANFE enviado para impressora."
@@ -6197,6 +6218,17 @@ function getFiscalBillingStatus(operation: WeighingOperationSummary): {
           : "Pedido faturado no OMIE.",
       tone: "success",
       canRetry: false
+    };
+  }
+
+  if (operation.omieBillingStatus === "cadastro_incompleto") {
+    return {
+      label: "Cadastro incompleto",
+      detail:
+        operation.omieBillingMessage ??
+        "Falta Numero do Endereco e E-mail do cliente para emitir a NF-e.",
+      tone: "warning",
+      canRetry: true
     };
   }
 

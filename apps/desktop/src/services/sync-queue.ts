@@ -169,6 +169,32 @@ export function markSyncJobDone(
     .run(now.toISOString(), id);
 }
 
+// Sentinela lexicograficamente maior que qualquer ISO real: o loop batch
+// (listRunnableSyncJobs filtra next_attempt_at <= now) nunca repega o job, mas
+// processFiscalBillingNow (que so filtra por status) ainda consegue re-executa-lo.
+export const BLOCKED_NEXT_ATTEMPT_AT = "9999-12-31T23:59:59.999Z";
+
+/**
+ * Marca um job como bloqueado por falha DETERMINISTICA (ex.: cadastro incompleto para NF-e):
+ * mantem status 'failed' (re-executavel manualmente), empurra next_attempt_at para o futuro
+ * distante (para o retry automatico) e NAO incrementa attempt_count (para nunca cruzar o limite
+ * de dead_letter e continuar re-executavel apos o operador corrigir o cadastro).
+ */
+export function markSyncJobBlocked(
+  database: DesktopDatabase,
+  id: string,
+  errorMessage: string,
+  now: Date = new Date()
+): void {
+  database
+    .prepare(
+      `UPDATE sync_queue
+       SET status = 'failed', next_attempt_at = ?, last_error = ?, updated_at = ?
+       WHERE id = ?`
+    )
+    .run(BLOCKED_NEXT_ATTEMPT_AT, sanitizeErrorMessage(errorMessage), now.toISOString(), id);
+}
+
 export function markSyncJobFailed(
   database: DesktopDatabase,
   id: string,

@@ -21,9 +21,16 @@ import { isSellableProduct } from "./product-classification.js";
 import {
   enqueueSyncJob,
   listRunnableSyncJobs,
+  markSyncJobBlocked,
   markSyncJobDone,
   markSyncJobFailed
 } from "./sync-queue.js";
+import {
+  buildOmieBillingJob,
+  enqueueOmieBillingJob,
+  validateOperationFiscalReadiness
+} from "./weighing-operations.js";
+import { isCadastroIncompleteFault } from "./omie-fault-classifier.js";
 
 let client: SupabaseClient | null = null;
 let clientConfigKey: string | null = null;
@@ -104,8 +111,12 @@ export interface OmieCloudSyncResult {
 }
 
 export interface FiscalBillingResult {
-  orderId: number;
+  orderId: number | null;
   billed: boolean;
+  /** true quando o faturamento foi bloqueado por pendencia de cadastro (nao é erro/retry). */
+  blocked?: boolean;
+  /** Mensagem acionavel da pendencia (ex.: preencher Numero do Endereco + E-mail). */
+  blockReason?: string | null;
   billingStatusCode: string | null;
   billingStatusMessage: string | null;
   documentUrl: string | null;
@@ -1938,7 +1949,23 @@ export async function processOmieSyncQueue(
       processed++;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Erro OMIE";
-      markSyncJobFailed(database, job.id, message);
+      // Falha deterministica de cadastro/NF-e no faturamento: bloqueia (para o retry storm de
+      // ~10x/min) e marca a pendencia na operacao. Continua re-executavel via processFiscalBillingNow.
+      if (job.action === "create_and_bill_order" && isCadastroIncompleteFault(message)) {
+        markSyncJobBlocked(database, job.id, message);
+        const blockedOperationId = (job.payload as { operationId?: string })?.operationId;
+        if (blockedOperationId) {
+          database
+            .prepare(
+              `UPDATE weighing_operations
+               SET omie_billing_status = 'cadastro_incompleto', omie_billing_message = ?, updated_at = datetime('now')
+               WHERE id = ?`
+            )
+            .run(message, blockedOperationId);
+        }
+      } else {
+        markSyncJobFailed(database, job.id, message);
+      }
       failed++;
       errors.push(`Job ${job.id}: ${message}`);
     }
@@ -1968,26 +1995,79 @@ export async function processFiscalBillingNow(
 ): Promise<FiscalBillingResult> {
   const settings = getCloudSettings(database, identity);
   const supabase = getSupabaseClient();
-  const job = database
-    .prepare(
-      `SELECT * FROM sync_queue
-       WHERE target = 'omie'
-         AND action = 'create_and_bill_order'
-         AND entity_id = ?
-         AND status IN ('pending', 'failed')
-       ORDER BY created_at DESC
-       LIMIT 1`
-    )
-    .get(operationId) as
-    | {
-        id: string;
-        idempotency_key: string;
-        payload_json: string;
-      }
-    | undefined;
+
+  // Gate autoritativo: cadastro do cliente precisa estar completo para NF-e. Se nao estiver,
+  // registra a pendencia e retorna bloqueado (sem chamar o OMIE, sem enfileirar job condenado).
+  const readiness = validateOperationFiscalReadiness(database, operationId);
+  if (!readiness.ready) {
+    database
+      .prepare(
+        `UPDATE weighing_operations
+         SET omie_billing_status = 'cadastro_incompleto', omie_billing_message = ?, updated_at = datetime('now')
+         WHERE id = ?`
+      )
+      .run(readiness.message, operationId);
+    return {
+      orderId: null,
+      billed: false,
+      blocked: true,
+      blockReason: readiness.message,
+      billingStatusCode: null,
+      billingStatusMessage: readiness.message,
+      documentUrl: null,
+      documentPrinted: false,
+      documentPrintError: null
+    };
+  }
+
+  const findBillingJob = () =>
+    database
+      .prepare(
+        `SELECT * FROM sync_queue
+         WHERE target = 'omie'
+           AND action = 'create_and_bill_order'
+           AND entity_id = ?
+           AND status IN ('pending', 'failed')
+         ORDER BY created_at DESC
+         LIMIT 1`
+      )
+      .get(operationId) as
+      | { id: string; idempotency_key: string; payload_json: string }
+      | undefined;
+
+  let job = findBillingJob();
+
+  // A pre-validacao no fechamento pode ter deixado a operacao sem job de faturamento. Como o
+  // cadastro agora esta completo, (re)constroi o job a partir da operacao e re-executa.
+  if (!job) {
+    const built = buildOmieBillingJob(database, operationId);
+    if (built && built.action === "create_and_bill_order") {
+      enqueueOmieBillingJob(database, operationId, built);
+      job = findBillingJob();
+    }
+  }
 
   if (!job) {
-    throw new Error("Nao ha faturamento OMIE pendente para esta operacao fiscal.");
+    const reason =
+      "Nao ha faturamento OMIE pendente para esta operacao fiscal (verifique se o cliente tem codigo OMIE).";
+    database
+      .prepare(
+        `UPDATE weighing_operations
+         SET omie_billing_status = 'cadastro_incompleto', omie_billing_message = ?, updated_at = datetime('now')
+         WHERE id = ?`
+      )
+      .run(reason, operationId);
+    return {
+      orderId: null,
+      billed: false,
+      blocked: true,
+      blockReason: reason,
+      billingStatusCode: null,
+      billingStatusMessage: reason,
+      documentUrl: null,
+      documentPrinted: false,
+      documentPrintError: null
+    };
   }
 
   const payload = parseJsonValue(job.payload_json) as {
@@ -2080,6 +2160,31 @@ export async function processFiscalBillingNow(
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Erro ao faturar pedido no OMIE.";
+
+    // Falha deterministica de cadastro/NF-e: nao adianta re-tentar automaticamente. Bloqueia o
+    // job (re-executavel manualmente apos corrigir) e retorna pendencia clara — sem throw/storm.
+    if (isCadastroIncompleteFault(message)) {
+      markSyncJobBlocked(database, job.id, message);
+      database
+        .prepare(
+          `UPDATE weighing_operations
+           SET omie_billing_status = 'cadastro_incompleto', omie_billing_message = ?, updated_at = datetime('now')
+           WHERE id = ?`
+        )
+        .run(message, operationId);
+      return {
+        orderId: null,
+        billed: false,
+        blocked: true,
+        blockReason: message,
+        billingStatusCode: null,
+        billingStatusMessage: message,
+        documentUrl: null,
+        documentPrinted: false,
+        documentPrintError: null
+      };
+    }
+
     markSyncJobFailed(database, job.id, message);
     database
       .prepare(
