@@ -760,90 +760,227 @@ export function closeWeighingOperation(
       );
     }
 
-    const operationIds = database
-      .prepare(
-        "SELECT customer_id, product_id, unit_id, payment_term_id FROM weighing_operations WHERE id = ?"
-      )
-      .get(input.operationId) as
-      | {
-          customer_id: string | null;
-          product_id: string | null;
-          unit_id: string;
-          payment_term_id: string | null;
+    // Reconstroi o job a partir da operacao ja atualizada nesta transacao (buildOmieBillingJob
+    // le os valores recem-gravados). Retorna null sem omie_customer_id (nada a enviar).
+    const billingJob = buildOmieBillingJob(database, input.operationId);
+    if (billingJob) {
+      // Operacao fiscal: pre-valida o cadastro do cliente (Numero do Endereco + E-mail exigidos
+      // pela NF-e). Se incompleto, NAO enfileira o faturamento condenado; registra a pendencia.
+      // O fechamento local segue integral (offline-first).
+      if (billingJob.payload.operationType === "invoice") {
+        const readiness = validateOperationFiscalReadiness(database, input.operationId);
+        if (!readiness.ready) {
+          database
+            .prepare(
+              `UPDATE weighing_operations
+               SET omie_billing_status = 'cadastro_incompleto', omie_billing_message = ?, updated_at = ?
+               WHERE id = ?`
+            )
+            .run(readiness.message, timestamp, input.operationId);
+        } else {
+          enqueueOmieBillingJob(database, input.operationId, billingJob, now);
         }
-      | undefined;
-
-    const omieCustomerId = operationIds?.customer_id
-      ? (
-          database
-            .prepare("SELECT omie_customer_id FROM customers WHERE id = ?")
-            .get(operationIds.customer_id) as { omie_customer_id: number | null } | undefined
-        )?.omie_customer_id
-      : null;
-    const omieProductId = operationIds?.product_id
-      ? (
-          database
-            .prepare("SELECT omie_product_id FROM products WHERE id = ?")
-            .get(operationIds.product_id) as { omie_product_id: number | null } | undefined
-        )?.omie_product_id
-      : null;
-
-    // Codigo de parcela do OMIE vinculado a condicao local da operacao. Sem vinculo, o
-    // edge function cai no padrao "000" (a vista) — comportamento historico.
-    const omieParcela = operationIds?.payment_term_id
-      ? (database
-          .prepare(
-            `SELECT pt.omie_parcela_code AS code, opt.installment_count AS installment_count
-             FROM payment_terms pt
-             LEFT JOIN omie_payment_terms opt
-               ON opt.company_id = pt.company_id AND opt.code = pt.omie_parcela_code AND opt.is_active = 1
-             WHERE pt.id = ?`
-          )
-          .get(operationIds.payment_term_id) as
-          | { code: string | null; installment_count: number | null }
-          | undefined)
-      : undefined;
-    const paymentTermOmieCode = omieParcela?.code ?? null;
-    const paymentTermInstallmentCount = omieParcela?.installment_count ?? null;
-
-    if (omieCustomerId) {
-      const omieAction = nextOperationType === "invoice" ? "create_and_bill_order" : "create_order";
-      const idempotencyAction =
-        nextOperationType === "invoice" ? "create_sales_order" : "create_service_order";
-      enqueueSyncJob(
-        database,
-        {
-          target: "omie",
-          action: omieAction,
-          entityType: "weighing_operation",
-          entityId: input.operationId,
-          idempotencyKey: buildOmieIntegrationCode(
-            operationIds?.unit_id ?? "unknown",
-            input.operationId,
-            idempotencyAction
-          ),
-          payload: {
-            operationId: input.operationId,
-            operationType: nextOperationType,
-            customerOmieId: omieCustomerId,
-            productOmieId: omieProductId ?? null,
-            serviceDescription: operation.productDescription,
-            quantity: netWeightKg / 1000,
-            unitPrice: operation.unitPriceCents ? operation.unitPriceCents / 100 : 0,
-            freightTotalCents,
-            issueDate: timestamp.slice(0, 10),
-            paymentTermOmieCode,
-            paymentTermInstallmentCount
-          }
-        },
-        now
-      );
+      } else {
+        enqueueOmieBillingJob(database, input.operationId, billingJob, now);
+      }
     }
   });
 
   closeOperation();
 
   return getWeighingOperation(database, input.operationId);
+}
+
+export type FiscalMissingField = "address_number" | "email";
+
+export interface CustomerFiscalReadiness {
+  ready: boolean;
+  missing: FiscalMissingField[];
+  source: string | null;
+  message: string | null;
+}
+
+const FISCAL_FIELD_LABELS: Record<FiscalMissingField, string> = {
+  address_number: "Numero do Endereco",
+  email: "E-mail"
+};
+
+/**
+ * O OMIE exige Numero do Endereco + E-mail no cadastro do cliente para emitir a NF-e
+ * (rejeitado apenas no FaturarPedidoVenda). Pre-valida esses dois campos antes de tentar
+ * faturar, para nao criar um pedido condenado nem gerar retry storm.
+ */
+export function validateCustomerFiscalReadiness(
+  database: DesktopDatabase,
+  customerId: string | null
+): CustomerFiscalReadiness {
+  if (!customerId) {
+    return {
+      ready: false,
+      missing: ["address_number", "email"],
+      source: null,
+      message: "Operacao fiscal sem cliente vinculado."
+    };
+  }
+  const row = database
+    .prepare("SELECT address_number, email, source FROM customers WHERE id = ?")
+    .get(customerId) as
+    | { address_number: string | null; email: string | null; source: string | null }
+    | undefined;
+  if (!row) {
+    return {
+      ready: false,
+      missing: ["address_number", "email"],
+      source: null,
+      message: "Cliente nao encontrado no cadastro local."
+    };
+  }
+  const missing: FiscalMissingField[] = [];
+  if (!(row.address_number ?? "").trim()) missing.push("address_number");
+  if (!(row.email ?? "").trim()) missing.push("email");
+  if (missing.length === 0) {
+    return { ready: true, missing: [], source: row.source, message: null };
+  }
+  const fields = missing.map((field) => FISCAL_FIELD_LABELS[field]).join(" e ");
+  let message = `Cadastro do cliente incompleto para NF-e: falta ${fields}. Preencha no cadastro do cliente e refature.`;
+  if (row.source === "omie") {
+    message += " Cliente de origem OMIE: corrija diretamente no portal OMIE.";
+  }
+  return { ready: false, missing, source: row.source, message };
+}
+
+/** Igual a validateCustomerFiscalReadiness, resolvendo o cliente pela operacao. */
+export function validateOperationFiscalReadiness(
+  database: DesktopDatabase,
+  operationId: string
+): CustomerFiscalReadiness {
+  const row = database
+    .prepare("SELECT customer_id FROM weighing_operations WHERE id = ?")
+    .get(operationId) as { customer_id: string | null } | undefined;
+  return validateCustomerFiscalReadiness(database, row?.customer_id ?? null);
+}
+
+export interface OmieBillingJobPayload {
+  operationId: string;
+  operationType: OperationType;
+  customerOmieId: number;
+  productOmieId: number | null;
+  serviceDescription: string | null;
+  quantity: number;
+  unitPrice: number;
+  freightTotalCents: number;
+  issueDate: string;
+  paymentTermOmieCode: string | null;
+  paymentTermInstallmentCount: number | null;
+}
+
+export interface BuiltOmieBillingJob {
+  payload: OmieBillingJobPayload;
+  idempotencyKey: string;
+  action: "create_and_bill_order" | "create_order";
+  unitId: string;
+}
+
+/**
+ * Reconstroi o job de faturamento/pedido OMIE a partir da operacao ja persistida, de forma
+ * IDENTICA ao que o fechamento produz (mesmo payload e idempotencyKey), para que fechamento e
+ * refaturamento (apos corrigir o cadastro) sejam byte-a-byte iguais e reusem o mesmo pedido no
+ * OMIE. Retorna null quando o cliente nao tem omie_customer_id (nada a enviar).
+ */
+export function buildOmieBillingJob(
+  database: DesktopDatabase,
+  operationId: string
+): BuiltOmieBillingJob | null {
+  const row = database
+    .prepare(
+      "SELECT unit_id, customer_id, product_id, payment_term_id, exit_weight_captured_at FROM weighing_operations WHERE id = ?"
+    )
+    .get(operationId) as
+    | {
+        unit_id: string;
+        customer_id: string | null;
+        product_id: string | null;
+        payment_term_id: string | null;
+        exit_weight_captured_at: string | null;
+      }
+    | undefined;
+  if (!row) return null;
+
+  const omieCustomerId = row.customer_id
+    ? (
+        database
+          .prepare("SELECT omie_customer_id FROM customers WHERE id = ?")
+          .get(row.customer_id) as { omie_customer_id: number | null } | undefined
+      )?.omie_customer_id ?? null
+    : null;
+  if (!omieCustomerId) return null;
+
+  const omieProductId = row.product_id
+    ? (
+        database
+          .prepare("SELECT omie_product_id FROM products WHERE id = ?")
+          .get(row.product_id) as { omie_product_id: number | null } | undefined
+      )?.omie_product_id ?? null
+    : null;
+
+  const omieParcela = row.payment_term_id
+    ? (database
+        .prepare(
+          `SELECT pt.omie_parcela_code AS code, opt.installment_count AS installment_count
+           FROM payment_terms pt
+           LEFT JOIN omie_payment_terms opt
+             ON opt.company_id = pt.company_id AND opt.code = pt.omie_parcela_code AND opt.is_active = 1
+           WHERE pt.id = ?`
+        )
+        .get(row.payment_term_id) as
+        | { code: string | null; installment_count: number | null }
+        | undefined)
+    : undefined;
+
+  const operation = getWeighingOperation(database, operationId);
+  const action = operation.operationType === "invoice" ? "create_and_bill_order" : "create_order";
+  const idempotencyAction =
+    operation.operationType === "invoice" ? "create_sales_order" : "create_service_order";
+
+  return {
+    unitId: row.unit_id,
+    action,
+    idempotencyKey: buildOmieIntegrationCode(row.unit_id ?? "unknown", operationId, idempotencyAction),
+    payload: {
+      operationId,
+      operationType: operation.operationType,
+      customerOmieId: omieCustomerId,
+      productOmieId: omieProductId,
+      serviceDescription: operation.productDescription,
+      quantity: (operation.netWeightKg ?? 0) / 1000,
+      unitPrice: operation.unitPriceCents ? operation.unitPriceCents / 100 : 0,
+      freightTotalCents: operation.freightTotalCents,
+      issueDate: (row.exit_weight_captured_at ?? "").slice(0, 10),
+      paymentTermOmieCode: omieParcela?.code ?? null,
+      paymentTermInstallmentCount: omieParcela?.installment_count ?? null
+    }
+  };
+}
+
+/** Enfileira o job de faturamento/pedido OMIE reconstruido por buildOmieBillingJob. */
+export function enqueueOmieBillingJob(
+  database: DesktopDatabase,
+  operationId: string,
+  job: BuiltOmieBillingJob,
+  now: Date = new Date()
+): void {
+  enqueueSyncJob(
+    database,
+    {
+      target: "omie",
+      action: job.action,
+      entityType: "weighing_operation",
+      entityId: operationId,
+      idempotencyKey: job.idempotencyKey,
+      payload: job.payload
+    },
+    now
+  );
 }
 
 export function cancelWeighingOperation(

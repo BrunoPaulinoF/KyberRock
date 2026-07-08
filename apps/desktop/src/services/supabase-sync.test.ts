@@ -9,7 +9,7 @@ import {
 import { runDesktopMigrations } from "../database/migrate";
 import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite";
 import { ensureInitialDesktopIdentity, type LocalDesktopIdentity } from "./bootstrap";
-import { enqueueSyncJob } from "./sync-queue";
+import { BLOCKED_NEXT_ATTEMPT_AT, enqueueSyncJob } from "./sync-queue";
 import { createSimulatedWeighingOperation } from "./weighing-operations";
 import {
   applyOmieReferenceData,
@@ -1192,6 +1192,94 @@ describe("supabase sync", () => {
       expect(state.productsPage).toBe(1);
       expect(state.paymentTermsPage).toBe(1);
       expect(state.inProgress).toBe(false);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("processFiscalBillingNow returns blocked (no OMIE call) when the customer lacks NF-e fields", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertWeighingOperation(database);
+      // Cliente sem Numero do Endereco / E-mail vinculado a operacao fiscal.
+      database
+        .prepare(
+          `INSERT INTO customers (id, company_id, source, legal_name, trade_name, omie_customer_id, email, address_number, created_at, updated_at)
+           VALUES ('cust-x', 'company-1', 'omie', 'Cliente X', 'Cliente X', 456, NULL, NULL, datetime('now'), datetime('now'))`
+        )
+        .run();
+      database
+        .prepare("UPDATE weighing_operations SET customer_id = 'cust-x' WHERE id = 'operation-1'")
+        .run();
+
+      const result = await processFiscalBillingNow(database, identity, "operation-1");
+
+      expect(result.blocked).toBe(true);
+      expect(result.billed).toBe(false);
+      expect(invokeMock).not.toHaveBeenCalled();
+      expect(
+        database
+          .prepare("SELECT omie_billing_status FROM weighing_operations WHERE id = 'operation-1'")
+          .pluck()
+          .get()
+      ).toBe("cadastro_incompleto");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("processOmieSyncQueue blocks (no storm) a billing job on the OMIE NF-e cadastro fault", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertWeighingOperation(database);
+      const job = enqueueSyncJob(database, {
+        target: "omie",
+        action: "create_and_bill_order",
+        entityType: "weighing_operation",
+        entityId: "operation-1",
+        idempotencyKey: "omie:operation-1:bill",
+        payload: {
+          operationId: "operation-1",
+          operationType: "invoice",
+          customerOmieId: 456,
+          quantity: 10,
+          unitPrice: 25,
+          issueDate: "2026-06-12"
+        }
+      });
+
+      invokeMock.mockResolvedValueOnce({
+        error: createFunctionHttpError(
+          "Nao foi possivel realizar o faturamento desse Pedido de Venda de Produto! Para emitir a NF-e falta preencher o Numero do Endereco e o E-mail."
+        ),
+        data: null
+      });
+
+      await processOmieSyncQueue(database, identity);
+
+      const row = database
+        .prepare("SELECT status, next_attempt_at, attempt_count FROM sync_queue WHERE id = ?")
+        .get(job.id) as { status: string; next_attempt_at: string; attempt_count: number };
+      expect(row.status).toBe("failed");
+      expect(row.next_attempt_at).toBe(BLOCKED_NEXT_ATTEMPT_AT);
+      expect(row.attempt_count).toBe(0);
+      expect(
+        database
+          .prepare("SELECT omie_billing_status FROM weighing_operations WHERE id = 'operation-1'")
+          .pluck()
+          .get()
+      ).toBe("cadastro_incompleto");
+
+      // Segunda passada do batch nao repega o job bloqueado (sem storm).
+      invokeMock.mockClear();
+      await processOmieSyncQueue(database, identity);
+      expect(invokeMock).not.toHaveBeenCalled();
     } finally {
       database.close();
     }
