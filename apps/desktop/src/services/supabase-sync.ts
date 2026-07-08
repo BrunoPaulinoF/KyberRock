@@ -31,6 +31,7 @@ import {
   validateOperationFiscalReadiness
 } from "./weighing-operations.js";
 import { isCadastroIncompleteFault } from "./omie-fault-classifier.js";
+import { provisionPaymentTermsFromOmieMirror } from "./payment-terms.js";
 
 let client: SupabaseClient | null = null;
 let clientConfigKey: string | null = null;
@@ -1160,6 +1161,9 @@ export function applyOmieReferenceData(
     productsSynced = upsertOmieProducts(database, companyId, products);
     suppliersPersisted = upsertOmieSuppliers(database, companyId, suppliers);
     paymentTermsPersisted = upsertOmiePaymentTerms(database, companyId, paymentTerms);
+    // Materializa parcelas novas do espelho como condicoes locais selecionaveis
+    // (aparecem na Nova Entrada e no cadastro do cliente).
+    provisionPaymentTermsFromOmieMirror(database, companyId);
   });
   apply();
 
@@ -1969,9 +1973,19 @@ export async function processOmieSyncQueue(
             )
             .run(message, blockedOperationId);
         }
-      } else {
-        markSyncJobFailed(database, job.id, message);
+        failed++;
+        // Pendencia de cadastro, nao erro de sincronizacao: orienta a correcao e avisa
+        // que nao havera novas tentativas automaticas (o job fica bloqueado).
+        errors.push(
+          `Job ${job.id}: faturamento pausado por cadastro incompleto do cliente ` +
+            `(corrija no cadastro/portal OMIE e refature pela operacao). Detalhe OMIE: ${message}`
+        );
+        if (index < jobs.length - 1) {
+          await sleep(delayMs);
+        }
+        continue;
       }
+      markSyncJobFailed(database, job.id, message);
       failed++;
       errors.push(`Job ${job.id}: ${message}`);
     }

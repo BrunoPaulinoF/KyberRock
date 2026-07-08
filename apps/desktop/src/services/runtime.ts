@@ -533,6 +533,8 @@ export class DesktopRuntime {
       entryWeightKg: entryReading.weightKg,
       entryScaleCapture: buildScaleCaptureAudit(entryReading)
     });
+    // A entrada pode ter gravado condicao/forma como padrao do cliente (primeira escolha).
+    this.cacheStore.invalidate("customer", this.ensureIdentity().companyId);
     this.triggerBackgroundCloudSync("entry_registered", { operationId: operation.id });
     return operation;
   }

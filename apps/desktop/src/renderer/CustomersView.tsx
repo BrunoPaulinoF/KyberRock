@@ -23,6 +23,8 @@ import {
 import type { CepLookupResult } from "./inputs";
 import type { CustomerCacheEntry, CustomerFormData } from "./customers.types";
 import { CrudFormModal } from "./CrudFormModal";
+import { extractConditionRaw, resolveConditionTermId } from "./payment-condition-helpers";
+import { tryParsePaymentCondition } from "../services/payment-condition-parser";
 import {
   CellMuted,
   CellPrimary,
@@ -210,7 +212,20 @@ interface CarrierOption {
 interface PaymentTermOption {
   id: string;
   name: string;
+  rulesJson?: string;
 }
+
+// Secoes do formulario de cliente, navegadas por botoes (uma visivel por vez).
+const CUSTOMER_FORM_SECTIONS = [
+  { key: "identificacao", label: "Identificacao" },
+  { key: "contato", label: "Contato" },
+  { key: "endereco", label: "Endereco" },
+  { key: "comercial", label: "Comercial" },
+  { key: "transportadoras", label: "Transportadoras" },
+  { key: "frete", label: "Frete" },
+  { key: "precos", label: "Precos" }
+] as const;
+type CustomerFormSectionKey = (typeof CUSTOMER_FORM_SECTIONS)[number]["key"];
 interface PaymentMethodOption {
   id: string;
   name: string;
@@ -264,6 +279,11 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
   const [carriers, setCarriers] = useState<CarrierOption[]>([]);
   const [paymentTerms, setPaymentTerms] = useState<PaymentTermOption[]>([]);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodOption[]>([]);
+  // Condicao de pagamento padrao digitada ("5", "7 14 21", "7/14/21"); resolvida
+  // para um payment_term local no salvar.
+  const [defaultConditionText, setDefaultConditionText] = useState("");
+  const [activeFormSection, setActiveFormSection] =
+    useState<CustomerFormSectionKey>("identificacao");
   const [products, setProducts] = useState<ProductOption[]>([]);
   const [specialPrices, setSpecialPrices] = useState<CustomerSpecialPriceEntry[]>([]);
   const [specialProductId, setSpecialProductId] = useState("");
@@ -348,6 +368,8 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
     setFreightProductId("");
     setFreightValueReais("");
     setFreightMode("default");
+    setDefaultConditionText("");
+    setActiveFormSection("identificacao");
   }
 
   function openCreateForm(): void {
@@ -392,6 +414,14 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
       city: customer.city ?? "",
       state: customer.state ?? ""
     });
+    // Condicao padrao aparece como texto editavel (regra da condicao vinculada).
+    const defaultTerm = customer.defaultPaymentTermId
+      ? paymentTerms.find((term) => term.id === customer.defaultPaymentTermId)
+      : undefined;
+    setDefaultConditionText(
+      defaultTerm ? extractConditionRaw(defaultTerm.rulesJson ?? "") || defaultTerm.name : ""
+    );
+    setActiveFormSection("identificacao");
     setEditingId(customer.id);
     setEditingSource(customer.source);
     setFormError(null);
@@ -570,14 +600,24 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
     }
     const normalizedZipcode = form.zipcode.replace(/\D/g, "");
 
+    const conditionText = defaultConditionText.trim();
+    if (conditionText && !tryParsePaymentCondition(conditionText)) {
+      setFormError('Condicao de pagamento padrao invalida. Use "5", "7 14 21" ou "7/14/21".');
+      return;
+    }
+
     setSaving(true);
     try {
+      // Texto da condicao vira (ou reusa) um payment_term local vinculado ao cliente.
+      const resolvedDefaultTermId = conditionText
+        ? await resolveConditionTermId(desktopApi, conditionText)
+        : "";
       if (editingId) {
         const localPatch = {
           observations: form.observations.trim() || undefined,
           creditMode: form.creditMode,
           defaultCarrierId: form.defaultCarrierId || null,
-          defaultPaymentTermId: form.defaultPaymentTermId || null,
+          defaultPaymentTermId: resolvedDefaultTermId || null,
           defaultPaymentMethodId: form.defaultPaymentMethodId || null,
           creditAccountEnabled: form.creditAccountEnabled,
           creditClosingDay,
@@ -622,7 +662,7 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
           omieBillingBlocked: form.omieBillingBlocked,
           observations: form.observations.trim() || undefined,
           defaultCarrierId: form.defaultCarrierId || undefined,
-          defaultPaymentTermId: form.defaultPaymentTermId || undefined,
+          defaultPaymentTermId: resolvedDefaultTermId || undefined,
           defaultPaymentMethodId: form.defaultPaymentMethodId || undefined,
           creditAccountEnabled: form.creditAccountEnabled,
           creditClosingDay: creditClosingDay ?? undefined,
@@ -786,7 +826,32 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
             </h3>
             {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
           </div>
-          <div style={styles.formShell}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", padding: "14px 18px 0" }}>
+            {CUSTOMER_FORM_SECTIONS.map((section) => {
+              const active = activeFormSection === section.key;
+              return (
+                <button
+                  key={section.key}
+                  type="button"
+                  onClick={() => setActiveFormSection(section.key)}
+                  style={{
+                    padding: "8px 14px",
+                    borderRadius: "999px",
+                    border: active ? "2px solid var(--kr-accent)" : "1px solid var(--kr-border)",
+                    background: active ? "var(--kr-accent-soft)" : "var(--kr-surface)",
+                    color: active ? "var(--kr-info-text)" : "var(--kr-muted)",
+                    fontWeight: active ? 800 : 600,
+                    fontSize: "12px",
+                    cursor: "pointer"
+                  }}
+                >
+                  {section.label}
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ ...styles.formShell, gridTemplateColumns: "1fr" }}>
+          {activeFormSection === "identificacao" ? (
             <section style={styles.formSection}>
               <h4 style={styles.formSectionTitle}>Identificacao</h4>
               <TextInput
@@ -820,9 +885,11 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
                 />
               </div>
             </section>
+          ) : null}
 
+          {activeFormSection === "contato" ? (
             <section style={styles.formSection}>
-              <h4 style={styles.formSectionTitle}>Contato e endereco</h4>
+              <h4 style={styles.formSectionTitle}>Contato</h4>
               <div style={styles.fieldRow}>
                 <PhoneInput
                   label="Telefone"
@@ -837,6 +904,12 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
                   disabled={isOmie}
                 />
               </div>
+            </section>
+          ) : null}
+
+          {activeFormSection === "endereco" ? (
+            <section style={styles.formSection}>
+              <h4 style={styles.formSectionTitle}>Endereco</h4>
               <div style={styles.fieldRow}>
                 <CepInput
                   label="CEP"
@@ -899,7 +972,9 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
                 </Field>
               </div>
             </section>
+          ) : null}
 
+          {activeFormSection === "comercial" ? (
             <section style={styles.formSection}>
               <h4 style={styles.formSectionTitle}>Comercial</h4>
               <Field
@@ -919,19 +994,17 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
                   ))}
                 </select>
               </Field>
-              <Field label="Condicao de pagamento padrao">
-                <select
-                  value={form.defaultPaymentTermId}
-                  onChange={(e) => setForm({ ...form, defaultPaymentTermId: e.target.value })}
+              <Field
+                label="Condicao de pagamento padrao"
+                hint='Digite: "5" (5 parcelas mensais), "7 14 21" ou "7/14/21" (prazos), "A Vista". Vazio = sem padrao. Se nao existir no OMIE, e criada automaticamente no envio.'
+              >
+                <input
+                  type="text"
+                  value={defaultConditionText}
+                  onChange={(e) => setDefaultConditionText(e.target.value)}
+                  placeholder='Ex.: "7/14/21"'
                   style={getInputStyle(false)}
-                >
-                  <option value="">Selecione</option>
-                  {paymentTerms.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                </select>
+                />
               </Field>
               <label style={styles.checkbox}>
                 <input
@@ -1103,7 +1176,12 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
                   placeholder="Anotacoes internas"
                 />
               </Field>
-              <div style={{ display: "grid", gap: "8px", marginTop: "8px" }}>
+            </section>
+          ) : null}
+
+          {activeFormSection === "transportadoras" ? (
+            <section style={styles.formSection}>
+              <div style={{ display: "grid", gap: "8px" }}>
                 <h4 style={styles.formSectionTitle}>Transportadoras vinculadas</h4>
                 {editingId ? (
                   <div style={styles.compactScrollList}>
@@ -1126,7 +1204,12 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
                   <p style={styles.cellMuted}>Salve o cliente antes de vincular transportadoras.</p>
                 )}
               </div>
-              <div style={{ display: "grid", gap: "8px", marginTop: "8px" }}>
+            </section>
+          ) : null}
+
+          {activeFormSection === "frete" ? (
+            <section style={styles.formSection}>
+              <div style={{ display: "grid", gap: "8px" }}>
                 <h4 style={styles.formSectionTitle}>Frete do cliente</h4>
                 {editingId ? (
                   <>
@@ -1235,7 +1318,12 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
                   <p style={styles.cellMuted}>Salve o cliente antes de cadastrar frete.</p>
                 )}
               </div>
-              <div style={{ display: "grid", gap: "8px", marginTop: "8px" }}>
+            </section>
+          ) : null}
+
+          {activeFormSection === "precos" ? (
+            <section style={styles.formSection}>
+              <div style={{ display: "grid", gap: "8px" }}>
                 <h4 style={styles.formSectionTitle}>Precos especiais</h4>
                 {editingId ? (
                   <>
@@ -1305,6 +1393,7 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
                 )}
               </div>
             </section>
+          ) : null}
           </div>
           <div style={styles.formFooter}>
             <button type="button" onClick={() => setShowForm(false)} style={styles.secondaryButton}>

@@ -7,6 +7,7 @@ import {
   deletePaymentTerm,
   listOmiePaymentTerms,
   listPaymentTerms,
+  provisionPaymentTermsFromOmieMirror,
   updatePaymentTerm
 } from "./payment-terms.js";
 
@@ -127,5 +128,35 @@ describe("payment-terms service", () => {
     const options = listOmiePaymentTerms(database, COMPANY_ID);
     expect(options.map((o) => o.code)).toEqual(["000", "030"]);
     expect(options[0].description).toBe("A vista");
+  });
+
+  it("materializes OMIE mirror parcelas as selectable local terms (idempotent)", () => {
+    const nowIso = new Date().toISOString();
+    database
+      .prepare(
+        `INSERT INTO omie_payment_terms (id, company_id, omie_id, code, description, installment_count, installment_days_json, is_active, visible, created_at, updated_at)
+         VALUES ('omie_parcela_212', ?, 212, '212', '7/14/21', 3, '[7,14,21]', 1, 1, ?, ?),
+                ('omie_parcela_090', ?, 90, '090', 'Inativa', 1, NULL, 0, 1, ?, ?)`
+      )
+      .run(COMPANY_ID, nowIso, nowIso, COMPANY_ID, nowIso, nowIso);
+
+    const created = provisionPaymentTermsFromOmieMirror(database, COMPANY_ID);
+    expect(created).toBe(1);
+
+    const terms = listPaymentTerms(database, COMPANY_ID);
+    const provisioned = terms.find((t) => t.omie_parcela_code === "212");
+    expect(provisioned).toBeDefined();
+    expect(provisioned!.name).toBe("7/14/21");
+    expect(JSON.parse(provisioned!.installment_days_json!)).toEqual([7, 14, 21]);
+    expect(JSON.parse(provisioned!.rules_json).raw).toBe("7/14/21");
+    // Parcela inativa nao vira condicao local.
+    expect(terms.some((t) => t.omie_parcela_code === "090")).toBe(false);
+
+    // Idempotente: nada novo na segunda rodada.
+    expect(provisionPaymentTermsFromOmieMirror(database, COMPANY_ID)).toBe(0);
+
+    // Exclusao do operador e respeitada: nao recria o termo apagado.
+    deletePaymentTerm(database, provisioned!.id);
+    expect(provisionPaymentTermsFromOmieMirror(database, COMPANY_ID)).toBe(0);
   });
 });
