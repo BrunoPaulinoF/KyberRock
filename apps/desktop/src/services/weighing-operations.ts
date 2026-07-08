@@ -560,6 +560,30 @@ export function createWeighingOperation(
         timestamp
       );
 
+    // Primeira escolha vira padrao do cliente: a condicao e a forma usadas nesta
+    // entrada preenchem os campos padrao ainda vazios do cadastro (nunca sobrescrevem
+    // um padrao ja definido).
+    if (input.paymentTermId || input.paymentMethodId) {
+      database
+        .prepare(
+          `UPDATE customers SET
+             default_payment_term_id = COALESCE(default_payment_term_id, ?),
+             default_payment_method_id = COALESCE(default_payment_method_id, ?),
+             updated_at = ?
+           WHERE id = ?
+             AND ((default_payment_term_id IS NULL AND ? IS NOT NULL)
+               OR (default_payment_method_id IS NULL AND ? IS NOT NULL))`
+        )
+        .run(
+          input.paymentTermId ?? null,
+          input.paymentMethodId ?? null,
+          timestamp,
+          input.customerId,
+          input.paymentTermId ?? null,
+          input.paymentMethodId ?? null
+        );
+    }
+
     insertAuditLog(
       database,
       input.identity,

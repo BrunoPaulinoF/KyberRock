@@ -43,6 +43,7 @@ import {
 } from "../services/update-flow";
 import { validatePaymentMethodCondition } from "../services/payment-method-condition-guard";
 import { tryParsePaymentCondition } from "../services/payment-condition-parser";
+import { extractConditionRaw, resolveConditionTermId } from "./payment-condition-helpers";
 import type {
   OperationFreightInput,
   OperationType,
@@ -1274,7 +1275,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       // Condicao digitada livre vence o select: vira (ou reusa) um payment_term local.
       const customCondition = form.customConditionText.trim();
       const effectivePaymentTermId = customCondition
-        ? await resolveCustomConditionTermId(desktopApi, customCondition)
+        ? await resolveConditionTermId(desktopApi, customCondition)
         : form.paymentMode === "registered"
           ? form.paymentTermId || undefined
           : undefined;
@@ -3556,15 +3557,6 @@ function describeUpdateState(state: UpdateState): string {
   return "Sem atualizacao pendente.";
 }
 
-function extractConditionRaw(rulesJson: string): string {
-  try {
-    const rules = JSON.parse(rulesJson || "{}") as { raw?: string };
-    return typeof rules.raw === "string" ? rules.raw : "";
-  } catch {
-    return "";
-  }
-}
-
 /**
  * Resolve a forma e a condicao de pagamento selecionadas (via cache) e aplica
  * a trava de compatibilidade. Retorna `{ allowed: true }` quando nao ha forma
@@ -3602,36 +3594,6 @@ async function resolvePaymentConditionGuard(
     if (term) raw = extractConditionRaw(term.rulesJson);
   }
   return validatePaymentMethodCondition(methodLike, { raw });
-}
-
-/**
- * Resolve a condicao digitada livre na Nova Entrada para um payment_term local:
- * reusa uma condicao existente com a mesma regra (raw normalizado igual) ou cria
- * uma nova na hora. O termo resultante segue no fechamento e, sem codigo OMIE
- * vinculado, a parcela e criada no cadastro do OMIE pelo proprio envio do pedido/OS.
- */
-async function resolveCustomConditionTermId(
-  desktopApi: KyberRockDesktopApi,
-  conditionText: string
-): Promise<string> {
-  const parsed = tryParsePaymentCondition(conditionText);
-  if (!parsed) {
-    throw new Error(
-      'Condicao de pagamento invalida. Use formatos como "5", "7 14 21" ou "7/14/21".'
-    );
-  }
-
-  const termResult = await desktopApi.queryCache({ entityType: "payment_term", limit: 200 });
-  const existing = (termResult.rows as PaymentTermCacheEntry[]).find(
-    (term) => extractConditionRaw(term.rulesJson) === parsed.raw
-  );
-  if (existing) return existing.id;
-
-  const created = (await desktopApi.paymentTermsCreate({
-    name: parsed.summary,
-    condition: parsed.raw
-  })) as { id: string };
-  return created.id;
 }
 
 function validateWeighingForm(form: WeighingFormState): string | null {
@@ -4571,7 +4533,7 @@ function WeighingForm({
             label="Cliente"
             entityType="customer"
             value={form.customerId}
-            onChange={(id, item) =>
+            onChange={(id, item) => {
               setForm((prev) => ({
                 ...prev,
                 customerId: id,
@@ -4593,14 +4555,33 @@ function WeighingForm({
                   typeof item?.defaultPaymentMethodId === "string" && item.defaultPaymentMethodId
                     ? item.defaultPaymentMethodId
                     : prev.paymentMethodId,
-                paymentTermId:
-                  prev.paymentMode === "registered" &&
-                  typeof item?.defaultPaymentTermId === "string" &&
-                  item.defaultPaymentTermId
-                    ? item.defaultPaymentTermId
-                    : prev.paymentTermId
-              }))
-            }
+                // A condicao padrao chega como texto (async abaixo); limpa a anterior.
+                paymentTermId: "",
+                customConditionText: ""
+              }));
+              // Pre-carrega a condicao padrao do cliente como texto editavel no campo.
+              const defaultTermId =
+                typeof item?.defaultPaymentTermId === "string" ? item.defaultPaymentTermId : "";
+              if (defaultTermId && desktopApi) {
+                void desktopApi
+                  .queryCache({ entityType: "payment_term", limit: 200 })
+                  .then((result) => {
+                    const term = (result.rows as PaymentTermCacheEntry[]).find(
+                      (t) => t.id === defaultTermId
+                    );
+                    if (!term) return;
+                    setForm((prev) =>
+                      prev.customerId === id
+                        ? {
+                            ...prev,
+                            customConditionText: extractConditionRaw(term.rulesJson) || term.name
+                          }
+                        : prev
+                    );
+                  })
+                  .catch(() => undefined);
+              }
+            }}
             onCreateNew={() => setShowCustomerModal(true)}
             desktopApi={desktopApi}
             refreshKey={customerRefreshKey}
@@ -4620,31 +4601,21 @@ function WeighingForm({
             onChange={(id) => setForm((prev) => ({ ...prev, paymentMethodId: id }))}
             desktopApi={desktopApi}
           />
-          <CacheSelect
-            label="Condicao de pagamento"
-            entityType="payment_term"
-            value={form.paymentTermId}
-            onChange={(id) => {
-              // Escolher da lista limpa a condicao personalizada digitada.
-              setForm((prev) => ({
-                ...prev,
-                paymentTermId: id,
-                customConditionText: ""
-              }));
-            }}
-            desktopApi={desktopApi}
-          />
           <Field
-            label="Condicao personalizada"
-            hint='Ex.: "5" (5 parcelas), "7 14 21" ou "7/14/21". Se preenchida, substitui a condicao selecionada e sera criada no OMIE no envio.'
+            label="Condicao de pagamento"
+            hint='Digite: "5" (5 parcelas mensais), "7 14 21" ou "7/14/21" (prazos), "A Vista". Vazio = a vista. Se a condicao nao existir no OMIE, ela e criada automaticamente no envio.'
           >
             <input
               type="text"
               value={form.customConditionText}
               onChange={(event) =>
-                setForm((prev) => ({ ...prev, customConditionText: event.target.value }))
+                setForm((prev) => ({
+                  ...prev,
+                  customConditionText: event.target.value,
+                  paymentTermId: ""
+                }))
               }
-              placeholder="Digite para personalizar (opcional)"
+              placeholder='Ex.: "7/14/21"'
               style={getInputStyle(false)}
             />
           </Field>

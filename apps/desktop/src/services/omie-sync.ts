@@ -21,6 +21,7 @@ import {
   upsertOmiePaymentTerms,
   type OmieReferencePaymentTerm
 } from "./supabase-sync.js";
+import { provisionPaymentTermsFromOmieMirror } from "./payment-terms.js";
 
 export interface OmieSyncConfig {
   appKey: string;
@@ -603,10 +604,12 @@ export class OmieSyncService {
     }));
 
     const upserted = upsertOmiePaymentTerms(this.db, companyId, mapped);
+    // Materializa as parcelas novas como condicoes locais selecionaveis.
+    const created = provisionPaymentTermsFromOmieMirror(this.db, companyId);
     return {
       fetched: parcelas.length,
-      created: 0,
-      updated: upserted,
+      created,
+      updated: upserted - created > 0 ? upserted - created : 0,
       skipped: parcelas.length - upserted
     };
   }

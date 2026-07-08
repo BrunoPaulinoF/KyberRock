@@ -857,6 +857,90 @@ describe("weighing operations", () => {
     }
   });
 
+  it("saves the entry's condition and method as customer defaults when empty", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      const now = "2026-06-06T12:00:00.000Z";
+      database
+        .prepare(
+          `INSERT INTO payment_methods (id, company_id, code, name, is_system, is_customer_credit, sort_order, is_active, created_at, updated_at)
+           VALUES ('method-pix', 'company-1', 'pix', 'Pix', 1, 0, 1, 1, ?, ?)`
+        )
+        .run(now, now);
+      database
+        .prepare(
+          `INSERT INTO payment_terms (id, company_id, name, rules_json, is_active, created_at, updated_at)
+           VALUES ('term-7-14', 'company-1', '7/14', '{"raw":"7/14"}', 1, ?, ?)`
+        )
+        .run(now, now);
+
+      createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        paymentTermId: "term-7-14",
+        paymentMethodId: "method-pix",
+        entryWeightKg: 12_000
+      });
+
+      const customer = database
+        .prepare(
+          "SELECT default_payment_term_id, default_payment_method_id FROM customers WHERE id = 'customer-1'"
+        )
+        .get() as { default_payment_term_id: string | null; default_payment_method_id: string | null };
+      expect(customer.default_payment_term_id).toBe("term-7-14");
+      expect(customer.default_payment_method_id).toBe("method-pix");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("does not overwrite existing customer defaults with the entry's choices", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      const now = "2026-06-06T12:00:00.000Z";
+      database
+        .prepare(
+          `INSERT INTO payment_methods (id, company_id, code, name, is_system, is_customer_credit, sort_order, is_active, created_at, updated_at)
+           VALUES ('method-pix', 'company-1', 'pix', 'Pix', 1, 0, 1, 1, ?, ?)`
+        )
+        .run(now, now);
+      database
+        .prepare(
+          "UPDATE customers SET default_payment_term_id = 'term-original', default_payment_method_id = 'method-original' WHERE id = 'customer-1'"
+        )
+        .run();
+
+      createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        paymentMethodId: "method-pix",
+        entryWeightKg: 12_000
+      });
+
+      const customer = database
+        .prepare(
+          "SELECT default_payment_term_id, default_payment_method_id FROM customers WHERE id = 'customer-1'"
+        )
+        .get() as { default_payment_term_id: string | null; default_payment_method_id: string | null };
+      expect(customer.default_payment_term_id).toBe("term-original");
+      expect(customer.default_payment_method_id).toBe("method-original");
+    } finally {
+      database.close();
+    }
+  });
+
   it("sends null payment method/account codes when no method was selected", () => {
     const database = createDatabase();
 

@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 
 import type { DesktopDatabase } from "../database/sqlite.js";
-import { parsePaymentCondition, type ParsedPaymentCondition } from "./payment-condition-parser.js";
+import {
+  parsePaymentCondition,
+  tryParsePaymentCondition,
+  type ParsedPaymentCondition
+} from "./payment-condition-parser.js";
 
 export interface PaymentTermRow {
   id: string;
@@ -69,6 +73,117 @@ function buildRules(parsed: ParsedPaymentCondition): PaymentTermRules {
     intervalDays: parsed.intervalDays,
     summary: parsed.summary
   };
+}
+
+interface OmieMirrorTermRow {
+  code: string;
+  description: string;
+  first_installment_days: number | null;
+  installment_interval_days: number | null;
+  installment_count: number | null;
+  installment_type: string | null;
+  installment_days_json: string | null;
+}
+
+/** Dias de vencimento de uma parcela do espelho OMIE (json explicito ou 1o dia + intervalo). */
+function mirrorDueDays(row: OmieMirrorTermRow): number[] | null {
+  if (row.installment_days_json) {
+    try {
+      const parsed = JSON.parse(row.installment_days_json) as unknown;
+      if (Array.isArray(parsed)) {
+        const days = parsed
+          .map((value) => Number(value))
+          .filter((value) => Number.isInteger(value) && value >= 0);
+        if (days.length > 0) return days;
+      }
+    } catch {
+      // JSON invalido: cai na derivacao abaixo.
+    }
+  }
+  const count = row.installment_count;
+  const first = row.first_installment_days;
+  if (!count || count < 1 || first === null || first < 0) return null;
+  const interval = row.installment_interval_days ?? 0;
+  return Array.from({ length: count }, (_, index) => first + index * interval);
+}
+
+/**
+ * Materializa as parcelas do espelho OMIE (omie_payment_terms) como condicoes locais
+ * selecionaveis (payment_terms vinculadas via omie_parcela_code), para que as condicoes
+ * ja cadastradas no OMIE aparecam na Nova Entrada e no cadastro do cliente.
+ * Idempotente: um codigo ja materializado (mesmo que depois excluido pelo operador)
+ * nao e recriado. Retorna o total de condicoes criadas.
+ */
+export function provisionPaymentTermsFromOmieMirror(
+  database: DesktopDatabase,
+  companyId: string,
+  now: Date = new Date()
+): number {
+  const pending = database
+    .prepare(
+      `SELECT opt.code, opt.description, opt.first_installment_days, opt.installment_interval_days,
+              opt.installment_count, opt.installment_type, opt.installment_days_json
+       FROM omie_payment_terms opt
+       WHERE opt.company_id = ? AND opt.is_active = 1 AND opt.visible = 1
+         AND NOT EXISTS (
+           SELECT 1 FROM payment_terms pt
+           WHERE pt.company_id = opt.company_id AND pt.omie_parcela_code = opt.code
+         )`
+    )
+    .all(companyId) as OmieMirrorTermRow[];
+
+  if (pending.length === 0) return 0;
+
+  const nowIso = now.toISOString();
+  const insert = database.prepare(
+    `INSERT INTO payment_terms (
+      id, company_id, omie_code, name, rules_json,
+      first_installment_days, installment_interval_days, installment_count,
+      installment_type, installment_days_json, omie_parcela_code, visible, is_active,
+      created_at, updated_at
+    ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)`
+  );
+
+  const provision = database.transaction(() => {
+    for (const row of pending) {
+      const name = row.description.trim() || `Condicao OMIE ${row.code}`;
+      // Regras a partir dos dados do espelho; quando a descricao segue o padrao
+      // OMIE ("7/14/21", "A Vista"...), o parse dela cobre os campos ausentes.
+      const parsed = tryParsePaymentCondition(row.description);
+      const days = mirrorDueDays(row) ?? parsed?.installments.map((i) => i.dueDays) ?? null;
+      const installments =
+        days?.map((dueDays, index) => ({ number: index + 1, dueDays })) ??
+        parsed?.installments ??
+        [];
+      const installmentCount = installments.length || (row.installment_count ?? 1);
+      const rules: PaymentTermRules = {
+        raw: parsed?.raw ?? row.description,
+        kind: parsed?.kind ?? (installments.length > 1 ? "fixed_days" : "single"),
+        installmentCount,
+        installments,
+        intervalDays: row.installment_interval_days ?? parsed?.intervalDays ?? null,
+        summary: name
+      };
+
+      insert.run(
+        randomUUID(),
+        companyId,
+        name,
+        JSON.stringify(rules),
+        installments[0]?.dueDays ?? row.first_installment_days ?? null,
+        rules.intervalDays,
+        installmentCount,
+        row.installment_type,
+        days ? JSON.stringify(days) : null,
+        row.code,
+        nowIso,
+        nowIso
+      );
+    }
+  });
+  provision();
+
+  return pending.length;
 }
 
 export function listPaymentTerms(database: DesktopDatabase, companyId: string): PaymentTermRow[] {
