@@ -800,43 +800,11 @@ export function closeWeighingOperation(
 
     // Reconstroi o job a partir da operacao ja atualizada nesta transacao (buildOmieBillingJob
     // le os valores recem-gravados). Retorna null sem omie_customer_id (nada a enviar).
+    // O faturamento (emissao de NF-e) e feito INTEIRAMENTE no OMIE: o app apenas cria o
+    // pedido/OS (o pedido entra na etapa "Faturar" do kanban de Vendas — ver edge function).
     const billingJob = buildOmieBillingJob(database, input.operationId);
     if (billingJob) {
-      // Operacao fiscal: pre-valida o cadastro do cliente (Numero do Endereco + E-mail exigidos
-      // pela NF-e). Se incompleto, NAO enfileira o faturamento condenado; registra a pendencia.
-      // O fechamento local segue integral (offline-first).
-      if (billingJob.payload.operationType === "invoice") {
-        const readiness = validateOperationFiscalReadiness(database, input.operationId);
-        if (!readiness.ready) {
-          database
-            .prepare(
-              `UPDATE weighing_operations
-               SET omie_billing_status = 'cadastro_incompleto', omie_billing_message = ?, updated_at = ?
-               WHERE id = ?`
-            )
-            .run(readiness.message, timestamp, input.operationId);
-          // O pedido de venda sobe ao OMIE mesmo assim: criar pedido nao exige os
-          // campos de NF-e (so o FaturarPedidoVenda exige). Fica pendente apenas a
-          // emissao — apos corrigir o cadastro, o refaturamento promove este mesmo
-          // job (mesma chave de idempotencia) para create_and_bill_order.
-          enqueueSyncJob(
-            database,
-            {
-              target: "omie",
-              action: "create_order",
-              entityType: "weighing_operation",
-              entityId: input.operationId,
-              idempotencyKey: billingJob.idempotencyKey,
-              payload: billingJob.payload
-            },
-            now
-          );
-        } else {
-          enqueueOmieBillingJob(database, input.operationId, billingJob, now);
-        }
-      } else {
-        enqueueOmieBillingJob(database, input.operationId, billingJob, now);
-      }
+      enqueueOmieBillingJob(database, input.operationId, billingJob, now);
     }
   });
 
@@ -1028,7 +996,10 @@ export function buildOmieBillingJob(
     : undefined;
 
   const operation = getWeighingOperation(database, operationId);
-  const action = operation.operationType === "invoice" ? "create_and_bill_order" : "create_order";
+  // O app so CRIA o pedido/OS no OMIE; o faturamento (NF-e/NFS-e) e feito no proprio
+  // OMIE (pedido entra na etapa "Faturar"). O botao manual de faturar promove o job
+  // para create_and_bill_order em processFiscalBillingNow.
+  const action = "create_order";
   const idempotencyAction =
     operation.operationType === "invoice" ? "create_sales_order" : "create_service_order";
 

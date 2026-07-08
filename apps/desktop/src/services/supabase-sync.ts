@@ -2057,14 +2057,13 @@ export async function processFiscalBillingNow(
 
   let job = findBillingJob();
 
-  // A pre-validacao no fechamento pode ter deixado a operacao sem job de faturamento. Como o
-  // cadastro agora esta completo, (re)constroi o job a partir da operacao e re-executa.
+  // O fechamento so CRIA o pedido no OMIE (create_order) — o faturamento e feito no
+  // OMIE. Este caminho manual promove o job de criacao (MESMA chave de idempotencia)
+  // para create_and_bill_order em vez de inserir outra linha com a chave ja usada
+  // (INSERT OR IGNORE seria descartado); a edge reusa o pedido ja criado.
   if (!job) {
     const built = buildOmieBillingJob(database, operationId);
-    if (built && built.action === "create_and_bill_order") {
-      // Fechamento com cadastro incompleto sobe o pedido sem faturar (create_order com a
-      // MESMA chave de idempotencia). Promove esse job para faturamento em vez de tentar
-      // inserir outra linha com a chave ja usada (INSERT OR IGNORE seria descartado).
+    if (built && built.payload.operationType === "invoice") {
       const nowIso = new Date().toISOString();
       const promoted = database
         .prepare(
@@ -2075,7 +2074,10 @@ export async function processFiscalBillingNow(
         )
         .run(JSON.stringify(built.payload), nowIso, nowIso, built.idempotencyKey);
       if (promoted.changes === 0) {
-        enqueueOmieBillingJob(database, operationId, built);
+        enqueueOmieBillingJob(database, operationId, {
+          ...built,
+          action: "create_and_bill_order"
+        });
       }
       job = findBillingJob();
     }

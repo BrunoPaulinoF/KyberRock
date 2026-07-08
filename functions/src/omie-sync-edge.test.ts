@@ -87,6 +87,16 @@ describe("omie-sync Edge Function", () => {
     expect(source).toContain(": await resolveOmieAccountCode(credentials);");
   });
 
+  it("creates orders at the 'Faturar' stage so billing happens inside OMIE", () => {
+    const source = getOmieSyncSource();
+
+    // Pedido de venda e OS nascem na etapa 50 (coluna "Faturar" do kanban).
+    expect(source).toContain('etapa: "50"');
+    expect(source).toContain('cEtapa: "50"');
+    expect(source).not.toContain('etapa: "10"');
+    expect(source).not.toContain('cEtapa: "10"');
+  });
+
   it("ensures the operation's payment condition exists in the OMIE parcelas cadastro", () => {
     const source = getOmieSyncSource();
 
