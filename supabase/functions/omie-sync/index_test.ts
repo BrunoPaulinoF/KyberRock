@@ -527,6 +527,8 @@ Deno.test("create_order envia o codigo_parcela vinculado no pedido de venda", as
     unknown
   >;
   assertEquals(cabecalho.codigo_parcela, "030");
+  // Pedido nasce na etapa "Faturar" do kanban de Vendas (faturamento feito no OMIE).
+  assertEquals(cabecalho.etapa, "50");
 });
 
 Deno.test("create_order usa 000 quando nao ha codigo de parcela vinculado", async () => {
@@ -629,6 +631,8 @@ Deno.test("create_order envia cCodParc e nQtdeParc na ordem de servico", async (
   >;
   assertEquals(cabecalho.cCodParc, "030");
   assertEquals(cabecalho.nQtdeParc, 3);
+  // OS tambem nasce na etapa "Faturar" (faturamento feito no OMIE).
+  assertEquals(cabecalho.cEtapa, "50");
 });
 
 Deno.test("create_order usa a conta corrente selecionada no desktop no pedido de venda", async () => {

@@ -1576,7 +1576,9 @@ async function createOmieOrder(
           codigo_pedido_integracao: integrationCode,
           codigo_cliente: payload.customerOmieId,
           data_previsao: toOmieDate(payload.issueDate),
-          etapa: "10",
+          // Etapa "50" = coluna "Faturar" do kanban de Vendas do OMIE: o pedido chega
+          // pronto para faturar, e a emissao da NF-e e feita DENTRO do OMIE.
+          etapa: "50",
           codigo_parcela: parcelaCode,
           quantidade_itens: 1
         },
@@ -1632,7 +1634,8 @@ async function createOmieOrder(
       cCodIntOS: integrationCode,
       nCodCli: payload.customerOmieId,
       dDtPrevisao: toOmieDate(payload.issueDate),
-      cEtapa: "10",
+      // Etapa "50" = "Faturar": a OS tambem e faturada dentro do OMIE.
+      cEtapa: "50",
       cCodParc: parcelaCode,
       nQtdeParc: installmentCount
     },

@@ -258,7 +258,7 @@ describe("weighing operations", () => {
       expect(
         database
           .prepare(
-            "SELECT status FROM sync_queue WHERE target = 'omie' AND action = 'create_and_bill_order'"
+            "SELECT status FROM sync_queue WHERE target = 'omie' AND action = 'create_order'"
           )
           .pluck()
           .get()
@@ -570,7 +570,7 @@ describe("weighing operations", () => {
     }
   });
 
-  it("queues fiscal operations for OMIE billing on close", () => {
+  it("queues fiscal operations as create-only orders on close (billing happens in OMIE)", () => {
     const database = createDatabase();
 
     try {
@@ -593,9 +593,10 @@ describe("weighing operations", () => {
         operationType: "invoice"
       });
 
+      // O app so cria o pedido; a emissao da NF-e e feita dentro do OMIE.
       expect(
         database.prepare("SELECT action FROM sync_queue WHERE target = 'omie'").pluck().get()
-      ).toBe("create_and_bill_order");
+      ).toBe("create_order");
     } finally {
       database.close();
     }
@@ -629,7 +630,8 @@ describe("weighing operations", () => {
         operationType: "invoice"
       });
 
-      // Fecha localmente e sobe o PEDIDO (sem faturar): criar pedido nao exige NF-e.
+      // Fecha localmente e sobe o PEDIDO: criar pedido nao exige campos de NF-e
+      // (a emissao e feita dentro do OMIE, que cobra o cadastro na hora de faturar).
       expect(closed.status).toBe("closed_local");
       const omieJob = database
         .prepare("SELECT action, idempotency_key FROM sync_queue WHERE target = 'omie'")
@@ -638,13 +640,6 @@ describe("weighing operations", () => {
       expect(omieJob.idempotency_key).toBe(
         buildOmieIntegrationCode("unit-1", operation.id, "create_sales_order")
       );
-      // A emissao da NF-e fica pendente ate corrigir o cadastro.
-      expect(
-        database
-          .prepare("SELECT omie_billing_status FROM weighing_operations WHERE id = ?")
-          .pluck()
-          .get(operation.id)
-      ).toBe("cadastro_incompleto");
     } finally {
       database.close();
     }
@@ -702,7 +697,7 @@ describe("weighing operations", () => {
 
       const enqueued = database
         .prepare(
-          "SELECT idempotency_key, payload_json FROM sync_queue WHERE target = 'omie' AND action = 'create_and_bill_order'"
+          "SELECT idempotency_key, payload_json FROM sync_queue WHERE target = 'omie' AND action = 'create_order'"
         )
         .get() as { idempotency_key: string; payload_json: string };
 
