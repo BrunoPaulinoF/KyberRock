@@ -97,10 +97,22 @@ describe("omie-sync Edge Function", () => {
     expect(source).not.toContain('cEtapa: "10"');
   });
 
-  it("ensures the operation's payment condition exists in the OMIE parcelas cadastro", () => {
+  it("sends installments + payment method inline via lista_parcelas (codigo_parcela 999)", () => {
     const source = getOmieSyncSource();
 
-    // Sem codigo vinculado, a condicao e localizada/criada no cadastro (/geral/parcelas/).
+    // Pedido de venda leva o parcelamento informado e o meio de pagamento por parcela.
+    expect(source).toContain("function buildOrderParcelamento");
+    expect(source).toContain('codigo_parcela: "999"');
+    expect(source).toContain("quantidade_parcelas: count");
+    expect(source).toContain("lista_parcelas: parcelamento.listaParcelas");
+    expect(source).toContain("meio_pagamento: meio");
+    expect(source).toContain("data_vencimento: toOmieDate(addDaysToIsoDate(payload.issueDate");
+  });
+
+  it("ensures the OS payment condition exists in the OMIE parcelas cadastro", () => {
+    const source = getOmieSyncSource();
+
+    // A OS (operacao interna) ainda usa o codigo de parcela vinculado/criado no cadastro.
     expect(source).toContain("async function ensureOmieParcelaCode");
     expect(source).toContain("installmentDays?: number[];");
     expect(source).toContain('"IncluirParcela"');
