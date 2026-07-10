@@ -103,31 +103,30 @@ export function enqueueSyncJob(
 
 export function listRunnableSyncJobs(
   database: DesktopDatabase,
-  options: { now?: Date; target?: SyncTarget; limit?: number } = {}
+  options: { now?: Date; target?: SyncTarget; entityId?: string; limit?: number } = {}
 ): SyncQueueJob[] {
   const nowIso = (options.now ?? new Date()).toISOString();
   const limit = options.limit ?? 50;
 
-  const rows = options.target
-    ? database
-        .prepare(
-          `SELECT * FROM sync_queue
-           WHERE target = ?
-             AND status IN ('pending', 'failed')
-             AND next_attempt_at <= ?
-           ORDER BY created_at ASC
-           LIMIT ?`
-        )
-        .all(options.target, nowIso, limit)
-    : database
-        .prepare(
-          `SELECT * FROM sync_queue
-           WHERE status IN ('pending', 'failed')
-             AND next_attempt_at <= ?
-           ORDER BY created_at ASC
-           LIMIT ?`
-        )
-        .all(nowIso, limit);
+  const conditions = ["status IN ('pending', 'failed')", "next_attempt_at <= ?"];
+  const params: unknown[] = [nowIso];
+  if (options.target) {
+    conditions.unshift("target = ?");
+    params.unshift(options.target);
+  }
+  if (options.entityId) {
+    conditions.push("entity_id = ?");
+    params.push(options.entityId);
+  }
+
+  const rows = database
+    .prepare(
+      `SELECT * FROM sync_queue
+       WHERE ${conditions.join(" AND ")}
+       ORDER BY created_at ASC
+       LIMIT ?`
+    )
+    .all(...params, limit);
 
   return rows.map((row) => mapSyncQueueJobRow(row as SyncQueueJobRow));
 }

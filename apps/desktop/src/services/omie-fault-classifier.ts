@@ -24,3 +24,28 @@ export function isCadastroIncompleteFault(message: string): boolean {
   // Precisa indicar campo/dado faltante para nao pegar erros genericos de faturamento.
   return text.includes("falta preencher") || text.includes("falta ");
 }
+
+/**
+ * Registro protegido pelo OMIE: o "Cliente Consumidor" (consumidor final padrao) nao aceita
+ * AlterarCliente — "Não é possível alterar esse código de integração (Cliente Consumidor)!".
+ * Determinstico: re-tentar nunca resolve; o registro pertence ao OMIE e fica como esta.
+ */
+export function isOmieProtectedRecordFault(message: string): boolean {
+  if (!message) return false;
+  const text = normalize(message);
+  return (
+    text.includes("nao e possivel alterar esse codigo de integracao") ||
+    text.includes("cliente consumidor")
+  );
+}
+
+/**
+ * IncluirCliente sem CPF/CNPJ: "O preenchimento da tag [cnpj_cpf] é obrigatório!".
+ * Deterministico: so resolve quando o operador preencher o documento no cadastro local
+ * (o update re-arma needs_push=1).
+ */
+export function isOmieMissingDocumentFault(message: string): boolean {
+  if (!message) return false;
+  const text = normalize(message);
+  return text.includes("[cnpj_cpf]") && text.includes("obrigat");
+}

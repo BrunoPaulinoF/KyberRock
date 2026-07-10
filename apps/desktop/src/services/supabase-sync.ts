@@ -30,7 +30,11 @@ import {
   enqueueOmieBillingJob,
   validateOperationFiscalReadiness
 } from "./weighing-operations.js";
-import { isCadastroIncompleteFault } from "./omie-fault-classifier.js";
+import {
+  isCadastroIncompleteFault,
+  isOmieMissingDocumentFault,
+  isOmieProtectedRecordFault
+} from "./omie-fault-classifier.js";
 import { provisionPaymentTermsFromOmieMirror } from "./payment-terms.js";
 
 let client: SupabaseClient | null = null;
@@ -1427,7 +1431,7 @@ export async function pushOmieCustomersToCloud(
 
   const pending = database
     .prepare(
-      `SELECT id, omie_customer_id, legal_name, trade_name, document, phone, email,
+      `SELECT id, omie_customer_id, omie_integration_code, legal_name, trade_name, document, phone, email,
               zipcode, address_street, address_number, address_complement, neighborhood, city, state,
               default_payment_term_id
        FROM customers
@@ -1438,6 +1442,7 @@ export async function pushOmieCustomersToCloud(
     .all(identity.companyId, limit) as Array<{
     id: string;
     omie_customer_id: number | null;
+    omie_integration_code: string | null;
     legal_name: string;
     trade_name: string;
     document: string | null;
@@ -1471,8 +1476,34 @@ export async function pushOmieCustomersToCloud(
     SET sync_status = 'error', updated_at = datetime('now')
     WHERE id = ?
   `);
+  // Falha deterministica: para de re-tentar (needs_push=0) ate o operador editar o
+  // cadastro (o update re-arma needs_push=1).
+  const markBlocked = database.prepare(`
+    UPDATE customers
+    SET sync_status = 'error', needs_push = 0, updated_at = datetime('now')
+    WHERE id = ?
+  `);
 
   for (const [index, customer] of pending.entries()) {
+    // O "Cliente Consumidor" e um registro protegido do OMIE: AlterarCliente e sempre
+    // rejeitado ("Nao e possivel alterar esse codigo de integracao"). Edicoes locais
+    // (ex: e-mail padrao de NF-e) ficam apenas locais — nada a enviar.
+    if (isOmieConsumidorIntegrationCode(customer.omie_integration_code)) {
+      markSynced.run(customer.id);
+      continue;
+    }
+
+    // OMIE exige CPF/CNPJ no IncluirCliente. Sem documento valido, nao adianta chamar:
+    // bloqueia com mensagem clara ate o operador preencher o documento.
+    if (!customer.omie_customer_id && !hasValidCnpjCpf(customer.document)) {
+      markBlocked.run(customer.id);
+      failed++;
+      errors.push(
+        `Cliente ${customer.trade_name || customer.legal_name}: sem CPF/CNPJ — o OMIE exige o documento para criar o cadastro. Preencha o documento do cliente para reenviar.`
+      );
+      continue;
+    }
+
     try {
       const phoneMatch = customer.phone?.match(/\(?(\d{2})\)?\s*(\d+)/);
       const { data, error } = await supabase.functions.invoke<{ omieCustomerId?: number }>(
@@ -1518,9 +1549,21 @@ export async function pushOmieCustomersToCloud(
       pushed++;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Erro OMIE";
-      markError.run(customer.id);
-      failed++;
-      errors.push(`Cliente ${customer.id}: ${message}`);
+      if (isOmieProtectedRecordFault(message)) {
+        // Registro que o OMIE nao permite alterar (ex: Cliente Consumidor): mantem o dado
+        // local e para de re-tentar — o erro nao aparece mais a cada sincronizacao.
+        markSynced.run(customer.id);
+      } else if (isOmieMissingDocumentFault(message)) {
+        markBlocked.run(customer.id);
+        failed++;
+        errors.push(
+          `Cliente ${customer.trade_name || customer.legal_name}: o OMIE exige CPF/CNPJ. Preencha o documento do cliente para reenviar. Detalhe: ${message}`
+        );
+      } else {
+        markError.run(customer.id);
+        failed++;
+        errors.push(`Cliente ${customer.id}: ${message}`);
+      }
     }
 
     if (index < pending.length - 1) {
@@ -1529,6 +1572,17 @@ export async function pushOmieCustomersToCloud(
   }
 
   return { pushed, failed, errors };
+}
+
+// Codigo de integracao do consumidor final padrao do OMIE (registro protegido).
+function isOmieConsumidorIntegrationCode(code: string | null): boolean {
+  return (code ?? "").trim().toUpperCase() === "CONSUMIDOR";
+}
+
+// OMIE exige CPF (11 digitos) ou CNPJ (14 digitos) para incluir cliente/transportadora.
+function hasValidCnpjCpf(document: string | null): boolean {
+  const digits = (document ?? "").replace(/\D/g, "");
+  return digits.length === 11 || digits.length === 14;
 }
 
 export async function pushOmieCarriersToCloud(
@@ -1584,8 +1638,26 @@ export async function pushOmieCarriersToCloud(
     SET sync_status = 'error', updated_at = datetime('now')
     WHERE id = ?
   `);
+  // Falha deterministica: para de re-tentar (needs_push=0) ate o operador editar a
+  // transportadora (o update re-arma needs_push=1).
+  const markBlocked = database.prepare(`
+    UPDATE carriers
+    SET sync_status = 'error', needs_push = 0, updated_at = datetime('now')
+    WHERE id = ?
+  `);
 
   for (const [index, carrier] of pending.entries()) {
+    // OMIE exige CPF/CNPJ no IncluirCliente. Sem documento valido, nao adianta chamar:
+    // bloqueia com mensagem clara ate o operador preencher o documento.
+    if (!carrier.omie_customer_id && !hasValidCnpjCpf(carrier.document)) {
+      markBlocked.run(carrier.id);
+      failed++;
+      errors.push(
+        `Transportadora ${carrier.name}: sem CPF/CNPJ — o OMIE exige o documento para criar o cadastro. Preencha o documento da transportadora para reenviar.`
+      );
+      continue;
+    }
+
     try {
       const phoneMatch = carrier.phone?.match(/\(?(\d{2})\)?\s*(\d+)/);
       const { data, error } = await supabase.functions.invoke<{ omieCustomerId?: number }>(
@@ -1631,9 +1703,20 @@ export async function pushOmieCarriersToCloud(
       pushed++;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Erro OMIE";
-      markError.run(carrier.id);
-      failed++;
-      errors.push(`Transportadora ${carrier.id}: ${message}`);
+      if (isOmieProtectedRecordFault(message)) {
+        // Registro que o OMIE nao permite alterar: mantem o dado local e para de re-tentar.
+        markSynced.run(carrier.id);
+      } else if (isOmieMissingDocumentFault(message)) {
+        markBlocked.run(carrier.id);
+        failed++;
+        errors.push(
+          `Transportadora ${carrier.name}: o OMIE exige CPF/CNPJ. Preencha o documento da transportadora para reenviar. Detalhe: ${message}`
+        );
+      } else {
+        markError.run(carrier.id);
+        failed++;
+        errors.push(`Transportadora ${carrier.id}: ${message}`);
+      }
     }
 
     if (index < pending.length - 1) {
@@ -1881,13 +1964,19 @@ async function processOmieCancelJob(
 export async function processOmieSyncQueue(
   database: DesktopDatabase,
   identity: LocalDesktopIdentity,
-  options: { limit?: number; delayMs?: number } = {}
+  options: { limit?: number; delayMs?: number; entityId?: string } = {}
 ): Promise<{ processed: number; failed: number; errors: string[] }> {
   const settings = getCloudSettings(database, identity);
   const supabase = getSupabaseClient();
   const limit = options.limit ?? OMIE_QUEUE_BATCH_LIMIT;
   const delayMs = options.delayMs ?? OMIE_BATCH_DELAY_MS;
-  const jobs = listRunnableSyncJobs(database, { target: "omie", limit });
+  // entityId: processa apenas os jobs de uma operacao especifica — usado pelo envio
+  // imediato pos-fechamento, sem esperar (nem concorrer com) a varredura completa.
+  const jobs = listRunnableSyncJobs(database, {
+    target: "omie",
+    entityId: options.entityId,
+    limit
+  });
   let processed = 0;
   let failed = 0;
   const errors: string[] = [];

@@ -87,6 +87,53 @@ describe("sync queue", () => {
     }
   });
 
+  it("lists runnable jobs filtered by entityId (envio imediato pos-fechamento)", () => {
+    const database = createMigratedDatabase();
+
+    try {
+      enqueueSyncJob(database, {
+        id: "job-1",
+        target: "omie",
+        action: "create_order",
+        entityType: "weighing_operation",
+        entityId: "operation-1",
+        idempotencyKey: "omie:operation-1",
+        payload: {}
+      });
+      enqueueSyncJob(database, {
+        id: "job-2",
+        target: "omie",
+        action: "create_order",
+        entityType: "weighing_operation",
+        entityId: "operation-2",
+        idempotencyKey: "omie:operation-2",
+        payload: {}
+      });
+      enqueueSyncJob(database, {
+        id: "job-3",
+        target: "cloud",
+        action: "upsert_operation",
+        entityType: "operation",
+        entityId: "operation-1",
+        idempotencyKey: "cloud:operation-1",
+        payload: {}
+      });
+
+      expect(
+        listRunnableSyncJobs(database, { target: "omie", entityId: "operation-1" }).map(
+          (job) => job.id
+        )
+      ).toEqual(["job-1"]);
+      expect(
+        listRunnableSyncJobs(database, { entityId: "operation-1" })
+          .map((job) => job.id)
+          .sort()
+      ).toEqual(["job-1", "job-3"]);
+    } finally {
+      database.close();
+    }
+  });
+
   it("tracks failures and completion", () => {
     const database = createMigratedDatabase();
 
