@@ -1316,16 +1316,12 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   ): Promise<void> {
     if (!desktopApi) return;
 
-    if (operationType === "invoice" && !navigator.onLine) {
-      setMessage(
-        "Saida fiscal exige internet conectada para faturar no OMIE antes de liberar o caminhao."
-      );
-      return;
-    }
-
+    // O faturamento (NF-e) e feito INTEIRAMENTE no OMIE: o fechamento apenas cria o
+    // pedido de venda (etapa "Faturar"). Nao ha mais faturamento automatico aqui — por
+    // isso nao exigimos internet no fechamento (o pedido sobe na proxima sincronizacao).
     setMessage(
       operationType === "invoice"
-        ? "Fechando operacao fiscal e faturando no OMIE. Mantenha a internet conectada."
+        ? "Fechando operacao fiscal e enviando o pedido ao OMIE."
         : "Fechando operacao interna."
     );
 
@@ -1339,7 +1335,6 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
           detail:
             "Capturando peso de saida com os criterios configurados e calculando peso liquido."
         });
-        setMessage("Fechando operacao fiscal e faturando no OMIE. Mantenha a internet conectada.");
       }
       const operation = await desktopApi.closeWeighing(operationId, operationType, scaleCaptureId);
       if (operationType === "invoice") {
@@ -1347,26 +1342,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
           operationId: operation.id,
           status: "running",
           step: "billing",
-          title: "Faturando no OMIE",
-          detail: "Criando e faturando o pedido de venda fiscal."
-        });
-      }
-      const billingStatus =
-        operationType === "invoice" ? await desktopApi.billFiscalOperation(operation.id) : null;
-      // Pendencia de cadastro (Numero do Endereco + E-mail para NF-e): a operacao fechou
-      // localmente, mas o faturamento nao ocorreu. Mostra aviso acionavel (nao erro).
-      const billingBlocked = billingStatus?.blocked === true;
-      if (operationType === "invoice" && !billingBlocked) {
-        setFiscalCloseProgress({
-          operationId: operation.id,
-          status: "running",
-          step: "danfe",
-          title: "Documento fiscal",
-          detail: billingStatus?.documentUrl
-            ? billingStatus.documentPrinted
-              ? "DANFE retornado pela OMIE e enviado para impressora."
-              : "DANFE retornado pela OMIE, mas a impressao automatica nao confirmou."
-            : "OMIE faturou o pedido, mas ainda nao retornou URL do DANFE."
+          title: "Enviando pedido ao OMIE",
+          detail:
+            'O pedido de venda sobe ao OMIE na etapa "Faturar". A emissao da NF-e e feita no proprio OMIE.'
         });
         setFiscalCloseProgress({
           operationId: operation.id,
@@ -1386,19 +1364,12 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       } catch (error) {
         receiptStatus = `Cupom nao impresso: ${getErrorMessage(error)}.`;
       }
-      const fiscalStatus = billingBlocked
-        ? `Faturamento pendente: ${billingStatus?.blockReason ?? "cadastro do cliente incompleto para NF-e."} `
-        : billingStatus
-          ? `Pedido fiscal OMIE ${billingStatus.orderId} faturado.${
-              billingStatus.documentUrl
-                ? billingStatus.documentPrinted
-                  ? " DANFE enviado para impressora."
-                  : ` DANFE disponivel, mas nao foi impresso automaticamente: ${billingStatus.documentPrintError ?? "sem detalhe"}.`
-                : " DANFE ainda nao foi retornado pela OMIE; imprima pelo portal OMIE se necessario."
-            } `
-          : "";
       const operationLabel =
         operationType === "invoice" ? "Operacao fiscal fechada" : "Operacao interna fechada";
+      const fiscalStatus =
+        operationType === "invoice"
+          ? 'Pedido enviado ao OMIE para faturar (coluna "Faturar"). '
+          : "";
       setMessage(
         `${operationLabel}. Peso liquido: ${operation.netWeightKg} kg. ${fiscalStatus}${receiptStatus}`
       );
@@ -1407,8 +1378,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
           operationId: operation.id,
           status: "success",
           step: "receipt",
-          title: billingBlocked ? "Saida fiscal fechada — pendencia de cadastro" : "Saida fiscal concluida",
-          detail: fiscalStatus.trim() || "Pedido fiscal faturado no OMIE."
+          title: "Saida fiscal concluida",
+          detail: 'Pedido enviado ao OMIE. Emita a NF-e no OMIE (coluna "Faturar").'
         });
       }
       await refreshOpenOperations();
@@ -6307,6 +6278,19 @@ function getFiscalBillingStatus(operation: WeighingOperationSummary): {
     };
   }
 
+  // Pedido ja criado no OMIE: o faturamento (NF-e) e feito no proprio OMIE (coluna
+  // "Faturar"). O app nao fatura — nao ha "retry" de faturamento aqui.
+  if (operation.omieSalesOrderId) {
+    return {
+      label: "Enviada ao OMIE",
+      detail: `Pedido OMIE ${operation.omieSalesOrderId} — fature na coluna "Faturar" do OMIE.`,
+      tone: "success",
+      canRetry: false
+    };
+  }
+
+  // Operacoes antigas (fluxo anterior) que ficaram bloqueadas por cadastro/erro:
+  // mantem a recuperacao manual pelo botao.
   if (operation.omieBillingStatus === "cadastro_incompleto") {
     return {
       label: "Cadastro incompleto",
@@ -6321,17 +6305,17 @@ function getFiscalBillingStatus(operation: WeighingOperationSummary): {
   if (operation.omieBillingStatus === "failed") {
     return {
       label: "Falhou",
-      detail: operation.omieBillingMessage ?? "Faturamento nao confirmado.",
+      detail: operation.omieBillingMessage ?? "Envio do pedido nao confirmado.",
       tone: "danger",
       canRetry: true
     };
   }
 
   return {
-    label: "Pendente",
-    detail: "Aguardando faturamento OMIE.",
-    tone: "warning",
-    canRetry: true
+    label: "Enviando ao OMIE",
+    detail: "Pedido sera enviado ao OMIE na proxima sincronizacao.",
+    tone: "neutral",
+    canRetry: false
   };
 }
 
