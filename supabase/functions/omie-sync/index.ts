@@ -1561,7 +1561,7 @@ function addDaysToIsoDate(isoDate: string, days: number): string {
 }
 
 type OrderParcelamento = {
-  /** Campos do cabecalho (codigo_parcela + quantidade_parcelas quando "999"). */
+  /** Campos do cabecalho (codigo_parcela + qtde_parcelas quando "999"). */
   cabecalho: Record<string, unknown>;
   /** lista_parcelas quando o parcelamento e informado (999); null para "000"/vinculado. */
   listaParcelas: Record<string, unknown> | null;
@@ -1597,7 +1597,9 @@ function buildOrderParcelamento(payload: CreateOrderPayload): OrderParcelamento 
   }));
 
   return {
-    cabecalho: { codigo_parcela: "999", quantidade_parcelas: count },
+    // OMIE: o campo do cabecalho e "qtde_parcelas" — "quantidade_parcelas" e rejeitado
+    // ("Tag [QUANTIDADE_PARCELAS] nao faz parte da estrutura do tipo complexo [cabecalho]").
+    cabecalho: { codigo_parcela: "999", qtde_parcelas: count },
     listaParcelas: { parcela }
   };
 }

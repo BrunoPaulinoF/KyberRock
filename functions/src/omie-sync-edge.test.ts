@@ -103,7 +103,10 @@ describe("omie-sync Edge Function", () => {
     // Pedido de venda leva o parcelamento informado e o meio de pagamento por parcela.
     expect(source).toContain("function buildOrderParcelamento");
     expect(source).toContain('codigo_parcela: "999"');
-    expect(source).toContain("quantidade_parcelas: count");
+    // "qtde_parcelas" e o nome aceito pelo OMIE no cabecalho; "quantidade_parcelas"
+    // e rejeitado ("Tag [QUANTIDADE_PARCELAS] nao faz parte da estrutura ... [cabecalho]").
+    expect(source).toContain("qtde_parcelas: count");
+    expect(source).not.toContain("quantidade_parcelas: count");
     expect(source).toContain("lista_parcelas: parcelamento.listaParcelas");
     expect(source).toContain("meio_pagamento: meio");
     expect(source).toContain("data_vencimento: toOmieDate(addDaysToIsoDate(payload.issueDate");
