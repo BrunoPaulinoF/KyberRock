@@ -826,7 +826,7 @@ Deno.test("create_order envia parcelamento informado (999 + lista_parcelas) pelo
   const body = getParam(findRequest(omieQueue, "IncluirPedido"));
   const cabecalho = body.cabecalho as Record<string, unknown>;
   assertEquals(cabecalho.codigo_parcela, "999");
-  assertEquals(cabecalho.quantidade_parcelas, 3);
+  assertEquals(cabecalho.qtde_parcelas, 3);
   const parcela = (body.lista_parcelas as { parcela: Array<Record<string, unknown>> }).parcela;
   assertEquals(parcela.length, 3);
   assertEquals(parcela[0].numero_parcela, 1);
@@ -885,7 +885,7 @@ Deno.test("create_order leva o meio de pagamento em cada parcela (tPag da NF-e)"
   const body = getParam(findRequest(omieQueue, "IncluirPedido"));
   const cabecalho = body.cabecalho as Record<string, unknown>;
   assertEquals(cabecalho.codigo_parcela, "999");
-  assertEquals(cabecalho.quantidade_parcelas, 1);
+  assertEquals(cabecalho.qtde_parcelas, 1);
   const parcela = (body.lista_parcelas as { parcela: Array<Record<string, unknown>> }).parcela;
   assertEquals(parcela.length, 1);
   assertEquals(parcela[0].meio_pagamento, "17");
