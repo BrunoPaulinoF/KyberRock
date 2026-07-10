@@ -90,6 +90,7 @@ export interface WeighingOperationSummary {
   id: string;
   status: OperationStatus;
   operationType: OperationType;
+  customerId: string | null;
   customerName: string;
   plate: string;
   driverName: string;
@@ -153,6 +154,7 @@ interface OperationRow {
   cancel_reason: string | null;
   created_at: string;
   updated_at: string;
+  customer_id: string | null;
   customer_name: string | null;
   plate: string | null;
   driver_name: string | null;
@@ -1243,7 +1245,7 @@ export function listOpenWeighingOperations(database: DesktopDatabase): WeighingO
         o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
-        c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
+        c.id AS customer_id, c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
         CASE
           WHEN o.manual_installments = 1 THEN '1 parcela'
           WHEN o.manual_installments > 1 THEN CAST(o.manual_installments AS TEXT) || ' parcelas'
@@ -1277,7 +1279,7 @@ export function listCanceledWeighingOperations(
         o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
-        c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
+        c.id AS customer_id, c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
         CASE
           WHEN o.manual_installments = 1 THEN '1 parcela'
           WHEN o.manual_installments > 1 THEN CAST(o.manual_installments AS TEXT) || ' parcelas'
@@ -1311,7 +1313,7 @@ export function listClosedWeighingOperations(
         o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
-        c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
+        c.id AS customer_id, c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
         CASE
           WHEN o.manual_installments = 1 THEN '1 parcela'
           WHEN o.manual_installments > 1 THEN CAST(o.manual_installments AS TEXT) || ' parcelas'
@@ -1347,6 +1349,31 @@ export function clearCanceledWeighingOperations(
   return result.changes;
 }
 
+/**
+ * Exclui (soft-delete) uma operacao ja concluida (status closed_local ou synced).
+ * Nao remove nada no OMIE — o pedido/OS de la, se ja enviado, deve ser tratado no
+ * proprio OMIE. Serve para limpar a lista local de operacoes concluidas.
+ */
+export function deleteClosedWeighingOperation(
+  database: DesktopDatabase,
+  operationId: string,
+  now: Date = new Date()
+): void {
+  const existing = database
+    .prepare("SELECT status FROM weighing_operations WHERE id = ? AND deleted_at IS NULL")
+    .get(operationId) as { status: OperationStatus } | undefined;
+  if (!existing) {
+    throw new Error("Operacao nao encontrada.");
+  }
+  if (existing.status !== "closed_local" && existing.status !== "synced") {
+    throw new Error("Apenas operacoes concluidas podem ser excluidas por aqui.");
+  }
+  const timestamp = now.toISOString();
+  database
+    .prepare("UPDATE weighing_operations SET deleted_at = ?, updated_at = ? WHERE id = ?")
+    .run(timestamp, timestamp, operationId);
+}
+
 export function getWeighingOperation(
   database: DesktopDatabase,
   operationId: string
@@ -1362,7 +1389,7 @@ export function getWeighingOperation(
         o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
-        c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
+        c.id AS customer_id, c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
         CASE
           WHEN o.manual_installments = 1 THEN '1 parcela'
           WHEN o.manual_installments > 1 THEN CAST(o.manual_installments AS TEXT) || ' parcelas'
@@ -1605,6 +1632,7 @@ function mapOperationRow(row: OperationRow): WeighingOperationSummary {
     id: row.id,
     status: row.status,
     operationType: row.operation_type,
+    customerId: row.customer_id ?? null,
     customerName: row.customer_name ?? "",
     plate: row.plate ?? "",
     driverName: row.driver_name ?? "",

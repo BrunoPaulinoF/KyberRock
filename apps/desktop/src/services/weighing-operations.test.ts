@@ -11,6 +11,7 @@ import {
   closeWeighingOperation,
   createWeighingOperation,
   createSimulatedWeighingOperation,
+  deleteClosedWeighingOperation,
   listClosedWeighingOperations,
   listOpenWeighingOperations,
   validateCustomerFiscalReadiness
@@ -565,6 +566,39 @@ describe("weighing operations", () => {
           exitWeightKg: 18_500
         })
       ).toThrow("insuficiente");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("soft-deletes a closed operation and keeps others", () => {
+    const database = createDatabase();
+
+    try {
+      const operation = createSimulatedWeighingOperation(database, {
+        identity: createIdentity(database),
+        customerName: "Cliente Teste",
+        plate: "ABC1D23",
+        driverName: "Motorista Teste",
+        productDescription: "Brita 1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, { operationId: operation.id, exitWeightKg: 18_500 });
+      expect(listClosedWeighingOperations(database)).toHaveLength(1);
+
+      deleteClosedWeighingOperation(database, operation.id);
+      expect(listClosedWeighingOperations(database)).toHaveLength(0);
+
+      // Operacao aberta (nao concluida) nao pode ser excluida por aqui.
+      const open = createSimulatedWeighingOperation(database, {
+        identity: createIdentity(database),
+        customerName: "Cliente 2",
+        plate: "XYZ9K88",
+        driverName: "Motorista 2",
+        productDescription: "Brita 0",
+        entryWeightKg: 10_000
+      });
+      expect(() => deleteClosedWeighingOperation(database, open.id)).toThrow(/concluidas/i);
     } finally {
       database.close();
     }

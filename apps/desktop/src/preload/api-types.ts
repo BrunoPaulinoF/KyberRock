@@ -78,6 +78,7 @@ export interface KyberRockDesktopApi {
   listCanceledWeighingOperations: () => Promise<WeighingOperationSummary[]>;
   listClosedWeighingOperations: () => Promise<WeighingOperationSummary[]>;
   clearCanceledWeighingOperations: () => Promise<number>;
+  deleteClosedWeighingOperation: (operationId: string) => Promise<void>;
   startWeighing: (input: {
     operationType?: OperationType;
     customerId: string;
@@ -279,8 +280,15 @@ export interface KyberRockDesktopApi {
   quotationsCancel: (id: string) => Promise<void>;
   quotationsListOpenForCustomer: (customerId: string) => Promise<QuotationSummary[]>;
   customersCreate: (input: Omit<CreateCustomerInput, "companyId">) => Promise<unknown>;
-  customersUpdate: (id: string, input: UpdateCustomerInput) => Promise<unknown>;
+  customersUpdate: (
+    id: string,
+    input: UpdateCustomerInput,
+    options?: { overrideOmieFields?: boolean }
+  ) => Promise<unknown>;
   customersDelete: (id: string) => Promise<void>;
+  getDefaultNfeEmail: () => Promise<string | null>;
+  setDefaultNfeEmail: (email: string) => Promise<string | null>;
+  applyDefaultNfeEmailToAll: (email: string) => Promise<number>;
   // Meios de pagamento e contas vem do OMIE (sincronizacao); localmente so ha
   // atualizacao restrita (ativar/desativar, apelido, vinculo forma -> conta).
   paymentMethodsUpdate: (id: string, input: UpdatePaymentMethodInput) => Promise<unknown>;
@@ -502,6 +510,22 @@ export interface KyberRockDesktopApi {
     neighborhood: string;
     city: string;
     state: string;
+  }>;
+  lookupCnpj: (cnpj: string) => Promise<{
+    found: boolean;
+    cnpj: string;
+    legalName: string | null;
+    tradeName: string | null;
+    email: string | null;
+    phone: string | null;
+    zipcode: string | null;
+    addressStreet: string | null;
+    addressNumber: string | null;
+    addressComplement: string | null;
+    neighborhood: string | null;
+    city: string | null;
+    state: string | null;
+    status: string | null;
   }>;
   onUpdateAvailable: (callback: (event: unknown, version: string) => void) => void;
   offUpdateAvailable: (callback: (event: unknown, version: string) => void) => void;

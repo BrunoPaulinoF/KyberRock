@@ -260,7 +260,14 @@ type PendingSpecialPriceAction =
       productId: string;
     };
 
-export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi | null }) {
+export function CustomersView({
+  desktopApi,
+  initialSearch
+}: {
+  desktopApi: KyberRockDesktopApi | null;
+  /** Busca inicial (ex.: nome do cliente vindo da tela de operacoes concluidas). */
+  initialSearch?: string;
+}) {
   const [customers, setCustomers] = useState<CustomerCacheEntry[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
@@ -284,6 +291,9 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
   const [defaultConditionText, setDefaultConditionText] = useState("");
   const [activeFormSection, setActiveFormSection] =
     useState<CustomerFormSectionKey>("identificacao");
+  const [cnpjBusy, setCnpjBusy] = useState(false);
+  const [nfeEmail, setNfeEmail] = useState("");
+  const [nfeEmailBusy, setNfeEmailBusy] = useState(false);
   const [products, setProducts] = useState<ProductOption[]>([]);
   const [specialPrices, setSpecialPrices] = useState<CustomerSpecialPriceEntry[]>([]);
   const [specialProductId, setSpecialProductId] = useState("");
@@ -351,9 +361,46 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
     setPage(0);
   }, [search]);
 
+  // Abre a tela ja filtrada por um cliente (ex.: "Editar cliente" numa operacao).
+  useEffect(() => {
+    if (initialSearch && initialSearch.trim()) {
+      setSearch(initialSearch.trim());
+    }
+  }, [initialSearch]);
+
   useEffect(() => {
     void loadCustomers();
   }, [loadCustomers]);
+
+  useEffect(() => {
+    if (!desktopApi) return;
+    void desktopApi
+      .getDefaultNfeEmail()
+      .then((email) => setNfeEmail(email ?? ""))
+      .catch(() => undefined);
+  }, [desktopApi]);
+
+  async function handleApplyDefaultNfeEmail(): Promise<void> {
+    if (!desktopApi) return;
+    const email = nfeEmail.trim();
+    if (!email) {
+      showFlash("error", "Informe um e-mail padrao antes de aplicar.");
+      return;
+    }
+    setNfeEmailBusy(true);
+    try {
+      const count = await desktopApi.applyDefaultNfeEmailToAll(email);
+      await loadCustomers();
+      showFlash(
+        "success",
+        `E-mail padrao aplicado a ${count} cliente(s). Sera enviado ao OMIE no proximo sync.`
+      );
+    } catch (err) {
+      showFlash("error", err instanceof Error ? err.message : "Falha ao aplicar o e-mail padrao.");
+    } finally {
+      setNfeEmailBusy(false);
+    }
+  }
 
   function resetForm(): void {
     setForm(initialForm);
@@ -645,10 +692,14 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
           city: form.city.trim() || null,
           state: form.state.trim().toUpperCase() || null
         };
-        await desktopApi.customersUpdate(
-          editingId,
-          editingSource === "omie" ? localPatch : fullPatch
-        );
+        // Cliente origem OMIE agora aceita edicao de cadastro (endereco/e-mail/razao)
+        // para completar os dados de NF-e: enviamos o cadastro completo com override,
+        // e o cliente vira 'hybrid' para o proximo sync empurrar os campos ao OMIE.
+        if (editingSource === "omie") {
+          await desktopApi.customersUpdate(editingId, fullPatch, { overrideOmieFields: true });
+        } else {
+          await desktopApi.customersUpdate(editingId, fullPatch);
+        }
         showFlash("success", "Cliente atualizado.");
       } else {
         await desktopApi.customersCreate({
@@ -794,6 +845,51 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
     }));
   }
 
+  // Busca os dados do cliente pelo CNPJ (BrasilAPI/Receita via edge) e preenche o
+  // formulario. Nao sobrescreve campos ja preenchidos com valor vazio da consulta.
+  async function handleCnpjLookup(): Promise<void> {
+    if (!desktopApi) return;
+    const digits = form.document.replace(/\D/g, "");
+    if (digits.length !== 14) {
+      setFormError("Informe um CNPJ com 14 digitos para buscar.");
+      return;
+    }
+    setCnpjBusy(true);
+    setFormError(null);
+    try {
+      const data = await desktopApi.lookupCnpj(digits);
+      if (!data.found) {
+        showFlash("error", "CNPJ nao encontrado na base da Receita.");
+        return;
+      }
+      setForm((prev) => ({
+        ...prev,
+        legalName: data.legalName || prev.legalName,
+        tradeName: data.tradeName || prev.tradeName,
+        phone: data.phone || prev.phone,
+        email: data.email || prev.email,
+        zipcode: data.zipcode || prev.zipcode,
+        addressStreet: data.addressStreet || prev.addressStreet,
+        addressNumber: data.addressNumber || prev.addressNumber,
+        addressComplement: data.addressComplement || prev.addressComplement,
+        neighborhood: data.neighborhood || prev.neighborhood,
+        city: data.city || prev.city,
+        state: (data.state || prev.state).toUpperCase().slice(0, 2)
+      }));
+      const semEmail = !data.email;
+      showFlash(
+        "success",
+        semEmail
+          ? "Dados do CNPJ preenchidos. E-mail nao consta na Receita — informe manualmente ou use o e-mail padrao de NF-e."
+          : "Dados do CNPJ preenchidos. Revise e salve."
+      );
+    } catch (err) {
+      showFlash("error", err instanceof Error ? err.message : "Falha ao buscar o CNPJ.");
+    } finally {
+      setCnpjBusy(false);
+    }
+  }
+
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total]);
 
   const isOmie = editingSource === "omie";
@@ -807,6 +903,43 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
         actionLabel="Novo cliente"
         onAction={openCreateForm}
       />
+
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "flex-end",
+          gap: "10px",
+          padding: "12px 14px",
+          marginBottom: "12px",
+          border: "1px solid var(--kr-border)",
+          borderRadius: "12px",
+          background: "var(--kr-surface-soft)"
+        }}
+      >
+        <Field
+          label="E-mail padrao de NF-e"
+          hint="Usado para emitir NF-e sem depender do e-mail de cada cliente."
+        >
+          <input
+            type="email"
+            value={nfeEmail}
+            onChange={(e) => setNfeEmail(e.target.value)}
+            placeholder="nfe@suaempresa.com.br"
+            style={{ ...getInputStyle(false), minWidth: "260px" }}
+          />
+        </Field>
+        <button
+          type="button"
+          onClick={() => void handleApplyDefaultNfeEmail()}
+          disabled={nfeEmailBusy}
+          title="Define esse e-mail em TODOS os clientes (e envia ao OMIE no proximo sync)"
+          style={{ ...styles.primaryButton, height: "38px", opacity: nfeEmailBusy ? 0.6 : 1 }}
+        >
+          {nfeEmailBusy ? "Aplicando..." : "Aplicar a todos os clientes"}
+        </button>
+      </div>
+
       <CrudSearchBar
         value={search}
         onChange={setSearch}
@@ -821,7 +954,7 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
           <div style={styles.formHeader}>
             <h3 style={styles.formTitle}>
               {editingId
-                ? `Editar cliente ${isOmie ? "(somente campos KyberRock)" : ""}`
+                ? `Editar cliente ${isOmie ? "(alteracoes serao enviadas ao OMIE)" : ""}`
                 : "Novo cliente"}
             </h3>
             {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
@@ -870,27 +1003,45 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
                 value={form.legalName}
                 onChange={(legalName) => setForm({ ...form, legalName })}
                 required
-                disabled={isOmie}
+                disabled={false}
               />
               <TextInput
                 label="Nome fantasia"
                 value={form.tradeName}
                 onChange={(tradeName) => setForm({ ...form, tradeName })}
                 required
-                disabled={isOmie}
+                disabled={false}
               />
               <div style={styles.fieldRow}>
-                <DocumentInput
-                  label="CNPJ/CPF"
-                  value={form.document}
-                  onChange={(document) => setForm({ ...form, document })}
-                  disabled={isOmie}
-                />
+                <div style={{ display: "flex", alignItems: "flex-end", gap: "8px" }}>
+                  <div style={{ flex: 1 }}>
+                    <DocumentInput
+                      label="CNPJ/CPF"
+                      value={form.document}
+                      onChange={(document) => setForm({ ...form, document })}
+                      disabled={false}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void handleCnpjLookup()}
+                    disabled={cnpjBusy}
+                    title="Buscar dados pelo CNPJ (Receita) e preencher o cadastro"
+                    style={{
+                      ...styles.secondaryButton,
+                      height: "38px",
+                      whiteSpace: "nowrap",
+                      opacity: cnpjBusy ? 0.6 : 1
+                    }}
+                  >
+                    {cnpjBusy ? "Buscando..." : "🔍 Buscar CNPJ"}
+                  </button>
+                </div>
                 <MoneyInput
                   label="Limite (R$)"
                   value={form.creditLimitReais}
                   onChange={(creditLimitReais) => setForm({ ...form, creditLimitReais })}
-                  disabled={isOmie}
+                  disabled={false}
                   allowZero
                   hint="Use virgula para centavos."
                 />
@@ -906,13 +1057,13 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
                   label="Telefone"
                   value={form.phone}
                   onChange={(phone) => setForm({ ...form, phone })}
-                  disabled={isOmie}
+                  disabled={false}
                 />
                 <EmailInput
                   label="E-mail"
                   value={form.email}
                   onChange={(email) => setForm({ ...form, email })}
-                  disabled={isOmie}
+                  disabled={false}
                 />
               </div>
             </section>
@@ -928,13 +1079,13 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
                   onChange={(zipcode) => setForm({ ...form, zipcode })}
                   onLookup={handleCepLookup}
                   onAddressFound={handleCepAddressFound}
-                  disabled={isOmie}
+                  disabled={false}
                 />
                 <TextInput
                   label="Numero"
                   value={form.addressNumber}
                   onChange={(addressNumber) => setForm({ ...form, addressNumber })}
-                  disabled={isOmie}
+                  disabled={false}
                   hint="Opcional"
                 />
               </div>
@@ -942,7 +1093,7 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
                 label="Endereco"
                 value={form.addressStreet}
                 onChange={(addressStreet) => setForm({ ...form, addressStreet })}
-                disabled={isOmie}
+                disabled={false}
                 placeholder="Rua / avenida"
               />
               <div style={styles.fieldRow}>
@@ -950,13 +1101,13 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
                   label="Bairro"
                   value={form.neighborhood}
                   onChange={(neighborhood) => setForm({ ...form, neighborhood })}
-                  disabled={isOmie}
+                  disabled={false}
                 />
                 <TextInput
                   label="Complemento"
                   value={form.addressComplement}
                   onChange={(addressComplement) => setForm({ ...form, addressComplement })}
-                  disabled={isOmie}
+                  disabled={false}
                 />
               </div>
               <div style={styles.fieldRow}>
@@ -964,20 +1115,20 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
                   label="Cidade"
                   value={form.city}
                   onChange={(city) => setForm({ ...form, city })}
-                  disabled={isOmie}
+                  disabled={false}
                 />
                 <Field label="UF">
                   <input
                     type="text"
                     inputMode="text"
                     autoComplete="off"
-                    disabled={isOmie}
+                    disabled={false}
                     value={form.state}
                     placeholder="SP"
                     onChange={(e) =>
                       setForm({ ...form, state: e.target.value.toUpperCase().slice(0, 2) })
                     }
-                    style={getInputStyle(isOmie)}
+                    style={getInputStyle(false)}
                     maxLength={2}
                   />
                 </Field>
@@ -1174,7 +1325,7 @@ export function CustomersView({ desktopApi }: { desktopApi: KyberRockDesktopApi 
                   type="checkbox"
                   checked={form.omieBillingBlocked}
                   onChange={(e) => setForm({ ...form, omieBillingBlocked: e.target.checked })}
-                  disabled={isOmie}
+                  disabled={false}
                 />
                 Bloqueado para faturamento
               </label>
