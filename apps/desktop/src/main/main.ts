@@ -1233,6 +1233,21 @@ function registerIpcHandlers(): void {
     return runtime.syncOmieAll();
   });
 
+  ipcMain.handle("desktop:omie-queue-list", () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.listOmieQueue();
+  });
+
+  ipcMain.handle("desktop:omie-queue-delete", (_event, jobId: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.deleteOmieQueueItem(jobId);
+  });
+
+  ipcMain.handle("desktop:omie-queue-send-now", async (_event, jobId: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.sendOmieQueueItemNow(jobId);
+  });
+
   ipcMain.handle("desktop:sync-omie-direct", async (_event, appKey: string, appSecret: string) => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.syncOmieDirect(appKey, appSecret);

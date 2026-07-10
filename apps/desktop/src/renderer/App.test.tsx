@@ -8,6 +8,8 @@ import {
   filterCacheSelectOptions,
   formatElapsedSince,
   isTransportReady,
+  omieQueueActionLabel,
+  omieQueueStatusLabel,
   readStoredThemeMode,
   shouldLinkCreatedDriverToCarrier
 } from "./App";
@@ -106,6 +108,18 @@ describe("App", () => {
     ]);
     // Sem filtro ativo (nenhum cliente selecionado): continua sem filtro.
     expect(appendAvailableId(undefined, "carrier-2")).toBeUndefined();
+  });
+
+  it("labels OMIE queue items in plain portuguese for the cloud screen", () => {
+    expect(omieQueueActionLabel("create_order", "invoice")).toBe("Criar pedido (com nota)");
+    expect(omieQueueActionLabel("create_order", "internal")).toBe("Criar OS (interno)");
+    expect(omieQueueActionLabel("create_and_bill_order", "invoice")).toBe(
+      "Criar e faturar pedido"
+    );
+    expect(omieQueueActionLabel("cancel_order", null)).toBe("Cancelar pedido no OMIE");
+    expect(omieQueueStatusLabel("pending")).toBe("aguardando envio");
+    expect(omieQueueStatusLabel("failed")).toBe("falhou (re-tenta sozinho)");
+    expect(omieQueueStatusLabel("dead_letter")).toBe("parado apos varias falhas");
   });
 
   it("builds and filters cache select modal options", () => {

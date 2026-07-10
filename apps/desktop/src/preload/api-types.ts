@@ -52,6 +52,7 @@ import type {
 import type { CreateVehicleInput, UpdateVehicleInput } from "../services/vehicles";
 import type { CreateDriverInput, UpdateDriverInput } from "../services/drivers";
 import type { CreateCarrierInput, UpdateCarrierInput } from "../services/carriers";
+import type { OmieQueueItem } from "../services/sync-queue";
 import type { ScaleConfiguration, ScaleConfigurationInput } from "../services/scale-configs";
 import type {
   ToledoTcpConfig,
@@ -388,6 +389,11 @@ export interface KyberRockDesktopApi {
     customersPushFailed: number;
     errors: string[];
   }>;
+  omieQueueList: () => Promise<OmieQueueItem[]>;
+  omieQueueDelete: (jobId: string) => Promise<{ deleted: boolean }>;
+  omieQueueSendNow: (
+    jobId: string
+  ) => Promise<{ processed: number; failed: number; errors: string[] }>;
   syncOmieDirect: (
     appKey: string,
     appSecret: string

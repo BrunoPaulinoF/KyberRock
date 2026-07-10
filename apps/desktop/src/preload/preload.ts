@@ -208,6 +208,9 @@ const desktopApi = {
   lookupCep: (cep: string) => ipcRenderer.invoke("desktop:lookup-cep", cep),
   lookupCnpj: (cnpj: string) => ipcRenderer.invoke("desktop:lookup-cnpj", cnpj),
   omieSync: () => ipcRenderer.invoke("desktop:omie-sync"),
+  omieQueueList: () => ipcRenderer.invoke("desktop:omie-queue-list"),
+  omieQueueDelete: (jobId: string) => ipcRenderer.invoke("desktop:omie-queue-delete", jobId),
+  omieQueueSendNow: (jobId: string) => ipcRenderer.invoke("desktop:omie-queue-send-now", jobId),
   syncOmieDirect: (appKey: string, appSecret: string) =>
     ipcRenderer.invoke("desktop:sync-omie-direct", appKey, appSecret),
   syncOmieMasterData: (options?: unknown) =>

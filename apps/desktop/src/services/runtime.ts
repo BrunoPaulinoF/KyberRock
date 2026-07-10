@@ -51,6 +51,13 @@ import {
   type DesktopStatusSnapshot
 } from "./status.js";
 import {
+  deleteOmieQueueJob,
+  getSyncJobById,
+  listOmieQueueItems,
+  resetOmieQueueJobForRetry,
+  type OmieQueueItem
+} from "./sync-queue.js";
+import {
   cancelWeighingOperation,
   clearCanceledWeighingOperations,
   closeWeighingOperation,
@@ -324,7 +331,7 @@ export class DesktopRuntime {
   private cloudSyncScheduler: CloudSyncSchedulerHandle | null = null;
   private cloudSyncInProgress = false;
   private omieSyncInProgress = false;
-  private readonly omieOrderPushInFlight = new Set<string>();
+  private omieQueueProcessing = false;
   private receiptPrinter: ReceiptPrinter = { printReceipt: async () => undefined };
   private fiscalDocumentPrinter: FiscalDocumentPrinter = {
     printDocument: async () => ({ printed: false, error: null })
@@ -582,37 +589,53 @@ export class DesktopRuntime {
   }
 
   /**
+   * Processa a fila OMIE (pedidos/OS/cancelamentos) com trava unica contra execucoes
+   * concorrentes (push do fechamento x sincronizacao agendada). entityId limita aos
+   * jobs de uma operacao. Retorna null quando outro processamento ja esta em andamento
+   * (os jobs permanecem na fila e a proxima passada os pega).
+   */
+  private async runOmieQueue(
+    entityId?: string
+  ): Promise<{ processed: number; failed: number; errors: string[] } | null> {
+    if (this.omieQueueProcessing) return null;
+    this.omieQueueProcessing = true;
+    try {
+      initializeSupabaseFromSettings(this.database);
+      if (!isSupabaseInitialized()) {
+        return { processed: 0, failed: 0, errors: ["Supabase nao configurado."] };
+      }
+      const identity = this.ensureIdentity();
+      return await processOmieSyncQueue(this.database, identity, { entityId });
+    } finally {
+      this.omieQueueProcessing = false;
+    }
+  }
+
+  /**
    * Processa em segundo plano APENAS os jobs OMIE da operacao informada (pedido/OS,
    * cancelamento), logo apos o fechamento/cancelamento — o envio nao depende mais da
    * varredura completa do OMIE. Falha aqui nao e terminal: o job permanece na fila e a
-   * sincronizacao agendada/manual re-tenta normalmente.
+   * sincronizacao agendada re-tenta (syncCloudNow tambem processa a fila OMIE).
    */
   private triggerBackgroundOmieOrderPush(reason: string, operationId: string): void {
-    if (this.omieOrderPushInFlight.has(operationId)) return;
-    this.omieOrderPushInFlight.add(operationId);
-
-    void (async () => {
-      initializeSupabaseFromSettings(this.database);
-      if (!isSupabaseInitialized()) return;
-      const identity = this.ensureIdentity();
-      const result = await processOmieSyncQueue(this.database, identity, {
-        entityId: operationId
-      });
-      if (result.failed > 0) {
-        this.recordTechnicalLog(
-          "warning",
-          "omie-sync",
-          "Envio imediato do pedido ao OMIE falhou; o job permanece na fila para nova tentativa.",
-          { reason, operationId, errors: result.errors }
-        );
-      } else if (result.processed > 0) {
-        this.recordTechnicalLog("info", "omie-sync", "Pedido enviado ao OMIE no fechamento.", {
-          reason,
-          operationId,
-          processed: result.processed
-        });
-      }
-    })()
+    void this.runOmieQueue(operationId)
+      .then((result) => {
+        if (!result) return;
+        if (result.failed > 0) {
+          this.recordTechnicalLog(
+            "warning",
+            "omie-sync",
+            "Envio imediato do pedido ao OMIE falhou; o job permanece na fila para nova tentativa.",
+            { reason, operationId, errors: result.errors }
+          );
+        } else if (result.processed > 0) {
+          this.recordTechnicalLog("info", "omie-sync", "Pedido enviado ao OMIE no fechamento.", {
+            reason,
+            operationId,
+            processed: result.processed
+          });
+        }
+      })
       .catch((error: unknown) => {
         this.recordTechnicalLog(
           "warning",
@@ -620,9 +643,6 @@ export class DesktopRuntime {
           error instanceof Error ? error.message : "Envio imediato do pedido ao OMIE falhou.",
           { reason, operationId }
         );
-      })
-      .finally(() => {
-        this.omieOrderPushInFlight.delete(operationId);
       });
   }
 
@@ -997,6 +1017,23 @@ export class DesktopRuntime {
       synced += queue.processed;
       failed += queue.failed;
       errors.push(...queue.errors);
+
+      // Fila OMIE (pedidos/OS dos fechamentos): processada junto da sincronizacao
+      // cloud — que roda logo apos cada fechamento e no agendador — para o envio ao
+      // OMIE nao depender da varredura completa; falhas re-tentam a cada ciclo.
+      try {
+        const omieQueue = await this.runOmieQueue();
+        if (omieQueue) {
+          synced += omieQueue.processed;
+          failed += omieQueue.failed;
+          errors.push(...omieQueue.errors);
+        }
+      } catch (error) {
+        failed++;
+        errors.push(
+          `Fila OMIE: ${error instanceof Error ? error.message : "erro desconhecido"}`
+        );
+      }
 
       // Sync open operations
       const openOperations = listOpenWeighingOperations(this.database);
@@ -1945,6 +1982,47 @@ export class DesktopRuntime {
     return { configured: this.hasCloudCredentials(), appKeyMasked: null };
   }
 
+  /** Itens da fila OMIE (fechamentos a enviar) para a tela cloud. */
+  listOmieQueue(): OmieQueueItem[] {
+    this.assertDesktopAccess();
+    return listOmieQueueItems(this.database);
+  }
+
+  /** Exclui um item da fila OMIE: o fechamento NAO sera mais enviado ao OMIE. */
+  deleteOmieQueueItem(jobId: string): { deleted: boolean } {
+    this.assertDesktopAccess();
+    const job = getSyncJobById(this.database, jobId);
+    const deleted = deleteOmieQueueJob(this.database, jobId);
+    if (deleted) {
+      this.recordTechnicalLog("info", "omie-sync", "Item removido da fila OMIE pelo operador.", {
+        jobId,
+        action: job?.action ?? null,
+        operationId: job?.entityId ?? null
+      });
+    }
+    return { deleted };
+  }
+
+  /** Rearma e envia agora um item da fila OMIE (ignora backoff/dead_letter). */
+  async sendOmieQueueItemNow(
+    jobId: string
+  ): Promise<{ processed: number; failed: number; errors: string[] }> {
+    this.assertDesktopAccess();
+    const job = resetOmieQueueJobForRetry(this.database, jobId);
+    if (!job) {
+      throw new Error("Item nao encontrado na fila OMIE.");
+    }
+    const result = await this.runOmieQueue(job.entityId);
+    if (!result) {
+      return {
+        processed: 0,
+        failed: 0,
+        errors: ["Envio OMIE ja em andamento. O item foi rearmado e sera enviado em instantes."]
+      };
+    }
+    return result;
+  }
+
   async syncOmieAll(): Promise<{
     customersPulled: number;
     customersPushed: number;
@@ -1992,7 +2070,10 @@ export class DesktopRuntime {
       const loop = await this.runOmieDataEntryLoop({ reset: true, maxIterations: 200 });
       const customerPush = await pushOmieCustomersToCloud(this.database, identity);
       const carrierPush = await pushOmieCarriersToCloud(this.database, identity);
-      const queue = await processOmieSyncQueue(this.database, identity);
+      // Trava unica da fila OMIE (compartilhada com o push do fechamento e o
+      // syncCloudNow); se outro processamento estiver em andamento, os jobs ficam
+      // para a proxima passada.
+      const queue = (await this.runOmieQueue()) ?? { processed: 0, failed: 0, errors: [] };
       this.cacheStore.invalidateAll(identity.companyId);
       return {
         customersPulled: loop.customersPulled,
