@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   App,
+  appendAvailableId,
   buildFreightInput,
   createCacheSelectOptions,
   filterCacheSelectOptions,
@@ -93,6 +94,18 @@ describe("App", () => {
     expect(formatElapsedSince("2026-07-04T10:00:00Z", now)).toBe("ha 2 d 2 h");
     expect(formatElapsedSince(null, now)).toBe("-");
     expect(formatElapsedSince("not-a-date", now)).toBe("-");
+  });
+
+  it("shows a newly created carrier in the customer-filtered list right away", () => {
+    // Lista filtrada por vinculo: a recem-criada entra otimisticamente.
+    expect(appendAvailableId(["carrier-1"], "carrier-2")).toEqual(["carrier-1", "carrier-2"]);
+    // Ja presente (releitura chegou antes): nao duplica.
+    expect(appendAvailableId(["carrier-1", "carrier-2"], "carrier-2")).toEqual([
+      "carrier-1",
+      "carrier-2"
+    ]);
+    // Sem filtro ativo (nenhum cliente selecionado): continua sem filtro.
+    expect(appendAvailableId(undefined, "carrier-2")).toBeUndefined();
   });
 
   it("builds and filters cache select modal options", () => {
