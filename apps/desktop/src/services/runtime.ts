@@ -324,6 +324,7 @@ export class DesktopRuntime {
   private cloudSyncScheduler: CloudSyncSchedulerHandle | null = null;
   private cloudSyncInProgress = false;
   private omieSyncInProgress = false;
+  private readonly omieOrderPushInFlight = new Set<string>();
   private receiptPrinter: ReceiptPrinter = { printReceipt: async () => undefined };
   private fiscalDocumentPrinter: FiscalDocumentPrinter = {
     printDocument: async () => ({ printed: false, error: null })
@@ -574,7 +575,55 @@ export class DesktopRuntime {
     // nem falha o fechamento se a busca nao der certo.
     await this.autoCompleteCustomerForNfe(operationId).catch(() => undefined);
     this.triggerBackgroundCloudSync("exit_registered", { operationId });
+    // O pedido/OS do fechamento vai para o OMIE imediatamente (apenas os jobs desta
+    // operacao), sem esperar a varredura completa de sincronizacao.
+    this.triggerBackgroundOmieOrderPush("operation_closed", operationId);
     return operation;
+  }
+
+  /**
+   * Processa em segundo plano APENAS os jobs OMIE da operacao informada (pedido/OS,
+   * cancelamento), logo apos o fechamento/cancelamento — o envio nao depende mais da
+   * varredura completa do OMIE. Falha aqui nao e terminal: o job permanece na fila e a
+   * sincronizacao agendada/manual re-tenta normalmente.
+   */
+  private triggerBackgroundOmieOrderPush(reason: string, operationId: string): void {
+    if (this.omieOrderPushInFlight.has(operationId)) return;
+    this.omieOrderPushInFlight.add(operationId);
+
+    void (async () => {
+      initializeSupabaseFromSettings(this.database);
+      if (!isSupabaseInitialized()) return;
+      const identity = this.ensureIdentity();
+      const result = await processOmieSyncQueue(this.database, identity, {
+        entityId: operationId
+      });
+      if (result.failed > 0) {
+        this.recordTechnicalLog(
+          "warning",
+          "omie-sync",
+          "Envio imediato do pedido ao OMIE falhou; o job permanece na fila para nova tentativa.",
+          { reason, operationId, errors: result.errors }
+        );
+      } else if (result.processed > 0) {
+        this.recordTechnicalLog("info", "omie-sync", "Pedido enviado ao OMIE no fechamento.", {
+          reason,
+          operationId,
+          processed: result.processed
+        });
+      }
+    })()
+      .catch((error: unknown) => {
+        this.recordTechnicalLog(
+          "warning",
+          "omie-sync",
+          error instanceof Error ? error.message : "Envio imediato do pedido ao OMIE falhou.",
+          { reason, operationId }
+        );
+      })
+      .finally(() => {
+        this.omieOrderPushInFlight.delete(operationId);
+      });
   }
 
   /**
@@ -728,6 +777,8 @@ export class DesktopRuntime {
     this.assertDesktopAccess();
     const operation = cancelWeighingOperation(this.database, { operationId, reason });
     this.triggerBackgroundCloudSync("operation_cancelled", { operationId });
+    // Se ja existe pedido no OMIE, o cancel_order enfileirado tambem segue de imediato.
+    this.triggerBackgroundOmieOrderPush("operation_cancelled", operationId);
     return operation;
   }
 

@@ -696,6 +696,147 @@ describe("supabase sync", () => {
     }
   });
 
+  it("skips the protected OMIE Cliente Consumidor without calling the bridge", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      // Registro do consumidor final padrao do OMIE, editado localmente (hybrid + needs_push).
+      insertLocalCustomer(database, "omie_11455899069", {
+        source: "hybrid",
+        omieCustomerId: 11455899069,
+        omieIntegrationCode: "CONSUMIDOR"
+      });
+
+      const result = await pushOmieCustomersToCloud(database, identity);
+
+      expect(invokeMock).not.toHaveBeenCalled();
+      expect(result).toEqual({ pushed: 0, failed: 0, errors: [] });
+      // Sai da fila de push: o erro nao volta a cada sincronizacao.
+      expect(
+        database
+          .prepare("SELECT needs_push FROM customers WHERE id = 'omie_11455899069'")
+          .pluck()
+          .get()
+      ).toBe(0);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("stops retrying a customer when OMIE rejects altering a protected record", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      // Registro protegido sem o codigo de integracao local (fallback pela mensagem do OMIE).
+      insertLocalCustomer(database, "omie_11455899069", {
+        source: "hybrid",
+        omieCustomerId: 11455899069
+      });
+      invokeMock.mockResolvedValueOnce({
+        error: createFunctionHttpError(
+          "OMIE HTTP 500 em AlterarCliente (/geral/clientes/) - ERROR: Não é possível alterar esse código de integração (Cliente Consumidor)!"
+        ),
+        data: null
+      });
+
+      const result = await pushOmieCustomersToCloud(database, identity);
+
+      expect(result).toEqual({ pushed: 0, failed: 0, errors: [] });
+      expect(
+        database
+          .prepare("SELECT needs_push FROM customers WHERE id = 'omie_11455899069'")
+          .pluck()
+          .get()
+      ).toBe(0);
+
+      // Segunda passada nao chama mais o OMIE (sem repetir o erro).
+      invokeMock.mockClear();
+      await pushOmieCustomersToCloud(database, identity);
+      expect(invokeMock).not.toHaveBeenCalled();
+    } finally {
+      database.close();
+    }
+  });
+
+  it("blocks local customers without CPF/CNPJ before calling OMIE", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertLocalCustomer(database, "customer-1", { document: null });
+
+      const result = await pushOmieCustomersToCloud(database, identity);
+
+      expect(invokeMock).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ pushed: 0, failed: 1 });
+      expect(result.errors[0]).toContain("CPF/CNPJ");
+      expect(
+        database
+          .prepare("SELECT needs_push, sync_status FROM customers WHERE id = 'customer-1'")
+          .get()
+      ).toEqual({ needs_push: 0, sync_status: "error" });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("blocks local carriers without CPF/CNPJ before calling OMIE", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertLocalCarrier(database, "carrier-1", { document: null });
+
+      const result = await pushOmieCarriersToCloud(database, identity);
+
+      expect(invokeMock).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ pushed: 0, failed: 1 });
+      expect(result.errors[0]).toContain("CPF/CNPJ");
+      expect(
+        database.prepare("SELECT needs_push, sync_status FROM carriers WHERE id = 'carrier-1'").get()
+      ).toEqual({ needs_push: 0, sync_status: "error" });
+
+      // Segunda passada nao repete a chamada nem o erro.
+      const again = await pushOmieCarriersToCloud(database, identity);
+      expect(again).toEqual({ pushed: 0, failed: 0, errors: [] });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("stops retrying a carrier when OMIE demands the cnpj_cpf tag", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      // Documento presente porem invalido para o OMIE: passa o pre-check local e falha la.
+      insertLocalCarrier(database, "carrier-1", { document: "22222222000182" });
+      invokeMock.mockResolvedValueOnce({
+        error: createFunctionHttpError(
+          "OMIE HTTP 500 em IncluirCliente (/geral/clientes/) - ERROR: O preenchimento da tag [cnpj_cpf] é obrigatório!"
+        ),
+        data: null
+      });
+
+      const result = await pushOmieCarriersToCloud(database, identity);
+
+      expect(result).toMatchObject({ pushed: 0, failed: 1 });
+      expect(result.errors[0]).toContain("CPF/CNPJ");
+      expect(
+        database.prepare("SELECT needs_push FROM carriers WHERE id = 'carrier-1'").pluck().get()
+      ).toBe(0);
+    } finally {
+      database.close();
+    }
+  });
+
   it("does not store OMIE products when they are not sellable", () => {
     const database = createDatabase();
 
@@ -878,6 +1019,74 @@ describe("supabase sync", () => {
       expect(
         database.prepare("SELECT COUNT(*) FROM sync_queue WHERE status = 'pending'").pluck().get()
       ).toBe(2);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("processes only the closed operation's OMIE jobs when entityId is given", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertWeighingOperation(database);
+      enqueueSyncJob(database, {
+        id: "omie-job-other",
+        target: "omie",
+        action: "create_order",
+        entityType: "weighing_operation",
+        entityId: "operation-other",
+        idempotencyKey: "kyberrock:unit-1:operation-other:create_sales_order",
+        payload: {
+          operationId: "operation-other",
+          operationType: "invoice",
+          customerOmieId: 123,
+          productOmieId: 456,
+          quantity: 5,
+          unitPrice: 20,
+          issueDate: "2026-06-12"
+        }
+      });
+      enqueueSyncJob(database, {
+        id: "omie-job-1",
+        target: "omie",
+        action: "create_order",
+        entityType: "weighing_operation",
+        entityId: "operation-1",
+        idempotencyKey: "kyberrock:unit-1:operation-1:create_sales_order",
+        payload: {
+          operationId: "operation-1",
+          operationType: "invoice",
+          customerOmieId: 123,
+          productOmieId: 456,
+          quantity: 10,
+          unitPrice: 25,
+          issueDate: "2026-06-12"
+        }
+      });
+      invokeMock.mockResolvedValueOnce({ error: null, data: { orderId: 987 } });
+
+      const result = await processOmieSyncQueue(database, identity, {
+        entityId: "operation-1",
+        delayMs: 0
+      });
+
+      // Envia apenas o pedido da operacao fechada, sem varrer o resto da fila.
+      expect(invokeMock).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({ processed: 1, failed: 0, errors: [] });
+      expect(
+        database.prepare("SELECT status FROM sync_queue WHERE id = 'omie-job-1'").pluck().get()
+      ).toBe("done");
+      expect(
+        database.prepare("SELECT status FROM sync_queue WHERE id = 'omie-job-other'").pluck().get()
+      ).toBe("pending");
+      expect(
+        database
+          .prepare("SELECT status FROM weighing_operations WHERE id = 'operation-1'")
+          .pluck()
+          .get()
+      ).toBe("synced");
     } finally {
       database.close();
     }
@@ -1380,22 +1589,39 @@ function createCloudSettings(database: DesktopDatabase): void {
   }
 }
 
-function insertLocalCustomer(database: DesktopDatabase, id: string): void {
+function insertLocalCustomer(
+  database: DesktopDatabase,
+  id: string,
+  options: {
+    document?: string | null;
+    omieCustomerId?: number;
+    omieIntegrationCode?: string;
+    source?: string;
+  } = {}
+): void {
   const now = "2026-06-12T12:00:00.000Z";
   database
     .prepare(
       `INSERT INTO customers (
-        id, company_id, source, legal_name, trade_name, document, phone, email,
+        id, company_id, source, omie_customer_id, omie_integration_code, legal_name, trade_name, document, phone, email,
         sync_status, created_at, updated_at, needs_push
-      ) VALUES (?, 'company-1', 'local', 'Cliente Local LTDA', 'Cliente Local', '12345678000195', '(11) 99999-9999', 'cliente@example.com', 'pending', ?, ?, 1)`
+      ) VALUES (?, 'company-1', ?, ?, ?, 'Cliente Local LTDA', 'Cliente Local', ?, '(11) 99999-9999', 'cliente@example.com', 'pending', ?, ?, 1)`
     )
-    .run(id, now, now);
+    .run(
+      id,
+      options.source ?? "local",
+      options.omieCustomerId ?? null,
+      options.omieIntegrationCode ?? null,
+      options.document === undefined ? "12345678000195" : options.document,
+      now,
+      now
+    );
 }
 
 function insertLocalCarrier(
   database: DesktopDatabase,
   id: string,
-  options: { omieCustomerId?: number } = {}
+  options: { omieCustomerId?: number; document?: string | null } = {}
 ): void {
   const now = "2026-06-12T12:00:00.000Z";
   database
@@ -1403,10 +1629,16 @@ function insertLocalCarrier(
       `INSERT INTO carriers (
         id, company_id, omie_customer_id, name, document, phone, email,
         source, is_active, sync_status, needs_push, created_at, updated_at
-      ) VALUES (?, 'company-1', ?, 'Transportadora Local LTDA', '22222222000182', '(19) 3333-4444', 'transporte@example.com',
+      ) VALUES (?, 'company-1', ?, 'Transportadora Local LTDA', ?, '(19) 3333-4444', 'transporte@example.com',
         'local', 1, 'pending', 1, ?, ?)`
     )
-    .run(id, options.omieCustomerId ?? null, now, now);
+    .run(
+      id,
+      options.omieCustomerId ?? null,
+      options.document === undefined ? "22222222000182" : options.document,
+      now,
+      now
+    );
 }
 
 function insertWeighingOperation(database: DesktopDatabase): void {
