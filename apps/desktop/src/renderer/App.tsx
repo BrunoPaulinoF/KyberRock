@@ -3730,6 +3730,19 @@ export function filterCacheSelectOptions(
   return filterIds !== undefined ? options.filter((option) => filterIds.includes(option.id)) : options;
 }
 
+/**
+ * Inclui otimisticamente um id recem-criado na lista de ids permitidos de um seletor
+ * filtrado por vinculo (ex.: transportadoras do cliente), para o item aparecer de
+ * imediato mesmo antes da releitura do vinculo no banco. `undefined` = sem filtro.
+ */
+export function appendAvailableId(
+  ids: string[] | undefined,
+  id: string
+): string[] | undefined {
+  if (ids === undefined) return undefined;
+  return ids.includes(id) ? ids : [...ids, id];
+}
+
 function CacheSelect({
   label,
   entityType,
@@ -4127,7 +4140,9 @@ function WeighingForm({
       }
     }
     load();
-  }, [desktopApi, form.customerId]);
+    // carrierRefreshKey: recarrega os vinculos apos criar/vincular transportadora
+    // pelo modal rapido, senao a lista filtrada esconderia a recem-criada.
+  }, [desktopApi, form.customerId, carrierRefreshKey]);
 
   useEffect(() => {
     async function load() {
@@ -4958,6 +4973,17 @@ function WeighingForm({
           onCreated={async (id) => {
             setForm((prev) => ({ ...prev, carrierId: id, customerOwnTransport: false }));
             setShowCarrierModal(false);
+            // O seletor filtra por "transportadoras vinculadas ao cliente": sem vincular
+            // a recem-criada ao cliente selecionado, ela nao apareceria na lista.
+            if (desktopApi && form.customerId) {
+              try {
+                await desktopApi.linkCustomerCarrier(form.customerId, id);
+              } catch {
+                /* ignore */
+              }
+            }
+            // Mostra a nova transportadora de imediato, mesmo se a releitura falhar.
+            setAvailableCarrierIds((prev) => appendAvailableId(prev, id));
             if (desktopApi && form.vehicleId) {
               try {
                 await desktopApi.vehiclesLinkCarrier(form.vehicleId, id);
