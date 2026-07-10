@@ -1539,6 +1539,69 @@ async function ensureOmieParcelaCode(
   }
 }
 
+/** Dias de vencimento das parcelas do pedido (explicitos, ou mensal por quantidade). */
+function orderDueDays(payload: CreateOrderPayload): number[] {
+  const days = (payload.installmentDays ?? [])
+    .map((value) => toNumber(value))
+    .filter((value): value is number => value !== null && value >= 0);
+  if (days.length > 0) return days;
+  const count =
+    typeof payload.installmentCount === "number" && payload.installmentCount > 0
+      ? Math.floor(payload.installmentCount)
+      : 1;
+  if (count <= 1) return [0];
+  return Array.from({ length: count }, (_, index) => 30 * (index + 1));
+}
+
+function addDaysToIsoDate(isoDate: string, days: number): string {
+  const base = new Date(`${isoDate.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(base.getTime())) return isoDate;
+  base.setUTCDate(base.getUTCDate() + days);
+  return base.toISOString().slice(0, 10);
+}
+
+type OrderParcelamento = {
+  /** Campos do cabecalho (codigo_parcela + quantidade_parcelas quando "999"). */
+  cabecalho: Record<string, unknown>;
+  /** lista_parcelas quando o parcelamento e informado (999); null para "000"/vinculado. */
+  listaParcelas: Record<string, unknown> | null;
+};
+
+/**
+ * Monta o parcelamento do pedido de venda. Quando ha meio de pagamento OU parcelas
+ * com vencimento (ou mais de uma), usa o parcelamento informado do OMIE:
+ * codigo_parcela "999" + lista_parcelas com data_vencimento, percentual e
+ * meio_pagamento (tPag da NF-e) por parcela. Sem meio e a vista, usa o codigo
+ * vinculado (ou "000").
+ */
+function buildOrderParcelamento(payload: CreateOrderPayload): OrderParcelamento {
+  const meio = (payload.paymentMethodOmieCode ?? "").trim();
+  const dueDays = orderDueDays(payload);
+  const useLista = meio.length > 0 || dueDays.length > 1 || dueDays[0] > 0;
+
+  if (!useLista) {
+    const code = normalizeParcelaCode(payload.paymentTermOmieCode) ?? "000";
+    return { cabecalho: { codigo_parcela: code }, listaParcelas: null };
+  }
+
+  const count = dueDays.length;
+  const basePercent = Math.floor(10000 / count) / 100;
+  const parcela = dueDays.map((dueInDays, index) => ({
+    numero_parcela: index + 1,
+    data_vencimento: toOmieDate(addDaysToIsoDate(payload.issueDate, dueInDays)),
+    percentual:
+      index === count - 1
+        ? Math.round((100 - basePercent * (count - 1)) * 100) / 100
+        : basePercent,
+    ...(meio ? { meio_pagamento: meio } : {})
+  }));
+
+  return {
+    cabecalho: { codigo_parcela: "999", quantidade_parcelas: count },
+    listaParcelas: { parcela }
+  };
+}
+
 async function createOmieOrder(
   credentials: OmieCredentials,
   payload: CreateOrderPayload
@@ -1551,13 +1614,6 @@ async function createOmieOrder(
     selectedAccountCode !== null && selectedAccountCode > 0
       ? selectedAccountCode
       : await resolveOmieAccountCode(credentials);
-  // Codigo de parcela: usa o vinculado quando existe; sem vinculo, garante a condicao
-  // da operacao no cadastro de parcelas do OMIE (criando-a se preciso); em ultimo
-  // caso cai no "000" (a vista) — comportamento historico.
-  const parcelaCode =
-    normalizeParcelaCode(payload.paymentTermOmieCode) ??
-    (await ensureOmieParcelaCode(credentials, payload)) ??
-    "000";
   const installmentCount =
     typeof payload.installmentCount === "number" && payload.installmentCount > 0
       ? Math.floor(payload.installmentCount)
@@ -1567,6 +1623,7 @@ async function createOmieOrder(
     if (!payload.productOmieId) {
       throw new Error("productOmieId obrigatorio para pedido de venda");
     }
+    const parcelamento = buildOrderParcelamento(payload);
     const response = await callOmie<unknown, unknown>(
       credentials,
       "/produtos/pedido/",
@@ -1579,7 +1636,7 @@ async function createOmieOrder(
           // Etapa "50" = coluna "Faturar" do kanban de Vendas do OMIE: o pedido chega
           // pronto para faturar, e a emissao da NF-e e feita DENTRO do OMIE.
           etapa: "50",
-          codigo_parcela: parcelaCode,
+          ...parcelamento.cabecalho,
           quantidade_itens: 1
         },
         det: [
@@ -1598,7 +1655,12 @@ async function createOmieOrder(
         informacoes_adicionais: {
           codigo_categoria: "1.01.01",
           ...(accountCode !== null ? { codigo_conta_corrente: accountCode } : {})
-        }
+        },
+        // Parcelamento informado (codigo_parcela "999"): leva os vencimentos e o
+        // meio de pagamento (tPag da NF-e) por parcela.
+        ...(parcelamento.listaParcelas !== null
+          ? { lista_parcelas: parcelamento.listaParcelas }
+          : {})
       }
     ).catch(async (error) => {
       // So aceita a consulta como fallback se ela realmente devolver o pedido;
@@ -1621,6 +1683,12 @@ async function createOmieOrder(
   }
 
   const serviceCodes = await resolveOmieServiceCodes(credentials);
+  // OS (operacao interna): usa o codigo de parcela vinculado, senao localiza/cria
+  // no cadastro; em ultimo caso "000" (a vista).
+  const osParcelaCode =
+    normalizeParcelaCode(payload.paymentTermOmieCode) ??
+    (await ensureOmieParcelaCode(credentials, payload)) ??
+    "000";
   const response = await callOmie<
     unknown,
     {
@@ -1636,7 +1704,7 @@ async function createOmieOrder(
       dDtPrevisao: toOmieDate(payload.issueDate),
       // Etapa "50" = "Faturar": a OS tambem e faturada dentro do OMIE.
       cEtapa: "50",
-      cCodParc: parcelaCode,
+      cCodParc: osParcelaCode,
       nQtdeParc: installmentCount
     },
     ServicosPrestados: [

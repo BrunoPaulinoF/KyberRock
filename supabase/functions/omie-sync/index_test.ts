@@ -774,7 +774,7 @@ function parcelaAwareOrderStub(options: {
   });
 }
 
-Deno.test("create_order cria a condicao no cadastro OMIE quando ela nao existe", async () => {
+Deno.test("create_order envia parcelamento informado (999 + lista_parcelas) pelos dias", async () => {
   const deviceToken = "token-order-new-parcela";
   const token_hash = await sha256Hex(deviceToken);
   const fixtures = createSupabaseDependencies({
@@ -796,10 +796,7 @@ Deno.test("create_order cria a condicao no cadastro OMIE quando ela nao existe",
       }
     }
   });
-  const omieQueue = parcelaAwareOrderStub({
-    existingParcelas: [{ nCodigo: "000", cDescricao: "A Vista", nParcelas: 1 }],
-    createdParcelaCode: "212"
-  });
+  const omieQueue = parcelaAwareOrderStub({});
 
   const response = await postOmieSync(
     {
@@ -821,47 +818,54 @@ Deno.test("create_order cria a condicao no cadastro OMIE quando ela nao existe",
   );
 
   assertObjectMatch(response, { ok: true, orderId: 12345 });
-  const incluirParcela = getParam(findRequest(omieQueue, "IncluirParcela"));
-  assertEquals(incluirParcela.cDescricao, "7/14/21");
-  const cabecalho = getParam(findRequest(omieQueue, "IncluirPedido")).cabecalho as Record<
-    string,
-    unknown
-  >;
-  assertEquals(cabecalho.codigo_parcela, "212");
+  // Nao cria parcela no cadastro: o parcelamento vai INFORMADO no pedido.
+  assertEquals(
+    omieQueue.requests.some((request) => request.call === "IncluirParcela"),
+    false
+  );
+  const body = getParam(findRequest(omieQueue, "IncluirPedido"));
+  const cabecalho = body.cabecalho as Record<string, unknown>;
+  assertEquals(cabecalho.codigo_parcela, "999");
+  assertEquals(cabecalho.quantidade_parcelas, 3);
+  const parcela = (body.lista_parcelas as { parcela: Array<Record<string, unknown>> }).parcela;
+  assertEquals(parcela.length, 3);
+  assertEquals(parcela[0].numero_parcela, 1);
+  assertEquals(parcela[0].data_vencimento, "14/07/2026");
+  assertEquals(parcela[2].data_vencimento, "28/07/2026");
+  // Percentuais fecham 100 (a ultima absorve o arredondamento).
+  assertEquals(parcela[0].percentual, 33.33);
+  assertEquals(parcela[2].percentual, 33.34);
 });
 
-Deno.test("create_order reusa parcela existente no OMIE com os mesmos dias", async () => {
-  const deviceToken = "token-order-reuse-parcela";
+Deno.test("create_order leva o meio de pagamento em cada parcela (tPag da NF-e)", async () => {
+  const deviceToken = "token-order-meio";
   const token_hash = await sha256Hex(deviceToken);
   const fixtures = createSupabaseDependencies({
     devices: {
-      "device-order-reuse-parcela": {
-        id: "device-order-reuse-parcela",
-        company_id: "company-order-reuse-parcela",
-        unit_id: "unit-order-reuse-parcela",
+      "device-order-meio": {
+        id: "device-order-meio",
+        company_id: "company-order-meio",
+        unit_id: "unit-order-meio",
         token_hash,
         is_active: true
       }
     },
     companies: {
-      "company-order-reuse-parcela": {
-        id: "company-order-reuse-parcela",
+      "company-order-meio": {
+        id: "company-order-meio",
         is_active: true,
-        omie_app_key: "order-reuse-parcela",
-        omie_app_secret: "secret-order-reuse-parcela"
+        omie_app_key: "order-meio",
+        omie_app_secret: "secret-order-meio"
       }
     }
   });
-  const omieQueue = parcelaAwareOrderStub({
-    existingParcelas: [
-      { nCodigo: "000", cDescricao: "A Vista", nParcelas: 1 },
-      { nCodigo: "215", cDescricao: "7/14/21", nParcelas: 3, aparcela_dias: [7, 14, 21] }
-    ]
-  });
+  const omieQueue = parcelaAwareOrderStub({});
 
+  // A vista (sem dias) MAS com meio de pagamento -> ainda usa lista_parcelas para
+  // carregar o meio na NF-e.
   await postOmieSync(
     {
-      deviceId: "device-order-reuse-parcela",
+      deviceId: "device-order-meio",
       deviceToken,
       action: "create_order",
       payload: {
@@ -872,22 +876,20 @@ Deno.test("create_order reusa parcela existente no OMIE com os mesmos dias", asy
         unitPrice: 50,
         issueDate: "2026-07-07",
         idempotencyKey: "kyberrock:unit:op7:create_sales_order",
-        installmentDays: [7, 14, 21]
+        paymentMethodOmieCode: "17"
       }
     },
     { createClient: fixtures.createClient, omieQueue }
   );
 
-  // Reusa o codigo existente sem criar parcela nova.
-  assertEquals(
-    omieQueue.requests.some((request) => request.call === "IncluirParcela"),
-    false
-  );
-  const cabecalho = getParam(findRequest(omieQueue, "IncluirPedido")).cabecalho as Record<
-    string,
-    unknown
-  >;
-  assertEquals(cabecalho.codigo_parcela, "215");
+  const body = getParam(findRequest(omieQueue, "IncluirPedido"));
+  const cabecalho = body.cabecalho as Record<string, unknown>;
+  assertEquals(cabecalho.codigo_parcela, "999");
+  assertEquals(cabecalho.quantidade_parcelas, 1);
+  const parcela = (body.lista_parcelas as { parcela: Array<Record<string, unknown>> }).parcela;
+  assertEquals(parcela.length, 1);
+  assertEquals(parcela[0].meio_pagamento, "17");
+  assertEquals(parcela[0].data_vencimento, "07/07/2026");
 });
 
 Deno.test("create_order aplica a condicao criada tambem na ordem de servico", async () => {
