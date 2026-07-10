@@ -351,6 +351,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [changeProductLoading, setChangeProductLoading] = useState(false);
   const [fiscalCloseProgress, setFiscalCloseProgress] = useState<FiscalCloseProgress | null>(null);
   const [retryingFiscalOperationId, setRetryingFiscalOperationId] = useState<string | null>(null);
+  const [customersInitialSearch, setCustomersInitialSearch] = useState("");
+  const [deleteClosedOperationId, setDeleteClosedOperationId] = useState<string | null>(null);
   const [omieSyncing, setOmieSyncing] = useState(false);
   const [omieResetting, setOmieResetting] = useState(false);
   const [showOmieDirectSync, setShowOmieDirectSync] = useState(false);
@@ -1492,6 +1494,27 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
   }
 
+  // "Editar cliente" de uma operacao concluida: abre a tela de Clientes ja filtrada
+  // pelo cliente, para corrigir o cadastro (endereco/e-mail) e reenviar depois.
+  function handleEditOperationCustomer(operation: WeighingOperationSummary): void {
+    setCustomersInitialSearch(operation.customerName || "");
+    setRegistrationsTab("customers");
+    setActiveView("registrations");
+  }
+
+  async function handleDeleteClosedOperation(operationId: string): Promise<void> {
+    if (!desktopApi) return;
+    try {
+      await desktopApi.deleteClosedWeighingOperation(operationId);
+      setDeleteClosedOperationId(null);
+      await refreshOpenOperations();
+      setMessage("Operacao concluida excluida.");
+    } catch (error) {
+      setDeleteClosedOperationId(null);
+      setMessage(getErrorMessage(error));
+    }
+  }
+
   async function handleConfigureReceiptPrinter(): Promise<void> {
     if (!desktopApi) {
       return;
@@ -2480,6 +2503,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       <span>Peso liquido / Receita</span>
                       <span>Concluida em</span>
                       <span>Fiscal OMIE</span>
+                      <span>Acoes</span>
                     </div>
                     {filteredClosedOperations.map((operation) => (
                       <div key={operation.id} style={styles.closedOperationsTableRow}>
@@ -2499,6 +2523,24 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                           retrying={retryingFiscalOperationId === operation.id}
                           onRetry={() => void handleRetryFiscalBilling(operation.id)}
                         />
+                        <span style={styles.rowActions}>
+                          <button
+                            type="button"
+                            style={styles.smallSecondaryButton}
+                            title="Editar o cadastro do cliente desta operacao"
+                            onClick={() => handleEditOperationCustomer(operation)}
+                          >
+                            Editar cliente
+                          </button>
+                          <button
+                            type="button"
+                            style={styles.smallDangerButton}
+                            title="Excluir esta operacao concluida da lista"
+                            onClick={() => setDeleteClosedOperationId(operation.id)}
+                          >
+                            Excluir
+                          </button>
+                        </span>
                       </div>
                     ))}
                   </div>
@@ -2527,6 +2569,15 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   void handleCancelOperation(id, reason);
                 }}
                 onCancel={() => setCancelOperationId(null)}
+              />
+            ) : null}
+
+            {deleteClosedOperationId ? (
+              <ConfirmDialog
+                title="Excluir operacao concluida"
+                description="A operacao sera removida da lista de concluidas. O pedido/OS ja enviado ao OMIE nao e afetado — trate-o no proprio OMIE se necessario."
+                onCancel={() => setDeleteClosedOperationId(null)}
+                onConfirm={() => void handleDeleteClosedOperation(deleteClosedOperationId)}
               />
             ) : null}
 
@@ -2656,7 +2707,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 <p style={styles.muted}>{TIPS.screens.registrations}</p>
                 <div style={{ marginTop: "20px" }}>
                   {registrationsTab === "customers" ? (
-                    <CustomersView desktopApi={desktopApi} />
+                    <CustomersView desktopApi={desktopApi} initialSearch={customersInitialSearch} />
                   ) : null}
                   {registrationsTab === "products" ? (
                     <ProductsView desktopApi={desktopApi} />
@@ -9700,7 +9751,8 @@ const styles = {
   },
   closedOperationsTableRow: {
     display: "grid",
-    gridTemplateColumns: "96px minmax(180px, 1.2fr) minmax(120px, 0.8fr) 150px minmax(190px, 1fr)",
+    gridTemplateColumns:
+      "96px minmax(160px, 1.1fr) minmax(110px, 0.7fr) 140px minmax(170px, 0.9fr) 150px",
     alignItems: "center",
     gap: "10px",
     padding: "8px 10px",

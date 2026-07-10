@@ -20,6 +20,8 @@ const desktopApi = {
   listClosedWeighingOperations: () => ipcRenderer.invoke("desktop:list-closed-weighing-operations"),
   clearCanceledWeighingOperations: () =>
     ipcRenderer.invoke("desktop:clear-canceled-weighing-operations"),
+  deleteClosedWeighingOperation: (operationId: string) =>
+    ipcRenderer.invoke("desktop:delete-closed-weighing-operation", operationId),
   startWeighing: (input: unknown) => ipcRenderer.invoke("desktop:start-weighing", input),
   closeWeighing: (operationId: string, operationType?: string, scaleCaptureId?: string) =>
     ipcRenderer.invoke("desktop:close-weighing", operationId, operationType, scaleCaptureId),
@@ -107,9 +109,13 @@ const desktopApi = {
   quotationsListOpenForCustomer: (customerId: string) =>
     ipcRenderer.invoke("desktop:quotations-list-open-for-customer", customerId),
   customersCreate: (input: unknown) => ipcRenderer.invoke("desktop:customers-create", input),
-  customersUpdate: (id: string, input: unknown) =>
-    ipcRenderer.invoke("desktop:customers-update", id, input),
+  customersUpdate: (id: string, input: unknown, options?: { overrideOmieFields?: boolean }) =>
+    ipcRenderer.invoke("desktop:customers-update", id, input, options),
   customersDelete: (id: string) => ipcRenderer.invoke("desktop:customers-delete", id),
+  getDefaultNfeEmail: () => ipcRenderer.invoke("desktop:get-default-nfe-email"),
+  setDefaultNfeEmail: (email: string) => ipcRenderer.invoke("desktop:set-default-nfe-email", email),
+  applyDefaultNfeEmailToAll: (email: string) =>
+    ipcRenderer.invoke("desktop:apply-default-nfe-email-to-all", email),
   // Meios de pagamento e contas vem do OMIE (sincronizacao); localmente so ha
   // atualizacao restrita (ativar/desativar, apelido, vinculo forma -> conta).
   paymentMethodsUpdate: (id: string, input: unknown) =>
@@ -200,6 +206,7 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:verify-price-password", password),
   omieConfig: () => ipcRenderer.invoke("desktop:omie-config"),
   lookupCep: (cep: string) => ipcRenderer.invoke("desktop:lookup-cep", cep),
+  lookupCnpj: (cnpj: string) => ipcRenderer.invoke("desktop:lookup-cnpj", cnpj),
   omieSync: () => ipcRenderer.invoke("desktop:omie-sync"),
   syncOmieDirect: (appKey: string, appSecret: string) =>
     ipcRenderer.invoke("desktop:sync-omie-direct", appKey, appSecret),

@@ -55,6 +55,7 @@ import {
   clearCanceledWeighingOperations,
   closeWeighingOperation,
   createWeighingOperation,
+  deleteClosedWeighingOperation,
   listCanceledWeighingOperations,
   listClosedWeighingOperations,
   listOpenWeighingOperations,
@@ -107,7 +108,9 @@ import {
   pullDriverCarriersFromCloud,
   pullLoaderCompletionsFromCloud,
   pullDesktopDataFromCloud,
+  lookupCnpjFromCloud,
   type CloudBootstrapResult,
+  type CnpjLookupResult,
   type FiscalBillingResult,
   type SyncResult
 } from "./supabase-sync.js";
@@ -209,9 +212,12 @@ import {
 } from "./scale-configs.js";
 import { ScaleCaptureService, type ScaleCaptureOperationType } from "./scale-capture.js";
 import {
+  applyDefaultNfeEmailToAllCustomers,
   createCustomer,
   deleteCustomer,
   getCustomersByCarrier,
+  getDefaultNfeEmail,
+  setDefaultNfeEmail,
   updateCustomer,
   type CreateCustomerInput,
   type UpdateCustomerInput
@@ -563,8 +569,66 @@ export class DesktopRuntime {
       operationType,
       exitScaleCapture: buildScaleCaptureAudit(exitReading)
     });
+    // Best-effort: completa o cadastro do cliente para NF-e (busca por CNPJ + e-mail
+    // padrao) em vez de deixar o faturamento pendente por falta de dados. Nao bloqueia
+    // nem falha o fechamento se a busca nao der certo.
+    await this.autoCompleteCustomerForNfe(operationId).catch(() => undefined);
     this.triggerBackgroundCloudSync("exit_registered", { operationId });
     return operation;
+  }
+
+  /**
+   * Se o cliente da operacao estiver sem Numero do Endereco ou E-mail (exigidos pela
+   * NF-e), busca os dados por CNPJ (Receita) e aplica o e-mail padrao, completando o
+   * cadastro e marcando para push ao OMIE. Silencioso: qualquer falha e ignorada.
+   */
+  private async autoCompleteCustomerForNfe(operationId: string): Promise<void> {
+    const op = this.database
+      .prepare("SELECT customer_id FROM weighing_operations WHERE id = ?")
+      .get(operationId) as { customer_id: string | null } | undefined;
+    if (!op?.customer_id) return;
+
+    const customer = this.database
+      .prepare(
+        "SELECT document, email, address_number FROM customers WHERE id = ? AND deleted_at IS NULL"
+      )
+      .get(op.customer_id) as
+      | { document: string | null; email: string | null; address_number: string | null }
+      | undefined;
+    if (!customer) return;
+
+    const missingEmail = !customer.email?.trim();
+    const missingNumber = !customer.address_number?.trim();
+    if (!missingEmail && !missingNumber) return;
+
+    const patch: Record<string, unknown> = {};
+
+    // 1. Completa endereco/razao pelo CNPJ quando ha documento valido.
+    const digits = (customer.document ?? "").replace(/\D/g, "");
+    if (digits.length === 14) {
+      const data = await lookupCnpjFromCloud(this.database, this.ensureIdentity(), digits).catch(
+        () => null
+      );
+      if (data?.found) {
+        if (missingNumber && data.addressNumber) patch.addressNumber = data.addressNumber;
+        if (data.addressStreet) patch.addressStreet = data.addressStreet;
+        if (data.neighborhood) patch.neighborhood = data.neighborhood;
+        if (data.city) patch.city = data.city;
+        if (data.state) patch.state = data.state;
+        if (data.zipcode) patch.zipcode = data.zipcode;
+        if (missingEmail && data.email) patch.email = data.email;
+      }
+    }
+
+    // 2. E-mail padrao de NF-e quando ainda faltar (Receita raramente traz e-mail).
+    if (missingEmail && patch.email === undefined) {
+      const defaultEmail = getDefaultNfeEmail(this.database);
+      if (defaultEmail) patch.email = defaultEmail;
+    }
+
+    if (Object.keys(patch).length === 0) return;
+    updateCustomer(this.database, op.customer_id, patch, new Date(), { overrideOmieFields: true });
+    this.cacheStore.invalidate("customer", this.ensureIdentity().companyId);
   }
 
   private async captureStableWeight(options: {
@@ -696,6 +760,11 @@ export class DesktopRuntime {
     return clearCanceledWeighingOperations(this.database);
   }
 
+  deleteClosedWeighingOperation(operationId: string): void {
+    this.assertDesktopAccess();
+    deleteClosedWeighingOperation(this.database, operationId);
+  }
+
   getCustomerFreightRules(customerId: string) {
     this.assertDesktopAccess();
     return getCustomerFreightRules(this.database, customerId);
@@ -771,6 +840,11 @@ export class DesktopRuntime {
       operationId,
       (documentUrl) => this.fiscalDocumentPrinter.printDocument(documentUrl)
     );
+  }
+
+  lookupCnpj(cnpj: string): Promise<CnpjLookupResult> {
+    this.assertDesktopAccess();
+    return lookupCnpjFromCloud(this.database, this.ensureIdentity(), cnpj);
   }
 
   async syncToCloud(): Promise<SyncResult> {
@@ -1404,13 +1478,37 @@ export class DesktopRuntime {
     return result;
   }
 
-  updateCustomer(id: string, input: UpdateCustomerInput): unknown {
+  updateCustomer(
+    id: string,
+    input: UpdateCustomerInput,
+    options?: { overrideOmieFields?: boolean }
+  ): unknown {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
-    const result = updateCustomer(this.database, id, input);
+    const result = updateCustomer(this.database, id, input, new Date(), {
+      overrideOmieFields: options?.overrideOmieFields
+    });
     this.cacheStore.invalidate("customer", identity.companyId);
     this.cacheStore.invalidate("carrier", identity.companyId);
     return result;
+  }
+
+  getDefaultNfeEmail(): string | null {
+    this.assertDesktopAccess();
+    return getDefaultNfeEmail(this.database);
+  }
+
+  setDefaultNfeEmail(email: string): string | null {
+    this.assertDesktopAccess();
+    return setDefaultNfeEmail(this.database, email);
+  }
+
+  applyDefaultNfeEmailToAll(email: string): number {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    const count = applyDefaultNfeEmailToAllCustomers(this.database, identity.companyId, email);
+    this.cacheStore.invalidate("customer", identity.companyId);
+    return count;
   }
 
   deleteCustomer(id: string): void {

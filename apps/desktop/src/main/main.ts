@@ -313,6 +313,14 @@ function registerIpcHandlers(): void {
     return runtime.clearCanceledWeighingOperations();
   });
 
+  ipcMain.handle("desktop:delete-closed-weighing-operation", (_event, operationId: string) => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.deleteClosedWeighingOperation(operationId);
+  });
+
   ipcMain.handle("desktop:start-weighing", async (_event, input: unknown) => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");
@@ -789,12 +797,35 @@ function registerIpcHandlers(): void {
     }
   );
 
-  ipcMain.handle("desktop:customers-update", (_event, id: string, input: UpdateCustomerInput) => {
-    if (!runtime) {
-      throw new Error("Desktop runtime is not ready.");
-    }
+  ipcMain.handle(
+    "desktop:customers-update",
+    (
+      _event,
+      id: string,
+      input: UpdateCustomerInput,
+      options?: { overrideOmieFields?: boolean }
+    ) => {
+      if (!runtime) {
+        throw new Error("Desktop runtime is not ready.");
+      }
 
-    return runtime.updateCustomer(id, input);
+      return runtime.updateCustomer(id, input, options);
+    }
+  );
+
+  ipcMain.handle("desktop:get-default-nfe-email", () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.getDefaultNfeEmail();
+  });
+
+  ipcMain.handle("desktop:set-default-nfe-email", (_event, email: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.setDefaultNfeEmail(email);
+  });
+
+  ipcMain.handle("desktop:apply-default-nfe-email-to-all", (_event, email: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.applyDefaultNfeEmailToAll(email);
   });
 
   ipcMain.handle("desktop:customers-delete", (_event, id: string) => {
@@ -1190,6 +1221,11 @@ function registerIpcHandlers(): void {
         .trim()
         .toUpperCase()
     };
+  });
+
+  ipcMain.handle("desktop:lookup-cnpj", async (_event, cnpj: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.lookupCnpj(cnpj);
   });
 
   ipcMain.handle("desktop:omie-sync", async () => {

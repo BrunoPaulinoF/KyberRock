@@ -545,6 +545,48 @@ export async function pullDesktopDataFromCloud(
   return apply();
 }
 
+export interface CnpjLookupResult {
+  found: boolean;
+  cnpj: string;
+  legalName: string | null;
+  tradeName: string | null;
+  email: string | null;
+  phone: string | null;
+  zipcode: string | null;
+  addressStreet: string | null;
+  addressNumber: string | null;
+  addressComplement: string | null;
+  neighborhood: string | null;
+  city: string | null;
+  state: string | null;
+  status: string | null;
+}
+
+/**
+ * Consulta os dados cadastrais de um CNPJ pela edge cnpj-lookup (BrasilAPI/Receita).
+ * O e-mail quase nunca vem na base publica — os demais campos (endereco, razao
+ * social, telefone) vem normalmente. Lanca em CNPJ invalido / consulta indisponivel.
+ */
+export async function lookupCnpjFromCloud(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity,
+  cnpj: string
+): Promise<CnpjLookupResult> {
+  const digits = String(cnpj ?? "").replace(/\D/g, "");
+  if (digits.length !== 14) {
+    throw new Error("CNPJ invalido. Informe os 14 digitos.");
+  }
+  const settings = getCloudSettings(database, identity);
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.functions.invoke<CnpjLookupResult & { message?: string }>(
+    "cnpj-lookup",
+    { body: { deviceId: settings.deviceId, deviceToken: settings.deviceToken, cnpj: digits } }
+  );
+  if (error) throw new Error(await getFunctionErrorMessage(error));
+  if (!data) throw new Error("Consulta de CNPJ nao retornou dados.");
+  return data;
+}
+
 function upsertCloudCustomers(
   database: DesktopDatabase,
   companyId: string,
