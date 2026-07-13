@@ -818,6 +818,22 @@ export function closeWeighingOperation(
     const billingJob = buildOmieBillingJob(database, input.operationId);
     if (billingJob) {
       enqueueOmieBillingJob(database, input.operationId, billingJob, now);
+    } else if (nextOperationType === "invoice") {
+      // buildOmieBillingJob so retorna null aqui quando o cliente nao tem codigo OMIE.
+      // Sem pedido a enviar, registra o motivo (em vez de pular em silencio, que deixava
+      // a operacao eternamente como "Enviando ao OMIE"). Aparece na tela Concluidas e
+      // pode ser reenviado com "Refaturar" depois de vincular o cliente ao OMIE.
+      database
+        .prepare(
+          `UPDATE weighing_operations
+           SET omie_billing_status = 'cadastro_incompleto', omie_billing_message = ?, updated_at = ?
+           WHERE id = ?`
+        )
+        .run(
+          "Cliente sem codigo OMIE: o pedido nao foi enviado. Sincronize ou cadastre o cliente no OMIE e use Refaturar.",
+          timestamp,
+          input.operationId
+        );
     }
   });
 
