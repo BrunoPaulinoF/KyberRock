@@ -4,7 +4,13 @@ import type { ScaleStatus } from "@kyberrock/scale-adapters";
 import type { DesktopDatabase } from "../database/sqlite.js";
 import type { LocalDesktopIdentity } from "./bootstrap.js";
 import { FinancialBlockService } from "./financial-block.js";
-import { FreightCalculator, type FreightRule } from "./freight.js";
+import {
+  FreightCalculator,
+  freightModalityOmieCode,
+  getFreightModalityInfo,
+  type FreightModality,
+  type FreightRule
+} from "./freight.js";
 import { PricingService, type PriceDetails } from "./pricing.js";
 import { cancelPendingOmieJobs, enqueueSyncJob } from "./sync-queue.js";
 import { CreditService } from "./credit.js";
@@ -70,6 +76,8 @@ export interface CreateWeighingOperationInput {
   entryWeightKg: number;
   entryScaleCapture?: ScaleCaptureAudit | null;
   freight?: OperationFreightInput | null;
+  /** Tipo (modalidade) de frete enviado ao OMIE; default "none" (sem frete). */
+  freightModality?: FreightModality | null;
   quotationId?: string;
   deductFreightFromCredit?: boolean;
 }
@@ -109,6 +117,7 @@ export interface WeighingOperationSummary {
   productTotalCents: number | null;
   freightTotalCents: number;
   freightJson: string | null;
+  freightModality: FreightModality;
   totalCents: number | null;
   deductFreightFromCredit: boolean;
   productCreditDebitCents: number;
@@ -141,6 +150,7 @@ interface OperationRow {
   product_total_cents: number | null;
   freight_total_cents: number;
   freight_json: string | null;
+  freight_type: string | null;
   total_cents: number | null;
   deduct_freight_from_credit: number;
   product_credit_debit_cents: number;
@@ -508,9 +518,9 @@ export function createWeighingOperation(
           id, company_id, unit_id, device_id, status, operation_type, customer_id, vehicle_id, carrier_id, driver_id, product_id,
           payment_term_id, payment_method_id, manual_installments, manual_down_payment_cents, entry_weight_kg, entry_weight_captured_at, unit_price_cents,
           base_unit_price_cents, applied_price_table_id, applied_price_table_name, applied_price_table_item_id,
-          price_unit, price_savings_percent, freight_total_cents, freight_json, deduct_freight_from_credit,
+          price_unit, price_savings_percent, freight_total_cents, freight_json, freight_type, deduct_freight_from_credit,
           product_credit_debit_cents, freight_credit_debit_cents, quotation_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, 'loading_requested', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0, 0, ?, ?, ?)`
+        ) VALUES (?, ?, ?, ?, 'loading_requested', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 0, 0, ?, ?, ?)`
       )
       .run(
         operationId,
@@ -537,6 +547,7 @@ export function createWeighingOperation(
         priceDetails?.priceUnit ?? "ton",
         priceDetails?.savingsPercent ?? null,
         serializeOperationFreight(input.freight),
+        getFreightModalityInfo(input.freightModality).key,
         input.deductFreightFromCredit ? 1 : 0,
         input.quotationId ?? null,
         timestamp,
@@ -893,6 +904,8 @@ export interface OmieBillingJobPayload {
   quantity: number;
   unitPrice: number;
   freightTotalCents: number;
+  /** Codigo "modalidade" do frete no OMIE (modFrete da NF-e): 0 CIF, 1 FOB, 2 terceiros, 3/4 proprio, 9 sem frete. */
+  freightModalidade: string;
   issueDate: string;
   paymentTermOmieCode: string | null;
   paymentTermInstallmentCount: number | null;
@@ -917,13 +930,28 @@ export interface BuiltOmieBillingJob {
  * refaturamento (apos corrigir o cadastro) sejam byte-a-byte iguais e reusem o mesmo pedido no
  * OMIE. Retorna null quando o cliente nao tem omie_customer_id (nada a enviar).
  */
+/**
+ * Codigo "modalidade" do frete para o OMIE a partir do tipo salvo. Compat: operacoes
+ * anteriores a esta feature nao tem tipo salvo (default "none" -> "9"); quando elas tem
+ * valor de frete, mantemos o comportamento legado (CIF "0" com valor), evitando enviar
+ * "sem frete" para um pedido que tinha frete.
+ */
+function resolveFreightModalidade(
+  freightType: string | null | undefined,
+  freightTotalCents: number
+): string {
+  const code = freightModalityOmieCode(freightType);
+  if (code === "9" && freightTotalCents > 0) return "0";
+  return code;
+}
+
 export function buildOmieBillingJob(
   database: DesktopDatabase,
   operationId: string
 ): BuiltOmieBillingJob | null {
   const row = database
     .prepare(
-      "SELECT unit_id, customer_id, product_id, payment_term_id, payment_method_id, exit_weight_captured_at FROM weighing_operations WHERE id = ?"
+      "SELECT unit_id, customer_id, product_id, payment_term_id, payment_method_id, freight_type, exit_weight_captured_at FROM weighing_operations WHERE id = ?"
     )
     .get(operationId) as
     | {
@@ -932,6 +960,7 @@ export function buildOmieBillingJob(
         product_id: string | null;
         payment_term_id: string | null;
         payment_method_id: string | null;
+        freight_type: string | null;
         exit_weight_captured_at: string | null;
       }
     | undefined;
@@ -1018,6 +1047,7 @@ export function buildOmieBillingJob(
       quantity: (operation.netWeightKg ?? 0) / 1000,
       unitPrice: operation.unitPriceCents ? operation.unitPriceCents / 100 : 0,
       freightTotalCents: operation.freightTotalCents,
+      freightModalidade: resolveFreightModalidade(row.freight_type, operation.freightTotalCents),
       issueDate: (row.exit_weight_captured_at ?? "").slice(0, 10),
       paymentTermOmieCode: omieParcela?.code ?? null,
       paymentTermInstallmentCount: omieParcela?.installment_count ?? null,
@@ -1240,7 +1270,7 @@ export function listOpenWeighingOperations(database: DesktopDatabase): WeighingO
         o.id, o.status, o.operation_type, o.entry_weight_kg, o.exit_weight_kg, o.net_weight_kg,
         o.unit_price_cents, o.base_unit_price_cents, o.applied_price_table_id, o.applied_price_table_name,
         o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
-        o.product_total_cents, o.freight_total_cents, o.freight_json, o.total_cents,
+        o.product_total_cents, o.freight_total_cents, o.freight_json, o.freight_type, o.total_cents,
         o.deduct_freight_from_credit, o.product_credit_debit_cents, o.freight_credit_debit_cents, o.quotation_id,
         o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
@@ -1274,7 +1304,7 @@ export function listCanceledWeighingOperations(
         o.id, o.status, o.operation_type, o.entry_weight_kg, o.exit_weight_kg, o.net_weight_kg,
         o.unit_price_cents, o.base_unit_price_cents, o.applied_price_table_id, o.applied_price_table_name,
         o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
-        o.product_total_cents, o.freight_total_cents, o.freight_json, o.total_cents,
+        o.product_total_cents, o.freight_total_cents, o.freight_json, o.freight_type, o.total_cents,
         o.deduct_freight_from_credit, o.product_credit_debit_cents, o.freight_credit_debit_cents, o.quotation_id,
         o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
@@ -1308,7 +1338,7 @@ export function listClosedWeighingOperations(
         o.id, o.status, o.operation_type, o.entry_weight_kg, o.exit_weight_kg, o.net_weight_kg,
         o.unit_price_cents, o.base_unit_price_cents, o.applied_price_table_id, o.applied_price_table_name,
         o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
-        o.product_total_cents, o.freight_total_cents, o.freight_json, o.total_cents,
+        o.product_total_cents, o.freight_total_cents, o.freight_json, o.freight_type, o.total_cents,
         o.deduct_freight_from_credit, o.product_credit_debit_cents, o.freight_credit_debit_cents, o.quotation_id,
         o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
@@ -1384,7 +1414,7 @@ export function getWeighingOperation(
         o.id, o.status, o.operation_type, o.entry_weight_kg, o.exit_weight_kg, o.net_weight_kg,
         o.unit_price_cents, o.base_unit_price_cents, o.applied_price_table_id, o.applied_price_table_name,
         o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
-        o.product_total_cents, o.freight_total_cents, o.freight_json, o.total_cents,
+        o.product_total_cents, o.freight_total_cents, o.freight_json, o.freight_type, o.total_cents,
         o.deduct_freight_from_credit, o.product_credit_debit_cents, o.freight_credit_debit_cents, o.quotation_id,
         o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
@@ -1651,6 +1681,7 @@ function mapOperationRow(row: OperationRow): WeighingOperationSummary {
     productTotalCents: row.product_total_cents,
     freightTotalCents: row.freight_total_cents,
     freightJson: row.freight_json,
+    freightModality: getFreightModalityInfo(row.freight_type).key,
     totalCents: row.total_cents,
     deductFreightFromCredit: row.deduct_freight_from_credit === 1,
     productCreditDebitCents: row.product_credit_debit_cents ?? 0,

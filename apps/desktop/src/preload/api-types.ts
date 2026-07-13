@@ -12,6 +12,7 @@ import type {
   OperationType,
   WeighingOperationSummary
 } from "../services/weighing-operations";
+import type { FreightModality } from "../services/freight";
 import type {
   CloudBootstrapResult,
   FiscalBillingResult,
@@ -92,6 +93,7 @@ export interface KyberRockDesktopApi {
     manualInstallments?: number;
     manualDownPaymentCents?: number;
     freight?: OperationFreightInput | null;
+    freightModality?: FreightModality | null;
     quotationId?: string;
     deductFreightFromCredit?: boolean;
     scaleCaptureId?: string;

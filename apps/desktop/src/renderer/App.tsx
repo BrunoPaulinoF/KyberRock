@@ -49,6 +49,11 @@ import type {
   OperationType,
   WeighingOperationSummary
 } from "../services/weighing-operations";
+import {
+  FREIGHT_MODALITIES,
+  getFreightModalityInfo,
+  type FreightModality
+} from "../services/freight";
 import type { PriceDetails } from "../services/pricing";
 import type { CacheEntityType } from "../services/cache-store";
 import {
@@ -135,15 +140,16 @@ export interface WeighingFormState {
   manualDownPaymentCents: number | null;
   quotationId: string;
   deductFreightFromCredit: boolean;
-  freightEnabled: boolean;
-  freightPayer: "customer" | "quarry" | "third_party";
+  /** Tipo (modalidade) de frete da operacao, enviado ao OMIE. Default "none" (sem frete). */
+  freightModality: FreightModality;
+  /** Se a Pedreira lanca um valor de frete nesta operacao (habilita os campos de valor). */
+  chargeFreight: boolean;
   freightCalculationType: "per_ton" | "per_ton_km" | "fixed_plus_ton";
   freightBaseValueCents: number | null;
   freightFixedValueCents: number | null;
   freightMinValueCents: number | null;
   freightDistanceKm: string;
   freightDestination: string;
-  customerOwnTransport: boolean;
   driverIsIndependent: boolean;
 }
 
@@ -177,25 +183,36 @@ const initialWeighingForm: WeighingFormState = {
   manualDownPaymentCents: null,
   quotationId: "",
   deductFreightFromCredit: false,
-  freightEnabled: false,
-  freightPayer: "customer",
+  freightModality: "none",
+  chargeFreight: false,
   freightCalculationType: "per_ton",
   freightBaseValueCents: null,
   freightFixedValueCents: null,
   freightMinValueCents: null,
   freightDistanceKm: "",
   freightDestination: "",
-  customerOwnTransport: false,
   driverIsIndependent: false
 };
 
 /**
- * Regra de frete na fatura: quando a Pedreira paga o frete e a forma de pagamento
- * e "credito do cliente" (fiado), o valor do frete obrigatoriamente entra na fatura
- * do cliente (abate do credito).
+ * Transporte proprio do cliente: o cliente traz o proprio caminhao, entao a
+ * transportadora da Pedreira nao se aplica (modalidade own_recipient). Substitui a
+ * antiga caixa "transportadora propria do cliente".
+ */
+export function isCustomerOwnTransport(
+  form: Pick<WeighingFormState, "freightModality">
+): boolean {
+  return form.freightModality === "own_recipient";
+}
+
+/**
+ * Regra de frete na fatura: quando a Pedreira paga o frete (modalidade CIF/proprio do
+ * remetente) e a forma de pagamento e "credito do cliente" (fiado), o valor do frete
+ * obrigatoriamente entra na fatura do cliente (abate do credito).
  */
 function freightGoesToCustomerInvoice(form: WeighingFormState): boolean {
-  return form.freightEnabled && form.freightPayer === "quarry" && form.paymentMethodIsCredit;
+  const info = getFreightModalityInfo(form.freightModality);
+  return form.chargeFreight && info.defaultPayer === "quarry" && form.paymentMethodIsCredit;
 }
 
 type RegistrationsTab = "customers" | "products" | "payment_terms" | "transport";
@@ -1348,7 +1365,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         operationType: form.operationType,
         customerId: form.customerId,
         vehicleId: form.vehicleId,
-        carrierId: form.customerOwnTransport ? undefined : form.carrierId || undefined,
+        carrierId: isCustomerOwnTransport(form) ? undefined : form.carrierId || undefined,
         driverId: form.driverId,
         productId: form.productId,
         paymentTermId: effectivePaymentTermId,
@@ -1359,6 +1376,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
             ? (form.manualDownPaymentCents ?? 0)
             : undefined,
         freight: buildFreightInput(form),
+        freightModality: form.freightModality,
         quotationId: form.quotationId || undefined,
         deductFreightFromCredit: form.deductFreightFromCredit || freightGoesToCustomerInvoice(form),
         scaleCaptureId
@@ -3782,7 +3800,7 @@ function validateWeighingForm(form: WeighingFormState): string | null {
   if (!form.customerId) return "Selecione o cliente.";
   if (!form.driverId) return "Selecione o motorista.";
   if (!form.productId) return "Selecione o produto.";
-  if (!form.customerOwnTransport && !form.driverIsIndependent && !form.carrierId) {
+  if (!isCustomerOwnTransport(form) && !form.driverIsIndependent && !form.carrierId) {
     return "Selecione a transportadora.";
   }
   if (form.paymentMode === "manual") {
@@ -3797,7 +3815,7 @@ function validateWeighingForm(form: WeighingFormState): string | null {
   if (form.customConditionText.trim() && !tryParsePaymentCondition(form.customConditionText)) {
     return 'Condicao personalizada invalida. Use "5" (parcelas), "7 14 21" ou "7/14/21".';
   }
-  if (form.freightEnabled && !form.customerOwnTransport) {
+  if (isFreightCharged(form)) {
     if (form.freightBaseValueCents === null && form.freightFixedValueCents === null) {
       return "Informe o valor do frete.";
     }
@@ -3811,11 +3829,18 @@ function validateWeighingForm(form: WeighingFormState): string | null {
   return null;
 }
 
+/** A operacao tem um valor de frete lancado pela Pedreira (modalidade cobravel + toggle). */
+export function isFreightCharged(
+  form: Pick<WeighingFormState, "freightModality" | "chargeFreight">
+): boolean {
+  return form.chargeFreight && getFreightModalityInfo(form.freightModality).supportsCharge;
+}
+
 export function buildFreightInput(form: WeighingFormState): OperationFreightInput | null {
-  if (!form.freightEnabled || form.customerOwnTransport) return null;
+  if (!isFreightCharged(form)) return null;
   const distanceKm = parsePositiveNumber(form.freightDistanceKm);
   return {
-    payer: form.freightPayer,
+    payer: getFreightModalityInfo(form.freightModality).defaultPayer,
     destination: form.freightDestination.trim() || null,
     rule: {
       id: "operation-freight",
@@ -3831,13 +3856,13 @@ export function buildFreightInput(form: WeighingFormState): OperationFreightInpu
 }
 
 export function shouldLinkCreatedDriverToCarrier(
-  form: Pick<WeighingFormState, "carrierId" | "customerOwnTransport" | "driverIsIndependent">,
+  form: Pick<WeighingFormState, "carrierId" | "freightModality" | "driverIsIndependent">,
   createdDriverIsIndependent: boolean
 ): string | null {
   if (
     createdDriverIsIndependent ||
     form.driverIsIndependent ||
-    form.customerOwnTransport ||
+    isCustomerOwnTransport(form) ||
     !form.carrierId
   ) {
     return null;
@@ -3846,19 +3871,19 @@ export function shouldLinkCreatedDriverToCarrier(
 }
 
 export function getDriverFilterIds(
-  form: Pick<WeighingFormState, "customerOwnTransport" | "driverIsIndependent">,
+  form: Pick<WeighingFormState, "freightModality" | "driverIsIndependent">,
   availableDriverIds: string[] | undefined,
   independentDriverIds: string[] | undefined
 ): string[] | undefined {
-  if (form.customerOwnTransport) return undefined;
+  if (isCustomerOwnTransport(form)) return undefined;
   if (form.driverIsIndependent) return independentDriverIds ?? [];
   return availableDriverIds;
 }
 
 export function isTransportReady(
-  form: Pick<WeighingFormState, "carrierId" | "customerOwnTransport" | "driverIsIndependent">
+  form: Pick<WeighingFormState, "carrierId" | "freightModality" | "driverIsIndependent">
 ): boolean {
-  return form.customerOwnTransport || form.driverIsIndependent || Boolean(form.carrierId);
+  return isCustomerOwnTransport(form) || form.driverIsIndependent || Boolean(form.carrierId);
 }
 
 function parsePositiveNumber(value: string): number | null {
@@ -4281,6 +4306,7 @@ function WeighingForm({
   const [showDriverModal, setShowDriverModal] = useState(false);
   const [showCustomerModal, setShowCustomerModal] = useState(false);
   const [showCarrierModal, setShowCarrierModal] = useState(false);
+  const [showFreightModal, setShowFreightModal] = useState(false);
   const [vehicleRefreshKey, setVehicleRefreshKey] = useState(0);
   const [driverRefreshKey, setDriverRefreshKey] = useState(0);
   const [customerRefreshKey, setCustomerRefreshKey] = useState(0);
@@ -4304,7 +4330,7 @@ function WeighingForm({
         // foi definida pelo padrao, ja preenchemos para agilizar a entrada.
         if (carriers.length === 1) {
           setForm((prev) =>
-            prev.carrierId || prev.customerOwnTransport
+            prev.carrierId || isCustomerOwnTransport(prev)
               ? prev
               : { ...prev, carrierId: carriers[0].id }
           );
@@ -4320,7 +4346,7 @@ function WeighingForm({
 
   useEffect(() => {
     async function load() {
-      if (!desktopApi || !form.carrierId || form.customerOwnTransport || form.driverIsIndependent) {
+      if (!desktopApi || !form.carrierId || isCustomerOwnTransport(form) || form.driverIsIndependent) {
         setAvailableVehicleIds(undefined);
         return;
       }
@@ -4335,7 +4361,7 @@ function WeighingForm({
   }, [
     desktopApi,
     form.carrierId,
-    form.customerOwnTransport,
+    form.freightModality,
     form.driverIsIndependent,
     vehicleRefreshKey
   ]);
@@ -4530,8 +4556,10 @@ function WeighingForm({
         if (canceled || !rule) return;
         setForm((prev) => ({
           ...prev,
-          freightEnabled: true,
-          freightPayer: "customer",
+          // Regra de frete do cliente: frete por conta do cliente (FOB) com valor lancado.
+          // Nao sobrescreve o transporte proprio do cliente, que nao comporta valor.
+          freightModality: isCustomerOwnTransport(prev) ? prev.freightModality : "fob",
+          chargeFreight: !isCustomerOwnTransport(prev),
           freightCalculationType: rule.rule.type as WeighingFormState["freightCalculationType"],
           freightBaseValueCents: rule.rule.baseValueCents,
           freightFixedValueCents: rule.rule.fixedValueCents ?? null
@@ -4838,27 +4866,140 @@ function WeighingForm({
             title="Transporte"
             description="Transportadora, placa e motorista"
           />
-          <label style={styles.compactCheckboxCard}>
-            <input
-              type="checkbox"
-              checked={form.customerOwnTransport}
-              onChange={(event) =>
-                setForm((prev) => ({
-                  ...prev,
-                  customerOwnTransport: event.target.checked,
-                  driverIsIndependent: event.target.checked ? false : prev.driverIsIndependent,
-                  carrierId: "",
-                  vehicleId: "",
-                  driverId: "",
-                  freightEnabled: event.target.checked ? false : prev.freightEnabled,
-                  deductFreightFromCredit: event.target.checked
-                    ? false
-                    : prev.deductFreightFromCredit
-                }))
-              }
-            />
-            <span>Transportadora propria do cliente</span>
-          </label>
+          <div style={styles.freightBox}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "8px",
+                flexWrap: "wrap"
+              }}
+            >
+              <div style={{ display: "flex", flexDirection: "column", gap: "2px", minWidth: "160px" }}>
+                <span style={{ fontWeight: 600, fontSize: "13px" }}>Tipo de frete</span>
+                <span style={styles.helperText}>
+                  {form.freightModality === "none"
+                    ? "Sem frete. Selecione a modalidade enviada ao OMIE."
+                    : `${getFreightModalityInfo(form.freightModality).label} — ${getFreightModalityInfo(form.freightModality).description}`}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowFreightModal(true)}
+                style={{ ...styles.secondaryButton, whiteSpace: "nowrap" }}
+              >
+                Selecionar tipo de frete
+              </button>
+            </div>
+            {getFreightModalityInfo(form.freightModality).supportsCharge ? (
+              <>
+                <label style={styles.checkboxLabel}>
+                  <input
+                    type="checkbox"
+                    checked={form.chargeFreight}
+                    onChange={(event) =>
+                      setForm((prev) => ({ ...prev, chargeFreight: event.target.checked }))
+                    }
+                  />
+                  Lancar valor de frete nesta operacao
+                </label>
+                {form.chargeFreight ? (
+                  <div style={styles.freightCompactGrid}>
+                    <label style={styles.fieldLabel}>
+                      Calculo
+                      <select
+                        value={form.freightCalculationType}
+                        onChange={(event) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            freightCalculationType: event.target
+                              .value as WeighingFormState["freightCalculationType"]
+                          }))
+                        }
+                        style={styles.input}
+                      >
+                        <option value="per_ton">Por tonelada</option>
+                        <option value="per_ton_km">Tonelada-km</option>
+                        <option value="fixed_plus_ton">Fixo + tonelada</option>
+                      </select>
+                    </label>
+                    <PriceInput
+                      label={
+                        form.freightCalculationType === "per_ton_km"
+                          ? "Frete por ton-km"
+                          : "Frete por tonelada"
+                      }
+                      suffix={form.freightCalculationType === "per_ton_km" ? "/ton-km" : "/ton"}
+                      valueCents={form.freightBaseValueCents}
+                      onChange={(cents) =>
+                        setForm((prev) => ({ ...prev, freightBaseValueCents: cents }))
+                      }
+                      compact
+                    />
+                    {form.freightCalculationType === "fixed_plus_ton" ? (
+                      <PriceInput
+                        label="Valor fixo do frete"
+                        suffix=""
+                        valueCents={form.freightFixedValueCents}
+                        onChange={(cents) =>
+                          setForm((prev) => ({ ...prev, freightFixedValueCents: cents }))
+                        }
+                        compact
+                      />
+                    ) : null}
+                    {form.freightCalculationType === "per_ton_km" ? (
+                      <NumberInput
+                        label="Distancia km"
+                        value={form.freightDistanceKm}
+                        onChange={(freightDistanceKm) =>
+                          setForm((prev) => ({ ...prev, freightDistanceKm }))
+                        }
+                        placeholder="Ex: 35"
+                      />
+                    ) : null}
+                    <PriceInput
+                      label="Frete minimo"
+                      suffix=""
+                      valueCents={form.freightMinValueCents}
+                      onChange={(cents) =>
+                        setForm((prev) => ({ ...prev, freightMinValueCents: cents }))
+                      }
+                      compact
+                    />
+                    <TextInput
+                      label="Destino/obs."
+                      value={form.freightDestination}
+                      onChange={(freightDestination) =>
+                        setForm((prev) => ({ ...prev, freightDestination }))
+                      }
+                      placeholder="Destino ou regra comercial"
+                    />
+                    <label style={styles.checkboxLabel}>
+                      <input
+                        type="checkbox"
+                        checked={form.deductFreightFromCredit || freightGoesToCustomerInvoice(form)}
+                        disabled={freightGoesToCustomerInvoice(form)}
+                        onChange={(event) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            deductFreightFromCredit: event.target.checked
+                          }))
+                        }
+                      />
+                      Abater frete do credito do cliente
+                    </label>
+                    {freightGoesToCustomerInvoice(form) ? (
+                      <p style={styles.muted}>
+                        Frete pago pela Pedreira e forma de pagamento no credito do cliente: o frete
+                        entra automaticamente na fatura.
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+              </>
+            ) : null}
+          </div>
           <CacheSelect
             label="Transportadora"
             entityType="carrier"
@@ -4867,7 +5008,6 @@ function WeighingForm({
               setForm((prev) => ({
                 ...prev,
                 carrierId: id,
-                customerOwnTransport: false,
                 driverIsIndependent: false,
                 vehicleId: "",
                 driverId: ""
@@ -4877,7 +5017,7 @@ function WeighingForm({
             desktopApi={desktopApi}
             refreshKey={carrierRefreshKey}
             filterIds={carrierSelectorFilterIds(availableCarrierIds)}
-            disabled={form.customerOwnTransport || form.driverIsIndependent}
+            disabled={isCustomerOwnTransport(form) || form.driverIsIndependent}
           />
           {form.customerId && availableCarrierIds && availableCarrierIds.length === 0 ? (
             <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" }}>
@@ -4902,7 +5042,7 @@ function WeighingForm({
               onCreateNew={() => setShowVehicleModal(true)}
               desktopApi={desktopApi}
               refreshKey={vehicleRefreshKey}
-              filterIds={form.customerOwnTransport ? undefined : availableVehicleIds}
+              filterIds={isCustomerOwnTransport(form) ? undefined : availableVehicleIds}
               disabled={!transportReady}
             />
             <CacheSelect
@@ -4940,129 +5080,6 @@ function WeighingForm({
             description="Preco, frete e captura"
           />
           <PriceDetailsPanel details={priceDetails} />
-          <div style={styles.freightBox}>
-            <label style={styles.checkboxLabel}>
-              <input
-                type="checkbox"
-                checked={form.freightEnabled && !form.customerOwnTransport}
-                disabled={form.customerOwnTransport}
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, freightEnabled: event.target.checked }))
-                }
-              />
-              Operacao com frete
-            </label>
-            {form.freightEnabled && !form.customerOwnTransport ? (
-              <div style={styles.freightCompactGrid}>
-                <label style={styles.fieldLabel}>
-                  Responsavel
-                  <select
-                    value={form.freightPayer}
-                    onChange={(event) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        freightPayer: event.target.value as WeighingFormState["freightPayer"]
-                      }))
-                    }
-                    style={styles.input}
-                  >
-                    <option value="customer">Cliente</option>
-                    <option value="quarry">Pedreira</option>
-                    <option value="third_party">Terceiro</option>
-                  </select>
-                </label>
-                <label style={styles.fieldLabel}>
-                  Calculo
-                  <select
-                    value={form.freightCalculationType}
-                    onChange={(event) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        freightCalculationType: event.target
-                          .value as WeighingFormState["freightCalculationType"]
-                      }))
-                    }
-                    style={styles.input}
-                  >
-                    <option value="per_ton">Por tonelada</option>
-                    <option value="per_ton_km">Tonelada-km</option>
-                    <option value="fixed_plus_ton">Fixo + tonelada</option>
-                  </select>
-                </label>
-                <PriceInput
-                  label={
-                    form.freightCalculationType === "per_ton_km"
-                      ? "Frete por ton-km"
-                      : "Frete por tonelada"
-                  }
-                  suffix={form.freightCalculationType === "per_ton_km" ? "/ton-km" : "/ton"}
-                  valueCents={form.freightBaseValueCents}
-                  onChange={(cents) =>
-                    setForm((prev) => ({ ...prev, freightBaseValueCents: cents }))
-                  }
-                  compact
-                />
-                {form.freightCalculationType === "fixed_plus_ton" ? (
-                  <PriceInput
-                    label="Valor fixo do frete"
-                    suffix=""
-                    valueCents={form.freightFixedValueCents}
-                    onChange={(cents) =>
-                      setForm((prev) => ({ ...prev, freightFixedValueCents: cents }))
-                    }
-                    compact
-                  />
-                ) : null}
-                {form.freightCalculationType === "per_ton_km" ? (
-                  <NumberInput
-                    label="Distancia km"
-                    value={form.freightDistanceKm}
-                    onChange={(freightDistanceKm) =>
-                      setForm((prev) => ({ ...prev, freightDistanceKm }))
-                    }
-                    placeholder="Ex: 35"
-                  />
-                ) : null}
-                <PriceInput
-                  label="Frete minimo"
-                  suffix=""
-                  valueCents={form.freightMinValueCents}
-                  onChange={(cents) =>
-                    setForm((prev) => ({ ...prev, freightMinValueCents: cents }))
-                  }
-                  compact
-                />
-                <TextInput
-                  label="Destino/obs."
-                  value={form.freightDestination}
-                  onChange={(freightDestination) =>
-                    setForm((prev) => ({ ...prev, freightDestination }))
-                  }
-                  placeholder="Destino ou regra comercial"
-                />
-                <label style={styles.checkboxLabel}>
-                  <input
-                    type="checkbox"
-                    checked={form.deductFreightFromCredit || freightGoesToCustomerInvoice(form)}
-                    disabled={freightGoesToCustomerInvoice(form)}
-                    onChange={(event) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        deductFreightFromCredit: event.target.checked
-                      }))
-                    }
-                  />
-                  Abater frete do credito do cliente
-                </label>
-                {freightGoesToCustomerInvoice(form) ? (
-                  <p style={styles.muted}>
-                    Frete pago pela Pedreira e forma de pagamento no credito do cliente: o frete
-                    entra automaticamente na fatura.
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
           <div style={styles.actionStack}>
             <button
               type="button"
@@ -5145,7 +5162,13 @@ function WeighingForm({
           desktopApi={desktopApi}
           onClose={() => setShowCarrierModal(false)}
           onCreated={async (id) => {
-            setForm((prev) => ({ ...prev, carrierId: id, customerOwnTransport: false }));
+            setForm((prev) => ({
+              ...prev,
+              carrierId: id,
+              // Vincular uma transportadora da Pedreira sai do transporte proprio do cliente.
+              freightModality:
+                prev.freightModality === "own_recipient" ? "none" : prev.freightModality
+            }));
             setShowCarrierModal(false);
             // O seletor filtra por "transportadoras vinculadas ao cliente": sem vincular
             // a recem-criada ao cliente selecionado, ela nao apareceria na lista.
@@ -5170,7 +5193,88 @@ function WeighingForm({
           }}
         />
       ) : null}
+
+      {showFreightModal ? (
+        <FreightTypeModal
+          selected={form.freightModality}
+          onClose={() => setShowFreightModal(false)}
+          onSelect={(modality) => {
+            setForm((prev) => {
+              const info = getFreightModalityInfo(modality);
+              const ownRecipient = modality === "own_recipient";
+              return {
+                ...prev,
+                freightModality: modality,
+                // Modalidade cobravel ja abre os campos de valor; sem cobranca, zera o toggle.
+                chargeFreight: info.supportsCharge,
+                deductFreightFromCredit: info.supportsCharge ? prev.deductFreightFromCredit : false,
+                // Transporte proprio do cliente: a transportadora da Pedreira nao se aplica.
+                carrierId: ownRecipient ? "" : prev.carrierId,
+                vehicleId: ownRecipient ? "" : prev.vehicleId,
+                driverId: ownRecipient ? "" : prev.driverId,
+                driverIsIndependent: ownRecipient ? false : prev.driverIsIndependent
+              };
+            });
+            setShowFreightModal(false);
+          }}
+        />
+      ) : null}
     </section>
+  );
+}
+
+function FreightTypeModal({
+  selected,
+  onSelect,
+  onClose
+}: {
+  selected: FreightModality;
+  onSelect: (modality: FreightModality) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div style={modalOverlayStyle} onClick={onClose}>
+      <div
+        style={{ ...modalContentStyle, maxWidth: "440px" }}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h3 style={{ margin: "0 0 4px" }}>Selecionar tipo de frete</h3>
+        <p style={{ ...styles.helperText, marginTop: 0 }}>
+          Escolha a modalidade enviada ao OMIE no pedido de venda. Apenas uma por operacao.
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: "8px", margin: "12px 0" }}>
+          {FREIGHT_MODALITIES.map((modality) => {
+            const isSelected = modality.key === selected;
+            return (
+              <button
+                key={modality.key}
+                type="button"
+                onClick={() => onSelect(modality.key)}
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "2px",
+                  alignItems: "flex-start",
+                  textAlign: "left",
+                  padding: "10px 12px",
+                  borderRadius: "10px",
+                  border: `1px solid ${isSelected ? "var(--kr-accent, #2563eb)" : "var(--kr-border)"}`,
+                  background: isSelected ? "var(--kr-accent-soft, rgba(37,99,235,0.08))" : "var(--kr-surface)",
+                  color: "var(--kr-text)",
+                  cursor: "pointer"
+                }}
+              >
+                <span style={{ fontWeight: 600, fontSize: "13px" }}>{modality.label}</span>
+                <span style={styles.helperText}>{modality.description}</span>
+              </button>
+            );
+          })}
+        </div>
+        <button type="button" onClick={onClose} style={styles.secondaryButton}>
+          Fechar
+        </button>
+      </div>
+    </div>
   );
 }
 

@@ -80,6 +80,7 @@ import {
   removeCustomerFreightRule,
   type SetCustomerFreightRuleInput
 } from "./customer-freight-rules.js";
+import type { FreightModality } from "./freight.js";
 import {
   configureReceiptPrintProfile,
   listPrintProfiles,
@@ -520,6 +521,7 @@ export class DesktopRuntime {
     manualInstallments?: number;
     manualDownPaymentCents?: number;
     freight?: OperationFreightInput | null;
+    freightModality?: FreightModality | null;
     quotationId?: string;
     deductFreightFromCredit?: boolean;
     scaleCaptureId?: string;
@@ -542,6 +544,7 @@ export class DesktopRuntime {
       manualInstallments: input.manualInstallments,
       manualDownPaymentCents: input.manualDownPaymentCents,
       freight: input.freight,
+      freightModality: input.freightModality,
       quotationId: input.quotationId,
       deductFreightFromCredit: input.deductFreightFromCredit,
       entryWeightKg: entryReading.weightKg,

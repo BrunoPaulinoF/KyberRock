@@ -187,6 +187,12 @@ type CreateOrderPayload = {
   unitPrice: number;
   /** Frete total em centavos (convertido para reais no edge, ver buildOmieFreight). */
   freightTotalCents?: number;
+  /**
+   * Codigo "modalidade" do frete no pedido de venda do OMIE (modFrete da NF-e):
+   * "0" CIF, "1" FOB, "2" terceiros, "3"/"4" transporte proprio, "9" sem frete.
+   * Ausente -> fallback: "0" quando ha valor de frete, senao "9".
+   */
+  freightModalidade?: string;
   issueDate: string;
   createdAt?: string;
   /**
@@ -1653,7 +1659,7 @@ async function createOmieOrder(
             }
           }
         ],
-        frete: buildOmieFreight(payload.freightTotalCents),
+        frete: buildOmieFreight(payload.freightTotalCents, payload.freightModalidade),
         informacoes_adicionais: {
           codigo_categoria: "1.01.01",
           ...(accountCode !== null ? { codigo_conta_corrente: accountCode } : {})
@@ -1884,14 +1890,29 @@ function findStringByKey(value: unknown, key: string): string | null {
   return null;
 }
 
-function buildOmieFreight(freightTotalCents: number | null | undefined): Record<string, unknown> {
-  if (!freightTotalCents || freightTotalCents <= 0) {
-    return { modalidade: "9" };
+/** Codigos "modalidade" (modFrete) validos no frete do pedido de venda do OMIE. */
+const OMIE_FREIGHT_MODALIDADES = new Set(["0", "1", "2", "3", "4", "9"]);
+
+function normalizeFreightModalidade(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return OMIE_FREIGHT_MODALIDADES.has(trimmed) ? trimmed : null;
+}
+
+function buildOmieFreight(
+  freightTotalCents: number | null | undefined,
+  freightModalidade?: string | null
+): Record<string, unknown> {
+  const hasValue = typeof freightTotalCents === "number" && freightTotalCents > 0;
+  // Modalidade escolhida na operacao (CIF/FOB/terceiros/proprio/sem frete). Sem valor
+  // valido, mantem o comportamento legado: "0" (CIF) quando ha valor, senao "9".
+  const modalidade = normalizeFreightModalidade(freightModalidade) ?? (hasValue ? "0" : "9");
+  const freight: Record<string, unknown> = { modalidade };
+  // "9" = sem ocorrencia de transporte: nao acompanha valor de frete.
+  if (hasValue && modalidade !== "9") {
+    freight.valor_frete = Math.round(freightTotalCents as number) / 100;
   }
-  return {
-    modalidade: "0",
-    valor_frete: Math.round(freightTotalCents) / 100
-  };
+  return freight;
 }
 
 async function createAndBillOmieOrder(

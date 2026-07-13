@@ -36,14 +36,13 @@ function createWeighingForm(overrides: Partial<WeighingFormForTest> = {}): Weigh
     deductFreightFromCredit: false,
     freightModality: "cif",
     chargeFreight: true,
-    freightEnabled: true,
-    freightPayer: "quarry",
     freightCalculationType: "per_ton",
     freightBaseValueCents: 12_500,
     freightFixedValueCents: null,
     freightMinValueCents: null,
     freightDistanceKm: "",
     freightDestination: "",
+    driverIsIndependent: false,
     ...overrides
   };
 }
@@ -58,9 +57,14 @@ describe("App", () => {
   it("does not build freight input when freight is not being charged (FOB)", () => {
     const form = createWeighingForm({
       freightModality: "fob",
-      chargeFreight: false,
-      freightEnabled: false
+      chargeFreight: false
     });
+
+    expect(buildFreightInput(form)).toBeNull();
+  });
+
+  it("does not build freight input for the client's own transport", () => {
+    const form = createWeighingForm({ freightModality: "own_recipient", chargeFreight: true });
 
     expect(buildFreightInput(form)).toBeNull();
   });
@@ -68,6 +72,11 @@ describe("App", () => {
   it("uses the quarry as the freight payer when charging freight (CIF)", () => {
     const freight = buildFreightInput(createWeighingForm());
     expect(freight?.payer).toBe("quarry");
+  });
+
+  it("uses the customer as the freight payer for FOB", () => {
+    const freight = buildFreightInput(createWeighingForm({ freightModality: "fob" }));
+    expect(freight?.payer).toBe("customer");
   });
 
   it("links a newly created driver to the selected carrier", () => {

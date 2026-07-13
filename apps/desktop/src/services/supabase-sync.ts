@@ -2004,6 +2004,7 @@ export async function processOmieSyncQueue(
       quantity: number;
       unitPrice: number;
       freightTotalCents?: number;
+      freightModalidade?: string | null;
       issueDate: string;
       paymentTermOmieCode?: string | null;
       paymentTermInstallmentCount?: number | null;
@@ -2034,6 +2035,7 @@ export async function processOmieSyncQueue(
             quantity: payload.quantity,
             unitPrice: payload.unitPrice,
             freightTotalCents: payload.freightTotalCents,
+            freightModalidade: payload.freightModalidade ?? undefined,
             issueDate: payload.issueDate,
             paymentTermOmieCode: payload.paymentTermOmieCode ?? undefined,
             installmentCount: payload.paymentTermInstallmentCount ?? undefined,
@@ -2246,6 +2248,7 @@ export async function processFiscalBillingNow(
     quantity: number;
     unitPrice: number;
     freightTotalCents?: number;
+    freightModalidade?: string | null;
     issueDate: string;
     paymentTermOmieCode?: string | null;
     paymentTermInstallmentCount?: number | null;
@@ -2277,6 +2280,7 @@ export async function processFiscalBillingNow(
           quantity: payload.quantity,
           unitPrice: payload.unitPrice,
           freightTotalCents: payload.freightTotalCents,
+          freightModalidade: payload.freightModalidade ?? undefined,
           issueDate: payload.issueDate,
           paymentTermOmieCode: payload.paymentTermOmieCode ?? undefined,
           installmentCount: payload.paymentTermInstallmentCount ?? undefined,
