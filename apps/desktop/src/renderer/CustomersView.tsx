@@ -473,6 +473,10 @@ export function CustomersView({
     setEditingSource(customer.source);
     setFormError(null);
     setShowForm(true);
+    // Recarrega as opcoes (transportadoras, condicoes, etc.) ao abrir o cadastro:
+    // sem isso a lista de transportadoras para vincular fica presa no estado do
+    // mount e uma transportadora recem-criada nao apareceria para ser vinculada.
+    void loadOptions();
     void loadSpecialPrices(customer.id);
     void loadLinkedCarriers(customer.id);
     void loadCustomerFreightRules(customer.id);
