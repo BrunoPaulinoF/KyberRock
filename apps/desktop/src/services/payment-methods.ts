@@ -56,16 +56,23 @@ interface DefaultPaymentMethod {
   name: string;
   isCustomerCredit: boolean;
   sortOrder: number;
+  /**
+   * Codigo do meio de pagamento no OMIE/NF-e (tPag) ja de fabrica, para o pedido levar
+   * o meio mesmo sem sincronizar os meios do OMIE. Sao codigos padronizados: 01 dinheiro,
+   * 17 PIX, 03 credito, 04 debito, 15 boleto. O credito do cliente (fiado) nao mapeia
+   * para um meio direto do OMIE, entao fica sem codigo.
+   */
+  omieCode: string | null;
 }
 
 /** Formas de pagamento padrao que ja vem cadastradas com o sistema. */
 export const DEFAULT_PAYMENT_METHODS: readonly DefaultPaymentMethod[] = [
-  { code: "cash", name: "Dinheiro", isCustomerCredit: false, sortOrder: 1 },
-  { code: "pix", name: "Pix", isCustomerCredit: false, sortOrder: 2 },
-  { code: "credit_card", name: "Cartao de credito", isCustomerCredit: false, sortOrder: 3 },
-  { code: "debit_card", name: "Cartao de debito", isCustomerCredit: false, sortOrder: 4 },
-  { code: "boleto", name: "Boleto", isCustomerCredit: false, sortOrder: 5 },
-  { code: "customer_credit", name: "Credito do cliente", isCustomerCredit: true, sortOrder: 6 }
+  { code: "cash", name: "Dinheiro", isCustomerCredit: false, sortOrder: 1, omieCode: "01" },
+  { code: "pix", name: "Pix", isCustomerCredit: false, sortOrder: 2, omieCode: "17" },
+  { code: "credit_card", name: "Cartao de credito", isCustomerCredit: false, sortOrder: 3, omieCode: "03" },
+  { code: "debit_card", name: "Cartao de debito", isCustomerCredit: false, sortOrder: 4, omieCode: "04" },
+  { code: "boleto", name: "Boleto", isCustomerCredit: false, sortOrder: 5, omieCode: "15" },
+  { code: "customer_credit", name: "Credito do cliente", isCustomerCredit: true, sortOrder: 6, omieCode: null }
 ];
 
 /** Codigo da forma de pagamento "credito do cliente" (fiado). */
@@ -83,8 +90,8 @@ export function ensureDefaultPaymentMethods(
   const nowIso = now.toISOString();
   const insert = database.prepare(
     `INSERT INTO payment_methods
-       (id, company_id, code, name, is_system, is_customer_credit, sort_order, is_active, created_at, updated_at)
-     SELECT ?, ?, ?, ?, 1, ?, ?, 1, ?, ?
+       (id, company_id, code, name, omie_code, is_system, is_customer_credit, sort_order, is_active, created_at, updated_at)
+     SELECT ?, ?, ?, ?, ?, 1, ?, ?, 1, ?, ?
      WHERE EXISTS (SELECT 1 FROM companies WHERE id = ?)
        AND NOT EXISTS (
          SELECT 1 FROM payment_methods
@@ -99,6 +106,7 @@ export function ensureDefaultPaymentMethods(
         companyId,
         method.code,
         method.name,
+        method.omieCode,
         method.isCustomerCredit ? 1 : 0,
         method.sortOrder,
         nowIso,

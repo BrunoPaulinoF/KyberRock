@@ -54,6 +54,18 @@ describe("payment-methods service", () => {
     expect(methods.every((m) => m.is_system === 1)).toBe(true);
   });
 
+  it("seeds the default OMIE payment codes (tPag) so the order carries the meio", () => {
+    ensureDefaultPaymentMethods(database, COMPANY_ID);
+    const byCode = new Map(listPaymentMethods(database, COMPANY_ID).map((m) => [m.code, m.omie_code]));
+    expect(byCode.get("cash")).toBe("01");
+    expect(byCode.get("pix")).toBe("17");
+    expect(byCode.get("credit_card")).toBe("03");
+    expect(byCode.get("debit_card")).toBe("04");
+    expect(byCode.get("boleto")).toBe("15");
+    // Credito do cliente (fiado) nao mapeia para um meio direto do OMIE.
+    expect(byCode.get("customer_credit")).toBeNull();
+  });
+
   it("flags the customer-credit method", () => {
     ensureDefaultPaymentMethods(database, COMPANY_ID);
     const credit = listPaymentMethods(database, COMPANY_ID).find(
