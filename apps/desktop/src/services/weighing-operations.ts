@@ -819,10 +819,10 @@ export function closeWeighingOperation(
     if (billingJob) {
       enqueueOmieBillingJob(database, input.operationId, billingJob, now);
     } else if (nextOperationType === "invoice") {
-      // buildOmieBillingJob so retorna null aqui quando o cliente nao tem codigo OMIE.
-      // Sem pedido a enviar, registra o motivo (em vez de pular em silencio, que deixava
-      // a operacao eternamente como "Enviando ao OMIE"). Aparece na tela Concluidas e
-      // pode ser reenviado com "Refaturar" depois de vincular o cliente ao OMIE.
+      // Aqui buildOmieBillingJob so retorna null quando o cliente nao tem codigo OMIE E
+      // nao tem CNPJ/CPF (sem documento o OMIE nao permite cadastrar o cliente na hora).
+      // Registra o motivo (em vez de pular em silencio) para aparecer na tela Concluidas;
+      // apos informar o documento do cliente, "Refaturar" cria o cliente e envia o pedido.
       database
         .prepare(
           `UPDATE weighing_operations
@@ -830,7 +830,7 @@ export function closeWeighingOperation(
            WHERE id = ?`
         )
         .run(
-          "Cliente sem codigo OMIE: o pedido nao foi enviado. Sincronize ou cadastre o cliente no OMIE e use Refaturar.",
+          "Cliente sem CNPJ/CPF: informe o documento do cliente para cadastra-lo no OMIE e enviar o pedido (use Refaturar).",
           timestamp,
           input.operationId
         );
@@ -911,10 +911,36 @@ export function validateOperationFiscalReadiness(
   return validateCustomerFiscalReadiness(database, row?.customer_id ?? null);
 }
 
+/**
+ * Cadastro do cliente enviado junto ao pedido para o edge criar/localizar o cliente no
+ * OMIE na hora, quando ele ainda nao tem codigo OMIE (customerOmieId = 0). Espelha os
+ * campos de PushCustomerPayload do edge.
+ */
+export interface OmieOrderCustomerCadastro {
+  localCustomerId: string;
+  razaoSocial: string;
+  nomeFantasia?: string;
+  cnpjCpf?: string;
+  email?: string;
+  telefone1Ddd?: string;
+  telefone1Numero?: string;
+  zipcode?: string;
+  addressStreet?: string;
+  addressNumber?: string;
+  neighborhood?: string;
+  city?: string;
+  state?: string;
+}
+
 export interface OmieBillingJobPayload {
   operationId: string;
   operationType: OperationType;
+  /** Codigo OMIE do cliente. 0 quando ainda nao vinculado — o edge cria pelo campo `customer`. */
   customerOmieId: number;
+  /** Id local do cliente, para gravar o codigo OMIE de volta apos o envio. */
+  localCustomerId: string | null;
+  /** Cadastro para criar o cliente no OMIE na hora quando customerOmieId = 0. */
+  customer: OmieOrderCustomerCadastro | null;
   productOmieId: number | null;
   serviceDescription: string | null;
   quantity: number;
@@ -961,6 +987,51 @@ function resolveFreightModalidade(
   return code;
 }
 
+interface OrderCustomerRow {
+  omie_customer_id: number | null;
+  legal_name: string | null;
+  trade_name: string | null;
+  document: string | null;
+  phone: string | null;
+  email: string | null;
+  zipcode: string | null;
+  address_street: string | null;
+  address_number: string | null;
+  neighborhood: string | null;
+  city: string | null;
+  state: string | null;
+}
+
+/** Separa o telefone (so digitos) em DDD + numero, como o OMIE espera. */
+function splitPhoneForOmie(phone: string | null): { ddd?: string; numero?: string } {
+  const digits = (phone ?? "").replace(/\D/g, "");
+  if (digits.length < 10) return {};
+  return { ddd: digits.slice(0, 2), numero: digits.slice(2) };
+}
+
+/** Monta o cadastro do cliente para o edge criar/localizar no OMIE junto com o pedido. */
+function buildOrderCustomerCadastro(
+  localCustomerId: string,
+  row: OrderCustomerRow
+): OmieOrderCustomerCadastro {
+  const phone = splitPhoneForOmie(row.phone);
+  return {
+    localCustomerId,
+    razaoSocial: row.legal_name ?? row.trade_name ?? "",
+    nomeFantasia: row.trade_name ?? row.legal_name ?? undefined,
+    cnpjCpf: row.document?.trim() || undefined,
+    email: row.email ?? undefined,
+    telefone1Ddd: phone.ddd,
+    telefone1Numero: phone.numero,
+    zipcode: row.zipcode ?? undefined,
+    addressStreet: row.address_street ?? undefined,
+    addressNumber: row.address_number ?? undefined,
+    neighborhood: row.neighborhood ?? undefined,
+    city: row.city ?? undefined,
+    state: row.state ?? undefined
+  };
+}
+
 export function buildOmieBillingJob(
   database: DesktopDatabase,
   operationId: string
@@ -982,14 +1053,28 @@ export function buildOmieBillingJob(
     | undefined;
   if (!row) return null;
 
-  const omieCustomerId = row.customer_id
-    ? (
-        database
-          .prepare("SELECT omie_customer_id FROM customers WHERE id = ?")
-          .get(row.customer_id) as { omie_customer_id: number | null } | undefined
-      )?.omie_customer_id ?? null
-    : null;
-  if (!omieCustomerId) return null;
+  const customerRow = row.customer_id
+    ? (database
+        .prepare(
+          `SELECT omie_customer_id, legal_name, trade_name, document, phone, email,
+                  zipcode, address_street, address_number, neighborhood, city, state
+           FROM customers WHERE id = ?`
+        )
+        .get(row.customer_id) as OrderCustomerRow | undefined)
+    : undefined;
+
+  const omieCustomerId = customerRow?.omie_customer_id ?? null;
+  const customerDocument = customerRow?.document?.trim() || null;
+  // Sem codigo OMIE e sem documento: nao da para criar o cliente no OMIE, entao nao ha
+  // pedido a enviar. O fechamento marca cadastro_incompleto pedindo o CNPJ/CPF do cliente.
+  if (!omieCustomerId && !customerDocument) return null;
+
+  // Cliente ainda nao vinculado (mas com documento): envia o cadastro para o edge
+  // criar/localizar o cliente no OMIE na hora, antes de criar o pedido.
+  const customerCadastro: OmieOrderCustomerCadastro | null =
+    !omieCustomerId && customerRow && row.customer_id
+      ? buildOrderCustomerCadastro(row.customer_id, customerRow)
+      : null;
 
   const omieProductId = row.product_id
     ? (
@@ -1057,7 +1142,9 @@ export function buildOmieBillingJob(
     payload: {
       operationId,
       operationType: operation.operationType,
-      customerOmieId: omieCustomerId,
+      customerOmieId: omieCustomerId ?? 0,
+      localCustomerId: row.customer_id,
+      customer: customerCadastro,
       productOmieId: omieProductId,
       serviceDescription: operation.productDescription,
       quantity: (operation.netWeightKg ?? 0) / 1000,

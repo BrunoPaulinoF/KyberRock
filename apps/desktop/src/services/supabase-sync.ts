@@ -1999,6 +1999,8 @@ export async function processOmieSyncQueue(
       operationId: string;
       operationType: "invoice" | "internal";
       customerOmieId: number;
+      localCustomerId?: string | null;
+      customer?: Record<string, unknown> | null;
       productOmieId?: number | null;
       serviceDescription?: string | null;
       quantity: number;
@@ -2018,6 +2020,7 @@ export async function processOmieSyncQueue(
         job.action === "create_and_bill_order" ? "create_and_bill_order" : "create_order";
       const { data, error } = await supabase.functions.invoke<{
         orderId?: number;
+        omieCustomerId?: number;
         billed?: boolean;
         billingStatusCode?: string | null;
         billingStatusMessage?: string | null;
@@ -2030,6 +2033,7 @@ export async function processOmieSyncQueue(
           payload: {
             operationType: payload.operationType,
             customerOmieId: payload.customerOmieId,
+            customer: payload.customer ?? undefined,
             productOmieId: payload.productOmieId ?? undefined,
             serviceDescription: payload.serviceDescription ?? undefined,
             quantity: payload.quantity,
@@ -2052,6 +2056,22 @@ export async function processOmieSyncQueue(
       }
       if (!data?.orderId) {
         throw new Error("OMIE nao retornou orderId");
+      }
+
+      // Cliente cadastrado no OMIE na hora do envio: grava o codigo devolvido no cadastro
+      // local para os proximos pedidos ja irem vinculados (e nao recriarem o cliente).
+      if (
+        data.omieCustomerId &&
+        payload.localCustomerId &&
+        (!payload.customerOmieId || payload.customerOmieId <= 0)
+      ) {
+        database
+          .prepare(
+            `UPDATE customers
+             SET omie_customer_id = ?, needs_push = 0, sync_status = 'synced', updated_at = datetime('now')
+             WHERE id = ? AND (omie_customer_id IS NULL OR omie_customer_id = 0)`
+          )
+          .run(data.omieCustomerId, payload.localCustomerId);
       }
 
       const updateSql =
@@ -2243,6 +2263,8 @@ export async function processFiscalBillingNow(
     operationId: string;
     operationType: "invoice" | "internal";
     customerOmieId: number;
+    localCustomerId?: string | null;
+    customer?: Record<string, unknown> | null;
     productOmieId?: number | null;
     serviceDescription?: string | null;
     quantity: number;
@@ -2264,6 +2286,7 @@ export async function processFiscalBillingNow(
   try {
     const { data, error } = await supabase.functions.invoke<{
       orderId?: number;
+      omieCustomerId?: number;
       billed?: boolean;
       billingStatusCode?: string | null;
       billingStatusMessage?: string | null;
@@ -2276,6 +2299,7 @@ export async function processFiscalBillingNow(
         payload: {
           operationType: payload.operationType,
           customerOmieId: payload.customerOmieId,
+          customer: payload.customer ?? undefined,
           productOmieId: payload.productOmieId ?? undefined,
           quantity: payload.quantity,
           unitPrice: payload.unitPrice,
@@ -2297,6 +2321,21 @@ export async function processFiscalBillingNow(
     }
     if (!data?.orderId || data.billed !== true) {
       throw new Error("OMIE nao confirmou o faturamento do pedido de venda.");
+    }
+
+    // Cliente criado no OMIE na hora: grava o codigo devolvido no cadastro local.
+    if (
+      data.omieCustomerId &&
+      payload.localCustomerId &&
+      (!payload.customerOmieId || payload.customerOmieId <= 0)
+    ) {
+      database
+        .prepare(
+          `UPDATE customers
+           SET omie_customer_id = ?, needs_push = 0, sync_status = 'synced', updated_at = datetime('now')
+           WHERE id = ? AND (omie_customer_id IS NULL OR omie_customer_id = 0)`
+        )
+        .run(data.omieCustomerId, payload.localCustomerId);
     }
 
     let documentPrinted = false;

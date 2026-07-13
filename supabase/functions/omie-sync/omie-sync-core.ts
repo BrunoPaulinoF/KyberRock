@@ -130,6 +130,15 @@ export class OmieQueueManager {
       const retryAfterMs = parseOmieRetryDelayMs(detail, response.headers.get("retry-after"));
       const status = response.ok ? null : response.status;
       const statusText = response.ok ? "faultstring" : `HTTP ${response.status}`;
+      // Diagnostico: registra a chamada, o erro e o corpo enviado (sem credenciais) para
+      // depurar rejeicoes de campo obrigatorio do OMIE (ex: "tag [valor] obrigatorio").
+      try {
+        console.error(
+          `[omie] falha em ${input.call} (${input.endpoint}) ${statusText}: ${detail ?? "sem detalhe"} | param=${JSON.stringify(input.param)}`
+        );
+      } catch {
+        /* logging best-effort */
+      }
       throw new OmieHttpError(
         `OMIE ${statusText} em ${input.call} (${input.endpoint})${detail ? ` - ${detail}` : ""}`,
         status,

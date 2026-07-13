@@ -223,11 +223,19 @@ type CreateOrderPayload = {
    * lugar da resolucao automatica da primeira conta do tenant.
    */
   accountOmieCode?: string | number;
+  /**
+   * Cadastro do cliente para criar/localizar no OMIE na hora do envio quando ele ainda
+   * nao tem codigo OMIE (customerOmieId ausente/0). O edge faz find-or-create por CNPJ/CPF
+   * (pushCustomerToOmie) e usa o codigo resultante no pedido, devolvendo omieCustomerId
+   * para o desktop vincular o cliente localmente.
+   */
+  customer?: PushCustomerPayload;
   idempotencyKey: string;
 };
 
 type CreateAndBillOrderResult = {
   orderId: number;
+  omieCustomerId: number;
   billed: boolean;
   billingStatusCode: string | null;
   billingStatusMessage: string | null;
@@ -428,8 +436,8 @@ export async function handleOmieSyncRequest(
 
     if (action === "create_order") {
       const payload = body.payload as CreateOrderPayload;
-      const orderId = await createOmieOrder(credentials, payload);
-      return jsonResponse({ ok: true, orderId });
+      const { orderId, omieCustomerId } = await createOmieOrder(credentials, payload);
+      return jsonResponse({ ok: true, orderId, omieCustomerId });
     }
 
     if (action === "create_and_bill_order") {
@@ -604,7 +612,7 @@ async function pushLocalQueuePage(
       const omieId =
         order.operationType === "invoice"
           ? (await createAndBillOmieOrder(credentials, order)).orderId
-          : await createOmieOrder(credentials, order);
+          : (await createOmieOrder(credentials, order)).orderId;
       result.orders.push({ localId: order.localOperationId ?? order.idempotencyKey, omieId });
       result.processed++;
     } catch (error) {
@@ -1592,15 +1600,34 @@ function buildOrderParcelamento(payload: CreateOrderPayload): OrderParcelamento 
 
   const count = dueDays.length;
   const basePercent = Math.floor(10000 / count) / 100;
-  const parcela = dueDays.map((dueInDays, index) => ({
-    numero_parcela: index + 1,
-    data_vencimento: toOmieDate(addDaysToIsoDate(payload.issueDate, dueInDays)),
-    percentual:
-      index === count - 1
-        ? Math.round((100 - basePercent * (count - 1)) * 100) / 100
-        : basePercent,
-    ...(meio ? { meio_pagamento: meio } : {})
-  }));
+  // Total do pedido (itens + frete) em centavos. O OMIE exige a tag `valor` em CADA
+  // parcela do parcelamento informado (codigo_parcela "999"); sem ela rejeita o pedido
+  // com "O preenchimento da tag [valor] e obrigatorio!". O ultimo parcela absorve o
+  // arredondamento para as parcelas somarem exatamente o total.
+  const itemsTotalCents = Math.round(payload.quantity * payload.unitPrice * 100);
+  const freightCents =
+    typeof payload.freightTotalCents === "number" && payload.freightTotalCents > 0
+      ? Math.round(payload.freightTotalCents)
+      : 0;
+  const orderTotalCents = itemsTotalCents + freightCents;
+  let allocatedCents = 0;
+  const parcela = dueDays.map((dueInDays, index) => {
+    const isLast = index === count - 1;
+    const percentual = isLast
+      ? Math.round((100 - basePercent * (count - 1)) * 100) / 100
+      : basePercent;
+    const valorCents = isLast
+      ? orderTotalCents - allocatedCents
+      : Math.round((orderTotalCents * percentual) / 100);
+    allocatedCents += valorCents;
+    return {
+      numero_parcela: index + 1,
+      data_vencimento: toOmieDate(addDaysToIsoDate(payload.issueDate, dueInDays)),
+      percentual,
+      valor: valorCents / 100,
+      ...(meio ? { meio_pagamento: meio } : {})
+    };
+  });
 
   return {
     // OMIE: o campo do cabecalho e "qtde_parcelas" — "quantidade_parcelas" e rejeitado
@@ -1610,11 +1637,31 @@ function buildOrderParcelamento(payload: CreateOrderPayload): OrderParcelamento 
   };
 }
 
-async function createOmieOrder(
+/**
+ * Codigo OMIE do cliente do pedido. Ja vinculado -> usa direto. Sem codigo mas com
+ * cadastro no payload -> cria/localiza o cliente no OMIE na hora (find-or-create por
+ * CNPJ/CPF) e devolve o codigo. Sem codigo e sem cadastro -> erro claro.
+ */
+async function resolveOrderCustomerOmieId(
   credentials: OmieCredentials,
   payload: CreateOrderPayload
 ): Promise<number> {
+  if (typeof payload.customerOmieId === "number" && payload.customerOmieId > 0) {
+    return payload.customerOmieId;
+  }
+  if (payload.customer) {
+    return await pushCustomerToOmie(credentials, payload.customer);
+  }
+  throw new Error("Cliente sem codigo OMIE e sem dados de cadastro para criar no OMIE.");
+}
+
+async function createOmieOrder(
+  credentials: OmieCredentials,
+  payload: CreateOrderPayload
+): Promise<{ orderId: number; omieCustomerId: number }> {
   const integrationCode = toOmieIntegrationCode(payload.idempotencyKey);
+  // Garante o cliente no OMIE (cadastra na hora quando ainda nao existe) antes do pedido.
+  const customerOmieId = await resolveOrderCustomerOmieId(credentials, payload);
   // Conta corrente escolhida na operacao (meio de pagamento -> conta). Sem ela,
   // mantem o fallback historico: primeira conta corrente do tenant.
   const selectedAccountCode = toNumber(payload.accountOmieCode ?? null);
@@ -1639,7 +1686,7 @@ async function createOmieOrder(
       {
         cabecalho: {
           codigo_pedido_integracao: integrationCode,
-          codigo_cliente: payload.customerOmieId,
+          codigo_cliente: customerOmieId,
           data_previsao: toOmieDate(payload.issueDate),
           // Etapa "50" = coluna "Faturar" do kanban de Vendas do OMIE: o pedido chega
           // pronto para faturar, e a emissao da NF-e e feita DENTRO do OMIE.
@@ -1687,7 +1734,7 @@ async function createOmieOrder(
     if (!orderId) {
       throw new Error("OMIE nao retornou codigoPedido");
     }
-    return orderId;
+    return { orderId, omieCustomerId: customerOmieId };
   }
 
   const serviceCodes = await resolveOmieServiceCodes(credentials);
@@ -1708,7 +1755,7 @@ async function createOmieOrder(
   >(credentials, "/servicos/os/", "IncluirOS", {
     Cabecalho: {
       cCodIntOS: integrationCode,
-      nCodCli: payload.customerOmieId,
+      nCodCli: customerOmieId,
       dDtPrevisao: toOmieDate(payload.issueDate),
       // Etapa "50" = "Faturar": a OS tambem e faturada dentro do OMIE.
       cEtapa: "50",
@@ -1746,7 +1793,7 @@ async function createOmieOrder(
   if (!orderId) {
     throw new Error("OMIE nao retornou codigoOS");
   }
-  return orderId;
+  return { orderId, omieCustomerId: customerOmieId };
 }
 
 async function consultServiceOrderByIntegrationCode(
@@ -1923,7 +1970,7 @@ async function createAndBillOmieOrder(
     throw new Error("Faturamento automatico disponivel apenas para pedido de venda fiscal");
   }
 
-  const orderId = await createOmieOrder(credentials, payload);
+  const { orderId, omieCustomerId } = await createOmieOrder(credentials, payload);
   const billing = await billSalesOrder(
     credentials,
     orderId,
@@ -1938,6 +1985,7 @@ async function createAndBillOmieOrder(
 
   return {
     orderId,
+    omieCustomerId,
     billed: true,
     billingStatusCode: billing.statusCode,
     billingStatusMessage: billing.statusMessage,
