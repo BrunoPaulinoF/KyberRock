@@ -1907,12 +1907,12 @@ function buildOmieFreight(
   // Modalidade escolhida na operacao (CIF/FOB/terceiros/proprio/sem frete). Sem valor
   // valido, mantem o comportamento legado: "0" (CIF) quando ha valor, senao "9".
   const modalidade = normalizeFreightModalidade(freightModalidade) ?? (hasValue ? "0" : "9");
-  const freight: Record<string, unknown> = { modalidade };
-  // "9" = sem ocorrencia de transporte: nao acompanha valor de frete.
-  if (hasValue && modalidade !== "9") {
-    freight.valor_frete = Math.round(freightTotalCents as number) / 100;
-  }
-  return freight;
+  // O OMIE exige a tag valor_frete sempre que o bloco frete e enviado (HTTP 500
+  // "tag [valor] obrigatorio" quando ausente). Sem valor de frete, enviamos 0.
+  return {
+    modalidade,
+    valor_frete: hasValue ? Math.round(freightTotalCents as number) / 100 : 0
+  };
 }
 
 async function createAndBillOmieOrder(

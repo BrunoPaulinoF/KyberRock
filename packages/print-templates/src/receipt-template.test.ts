@@ -26,6 +26,41 @@ describe("buildReceiptLines", () => {
     expect(lines).toContain("2a VIA");
     expect(lines).toContain("Cond.Pagto.: NAO INFORMADA");
   });
+
+  it("prints the payment method alongside the condition", () => {
+    const lines = buildReceiptLines(baseInput());
+
+    expect(lines).toContain("Cond.Pagto.: A vista");
+    expect(lines).toContain("Meio Pagto.: Dinheiro");
+  });
+
+  it("falls back when the payment method is missing", () => {
+    const lines = buildReceiptLines({ ...baseInput(), paymentMethodName: null });
+
+    expect(lines).toContain("Meio Pagto.: NAO INFORMADO");
+  });
+
+  it("aligns the quantity/unit/total columns to the same width as the header", () => {
+    const lines = buildReceiptLines(baseInput());
+
+    const headerIndex = lines.findIndex((line) => line.includes("Quantidade"));
+    expect(headerIndex).toBeGreaterThanOrEqual(0);
+    const header = lines[headerIndex];
+    const values = lines[headerIndex + 1];
+    // Cabecalho e valores tem a mesma largura (colunas de 1/3 do cupom).
+    expect(header.length).toBe(values.length);
+    expect(header.trimEnd()).toBe(header); // sem espacos sobrando a direita
+  });
+
+  it("breaks the signature onto its own line so it is not cut off", () => {
+    const lines = buildReceiptLines(baseInput());
+
+    const dateLine = lines.find((line) => line.startsWith("Data: "));
+    expect(dateLine).toBeDefined();
+    // A data e a assinatura ficam em linhas separadas (antes iam juntas e cortavam).
+    expect(dateLine).not.toContain("Assinatura");
+    expect(lines).toContain("Assinatura do Recebimento:");
+  });
 });
 
 function baseInput(): Parameters<typeof buildReceiptLines>[0] {
@@ -50,6 +85,7 @@ function baseInput(): Parameters<typeof buildReceiptLines>[0] {
     plate: "ABC1D23",
     driverName: "Motorista Teste",
     paymentTermName: "A vista",
+    paymentMethodName: "Dinheiro",
     entryCapturedAt: "2026-06-07T11:00:00.000Z",
     exitCapturedAt: "2026-06-07T12:00:00.000Z",
     permanenceLabel: "1h 0min",
