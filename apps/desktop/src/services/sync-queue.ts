@@ -156,6 +156,118 @@ export function cancelPendingOmieJobs(
   return result.changes;
 }
 
+/** Item da fila OMIE com os dados da operacao para exibicao (tela cloud). */
+export interface OmieQueueItem {
+  id: string;
+  action: string;
+  status: SyncQueueStatus;
+  attemptCount: number;
+  lastError: string | null;
+  nextAttemptAt: string;
+  createdAt: string;
+  operationId: string;
+  operationType: string | null;
+  operationStatus: string | null;
+  customerName: string | null;
+  plate: string | null;
+  totalCents: number | null;
+  closedAt: string | null;
+}
+
+interface OmieQueueItemRow {
+  id: string;
+  action: string;
+  status: SyncQueueStatus;
+  attempt_count: number;
+  last_error: string | null;
+  next_attempt_at: string;
+  created_at: string;
+  operation_id: string;
+  operation_type: string | null;
+  operation_status: string | null;
+  customer_name: string | null;
+  plate: string | null;
+  total_cents: number | null;
+  closed_at: string | null;
+}
+
+/**
+ * Lista os itens da fila OMIE que ainda precisam ir para o OMIE (pendentes, falhos e
+ * mortos), com os dados da operacao para a tela cloud. Jobs 'done' ficam de fora.
+ */
+export function listOmieQueueItems(database: DesktopDatabase): OmieQueueItem[] {
+  const rows = database
+    .prepare(
+      `SELECT q.id, q.action, q.status, q.attempt_count, q.last_error, q.next_attempt_at, q.created_at,
+              q.entity_id AS operation_id,
+              o.operation_type, o.status AS operation_status, o.total_cents,
+              o.exit_weight_captured_at AS closed_at,
+              c.trade_name AS customer_name, v.plate
+       FROM sync_queue q
+       LEFT JOIN weighing_operations o ON o.id = q.entity_id
+       LEFT JOIN customers c ON c.id = o.customer_id
+       LEFT JOIN vehicles v ON v.id = o.vehicle_id
+       WHERE q.target = 'omie'
+         AND q.status IN ('pending', 'failed', 'dead_letter')
+       ORDER BY q.created_at DESC`
+    )
+    .all() as OmieQueueItemRow[];
+
+  return rows.map((row) => ({
+    id: row.id,
+    action: row.action,
+    status: row.status,
+    attemptCount: row.attempt_count,
+    lastError: row.last_error,
+    nextAttemptAt: row.next_attempt_at,
+    createdAt: row.created_at,
+    operationId: row.operation_id,
+    operationType: row.operation_type,
+    operationStatus: row.operation_status,
+    customerName: row.customer_name,
+    plate: row.plate,
+    totalCents: row.total_cents,
+    closedAt: row.closed_at
+  }));
+}
+
+/**
+ * Remove um item da fila OMIE (o fechamento NAO sera mais enviado ao OMIE). So
+ * remove jobs ainda nao concluidos; liberar a chave de idempotencia permite
+ * re-enfileirar depois (ex.: refaturar). Retorna se algo foi removido.
+ */
+export function deleteOmieQueueJob(database: DesktopDatabase, id: string): boolean {
+  const result = database
+    .prepare(
+      `DELETE FROM sync_queue
+       WHERE id = ? AND target = 'omie' AND status IN ('pending', 'failed', 'dead_letter')`
+    )
+    .run(id);
+  return result.changes > 0;
+}
+
+/**
+ * Rearma um item da fila OMIE para envio imediato: volta para 'pending', zera o
+ * backoff (next_attempt_at = agora) e o contador de tentativas (um job morto volta
+ * a ser re-executavel). Retorna o job rearmado ou null se nao encontrado.
+ */
+export function resetOmieQueueJobForRetry(
+  database: DesktopDatabase,
+  id: string,
+  now: Date = new Date()
+): SyncQueueJob | null {
+  const nowIso = now.toISOString();
+  const result = database
+    .prepare(
+      `UPDATE sync_queue
+       SET status = 'pending', attempt_count = 0, next_attempt_at = ?, updated_at = ?
+       WHERE id = ? AND target = 'omie' AND status IN ('pending', 'failed', 'dead_letter')`
+    )
+    .run(nowIso, nowIso, id);
+  if (result.changes === 0) return null;
+  return getSyncJobById(database, id);
+}
+
 export function markSyncJobDone(
   database: DesktopDatabase,
   id: string,

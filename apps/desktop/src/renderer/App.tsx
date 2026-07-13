@@ -111,6 +111,7 @@ import type {
 } from "./customers.types";
 import type { KyberRockDesktopApi } from "./desktop-api";
 import type { ScaleConfiguration, ScaleConfigurationInput } from "../services/scale-configs";
+import type { OmieQueueItem } from "../services/sync-queue";
 export interface AppProps {
   desktopApi?: KyberRockDesktopApi;
   initialStatus?: DesktopStatusSnapshot | null;
@@ -354,6 +355,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [customersInitialSearch, setCustomersInitialSearch] = useState("");
   const [deleteClosedOperationId, setDeleteClosedOperationId] = useState<string | null>(null);
   const [omieSyncing, setOmieSyncing] = useState(false);
+  const [omieQueue, setOmieQueue] = useState<OmieQueueItem[]>([]);
+  const [omieQueueLoading, setOmieQueueLoading] = useState(false);
+  const [omieQueueBusyId, setOmieQueueBusyId] = useState<string | null>(null);
+  const [omieQueueConfirmDeleteId, setOmieQueueConfirmDeleteId] = useState<string | null>(null);
   const [omieResetting, setOmieResetting] = useState(false);
   const [showOmieDirectSync, setShowOmieDirectSync] = useState(false);
   const [omieConnectionFeedback, setOmieConnectionFeedback] = useState<{
@@ -976,6 +981,64 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       window.clearTimeout(initial);
     };
   }, [desktopApi, phase, autoSyncCloud]);
+
+  const refreshOmieQueue = useCallback(async () => {
+    if (!desktopApi) return;
+    setOmieQueueLoading(true);
+    try {
+      setOmieQueue(await desktopApi.omieQueueList());
+    } catch {
+      setOmieQueue([]);
+    } finally {
+      setOmieQueueLoading(false);
+    }
+  }, [desktopApi]);
+
+  // Recarrega a fila OMIE ao abrir a tela cloud e ao terminar sincronizacoes
+  // (cloudSyncing/omieSyncing viram false quando concluem).
+  useEffect(() => {
+    if (activeView !== "cloud" || cloudSyncing || omieSyncing) return;
+    void refreshOmieQueue();
+  }, [activeView, cloudSyncing, omieSyncing, refreshOmieQueue]);
+
+  async function handleOmieQueueDelete(jobId: string): Promise<void> {
+    if (!desktopApi) return;
+    setOmieQueueBusyId(jobId);
+    try {
+      const result = await desktopApi.omieQueueDelete(jobId);
+      setMessage(
+        result.deleted
+          ? "Item removido da fila OMIE. Este fechamento nao sera mais enviado ao OMIE."
+          : "Item nao encontrado na fila OMIE."
+      );
+    } catch (error) {
+      setMessage(getErrorMessage(error));
+    } finally {
+      setOmieQueueBusyId(null);
+      setOmieQueueConfirmDeleteId(null);
+      void refreshOmieQueue();
+    }
+  }
+
+  async function handleOmieQueueSendNow(jobId: string): Promise<void> {
+    if (!desktopApi) return;
+    setOmieQueueBusyId(jobId);
+    try {
+      const result = await desktopApi.omieQueueSendNow(jobId);
+      if (result.errors.length > 0) {
+        setMessage(`Envio OMIE: ${result.errors[0]}`);
+      } else if (result.processed > 0) {
+        setMessage("Pedido enviado ao OMIE com sucesso.");
+      } else {
+        setMessage("Item rearmado; sera enviado na proxima sincronizacao.");
+      }
+    } catch (error) {
+      setMessage(getErrorMessage(error));
+    } finally {
+      setOmieQueueBusyId(null);
+      void refreshOmieQueue();
+    }
+  }
 
   useEffect(() => {
     if (!desktopApi || phase !== "unlocked") return;
@@ -3165,6 +3228,102 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     </>
                   ) : (
                     <p style={{ color: "#64748b" }}>Carregando status OMIE...</p>
+                  )}
+                </article>
+
+                <article style={{ ...styles.panel, gridColumn: "1 / -1" }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: "12px"
+                    }}
+                  >
+                    <h2 style={styles.panelTitle}>Fila OMIE (fechamentos a enviar)</h2>
+                    <button
+                      type="button"
+                      onClick={() => void refreshOmieQueue()}
+                      disabled={omieQueueLoading}
+                      style={{ ...styles.secondaryButton, fontSize: "12px" }}
+                    >
+                      {omieQueueLoading ? "Atualizando..." : "Atualizar"}
+                    </button>
+                  </div>
+                  <p style={styles.muted}>
+                    Pedidos/OS de fechamentos que ainda serao enviados ao OMIE. Excluir um item
+                    cancela o envio daquele fechamento ao OMIE (a operacao local nao e alterada).
+                  </p>
+                  {omieQueue.length === 0 ? (
+                    <p style={styles.muted}>
+                      {omieQueueLoading
+                        ? "Carregando fila OMIE..."
+                        : "Nenhum item na fila: todos os fechamentos foram enviados ao OMIE."}
+                    </p>
+                  ) : (
+                    omieQueue.map((item) => (
+                      <div key={item.id} style={styles.receiptRow}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <strong>
+                            {item.customerName ?? "Cliente nao identificado"}
+                            {item.plate ? ` - ${item.plate}` : ""}
+                            {item.totalCents !== null ? ` - ${formatMoney(item.totalCents)}` : ""}
+                          </strong>
+                          <p style={styles.muted}>
+                            {omieQueueActionLabel(item.action, item.operationType)} -{" "}
+                            {omieQueueStatusLabel(item.status)}
+                            {item.attemptCount > 0 ? ` (${item.attemptCount} tentativas)` : ""}
+                            {" - "}
+                            {formatDbDateTime(item.closedAt ?? item.createdAt)}
+                          </p>
+                          {item.lastError ? (
+                            <p style={{ ...styles.errorMessage, wordBreak: "break-word" }}>
+                              {item.lastError}
+                            </p>
+                          ) : null}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void handleOmieQueueSendNow(item.id)}
+                          disabled={omieQueueBusyId !== null}
+                          style={{
+                            ...styles.primaryButton,
+                            fontSize: "12px",
+                            opacity: omieQueueBusyId !== null ? 0.6 : 1
+                          }}
+                        >
+                          {omieQueueBusyId === item.id ? "Enviando..." : "Enviar agora"}
+                        </button>
+                        {omieQueueConfirmDeleteId === item.id ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => void handleOmieQueueDelete(item.id)}
+                              disabled={omieQueueBusyId !== null}
+                              style={{ ...styles.dangerButton, fontSize: "12px" }}
+                            >
+                              Confirmar exclusao
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setOmieQueueConfirmDeleteId(null)}
+                              style={{ ...styles.secondaryButton, fontSize: "12px" }}
+                            >
+                              Cancelar
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setOmieQueueConfirmDeleteId(item.id)}
+                            disabled={omieQueueBusyId !== null}
+                            style={{ ...styles.secondaryButton, fontSize: "12px" }}
+                          >
+                            Excluir da fila
+                          </button>
+                        )}
+                      </div>
+                    ))
                   )}
                 </article>
               </section>
@@ -6141,6 +6300,34 @@ function PriceInput({
       ) : null}
     </div>
   );
+}
+
+/** Rotulo humano da acao de um item da fila OMIE (tela cloud). */
+export function omieQueueActionLabel(action: string, operationType: string | null): string {
+  switch (action) {
+    case "create_order":
+      return operationType === "internal" ? "Criar OS (interno)" : "Criar pedido (com nota)";
+    case "create_and_bill_order":
+      return "Criar e faturar pedido";
+    case "cancel_order":
+      return "Cancelar pedido no OMIE";
+    default:
+      return action;
+  }
+}
+
+/** Rotulo humano do status de um item da fila OMIE (tela cloud). */
+export function omieQueueStatusLabel(status: string): string {
+  switch (status) {
+    case "pending":
+      return "aguardando envio";
+    case "failed":
+      return "falhou (re-tenta sozinho)";
+    case "dead_letter":
+      return "parado apos varias falhas";
+    default:
+      return status;
+  }
 }
 
 function formatMoney(value: number | null | undefined): string {
