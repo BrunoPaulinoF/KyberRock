@@ -531,6 +531,103 @@ Deno.test("create_order envia o codigo_parcela vinculado no pedido de venda", as
   assertEquals(cabecalho.etapa, "50");
 });
 
+Deno.test("create_order envia a modalidade de frete escolhida (FOB) com o valor", async () => {
+  const deviceToken = "token-order-freight";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-order-freight": {
+        id: "device-order-freight",
+        company_id: "company-order-freight",
+        unit_id: "unit-order-freight",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-order-freight": {
+        id: "company-order-freight",
+        is_active: true,
+        omie_app_key: "order-freight",
+        omie_app_secret: "secret-order-freight"
+      }
+    }
+  });
+  const omieQueue = orderQueueStub();
+
+  await postOmieSync(
+    {
+      deviceId: "device-order-freight",
+      deviceToken,
+      action: "create_order",
+      payload: {
+        operationType: "invoice",
+        customerOmieId: 100,
+        productOmieId: 200,
+        quantity: 10,
+        unitPrice: 50,
+        freightTotalCents: 15000,
+        freightModalidade: "1",
+        issueDate: "2026-07-07",
+        idempotencyKey: "kyberrock:unit:op-freight:create_sales_order"
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  const frete = getParam(findRequest(omieQueue, "IncluirPedido")).frete as Record<string, unknown>;
+  assertEquals(frete.modalidade, "1");
+  assertEquals(frete.valor_frete, 150);
+});
+
+Deno.test("create_order envia modalidade sem frete (9) sem valor", async () => {
+  const deviceToken = "token-order-nofreight";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-order-nofreight": {
+        id: "device-order-nofreight",
+        company_id: "company-order-nofreight",
+        unit_id: "unit-order-nofreight",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-order-nofreight": {
+        id: "company-order-nofreight",
+        is_active: true,
+        omie_app_key: "order-nofreight",
+        omie_app_secret: "secret-order-nofreight"
+      }
+    }
+  });
+  const omieQueue = orderQueueStub();
+
+  await postOmieSync(
+    {
+      deviceId: "device-order-nofreight",
+      deviceToken,
+      action: "create_order",
+      payload: {
+        operationType: "invoice",
+        customerOmieId: 100,
+        productOmieId: 200,
+        quantity: 10,
+        unitPrice: 50,
+        freightModalidade: "9",
+        issueDate: "2026-07-07",
+        idempotencyKey: "kyberrock:unit:op-nofreight:create_sales_order"
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  const frete = getParam(findRequest(omieQueue, "IncluirPedido")).frete as Record<string, unknown>;
+  assertEquals(frete.modalidade, "9");
+  assertEquals(frete.valor_frete, undefined);
+});
+
 Deno.test("create_order usa 000 quando nao ha codigo de parcela vinculado", async () => {
   const deviceToken = "token-order-default";
   const token_hash = await sha256Hex(deviceToken);

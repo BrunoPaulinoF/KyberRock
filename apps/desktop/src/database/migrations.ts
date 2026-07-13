@@ -1099,5 +1099,18 @@ ALTER TABLE weighing_operations ADD COLUMN payment_method_id TEXT REFERENCES pay
 CREATE INDEX IF NOT EXISTS idx_weighing_operations_payment_method
   ON weighing_operations(payment_method_id);
 `
+  },
+  {
+    version: 32,
+    name: "weighing_operation_freight_type",
+    sql: `
+-- Tipo (modalidade) de frete da operacao: CIF, FOB, terceiros, transporte proprio
+-- (remetente/destinatario) ou sem frete. Segue no pedido de venda do OMIE como o codigo
+-- "modalidade" do frete (modFrete da NF-e: 0/1/2/3/4/9). Substitui a antiga caixa
+-- "transportadora propria do cliente" (own_recipient) e a parte CIF/FOB da caixa
+-- "operacao com frete". Default 'none' (sem frete) para operacoes ja existentes.
+ALTER TABLE weighing_operations ADD COLUMN freight_type TEXT NOT NULL DEFAULT 'none'
+  CHECK (freight_type IN ('cif', 'fob', 'third_party', 'own_sender', 'own_recipient', 'none'));
+`
   }
 ];
