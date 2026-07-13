@@ -4,6 +4,7 @@ import {
   App,
   appendAvailableId,
   buildFreightInput,
+  carrierSelectorFilterIds,
   createCacheSelectOptions,
   filterCacheSelectOptions,
   formatElapsedSince,
@@ -108,6 +109,18 @@ describe("App", () => {
     ]);
     // Sem filtro ativo (nenhum cliente selecionado): continua sem filtro.
     expect(appendAvailableId(undefined, "carrier-2")).toBeUndefined();
+  });
+
+  it("falls back to all carriers when the customer has none linked", () => {
+    // Cliente com transportadoras vinculadas: restringe a lista a elas.
+    expect(carrierSelectorFilterIds(["carrier-1", "carrier-2"])).toEqual([
+      "carrier-1",
+      "carrier-2"
+    ]);
+    // Cliente selecionado sem nenhum vinculo: nao filtra, exibe todas as cadastradas.
+    expect(carrierSelectorFilterIds([])).toBeUndefined();
+    // Nenhum cliente selecionado ainda: continua sem filtro.
+    expect(carrierSelectorFilterIds(undefined)).toBeUndefined();
   });
 
   it("labels OMIE queue items in plain portuguese for the cloud screen", () => {
