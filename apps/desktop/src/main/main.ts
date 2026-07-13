@@ -1447,14 +1447,14 @@ function buildReceiptHtml(payload: ReceiptPrintPayload): string {
       .receipt { width: 100%; }
       .top-company { font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
       .rule { border-top: 1px solid #000; margin: 4px 0 8px; }
-      .header { display: flex; flex-direction: column; align-items: center; gap: 4px; }
-      .logo-slot { width: ${logo.widthMm}mm; height: ${logo.heightMm}mm; margin: 0 auto; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-      .logo-slot img { width: 100%; height: 100%; object-fit: ${logo.fit}; }
+      .header { text-align: center; }
+      .logo-slot { width: ${logo.widthMm}mm; height: ${logo.heightMm}mm; margin: 0 auto 4px; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+      .logo-slot img { max-width: 100%; max-height: 100%; object-fit: ${logo.fit}; }
       .logo-fallback { font-size: 18px; font-weight: 800; text-align: center; line-height: 1.05; }
       .datetime { text-align: center; font-size: 14px; font-weight: 700; line-height: 1.35; }
       .copy { margin: 8px 0 2px; text-align: center; font-size: 17px; font-weight: 900; letter-spacing: 0.04em; }
       .via { text-align: center; font-weight: 800; }
-      pre { white-space: pre-wrap; margin: 0; font: inherit; line-height: 1.28; }
+      pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; font: inherit; line-height: 1.28; }
     </style>
   </head>
   <body>
