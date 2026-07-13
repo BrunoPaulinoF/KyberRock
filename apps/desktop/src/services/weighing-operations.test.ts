@@ -782,13 +782,13 @@ describe("weighing operations", () => {
     }
   });
 
-  it("flags an invoice close as cadastro_incompleto when the customer has no OMIE code", () => {
+  it("flags an invoice close as cadastro_incompleto when the customer has no OMIE code nor document", () => {
     const database = createDatabase();
 
     try {
       const identity = createIdentity(database);
       insertCatalog(database);
-      // Cliente SEM omie_customer_id (nao vinculado ao OMIE).
+      // Cliente SEM omie_customer_id e SEM documento (nao da para cadastrar no OMIE).
 
       const operation = createWeighingOperation(database, {
         identity,
@@ -812,7 +812,55 @@ describe("weighing operations", () => {
       ).toMatchObject({ n: 0 });
       // ...mas o motivo fica visivel em vez de sumir em silencio.
       expect(closed.omieBillingStatus).toBe("cadastro_incompleto");
-      expect(closed.omieBillingMessage).toContain("Cliente sem codigo OMIE");
+      expect(closed.omieBillingMessage).toContain("Cliente sem CNPJ/CPF");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("enqueues the order with customer cadastro when the customer has a document but no OMIE code", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      // Cliente com CNPJ mas SEM codigo OMIE: o edge deve cria-lo na hora.
+      database
+        .prepare(
+          "UPDATE customers SET document = '11444777000161', legal_name = 'Cliente Novo LTDA' WHERE id = 'customer-1'"
+        )
+        .run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        operationType: "invoice",
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      const job = buildOmieBillingJob(database, operation.id);
+      expect(job).not.toBeNull();
+      // customerOmieId 0 sinaliza "criar na hora"; o cadastro segue no payload.
+      expect(job!.payload.customerOmieId).toBe(0);
+      expect(job!.payload.localCustomerId).toBe("customer-1");
+      expect(job!.payload.customer).toMatchObject({
+        localCustomerId: "customer-1",
+        razaoSocial: "Cliente Novo LTDA",
+        cnpjCpf: "11444777000161"
+      });
+      // E o job foi enfileirado (nao pulou em silencio).
+      expect(
+        database.prepare("SELECT COUNT(*) AS n FROM sync_queue WHERE target = 'omie'").get()
+      ).toMatchObject({ n: 1 });
     } finally {
       database.close();
     }

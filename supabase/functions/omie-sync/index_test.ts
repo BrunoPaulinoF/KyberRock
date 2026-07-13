@@ -629,6 +629,69 @@ Deno.test("create_order envia modalidade sem frete (9) sem valor", async () => {
   assertEquals(frete.valor_frete, 0);
 });
 
+Deno.test("create_order cadastra o cliente no OMIE na hora quando ele nao tem codigo", async () => {
+  const deviceToken = "token-order-newcustomer";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-order-newcustomer": {
+        id: "device-order-newcustomer",
+        company_id: "company-order-newcustomer",
+        unit_id: "unit-order-newcustomer",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-order-newcustomer": {
+        id: "company-order-newcustomer",
+        is_active: true,
+        omie_app_key: "order-newcustomer",
+        omie_app_secret: "secret-order-newcustomer"
+      }
+    }
+  });
+  // Cliente ainda nao existe no OMIE: ListarClientesResumido vazio, IncluirCliente cria o 7777.
+  const omieQueue = createOmieQueueStub((input) => {
+    if (input.call === "ListarContasCorrentes") return { conta_corrente_lista: [{ nCodCC: 7 }] };
+    if (input.call === "ListarClientesResumido") return { clientes: [] };
+    if (input.call === "IncluirCliente") return { codigo_cliente_omie: 7777 };
+    if (input.call === "IncluirPedido") return { codigo_pedido: 12345 };
+    return defaultOmieListResponse(input);
+  });
+
+  const response = await postOmieSync(
+    {
+      deviceId: "device-order-newcustomer",
+      deviceToken,
+      action: "create_order",
+      payload: {
+        operationType: "invoice",
+        customerOmieId: 0,
+        customer: {
+          localCustomerId: "cust-local-1",
+          razaoSocial: "Cliente Novo LTDA",
+          cnpjCpf: "11444777000161"
+        },
+        productOmieId: 200,
+        quantity: 10,
+        unitPrice: 50,
+        issueDate: "2026-07-07",
+        idempotencyKey: "kyberrock:unit:op-newcustomer:create_sales_order"
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  // Cliente foi criado no OMIE e o pedido usou o codigo devolvido...
+  assertObjectMatch(response, { ok: true, orderId: 12345, omieCustomerId: 7777 });
+  const cabecalho = getParam(findRequest(omieQueue, "IncluirPedido")).cabecalho as Record<
+    string,
+    unknown
+  >;
+  assertEquals(cabecalho.codigo_cliente, 7777);
+});
+
 Deno.test("create_order usa 000 quando nao ha codigo de parcela vinculado", async () => {
   const deviceToken = "token-order-default";
   const token_hash = await sha256Hex(deviceToken);
@@ -933,6 +996,14 @@ Deno.test("create_order envia parcelamento informado (999 + lista_parcelas) pelo
   // Percentuais fecham 100 (a ultima absorve o arredondamento).
   assertEquals(parcela[0].percentual, 33.33);
   assertEquals(parcela[2].percentual, 33.34);
+  // O OMIE exige `valor` em cada parcela; somam exatamente o total (30,5 * 85 = 2592,50).
+  assertEquals(parcela[0].valor, 864.08);
+  assertEquals(parcela[1].valor, 864.08);
+  assertEquals(parcela[2].valor, 864.34);
+  assertEquals(
+    (parcela[0].valor as number) + (parcela[1].valor as number) + (parcela[2].valor as number),
+    2592.5
+  );
 });
 
 Deno.test("create_order leva o meio de pagamento em cada parcela (tPag da NF-e)", async () => {
