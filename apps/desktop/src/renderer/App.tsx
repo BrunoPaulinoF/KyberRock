@@ -3927,6 +3927,21 @@ export function appendAvailableId(
   return ids.includes(id) ? ids : [...ids, id];
 }
 
+/**
+ * Ids a exibir no seletor de transportadora da nova entrada. Quando o cliente tem
+ * transportadoras vinculadas, restringe a lista a elas. Quando nao tem nenhuma
+ * vinculada (lista vazia) ou nenhum cliente foi escolhido (`undefined`), retorna
+ * `undefined` para nao filtrar — assim o operador consegue selecionar qualquer
+ * transportadora cadastrada em vez de ficar com a lista vazia.
+ */
+export function carrierSelectorFilterIds(
+  availableCarrierIds: string[] | undefined
+): string[] | undefined {
+  return availableCarrierIds && availableCarrierIds.length > 0
+    ? availableCarrierIds
+    : undefined;
+}
+
 function CacheSelect({
   label,
   entityType,
@@ -5001,13 +5016,13 @@ function WeighingForm({
             onCreateNew={() => setShowCarrierModal(true)}
             desktopApi={desktopApi}
             refreshKey={carrierRefreshKey}
-            filterIds={availableCarrierIds}
+            filterIds={carrierSelectorFilterIds(availableCarrierIds)}
             disabled={isCustomerOwnTransport(form) || form.driverIsIndependent}
           />
           {form.customerId && availableCarrierIds && availableCarrierIds.length === 0 ? (
             <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" }}>
               <p style={{ ...styles.helperText, color: "#d97706", margin: 0 }}>
-                Nenhuma transportadora vinculada a este cliente.
+                Nenhuma transportadora vinculada a este cliente &mdash; exibindo todas as cadastradas.
               </p>
               <button
                 type="button"
