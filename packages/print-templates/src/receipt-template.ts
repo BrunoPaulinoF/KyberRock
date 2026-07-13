@@ -209,7 +209,7 @@ export function buildReceiptLinesWithConfig(
       `Data: ${formatDateTime(input.printedAt)}`,
       "Assinatura do Recebimento:",
       "",
-      "________________________________"
+      ""
     );
   }
 
@@ -235,19 +235,22 @@ export function buildReceiptLinesWithConfig(
   return lines.filter((line): line is string => line !== null);
 }
 
-/** Largura do papel termico de 80 mm em caracteres (fonte monoespacada). */
-const RECEIPT_WIDTH = 48;
+/**
+ * Largura de cada coluna do bloco Quantidade/Unitario/Total. 3 x 12 = 36 caracteres,
+ * mais estreito que o divisor (48) para caber com folga tambem em papel de 58 mm.
+ */
+const RECEIPT_COLUMN_WIDTH = 12;
 
 /**
- * Formata tres colunas alinhadas a direita, cada uma ocupando 1/3 da largura do cupom,
- * para que os valores fiquem exatamente sob os cabecalhos (Quantidade/Unitario/Total).
+ * Formata tres colunas alinhadas a direita (uma sob a outra), para que os valores
+ * fiquem exatamente sob os cabecalhos (Quantidade/Unitario/Total). Nunca trunca: se um
+ * valor exceder a coluna, a linha so fica um pouco mais larga (sem perder digitos).
  */
 function threeColumns(col1: string, col2: string, col3: string): string {
-  const width = Math.floor(RECEIPT_WIDTH / 3);
   return (
-    col1.padStart(width).slice(-width) +
-    col2.padStart(width).slice(-width) +
-    col3.padStart(width).slice(-width)
+    col1.padStart(RECEIPT_COLUMN_WIDTH) +
+    col2.padStart(RECEIPT_COLUMN_WIDTH) +
+    col3.padStart(RECEIPT_COLUMN_WIDTH)
   );
 }
 
