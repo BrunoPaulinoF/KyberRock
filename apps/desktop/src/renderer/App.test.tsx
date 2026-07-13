@@ -42,7 +42,6 @@ function createWeighingForm(overrides: Partial<WeighingFormForTest> = {}): Weigh
     freightMinValueCents: null,
     freightDistanceKm: "",
     freightDestination: "",
-    driverIsIndependent: false,
     ...overrides
   };
 }

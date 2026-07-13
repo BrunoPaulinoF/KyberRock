@@ -625,7 +625,8 @@ Deno.test("create_order envia modalidade sem frete (9) sem valor", async () => {
 
   const frete = getParam(findRequest(omieQueue, "IncluirPedido")).frete as Record<string, unknown>;
   assertEquals(frete.modalidade, "9");
-  assertEquals(frete.valor_frete, undefined);
+  // O OMIE exige valor_frete sempre que o bloco frete e enviado; sem frete vai 0.
+  assertEquals(frete.valor_frete, 0);
 });
 
 Deno.test("create_order usa 000 quando nao ha codigo de parcela vinculado", async () => {

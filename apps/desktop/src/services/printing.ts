@@ -158,6 +158,7 @@ interface OperationReceiptRow {
   product_code: string | null;
   product_description: string | null;
   payment_term_name: string | null;
+  payment_method_name: string | null;
 }
 
 interface PrintReceiptRow {
@@ -575,7 +576,8 @@ function getOperationForReceipt(
           WHEN o.manual_installments = 1 THEN '1 parcela'
           WHEN o.manual_installments > 1 THEN CAST(o.manual_installments AS TEXT) || ' parcelas'
           ELSE pt.name
-        END AS payment_term_name
+        END AS payment_term_name,
+        pm.name AS payment_method_name
        FROM weighing_operations o
         INNER JOIN companies co ON co.id = o.company_id
         INNER JOIN units u ON u.id = o.unit_id
@@ -584,6 +586,7 @@ function getOperationForReceipt(
        LEFT JOIN drivers d ON d.id = o.driver_id
        LEFT JOIN products p ON p.id = o.product_id
        LEFT JOIN payment_terms pt ON pt.id = o.payment_term_id
+       LEFT JOIN payment_methods pm ON pm.id = o.payment_method_id
        WHERE o.id = ?`
     )
     .get(operationId) as OperationReceiptRow | undefined;
@@ -656,6 +659,7 @@ function buildReceiptSnapshot(
     plate: operation.plate ?? "",
     driverName: operation.driver_name ?? "",
     paymentTermName: operation.payment_term_name,
+    paymentMethodName: operation.payment_method_name,
     entryCapturedAt: operation.entry_weight_captured_at,
     exitCapturedAt: operation.exit_weight_captured_at,
     permanenceLabel: formatPermanence(operation.entry_weight_captured_at, operation.exit_weight_captured_at),
@@ -698,6 +702,7 @@ function buildTestReceiptSnapshot(
     plate: "ABC1D23",
     driverName: "Motorista Teste",
     paymentTermName: "A vista",
+    paymentMethodName: "Dinheiro",
     entryCapturedAt: printedAt,
     exitCapturedAt: printedAt,
     permanenceLabel: "0min",

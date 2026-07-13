@@ -19,6 +19,7 @@ export interface ReceiptTemplateInput {
   plate: string;
   driverName: string;
   paymentTermName: string | null;
+  paymentMethodName: string | null;
   entryCapturedAt: string;
   exitCapturedAt: string;
   permanenceLabel: string;
@@ -151,8 +152,12 @@ export function buildReceiptLinesWithConfig(
   if (config.showProductDetail) {
     lines.push(
       productLabel.toUpperCase(),
-      "  Quantidade |   Unitario R$ |   Total R$",
-      `  ${formatTon(quantityTon)} TN | ${formatDecimalMoney(input.unitPriceCents)} | ${formatNumber(input.productTotalCents / 100)}`,
+      threeColumns("Quantidade", "Unitario R$", "Total R$"),
+      threeColumns(
+        `${formatTon(quantityTon)} TN`,
+        formatDecimalMoney(input.unitPriceCents),
+        formatNumber(input.productTotalCents / 100)
+      ),
       divider(),
       `TOTAL DA VENDA - Itens (1) R$ ${formatNumber(input.productTotalCents / 100)}`
     );
@@ -164,6 +169,7 @@ export function buildReceiptLinesWithConfig(
 
   if (config.showProductDetail) {
     lines.push(`Cond.Pagto.: ${input.paymentTermName ?? "NAO INFORMADA"}`);
+    lines.push(`Meio Pagto.: ${input.paymentMethodName ?? "NAO INFORMADO"}`);
   }
 
   if (config.showWeights || config.showProductDetail) {
@@ -200,8 +206,10 @@ export function buildReceiptLinesWithConfig(
   if (config.showSignature) {
     lines.push(
       divider(),
-      `Data: ${formatDateTime(input.printedAt)} | Assinatura do Recebimento`,
-      ""
+      `Data: ${formatDateTime(input.printedAt)}`,
+      "Assinatura do Recebimento:",
+      "",
+      "________________________________"
     );
   }
 
@@ -225,6 +233,22 @@ export function buildReceiptLinesWithConfig(
   }
 
   return lines.filter((line): line is string => line !== null);
+}
+
+/** Largura do papel termico de 80 mm em caracteres (fonte monoespacada). */
+const RECEIPT_WIDTH = 48;
+
+/**
+ * Formata tres colunas alinhadas a direita, cada uma ocupando 1/3 da largura do cupom,
+ * para que os valores fiquem exatamente sob os cabecalhos (Quantidade/Unitario/Total).
+ */
+function threeColumns(col1: string, col2: string, col3: string): string {
+  const width = Math.floor(RECEIPT_WIDTH / 3);
+  return (
+    col1.padStart(width).slice(-width) +
+    col2.padStart(width).slice(-width) +
+    col3.padStart(width).slice(-width)
+  );
 }
 
 function divider(): string {

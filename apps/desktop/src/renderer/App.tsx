@@ -150,7 +150,6 @@ export interface WeighingFormState {
   freightMinValueCents: number | null;
   freightDistanceKm: string;
   freightDestination: string;
-  driverIsIndependent: boolean;
 }
 
 type ActiveView =
@@ -190,8 +189,7 @@ const initialWeighingForm: WeighingFormState = {
   freightFixedValueCents: null,
   freightMinValueCents: null,
   freightDistanceKm: "",
-  freightDestination: "",
-  driverIsIndependent: false
+  freightDestination: ""
 };
 
 /**
@@ -369,6 +367,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [changeProductLoading, setChangeProductLoading] = useState(false);
   const [fiscalCloseProgress, setFiscalCloseProgress] = useState<FiscalCloseProgress | null>(null);
   const [retryingFiscalOperationId, setRetryingFiscalOperationId] = useState<string | null>(null);
+  const [reprintingOperationId, setReprintingOperationId] = useState<string | null>(null);
   const [customersInitialSearch, setCustomersInitialSearch] = useState("");
   const [deleteClosedOperationId, setDeleteClosedOperationId] = useState<string | null>(null);
   const [omieSyncing, setOmieSyncing] = useState(false);
@@ -1659,6 +1658,29 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
   }
 
+  // Reimpressao de emergencia direto da tela Concluidas: emite uma nova via (2a, 3a...)
+  // da nota daquela operacao, util quando faltou papel ou o cupom saiu ilegivel.
+  async function handleReprintOperationReceipt(operationId: string): Promise<void> {
+    if (!desktopApi) {
+      return;
+    }
+
+    setReprintingOperationId(operationId);
+    try {
+      const receipt = await desktopApi.printReceipt(operationId);
+      setMessage(
+        receipt.status === "printed"
+          ? `Nota reimpressa: cupom ${receipt.receiptNumber}, via ${receipt.copyNumber}.`
+          : `Falha ao reimprimir nota: ${receipt.errorMessage}.`
+      );
+      await refreshPrintData();
+    } catch (error) {
+      setMessage(getErrorMessage(error));
+    } finally {
+      setReprintingOperationId(null);
+    }
+  }
+
   async function handlePrintTest(): Promise<void> {
     if (!desktopApi) {
       return;
@@ -2576,6 +2598,17 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                           onRetry={() => void handleRetryFiscalBilling(operation.id)}
                         />
                         <span style={styles.rowActions}>
+                          <button
+                            type="button"
+                            style={styles.smallSecondaryButton}
+                            title="Reimprimir a nota desta operacao (emite uma nova via)"
+                            disabled={reprintingOperationId === operation.id}
+                            onClick={() => void handleReprintOperationReceipt(operation.id)}
+                          >
+                            {reprintingOperationId === operation.id
+                              ? "Reimprimindo..."
+                              : "Reimprimir nota"}
+                          </button>
                           <button
                             type="button"
                             style={styles.smallSecondaryButton}
@@ -3800,7 +3833,7 @@ function validateWeighingForm(form: WeighingFormState): string | null {
   if (!form.customerId) return "Selecione o cliente.";
   if (!form.driverId) return "Selecione o motorista.";
   if (!form.productId) return "Selecione o produto.";
-  if (!isCustomerOwnTransport(form) && !form.driverIsIndependent && !form.carrierId) {
+  if (!isCustomerOwnTransport(form) && !form.carrierId) {
     return "Selecione a transportadora.";
   }
   if (form.paymentMode === "manual") {
@@ -3856,34 +3889,26 @@ export function buildFreightInput(form: WeighingFormState): OperationFreightInpu
 }
 
 export function shouldLinkCreatedDriverToCarrier(
-  form: Pick<WeighingFormState, "carrierId" | "freightModality" | "driverIsIndependent">,
-  createdDriverIsIndependent: boolean
+  form: Pick<WeighingFormState, "carrierId" | "freightModality">
 ): string | null {
-  if (
-    createdDriverIsIndependent ||
-    form.driverIsIndependent ||
-    isCustomerOwnTransport(form) ||
-    !form.carrierId
-  ) {
+  if (isCustomerOwnTransport(form) || !form.carrierId) {
     return null;
   }
   return form.carrierId;
 }
 
 export function getDriverFilterIds(
-  form: Pick<WeighingFormState, "freightModality" | "driverIsIndependent">,
-  availableDriverIds: string[] | undefined,
-  independentDriverIds: string[] | undefined
+  form: Pick<WeighingFormState, "freightModality">,
+  availableDriverIds: string[] | undefined
 ): string[] | undefined {
   if (isCustomerOwnTransport(form)) return undefined;
-  if (form.driverIsIndependent) return independentDriverIds ?? [];
   return availableDriverIds;
 }
 
 export function isTransportReady(
-  form: Pick<WeighingFormState, "carrierId" | "freightModality" | "driverIsIndependent">
+  form: Pick<WeighingFormState, "carrierId" | "freightModality">
 ): boolean {
-  return isCustomerOwnTransport(form) || form.driverIsIndependent || Boolean(form.carrierId);
+  return isCustomerOwnTransport(form) || Boolean(form.carrierId);
 }
 
 function parsePositiveNumber(value: string): number | null {
@@ -4314,7 +4339,6 @@ function WeighingForm({
   const [availableCarrierIds, setAvailableCarrierIds] = useState<string[] | undefined>(undefined);
   const [availableVehicleIds, setAvailableVehicleIds] = useState<string[] | undefined>(undefined);
   const [availableDriverIds, setAvailableDriverIds] = useState<string[] | undefined>(undefined);
-  const [independentDriverIds, setIndependentDriverIds] = useState<string[] | undefined>(undefined);
 
   // Buscar transportadoras vinculadas ao cliente
   useEffect(() => {
@@ -4346,7 +4370,7 @@ function WeighingForm({
 
   useEffect(() => {
     async function load() {
-      if (!desktopApi || !form.carrierId || isCustomerOwnTransport(form) || form.driverIsIndependent) {
+      if (!desktopApi || !form.carrierId || isCustomerOwnTransport(form)) {
         setAvailableVehicleIds(undefined);
         return;
       }
@@ -4358,15 +4382,9 @@ function WeighingForm({
       }
     }
     load();
-  }, [
-    desktopApi,
-    form.carrierId,
-    form.freightModality,
-    form.driverIsIndependent,
-    vehicleRefreshKey
-  ]);
+  }, [desktopApi, form.carrierId, form.freightModality, vehicleRefreshKey]);
 
-  // Buscar motoristas vinculados a transportadora + independentes
+  // Buscar motoristas vinculados a transportadora selecionada
   useEffect(() => {
     async function load() {
       if (!desktopApi) {
@@ -4374,26 +4392,18 @@ function WeighingForm({
         return;
       }
       try {
-        const independent = await desktopApi.listIndependentDrivers();
-        const independentIds = independent.map((d) => d.id);
-        setIndependentDriverIds(independentIds);
-
-        if (form.driverIsIndependent) {
-          setAvailableDriverIds(independentIds);
-        } else if (form.carrierId) {
+        if (form.carrierId) {
           const linked = await desktopApi.listDriversByCarrier(form.carrierId);
-          const linkedIds = linked.map((d) => d.id);
-          setAvailableDriverIds([...new Set([...linkedIds, ...independentIds])]);
+          setAvailableDriverIds(linked.map((d) => d.id));
         } else {
-          setAvailableDriverIds(independentIds.length > 0 ? independentIds : undefined);
+          setAvailableDriverIds(undefined);
         }
       } catch {
         setAvailableDriverIds(undefined);
-        setIndependentDriverIds(undefined);
       }
     }
     load();
-  }, [desktopApi, form.carrierId, form.driverIsIndependent, driverRefreshKey]);
+  }, [desktopApi, form.carrierId, driverRefreshKey]);
 
   // Quando motorista muda, verificar se tem 1 transportadora e preencher
   useEffect(() => {
@@ -5008,7 +5018,6 @@ function WeighingForm({
               setForm((prev) => ({
                 ...prev,
                 carrierId: id,
-                driverIsIndependent: false,
                 vehicleId: "",
                 driverId: ""
               }))
@@ -5017,7 +5026,7 @@ function WeighingForm({
             desktopApi={desktopApi}
             refreshKey={carrierRefreshKey}
             filterIds={carrierSelectorFilterIds(availableCarrierIds)}
-            disabled={isCustomerOwnTransport(form) || form.driverIsIndependent}
+            disabled={isCustomerOwnTransport(form)}
           />
           {form.customerId && availableCarrierIds && availableCarrierIds.length === 0 ? (
             <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" }}>
@@ -5053,7 +5062,7 @@ function WeighingForm({
               onCreateNew={() => setShowDriverModal(true)}
               desktopApi={desktopApi}
               refreshKey={driverRefreshKey}
-              filterIds={getDriverFilterIds(form, availableDriverIds, independentDriverIds)}
+              filterIds={getDriverFilterIds(form, availableDriverIds)}
               disabled={!transportReady}
             />
           </div>
@@ -5125,12 +5134,8 @@ function WeighingForm({
         <QuickDriverModal
           desktopApi={desktopApi}
           onClose={() => setShowDriverModal(false)}
-          defaultIsIndependent={form.driverIsIndependent}
-          onCreated={async (id, options) => {
-            const carrierId = shouldLinkCreatedDriverToCarrier(
-              form,
-              options?.isIndependent ?? false
-            );
+          onCreated={async (id) => {
+            const carrierId = shouldLinkCreatedDriverToCarrier(form);
             setForm((prev) => ({ ...prev, driverId: id }));
             setShowDriverModal(false);
             if (desktopApi && carrierId) {
@@ -5211,8 +5216,7 @@ function WeighingForm({
                 // Transporte proprio do cliente: a transportadora da Pedreira nao se aplica.
                 carrierId: ownRecipient ? "" : prev.carrierId,
                 vehicleId: ownRecipient ? "" : prev.vehicleId,
-                driverId: ownRecipient ? "" : prev.driverId,
-                driverIsIndependent: ownRecipient ? false : prev.driverIsIndependent
+                driverId: ownRecipient ? "" : prev.driverId
               };
             });
             setShowFreightModal(false);
@@ -5320,10 +5324,7 @@ interface QuickModalProps {
   onCreated: (id: string) => void;
 }
 
-interface QuickDriverModalProps extends Omit<QuickModalProps, "onCreated"> {
-  defaultIsIndependent?: boolean;
-  onCreated: (id: string, options?: { isIndependent: boolean }) => void;
-}
+type QuickDriverModalProps = QuickModalProps;
 
 function QuickVehicleModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
   const [plateInput, setPlateInput] = useState("");
@@ -5383,16 +5384,10 @@ function QuickVehicleModal({ desktopApi, onClose, onCreated }: QuickModalProps) 
   );
 }
 
-function QuickDriverModal({
-  desktopApi,
-  onClose,
-  onCreated,
-  defaultIsIndependent = false
-}: QuickDriverModalProps) {
+function QuickDriverModal({ desktopApi, onClose, onCreated }: QuickDriverModalProps) {
   const [name, setName] = useState("");
   const [documentInput, setDocumentInput] = useState("");
   const [phone, setPhone] = useState("");
-  const [isIndependent, setIsIndependent] = useState(defaultIsIndependent);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -5417,10 +5412,9 @@ function QuickDriverModal({
       const result = await desktopApi.driversCreate({
         name: name.trim(),
         document: normalizedDocument || undefined,
-        phone: normalizedPhone || undefined,
-        isIndependent
+        phone: normalizedPhone || undefined
       });
-      onCreated((result as { id: string }).id, { isIndependent });
+      onCreated((result as { id: string }).id);
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -5449,18 +5443,6 @@ function QuickDriverModal({
           placeholder="000.000.000-00"
         />
         <PhoneInput label="Telefone" value={phone} onChange={setPhone} />
-        <label style={styles.checkboxLabel}>
-          <input
-            type="checkbox"
-            checked={isIndependent}
-            onChange={(e) => setIsIndependent(e.target.checked)}
-          />
-          Motorista independente
-        </label>
-        <p style={{ ...styles.helperText, marginTop: "-4px" }}>
-          Use para motorista sem transportadora. Ele aparecera quando a opcao "Motorista
-          independente" estiver marcada na nova entrada.
-        </p>
         <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
           <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
             {saving ? "Salvando..." : "Salvar"}
@@ -6865,12 +6847,11 @@ const CRUD_DEFAULT_SECTION = "Dados principais";
 async function reconcileDriverCarrier(
   desktopApi: KyberRockDesktopApi,
   driverId: string,
-  isIndependent: boolean,
   carrierId: string
 ): Promise<void> {
   const current = await desktopApi.listCarriersByDriver(driverId);
   const currentIds = current.map((carrier) => carrier.id);
-  const targetIds = isIndependent || !carrierId ? [] : [carrierId];
+  const targetIds = carrierId ? [carrierId] : [];
   for (const id of currentIds) {
     if (!targetIds.includes(id)) await desktopApi.unlinkDriverCarrier(driverId, id);
   }
@@ -6881,7 +6862,6 @@ async function reconcileDriverCarrier(
 
 function driverDetails(item: Record<string, unknown>): string {
   const parts: string[] = [];
-  if (item.isIndependent) parts.push("Independente: sem transportadora");
   if (item.document) parts.push(`CPF: ${String(item.document)}`);
   if (item.phone) parts.push(String(item.phone));
   return parts.join(" | ");
@@ -7216,12 +7196,6 @@ function DriverCrud({
       options: carrierOptions,
       emptyOption: "Sem transportadora",
       helper: "Vincule o motorista a uma transportadora para agilizar a nova entrada."
-    },
-    {
-      key: "isIndependent",
-      label: "Motorista independente",
-      type: "checkbox",
-      helper: "Marque quando este motorista nao pertence a uma transportadora."
     }
   ];
 
@@ -7256,8 +7230,7 @@ function DriverCrud({
         name: String(item.name ?? ""),
         document: String(item.document ?? ""),
         phone: String(item.phone ?? ""),
-        carrierId: "",
-        isIndependent: item.isIndependent ? "true" : "false"
+        carrierId: ""
       })}
       enrichForm={async (item) => {
         const linked = await desktopApi.listCarriersByDriver(String(item.id));
@@ -7279,14 +7252,12 @@ function DriverCrud({
           }
           phone = normalized;
         }
-        const isIndependent = form.isIndependent === "true";
         return {
           value: {
             name: form.name.trim(),
             document,
             phone,
-            isIndependent,
-            carrierId: isIndependent ? "" : form.carrierId
+            carrierId: form.carrierId
           }
         };
       }}
@@ -7294,32 +7265,20 @@ function DriverCrud({
         const created = await desktopApi.driversCreate({
           name: payload.name as string,
           document: (payload.document as string) || undefined,
-          phone: (payload.phone as string) || undefined,
-          isIndependent: payload.isIndependent as boolean
+          phone: (payload.phone as string) || undefined
         });
         const id = (created as { id?: string } | null)?.id;
         if (id) {
-          await reconcileDriverCarrier(
-            desktopApi,
-            id,
-            payload.isIndependent as boolean,
-            payload.carrierId as string
-          );
+          await reconcileDriverCarrier(desktopApi, id, payload.carrierId as string);
         }
       }}
       update={async (id, payload) => {
         await desktopApi.driversUpdate(id, {
           name: payload.name as string,
           document: (payload.document as string) || undefined,
-          phone: (payload.phone as string) || undefined,
-          isIndependent: payload.isIndependent as boolean
+          phone: (payload.phone as string) || undefined
         });
-        await reconcileDriverCarrier(
-          desktopApi,
-          id,
-          payload.isIndependent as boolean,
-          payload.carrierId as string
-        );
+        await reconcileDriverCarrier(desktopApi, id, payload.carrierId as string);
       }}
       remove={(id) => desktopApi.driversDelete(id)}
       deleteDescription="O registro sera removido dos cadastros. Operacoes ja registradas nao sao afetadas."
