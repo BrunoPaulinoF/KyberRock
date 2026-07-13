@@ -782,6 +782,42 @@ describe("weighing operations", () => {
     }
   });
 
+  it("flags an invoice close as cadastro_incompleto when the customer has no OMIE code", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      // Cliente SEM omie_customer_id (nao vinculado ao OMIE).
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        operationType: "invoice",
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+
+      const closed = closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      // Nao enfileira pedido OMIE (nada a enviar)...
+      expect(
+        database.prepare("SELECT COUNT(*) AS n FROM sync_queue WHERE target = 'omie'").get()
+      ).toMatchObject({ n: 0 });
+      // ...mas o motivo fica visivel em vez de sumir em silencio.
+      expect(closed.omieBillingStatus).toBe("cadastro_incompleto");
+      expect(closed.omieBillingMessage).toContain("Cliente sem codigo OMIE");
+    } finally {
+      database.close();
+    }
+  });
+
   it("forwards the linked OMIE parcela code in the enqueued order payload", () => {
     const database = createDatabase();
 
