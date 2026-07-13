@@ -340,8 +340,9 @@ describe("OmieSyncService", () => {
 
       const first = await service.syncPaymentMethods("company-1");
 
-      // "cash" e "pix" (seeds) adotam os codigos; "90" entra como forma nova do OMIE.
-      expect(first).toEqual({ fetched: 3, created: 1, updated: 2, skipped: 0 });
+      // "cash"/"pix" ja vem com os codigos padrao (01/17) do seed -> ja presentes (skipped);
+      // "90" entra como forma nova do OMIE.
+      expect(first).toEqual({ fetched: 3, created: 1, updated: 0, skipped: 2 });
       expect(
         db.prepare(
           "SELECT omie_code FROM payment_methods WHERE company_id = 'company-1' AND code = 'cash'"

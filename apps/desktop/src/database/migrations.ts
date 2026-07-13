@@ -1112,5 +1112,20 @@ CREATE INDEX IF NOT EXISTS idx_weighing_operations_payment_method
 ALTER TABLE weighing_operations ADD COLUMN freight_type TEXT NOT NULL DEFAULT 'none'
   CHECK (freight_type IN ('cif', 'fob', 'third_party', 'own_sender', 'own_recipient', 'none'));
 `
+  },
+  {
+    version: 33,
+    name: "seed_payment_methods_default_omie_code",
+    sql: `
+-- Preenche o codigo do meio de pagamento no OMIE/NF-e (tPag) das formas padrao do sistema
+-- que ainda estao sem codigo, para o pedido de venda levar o meio de pagamento (antes ia
+-- vazio -> "nao informado" no OMIE) mesmo sem sincronizar os meios do OMIE. Sao codigos
+-- padronizados; nao mexe em formas que ja tem codigo (vindo da sincronizacao do OMIE).
+UPDATE payment_methods SET omie_code = '01' WHERE code = 'cash' AND omie_code IS NULL AND is_system = 1 AND deleted_at IS NULL;
+UPDATE payment_methods SET omie_code = '17' WHERE code = 'pix' AND omie_code IS NULL AND is_system = 1 AND deleted_at IS NULL;
+UPDATE payment_methods SET omie_code = '03' WHERE code = 'credit_card' AND omie_code IS NULL AND is_system = 1 AND deleted_at IS NULL;
+UPDATE payment_methods SET omie_code = '04' WHERE code = 'debit_card' AND omie_code IS NULL AND is_system = 1 AND deleted_at IS NULL;
+UPDATE payment_methods SET omie_code = '15' WHERE code = 'boleto' AND omie_code IS NULL AND is_system = 1 AND deleted_at IS NULL;
+`
   }
 ];
