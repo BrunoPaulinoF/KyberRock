@@ -131,6 +131,12 @@ export interface WeighingOperationSummary {
   cancelReason: string | null;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Quando o carregador marcou a carga como concluida no loader-web (projetado
+   * de volta para o desktop pela sincronizacao cloud). `null` enquanto a carga
+   * ainda aguarda o carregador. So e populado por `listOpenWeighingOperations`.
+   */
+  loaderCompletedAt?: string | null;
 }
 
 interface OperationRow {
@@ -170,6 +176,7 @@ interface OperationRow {
   driver_name: string | null;
   product_description: string | null;
   payment_term_name: string | null;
+  loader_completed_at?: string | null;
 }
 
 export function createSimulatedWeighingOperation(
@@ -1379,6 +1386,7 @@ export function listOpenWeighingOperations(database: DesktopDatabase): WeighingO
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
         c.id AS customer_id, c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
+        lr.loader_completed_at AS loader_completed_at,
         CASE
           WHEN o.manual_installments = 1 THEN '1 parcela'
           WHEN o.manual_installments > 1 THEN CAST(o.manual_installments AS TEXT) || ' parcelas'
@@ -1390,6 +1398,7 @@ export function listOpenWeighingOperations(database: DesktopDatabase): WeighingO
        LEFT JOIN drivers d ON d.id = o.driver_id
        LEFT JOIN products p ON p.id = o.product_id
        LEFT JOIN payment_terms pt ON pt.id = o.payment_term_id
+       LEFT JOIN loading_requests lr ON lr.operation_id = o.id
         WHERE o.status IN ('loading_requested', 'awaiting_exit', 'entry_registered')
           AND o.deleted_at IS NULL
         ORDER BY o.created_at DESC`
@@ -1797,7 +1806,8 @@ function mapOperationRow(row: OperationRow): WeighingOperationSummary {
     omieDocumentUrl: row.omie_document_url,
     cancelReason: row.cancel_reason,
     createdAt: row.created_at,
-    updatedAt: row.updated_at
+    updatedAt: row.updated_at,
+    loaderCompletedAt: row.loader_completed_at ?? null
   };
 }
 
