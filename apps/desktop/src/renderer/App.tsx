@@ -4775,13 +4775,13 @@ function WeighingForm({
     <section style={styles.entryShell}>
       <div style={styles.entryHero}>
         <MountainOutline
-          opacity={0.5}
+          opacity={0.28}
           style={{
             position: "absolute",
-            right: "-8px",
+            left: "-6px",
             bottom: "-6px",
-            width: "232px",
-            height: "87px",
+            width: "188px",
+            height: "70px",
             pointerEvents: "none",
             zIndex: 0
           }}
@@ -9973,7 +9973,11 @@ const styles = {
     minHeight: 0
   },
   entryHero: {
+    // zIndex acima do card "Resumo" (sticky, top:0): ao rolar o formulario com o
+    // frete configuravel aberto, o hero cobre o card sticky em vez de ficar por
+    // baixo dele. Fundo opaco garante que nada vaze por tras.
     position: "relative" as const,
+    zIndex: 2,
     overflow: "hidden",
     display: "grid",
     gridTemplateColumns: "minmax(220px, 0.7fr) minmax(360px, 1fr)",
