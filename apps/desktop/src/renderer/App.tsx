@@ -4775,13 +4775,13 @@ function WeighingForm({
     <section style={styles.entryShell}>
       <div style={styles.entryHero}>
         <MountainOutline
-          opacity={0.28}
+          opacity={0.5}
           style={{
             position: "absolute",
-            left: "-6px",
+            right: "-8px",
             bottom: "-6px",
-            width: "188px",
-            height: "70px",
+            width: "232px",
+            height: "87px",
             pointerEvents: "none",
             zIndex: 0
           }}
@@ -9966,18 +9966,17 @@ const styles = {
     border: 0
   },
   entryShell: {
+    // flexShrink 0 + sem minHeight 0: dentro do contentBody (flex + overflowY),
+    // encolher aqui comprimia o hero (overflow hidden corta o conteudo) quando o
+    // frete configuravel abria; mantendo a altura natural, o excesso vira scroll.
     display: "flex",
     flexDirection: "column" as const,
     gap: "8px",
     marginTop: 0,
-    minHeight: 0
+    flexShrink: 0
   },
   entryHero: {
-    // zIndex acima do card "Resumo" (sticky, top:0): ao rolar o formulario com o
-    // frete configuravel aberto, o hero cobre o card sticky em vez de ficar por
-    // baixo dele. Fundo opaco garante que nada vaze por tras.
     position: "relative" as const,
-    zIndex: 2,
     overflow: "hidden",
     display: "grid",
     gridTemplateColumns: "minmax(220px, 0.7fr) minmax(360px, 1fr)",
@@ -10036,13 +10035,14 @@ const styles = {
     boxShadow: "var(--kr-shadow)"
   },
   entrySummaryCard: {
+    // Sem sticky: com o frete configuravel aberto o formulario rola, e um card
+    // pinado em top:0 sobrepoe o hero e os demais cards (Ctrl+Enter captura
+    // mesmo com o botao fora da tela).
     padding: "10px",
     borderRadius: "14px",
     background: "var(--kr-surface-soft)",
     border: "1px solid var(--kr-input-border)",
-    boxShadow: "var(--kr-shadow)",
-    position: "sticky" as const,
-    top: 0
+    boxShadow: "var(--kr-shadow)"
   },
   freightBox: {
     display: "grid",
