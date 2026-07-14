@@ -4775,12 +4775,13 @@ function WeighingForm({
     <section style={styles.entryShell}>
       <div style={styles.entryHero}>
         <MountainOutline
+          opacity={0.5}
           style={{
             position: "absolute",
             right: "-8px",
             bottom: "-6px",
-            width: "min(46%, 340px)",
-            height: "auto",
+            width: "232px",
+            height: "87px",
             pointerEvents: "none",
             zIndex: 0
           }}

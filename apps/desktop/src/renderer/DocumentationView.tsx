@@ -389,15 +389,15 @@ export function DocumentationView() {
     <section style={styles.page} aria-labelledby="documentation-title">
       <div style={styles.hero}>
         <MountainOutline
+          opacity={0.45}
           style={{
             position: "absolute",
-            left: "50%",
-            bottom: "-10px",
-            width: "min(52%, 380px)",
-            height: "auto",
+            right: "-6px",
+            bottom: "-6px",
+            width: "200px",
+            height: "75px",
             pointerEvents: "none",
-            zIndex: 0,
-            opacity: 0.85
+            zIndex: 0
           }}
         />
         <div style={{ ...styles.heroText, position: "relative", zIndex: 1 }}>
