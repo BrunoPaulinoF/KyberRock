@@ -17,6 +17,7 @@ import {
   Truck,
   Users
 } from "lucide-react";
+import { MountainOutline } from "./MountainOutline";
 
 interface DocumentationSection {
   id: string;
@@ -387,7 +388,19 @@ export function DocumentationView() {
   return (
     <section style={styles.page} aria-labelledby="documentation-title">
       <div style={styles.hero}>
-        <div style={styles.heroText}>
+        <MountainOutline
+          style={{
+            position: "absolute",
+            left: "50%",
+            bottom: "-10px",
+            width: "min(52%, 380px)",
+            height: "auto",
+            pointerEvents: "none",
+            zIndex: 0,
+            opacity: 0.85
+          }}
+        />
+        <div style={{ ...styles.heroText, position: "relative", zIndex: 1 }}>
           <p style={styles.kicker}>Central de ajuda</p>
           <h1 id="documentation-title" style={styles.title}>
             Documentacao do KyberRock
@@ -570,13 +583,16 @@ const styles: Record<string, CSSProperties> = {
     minHeight: 0
   },
   hero: {
+    position: "relative",
+    overflow: "hidden",
     display: "grid",
     gridTemplateColumns: "minmax(280px, 1fr) minmax(220px, 320px)",
     gap: "14px",
     alignItems: "stretch",
     padding: "18px",
     borderRadius: "18px",
-    background: "linear-gradient(135deg, #171412 0%, #292524 55%, #b45309 100%)",
+    background: "#1c1917",
+    border: "1px solid #292524",
     color: "#ffffff",
     boxShadow: "0 18px 45px rgba(28, 25, 23, 0.2)"
   },
@@ -608,6 +624,8 @@ const styles: Record<string, CSSProperties> = {
     maxWidth: "760px"
   },
   heroCard: {
+    position: "relative",
+    zIndex: 1,
     display: "flex",
     flexDirection: "column",
     gap: "8px",

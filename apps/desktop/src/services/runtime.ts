@@ -819,6 +819,31 @@ export class DesktopRuntime {
     return listOpenWeighingOperations(this.database);
   }
 
+  /**
+   * Busca no cloud apenas as conclusoes do carregador (loader-web) e as projeta
+   * no SQLite local. E uma consulta leve (uma tabela, filtrada por unidade) que
+   * o renderer pode chamar com frequencia para manter a "luz" de conclusao
+   * praticamente em tempo real, sem depender da varredura completa de 30 min.
+   */
+  async pullLoaderCompletions(): Promise<{ pulled: number; errors: string[] }> {
+    this.assertDesktopAccess();
+    try {
+      initializeSupabaseFromSettings(this.database);
+      if (!isSupabaseInitialized()) {
+        return { pulled: 0, errors: [] };
+      }
+      const identity = this.ensureIdentity();
+      return await pullLoaderCompletionsFromCloud(this.database, identity);
+    } catch (error) {
+      return {
+        pulled: 0,
+        errors: [
+          error instanceof Error ? error.message : "Falha ao buscar conclusoes do carregador."
+        ]
+      };
+    }
+  }
+
   listCanceledWeighingOperations(): WeighingOperationSummary[] {
     this.assertDesktopAccess();
     return listCanceledWeighingOperations(this.database);

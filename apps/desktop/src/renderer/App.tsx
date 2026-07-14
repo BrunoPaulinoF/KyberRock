@@ -68,6 +68,7 @@ import {
 } from "@kyberrock/shared";
 import { ActivationGate } from "./ActivationGate";
 import { formatDbDateTime } from "./format-datetime";
+import { MountainOutline } from "./MountainOutline";
 import { CrudFormModal } from "./CrudFormModal";
 import {
   CellMuted,
@@ -289,6 +290,12 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [canceledOperations, setCanceledOperations] = useState<WeighingOperationSummary[]>([]);
   const [closedOperations, setClosedOperations] = useState<WeighingOperationSummary[]>([]);
   const [operationsTab, setOperationsTab] = useState<OperationsTab>("open");
+  const [loaderCompletionNotice, setLoaderCompletionNotice] = useState<string | null>(null);
+  // Estado anterior (id -> concluida?) para detectar a transicao aguardando->concluida
+  // e disparar o aviso de "carga concluida pelo carregador".
+  const loaderCompletedStateRef = useRef<Map<string, boolean>>(new Map());
+  const loaderStateSeededRef = useRef(false);
+  const loaderNoticeTimerRef = useRef<number | null>(null);
   const [canceledFilter, setCanceledFilter] = useState<CanceledFilter>("all");
   const [closedProductFilter, setClosedProductFilter] = useState<string>("all");
   const [printers, setPrinters] = useState<WindowsPrinterSummary[]>([]);
@@ -418,6 +425,74 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     () => new Set(overtimeOpenOperations.map((op) => op.id)),
     [overtimeOpenOperations]
   );
+  const hasAwaitingLoader = useMemo(
+    () => openOperations.some((op) => !op.loaderCompletedAt),
+    [openOperations]
+  );
+
+  // Detecta a transicao aguardando -> concluida (o carregador clicou em "Concluir
+  // carga" no loader-web) e dispara um aviso verde temporario no desktop.
+  useEffect(() => {
+    const prev = loaderCompletedStateRef.current;
+    const next = new Map<string, boolean>();
+    const newlyCompleted: string[] = [];
+    for (const op of openOperations) {
+      const done = Boolean(op.loaderCompletedAt);
+      next.set(op.id, done);
+      if (loaderStateSeededRef.current && done && prev.get(op.id) === false) {
+        newlyCompleted.push(op.plate || "SEM PLACA");
+      }
+    }
+    loaderCompletedStateRef.current = next;
+    loaderStateSeededRef.current = true;
+
+    if (newlyCompleted.length > 0) {
+      setLoaderCompletionNotice(
+        newlyCompleted.length === 1
+          ? `Carga da placa ${newlyCompleted[0]} concluida pelo carregador — pronta para fechar.`
+          : `${newlyCompleted.length} cargas concluidas pelo carregador — prontas para fechar.`
+      );
+      if (loaderNoticeTimerRef.current) window.clearTimeout(loaderNoticeTimerRef.current);
+      loaderNoticeTimerRef.current = window.setTimeout(
+        () => setLoaderCompletionNotice(null),
+        12_000
+      );
+    }
+  }, [openOperations]);
+
+  useEffect(
+    () => () => {
+      if (loaderNoticeTimerRef.current) window.clearTimeout(loaderNoticeTimerRef.current);
+    },
+    []
+  );
+
+  // Enquanto houver carga aguardando o carregador, busca so as conclusoes no
+  // cloud com frequencia (consulta leve por unidade) para a luz virar verde
+  // quase em tempo real, sem esperar a sincronizacao completa de 30 min.
+  useEffect(() => {
+    if (!desktopApi || phase !== "unlocked" || !hasAwaitingLoader) return;
+    let cancelled = false;
+    const api = desktopApi;
+
+    async function tick(): Promise<void> {
+      if (cancelled || !navigator.onLine) return;
+      try {
+        const result = await api.pullLoaderCompletions();
+        if (cancelled || result.pulled <= 0) return;
+        const nextOpen = await api.listOpenWeighingOperations();
+        if (!cancelled) setOpenOperations(nextOpen);
+      } catch {
+        // best-effort: a luz atualiza no proximo ciclo ou na sincronizacao completa
+      }
+    }
+
+    const intervalId = window.setInterval(() => void tick(), 20_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [desktopApi, phase, hasAwaitingLoader]);
 
   useEffect(() => {
     writeStoredThemeMode(themeMode);
@@ -2429,6 +2504,53 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     </div>
                   ) : (
                     <div style={styles.operationsTable}>
+                      {loaderCompletionNotice ? (
+                        <div
+                          role="status"
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "8px",
+                            padding: "10px 12px",
+                            marginBottom: "8px",
+                            borderRadius: "10px",
+                            border: "1px solid #86efac",
+                            background: "#f0fdf4",
+                            color: "#15803d",
+                            fontSize: "13px",
+                            fontWeight: 700
+                          }}
+                        >
+                          <span
+                            aria-hidden="true"
+                            style={{
+                              width: "10px",
+                              height: "10px",
+                              borderRadius: "50%",
+                              background: "#22c55e",
+                              flexShrink: 0
+                            }}
+                          />
+                          <span style={{ flex: 1 }}>✓ {loaderCompletionNotice}</span>
+                          <button
+                            type="button"
+                            onClick={() => setLoaderCompletionNotice(null)}
+                            aria-label="Dispensar aviso"
+                            style={{
+                              border: "none",
+                              background: "transparent",
+                              color: "#15803d",
+                              cursor: "pointer",
+                              fontWeight: 900,
+                              fontSize: "15px",
+                              lineHeight: 1,
+                              padding: "0 2px"
+                            }}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ) : null}
                       {overtimeOpenOperations.length > 0 ? (
                         <div
                           role="alert"
@@ -2465,7 +2587,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                         </div>
                       ) : null}
                       <div style={{ ...styles.operationsTableRow, ...styles.operationsTableHead }}>
-                        <span>Placa</span>
+                        <span>Placa / Carregador</span>
                         <span>Cliente / Produto</span>
                         <span>Entrada / Preco</span>
                         <span>Acoes</span>
@@ -2480,7 +2602,18 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                             ...(isOvertime ? { background: "#fef2f2" } : {})
                           }}
                         >
-                          <strong style={styles.plateBadge}>{operation.plate}</strong>
+                          <span
+                            style={{
+                              display: "flex",
+                              flexDirection: "column",
+                              alignItems: "flex-start",
+                              gap: "5px",
+                              minWidth: 0
+                            }}
+                          >
+                            <strong style={styles.plateBadge}>{operation.plate}</strong>
+                            <LoaderStatusLight completedAt={operation.loaderCompletedAt} />
+                          </span>
                           <span style={styles.operationCellStack}>
                             <strong>{operation.customerName}</strong>
                             <span>{operation.productDescription}</span>
@@ -3649,12 +3782,63 @@ function GlobalUiPolish() {
         0% { transform: translateX(-100%); }
         100% { transform: translateX(400%); }
       }
+
+      @keyframes krPulse {
+        0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.55); opacity: 1; }
+        70% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); opacity: 0.65; }
+        100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); opacity: 1; }
+      }
     `}</style>
   );
 }
 
 function getWindowDesktopApi(): KyberRockDesktopApi | undefined {
   return typeof window === "undefined" ? undefined : window.kyberrockDesktop;
+}
+
+/**
+ * Luz de conclusao do carregador: vermelha (pulsando) enquanto a carga aguarda
+ * o carregador marcar "Concluir carga" no loader-web; verde quando concluida.
+ * O status chega ao desktop pela projecao cloud (`loader_completed_at`).
+ */
+function LoaderStatusLight({ completedAt }: { completedAt?: string | null }) {
+  const completed = Boolean(completedAt);
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "5px",
+        padding: "2px 8px 2px 6px",
+        borderRadius: "999px",
+        fontSize: "10px",
+        fontWeight: 800,
+        letterSpacing: "0.02em",
+        whiteSpace: "nowrap",
+        border: `1px solid ${completed ? "#86efac" : "#fca5a5"}`,
+        background: completed ? "#f0fdf4" : "#fef2f2",
+        color: completed ? "#15803d" : "#b91c1c"
+      }}
+      title={
+        completed
+          ? `Carga concluida pelo carregador${completedAt ? ` em ${formatDbDateTime(completedAt)}` : ""}.`
+          : "Aguardando o carregador concluir a carga no loader-web."
+      }
+    >
+      <span
+        aria-hidden="true"
+        style={{
+          width: "8px",
+          height: "8px",
+          borderRadius: "50%",
+          flexShrink: 0,
+          background: completed ? "#22c55e" : "#ef4444",
+          animation: completed ? undefined : "krPulse 1.6s ease-out infinite"
+        }}
+      />
+      {completed ? "Concluida" : "Aguardando"}
+    </span>
+  );
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {
@@ -4590,12 +4774,25 @@ function WeighingForm({
   return (
     <section style={styles.entryShell}>
       <div style={styles.entryHero}>
-        <div>
-          <p style={styles.kicker}>Operacao de balanca</p>
-          <h2 style={{ ...styles.title, marginBottom: "4px" }}>Nova entrada</h2>
-          <p style={styles.subtitle}>Use Tab para avancar e Ctrl+Enter para capturar.</p>
+        <MountainOutline
+          style={{
+            position: "absolute",
+            right: "-8px",
+            bottom: "-6px",
+            width: "min(46%, 340px)",
+            height: "auto",
+            pointerEvents: "none",
+            zIndex: 0
+          }}
+        />
+        <div style={{ position: "relative", zIndex: 1 }}>
+          <p style={{ ...styles.kicker, color: "#fbbf24" }}>Operacao de balanca</p>
+          <h2 style={{ ...styles.title, marginBottom: "4px", color: "#ffffff" }}>Nova entrada</h2>
+          <p style={{ ...styles.subtitle, color: "#d6d3d1" }}>
+            Use Tab para avancar e Ctrl+Enter para capturar.
+          </p>
         </div>
-        <div style={{ display: "flex", gap: "16px", alignItems: "stretch" }}>
+        <div style={{ display: "flex", gap: "16px", alignItems: "stretch", position: "relative", zIndex: 1 }}>
           <div style={{ ...styles.liveWeightCard, flex: 1 }}>
             <div style={styles.metricHeader}>
               <img
@@ -9775,13 +9972,16 @@ const styles = {
     minHeight: 0
   },
   entryHero: {
+    position: "relative" as const,
+    overflow: "hidden",
     display: "grid",
     gridTemplateColumns: "minmax(220px, 0.7fr) minmax(360px, 1fr)",
     alignItems: "stretch",
     gap: "10px",
     padding: "10px 12px",
     borderRadius: "14px",
-    background: "linear-gradient(135deg, #171412 0%, #292524 58%, #b45309 100%)",
+    background: "#1c1917",
+    border: "1px solid #292524",
     color: "#ffffff",
     boxShadow: "0 12px 28px rgba(28, 25, 23, 0.2)"
   },

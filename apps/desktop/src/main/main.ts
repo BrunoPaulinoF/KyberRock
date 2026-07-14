@@ -289,6 +289,14 @@ function registerIpcHandlers(): void {
     return runtime.listOpenWeighingOperations();
   });
 
+  ipcMain.handle("desktop:pull-loader-completions", () => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.pullLoaderCompletions();
+  });
+
   ipcMain.handle("desktop:list-canceled-weighing-operations", () => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");
