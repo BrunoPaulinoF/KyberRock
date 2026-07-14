@@ -21,7 +21,10 @@ export function MountainOutline({
       aria-hidden="true"
       focusable="false"
       preserveAspectRatio="xMidYMax meet"
-      style={style}
+      // `display: block` evita o baseline de elemento inline e o `height: auto`
+      // (que, dependendo do layout, estica ou colapsa o SVG e quebra o hero).
+      // Quem usa o componente deve passar width E height explicitos no `style`.
+      style={{ display: "block", ...style }}
     >
       <g
         stroke={stroke}
