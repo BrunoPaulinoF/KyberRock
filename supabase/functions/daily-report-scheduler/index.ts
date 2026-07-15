@@ -63,8 +63,11 @@ Deno.serve(async (req) => {
   const unitId = body.unitId ?? url.searchParams.get("unitId") ?? undefined;
   const force = body.force === true || url.searchParams.get("force") === "true";
 
+  // Encaminha o segredo ja validado: o daily-report-email faz a propria checagem
+  // (nao depende do formato da chave no Authorization do gateway).
   const { data, error } = await supabase.functions.invoke("daily-report-email", {
-    body: { date, companyId, unitId, force }
+    body: { date, companyId, unitId, force },
+    headers: { "x-cron-secret": providedSecret }
   });
 
   if (error) {
