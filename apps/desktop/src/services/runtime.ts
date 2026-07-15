@@ -98,6 +98,7 @@ import {
   pingSupabase,
   processCloudSyncQueue,
   pushPendingReportRecipients,
+  pushReportChannelSettings,
   syncOperationToSupabase,
   syncLoadingRequestToSupabase,
   syncOmieReferenceDataFromCloud,
@@ -137,8 +138,20 @@ import {
   sendEmail,
   verifySmtpConnection,
   type EmailSendInput,
-  type EmailSendResult
+  type EmailSendResult,
+  type SmtpOverrides
 } from "./email.js";
+import {
+  normalizeUazapiBaseUrl,
+  readReportChannelSettings,
+  uazapiConnectInstance,
+  uazapiCreateInstance,
+  uazapiDisconnectInstance,
+  uazapiInstanceStatus,
+  writeReportChannelSettings,
+  type ReportChannelSettings,
+  type UazapiInstanceState
+} from "./report-channels.js";
 import {
   createReportRecipient,
   deleteReportRecipient,
@@ -1104,6 +1117,22 @@ export class DesktopRuntime {
         );
       }
 
+      // Config dos canais de envio (SMTP/WhatsApp) com push pendente de uma
+      // tentativa anterior que falhou (ex.: salvo offline na tela de Relatorios).
+      try {
+        if (readReportChannelSettings(this.database).cloudPushPending) {
+          await pushReportChannelSettings(this.database, identity);
+          writeReportChannelSettings(this.database, {
+            cloudPushPending: false,
+            cloudPushError: null
+          });
+        }
+      } catch (error) {
+        errors.push(
+          `Report channel settings sync: ${error instanceof Error ? error.message : "Unknown error"}`
+        );
+      }
+
       // Pull company price_change_password from cloud
       try {
         await pullCompanyPricePasswordFromCloud(this.database, identity);
@@ -1434,16 +1463,31 @@ export class DesktopRuntime {
     deleteReportRecipient(this.database, id);
   }
 
+  // Config SMTP cadastrada na tela de Relatorios; os envs SMTP_* sao fallback.
+  private smtpOverrides(): SmtpOverrides {
+    const settings = readReportChannelSettings(this.database);
+    return {
+      host: settings.smtpHost,
+      port: settings.smtpPort,
+      user: settings.smtpUser,
+      password: settings.smtpPassword,
+      from: settings.smtpSender
+    };
+  }
+
   sendReportEmail(input: EmailSendInput): Promise<EmailSendResult> {
-    return sendEmail(input);
+    return sendEmail(input, this.smtpOverrides());
   }
 
   async sendTestEmail(to: string): Promise<EmailSendResult> {
-    return sendEmail({
-      to,
-      subject: "Teste de envio - KyberRock",
-      html: '<!doctype html><html><head><meta charset="utf-8" /></head><body style="font-family:Arial,sans-serif;padding:24px"><h1>KyberRock - Email configurado com sucesso!</h1><p>Este e um email de teste para verificar a conexao SMTP. Se voce esta lendo isso, o envio de relatorios por email esta funcionando.</p></body></html>'
-    });
+    return sendEmail(
+      {
+        to,
+        subject: "Teste de envio - KyberRock",
+        html: '<!doctype html><html><head><meta charset="utf-8" /></head><body style="font-family:Arial,sans-serif;padding:24px"><h1>KyberRock - Email configurado com sucesso!</h1><p>Este e um email de teste para verificar a conexao SMTP. Se voce esta lendo isso, o envio de relatorios por email esta funcionando.</p></body></html>'
+      },
+      this.smtpOverrides()
+    );
   }
 
   async sendDailyReportEmail(email: string, date: string): Promise<EmailSendResult> {
@@ -1458,11 +1502,14 @@ export class DesktopRuntime {
       date,
       report
     });
-    return sendEmail({
-      to: email,
-      subject: `Fechamento diario ${date} - ${companyName}`,
-      html
-    });
+    return sendEmail(
+      {
+        to: email,
+        subject: `Fechamento diario ${date} - ${companyName}`,
+        html
+      },
+      this.smtpOverrides()
+    );
   }
 
   async sendRangeReportEmail(
@@ -1476,15 +1523,152 @@ export class DesktopRuntime {
       .get(identity.companyId) as { legal_name: string | null } | undefined;
     const companyName = companyRow?.legal_name || "KyberRock";
     const html = this.getReportHtml(startDate, endDate);
-    return sendEmail({
-      to: email,
-      subject: `Relatorio ${startDate} a ${endDate} - ${companyName}`,
-      html
-    });
+    return sendEmail(
+      {
+        to: email,
+        subject: `Relatorio ${startDate} a ${endDate} - ${companyName}`,
+        html
+      },
+      this.smtpOverrides()
+    );
   }
 
   verifySmtpConfig(): Promise<EmailSendResult> {
-    return verifySmtpConnection();
+    return verifySmtpConnection(this.smtpOverrides());
+  }
+
+  getReportChannelSettings(): ReportChannelSettings {
+    return readReportChannelSettings(this.database);
+  }
+
+  // Salva a configuracao dos canais localmente e tenta empurrar para o cloud;
+  // falha de push nao perde o salvamento local (fica pendente para o proximo sync).
+  async saveReportChannelSettings(
+    input: Partial<ReportChannelSettings>
+  ): Promise<ReportChannelSettings> {
+    const sanitized: Partial<ReportChannelSettings> = { ...input };
+    if (typeof sanitized.uazapiBaseUrl === "string") {
+      sanitized.uazapiBaseUrl = normalizeUazapiBaseUrl(sanitized.uazapiBaseUrl);
+    }
+    if (typeof sanitized.smtpPort === "number" && !Number.isFinite(sanitized.smtpPort)) {
+      sanitized.smtpPort = 587;
+    }
+    writeReportChannelSettings(this.database, {
+      ...sanitized,
+      cloudPushPending: true,
+      cloudPushError: null
+    });
+    return this.pushChannelSettingsToCloud();
+  }
+
+  private async pushChannelSettingsToCloud(): Promise<ReportChannelSettings> {
+    try {
+      const identity = this.ensureIdentity();
+      await pushReportChannelSettings(this.database, identity);
+      return writeReportChannelSettings(this.database, {
+        cloudPushPending: false,
+        cloudPushError: null
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Falha ao sincronizar configuracao com o cloud";
+      return writeReportChannelSettings(this.database, {
+        cloudPushPending: true,
+        cloudPushError: message
+      });
+    }
+  }
+
+  private persistWhatsappState(state: UazapiInstanceState): void {
+    writeReportChannelSettings(this.database, {
+      uazapiStatus: state.status,
+      uazapiProfileName: state.profileName ?? "",
+      cloudPushPending: true
+    });
+  }
+
+  // Cria a instancia UAZAPI (na primeira vez) e inicia a conexao; o QR code
+  // volta no estado retornado e rotaciona via whatsappStatus().
+  async whatsappConnect(): Promise<UazapiInstanceState> {
+    const settings = readReportChannelSettings(this.database);
+    if (!settings.uazapiBaseUrl) {
+      throw new Error("Informe o servidor UAZAPI (URL) e salve a configuracao antes de conectar.");
+    }
+    let instanceToken = settings.uazapiInstanceToken;
+    if (!instanceToken) {
+      if (!settings.uazapiAdminToken) {
+        throw new Error("Informe a chave de API (admin token) do UAZAPI e salve antes de conectar.");
+      }
+      let instanceName = settings.uazapiInstanceName;
+      if (!instanceName) {
+        try {
+          instanceName = `kyberrock-${this.ensureIdentity().companyId.slice(0, 8)}`;
+        } catch {
+          instanceName = "kyberrock-desktop";
+        }
+      }
+      const created = await uazapiCreateInstance({
+        baseUrl: settings.uazapiBaseUrl,
+        adminToken: settings.uazapiAdminToken,
+        name: instanceName
+      });
+      if (!created.instanceToken) {
+        throw new Error("UAZAPI nao retornou o token da instancia criada.");
+      }
+      instanceToken = created.instanceToken;
+      writeReportChannelSettings(this.database, {
+        uazapiInstanceToken: instanceToken,
+        uazapiInstanceName: instanceName,
+        uazapiStatus: created.status,
+        cloudPushPending: true
+      });
+    }
+    await uazapiConnectInstance({ baseUrl: settings.uazapiBaseUrl, instanceToken });
+    // O QR mais recente vem no status (o connect pode responder antes de gera-lo).
+    const state = await uazapiInstanceStatus({ baseUrl: settings.uazapiBaseUrl, instanceToken });
+    this.persistWhatsappState(state);
+    void this.pushChannelSettingsToCloud();
+    return state;
+  }
+
+  async whatsappStatus(): Promise<UazapiInstanceState> {
+    const settings = readReportChannelSettings(this.database);
+    if (!settings.uazapiBaseUrl || !settings.uazapiInstanceToken) {
+      return {
+        status: "disconnected",
+        connected: false,
+        loggedIn: false,
+        qrcode: null,
+        paircode: null,
+        profileName: null,
+        owner: null,
+        instanceToken: null,
+        lastDisconnectReason: null
+      };
+    }
+    const state = await uazapiInstanceStatus({
+      baseUrl: settings.uazapiBaseUrl,
+      instanceToken: settings.uazapiInstanceToken
+    });
+    if (state.status !== settings.uazapiStatus) {
+      this.persistWhatsappState(state);
+      void this.pushChannelSettingsToCloud();
+    }
+    return state;
+  }
+
+  async whatsappDisconnect(): Promise<UazapiInstanceState> {
+    const settings = readReportChannelSettings(this.database);
+    if (!settings.uazapiBaseUrl || !settings.uazapiInstanceToken) {
+      throw new Error("Nenhuma instancia WhatsApp configurada.");
+    }
+    const state = await uazapiDisconnectInstance({
+      baseUrl: settings.uazapiBaseUrl,
+      instanceToken: settings.uazapiInstanceToken
+    });
+    this.persistWhatsappState({ ...state, status: "disconnected" });
+    void this.pushChannelSettingsToCloud();
+    return { ...state, status: "disconnected" };
   }
 
   getPriceForCustomerProduct(customerId: string, productId: string): number | null {

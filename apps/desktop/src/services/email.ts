@@ -20,12 +20,22 @@ export interface EmailSendResult {
   error?: string;
 }
 
-function readSmtpConfig(): SmtpConfig {
-  const host = process.env["SMTP_HOST"] ?? "";
-  const port = Number(process.env["SMTP_PORT"] ?? "587");
-  const user = process.env["SMTP_USER"] ?? "";
-  const password = process.env["SMTP_PASSWORD"] ?? "";
-  const from = process.env["DAILY_REPORT_SENDER"] ?? user;
+// A configuracao salva na tela de Relatorios (local_settings) tem prioridade;
+// os envs SMTP_*/DAILY_REPORT_SENDER seguem como fallback por campo.
+export interface SmtpOverrides {
+  host?: string;
+  port?: number;
+  user?: string;
+  password?: string;
+  from?: string;
+}
+
+function readSmtpConfig(overrides?: SmtpOverrides): SmtpConfig {
+  const host = overrides?.host || process.env["SMTP_HOST"] || "";
+  const port = overrides?.port || Number(process.env["SMTP_PORT"] ?? "587");
+  const user = overrides?.user || process.env["SMTP_USER"] || "";
+  const password = overrides?.password || process.env["SMTP_PASSWORD"] || "";
+  const from = overrides?.from || process.env["DAILY_REPORT_SENDER"] || user;
   return { host, port, user, password, from };
 }
 
@@ -41,7 +51,8 @@ let cachedTransport: Transporter | null = null;
 let cachedConfigKey: string | null = null;
 
 function configKey(config: SmtpConfig): string {
-  return `${config.host}:${config.port}:${config.user}:${config.from}`;
+  // Inclui a senha para invalidar o transport cacheado quando ela muda na tela.
+  return `${config.host}:${config.port}:${config.user}:${config.from}:${config.password}`;
 }
 
 function getTransport(config: SmtpConfig): Transporter {
@@ -65,8 +76,11 @@ function getTransport(config: SmtpConfig): Transporter {
   return cachedTransport;
 }
 
-export async function sendEmail(input: EmailSendInput): Promise<EmailSendResult> {
-  const config = readSmtpConfig();
+export async function sendEmail(
+  input: EmailSendInput,
+  overrides?: SmtpOverrides
+): Promise<EmailSendResult> {
+  const config = readSmtpConfig(overrides);
   const validationError = validateConfig(config);
   if (validationError) {
     return { success: false, error: validationError };
@@ -89,8 +103,8 @@ export async function sendEmail(input: EmailSendInput): Promise<EmailSendResult>
   }
 }
 
-export async function verifySmtpConnection(): Promise<EmailSendResult> {
-  const config = readSmtpConfig();
+export async function verifySmtpConnection(overrides?: SmtpOverrides): Promise<EmailSendResult> {
+  const config = readSmtpConfig(overrides);
   const validationError = validateConfig(config);
   if (validationError) {
     return { success: false, error: validationError };

@@ -18,6 +18,7 @@ import {
   type ReportRecipientRow
 } from "./report-recipients.js";
 import { isSellableProduct } from "./product-classification.js";
+import { readReportChannelSettings, toCloudChannelSettingsRow } from "./report-channels.js";
 import {
   enqueueSyncJob,
   listRunnableSyncJobs,
@@ -2458,6 +2459,21 @@ export async function pushPendingReportRecipients(
 
   for (const row of rows) markRecipientSynced(database, row.id);
   return rows.length;
+}
+
+// Empurra a configuracao dos canais de envio (SMTP/WhatsApp) da empresa para o
+// cloud (tabela report_channel_settings), para o daily-report-email usar sem
+// depender de envs nas Edge Functions. Chamado ao salvar/conectar na tela de
+// Relatorios e no ciclo de sync enquanto houver push pendente.
+export async function pushReportChannelSettings(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity
+): Promise<void> {
+  const settings = readReportChannelSettings(database);
+  const cloud = getCloudSettings(database, identity);
+  await invokeDesktopSync(cloud, {
+    reportChannelSettings: toCloudChannelSettingsRow(cloud.companyId, settings)
+  });
 }
 
 async function invokeDesktopSync(

@@ -11,6 +11,7 @@ type CloudPayload = {
   customers?: Record<string, unknown>[];
   products?: Record<string, unknown>[];
   reportRecipients?: Record<string, unknown>[];
+  reportChannelSettings?: Record<string, unknown>;
   avgQuarryMinutes?: number;
 };
 
@@ -117,6 +118,16 @@ Deno.serve(async (req) => {
         stepErrors.push(`report_recipients: ${error.message} (code=${error.code ?? "n/a"})`);
       } else {
         counts.reportRecipients = body.reportRecipients.length;
+      }
+    }
+    // Configuracao dos canais de envio (SMTP/WhatsApp) da empresa: um registro
+    // por empresa, usado pelo daily-report-email no lugar dos envs.
+    if (body.reportChannelSettings && typeof body.reportChannelSettings === "object") {
+      const { error } = await supabase
+        .from("report_channel_settings")
+        .upsert(body.reportChannelSettings, { onConflict: "company_id" });
+      if (error) {
+        stepErrors.push(`report_channel_settings: ${error.message} (code=${error.code ?? "n/a"})`);
       }
     }
 

@@ -705,6 +705,34 @@ function registerIpcHandlers(): void {
     return runtime.verifySmtpConfig();
   });
 
+  ipcMain.handle("desktop:report-channels-get", () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.getReportChannelSettings();
+  });
+
+  ipcMain.handle(
+    "desktop:report-channels-save",
+    async (_event, input: Record<string, unknown>) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.saveReportChannelSettings(input);
+    }
+  );
+
+  ipcMain.handle("desktop:whatsapp-connect", async () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.whatsappConnect();
+  });
+
+  ipcMain.handle("desktop:whatsapp-status", async () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.whatsappStatus();
+  });
+
+  ipcMain.handle("desktop:whatsapp-disconnect", async () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.whatsappDisconnect();
+  });
+
   ipcMain.handle("desktop:get-price", (_event, customerId: string, productId: string) => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");

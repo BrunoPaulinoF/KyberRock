@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 
 import type { KyberRockDesktopApi } from "../preload/api-types";
 import { CrudFormModal } from "./CrudFormModal";
+import { ReportChannelsSettings } from "./ReportChannelsSettings";
 import { formatDbDateTime } from "./format-datetime";
 
 type ReportType = "sales" | "trucks" | "both";
@@ -398,6 +399,8 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
           + Novo destinatario
         </button>
       </header>
+
+      <ReportChannelsSettings desktopApi={desktopApi} />
 
       {showForm ? (
         <CrudFormModal onClose={resetForm} maxWidth={920}>
