@@ -54,6 +54,18 @@ describe("payment-methods service", () => {
     expect(methods.every((m) => m.is_system === 1)).toBe(true);
   });
 
+  it("seeds the default OMIE payment codes (tPag) so the order carries the meio", () => {
+    ensureDefaultPaymentMethods(database, COMPANY_ID);
+    const byCode = new Map(listPaymentMethods(database, COMPANY_ID).map((m) => [m.code, m.omie_code]));
+    expect(byCode.get("cash")).toBe("01");
+    expect(byCode.get("pix")).toBe("17");
+    expect(byCode.get("credit_card")).toBe("03");
+    expect(byCode.get("debit_card")).toBe("04");
+    expect(byCode.get("boleto")).toBe("15");
+    // Credito do cliente (fiado) nao mapeia para um meio direto do OMIE.
+    expect(byCode.get("customer_credit")).toBeNull();
+  });
+
   it("flags the customer-credit method", () => {
     ensureDefaultPaymentMethods(database, COMPANY_ID);
     const credit = listPaymentMethods(database, COMPANY_ID).find(
@@ -71,13 +83,14 @@ describe("payment-methods service", () => {
     expect(created.is_system).toBe(0);
   });
 
-  it("renames and deactivates a method", () => {
+  it("aliases and deactivates a method (name stays OMIE-owned)", () => {
     const created = createPaymentMethod(database, { companyId: COMPANY_ID, name: "Vale" });
     const updated = updatePaymentMethod(database, created.id, {
-      name: "Vale-compra",
+      alias: "Vale-compra",
       isActive: false
     });
-    expect(updated.name).toBe("Vale-compra");
+    expect(updated.name).toBe("Vale");
+    expect(updated.alias).toBe("Vale-compra");
     expect(updated.is_active).toBe(0);
   });
 
@@ -106,7 +119,7 @@ describe("payment-methods service", () => {
     expect(created.account_id).toBe("acc-123");
   });
 
-  it("updates and clears alias / omie code / account", () => {
+  it("updates and clears alias / account (omie code stays untouched)", () => {
     const created = createPaymentMethod(database, {
       companyId: COMPANY_ID,
       name: "Pix",
@@ -116,11 +129,10 @@ describe("payment-methods service", () => {
     });
     const updated = updatePaymentMethod(database, created.id, {
       alias: "",
-      omieCode: null,
       accountId: null
     });
     expect(updated.alias).toBeNull();
-    expect(updated.omie_code).toBeNull();
+    expect(updated.omie_code).toBe("PIX-9");
     expect(updated.account_id).toBeNull();
   });
 

@@ -8,6 +8,8 @@ import {
   createOmieClient,
   OmieSyncService
 } from "./omie-sync";
+import { ensureDefaultPaymentMethods } from "./payment-methods.js";
+import { ensureDefaultAccounts } from "./accounts.js";
 
 describe("createOmieClient", () => {
   it("creates client with credentials", () => {
@@ -105,7 +107,7 @@ describe("OmieSyncService", () => {
     expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining("INSERT INTO products"));
   });
 
-  it("rebuilds customers and carriers from ListarClientes tags after clearing local registrations", async () => {
+  it("rebuilds customers and carriers from ListarClientes tags while preserving local registrations", async () => {
     const db = openDesktopDatabase({ databasePath: ":memory:" });
 
     try {
@@ -187,18 +189,22 @@ describe("OmieSyncService", () => {
       const result = await service.rebuildCustomersAndCarriersFromOmie("company-1");
 
       expect(result).toEqual({ customersPulled: 2, suppliersSynced: 2 });
+      // 2 clientes OMIE (101, 303) + 1 cliente local preservado.
       expect(
         db.prepare("SELECT COUNT(*) FROM customers WHERE company_id = ? AND deleted_at IS NULL").pluck().get("company-1")
-      ).toBe(2);
+      ).toBe(3);
+      // 2 transportadoras OMIE (202, 303) + 1 transportadora local preservada.
       expect(
         db.prepare("SELECT COUNT(*) FROM carriers WHERE company_id = ? AND deleted_at IS NULL").pluck().get("company-1")
-      ).toBe(2);
-      expect(db.prepare("SELECT deleted_at IS NOT NULL FROM customers WHERE id = 'local-customer'").pluck().get()).toBe(1);
-      expect(db.prepare("SELECT deleted_at IS NOT NULL FROM carriers WHERE id = 'local-carrier'").pluck().get()).toBe(1);
-      expect(db.prepare("SELECT carrier_id FROM vehicles WHERE id = 'vehicle-1'").pluck().get()).toBeNull();
-      expect(db.prepare("SELECT deleted_at IS NOT NULL FROM customer_carriers WHERE id = 'cc-1'").pluck().get()).toBe(1);
-      expect(db.prepare("SELECT deleted_at IS NOT NULL FROM vehicle_carriers WHERE id = 'vc-1'").pluck().get()).toBe(1);
-      expect(db.prepare("SELECT deleted_at IS NOT NULL FROM driver_carriers WHERE id = 'dc-1'").pluck().get()).toBe(1);
+      ).toBe(3);
+      // Registros locais NAO sao apagados na reconciliacao.
+      expect(db.prepare("SELECT deleted_at IS NOT NULL FROM customers WHERE id = 'local-customer'").pluck().get()).toBe(0);
+      expect(db.prepare("SELECT deleted_at IS NOT NULL FROM carriers WHERE id = 'local-carrier'").pluck().get()).toBe(0);
+      // Relacoes de uma transportadora local sao preservadas (nao apontam para transportadora OMIE removida).
+      expect(db.prepare("SELECT carrier_id FROM vehicles WHERE id = 'vehicle-1'").pluck().get()).toBe("local-carrier");
+      expect(db.prepare("SELECT deleted_at IS NOT NULL FROM customer_carriers WHERE id = 'cc-1'").pluck().get()).toBe(0);
+      expect(db.prepare("SELECT deleted_at IS NOT NULL FROM vehicle_carriers WHERE id = 'vc-1'").pluck().get()).toBe(0);
+      expect(db.prepare("SELECT deleted_at IS NOT NULL FROM driver_carriers WHERE id = 'dc-1'").pluck().get()).toBe(0);
       expect(
         db.prepare("SELECT email FROM customers WHERE id = 'omie_101' AND deleted_at IS NULL").pluck().get()
       ).toBe("cliente@example.com");
@@ -302,6 +308,184 @@ describe("OmieSyncService", () => {
     expect(db.prepare).not.toHaveBeenCalledWith(
       expect.stringContaining("INSERT INTO payment_terms")
     );
+  });
+
+  it("pulls payment methods from OMIE adopting seeds and inserting new ones idempotently", async () => {
+    const db = openDesktopDatabase({ databasePath: ":memory:" });
+
+    try {
+      runDesktopMigrations(db);
+      db.exec(`
+        INSERT INTO companies (id, legal_name, trade_name, created_at, updated_at)
+        VALUES ('company-1', 'Empresa Teste', 'Empresa', datetime('now'), datetime('now'));
+      `);
+      ensureDefaultPaymentMethods(db, "company-1");
+      // Simula vinculo local existente para garantir que o adote preserva campos locais.
+      db.exec(`
+        UPDATE payment_methods SET alias = 'PIX rapidinho' WHERE company_id = 'company-1' AND code = 'pix';
+      `);
+
+      const service = new OmieSyncService(createMockClient(), db);
+      const listAll = vi
+        .spyOn(
+          (service as unknown as Record<string, unknown>)
+            .paymentMethodsService as { listAll: () => Promise<unknown[]> },
+          "listAll"
+        )
+        .mockResolvedValue([
+          { code: "01", description: "Dinheiro", type: null },
+          { code: "17", description: "PIX", type: null },
+          { code: "90", description: "Sem pagamento", type: null }
+        ]);
+
+      const first = await service.syncPaymentMethods("company-1");
+
+      // "cash"/"pix" ja vem com os codigos padrao (01/17) do seed -> ja presentes (skipped);
+      // "90" entra como forma nova do OMIE.
+      expect(first).toEqual({ fetched: 3, created: 1, updated: 0, skipped: 2 });
+      expect(
+        db.prepare(
+          "SELECT omie_code FROM payment_methods WHERE company_id = 'company-1' AND code = 'cash'"
+        ).pluck().get()
+      ).toBe("01");
+      expect(
+        db.prepare(
+          "SELECT alias FROM payment_methods WHERE company_id = 'company-1' AND code = 'pix'"
+        ).pluck().get()
+      ).toBe("PIX rapidinho");
+      expect(
+        db.prepare(
+          "SELECT name FROM payment_methods WHERE company_id = 'company-1' AND omie_code = '90'"
+        ).pluck().get()
+      ).toBe("Sem pagamento");
+
+      const countAfterFirst = db
+        .prepare("SELECT COUNT(*) FROM payment_methods WHERE company_id = 'company-1'")
+        .pluck()
+        .get();
+
+      // Segunda sincronizacao: nada acontece (idempotente).
+      const second = await service.syncPaymentMethods("company-1");
+      expect(second).toEqual({ fetched: 3, created: 0, updated: 0, skipped: 3 });
+      expect(
+        db.prepare("SELECT COUNT(*) FROM payment_methods WHERE company_id = 'company-1'").pluck().get()
+      ).toBe(countAfterFirst);
+      expect(listAll).toHaveBeenCalledTimes(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("pulls payment conditions from OMIE into the omie_payment_terms mirror without duplicating", async () => {
+    const db = openDesktopDatabase({ databasePath: ":memory:" });
+
+    try {
+      runDesktopMigrations(db);
+      db.exec(`
+        INSERT INTO companies (id, legal_name, trade_name, created_at, updated_at)
+        VALUES ('company-1', 'Empresa Teste', 'Empresa', datetime('now'), datetime('now'));
+      `);
+
+      const service = new OmieSyncService(createMockClient(), db);
+      vi.spyOn(
+        (service as unknown as Record<string, unknown>)
+          .parcelasService as { listAll: () => Promise<unknown[]> },
+        "listAll"
+      ).mockResolvedValue([
+        {
+          id: 0,
+          code: "000",
+          description: "A Vista",
+          firstInstallmentDays: 0,
+          installmentIntervalDays: null,
+          installmentCount: 1,
+          installmentType: null,
+          installmentDays: null,
+          isActive: true,
+          visible: true
+        },
+        {
+          id: 212,
+          code: "212",
+          description: "7/14/21",
+          firstInstallmentDays: 7,
+          installmentIntervalDays: 7,
+          installmentCount: 3,
+          installmentType: null,
+          installmentDays: [7, 14, 21],
+          isActive: true,
+          visible: true
+        }
+      ]);
+
+      const first = await service.syncPaymentConditions("company-1");
+      expect(first.fetched).toBe(2);
+      expect(
+        db.prepare("SELECT COUNT(*) FROM omie_payment_terms WHERE company_id = 'company-1'").pluck().get()
+      ).toBe(2);
+      expect(
+        db
+          .prepare("SELECT installment_days_json FROM omie_payment_terms WHERE code = '212'")
+          .pluck()
+          .get()
+      ).toBe("[7,14,21]");
+
+      // Re-sincronizar nao duplica (upsert por company_id + code).
+      await service.syncPaymentConditions("company-1");
+      expect(
+        db.prepare("SELECT COUNT(*) FROM omie_payment_terms WHERE company_id = 'company-1'").pluck().get()
+      ).toBe(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("pulls checking accounts from OMIE adopting same-name locals and skipping existing codes", async () => {
+    const db = openDesktopDatabase({ databasePath: ":memory:" });
+
+    try {
+      runDesktopMigrations(db);
+      db.exec(`
+        INSERT INTO companies (id, legal_name, trade_name, created_at, updated_at)
+        VALUES ('company-1', 'Empresa Teste', 'Empresa', datetime('now'), datetime('now'));
+      `);
+      ensureDefaultAccounts(db, "company-1");
+
+      const service = new OmieSyncService(createMockClient(), db);
+      vi.spyOn(
+        (service as unknown as Record<string, unknown>)
+          .checkingAccountsService as { listAll: () => Promise<unknown[]> },
+        "listAll"
+      ).mockResolvedValue([
+        { code: 111, integrationCode: null, name: "caixinha", type: null, isActive: true },
+        { code: 222, integrationCode: null, name: "Home Cash", type: null, isActive: true }
+      ]);
+
+      const first = await service.syncCheckingAccounts("company-1");
+
+      // "Caixinha" (seed) adota o codigo por nome; "Home Cash" entra como conta nova.
+      expect(first).toEqual({ fetched: 2, created: 1, updated: 1, skipped: 0 });
+      expect(
+        db.prepare(
+          "SELECT omie_code FROM accounts WHERE company_id = 'company-1' AND code = 'caixinha'"
+        ).pluck().get()
+      ).toBe("111");
+      expect(
+        db.prepare(
+          "SELECT name FROM accounts WHERE company_id = 'company-1' AND omie_code = '222'"
+        ).pluck().get()
+      ).toBe("Home Cash");
+
+      const second = await service.syncCheckingAccounts("company-1");
+      expect(second).toEqual({ fetched: 2, created: 0, updated: 0, skipped: 2 });
+      expect(
+        db.prepare(
+          "SELECT COUNT(*) FROM accounts WHERE company_id = 'company-1' AND deleted_at IS NULL"
+        ).pluck().get()
+      ).toBe(4); // caixinha, omie_cash, getnet + Home Cash
+    } finally {
+      db.close();
+    }
   });
 
   it("syncAll returns counts and collects errors", async () => {

@@ -1046,5 +1046,86 @@ ALTER TABLE customers ADD COLUMN credit_second_closing_day INTEGER;
 ALTER TABLE customers ADD COLUMN credit_second_boleto_days INTEGER;
 ALTER TABLE customers ADD COLUMN credit_closing_weekday INTEGER;
 `
+  },
+  {
+    version: 30,
+    name: "omie_payment_terms_registry_and_link",
+    sql: `
+-- Condicoes de parcelamento (parcelas) espelhadas do OMIE, apenas para consulta/vinculo.
+-- O KyberRock continua dono das condicoes locais (payment_terms); esta tabela guarda os
+-- codigos de parcela do OMIE (ex: "000", "030") para que uma condicao local possa ser
+-- vinculada e enviada no codigo_parcela/cCodParc do pedido/OS.
+CREATE TABLE IF NOT EXISTS omie_payment_terms (
+  id TEXT PRIMARY KEY,
+  company_id TEXT NOT NULL REFERENCES companies(id),
+  omie_id INTEGER,
+  code TEXT NOT NULL,
+  description TEXT NOT NULL,
+  first_installment_days INTEGER,
+  installment_interval_days INTEGER,
+  installment_count INTEGER,
+  installment_type TEXT,
+  installment_days_json TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+  visible INTEGER NOT NULL DEFAULT 1 CHECK (visible IN (0, 1)),
+  updated_from_omie_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_omie_payment_terms_company_code
+  ON omie_payment_terms(company_id, code);
+CREATE INDEX IF NOT EXISTS idx_omie_payment_terms_company_active
+  ON omie_payment_terms(company_id, is_active);
+
+-- Vinculo opcional de uma condicao local ao codigo de parcela do OMIE. Distinto de
+-- payment_terms.omie_code (legado, marca condicoes importadas e nao editaveis): aqui o
+-- usuario associa manualmente sua condicao local a um codigo do OMIE.
+ALTER TABLE payment_terms ADD COLUMN omie_parcela_code TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_payment_terms_omie_parcela
+  ON payment_terms(company_id, omie_parcela_code);
+`
+  },
+  {
+    version: 31,
+    name: "weighing_operation_payment_method",
+    sql: `
+-- Meio de pagamento escolhido na operacao. No fechamento, o codigo OMIE do meio e o
+-- codigo OMIE da conta vinculada (payment_methods.account_id -> accounts.omie_code)
+-- seguem no job de criacao do pedido/OS para o OMIE.
+ALTER TABLE weighing_operations ADD COLUMN payment_method_id TEXT REFERENCES payment_methods(id);
+
+CREATE INDEX IF NOT EXISTS idx_weighing_operations_payment_method
+  ON weighing_operations(payment_method_id);
+`
+  },
+  {
+    version: 32,
+    name: "weighing_operation_freight_type",
+    sql: `
+-- Tipo (modalidade) de frete da operacao: CIF, FOB, terceiros, transporte proprio
+-- (remetente/destinatario) ou sem frete. Segue no pedido de venda do OMIE como o codigo
+-- "modalidade" do frete (modFrete da NF-e: 0/1/2/3/4/9). Substitui a antiga caixa
+-- "transportadora propria do cliente" (own_recipient) e a parte CIF/FOB da caixa
+-- "operacao com frete". Default 'none' (sem frete) para operacoes ja existentes.
+ALTER TABLE weighing_operations ADD COLUMN freight_type TEXT NOT NULL DEFAULT 'none'
+  CHECK (freight_type IN ('cif', 'fob', 'third_party', 'own_sender', 'own_recipient', 'none'));
+`
+  },
+  {
+    version: 33,
+    name: "seed_payment_methods_default_omie_code",
+    sql: `
+-- Preenche o codigo do meio de pagamento no OMIE/NF-e (tPag) das formas padrao do sistema
+-- que ainda estao sem codigo, para o pedido de venda levar o meio de pagamento (antes ia
+-- vazio -> "nao informado" no OMIE) mesmo sem sincronizar os meios do OMIE. Sao codigos
+-- padronizados; nao mexe em formas que ja tem codigo (vindo da sincronizacao do OMIE).
+UPDATE payment_methods SET omie_code = '01' WHERE code = 'cash' AND omie_code IS NULL AND is_system = 1 AND deleted_at IS NULL;
+UPDATE payment_methods SET omie_code = '17' WHERE code = 'pix' AND omie_code IS NULL AND is_system = 1 AND deleted_at IS NULL;
+UPDATE payment_methods SET omie_code = '03' WHERE code = 'credit_card' AND omie_code IS NULL AND is_system = 1 AND deleted_at IS NULL;
+UPDATE payment_methods SET omie_code = '04' WHERE code = 'debit_card' AND omie_code IS NULL AND is_system = 1 AND deleted_at IS NULL;
+UPDATE payment_methods SET omie_code = '15' WHERE code = 'boleto' AND omie_code IS NULL AND is_system = 1 AND deleted_at IS NULL;
+`
   }
 ];

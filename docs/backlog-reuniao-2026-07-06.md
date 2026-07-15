@@ -29,12 +29,16 @@ financeiro · **P1** essencial para o piloto · **P2** melhoria/escalabilidade.
 
 ## 2. Formas e condições de pagamento (integração OMIE)
 
-- [ ] **P0** Sincronizar do OMIE os **meios/formas de pagamento** (cada um com seu código OMIE) e as
+- [x] **P0** Sincronizar do OMIE os **meios/formas de pagamento** (cada um com seu código OMIE) e as
       **condições de pagamento** (nº de parcelas, à vista, prazos: 7/14/21 etc.).
+      *(Implementado: entidades `meios_pagamento`, `contas_correntes` e `condicoes_pagamento`
+      (ListarParcelas → espelho `omie_payment_terms`) no sync OMIE — idempotente, seeds adotam o
+      código OMIE; criação/exclusão local de meios/contas travada, só ativar/desativar + vínculo.
+      Condição sem código OMIE é criada no cadastro de parcelas pelo próprio envio (IncluirParcela).)*
 - [ ] **P0** Entender e documentar **o que o OMIE exige de forma de pagamento** ao criar o pedido de
       venda, antes de amarrar a lógica de envio.
-- [ ] **P1** Botão **ativar/desativar** por forma de pagamento (algumas do OMIE são só para
-      transferência interna e não devem aparecer).
+- [x] **P1** Botão **ativar/desativar** por forma de pagamento (algumas do OMIE são só para
+      transferência interna e não devem aparecer). *(Implementado, incl. ativar/desativar contas.)*
 - [x] **P1** Permitir **apelido (alias)** por forma de pagamento — o apelido é o que aparece na UI
       (os nomes vindos do OMIE ficam "bugados"). *(Implementado, incl. campo de código OMIE por forma.)*
 - [x] **P0** **Vincular forma de pagamento → conta** no cadastro (dinheiro→caixinha; boleto/PIX→OMIE
@@ -42,8 +46,10 @@ financeiro · **P1** essencial para o piloto · **P2** melhoria/escalabilidade.
       *(Implementado: cadastro de contas, apelido e código OMIE por forma, vínculos pré-configurados.)*
 - [ ] **P0** **Boleto bancário deve usar obrigatoriamente a conta Home Cash** (banco digital) — o boleto
       é faturado lá para ter conciliação automática no retorno.
-- [ ] **P1** Deixar a **condição de pagamento pré-cadastrada no cliente**, mas **editável na hora** da
+- [x] **P1** Deixar a **condição de pagamento pré-cadastrada no cliente**, mas **editável na hora** da
       operação (ex.: padrão 7/14/21, mas hoje o patrão liberou 7/14/21/28).
+      *(Implementado: prefill do cliente na Nova Entrada + campo "Condição personalizada" que aceita
+      "5", "7 14 21" ou "7/14/21", cria/reusa a condição local e a registra no OMIE no envio.)*
 - [ ] **P1** Definir a conta padrão por forma de pagamento (dinheiro→caixinha, débito→GetNet,
       boleto/PIX→Home Cash) e permitir alteração posterior **apenas no OMIE**.
 

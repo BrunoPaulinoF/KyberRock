@@ -4,9 +4,15 @@ import type { ScaleStatus } from "@kyberrock/scale-adapters";
 import type { DesktopDatabase } from "../database/sqlite.js";
 import type { LocalDesktopIdentity } from "./bootstrap.js";
 import { FinancialBlockService } from "./financial-block.js";
-import { FreightCalculator, type FreightRule } from "./freight.js";
+import {
+  FreightCalculator,
+  freightModalityOmieCode,
+  getFreightModalityInfo,
+  type FreightModality,
+  type FreightRule
+} from "./freight.js";
 import { PricingService, type PriceDetails } from "./pricing.js";
-import { enqueueSyncJob } from "./sync-queue.js";
+import { cancelPendingOmieJobs, enqueueSyncJob } from "./sync-queue.js";
 import { CreditService } from "./credit.js";
 import { buildOmieIntegrationCode } from "@kyberrock/omie-client";
 import { consumeQuotation } from "./quotations.js";
@@ -64,11 +70,14 @@ export interface CreateWeighingOperationInput {
   driverId: string;
   productId: string;
   paymentTermId?: string;
+  paymentMethodId?: string;
   manualInstallments?: number;
   manualDownPaymentCents?: number;
   entryWeightKg: number;
   entryScaleCapture?: ScaleCaptureAudit | null;
   freight?: OperationFreightInput | null;
+  /** Tipo (modalidade) de frete enviado ao OMIE; default "none" (sem frete). */
+  freightModality?: FreightModality | null;
   quotationId?: string;
   deductFreightFromCredit?: boolean;
 }
@@ -89,6 +98,7 @@ export interface WeighingOperationSummary {
   id: string;
   status: OperationStatus;
   operationType: OperationType;
+  customerId: string | null;
   customerName: string;
   plate: string;
   driverName: string;
@@ -107,6 +117,7 @@ export interface WeighingOperationSummary {
   productTotalCents: number | null;
   freightTotalCents: number;
   freightJson: string | null;
+  freightModality: FreightModality;
   totalCents: number | null;
   deductFreightFromCredit: boolean;
   productCreditDebitCents: number;
@@ -120,6 +131,12 @@ export interface WeighingOperationSummary {
   cancelReason: string | null;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Quando o carregador marcou a carga como concluida no loader-web (projetado
+   * de volta para o desktop pela sincronizacao cloud). `null` enquanto a carga
+   * ainda aguarda o carregador. So e populado por `listOpenWeighingOperations`.
+   */
+  loaderCompletedAt?: string | null;
 }
 
 interface OperationRow {
@@ -139,6 +156,7 @@ interface OperationRow {
   product_total_cents: number | null;
   freight_total_cents: number;
   freight_json: string | null;
+  freight_type: string | null;
   total_cents: number | null;
   deduct_freight_from_credit: number;
   product_credit_debit_cents: number;
@@ -152,11 +170,13 @@ interface OperationRow {
   cancel_reason: string | null;
   created_at: string;
   updated_at: string;
+  customer_id: string | null;
   customer_name: string | null;
   plate: string | null;
   driver_name: string | null;
   product_description: string | null;
   payment_term_name: string | null;
+  loader_completed_at?: string | null;
 }
 
 export function createSimulatedWeighingOperation(
@@ -453,6 +473,18 @@ export function createWeighingOperation(
     throw new Error("Somente produtos OMIE tipo 04 - produtos acabados podem iniciar pesagem.");
   }
 
+  if (input.paymentMethodId) {
+    const paymentMethod = database
+      .prepare(
+        "SELECT is_active FROM payment_methods WHERE id = ? AND deleted_at IS NULL"
+      )
+      .get(input.paymentMethodId) as { is_active: number } | undefined;
+    if (!paymentMethod) throw new Error("Forma de pagamento selecionada nao foi encontrada.");
+    if (paymentMethod.is_active !== 1) {
+      throw new Error("Forma de pagamento inativa nao pode ser usada na operacao.");
+    }
+  }
+
   const duplicateOpenOperation = database
     .prepare(
       `SELECT id
@@ -491,11 +523,11 @@ export function createWeighingOperation(
       .prepare(
         `INSERT INTO weighing_operations (
           id, company_id, unit_id, device_id, status, operation_type, customer_id, vehicle_id, carrier_id, driver_id, product_id,
-          payment_term_id, manual_installments, manual_down_payment_cents, entry_weight_kg, entry_weight_captured_at, unit_price_cents,
+          payment_term_id, payment_method_id, manual_installments, manual_down_payment_cents, entry_weight_kg, entry_weight_captured_at, unit_price_cents,
           base_unit_price_cents, applied_price_table_id, applied_price_table_name, applied_price_table_item_id,
-          price_unit, price_savings_percent, freight_total_cents, freight_json, deduct_freight_from_credit,
+          price_unit, price_savings_percent, freight_total_cents, freight_json, freight_type, deduct_freight_from_credit,
           product_credit_debit_cents, freight_credit_debit_cents, quotation_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, 'loading_requested', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0, 0, ?, ?, ?)`
+        ) VALUES (?, ?, ?, ?, 'loading_requested', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 0, 0, ?, ?, ?)`
       )
       .run(
         operationId,
@@ -509,6 +541,7 @@ export function createWeighingOperation(
         input.driverId,
         input.productId,
         input.paymentTermId ?? null,
+        input.paymentMethodId ?? null,
         input.manualInstallments ?? null,
         input.manualDownPaymentCents ?? null,
         input.entryWeightKg,
@@ -521,6 +554,7 @@ export function createWeighingOperation(
         priceDetails?.priceUnit ?? "ton",
         priceDetails?.savingsPercent ?? null,
         serializeOperationFreight(input.freight),
+        getFreightModalityInfo(input.freightModality).key,
         input.deductFreightFromCredit ? 1 : 0,
         input.quotationId ?? null,
         timestamp,
@@ -545,6 +579,30 @@ export function createWeighingOperation(
         timestamp,
         timestamp
       );
+
+    // Primeira escolha vira padrao do cliente: a condicao e a forma usadas nesta
+    // entrada preenchem os campos padrao ainda vazios do cadastro (nunca sobrescrevem
+    // um padrao ja definido).
+    if (input.paymentTermId || input.paymentMethodId) {
+      database
+        .prepare(
+          `UPDATE customers SET
+             default_payment_term_id = COALESCE(default_payment_term_id, ?),
+             default_payment_method_id = COALESCE(default_payment_method_id, ?),
+             updated_at = ?
+           WHERE id = ?
+             AND ((default_payment_term_id IS NULL AND ? IS NOT NULL)
+               OR (default_payment_method_id IS NULL AND ? IS NOT NULL))`
+        )
+        .run(
+          input.paymentTermId ?? null,
+          input.paymentMethodId ?? null,
+          timestamp,
+          input.customerId,
+          input.paymentTermId ?? null,
+          input.paymentMethodId ?? null
+        );
+    }
 
     insertAuditLog(
       database,
@@ -760,63 +818,413 @@ export function closeWeighingOperation(
       );
     }
 
-    const operationIds = database
-      .prepare("SELECT customer_id, product_id, unit_id FROM weighing_operations WHERE id = ?")
-      .get(input.operationId) as
-      | { customer_id: string | null; product_id: string | null; unit_id: string }
-      | undefined;
-
-    const omieCustomerId = operationIds?.customer_id
-      ? (
-          database
-            .prepare("SELECT omie_customer_id FROM customers WHERE id = ?")
-            .get(operationIds.customer_id) as { omie_customer_id: number | null } | undefined
-        )?.omie_customer_id
-      : null;
-    const omieProductId = operationIds?.product_id
-      ? (
-          database
-            .prepare("SELECT omie_product_id FROM products WHERE id = ?")
-            .get(operationIds.product_id) as { omie_product_id: number | null } | undefined
-        )?.omie_product_id
-      : null;
-
-    if (omieCustomerId) {
-      const omieAction = nextOperationType === "invoice" ? "create_and_bill_order" : "create_order";
-      const idempotencyAction =
-        nextOperationType === "invoice" ? "create_sales_order" : "create_service_order";
-      enqueueSyncJob(
-        database,
-        {
-          target: "omie",
-          action: omieAction,
-          entityType: "weighing_operation",
-          entityId: input.operationId,
-          idempotencyKey: buildOmieIntegrationCode(
-            operationIds?.unit_id ?? "unknown",
-            input.operationId,
-            idempotencyAction
-          ),
-          payload: {
-            operationId: input.operationId,
-            operationType: nextOperationType,
-            customerOmieId: omieCustomerId,
-            productOmieId: omieProductId ?? null,
-            serviceDescription: operation.productDescription,
-            quantity: netWeightKg / 1000,
-            unitPrice: operation.unitPriceCents ? operation.unitPriceCents / 100 : 0,
-            freightTotalCents,
-            issueDate: timestamp.slice(0, 10)
-          }
-        },
-        now
-      );
+    // Reconstroi o job a partir da operacao ja atualizada nesta transacao (buildOmieBillingJob
+    // le os valores recem-gravados). Retorna null sem omie_customer_id (nada a enviar).
+    // O faturamento (emissao de NF-e) e feito INTEIRAMENTE no OMIE: o app apenas cria o
+    // pedido/OS (o pedido entra na etapa "Faturar" do kanban de Vendas — ver edge function).
+    const billingJob = buildOmieBillingJob(database, input.operationId);
+    if (billingJob) {
+      enqueueOmieBillingJob(database, input.operationId, billingJob, now);
+    } else if (nextOperationType === "invoice") {
+      // Aqui buildOmieBillingJob so retorna null quando o cliente nao tem codigo OMIE E
+      // nao tem CNPJ/CPF (sem documento o OMIE nao permite cadastrar o cliente na hora).
+      // Registra o motivo (em vez de pular em silencio) para aparecer na tela Concluidas;
+      // apos informar o documento do cliente, "Refaturar" cria o cliente e envia o pedido.
+      database
+        .prepare(
+          `UPDATE weighing_operations
+           SET omie_billing_status = 'cadastro_incompleto', omie_billing_message = ?, updated_at = ?
+           WHERE id = ?`
+        )
+        .run(
+          "Cliente sem CNPJ/CPF: informe o documento do cliente para cadastra-lo no OMIE e enviar o pedido (use Refaturar).",
+          timestamp,
+          input.operationId
+        );
     }
   });
 
   closeOperation();
 
   return getWeighingOperation(database, input.operationId);
+}
+
+export type FiscalMissingField = "address_number" | "email";
+
+export interface CustomerFiscalReadiness {
+  ready: boolean;
+  missing: FiscalMissingField[];
+  source: string | null;
+  message: string | null;
+}
+
+const FISCAL_FIELD_LABELS: Record<FiscalMissingField, string> = {
+  address_number: "Numero do Endereco",
+  email: "E-mail"
+};
+
+/**
+ * O OMIE exige Numero do Endereco + E-mail no cadastro do cliente para emitir a NF-e
+ * (rejeitado apenas no FaturarPedidoVenda). Pre-valida esses dois campos antes de tentar
+ * faturar, para nao criar um pedido condenado nem gerar retry storm.
+ */
+export function validateCustomerFiscalReadiness(
+  database: DesktopDatabase,
+  customerId: string | null
+): CustomerFiscalReadiness {
+  if (!customerId) {
+    return {
+      ready: false,
+      missing: ["address_number", "email"],
+      source: null,
+      message: "Operacao fiscal sem cliente vinculado."
+    };
+  }
+  const row = database
+    .prepare("SELECT address_number, email, source FROM customers WHERE id = ?")
+    .get(customerId) as
+    | { address_number: string | null; email: string | null; source: string | null }
+    | undefined;
+  if (!row) {
+    return {
+      ready: false,
+      missing: ["address_number", "email"],
+      source: null,
+      message: "Cliente nao encontrado no cadastro local."
+    };
+  }
+  const missing: FiscalMissingField[] = [];
+  if (!(row.address_number ?? "").trim()) missing.push("address_number");
+  if (!(row.email ?? "").trim()) missing.push("email");
+  if (missing.length === 0) {
+    return { ready: true, missing: [], source: row.source, message: null };
+  }
+  const fields = missing.map((field) => FISCAL_FIELD_LABELS[field]).join(" e ");
+  let message = `Cadastro do cliente incompleto para NF-e: falta ${fields}. Preencha no cadastro do cliente e refature.`;
+  if (row.source === "omie") {
+    message += " Cliente de origem OMIE: corrija diretamente no portal OMIE.";
+  }
+  return { ready: false, missing, source: row.source, message };
+}
+
+/** Igual a validateCustomerFiscalReadiness, resolvendo o cliente pela operacao. */
+export function validateOperationFiscalReadiness(
+  database: DesktopDatabase,
+  operationId: string
+): CustomerFiscalReadiness {
+  const row = database
+    .prepare("SELECT customer_id FROM weighing_operations WHERE id = ?")
+    .get(operationId) as { customer_id: string | null } | undefined;
+  return validateCustomerFiscalReadiness(database, row?.customer_id ?? null);
+}
+
+/**
+ * Cadastro do cliente enviado junto ao pedido para o edge criar/localizar o cliente no
+ * OMIE na hora, quando ele ainda nao tem codigo OMIE (customerOmieId = 0). Espelha os
+ * campos de PushCustomerPayload do edge.
+ */
+export interface OmieOrderCustomerCadastro {
+  localCustomerId: string;
+  razaoSocial: string;
+  nomeFantasia?: string;
+  cnpjCpf?: string;
+  email?: string;
+  telefone1Ddd?: string;
+  telefone1Numero?: string;
+  zipcode?: string;
+  addressStreet?: string;
+  addressNumber?: string;
+  neighborhood?: string;
+  city?: string;
+  state?: string;
+}
+
+export interface OmieBillingJobPayload {
+  operationId: string;
+  operationType: OperationType;
+  /** Codigo OMIE do cliente. 0 quando ainda nao vinculado — o edge cria pelo campo `customer`. */
+  customerOmieId: number;
+  /** Id local do cliente, para gravar o codigo OMIE de volta apos o envio. */
+  localCustomerId: string | null;
+  /** Cadastro para criar o cliente no OMIE na hora quando customerOmieId = 0. */
+  customer: OmieOrderCustomerCadastro | null;
+  productOmieId: number | null;
+  serviceDescription: string | null;
+  quantity: number;
+  unitPrice: number;
+  freightTotalCents: number;
+  /** Codigo "modalidade" do frete no OMIE (modFrete da NF-e): 0 CIF, 1 FOB, 2 terceiros, 3/4 proprio, 9 sem frete. */
+  freightModalidade: string;
+  issueDate: string;
+  paymentTermOmieCode: string | null;
+  paymentTermInstallmentCount: number | null;
+  /** Dias de vencimento das parcelas da condicao OMIE (ex: [7,14,21]); null = a vista. */
+  paymentTermInstallmentDays: number[] | null;
+  /** Codigo NFe/OMIE do meio de pagamento escolhido na operacao ("01", "17"...). */
+  paymentMethodOmieCode: string | null;
+  /** nCodCC (OMIE) da conta vinculada ao meio escolhido; vai em codigo_conta_corrente/nCodCC. */
+  accountOmieCode: string | null;
+}
+
+export interface BuiltOmieBillingJob {
+  payload: OmieBillingJobPayload;
+  idempotencyKey: string;
+  action: "create_and_bill_order" | "create_order";
+  unitId: string;
+}
+
+/**
+ * Reconstroi o job de faturamento/pedido OMIE a partir da operacao ja persistida, de forma
+ * IDENTICA ao que o fechamento produz (mesmo payload e idempotencyKey), para que fechamento e
+ * refaturamento (apos corrigir o cadastro) sejam byte-a-byte iguais e reusem o mesmo pedido no
+ * OMIE. Retorna null quando o cliente nao tem omie_customer_id (nada a enviar).
+ */
+/**
+ * Codigo "modalidade" do frete para o OMIE a partir do tipo salvo. Compat: operacoes
+ * anteriores a esta feature nao tem tipo salvo (default "none" -> "9"); quando elas tem
+ * valor de frete, mantemos o comportamento legado (CIF "0" com valor), evitando enviar
+ * "sem frete" para um pedido que tinha frete.
+ */
+function resolveFreightModalidade(
+  freightType: string | null | undefined,
+  freightTotalCents: number
+): string {
+  const code = freightModalityOmieCode(freightType);
+  if (code === "9" && freightTotalCents > 0) return "0";
+  return code;
+}
+
+interface OrderCustomerRow {
+  omie_customer_id: number | null;
+  legal_name: string | null;
+  trade_name: string | null;
+  document: string | null;
+  phone: string | null;
+  email: string | null;
+  zipcode: string | null;
+  address_street: string | null;
+  address_number: string | null;
+  neighborhood: string | null;
+  city: string | null;
+  state: string | null;
+}
+
+/** Separa o telefone (so digitos) em DDD + numero, como o OMIE espera. */
+function splitPhoneForOmie(phone: string | null): { ddd?: string; numero?: string } {
+  const digits = (phone ?? "").replace(/\D/g, "");
+  if (digits.length < 10) return {};
+  return { ddd: digits.slice(0, 2), numero: digits.slice(2) };
+}
+
+/** Monta o cadastro do cliente para o edge criar/localizar no OMIE junto com o pedido. */
+function buildOrderCustomerCadastro(
+  localCustomerId: string,
+  row: OrderCustomerRow
+): OmieOrderCustomerCadastro {
+  const phone = splitPhoneForOmie(row.phone);
+  return {
+    localCustomerId,
+    razaoSocial: row.legal_name ?? row.trade_name ?? "",
+    nomeFantasia: row.trade_name ?? row.legal_name ?? undefined,
+    cnpjCpf: row.document?.trim() || undefined,
+    email: row.email ?? undefined,
+    telefone1Ddd: phone.ddd,
+    telefone1Numero: phone.numero,
+    zipcode: row.zipcode ?? undefined,
+    addressStreet: row.address_street ?? undefined,
+    addressNumber: row.address_number ?? undefined,
+    neighborhood: row.neighborhood ?? undefined,
+    city: row.city ?? undefined,
+    state: row.state ?? undefined
+  };
+}
+
+export function buildOmieBillingJob(
+  database: DesktopDatabase,
+  operationId: string
+): BuiltOmieBillingJob | null {
+  const row = database
+    .prepare(
+      "SELECT unit_id, customer_id, product_id, payment_term_id, payment_method_id, freight_type, exit_weight_captured_at FROM weighing_operations WHERE id = ?"
+    )
+    .get(operationId) as
+    | {
+        unit_id: string;
+        customer_id: string | null;
+        product_id: string | null;
+        payment_term_id: string | null;
+        payment_method_id: string | null;
+        freight_type: string | null;
+        exit_weight_captured_at: string | null;
+      }
+    | undefined;
+  if (!row) return null;
+
+  const customerRow = row.customer_id
+    ? (database
+        .prepare(
+          `SELECT omie_customer_id, legal_name, trade_name, document, phone, email,
+                  zipcode, address_street, address_number, neighborhood, city, state
+           FROM customers WHERE id = ?`
+        )
+        .get(row.customer_id) as OrderCustomerRow | undefined)
+    : undefined;
+
+  const omieCustomerId = customerRow?.omie_customer_id ?? null;
+  const customerDocument = customerRow?.document?.trim() || null;
+  // Sem codigo OMIE e sem documento: nao da para criar o cliente no OMIE, entao nao ha
+  // pedido a enviar. O fechamento marca cadastro_incompleto pedindo o CNPJ/CPF do cliente.
+  if (!omieCustomerId && !customerDocument) return null;
+
+  // Cliente ainda nao vinculado (mas com documento): envia o cadastro para o edge
+  // criar/localizar o cliente no OMIE na hora, antes de criar o pedido.
+  const customerCadastro: OmieOrderCustomerCadastro | null =
+    !omieCustomerId && customerRow && row.customer_id
+      ? buildOrderCustomerCadastro(row.customer_id, customerRow)
+      : null;
+
+  const omieProductId = row.product_id
+    ? (
+        database
+          .prepare("SELECT omie_product_id FROM products WHERE id = ?")
+          .get(row.product_id) as { omie_product_id: number | null } | undefined
+      )?.omie_product_id ?? null
+    : null;
+
+  // Espelho OMIE (quando a condicao local esta vinculada a um codigo) tem precedencia;
+  // sem vinculo, os campos da propria condicao local (parse do texto digitado) valem —
+  // e a edge cria a parcela no cadastro do OMIE a partir deles.
+  const omieParcela = row.payment_term_id
+    ? (database
+        .prepare(
+          `SELECT pt.omie_parcela_code AS code,
+                  COALESCE(opt.installment_count, pt.installment_count) AS installment_count,
+                  COALESCE(opt.installment_days_json, pt.installment_days_json) AS installment_days_json,
+                  COALESCE(opt.first_installment_days, pt.first_installment_days) AS first_installment_days,
+                  COALESCE(opt.installment_interval_days, pt.installment_interval_days) AS installment_interval_days
+           FROM payment_terms pt
+           LEFT JOIN omie_payment_terms opt
+             ON opt.company_id = pt.company_id AND opt.code = pt.omie_parcela_code AND opt.is_active = 1
+           WHERE pt.id = ?`
+        )
+        .get(row.payment_term_id) as
+        | {
+            code: string | null;
+            installment_count: number | null;
+            installment_days_json: string | null;
+            first_installment_days: number | null;
+            installment_interval_days: number | null;
+          }
+        | undefined)
+    : undefined;
+
+  // Codigos OMIE do meio de pagamento escolhido e da conta vinculada a ele
+  // (payment_methods.account_id -> accounts.omie_code). Vao no job para o pedido/OS
+  // ja nascer no OMIE com o meio e a conta corrente da operacao.
+  const omiePayment = row.payment_method_id
+    ? (database
+        .prepare(
+          `SELECT pm.omie_code AS method_code, ac.omie_code AS account_code
+           FROM payment_methods pm
+           LEFT JOIN accounts ac ON ac.id = pm.account_id AND ac.deleted_at IS NULL
+           WHERE pm.id = ?`
+        )
+        .get(row.payment_method_id) as
+        | { method_code: string | null; account_code: string | null }
+        | undefined)
+    : undefined;
+
+  const operation = getWeighingOperation(database, operationId);
+  // O app so CRIA o pedido/OS no OMIE; o faturamento (NF-e/NFS-e) e feito no proprio
+  // OMIE (pedido entra na etapa "Faturar"). O botao manual de faturar promove o job
+  // para create_and_bill_order em processFiscalBillingNow.
+  const action = "create_order";
+  const idempotencyAction =
+    operation.operationType === "invoice" ? "create_sales_order" : "create_service_order";
+
+  return {
+    unitId: row.unit_id,
+    action,
+    idempotencyKey: buildOmieIntegrationCode(row.unit_id ?? "unknown", operationId, idempotencyAction),
+    payload: {
+      operationId,
+      operationType: operation.operationType,
+      customerOmieId: omieCustomerId ?? 0,
+      localCustomerId: row.customer_id,
+      customer: customerCadastro,
+      productOmieId: omieProductId,
+      serviceDescription: operation.productDescription,
+      quantity: (operation.netWeightKg ?? 0) / 1000,
+      unitPrice: operation.unitPriceCents ? operation.unitPriceCents / 100 : 0,
+      freightTotalCents: operation.freightTotalCents,
+      freightModalidade: resolveFreightModalidade(row.freight_type, operation.freightTotalCents),
+      issueDate: (row.exit_weight_captured_at ?? "").slice(0, 10),
+      paymentTermOmieCode: omieParcela?.code ?? null,
+      paymentTermInstallmentCount: omieParcela?.installment_count ?? null,
+      paymentTermInstallmentDays: resolveInstallmentDays(omieParcela),
+      paymentMethodOmieCode: omiePayment?.method_code ?? null,
+      accountOmieCode: omiePayment?.account_code ?? null
+    }
+  };
+}
+
+/**
+ * Dias de vencimento das parcelas da condicao OMIE vinculada: usa o JSON explicito
+ * (ex: [7,14,21]) quando presente, senao deriva de primeiro dia + intervalo + quantidade.
+ * Retorna null quando a condicao nao informa dias (edge trata como a vista).
+ */
+function resolveInstallmentDays(
+  omieParcela:
+    | {
+        installment_days_json: string | null;
+        first_installment_days: number | null;
+        installment_interval_days: number | null;
+        installment_count: number | null;
+      }
+    | undefined
+): number[] | null {
+  if (!omieParcela) return null;
+
+  if (omieParcela.installment_days_json) {
+    try {
+      const parsed = JSON.parse(omieParcela.installment_days_json) as unknown;
+      if (Array.isArray(parsed)) {
+        const days = parsed
+          .map((value) => Number(value))
+          .filter((value) => Number.isInteger(value) && value >= 0);
+        if (days.length > 0) return days;
+      }
+    } catch {
+      // JSON invalido no espelho OMIE: cai na derivacao abaixo.
+    }
+  }
+
+  const count = omieParcela.installment_count;
+  const first = omieParcela.first_installment_days;
+  if (!count || count < 1 || first === null || first < 0) return null;
+  const interval = omieParcela.installment_interval_days ?? 0;
+  return Array.from({ length: count }, (_, index) => first + index * interval);
+}
+
+/** Enfileira o job de faturamento/pedido OMIE reconstruido por buildOmieBillingJob. */
+export function enqueueOmieBillingJob(
+  database: DesktopDatabase,
+  operationId: string,
+  job: BuiltOmieBillingJob,
+  now: Date = new Date()
+): void {
+  enqueueSyncJob(
+    database,
+    {
+      target: "omie",
+      action: job.action,
+      entityType: "weighing_operation",
+      entityId: operationId,
+      idempotencyKey: job.idempotencyKey,
+      payload: job.payload
+    },
+    now
+  );
 }
 
 export function cancelWeighingOperation(
@@ -831,7 +1239,9 @@ export function cancelWeighingOperation(
 
   const opRow = database
     .prepare(
-      `SELECT customer_id, product_credit_debit_cents, freight_credit_debit_cents, quotation_id FROM weighing_operations WHERE id = ?`
+      `SELECT customer_id, product_credit_debit_cents, freight_credit_debit_cents, quotation_id,
+              omie_sales_order_id, omie_service_order_id, omie_billing_status
+       FROM weighing_operations WHERE id = ?`
     )
     .get(input.operationId) as
     | {
@@ -839,6 +1249,9 @@ export function cancelWeighingOperation(
         product_credit_debit_cents: number;
         freight_credit_debit_cents: number;
         quotation_id: string | null;
+        omie_sales_order_id: number | null;
+        omie_service_order_id: number | null;
+        omie_billing_status: string | null;
       }
     | undefined;
 
@@ -886,6 +1299,42 @@ export function cancelWeighingOperation(
       timestamp
     );
 
+    // "Antes Do OMIE": neutraliza jobs de criacao ainda pendentes para nao criar/faturar
+    // um pedido no OMIE depois do cancelamento local (docs/phase-1/sync-strategy.md).
+    cancelPendingOmieJobs(database, input.operationId, now);
+
+    // "Depois Do OMIE": se ja existe pedido/OS no OMIE, solicita o cancelamento la.
+    const omieOrderId = opRow?.omie_sales_order_id ?? opRow?.omie_service_order_id ?? null;
+    if (omieOrderId) {
+      const orderType = opRow?.omie_sales_order_id ? "sales" : "service";
+      enqueueSyncJob(
+        database,
+        {
+          target: "omie",
+          action: "cancel_order",
+          entityType: "weighing_operation",
+          entityId: input.operationId,
+          idempotencyKey: `omie:cancel:${input.operationId}`,
+          payload: {
+            operationId: input.operationId,
+            orderType,
+            omieOrderId,
+            reason: input.reason.trim()
+          }
+        },
+        now
+      );
+      insertAuditLog(
+        database,
+        null,
+        input.operationId,
+        "omie_cancel_requested",
+        operation,
+        { orderType, omieOrderId, reason: input.reason.trim() },
+        timestamp
+      );
+    }
+
     enqueueSyncJob(
       database,
       {
@@ -931,12 +1380,13 @@ export function listOpenWeighingOperations(database: DesktopDatabase): WeighingO
         o.id, o.status, o.operation_type, o.entry_weight_kg, o.exit_weight_kg, o.net_weight_kg,
         o.unit_price_cents, o.base_unit_price_cents, o.applied_price_table_id, o.applied_price_table_name,
         o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
-        o.product_total_cents, o.freight_total_cents, o.freight_json, o.total_cents,
+        o.product_total_cents, o.freight_total_cents, o.freight_json, o.freight_type, o.total_cents,
         o.deduct_freight_from_credit, o.product_credit_debit_cents, o.freight_credit_debit_cents, o.quotation_id,
         o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
-        c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
+        c.id AS customer_id, c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
+        lr.loader_completed_at AS loader_completed_at,
         CASE
           WHEN o.manual_installments = 1 THEN '1 parcela'
           WHEN o.manual_installments > 1 THEN CAST(o.manual_installments AS TEXT) || ' parcelas'
@@ -948,6 +1398,7 @@ export function listOpenWeighingOperations(database: DesktopDatabase): WeighingO
        LEFT JOIN drivers d ON d.id = o.driver_id
        LEFT JOIN products p ON p.id = o.product_id
        LEFT JOIN payment_terms pt ON pt.id = o.payment_term_id
+       LEFT JOIN loading_requests lr ON lr.operation_id = o.id
         WHERE o.status IN ('loading_requested', 'awaiting_exit', 'entry_registered')
           AND o.deleted_at IS NULL
         ORDER BY o.created_at DESC`
@@ -965,12 +1416,12 @@ export function listCanceledWeighingOperations(
         o.id, o.status, o.operation_type, o.entry_weight_kg, o.exit_weight_kg, o.net_weight_kg,
         o.unit_price_cents, o.base_unit_price_cents, o.applied_price_table_id, o.applied_price_table_name,
         o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
-        o.product_total_cents, o.freight_total_cents, o.freight_json, o.total_cents,
+        o.product_total_cents, o.freight_total_cents, o.freight_json, o.freight_type, o.total_cents,
         o.deduct_freight_from_credit, o.product_credit_debit_cents, o.freight_credit_debit_cents, o.quotation_id,
         o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
-        c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
+        c.id AS customer_id, c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
         CASE
           WHEN o.manual_installments = 1 THEN '1 parcela'
           WHEN o.manual_installments > 1 THEN CAST(o.manual_installments AS TEXT) || ' parcelas'
@@ -999,12 +1450,12 @@ export function listClosedWeighingOperations(
         o.id, o.status, o.operation_type, o.entry_weight_kg, o.exit_weight_kg, o.net_weight_kg,
         o.unit_price_cents, o.base_unit_price_cents, o.applied_price_table_id, o.applied_price_table_name,
         o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
-        o.product_total_cents, o.freight_total_cents, o.freight_json, o.total_cents,
+        o.product_total_cents, o.freight_total_cents, o.freight_json, o.freight_type, o.total_cents,
         o.deduct_freight_from_credit, o.product_credit_debit_cents, o.freight_credit_debit_cents, o.quotation_id,
         o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
-        c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
+        c.id AS customer_id, c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
         CASE
           WHEN o.manual_installments = 1 THEN '1 parcela'
           WHEN o.manual_installments > 1 THEN CAST(o.manual_installments AS TEXT) || ' parcelas'
@@ -1040,6 +1491,31 @@ export function clearCanceledWeighingOperations(
   return result.changes;
 }
 
+/**
+ * Exclui (soft-delete) uma operacao ja concluida (status closed_local ou synced).
+ * Nao remove nada no OMIE — o pedido/OS de la, se ja enviado, deve ser tratado no
+ * proprio OMIE. Serve para limpar a lista local de operacoes concluidas.
+ */
+export function deleteClosedWeighingOperation(
+  database: DesktopDatabase,
+  operationId: string,
+  now: Date = new Date()
+): void {
+  const existing = database
+    .prepare("SELECT status FROM weighing_operations WHERE id = ? AND deleted_at IS NULL")
+    .get(operationId) as { status: OperationStatus } | undefined;
+  if (!existing) {
+    throw new Error("Operacao nao encontrada.");
+  }
+  if (existing.status !== "closed_local" && existing.status !== "synced") {
+    throw new Error("Apenas operacoes concluidas podem ser excluidas por aqui.");
+  }
+  const timestamp = now.toISOString();
+  database
+    .prepare("UPDATE weighing_operations SET deleted_at = ?, updated_at = ? WHERE id = ?")
+    .run(timestamp, timestamp, operationId);
+}
+
 export function getWeighingOperation(
   database: DesktopDatabase,
   operationId: string
@@ -1050,12 +1526,12 @@ export function getWeighingOperation(
         o.id, o.status, o.operation_type, o.entry_weight_kg, o.exit_weight_kg, o.net_weight_kg,
         o.unit_price_cents, o.base_unit_price_cents, o.applied_price_table_id, o.applied_price_table_name,
         o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
-        o.product_total_cents, o.freight_total_cents, o.freight_json, o.total_cents,
+        o.product_total_cents, o.freight_total_cents, o.freight_json, o.freight_type, o.total_cents,
         o.deduct_freight_from_credit, o.product_credit_debit_cents, o.freight_credit_debit_cents, o.quotation_id,
         o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
-        c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
+        c.id AS customer_id, c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
         CASE
           WHEN o.manual_installments = 1 THEN '1 parcela'
           WHEN o.manual_installments > 1 THEN CAST(o.manual_installments AS TEXT) || ' parcelas'
@@ -1298,6 +1774,7 @@ function mapOperationRow(row: OperationRow): WeighingOperationSummary {
     id: row.id,
     status: row.status,
     operationType: row.operation_type,
+    customerId: row.customer_id ?? null,
     customerName: row.customer_name ?? "",
     plate: row.plate ?? "",
     driverName: row.driver_name ?? "",
@@ -1316,6 +1793,7 @@ function mapOperationRow(row: OperationRow): WeighingOperationSummary {
     productTotalCents: row.product_total_cents,
     freightTotalCents: row.freight_total_cents,
     freightJson: row.freight_json,
+    freightModality: getFreightModalityInfo(row.freight_type).key,
     totalCents: row.total_cents,
     deductFreightFromCredit: row.deduct_freight_from_credit === 1,
     productCreditDebitCents: row.product_credit_debit_cents ?? 0,
@@ -1328,7 +1806,8 @@ function mapOperationRow(row: OperationRow): WeighingOperationSummary {
     omieDocumentUrl: row.omie_document_url,
     cancelReason: row.cancel_reason,
     createdAt: row.created_at,
-    updatedAt: row.updated_at
+    updatedAt: row.updated_at,
+    loaderCompletedAt: row.loader_completed_at ?? null
   };
 }
 

@@ -10,11 +10,8 @@ import { DesktopRuntime, type FiscalDocumentPrinter } from "../services/runtime.
 import type { ActivateDesktopInput } from "../services/desktop-activation.js";
 import type { CacheQueryOptions } from "../services/cache-store.js";
 import type { CreateCustomerInput, UpdateCustomerInput } from "../services/customers.js";
-import type {
-  CreatePaymentMethodInput,
-  UpdatePaymentMethodInput
-} from "../services/payment-methods.js";
-import type { CreateAccountInput, UpdateAccountInput } from "../services/accounts.js";
+import type { UpdatePaymentMethodInput } from "../services/payment-methods.js";
+import type { UpdateAccountInput } from "../services/accounts.js";
 import type {
   CreatePaymentTermInput,
   UpdatePaymentTermInput
@@ -38,7 +35,13 @@ import type {
   WindowsPrinterSummary
 } from "../services/printing.js";
 import { NetworkEscPosPrinter } from "../services/network-printer.js";
-import { createInitialUpdateState, type UpdateState } from "../services/update-flow.js";
+import {
+  AUTO_DOWNLOAD_UPDATES,
+  AUTO_INSTALL_ON_QUIT,
+  createInitialUpdateState,
+  type UpdateState
+} from "../services/update-flow.js";
+import { GITHUB_UPDATER_TOKEN } from "./updater-config.js";
 import type { OperationType } from "../services/weighing-operations.js";
 
 const require = createRequire(import.meta.url);
@@ -251,13 +254,19 @@ function registerIpcHandlers(): void {
       return updateState;
     }
 
-    if (updateState.status !== "available" && updateState.status !== "downloaded") {
+    if (
+      updateState.status !== "available" &&
+      updateState.status !== "downloading" &&
+      updateState.status !== "downloaded"
+    ) {
       return updateState;
     }
 
     try {
-      if (updateState.status === "available") {
+      if (updateState.status !== "downloaded") {
         updateState = { ...updateState, status: "downloading" };
+        // Se o autoDownload ja iniciou o download, esta chamada apenas aguarda
+        // o mesmo download em andamento concluir antes de instalar.
         await autoUpdater.downloadUpdate();
       }
       autoUpdater.quitAndInstall(false, true);
@@ -278,6 +287,14 @@ function registerIpcHandlers(): void {
     }
 
     return runtime.listOpenWeighingOperations();
+  });
+
+  ipcMain.handle("desktop:pull-loader-completions", () => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.pullLoaderCompletions();
   });
 
   ipcMain.handle("desktop:list-canceled-weighing-operations", () => {
@@ -302,6 +319,14 @@ function registerIpcHandlers(): void {
     }
 
     return runtime.clearCanceledWeighingOperations();
+  });
+
+  ipcMain.handle("desktop:delete-closed-weighing-operation", (_event, operationId: string) => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.deleteClosedWeighingOperation(operationId);
   });
 
   ipcMain.handle("desktop:start-weighing", async (_event, input: unknown) => {
@@ -533,6 +558,28 @@ function registerIpcHandlers(): void {
     return runtime.getReportHtml(startDate, endDate);
   });
 
+  ipcMain.handle("desktop:get-truck-control", (_event, startDate: string, endDate: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.getTruckControlReport(startDate, endDate);
+  });
+
+  ipcMain.handle(
+    "desktop:export-truck-control-pdf",
+    async (_event, startDate: string, endDate: string) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      const html = runtime.getTruckControlHtml(startDate, endDate);
+      const filePath = await pickReportFilePath(
+        `controle-caminhoes-${startDate}-a-${endDate}.pdf`,
+        ["pdf"]
+      );
+      if (!filePath) return null;
+      const data = await renderHtmlToPdf(html);
+      const fs = await import("node:fs/promises");
+      await fs.writeFile(filePath, data);
+      return { path: filePath };
+    }
+  );
+
   ipcMain.handle(
     "desktop:export-report-pdf",
     async (_event, startDate: string, endDate: string) => {
@@ -658,6 +705,34 @@ function registerIpcHandlers(): void {
     return runtime.verifySmtpConfig();
   });
 
+  ipcMain.handle("desktop:report-channels-get", () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.getReportChannelSettings();
+  });
+
+  ipcMain.handle(
+    "desktop:report-channels-save",
+    async (_event, input: Record<string, unknown>) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.saveReportChannelSettings(input);
+    }
+  );
+
+  ipcMain.handle("desktop:whatsapp-connect", async () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.whatsappConnect();
+  });
+
+  ipcMain.handle("desktop:whatsapp-status", async () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.whatsappStatus();
+  });
+
+  ipcMain.handle("desktop:whatsapp-disconnect", async () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.whatsappDisconnect();
+  });
+
   ipcMain.handle("desktop:get-price", (_event, customerId: string, productId: string) => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");
@@ -758,12 +833,35 @@ function registerIpcHandlers(): void {
     }
   );
 
-  ipcMain.handle("desktop:customers-update", (_event, id: string, input: UpdateCustomerInput) => {
-    if (!runtime) {
-      throw new Error("Desktop runtime is not ready.");
-    }
+  ipcMain.handle(
+    "desktop:customers-update",
+    (
+      _event,
+      id: string,
+      input: UpdateCustomerInput,
+      options?: { overrideOmieFields?: boolean }
+    ) => {
+      if (!runtime) {
+        throw new Error("Desktop runtime is not ready.");
+      }
 
-    return runtime.updateCustomer(id, input);
+      return runtime.updateCustomer(id, input, options);
+    }
+  );
+
+  ipcMain.handle("desktop:get-default-nfe-email", () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.getDefaultNfeEmail();
+  });
+
+  ipcMain.handle("desktop:set-default-nfe-email", (_event, email: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.setDefaultNfeEmail(email);
+  });
+
+  ipcMain.handle("desktop:apply-default-nfe-email-to-all", (_event, email: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.applyDefaultNfeEmailToAll(email);
   });
 
   ipcMain.handle("desktop:customers-delete", (_event, id: string) => {
@@ -774,14 +872,8 @@ function registerIpcHandlers(): void {
     runtime.deleteCustomer(id);
   });
 
-  ipcMain.handle(
-    "desktop:payment-methods-create",
-    (_event, input: Omit<CreatePaymentMethodInput, "companyId">) => {
-      if (!runtime) throw new Error("Desktop runtime is not ready.");
-      return runtime.createPaymentMethod(input);
-    }
-  );
-
+  // Meios de pagamento e contas vem do OMIE (sincronizacao) — nao ha handlers de
+  // criacao/exclusao no desktop, apenas atualizacao restrita.
   ipcMain.handle(
     "desktop:payment-methods-update",
     (_event, id: string, input: UpdatePaymentMethodInput) => {
@@ -790,32 +882,14 @@ function registerIpcHandlers(): void {
     }
   );
 
-  ipcMain.handle("desktop:payment-methods-delete", (_event, id: string) => {
-    if (!runtime) throw new Error("Desktop runtime is not ready.");
-    runtime.deletePaymentMethod(id);
-  });
-
   ipcMain.handle("desktop:accounts-list", () => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.listAccounts();
   });
 
-  ipcMain.handle(
-    "desktop:accounts-create",
-    (_event, input: Omit<CreateAccountInput, "companyId">) => {
-      if (!runtime) throw new Error("Desktop runtime is not ready.");
-      return runtime.createAccount(input);
-    }
-  );
-
   ipcMain.handle("desktop:accounts-update", (_event, id: string, input: UpdateAccountInput) => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.updateAccount(id, input);
-  });
-
-  ipcMain.handle("desktop:accounts-delete", (_event, id: string) => {
-    if (!runtime) throw new Error("Desktop runtime is not ready.");
-    runtime.deleteAccount(id);
   });
 
   ipcMain.handle(
@@ -837,6 +911,11 @@ function registerIpcHandlers(): void {
   ipcMain.handle("desktop:payment-terms-delete", (_event, id: string) => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     runtime.deletePaymentTerm(id);
+  });
+
+  ipcMain.handle("desktop:payment-terms-list-omie", () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.listOmiePaymentTerms();
   });
 
   ipcMain.handle(
@@ -1180,9 +1259,29 @@ function registerIpcHandlers(): void {
     };
   });
 
+  ipcMain.handle("desktop:lookup-cnpj", async (_event, cnpj: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.lookupCnpj(cnpj);
+  });
+
   ipcMain.handle("desktop:omie-sync", async () => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.syncOmieAll();
+  });
+
+  ipcMain.handle("desktop:omie-queue-list", () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.listOmieQueue();
+  });
+
+  ipcMain.handle("desktop:omie-queue-delete", (_event, jobId: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.deleteOmieQueueItem(jobId);
+  });
+
+  ipcMain.handle("desktop:omie-queue-send-now", async (_event, jobId: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.sendOmieQueueItemNow(jobId);
   });
 
   ipcMain.handle("desktop:sync-omie-direct", async (_event, appKey: string, appSecret: string) => {
@@ -1205,6 +1304,11 @@ function registerIpcHandlers(): void {
   ipcMain.handle("desktop:get-last-omie-sync-run", () => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.getLastOmieSyncRun();
+  });
+
+  ipcMain.handle("desktop:omie-list-document-types", async () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.listOmieDocumentTypes();
   });
 
   ipcMain.handle("desktop:get-omie-sync-entities", (_event, runId: string) => {
@@ -1379,14 +1483,14 @@ function buildReceiptHtml(payload: ReceiptPrintPayload): string {
       .receipt { width: 100%; }
       .top-company { font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
       .rule { border-top: 1px solid #000; margin: 4px 0 8px; }
-      .header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-      .logo-slot { width: ${logo.widthMm}mm; height: ${logo.heightMm}mm; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-      .logo-slot img { width: 100%; height: 100%; object-fit: ${logo.fit}; }
+      .header { text-align: center; }
+      .logo-slot { width: ${logo.widthMm}mm; height: ${logo.heightMm}mm; margin: 0 auto 4px; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+      .logo-slot img { max-width: 100%; max-height: 100%; object-fit: ${logo.fit}; }
       .logo-fallback { font-size: 18px; font-weight: 800; text-align: center; line-height: 1.05; }
-      .datetime { min-width: 30mm; font-size: 14px; font-weight: 700; line-height: 1.35; }
+      .datetime { text-align: center; font-size: 14px; font-weight: 700; line-height: 1.35; }
       .copy { margin: 8px 0 2px; text-align: center; font-size: 17px; font-weight: 900; letter-spacing: 0.04em; }
       .via { text-align: center; font-weight: 800; }
-      pre { white-space: pre-wrap; margin: 0; font: inherit; line-height: 1.28; }
+      pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; font: inherit; line-height: 1.28; }
     </style>
   </head>
   <body>
@@ -1437,18 +1541,41 @@ function escapeHtml(value: string): string {
 }
 
 function configureAutoUpdater(): void {
-  autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = false;
+  // Atualizacao automatica: assim que uma versao nova e detectada, o app baixa
+  // em segundo plano e instala na proxima vez que o operador fechar o app. Nao
+  // interrompe a operacao em andamento. O operador ainda pode forcar o download
+  // e a reinstalacao pelos botoes de update.
+  autoUpdater.autoDownload = AUTO_DOWNLOAD_UPDATES;
+  autoUpdater.autoInstallOnAppQuit = AUTO_INSTALL_ON_QUIT;
+
+  // Repo privado no GitHub Releases: o electron-updater usa GH_TOKEN para ler e
+  // baixar os assets do release. O token (somente leitura) e embutido no build
+  // pelo CI; em dev fica vazio e o updater nem roda (so quando app.isPackaged).
+  if (GITHUB_UPDATER_TOKEN) {
+    process.env.GH_TOKEN = GITHUB_UPDATER_TOKEN;
+  }
 
   autoUpdater.on("update-available", (info) => {
-    updateState = { status: "available", availableVersion: info.version, errorMessage: null };
+    // autoDownload esta ligado, entao o download comeca automaticamente aqui.
+    updateState = { status: "downloading", availableVersion: info.version, errorMessage: null };
     mainWindow?.webContents.send("desktop:update-available", info.version);
   });
   autoUpdater.on("update-not-available", () => {
     updateState = createInitialUpdateState();
   });
+  autoUpdater.on("download-progress", (progress) => {
+    if (updateState.status !== "downloaded") {
+      updateState = {
+        status: "downloading",
+        availableVersion: updateState.availableVersion,
+        errorMessage: null
+      };
+    }
+    mainWindow?.webContents.send("desktop:update-download-progress", progress.percent);
+  });
   autoUpdater.on("update-downloaded", (info) => {
     updateState = { status: "downloaded", availableVersion: info.version, errorMessage: null };
+    mainWindow?.webContents.send("desktop:update-downloaded", info.version);
   });
   autoUpdater.on("error", (error) => {
     updateState = { status: "error", availableVersion: null, errorMessage: error.message };
@@ -1482,6 +1609,27 @@ function writeStartupLog(step: string, detail?: unknown): void {
     appendFileSync(logPath, `[${new Date().toISOString()}] ${step}${serializedDetail}\n`);
   } catch {
     // Startup logging must never prevent the app from opening.
+  }
+}
+
+// Renderiza um HTML de relatorio em uma janela oculta e exporta como PDF A4.
+async function renderHtmlToPdf(html: string): Promise<Buffer> {
+  const fs = await import("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const tmpFile = path.join(os.tmpdir(), `kyberrock-report-${Date.now()}.html`);
+  await fs.writeFile(tmpFile, html, "utf8");
+  const win = new BrowserWindow({ show: false, webPreferences: { offscreen: true } });
+  try {
+    await win.loadFile(tmpFile);
+    return await win.webContents.printToPDF({
+      pageSize: "A4",
+      printBackground: true,
+      margins: { top: 0.5, bottom: 0.5, left: 0.5, right: 0.5 }
+    });
+  } finally {
+    win.destroy();
+    await fs.unlink(tmpFile).catch(() => {});
   }
 }
 

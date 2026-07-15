@@ -84,6 +84,8 @@ describe("omie-master-sync", () => {
     expect(entityNames).toContain("transportadoras");
     expect(entityNames).toContain("motoristas");
     expect(entityNames).toContain("veiculos");
+    expect(entityNames).toContain("meios_pagamento");
+    expect(entityNames).toContain("contas_correntes");
   });
 
   it("should not corrupt other entities when one fails", async () => {

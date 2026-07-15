@@ -1,0 +1,156 @@
+name: Desktop release
+
+# Gera e publica o instalador Windows do KyberRock Desktop no GitHub Releases
+# automaticamente sempre que a `main` muda. O `electron-updater` no app dos
+# operadores baixa a nova versao em segundo plano e instala ao fechar o app
+# (ver `apps/desktop/src/main/main.ts` -> configureAutoUpdater).
+#
+# Fluxo:
+#   1. push na main (tocando o desktop) ou disparo manual;
+#   2. a versao vira MAJOR.MINOR.<run_number> (sempre crescente, sem bump manual);
+#   3. o token de LEITURA (secret GH_UPDATER_TOKEN) e injetado no app;
+#   4. build do instalador NSIS + latest.yml + .blockmap;
+#   5. electron-builder publica um GitHub Release `vX.Y.Z` com esses arquivos,
+#      usando o GITHUB_TOKEN automatico do Actions (escopo de escrita fica no CI).
+
+on:
+  # Push na main que toca o desktop (ou suas dependencias) gera uma versao nova
+  # e publica. O filtro de paths evita gastar minutos pagos do Actions (runner
+  # Windows custa 2x em repo privado) com merges que nao mudam o instalador
+  # (ex.: so edge functions em supabase/ ou docs/).
+  push:
+    branches: [main]
+    paths:
+      - "apps/desktop/**"
+      - "packages/**"
+      - "functions/**"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig.json"
+      - ".github/workflows/desktop-release.yml"
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Motivo do build manual (opcional)"
+        required: false
+        default: ""
+
+concurrency:
+  group: desktop-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write # necessario para o electron-builder criar o GitHub Release
+
+jobs:
+  release:
+    name: Build and publish Windows installer
+    # windows-2022 traz o Visual Studio 2022, que o node-gyp reconhece. O
+    # windows-latest passou a trazer um VS mais novo (v18) que o node-gyp
+    # empacotado nao detecta, quebrando a compilacao nativa do better-sqlite3.
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        # --ignore-scripts evita o postinstall do better-sqlite3 tentar compilar
+        # para o runtime de Node. O binario para o Electron e produzido depois
+        # pelo rebuild:native:electron (dentro de dist:win:publish).
+        run: npm ci --ignore-scripts
+
+      - name: Resolve version (MAJOR.MINOR.run_number)
+        id: version
+        shell: bash
+        # Roda depois do `npm ci` porque o `npm ci` exige que a versao do
+        # workspace bata com o package-lock.json. O electron-builder le a versao
+        # do package.json no momento do build, entao o bump aqui e suficiente e
+        # nao e commitado de volta.
+        run: |
+          BASE=$(node -p "require('./apps/desktop/package.json').version")
+          MAJOR_MINOR=$(echo "$BASE" | cut -d. -f1-2)
+          export VERSION="${MAJOR_MINOR}.${GITHUB_RUN_NUMBER}"
+          echo "Versao do release: $VERSION (base $BASE)"
+          node -e "const f='apps/desktop/package.json';const fs=require('fs');const p=JSON.parse(fs.readFileSync(f,'utf8'));p.version=process.env.VERSION;fs.writeFileSync(f, JSON.stringify(p,null,4)+'\n');"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Inject updater read-token into the app
+        shell: bash
+        env:
+          GH_UPDATER_TOKEN: ${{ secrets.GH_UPDATER_TOKEN }}
+        run: |
+          if [ -z "${GH_UPDATER_TOKEN:-}" ]; then
+            echo "::warning title=Token de update ausente::Secret GH_UPDATER_TOKEN nao configurado. O release sera publicado, mas os apps instalados NAO conseguirao autenticar para baixar a atualizacao (repo privado). Crie um PAT fine-grained (Contents: read neste repo) e salve como GH_UPDATER_TOKEN."
+          fi
+          node -e "const f='apps/desktop/src/main/updater-config.ts';const fs=require('fs');let s=fs.readFileSync(f,'utf8');s=s.replace(/export const GITHUB_UPDATER_TOKEN = \"\";/, 'export const GITHUB_UPDATER_TOKEN = '+JSON.stringify(process.env.GH_UPDATER_TOKEN||'')+';');fs.writeFileSync(f,s);"
+
+      - name: Build workspaces (packages before desktop)
+        # O tsconfig do desktop nao referencia os pacotes @kyberrock/*, entao eles
+        # precisam ser compilados antes (dist/*.d.ts). O build da raiz compila
+        # todos os workspaces na ordem certa. Sem isto, o tsc do desktop falha com
+        # "Cannot find module '@kyberrock/...'".
+        run: npm run build
+
+      - name: Create the GitHub release (tag + release) up front
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Criamos a release (e a tag) via API ANTES do electron-builder. Assim ele
+        # so anexa os assets a uma release existente. Sem isto, o electron-builder
+        # dispara duas criacoes concorrentes de release (uma por asset): a primeira
+        # cria e a segunda falha com 422 "already_exists", abortando o upload do
+        # .exe/latest.yml. Passo idempotente. Criar release ja cria a tag; push de
+        # tag/release nao dispara o workflow (o gatilho e so branches: [main]).
+        run: |
+          set -euo pipefail
+          TAG="v${{ steps.version.outputs.version }}"
+          REPO="${{ github.repository }}"
+          code=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$REPO/releases/tags/$TAG")
+          if [ "$code" = "200" ]; then
+            echo "Release $TAG ja existe, seguindo."
+          else
+            echo "Criando release $TAG..."
+            curl -s -f -X POST \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$REPO/releases" \
+              -d "{\"tag_name\":\"$TAG\",\"target_commitish\":\"${{ github.sha }}\",\"name\":\"KyberRock Desktop ${{ steps.version.outputs.version }}\",\"draft\":false,\"prerelease\":false}" \
+              > /dev/null
+            echo "Release $TAG criada."
+          fi
+
+      - name: Build and publish to GitHub Releases
+        shell: bash
+        env:
+          # Token de PUBLICACAO (escrita) -- o GITHUB_TOKEN automatico do Actions,
+          # limitado a este repo e ao run. Distinto do token de leitura embutido.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run dist:win:publish --workspace @kyberrock/desktop
+
+      - name: Verify the native module is inside the package
+        shell: bash
+        # O app so abre se o better_sqlite3.node (binario nativo compilado para o
+        # Electron) estiver empacotado (desempacotado do asar). Falhamos o run se
+        # nao estiver, para nao dar por bom um instalador que nao abre.
+        run: |
+          echo "Procurando better_sqlite3.node em release/win-unpacked/resources..."
+          found=$(find "apps/desktop/release/win-unpacked/resources" -name "better_sqlite3.node" 2>/dev/null || true)
+          echo "Encontrado: ${found:-<nenhum>}"
+          if [ -z "$found" ]; then
+            echo "::error title=Nativo ausente::better_sqlite3.node NAO foi empacotado — o app nao abriria."
+            echo "Todos os .node encontrados:"
+            find "apps/desktop/release/win-unpacked/resources" -name "*.node" 2>/dev/null || true
+            exit 1
+          fi
+          echo "OK: binario nativo presente no pacote."

@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
 
+import { isValidEmail, normalizeEmail } from "@kyberrock/shared";
+
 import type { DesktopDatabase } from "../database/sqlite.js";
+import { readStringLocalSetting, writeLocalSetting } from "./local-settings.js";
+
+/** Key do e-mail padrao de NF-e (usado quando o cliente nao tem e-mail proprio). */
+export const DEFAULT_NFE_EMAIL_KEY = "default_nfe_email";
 
 export interface CreateCustomerInput {
   companyId: string;
@@ -197,11 +203,23 @@ export function createCustomer(
     .get(id) as CustomerRow;
 }
 
+export interface UpdateCustomerOptions {
+  /**
+   * Libera a edicao dos campos de cadastro que normalmente sao "propriedade do
+   * OMIE" (endereco, e-mail, razao...). Usado para COMPLETAR o cadastro (busca por
+   * CNPJ, e-mail padrao de NF-e, auto-complete no fechamento). Ao alterar um cliente
+   * origem OMIE, ele vira 'hybrid' — assim o proximo sync empurra os campos ao OMIE
+   * (o push filtra source IN ('local','hybrid')) e o faturamento la passa a funcionar.
+   */
+  overrideOmieFields?: boolean;
+}
+
 export function updateCustomer(
   database: DesktopDatabase,
   id: string,
   input: UpdateCustomerInput,
-  now: Date = new Date()
+  now: Date = new Date(),
+  options: UpdateCustomerOptions = {}
 ): CustomerRow {
   const existing = database
     .prepare("SELECT * FROM customers WHERE id = ? AND deleted_at IS NULL")
@@ -211,7 +229,7 @@ export function updateCustomer(
     throw new Error("Cliente nao encontrado.");
   }
 
-  if (existing.source === "omie") {
+  if (existing.source === "omie" && !options.overrideOmieFields) {
     const protectedFields: Array<keyof UpdateCustomerInput> = [
       "tradeName",
       "legalName",
@@ -237,6 +255,12 @@ export function updateCustomer(
   const nowIso = now.toISOString();
   const sets: string[] = [];
   const values: unknown[] = [];
+
+  // Cliente origem OMIE com edicao local de cadastro passa a 'hybrid' para o push
+  // ao OMIE (que ignora source='omie') e para nao ser sobrescrito na proxima sync.
+  if (existing.source === "omie" && options.overrideOmieFields) {
+    sets.push("source = 'hybrid'");
+  }
 
   if (input.legalName !== undefined) {
     sets.push("legal_name = ?");
@@ -392,6 +416,58 @@ export function deleteCustomer(
       `UPDATE customers SET deleted_at = ?, updated_at = ?, needs_push = 1, local_updated_at = ? WHERE id = ?`
     )
     .run(nowIso, nowIso, nowIso, id);
+}
+
+/** Le o e-mail padrao de NF-e configurado (ou null). */
+export function getDefaultNfeEmail(database: DesktopDatabase): string | null {
+  return readStringLocalSetting(database, DEFAULT_NFE_EMAIL_KEY);
+}
+
+/** Grava (ou limpa, com string vazia) o e-mail padrao de NF-e. Valida o formato. */
+export function setDefaultNfeEmail(database: DesktopDatabase, email: string): string | null {
+  const trimmed = email.trim();
+  if (!trimmed) {
+    writeLocalSetting(database, DEFAULT_NFE_EMAIL_KEY, null);
+    return null;
+  }
+  const normalized = normalizeEmail(trimmed);
+  if (!isValidEmail(normalized)) {
+    throw new Error("E-mail padrao invalido.");
+  }
+  writeLocalSetting(database, DEFAULT_NFE_EMAIL_KEY, normalized);
+  return normalized;
+}
+
+/**
+ * Define o e-mail de TODOS os clientes da empresa para o e-mail padrao (NF-e sempre
+ * sai com um e-mail, sem depender do cadastro de cada cliente). Tambem grava o valor
+ * como e-mail padrao. Clientes origem OMIE viram 'hybrid' + needs_push=1 para o e-mail
+ * ser empurrado ao OMIE. Retorna quantos clientes foram atualizados.
+ */
+export function applyDefaultNfeEmailToAllCustomers(
+  database: DesktopDatabase,
+  companyId: string,
+  email: string,
+  now: Date = new Date()
+): number {
+  const normalized = setDefaultNfeEmail(database, email);
+  if (!normalized) {
+    throw new Error("Informe um e-mail padrao valido antes de aplicar a todos.");
+  }
+  const nowIso = now.toISOString();
+  const result = database
+    .prepare(
+      `UPDATE customers
+       SET email = ?,
+           source = CASE WHEN source = 'omie' THEN 'hybrid' ELSE source END,
+           needs_push = 1,
+           local_updated_at = ?,
+           updated_at = ?
+       WHERE company_id = ? AND deleted_at IS NULL
+         AND (email IS NULL OR email != ?)`
+    )
+    .run(normalized, nowIso, nowIso, companyId, normalized);
+  return result.changes;
 }
 
 export function listCustomers(

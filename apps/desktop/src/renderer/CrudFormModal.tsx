@@ -5,6 +5,12 @@ interface CrudFormModalProps {
   onClose: () => void;
   children: ReactNode;
   maxWidth?: number;
+  /**
+   * Altura grande e constante (nao varia com o conteudo): o painel vira coluna
+   * flex e o miolo rola por dentro. Usado em formularios com abas (ex.: cliente)
+   * para o modal nao mudar de tamanho ao alternar de aba.
+   */
+  fixedHeight?: boolean;
 }
 
 const overlayStyle: CSSProperties = {
@@ -57,7 +63,20 @@ const closeButtonStyle: CSSProperties = {
   transition: "background 120ms ease, color 120ms ease"
 };
 
-export function CrudFormModal({ onClose, children, maxWidth = 920 }: CrudFormModalProps) {
+const fixedHeightStyle: CSSProperties = {
+  height: "min(880px, 92vh)",
+  display: "flex",
+  flexDirection: "column",
+  // O scroll passa a ser interno (miolo do formulario), nao do painel inteiro.
+  overflowY: "hidden"
+};
+
+export function CrudFormModal({
+  onClose,
+  children,
+  maxWidth = 920,
+  fixedHeight = false
+}: CrudFormModalProps) {
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
       if (e.key === "Escape") onClose();
@@ -75,7 +94,7 @@ export function CrudFormModal({ onClose, children, maxWidth = 920 }: CrudFormMod
     <div className="kr-modal-overlay" style={overlayStyle} onClick={onClose} role="presentation">
       <div
         className="kr-modal-panel"
-        style={{ ...panelBaseStyle, maxWidth }}
+        style={{ ...panelBaseStyle, maxWidth, ...(fixedHeight ? fixedHeightStyle : {}) }}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"

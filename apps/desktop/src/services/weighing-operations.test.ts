@@ -6,12 +6,15 @@ import { ensureInitialDesktopIdentity } from "./bootstrap";
 import { CreditService } from "./credit";
 import { buildOmieIntegrationCode } from "@kyberrock/omie-client";
 import {
+  buildOmieBillingJob,
   cancelWeighingOperation,
   closeWeighingOperation,
   createWeighingOperation,
   createSimulatedWeighingOperation,
+  deleteClosedWeighingOperation,
   listClosedWeighingOperations,
-  listOpenWeighingOperations
+  listOpenWeighingOperations,
+  validateCustomerFiscalReadiness
 } from "./weighing-operations";
 
 describe("weighing operations", () => {
@@ -224,6 +227,118 @@ describe("weighing operations", () => {
       expect(
         database.prepare("SELECT COUNT(*) FROM sync_queue WHERE status = 'pending'").pluck().get()
       ).toBe(4);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("dead-letters a pending OMIE create job when cancelling before send", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET omie_customer_id = 456 WHERE id = 'customer-1'").run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      cancelWeighingOperation(database, { operationId: operation.id, reason: "cancelado" });
+
+      expect(
+        database
+          .prepare(
+            "SELECT status FROM sync_queue WHERE target = 'omie' AND action = 'create_order'"
+          )
+          .pluck()
+          .get()
+      ).toBe("dead_letter");
+      expect(
+        database
+          .prepare("SELECT COUNT(*) FROM sync_queue WHERE action = 'cancel_order'")
+          .pluck()
+          .get()
+      ).toBe(0);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("enqueues an OMIE cancel job when the sales order was already sent", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      database
+        .prepare("UPDATE weighing_operations SET omie_sales_order_id = 9876 WHERE id = ?")
+        .run(operation.id);
+
+      cancelWeighingOperation(database, { operationId: operation.id, reason: "erro fiscal" });
+
+      const job = database
+        .prepare(
+          "SELECT idempotency_key, payload_json FROM sync_queue WHERE action = 'cancel_order'"
+        )
+        .get() as { idempotency_key: string; payload_json: string } | undefined;
+      expect(job?.idempotency_key).toBe(`omie:cancel:${operation.id}`);
+      const payload = JSON.parse(job!.payload_json) as { orderType: string; omieOrderId: number };
+      expect(payload).toMatchObject({ orderType: "sales", omieOrderId: 9876 });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("enqueues a service-order cancel for internal operations already sent", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        operationType: "internal",
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      database
+        .prepare("UPDATE weighing_operations SET omie_service_order_id = 555 WHERE id = ?")
+        .run(operation.id);
+
+      cancelWeighingOperation(database, { operationId: operation.id, reason: "erro" });
+      cancelWeighingOperation(database, { operationId: operation.id, reason: "erro de novo" });
+
+      const jobs = database
+        .prepare("SELECT payload_json FROM sync_queue WHERE action = 'cancel_order'")
+        .all() as Array<{ payload_json: string }>;
+      // Cancel duplo nao duplica o job (INSERT OR IGNORE na chave idempotente).
+      expect(jobs).toHaveLength(1);
+      const payload = JSON.parse(jobs[0].payload_json) as { orderType: string; omieOrderId: number };
+      expect(payload).toMatchObject({ orderType: "service", omieOrderId: 555 });
     } finally {
       database.close();
     }
@@ -456,7 +571,40 @@ describe("weighing operations", () => {
     }
   });
 
-  it("queues fiscal operations for OMIE billing on close", () => {
+  it("soft-deletes a closed operation and keeps others", () => {
+    const database = createDatabase();
+
+    try {
+      const operation = createSimulatedWeighingOperation(database, {
+        identity: createIdentity(database),
+        customerName: "Cliente Teste",
+        plate: "ABC1D23",
+        driverName: "Motorista Teste",
+        productDescription: "Brita 1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, { operationId: operation.id, exitWeightKg: 18_500 });
+      expect(listClosedWeighingOperations(database)).toHaveLength(1);
+
+      deleteClosedWeighingOperation(database, operation.id);
+      expect(listClosedWeighingOperations(database)).toHaveLength(0);
+
+      // Operacao aberta (nao concluida) nao pode ser excluida por aqui.
+      const open = createSimulatedWeighingOperation(database, {
+        identity: createIdentity(database),
+        customerName: "Cliente 2",
+        plate: "XYZ9K88",
+        driverName: "Motorista 2",
+        productDescription: "Brita 0",
+        entryWeightKg: 10_000
+      });
+      expect(() => deleteClosedWeighingOperation(database, open.id)).toThrow(/concluidas/i);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("queues fiscal operations as create-only orders on close (billing happens in OMIE)", () => {
     const database = createDatabase();
 
     try {
@@ -479,9 +627,118 @@ describe("weighing operations", () => {
         operationType: "invoice"
       });
 
+      // O app so cria o pedido; a emissao da NF-e e feita dentro do OMIE.
       expect(
         database.prepare("SELECT action FROM sync_queue WHERE target = 'omie'").pluck().get()
-      ).toBe("create_and_bill_order");
+      ).toBe("create_order");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("sends the sales order without billing when the customer is missing NF-e fields", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      // Cliente sem Numero do Endereco e sem E-mail (exigidos para a NF-e).
+      database
+        .prepare(
+          "UPDATE customers SET omie_customer_id = 456, email = NULL, address_number = NULL WHERE id = 'customer-1'"
+        )
+        .run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+
+      const closed = closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      // Fecha localmente e sobe o PEDIDO: criar pedido nao exige campos de NF-e
+      // (a emissao e feita dentro do OMIE, que cobra o cadastro na hora de faturar).
+      expect(closed.status).toBe("closed_local");
+      const omieJob = database
+        .prepare("SELECT action, idempotency_key FROM sync_queue WHERE target = 'omie'")
+        .get() as { action: string; idempotency_key: string };
+      expect(omieJob.action).toBe("create_order");
+      expect(omieJob.idempotency_key).toBe(
+        buildOmieIntegrationCode("unit-1", operation.id, "create_sales_order")
+      );
+    } finally {
+      database.close();
+    }
+  });
+
+  it("validateCustomerFiscalReadiness reports missing fields and OMIE-origin hint", () => {
+    const database = createDatabase();
+
+    try {
+      // insertCatalog referencia company-1; a identidade cria a empresa (FK).
+      createIdentity(database);
+      insertCatalog(database);
+      expect(validateCustomerFiscalReadiness(database, "customer-1").ready).toBe(true);
+
+      database.prepare("UPDATE customers SET email = '   ' WHERE id = 'customer-1'").run();
+      const missingEmail = validateCustomerFiscalReadiness(database, "customer-1");
+      expect(missingEmail.ready).toBe(false);
+      expect(missingEmail.missing).toEqual(["email"]);
+
+      database
+        .prepare("UPDATE customers SET address_number = NULL, email = NULL WHERE id = 'customer-1'")
+        .run();
+      const missingBoth = validateCustomerFiscalReadiness(database, "customer-1");
+      expect(missingBoth.missing).toEqual(["address_number", "email"]);
+      // Cliente source='omie' -> orienta corrigir no portal OMIE.
+      expect(missingBoth.message).toContain("portal OMIE");
+
+      expect(validateCustomerFiscalReadiness(database, null).ready).toBe(false);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("buildOmieBillingJob reproduces the payload and idempotency key of the close", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET omie_customer_id = 456 WHERE id = 'customer-1'").run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      const enqueued = database
+        .prepare(
+          "SELECT idempotency_key, payload_json FROM sync_queue WHERE target = 'omie' AND action = 'create_order'"
+        )
+        .get() as { idempotency_key: string; payload_json: string };
+
+      const built = buildOmieBillingJob(database, operation.id);
+      expect(built).not.toBeNull();
+      expect(built!.idempotencyKey).toBe(enqueued.idempotency_key);
+      expect(built!.payload).toEqual(JSON.parse(enqueued.payload_json));
     } finally {
       database.close();
     }
@@ -520,6 +777,352 @@ describe("weighing operations", () => {
         action: "create_order",
         idempotency_key: buildOmieIntegrationCode("unit-1", operation.id, "create_service_order")
       });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("flags an invoice close as cadastro_incompleto when the customer has no OMIE code nor document", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      // Cliente SEM omie_customer_id e SEM documento (nao da para cadastrar no OMIE).
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        operationType: "invoice",
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+
+      const closed = closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      // Nao enfileira pedido OMIE (nada a enviar)...
+      expect(
+        database.prepare("SELECT COUNT(*) AS n FROM sync_queue WHERE target = 'omie'").get()
+      ).toMatchObject({ n: 0 });
+      // ...mas o motivo fica visivel em vez de sumir em silencio.
+      expect(closed.omieBillingStatus).toBe("cadastro_incompleto");
+      expect(closed.omieBillingMessage).toContain("Cliente sem CNPJ/CPF");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("enqueues the order with customer cadastro when the customer has a document but no OMIE code", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      // Cliente com CNPJ mas SEM codigo OMIE: o edge deve cria-lo na hora.
+      database
+        .prepare(
+          "UPDATE customers SET document = '11444777000161', legal_name = 'Cliente Novo LTDA' WHERE id = 'customer-1'"
+        )
+        .run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        operationType: "invoice",
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      const job = buildOmieBillingJob(database, operation.id);
+      expect(job).not.toBeNull();
+      // customerOmieId 0 sinaliza "criar na hora"; o cadastro segue no payload.
+      expect(job!.payload.customerOmieId).toBe(0);
+      expect(job!.payload.localCustomerId).toBe("customer-1");
+      expect(job!.payload.customer).toMatchObject({
+        localCustomerId: "customer-1",
+        razaoSocial: "Cliente Novo LTDA",
+        cnpjCpf: "11444777000161"
+      });
+      // E o job foi enfileirado (nao pulou em silencio).
+      expect(
+        database.prepare("SELECT COUNT(*) AS n FROM sync_queue WHERE target = 'omie'").get()
+      ).toMatchObject({ n: 1 });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("forwards the linked OMIE parcela code in the enqueued order payload", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET omie_customer_id = 456 WHERE id = 'customer-1'").run();
+      const now = "2026-06-06T12:00:00.000Z";
+      database
+        .prepare(
+          `INSERT INTO payment_terms (id, company_id, name, rules_json, omie_parcela_code, is_active, created_at, updated_at)
+           VALUES ('term-030', 'company-1', 'A prazo 30', '{}', '030', 1, ?, ?)`
+        )
+        .run(now, now);
+      database
+        .prepare(
+          `INSERT INTO omie_payment_terms (id, company_id, omie_id, code, description, installment_count, installment_days_json, is_active, visible, created_at, updated_at)
+           VALUES ('omie_parcela_030', 'company-1', 30, '030', '30 dias', 2, '[15,30]', 1, 1, ?, ?)`
+        )
+        .run(now, now);
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        paymentTermId: "term-030",
+        entryWeightKg: 12_000
+      });
+
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      const payloadJson = database
+        .prepare("SELECT payload_json FROM sync_queue WHERE target = 'omie'")
+        .pluck()
+        .get() as string;
+      const payload = JSON.parse(payloadJson) as {
+        paymentTermOmieCode: string | null;
+        paymentTermInstallmentCount: number | null;
+        paymentTermInstallmentDays: number[] | null;
+      };
+      expect(payload.paymentTermOmieCode).toBe("030");
+      expect(payload.paymentTermInstallmentCount).toBe(2);
+      expect(payload.paymentTermInstallmentDays).toEqual([15, 30]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("sends the OMIE codes of the selected payment method and its linked account", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET omie_customer_id = 456 WHERE id = 'customer-1'").run();
+      const now = "2026-06-06T12:00:00.000Z";
+      database
+        .prepare(
+          `INSERT INTO accounts (id, company_id, code, name, omie_code, is_system, sort_order, is_active, created_at, updated_at)
+           VALUES ('account-getnet', 'company-1', NULL, 'GetNet', '4321', 0, 1, 1, ?, ?)`
+        )
+        .run(now, now);
+      database
+        .prepare(
+          `INSERT INTO payment_methods (id, company_id, code, name, omie_code, account_id, is_system, is_customer_credit, sort_order, is_active, created_at, updated_at)
+           VALUES ('method-debit', 'company-1', 'debit_card', 'Cartao de debito', '04', 'account-getnet', 0, 0, 1, 1, ?, ?)`
+        )
+        .run(now, now);
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        paymentMethodId: "method-debit",
+        entryWeightKg: 12_000
+      });
+
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      const payloadJson = database
+        .prepare("SELECT payload_json FROM sync_queue WHERE target = 'omie'")
+        .pluck()
+        .get() as string;
+      const payload = JSON.parse(payloadJson) as {
+        paymentMethodOmieCode: string | null;
+        accountOmieCode: string | null;
+      };
+      expect(payload.paymentMethodOmieCode).toBe("04");
+      expect(payload.accountOmieCode).toBe("4321");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("saves the entry's condition and method as customer defaults when empty", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      const now = "2026-06-06T12:00:00.000Z";
+      database
+        .prepare(
+          `INSERT INTO payment_methods (id, company_id, code, name, is_system, is_customer_credit, sort_order, is_active, created_at, updated_at)
+           VALUES ('method-pix', 'company-1', 'pix', 'Pix', 1, 0, 1, 1, ?, ?)`
+        )
+        .run(now, now);
+      database
+        .prepare(
+          `INSERT INTO payment_terms (id, company_id, name, rules_json, is_active, created_at, updated_at)
+           VALUES ('term-7-14', 'company-1', '7/14', '{"raw":"7/14"}', 1, ?, ?)`
+        )
+        .run(now, now);
+
+      createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        paymentTermId: "term-7-14",
+        paymentMethodId: "method-pix",
+        entryWeightKg: 12_000
+      });
+
+      const customer = database
+        .prepare(
+          "SELECT default_payment_term_id, default_payment_method_id FROM customers WHERE id = 'customer-1'"
+        )
+        .get() as { default_payment_term_id: string | null; default_payment_method_id: string | null };
+      expect(customer.default_payment_term_id).toBe("term-7-14");
+      expect(customer.default_payment_method_id).toBe("method-pix");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("does not overwrite existing customer defaults with the entry's choices", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      const now = "2026-06-06T12:00:00.000Z";
+      database
+        .prepare(
+          `INSERT INTO payment_methods (id, company_id, code, name, is_system, is_customer_credit, sort_order, is_active, created_at, updated_at)
+           VALUES ('method-pix', 'company-1', 'pix', 'Pix', 1, 0, 1, 1, ?, ?)`
+        )
+        .run(now, now);
+      database
+        .prepare(
+          "UPDATE customers SET default_payment_term_id = 'term-original', default_payment_method_id = 'method-original' WHERE id = 'customer-1'"
+        )
+        .run();
+
+      createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        paymentMethodId: "method-pix",
+        entryWeightKg: 12_000
+      });
+
+      const customer = database
+        .prepare(
+          "SELECT default_payment_term_id, default_payment_method_id FROM customers WHERE id = 'customer-1'"
+        )
+        .get() as { default_payment_term_id: string | null; default_payment_method_id: string | null };
+      expect(customer.default_payment_term_id).toBe("term-original");
+      expect(customer.default_payment_method_id).toBe("method-original");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("sends null payment method/account codes when no method was selected", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET omie_customer_id = 456 WHERE id = 'customer-1'").run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      const payloadJson = database
+        .prepare("SELECT payload_json FROM sync_queue WHERE target = 'omie'")
+        .pluck()
+        .get() as string;
+      const payload = JSON.parse(payloadJson) as {
+        paymentMethodOmieCode: string | null;
+        accountOmieCode: string | null;
+      };
+      expect(payload.paymentMethodOmieCode).toBeNull();
+      expect(payload.accountOmieCode).toBeNull();
+    } finally {
+      database.close();
+    }
+  });
+
+  it("sends a null parcela code when the operation term has no OMIE link", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET omie_customer_id = 456 WHERE id = 'customer-1'").run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      const payloadJson = database
+        .prepare("SELECT payload_json FROM sync_queue WHERE target = 'omie'")
+        .pluck()
+        .get() as string;
+      const payload = JSON.parse(payloadJson) as { paymentTermOmieCode: string | null };
+      expect(payload.paymentTermOmieCode).toBeNull();
     } finally {
       database.close();
     }
@@ -635,8 +1238,8 @@ function insertCatalog(
   database
     .prepare(
       `INSERT INTO customers (
-        id, company_id, source, legal_name, trade_name, omie_billing_blocked, created_at, updated_at
-      ) VALUES ('customer-1', 'company-1', 'omie', 'Cliente Teste LTDA', 'Cliente Teste', ?, ?, ?)`
+        id, company_id, source, legal_name, trade_name, email, address_number, omie_billing_blocked, created_at, updated_at
+      ) VALUES ('customer-1', 'company-1', 'omie', 'Cliente Teste LTDA', 'Cliente Teste', 'cliente@example.com', '123', ?, ?, ?)`
     )
     .run(options.customerBlocked ? 1 : 0, now, now);
   database

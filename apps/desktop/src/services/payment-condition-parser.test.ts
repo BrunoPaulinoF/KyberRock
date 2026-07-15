@@ -15,6 +15,19 @@ describe("parsePaymentCondition", () => {
     expect(result.installments.map((i) => i.number)).toEqual([1, 2, 3, 4]);
   });
 
+  it("formato 1 tambem aceita dias separados por espaco", () => {
+    const result = parsePaymentCondition("7 14 21");
+    expect(result.kind).toBe("fixed_days");
+    expect(result.installmentCount).toBe(3);
+    expect(result.installments.map((i) => i.dueDays)).toEqual([7, 14, 21]);
+    expect(result.raw).toBe("7/14/21");
+  });
+
+  it("numero isolado continua sendo quantidade de parcelas (nao dias)", () => {
+    expect(parsePaymentCondition("5").kind).toBe("monthly_count");
+    expect(parsePaymentCondition("5").installmentCount).toBe(5);
+  });
+
   it("formato 2: primeira a vista e demais em dias", () => {
     const result = parsePaymentCondition("A Vista/40/60");
     expect(result.kind).toBe("fixed_days");

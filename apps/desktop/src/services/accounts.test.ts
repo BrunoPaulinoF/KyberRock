@@ -65,14 +65,14 @@ describe("accounts service", () => {
     expect(created.code).toBeNull();
   });
 
-  it("renames, sets the OMIE code and deactivates", () => {
-    const created = createAccount(database, { companyId: COMPANY_ID, name: "Conta" });
-    const updated = updateAccount(database, created.id, {
-      name: "Conta Corrente",
-      omieCode: "999",
-      isActive: false
+  it("deactivates an account (name and OMIE code stay OMIE-owned)", () => {
+    const created = createAccount(database, {
+      companyId: COMPANY_ID,
+      name: "Conta",
+      omieCode: "999"
     });
-    expect(updated.name).toBe("Conta Corrente");
+    const updated = updateAccount(database, created.id, { isActive: false });
+    expect(updated.name).toBe("Conta");
     expect(updated.omie_code).toBe("999");
     expect(updated.is_active).toBe(0);
   });

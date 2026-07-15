@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { DesktopAccessStatus } from "../services/desktop-activation";
 import type { KyberRockDesktopApi } from "./desktop-api";
+import { formatDbDateTime } from "./format-datetime";
 import { HelpTooltip } from "./Tooltip";
 import { TIPS } from "./tooltip-messages";
 
@@ -212,12 +213,12 @@ export function ActivationGate({ desktopApi, onUnlocked }: ActivationGateProps) 
             )}
             {status.lastSuccessfulCheckAt && (
               <p style={styles.statusText}>
-                Ultima validacao: {new Date(status.lastSuccessfulCheckAt).toLocaleString("pt-BR")}
+                Ultima validacao: {formatDbDateTime(status.lastSuccessfulCheckAt)}
               </p>
             )}
             {status.graceExpiresAt && (
               <p style={styles.statusText}>
-                Acesso offline expira: {new Date(status.graceExpiresAt).toLocaleString("pt-BR")}
+                Acesso offline expira: {formatDbDateTime(status.graceExpiresAt)}
               </p>
             )}
           </div>

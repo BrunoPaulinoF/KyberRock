@@ -19,6 +19,7 @@ import type { KyberRockDesktopApi } from "../preload/api-types";
 import type { DailySeriesPoint, OperationMix, ProductReport } from "../services/reports";
 import type { WeighingOperationSummary } from "../services/weighing-operations";
 import { HelpTooltip } from "./Tooltip";
+import { formatDbDateTime } from "./format-datetime";
 import { TIPS } from "./tooltip-messages";
 
 type Period = "today" | "7d" | "30d" | "month" | "lastMonth";
@@ -489,7 +490,7 @@ export function InsightsView({
                 <p style={{ ...styles.syncValue, color: syncBadge.color }}>{syncBadge.label}</p>
                 {omieStatus?.lastSyncAt ? (
                   <p style={styles.syncHint}>
-                    Ultima: {new Date(omieStatus.lastSyncAt).toLocaleString("pt-BR")}
+                    Ultima: {formatDbDateTime(omieStatus.lastSyncAt)}
                   </p>
                 ) : null}
               </div>

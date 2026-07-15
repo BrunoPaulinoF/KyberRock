@@ -19,6 +19,7 @@ export interface ReceiptTemplateInput {
   plate: string;
   driverName: string;
   paymentTermName: string | null;
+  paymentMethodName: string | null;
   entryCapturedAt: string;
   exitCapturedAt: string;
   permanenceLabel: string;
@@ -151,8 +152,12 @@ export function buildReceiptLinesWithConfig(
   if (config.showProductDetail) {
     lines.push(
       productLabel.toUpperCase(),
-      "  Quantidade |   Unitario R$ |   Total R$",
-      `  ${formatTon(quantityTon)} TN | ${formatDecimalMoney(input.unitPriceCents)} | ${formatNumber(input.productTotalCents / 100)}`,
+      threeColumns("Quantidade", "Unitario R$", "Total R$"),
+      threeColumns(
+        `${formatTon(quantityTon)} TN`,
+        formatDecimalMoney(input.unitPriceCents),
+        formatNumber(input.productTotalCents / 100)
+      ),
       divider(),
       `TOTAL DA VENDA - Itens (1) R$ ${formatNumber(input.productTotalCents / 100)}`
     );
@@ -164,6 +169,7 @@ export function buildReceiptLinesWithConfig(
 
   if (config.showProductDetail) {
     lines.push(`Cond.Pagto.: ${input.paymentTermName ?? "NAO INFORMADA"}`);
+    lines.push(`Meio Pagto.: ${input.paymentMethodName ?? "NAO INFORMADO"}`);
   }
 
   if (config.showWeights || config.showProductDetail) {
@@ -200,7 +206,9 @@ export function buildReceiptLinesWithConfig(
   if (config.showSignature) {
     lines.push(
       divider(),
-      `Data: ${formatDateTime(input.printedAt)} | Assinatura do Recebimento`,
+      `Data: ${formatDateTime(input.printedAt)}`,
+      "Assinatura do Recebimento:",
+      "",
       ""
     );
   }
@@ -225,6 +233,25 @@ export function buildReceiptLinesWithConfig(
   }
 
   return lines.filter((line): line is string => line !== null);
+}
+
+/**
+ * Largura de cada coluna do bloco Quantidade/Unitario/Total. 3 x 12 = 36 caracteres,
+ * mais estreito que o divisor (48) para caber com folga tambem em papel de 58 mm.
+ */
+const RECEIPT_COLUMN_WIDTH = 12;
+
+/**
+ * Formata tres colunas alinhadas a direita (uma sob a outra), para que os valores
+ * fiquem exatamente sob os cabecalhos (Quantidade/Unitario/Total). Nunca trunca: se um
+ * valor exceder a coluna, a linha so fica um pouco mais larga (sem perder digitos).
+ */
+function threeColumns(col1: string, col2: string, col3: string): string {
+  return (
+    col1.padStart(RECEIPT_COLUMN_WIDTH) +
+    col2.padStart(RECEIPT_COLUMN_WIDTH) +
+    col3.padStart(RECEIPT_COLUMN_WIDTH)
+  );
 }
 
 function divider(): string {

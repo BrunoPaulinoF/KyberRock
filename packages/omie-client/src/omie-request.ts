@@ -1,13 +1,3 @@
-export const OMIE_ENDPOINTS = {
-  customers: "/geral/clientes/",
-  products: "/geral/produtos/",
-  salesOrders: "/produtos/pedido/",
-  serviceOrders: "/servicos/os/",
-  receivables: "/financas/contareceber/"
-} as const;
-
-export type OmieEndpoint = (typeof OMIE_ENDPOINTS)[keyof typeof OMIE_ENDPOINTS];
-
 export interface OmieRequestBody<TParam> {
   call: string;
   param: TParam[];

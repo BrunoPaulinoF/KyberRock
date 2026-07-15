@@ -56,6 +56,41 @@ export interface OperationMix {
   cancelled: { count: number; weightKg: number };
 }
 
+export interface TruckProductWeight {
+  productDescription: string;
+  totalNetWeightKg: number;
+  operations: number;
+}
+
+export interface TruckControlRow {
+  plate: string;
+  driverName: string | null;
+  operations: number;
+  totalMinutes: number;
+  avgMinutes: number;
+  totalNetWeightKg: number;
+  lastOperationAt: string | null;
+  products: TruckProductWeight[];
+}
+
+export interface TruckControlReport {
+  startDate: string;
+  endDate: string;
+  averageMinutes: number;
+  totalOperations: number;
+  totalNetWeightKg: number;
+  trucks: TruckControlRow[];
+}
+
+interface TruckControlOperationRow {
+  plate: string | null;
+  driver_name: string | null;
+  product_description: string | null;
+  net_weight_kg: number | null;
+  entry_at: string | null;
+  exit_at: string | null;
+}
+
 interface RangeReportOperation {
   date: string;
   customerName: string;
@@ -358,6 +393,177 @@ export class ReportService {
     return lines.join("\n");
   }
 
+  // Controle de caminhoes: estatisticas por placa no periodo (tempo dentro da
+  // pedreira = saida - entrada da balanca), peso por produto e media geral.
+  getTruckControlReport(startDate: string, endDate: string, unitId: string): TruckControlReport {
+    const rows = this.db
+      .prepare(
+        `
+      SELECT
+        v.plate as plate,
+        d.name as driver_name,
+        p.description as product_description,
+        wo.net_weight_kg as net_weight_kg,
+        wo.entry_weight_captured_at as entry_at,
+        wo.exit_weight_captured_at as exit_at
+      FROM weighing_operations wo
+      LEFT JOIN vehicles v ON v.id = wo.vehicle_id
+      LEFT JOIN drivers d ON d.id = wo.driver_id
+      LEFT JOIN products p ON p.id = wo.product_id
+      WHERE wo.unit_id = ?
+        AND wo.status != 'cancelled'
+        AND wo.entry_weight_captured_at IS NOT NULL
+        AND wo.exit_weight_captured_at IS NOT NULL
+        AND date(wo.entry_weight_captured_at) >= date(?)
+        AND date(wo.entry_weight_captured_at) <= date(?)
+      ORDER BY wo.entry_weight_captured_at ASC
+    `
+      )
+      .all(unitId, startDate, endDate) as TruckControlOperationRow[];
+
+    const byPlate = new Map<
+      string,
+      {
+        plate: string;
+        driverName: string | null;
+        operations: number;
+        totalMinutes: number;
+        totalNetWeightKg: number;
+        lastOperationAt: string | null;
+        products: Map<string, TruckProductWeight>;
+      }
+    >();
+
+    let totalMinutesAll = 0;
+    let totalOperations = 0;
+    let totalNetWeightKg = 0;
+
+    for (const row of rows) {
+      const plate = (row.plate ?? "").trim() || "SEM PLACA";
+      const minutes = minutesBetween(row.entry_at, row.exit_at);
+      if (minutes === null) continue;
+      const weight = row.net_weight_kg ?? 0;
+
+      let entry = byPlate.get(plate);
+      if (!entry) {
+        entry = {
+          plate,
+          driverName: row.driver_name,
+          operations: 0,
+          totalMinutes: 0,
+          totalNetWeightKg: 0,
+          lastOperationAt: null,
+          products: new Map()
+        };
+        byPlate.set(plate, entry);
+      }
+
+      entry.operations += 1;
+      entry.totalMinutes += minutes;
+      entry.totalNetWeightKg += weight;
+      if (row.driver_name) entry.driverName = row.driver_name;
+      if (row.exit_at && (!entry.lastOperationAt || row.exit_at > entry.lastOperationAt)) {
+        entry.lastOperationAt = row.exit_at;
+      }
+
+      const productKey = (row.product_description ?? "N/A").trim() || "N/A";
+      const product = entry.products.get(productKey) ?? {
+        productDescription: productKey,
+        totalNetWeightKg: 0,
+        operations: 0
+      };
+      product.totalNetWeightKg += weight;
+      product.operations += 1;
+      entry.products.set(productKey, product);
+
+      totalMinutesAll += minutes;
+      totalOperations += 1;
+      totalNetWeightKg += weight;
+    }
+
+    const trucks: TruckControlRow[] = Array.from(byPlate.values())
+      .map((entry) => ({
+        plate: entry.plate,
+        driverName: entry.driverName,
+        operations: entry.operations,
+        totalMinutes: Math.round(entry.totalMinutes),
+        avgMinutes: entry.operations > 0 ? Math.round(entry.totalMinutes / entry.operations) : 0,
+        totalNetWeightKg: entry.totalNetWeightKg,
+        lastOperationAt: entry.lastOperationAt,
+        products: Array.from(entry.products.values()).sort(
+          (a, b) => b.totalNetWeightKg - a.totalNetWeightKg
+        )
+      }))
+      .sort((a, b) => b.operations - a.operations || b.totalNetWeightKg - a.totalNetWeightKg);
+
+    return {
+      startDate,
+      endDate,
+      averageMinutes: totalOperations > 0 ? Math.round(totalMinutesAll / totalOperations) : 0,
+      totalOperations,
+      totalNetWeightKg,
+      trucks
+    };
+  }
+
+  // Media (minutos) de tempo dentro da pedreira no periodo. Usada para o alerta
+  // de caminhoes acima da media (desktop e carregador).
+  getAverageQuarryMinutes(startDate: string, endDate: string, unitId: string): number {
+    const row = this.db
+      .prepare(
+        `
+      SELECT AVG((julianday(exit_weight_captured_at) - julianday(entry_weight_captured_at)) * 1440) AS avg_min
+      FROM weighing_operations
+      WHERE unit_id = ?
+        AND status != 'cancelled'
+        AND entry_weight_captured_at IS NOT NULL
+        AND exit_weight_captured_at IS NOT NULL
+        AND exit_weight_captured_at >= entry_weight_captured_at
+        AND date(entry_weight_captured_at) >= date(?)
+        AND date(entry_weight_captured_at) <= date(?)
+    `
+      )
+      .get(unitId, startDate, endDate) as { avg_min: number | null } | undefined;
+    const avg = row?.avg_min ?? 0;
+    return Number.isFinite(avg) && avg > 0 ? Math.round(avg) : 0;
+  }
+
+  exportTruckControlToHtml(startDate: string, endDate: string, unitId: string): string {
+    const report = this.getTruckControlReport(startDate, endDate, unitId);
+    const truckRows = report.trucks
+      .map((truck) => {
+        const products = truck.products
+          .map(
+            (p) =>
+              `${escapeHtml(p.productDescription)}: ${p.totalNetWeightKg.toLocaleString("pt-BR")} kg`
+          )
+          .join("<br />");
+        return `<tr><td>${escapeHtml(truck.plate)}</td><td>${escapeHtml(
+          truck.driverName ?? "-"
+        )}</td><td class="num">${truck.operations}</td><td class="num">${formatMinutes(
+          truck.avgMinutes
+        )}</td><td class="num">${formatMinutes(
+          truck.totalMinutes
+        )}</td><td class="num">${truck.totalNetWeightKg.toLocaleString(
+          "pt-BR"
+        )}</td><td>${products || "-"}</td></tr>`;
+      })
+      .join("");
+
+    return `<!doctype html><html><head><meta charset="utf-8" /><style>body{font-family:Arial,sans-serif;color:#0f172a;margin:28px}h1{margin:0 0 4px;font-size:22px}p{margin:0 0 18px;color:#475569}.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:18px 0}.card{border:1px solid #cbd5e1;border-radius:10px;padding:10px}.card span{display:block;color:#64748b;font-size:12px}.card strong{font-size:16px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #cbd5e1;padding:7px;text-align:left;vertical-align:top}th{background:#e2e8f0}.num{text-align:right}@page{size:A4;margin:14mm}</style></head><body><h1>Controle de caminhoes</h1><p>Periodo: ${escapeHtml(
+      startDate
+    )} a ${escapeHtml(
+      endDate
+    )}</p><section class="summary"><div class="card"><span>Caminhoes</span><strong>${report.trucks.length}</strong></div><div class="card"><span>Operacoes</span><strong>${report.totalOperations}</strong></div><div class="card"><span>Tempo medio na pedreira</span><strong>${formatMinutes(
+      report.averageMinutes
+    )}</strong></div><div class="card"><span>Tonelagem</span><strong>${(report.totalNetWeightKg / 1000).toLocaleString(
+      "pt-BR",
+      { maximumFractionDigits: 2 }
+    )} t</strong></div></section><table><thead><tr><th>Placa</th><th>Motorista</th><th>Operacoes</th><th>Tempo medio</th><th>Tempo total</th><th>Peso kg</th><th>Peso por produto</th></tr></thead><tbody>${
+      truckRows || '<tr><td colspan="7">Sem operacoes no periodo.</td></tr>'
+    }</tbody></table></body></html>`;
+  }
+
   exportRangeToHtml(startDate: string, endDate: string, unitId: string): string {
     const operations = this.getRangeOperations(startDate, endDate, unitId);
     const totalWeight = operations.reduce((sum, op) => sum + op.netWeightKg, 0);
@@ -415,6 +621,28 @@ export class ReportService {
     const value = (cents / 100).toFixed(2);
     return `R$ ${value}`;
   }
+}
+
+// Minutos entre entrada e saida da balanca; null se datas invalidas.
+export function minutesBetween(
+  entryIso: string | null | undefined,
+  exitIso: string | null | undefined
+): number | null {
+  if (!entryIso || !exitIso) return null;
+  const entry = new Date(entryIso).getTime();
+  const exit = new Date(exitIso).getTime();
+  if (Number.isNaN(entry) || Number.isNaN(exit)) return null;
+  const minutes = (exit - entry) / 60_000;
+  return minutes >= 0 ? minutes : 0;
+}
+
+// Formata minutos como "1h 05min" / "42min".
+export function formatMinutes(totalMinutes: number): string {
+  const minutes = Math.max(0, Math.round(totalMinutes));
+  if (minutes < 60) return `${minutes}min`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return `${hours}h ${String(rest).padStart(2, "0")}min`;
 }
 
 function escapeHtml(value: string): string {

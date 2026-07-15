@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { FreightCalculator, type FreightRule } from "./freight";
+import {
+  FreightCalculator,
+  FREIGHT_MODALITIES,
+  freightModalityOmieCode,
+  getFreightModalityInfo,
+  isFreightModality,
+  type FreightRule
+} from "./freight";
 
 describe("FreightCalculator", () => {
   const baseRule: FreightRule = {
@@ -99,5 +106,41 @@ describe("FreightCalculator", () => {
     // Simula alteração pós-saída
     const newFreight = calculator.recalculateAfterExit(15000, baseRule, 1200); // R$ 12,00/ton
     expect(newFreight).toBe(18000); // 15 ton * R$ 12,00 = R$ 180,00
+  });
+});
+
+describe("freight modalities", () => {
+  it("maps each modality to the OMIE modalidade code (modFrete)", () => {
+    expect(freightModalityOmieCode("cif")).toBe("0");
+    expect(freightModalityOmieCode("fob")).toBe("1");
+    expect(freightModalityOmieCode("third_party")).toBe("2");
+    expect(freightModalityOmieCode("own_sender")).toBe("3");
+    expect(freightModalityOmieCode("own_recipient")).toBe("4");
+    expect(freightModalityOmieCode("none")).toBe("9");
+  });
+
+  it("falls back to sem frete (9) for unknown or missing modalities", () => {
+    expect(freightModalityOmieCode(null)).toBe("9");
+    expect(freightModalityOmieCode(undefined)).toBe("9");
+    expect(freightModalityOmieCode("bogus")).toBe("9");
+    expect(getFreightModalityInfo("bogus").key).toBe("none");
+  });
+
+  it("marks only the client's own transport as not using the Pedreira carrier", () => {
+    const withoutCarrier = FREIGHT_MODALITIES.filter((modality) => !modality.usesCarrier);
+    expect(withoutCarrier.map((modality) => modality.key)).toEqual(["own_recipient"]);
+  });
+
+  it("supports a freight charge only on billable modalities", () => {
+    const chargeable = FREIGHT_MODALITIES.filter((modality) => modality.supportsCharge).map(
+      (modality) => modality.key
+    );
+    expect(chargeable).toEqual(["cif", "fob", "third_party", "own_sender"]);
+  });
+
+  it("validates modality keys", () => {
+    expect(isFreightModality("cif")).toBe(true);
+    expect(isFreightModality("nope")).toBe(false);
+    expect(isFreightModality(42)).toBe(false);
   });
 });

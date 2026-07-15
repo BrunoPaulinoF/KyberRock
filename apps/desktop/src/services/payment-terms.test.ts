@@ -5,7 +5,9 @@ import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite.js
 import {
   createPaymentTerm,
   deletePaymentTerm,
+  listOmiePaymentTerms,
   listPaymentTerms,
+  provisionPaymentTermsFromOmieMirror,
   updatePaymentTerm
 } from "./payment-terms.js";
 
@@ -94,5 +96,67 @@ describe("payment-terms service", () => {
       )
       .get() as { c: number };
     expect(rows.c).toBe(0);
+  });
+
+  it("stores and preserves the OMIE parcela code (with leading zeros)", () => {
+    const term = createPaymentTerm(database, {
+      companyId: COMPANY_ID,
+      name: "A prazo 30",
+      condition: "Para 30 dias",
+      omieParcelaCode: "030"
+    });
+    expect(term.omie_parcela_code).toBe("030");
+
+    const cleared = updatePaymentTerm(database, term.id, { omieParcelaCode: null });
+    expect(cleared.omie_parcela_code).toBeNull();
+
+    const relinked = updatePaymentTerm(database, term.id, { omieParcelaCode: "  000  " });
+    expect(relinked.omie_parcela_code).toBe("000");
+  });
+
+  it("lists active OMIE payment terms for linking", () => {
+    const nowIso = new Date().toISOString();
+    database
+      .prepare(
+        `INSERT INTO omie_payment_terms (id, company_id, omie_id, code, description, installment_count, is_active, visible, created_at, updated_at)
+         VALUES ('omie_parcela_000', ?, 0, '000', 'A vista', 1, 1, 1, ?, ?),
+                ('omie_parcela_030', ?, 30, '030', '30 dias', 1, 1, 1, ?, ?),
+                ('omie_parcela_060', ?, 60, '060', 'Inativa', 2, 0, 1, ?, ?)`
+      )
+      .run(COMPANY_ID, nowIso, nowIso, COMPANY_ID, nowIso, nowIso, COMPANY_ID, nowIso, nowIso);
+
+    const options = listOmiePaymentTerms(database, COMPANY_ID);
+    expect(options.map((o) => o.code)).toEqual(["000", "030"]);
+    expect(options[0].description).toBe("A vista");
+  });
+
+  it("materializes OMIE mirror parcelas as selectable local terms (idempotent)", () => {
+    const nowIso = new Date().toISOString();
+    database
+      .prepare(
+        `INSERT INTO omie_payment_terms (id, company_id, omie_id, code, description, installment_count, installment_days_json, is_active, visible, created_at, updated_at)
+         VALUES ('omie_parcela_212', ?, 212, '212', '7/14/21', 3, '[7,14,21]', 1, 1, ?, ?),
+                ('omie_parcela_090', ?, 90, '090', 'Inativa', 1, NULL, 0, 1, ?, ?)`
+      )
+      .run(COMPANY_ID, nowIso, nowIso, COMPANY_ID, nowIso, nowIso);
+
+    const created = provisionPaymentTermsFromOmieMirror(database, COMPANY_ID);
+    expect(created).toBe(1);
+
+    const terms = listPaymentTerms(database, COMPANY_ID);
+    const provisioned = terms.find((t) => t.omie_parcela_code === "212");
+    expect(provisioned).toBeDefined();
+    expect(provisioned!.name).toBe("7/14/21");
+    expect(JSON.parse(provisioned!.installment_days_json!)).toEqual([7, 14, 21]);
+    expect(JSON.parse(provisioned!.rules_json).raw).toBe("7/14/21");
+    // Parcela inativa nao vira condicao local.
+    expect(terms.some((t) => t.omie_parcela_code === "090")).toBe(false);
+
+    // Idempotente: nada novo na segunda rodada.
+    expect(provisionPaymentTermsFromOmieMirror(database, COMPANY_ID)).toBe(0);
+
+    // Exclusao do operador e respeitada: nao recria o termo apagado.
+    deletePaymentTerm(database, provisioned!.id);
+    expect(provisionPaymentTermsFromOmieMirror(database, COMPANY_ID)).toBe(0);
   });
 });

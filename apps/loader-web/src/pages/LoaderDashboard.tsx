@@ -15,6 +15,10 @@ export interface WeighingOperation {
   loaderCompletedAt: string | null;
 }
 
+// Duration of the truck departure animation. Keep in sync with the
+// `truck-drive-off` keyframes duration in loader-ui.css.
+const DEPART_ANIMATION_MS = 1150;
+
 function formatWeight(weightKg: number): string {
   if (!weightKg) {
     return "A definir";
@@ -59,12 +63,66 @@ function mapRow(row: LoadingRequestRow): WeighingOperation {
   };
 }
 
+/**
+ * Operations still awaiting the loader (used for counters). A departing
+ * operation already has `loaderCompletedAt` set, so it is excluded here.
+ */
+export function getInProgressOperations(operations: WeighingOperation[]): WeighingOperation[] {
+  return operations.filter((operation) => !operation.loaderCompletedAt);
+}
+
+/**
+ * Operations that should be rendered as cards: everything still in progress
+ * plus any concluded operation whose truck is still driving off screen, so the
+ * departure animation can play before the row disappears.
+ */
+export function getRenderedOperations(
+  operations: WeighingOperation[],
+  departingIds: ReadonlySet<string>
+): WeighingOperation[] {
+  return operations.filter(
+    (operation) => !operation.loaderCompletedAt || departingIds.has(operation.id)
+  );
+}
+
+/** Minutos desde a chegada do caminhao (created_at). */
+export function minutesSinceArrival(createdAt: string, now: number): number {
+  const arrived = new Date(createdAt).getTime();
+  if (Number.isNaN(arrived)) return 0;
+  return Math.max(0, (now - arrived) / 60_000);
+}
+
+/**
+ * Operacoes em andamento cujo caminhao ja passou do tempo medio dentro da
+ * pedreira (projetado pelo desktop na unidade). Vazio se nao ha media.
+ */
+export function getOvertimeOperations(
+  operations: WeighingOperation[],
+  avgMinutes: number | null,
+  now: number
+): WeighingOperation[] {
+  if (!avgMinutes || avgMinutes <= 0) return [];
+  return operations.filter(
+    (operation) =>
+      !operation.loaderCompletedAt && minutesSinceArrival(operation.createdAt, now) > avgMinutes
+  );
+}
+
 export function LoaderDashboard() {
   const { user, logout } = useAuth();
   const [operations, setOperations] = useState<WeighingOperation[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [pendingCompletions, setPendingCompletions] = useState<Set<string>>(new Set());
+  const [departingIds, setDepartingIds] = useState<Set<string>>(new Set());
+  const [avgQuarryMinutes, setAvgQuarryMinutes] = useState<number | null>(null);
+  const [now, setNow] = useState<number>(() => Date.now());
+
+  // Relogio para recalcular o tempo decorrido sem depender do polling.
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
 
   useEffect(() => {
     void loadOperations();
@@ -116,6 +174,16 @@ export function LoaderDashboard() {
       if (error) throw error;
       setOperations((data ?? []).map(mapRow));
       setErrorMessage(null);
+
+      // Media de tempo dentro da pedreira (projetada pelo desktop na unidade),
+      // usada para destacar caminhoes acima da media. Best-effort.
+      const { data: unitData } = await supabase
+        .from("units")
+        .select("avg_quarry_minutes")
+        .eq("id", user.unitId)
+        .maybeSingle();
+      const avg = Number((unitData as { avg_quarry_minutes?: number | null } | null)?.avg_quarry_minutes ?? 0);
+      setAvgQuarryMinutes(Number.isFinite(avg) && avg > 0 ? avg : null);
     } catch (error) {
       console.error("Error loading operations:", error);
       setErrorMessage(
@@ -126,12 +194,34 @@ export function LoaderDashboard() {
     }
   }
 
+  function finalizeDeparture(operationId: string) {
+    setDepartingIds((current) => {
+      if (!current.has(operationId)) return current;
+      const next = new Set(current);
+      next.delete(operationId);
+      return next;
+    });
+    setPendingCompletions((current) => {
+      if (!current.has(operationId)) return current;
+      const next = new Set(current);
+      next.delete(operationId);
+      return next;
+    });
+  }
+
   async function handleCompleteOperation(operation: WeighingOperation) {
     if (!user?.unitId) return;
     if (operation.loaderCompletedAt) return;
     if (pendingCompletions.has(operation.id)) return;
 
     setPendingCompletions((current) => {
+      const next = new Set(current);
+      next.add(operation.id);
+      return next;
+    });
+    // Trigger the truck animation. The row keeps rendering while it drives off
+    // because `getRenderedOperations` includes departing ids.
+    setDepartingIds((current) => {
       const next = new Set(current);
       next.add(operation.id);
       return next;
@@ -154,26 +244,28 @@ export function LoaderDashboard() {
 
       if (error) throw error;
       setErrorMessage(null);
+      // Success: let the truck finish driving off. `onDeparted` (or the safety
+      // timeout below) removes the row once the animation ends.
+      window.setTimeout(() => finalizeDeparture(operation.id), DEPART_ANIMATION_MS + 250);
     } catch (error) {
       console.error("Error completing loading operation:", error);
       setErrorMessage(
         error instanceof Error ? error.message : "Nao foi possivel marcar a carga como concluida."
       );
+      // Revert everything: the truck stops and the row returns to the queue.
       setOperations((current) =>
         current.map((item) =>
           item.id === operation.id ? { ...item, loaderCompletedAt: null } : item
         )
       );
-    } finally {
-      setPendingCompletions((current) => {
-        const next = new Set(current);
-        next.delete(operation.id);
-        return next;
-      });
+      finalizeDeparture(operation.id);
     }
   }
 
-  const inProgressOperations = operations.filter((operation) => !operation.loaderCompletedAt);
+  const inProgressOperations = getInProgressOperations(operations);
+  const renderedOperations = getRenderedOperations(operations, departingIds);
+  const overtimeOperations = getOvertimeOperations(inProgressOperations, avgQuarryMinutes, now);
+  const overtimeIds = new Set(overtimeOperations.map((operation) => operation.id));
   const operatorName = user?.name ?? "Carregador";
 
   return (
@@ -223,6 +315,21 @@ export function LoaderDashboard() {
         </div>
       ) : null}
 
+      {overtimeOperations.length > 0 ? (
+        <div className="overtime-banner" role="alert">
+          <span className="overtime-banner__label">
+            ⚠ Acima do tempo medio ({Math.round(avgQuarryMinutes ?? 0)}min):
+          </span>
+          <span className="overtime-banner__plates">
+            {overtimeOperations.map((operation) => (
+              <span key={operation.id} className="overtime-plate">
+                {operation.plate || "SEM PLACA"}
+              </span>
+            ))}
+          </span>
+        </div>
+      ) : null}
+
       <section className="queue-panel" aria-labelledby="in-progress-title">
         <div className="queue-panel-header">
           <div>
@@ -238,20 +345,23 @@ export function LoaderDashboard() {
 
         {isLoading ? (
           <EmptyState title="Carregando fila..." description="Buscando cargas em aberto da unidade." />
-        ) : inProgressOperations.length === 0 ? (
+        ) : renderedOperations.length === 0 ? (
           <EmptyState
             title="Nenhuma carga aguardando"
             description="Quando uma operacao entrar na fila, ela aparecera aqui."
           />
         ) : (
-          <div className="card-list">
-            {inProgressOperations.map((operation, index) => (
+          <div className={`card-list${departingIds.size > 0 ? " card-list--departing" : ""}`}>
+            {renderedOperations.map((operation, index) => (
               <LoadingCard
                 key={operation.id}
                 operation={operation}
                 position={index + 1}
                 isSubmitting={pendingCompletions.has(operation.id)}
+                isDeparting={departingIds.has(operation.id)}
+                isOvertime={overtimeIds.has(operation.id)}
                 onComplete={() => void handleCompleteOperation(operation)}
+                onDeparted={() => finalizeDeparture(operation.id)}
               />
             ))}
           </div>
@@ -265,35 +375,96 @@ function LoadingCard({
   operation,
   position,
   isSubmitting,
-  onComplete
+  isDeparting,
+  isOvertime,
+  onComplete,
+  onDeparted
 }: {
   operation: WeighingOperation;
   position: number;
   isSubmitting: boolean;
+  isDeparting: boolean;
+  isOvertime: boolean;
   onComplete: () => void;
+  onDeparted: () => void;
 }) {
   return (
-    <article className="operation-card">
-      <div className="operation-top-row">
-        <span className="queue-position">{position}º</span>
-        <div className="operation-identity">
-          <h3 className="operation-plate">{operation.plate}</h3>
-          <p className="operation-customer">{operation.customerName}</p>
+    <article
+      className={`operation-card${isDeparting ? " operation-card--departing" : ""}${
+        isOvertime ? " operation-card--overtime" : ""
+      }`}
+      aria-hidden={isDeparting ? true : undefined}
+      onAnimationEnd={(event) => {
+        // Ignore animation events bubbling up from child elements (truck reveal
+        // / bob) — only react to the card's own drive-off animation ending.
+        if (event.target !== event.currentTarget) return;
+        if (isDeparting) onDeparted();
+      }}
+    >
+      <div className="operation-card__content">
+        <div className="operation-top-row">
+          <span className="queue-position">{position}º</span>
+          <div className="operation-identity">
+            <h3 className="operation-plate">{operation.plate}</h3>
+            <p className="operation-customer">{operation.customerName}</p>
+          </div>
+          <span className={`waiting-pill${isOvertime ? " waiting-pill--overtime" : ""}`}>
+            {isOvertime ? "Acima da media" : "Aguardando"}
+          </span>
         </div>
-        <span className="waiting-pill">Aguardando</span>
+
+        <dl className="details-grid">
+          <InfoItem label="Motorista" value={operation.driverName} />
+          <InfoItem label="Produto" value={operation.productDescription} />
+          <InfoItem label="Quantidade" value={formatWeight(operation.entryWeightKg)} />
+          <InfoItem label="Chegada" value={formatDateTime(operation.createdAt)} />
+        </dl>
+
+        <button
+          onClick={onComplete}
+          disabled={isSubmitting}
+          className="primary-action complete-button"
+        >
+          {isSubmitting ? "Enviando..." : "Concluir carga"}
+        </button>
       </div>
 
-      <dl className="details-grid">
-        <InfoItem label="Motorista" value={operation.driverName} />
-        <InfoItem label="Produto" value={operation.productDescription} />
-        <InfoItem label="Quantidade" value={formatWeight(operation.entryWeightKg)} />
-        <InfoItem label="Chegada" value={formatDateTime(operation.createdAt)} />
-      </dl>
-
-      <button onClick={onComplete} disabled={isSubmitting} className="primary-action complete-button">
-        {isSubmitting ? "Enviando..." : "Concluir carga"}
-      </button>
+      <div className="operation-card__truck" aria-hidden="true">
+        <TruckIcon />
+        <span className="operation-card__truck-trail" />
+      </div>
     </article>
+  );
+}
+
+function TruckIcon() {
+  // Side-view delivery truck facing right (the direction it drives off).
+  return (
+    <svg
+      className="operation-card__truck-svg"
+      viewBox="0 0 132 72"
+      role="img"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {/* cargo box */}
+      <rect x="4" y="14" width="72" height="38" rx="4" fill="#1d4ed8" />
+      <rect x="12" y="22" width="56" height="22" rx="2" fill="#3b82f6" opacity="0.55" />
+      {/* cab: hood + cabin */}
+      <path
+        d="M76 24h18l14 16v12H76z"
+        fill="#0f172a"
+      />
+      {/* windshield */}
+      <path d="M80 28h11l9 10H80z" fill="#93c5fd" />
+      {/* headlight */}
+      <rect x="104" y="44" width="6" height="5" rx="1.5" fill="#fde68a" />
+      {/* wheels */}
+      <circle cx="30" cy="56" r="10" fill="#0f172a" />
+      <circle cx="30" cy="56" r="4" fill="#cbd5e1" />
+      <circle cx="92" cy="56" r="10" fill="#0f172a" />
+      <circle cx="92" cy="56" r="4" fill="#cbd5e1" />
+    </svg>
   );
 }
 

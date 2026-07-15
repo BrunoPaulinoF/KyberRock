@@ -24,9 +24,11 @@ export interface CreateAccountInput {
   sortOrder?: number;
 }
 
+/**
+ * Campos editaveis localmente. Nome e codigo OMIE sao de propriedade do OMIE
+ * (chegam pela sincronizacao) e nao podem ser alterados no desktop.
+ */
 export interface UpdateAccountInput {
-  name?: string;
-  omieCode?: string | null;
   isActive?: boolean;
   sortOrder?: number;
 }
@@ -143,16 +145,6 @@ export function updateAccount(
   const sets: string[] = [];
   const values: unknown[] = [];
 
-  if (input.name !== undefined) {
-    const name = input.name.trim();
-    if (!name) throw new Error("Informe o nome da conta.");
-    sets.push("name = ?");
-    values.push(name);
-  }
-  if (input.omieCode !== undefined) {
-    sets.push("omie_code = ?");
-    values.push(input.omieCode?.trim() || null);
-  }
   if (input.isActive !== undefined) {
     sets.push("is_active = ?");
     values.push(input.isActive ? 1 : 0);

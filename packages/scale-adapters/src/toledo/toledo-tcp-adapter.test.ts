@@ -37,7 +37,15 @@ describe("toledo-tcp-adapter readSampled", () => {
   });
 
   it("returns a stable protocol reading without calculating a mean", async () => {
-    readings = ["       000015200kg", "       000018400kg"];
+    // Repete a primeira leitura: o servidor avanca a cada 200ms mesmo antes de o
+    // adapter amostrar, e sob carga a primeira amostra observada pulava para a
+    // segunda leitura (flake). Uma media com o 18400 na janela ainda falharia.
+    readings = [
+      "       000015200kg",
+      "       000015200kg",
+      "       000015200kg",
+      "       000018400kg"
+    ];
     const adapter = createToledoTcpAdapter();
     await adapter.connect({ host: "127.0.0.1", port });
 

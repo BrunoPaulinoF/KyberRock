@@ -325,6 +325,8 @@ select {
 .loader-page {
   min-height: 100vh;
   padding: clamp(16px, 3vw, 34px);
+  /* Keep the truck departure animation from spawning a horizontal scrollbar. */
+  overflow-x: hidden;
   background:
     radial-gradient(circle at 18% 8%, rgba(37, 99, 235, 0.14), transparent 32%),
     linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
@@ -591,6 +593,141 @@ select {
   width: 100%;
 }
 
+/* --- Truck departure animation ------------------------------------------- */
+
+.operation-card__content {
+  display: grid;
+  gap: 16px;
+}
+
+/* The truck overlay sits on top of the card content and only becomes visible
+   while the row is driving off screen. An inline SVG is used (instead of an
+   emoji) so the truck renders identically on every OS/browser. */
+.operation-card__truck {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 20px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.operation-card__truck-svg {
+  flex: 0 0 auto;
+  width: clamp(96px, 22vw, 132px);
+  height: auto;
+}
+
+.operation-card__truck-trail {
+  flex: 1;
+  height: 4px;
+  border-radius: 999px;
+  background: repeating-linear-gradient(
+    90deg,
+    rgba(148, 163, 184, 0.6) 0,
+    rgba(148, 163, 184, 0.6) 16px,
+    transparent 16px,
+    transparent 34px
+  );
+}
+
+/* When a card is departing, let the truck escape the (otherwise clipped) panel. */
+.queue-panel:has(.card-list--departing) {
+  overflow: visible;
+}
+
+.operation-card--departing {
+  z-index: 3;
+  overflow: visible;
+  pointer-events: none;
+  will-change: transform, opacity;
+  animation: truck-drive-off 1150ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+.operation-card--departing .operation-card__content {
+  animation: content-morph 340ms ease forwards;
+}
+
+.operation-card--departing .operation-card__truck {
+  animation:
+    truck-reveal 420ms ease forwards,
+    truck-bob 460ms 420ms ease-in-out infinite;
+}
+
+@keyframes content-morph {
+  to {
+    opacity: 0;
+    transform: scale(0.92);
+    filter: blur(1px);
+  }
+}
+
+@keyframes truck-reveal {
+  0% {
+    opacity: 0;
+    transform: scale(0.55) translateY(8px);
+  }
+  60% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes truck-bob {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  50% {
+    translate: 0 -4px;
+  }
+}
+
+@keyframes truck-drive-off {
+  0% {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  12% {
+    transform: translateX(-20px); /* wind-up: back up before pulling out */
+    opacity: 1;
+  }
+  26% {
+    transform: translateX(-14px);
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(130vw); /* drive straight off the right edge */
+    opacity: 0;
+  }
+}
+
+/* Concluding a load is a core, user-facing confirmation, so keep the truck
+   driving off even when the viewer prefers reduced motion — just make it
+   quicker and drop the repetitive wheel bob. This intentionally overrides the
+   global reduced-motion rule below (higher specificity + !important). */
+@media (prefers-reduced-motion: reduce) {
+  .operation-card--departing {
+    animation: truck-drive-off 900ms cubic-bezier(0.4, 0, 0.2, 1) forwards !important;
+  }
+
+  .operation-card--departing .operation-card__content {
+    animation: content-morph 260ms ease forwards !important;
+  }
+
+  .operation-card--departing .operation-card__truck {
+    animation: truck-reveal 300ms ease forwards !important;
+  }
+}
+
 .empty-state {
   min-height: 260px;
   display: grid;
@@ -644,6 +781,49 @@ select {
   color: #991b1b;
   font-size: 14px;
   box-shadow: 0 14px 34px rgba(153, 27, 27, 0.08);
+}
+
+.waiting-pill--overtime {
+  border-color: #fca5a5;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.operation-card--overtime {
+  border-color: #fca5a5;
+  box-shadow: 0 14px 34px rgba(185, 28, 28, 0.12);
+}
+
+.overtime-banner {
+  max-width: 1240px;
+  margin: 0 auto 18px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 13px 14px;
+  border: 1px solid #fca5a5;
+  border-radius: 18px;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 14px;
+  font-weight: 800;
+  box-shadow: 0 14px 34px rgba(185, 28, 28, 0.08);
+}
+
+.overtime-banner__plates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.overtime-plate {
+  border: 1px solid #fca5a5;
+  border-radius: 999px;
+  background: #fff;
+  padding: 3px 10px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
 }
 
 .admin-page {

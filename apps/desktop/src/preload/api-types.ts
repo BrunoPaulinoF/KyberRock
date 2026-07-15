@@ -12,6 +12,7 @@ import type {
   OperationType,
   WeighingOperationSummary
 } from "../services/weighing-operations";
+import type { FreightModality } from "../services/freight";
 import type {
   CloudBootstrapResult,
   FiscalBillingResult,
@@ -32,15 +33,17 @@ import type {
   MonthlyReport,
   OperationMix,
   ProductReport,
-  CustomerReport
+  CustomerReport,
+  TruckControlReport
 } from "../services/reports";
 import type { CreateCustomerInput, UpdateCustomerInput } from "../services/customers";
+import type { UpdatePaymentMethodInput } from "../services/payment-methods";
+import type { UpdateAccountInput } from "../services/accounts";
 import type {
-  CreatePaymentMethodInput,
-  UpdatePaymentMethodInput
-} from "../services/payment-methods";
-import type { CreateAccountInput, UpdateAccountInput } from "../services/accounts";
-import type { CreatePaymentTermInput, UpdatePaymentTermInput } from "../services/payment-terms";
+  CreatePaymentTermInput,
+  OmiePaymentTermOption,
+  UpdatePaymentTermInput
+} from "../services/payment-terms";
 import type {
   AddPriceTableItemInput,
   CreatePriceTableInput,
@@ -50,6 +53,7 @@ import type {
 import type { CreateVehicleInput, UpdateVehicleInput } from "../services/vehicles";
 import type { CreateDriverInput, UpdateDriverInput } from "../services/drivers";
 import type { CreateCarrierInput, UpdateCarrierInput } from "../services/carriers";
+import type { OmieQueueItem } from "../services/sync-queue";
 import type { ScaleConfiguration, ScaleConfigurationInput } from "../services/scale-configs";
 import type {
   ToledoTcpConfig,
@@ -57,6 +61,12 @@ import type {
   ParsedToledoReading,
   ScaleReading
 } from "@kyberrock/scale-adapters";
+import type {
+  ReportChannelSettings as ReportChannelSettingsView,
+  UazapiInstanceState as WhatsappInstanceStateView
+} from "../services/report-channels";
+
+export type { ReportChannelSettingsView, WhatsappInstanceStateView };
 
 export interface KyberRockDesktopApi {
   getStatus: (internetOnline?: boolean) => Promise<DesktopStatusSnapshot>;
@@ -73,9 +83,11 @@ export interface KyberRockDesktopApi {
   checkForUpdates: () => Promise<UpdateState>;
   downloadAndInstallUpdate: () => Promise<UpdateState>;
   listOpenWeighingOperations: () => Promise<WeighingOperationSummary[]>;
+  pullLoaderCompletions: () => Promise<{ pulled: number; errors: string[] }>;
   listCanceledWeighingOperations: () => Promise<WeighingOperationSummary[]>;
   listClosedWeighingOperations: () => Promise<WeighingOperationSummary[]>;
   clearCanceledWeighingOperations: () => Promise<number>;
+  deleteClosedWeighingOperation: (operationId: string) => Promise<void>;
   startWeighing: (input: {
     operationType?: OperationType;
     customerId: string;
@@ -84,9 +96,11 @@ export interface KyberRockDesktopApi {
     driverId: string;
     productId: string;
     paymentTermId?: string;
+    paymentMethodId?: string;
     manualInstallments?: number;
     manualDownPaymentCents?: number;
     freight?: OperationFreightInput | null;
+    freightModality?: FreightModality | null;
     quotationId?: string;
     deductFreightFromCredit?: boolean;
     scaleCaptureId?: string;
@@ -181,6 +195,11 @@ export interface KyberRockDesktopApi {
   getMonthlyReport: (year: number, month: number) => Promise<MonthlyReport>;
   getReportHtml: (startDate: string, endDate: string) => Promise<string>;
   exportReportPdf: (startDate: string, endDate: string) => Promise<{ path: string } | null>;
+  getTruckControl: (startDate: string, endDate: string) => Promise<TruckControlReport>;
+  exportTruckControlPdf: (
+    startDate: string,
+    endDate: string
+  ) => Promise<{ path: string } | null>;
   exportReportExcel: (startDate: string, endDate: string) => Promise<{ path: string } | null>;
   listReportRecipients: () => Promise<
     Array<{
@@ -233,6 +252,13 @@ export interface KyberRockDesktopApi {
     endDate: string
   ) => Promise<{ success: boolean; messageId?: string; error?: string }>;
   verifySmtpConfig: () => Promise<{ success: boolean; messageId?: string; error?: string }>;
+  getReportChannelSettings: () => Promise<ReportChannelSettingsView>;
+  saveReportChannelSettings: (
+    input: Partial<ReportChannelSettingsView>
+  ) => Promise<ReportChannelSettingsView>;
+  whatsappConnect: () => Promise<WhatsappInstanceStateView>;
+  whatsappStatus: () => Promise<WhatsappInstanceStateView>;
+  whatsappDisconnect: () => Promise<WhatsappInstanceStateView>;
   getReportByProduct: (
     startDate: string,
     endDate: string,
@@ -271,20 +297,24 @@ export interface KyberRockDesktopApi {
   quotationsCancel: (id: string) => Promise<void>;
   quotationsListOpenForCustomer: (customerId: string) => Promise<QuotationSummary[]>;
   customersCreate: (input: Omit<CreateCustomerInput, "companyId">) => Promise<unknown>;
-  customersUpdate: (id: string, input: UpdateCustomerInput) => Promise<unknown>;
-  customersDelete: (id: string) => Promise<void>;
-  paymentMethodsCreate: (
-    input: Omit<CreatePaymentMethodInput, "companyId">
+  customersUpdate: (
+    id: string,
+    input: UpdateCustomerInput,
+    options?: { overrideOmieFields?: boolean }
   ) => Promise<unknown>;
+  customersDelete: (id: string) => Promise<void>;
+  getDefaultNfeEmail: () => Promise<string | null>;
+  setDefaultNfeEmail: (email: string) => Promise<string | null>;
+  applyDefaultNfeEmailToAll: (email: string) => Promise<number>;
+  // Meios de pagamento e contas vem do OMIE (sincronizacao); localmente so ha
+  // atualizacao restrita (ativar/desativar, apelido, vinculo forma -> conta).
   paymentMethodsUpdate: (id: string, input: UpdatePaymentMethodInput) => Promise<unknown>;
-  paymentMethodsDelete: (id: string) => Promise<void>;
   accountsList: () => Promise<unknown[]>;
-  accountsCreate: (input: Omit<CreateAccountInput, "companyId">) => Promise<unknown>;
   accountsUpdate: (id: string, input: UpdateAccountInput) => Promise<unknown>;
-  accountsDelete: (id: string) => Promise<void>;
   paymentTermsCreate: (input: Omit<CreatePaymentTermInput, "companyId">) => Promise<unknown>;
   paymentTermsUpdate: (id: string, input: UpdatePaymentTermInput) => Promise<unknown>;
   paymentTermsDelete: (id: string) => Promise<void>;
+  paymentTermsListOmie: () => Promise<OmiePaymentTermOption[]>;
   priceTablesCreate: (input: Omit<CreatePriceTableInput, "companyId">) => Promise<unknown>;
   priceTablesUpdateName: (id: string, name: string) => Promise<unknown>;
   priceTablesDelete: (id: string) => Promise<void>;
@@ -375,6 +405,11 @@ export interface KyberRockDesktopApi {
     customersPushFailed: number;
     errors: string[];
   }>;
+  omieQueueList: () => Promise<OmieQueueItem[]>;
+  omieQueueDelete: (jobId: string) => Promise<{ deleted: boolean }>;
+  omieQueueSendNow: (
+    jobId: string
+  ) => Promise<{ processed: number; failed: number; errors: string[] }>;
   syncOmieDirect: (
     appKey: string,
     appSecret: string
@@ -432,6 +467,7 @@ export interface KyberRockDesktopApi {
       errorMessage: string | null;
     }>
   >;
+  listOmieDocumentTypes: () => Promise<Array<{ code: string; description: string }>>;
   startOmieDataEntryLoop: () => Promise<{
     customersPulled: number;
     productsSynced: number;
@@ -497,8 +533,28 @@ export interface KyberRockDesktopApi {
     city: string;
     state: string;
   }>;
+  lookupCnpj: (cnpj: string) => Promise<{
+    found: boolean;
+    cnpj: string;
+    legalName: string | null;
+    tradeName: string | null;
+    email: string | null;
+    phone: string | null;
+    zipcode: string | null;
+    addressStreet: string | null;
+    addressNumber: string | null;
+    addressComplement: string | null;
+    neighborhood: string | null;
+    city: string | null;
+    state: string | null;
+    status: string | null;
+  }>;
   onUpdateAvailable: (callback: (event: unknown, version: string) => void) => void;
   offUpdateAvailable: (callback: (event: unknown, version: string) => void) => void;
+  onUpdateDownloadProgress: (callback: (event: unknown, percent: number) => void) => void;
+  offUpdateDownloadProgress: (callback: (event: unknown, percent: number) => void) => void;
+  onUpdateDownloaded: (callback: (event: unknown, version: string) => void) => void;
+  offUpdateDownloaded: (callback: (event: unknown, version: string) => void) => void;
   onPlateScanned: (callback: (plate: string) => void) => void;
   onScaleReading: (callback: (reading: ParsedToledoReading) => void) => void;
   offScaleReading: (callback: (reading: ParsedToledoReading) => void) => void;

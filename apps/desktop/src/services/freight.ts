@@ -3,6 +3,124 @@ export interface DistanceRange {
   valueCents: number;
 }
 
+/**
+ * Tipo (modalidade) de frete da operacao. Mapeia 1:1 para o codigo "modalidade" do
+ * frete no pedido de venda do OMIE, que reusa os codigos modFrete da NF-e:
+ * 0 CIF, 1 FOB, 2 terceiros, 3/4 transporte proprio, 9 sem frete.
+ */
+export type FreightModality =
+  | "cif"
+  | "fob"
+  | "third_party"
+  | "own_sender"
+  | "own_recipient"
+  | "none";
+
+/** Responsavel padrao pelo valor de frete de cada modalidade (reusa o enum de payer). */
+export type FreightModalityPayer = "customer" | "quarry" | "third_party";
+
+export interface FreightModalityInfo {
+  key: FreightModality;
+  /** Rotulo curto para o chip/botao. */
+  label: string;
+  /** Descricao exibida no modal de selecao. */
+  description: string;
+  /** Codigo "modalidade" enviado ao OMIE (modFrete da NF-e). */
+  omieCode: string;
+  /**
+   * A transportadora da Pedreira se aplica (placa/motorista vinculados). Falso apenas
+   * quando o cliente traz o proprio caminhao (transporte proprio do destinatario).
+   */
+  usesCarrier: boolean;
+  /** A modalidade comporta um valor de frete lancado pela Pedreira (campos de calculo). */
+  supportsCharge: boolean;
+  /** Responsavel padrao pelo frete quando ha valor lancado. */
+  defaultPayer: FreightModalityPayer;
+}
+
+/**
+ * Catalogo dos tipos de frete do OMIE. A ordem e a exibida no modal de selecao.
+ * `own_recipient` substitui a antiga caixa "transportadora propria do cliente" e
+ * `cif`/`fob` substituem a antiga caixa "operacao com frete" (parte CIF/FOB).
+ */
+export const FREIGHT_MODALITIES: readonly FreightModalityInfo[] = [
+  {
+    key: "cif",
+    label: "CIF",
+    description: "Frete por conta da Pedreira (remetente).",
+    omieCode: "0",
+    usesCarrier: true,
+    supportsCharge: true,
+    defaultPayer: "quarry"
+  },
+  {
+    key: "fob",
+    label: "FOB",
+    description: "Frete por conta do cliente (destinatario).",
+    omieCode: "1",
+    usesCarrier: true,
+    supportsCharge: true,
+    defaultPayer: "customer"
+  },
+  {
+    key: "third_party",
+    label: "Terceiros",
+    description: "Frete por conta de terceiros.",
+    omieCode: "2",
+    usesCarrier: true,
+    supportsCharge: true,
+    defaultPayer: "third_party"
+  },
+  {
+    key: "own_sender",
+    label: "Transp. proprio (Pedreira)",
+    description: "Transporte proprio por conta do remetente (Pedreira).",
+    omieCode: "3",
+    usesCarrier: true,
+    supportsCharge: true,
+    defaultPayer: "quarry"
+  },
+  {
+    key: "own_recipient",
+    label: "Transp. proprio do cliente",
+    description: "Transporte proprio por conta do destinatario: o cliente traz o proprio caminhao.",
+    omieCode: "4",
+    usesCarrier: false,
+    supportsCharge: false,
+    defaultPayer: "customer"
+  },
+  {
+    key: "none",
+    label: "Sem frete",
+    description: "Sem ocorrencia de transporte / sem frete.",
+    omieCode: "9",
+    usesCarrier: true,
+    supportsCharge: false,
+    defaultPayer: "quarry"
+  }
+];
+
+const DEFAULT_FREIGHT_MODALITY: FreightModalityInfo =
+  FREIGHT_MODALITIES.find((modality) => modality.key === "none") ?? FREIGHT_MODALITIES[0];
+
+/** Retorna os metadados da modalidade; cai em "sem frete" quando o valor e invalido. */
+export function getFreightModalityInfo(
+  key: FreightModality | string | null | undefined
+): FreightModalityInfo {
+  return FREIGHT_MODALITIES.find((modality) => modality.key === key) ?? DEFAULT_FREIGHT_MODALITY;
+}
+
+export function isFreightModality(value: unknown): value is FreightModality {
+  return typeof value === "string" && FREIGHT_MODALITIES.some((modality) => modality.key === value);
+}
+
+/** Codigo "modalidade" do OMIE para a modalidade escolhida (default "9" = sem frete). */
+export function freightModalityOmieCode(
+  key: FreightModality | string | null | undefined
+): string {
+  return getFreightModalityInfo(key).omieCode;
+}
+
 export interface FreightRule {
   id: string;
   name: string;

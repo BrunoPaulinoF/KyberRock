@@ -2,7 +2,10 @@ import { createClient as createSupabaseClient } from "jsr:@supabase/supabase-js@
 import {
   OmieQueueManager,
   buildCustomerPayload,
+  extractExistingCustomerId,
   pushCarrierToOmie as pushCarrierToOmieCore,
+  toCustomerUpdateBody,
+  toOmieIntegrationCode,
   type OmieCredentials,
   type OmieRequester
 } from "./omie-sync-core.ts";
@@ -44,8 +47,10 @@ async function sha256Hex(value: string): Promise<string> {
 type OmieAction =
   | "sync"
   | "pull_reference_data"
+  | "list_document_types"
   | "create_order"
   | "create_and_bill_order"
+  | "cancel_order"
   | "push_customer"
   | "push_carrier";
 
@@ -139,6 +144,7 @@ type OmieProduct = {
 
 type OmiePaymentTerm = {
   id: number;
+  code: string | null;
   integrationCode: string | null;
   description: string;
   firstInstallmentDays: number | null;
@@ -175,16 +181,61 @@ type CreateOrderPayload = {
   customerOmieId: number;
   productOmieId?: number;
   serviceDescription?: string;
+  /** Quantidade em toneladas (mesma unidade do preco unitario). */
   quantity: number;
+  /** Preco unitario em reais (ja convertido de centavos no desktop). */
   unitPrice: number;
+  /** Frete total em centavos (convertido para reais no edge, ver buildOmieFreight). */
   freightTotalCents?: number;
+  /**
+   * Codigo "modalidade" do frete no pedido de venda do OMIE (modFrete da NF-e):
+   * "0" CIF, "1" FOB, "2" terceiros, "3"/"4" transporte proprio, "9" sem frete.
+   * Ausente -> fallback: "0" quando ha valor de frete, senao "9".
+   */
+  freightModalidade?: string;
   issueDate: string;
   createdAt?: string;
+  /**
+   * Codigo de parcela do OMIE (codigo_parcela/cCodParc). String, preserva zeros a
+   * esquerda (ex: "000", "030"). Ausente -> a condicao e resolvida/criada no
+   * cadastro de parcelas do OMIE a partir de installmentDays/installmentCount
+   * (ensureOmieParcelaCode); em ultimo caso "000" (a vista).
+   */
+  paymentTermOmieCode?: string;
+  /** Numero de parcelas da OS (nQtdeParc). Ausente/invalido -> 1. */
+  installmentCount?: number;
+  /**
+   * Dias de vencimento das parcelas da condicao escolhida no desktop (ex: [7,14,21]).
+   * Usados para localizar/criar a parcela no cadastro do OMIE quando nao ha codigo.
+   */
+  installmentDays?: number[];
+  /**
+   * Codigo NFe/OMIE do meio de pagamento selecionado no desktop ("01" dinheiro,
+   * "17" PIX...). Transportado no payload; como o pedido/OS referencia a condicao
+   * pelo codigo do cadastro de parcelas, o meio (tPag da NF-e) ainda nao entra no
+   * corpo do pedido — exigiria parcelamento informado (codigo_parcela "999" +
+   * lista_parcelas), a validar com credenciais reais.
+   */
+  paymentMethodOmieCode?: string;
+  /**
+   * nCodCC da conta corrente vinculada ao meio selecionado no desktop. Quando
+   * presente e valido, vai em codigo_conta_corrente (pedido) / nCodCC (OS) no
+   * lugar da resolucao automatica da primeira conta do tenant.
+   */
+  accountOmieCode?: string | number;
+  /**
+   * Cadastro do cliente para criar/localizar no OMIE na hora do envio quando ele ainda
+   * nao tem codigo OMIE (customerOmieId ausente/0). O edge faz find-or-create por CNPJ/CPF
+   * (pushCustomerToOmie) e usa o codigo resultante no pedido, devolvendo omieCustomerId
+   * para o desktop vincular o cliente localmente.
+   */
+  customer?: PushCustomerPayload;
   idempotencyKey: string;
 };
 
 type CreateAndBillOrderResult = {
   orderId: number;
+  omieCustomerId: number;
   billed: boolean;
   billingStatusCode: string | null;
   billingStatusMessage: string | null;
@@ -378,16 +429,29 @@ export async function handleOmieSyncRequest(
       });
     }
 
+    if (action === "list_document_types") {
+      const documentTypes = await listDocumentTypes(credentials);
+      return jsonResponse({ ok: true, documentTypes });
+    }
+
     if (action === "create_order") {
       const payload = body.payload as CreateOrderPayload;
-      const orderId = await createOmieOrder(credentials, payload);
-      return jsonResponse({ ok: true, orderId });
+      const { orderId, omieCustomerId } = await createOmieOrder(credentials, payload);
+      return jsonResponse({ ok: true, orderId, omieCustomerId });
     }
 
     if (action === "create_and_bill_order") {
       const payload = body.payload as CreateOrderPayload;
       const result = await createAndBillOmieOrder(credentials, payload);
       return jsonResponse({ ok: true, ...result });
+    }
+
+    if (action === "cancel_order") {
+      const payload = body.payload as CancelOrderPayload;
+      // Retorna 200 mesmo para "blocked" para o desktop marcar o job como done (sem retry
+      // infinito) e manter o cancelamento local com o erro visivel.
+      const result = await cancelOmieOrder(credentials, payload);
+      return jsonResponse(result);
     }
 
     if (action === "push_customer") {
@@ -548,7 +612,7 @@ async function pushLocalQueuePage(
       const omieId =
         order.operationType === "invoice"
           ? (await createAndBillOmieOrder(credentials, order)).orderId
-          : await createOmieOrder(credentials, order);
+          : (await createOmieOrder(credentials, order)).orderId;
       result.orders.push({ localId: order.localOperationId ?? order.idempotencyKey, omieId });
       result.processed++;
     } catch (error) {
@@ -1092,21 +1156,23 @@ async function listPaymentTermsPage(
       total_de_paginas?: number;
       registros?: number;
       total_de_registros?: number;
+      cadastros?: OmiePaymentTermRaw[];
+      parcela_cadastro?: OmiePaymentTermRaw[];
       condicoesPagamentoCadastro?: OmiePaymentTermRaw[];
       condicoes_pagamento_cadastro?: OmiePaymentTermRaw[];
-      cadastros?: OmiePaymentTermRaw[];
       listaCondicoesPagamento?: OmiePaymentTermRaw[];
     }
-  >(credentials, "/geral/condicoespgto/", "ListarCondicoesPagamento", {
+  >(credentials, "/geral/parcelas/", "ListarParcelas", {
     pagina: page,
     registros_por_pagina: PAGE_SIZE,
     apenas_importado_api: "N"
   });
 
   const rawItems =
+    response.cadastros ??
+    response.parcela_cadastro ??
     response.condicoesPagamentoCadastro ??
     response.condicoes_pagamento_cadastro ??
-    response.cadastros ??
     response.listaCondicoesPagamento ??
     [];
   const items: OmiePaymentTerm[] = [];
@@ -1139,10 +1205,14 @@ async function listOptionalPaymentTermsPage(
 
 function isPaymentTermsUnavailableError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
-  return /OMIE HTTP 404:.*ListarCondicoesPagamento|\/geral\/condicoespgto\//i.test(error.message);
+  return /OMIE HTTP 404:.*ListarParcelas|\/geral\/parcelas\//i.test(error.message);
 }
 
 type OmiePaymentTermRaw = {
+  // Campos do endpoint atual /geral/parcelas/ (ListarParcelas)
+  nCodigo?: number | string;
+  nParcelas?: number | string;
+  // Campos legados / variacoes mantidos por resiliencia
   codigoCondicaoPagamentoOmie?: number | string;
   codigo_condicao_pagamento_omie?: number | string;
   codigoCondicaoPagamentoIntegracao?: string;
@@ -1172,6 +1242,7 @@ type OmiePaymentTermRaw = {
 
 function mapOmiePaymentTermRaw(item: OmiePaymentTermRaw): OmiePaymentTerm | null {
   const idValue = pickFirst(
+    item.nCodigo,
     item.codigoCondicaoPagamentoOmie,
     item.codigo_condicao_pagamento_omie,
     item.nCodCondicao,
@@ -1197,8 +1268,13 @@ function mapOmiePaymentTermRaw(item: OmiePaymentTermRaw): OmiePaymentTerm | null
         .filter((value): value is number => value !== null)
     : null;
 
+  // Preserva o codigo original da parcela (ex.: "000"), mantendo zeros a esquerda
+  // exigidos no codigo_parcela do pedido e perdidos na conversao para numero.
+  const code = pickFirst(item.nCodigo, item.codigo, item.codigoParcela);
+
   return {
     id,
+    code,
     integrationCode: pickFirst(
       item.codigoCondicaoPagamentoIntegracao,
       item.codigo_condicao_pagamento_integracao
@@ -1208,12 +1284,52 @@ function mapOmiePaymentTermRaw(item: OmiePaymentTermRaw): OmiePaymentTerm | null
       pickFirst(item.nDiasPrimeiraParcela, item.dias_primeira_parcela)
     ),
     installmentIntervalDays: toNumber(pickFirst(item.nIntervaloParcelas, item.intervalo_parcelas)),
-    installmentCount: toNumber(pickFirst(item.nNumeroParcelas, item.numero_parcelas)),
+    installmentCount: toNumber(pickFirst(item.nParcelas, item.nNumeroParcelas, item.numero_parcelas)),
     installmentType: pickFirst(item.cTipoParcelas, item.tipo_parcelas),
     installmentDaysJson: days && days.length > 0 ? days : null,
     isActive: !isYesFlag(pickFirst(item.cInativo, item.inativo)),
     visible: !isNoFlag(pickFirst(item.cVisualizar, item.visualizar))
   };
+}
+
+interface OmieDocumentTypeRaw {
+  cCodigo?: string;
+  codigo?: string;
+  cDescricao?: string;
+  descricao?: string;
+}
+
+interface OmieDocumentType {
+  code: string;
+  description: string;
+}
+
+// Formas de pagamento no OMIE = "tipos de documento" (ListarTiposDocumento).
+// Cada um traz um codigo (cCodigo) e uma descricao (cDescricao), que alimentam
+// o campo "Codigo OMIE" das formas de pagamento locais.
+async function listDocumentTypes(credentials: OmieCredentials): Promise<OmieDocumentType[]> {
+  const response = await callOmie<
+    Record<string, never>,
+    {
+      tipo_documento_cadastro?: OmieDocumentTypeRaw[];
+      tipoDocumentoCadastro?: OmieDocumentTypeRaw[];
+      cadastros?: OmieDocumentTypeRaw[];
+    }
+  >(credentials, "/geral/tiposdoc/", "ListarTiposDocumento", {});
+
+  const raw =
+    response.tipo_documento_cadastro ?? response.tipoDocumentoCadastro ?? response.cadastros ?? [];
+
+  const types: OmieDocumentType[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    const code = pickFirst(item.cCodigo, item.codigo);
+    if (!code || seen.has(code)) continue;
+    seen.add(code);
+    const description = pickFirst(item.cDescricao, item.descricao);
+    types.push({ code, description: description ?? code });
+  }
+  return types;
 }
 
 async function pushCustomerToOmie(
@@ -1223,28 +1339,48 @@ async function pushCustomerToOmie(
   const body = buildCustomerPayload(payload);
 
   if (payload.omieCustomerId) {
-    await callOmie<unknown, unknown>(credentials, "/geral/clientes/", "AlterarCliente", body);
+    await callOmie<unknown, unknown>(
+      credentials,
+      "/geral/clientes/",
+      "AlterarCliente",
+      toCustomerUpdateBody(body, payload.omieCustomerId)
+    );
     return payload.omieCustomerId;
   }
 
   if (payload.cnpjCpf) {
     const existing = await findCustomerByDocument(credentials, payload.cnpjCpf);
     if (existing) {
-      await callOmie<unknown, unknown>(credentials, "/geral/clientes/", "AlterarCliente", {
-        ...body,
-        codigo_cliente_omie: existing
-      });
+      await callOmie<unknown, unknown>(
+        credentials,
+        "/geral/clientes/",
+        "AlterarCliente",
+        toCustomerUpdateBody(body, existing)
+      );
       return existing;
     }
   }
 
-  const response = await callOmie<
-    unknown,
-    {
-      codigo_cliente_omie?: number;
-      codigoClienteOmie?: number;
-    }
-  >(credentials, "/geral/clientes/", "IncluirCliente", body);
+  let response: { codigo_cliente_omie?: number; codigoClienteOmie?: number };
+  try {
+    response = await callOmie<
+      unknown,
+      {
+        codigo_cliente_omie?: number;
+        codigoClienteOmie?: number;
+      }
+    >(credentials, "/geral/clientes/", "IncluirCliente", body);
+  } catch (error) {
+    const existingId = extractExistingCustomerId(error);
+    if (existingId === null) throw error;
+    await callOmie<unknown, unknown>(
+      credentials,
+      "/geral/clientes/",
+      "AlterarCliente",
+      toCustomerUpdateBody(body, existingId)
+    );
+    return existingId;
+  }
 
   const omieCustomerId = response.codigo_cliente_omie ?? response.codigoClienteOmie;
   if (!omieCustomerId) {
@@ -1292,30 +1428,275 @@ async function findCustomerByDocument(
   }
 }
 
-async function createOmieOrder(
+// O codigo de parcela do OMIE e uma string com zeros a esquerda significativos ("000",
+// "030"). Nunca converter para numero. Retorna null quando vazio/invalido para o chamador
+// cair no padrao "000".
+function normalizeParcelaCode(value: string | undefined): string | null {
+  const text = (value ?? "").trim();
+  if (!text) return null;
+  return /^[0-9A-Za-z]+$/.test(text) ? text : null;
+}
+
+// Codigos de parcela criados/descobertos no cadastro do OMIE, por app_key + condicao.
+const omieParcelaCodeCache = new Map<string, string>();
+
+/** Dias de vencimento de uma parcela do cadastro OMIE (json explicito ou 1o dia + intervalo). */
+function paymentTermDueDays(term: OmiePaymentTerm): number[] | null {
+  if (term.installmentDaysJson && term.installmentDaysJson.length > 0) {
+    return term.installmentDaysJson;
+  }
+  const count = term.installmentCount;
+  const first = term.firstInstallmentDays;
+  if (!count || count < 1 || first === null || first < 0) return null;
+  const interval = term.installmentIntervalDays ?? 0;
+  return Array.from({ length: count }, (_, index) => first + index * interval);
+}
+
+function sameDays(a: number[], b: number[]): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+/**
+ * Garante que a condicao de pagamento da operacao exista no cadastro de parcelas do
+ * OMIE (/geral/parcelas/) e retorna o codigo dela. Fluxo: procura por dias de
+ * vencimento iguais em ListarParcelas; se nao existir, cria via IncluirParcela no
+ * formato aceito pelo OMIE ("7/14/21", "93 dias" ou "5") e usa o cCodParcela
+ * retornado. Qualquer falha retorna null e o chamador cai no comportamento
+ * historico ("000"/codigo vinculado) — a criacao do pedido/OS nunca trava aqui.
+ */
+async function ensureOmieParcelaCode(
+  credentials: OmieCredentials,
+  payload: CreateOrderPayload
+): Promise<string | null> {
+  const days = (payload.installmentDays ?? [])
+    .map((value) => toNumber(value))
+    .filter((value): value is number => value !== null && value >= 0);
+  const count =
+    typeof payload.installmentCount === "number" && payload.installmentCount > 0
+      ? Math.floor(payload.installmentCount)
+      : days.length;
+
+  // A vista (sem parcelamento util): mantem o padrao "000" do chamador.
+  const isAVista = days.length === 0 ? count <= 1 : days.length === 1 && days[0] === 0;
+  if (isAVista) return null;
+
+  const conditionText =
+    days.length > 1
+      ? days.join("/")
+      : days.length === 1
+        ? `${days[0]} dias`
+        : String(count);
+
+  const cacheKey = `${credentials.appKey}:${conditionText}`;
+  const cached = omieParcelaCodeCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
+  try {
+    // 1. Procura no cadastro por dias de vencimento equivalentes.
+    const desiredDays = days.length > 0 ? days : null;
+    let page = 1;
+    let finished = false;
+    while (!finished) {
+      const result = await listPaymentTermsPage(credentials, page);
+      for (const term of result.items) {
+        if (!term.code || !term.isActive) continue;
+        const termDays = paymentTermDueDays(term);
+        if (desiredDays !== null) {
+          if (termDays !== null && sameDays(termDays, desiredDays)) {
+            omieParcelaCodeCache.set(cacheKey, term.code);
+            return term.code;
+          }
+        } else if (termDays === null && term.installmentCount === count) {
+          // Sem dias dos dois lados: casa pela quantidade de parcelas.
+          omieParcelaCodeCache.set(cacheKey, term.code);
+          return term.code;
+        }
+      }
+      finished = result.finished || result.items.length === 0;
+      page++;
+    }
+
+    // 2. Nao existe: cria no cadastro do OMIE. O nome do campo de descricao varia na
+    // documentacao publica; tenta os dois aliases conhecidos (sem risco de duplicar:
+    // uma tentativa rejeitada por tag invalida nao cria nada).
+    let response: Record<string, unknown> | null = null;
+    try {
+      response = await callOmie<unknown, Record<string, unknown>>(
+        credentials,
+        "/geral/parcelas/",
+        "IncluirParcela",
+        { cDescricao: conditionText }
+      );
+    } catch {
+      response = await callOmie<unknown, Record<string, unknown>>(
+        credentials,
+        "/geral/parcelas/",
+        "IncluirParcela",
+        { descricao: conditionText }
+      );
+    }
+
+    const createdCode = normalizeParcelaCode(
+      findStringByKey(response, "cCodParcela") ??
+        findStringByKey(response, "nCodigo") ??
+        findStringByKey(response, "codigo") ??
+        undefined
+    );
+    if (createdCode) {
+      omieParcelaCodeCache.set(cacheKey, createdCode);
+      return createdCode;
+    }
+    return null;
+  } catch {
+    // Falhas de consulta/criacao nao sao cacheadas para permitir nova tentativa.
+    return null;
+  }
+}
+
+/** Dias de vencimento das parcelas do pedido (explicitos, ou mensal por quantidade). */
+function orderDueDays(payload: CreateOrderPayload): number[] {
+  const days = (payload.installmentDays ?? [])
+    .map((value) => toNumber(value))
+    .filter((value): value is number => value !== null && value >= 0);
+  if (days.length > 0) return days;
+  const count =
+    typeof payload.installmentCount === "number" && payload.installmentCount > 0
+      ? Math.floor(payload.installmentCount)
+      : 1;
+  if (count <= 1) return [0];
+  return Array.from({ length: count }, (_, index) => 30 * (index + 1));
+}
+
+function addDaysToIsoDate(isoDate: string, days: number): string {
+  const base = new Date(`${isoDate.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(base.getTime())) return isoDate;
+  base.setUTCDate(base.getUTCDate() + days);
+  return base.toISOString().slice(0, 10);
+}
+
+type OrderParcelamento = {
+  /** Campos do cabecalho (codigo_parcela + qtde_parcelas quando "999"). */
+  cabecalho: Record<string, unknown>;
+  /** lista_parcelas quando o parcelamento e informado (999); null para "000"/vinculado. */
+  listaParcelas: Record<string, unknown> | null;
+};
+
+/**
+ * Monta o parcelamento do pedido de venda. Quando ha meio de pagamento OU parcelas
+ * com vencimento (ou mais de uma), usa o parcelamento informado do OMIE:
+ * codigo_parcela "999" + lista_parcelas com data_vencimento, percentual e
+ * meio_pagamento (tPag da NF-e) por parcela. Sem meio e a vista, usa o codigo
+ * vinculado (ou "000").
+ */
+function buildOrderParcelamento(payload: CreateOrderPayload): OrderParcelamento {
+  const meio = (payload.paymentMethodOmieCode ?? "").trim();
+  const dueDays = orderDueDays(payload);
+  const useLista = meio.length > 0 || dueDays.length > 1 || dueDays[0] > 0;
+
+  if (!useLista) {
+    const code = normalizeParcelaCode(payload.paymentTermOmieCode) ?? "000";
+    return { cabecalho: { codigo_parcela: code }, listaParcelas: null };
+  }
+
+  const count = dueDays.length;
+  const basePercent = Math.floor(10000 / count) / 100;
+  // Total do pedido (itens + frete) em centavos. O OMIE exige a tag `valor` em CADA
+  // parcela do parcelamento informado (codigo_parcela "999"); sem ela rejeita o pedido
+  // com "O preenchimento da tag [valor] e obrigatorio!". O ultimo parcela absorve o
+  // arredondamento para as parcelas somarem exatamente o total.
+  const itemsTotalCents = Math.round(payload.quantity * payload.unitPrice * 100);
+  const freightCents =
+    typeof payload.freightTotalCents === "number" && payload.freightTotalCents > 0
+      ? Math.round(payload.freightTotalCents)
+      : 0;
+  const orderTotalCents = itemsTotalCents + freightCents;
+  let allocatedCents = 0;
+  const parcela = dueDays.map((dueInDays, index) => {
+    const isLast = index === count - 1;
+    const percentual = isLast
+      ? Math.round((100 - basePercent * (count - 1)) * 100) / 100
+      : basePercent;
+    const valorCents = isLast
+      ? orderTotalCents - allocatedCents
+      : Math.round((orderTotalCents * percentual) / 100);
+    allocatedCents += valorCents;
+    return {
+      numero_parcela: index + 1,
+      data_vencimento: toOmieDate(addDaysToIsoDate(payload.issueDate, dueInDays)),
+      percentual,
+      valor: valorCents / 100,
+      ...(meio ? { meio_pagamento: meio } : {})
+    };
+  });
+
+  return {
+    // OMIE: o campo do cabecalho e "qtde_parcelas" — "quantidade_parcelas" e rejeitado
+    // ("Tag [QUANTIDADE_PARCELAS] nao faz parte da estrutura do tipo complexo [cabecalho]").
+    cabecalho: { codigo_parcela: "999", qtde_parcelas: count },
+    listaParcelas: { parcela }
+  };
+}
+
+/**
+ * Codigo OMIE do cliente do pedido. Ja vinculado -> usa direto. Sem codigo mas com
+ * cadastro no payload -> cria/localiza o cliente no OMIE na hora (find-or-create por
+ * CNPJ/CPF) e devolve o codigo. Sem codigo e sem cadastro -> erro claro.
+ */
+async function resolveOrderCustomerOmieId(
   credentials: OmieCredentials,
   payload: CreateOrderPayload
 ): Promise<number> {
+  if (typeof payload.customerOmieId === "number" && payload.customerOmieId > 0) {
+    return payload.customerOmieId;
+  }
+  if (payload.customer) {
+    return await pushCustomerToOmie(credentials, payload.customer);
+  }
+  throw new Error("Cliente sem codigo OMIE e sem dados de cadastro para criar no OMIE.");
+}
+
+async function createOmieOrder(
+  credentials: OmieCredentials,
+  payload: CreateOrderPayload
+): Promise<{ orderId: number; omieCustomerId: number }> {
+  const integrationCode = toOmieIntegrationCode(payload.idempotencyKey);
+  // Garante o cliente no OMIE (cadastra na hora quando ainda nao existe) antes do pedido.
+  const customerOmieId = await resolveOrderCustomerOmieId(credentials, payload);
+  // Conta corrente escolhida na operacao (meio de pagamento -> conta). Sem ela,
+  // mantem o fallback historico: primeira conta corrente do tenant.
+  const selectedAccountCode = toNumber(payload.accountOmieCode ?? null);
+  const accountCode =
+    selectedAccountCode !== null && selectedAccountCode > 0
+      ? selectedAccountCode
+      : await resolveOmieAccountCode(credentials);
+  const installmentCount =
+    typeof payload.installmentCount === "number" && payload.installmentCount > 0
+      ? Math.floor(payload.installmentCount)
+      : 1;
+
   if (payload.operationType === "invoice") {
     if (!payload.productOmieId) {
       throw new Error("productOmieId obrigatorio para pedido de venda");
     }
+    const parcelamento = buildOrderParcelamento(payload);
     const response = await callOmie<unknown, unknown>(
       credentials,
       "/produtos/pedido/",
       "IncluirPedido",
       {
         cabecalho: {
-          codigo_pedido_integracao: payload.idempotencyKey,
-          codigo_cliente: payload.customerOmieId,
+          codigo_pedido_integracao: integrationCode,
+          codigo_cliente: customerOmieId,
           data_previsao: toOmieDate(payload.issueDate),
-          etapa: "10",
-          codigo_parcela: "000",
+          // Etapa "50" = coluna "Faturar" do kanban de Vendas do OMIE: o pedido chega
+          // pronto para faturar, e a emissao da NF-e e feita DENTRO do OMIE.
+          etapa: "50",
+          ...parcelamento.cabecalho,
           quantidade_itens: 1
         },
         det: [
           {
-            ide: { codigo_item_integracao: `${payload.idempotencyKey}:1` },
+            ide: { codigo_item_integracao: toOmieIntegrationCode(`${payload.idempotencyKey}:1`) },
             produto: {
               codigo_produto: payload.productOmieId,
               quantidade: payload.quantity,
@@ -1325,15 +1706,27 @@ async function createOmieOrder(
             }
           }
         ],
-        frete: buildOmieFreight(payload.freightTotalCents),
-        informacoes_adicionais: { codigo_categoria: "1.01.01", codigo_conta_corrente: 0 }
+        frete: buildOmieFreight(payload.freightTotalCents, payload.freightModalidade),
+        informacoes_adicionais: {
+          codigo_categoria: "1.01.01",
+          ...(accountCode !== null ? { codigo_conta_corrente: accountCode } : {})
+        },
+        // Parcelamento informado (codigo_parcela "999"): leva os vencimentos e o
+        // meio de pagamento (tPag da NF-e) por parcela.
+        ...(parcelamento.listaParcelas !== null
+          ? { lista_parcelas: parcelamento.listaParcelas }
+          : {})
       }
     ).catch(async (error) => {
+      // So aceita a consulta como fallback se ela realmente devolver o pedido;
+      // caso contrario propaga o erro original do IncluirPedido (antes, uma
+      // resposta vazia da consulta mascarava a causa real com
+      // "OMIE nao retornou codigoPedido").
       const existing = await consultSalesOrderByIntegrationCode(
         credentials,
-        payload.idempotencyKey
+        integrationCode
       ).catch(() => null);
-      if (existing) return existing;
+      if (existing && extractSalesOrderId(existing) !== null) return existing;
       throw error;
     });
 
@@ -1341,9 +1734,16 @@ async function createOmieOrder(
     if (!orderId) {
       throw new Error("OMIE nao retornou codigoPedido");
     }
-    return orderId;
+    return { orderId, omieCustomerId: customerOmieId };
   }
 
+  const serviceCodes = await resolveOmieServiceCodes(credentials);
+  // OS (operacao interna): usa o codigo de parcela vinculado, senao localiza/cria
+  // no cadastro; em ultimo caso "000" (a vista).
+  const osParcelaCode =
+    normalizeParcelaCode(payload.paymentTermOmieCode) ??
+    (await ensureOmieParcelaCode(credentials, payload)) ??
+    "000";
   const response = await callOmie<
     unknown,
     {
@@ -1354,36 +1754,211 @@ async function createOmieOrder(
     }
   >(credentials, "/servicos/os/", "IncluirOS", {
     Cabecalho: {
-      cCodIntOS: payload.idempotencyKey,
-      nCodCli: payload.customerOmieId,
+      cCodIntOS: integrationCode,
+      nCodCli: customerOmieId,
       dDtPrevisao: toOmieDate(payload.issueDate),
-      cEtapa: "10",
-      cCodParc: "000",
-      nQtdeParc: 1
+      // Etapa "50" = "Faturar": a OS tambem e faturada dentro do OMIE.
+      cEtapa: "50",
+      cCodParc: osParcelaCode,
+      nQtdeParc: installmentCount
     },
     ServicosPrestados: [
       {
         cDescServ: payload.serviceDescription || "Servico",
+        // Obrigatorio no IncluirOS: "01" = tributado no municipio (padrao).
+        cTribServ: "01",
+        // Obrigatorio no IncluirOS: "N" = ISS nao retido (padrao para a operacao interna).
+        cRetemISS: "N",
+        ...(serviceCodes.municipal !== null ? { cCodServMun: serviceCodes.municipal } : {}),
+        ...(serviceCodes.lc116 !== null ? { cCodServLC116: serviceCodes.lc116 } : {}),
         nQtde: payload.quantity,
         nValUnit: payload.unitPrice
       }
     ],
-    InformacoesAdicionais: { cCodCateg: "1.01.01", nCodCC: 0 }
+    InformacoesAdicionais: {
+      cCodCateg: "1.01.01",
+      ...(accountCode !== null ? { nCodCC: accountCode } : {})
+    }
+  }).catch(async (error) => {
+    // Idempotencia: se a OS ja existe (reenvio apos erro desconhecido), consulta por
+    // cCodIntOS e reaproveita o nCodOS; caso contrario propaga o erro original.
+    const existing = await consultServiceOrderByIntegrationCode(credentials, integrationCode).catch(
+      () => null
+    );
+    const existingId = extractServiceOrderId(existing);
+    if (existingId !== null) return { nCodOS: existingId } as { nCodOS?: number; codigoOS?: number };
+    throw error;
   });
   const orderId = response.nCodOS ?? response.codigoOS;
   if (!orderId) {
     throw new Error("OMIE nao retornou codigoOS");
   }
-  return orderId;
+  return { orderId, omieCustomerId: customerOmieId };
 }
 
-function buildOmieFreight(freightTotalCents: number | null | undefined): Record<string, unknown> {
-  if (!freightTotalCents || freightTotalCents <= 0) {
-    return { modalidade: "9" };
+async function consultServiceOrderByIntegrationCode(
+  credentials: OmieCredentials,
+  integrationCode: string
+): Promise<unknown> {
+  return callOmie<unknown, unknown>(credentials, "/servicos/os/", "ConsultarOS", {
+    cCodIntOS: integrationCode
+  });
+}
+
+function extractServiceOrderId(value: unknown): number | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const direct = toNumber(
+    pickFirst(
+      record.nCodOS as string | number | null | undefined,
+      record.codigoOS as string | number | null | undefined
+    )
+  );
+  if (direct !== null) return direct;
+  // ConsultarOS pode aninhar a OS em Cabecalho/cabecalho.
+  const header =
+    (record.Cabecalho as Record<string, unknown> | undefined) ??
+    (record.cabecalho as Record<string, unknown> | undefined);
+  if (header) {
+    const fromHeader = toNumber(
+      pickFirst(
+        header.nCodOS as string | number | null | undefined,
+        header.codigoOS as string | number | null | undefined
+      )
+    );
+    if (fromHeader !== null) return fromHeader;
   }
+  return null;
+}
+
+// O OMIE exige uma conta corrente valida em informacoes_adicionais (enviar 0 gera
+// "ERROR: - tag: [codigo_conta_corrente]"). Como a conta varia por tenant, resolvemos a
+// primeira conta corrente cadastrada via ListarContasCorrentes e cacheamos por app_key.
+// Falhas de consulta nao sao cacheadas para permitir nova tentativa no proximo job.
+const omieAccountCodeCache = new Map<string, number>();
+
+async function resolveOmieAccountCode(credentials: OmieCredentials): Promise<number | null> {
+  const cached = omieAccountCodeCache.get(credentials.appKey);
+  if (cached !== undefined) return cached;
+
+  try {
+    const response = await callOmie<unknown, Record<string, unknown>>(
+      credentials,
+      "/geral/contacorrente/",
+      "ListarContasCorrentes",
+      { pagina: 1, registros_por_pagina: 50 }
+    );
+    const accountCode = extractFirstAccountCode(response);
+    if (accountCode !== null) {
+      omieAccountCodeCache.set(credentials.appKey, accountCode);
+    }
+    return accountCode;
+  } catch {
+    return null;
+  }
+}
+
+function extractFirstAccountCode(response: Record<string, unknown> | null): number | null {
+  if (!response || typeof response !== "object") return null;
+  const knownKeys = ["ListarContasCorrentes", "conta_corrente_lista", "contaCorrenteLista"];
+  const lists = [
+    ...knownKeys.map((key) => response[key]),
+    ...Object.values(response).filter((value) => Array.isArray(value))
+  ];
+  for (const list of lists) {
+    if (!Array.isArray(list)) continue;
+    for (const entry of list) {
+      if (!entry || typeof entry !== "object") continue;
+      const row = entry as Record<string, unknown>;
+      const code = toNumber(
+        pickFirst(
+          row.nCodCC as string | number | null | undefined,
+          row.codigo_conta_corrente as string | number | null | undefined,
+          row.codigoContaCorrente as string | number | null | undefined
+        )
+      );
+      if (code !== null && code > 0) return code;
+    }
+  }
+  return null;
+}
+
+// O IncluirOS tambem exige o Codigo do Servico Municipal (cCodServMun) e o Codigo
+// do Servico LC116 (cCodServLC116), ambos especificos do tenant (cadastro de
+// servicos do OMIE). Buscamos o primeiro servico cadastrado via ListarCadastroServico
+// e cacheamos por app_key; falhas nao sao cacheadas para permitir nova tentativa.
+type OmieServiceCodes = { municipal: string | null; lc116: string | null };
+
+const omieServiceCodesCache = new Map<string, OmieServiceCodes>();
+
+async function resolveOmieServiceCodes(credentials: OmieCredentials): Promise<OmieServiceCodes> {
+  const cached = omieServiceCodesCache.get(credentials.appKey);
+  if (cached !== undefined) return cached;
+
+  try {
+    const response = await callOmie<unknown, unknown>(
+      credentials,
+      "/servicos/servico/",
+      "ListarCadastroServico",
+      { nPagina: 1, nRegPorPagina: 50 }
+    );
+    const codes: OmieServiceCodes = {
+      municipal: findStringByKey(response, "cCodServMun"),
+      lc116: findStringByKey(response, "cCodLC116") ?? findStringByKey(response, "cCodServLC116")
+    };
+    if (codes.municipal !== null || codes.lc116 !== null) {
+      omieServiceCodesCache.set(credentials.appKey, codes);
+    }
+    return codes;
+  } catch {
+    return { municipal: null, lc116: null };
+  }
+}
+
+function findStringByKey(value: unknown, key: string): string | null {
+  if (!value || typeof value !== "object") return null;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findStringByKey(item, key);
+      if (found !== null) return found;
+    }
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const direct = record[key];
+  if (typeof direct === "string" && direct.trim().length > 0) return direct.trim();
+  if (typeof direct === "number" && Number.isFinite(direct)) return String(direct);
+  for (const nested of Object.values(record)) {
+    if (nested && typeof nested === "object") {
+      const found = findStringByKey(nested, key);
+      if (found !== null) return found;
+    }
+  }
+  return null;
+}
+
+/** Codigos "modalidade" (modFrete) validos no frete do pedido de venda do OMIE. */
+const OMIE_FREIGHT_MODALIDADES = new Set(["0", "1", "2", "3", "4", "9"]);
+
+function normalizeFreightModalidade(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return OMIE_FREIGHT_MODALIDADES.has(trimmed) ? trimmed : null;
+}
+
+function buildOmieFreight(
+  freightTotalCents: number | null | undefined,
+  freightModalidade?: string | null
+): Record<string, unknown> {
+  const hasValue = typeof freightTotalCents === "number" && freightTotalCents > 0;
+  // Modalidade escolhida na operacao (CIF/FOB/terceiros/proprio/sem frete). Sem valor
+  // valido, mantem o comportamento legado: "0" (CIF) quando ha valor, senao "9".
+  const modalidade = normalizeFreightModalidade(freightModalidade) ?? (hasValue ? "0" : "9");
+  // O OMIE exige a tag valor_frete sempre que o bloco frete e enviado (HTTP 500
+  // "tag [valor] obrigatorio" quando ausente). Sem valor de frete, enviamos 0.
   return {
-    modalidade: "0",
-    valor_frete: Math.round(freightTotalCents) / 100
+    modalidade,
+    valor_frete: hasValue ? Math.round(freightTotalCents as number) / 100 : 0
   };
 }
 
@@ -1395,8 +1970,12 @@ async function createAndBillOmieOrder(
     throw new Error("Faturamento automatico disponivel apenas para pedido de venda fiscal");
   }
 
-  const orderId = await createOmieOrder(credentials, payload);
-  const billing = await billSalesOrder(credentials, orderId, payload.idempotencyKey);
+  const { orderId, omieCustomerId } = await createOmieOrder(credentials, payload);
+  const billing = await billSalesOrder(
+    credentials,
+    orderId,
+    toOmieIntegrationCode(payload.idempotencyKey)
+  );
   const consultedOrder = await consultSalesOrder(credentials, orderId).catch(() => null);
   const orderDocument = await getSalesOrderDocument(credentials, orderId).catch(() => null);
   const documentUrl =
@@ -1406,6 +1985,7 @@ async function createAndBillOmieOrder(
 
   return {
     orderId,
+    omieCustomerId,
     billed: true,
     billingStatusCode: billing.statusCode,
     billingStatusMessage: billing.statusMessage,
@@ -1446,6 +2026,108 @@ async function consultSalesOrder(credentials: OmieCredentials, orderId: number):
   });
 }
 
+async function consultServiceOrder(credentials: OmieCredentials, orderId: number): Promise<unknown> {
+  return callOmie<unknown, unknown>(credentials, "/servicos/os/", "ConsultarOS", {
+    nCodOS: orderId
+  });
+}
+
+// Faults do OMIE quando o registro ja nao existe (cancelamento idempotente).
+function isOmieNotFoundFault(message: string): boolean {
+  return /nao cadastrad|nao encontrad|not found|inexistente|nao existe/i.test(message);
+}
+
+// Faults que indicam que o pedido/OS nao pode ser excluido pelo estado (ja faturado,
+// etapa avancada, NF emitida) — nao devem virar retry infinito.
+function isOmieBlockedCancelFault(message: string): boolean {
+  return /faturad|nota fiscal|nf-?e|etapa|nao pode ser excluid|cancelad[ao] no omie|ja faturado/i.test(
+    message
+  );
+}
+
+// Etapa >= "60" no OMIE indica pedido faturado; nesse caso nao tentamos excluir.
+function isSalesOrderBilled(consult: unknown): boolean {
+  const etapa = findStringByKey(consult, "etapa") ?? findStringByKey(consult, "cEtapa");
+  if (etapa && /^\d+$/.test(etapa.trim())) {
+    return Number(etapa.trim()) >= 60;
+  }
+  // Sinais de NF emitida no bloco de informacoes.
+  const nfKey =
+    findStringByKey(consult, "numero_nfe") ??
+    findStringByKey(consult, "nNF") ??
+    findStringByKey(consult, "chave_nfe");
+  return nfKey !== null && nfKey.trim().length > 0;
+}
+
+type CancelOrderPayload = {
+  operationId?: string;
+  orderType: "sales" | "service";
+  omieOrderId: number;
+  reason?: string;
+};
+
+type CancelOrderResult = {
+  ok: true;
+  cancelled: boolean;
+  alreadyCancelled?: boolean;
+  blocked?: boolean;
+  blockedReason?: string | null;
+};
+
+async function cancelOmieOrder(
+  credentials: OmieCredentials,
+  payload: CancelOrderPayload
+): Promise<CancelOrderResult> {
+  const isSales = payload.orderType === "sales";
+
+  // 1) Consulta primeiro: idempotencia (ja excluido) e deteccao de faturamento.
+  let consult: unknown = null;
+  try {
+    consult = isSales
+      ? await consultSalesOrder(credentials, payload.omieOrderId)
+      : await consultServiceOrder(credentials, payload.omieOrderId);
+  } catch (error) {
+    const message = getErrorMessage(error);
+    if (isOmieNotFoundFault(message)) {
+      return { ok: true, cancelled: false, alreadyCancelled: true };
+    }
+    throw error;
+  }
+
+  if (isSales && isSalesOrderBilled(consult)) {
+    return {
+      ok: true,
+      cancelled: false,
+      blocked: true,
+      blockedReason:
+        "Pedido faturado no OMIE (etapa 60 ou NF emitida); cancelamento/estorno manual necessario."
+    };
+  }
+
+  // 2) Exclui o pedido/OS.
+  try {
+    if (isSales) {
+      await callOmie<unknown, unknown>(credentials, "/produtos/pedido/", "ExcluirPedido", {
+        codigo_pedido: payload.omieOrderId
+      });
+    } else {
+      await callOmie<unknown, unknown>(credentials, "/servicos/os/", "ExcluirOS", {
+        nCodOS: payload.omieOrderId
+      });
+    }
+    return { ok: true, cancelled: true };
+  } catch (error) {
+    const message = getErrorMessage(error);
+    if (isOmieNotFoundFault(message)) {
+      return { ok: true, cancelled: false, alreadyCancelled: true };
+    }
+    if (isOmieBlockedCancelFault(message)) {
+      return { ok: true, cancelled: false, blocked: true, blockedReason: message };
+    }
+    throw error;
+  }
+}
+
 async function consultSalesOrderByIntegrationCode(
   credentials: OmieCredentials,
   integrationCode: string
@@ -1470,12 +2152,25 @@ function extractSalesOrderId(value: unknown): number | null {
     record.cabecalho && typeof record.cabecalho === "object"
       ? (record.cabecalho as Record<string, unknown>)
       : null;
-  return toNumber(
+  const fromHeader = toNumber(
     pickFirst(
       header?.codigo_pedido as string | number | null | undefined,
       header?.codigoPedido as string | number | null | undefined
     )
   );
+  if (fromHeader !== null) return fromHeader;
+  // ConsultarPedido devolve o pedido aninhado em pedido_venda_produto.
+  const nested = record.pedido_venda_produto ?? record.pedidoVendaProduto;
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    return extractSalesOrderId(nested);
+  }
+  if (Array.isArray(nested)) {
+    for (const item of nested) {
+      const found = extractSalesOrderId(item);
+      if (found !== null) return found;
+    }
+  }
+  return null;
 }
 
 async function getSalesOrderDocument(

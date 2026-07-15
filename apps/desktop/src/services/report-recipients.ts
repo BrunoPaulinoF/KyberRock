@@ -3,6 +3,13 @@ import { randomUUID } from "node:crypto";
 import type { DesktopDatabase } from "../database/sqlite.js";
 
 export type ScheduleFrequency = "daily" | "weekly" | "monthly";
+export type ReportType = "sales" | "trucks" | "both";
+
+const REPORT_TYPES: ReadonlySet<string> = new Set(["sales", "trucks", "both"]);
+
+function normalizeReportType(value: unknown): ReportType {
+  return typeof value === "string" && REPORT_TYPES.has(value) ? (value as ReportType) : "sales";
+}
 
 export interface ReportRecipientRow {
   id: string;
@@ -13,6 +20,7 @@ export interface ReportRecipientRow {
   send_whatsapp: number;
   schedule_frequency: ScheduleFrequency;
   schedule_time: string;
+  report_types: string;
   display_name: string | null;
   is_active: number;
   needs_push: number;
@@ -33,6 +41,7 @@ export interface ReportRecipient {
   sendWhatsapp: boolean;
   scheduleFrequency: ScheduleFrequency;
   scheduleTime: string;
+  reportTypes: ReportType;
   displayName: string | null;
   isActive: boolean;
   syncStatus: "synced" | "pending" | "error";
@@ -50,6 +59,7 @@ export interface CreateReportRecipientInput {
   sendWhatsapp?: boolean;
   scheduleFrequency?: ScheduleFrequency;
   scheduleTime?: string;
+  reportTypes?: ReportType;
   displayName?: string | null;
   isActive?: boolean;
 }
@@ -61,6 +71,7 @@ export interface UpdateReportRecipientInput {
   sendWhatsapp?: boolean;
   scheduleFrequency?: ScheduleFrequency;
   scheduleTime?: string;
+  reportTypes?: ReportType;
   displayName?: string | null;
   isActive?: boolean;
 }
@@ -75,6 +86,7 @@ function mapRow(row: ReportRecipientRow): ReportRecipient {
     sendWhatsapp: row.send_whatsapp === 1,
     scheduleFrequency: row.schedule_frequency,
     scheduleTime: row.schedule_time,
+    reportTypes: normalizeReportType(row.report_types),
     displayName: row.display_name,
     isActive: row.is_active === 1,
     syncStatus: row.sync_status,
@@ -132,6 +144,7 @@ function ensureRecipientsTable(database: DesktopDatabase): void {
       send_whatsapp INTEGER NOT NULL DEFAULT 0 CHECK (send_whatsapp IN (0, 1)),
       schedule_frequency TEXT NOT NULL DEFAULT 'daily' CHECK (schedule_frequency IN ('daily', 'weekly', 'monthly')),
       schedule_time TEXT NOT NULL DEFAULT '20:00',
+      report_types TEXT NOT NULL DEFAULT 'sales' CHECK (report_types IN ('sales', 'trucks', 'both')),
       display_name TEXT,
       is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
       needs_push INTEGER NOT NULL DEFAULT 0,
@@ -186,6 +199,13 @@ function ensureRecipientsTable(database: DesktopDatabase): void {
       )
       .run();
   }
+  if (!existingColumns.has("report_types")) {
+    database
+      .prepare(
+        "ALTER TABLE report_recipients ADD COLUMN report_types TEXT NOT NULL DEFAULT 'sales' CHECK (report_types IN ('sales', 'trucks', 'both'))"
+      )
+      .run();
+  }
   const currentColumns = database.prepare("PRAGMA table_info(report_recipients)").all() as Array<{
     name: string;
     notnull: number;
@@ -196,13 +216,14 @@ function ensureRecipientsTable(database: DesktopDatabase): void {
       ${createTableSql}
       INSERT INTO report_recipients (
         id, company_id, email, whatsapp_phone, send_email, send_whatsapp,
-        schedule_frequency, schedule_time,
+        schedule_frequency, schedule_time, report_types,
         display_name, is_active,
         needs_push, sync_status, last_synced_at, last_error, created_at, updated_at, deleted_at
       )
       SELECT
         id, company_id, email, whatsapp_phone, send_email, send_whatsapp,
         COALESCE(schedule_frequency, 'daily'), COALESCE(schedule_time, '20:00'),
+        COALESCE(report_types, 'sales'),
         display_name, is_active,
         needs_push, sync_status, last_synced_at, last_error, created_at, updated_at, deleted_at
       FROM report_recipients_old;
@@ -248,6 +269,7 @@ export function createReportRecipient(
   });
   const scheduleFrequency = input.scheduleFrequency ?? "daily";
   const scheduleTime = input.scheduleTime ?? "20:00";
+  const reportTypes = normalizeReportType(input.reportTypes);
   const displayName = input.displayName?.trim() || null;
   const isActive = input.isActive === false ? 0 : 1;
   const timestamp = now.toISOString();
@@ -278,10 +300,10 @@ export function createReportRecipient(
     .prepare(
       `INSERT INTO report_recipients (
         id, company_id, email, whatsapp_phone, send_email, send_whatsapp,
-        schedule_frequency, schedule_time,
+        schedule_frequency, schedule_time, report_types,
         display_name, is_active,
         needs_push, sync_status, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'pending', ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'pending', ?, ?)`
     )
     .run(
       id,
@@ -292,6 +314,7 @@ export function createReportRecipient(
       sendWhatsapp ? 1 : 0,
       scheduleFrequency,
       scheduleTime,
+      reportTypes,
       displayName,
       isActive,
       timestamp,
@@ -389,6 +412,11 @@ export function updateReportRecipient(
     values.push(input.scheduleTime);
   }
 
+  if (input.reportTypes !== undefined) {
+    sets.push("report_types = ?");
+    values.push(normalizeReportType(input.reportTypes));
+  }
+
   if (input.displayName !== undefined) {
     sets.push("display_name = ?");
     values.push(input.displayName?.trim() || null);
@@ -429,7 +457,11 @@ export function deleteReportRecipient(
     throw new Error("Destinatario nao encontrado.");
   }
   database
-    .prepare("UPDATE report_recipients SET deleted_at = ?, updated_at = ? WHERE id = ?")
+    .prepare(
+      `UPDATE report_recipients
+       SET deleted_at = ?, updated_at = ?, needs_push = 1, sync_status = 'pending', last_error = NULL
+       WHERE id = ?`
+    )
     .run(now.toISOString(), now.toISOString(), id);
 }
 

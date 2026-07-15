@@ -130,6 +130,15 @@ export class OmieQueueManager {
       const retryAfterMs = parseOmieRetryDelayMs(detail, response.headers.get("retry-after"));
       const status = response.ok ? null : response.status;
       const statusText = response.ok ? "faultstring" : `HTTP ${response.status}`;
+      // Diagnostico: registra a chamada, o erro e o corpo enviado (sem credenciais) para
+      // depurar rejeicoes de campo obrigatorio do OMIE (ex: "tag [valor] obrigatorio").
+      try {
+        console.error(
+          `[omie] falha em ${input.call} (${input.endpoint}) ${statusText}: ${detail ?? "sem detalhe"} | param=${JSON.stringify(input.param)}`
+        );
+      } catch {
+        /* logging best-effort */
+      }
       throw new OmieHttpError(
         `OMIE ${statusText} em ${input.call} (${input.endpoint})${detail ? ` - ${detail}` : ""}`,
         status,
@@ -162,10 +171,36 @@ export class OmieQueueManager {
   }
 }
 
+// O OMIE rejeita codigos de integracao com caracteres especiais (hifens de UUID,
+// ":" das chaves de idempotencia) — "caracteres especiais nao permitidos para um codigo".
+// Esta funcao mapeia qualquer valor para um codigo aceito: mantem valores curtos que ja
+// sao alfanumericos e, para o resto, deriva um hash estavel (mesma entrada => mesmo
+// codigo, preservando a idempotencia no OMIE).
+export const OMIE_INTEGRATION_CODE_MAX_LENGTH = 20;
+
+export function toOmieIntegrationCode(value: string): string {
+  const trimmed = value.trim();
+  if (/^[A-Za-z0-9]+$/.test(trimmed) && trimmed.length <= OMIE_INTEGRATION_CODE_MAX_LENGTH) {
+    return trimmed;
+  }
+  return `KR${fnv1a64(trimmed).toString(36).toUpperCase()}`;
+}
+
+function fnv1a64(input: string): bigint {
+  let hash = BigInt("14695981039346656037");
+  const prime = BigInt("1099511628211");
+  const mask = BigInt("0xFFFFFFFFFFFFFFFF");
+  for (let i = 0; i < input.length; i++) {
+    hash ^= BigInt(input.charCodeAt(i));
+    hash = (hash * prime) & mask;
+  }
+  return hash;
+}
+
 export function buildCustomerPayload(payload: PushCustomerPayload): Record<string, unknown> {
   return {
     codigo_cliente_omie: payload.omieCustomerId,
-    codigo_cliente_integracao: payload.localCustomerId,
+    codigo_cliente_integracao: toOmieIntegrationCode(payload.localCustomerId),
     razao_social: payload.razaoSocial,
     nome_fantasia: payload.nomeFantasia,
     cnpj_cpf: payload.cnpjCpf,
@@ -260,6 +295,30 @@ function getRetryDelayMs(error: OmieHttpError, attempt: number, baseBackoffMs: n
   return Math.min(error.retryAfterMs ?? baseBackoffMs * Math.pow(2, attempt), OMIE_MAX_BACKOFF_MS);
 }
 
+// Quando o CPF/CNPJ ja existe no OMIE, o IncluirCliente falha com
+// "Cliente ja cadastrado para o CPF/CNPJ [...] com o Id [123] ...".
+// Extraimos o Id existente para converter o insert em update.
+export function extractExistingCustomerId(error: unknown): number | null {
+  if (!(error instanceof OmieHttpError)) return null;
+  const text = error.detail ?? error.message;
+  if (!/j[aá] cadastrad/i.test(text)) return null;
+  const match = /\bId\s*\[(\d+)\]/i.exec(text);
+  return match ? Number(match[1]) : null;
+}
+
+// O AlterarCliente localiza o registro pelo codigo_cliente_integracao quando presente.
+// Para cadastros adotados (criados fora do KyberRock) o codigo nao confere e o OMIE
+// responde "Cliente nao cadastrado para o Codigo de Integracao [...]". Em updates,
+// identificamos apenas pelo codigo_cliente_omie.
+export function toCustomerUpdateBody(
+  body: Record<string, unknown>,
+  omieCustomerId: number
+): Record<string, unknown> {
+  const updateBody = { ...body, codigo_cliente_omie: omieCustomerId };
+  delete updateBody.codigo_cliente_integracao;
+  return updateBody;
+}
+
 async function pushCustomerBodyToOmie(
   queue: OmieRequester,
   credentials: OmieCredentials,
@@ -271,20 +330,33 @@ async function pushCustomerBodyToOmie(
       credentials,
       endpoint: "/geral/clientes/",
       call: "AlterarCliente",
-      param: body
+      param: toCustomerUpdateBody(body, omieCustomerId)
     });
     return omieCustomerId;
   }
 
-  const response = await queue.request<
-    unknown,
-    { codigo_cliente_omie?: number; codigoClienteOmie?: number }
-  >({
-    credentials,
-    endpoint: "/geral/clientes/",
-    call: "IncluirCliente",
-    param: body
-  });
+  let response: { codigo_cliente_omie?: number; codigoClienteOmie?: number };
+  try {
+    response = await queue.request<
+      unknown,
+      { codigo_cliente_omie?: number; codigoClienteOmie?: number }
+    >({
+      credentials,
+      endpoint: "/geral/clientes/",
+      call: "IncluirCliente",
+      param: body
+    });
+  } catch (error) {
+    const existingId = extractExistingCustomerId(error);
+    if (existingId === null) throw error;
+    await queue.request<unknown, unknown>({
+      credentials,
+      endpoint: "/geral/clientes/",
+      call: "AlterarCliente",
+      param: toCustomerUpdateBody(body, existingId)
+    });
+    return existingId;
+  }
   const id = response.codigo_cliente_omie ?? response.codigoClienteOmie;
   if (!id) throw new Error("OMIE nao retornou codigoClienteOmie");
   return id;

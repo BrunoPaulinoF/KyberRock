@@ -3,7 +3,8 @@ import { assert, assertEquals } from "jsr:@std/assert";
 import {
   OmieQueueManager,
   buildCarrierPayload,
-  pushCustomerToOmieCore
+  pushCustomerToOmieCore,
+  toOmieIntegrationCode
 } from "./omie-sync-core.ts";
 
 const credentials = { appKey: "app_key_teste", appSecret: "app_secret_teste" };
@@ -100,4 +101,17 @@ Deno.test("buildCarrierPayload sempre inclui a tag transportadora sem remover ta
   assertEquals(payload.nome_fantasia, "Transportadora Teste");
   assert(Array.isArray(payload.tags));
   assertEquals(payload.tags, [{ tag: "cliente" }, { tag: "transportadora" }]);
+});
+
+// Golden test: mudar este algoritmo altera o codigo_pedido_integracao de jobs antigos
+// re-enviados e DUPLICA pedidos no OMIE. Se este teste quebrar, foi mudanca proposital e
+// exige migracao dos codigos de integracao ja em transito.
+Deno.test("toOmieIntegrationCode e estavel para os formatos de chave do desktop", () => {
+  // Chave curta alfanumerica: usada como esta.
+  assertEquals(toOmieIntegrationCode("KR20250101ABCDEF"), "KR20250101ABCDEF");
+  // Chave longa com ':' (kyberrock:unit:op:action): hasheada de forma deterministica.
+  const hashed = toOmieIntegrationCode("kyberrock:unit-1:op-1:create_sales_order");
+  assertEquals(hashed, toOmieIntegrationCode("kyberrock:unit-1:op-1:create_sales_order"));
+  assert(hashed.startsWith("KR"));
+  assert(hashed.length <= 20);
 });

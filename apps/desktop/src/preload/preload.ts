@@ -15,11 +15,14 @@ const desktopApi = {
   checkForUpdates: () => ipcRenderer.invoke("desktop:check-for-updates"),
   downloadAndInstallUpdate: () => ipcRenderer.invoke("desktop:download-and-install-update"),
   listOpenWeighingOperations: () => ipcRenderer.invoke("desktop:list-open-weighing-operations"),
+  pullLoaderCompletions: () => ipcRenderer.invoke("desktop:pull-loader-completions"),
   listCanceledWeighingOperations: () =>
     ipcRenderer.invoke("desktop:list-canceled-weighing-operations"),
   listClosedWeighingOperations: () => ipcRenderer.invoke("desktop:list-closed-weighing-operations"),
   clearCanceledWeighingOperations: () =>
     ipcRenderer.invoke("desktop:clear-canceled-weighing-operations"),
+  deleteClosedWeighingOperation: (operationId: string) =>
+    ipcRenderer.invoke("desktop:delete-closed-weighing-operation", operationId),
   startWeighing: (input: unknown) => ipcRenderer.invoke("desktop:start-weighing", input),
   closeWeighing: (operationId: string, operationType?: string, scaleCaptureId?: string) =>
     ipcRenderer.invoke("desktop:close-weighing", operationId, operationType, scaleCaptureId),
@@ -59,6 +62,10 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:export-report-pdf", startDate, endDate),
   exportReportExcel: (startDate: string, endDate: string) =>
     ipcRenderer.invoke("desktop:export-report-excel", startDate, endDate),
+  getTruckControl: (startDate: string, endDate: string) =>
+    ipcRenderer.invoke("desktop:get-truck-control", startDate, endDate),
+  exportTruckControlPdf: (startDate: string, endDate: string) =>
+    ipcRenderer.invoke("desktop:export-truck-control-pdf", startDate, endDate),
   listReportRecipients: () => ipcRenderer.invoke("desktop:list-report-recipients"),
   createReportRecipient: (input: unknown) =>
     ipcRenderer.invoke("desktop:create-report-recipient", input),
@@ -71,6 +78,12 @@ const desktopApi = {
   sendRangeReportEmail: (email: string, startDate: string, endDate: string) =>
     ipcRenderer.invoke("desktop:send-range-report-email", email, startDate, endDate),
   verifySmtpConfig: () => ipcRenderer.invoke("desktop:verify-smtp-config"),
+  getReportChannelSettings: () => ipcRenderer.invoke("desktop:report-channels-get"),
+  saveReportChannelSettings: (input: unknown) =>
+    ipcRenderer.invoke("desktop:report-channels-save", input),
+  whatsappConnect: () => ipcRenderer.invoke("desktop:whatsapp-connect"),
+  whatsappStatus: () => ipcRenderer.invoke("desktop:whatsapp-status"),
+  whatsappDisconnect: () => ipcRenderer.invoke("desktop:whatsapp-disconnect"),
   getReportByProduct: (startDate: string, endDate: string, limit?: number) =>
     ipcRenderer.invoke("desktop:get-report-by-product", startDate, endDate, limit),
   getReportByCustomer: (startDate: string, endDate: string, limit?: number) =>
@@ -103,24 +116,26 @@ const desktopApi = {
   quotationsListOpenForCustomer: (customerId: string) =>
     ipcRenderer.invoke("desktop:quotations-list-open-for-customer", customerId),
   customersCreate: (input: unknown) => ipcRenderer.invoke("desktop:customers-create", input),
-  customersUpdate: (id: string, input: unknown) =>
-    ipcRenderer.invoke("desktop:customers-update", id, input),
+  customersUpdate: (id: string, input: unknown, options?: { overrideOmieFields?: boolean }) =>
+    ipcRenderer.invoke("desktop:customers-update", id, input, options),
   customersDelete: (id: string) => ipcRenderer.invoke("desktop:customers-delete", id),
-  paymentMethodsCreate: (input: unknown) =>
-    ipcRenderer.invoke("desktop:payment-methods-create", input),
+  getDefaultNfeEmail: () => ipcRenderer.invoke("desktop:get-default-nfe-email"),
+  setDefaultNfeEmail: (email: string) => ipcRenderer.invoke("desktop:set-default-nfe-email", email),
+  applyDefaultNfeEmailToAll: (email: string) =>
+    ipcRenderer.invoke("desktop:apply-default-nfe-email-to-all", email),
+  // Meios de pagamento e contas vem do OMIE (sincronizacao); localmente so ha
+  // atualizacao restrita (ativar/desativar, apelido, vinculo forma -> conta).
   paymentMethodsUpdate: (id: string, input: unknown) =>
     ipcRenderer.invoke("desktop:payment-methods-update", id, input),
-  paymentMethodsDelete: (id: string) => ipcRenderer.invoke("desktop:payment-methods-delete", id),
   accountsList: () => ipcRenderer.invoke("desktop:accounts-list"),
-  accountsCreate: (input: unknown) => ipcRenderer.invoke("desktop:accounts-create", input),
   accountsUpdate: (id: string, input: unknown) =>
     ipcRenderer.invoke("desktop:accounts-update", id, input),
-  accountsDelete: (id: string) => ipcRenderer.invoke("desktop:accounts-delete", id),
   paymentTermsCreate: (input: unknown) =>
     ipcRenderer.invoke("desktop:payment-terms-create", input),
   paymentTermsUpdate: (id: string, input: unknown) =>
     ipcRenderer.invoke("desktop:payment-terms-update", id, input),
   paymentTermsDelete: (id: string) => ipcRenderer.invoke("desktop:payment-terms-delete", id),
+  paymentTermsListOmie: () => ipcRenderer.invoke("desktop:payment-terms-list-omie"),
   priceTablesCreate: (input: unknown) => ipcRenderer.invoke("desktop:price-tables-create", input),
   priceTablesUpdateName: (id: string, name: string) =>
     ipcRenderer.invoke("desktop:price-tables-update-name", id, name),
@@ -198,12 +213,17 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:verify-price-password", password),
   omieConfig: () => ipcRenderer.invoke("desktop:omie-config"),
   lookupCep: (cep: string) => ipcRenderer.invoke("desktop:lookup-cep", cep),
+  lookupCnpj: (cnpj: string) => ipcRenderer.invoke("desktop:lookup-cnpj", cnpj),
   omieSync: () => ipcRenderer.invoke("desktop:omie-sync"),
+  omieQueueList: () => ipcRenderer.invoke("desktop:omie-queue-list"),
+  omieQueueDelete: (jobId: string) => ipcRenderer.invoke("desktop:omie-queue-delete", jobId),
+  omieQueueSendNow: (jobId: string) => ipcRenderer.invoke("desktop:omie-queue-send-now", jobId),
   syncOmieDirect: (appKey: string, appSecret: string) =>
     ipcRenderer.invoke("desktop:sync-omie-direct", appKey, appSecret),
   syncOmieMasterData: (options?: unknown) =>
     ipcRenderer.invoke("desktop:sync-omie-master", options),
   getLastOmieSyncRun: () => ipcRenderer.invoke("desktop:get-last-omie-sync-run"),
+  listOmieDocumentTypes: () => ipcRenderer.invoke("desktop:omie-list-document-types"),
   getOmieSyncEntitiesByRun: (runId: string) =>
     ipcRenderer.invoke("desktop:get-omie-sync-entities", runId),
   resetOmieMaster: () => ipcRenderer.invoke("desktop:reset-omie-master"),
@@ -221,6 +241,14 @@ const desktopApi = {
     ipcRenderer.on("desktop:update-available", callback),
   offUpdateAvailable: (callback: (event: unknown, version: string) => void) =>
     ipcRenderer.off("desktop:update-available", callback),
+  onUpdateDownloadProgress: (callback: (event: unknown, percent: number) => void) =>
+    ipcRenderer.on("desktop:update-download-progress", callback),
+  offUpdateDownloadProgress: (callback: (event: unknown, percent: number) => void) =>
+    ipcRenderer.off("desktop:update-download-progress", callback),
+  onUpdateDownloaded: (callback: (event: unknown, version: string) => void) =>
+    ipcRenderer.on("desktop:update-downloaded", callback),
+  offUpdateDownloaded: (callback: (event: unknown, version: string) => void) =>
+    ipcRenderer.off("desktop:update-downloaded", callback),
   onPlateScanned: (callback: (plate: string) => void) =>
     ipcRenderer.on("desktop:plate-scanned", (_event: unknown, plate: string) => callback(plate)),
   onScaleReading: (callback: (reading: unknown) => void) =>

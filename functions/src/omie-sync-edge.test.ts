@@ -74,4 +74,54 @@ describe("omie-sync Edge Function", () => {
     expect(source).toContain('forceOmieTag(payload.tags, "transportadora")');
     expect(source).toContain("buildCarrierPayload(payload)");
   });
+
+  it("uses the account selected on desktop before falling back to the first tenant account", () => {
+    const source = getOmieSyncSource();
+
+    // Payload carrega o meio e a conta escolhidos na operacao do desktop.
+    expect(source).toContain("paymentMethodOmieCode?: string;");
+    expect(source).toContain("accountOmieCode?: string | number;");
+    // A conta selecionada tem precedencia sobre resolveOmieAccountCode (fallback historico).
+    expect(source).toContain("const selectedAccountCode = toNumber(payload.accountOmieCode ?? null);");
+    expect(source).toContain("? selectedAccountCode");
+    expect(source).toContain(": await resolveOmieAccountCode(credentials);");
+  });
+
+  it("creates orders at the 'Faturar' stage so billing happens inside OMIE", () => {
+    const source = getOmieSyncSource();
+
+    // Pedido de venda e OS nascem na etapa 50 (coluna "Faturar" do kanban).
+    expect(source).toContain('etapa: "50"');
+    expect(source).toContain('cEtapa: "50"');
+    expect(source).not.toContain('etapa: "10"');
+    expect(source).not.toContain('cEtapa: "10"');
+  });
+
+  it("sends installments + payment method inline via lista_parcelas (codigo_parcela 999)", () => {
+    const source = getOmieSyncSource();
+
+    // Pedido de venda leva o parcelamento informado e o meio de pagamento por parcela.
+    expect(source).toContain("function buildOrderParcelamento");
+    expect(source).toContain('codigo_parcela: "999"');
+    // "qtde_parcelas" e o nome aceito pelo OMIE no cabecalho; "quantidade_parcelas"
+    // e rejeitado ("Tag [QUANTIDADE_PARCELAS] nao faz parte da estrutura ... [cabecalho]").
+    expect(source).toContain("qtde_parcelas: count");
+    expect(source).not.toContain("quantidade_parcelas: count");
+    expect(source).toContain("lista_parcelas: parcelamento.listaParcelas");
+    expect(source).toContain("meio_pagamento: meio");
+    expect(source).toContain("data_vencimento: toOmieDate(addDaysToIsoDate(payload.issueDate");
+  });
+
+  it("ensures the OS payment condition exists in the OMIE parcelas cadastro", () => {
+    const source = getOmieSyncSource();
+
+    // A OS (operacao interna) ainda usa o codigo de parcela vinculado/criado no cadastro.
+    expect(source).toContain("async function ensureOmieParcelaCode");
+    expect(source).toContain("installmentDays?: number[];");
+    expect(source).toContain('"IncluirParcela"');
+    expect(source).toContain("await ensureOmieParcelaCode(credentials, payload)");
+    // A vista continua caindo no padrao "000" (comportamento historico).
+    expect(source).toContain("normalizeParcelaCode(payload.paymentTermOmieCode) ??");
+    expect(source).toContain('"000";');
+  });
 });

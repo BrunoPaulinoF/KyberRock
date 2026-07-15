@@ -11,8 +11,32 @@ import {
 import type { DesktopDatabase } from "../database/sqlite.js";
 import type { LocalDesktopIdentity } from "./bootstrap.js";
 import { readLocalSetting, readStringLocalSetting, writeLocalSetting } from "./local-settings.js";
+import { ReportService } from "./reports.js";
+import {
+  markRecipientSynced,
+  markRecipientSyncError,
+  type ReportRecipientRow
+} from "./report-recipients.js";
 import { isSellableProduct } from "./product-classification.js";
-import { listRunnableSyncJobs, markSyncJobDone, markSyncJobFailed } from "./sync-queue.js";
+import { readReportChannelSettings, toCloudChannelSettingsRow } from "./report-channels.js";
+import {
+  enqueueSyncJob,
+  listRunnableSyncJobs,
+  markSyncJobBlocked,
+  markSyncJobDone,
+  markSyncJobFailed
+} from "./sync-queue.js";
+import {
+  buildOmieBillingJob,
+  enqueueOmieBillingJob,
+  validateOperationFiscalReadiness
+} from "./weighing-operations.js";
+import {
+  isCadastroIncompleteFault,
+  isOmieMissingDocumentFault,
+  isOmieProtectedRecordFault
+} from "./omie-fault-classifier.js";
+import { provisionPaymentTermsFromOmieMirror } from "./payment-terms.js";
 
 let client: SupabaseClient | null = null;
 let clientConfigKey: string | null = null;
@@ -93,8 +117,12 @@ export interface OmieCloudSyncResult {
 }
 
 export interface FiscalBillingResult {
-  orderId: number;
+  orderId: number | null;
   billed: boolean;
+  /** true quando o faturamento foi bloqueado por pendencia de cadastro (nao é erro/retry). */
+  blocked?: boolean;
+  /** Mensagem acionavel da pendencia (ex.: preencher Numero do Endereco + E-mail). */
+  blockReason?: string | null;
   billingStatusCode: string | null;
   billingStatusMessage: string | null;
   documentUrl: string | null;
@@ -166,8 +194,9 @@ interface OmieReferenceProduct {
   fiscalRecommendations?: Record<string, unknown> | null;
 }
 
-interface OmieReferencePaymentTerm {
+export interface OmieReferencePaymentTerm {
   id: number;
+  code?: string | null;
   integrationCode?: string | null;
   description: string;
   firstInstallmentDays?: number | null;
@@ -398,6 +427,24 @@ export async function syncOperationToSupabase(
   return true;
 }
 
+// Media (30 dias) de tempo dentro da pedreira, projetada na unidade para o
+// alerta do carregador. Best-effort: nunca deve quebrar o sync.
+function computeAvgQuarryMinutes(database: DesktopDatabase, unitId: string): number | undefined {
+  try {
+    const to = new Date();
+    const from = new Date();
+    from.setDate(from.getDate() - 30);
+    const avg = new ReportService(database).getAverageQuarryMinutes(
+      from.toISOString().slice(0, 10),
+      to.toISOString().slice(0, 10),
+      unitId
+    );
+    return avg > 0 ? avg : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function syncLoadingRequestToSupabase(
   database: DesktopDatabase,
   requestId: string,
@@ -413,7 +460,12 @@ export async function syncLoadingRequestToSupabase(
     customer_id: customerId,
     product_id: productId
   });
-  await invokeDesktopSync(settings, { loadingRequests: [request], ...dependencies });
+  const avgQuarryMinutes = computeAvgQuarryMinutes(database, identity.unitId);
+  await invokeDesktopSync(settings, {
+    loadingRequests: [request],
+    ...dependencies,
+    ...(avgQuarryMinutes !== undefined ? { avgQuarryMinutes } : {})
+  });
   return true;
 }
 
@@ -496,6 +548,48 @@ export async function pullDesktopDataFromCloud(
   });
 
   return apply();
+}
+
+export interface CnpjLookupResult {
+  found: boolean;
+  cnpj: string;
+  legalName: string | null;
+  tradeName: string | null;
+  email: string | null;
+  phone: string | null;
+  zipcode: string | null;
+  addressStreet: string | null;
+  addressNumber: string | null;
+  addressComplement: string | null;
+  neighborhood: string | null;
+  city: string | null;
+  state: string | null;
+  status: string | null;
+}
+
+/**
+ * Consulta os dados cadastrais de um CNPJ pela edge cnpj-lookup (BrasilAPI/Receita).
+ * O e-mail quase nunca vem na base publica — os demais campos (endereco, razao
+ * social, telefone) vem normalmente. Lanca em CNPJ invalido / consulta indisponivel.
+ */
+export async function lookupCnpjFromCloud(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity,
+  cnpj: string
+): Promise<CnpjLookupResult> {
+  const digits = String(cnpj ?? "").replace(/\D/g, "");
+  if (digits.length !== 14) {
+    throw new Error("CNPJ invalido. Informe os 14 digitos.");
+  }
+  const settings = getCloudSettings(database, identity);
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.functions.invoke<CnpjLookupResult & { message?: string }>(
+    "cnpj-lookup",
+    { body: { deviceId: settings.deviceId, deviceToken: settings.deviceToken, cnpj: digits } }
+  );
+  if (error) throw new Error(await getFunctionErrorMessage(error));
+  if (!data) throw new Error("Consulta de CNPJ nao retornou dados.");
+  return data;
 }
 
 function upsertCloudCustomers(
@@ -1049,6 +1143,47 @@ export async function syncOmieReferenceDataFromCloud(
   throw new Error("OMIE sync redundant retry exhausted.");
 }
 
+export interface OmieDocumentTypeOption {
+  code: string;
+  description: string;
+}
+
+// Busca as formas de pagamento (tipos de documento) do OMIE sob demanda, para
+// o seletor de "Codigo OMIE" das formas de pagamento locais. Nao persiste nada:
+// o codigo escolhido e gravado na propria forma de pagamento.
+export async function listOmieDocumentTypesFromCloud(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity
+): Promise<OmieDocumentTypeOption[]> {
+  const settings = getCloudSettings(database, identity);
+  const supabase = getSupabaseClient();
+  const body = {
+    deviceId: settings.deviceId,
+    deviceToken: settings.deviceToken,
+    action: "list_document_types"
+  };
+
+  for (let attempt = 0; attempt <= OMIE_SYNC_REDUNDANT_MAX_RETRIES; attempt++) {
+    const { data, error } = await supabase.functions.invoke<{
+      documentTypes?: OmieDocumentTypeOption[];
+    }>("omie-sync", { body });
+
+    if (error) {
+      const message = await getFunctionErrorMessage(error);
+      if (isOmieSyncRedundantError(message) && attempt < OMIE_SYNC_REDUNDANT_MAX_RETRIES) {
+        await new Promise((resolve) => setTimeout(resolve, parseOmieSyncRedundantWaitMs(message)));
+        continue;
+      }
+      throw new Error(message);
+    }
+
+    if (!data) throw new Error("Resposta OMIE vazia.");
+    return data.documentTypes ?? [];
+  }
+
+  throw new Error("OMIE sync redundant retry exhausted.");
+}
+
 export function applyOmieReferenceData(
   database: DesktopDatabase,
   companyId: string,
@@ -1057,19 +1192,25 @@ export function applyOmieReferenceData(
   const customers = data.customers ?? [];
   const products = data.products ?? [];
   const suppliers = data.suppliers ?? [];
+  const paymentTerms = data.paymentTerms ?? [];
   const pagination = data.pagination;
 
   // Contadores refletem linhas realmente gravadas no SQLite (nao o tamanho do payload),
   // para o log de sync nao reportar sucesso quando nada ficou visivel nas telas.
   let customersPersisted = 0;
   let productsSynced = 0;
-  // Condicoes de pagamento sao cadastradas localmente: o pull nao as persiste mais.
-  const paymentTermsPersisted = 0;
+  // As condicoes locais (payment_terms) continuam sendo cadastradas manualmente; aqui
+  // apenas espelhamos os codigos de parcela do OMIE (omie_payment_terms) para vinculo.
+  let paymentTermsPersisted = 0;
   let suppliersPersisted = 0;
   const apply = database.transaction(() => {
     customersPersisted = upsertOmieCustomers(database, companyId, customers);
     productsSynced = upsertOmieProducts(database, companyId, products);
     suppliersPersisted = upsertOmieSuppliers(database, companyId, suppliers);
+    paymentTermsPersisted = upsertOmiePaymentTerms(database, companyId, paymentTerms);
+    // Materializa parcelas novas do espelho como condicoes locais selecionaveis
+    // (aparecem na Nova Entrada e no cadastro do cliente).
+    provisionPaymentTermsFromOmieMirror(database, companyId);
   });
   apply();
 
@@ -1291,7 +1432,7 @@ export async function pushOmieCustomersToCloud(
 
   const pending = database
     .prepare(
-      `SELECT id, omie_customer_id, legal_name, trade_name, document, phone, email,
+      `SELECT id, omie_customer_id, omie_integration_code, legal_name, trade_name, document, phone, email,
               zipcode, address_street, address_number, address_complement, neighborhood, city, state,
               default_payment_term_id
        FROM customers
@@ -1302,6 +1443,7 @@ export async function pushOmieCustomersToCloud(
     .all(identity.companyId, limit) as Array<{
     id: string;
     omie_customer_id: number | null;
+    omie_integration_code: string | null;
     legal_name: string;
     trade_name: string;
     document: string | null;
@@ -1335,8 +1477,34 @@ export async function pushOmieCustomersToCloud(
     SET sync_status = 'error', updated_at = datetime('now')
     WHERE id = ?
   `);
+  // Falha deterministica: para de re-tentar (needs_push=0) ate o operador editar o
+  // cadastro (o update re-arma needs_push=1).
+  const markBlocked = database.prepare(`
+    UPDATE customers
+    SET sync_status = 'error', needs_push = 0, updated_at = datetime('now')
+    WHERE id = ?
+  `);
 
   for (const [index, customer] of pending.entries()) {
+    // O "Cliente Consumidor" e um registro protegido do OMIE: AlterarCliente e sempre
+    // rejeitado ("Nao e possivel alterar esse codigo de integracao"). Edicoes locais
+    // (ex: e-mail padrao de NF-e) ficam apenas locais — nada a enviar.
+    if (isOmieConsumidorIntegrationCode(customer.omie_integration_code)) {
+      markSynced.run(customer.id);
+      continue;
+    }
+
+    // OMIE exige CPF/CNPJ no IncluirCliente. Sem documento valido, nao adianta chamar:
+    // bloqueia com mensagem clara ate o operador preencher o documento.
+    if (!customer.omie_customer_id && !hasValidCnpjCpf(customer.document)) {
+      markBlocked.run(customer.id);
+      failed++;
+      errors.push(
+        `Cliente ${customer.trade_name || customer.legal_name}: sem CPF/CNPJ — o OMIE exige o documento para criar o cadastro. Preencha o documento do cliente para reenviar.`
+      );
+      continue;
+    }
+
     try {
       const phoneMatch = customer.phone?.match(/\(?(\d{2})\)?\s*(\d+)/);
       const { data, error } = await supabase.functions.invoke<{ omieCustomerId?: number }>(
@@ -1382,9 +1550,21 @@ export async function pushOmieCustomersToCloud(
       pushed++;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Erro OMIE";
-      markError.run(customer.id);
-      failed++;
-      errors.push(`Cliente ${customer.id}: ${message}`);
+      if (isOmieProtectedRecordFault(message)) {
+        // Registro que o OMIE nao permite alterar (ex: Cliente Consumidor): mantem o dado
+        // local e para de re-tentar — o erro nao aparece mais a cada sincronizacao.
+        markSynced.run(customer.id);
+      } else if (isOmieMissingDocumentFault(message)) {
+        markBlocked.run(customer.id);
+        failed++;
+        errors.push(
+          `Cliente ${customer.trade_name || customer.legal_name}: o OMIE exige CPF/CNPJ. Preencha o documento do cliente para reenviar. Detalhe: ${message}`
+        );
+      } else {
+        markError.run(customer.id);
+        failed++;
+        errors.push(`Cliente ${customer.id}: ${message}`);
+      }
     }
 
     if (index < pending.length - 1) {
@@ -1393,6 +1573,17 @@ export async function pushOmieCustomersToCloud(
   }
 
   return { pushed, failed, errors };
+}
+
+// Codigo de integracao do consumidor final padrao do OMIE (registro protegido).
+function isOmieConsumidorIntegrationCode(code: string | null): boolean {
+  return (code ?? "").trim().toUpperCase() === "CONSUMIDOR";
+}
+
+// OMIE exige CPF (11 digitos) ou CNPJ (14 digitos) para incluir cliente/transportadora.
+function hasValidCnpjCpf(document: string | null): boolean {
+  const digits = (document ?? "").replace(/\D/g, "");
+  return digits.length === 11 || digits.length === 14;
 }
 
 export async function pushOmieCarriersToCloud(
@@ -1448,8 +1639,26 @@ export async function pushOmieCarriersToCloud(
     SET sync_status = 'error', updated_at = datetime('now')
     WHERE id = ?
   `);
+  // Falha deterministica: para de re-tentar (needs_push=0) ate o operador editar a
+  // transportadora (o update re-arma needs_push=1).
+  const markBlocked = database.prepare(`
+    UPDATE carriers
+    SET sync_status = 'error', needs_push = 0, updated_at = datetime('now')
+    WHERE id = ?
+  `);
 
   for (const [index, carrier] of pending.entries()) {
+    // OMIE exige CPF/CNPJ no IncluirCliente. Sem documento valido, nao adianta chamar:
+    // bloqueia com mensagem clara ate o operador preencher o documento.
+    if (!carrier.omie_customer_id && !hasValidCnpjCpf(carrier.document)) {
+      markBlocked.run(carrier.id);
+      failed++;
+      errors.push(
+        `Transportadora ${carrier.name}: sem CPF/CNPJ — o OMIE exige o documento para criar o cadastro. Preencha o documento da transportadora para reenviar.`
+      );
+      continue;
+    }
+
     try {
       const phoneMatch = carrier.phone?.match(/\(?(\d{2})\)?\s*(\d+)/);
       const { data, error } = await supabase.functions.invoke<{ omieCustomerId?: number }>(
@@ -1495,9 +1704,20 @@ export async function pushOmieCarriersToCloud(
       pushed++;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Erro OMIE";
-      markError.run(carrier.id);
-      failed++;
-      errors.push(`Transportadora ${carrier.id}: ${message}`);
+      if (isOmieProtectedRecordFault(message)) {
+        // Registro que o OMIE nao permite alterar: mantem o dado local e para de re-tentar.
+        markSynced.run(carrier.id);
+      } else if (isOmieMissingDocumentFault(message)) {
+        markBlocked.run(carrier.id);
+        failed++;
+        errors.push(
+          `Transportadora ${carrier.name}: o OMIE exige CPF/CNPJ. Preencha o documento da transportadora para reenviar. Detalhe: ${message}`
+        );
+      } else {
+        markError.run(carrier.id);
+        failed++;
+        errors.push(`Transportadora ${carrier.id}: ${message}`);
+      }
     }
 
     if (index < pending.length - 1) {
@@ -1636,31 +1856,164 @@ function parseJsonValue(value: unknown): unknown {
   }
 }
 
+function reconcileCancelledAfterCreate(
+  database: DesktopDatabase,
+  operationId: string,
+  orderId: number,
+  operationType: "invoice" | "internal"
+): void {
+  const row = database
+    .prepare("SELECT status, cancel_reason FROM weighing_operations WHERE id = ?")
+    .get(operationId) as { status: string; cancel_reason: string | null } | undefined;
+  if (!row || row.status !== "cancelled") return;
+
+  // O update de sucesso do create sobrescreveu o status; devolve para 'cancelled'.
+  database
+    .prepare("UPDATE weighing_operations SET status = 'cancelled', updated_at = datetime('now') WHERE id = ?")
+    .run(operationId);
+
+  enqueueSyncJob(database, {
+    target: "omie",
+    action: "cancel_order",
+    entityType: "weighing_operation",
+    entityId: operationId,
+    idempotencyKey: `omie:cancel:${operationId}`,
+    payload: {
+      operationId,
+      orderType: operationType === "invoice" ? "sales" : "service",
+      omieOrderId: orderId,
+      reason: row.cancel_reason ?? "Operacao cancelada localmente."
+    }
+  });
+}
+
+async function processOmieCancelJob(
+  database: DesktopDatabase,
+  supabase: SupabaseClient,
+  settings: CloudSettings,
+  job: { id: string; payload: unknown }
+): Promise<"processed" | "failed"> {
+  const payload = job.payload as {
+    operationId: string;
+    orderType: "sales" | "service";
+    omieOrderId: number;
+    reason?: string;
+  };
+
+  try {
+    const { data, error } = await supabase.functions.invoke<{
+      cancelled?: boolean;
+      alreadyCancelled?: boolean;
+      blocked?: boolean;
+      blockedReason?: string | null;
+    }>("omie-sync", {
+      body: {
+        deviceId: settings.deviceId,
+        deviceToken: settings.deviceToken,
+        action: "cancel_order",
+        payload: {
+          operationId: payload.operationId,
+          orderType: payload.orderType,
+          omieOrderId: payload.omieOrderId,
+          reason: payload.reason
+        }
+      }
+    });
+
+    if (error) {
+      throw new Error(await getFunctionErrorMessage(error));
+    }
+
+    if (data?.blocked) {
+      // Pedido faturado ou em estado que impede exclusao: mantem operacao cancelada
+      // localmente com o erro visivel, sem retry (docs/phase-1/sync-strategy.md).
+      database
+        .prepare(
+          `UPDATE weighing_operations
+           SET omie_billing_status = 'cancel_blocked',
+               omie_billing_message = ?,
+               updated_at = datetime('now')
+           WHERE id = ?`
+        )
+        .run(data.blockedReason ?? "Cancelamento negado pelo OMIE.", payload.operationId);
+      markSyncJobDone(database, job.id);
+      return "processed";
+    }
+
+    // cancelled ou alreadyCancelled: registra o cancelamento no OMIE.
+    database
+      .prepare(
+        `UPDATE weighing_operations
+         SET omie_billing_status = 'cancelled_in_omie',
+             omie_billing_message = ?,
+             updated_at = datetime('now')
+         WHERE id = ?`
+      )
+      .run(
+        data?.alreadyCancelled ? "Pedido ja nao existia no OMIE." : "Pedido cancelado no OMIE.",
+        payload.operationId
+      );
+    markSyncJobDone(database, job.id);
+    return "processed";
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Erro OMIE";
+    markSyncJobFailed(database, job.id, message);
+    return "failed";
+  }
+}
+
 export async function processOmieSyncQueue(
   database: DesktopDatabase,
   identity: LocalDesktopIdentity,
-  options: { limit?: number; delayMs?: number } = {}
+  options: { limit?: number; delayMs?: number; entityId?: string } = {}
 ): Promise<{ processed: number; failed: number; errors: string[] }> {
   const settings = getCloudSettings(database, identity);
   const supabase = getSupabaseClient();
   const limit = options.limit ?? OMIE_QUEUE_BATCH_LIMIT;
   const delayMs = options.delayMs ?? OMIE_BATCH_DELAY_MS;
-  const jobs = listRunnableSyncJobs(database, { target: "omie", limit });
+  // entityId: processa apenas os jobs de uma operacao especifica — usado pelo envio
+  // imediato pos-fechamento, sem esperar (nem concorrer com) a varredura completa.
+  const jobs = listRunnableSyncJobs(database, {
+    target: "omie",
+    entityId: options.entityId,
+    limit
+  });
   let processed = 0;
   let failed = 0;
   const errors: string[] = [];
 
   for (const [index, job] of jobs.entries()) {
+    if (job.action === "cancel_order") {
+      const outcome = await processOmieCancelJob(database, supabase, settings, job);
+      if (outcome === "processed") processed++;
+      else {
+        failed++;
+        errors.push(`Job ${job.id}: falha ao cancelar pedido OMIE`);
+      }
+      if (index < jobs.length - 1) {
+        await sleep(delayMs);
+      }
+      continue;
+    }
+
     const payload = job.payload as {
       operationId: string;
       operationType: "invoice" | "internal";
       customerOmieId: number;
+      localCustomerId?: string | null;
+      customer?: Record<string, unknown> | null;
       productOmieId?: number | null;
       serviceDescription?: string | null;
       quantity: number;
       unitPrice: number;
       freightTotalCents?: number;
+      freightModalidade?: string | null;
       issueDate: string;
+      paymentTermOmieCode?: string | null;
+      paymentTermInstallmentCount?: number | null;
+      paymentTermInstallmentDays?: number[] | null;
+      paymentMethodOmieCode?: string | null;
+      accountOmieCode?: string | null;
     };
 
     try {
@@ -1668,6 +2021,7 @@ export async function processOmieSyncQueue(
         job.action === "create_and_bill_order" ? "create_and_bill_order" : "create_order";
       const { data, error } = await supabase.functions.invoke<{
         orderId?: number;
+        omieCustomerId?: number;
         billed?: boolean;
         billingStatusCode?: string | null;
         billingStatusMessage?: string | null;
@@ -1680,12 +2034,19 @@ export async function processOmieSyncQueue(
           payload: {
             operationType: payload.operationType,
             customerOmieId: payload.customerOmieId,
+            customer: payload.customer ?? undefined,
             productOmieId: payload.productOmieId ?? undefined,
             serviceDescription: payload.serviceDescription ?? undefined,
             quantity: payload.quantity,
             unitPrice: payload.unitPrice,
             freightTotalCents: payload.freightTotalCents,
+            freightModalidade: payload.freightModalidade ?? undefined,
             issueDate: payload.issueDate,
+            paymentTermOmieCode: payload.paymentTermOmieCode ?? undefined,
+            installmentCount: payload.paymentTermInstallmentCount ?? undefined,
+            installmentDays: payload.paymentTermInstallmentDays ?? undefined,
+            paymentMethodOmieCode: payload.paymentMethodOmieCode ?? undefined,
+            accountOmieCode: payload.accountOmieCode ?? undefined,
             idempotencyKey: job.idempotencyKey
           }
         }
@@ -1696,6 +2057,22 @@ export async function processOmieSyncQueue(
       }
       if (!data?.orderId) {
         throw new Error("OMIE nao retornou orderId");
+      }
+
+      // Cliente cadastrado no OMIE na hora do envio: grava o codigo devolvido no cadastro
+      // local para os proximos pedidos ja irem vinculados (e nao recriarem o cliente).
+      if (
+        data.omieCustomerId &&
+        payload.localCustomerId &&
+        (!payload.customerOmieId || payload.customerOmieId <= 0)
+      ) {
+        database
+          .prepare(
+            `UPDATE customers
+             SET omie_customer_id = ?, needs_push = 0, sync_status = 'synced', updated_at = datetime('now')
+             WHERE id = ? AND (omie_customer_id IS NULL OR omie_customer_id = 0)`
+          )
+          .run(data.omieCustomerId, payload.localCustomerId);
       }
 
       const updateSql =
@@ -1729,9 +2106,39 @@ export async function processOmieSyncQueue(
         database.prepare(updateSql).run(data.orderId, payload.operationId);
       }
       markSyncJobDone(database, job.id);
+      // Corrida create x cancel: se a operacao foi cancelada localmente enquanto o pedido
+      // era criado, o update acima marcou 'synced' por engano. Restaura o cancelamento e
+      // solicita o cancelamento do pedido recem-criado no OMIE.
+      reconcileCancelledAfterCreate(database, payload.operationId, data.orderId, payload.operationType);
       processed++;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Erro OMIE";
+      // Falha deterministica de cadastro/NF-e no faturamento: bloqueia (para o retry storm de
+      // ~10x/min) e marca a pendencia na operacao. Continua re-executavel via processFiscalBillingNow.
+      if (job.action === "create_and_bill_order" && isCadastroIncompleteFault(message)) {
+        markSyncJobBlocked(database, job.id, message);
+        const blockedOperationId = (job.payload as { operationId?: string })?.operationId;
+        if (blockedOperationId) {
+          database
+            .prepare(
+              `UPDATE weighing_operations
+               SET omie_billing_status = 'cadastro_incompleto', omie_billing_message = ?, updated_at = datetime('now')
+               WHERE id = ?`
+            )
+            .run(message, blockedOperationId);
+        }
+        failed++;
+        // Pendencia de cadastro, nao erro de sincronizacao: orienta a correcao e avisa
+        // que nao havera novas tentativas automaticas (o job fica bloqueado).
+        errors.push(
+          `Job ${job.id}: faturamento pausado por cadastro incompleto do cliente ` +
+            `(corrija no cadastro/portal OMIE e refature pela operacao). Detalhe OMIE: ${message}`
+        );
+        if (index < jobs.length - 1) {
+          await sleep(delayMs);
+        }
+        continue;
+      }
       markSyncJobFailed(database, job.id, message);
       failed++;
       errors.push(`Job ${job.id}: ${message}`);
@@ -1762,38 +2169,115 @@ export async function processFiscalBillingNow(
 ): Promise<FiscalBillingResult> {
   const settings = getCloudSettings(database, identity);
   const supabase = getSupabaseClient();
-  const job = database
-    .prepare(
-      `SELECT * FROM sync_queue
-       WHERE target = 'omie'
-         AND action = 'create_and_bill_order'
-         AND entity_id = ?
-         AND status IN ('pending', 'failed')
-       ORDER BY created_at DESC
-       LIMIT 1`
-    )
-    .get(operationId) as
-    | {
-        id: string;
-        idempotency_key: string;
-        payload_json: string;
+
+  // Gate autoritativo: cadastro do cliente precisa estar completo para NF-e. Se nao estiver,
+  // registra a pendencia e retorna bloqueado (sem chamar o OMIE, sem enfileirar job condenado).
+  const readiness = validateOperationFiscalReadiness(database, operationId);
+  if (!readiness.ready) {
+    database
+      .prepare(
+        `UPDATE weighing_operations
+         SET omie_billing_status = 'cadastro_incompleto', omie_billing_message = ?, updated_at = datetime('now')
+         WHERE id = ?`
+      )
+      .run(readiness.message, operationId);
+    return {
+      orderId: null,
+      billed: false,
+      blocked: true,
+      blockReason: readiness.message,
+      billingStatusCode: null,
+      billingStatusMessage: readiness.message,
+      documentUrl: null,
+      documentPrinted: false,
+      documentPrintError: null
+    };
+  }
+
+  const findBillingJob = () =>
+    database
+      .prepare(
+        `SELECT * FROM sync_queue
+         WHERE target = 'omie'
+           AND action = 'create_and_bill_order'
+           AND entity_id = ?
+           AND status IN ('pending', 'failed')
+         ORDER BY created_at DESC
+         LIMIT 1`
+      )
+      .get(operationId) as
+      | { id: string; idempotency_key: string; payload_json: string }
+      | undefined;
+
+  let job = findBillingJob();
+
+  // O fechamento so CRIA o pedido no OMIE (create_order) — o faturamento e feito no
+  // OMIE. Este caminho manual promove o job de criacao (MESMA chave de idempotencia)
+  // para create_and_bill_order em vez de inserir outra linha com a chave ja usada
+  // (INSERT OR IGNORE seria descartado); a edge reusa o pedido ja criado.
+  if (!job) {
+    const built = buildOmieBillingJob(database, operationId);
+    if (built && built.payload.operationType === "invoice") {
+      const nowIso = new Date().toISOString();
+      const promoted = database
+        .prepare(
+          `UPDATE sync_queue
+           SET action = 'create_and_bill_order', status = 'pending', payload_json = ?,
+               next_attempt_at = ?, updated_at = ?
+           WHERE target = 'omie' AND action = 'create_order' AND idempotency_key = ?`
+        )
+        .run(JSON.stringify(built.payload), nowIso, nowIso, built.idempotencyKey);
+      if (promoted.changes === 0) {
+        enqueueOmieBillingJob(database, operationId, {
+          ...built,
+          action: "create_and_bill_order"
+        });
       }
-    | undefined;
+      job = findBillingJob();
+    }
+  }
 
   if (!job) {
-    throw new Error("Nao ha faturamento OMIE pendente para esta operacao fiscal.");
+    const reason =
+      "Nao ha faturamento OMIE pendente para esta operacao fiscal (verifique se o cliente tem codigo OMIE).";
+    database
+      .prepare(
+        `UPDATE weighing_operations
+         SET omie_billing_status = 'cadastro_incompleto', omie_billing_message = ?, updated_at = datetime('now')
+         WHERE id = ?`
+      )
+      .run(reason, operationId);
+    return {
+      orderId: null,
+      billed: false,
+      blocked: true,
+      blockReason: reason,
+      billingStatusCode: null,
+      billingStatusMessage: reason,
+      documentUrl: null,
+      documentPrinted: false,
+      documentPrintError: null
+    };
   }
 
   const payload = parseJsonValue(job.payload_json) as {
     operationId: string;
     operationType: "invoice" | "internal";
     customerOmieId: number;
+    localCustomerId?: string | null;
+    customer?: Record<string, unknown> | null;
     productOmieId?: number | null;
     serviceDescription?: string | null;
     quantity: number;
     unitPrice: number;
     freightTotalCents?: number;
+    freightModalidade?: string | null;
     issueDate: string;
+    paymentTermOmieCode?: string | null;
+    paymentTermInstallmentCount?: number | null;
+    paymentTermInstallmentDays?: number[] | null;
+    paymentMethodOmieCode?: string | null;
+    accountOmieCode?: string | null;
   };
 
   if (payload.operationType !== "invoice") {
@@ -1803,6 +2287,7 @@ export async function processFiscalBillingNow(
   try {
     const { data, error } = await supabase.functions.invoke<{
       orderId?: number;
+      omieCustomerId?: number;
       billed?: boolean;
       billingStatusCode?: string | null;
       billingStatusMessage?: string | null;
@@ -1815,11 +2300,18 @@ export async function processFiscalBillingNow(
         payload: {
           operationType: payload.operationType,
           customerOmieId: payload.customerOmieId,
+          customer: payload.customer ?? undefined,
           productOmieId: payload.productOmieId ?? undefined,
           quantity: payload.quantity,
           unitPrice: payload.unitPrice,
           freightTotalCents: payload.freightTotalCents,
+          freightModalidade: payload.freightModalidade ?? undefined,
           issueDate: payload.issueDate,
+          paymentTermOmieCode: payload.paymentTermOmieCode ?? undefined,
+          installmentCount: payload.paymentTermInstallmentCount ?? undefined,
+          installmentDays: payload.paymentTermInstallmentDays ?? undefined,
+          paymentMethodOmieCode: payload.paymentMethodOmieCode ?? undefined,
+          accountOmieCode: payload.accountOmieCode ?? undefined,
           idempotencyKey: job.idempotency_key
         }
       }
@@ -1830,6 +2322,21 @@ export async function processFiscalBillingNow(
     }
     if (!data?.orderId || data.billed !== true) {
       throw new Error("OMIE nao confirmou o faturamento do pedido de venda.");
+    }
+
+    // Cliente criado no OMIE na hora: grava o codigo devolvido no cadastro local.
+    if (
+      data.omieCustomerId &&
+      payload.localCustomerId &&
+      (!payload.customerOmieId || payload.customerOmieId <= 0)
+    ) {
+      database
+        .prepare(
+          `UPDATE customers
+           SET omie_customer_id = ?, needs_push = 0, sync_status = 'synced', updated_at = datetime('now')
+           WHERE id = ? AND (omie_customer_id IS NULL OR omie_customer_id = 0)`
+        )
+        .run(data.omieCustomerId, payload.localCustomerId);
     }
 
     let documentPrinted = false;
@@ -1870,6 +2377,31 @@ export async function processFiscalBillingNow(
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Erro ao faturar pedido no OMIE.";
+
+    // Falha deterministica de cadastro/NF-e: nao adianta re-tentar automaticamente. Bloqueia o
+    // job (re-executavel manualmente apos corrigir) e retorna pendencia clara — sem throw/storm.
+    if (isCadastroIncompleteFault(message)) {
+      markSyncJobBlocked(database, job.id, message);
+      database
+        .prepare(
+          `UPDATE weighing_operations
+           SET omie_billing_status = 'cadastro_incompleto', omie_billing_message = ?, updated_at = datetime('now')
+           WHERE id = ?`
+        )
+        .run(message, operationId);
+      return {
+        orderId: null,
+        billed: false,
+        blocked: true,
+        blockReason: message,
+        billingStatusCode: null,
+        billingStatusMessage: message,
+        documentUrl: null,
+        documentPrinted: false,
+        documentPrintError: null
+      };
+    }
+
     markSyncJobFailed(database, job.id, message);
     database
       .prepare(
@@ -1884,6 +2416,64 @@ export async function processFiscalBillingNow(
       `Nao foi possivel faturar no OMIE. Verifique a internet conectada e a configuracao da API OMIE. Detalhe: ${message}`
     );
   }
+}
+
+// Empurra os destinatarios de relatorio pendentes (needs_push) para o Supabase,
+// para o envio automatico (daily-report-email) enxergar quem recebe o que.
+// Destinatarios removidos localmente sao enviados como inativos.
+export async function pushPendingReportRecipients(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity
+): Promise<number> {
+  const settings = getCloudSettings(database, identity);
+  const rows = database
+    .prepare(
+      `SELECT * FROM report_recipients WHERE company_id = ? AND needs_push = 1
+       ORDER BY updated_at ASC LIMIT 100`
+    )
+    .all(settings.companyId) as ReportRecipientRow[];
+  if (rows.length === 0) return 0;
+
+  const recipients = rows.map((row) => ({
+    id: row.id,
+    company_id: settings.companyId,
+    email: row.email,
+    whatsapp_phone: row.whatsapp_phone,
+    send_email: row.send_email === 1,
+    send_whatsapp: row.send_whatsapp === 1,
+    schedule_frequency: row.schedule_frequency,
+    schedule_time: row.schedule_time,
+    report_types: row.report_types || "sales",
+    display_name: row.display_name,
+    is_active: row.is_active === 1 && row.deleted_at === null,
+    updated_at: new Date().toISOString()
+  }));
+
+  try {
+    await invokeDesktopSync(settings, { reportRecipients: recipients });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Falha ao sincronizar destinatarios.";
+    for (const row of rows) markRecipientSyncError(database, row.id, message);
+    throw error;
+  }
+
+  for (const row of rows) markRecipientSynced(database, row.id);
+  return rows.length;
+}
+
+// Empurra a configuracao dos canais de envio (SMTP/WhatsApp) da empresa para o
+// cloud (tabela report_channel_settings), para o daily-report-email usar sem
+// depender de envs nas Edge Functions. Chamado ao salvar/conectar na tela de
+// Relatorios e no ciclo de sync enquanto houver push pendente.
+export async function pushReportChannelSettings(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity
+): Promise<void> {
+  const settings = readReportChannelSettings(database);
+  const cloud = getCloudSettings(database, identity);
+  await invokeDesktopSync(cloud, {
+    reportChannelSettings: toCloudChannelSettingsRow(cloud.companyId, settings)
+  });
 }
 
 async function invokeDesktopSync(
@@ -2227,6 +2817,56 @@ function upsertOmieSuppliers(
       supplier.city ?? null,
       supplier.state ?? null,
       supplier.isActive === false ? 0 : 1
+    );
+    persisted++;
+  }
+  return persisted;
+}
+
+export function upsertOmiePaymentTerms(
+  database: DesktopDatabase,
+  companyId: string,
+  paymentTerms: OmieReferencePaymentTerm[]
+): number {
+  const upsert = database.prepare(`
+    INSERT INTO omie_payment_terms (
+      id, company_id, omie_id, code, description,
+      first_installment_days, installment_interval_days, installment_count,
+      installment_type, installment_days_json, is_active, visible,
+      updated_from_omie_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), datetime('now'))
+    ON CONFLICT(company_id, code) DO UPDATE SET
+      omie_id = excluded.omie_id,
+      description = excluded.description,
+      first_installment_days = excluded.first_installment_days,
+      installment_interval_days = excluded.installment_interval_days,
+      installment_count = excluded.installment_count,
+      installment_type = excluded.installment_type,
+      installment_days_json = excluded.installment_days_json,
+      is_active = excluded.is_active,
+      visible = excluded.visible,
+      updated_from_omie_at = datetime('now'),
+      updated_at = datetime('now')
+  `);
+
+  let persisted = 0;
+  for (const term of paymentTerms) {
+    // code e o identificador do codigo_parcela do OMIE; preserva zeros a esquerda (TEXT).
+    const code = (term.code ?? "").trim();
+    if (!code) continue;
+    upsert.run(
+      `omie_parcela_${code}`,
+      companyId,
+      Number.isFinite(term.id) ? term.id : null,
+      code,
+      term.description?.trim() || code,
+      term.firstInstallmentDays ?? null,
+      term.installmentIntervalDays ?? null,
+      term.installmentCount ?? null,
+      term.installmentType ?? null,
+      term.installmentDaysJson ? JSON.stringify(term.installmentDaysJson) : null,
+      term.isActive === false ? 0 : 1,
+      term.visible === false ? 0 : 1
     );
     persisted++;
   }

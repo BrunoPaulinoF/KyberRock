@@ -1,9 +1,25 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
+// Mesma lib de SMTP usada no desktop (sendTestEmail); o bundler das Edge
+// Functions so resolve especificadores jsr:/npm:, entao nada de deno.land aqui.
+import nodemailer from "npm:nodemailer@9.0.1";
+import {
+  localNow,
+  reportPeriod,
+  shouldSendAt,
+  type ReportPeriod
+} from "../_shared/report-schedule.ts";
+import {
+  buildTruckReport,
+  renderTruckReportHtml,
+  renderTruckReportWhatsapp,
+  type TruckReport,
+  type TruckReportRow
+} from "./truck-report.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-admin-session",
+    "authorization, x-client-info, apikey, content-type, x-admin-session, x-cron-secret",
   "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS"
 };
 
@@ -14,6 +30,12 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+type ReportType = "sales" | "trucks" | "both";
+
+// Operacoes fechadas localmente contam no relatorio mesmo depois de avancarem no
+// ciclo de sync (o status do cloud espelha o status local no momento do push).
+const CLOSED_STATUSES = ["closed_local", "pending_omie", "synced"];
+
 interface Recipient {
   email: string | null;
   whatsappPhone: string | null;
@@ -21,6 +43,7 @@ interface Recipient {
   sendWhatsapp: boolean;
   scheduleFrequency: string;
   scheduleTime: string;
+  reportTypes: ReportType;
   displayName: string | null;
 }
 
@@ -29,7 +52,8 @@ interface DispatchResult {
   unitId: string;
   date: string;
   recipients: number;
-  status: "sent" | "partial" | "failed";
+  status: "sent" | "partial" | "failed" | "skipped";
+  reason?: string;
   error?: string;
 }
 
@@ -49,12 +73,22 @@ Deno.serve(async (req) => {
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
   const supabase = createClient(supabaseUrl, serviceRoleKey);
 
+  // Somente chamadas server-side: o scheduler (que encaminha o segredo do cron) ou
+  // um chamador com a service role key. Deployada com verify_jwt=false e auth
+  // propria (como desktop-download); o JWT anon do loader-web nao dispara envios.
+  if (!(await isAuthorized(req, supabase, serviceRoleKey))) {
+    return jsonResponse({ error: "Acesso negado." }, 401);
+  }
+
   const body = (await req.json().catch(() => ({}))) as {
     date?: string;
     companyId?: string;
     unitId?: string;
+    force?: boolean;
   };
-  const targetDate = body.date ?? new Date().toISOString().slice(0, 10);
+  const now = localNow(new Date());
+  const targetDate = body.date ?? now.date;
+  const force = body.force === true;
 
   const companyFilter = body.companyId
     ? supabase.from("companies").select("id, name").eq("id", body.companyId)
@@ -67,6 +101,25 @@ Deno.serve(async (req) => {
   const results: DispatchResult[] = [];
 
   for (const company of companies ?? []) {
+    // Configuracao de canais cadastrada pelo desktop (tela de Relatorios);
+    // os envs SMTP_*/UAZAPI_* do projeto ficam como fallback.
+    const { data: channelSettings } = await supabase
+      .from("report_channel_settings")
+      .select(
+        "smtp_host, smtp_port, smtp_user, smtp_password, smtp_sender, whatsapp_url, whatsapp_instance_token"
+      )
+      .eq("company_id", company.id)
+      .maybeSingle();
+    const companySmtpHost = (channelSettings?.smtp_host as string | null) || smtpHost;
+    const companySmtpPort = Number(channelSettings?.smtp_port ?? 0) || smtpPort;
+    const companySmtpUser = (channelSettings?.smtp_user as string | null) || smtpUser;
+    const companySmtpPassword = (channelSettings?.smtp_password as string | null) || smtpPassword;
+    const companySenderEmail =
+      (channelSettings?.smtp_sender as string | null) || senderEmail || companySmtpUser;
+    const companyUazapiUrl = (channelSettings?.whatsapp_url as string | null) || uazapiWhatsappUrl;
+    const companyUazapiToken =
+      (channelSettings?.whatsapp_instance_token as string | null) || uazapiInstanceToken;
+
     const unitFilter = body.unitId
       ? supabase.from("units").select("id, name").eq("id", body.unitId).eq("company_id", company.id)
       : supabase
@@ -93,13 +146,15 @@ Deno.serve(async (req) => {
         company,
         unit,
         targetDate,
-        senderEmail,
-        smtpHost,
-        smtpPort,
-        smtpUser,
-        smtpPassword,
-        uazapiInstanceToken,
-        uazapiWhatsappUrl
+        nowHour: now.hour,
+        force,
+        senderEmail: companySenderEmail,
+        smtpHost: companySmtpHost,
+        smtpPort: companySmtpPort,
+        smtpUser: companySmtpUser,
+        smtpPassword: companySmtpPassword,
+        uazapiInstanceToken: companyUazapiToken,
+        uazapiWhatsappUrl: companyUazapiUrl
       });
       results.push(result);
     }
@@ -108,11 +163,38 @@ Deno.serve(async (req) => {
   return jsonResponse({ results });
 });
 
+async function isAuthorized(
+  req: Request,
+  supabase: ReturnType<typeof createClient>,
+  serviceRoleKey: string
+): Promise<boolean> {
+  const authHeader = req.headers.get("authorization") ?? "";
+  if (serviceRoleKey && authHeader === `Bearer ${serviceRoleKey}`) return true;
+
+  const providedSecret = req.headers.get("x-cron-secret") ?? "";
+  if (!providedSecret) return false;
+  const envSecret = Deno.env.get("CRON_SHARED_SECRET") ?? "";
+  if (envSecret && providedSecret === envSecret) return true;
+
+  const { data } = await supabase.rpc("get_cron_secret");
+  return typeof data === "string" && data.length > 0 && providedSecret === data;
+}
+
+interface UnitContent {
+  period: ReportPeriod;
+  salesHtml: string | null;
+  salesWhatsapp: string | null;
+  truckHtml: string | null;
+  truckWhatsapp: string | null;
+}
+
 async function dispatchForUnit(params: {
   supabase: ReturnType<typeof createClient>;
   company: { id: string; name: string };
   unit: { id: string; name: string };
   targetDate: string;
+  nowHour: number;
+  force: boolean;
   senderEmail: string;
   smtpHost: string;
   smtpPort: number;
@@ -121,151 +203,242 @@ async function dispatchForUnit(params: {
   uazapiInstanceToken: string;
   uazapiWhatsappUrl: string;
 }): Promise<DispatchResult> {
-  const { supabase, company, unit, targetDate, senderEmail } = params;
+  const { supabase, company, unit, targetDate, nowHour, force, senderEmail } = params;
 
-  const { data: recipients, error: recipientsError } = await supabase
+  const { data: recipientRows, error: recipientsError } = await supabase
     .from("report_recipients")
     .select(
-      "email, whatsapp_phone, send_email, send_whatsapp, schedule_frequency, schedule_time, display_name"
+      "email, whatsapp_phone, send_email, send_whatsapp, schedule_frequency, schedule_time, report_types, display_name"
     )
     .eq("company_id", company.id)
     .eq("is_active", true);
 
   if (recipientsError) {
-    return recordError(supabase, {
+    return recordFailure(supabase, {
       companyId: company.id,
       unitId: unit.id,
       date: targetDate,
+      scheduleHour: nowHour,
       error: recipientsError.message
     });
   }
 
-  if (!recipients || recipients.length === 0) {
-    return recordError(supabase, {
+  const recipients: Recipient[] = (recipientRows ?? []).map((row) => {
+    const reportTypes: ReportType =
+      row.report_types === "trucks" || row.report_types === "both"
+        ? (row.report_types as ReportType)
+        : "sales";
+    return {
+      email: (row.email as string | null) ?? null,
+      whatsappPhone: (row.whatsapp_phone as string | null) ?? null,
+      sendEmail: row.send_email !== false,
+      sendWhatsapp: row.send_whatsapp === true,
+      scheduleFrequency: (row.schedule_frequency as string | null) ?? "daily",
+      scheduleTime: (row.schedule_time as string | null) ?? "20:00",
+      reportTypes,
+      displayName: (row.display_name as string | null) ?? null
+    };
+  });
+
+  if (recipients.length === 0) {
+    return recordFailure(supabase, {
       companyId: company.id,
       unitId: unit.id,
       date: targetDate,
+      scheduleHour: nowHour,
       error: "Sem destinatarios ativos"
     });
   }
 
-  const summary = await buildDailySummary(supabase, company.id, unit.id, targetDate);
-  if (!summary) {
-    return recordError(supabase, {
+  // O cron roda toda hora; so envia para quem configurou ESTA hora (e, para
+  // semanais/mensais, o dia certo). Sem ninguem agendado agora, nao registra nada.
+  const due = force
+    ? recipients
+    : recipients.filter((recipient) =>
+        shouldSendAt({
+          frequency: recipient.scheduleFrequency,
+          scheduleTime: recipient.scheduleTime,
+          nowDate: targetDate,
+          nowHour
+        })
+      );
+  if (due.length === 0) {
+    return {
       companyId: company.id,
       unitId: unit.id,
       date: targetDate,
-      error: "Resumo vazio"
-    });
+      recipients: 0,
+      status: "skipped",
+      reason: "Nenhum destinatario agendado para esta hora"
+    };
   }
 
-  const html = renderEmailHtml({
-    companyName: company.name,
-    unitName: unit.name,
-    date: targetDate,
-    summary
-  });
-  const whatsappText = renderWhatsappText({
-    companyName: company.name,
-    unitName: unit.name,
-    date: targetDate,
-    summary
-  });
+  // Deduplicacao: um retry do cron (ou chamada dupla) na mesma hora nao reenvia.
+  if (!force) {
+    const { data: existing } = await supabase
+      .from("daily_report_dispatches")
+      .select("id")
+      .eq("company_id", company.id)
+      .eq("unit_id", unit.id)
+      .eq("report_date", targetDate)
+      .eq("schedule_hour", nowHour)
+      .in("status", ["sent", "partial"])
+      .limit(1);
+    if (existing && existing.length > 0) {
+      return {
+        companyId: company.id,
+        unitId: unit.id,
+        date: targetDate,
+        recipients: 0,
+        status: "skipped",
+        reason: "Ja despachado nesta hora"
+      };
+    }
+  }
+
+  // Conteudo por frequencia (o periodo semanal/mensal difere do diario), montado
+  // sob demanda e reaproveitado entre destinatarios da mesma frequencia.
+  const contentCache = new Map<string, UnitContent>();
+  const contentFor = async (frequency: string): Promise<UnitContent> => {
+    const key = frequency === "weekly" || frequency === "monthly" ? frequency : "daily";
+    const cached = contentCache.get(key);
+    if (cached) return cached;
+    const period = reportPeriod(key, targetDate);
+    const summary = await buildSalesSummary(supabase, company.id, unit.id, period);
+    const truckReport = await buildTruckSummary(supabase, company.id, unit.id, period);
+    const hasTrucks = truckReport.totalOperations > 0;
+    const content: UnitContent = {
+      period,
+      salesHtml: summary
+        ? renderEmailHtml({
+            companyName: company.name,
+            unitName: unit.name,
+            title: `Fechamento ${period.frequencyLabel} ${period.label}`,
+            summary
+          })
+        : null,
+      salesWhatsapp: summary
+        ? renderWhatsappText({
+            companyName: company.name,
+            unitName: unit.name,
+            title: `Fechamento ${period.frequencyLabel} ${period.label}`,
+            summary
+          })
+        : null,
+      truckHtml: hasTrucks
+        ? renderTruckReportHtml({
+            companyName: company.name,
+            unitName: unit.name,
+            date: period.label,
+            report: truckReport
+          })
+        : null,
+      truckWhatsapp: hasTrucks
+        ? renderTruckReportWhatsapp({ date: period.label, report: truckReport })
+        : null
+    };
+    contentCache.set(key, content);
+    return content;
+  };
 
   let dispatched = 0;
   let targets = 0;
-  let lastError: string | null = null;
-  for (const row of recipients as Array<{
-    email: string | null;
-    whatsapp_phone: string | null;
-    send_email: boolean | null;
-    send_whatsapp: boolean | null;
-    schedule_frequency: string | null;
-    schedule_time: string | null;
-    display_name: string | null;
-  }>) {
-    const recipient: Recipient = {
-      email: row.email,
-      whatsappPhone: row.whatsapp_phone,
-      sendEmail: row.send_email !== false,
-      sendWhatsapp: row.send_whatsapp === true,
-      scheduleFrequency: row.schedule_frequency ?? "daily",
-      scheduleTime: row.schedule_time ?? "20:00",
-      displayName: row.display_name
-    };
+  const errors: string[] = [];
 
-    if (
-      !shouldSendToday({
-        frequency: recipient.scheduleFrequency,
-        targetDate,
-        scheduleTime: recipient.scheduleTime
-      })
-    ) {
-      continue;
-    }
+  for (const recipient of due) {
+    const content = await contentFor(recipient.scheduleFrequency);
+    const wantsSales = recipient.reportTypes === "sales" || recipient.reportTypes === "both";
+    const wantsTrucks = recipient.reportTypes === "trucks" || recipient.reportTypes === "both";
+    const emailHtml =
+      [wantsSales ? content.salesHtml : null, wantsTrucks ? content.truckHtml : null]
+        .filter((part): part is string => Boolean(part))
+        .join('<hr style="margin:28px 0;border:none;border-top:1px solid #cbd5e1" />') || null;
+    const whatsappBody =
+      [wantsSales ? content.salesWhatsapp : null, wantsTrucks ? content.truckWhatsapp : null]
+        .filter((part): part is string => Boolean(part))
+        .join("\n\n") || null;
+    const subject = wantsSales
+      ? `Fechamento ${content.period.frequencyLabel} ${content.period.label} - ${company.name} (${unit.name})`
+      : `Controle de caminhoes ${content.period.label} - ${company.name} (${unit.name})`;
 
     if (recipient.sendEmail && recipient.email) {
       targets += 1;
-      try {
-        if (!params.smtpHost || !params.smtpUser || !params.smtpPassword || !senderEmail) {
-          throw new Error(
-            "Provedor SMTP nao configurado. Defina SMTP_HOST, SMTP_USER, SMTP_PASSWORD."
-          );
+      if (!emailHtml) {
+        errors.push(`email ${recipient.email}: sem dados no periodo (${content.period.label})`);
+      } else {
+        try {
+          if (!params.smtpHost || !params.smtpUser || !params.smtpPassword || !senderEmail) {
+            throw new Error(
+              "Provedor SMTP nao configurado. Defina SMTP_HOST, SMTP_USER, SMTP_PASSWORD."
+            );
+          }
+          await sendSmtpEmail({
+            host: params.smtpHost,
+            port: params.smtpPort,
+            user: params.smtpUser,
+            password: params.smtpPassword,
+            from: senderEmail,
+            to: recipient.email,
+            subject,
+            html: emailHtml
+          });
+          dispatched += 1;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Falha SMTP";
+          errors.push(`email ${recipient.email}: ${message}`);
         }
-        await sendSmtpEmail({
-          host: params.smtpHost,
-          port: params.smtpPort,
-          user: params.smtpUser,
-          password: params.smtpPassword,
-          from: senderEmail,
-          to: recipient.email,
-          subject: `Fechamento diario ${targetDate} - ${company.name}`,
-          html
-        });
-        dispatched += 1;
-      } catch (error) {
-        lastError = error instanceof Error ? error.message : "Falha SMTP";
       }
     }
 
     if (recipient.sendWhatsapp && recipient.whatsappPhone) {
       targets += 1;
-      try {
-        if (!params.uazapiInstanceToken || !params.uazapiWhatsappUrl) {
-          throw new Error(
-            "WhatsApp nao configurado. Defina UAZAPI_INSTANCE_TOKEN e UAZAPI_WHATSAPP_URL."
-          );
+      if (!whatsappBody) {
+        errors.push(
+          `whatsapp ${recipient.whatsappPhone}: sem dados no periodo (${content.period.label})`
+        );
+      } else {
+        try {
+          if (!params.uazapiInstanceToken || !params.uazapiWhatsappUrl) {
+            throw new Error(
+              "WhatsApp nao configurado. Defina UAZAPI_INSTANCE_TOKEN e UAZAPI_WHATSAPP_URL."
+            );
+          }
+          await sendUazapiWhatsappMessage({
+            instanceToken: params.uazapiInstanceToken,
+            baseUrl: params.uazapiWhatsappUrl,
+            to: recipient.whatsappPhone,
+            text: whatsappBody,
+            trackId: `daily-report:${company.id}:${unit.id}:${targetDate}:${nowHour}:${recipient.whatsappPhone}`
+          });
+          dispatched += 1;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Falha WhatsApp";
+          errors.push(`whatsapp ${recipient.whatsappPhone}: ${message}`);
         }
-        await sendUazapiWhatsappMessage({
-          instanceToken: params.uazapiInstanceToken,
-          baseUrl: params.uazapiWhatsappUrl,
-          to: recipient.whatsappPhone,
-          text: whatsappText,
-          trackId: `daily-report:${company.id}:${unit.id}:${targetDate}:${recipient.whatsappPhone}`
-        });
-        dispatched += 1;
-      } catch (error) {
-        lastError = error instanceof Error ? error.message : "Falha WhatsApp";
       }
     }
   }
 
+  const lastError = errors.length > 0 ? truncate(errors.join(" | "), 2000) : null;
+
   if (targets === 0) {
-    return recordError(supabase, {
+    return recordFailure(supabase, {
       companyId: company.id,
       unitId: unit.id,
       date: targetDate,
+      scheduleHour: nowHour,
       error: "Sem canais ativos para envio"
     });
   }
 
   const status: DispatchResult["status"] =
-    targets > 0 && dispatched === targets ? "sent" : dispatched > 0 ? "partial" : "failed";
+    dispatched === targets ? "sent" : dispatched > 0 ? "partial" : "failed";
 
   await supabase.from("daily_report_dispatches").insert({
     company_id: company.id,
     unit_id: unit.id,
     report_date: targetDate,
+    schedule_hour: nowHour,
     recipients_count: dispatched,
     status,
     last_error: lastError
@@ -281,14 +454,15 @@ async function dispatchForUnit(params: {
   };
 }
 
-function recordError(
+async function recordFailure(
   supabase: ReturnType<typeof createClient>,
-  input: { companyId: string; unitId: string; date: string; error: string }
-): DispatchResult {
-  void supabase.from("daily_report_dispatches").insert({
+  input: { companyId: string; unitId: string; date: string; scheduleHour: number; error: string }
+): Promise<DispatchResult> {
+  await supabase.from("daily_report_dispatches").insert({
     company_id: input.companyId,
     unit_id: input.unitId,
     report_date: input.date,
+    schedule_hour: input.scheduleHour,
     recipients_count: 0,
     status: "failed",
     last_error: input.error
@@ -303,7 +477,11 @@ function recordError(
   };
 }
 
-interface DailySummary {
+function truncate(value: string, max: number): string {
+  return value.length > max ? `${value.slice(0, max - 3)}...` : value;
+}
+
+interface SalesSummary {
   totalOperations: number;
   totalNetWeightKg: number;
   totalProductCents: number;
@@ -313,12 +491,12 @@ interface DailySummary {
   byProduct: Array<{ description: string; weightKg: number; totalCents: number }>;
 }
 
-async function buildDailySummary(
+async function buildSalesSummary(
   supabase: ReturnType<typeof createClient>,
   companyId: string,
   unitId: string,
-  date: string
-): Promise<DailySummary | null> {
+  period: ReportPeriod
+): Promise<SalesSummary | null> {
   const { data, error } = await supabase
     .from("weighing_operations")
     .select(
@@ -326,9 +504,9 @@ async function buildDailySummary(
     )
     .eq("company_id", companyId)
     .eq("unit_id", unitId)
-    .eq("status", "closed_local")
-    .gte("created_at", `${date}T00:00:00Z`)
-    .lt("created_at", nextDay(date));
+    .in("status", CLOSED_STATUSES)
+    .gte("created_at", period.startUtc)
+    .lt("created_at", period.endUtc);
 
   if (error) return null;
   if (!data || data.length === 0) return null;
@@ -348,7 +526,7 @@ async function buildDailySummary(
     totalNetWeightKg > 0 ? Math.round(totalCents / totalNetWeightKg) : 0;
   const byProduct = aggregateProducts(
     data.map((row) => ({
-      description: row.product_description,
+      description: row.product_description as string | null,
       weightKg: Number(row.net_weight_kg ?? 0),
       totalCents: Number(row.product_total_cents ?? 0)
     }))
@@ -365,6 +543,35 @@ async function buildDailySummary(
   };
 }
 
+async function buildTruckSummary(
+  supabase: ReturnType<typeof createClient>,
+  companyId: string,
+  unitId: string,
+  period: ReportPeriod
+): Promise<TruckReport> {
+  const { data, error } = await supabase
+    .from("weighing_operations")
+    .select("plate, driver_name, product_description, net_weight_kg, created_at, closed_at")
+    .eq("company_id", companyId)
+    .eq("unit_id", unitId)
+    .in("status", CLOSED_STATUSES)
+    .not("closed_at", "is", null)
+    .gte("created_at", period.startUtc)
+    .lt("created_at", period.endUtc);
+
+  if (error || !data) return buildTruckReport([]);
+
+  const rows: TruckReportRow[] = data.map((row) => ({
+    plate: row.plate as string | null,
+    driverName: row.driver_name as string | null,
+    productDescription: row.product_description as string | null,
+    netWeightKg: Number(row.net_weight_kg ?? 0),
+    createdAt: row.created_at as string | null,
+    closedAt: row.closed_at as string | null
+  }));
+  return buildTruckReport(rows);
+}
+
 function aggregateProducts(
   rows: Array<{ description: string | null; weightKg: number; totalCents: number }>
 ): Array<{ description: string; weightKg: number; totalCents: number }> {
@@ -379,46 +586,11 @@ function aggregateProducts(
   return Array.from(map.values()).sort((a, b) => b.totalCents - a.totalCents);
 }
 
-function nextDay(date: string): string {
-  const [year, month, day] = date.split("-").map(Number);
-  const next = new Date(Date.UTC(year, month - 1, day + 1));
-  return next.toISOString().slice(0, 10);
-}
-
-function shouldSendToday(input: {
-  frequency: string;
-  targetDate: string;
-  scheduleTime: string;
-}): boolean {
-  const now = new Date();
-  const [hourStr] = input.scheduleTime.split(":");
-  const scheduleHour = parseInt(hourStr ?? "20", 10);
-  const currentHour = now.getHours();
-
-  if (scheduleHour !== currentHour) return false;
-
-  const freq = input.frequency;
-  if (freq === "daily") return true;
-
-  const parts = input.targetDate.split("-").map(Number);
-  const target = new Date(Date.UTC(parts[0]!, (parts[1] ?? 1) - 1, parts[2]));
-
-  if (freq === "weekly") {
-    return target.getUTCDay() === 1;
-  }
-
-  if (freq === "monthly") {
-    return target.getUTCDate() === 1;
-  }
-
-  return false;
-}
-
 function renderEmailHtml(input: {
   companyName: string;
   unitName: string;
-  date: string;
-  summary: DailySummary;
+  title: string;
+  summary: SalesSummary;
 }): string {
   const centsToBRL = (cents: number) =>
     new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents / 100);
@@ -429,27 +601,30 @@ function renderEmailHtml(input: {
     )
     .join("");
 
-  return `<!doctype html><html><head><meta charset="utf-8" /><title>Fechamento diario ${input.date}</title></head><body style="font-family:Arial,sans-serif;color:#0f172a;padding:24px;background:#f8fafc"><h1 style="margin:0 0 4px;font-size:22px">Fechamento diario ${input.date}</h1><p style="margin:0 0 16px;color:#475569">${escapeHtml(input.companyName)} - ${escapeHtml(input.unitName)}</p><table cellpadding="8" cellspacing="0" style="border-collapse:collapse;width:100%;background:#fff;border:1px solid #cbd5e1"><thead><tr style="background:#1e293b;color:#fff"><th>Carregamentos</th><th>Tonelagem</th><th>Produto</th><th>Frete</th><th>Total</th><th>Preco medio (kg)</th></tr></thead><tbody><tr><td>${input.summary.totalOperations}</td><td>${(input.summary.totalNetWeightKg / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} t</td><td>${centsToBRL(input.summary.totalProductCents)}</td><td>${centsToBRL(input.summary.totalFreightCents)}</td><td>${centsToBRL(input.summary.totalCents)}</td><td>${centsToBRL(input.summary.averagePricePerKgCents)}</td></tr></tbody></table><h2 style="margin:24px 0 8px;font-size:16px">Produtos vendidos</h2><table cellpadding="8" cellspacing="0" style="border-collapse:collapse;width:100%;background:#fff;border:1px solid #cbd5e1"><thead><tr style="background:#e2e8f0"><th>Produto</th><th>Peso</th><th>Valor</th></tr></thead><tbody>${productRows}</tbody></table></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8" /><title>${escapeHtml(input.title)}</title></head><body style="font-family:Arial,sans-serif;color:#0f172a;padding:24px;background:#f8fafc"><h1 style="margin:0 0 4px;font-size:22px">${escapeHtml(input.title)}</h1><p style="margin:0 0 16px;color:#475569">${escapeHtml(input.companyName)} - ${escapeHtml(input.unitName)}</p><table cellpadding="8" cellspacing="0" style="border-collapse:collapse;width:100%;background:#fff;border:1px solid #cbd5e1"><thead><tr style="background:#1e293b;color:#fff"><th>Carregamentos</th><th>Tonelagem</th><th>Produto</th><th>Frete</th><th>Total</th><th>Preco medio (kg)</th></tr></thead><tbody><tr><td>${input.summary.totalOperations}</td><td>${(input.summary.totalNetWeightKg / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} t</td><td>${centsToBRL(input.summary.totalProductCents)}</td><td>${centsToBRL(input.summary.totalFreightCents)}</td><td>${centsToBRL(input.summary.totalCents)}</td><td>${centsToBRL(input.summary.averagePricePerKgCents)}</td></tr></tbody></table><h2 style="margin:24px 0 8px;font-size:16px">Produtos vendidos</h2><table cellpadding="8" cellspacing="0" style="border-collapse:collapse;width:100%;background:#fff;border:1px solid #cbd5e1"><thead><tr style="background:#e2e8f0"><th>Produto</th><th>Peso</th><th>Valor</th></tr></thead><tbody>${productRows}</tbody></table></body></html>`;
 }
+
+const WHATSAPP_MAX_PRODUCTS = 8;
 
 function renderWhatsappText(input: {
   companyName: string;
   unitName: string;
-  date: string;
-  summary: DailySummary;
+  title: string;
+  summary: SalesSummary;
 }): string {
   const centsToBRL = (cents: number) =>
     new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents / 100);
   const products = input.summary.byProduct
-    .slice(0, 8)
+    .slice(0, WHATSAPP_MAX_PRODUCTS)
     .map(
       (product) =>
         `- ${product.description}: ${(product.weightKg / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} t | ${centsToBRL(product.totalCents)}`
     )
     .join("\n");
+  const omitted = input.summary.byProduct.length - WHATSAPP_MAX_PRODUCTS;
 
   return [
-    `Fechamento diario ${input.date}`,
+    `*${input.title}*`,
     `${input.companyName} - ${input.unitName}`,
     `Carregamentos: ${input.summary.totalOperations}`,
     `Tonelagem: ${(input.summary.totalNetWeightKg / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} t`,
@@ -457,7 +632,8 @@ function renderWhatsappText(input: {
     `Frete: ${centsToBRL(input.summary.totalFreightCents)}`,
     `Total: ${centsToBRL(input.summary.totalCents)}`,
     `Preco medio/kg: ${centsToBRL(input.summary.averagePricePerKgCents)}`,
-    products ? `Produtos vendidos:\n${products}` : ""
+    products ? `Produtos vendidos:\n${products}` : "",
+    omitted > 0 ? `... e mais ${omitted} produto(s)` : ""
   ]
     .filter(Boolean)
     .join("\n");
@@ -472,6 +648,7 @@ function escapeHtml(value: string): string {
     .replace(/'/g, "&#039;");
 }
 
+// Porta 465 = TLS implicito; 587 = STARTTLS (requireTLS impede fallback em claro).
 async function sendSmtpEmail(input: {
   host: string;
   port: number;
@@ -482,55 +659,23 @@ async function sendSmtpEmail(input: {
   subject: string;
   html: string;
 }): Promise<void> {
-  const conn = await Deno.connect({ hostname: input.host, port: input.port });
-  const encoder = new TextEncoder();
-  const decoder = new TextDecoder();
-
-  async function readResponse(): Promise<string> {
-    const buffer = new Uint8Array(4096);
-    let total = "";
-    while (true) {
-      const { bytesRead } = await conn.read(buffer);
-      if (!bytesRead) break;
-      total += decoder.decode(buffer.subarray(0, bytesRead));
-      if (total.endsWith("\r\n")) break;
-    }
-    return total;
+  const transporter = nodemailer.createTransport({
+    host: input.host,
+    port: input.port,
+    secure: input.port === 465,
+    requireTLS: input.port !== 465,
+    auth: { user: input.user, pass: input.password }
+  });
+  try {
+    await transporter.sendMail({
+      from: input.from,
+      to: input.to,
+      subject: input.subject,
+      html: input.html
+    });
+  } finally {
+    transporter.close();
   }
-
-  async function sendCommand(command: string): Promise<string> {
-    await conn.write(encoder.encode(`${command}\r\n`));
-    return readResponse();
-  }
-
-  const banner = await readResponse();
-  if (!banner.startsWith("220")) throw new Error(`SMTP banner invalido: ${banner.trim()}`);
-
-  const ehlo = await sendCommand(`EHLO kyberrock`);
-  if (!ehlo.startsWith("250")) throw new Error(`SMTP EHLO falhou: ${ehlo.trim()}`);
-
-  await sendCommand("STARTTLS");
-  const tls = await Deno.startTls(conn, { hostname: input.host });
-  Object.assign(conn, tls);
-
-  await sendCommand(`AUTH LOGIN`);
-  await sendCommand(btoa(input.user));
-  await sendCommand(btoa(input.password));
-  await sendCommand(`MAIL FROM:<${input.from}>`);
-  await sendCommand(`RCPT TO:<${input.to}>`);
-  await sendCommand("DATA");
-  const headers = [
-    `From: ${input.from}`,
-    `To: ${input.to}`,
-    `Subject: ${input.subject}`,
-    "MIME-Version: 1.0",
-    'Content-Type: text/html; charset="utf-8"'
-  ].join("\r\n");
-  await conn.write(encoder.encode(`${headers}\r\n\r\n${input.html}\r\n.\r\n`));
-  const dataResponse = await readResponse();
-  if (!dataResponse.startsWith("250")) throw new Error(`SMTP DATA falhou: ${dataResponse.trim()}`);
-  await sendCommand("QUIT");
-  conn.close();
 }
 
 async function sendUazapiWhatsappMessage(input: {

@@ -51,10 +51,18 @@ import {
   type DesktopStatusSnapshot
 } from "./status.js";
 import {
+  deleteOmieQueueJob,
+  getSyncJobById,
+  listOmieQueueItems,
+  resetOmieQueueJobForRetry,
+  type OmieQueueItem
+} from "./sync-queue.js";
+import {
   cancelWeighingOperation,
   clearCanceledWeighingOperations,
   closeWeighingOperation,
   createWeighingOperation,
+  deleteClosedWeighingOperation,
   listCanceledWeighingOperations,
   listClosedWeighingOperations,
   listOpenWeighingOperations,
@@ -72,6 +80,7 @@ import {
   removeCustomerFreightRule,
   type SetCustomerFreightRuleInput
 } from "./customer-freight-rules.js";
+import type { FreightModality } from "./freight.js";
 import {
   configureReceiptPrintProfile,
   listPrintProfiles,
@@ -88,9 +97,13 @@ import {
   initializeSupabaseFromSettings,
   pingSupabase,
   processCloudSyncQueue,
+  pushPendingReportRecipients,
+  pushReportChannelSettings,
   syncOperationToSupabase,
   syncLoadingRequestToSupabase,
   syncOmieReferenceDataFromCloud,
+  listOmieDocumentTypesFromCloud,
+  type OmieDocumentTypeOption,
   pushOmieCarriersToCloud,
   pushOmieCustomersToCloud,
   processOmieSyncQueue,
@@ -104,7 +117,9 @@ import {
   pullDriverCarriersFromCloud,
   pullLoaderCompletionsFromCloud,
   pullDesktopDataFromCloud,
+  lookupCnpjFromCloud,
   type CloudBootstrapResult,
+  type CnpjLookupResult,
   type FiscalBillingResult,
   type SyncResult
 } from "./supabase-sync.js";
@@ -123,8 +138,20 @@ import {
   sendEmail,
   verifySmtpConnection,
   type EmailSendInput,
-  type EmailSendResult
+  type EmailSendResult,
+  type SmtpOverrides
 } from "./email.js";
+import {
+  normalizeUazapiBaseUrl,
+  readReportChannelSettings,
+  uazapiConnectInstance,
+  uazapiCreateInstance,
+  uazapiDisconnectInstance,
+  uazapiInstanceStatus,
+  writeReportChannelSettings,
+  type ReportChannelSettings,
+  type UazapiInstanceState
+} from "./report-channels.js";
 import {
   createReportRecipient,
   deleteReportRecipient,
@@ -206,9 +233,12 @@ import {
 } from "./scale-configs.js";
 import { ScaleCaptureService, type ScaleCaptureOperationType } from "./scale-capture.js";
 import {
+  applyDefaultNfeEmailToAllCustomers,
   createCustomer,
   deleteCustomer,
   getCustomersByCarrier,
+  getDefaultNfeEmail,
+  setDefaultNfeEmail,
   updateCustomer,
   type CreateCustomerInput,
   type UpdateCustomerInput
@@ -273,25 +303,20 @@ import {
 } from "./driver-carriers.js";
 import {
   applyDefaultAccountBindings,
-  createPaymentMethod,
-  deletePaymentMethod,
   ensureDefaultPaymentMethods,
   updatePaymentMethod,
-  type CreatePaymentMethodInput,
   type UpdatePaymentMethodInput
 } from "./payment-methods.js";
 import {
-  createAccount,
-  deleteAccount,
   ensureDefaultAccounts,
   listAccounts,
   updateAccount,
-  type CreateAccountInput,
   type UpdateAccountInput
 } from "./accounts.js";
 import {
   createPaymentTerm,
   deletePaymentTerm,
+  listOmiePaymentTerms,
   updatePaymentTerm,
   type CreatePaymentTermInput,
   type UpdatePaymentTermInput
@@ -320,6 +345,7 @@ export class DesktopRuntime {
   private cloudSyncScheduler: CloudSyncSchedulerHandle | null = null;
   private cloudSyncInProgress = false;
   private omieSyncInProgress = false;
+  private omieQueueProcessing = false;
   private receiptPrinter: ReceiptPrinter = { printReceipt: async () => undefined };
   private fiscalDocumentPrinter: FiscalDocumentPrinter = {
     printDocument: async () => ({ printed: false, error: null })
@@ -504,9 +530,11 @@ export class DesktopRuntime {
     driverId: string;
     productId: string;
     paymentTermId?: string;
+    paymentMethodId?: string;
     manualInstallments?: number;
     manualDownPaymentCents?: number;
     freight?: OperationFreightInput | null;
+    freightModality?: FreightModality | null;
     quotationId?: string;
     deductFreightFromCredit?: boolean;
     scaleCaptureId?: string;
@@ -525,14 +553,18 @@ export class DesktopRuntime {
       driverId: input.driverId,
       productId: input.productId,
       paymentTermId: input.paymentTermId,
+      paymentMethodId: input.paymentMethodId,
       manualInstallments: input.manualInstallments,
       manualDownPaymentCents: input.manualDownPaymentCents,
       freight: input.freight,
+      freightModality: input.freightModality,
       quotationId: input.quotationId,
       deductFreightFromCredit: input.deductFreightFromCredit,
       entryWeightKg: entryReading.weightKg,
       entryScaleCapture: buildScaleCaptureAudit(entryReading)
     });
+    // A entrada pode ter gravado condicao/forma como padrao do cliente (primeira escolha).
+    this.cacheStore.invalidate("customer", this.ensureIdentity().companyId);
     this.triggerBackgroundCloudSync("entry_registered", { operationId: operation.id });
     return operation;
   }
@@ -561,8 +593,127 @@ export class DesktopRuntime {
       operationType,
       exitScaleCapture: buildScaleCaptureAudit(exitReading)
     });
+    // Best-effort: completa o cadastro do cliente para NF-e (busca por CNPJ + e-mail
+    // padrao) em vez de deixar o faturamento pendente por falta de dados. Nao bloqueia
+    // nem falha o fechamento se a busca nao der certo.
+    await this.autoCompleteCustomerForNfe(operationId).catch(() => undefined);
     this.triggerBackgroundCloudSync("exit_registered", { operationId });
+    // O pedido/OS do fechamento vai para o OMIE imediatamente (apenas os jobs desta
+    // operacao), sem esperar a varredura completa de sincronizacao.
+    this.triggerBackgroundOmieOrderPush("operation_closed", operationId);
     return operation;
+  }
+
+  /**
+   * Processa a fila OMIE (pedidos/OS/cancelamentos) com trava unica contra execucoes
+   * concorrentes (push do fechamento x sincronizacao agendada). entityId limita aos
+   * jobs de uma operacao. Retorna null quando outro processamento ja esta em andamento
+   * (os jobs permanecem na fila e a proxima passada os pega).
+   */
+  private async runOmieQueue(
+    entityId?: string
+  ): Promise<{ processed: number; failed: number; errors: string[] } | null> {
+    if (this.omieQueueProcessing) return null;
+    this.omieQueueProcessing = true;
+    try {
+      initializeSupabaseFromSettings(this.database);
+      if (!isSupabaseInitialized()) {
+        return { processed: 0, failed: 0, errors: ["Supabase nao configurado."] };
+      }
+      const identity = this.ensureIdentity();
+      return await processOmieSyncQueue(this.database, identity, { entityId });
+    } finally {
+      this.omieQueueProcessing = false;
+    }
+  }
+
+  /**
+   * Processa em segundo plano APENAS os jobs OMIE da operacao informada (pedido/OS,
+   * cancelamento), logo apos o fechamento/cancelamento — o envio nao depende mais da
+   * varredura completa do OMIE. Falha aqui nao e terminal: o job permanece na fila e a
+   * sincronizacao agendada re-tenta (syncCloudNow tambem processa a fila OMIE).
+   */
+  private triggerBackgroundOmieOrderPush(reason: string, operationId: string): void {
+    void this.runOmieQueue(operationId)
+      .then((result) => {
+        if (!result) return;
+        if (result.failed > 0) {
+          this.recordTechnicalLog(
+            "warning",
+            "omie-sync",
+            "Envio imediato do pedido ao OMIE falhou; o job permanece na fila para nova tentativa.",
+            { reason, operationId, errors: result.errors }
+          );
+        } else if (result.processed > 0) {
+          this.recordTechnicalLog("info", "omie-sync", "Pedido enviado ao OMIE no fechamento.", {
+            reason,
+            operationId,
+            processed: result.processed
+          });
+        }
+      })
+      .catch((error: unknown) => {
+        this.recordTechnicalLog(
+          "warning",
+          "omie-sync",
+          error instanceof Error ? error.message : "Envio imediato do pedido ao OMIE falhou.",
+          { reason, operationId }
+        );
+      });
+  }
+
+  /**
+   * Se o cliente da operacao estiver sem Numero do Endereco ou E-mail (exigidos pela
+   * NF-e), busca os dados por CNPJ (Receita) e aplica o e-mail padrao, completando o
+   * cadastro e marcando para push ao OMIE. Silencioso: qualquer falha e ignorada.
+   */
+  private async autoCompleteCustomerForNfe(operationId: string): Promise<void> {
+    const op = this.database
+      .prepare("SELECT customer_id FROM weighing_operations WHERE id = ?")
+      .get(operationId) as { customer_id: string | null } | undefined;
+    if (!op?.customer_id) return;
+
+    const customer = this.database
+      .prepare(
+        "SELECT document, email, address_number FROM customers WHERE id = ? AND deleted_at IS NULL"
+      )
+      .get(op.customer_id) as
+      | { document: string | null; email: string | null; address_number: string | null }
+      | undefined;
+    if (!customer) return;
+
+    const missingEmail = !customer.email?.trim();
+    const missingNumber = !customer.address_number?.trim();
+    if (!missingEmail && !missingNumber) return;
+
+    const patch: Record<string, unknown> = {};
+
+    // 1. Completa endereco/razao pelo CNPJ quando ha documento valido.
+    const digits = (customer.document ?? "").replace(/\D/g, "");
+    if (digits.length === 14) {
+      const data = await lookupCnpjFromCloud(this.database, this.ensureIdentity(), digits).catch(
+        () => null
+      );
+      if (data?.found) {
+        if (missingNumber && data.addressNumber) patch.addressNumber = data.addressNumber;
+        if (data.addressStreet) patch.addressStreet = data.addressStreet;
+        if (data.neighborhood) patch.neighborhood = data.neighborhood;
+        if (data.city) patch.city = data.city;
+        if (data.state) patch.state = data.state;
+        if (data.zipcode) patch.zipcode = data.zipcode;
+        if (missingEmail && data.email) patch.email = data.email;
+      }
+    }
+
+    // 2. E-mail padrao de NF-e quando ainda faltar (Receita raramente traz e-mail).
+    if (missingEmail && patch.email === undefined) {
+      const defaultEmail = getDefaultNfeEmail(this.database);
+      if (defaultEmail) patch.email = defaultEmail;
+    }
+
+    if (Object.keys(patch).length === 0) return;
+    updateCustomer(this.database, op.customer_id, patch, new Date(), { overrideOmieFields: true });
+    this.cacheStore.invalidate("customer", this.ensureIdentity().companyId);
   }
 
   private async captureStableWeight(options: {
@@ -662,6 +813,8 @@ export class DesktopRuntime {
     this.assertDesktopAccess();
     const operation = cancelWeighingOperation(this.database, { operationId, reason });
     this.triggerBackgroundCloudSync("operation_cancelled", { operationId });
+    // Se ja existe pedido no OMIE, o cancel_order enfileirado tambem segue de imediato.
+    this.triggerBackgroundOmieOrderPush("operation_cancelled", operationId);
     return operation;
   }
 
@@ -679,6 +832,31 @@ export class DesktopRuntime {
     return listOpenWeighingOperations(this.database);
   }
 
+  /**
+   * Busca no cloud apenas as conclusoes do carregador (loader-web) e as projeta
+   * no SQLite local. E uma consulta leve (uma tabela, filtrada por unidade) que
+   * o renderer pode chamar com frequencia para manter a "luz" de conclusao
+   * praticamente em tempo real, sem depender da varredura completa de 30 min.
+   */
+  async pullLoaderCompletions(): Promise<{ pulled: number; errors: string[] }> {
+    this.assertDesktopAccess();
+    try {
+      initializeSupabaseFromSettings(this.database);
+      if (!isSupabaseInitialized()) {
+        return { pulled: 0, errors: [] };
+      }
+      const identity = this.ensureIdentity();
+      return await pullLoaderCompletionsFromCloud(this.database, identity);
+    } catch (error) {
+      return {
+        pulled: 0,
+        errors: [
+          error instanceof Error ? error.message : "Falha ao buscar conclusoes do carregador."
+        ]
+      };
+    }
+  }
+
   listCanceledWeighingOperations(): WeighingOperationSummary[] {
     this.assertDesktopAccess();
     return listCanceledWeighingOperations(this.database);
@@ -692,6 +870,11 @@ export class DesktopRuntime {
   clearCanceledWeighingOperations(): number {
     this.assertDesktopAccess();
     return clearCanceledWeighingOperations(this.database);
+  }
+
+  deleteClosedWeighingOperation(operationId: string): void {
+    this.assertDesktopAccess();
+    deleteClosedWeighingOperation(this.database, operationId);
   }
 
   getCustomerFreightRules(customerId: string) {
@@ -769,6 +952,11 @@ export class DesktopRuntime {
       operationId,
       (documentUrl) => this.fiscalDocumentPrinter.printDocument(documentUrl)
     );
+  }
+
+  lookupCnpj(cnpj: string): Promise<CnpjLookupResult> {
+    this.assertDesktopAccess();
+    return lookupCnpjFromCloud(this.database, this.ensureIdentity(), cnpj);
   }
 
   async syncToCloud(): Promise<SyncResult> {
@@ -871,6 +1059,23 @@ export class DesktopRuntime {
       failed += queue.failed;
       errors.push(...queue.errors);
 
+      // Fila OMIE (pedidos/OS dos fechamentos): processada junto da sincronizacao
+      // cloud — que roda logo apos cada fechamento e no agendador — para o envio ao
+      // OMIE nao depender da varredura completa; falhas re-tentam a cada ciclo.
+      try {
+        const omieQueue = await this.runOmieQueue();
+        if (omieQueue) {
+          synced += omieQueue.processed;
+          failed += omieQueue.failed;
+          errors.push(...omieQueue.errors);
+        }
+      } catch (error) {
+        failed++;
+        errors.push(
+          `Fila OMIE: ${error instanceof Error ? error.message : "erro desconhecido"}`
+        );
+      }
+
       // Sync open operations
       const openOperations = listOpenWeighingOperations(this.database);
       for (const operation of openOperations) {
@@ -900,6 +1105,32 @@ export class DesktopRuntime {
             `Loading request ${request.id}: ${error instanceof Error ? error.message : "Unknown error"}`
           );
         }
+      }
+
+      // Sync report recipients (quem recebe o envio automatico) to cloud
+      try {
+        synced += await pushPendingReportRecipients(this.database, identity);
+      } catch (error) {
+        failed++;
+        errors.push(
+          `Report recipients sync: ${error instanceof Error ? error.message : "Unknown error"}`
+        );
+      }
+
+      // Config dos canais de envio (SMTP/WhatsApp) com push pendente de uma
+      // tentativa anterior que falhou (ex.: salvo offline na tela de Relatorios).
+      try {
+        if (readReportChannelSettings(this.database).cloudPushPending) {
+          await pushReportChannelSettings(this.database, identity);
+          writeReportChannelSettings(this.database, {
+            cloudPushPending: false,
+            cloudPushError: null
+          });
+        }
+      } catch (error) {
+        errors.push(
+          `Report channel settings sync: ${error instanceof Error ? error.message : "Unknown error"}`
+        );
       }
 
       // Pull company price_change_password from cloud
@@ -1194,6 +1425,25 @@ export class DesktopRuntime {
     return this.reportService.exportRangeToHtml(startDate, endDate, this.ensureIdentity().unitId);
   }
 
+  getTruckControlReport(
+    startDate: string,
+    endDate: string
+  ): ReturnType<ReportService["getTruckControlReport"]> {
+    return this.reportService.getTruckControlReport(
+      startDate,
+      endDate,
+      this.ensureIdentity().unitId
+    );
+  }
+
+  getTruckControlHtml(startDate: string, endDate: string): string {
+    return this.reportService.exportTruckControlToHtml(
+      startDate,
+      endDate,
+      this.ensureIdentity().unitId
+    );
+  }
+
   listReportRecipients(): ReportRecipient[] {
     return listReportRecipients(this.database, this.ensureIdentity().companyId);
   }
@@ -1213,16 +1463,31 @@ export class DesktopRuntime {
     deleteReportRecipient(this.database, id);
   }
 
+  // Config SMTP cadastrada na tela de Relatorios; os envs SMTP_* sao fallback.
+  private smtpOverrides(): SmtpOverrides {
+    const settings = readReportChannelSettings(this.database);
+    return {
+      host: settings.smtpHost,
+      port: settings.smtpPort,
+      user: settings.smtpUser,
+      password: settings.smtpPassword,
+      from: settings.smtpSender
+    };
+  }
+
   sendReportEmail(input: EmailSendInput): Promise<EmailSendResult> {
-    return sendEmail(input);
+    return sendEmail(input, this.smtpOverrides());
   }
 
   async sendTestEmail(to: string): Promise<EmailSendResult> {
-    return sendEmail({
-      to,
-      subject: "Teste de envio - KyberRock",
-      html: '<!doctype html><html><head><meta charset="utf-8" /></head><body style="font-family:Arial,sans-serif;padding:24px"><h1>KyberRock - Email configurado com sucesso!</h1><p>Este e um email de teste para verificar a conexao SMTP. Se voce esta lendo isso, o envio de relatorios por email esta funcionando.</p></body></html>'
-    });
+    return sendEmail(
+      {
+        to,
+        subject: "Teste de envio - KyberRock",
+        html: '<!doctype html><html><head><meta charset="utf-8" /></head><body style="font-family:Arial,sans-serif;padding:24px"><h1>KyberRock - Email configurado com sucesso!</h1><p>Este e um email de teste para verificar a conexao SMTP. Se voce esta lendo isso, o envio de relatorios por email esta funcionando.</p></body></html>'
+      },
+      this.smtpOverrides()
+    );
   }
 
   async sendDailyReportEmail(email: string, date: string): Promise<EmailSendResult> {
@@ -1237,11 +1502,14 @@ export class DesktopRuntime {
       date,
       report
     });
-    return sendEmail({
-      to: email,
-      subject: `Fechamento diario ${date} - ${companyName}`,
-      html
-    });
+    return sendEmail(
+      {
+        to: email,
+        subject: `Fechamento diario ${date} - ${companyName}`,
+        html
+      },
+      this.smtpOverrides()
+    );
   }
 
   async sendRangeReportEmail(
@@ -1255,15 +1523,152 @@ export class DesktopRuntime {
       .get(identity.companyId) as { legal_name: string | null } | undefined;
     const companyName = companyRow?.legal_name || "KyberRock";
     const html = this.getReportHtml(startDate, endDate);
-    return sendEmail({
-      to: email,
-      subject: `Relatorio ${startDate} a ${endDate} - ${companyName}`,
-      html
-    });
+    return sendEmail(
+      {
+        to: email,
+        subject: `Relatorio ${startDate} a ${endDate} - ${companyName}`,
+        html
+      },
+      this.smtpOverrides()
+    );
   }
 
   verifySmtpConfig(): Promise<EmailSendResult> {
-    return verifySmtpConnection();
+    return verifySmtpConnection(this.smtpOverrides());
+  }
+
+  getReportChannelSettings(): ReportChannelSettings {
+    return readReportChannelSettings(this.database);
+  }
+
+  // Salva a configuracao dos canais localmente e tenta empurrar para o cloud;
+  // falha de push nao perde o salvamento local (fica pendente para o proximo sync).
+  async saveReportChannelSettings(
+    input: Partial<ReportChannelSettings>
+  ): Promise<ReportChannelSettings> {
+    const sanitized: Partial<ReportChannelSettings> = { ...input };
+    if (typeof sanitized.uazapiBaseUrl === "string") {
+      sanitized.uazapiBaseUrl = normalizeUazapiBaseUrl(sanitized.uazapiBaseUrl);
+    }
+    if (typeof sanitized.smtpPort === "number" && !Number.isFinite(sanitized.smtpPort)) {
+      sanitized.smtpPort = 587;
+    }
+    writeReportChannelSettings(this.database, {
+      ...sanitized,
+      cloudPushPending: true,
+      cloudPushError: null
+    });
+    return this.pushChannelSettingsToCloud();
+  }
+
+  private async pushChannelSettingsToCloud(): Promise<ReportChannelSettings> {
+    try {
+      const identity = this.ensureIdentity();
+      await pushReportChannelSettings(this.database, identity);
+      return writeReportChannelSettings(this.database, {
+        cloudPushPending: false,
+        cloudPushError: null
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Falha ao sincronizar configuracao com o cloud";
+      return writeReportChannelSettings(this.database, {
+        cloudPushPending: true,
+        cloudPushError: message
+      });
+    }
+  }
+
+  private persistWhatsappState(state: UazapiInstanceState): void {
+    writeReportChannelSettings(this.database, {
+      uazapiStatus: state.status,
+      uazapiProfileName: state.profileName ?? "",
+      cloudPushPending: true
+    });
+  }
+
+  // Cria a instancia UAZAPI (na primeira vez) e inicia a conexao; o QR code
+  // volta no estado retornado e rotaciona via whatsappStatus().
+  async whatsappConnect(): Promise<UazapiInstanceState> {
+    const settings = readReportChannelSettings(this.database);
+    if (!settings.uazapiBaseUrl) {
+      throw new Error("Informe o servidor UAZAPI (URL) e salve a configuracao antes de conectar.");
+    }
+    let instanceToken = settings.uazapiInstanceToken;
+    if (!instanceToken) {
+      if (!settings.uazapiAdminToken) {
+        throw new Error("Informe a chave de API (admin token) do UAZAPI e salve antes de conectar.");
+      }
+      let instanceName = settings.uazapiInstanceName;
+      if (!instanceName) {
+        try {
+          instanceName = `kyberrock-${this.ensureIdentity().companyId.slice(0, 8)}`;
+        } catch {
+          instanceName = "kyberrock-desktop";
+        }
+      }
+      const created = await uazapiCreateInstance({
+        baseUrl: settings.uazapiBaseUrl,
+        adminToken: settings.uazapiAdminToken,
+        name: instanceName
+      });
+      if (!created.instanceToken) {
+        throw new Error("UAZAPI nao retornou o token da instancia criada.");
+      }
+      instanceToken = created.instanceToken;
+      writeReportChannelSettings(this.database, {
+        uazapiInstanceToken: instanceToken,
+        uazapiInstanceName: instanceName,
+        uazapiStatus: created.status,
+        cloudPushPending: true
+      });
+    }
+    await uazapiConnectInstance({ baseUrl: settings.uazapiBaseUrl, instanceToken });
+    // O QR mais recente vem no status (o connect pode responder antes de gera-lo).
+    const state = await uazapiInstanceStatus({ baseUrl: settings.uazapiBaseUrl, instanceToken });
+    this.persistWhatsappState(state);
+    void this.pushChannelSettingsToCloud();
+    return state;
+  }
+
+  async whatsappStatus(): Promise<UazapiInstanceState> {
+    const settings = readReportChannelSettings(this.database);
+    if (!settings.uazapiBaseUrl || !settings.uazapiInstanceToken) {
+      return {
+        status: "disconnected",
+        connected: false,
+        loggedIn: false,
+        qrcode: null,
+        paircode: null,
+        profileName: null,
+        owner: null,
+        instanceToken: null,
+        lastDisconnectReason: null
+      };
+    }
+    const state = await uazapiInstanceStatus({
+      baseUrl: settings.uazapiBaseUrl,
+      instanceToken: settings.uazapiInstanceToken
+    });
+    if (state.status !== settings.uazapiStatus) {
+      this.persistWhatsappState(state);
+      void this.pushChannelSettingsToCloud();
+    }
+    return state;
+  }
+
+  async whatsappDisconnect(): Promise<UazapiInstanceState> {
+    const settings = readReportChannelSettings(this.database);
+    if (!settings.uazapiBaseUrl || !settings.uazapiInstanceToken) {
+      throw new Error("Nenhuma instancia WhatsApp configurada.");
+    }
+    const state = await uazapiDisconnectInstance({
+      baseUrl: settings.uazapiBaseUrl,
+      instanceToken: settings.uazapiInstanceToken
+    });
+    this.persistWhatsappState({ ...state, status: "disconnected" });
+    void this.pushChannelSettingsToCloud();
+    return { ...state, status: "disconnected" };
   }
 
   getPriceForCustomerProduct(customerId: string, productId: string): number | null {
@@ -1373,13 +1778,37 @@ export class DesktopRuntime {
     return result;
   }
 
-  updateCustomer(id: string, input: UpdateCustomerInput): unknown {
+  updateCustomer(
+    id: string,
+    input: UpdateCustomerInput,
+    options?: { overrideOmieFields?: boolean }
+  ): unknown {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
-    const result = updateCustomer(this.database, id, input);
+    const result = updateCustomer(this.database, id, input, new Date(), {
+      overrideOmieFields: options?.overrideOmieFields
+    });
     this.cacheStore.invalidate("customer", identity.companyId);
     this.cacheStore.invalidate("carrier", identity.companyId);
     return result;
+  }
+
+  getDefaultNfeEmail(): string | null {
+    this.assertDesktopAccess();
+    return getDefaultNfeEmail(this.database);
+  }
+
+  setDefaultNfeEmail(email: string): string | null {
+    this.assertDesktopAccess();
+    return setDefaultNfeEmail(this.database, email);
+  }
+
+  applyDefaultNfeEmailToAll(email: string): number {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    const count = applyDefaultNfeEmailToAllCustomers(this.database, identity.companyId, email);
+    this.cacheStore.invalidate("customer", identity.companyId);
+    return count;
   }
 
   deleteCustomer(id: string): void {
@@ -1389,27 +1818,20 @@ export class DesktopRuntime {
     this.cacheStore.invalidate("customer", identity.companyId);
   }
 
-  createPaymentMethod(input: Omit<CreatePaymentMethodInput, "companyId">): unknown {
-    this.assertDesktopAccess();
-    const identity = this.ensureIdentity();
-    const result = createPaymentMethod(this.database, { ...input, companyId: identity.companyId });
-    this.cacheStore.invalidate("payment_method", identity.companyId);
-    return result;
-  }
-
+  // Meios de pagamento e contas nao sao criados nem excluidos no desktop: o
+  // cadastro vem do OMIE via sincronizacao. Localmente so ha atualizacao
+  // restrita (ativar/desativar, apelido e vinculo forma -> conta).
   updatePaymentMethod(id: string, input: UpdatePaymentMethodInput): unknown {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
-    const result = updatePaymentMethod(this.database, id, input);
+    const result = updatePaymentMethod(this.database, id, {
+      alias: input.alias,
+      accountId: input.accountId,
+      isActive: input.isActive,
+      sortOrder: input.sortOrder
+    });
     this.cacheStore.invalidate("payment_method", identity.companyId);
     return result;
-  }
-
-  deletePaymentMethod(id: string): void {
-    this.assertDesktopAccess();
-    const identity = this.ensureIdentity();
-    deletePaymentMethod(this.database, id);
-    this.cacheStore.invalidate("payment_method", identity.companyId);
   }
 
   listAccounts(): unknown {
@@ -1417,29 +1839,15 @@ export class DesktopRuntime {
     return listAccounts(this.database, this.ensureIdentity().companyId);
   }
 
-  createAccount(input: Omit<CreateAccountInput, "companyId">): unknown {
-    this.assertDesktopAccess();
-    const identity = this.ensureIdentity();
-    const result = createAccount(this.database, { ...input, companyId: identity.companyId });
-    this.cacheStore.invalidate("account", identity.companyId);
-    return result;
-  }
-
   updateAccount(id: string, input: UpdateAccountInput): unknown {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
-    const result = updateAccount(this.database, id, input);
+    const result = updateAccount(this.database, id, {
+      isActive: input.isActive,
+      sortOrder: input.sortOrder
+    });
     this.cacheStore.invalidate("account", identity.companyId);
     return result;
-  }
-
-  deleteAccount(id: string): void {
-    this.assertDesktopAccess();
-    const identity = this.ensureIdentity();
-    deleteAccount(this.database, id);
-    // A exclusao desvincula formas de pagamento; recarrega ambos os caches.
-    this.cacheStore.invalidate("account", identity.companyId);
-    this.cacheStore.invalidate("payment_method", identity.companyId);
   }
 
   createPaymentTerm(input: Omit<CreatePaymentTermInput, "companyId">): unknown {
@@ -1463,6 +1871,12 @@ export class DesktopRuntime {
     const identity = this.ensureIdentity();
     deletePaymentTerm(this.database, id);
     this.cacheStore.invalidate("payment_term", identity.companyId);
+  }
+
+  listOmiePaymentTerms(): unknown {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    return listOmiePaymentTerms(this.database, identity.companyId);
   }
 
   createPriceTable(input: Omit<CreatePriceTableInput, "companyId">): unknown {
@@ -1780,6 +2194,47 @@ export class DesktopRuntime {
     return { configured: this.hasCloudCredentials(), appKeyMasked: null };
   }
 
+  /** Itens da fila OMIE (fechamentos a enviar) para a tela cloud. */
+  listOmieQueue(): OmieQueueItem[] {
+    this.assertDesktopAccess();
+    return listOmieQueueItems(this.database);
+  }
+
+  /** Exclui um item da fila OMIE: o fechamento NAO sera mais enviado ao OMIE. */
+  deleteOmieQueueItem(jobId: string): { deleted: boolean } {
+    this.assertDesktopAccess();
+    const job = getSyncJobById(this.database, jobId);
+    const deleted = deleteOmieQueueJob(this.database, jobId);
+    if (deleted) {
+      this.recordTechnicalLog("info", "omie-sync", "Item removido da fila OMIE pelo operador.", {
+        jobId,
+        action: job?.action ?? null,
+        operationId: job?.entityId ?? null
+      });
+    }
+    return { deleted };
+  }
+
+  /** Rearma e envia agora um item da fila OMIE (ignora backoff/dead_letter). */
+  async sendOmieQueueItemNow(
+    jobId: string
+  ): Promise<{ processed: number; failed: number; errors: string[] }> {
+    this.assertDesktopAccess();
+    const job = resetOmieQueueJobForRetry(this.database, jobId);
+    if (!job) {
+      throw new Error("Item nao encontrado na fila OMIE.");
+    }
+    const result = await this.runOmieQueue(job.entityId);
+    if (!result) {
+      return {
+        processed: 0,
+        failed: 0,
+        errors: ["Envio OMIE ja em andamento. O item foi rearmado e sera enviado em instantes."]
+      };
+    }
+    return result;
+  }
+
   async syncOmieAll(): Promise<{
     customersPulled: number;
     customersPushed: number;
@@ -1827,7 +2282,10 @@ export class DesktopRuntime {
       const loop = await this.runOmieDataEntryLoop({ reset: true, maxIterations: 200 });
       const customerPush = await pushOmieCustomersToCloud(this.database, identity);
       const carrierPush = await pushOmieCarriersToCloud(this.database, identity);
-      const queue = await processOmieSyncQueue(this.database, identity);
+      // Trava unica da fila OMIE (compartilhada com o push do fechamento e o
+      // syncCloudNow); se outro processamento estiver em andamento, os jobs ficam
+      // para a proxima passada.
+      const queue = (await this.runOmieQueue()) ?? { processed: 0, failed: 0, errors: [] };
       this.cacheStore.invalidateAll(identity.companyId);
       return {
         customersPulled: loop.customersPulled,
@@ -1886,6 +2344,11 @@ export class DesktopRuntime {
 
   getOmieSyncEntitiesByRun(runId: string): ReturnType<typeof getSyncEntitiesByRun> {
     return getSyncEntitiesByRun(this.database, runId);
+  }
+
+  async listOmieDocumentTypes(): Promise<OmieDocumentTypeOption[]> {
+    const identity = this.ensureIdentity();
+    return listOmieDocumentTypesFromCloud(this.database, identity);
   }
 
   async runOmieDataEntryLoop(

@@ -14,10 +14,12 @@ import {
   Moon,
   PlusCircle,
   Printer,
+  RefreshCw,
   Scale,
   ScrollText,
   Settings,
   Sun,
+  Truck,
   Upload
 } from "lucide-react";
 
@@ -34,13 +36,24 @@ import {
 } from "@kyberrock/print-templates";
 import type { DesktopAccessStatus } from "../services/desktop-activation";
 import type { DesktopStatusSnapshot } from "../services/status";
-import { createInitialUpdateState, type UpdateState } from "../services/update-flow";
+import {
+  createInitialUpdateState,
+  getManualUpdateButtonLabel,
+  type UpdateState
+} from "../services/update-flow";
 import { validatePaymentMethodCondition } from "../services/payment-method-condition-guard";
+import { tryParsePaymentCondition } from "../services/payment-condition-parser";
+import { extractConditionRaw, resolveConditionTermId } from "./payment-condition-helpers";
 import type {
   OperationFreightInput,
   OperationType,
   WeighingOperationSummary
 } from "../services/weighing-operations";
+import {
+  FREIGHT_MODALITIES,
+  getFreightModalityInfo,
+  type FreightModality
+} from "../services/freight";
 import type { PriceDetails } from "../services/pricing";
 import type { CacheEntityType } from "../services/cache-store";
 import {
@@ -54,6 +67,8 @@ import {
   parseMoneyInputToCents
 } from "@kyberrock/shared";
 import { ActivationGate } from "./ActivationGate";
+import { formatDbDateTime } from "./format-datetime";
+import { MountainOutline } from "./MountainOutline";
 import { CrudFormModal } from "./CrudFormModal";
 import {
   CellMuted,
@@ -77,6 +92,7 @@ import { DashboardView } from "./DashboardView";
 import { DocumentationView } from "./DocumentationView";
 import { InsightsView } from "./InsightsView";
 import { ReportsView } from "./ReportsView";
+import { TruckControlView, formatMinutes } from "./TruckControlView";
 import { CustomersView } from "./CustomersView";
 import { HelpTooltip } from "./Tooltip";
 import { PriceChangePasswordDialog } from "./PriceChangePasswordDialog";
@@ -101,6 +117,7 @@ import type {
 } from "./customers.types";
 import type { KyberRockDesktopApi } from "./desktop-api";
 import type { ScaleConfiguration, ScaleConfigurationInput } from "../services/scale-configs";
+import type { OmieQueueItem } from "../services/sync-queue";
 export interface AppProps {
   desktopApi?: KyberRockDesktopApi;
   initialStatus?: DesktopStatusSnapshot | null;
@@ -116,22 +133,24 @@ export interface WeighingFormState {
   paymentMethodId: string;
   paymentMethodIsCredit: boolean;
   paymentTermId: string;
+  /** Condicao digitada livre ("5", "7 14 21", "7/14/21"); quando preenchida, vence o select. */
+  customConditionText: string;
   paymentMode: "registered" | "manual";
   manualInstallments: string;
   manualDownPaymentEnabled: boolean;
   manualDownPaymentCents: number | null;
   quotationId: string;
   deductFreightFromCredit: boolean;
-  freightEnabled: boolean;
-  freightPayer: "customer" | "quarry" | "third_party";
+  /** Tipo (modalidade) de frete da operacao, enviado ao OMIE. Default "none" (sem frete). */
+  freightModality: FreightModality;
+  /** Se a Pedreira lanca um valor de frete nesta operacao (habilita os campos de valor). */
+  chargeFreight: boolean;
   freightCalculationType: "per_ton" | "per_ton_km" | "fixed_plus_ton";
   freightBaseValueCents: number | null;
   freightFixedValueCents: number | null;
   freightMinValueCents: number | null;
   freightDistanceKm: string;
   freightDestination: string;
-  customerOwnTransport: boolean;
-  driverIsIndependent: boolean;
 }
 
 type ActiveView =
@@ -143,6 +162,7 @@ type ActiveView =
   | "printing"
   | "cloud"
   | "insights"
+  | "truck-control"
   | "reports"
   | "documentation";
 
@@ -156,31 +176,42 @@ const initialWeighingForm: WeighingFormState = {
   paymentMethodId: "",
   paymentMethodIsCredit: false,
   paymentTermId: "",
+  customConditionText: "",
   paymentMode: "registered",
   manualInstallments: "",
   manualDownPaymentEnabled: false,
   manualDownPaymentCents: null,
   quotationId: "",
   deductFreightFromCredit: false,
-  freightEnabled: false,
-  freightPayer: "customer",
+  freightModality: "none",
+  chargeFreight: false,
   freightCalculationType: "per_ton",
   freightBaseValueCents: null,
   freightFixedValueCents: null,
   freightMinValueCents: null,
   freightDistanceKm: "",
-  freightDestination: "",
-  customerOwnTransport: false,
-  driverIsIndependent: false
+  freightDestination: ""
 };
 
 /**
- * Regra de frete na fatura: quando a Pedreira paga o frete e a forma de pagamento
- * e "credito do cliente" (fiado), o valor do frete obrigatoriamente entra na fatura
- * do cliente (abate do credito).
+ * Transporte proprio do cliente: o cliente traz o proprio caminhao, entao a
+ * transportadora da Pedreira nao se aplica (modalidade own_recipient). Substitui a
+ * antiga caixa "transportadora propria do cliente".
+ */
+export function isCustomerOwnTransport(
+  form: Pick<WeighingFormState, "freightModality">
+): boolean {
+  return form.freightModality === "own_recipient";
+}
+
+/**
+ * Regra de frete na fatura: quando a Pedreira paga o frete (modalidade CIF/proprio do
+ * remetente) e a forma de pagamento e "credito do cliente" (fiado), o valor do frete
+ * obrigatoriamente entra na fatura do cliente (abate do credito).
  */
 function freightGoesToCustomerInvoice(form: WeighingFormState): boolean {
-  return form.freightEnabled && form.freightPayer === "quarry" && form.paymentMethodIsCredit;
+  const info = getFreightModalityInfo(form.freightModality);
+  return form.chargeFreight && info.defaultPayer === "quarry" && form.paymentMethodIsCredit;
 }
 
 type RegistrationsTab = "customers" | "products" | "payment_terms" | "transport";
@@ -255,9 +286,16 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [status, setStatus] = useState<DesktopStatusSnapshot | null>(initialStatus);
   const [updateState, setUpdateState] = useState<UpdateState>(createInitialUpdateState());
   const [openOperations, setOpenOperations] = useState<WeighingOperationSummary[]>([]);
+  const [truckAverageMinutes, setTruckAverageMinutes] = useState(0);
   const [canceledOperations, setCanceledOperations] = useState<WeighingOperationSummary[]>([]);
   const [closedOperations, setClosedOperations] = useState<WeighingOperationSummary[]>([]);
   const [operationsTab, setOperationsTab] = useState<OperationsTab>("open");
+  const [loaderCompletionNotice, setLoaderCompletionNotice] = useState<string | null>(null);
+  // Estado anterior (id -> concluida?) para detectar a transicao aguardando->concluida
+  // e disparar o aviso de "carga concluida pelo carregador".
+  const loaderCompletedStateRef = useRef<Map<string, boolean>>(new Map());
+  const loaderStateSeededRef = useRef(false);
+  const loaderNoticeTimerRef = useRef<number | null>(null);
   const [canceledFilter, setCanceledFilter] = useState<CanceledFilter>("all");
   const [closedProductFilter, setClosedProductFilter] = useState<string>("all");
   const [printers, setPrinters] = useState<WindowsPrinterSummary[]>([]);
@@ -304,6 +342,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [unitName, setUnitName] = useState<string | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [availableVersion, setAvailableVersion] = useState<string | null>(null);
+  const updateReady =
+    updateState.status === "available" || updateState.status === "downloaded";
   const [showLogsModal, setShowLogsModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => readStoredThemeMode());
@@ -334,7 +374,14 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [changeProductLoading, setChangeProductLoading] = useState(false);
   const [fiscalCloseProgress, setFiscalCloseProgress] = useState<FiscalCloseProgress | null>(null);
   const [retryingFiscalOperationId, setRetryingFiscalOperationId] = useState<string | null>(null);
+  const [reprintingOperationId, setReprintingOperationId] = useState<string | null>(null);
+  const [customersInitialSearch, setCustomersInitialSearch] = useState("");
+  const [deleteClosedOperationId, setDeleteClosedOperationId] = useState<string | null>(null);
   const [omieSyncing, setOmieSyncing] = useState(false);
+  const [omieQueue, setOmieQueue] = useState<OmieQueueItem[]>([]);
+  const [omieQueueLoading, setOmieQueueLoading] = useState(false);
+  const [omieQueueBusyId, setOmieQueueBusyId] = useState<string | null>(null);
+  const [omieQueueConfirmDeleteId, setOmieQueueConfirmDeleteId] = useState<string | null>(null);
   const [omieResetting, setOmieResetting] = useState(false);
   const [showOmieDirectSync, setShowOmieDirectSync] = useState(false);
   const [omieConnectionFeedback, setOmieConnectionFeedback] = useState<{
@@ -366,6 +413,86 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         : closedOperations.filter((op) => op.productDescription === closedProductFilter),
     [closedOperations, closedProductFilter]
   );
+  // Operacoes abertas cujo caminhao ja passou do tempo medio dentro da pedreira.
+  const overtimeOpenOperations = useMemo(() => {
+    if (truckAverageMinutes <= 0) return [] as WeighingOperationSummary[];
+    const now = Date.now();
+    return openOperations.filter(
+      (op) => (now - new Date(op.createdAt).getTime()) / 60_000 > truckAverageMinutes
+    );
+  }, [openOperations, truckAverageMinutes]);
+  const overtimeOpenIds = useMemo(
+    () => new Set(overtimeOpenOperations.map((op) => op.id)),
+    [overtimeOpenOperations]
+  );
+  const hasAwaitingLoader = useMemo(
+    () => openOperations.some((op) => !op.loaderCompletedAt),
+    [openOperations]
+  );
+
+  // Detecta a transicao aguardando -> concluida (o carregador clicou em "Concluir
+  // carga" no loader-web) e dispara um aviso verde temporario no desktop.
+  useEffect(() => {
+    const prev = loaderCompletedStateRef.current;
+    const next = new Map<string, boolean>();
+    const newlyCompleted: string[] = [];
+    for (const op of openOperations) {
+      const done = Boolean(op.loaderCompletedAt);
+      next.set(op.id, done);
+      if (loaderStateSeededRef.current && done && prev.get(op.id) === false) {
+        newlyCompleted.push(op.plate || "SEM PLACA");
+      }
+    }
+    loaderCompletedStateRef.current = next;
+    loaderStateSeededRef.current = true;
+
+    if (newlyCompleted.length > 0) {
+      setLoaderCompletionNotice(
+        newlyCompleted.length === 1
+          ? `Carga da placa ${newlyCompleted[0]} concluida pelo carregador — pronta para fechar.`
+          : `${newlyCompleted.length} cargas concluidas pelo carregador — prontas para fechar.`
+      );
+      if (loaderNoticeTimerRef.current) window.clearTimeout(loaderNoticeTimerRef.current);
+      loaderNoticeTimerRef.current = window.setTimeout(
+        () => setLoaderCompletionNotice(null),
+        12_000
+      );
+    }
+  }, [openOperations]);
+
+  useEffect(
+    () => () => {
+      if (loaderNoticeTimerRef.current) window.clearTimeout(loaderNoticeTimerRef.current);
+    },
+    []
+  );
+
+  // Enquanto houver carga aguardando o carregador, busca so as conclusoes no
+  // cloud com frequencia (consulta leve por unidade) para a luz virar verde
+  // quase em tempo real, sem esperar a sincronizacao completa de 30 min.
+  useEffect(() => {
+    if (!desktopApi || phase !== "unlocked" || !hasAwaitingLoader) return;
+    let cancelled = false;
+    const api = desktopApi;
+
+    async function tick(): Promise<void> {
+      if (cancelled || !navigator.onLine) return;
+      try {
+        const result = await api.pullLoaderCompletions();
+        if (cancelled || result.pulled <= 0) return;
+        const nextOpen = await api.listOpenWeighingOperations();
+        if (!cancelled) setOpenOperations(nextOpen);
+      } catch {
+        // best-effort: a luz atualiza no proximo ciclo ou na sincronizacao completa
+      }
+    }
+
+    const intervalId = window.setInterval(() => void tick(), 20_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [desktopApi, phase, hasAwaitingLoader]);
 
   useEffect(() => {
     writeStoredThemeMode(themeMode);
@@ -852,6 +979,21 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       }
 
       try {
+        // Media de tempo dentro da pedreira (ultimos 30 dias) para o alerta de
+        // caminhoes acima da media. Best-effort: nao bloqueia o refresh.
+        const to = new Date();
+        const from = new Date();
+        from.setDate(from.getDate() - 30);
+        const truck = await desktopApi.getTruckControl(
+          from.toISOString().slice(0, 10),
+          to.toISOString().slice(0, 10)
+        );
+        if (active) setTruckAverageMinutes(truck.averageMinutes);
+      } catch {
+        // media indisponivel (ex.: sem identidade) - alerta apenas nao aparece
+      }
+
+      try {
         const omieStatusResult = await desktopApi.getOmieStatus();
         if (active) setOmieStatus(omieStatusResult);
       } catch {
@@ -930,6 +1072,64 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       window.clearTimeout(initial);
     };
   }, [desktopApi, phase, autoSyncCloud]);
+
+  const refreshOmieQueue = useCallback(async () => {
+    if (!desktopApi) return;
+    setOmieQueueLoading(true);
+    try {
+      setOmieQueue(await desktopApi.omieQueueList());
+    } catch {
+      setOmieQueue([]);
+    } finally {
+      setOmieQueueLoading(false);
+    }
+  }, [desktopApi]);
+
+  // Recarrega a fila OMIE ao abrir a tela cloud e ao terminar sincronizacoes
+  // (cloudSyncing/omieSyncing viram false quando concluem).
+  useEffect(() => {
+    if (activeView !== "cloud" || cloudSyncing || omieSyncing) return;
+    void refreshOmieQueue();
+  }, [activeView, cloudSyncing, omieSyncing, refreshOmieQueue]);
+
+  async function handleOmieQueueDelete(jobId: string): Promise<void> {
+    if (!desktopApi) return;
+    setOmieQueueBusyId(jobId);
+    try {
+      const result = await desktopApi.omieQueueDelete(jobId);
+      setMessage(
+        result.deleted
+          ? "Item removido da fila OMIE. Este fechamento nao sera mais enviado ao OMIE."
+          : "Item nao encontrado na fila OMIE."
+      );
+    } catch (error) {
+      setMessage(getErrorMessage(error));
+    } finally {
+      setOmieQueueBusyId(null);
+      setOmieQueueConfirmDeleteId(null);
+      void refreshOmieQueue();
+    }
+  }
+
+  async function handleOmieQueueSendNow(jobId: string): Promise<void> {
+    if (!desktopApi) return;
+    setOmieQueueBusyId(jobId);
+    try {
+      const result = await desktopApi.omieQueueSendNow(jobId);
+      if (result.errors.length > 0) {
+        setMessage(`Envio OMIE: ${result.errors[0]}`);
+      } else if (result.processed > 0) {
+        setMessage("Pedido enviado ao OMIE com sucesso.");
+      } else {
+        setMessage("Item rearmado; sera enviado na proxima sincronizacao.");
+      }
+    } catch (error) {
+      setMessage(getErrorMessage(error));
+    } finally {
+      setOmieQueueBusyId(null);
+      void refreshOmieQueue();
+    }
+  }
 
   useEffect(() => {
     if (!desktopApi || phase !== "unlocked") return;
@@ -1228,21 +1428,29 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     try {
       const manualInstallments =
         form.paymentMode === "manual" ? Number(form.manualInstallments.trim()) : undefined;
+      // Condicao digitada livre vence o select: vira (ou reusa) um payment_term local.
+      const customCondition = form.customConditionText.trim();
+      const effectivePaymentTermId = customCondition
+        ? await resolveConditionTermId(desktopApi, customCondition)
+        : form.paymentMode === "registered"
+          ? form.paymentTermId || undefined
+          : undefined;
       const operation = await desktopApi.startWeighing({
         operationType: form.operationType,
         customerId: form.customerId,
         vehicleId: form.vehicleId,
-        carrierId: form.customerOwnTransport ? undefined : form.carrierId || undefined,
+        carrierId: isCustomerOwnTransport(form) ? undefined : form.carrierId || undefined,
         driverId: form.driverId,
         productId: form.productId,
-        paymentTermId:
-          form.paymentMode === "registered" ? form.paymentTermId || undefined : undefined,
+        paymentTermId: effectivePaymentTermId,
+        paymentMethodId: form.paymentMethodId || undefined,
         manualInstallments,
         manualDownPaymentCents:
           form.paymentMode === "manual" && form.manualDownPaymentEnabled
             ? (form.manualDownPaymentCents ?? 0)
             : undefined,
         freight: buildFreightInput(form),
+        freightModality: form.freightModality,
         quotationId: form.quotationId || undefined,
         deductFreightFromCredit: form.deductFreightFromCredit || freightGoesToCustomerInvoice(form),
         scaleCaptureId
@@ -1263,16 +1471,12 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   ): Promise<void> {
     if (!desktopApi) return;
 
-    if (operationType === "invoice" && !navigator.onLine) {
-      setMessage(
-        "Saida fiscal exige internet conectada para faturar no OMIE antes de liberar o caminhao."
-      );
-      return;
-    }
-
+    // O faturamento (NF-e) e feito INTEIRAMENTE no OMIE: o fechamento apenas cria o
+    // pedido de venda (etapa "Faturar"). Nao ha mais faturamento automatico aqui — por
+    // isso nao exigimos internet no fechamento (o pedido sobe na proxima sincronizacao).
     setMessage(
       operationType === "invoice"
-        ? "Fechando operacao fiscal e faturando no OMIE. Mantenha a internet conectada."
+        ? "Fechando operacao fiscal e enviando o pedido ao OMIE."
         : "Fechando operacao interna."
     );
 
@@ -1286,7 +1490,6 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
           detail:
             "Capturando peso de saida com os criterios configurados e calculando peso liquido."
         });
-        setMessage("Fechando operacao fiscal e faturando no OMIE. Mantenha a internet conectada.");
       }
       const operation = await desktopApi.closeWeighing(operationId, operationType, scaleCaptureId);
       if (operationType === "invoice") {
@@ -1294,23 +1497,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
           operationId: operation.id,
           status: "running",
           step: "billing",
-          title: "Faturando no OMIE",
-          detail: "Criando e faturando o pedido de venda fiscal."
-        });
-      }
-      const billingStatus =
-        operationType === "invoice" ? await desktopApi.billFiscalOperation(operation.id) : null;
-      if (operationType === "invoice") {
-        setFiscalCloseProgress({
-          operationId: operation.id,
-          status: "running",
-          step: "danfe",
-          title: "Documento fiscal",
-          detail: billingStatus?.documentUrl
-            ? billingStatus.documentPrinted
-              ? "DANFE retornado pela OMIE e enviado para impressora."
-              : "DANFE retornado pela OMIE, mas a impressao automatica nao confirmou."
-            : "OMIE faturou o pedido, mas ainda nao retornou URL do DANFE."
+          title: "Enviando pedido ao OMIE",
+          detail:
+            'O pedido de venda sobe ao OMIE na etapa "Faturar". A emissao da NF-e e feita no proprio OMIE.'
         });
         setFiscalCloseProgress({
           operationId: operation.id,
@@ -1330,17 +1519,12 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       } catch (error) {
         receiptStatus = `Cupom nao impresso: ${getErrorMessage(error)}.`;
       }
-      const fiscalStatus = billingStatus
-        ? `Pedido fiscal OMIE ${billingStatus.orderId} faturado.${
-            billingStatus.documentUrl
-              ? billingStatus.documentPrinted
-                ? " DANFE enviado para impressora."
-                : ` DANFE disponivel, mas nao foi impresso automaticamente: ${billingStatus.documentPrintError ?? "sem detalhe"}.`
-              : " DANFE ainda nao foi retornado pela OMIE; imprima pelo portal OMIE se necessario."
-          } `
-        : "";
       const operationLabel =
         operationType === "invoice" ? "Operacao fiscal fechada" : "Operacao interna fechada";
+      const fiscalStatus =
+        operationType === "invoice"
+          ? 'Pedido enviado ao OMIE para faturar (coluna "Faturar"). '
+          : "";
       setMessage(
         `${operationLabel}. Peso liquido: ${operation.netWeightKg} kg. ${fiscalStatus}${receiptStatus}`
       );
@@ -1350,7 +1534,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
           status: "success",
           step: "receipt",
           title: "Saida fiscal concluida",
-          detail: fiscalStatus.trim() || "Pedido fiscal faturado no OMIE."
+          detail: 'Pedido enviado ao OMIE. Emita a NF-e no OMIE (coluna "Faturar").'
         });
       }
       await refreshOpenOperations();
@@ -1390,6 +1574,22 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
     try {
       const billingStatus = await desktopApi.billFiscalOperation(operationId);
+      if (billingStatus.blocked) {
+        // Cadastro ainda incompleto: aviso acionavel, nao erro. O job segue re-executavel.
+        const reason =
+          billingStatus.blockReason ??
+          "Cadastro do cliente incompleto para NF-e (Numero do Endereco + E-mail).";
+        setFiscalCloseProgress({
+          operationId,
+          status: "success",
+          step: "billing",
+          title: "Faturamento pendente — cadastro incompleto",
+          detail: reason
+        });
+        setMessage(reason);
+        await refreshOpenOperations();
+        return;
+      }
       const danfeStatus = billingStatus.documentUrl
         ? billingStatus.documentPrinted
           ? "DANFE enviado para impressora."
@@ -1417,6 +1617,27 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       await refreshOpenOperations();
     } finally {
       setRetryingFiscalOperationId(null);
+    }
+  }
+
+  // "Editar cliente" de uma operacao concluida: abre a tela de Clientes ja filtrada
+  // pelo cliente, para corrigir o cadastro (endereco/e-mail) e reenviar depois.
+  function handleEditOperationCustomer(operation: WeighingOperationSummary): void {
+    setCustomersInitialSearch(operation.customerName || "");
+    setRegistrationsTab("customers");
+    setActiveView("registrations");
+  }
+
+  async function handleDeleteClosedOperation(operationId: string): Promise<void> {
+    if (!desktopApi) return;
+    try {
+      await desktopApi.deleteClosedWeighingOperation(operationId);
+      setDeleteClosedOperationId(null);
+      await refreshOpenOperations();
+      setMessage("Operacao concluida excluida.");
+    } catch (error) {
+      setDeleteClosedOperationId(null);
+      setMessage(getErrorMessage(error));
     }
   }
 
@@ -1509,6 +1730,29 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       await refreshPrintData();
     } catch (error) {
       setMessage(getErrorMessage(error));
+    }
+  }
+
+  // Reimpressao de emergencia direto da tela Concluidas: emite uma nova via (2a, 3a...)
+  // da nota daquela operacao, util quando faltou papel ou o cupom saiu ilegivel.
+  async function handleReprintOperationReceipt(operationId: string): Promise<void> {
+    if (!desktopApi) {
+      return;
+    }
+
+    setReprintingOperationId(operationId);
+    try {
+      const receipt = await desktopApi.printReceipt(operationId);
+      setMessage(
+        receipt.status === "printed"
+          ? `Nota reimpressa: cupom ${receipt.receiptNumber}, via ${receipt.copyNumber}.`
+          : `Falha ao reimprimir nota: ${receipt.errorMessage}.`
+      );
+      await refreshPrintData();
+    } catch (error) {
+      setMessage(getErrorMessage(error));
+    } finally {
+      setReprintingOperationId(null);
     }
   }
 
@@ -1746,6 +1990,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 tooltip={TIPS.nav.insights}
               />
               <SidebarItem
+                id="truck-control"
+                label="Controle de caminhoes"
+                icon={Truck}
+                activeView={activeView}
+                onSelect={setActiveView}
+              />
+              <SidebarItem
                 id="reports"
                 label="Relatorios"
                 icon={FileText}
@@ -1795,9 +2046,25 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   type="button"
                   onClick={() => setShowSettings((s) => !s)}
                   style={styles.headerBtn}
-                  title="Configuracoes"
+                  title={
+                    updateReady ? "Atualizacao disponivel" : "Configuracoes"
+                  }
                 >
                   <Settings size={17} />
+                  {updateReady ? (
+                    <span
+                      style={{
+                        position: "absolute",
+                        top: "4px",
+                        right: "4px",
+                        width: "8px",
+                        height: "8px",
+                        borderRadius: "50%",
+                        background: "#16a34a",
+                        border: "1px solid #ffffff"
+                      }}
+                    />
+                  ) : null}
                 </button>
                 {showSettings ? (
                   <div style={styles.settingsDropdown}>
@@ -1833,6 +2100,34 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     >
                       <Cloud size={14} />
                       Cloud
+                    </button>
+                    <div style={{ height: "1px", background: "#e2e8f0", margin: "4px 0" }} />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void handleUpdateAction();
+                        setShowSettings(false);
+                      }}
+                      style={{
+                        ...styles.settingsItem,
+                        color: updateReady ? "#16a34a" : styles.settingsItem.color,
+                        fontWeight: updateReady ? 600 : styles.settingsItem.fontWeight
+                      }}
+                      title="Verificar / instalar atualizacao do KyberRock Desktop"
+                    >
+                      <RefreshCw size={14} />
+                      {getManualUpdateButtonLabel(updateState.status)}
+                      {updateReady ? (
+                        <span
+                          style={{
+                            marginLeft: "auto",
+                            width: "8px",
+                            height: "8px",
+                            borderRadius: "50%",
+                            background: "#16a34a"
+                          }}
+                        />
+                      ) : null}
                     </button>
                     <div style={{ height: "1px", background: "#e2e8f0", margin: "4px 0" }} />
                     <button
@@ -1988,7 +2283,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                                 color: "var(--kr-muted)"
                               }}
                             >
-                              <span>{new Date(log.timestamp).toLocaleString("pt-BR")}</span>
+                              <span>{formatDbDateTime(log.timestamp)}</span>
                               <span
                                 style={{
                                   padding: "1px 6px",
@@ -2209,15 +2504,116 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     </div>
                   ) : (
                     <div style={styles.operationsTable}>
+                      {loaderCompletionNotice ? (
+                        <div
+                          role="status"
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "8px",
+                            padding: "10px 12px",
+                            marginBottom: "8px",
+                            borderRadius: "10px",
+                            border: "1px solid #86efac",
+                            background: "#f0fdf4",
+                            color: "#15803d",
+                            fontSize: "13px",
+                            fontWeight: 700
+                          }}
+                        >
+                          <span
+                            aria-hidden="true"
+                            style={{
+                              width: "10px",
+                              height: "10px",
+                              borderRadius: "50%",
+                              background: "#22c55e",
+                              flexShrink: 0
+                            }}
+                          />
+                          <span style={{ flex: 1 }}>✓ {loaderCompletionNotice}</span>
+                          <button
+                            type="button"
+                            onClick={() => setLoaderCompletionNotice(null)}
+                            aria-label="Dispensar aviso"
+                            style={{
+                              border: "none",
+                              background: "transparent",
+                              color: "#15803d",
+                              cursor: "pointer",
+                              fontWeight: 900,
+                              fontSize: "15px",
+                              lineHeight: 1,
+                              padding: "0 2px"
+                            }}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ) : null}
+                      {overtimeOpenOperations.length > 0 ? (
+                        <div
+                          role="alert"
+                          style={{
+                            display: "flex",
+                            flexWrap: "wrap",
+                            alignItems: "center",
+                            gap: "8px",
+                            padding: "10px 12px",
+                            marginBottom: "8px",
+                            borderRadius: "10px",
+                            border: "1px solid #fca5a5",
+                            background: "#fef2f2",
+                            color: "#b91c1c",
+                            fontSize: "13px",
+                            fontWeight: 700
+                          }}
+                        >
+                          <span>⚠ Acima do tempo medio ({formatMinutes(truckAverageMinutes)}):</span>
+                          {overtimeOpenOperations.map((op) => (
+                            <span
+                              key={op.id}
+                              style={{
+                                background: "#fff",
+                                border: "1px solid #fca5a5",
+                                borderRadius: "8px",
+                                padding: "2px 8px",
+                                letterSpacing: "0.06em"
+                              }}
+                            >
+                              {op.plate || "SEM PLACA"} · {formatElapsedSince(op.createdAt)}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
                       <div style={{ ...styles.operationsTableRow, ...styles.operationsTableHead }}>
-                        <span>Placa</span>
+                        <span>Placa / Carregador</span>
                         <span>Cliente / Produto</span>
                         <span>Entrada / Preco</span>
                         <span>Acoes</span>
                       </div>
-                      {openOperations.map((operation) => (
-                        <div key={operation.id} style={styles.operationsTableRow}>
-                          <strong style={styles.plateBadge}>{operation.plate}</strong>
+                      {openOperations.map((operation) => {
+                        const isOvertime = overtimeOpenIds.has(operation.id);
+                        return (
+                        <div
+                          key={operation.id}
+                          style={{
+                            ...styles.operationsTableRow,
+                            ...(isOvertime ? { background: "#fef2f2" } : {})
+                          }}
+                        >
+                          <span
+                            style={{
+                              display: "flex",
+                              flexDirection: "column",
+                              alignItems: "flex-start",
+                              gap: "5px",
+                              minWidth: 0
+                            }}
+                          >
+                            <strong style={styles.plateBadge}>{operation.plate}</strong>
+                            <LoaderStatusLight completedAt={operation.loaderCompletedAt} />
+                          </span>
                           <span style={styles.operationCellStack}>
                             <strong>{operation.customerName}</strong>
                             <span>{operation.productDescription}</span>
@@ -2226,6 +2622,16 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                           <span style={styles.operationCellStack}>
                             <strong>{formatWeightKg(operation.entryWeightKg ?? 0)}</strong>
                             <span>{formatMoney(operation.unitPriceCents)}/ton</span>
+                            <small
+                              style={{
+                                color: isOvertime ? "#b91c1c" : "var(--kr-muted)",
+                                fontWeight: isOvertime ? 700 : undefined
+                              }}
+                              title={formatDbDateTime(operation.createdAt)}
+                            >
+                              Entrou {formatElapsedSince(operation.createdAt)}
+                              {isOvertime ? " · acima da media ▲" : ""}
+                            </small>
                           </span>
                           <span style={styles.rowActions}>
                             <button
@@ -2253,7 +2659,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                             <HelpTooltip content={TIPS.operations.cancel} placement="left" />
                           </span>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )
                 ) : operationsTab === "canceled" ? (
@@ -2282,7 +2689,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                             <strong>{operation.customerName || "Cliente nao informado"}</strong>
                             <span>{operation.productDescription || "Produto nao informado"}</span>
                           </span>
-                          <span>{new Date(operation.updatedAt).toLocaleString("pt-BR")}</span>
+                          <span>{formatDbDateTime(operation.updatedAt)}</span>
                           <span>{operation.cancelReason || "Sem motivo registrado"}</span>
                         </div>
                       ))}
@@ -2303,6 +2710,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       <span>Peso liquido / Receita</span>
                       <span>Concluida em</span>
                       <span>Fiscal OMIE</span>
+                      <span>Acoes</span>
                     </div>
                     {filteredClosedOperations.map((operation) => (
                       <div key={operation.id} style={styles.closedOperationsTableRow}>
@@ -2316,12 +2724,41 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                           <strong>{formatWeightKg(operation.netWeightKg ?? 0)}</strong>
                           <span>{formatMoney(operation.totalCents)}</span>
                         </span>
-                        <span>{new Date(operation.updatedAt).toLocaleString("pt-BR")}</span>
+                        <span>{formatDbDateTime(operation.updatedAt)}</span>
                         <FiscalBillingStatus
                           operation={operation}
                           retrying={retryingFiscalOperationId === operation.id}
                           onRetry={() => void handleRetryFiscalBilling(operation.id)}
                         />
+                        <span style={styles.rowActions}>
+                          <button
+                            type="button"
+                            style={styles.smallSecondaryButton}
+                            title="Reimprimir a nota desta operacao (emite uma nova via)"
+                            disabled={reprintingOperationId === operation.id}
+                            onClick={() => void handleReprintOperationReceipt(operation.id)}
+                          >
+                            {reprintingOperationId === operation.id
+                              ? "Reimprimindo..."
+                              : "Reimprimir nota"}
+                          </button>
+                          <button
+                            type="button"
+                            style={styles.smallSecondaryButton}
+                            title="Editar o cadastro do cliente desta operacao"
+                            onClick={() => handleEditOperationCustomer(operation)}
+                          >
+                            Editar cliente
+                          </button>
+                          <button
+                            type="button"
+                            style={styles.smallDangerButton}
+                            title="Excluir esta operacao concluida da lista"
+                            onClick={() => setDeleteClosedOperationId(operation.id)}
+                          >
+                            Excluir
+                          </button>
+                        </span>
                       </div>
                     ))}
                   </div>
@@ -2350,6 +2787,15 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   void handleCancelOperation(id, reason);
                 }}
                 onCancel={() => setCancelOperationId(null)}
+              />
+            ) : null}
+
+            {deleteClosedOperationId ? (
+              <ConfirmDialog
+                title="Excluir operacao concluida"
+                description="A operacao sera removida da lista de concluidas. O pedido/OS ja enviado ao OMIE nao e afetado — trate-o no proprio OMIE se necessario."
+                onCancel={() => setDeleteClosedOperationId(null)}
+                onConfirm={() => void handleDeleteClosedOperation(deleteClosedOperationId)}
               />
             ) : null}
 
@@ -2479,7 +2925,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 <p style={styles.muted}>{TIPS.screens.registrations}</p>
                 <div style={{ marginTop: "20px" }}>
                   {registrationsTab === "customers" ? (
-                    <CustomersView desktopApi={desktopApi} />
+                    <CustomersView desktopApi={desktopApi} initialSearch={customersInitialSearch} />
                   ) : null}
                   {registrationsTab === "products" ? (
                     <ProductsView desktopApi={desktopApi} />
@@ -2839,7 +3285,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                         <p>
                           Ultima sincronizacao:{" "}
                           {cloudStatus.lastSync
-                            ? new Date(cloudStatus.lastSync).toLocaleString("pt-BR")
+                            ? formatDbDateTime(cloudStatus.lastSync)
                             : "Nunca"}
                         </p>
                       </>
@@ -2888,7 +3334,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                           <p>
                             Ultima sincronizacao:{" "}
                             {omieStatus.lastSyncAt
-                              ? new Date(omieStatus.lastSyncAt).toLocaleString("pt-BR")
+                              ? formatDbDateTime(omieStatus.lastSyncAt)
                               : "Nunca"}
                           </p>
                           {omieConnectionFeedback.status !== "idle" ? (
@@ -2968,6 +3414,102 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     <p style={{ color: "#64748b" }}>Carregando status OMIE...</p>
                   )}
                 </article>
+
+                <article style={{ ...styles.panel, gridColumn: "1 / -1" }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: "12px"
+                    }}
+                  >
+                    <h2 style={styles.panelTitle}>Fila OMIE (fechamentos a enviar)</h2>
+                    <button
+                      type="button"
+                      onClick={() => void refreshOmieQueue()}
+                      disabled={omieQueueLoading}
+                      style={{ ...styles.secondaryButton, fontSize: "12px" }}
+                    >
+                      {omieQueueLoading ? "Atualizando..." : "Atualizar"}
+                    </button>
+                  </div>
+                  <p style={styles.muted}>
+                    Pedidos/OS de fechamentos que ainda serao enviados ao OMIE. Excluir um item
+                    cancela o envio daquele fechamento ao OMIE (a operacao local nao e alterada).
+                  </p>
+                  {omieQueue.length === 0 ? (
+                    <p style={styles.muted}>
+                      {omieQueueLoading
+                        ? "Carregando fila OMIE..."
+                        : "Nenhum item na fila: todos os fechamentos foram enviados ao OMIE."}
+                    </p>
+                  ) : (
+                    omieQueue.map((item) => (
+                      <div key={item.id} style={styles.receiptRow}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <strong>
+                            {item.customerName ?? "Cliente nao identificado"}
+                            {item.plate ? ` - ${item.plate}` : ""}
+                            {item.totalCents !== null ? ` - ${formatMoney(item.totalCents)}` : ""}
+                          </strong>
+                          <p style={styles.muted}>
+                            {omieQueueActionLabel(item.action, item.operationType)} -{" "}
+                            {omieQueueStatusLabel(item.status)}
+                            {item.attemptCount > 0 ? ` (${item.attemptCount} tentativas)` : ""}
+                            {" - "}
+                            {formatDbDateTime(item.closedAt ?? item.createdAt)}
+                          </p>
+                          {item.lastError ? (
+                            <p style={{ ...styles.errorMessage, wordBreak: "break-word" }}>
+                              {item.lastError}
+                            </p>
+                          ) : null}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void handleOmieQueueSendNow(item.id)}
+                          disabled={omieQueueBusyId !== null}
+                          style={{
+                            ...styles.primaryButton,
+                            fontSize: "12px",
+                            opacity: omieQueueBusyId !== null ? 0.6 : 1
+                          }}
+                        >
+                          {omieQueueBusyId === item.id ? "Enviando..." : "Enviar agora"}
+                        </button>
+                        {omieQueueConfirmDeleteId === item.id ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => void handleOmieQueueDelete(item.id)}
+                              disabled={omieQueueBusyId !== null}
+                              style={{ ...styles.dangerButton, fontSize: "12px" }}
+                            >
+                              Confirmar exclusao
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setOmieQueueConfirmDeleteId(null)}
+                              style={{ ...styles.secondaryButton, fontSize: "12px" }}
+                            >
+                              Cancelar
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setOmieQueueConfirmDeleteId(item.id)}
+                            disabled={omieQueueBusyId !== null}
+                            style={{ ...styles.secondaryButton, fontSize: "12px" }}
+                          >
+                            Excluir da fila
+                          </button>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </article>
               </section>
             ) : null}
             {activeView === "insights" ? (
@@ -2980,6 +3522,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 onSyncOmie={handleSyncOmie}
                 onSyncCloud={handleSyncToCloud}
               />
+            ) : null}
+            {activeView === "truck-control" ? (
+              <TruckControlView desktopApi={desktopApi} />
             ) : null}
             {activeView === "reports" ? <ReportsView desktopApi={desktopApi} /> : null}
             {activeView === "documentation" ? <DocumentationView /> : null}
@@ -3237,12 +3782,63 @@ function GlobalUiPolish() {
         0% { transform: translateX(-100%); }
         100% { transform: translateX(400%); }
       }
+
+      @keyframes krPulse {
+        0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.55); opacity: 1; }
+        70% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); opacity: 0.65; }
+        100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); opacity: 1; }
+      }
     `}</style>
   );
 }
 
 function getWindowDesktopApi(): KyberRockDesktopApi | undefined {
   return typeof window === "undefined" ? undefined : window.kyberrockDesktop;
+}
+
+/**
+ * Luz de conclusao do carregador: vermelha (pulsando) enquanto a carga aguarda
+ * o carregador marcar "Concluir carga" no loader-web; verde quando concluida.
+ * O status chega ao desktop pela projecao cloud (`loader_completed_at`).
+ */
+function LoaderStatusLight({ completedAt }: { completedAt?: string | null }) {
+  const completed = Boolean(completedAt);
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "5px",
+        padding: "2px 8px 2px 6px",
+        borderRadius: "999px",
+        fontSize: "10px",
+        fontWeight: 800,
+        letterSpacing: "0.02em",
+        whiteSpace: "nowrap",
+        border: `1px solid ${completed ? "#86efac" : "#fca5a5"}`,
+        background: completed ? "#f0fdf4" : "#fef2f2",
+        color: completed ? "#15803d" : "#b91c1c"
+      }}
+      title={
+        completed
+          ? `Carga concluida pelo carregador${completedAt ? ` em ${formatDbDateTime(completedAt)}` : ""}.`
+          : "Aguardando o carregador concluir a carga no loader-web."
+      }
+    >
+      <span
+        aria-hidden="true"
+        style={{
+          width: "8px",
+          height: "8px",
+          borderRadius: "50%",
+          flexShrink: 0,
+          background: completed ? "#22c55e" : "#ef4444",
+          animation: completed ? undefined : "krPulse 1.6s ease-out infinite"
+        }}
+      />
+      {completed ? "Concluida" : "Aguardando"}
+    </span>
+  );
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {
@@ -3377,15 +3973,6 @@ function describeUpdateState(state: UpdateState): string {
   return "Sem atualizacao pendente.";
 }
 
-function extractConditionRaw(rulesJson: string): string {
-  try {
-    const rules = JSON.parse(rulesJson || "{}") as { raw?: string };
-    return typeof rules.raw === "string" ? rules.raw : "";
-  } catch {
-    return "";
-  }
-}
-
 /**
  * Resolve a forma e a condicao de pagamento selecionadas (via cache) e aplica
  * a trava de compatibilidade. Retorna `{ allowed: true }` quando nao ha forma
@@ -3411,7 +3998,11 @@ async function resolvePaymentConditionGuard(
   }
 
   let raw = "";
-  if (form.paymentTermId) {
+  const customCondition = form.customConditionText.trim();
+  if (customCondition) {
+    // Condicao digitada livre vence o select; o parser normaliza (ex: "7 14 21" -> "7/14/21").
+    raw = tryParsePaymentCondition(customCondition)?.raw ?? customCondition;
+  } else if (form.paymentTermId) {
     const termResult = await desktopApi.queryCache({ entityType: "payment_term", limit: 200 });
     const term = (termResult.rows as PaymentTermCacheEntry[]).find(
       (t) => t.id === form.paymentTermId
@@ -3426,7 +4017,7 @@ function validateWeighingForm(form: WeighingFormState): string | null {
   if (!form.customerId) return "Selecione o cliente.";
   if (!form.driverId) return "Selecione o motorista.";
   if (!form.productId) return "Selecione o produto.";
-  if (!form.customerOwnTransport && !form.driverIsIndependent && !form.carrierId) {
+  if (!isCustomerOwnTransport(form) && !form.carrierId) {
     return "Selecione a transportadora.";
   }
   if (form.paymentMode === "manual") {
@@ -3438,7 +4029,10 @@ function validateWeighingForm(form: WeighingFormState): string | null {
       return "Informe o valor de entrada.";
     }
   }
-  if (form.freightEnabled && !form.customerOwnTransport) {
+  if (form.customConditionText.trim() && !tryParsePaymentCondition(form.customConditionText)) {
+    return 'Condicao personalizada invalida. Use "5" (parcelas), "7 14 21" ou "7/14/21".';
+  }
+  if (isFreightCharged(form)) {
     if (form.freightBaseValueCents === null && form.freightFixedValueCents === null) {
       return "Informe o valor do frete.";
     }
@@ -3452,11 +4046,18 @@ function validateWeighingForm(form: WeighingFormState): string | null {
   return null;
 }
 
+/** A operacao tem um valor de frete lancado pela Pedreira (modalidade cobravel + toggle). */
+export function isFreightCharged(
+  form: Pick<WeighingFormState, "freightModality" | "chargeFreight">
+): boolean {
+  return form.chargeFreight && getFreightModalityInfo(form.freightModality).supportsCharge;
+}
+
 export function buildFreightInput(form: WeighingFormState): OperationFreightInput | null {
-  if (!form.freightEnabled || form.customerOwnTransport) return null;
+  if (!isFreightCharged(form)) return null;
   const distanceKm = parsePositiveNumber(form.freightDistanceKm);
   return {
-    payer: form.freightPayer,
+    payer: getFreightModalityInfo(form.freightModality).defaultPayer,
     destination: form.freightDestination.trim() || null,
     rule: {
       id: "operation-freight",
@@ -3472,34 +4073,26 @@ export function buildFreightInput(form: WeighingFormState): OperationFreightInpu
 }
 
 export function shouldLinkCreatedDriverToCarrier(
-  form: Pick<WeighingFormState, "carrierId" | "customerOwnTransport" | "driverIsIndependent">,
-  createdDriverIsIndependent: boolean
+  form: Pick<WeighingFormState, "carrierId" | "freightModality">
 ): string | null {
-  if (
-    createdDriverIsIndependent ||
-    form.driverIsIndependent ||
-    form.customerOwnTransport ||
-    !form.carrierId
-  ) {
+  if (isCustomerOwnTransport(form) || !form.carrierId) {
     return null;
   }
   return form.carrierId;
 }
 
 export function getDriverFilterIds(
-  form: Pick<WeighingFormState, "customerOwnTransport" | "driverIsIndependent">,
-  availableDriverIds: string[] | undefined,
-  independentDriverIds: string[] | undefined
+  form: Pick<WeighingFormState, "freightModality">,
+  availableDriverIds: string[] | undefined
 ): string[] | undefined {
-  if (form.customerOwnTransport) return undefined;
-  if (form.driverIsIndependent) return independentDriverIds ?? [];
+  if (isCustomerOwnTransport(form)) return undefined;
   return availableDriverIds;
 }
 
 export function isTransportReady(
-  form: Pick<WeighingFormState, "carrierId" | "customerOwnTransport" | "driverIsIndependent">
+  form: Pick<WeighingFormState, "carrierId" | "freightModality">
 ): boolean {
-  return form.customerOwnTransport || form.driverIsIndependent || Boolean(form.carrierId);
+  return isCustomerOwnTransport(form) || Boolean(form.carrierId);
 }
 
 function parsePositiveNumber(value: string): number | null {
@@ -3528,6 +4121,34 @@ export function filterCacheSelectOptions(
   filterIds: string[] | undefined
 ): CacheSelectOption[] {
   return filterIds !== undefined ? options.filter((option) => filterIds.includes(option.id)) : options;
+}
+
+/**
+ * Inclui otimisticamente um id recem-criado na lista de ids permitidos de um seletor
+ * filtrado por vinculo (ex.: transportadoras do cliente), para o item aparecer de
+ * imediato mesmo antes da releitura do vinculo no banco. `undefined` = sem filtro.
+ */
+export function appendAvailableId(
+  ids: string[] | undefined,
+  id: string
+): string[] | undefined {
+  if (ids === undefined) return undefined;
+  return ids.includes(id) ? ids : [...ids, id];
+}
+
+/**
+ * Ids a exibir no seletor de transportadora da nova entrada. Quando o cliente tem
+ * transportadoras vinculadas, restringe a lista a elas. Quando nao tem nenhuma
+ * vinculada (lista vazia) ou nenhum cliente foi escolhido (`undefined`), retorna
+ * `undefined` para nao filtrar — assim o operador consegue selecionar qualquer
+ * transportadora cadastrada em vez de ficar com a lista vazia.
+ */
+export function carrierSelectorFilterIds(
+  availableCarrierIds: string[] | undefined
+): string[] | undefined {
+  return availableCarrierIds && availableCarrierIds.length > 0
+    ? availableCarrierIds
+    : undefined;
 }
 
 function CacheSelect({
@@ -3894,6 +4515,7 @@ function WeighingForm({
   const [showDriverModal, setShowDriverModal] = useState(false);
   const [showCustomerModal, setShowCustomerModal] = useState(false);
   const [showCarrierModal, setShowCarrierModal] = useState(false);
+  const [showFreightModal, setShowFreightModal] = useState(false);
   const [vehicleRefreshKey, setVehicleRefreshKey] = useState(0);
   const [driverRefreshKey, setDriverRefreshKey] = useState(0);
   const [customerRefreshKey, setCustomerRefreshKey] = useState(0);
@@ -3901,7 +4523,6 @@ function WeighingForm({
   const [availableCarrierIds, setAvailableCarrierIds] = useState<string[] | undefined>(undefined);
   const [availableVehicleIds, setAvailableVehicleIds] = useState<string[] | undefined>(undefined);
   const [availableDriverIds, setAvailableDriverIds] = useState<string[] | undefined>(undefined);
-  const [independentDriverIds, setIndependentDriverIds] = useState<string[] | undefined>(undefined);
 
   // Buscar transportadoras vinculadas ao cliente
   useEffect(() => {
@@ -3917,7 +4538,7 @@ function WeighingForm({
         // foi definida pelo padrao, ja preenchemos para agilizar a entrada.
         if (carriers.length === 1) {
           setForm((prev) =>
-            prev.carrierId || prev.customerOwnTransport
+            prev.carrierId || isCustomerOwnTransport(prev)
               ? prev
               : { ...prev, carrierId: carriers[0].id }
           );
@@ -3927,11 +4548,13 @@ function WeighingForm({
       }
     }
     load();
-  }, [desktopApi, form.customerId]);
+    // carrierRefreshKey: recarrega os vinculos apos criar/vincular transportadora
+    // pelo modal rapido, senao a lista filtrada esconderia a recem-criada.
+  }, [desktopApi, form.customerId, carrierRefreshKey]);
 
   useEffect(() => {
     async function load() {
-      if (!desktopApi || !form.carrierId || form.customerOwnTransport || form.driverIsIndependent) {
+      if (!desktopApi || !form.carrierId || isCustomerOwnTransport(form)) {
         setAvailableVehicleIds(undefined);
         return;
       }
@@ -3943,15 +4566,9 @@ function WeighingForm({
       }
     }
     load();
-  }, [
-    desktopApi,
-    form.carrierId,
-    form.customerOwnTransport,
-    form.driverIsIndependent,
-    vehicleRefreshKey
-  ]);
+  }, [desktopApi, form.carrierId, form.freightModality, vehicleRefreshKey]);
 
-  // Buscar motoristas vinculados a transportadora + independentes
+  // Buscar motoristas vinculados a transportadora selecionada
   useEffect(() => {
     async function load() {
       if (!desktopApi) {
@@ -3959,26 +4576,18 @@ function WeighingForm({
         return;
       }
       try {
-        const independent = await desktopApi.listIndependentDrivers();
-        const independentIds = independent.map((d) => d.id);
-        setIndependentDriverIds(independentIds);
-
-        if (form.driverIsIndependent) {
-          setAvailableDriverIds(independentIds);
-        } else if (form.carrierId) {
+        if (form.carrierId) {
           const linked = await desktopApi.listDriversByCarrier(form.carrierId);
-          const linkedIds = linked.map((d) => d.id);
-          setAvailableDriverIds([...new Set([...linkedIds, ...independentIds])]);
+          setAvailableDriverIds(linked.map((d) => d.id));
         } else {
-          setAvailableDriverIds(independentIds.length > 0 ? independentIds : undefined);
+          setAvailableDriverIds(undefined);
         }
       } catch {
         setAvailableDriverIds(undefined);
-        setIndependentDriverIds(undefined);
       }
     }
     load();
-  }, [desktopApi, form.carrierId, form.driverIsIndependent, driverRefreshKey]);
+  }, [desktopApi, form.carrierId, driverRefreshKey]);
 
   // Quando motorista muda, verificar se tem 1 transportadora e preencher
   useEffect(() => {
@@ -3988,22 +4597,12 @@ function WeighingForm({
       }
       try {
         const carriers = await desktopApi.listCarriersByDriver(form.driverId);
-        const driverData = await desktopApi.queryCache({ entityType: "driver", limit: 200 });
-        const driver = (driverData.rows as Array<Record<string, unknown>>).find(
-          (d) => d.id === form.driverId
-        );
-        const isIndependent = Boolean(driver?.isIndependent);
-        setForm((prev) => ({ ...prev, driverIsIndependent: isIndependent }));
-
-        if (carriers.length === 1 && !isIndependent) {
+        if (carriers.length === 1) {
           // Motorista tem exatamente 1 transportadora - preencher automaticamente
           setForm((prev) => ({ ...prev, carrierId: carriers[0].id }));
-        } else if (isIndependent) {
-          // Motorista independente - limpar transportadora
-          setForm((prev) => ({ ...prev, carrierId: "" }));
         }
       } catch {
-        setForm((prev) => ({ ...prev, driverIsIndependent: false }));
+        // ignore
       }
     }
     load();
@@ -4151,8 +4750,10 @@ function WeighingForm({
         if (canceled || !rule) return;
         setForm((prev) => ({
           ...prev,
-          freightEnabled: true,
-          freightPayer: "customer",
+          // Regra de frete do cliente: frete por conta do cliente (FOB) com valor lancado.
+          // Nao sobrescreve o transporte proprio do cliente, que nao comporta valor.
+          freightModality: isCustomerOwnTransport(prev) ? prev.freightModality : "fob",
+          chargeFreight: !isCustomerOwnTransport(prev),
           freightCalculationType: rule.rule.type as WeighingFormState["freightCalculationType"],
           freightBaseValueCents: rule.rule.baseValueCents,
           freightFixedValueCents: rule.rule.fixedValueCents ?? null
@@ -4168,18 +4769,31 @@ function WeighingForm({
     };
   }, [desktopApi, form.customerId, form.productId]);
 
-  const manualPayment = form.paymentMode === "manual";
   const transportReady = isTransportReady(form);
 
   return (
     <section style={styles.entryShell}>
       <div style={styles.entryHero}>
-        <div>
-          <p style={styles.kicker}>Operacao de balanca</p>
-          <h2 style={{ ...styles.title, marginBottom: "4px" }}>Nova entrada</h2>
-          <p style={styles.subtitle}>Use Tab para avancar e Ctrl+Enter para capturar.</p>
+        <MountainOutline
+          opacity={0.5}
+          style={{
+            position: "absolute",
+            right: "-8px",
+            bottom: "-6px",
+            width: "232px",
+            height: "87px",
+            pointerEvents: "none",
+            zIndex: 0
+          }}
+        />
+        <div style={{ position: "relative", zIndex: 1 }}>
+          <p style={{ ...styles.kicker, color: "#fbbf24" }}>Operacao de balanca</p>
+          <h2 style={{ ...styles.title, marginBottom: "4px", color: "#ffffff" }}>Nova entrada</h2>
+          <p style={{ ...styles.subtitle, color: "#d6d3d1" }}>
+            Use Tab para avancar e Ctrl+Enter para capturar.
+          </p>
         </div>
-        <div style={{ display: "flex", gap: "16px", alignItems: "stretch" }}>
+        <div style={{ display: "flex", gap: "16px", alignItems: "stretch", position: "relative", zIndex: 1 }}>
           <div style={{ ...styles.liveWeightCard, flex: 1 }}>
             <div style={styles.metricHeader}>
               <img
@@ -4366,7 +4980,7 @@ function WeighingForm({
             label="Cliente"
             entityType="customer"
             value={form.customerId}
-            onChange={(id, item) =>
+            onChange={(id, item) => {
               setForm((prev) => ({
                 ...prev,
                 customerId: id,
@@ -4388,14 +5002,33 @@ function WeighingForm({
                   typeof item?.defaultPaymentMethodId === "string" && item.defaultPaymentMethodId
                     ? item.defaultPaymentMethodId
                     : prev.paymentMethodId,
-                paymentTermId:
-                  prev.paymentMode === "registered" &&
-                  typeof item?.defaultPaymentTermId === "string" &&
-                  item.defaultPaymentTermId
-                    ? item.defaultPaymentTermId
-                    : prev.paymentTermId
-              }))
-            }
+                // A condicao padrao chega como texto (async abaixo); limpa a anterior.
+                paymentTermId: "",
+                customConditionText: ""
+              }));
+              // Pre-carrega a condicao padrao do cliente como texto editavel no campo.
+              const defaultTermId =
+                typeof item?.defaultPaymentTermId === "string" ? item.defaultPaymentTermId : "";
+              if (defaultTermId && desktopApi) {
+                void desktopApi
+                  .queryCache({ entityType: "payment_term", limit: 200 })
+                  .then((result) => {
+                    const term = (result.rows as PaymentTermCacheEntry[]).find(
+                      (t) => t.id === defaultTermId
+                    );
+                    if (!term) return;
+                    setForm((prev) =>
+                      prev.customerId === id
+                        ? {
+                            ...prev,
+                            customConditionText: extractConditionRaw(term.rulesJson) || term.name
+                          }
+                        : prev
+                    );
+                  })
+                  .catch(() => undefined);
+              }
+            }}
             onCreateNew={() => setShowCustomerModal(true)}
             desktopApi={desktopApi}
             refreshKey={customerRefreshKey}
@@ -4415,82 +5048,24 @@ function WeighingForm({
             onChange={(id) => setForm((prev) => ({ ...prev, paymentMethodId: id }))}
             desktopApi={desktopApi}
           />
-          <CacheSelect
+          <Field
             label="Condicao de pagamento"
-            entityType="payment_term"
-            value={form.paymentTermId}
-            onChange={(id) => {
-              setForm((prev) => ({
-                ...prev,
-                paymentTermId: id,
-                paymentMode: "registered",
-                manualInstallments: "",
-                manualDownPaymentEnabled: false,
-                manualDownPaymentCents: null
-              }));
-            }}
-            desktopApi={desktopApi}
-            disabled={manualPayment}
-          />
-          <label style={styles.compactCheckboxCard}>
+            hint='Digite: "5" (5 parcelas mensais), "7 14 21" ou "7/14/21" (prazos), "A Vista". Vazio = a vista. Se a condicao nao existir no OMIE, ela e criada automaticamente no envio.'
+          >
             <input
-              type="checkbox"
-              checked={manualPayment}
+              type="text"
+              value={form.customConditionText}
               onChange={(event) =>
                 setForm((prev) => ({
                   ...prev,
-                  paymentMode: event.target.checked ? "manual" : "registered",
-                  paymentTermId: event.target.checked ? "" : prev.paymentTermId,
-                  manualInstallments: event.target.checked ? prev.manualInstallments : "",
-                  manualDownPaymentEnabled: event.target.checked
-                    ? prev.manualDownPaymentEnabled
-                    : false,
-                  manualDownPaymentCents: event.target.checked ? prev.manualDownPaymentCents : null
+                  customConditionText: event.target.value,
+                  paymentTermId: ""
                 }))
               }
+              placeholder='Ex.: "7/14/21"'
+              style={getInputStyle(false)}
             />
-            Parcelamento manual
-          </label>
-          {manualPayment ? (
-            <div style={styles.compactInlineGrid}>
-              <NumberInput
-                label="Parcelas"
-                value={form.manualInstallments}
-                onChange={(manualInstallments) =>
-                  setForm((prev) => ({ ...prev, manualInstallments }))
-                }
-                placeholder="Ex: 3"
-                maxLength={2}
-                required
-              />
-              <label style={{ ...styles.checkboxLabel, alignSelf: "end", minHeight: "40px" }}>
-                <input
-                  type="checkbox"
-                  checked={form.manualDownPaymentEnabled}
-                  onChange={(event) =>
-                    setForm((prev) => ({
-                      ...prev,
-                      manualDownPaymentEnabled: event.target.checked,
-                      manualDownPaymentCents: event.target.checked
-                        ? prev.manualDownPaymentCents
-                        : null
-                    }))
-                  }
-                />
-                Com entrada
-              </label>
-              {form.manualDownPaymentEnabled ? (
-                <MoneyCentsInput
-                  label="Valor de entrada"
-                  valueCents={form.manualDownPaymentCents}
-                  onChange={(manualDownPaymentCents) =>
-                    setForm((prev) => ({ ...prev, manualDownPaymentCents }))
-                  }
-                  allowZero
-                />
-              ) : null}
-            </div>
-          ) : null}
+          </Field>
         </article>
 
         <article style={styles.entryCard}>
@@ -4499,47 +5074,140 @@ function WeighingForm({
             title="Transporte"
             description="Transportadora, placa e motorista"
           />
-          <label style={styles.compactCheckboxCard}>
-            <input
-              type="checkbox"
-              checked={form.customerOwnTransport}
-              onChange={(event) =>
-                setForm((prev) => ({
-                  ...prev,
-                  customerOwnTransport: event.target.checked,
-                  driverIsIndependent: event.target.checked ? false : prev.driverIsIndependent,
-                  carrierId: "",
-                  vehicleId: "",
-                  driverId: "",
-                  freightEnabled: event.target.checked ? false : prev.freightEnabled,
-                  deductFreightFromCredit: event.target.checked
-                    ? false
-                    : prev.deductFreightFromCredit
-                }))
-              }
-            />
-            <span>Transportadora propria do cliente</span>
-          </label>
-          <label style={styles.compactCheckboxCard}>
-            <input
-              type="checkbox"
-              checked={form.driverIsIndependent}
-              onChange={(event) =>
-                setForm((prev) => ({
-                  ...prev,
-                  driverIsIndependent: event.target.checked,
-                  customerOwnTransport: event.target.checked ? false : prev.customerOwnTransport,
-                  carrierId: event.target.checked ? "" : prev.carrierId,
-                  driverId: ""
-                }))
-              }
-            />
-            <span>Motorista independente</span>
-          </label>
-          <p style={{ ...styles.helperText, margin: "-2px 0 8px 0" }}>
-            Marque quando o motorista nao pertence a uma transportadora. A transportadora fica
-            bloqueada e a lista mostra somente motoristas independentes.
-          </p>
+          <div style={styles.freightBox}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "8px",
+                flexWrap: "wrap"
+              }}
+            >
+              <div style={{ display: "flex", flexDirection: "column", gap: "2px", minWidth: "160px" }}>
+                <span style={{ fontWeight: 600, fontSize: "13px" }}>Tipo de frete</span>
+                <span style={styles.helperText}>
+                  {form.freightModality === "none"
+                    ? "Sem frete. Selecione a modalidade enviada ao OMIE."
+                    : `${getFreightModalityInfo(form.freightModality).label} — ${getFreightModalityInfo(form.freightModality).description}`}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowFreightModal(true)}
+                style={{ ...styles.secondaryButton, whiteSpace: "nowrap" }}
+              >
+                Selecionar tipo de frete
+              </button>
+            </div>
+            {getFreightModalityInfo(form.freightModality).supportsCharge ? (
+              <>
+                <label style={styles.checkboxLabel}>
+                  <input
+                    type="checkbox"
+                    checked={form.chargeFreight}
+                    onChange={(event) =>
+                      setForm((prev) => ({ ...prev, chargeFreight: event.target.checked }))
+                    }
+                  />
+                  Lancar valor de frete nesta operacao
+                </label>
+                {form.chargeFreight ? (
+                  <div style={styles.freightCompactGrid}>
+                    <label style={styles.fieldLabel}>
+                      Calculo
+                      <select
+                        value={form.freightCalculationType}
+                        onChange={(event) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            freightCalculationType: event.target
+                              .value as WeighingFormState["freightCalculationType"]
+                          }))
+                        }
+                        style={styles.input}
+                      >
+                        <option value="per_ton">Por tonelada</option>
+                        <option value="per_ton_km">Tonelada-km</option>
+                        <option value="fixed_plus_ton">Fixo + tonelada</option>
+                      </select>
+                    </label>
+                    <PriceInput
+                      label={
+                        form.freightCalculationType === "per_ton_km"
+                          ? "Frete por ton-km"
+                          : "Frete por tonelada"
+                      }
+                      suffix={form.freightCalculationType === "per_ton_km" ? "/ton-km" : "/ton"}
+                      valueCents={form.freightBaseValueCents}
+                      onChange={(cents) =>
+                        setForm((prev) => ({ ...prev, freightBaseValueCents: cents }))
+                      }
+                      compact
+                    />
+                    {form.freightCalculationType === "fixed_plus_ton" ? (
+                      <PriceInput
+                        label="Valor fixo do frete"
+                        suffix=""
+                        valueCents={form.freightFixedValueCents}
+                        onChange={(cents) =>
+                          setForm((prev) => ({ ...prev, freightFixedValueCents: cents }))
+                        }
+                        compact
+                      />
+                    ) : null}
+                    {form.freightCalculationType === "per_ton_km" ? (
+                      <NumberInput
+                        label="Distancia km"
+                        value={form.freightDistanceKm}
+                        onChange={(freightDistanceKm) =>
+                          setForm((prev) => ({ ...prev, freightDistanceKm }))
+                        }
+                        placeholder="Ex: 35"
+                      />
+                    ) : null}
+                    <PriceInput
+                      label="Frete minimo"
+                      suffix=""
+                      valueCents={form.freightMinValueCents}
+                      onChange={(cents) =>
+                        setForm((prev) => ({ ...prev, freightMinValueCents: cents }))
+                      }
+                      compact
+                    />
+                    <TextInput
+                      label="Destino/obs."
+                      value={form.freightDestination}
+                      onChange={(freightDestination) =>
+                        setForm((prev) => ({ ...prev, freightDestination }))
+                      }
+                      placeholder="Destino ou regra comercial"
+                    />
+                    <label style={styles.checkboxLabel}>
+                      <input
+                        type="checkbox"
+                        checked={form.deductFreightFromCredit || freightGoesToCustomerInvoice(form)}
+                        disabled={freightGoesToCustomerInvoice(form)}
+                        onChange={(event) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            deductFreightFromCredit: event.target.checked
+                          }))
+                        }
+                      />
+                      Abater frete do credito do cliente
+                    </label>
+                    {freightGoesToCustomerInvoice(form) ? (
+                      <p style={styles.muted}>
+                        Frete pago pela Pedreira e forma de pagamento no credito do cliente: o frete
+                        entra automaticamente na fatura.
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+              </>
+            ) : null}
+          </div>
           <CacheSelect
             label="Transportadora"
             entityType="carrier"
@@ -4548,8 +5216,6 @@ function WeighingForm({
               setForm((prev) => ({
                 ...prev,
                 carrierId: id,
-                customerOwnTransport: false,
-                driverIsIndependent: false,
                 vehicleId: "",
                 driverId: ""
               }))
@@ -4557,13 +5223,13 @@ function WeighingForm({
             onCreateNew={() => setShowCarrierModal(true)}
             desktopApi={desktopApi}
             refreshKey={carrierRefreshKey}
-            filterIds={availableCarrierIds}
-            disabled={form.customerOwnTransport || form.driverIsIndependent}
+            filterIds={carrierSelectorFilterIds(availableCarrierIds)}
+            disabled={isCustomerOwnTransport(form)}
           />
           {form.customerId && availableCarrierIds && availableCarrierIds.length === 0 ? (
             <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" }}>
               <p style={{ ...styles.helperText, color: "#d97706", margin: 0 }}>
-                Nenhuma transportadora vinculada a este cliente.
+                Nenhuma transportadora vinculada a este cliente &mdash; exibindo todas as cadastradas.
               </p>
               <button
                 type="button"
@@ -4583,7 +5249,7 @@ function WeighingForm({
               onCreateNew={() => setShowVehicleModal(true)}
               desktopApi={desktopApi}
               refreshKey={vehicleRefreshKey}
-              filterIds={form.customerOwnTransport ? undefined : availableVehicleIds}
+              filterIds={isCustomerOwnTransport(form) ? undefined : availableVehicleIds}
               disabled={!transportReady}
             />
             <CacheSelect
@@ -4594,24 +5260,10 @@ function WeighingForm({
               onCreateNew={() => setShowDriverModal(true)}
               desktopApi={desktopApi}
               refreshKey={driverRefreshKey}
-              filterIds={getDriverFilterIds(form, availableDriverIds, independentDriverIds)}
+              filterIds={getDriverFilterIds(form, availableDriverIds)}
               disabled={!transportReady}
             />
           </div>
-          {form.driverIsIndependent && independentDriverIds && independentDriverIds.length === 0 ? (
-            <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" }}>
-              <p style={{ ...styles.helperText, color: "#d97706", margin: 0 }}>
-                Nenhum motorista independente cadastrado.
-              </p>
-              <button
-                type="button"
-                onClick={() => setShowDriverModal(true)}
-                style={{ ...styles.secondaryButton, fontSize: "11px", padding: "4px 8px" }}
-              >
-                + Cadastrar motorista independente
-              </button>
-            </div>
-          ) : null}
           {form.carrierId && availableDriverIds && availableDriverIds.length === 0 ? (
             <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" }}>
               <p style={{ ...styles.helperText, color: "#d97706", margin: 0 }}>
@@ -4635,129 +5287,6 @@ function WeighingForm({
             description="Preco, frete e captura"
           />
           <PriceDetailsPanel details={priceDetails} />
-          <div style={styles.freightBox}>
-            <label style={styles.checkboxLabel}>
-              <input
-                type="checkbox"
-                checked={form.freightEnabled && !form.customerOwnTransport}
-                disabled={form.customerOwnTransport}
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, freightEnabled: event.target.checked }))
-                }
-              />
-              Operacao com frete
-            </label>
-            {form.freightEnabled && !form.customerOwnTransport ? (
-              <div style={styles.freightCompactGrid}>
-                <label style={styles.fieldLabel}>
-                  Responsavel
-                  <select
-                    value={form.freightPayer}
-                    onChange={(event) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        freightPayer: event.target.value as WeighingFormState["freightPayer"]
-                      }))
-                    }
-                    style={styles.input}
-                  >
-                    <option value="customer">Cliente</option>
-                    <option value="quarry">Pedreira</option>
-                    <option value="third_party">Terceiro</option>
-                  </select>
-                </label>
-                <label style={styles.fieldLabel}>
-                  Calculo
-                  <select
-                    value={form.freightCalculationType}
-                    onChange={(event) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        freightCalculationType: event.target
-                          .value as WeighingFormState["freightCalculationType"]
-                      }))
-                    }
-                    style={styles.input}
-                  >
-                    <option value="per_ton">Por tonelada</option>
-                    <option value="per_ton_km">Tonelada-km</option>
-                    <option value="fixed_plus_ton">Fixo + tonelada</option>
-                  </select>
-                </label>
-                <PriceInput
-                  label={
-                    form.freightCalculationType === "per_ton_km"
-                      ? "Frete por ton-km"
-                      : "Frete por tonelada"
-                  }
-                  suffix={form.freightCalculationType === "per_ton_km" ? "/ton-km" : "/ton"}
-                  valueCents={form.freightBaseValueCents}
-                  onChange={(cents) =>
-                    setForm((prev) => ({ ...prev, freightBaseValueCents: cents }))
-                  }
-                  compact
-                />
-                {form.freightCalculationType === "fixed_plus_ton" ? (
-                  <PriceInput
-                    label="Valor fixo do frete"
-                    suffix=""
-                    valueCents={form.freightFixedValueCents}
-                    onChange={(cents) =>
-                      setForm((prev) => ({ ...prev, freightFixedValueCents: cents }))
-                    }
-                    compact
-                  />
-                ) : null}
-                {form.freightCalculationType === "per_ton_km" ? (
-                  <NumberInput
-                    label="Distancia km"
-                    value={form.freightDistanceKm}
-                    onChange={(freightDistanceKm) =>
-                      setForm((prev) => ({ ...prev, freightDistanceKm }))
-                    }
-                    placeholder="Ex: 35"
-                  />
-                ) : null}
-                <PriceInput
-                  label="Frete minimo"
-                  suffix=""
-                  valueCents={form.freightMinValueCents}
-                  onChange={(cents) =>
-                    setForm((prev) => ({ ...prev, freightMinValueCents: cents }))
-                  }
-                  compact
-                />
-                <TextInput
-                  label="Destino/obs."
-                  value={form.freightDestination}
-                  onChange={(freightDestination) =>
-                    setForm((prev) => ({ ...prev, freightDestination }))
-                  }
-                  placeholder="Destino ou regra comercial"
-                />
-                <label style={styles.checkboxLabel}>
-                  <input
-                    type="checkbox"
-                    checked={form.deductFreightFromCredit || freightGoesToCustomerInvoice(form)}
-                    disabled={freightGoesToCustomerInvoice(form)}
-                    onChange={(event) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        deductFreightFromCredit: event.target.checked
-                      }))
-                    }
-                  />
-                  Abater frete do credito do cliente
-                </label>
-                {freightGoesToCustomerInvoice(form) ? (
-                  <p style={styles.muted}>
-                    Frete pago pela Pedreira e forma de pagamento no credito do cliente: o frete
-                    entra automaticamente na fatura.
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
           <div style={styles.actionStack}>
             <button
               type="button"
@@ -4803,12 +5332,8 @@ function WeighingForm({
         <QuickDriverModal
           desktopApi={desktopApi}
           onClose={() => setShowDriverModal(false)}
-          defaultIsIndependent={form.driverIsIndependent}
-          onCreated={async (id, options) => {
-            const carrierId = shouldLinkCreatedDriverToCarrier(
-              form,
-              options?.isIndependent ?? false
-            );
+          onCreated={async (id) => {
+            const carrierId = shouldLinkCreatedDriverToCarrier(form);
             setForm((prev) => ({ ...prev, driverId: id }));
             setShowDriverModal(false);
             if (desktopApi && carrierId) {
@@ -4840,8 +5365,25 @@ function WeighingForm({
           desktopApi={desktopApi}
           onClose={() => setShowCarrierModal(false)}
           onCreated={async (id) => {
-            setForm((prev) => ({ ...prev, carrierId: id, customerOwnTransport: false }));
+            setForm((prev) => ({
+              ...prev,
+              carrierId: id,
+              // Vincular uma transportadora da Pedreira sai do transporte proprio do cliente.
+              freightModality:
+                prev.freightModality === "own_recipient" ? "none" : prev.freightModality
+            }));
             setShowCarrierModal(false);
+            // O seletor filtra por "transportadoras vinculadas ao cliente": sem vincular
+            // a recem-criada ao cliente selecionado, ela nao apareceria na lista.
+            if (desktopApi && form.customerId) {
+              try {
+                await desktopApi.linkCustomerCarrier(form.customerId, id);
+              } catch {
+                /* ignore */
+              }
+            }
+            // Mostra a nova transportadora de imediato, mesmo se a releitura falhar.
+            setAvailableCarrierIds((prev) => appendAvailableId(prev, id));
             if (desktopApi && form.vehicleId) {
               try {
                 await desktopApi.vehiclesLinkCarrier(form.vehicleId, id);
@@ -4854,7 +5396,87 @@ function WeighingForm({
           }}
         />
       ) : null}
+
+      {showFreightModal ? (
+        <FreightTypeModal
+          selected={form.freightModality}
+          onClose={() => setShowFreightModal(false)}
+          onSelect={(modality) => {
+            setForm((prev) => {
+              const info = getFreightModalityInfo(modality);
+              const ownRecipient = modality === "own_recipient";
+              return {
+                ...prev,
+                freightModality: modality,
+                // Modalidade cobravel ja abre os campos de valor; sem cobranca, zera o toggle.
+                chargeFreight: info.supportsCharge,
+                deductFreightFromCredit: info.supportsCharge ? prev.deductFreightFromCredit : false,
+                // Transporte proprio do cliente: a transportadora da Pedreira nao se aplica.
+                carrierId: ownRecipient ? "" : prev.carrierId,
+                vehicleId: ownRecipient ? "" : prev.vehicleId,
+                driverId: ownRecipient ? "" : prev.driverId
+              };
+            });
+            setShowFreightModal(false);
+          }}
+        />
+      ) : null}
     </section>
+  );
+}
+
+function FreightTypeModal({
+  selected,
+  onSelect,
+  onClose
+}: {
+  selected: FreightModality;
+  onSelect: (modality: FreightModality) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div style={modalOverlayStyle} onClick={onClose}>
+      <div
+        style={{ ...modalContentStyle, maxWidth: "440px" }}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h3 style={{ margin: "0 0 4px" }}>Selecionar tipo de frete</h3>
+        <p style={{ ...styles.helperText, marginTop: 0 }}>
+          Escolha a modalidade enviada ao OMIE no pedido de venda. Apenas uma por operacao.
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: "8px", margin: "12px 0" }}>
+          {FREIGHT_MODALITIES.map((modality) => {
+            const isSelected = modality.key === selected;
+            return (
+              <button
+                key={modality.key}
+                type="button"
+                onClick={() => onSelect(modality.key)}
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "2px",
+                  alignItems: "flex-start",
+                  textAlign: "left",
+                  padding: "10px 12px",
+                  borderRadius: "10px",
+                  border: `1px solid ${isSelected ? "var(--kr-accent, #2563eb)" : "var(--kr-border)"}`,
+                  background: isSelected ? "var(--kr-accent-soft, rgba(37,99,235,0.08))" : "var(--kr-surface)",
+                  color: "var(--kr-text)",
+                  cursor: "pointer"
+                }}
+              >
+                <span style={{ fontWeight: 600, fontSize: "13px" }}>{modality.label}</span>
+                <span style={styles.helperText}>{modality.description}</span>
+              </button>
+            );
+          })}
+        </div>
+        <button type="button" onClick={onClose} style={styles.secondaryButton}>
+          Fechar
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -4900,10 +5522,7 @@ interface QuickModalProps {
   onCreated: (id: string) => void;
 }
 
-interface QuickDriverModalProps extends Omit<QuickModalProps, "onCreated"> {
-  defaultIsIndependent?: boolean;
-  onCreated: (id: string, options?: { isIndependent: boolean }) => void;
-}
+type QuickDriverModalProps = QuickModalProps;
 
 function QuickVehicleModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
   const [plateInput, setPlateInput] = useState("");
@@ -4963,16 +5582,10 @@ function QuickVehicleModal({ desktopApi, onClose, onCreated }: QuickModalProps) 
   );
 }
 
-function QuickDriverModal({
-  desktopApi,
-  onClose,
-  onCreated,
-  defaultIsIndependent = false
-}: QuickDriverModalProps) {
+function QuickDriverModal({ desktopApi, onClose, onCreated }: QuickDriverModalProps) {
   const [name, setName] = useState("");
   const [documentInput, setDocumentInput] = useState("");
   const [phone, setPhone] = useState("");
-  const [isIndependent, setIsIndependent] = useState(defaultIsIndependent);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -4997,10 +5610,9 @@ function QuickDriverModal({
       const result = await desktopApi.driversCreate({
         name: name.trim(),
         document: normalizedDocument || undefined,
-        phone: normalizedPhone || undefined,
-        isIndependent
+        phone: normalizedPhone || undefined
       });
-      onCreated((result as { id: string }).id, { isIndependent });
+      onCreated((result as { id: string }).id);
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -5029,18 +5641,6 @@ function QuickDriverModal({
           placeholder="000.000.000-00"
         />
         <PhoneInput label="Telefone" value={phone} onChange={setPhone} />
-        <label style={styles.checkboxLabel}>
-          <input
-            type="checkbox"
-            checked={isIndependent}
-            onChange={(e) => setIsIndependent(e.target.checked)}
-          />
-          Motorista independente
-        </label>
-        <p style={{ ...styles.helperText, marginTop: "-4px" }}>
-          Use para motorista sem transportadora. Ele aparecera quando a opcao "Motorista
-          independente" estiver marcada na nova entrada.
-        </p>
         <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
           <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
             {saving ? "Salvando..." : "Salvar"}
@@ -6001,6 +6601,34 @@ function PriceInput({
   );
 }
 
+/** Rotulo humano da acao de um item da fila OMIE (tela cloud). */
+export function omieQueueActionLabel(action: string, operationType: string | null): string {
+  switch (action) {
+    case "create_order":
+      return operationType === "internal" ? "Criar OS (interno)" : "Criar pedido (com nota)";
+    case "create_and_bill_order":
+      return "Criar e faturar pedido";
+    case "cancel_order":
+      return "Cancelar pedido no OMIE";
+    default:
+      return action;
+  }
+}
+
+/** Rotulo humano do status de um item da fila OMIE (tela cloud). */
+export function omieQueueStatusLabel(status: string): string {
+  switch (status) {
+    case "pending":
+      return "aguardando envio";
+    case "failed":
+      return "falhou (re-tenta sozinho)";
+    case "dead_letter":
+      return "parado apos varias falhas";
+    default:
+      return status;
+  }
+}
+
 function formatMoney(value: number | null | undefined): string {
   if (value === null || value === undefined) {
     return "R$ 0,00";
@@ -6011,6 +6639,26 @@ function formatMoney(value: number | null | undefined): string {
 
 function formatWeightKg(value: number): string {
   return `${value.toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 0 })} kg`;
+}
+
+// Tempo decorrido desde a entrada do caminhao (ex.: "ha 12 min", "ha 2 h 05 min").
+export function formatElapsedSince(iso: string | null | undefined, now = new Date()): string {
+  if (!iso) return "-";
+  const then = new Date(iso);
+  if (Number.isNaN(then.getTime())) return "-";
+  const diffMs = now.getTime() - then.getTime();
+  if (diffMs < 0) return "agora mesmo";
+  const totalMinutes = Math.floor(diffMs / 60_000);
+  if (totalMinutes < 1) return "agora mesmo";
+  if (totalMinutes < 60) return `ha ${totalMinutes} min`;
+  const totalHours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (totalHours < 24) {
+    return `ha ${totalHours} h ${String(minutes).padStart(2, "0")} min`;
+  }
+  const days = Math.floor(totalHours / 24);
+  const hours = totalHours % 24;
+  return `ha ${days} d ${hours} h`;
 }
 
 function filterCanceledOperations(
@@ -6142,20 +6790,44 @@ function getFiscalBillingStatus(operation: WeighingOperationSummary): {
     };
   }
 
+  // Pedido ja criado no OMIE: o faturamento (NF-e) e feito no proprio OMIE (coluna
+  // "Faturar"). O app nao fatura — nao ha "retry" de faturamento aqui.
+  if (operation.omieSalesOrderId) {
+    return {
+      label: "Enviada ao OMIE",
+      detail: `Pedido OMIE ${operation.omieSalesOrderId} — fature na coluna "Faturar" do OMIE.`,
+      tone: "success",
+      canRetry: false
+    };
+  }
+
+  // Operacoes antigas (fluxo anterior) que ficaram bloqueadas por cadastro/erro:
+  // mantem a recuperacao manual pelo botao.
+  if (operation.omieBillingStatus === "cadastro_incompleto") {
+    return {
+      label: "Cadastro incompleto",
+      detail:
+        operation.omieBillingMessage ??
+        "Falta Numero do Endereco e E-mail do cliente para emitir a NF-e.",
+      tone: "warning",
+      canRetry: true
+    };
+  }
+
   if (operation.omieBillingStatus === "failed") {
     return {
       label: "Falhou",
-      detail: operation.omieBillingMessage ?? "Faturamento nao confirmado.",
+      detail: operation.omieBillingMessage ?? "Envio do pedido nao confirmado.",
       tone: "danger",
       canRetry: true
     };
   }
 
   return {
-    label: "Pendente",
-    detail: "Aguardando faturamento OMIE.",
-    tone: "warning",
-    canRetry: true
+    label: "Enviando ao OMIE",
+    detail: "Pedido sera enviado ao OMIE na proxima sincronizacao.",
+    tone: "neutral",
+    canRetry: false
   };
 }
 
@@ -6373,12 +7045,11 @@ const CRUD_DEFAULT_SECTION = "Dados principais";
 async function reconcileDriverCarrier(
   desktopApi: KyberRockDesktopApi,
   driverId: string,
-  isIndependent: boolean,
   carrierId: string
 ): Promise<void> {
   const current = await desktopApi.listCarriersByDriver(driverId);
   const currentIds = current.map((carrier) => carrier.id);
-  const targetIds = isIndependent || !carrierId ? [] : [carrierId];
+  const targetIds = carrierId ? [carrierId] : [];
   for (const id of currentIds) {
     if (!targetIds.includes(id)) await desktopApi.unlinkDriverCarrier(driverId, id);
   }
@@ -6389,7 +7060,6 @@ async function reconcileDriverCarrier(
 
 function driverDetails(item: Record<string, unknown>): string {
   const parts: string[] = [];
-  if (item.isIndependent) parts.push("Independente: sem transportadora");
   if (item.document) parts.push(`CPF: ${String(item.document)}`);
   if (item.phone) parts.push(String(item.phone));
   return parts.join(" | ");
@@ -6724,12 +7394,6 @@ function DriverCrud({
       options: carrierOptions,
       emptyOption: "Sem transportadora",
       helper: "Vincule o motorista a uma transportadora para agilizar a nova entrada."
-    },
-    {
-      key: "isIndependent",
-      label: "Motorista independente",
-      type: "checkbox",
-      helper: "Marque quando este motorista nao pertence a uma transportadora."
     }
   ];
 
@@ -6764,8 +7428,7 @@ function DriverCrud({
         name: String(item.name ?? ""),
         document: String(item.document ?? ""),
         phone: String(item.phone ?? ""),
-        carrierId: "",
-        isIndependent: item.isIndependent ? "true" : "false"
+        carrierId: ""
       })}
       enrichForm={async (item) => {
         const linked = await desktopApi.listCarriersByDriver(String(item.id));
@@ -6787,14 +7450,12 @@ function DriverCrud({
           }
           phone = normalized;
         }
-        const isIndependent = form.isIndependent === "true";
         return {
           value: {
             name: form.name.trim(),
             document,
             phone,
-            isIndependent,
-            carrierId: isIndependent ? "" : form.carrierId
+            carrierId: form.carrierId
           }
         };
       }}
@@ -6802,32 +7463,20 @@ function DriverCrud({
         const created = await desktopApi.driversCreate({
           name: payload.name as string,
           document: (payload.document as string) || undefined,
-          phone: (payload.phone as string) || undefined,
-          isIndependent: payload.isIndependent as boolean
+          phone: (payload.phone as string) || undefined
         });
         const id = (created as { id?: string } | null)?.id;
         if (id) {
-          await reconcileDriverCarrier(
-            desktopApi,
-            id,
-            payload.isIndependent as boolean,
-            payload.carrierId as string
-          );
+          await reconcileDriverCarrier(desktopApi, id, payload.carrierId as string);
         }
       }}
       update={async (id, payload) => {
         await desktopApi.driversUpdate(id, {
           name: payload.name as string,
           document: (payload.document as string) || undefined,
-          phone: (payload.phone as string) || undefined,
-          isIndependent: payload.isIndependent as boolean
+          phone: (payload.phone as string) || undefined
         });
-        await reconcileDriverCarrier(
-          desktopApi,
-          id,
-          payload.isIndependent as boolean,
-          payload.carrierId as string
-        );
+        await reconcileDriverCarrier(desktopApi, id, payload.carrierId as string);
       }}
       remove={(id) => desktopApi.driversDelete(id)}
       deleteDescription="O registro sera removido dos cadastros. Operacoes ja registradas nao sao afetadas."
@@ -6900,7 +7549,12 @@ function CarrierCrud({
               textAlign: "left",
               cursor: "pointer",
               color: "inherit",
-              minWidth: 0
+              display: "flex",
+              flexDirection: "column",
+              gap: "2px",
+              width: "100%",
+              minWidth: 0,
+              overflow: "hidden"
             }}
           >
             <CellPrimary>{String(item.name ?? "")}</CellPrimary>
@@ -7271,13 +7925,10 @@ function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi })
   const [alias, setAlias] = useState("");
   const [omieCode, setOmieCode] = useState("");
   const [accountId, setAccountId] = useState("");
-  const [isCustomerCredit, setIsCustomerCredit] = useState(false);
   const [isActive, setIsActive] = useState(true);
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [flash, showFlash] = useFlash();
-  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState(false);
 
   const loadMethods = useCallback(async () => {
     setLoading(true);
@@ -7297,56 +7948,29 @@ function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi })
     void loadMethods();
   }, [loadMethods]);
 
-  function openCreate(): void {
-    setEditingId(null);
-    setName("");
-    setAlias("");
-    setOmieCode("");
-    setAccountId("");
-    setIsCustomerCredit(false);
-    setIsActive(true);
-    setFormError(null);
-    setShowForm(true);
-  }
-
   function openEdit(method: PaymentMethodCacheEntry): void {
     setEditingId(method.id);
     setName(method.name);
     setAlias(method.alias ?? "");
     setOmieCode(method.omieCode ?? "");
     setAccountId(method.accountId ?? "");
-    setIsCustomerCredit(method.isCustomerCredit);
     setIsActive(method.isActive);
     setFormError(null);
     setShowForm(true);
   }
 
+  // As formas vem do OMIE (sincronizacao) ou do seed padrao. Localmente so e
+  // permitido ativar/desativar, apelidar e vincular a conta.
   async function handleSave(): Promise<void> {
-    if (!name.trim()) {
-      setFormError("Informe o nome da forma de pagamento.");
-      return;
-    }
+    if (!editingId) return;
     setSaving(true);
     try {
-      if (editingId) {
-        await desktopApi.paymentMethodsUpdate(editingId, {
-          name: name.trim(),
-          alias: alias.trim() || null,
-          omieCode: omieCode.trim() || null,
-          accountId: accountId || null,
-          isActive
-        });
-        showFlash("success", "Forma de pagamento atualizada.");
-      } else {
-        await desktopApi.paymentMethodsCreate({
-          name: name.trim(),
-          alias: alias.trim() || null,
-          omieCode: omieCode.trim() || null,
-          accountId: accountId || null,
-          isCustomerCredit
-        });
-        showFlash("success", "Forma de pagamento criada.");
-      }
+      await desktopApi.paymentMethodsUpdate(editingId, {
+        alias: alias.trim() || null,
+        accountId: accountId || null,
+        isActive
+      });
+      showFlash("success", "Forma de pagamento atualizada.");
       setShowForm(false);
       await loadMethods();
     } catch (err) {
@@ -7356,36 +7980,18 @@ function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi })
     }
   }
 
-  async function handleConfirmDelete(): Promise<void> {
-    if (!pendingDeleteId) return;
-    setDeleting(true);
-    try {
-      await desktopApi.paymentMethodsDelete(pendingDeleteId);
-      setPendingDeleteId(null);
-      await loadMethods();
-      showFlash("success", "Forma de pagamento excluida.");
-    } catch (err) {
-      setPendingDeleteId(null);
-      showFlash("error", err instanceof Error ? err.message : "Erro ao excluir.");
-    } finally {
-      setDeleting(false);
-    }
-  }
-
   return (
     <div>
       <CrudSectionHeader
         title="Formas de pagamento"
-        description="Dinheiro, Pix, cartoes, boleto e credito do cliente ja vem cadastrados. Adicione outras formas se precisar."
+        description="As formas vem do OMIE na sincronizacao (nome e codigo). Aqui voce ativa/desativa, apelida e vincula cada forma a uma conta."
         count={methods.length}
-        actionLabel="Nova forma"
-        onAction={openCreate}
       />
       <FlashBanner flash={flash} />
 
       {showForm ? (
         <CrudFormShell
-          title={editingId ? "Editar forma de pagamento" : "Nova forma de pagamento"}
+          title="Editar forma de pagamento"
           error={formError}
           saving={saving}
           maxWidth={520}
@@ -7393,32 +7999,26 @@ function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi })
           onSubmit={() => void handleSave()}
         >
           <FormSection title="Dados">
-            <TextInput label="Nome" value={name} onChange={setName} required />
+            <Field label="Forma" hint="Nome e codigo vem do OMIE e nao sao editaveis aqui.">
+              <p style={{ ...styles.helperText, margin: 0 }}>
+                {name}
+                {omieCode ? ` | Cod. OMIE ${omieCode}` : " | Sem codigo OMIE (sincronize com o OMIE)"}
+              </p>
+            </Field>
             <TextInput
               label="Apelido"
               value={alias}
               onChange={setAlias}
               placeholder="Rotulo exibido (opcional)"
             />
-            {editingId ? (
-              <label style={styles.checkboxLabel}>
-                <input
-                  type="checkbox"
-                  checked={isActive}
-                  onChange={(e) => setIsActive(e.target.checked)}
-                />
-                Ativa
-              </label>
-            ) : (
-              <label style={styles.checkboxLabel}>
-                <input
-                  type="checkbox"
-                  checked={isCustomerCredit}
-                  onChange={(e) => setIsCustomerCredit(e.target.checked)}
-                />
-                E credito do cliente (fiado)
-              </label>
-            )}
+            <label style={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                checked={isActive}
+                onChange={(e) => setIsActive(e.target.checked)}
+              />
+              Ativa
+            </label>
           </FormSection>
           <FormSection title="Integracao financeira">
             <Field
@@ -7438,24 +8038,8 @@ function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi })
                 ))}
               </select>
             </Field>
-            <TextInput
-              label="Codigo OMIE"
-              value={omieCode}
-              onChange={setOmieCode}
-              placeholder="Codigo da forma no OMIE (opcional)"
-            />
           </FormSection>
         </CrudFormShell>
-      ) : null}
-
-      {pendingDeleteId ? (
-        <ConfirmDialog
-          title="Excluir forma de pagamento"
-          description="A forma de pagamento sera removida dos cadastros."
-          busy={deleting}
-          onCancel={() => setPendingDeleteId(null)}
-          onConfirm={() => void handleConfirmDelete()}
-        />
       ) : null}
 
       <DataTable
@@ -7500,12 +8084,7 @@ function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi })
             header: "Acoes",
             width: "150px",
             align: "right",
-            render: (m: PaymentMethodCacheEntry) => (
-              <>
-                <EditRowButton onClick={() => openEdit(m)} />
-                {m.isSystem ? null : <DeleteRowButton onClick={() => setPendingDeleteId(m.id)} />}
-              </>
-            )
+            render: (m: PaymentMethodCacheEntry) => <EditRowButton onClick={() => openEdit(m)} />
           }
         ]}
         rows={methods}
@@ -7513,7 +8092,7 @@ function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi })
         loading={loading}
         minWidth="760px"
         emptyTitle="Nenhuma forma de pagamento."
-        emptyHint="As formas padrao sao criadas automaticamente."
+        emptyHint="Sincronize com o OMIE para puxar os meios de pagamento."
       />
     </div>
   );
@@ -7521,11 +8100,15 @@ function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi })
 
 function PaymentConditionsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   const [terms, setTerms] = useState<PaymentTermCacheEntry[]>([]);
+  const [omieTerms, setOmieTerms] = useState<
+    Array<{ code: string; description: string; installment_count: number | null }>
+  >([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [condition, setCondition] = useState("");
+  const [omieParcelaCode, setOmieParcelaCode] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [flash, showFlash] = useFlash();
@@ -7535,12 +8118,18 @@ function PaymentConditionsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi
   const loadTerms = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await desktopApi.queryCache({
-        entityType: "payment_term",
-        activeOnly: false,
-        limit: 500
-      });
+      const [result, omie] = await Promise.all([
+        desktopApi.queryCache({
+          entityType: "payment_term",
+          activeOnly: false,
+          limit: 500
+        }),
+        desktopApi.paymentTermsListOmie().catch(() => [])
+      ]);
       setTerms(result.rows as PaymentTermCacheEntry[]);
+      setOmieTerms(
+        omie as Array<{ code: string; description: string; installment_count: number | null }>
+      );
     } finally {
       setLoading(false);
     }
@@ -7554,6 +8143,7 @@ function PaymentConditionsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi
     setEditingId(null);
     setName("");
     setCondition("");
+    setOmieParcelaCode("");
     setFormError(null);
     setShowForm(true);
   }
@@ -7562,6 +8152,7 @@ function PaymentConditionsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi
     setEditingId(term.id);
     setName(term.name);
     setCondition(paymentConditionRaw(term));
+    setOmieParcelaCode(term.omieParcelaCode ?? "");
     setFormError(null);
     setShowForm(true);
   }
@@ -7577,11 +8168,20 @@ function PaymentConditionsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi
     }
     setSaving(true);
     try {
+      const parcelaCode = omieParcelaCode.trim() || null;
       if (editingId) {
-        await desktopApi.paymentTermsUpdate(editingId, { name: name.trim(), condition: condition.trim() });
+        await desktopApi.paymentTermsUpdate(editingId, {
+          name: name.trim(),
+          condition: condition.trim(),
+          omieParcelaCode: parcelaCode
+        });
         showFlash("success", "Condicao atualizada.");
       } else {
-        await desktopApi.paymentTermsCreate({ name: name.trim(), condition: condition.trim() });
+        await desktopApi.paymentTermsCreate({
+          name: name.trim(),
+          condition: condition.trim(),
+          omieParcelaCode: parcelaCode
+        });
         showFlash("success", "Condicao criada.");
       }
       setShowForm(false);
@@ -7640,6 +8240,37 @@ function PaymentConditionsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi
               placeholder="Ex: 10/20/30/40"
             />
           </FormSection>
+          <FormSection title="Integracao OMIE">
+            <Field
+              label="Codigo OMIE (parcela)"
+              hint="Codigo de parcela enviado no pedido/OS. Sem vinculo, o OMIE recebe 000 (a vista)."
+            >
+              {omieTerms.length > 0 ? (
+                <select
+                  value={omieParcelaCode}
+                  onChange={(e) => setOmieParcelaCode(e.target.value)}
+                  style={getInputStyle(false)}
+                >
+                  <option value="">Sem vinculo (usara 000)</option>
+                  {omieParcelaCode && !omieTerms.some((t) => t.code === omieParcelaCode) ? (
+                    <option value={omieParcelaCode}>{omieParcelaCode} (atual)</option>
+                  ) : null}
+                  {omieTerms.map((t) => (
+                    <option key={t.code} value={t.code}>
+                      {t.code} - {t.description}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <TextInput
+                  label=""
+                  value={omieParcelaCode}
+                  onChange={setOmieParcelaCode}
+                  placeholder="Codigo de parcela do OMIE (opcional, ex: 030)"
+                />
+              )}
+            </Field>
+          </FormSection>
         </CrudFormShell>
       ) : null}
 
@@ -7668,6 +8299,14 @@ function PaymentConditionsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi
             render: (t: PaymentTermCacheEntry) => <CellMuted>{paymentConditionSummary(t)}</CellMuted>
           },
           {
+            key: "omie",
+            header: "Cod. OMIE",
+            width: "120px",
+            render: (t: PaymentTermCacheEntry) => (
+              <CellMuted>{t.omieParcelaCode || "000"}</CellMuted>
+            )
+          },
+          {
             key: "status",
             header: "Status",
             width: "100px",
@@ -7691,7 +8330,7 @@ function PaymentConditionsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi
         rows={terms}
         rowKey={(t) => t.id}
         loading={loading}
-        minWidth="680px"
+        minWidth="800px"
         emptyTitle="Nenhuma condicao cadastrada."
         emptyHint='Crie uma condicao pelo botao "Nova condicao".'
       />
@@ -7700,76 +8339,104 @@ function PaymentConditionsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi
 }
 
 function AccountsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
-  const fields: CrudField[] = [
-    { key: "name", label: "Nome", required: true },
-    {
-      key: "omieCode",
-      label: "Codigo OMIE",
-      helper: "Codigo da conta corrente no OMIE (opcional)."
-    }
-  ];
+  const [accounts, setAccounts] = useState<AccountCacheEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [flash, showFlash] = useFlash();
 
-  const columns: Array<DataTableColumn<Record<string, unknown>>> = [
-    {
-      key: "name",
-      header: "Conta",
-      width: "minmax(200px, 1.3fr)",
-      render: (item) => <CellPrimary>{String(item.name ?? "")}</CellPrimary>
-    },
-    {
-      key: "omie",
-      header: "Cod. OMIE",
-      width: "140px",
-      render: (item) => <CellMuted>{String(item.omieCode ?? "") || "-"}</CellMuted>
-    },
-    {
-      key: "type",
-      header: "Origem",
-      width: "120px",
-      render: (item) => <CellMuted>{item.isSystem ? "Sistema" : "Personalizada"}</CellMuted>
+  const loadAccounts = useCallback(async () => {
+    setLoading(true);
+    try {
+      const result = await desktopApi.queryCache({
+        entityType: "account",
+        activeOnly: false,
+        limit: 200
+      });
+      setAccounts(result.rows as AccountCacheEntry[]);
+    } finally {
+      setLoading(false);
     }
-  ];
+  }, [desktopApi]);
+
+  useEffect(() => {
+    void loadAccounts();
+  }, [loadAccounts]);
+
+  // Contas vem do OMIE (sincronizacao); localmente so ativar/desativar.
+  async function toggleActive(account: AccountCacheEntry): Promise<void> {
+    setTogglingId(account.id);
+    try {
+      await desktopApi.accountsUpdate(account.id, { isActive: !account.isActive });
+      await loadAccounts();
+      showFlash("success", account.isActive ? "Conta desativada." : "Conta ativada.");
+    } catch (err) {
+      showFlash("error", err instanceof Error ? err.message : "Erro ao atualizar a conta.");
+    } finally {
+      setTogglingId(null);
+    }
+  }
 
   return (
-    <ResourceCrud
-      desktopApi={desktopApi}
-      entityType="account"
-      singular="Conta"
-      gender="f"
-      title="Contas"
-      description="Contas usadas no fechamento financeiro. Vincule as formas de pagamento a elas."
-      searchPlaceholder="Buscar contas..."
-      emptyHint={'Cadastre pelo botao "Nova conta".'}
-      modalMaxWidth={520}
-      fields={fields}
-      columns={columns}
-      rowToForm={(item) => ({
-        name: String(item.name ?? ""),
-        omieCode: String(item.omieCode ?? "")
-      })}
-      buildPayload={(form) => {
-        if (!form.name.trim()) return { error: "Informe o nome da conta." };
-        return { value: { name: form.name.trim(), omieCode: form.omieCode.trim() } };
-      }}
-      create={(payload) =>
-        desktopApi
-          .accountsCreate({
-            name: payload.name as string,
-            omieCode: (payload.omieCode as string) || undefined
-          })
-          .then(() => undefined)
-      }
-      update={(id, payload) =>
-        desktopApi
-          .accountsUpdate(id, {
-            name: payload.name as string,
-            omieCode: (payload.omieCode as string) || null
-          })
-          .then(() => undefined)
-      }
-      remove={(id) => desktopApi.accountsDelete(id)}
-      deleteDescription="A conta sera removida. Formas de pagamento vinculadas ficam sem conta."
-    />
+    <div>
+      <CrudSectionHeader
+        title="Contas"
+        description="As contas correntes vem do OMIE na sincronizacao (nome e codigo). Ative/desative as que devem aparecer e vincule as formas de pagamento a elas."
+        count={accounts.length}
+      />
+      <FlashBanner flash={flash} />
+      <DataTable
+        columns={[
+          {
+            key: "name",
+            header: "Conta",
+            width: "minmax(200px, 1.3fr)",
+            render: (account: AccountCacheEntry) => <CellPrimary>{account.name}</CellPrimary>
+          },
+          {
+            key: "omie",
+            header: "Cod. OMIE",
+            width: "140px",
+            render: (account: AccountCacheEntry) => (
+              <CellMuted>{account.omieCode ?? "-"}</CellMuted>
+            )
+          },
+          {
+            key: "status",
+            header: "Status",
+            width: "90px",
+            render: (account: AccountCacheEntry) => (
+              <CellMuted>{account.isActive ? "Ativa" : "Inativa"}</CellMuted>
+            )
+          },
+          {
+            key: "actions",
+            header: "Acoes",
+            width: "150px",
+            align: "right",
+            render: (account: AccountCacheEntry) => (
+              <button
+                type="button"
+                onClick={() => void toggleActive(account)}
+                disabled={togglingId === account.id}
+                style={{ ...styles.secondaryButton, fontSize: "11px", padding: "4px 10px" }}
+              >
+                {togglingId === account.id
+                  ? "Salvando..."
+                  : account.isActive
+                    ? "Desativar"
+                    : "Ativar"}
+              </button>
+            )
+          }
+        ]}
+        rows={accounts}
+        rowKey={(account) => account.id}
+        loading={loading}
+        minWidth="600px"
+        emptyTitle="Nenhuma conta."
+        emptyHint="Sincronize com o OMIE para puxar as contas correntes."
+      />
+    </div>
   );
 }
 
@@ -9299,20 +9966,26 @@ const styles = {
     border: 0
   },
   entryShell: {
+    // flexShrink 0 + sem minHeight 0: dentro do contentBody (flex + overflowY),
+    // encolher aqui comprimia o hero (overflow hidden corta o conteudo) quando o
+    // frete configuravel abria; mantendo a altura natural, o excesso vira scroll.
     display: "flex",
     flexDirection: "column" as const,
     gap: "8px",
     marginTop: 0,
-    minHeight: 0
+    flexShrink: 0
   },
   entryHero: {
+    position: "relative" as const,
+    overflow: "hidden",
     display: "grid",
     gridTemplateColumns: "minmax(220px, 0.7fr) minmax(360px, 1fr)",
     alignItems: "stretch",
     gap: "10px",
     padding: "10px 12px",
     borderRadius: "14px",
-    background: "linear-gradient(135deg, #171412 0%, #292524 58%, #b45309 100%)",
+    background: "#1c1917",
+    border: "1px solid #292524",
     color: "#ffffff",
     boxShadow: "0 12px 28px rgba(28, 25, 23, 0.2)"
   },
@@ -9362,13 +10035,14 @@ const styles = {
     boxShadow: "var(--kr-shadow)"
   },
   entrySummaryCard: {
+    // Sem sticky: com o frete configuravel aberto o formulario rola, e um card
+    // pinado em top:0 sobrepoe o hero e os demais cards (Ctrl+Enter captura
+    // mesmo com o botao fora da tela).
     padding: "10px",
     borderRadius: "14px",
     background: "var(--kr-surface-soft)",
     border: "1px solid var(--kr-input-border)",
-    boxShadow: "var(--kr-shadow)",
-    position: "sticky" as const,
-    top: 0
+    boxShadow: "var(--kr-shadow)"
   },
   freightBox: {
     display: "grid",
@@ -9557,7 +10231,8 @@ const styles = {
   },
   closedOperationsTableRow: {
     display: "grid",
-    gridTemplateColumns: "96px minmax(180px, 1.2fr) minmax(120px, 0.8fr) 150px minmax(190px, 1fr)",
+    gridTemplateColumns:
+      "96px minmax(160px, 1.1fr) minmax(110px, 0.7fr) 140px minmax(170px, 0.9fr) 150px",
     alignItems: "center",
     gap: "10px",
     padding: "8px 10px",
