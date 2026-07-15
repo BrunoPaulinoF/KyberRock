@@ -194,7 +194,11 @@ export interface KyberRockDesktopApi {
   getDailyReport: (date: string) => Promise<DailyReport>;
   getMonthlyReport: (year: number, month: number) => Promise<MonthlyReport>;
   getReportHtml: (startDate: string, endDate: string) => Promise<string>;
-  exportReportPdf: (startDate: string, endDate: string) => Promise<{ path: string } | null>;
+  exportReportPdf: (
+    startDate: string,
+    endDate: string,
+    periodLabel?: string
+  ) => Promise<{ path: string } | null>;
   getTruckControl: (startDate: string, endDate: string) => Promise<TruckControlReport>;
   exportTruckControlPdf: (
     startDate: string,
@@ -306,6 +310,17 @@ export interface KyberRockDesktopApi {
   getDefaultNfeEmail: () => Promise<string | null>;
   setDefaultNfeEmail: (email: string) => Promise<string | null>;
   applyDefaultNfeEmailToAll: (email: string) => Promise<number>;
+  /**
+   * Executa "buscar CNPJ" para todos os clientes com CNPJ valido e grava os dados
+   * retornados. Retorna um resumo (total/consultados/atualizados/nao-encontrados/falhas).
+   */
+  enrichAllCustomersFromCnpj: () => Promise<{
+    total: number;
+    withCnpj: number;
+    updated: number;
+    notFound: number;
+    failed: number;
+  }>;
   // Meios de pagamento e contas vem do OMIE (sincronizacao); localmente so ha
   // atualizacao restrita (ativar/desativar, apelido, vinculo forma -> conta).
   paymentMethodsUpdate: (id: string, input: UpdatePaymentMethodInput) => Promise<unknown>;

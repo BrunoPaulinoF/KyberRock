@@ -307,6 +307,56 @@ describe("ReportService", () => {
     }
   });
 
+  it("renders the insights report as structured HTML with KPIs and sections", () => {
+    const db = createDatabase();
+
+    try {
+      setupBaseData(db);
+      insertOperations(db);
+
+      const service = new ReportService(db);
+      const html = service.exportInsightsToHtml(
+        "2026-06-01",
+        "2026-06-30",
+        "unit-1",
+        "Mes atual",
+        new Date("2026-07-15T12:00:00Z")
+      );
+
+      // Cabecalho + periodo
+      expect(html).toContain("Painel de Insights");
+      expect(html).toContain("Mes atual");
+      // Secoes estruturadas (nao e um print da tela)
+      expect(html).toContain("Mix de operacoes");
+      expect(html).toContain("Top 5 produtos por peso");
+      expect(html).toContain("Evolucao diaria");
+      // KPI de faturamento do periodo (junho): 900000 + 720000 + 600000 = 2.220.000 cents
+      expect(html).toContain("R$");
+      expect(html).toContain("Brita 0");
+      // Datas em pt-BR (dd/mm/aaaa)
+      expect(html).toContain("07/06/2026");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("renders the insights report with empty-state rows when there is no data", () => {
+    const db = createDatabase();
+
+    try {
+      setupBaseData(db);
+
+      const service = new ReportService(db);
+      const html = service.exportInsightsToHtml("2026-06-01", "2026-06-30", "unit-1");
+
+      expect(html).toContain("Painel de Insights");
+      expect(html).toContain("Sem produtos no periodo.");
+      expect(html).toContain("Sem operacoes fechadas no periodo.");
+    } finally {
+      db.close();
+    }
+  });
+
   it("groups operations by type for the mix", () => {
     const db = createDatabase();
 

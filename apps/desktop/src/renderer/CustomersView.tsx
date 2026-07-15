@@ -294,6 +294,7 @@ export function CustomersView({
   const [cnpjBusy, setCnpjBusy] = useState(false);
   const [nfeEmail, setNfeEmail] = useState("");
   const [nfeEmailBusy, setNfeEmailBusy] = useState(false);
+  const [cnpjBulkBusy, setCnpjBulkBusy] = useState(false);
   const [products, setProducts] = useState<ProductOption[]>([]);
   const [specialPrices, setSpecialPrices] = useState<CustomerSpecialPriceEntry[]>([]);
   const [specialProductId, setSpecialProductId] = useState("");
@@ -399,6 +400,39 @@ export function CustomersView({
       showFlash("error", err instanceof Error ? err.message : "Falha ao aplicar o e-mail padrao.");
     } finally {
       setNfeEmailBusy(false);
+    }
+  }
+
+  // Executa "buscar CNPJ" (Receita) para TODOS os clientes com CNPJ valido e grava os
+  // dados retornados. Pode demorar quando ha muitos clientes: a consulta e serial para
+  // nao estourar o limite da BrasilAPI.
+  async function handleEnrichAllCnpj(): Promise<void> {
+    if (!desktopApi || cnpjBulkBusy) return;
+    const confirmed = window.confirm(
+      "Buscar o CNPJ de todos os clientes na Receita e atualizar o cadastro (razao social, " +
+        "endereco, telefone)?\n\nPode levar alguns minutos se houver muitos clientes."
+    );
+    if (!confirmed) return;
+    setCnpjBulkBusy(true);
+    try {
+      const result = await desktopApi.enrichAllCustomersFromCnpj();
+      await loadCustomers();
+      const extras: string[] = [];
+      if (result.notFound > 0) extras.push(`${result.notFound} nao encontrado(s) na Receita`);
+      if (result.failed > 0) extras.push(`${result.failed} com falha`);
+      const suffix = extras.length ? ` (${extras.join(", ")})` : "";
+      showFlash(
+        "success",
+        `Busca de CNPJ concluida: ${result.updated} de ${result.withCnpj} cliente(s) com CNPJ ` +
+          `atualizado(s)${suffix}. Clientes OMIE serao enviados no proximo sync.`
+      );
+    } catch (err) {
+      showFlash(
+        "error",
+        err instanceof Error ? err.message : "Falha ao buscar o CNPJ dos clientes."
+      );
+    } finally {
+      setCnpjBulkBusy(false);
     }
   }
 
@@ -941,6 +975,15 @@ export function CustomersView({
           style={{ ...styles.primaryButton, height: "38px", opacity: nfeEmailBusy ? 0.6 : 1 }}
         >
           {nfeEmailBusy ? "Aplicando..." : "Aplicar a todos os clientes"}
+        </button>
+        <button
+          type="button"
+          onClick={() => void handleEnrichAllCnpj()}
+          disabled={cnpjBulkBusy}
+          title="Busca o CNPJ de TODOS os clientes na Receita e atualiza o cadastro (razao social, endereco, telefone)"
+          style={{ ...styles.secondaryButton, height: "38px", opacity: cnpjBulkBusy ? 0.6 : 1 }}
+        >
+          {cnpjBulkBusy ? "Buscando CNPJs..." : "🔍 Buscar CNPJ de todos"}
         </button>
       </div>
 

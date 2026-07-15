@@ -238,6 +238,7 @@ import {
   deleteCustomer,
   getCustomersByCarrier,
   getDefaultNfeEmail,
+  listCustomers,
   setDefaultNfeEmail,
   updateCustomer,
   type CreateCustomerInput,
@@ -335,6 +336,20 @@ export interface StartSimulatedWeighingInput {
 export interface ScaleCaptureResult {
   captureId: string;
   reading: ScaleReading;
+}
+
+/** Resumo da busca de CNPJ em lote (enrichAllCustomersFromCnpj). */
+export interface CnpjBulkEnrichResult {
+  /** Total de clientes examinados. */
+  total: number;
+  /** Clientes com CNPJ de 14 digitos (efetivamente consultados). */
+  withCnpj: number;
+  /** Clientes atualizados com dados da Receita. */
+  updated: number;
+  /** CNPJs nao encontrados na base da Receita. */
+  notFound: number;
+  /** Falhas na consulta ou na gravacao. */
+  failed: number;
 }
 
 export class DesktopRuntime {
@@ -1425,6 +1440,15 @@ export class DesktopRuntime {
     return this.reportService.exportRangeToHtml(startDate, endDate, this.ensureIdentity().unitId);
   }
 
+  getInsightsHtml(startDate: string, endDate: string, periodLabel?: string): string {
+    return this.reportService.exportInsightsToHtml(
+      startDate,
+      endDate,
+      this.ensureIdentity().unitId,
+      periodLabel
+    );
+  }
+
   getTruckControlReport(
     startDate: string,
     endDate: string
@@ -1809,6 +1833,70 @@ export class DesktopRuntime {
     const count = applyDefaultNfeEmailToAllCustomers(this.database, identity.companyId, email);
     this.cacheStore.invalidate("customer", identity.companyId);
     return count;
+  }
+
+  /**
+   * Executa "buscar CNPJ" (Receita via edge cnpj-lookup) para TODOS os clientes com
+   * CNPJ valido (14 digitos) e grava os dados retornados. Processa em serie para nao
+   * estourar o limite da BrasilAPI. Cada campo so e sobrescrito quando a consulta traz
+   * valor (mesma regra da busca individual). Clientes origem OMIE viram 'hybrid'
+   * (overrideOmieFields) para o cadastro ser empurrado ao OMIE no proximo sync.
+   * Nunca lanca por causa de um cliente: falhas isoladas entram no resumo retornado.
+   */
+  async enrichAllCustomersFromCnpj(): Promise<CnpjBulkEnrichResult> {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    const customers = listCustomers(this.database, identity.companyId);
+    const summary: CnpjBulkEnrichResult = {
+      total: customers.length,
+      withCnpj: 0,
+      updated: 0,
+      notFound: 0,
+      failed: 0
+    };
+    const now = new Date();
+
+    for (const customer of customers) {
+      const digits = (customer.document ?? "").replace(/\D/g, "");
+      if (digits.length !== 14) continue;
+      summary.withCnpj += 1;
+
+      let data: CnpjLookupResult;
+      try {
+        data = await lookupCnpjFromCloud(this.database, identity, digits);
+      } catch {
+        summary.failed += 1;
+        continue;
+      }
+      if (!data.found) {
+        summary.notFound += 1;
+        continue;
+      }
+
+      const patch: UpdateCustomerInput = {};
+      if (data.legalName) patch.legalName = data.legalName;
+      if (data.tradeName) patch.tradeName = data.tradeName;
+      if (data.phone) patch.phone = data.phone;
+      if (data.email) patch.email = data.email;
+      if (data.zipcode) patch.zipcode = data.zipcode;
+      if (data.addressStreet) patch.addressStreet = data.addressStreet;
+      if (data.addressNumber) patch.addressNumber = data.addressNumber;
+      if (data.addressComplement) patch.addressComplement = data.addressComplement;
+      if (data.neighborhood) patch.neighborhood = data.neighborhood;
+      if (data.city) patch.city = data.city;
+      if (data.state) patch.state = data.state.toUpperCase().slice(0, 2);
+      if (Object.keys(patch).length === 0) continue;
+
+      try {
+        updateCustomer(this.database, customer.id, patch, now, { overrideOmieFields: true });
+        summary.updated += 1;
+      } catch {
+        summary.failed += 1;
+      }
+    }
+
+    this.cacheStore.invalidate("customer", identity.companyId);
+    return summary;
   }
 
   deleteCustomer(id: string): void {

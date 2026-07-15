@@ -579,6 +579,132 @@ export class ReportService {
     return `<!doctype html><html><head><meta charset="utf-8" /><style>body{font-family:Arial,sans-serif;color:#0f172a;margin:28px}h1{margin:0 0 4px;font-size:22px}p{margin:0 0 18px;color:#475569}.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:18px 0}.card{border:1px solid #cbd5e1;border-radius:10px;padding:10px}.card span{display:block;color:#64748b;font-size:12px}.card strong{font-size:16px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #cbd5e1;padding:7px;text-align:left}th{background:#e2e8f0}.num{text-align:right}tfoot td{font-weight:bold;background:#f8fafc}@page{size:A4;margin:14mm}</style></head><body><h1>Relatorio KyberRock</h1><p>Periodo: ${escapeHtml(startDate)} a ${escapeHtml(endDate)}</p><section class="summary"><div class="card"><span>Carregamentos</span><strong>${operations.length}</strong></div><div class="card"><span>Tonelagem</span><strong>${(totalWeight / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} t</strong></div><div class="card"><span>Produto</span><strong>${this.formatCurrency(totalProduct)}</strong></div><div class="card"><span>Total</span><strong>${this.formatCurrency(total)}</strong></div></section><table><thead><tr><th>Data</th><th>Cliente</th><th>Produto</th><th>Peso kg</th><th>Produto</th><th>Frete</th><th>Total</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="3">TOTAL</td><td class="num">${totalWeight.toLocaleString("pt-BR")}</td><td class="num">${this.formatCurrency(totalProduct)}</td><td class="num">${this.formatCurrency(totalFreight)}</td><td class="num">${this.formatCurrency(total)}</td></tr></tfoot></table></body></html>`;
   }
 
+  // Relatorio "Painel de Insights": documento A4 estruturado (KPIs, mix de operacoes,
+  // top produtos e serie diaria) — os mesmos dados exibidos na tela de Insights, porem
+  // formatados para PDF em vez de uma captura da tela.
+  exportInsightsToHtml(
+    startDate: string,
+    endDate: string,
+    unitId: string,
+    periodLabel?: string,
+    generatedAt: Date = new Date()
+  ): string {
+    const series = this.getDailySeries(startDate, endDate, unitId);
+    const topProducts = this.getReportByProduct(startDate, endDate, unitId).slice(0, 5);
+    const mix = this.getOperationMix(startDate, endDate, unitId);
+
+    const operations = series.reduce((sum, point) => sum + point.totalOperations, 0);
+    const weightKg = series.reduce((sum, point) => sum + point.totalNetWeightKg, 0);
+    const totalCents = series.reduce((sum, point) => sum + point.totalCents, 0);
+    const ticketCents = operations > 0 ? Math.round(totalCents / operations) : 0;
+
+    const kpis = [
+      { label: "Operacoes", value: operations.toLocaleString("pt-BR") },
+      { label: "Peso liquido", value: formatTons(weightKg) },
+      { label: "Faturamento", value: formatBRL(totalCents) },
+      { label: "Ticket medio", value: formatBRL(ticketCents) }
+    ];
+    const kpiCards = kpis
+      .map(
+        (kpi) =>
+          `<div class="kpi"><span>${escapeHtml(kpi.label)}</span><strong>${escapeHtml(
+            kpi.value
+          )}</strong></div>`
+      )
+      .join("");
+
+    const mixRows = [
+      { name: "Com nota", count: mix.invoice.count, weightKg: mix.invoice.weightKg, value: formatBRL(mix.invoice.totalCents) },
+      { name: "Interna", count: mix.internal.count, weightKg: mix.internal.weightKg, value: formatBRL(mix.internal.totalCents) },
+      { name: "Cancelada", count: mix.cancelled.count, weightKg: mix.cancelled.weightKg, value: "-" }
+    ];
+    const mixTotalCount = mixRows.reduce((sum, row) => sum + row.count, 0);
+    const mixBody = mixRows
+      .map((row) => {
+        const pct = mixTotalCount > 0 ? (row.count / mixTotalCount) * 100 : 0;
+        return `<tr><td>${escapeHtml(row.name)}</td><td class="num">${row.count.toLocaleString(
+          "pt-BR"
+        )}</td><td class="num">${pct.toLocaleString("pt-BR", {
+          maximumFractionDigits: 1
+        })}%</td><td class="num">${formatTons(row.weightKg)}</td><td class="num">${
+          row.value
+        }</td></tr>`;
+      })
+      .join("");
+
+    const productsBody = topProducts.length
+      ? topProducts
+          .map(
+            (product, index) =>
+              `<tr><td class="num">${index + 1}</td><td>${escapeHtml(
+                product.productDescription
+              )}</td><td>${escapeHtml(product.productCode)}</td><td class="num">${
+                product.totalOperations
+              }</td><td class="num">${formatTons(
+                product.totalWeightKg
+              )}</td><td class="num">${formatBRL(product.totalValueCents)}</td></tr>`
+          )
+          .join("")
+      : '<tr><td colspan="6" class="empty">Sem produtos no periodo.</td></tr>';
+
+    const seriesBody = series.some((point) => point.totalOperations > 0)
+      ? series
+          .map(
+            (point) =>
+              `<tr><td>${escapeHtml(formatDayLabel(point.date))}</td><td class="num">${
+                point.totalOperations
+              }</td><td class="num">${formatTons(
+                point.totalNetWeightKg
+              )}</td><td class="num">${formatBRL(point.totalCents)}</td></tr>`
+          )
+          .join("")
+      : '<tr><td colspan="4" class="empty">Sem operacoes fechadas no periodo.</td></tr>';
+
+    const periodText = periodLabel
+      ? `${escapeHtml(periodLabel)} &middot; ${escapeHtml(formatDayLabel(startDate))} a ${escapeHtml(
+          formatDayLabel(endDate)
+        )}`
+      : `${escapeHtml(formatDayLabel(startDate))} a ${escapeHtml(formatDayLabel(endDate))}`;
+    const generatedText = generatedAt.toLocaleString("pt-BR");
+
+    return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8" /><style>
+:root{--ink:#0f172a;--muted:#64748b;--line:#e2e8f0;--soft:#f8fafc;--brand:#1d4ed8}
+*{box-sizing:border-box}
+body{font-family:Arial,Helvetica,sans-serif;color:var(--ink);margin:0;font-size:12px}
+.header{display:flex;justify-content:space-between;align-items:flex-end;border-left:6px solid var(--brand);padding:4px 0 14px 14px;margin-bottom:8px;border-bottom:2px solid var(--line)}
+.header h1{margin:0;font-size:22px;letter-spacing:.2px}
+.header .period{margin:6px 0 0;color:var(--muted);font-size:13px}
+.header .generated{color:var(--muted);font-size:11px;text-align:right;white-space:nowrap}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:16px 0 8px}
+.kpi{border:1px solid var(--line);border-top:3px solid var(--brand);border-radius:10px;padding:10px 12px;background:var(--soft)}
+.kpi span{display:block;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+.kpi strong{display:block;margin-top:4px;font-size:18px}
+section{margin-top:18px;break-inside:avoid}
+h2{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 8px;font-weight:800}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{border:1px solid var(--line);padding:7px 9px;text-align:left}
+th{background:var(--line);font-size:11px;text-transform:uppercase;letter-spacing:.03em}
+tbody tr:nth-child(even){background:var(--soft)}
+tr{break-inside:avoid}
+.num{text-align:right;white-space:nowrap}
+.empty{text-align:center;color:var(--muted);font-style:italic}
+tfoot td{font-weight:bold;background:#eef2ff;border-top:2px solid var(--brand)}
+@page{size:A4;margin:14mm}
+</style></head><body>
+<div class="header"><div><h1>Painel de Insights</h1><p class="period">${periodText}</p></div><div class="generated">Gerado em<br />${escapeHtml(
+      generatedText
+    )}</div></div>
+<div class="kpis">${kpiCards}</div>
+<section><h2>Mix de operacoes</h2><table><thead><tr><th>Tipo</th><th class="num">Operacoes</th><th class="num">% oper.</th><th class="num">Peso</th><th class="num">Faturamento</th></tr></thead><tbody>${mixBody}</tbody></table></section>
+<section><h2>Top 5 produtos por peso</h2><table><thead><tr><th class="num">#</th><th>Produto</th><th>Codigo</th><th class="num">Operacoes</th><th class="num">Peso</th><th class="num">Valor produto</th></tr></thead><tbody>${productsBody}</tbody></table></section>
+<section><h2>Evolucao diaria</h2><table><thead><tr><th>Data</th><th class="num">Operacoes</th><th class="num">Peso liquido</th><th class="num">Faturamento</th></tr></thead><tbody>${seriesBody}</tbody><tfoot><tr><td>Total</td><td class="num">${operations.toLocaleString(
+      "pt-BR"
+    )}</td><td class="num">${formatTons(weightKg)}</td><td class="num">${formatBRL(
+      totalCents
+    )}</td></tr></tfoot></table></section>
+</body></html>`;
+  }
+
   private getRangeOperations(startDate: string, endDate: string, unitId: string): RangeReportOperation[] {
     const rows = this.db.prepare(`
       SELECT
@@ -643,6 +769,27 @@ export function formatMinutes(totalMinutes: number): string {
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
   return `${hours}h ${String(rest).padStart(2, "0")}min`;
+}
+
+// Valor em centavos -> "R$ 1.234,56" (pt-BR). Usado no relatorio de Insights.
+function formatBRL(cents: number): string {
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents / 100);
+}
+
+// Peso em kg -> "12,3 t" (pt-BR, 1 casa). Usado no relatorio de Insights.
+function formatTons(kg: number): string {
+  return `${(kg / 1000).toLocaleString("pt-BR", {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1
+  })} t`;
+}
+
+// "2026-07-15" -> "15/07/2026"; devolve a entrada crua se nao vier no formato ISO.
+function formatDayLabel(iso: string): string {
+  const parts = iso.split("-");
+  if (parts.length !== 3) return iso;
+  const [year, month, day] = parts;
+  return `${day}/${month}/${year}`;
 }
 
 function escapeHtml(value: string): string {

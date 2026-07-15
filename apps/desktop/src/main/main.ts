@@ -582,18 +582,14 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "desktop:export-report-pdf",
-    async (_event, startDate: string, endDate: string) => {
+    async (_event, startDate: string, endDate: string, periodLabel?: string) => {
       if (!runtime) throw new Error("Desktop runtime is not ready.");
-      if (!mainWindow) throw new Error("Janela principal nao disponivel.");
-      runtime.getReportHtml(startDate, endDate);
-      const target = mainWindow.webContents;
-      const data = await target.printToPDF({
-        pageSize: "A4",
-        printBackground: true,
-        margins: { top: 0.5, bottom: 0.5, left: 0.5, right: 0.5 }
-      });
-      const filePath = await pickReportFilePath(`relatorio-${startDate}-a-${endDate}.pdf`, ["pdf"]);
+      // Gera um PDF A4 estruturado com os dados dos Insights (KPIs, mix, top produtos,
+      // serie diaria) via BrowserWindow oculta — nao mais uma captura da tela visivel.
+      const html = runtime.getInsightsHtml(startDate, endDate, periodLabel);
+      const filePath = await pickReportFilePath(`insights-${startDate}-a-${endDate}.pdf`, ["pdf"]);
       if (!filePath) return null;
+      const data = await renderHtmlToPdf(html);
       const fs = await import("node:fs/promises");
       await fs.writeFile(filePath, data);
       return { path: filePath };
@@ -862,6 +858,11 @@ function registerIpcHandlers(): void {
   ipcMain.handle("desktop:apply-default-nfe-email-to-all", (_event, email: string) => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.applyDefaultNfeEmailToAll(email);
+  });
+
+  ipcMain.handle("desktop:enrich-all-customers-cnpj", async () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.enrichAllCustomersFromCnpj();
   });
 
   ipcMain.handle("desktop:customers-delete", (_event, id: string) => {

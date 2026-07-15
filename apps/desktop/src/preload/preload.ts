@@ -58,8 +58,8 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:get-monthly-report", year, month),
   getReportHtml: (startDate: string, endDate: string) =>
     ipcRenderer.invoke("desktop:get-report-html", startDate, endDate),
-  exportReportPdf: (startDate: string, endDate: string) =>
-    ipcRenderer.invoke("desktop:export-report-pdf", startDate, endDate),
+  exportReportPdf: (startDate: string, endDate: string, periodLabel?: string) =>
+    ipcRenderer.invoke("desktop:export-report-pdf", startDate, endDate, periodLabel),
   exportReportExcel: (startDate: string, endDate: string) =>
     ipcRenderer.invoke("desktop:export-report-excel", startDate, endDate),
   getTruckControl: (startDate: string, endDate: string) =>
@@ -123,6 +123,7 @@ const desktopApi = {
   setDefaultNfeEmail: (email: string) => ipcRenderer.invoke("desktop:set-default-nfe-email", email),
   applyDefaultNfeEmailToAll: (email: string) =>
     ipcRenderer.invoke("desktop:apply-default-nfe-email-to-all", email),
+  enrichAllCustomersFromCnpj: () => ipcRenderer.invoke("desktop:enrich-all-customers-cnpj"),
   // Meios de pagamento e contas vem do OMIE (sincronizacao); localmente so ha
   // atualizacao restrita (ativar/desativar, apelido, vinculo forma -> conta).
   paymentMethodsUpdate: (id: string, input: unknown) =>

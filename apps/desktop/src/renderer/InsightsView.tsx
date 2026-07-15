@@ -173,7 +173,7 @@ export function InsightsView({
     try {
       const result =
         kind === "pdf"
-          ? await desktopApi.exportReportPdf(range.start, range.end)
+          ? await desktopApi.exportReportPdf(range.start, range.end, range.label)
           : await desktopApi.exportReportExcel(range.start, range.end);
       if (result) {
         setExportMessage(`Arquivo salvo em ${result.path}`);
