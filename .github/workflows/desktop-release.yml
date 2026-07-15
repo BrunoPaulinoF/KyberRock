@@ -14,9 +14,20 @@ name: Desktop release
 #      usando o GITHUB_TOKEN automatico do Actions (escopo de escrita fica no CI).
 
 on:
-  # Todo push na main (ou seja, todo merge de PR) gera uma versao nova e publica.
+  # Push na main que toca o desktop (ou suas dependencias) gera uma versao nova
+  # e publica. O filtro de paths evita gastar minutos pagos do Actions (runner
+  # Windows custa 2x em repo privado) com merges que nao mudam o instalador
+  # (ex.: so edge functions em supabase/ ou docs/).
   push:
     branches: [main]
+    paths:
+      - "apps/desktop/**"
+      - "packages/**"
+      - "functions/**"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig.json"
+      - ".github/workflows/desktop-release.yml"
   workflow_dispatch:
     inputs:
       reason:
