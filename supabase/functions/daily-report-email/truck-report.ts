@@ -165,6 +165,8 @@ export function renderTruckReportHtml(input: {
   }</tbody></table></body></html>`;
 }
 
+const WHATSAPP_MAX_TRUCKS = 15;
+
 export function renderTruckReportWhatsapp(input: { date: string; report: TruckReport }): string {
   const { report } = input;
   const lines = [
@@ -172,10 +174,14 @@ export function renderTruckReportWhatsapp(input: { date: string; report: TruckRe
     `Caminhoes: ${report.trucks.length} | Operacoes: ${report.totalOperations}`,
     `Tempo medio na pedreira: ${formatMinutes(report.averageMinutes)}`
   ];
-  for (const truck of report.trucks.slice(0, 15)) {
+  for (const truck of report.trucks.slice(0, WHATSAPP_MAX_TRUCKS)) {
     lines.push(
       `- ${truck.plate}: ${truck.operations}x, media ${formatMinutes(truck.avgMinutes)}, ${truck.totalNetWeightKg.toLocaleString("pt-BR")} kg`
     );
+  }
+  const omitted = report.trucks.length - WHATSAPP_MAX_TRUCKS;
+  if (omitted > 0) {
+    lines.push(`... e mais ${omitted} caminhao(oes)`);
   }
   return lines.join("\n");
 }
