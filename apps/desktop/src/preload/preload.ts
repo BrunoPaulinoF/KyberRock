@@ -78,6 +78,12 @@ const desktopApi = {
   sendRangeReportEmail: (email: string, startDate: string, endDate: string) =>
     ipcRenderer.invoke("desktop:send-range-report-email", email, startDate, endDate),
   verifySmtpConfig: () => ipcRenderer.invoke("desktop:verify-smtp-config"),
+  getReportChannelSettings: () => ipcRenderer.invoke("desktop:report-channels-get"),
+  saveReportChannelSettings: (input: unknown) =>
+    ipcRenderer.invoke("desktop:report-channels-save", input),
+  whatsappConnect: () => ipcRenderer.invoke("desktop:whatsapp-connect"),
+  whatsappStatus: () => ipcRenderer.invoke("desktop:whatsapp-status"),
+  whatsappDisconnect: () => ipcRenderer.invoke("desktop:whatsapp-disconnect"),
   getReportByProduct: (startDate: string, endDate: string, limit?: number) =>
     ipcRenderer.invoke("desktop:get-report-by-product", startDate, endDate, limit),
   getReportByCustomer: (startDate: string, endDate: string, limit?: number) =>

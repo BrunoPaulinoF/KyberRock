@@ -101,6 +101,25 @@ Deno.serve(async (req) => {
   const results: DispatchResult[] = [];
 
   for (const company of companies ?? []) {
+    // Configuracao de canais cadastrada pelo desktop (tela de Relatorios);
+    // os envs SMTP_*/UAZAPI_* do projeto ficam como fallback.
+    const { data: channelSettings } = await supabase
+      .from("report_channel_settings")
+      .select(
+        "smtp_host, smtp_port, smtp_user, smtp_password, smtp_sender, whatsapp_url, whatsapp_instance_token"
+      )
+      .eq("company_id", company.id)
+      .maybeSingle();
+    const companySmtpHost = (channelSettings?.smtp_host as string | null) || smtpHost;
+    const companySmtpPort = Number(channelSettings?.smtp_port ?? 0) || smtpPort;
+    const companySmtpUser = (channelSettings?.smtp_user as string | null) || smtpUser;
+    const companySmtpPassword = (channelSettings?.smtp_password as string | null) || smtpPassword;
+    const companySenderEmail =
+      (channelSettings?.smtp_sender as string | null) || senderEmail || companySmtpUser;
+    const companyUazapiUrl = (channelSettings?.whatsapp_url as string | null) || uazapiWhatsappUrl;
+    const companyUazapiToken =
+      (channelSettings?.whatsapp_instance_token as string | null) || uazapiInstanceToken;
+
     const unitFilter = body.unitId
       ? supabase.from("units").select("id, name").eq("id", body.unitId).eq("company_id", company.id)
       : supabase
@@ -129,13 +148,13 @@ Deno.serve(async (req) => {
         targetDate,
         nowHour: now.hour,
         force,
-        senderEmail,
-        smtpHost,
-        smtpPort,
-        smtpUser,
-        smtpPassword,
-        uazapiInstanceToken,
-        uazapiWhatsappUrl
+        senderEmail: companySenderEmail,
+        smtpHost: companySmtpHost,
+        smtpPort: companySmtpPort,
+        smtpUser: companySmtpUser,
+        smtpPassword: companySmtpPassword,
+        uazapiInstanceToken: companyUazapiToken,
+        uazapiWhatsappUrl: companyUazapiUrl
       });
       results.push(result);
     }

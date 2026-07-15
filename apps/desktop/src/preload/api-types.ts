@@ -61,6 +61,12 @@ import type {
   ParsedToledoReading,
   ScaleReading
 } from "@kyberrock/scale-adapters";
+import type {
+  ReportChannelSettings as ReportChannelSettingsView,
+  UazapiInstanceState as WhatsappInstanceStateView
+} from "../services/report-channels";
+
+export type { ReportChannelSettingsView, WhatsappInstanceStateView };
 
 export interface KyberRockDesktopApi {
   getStatus: (internetOnline?: boolean) => Promise<DesktopStatusSnapshot>;
@@ -246,6 +252,13 @@ export interface KyberRockDesktopApi {
     endDate: string
   ) => Promise<{ success: boolean; messageId?: string; error?: string }>;
   verifySmtpConfig: () => Promise<{ success: boolean; messageId?: string; error?: string }>;
+  getReportChannelSettings: () => Promise<ReportChannelSettingsView>;
+  saveReportChannelSettings: (
+    input: Partial<ReportChannelSettingsView>
+  ) => Promise<ReportChannelSettingsView>;
+  whatsappConnect: () => Promise<WhatsappInstanceStateView>;
+  whatsappStatus: () => Promise<WhatsappInstanceStateView>;
+  whatsappDisconnect: () => Promise<WhatsappInstanceStateView>;
   getReportByProduct: (
     startDate: string,
     endDate: string,
