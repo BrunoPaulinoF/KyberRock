@@ -1,5 +1,7 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { SMTPClient } from "https://deno.land/x/denomailer@1.6.1/mod.ts";
+// Mesma lib de SMTP usada no desktop (sendTestEmail); o bundler das Edge
+// Functions so resolve especificadores jsr:/npm:, entao nada de deno.land aqui.
+import nodemailer from "npm:nodemailer@9.0.1";
 import {
   localNow,
   reportPeriod,
@@ -71,8 +73,9 @@ Deno.serve(async (req) => {
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
   const supabase = createClient(supabaseUrl, serviceRoleKey);
 
-  // Somente chamadas server-side: o scheduler (service role) ou um chamador com o
-  // segredo do cron. O JWT anon (publico no loader-web) nao dispara envios.
+  // Somente chamadas server-side: o scheduler (que encaminha o segredo do cron) ou
+  // um chamador com a service role key. Deployada com verify_jwt=false e auth
+  // propria (como desktop-download); o JWT anon do loader-web nao dispara envios.
   if (!(await isAuthorized(req, supabase, serviceRoleKey))) {
     return jsonResponse({ error: "Acesso negado." }, 401);
   }
@@ -626,7 +629,7 @@ function escapeHtml(value: string): string {
     .replace(/'/g, "&#039;");
 }
 
-// Porta 465 = TLS implicito; 587 = STARTTLS (negociado pelo denomailer).
+// Porta 465 = TLS implicito; 587 = STARTTLS (requireTLS impede fallback em claro).
 async function sendSmtpEmail(input: {
   host: string;
   port: number;
@@ -637,24 +640,22 @@ async function sendSmtpEmail(input: {
   subject: string;
   html: string;
 }): Promise<void> {
-  const client = new SMTPClient({
-    connection: {
-      hostname: input.host,
-      port: input.port,
-      tls: input.port === 465,
-      auth: { username: input.user, password: input.password }
-    }
+  const transporter = nodemailer.createTransport({
+    host: input.host,
+    port: input.port,
+    secure: input.port === 465,
+    requireTLS: input.port !== 465,
+    auth: { user: input.user, pass: input.password }
   });
   try {
-    await client.send({
+    await transporter.sendMail({
       from: input.from,
       to: input.to,
       subject: input.subject,
-      content: "auto",
       html: input.html
     });
   } finally {
-    await client.close().catch(() => {});
+    transporter.close();
   }
 }
 
