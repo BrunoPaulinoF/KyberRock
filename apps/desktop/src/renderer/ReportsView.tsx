@@ -53,10 +53,13 @@ const REPORT_TYPE_LABEL: Record<ReportType, string> = {
 
 const styles = {
   page: {
+    // flexShrink 0 + sem minHeight 0: dentro do contentBody (flex + overflowY),
+    // encolher aqui comprimia a pagina e o card de configuracao (overflow hidden)
+    // cortava o QR code sem dar scroll; com a altura natural, o excesso vira scroll.
     padding: 0,
     display: "grid",
     gap: "10px",
-    minHeight: 0
+    flexShrink: 0
   },
   header: {
     display: "flex",
