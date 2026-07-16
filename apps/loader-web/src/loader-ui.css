@@ -1157,6 +1157,9 @@ select {
 }
 
 .lp-login-card {
+  /* Sobrescreve o align-self: center do .auth-card: o card precisa aparecer
+     no topo do hero, visivel sem scroll, e acompanhar a rolagem (sticky). */
+  align-self: start;
   position: sticky;
   top: 92px;
   color: #0f172a;
