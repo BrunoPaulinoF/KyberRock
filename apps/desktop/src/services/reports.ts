@@ -1,4 +1,8 @@
 import type { DesktopDatabase } from "../database/sqlite.js";
+import {
+  CLOSED_OPERATION_STATUS_SQL_LIST,
+  isClosedOperationStatus
+} from "./weighing-operations.js";
 
 export interface DailyReport {
   date: string;
@@ -152,7 +156,7 @@ export class ReportService {
       LEFT JOIN customers c ON c.id = wo.customer_id
       LEFT JOIN products p ON p.id = wo.product_id
       WHERE wo.unit_id = ?
-        AND wo.status = 'closed_local'
+        AND wo.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
         AND date(wo.created_at) = date(?)
       ORDER BY wo.created_at ASC
     `);
@@ -203,7 +207,7 @@ export class ReportService {
         COALESCE(SUM(total_cents), 0) as total
       FROM weighing_operations
       WHERE unit_id = ?
-        AND status = 'closed_local'
+        AND status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
         AND date(created_at) >= date(?)
         AND date(created_at) < date(?)
     `);
@@ -242,7 +246,7 @@ export class ReportService {
       FROM weighing_operations wo
       LEFT JOIN products p ON p.id = wo.product_id
       WHERE wo.unit_id = ?
-        AND wo.status = 'closed_local'
+        AND wo.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
         AND date(wo.created_at) >= date(?)
         AND date(wo.created_at) <= date(?)
       GROUP BY p.id
@@ -280,7 +284,7 @@ export class ReportService {
       FROM weighing_operations wo
       LEFT JOIN customers c ON c.id = wo.customer_id
       WHERE wo.unit_id = ?
-        AND wo.status = 'closed_local'
+        AND wo.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
         AND date(wo.created_at) >= date(?)
         AND date(wo.created_at) <= date(?)
       GROUP BY c.id
@@ -335,7 +339,7 @@ export class ReportService {
 
     const conditions = [
       "wo.unit_id = ?",
-      "wo.status = 'closed_local'",
+      `wo.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})`,
       "date(wo.created_at) >= date(?)",
       "date(wo.created_at) <= date(?)"
     ];
@@ -438,7 +442,7 @@ export class ReportService {
         COALESCE(SUM(total_cents), 0) as total
       FROM weighing_operations
       WHERE unit_id = ?
-        AND status = 'closed_local'
+        AND status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
         AND date(created_at) >= date(?)
         AND date(created_at) <= date(?)
       GROUP BY day
@@ -514,7 +518,7 @@ export class ReportService {
         mix.cancelled.weightKg += row.total_weight;
         continue;
       }
-      if (row.status !== "closed_local") continue;
+      if (!isClosedOperationStatus(row.status)) continue;
       const target = row.operation_type === "internal" ? mix.internal : mix.invoice;
       target.count += row.total_operations;
       target.weightKg += row.total_weight;
@@ -890,7 +894,7 @@ tfoot td{font-weight:bold;background:#eef2ff;border-top:2px solid var(--brand)}
       LEFT JOIN customers c ON c.id = wo.customer_id
       LEFT JOIN products p ON p.id = wo.product_id
       WHERE wo.unit_id = ?
-        AND wo.status = 'closed_local'
+        AND wo.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
         AND date(wo.created_at) >= date(?)
         AND date(wo.created_at) <= date(?)
       ORDER BY wo.created_at ASC

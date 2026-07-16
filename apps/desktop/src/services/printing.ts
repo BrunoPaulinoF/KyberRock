@@ -11,6 +11,7 @@ import {
 import type { DesktopDatabase } from "../database/sqlite.js";
 import type { LocalDesktopIdentity } from "./bootstrap.js";
 import { enqueueSyncJob } from "./sync-queue.js";
+import { isClosedOperationStatus } from "./weighing-operations.js";
 
 export type PrintReceiptStatus = "printed" | "failed";
 export type PrinterType = "windows" | "network";
@@ -260,7 +261,7 @@ export async function printWeighingReceipt(
 ): Promise<PrintReceiptSummary> {
   const operation = getOperationForReceipt(database, input.operationId);
 
-  if (operation.status !== "closed_local") {
+  if (!isClosedOperationStatus(operation.status)) {
     throw new Error("Only closed operations can be printed.");
   }
 

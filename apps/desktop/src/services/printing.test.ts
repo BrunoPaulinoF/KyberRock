@@ -164,6 +164,34 @@ describe("printing", () => {
     }
   });
 
+  it("reprints a receipt for an operation already synced to the cloud/OMIE", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createIdentity(database);
+      configureReceiptPrintProfile(database, { identity, windowsPrinterName: "TERMICA-80" });
+      const operation = createClosedOperation(database, identity);
+
+      // A sincronizacao promove a operacao de closed_local para synced. A reimpressao
+      // da nota pela aba Concluidas ainda precisa funcionar nesse estado.
+      database
+        .prepare("UPDATE weighing_operations SET status = 'synced' WHERE id = ?")
+        .run(operation.id);
+
+      const receipt = await printWeighingReceipt(
+        database,
+        { operationId: operation.id, identity },
+        printer
+      );
+
+      expect(receipt.status).toBe("printed");
+      expect(printer.calls.length).toBeGreaterThan(0);
+    } finally {
+      database.close();
+    }
+  });
+
   it("prints a test receipt without creating a real operation", async () => {
     const database = createDatabase();
     const printer = createFakePrinter();

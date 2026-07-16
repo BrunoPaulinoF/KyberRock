@@ -201,6 +201,28 @@ describe("ReportService", () => {
     }
   });
 
+  it("keeps counting operations after they sync (closed_local -> synced/pending)", () => {
+    const db = createDatabase();
+
+    try {
+      setupBaseData(db);
+      insertOperations(db);
+      // Depois de fechar, a sincronizacao muda o status. As operacoes continuam concluidas
+      // e nao podem desaparecer dos relatorios.
+      db.prepare("UPDATE weighing_operations SET status = 'synced' WHERE id = 'op-1'").run();
+      db.prepare("UPDATE weighing_operations SET status = 'pending_omie' WHERE id = 'op-2'").run();
+
+      const service = new ReportService(db);
+      const report = service.getDailyReport("2026-06-06", "unit-1");
+
+      expect(report.totalOperations).toBe(2);
+      expect(report.totalNetWeightKg).toBe(25000);
+      expect(report.totalCents).toBe(1_620_000);
+    } finally {
+      db.close();
+    }
+  });
+
   it("generates monthly report", () => {
     const db = createDatabase();
 
