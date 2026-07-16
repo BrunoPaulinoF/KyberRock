@@ -145,7 +145,6 @@ import {
   normalizeUazapiBaseUrl,
   readReportChannelSettings,
   uazapiConnectInstance,
-  uazapiCreateInstance,
   uazapiDisconnectInstance,
   uazapiInstanceStatus,
   writeReportChannelSettings,
@@ -1587,41 +1586,19 @@ export class DesktopRuntime {
     });
   }
 
-  // Cria a instancia UAZAPI (na primeira vez) e inicia a conexao; o QR code
-  // volta no estado retornado e rotaciona via whatsappStatus().
+  // Inicia a conexao da instancia UAZAPI ja provisionada (o token da instancia
+  // e criado pelos admins direto na UAZAPI/loader-web e colado na tela); o QR
+  // code volta no estado retornado e rotaciona via whatsappStatus().
   async whatsappConnect(): Promise<UazapiInstanceState> {
     const settings = readReportChannelSettings(this.database);
     if (!settings.uazapiBaseUrl) {
       throw new Error("Informe o servidor UAZAPI (URL) e salve a configuracao antes de conectar.");
     }
-    let instanceToken = settings.uazapiInstanceToken;
+    const instanceToken = settings.uazapiInstanceToken;
     if (!instanceToken) {
-      if (!settings.uazapiAdminToken) {
-        throw new Error("Informe a chave de API (admin token) do UAZAPI e salve antes de conectar.");
-      }
-      let instanceName = settings.uazapiInstanceName;
-      if (!instanceName) {
-        try {
-          instanceName = `kyberrock-${this.ensureIdentity().companyId.slice(0, 8)}`;
-        } catch {
-          instanceName = "kyberrock-desktop";
-        }
-      }
-      const created = await uazapiCreateInstance({
-        baseUrl: settings.uazapiBaseUrl,
-        adminToken: settings.uazapiAdminToken,
-        name: instanceName
-      });
-      if (!created.instanceToken) {
-        throw new Error("UAZAPI nao retornou o token da instancia criada.");
-      }
-      instanceToken = created.instanceToken;
-      writeReportChannelSettings(this.database, {
-        uazapiInstanceToken: instanceToken,
-        uazapiInstanceName: instanceName,
-        uazapiStatus: created.status,
-        cloudPushPending: true
-      });
+      throw new Error(
+        "Informe o token da instancia UAZAPI e salve a configuracao antes de conectar."
+      );
     }
     await uazapiConnectInstance({ baseUrl: settings.uazapiBaseUrl, instanceToken });
     // O QR mais recente vem no status (o connect pode responder antes de gera-lo).

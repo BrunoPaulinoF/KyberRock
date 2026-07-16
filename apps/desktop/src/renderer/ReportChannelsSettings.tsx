@@ -17,7 +17,8 @@ interface FormState {
   smtpPassword: string;
   smtpSender: string;
   uazapiBaseUrl: string;
-  uazapiAdminToken: string;
+  uazapiInstanceName: string;
+  uazapiInstanceToken: string;
 }
 
 const emptyForm: FormState = {
@@ -27,7 +28,8 @@ const emptyForm: FormState = {
   smtpPassword: "",
   smtpSender: "",
   uazapiBaseUrl: "",
-  uazapiAdminToken: ""
+  uazapiInstanceName: "",
+  uazapiInstanceToken: ""
 };
 
 const styles = {
@@ -164,6 +166,43 @@ const styles = {
     fontSize: "13px",
     margin: 0
   },
+  modalOverlay: {
+    position: "fixed" as const,
+    inset: 0,
+    background: "rgba(15, 23, 42, 0.55)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "20px",
+    zIndex: 1000
+  },
+  modalCard: {
+    background: "var(--kr-surface)",
+    border: "1px solid var(--kr-border)",
+    borderRadius: "16px",
+    boxShadow: "0 20px 60px rgba(0, 0, 0, 0.35)",
+    padding: "22px",
+    width: "min(420px, 100%)",
+    display: "grid",
+    gap: "12px",
+    textAlign: "center" as const
+  },
+  modalIcon: {
+    fontSize: "40px",
+    lineHeight: 1
+  },
+  modalTitle: {
+    margin: 0,
+    fontSize: "16px",
+    fontWeight: 800,
+    color: "var(--kr-text-strong)"
+  },
+  modalMessage: {
+    margin: 0,
+    fontSize: "14px",
+    color: "var(--kr-muted)",
+    wordBreak: "break-word" as const
+  },
   helperText: {
     color: "var(--kr-muted)",
     fontSize: "12px",
@@ -241,7 +280,8 @@ export function ReportChannelsSettings({
       smtpPassword: next.smtpPassword ?? "",
       smtpSender: next.smtpSender ?? "",
       uazapiBaseUrl: next.uazapiBaseUrl ?? "",
-      uazapiAdminToken: next.uazapiAdminToken ?? ""
+      uazapiInstanceName: next.uazapiInstanceName ?? "",
+      uazapiInstanceToken: next.uazapiInstanceToken ?? ""
     });
     setWarning(
       next.cloudPushError
@@ -328,7 +368,8 @@ export function ReportChannelsSettings({
         smtpPassword: form.smtpPassword,
         smtpSender: form.smtpSender.trim(),
         uazapiBaseUrl: form.uazapiBaseUrl.trim(),
-        uazapiAdminToken: form.uazapiAdminToken.trim()
+        uazapiInstanceName: form.uazapiInstanceName.trim(),
+        uazapiInstanceToken: form.uazapiInstanceToken.trim()
       });
       applySettings(saved);
       setSuccess("Configuracao salva.");
@@ -369,7 +410,8 @@ export function ReportChannelsSettings({
         smtpPassword: form.smtpPassword,
         smtpSender: form.smtpSender.trim(),
         uazapiBaseUrl: form.uazapiBaseUrl.trim(),
-        uazapiAdminToken: form.uazapiAdminToken.trim()
+        uazapiInstanceName: form.uazapiInstanceName.trim(),
+        uazapiInstanceToken: form.uazapiInstanceToken.trim()
       });
       applySettings(saved);
       return saved;
@@ -393,8 +435,6 @@ export function ReportChannelsSettings({
       applySettings(stored);
       if (state.status === "connected") {
         setSuccess("WhatsApp ja esta conectado.");
-      } else if (state.qrcode || state.paircode) {
-        setSuccess("Escaneie o QR code no WhatsApp do celular (Aparelhos conectados).");
       }
     } catch (connectError) {
       setError(
@@ -456,8 +496,6 @@ export function ReportChannelsSettings({
 
       {expanded ? (
         <div style={styles.body}>
-          {error ? <p style={styles.error}>{error}</p> : null}
-          {success ? <p style={styles.success}>{success}</p> : null}
           {warning ? <p style={styles.warning}>{warning}</p> : null}
 
           <section style={styles.section}>
@@ -536,29 +574,28 @@ export function ReportChannelsSettings({
               />
             </label>
             <label style={styles.fieldLabel}>
-              Chave de API (admin token)
+              Nome da instancia
               <input
-                type="password"
-                value={form.uazapiAdminToken}
-                onChange={(event) => setForm({ ...form, uazapiAdminToken: event.target.value })}
-                placeholder="Token de administrador do UAZAPI"
+                value={form.uazapiInstanceName}
+                onChange={(event) => setForm({ ...form, uazapiInstanceName: event.target.value })}
+                placeholder="Ex.: pedreira-central"
                 style={styles.input}
               />
             </label>
-            {settings?.uazapiInstanceName ? (
-              <p style={styles.helperText}>
-                Instancia: {settings.uazapiInstanceName}
-                {whatsappState?.profileName || settings.uazapiProfileName
-                  ? ` — perfil ${whatsappState?.profileName ?? settings.uazapiProfileName}`
-                  : ""}
-                {whatsappState?.owner ? ` (${whatsappState.owner})` : ""}
-              </p>
-            ) : (
-              <p style={styles.helperText}>
-                A instancia sera criada automaticamente ao conectar — nao e preciso criar nada no
-                painel do UAZAPI (webhook nao e necessario).
-              </p>
-            )}
+            <label style={styles.fieldLabel}>
+              Token da instancia
+              <input
+                type="password"
+                value={form.uazapiInstanceToken}
+                onChange={(event) => setForm({ ...form, uazapiInstanceToken: event.target.value })}
+                placeholder="Token da instancia criada na UAZAPI"
+                style={styles.input}
+              />
+            </label>
+            <p style={styles.helperText}>
+              A instancia e criada pela administracao direto na UAZAPI (uma por pedreira). Cole aqui
+              o token da instancia e clique em conectar para gerar o QR code.
+            </p>
 
             {showQr ? (
               <div style={styles.qrBox}>
@@ -630,6 +667,38 @@ export function ReportChannelsSettings({
             >
               Salvar configuracao
             </button>
+          </div>
+        </div>
+      ) : null}
+
+      {error || success ? (
+        <div
+          style={styles.modalOverlay}
+          role="dialog"
+          aria-modal="true"
+          onClick={() => {
+            setError(null);
+            setSuccess(null);
+          }}
+        >
+          <div style={styles.modalCard} onClick={(event) => event.stopPropagation()}>
+            <div style={styles.modalIcon}>{error ? "❌" : "✅"}</div>
+            <h4 style={styles.modalTitle}>
+              {error ? "Nao foi possivel conectar" : "Tudo certo!"}
+            </h4>
+            <p style={styles.modalMessage}>{error ?? success}</p>
+            <div style={{ display: "flex", justifyContent: "center" }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setError(null);
+                  setSuccess(null);
+                }}
+                style={styles.primaryButton}
+              >
+                Fechar
+              </button>
+            </div>
           </div>
         </div>
       ) : null}
