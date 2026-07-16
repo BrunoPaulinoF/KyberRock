@@ -193,6 +193,21 @@ type CreateOrderPayload = {
    * Ausente -> fallback: "0" quando ha valor de frete, senao "9".
    */
   freightModalidade?: string;
+  /**
+   * Dados de transporte da operacao: placa/transportadora/pesos vao no bloco
+   * `frete` do pedido; o motorista vai em dados_adicionais_nf (a NF-e nao tem
+   * campo proprio para motorista no pedido de venda).
+   */
+  transport?: {
+    plate?: string | null;
+    driverName?: string | null;
+    /** Codigo OMIE (codigo_cliente_omie) da transportadora vinculada ao veiculo. */
+    carrierOmieId?: number | null;
+    /** Peso liquido da carga em kg (granel: peso_bruto = peso_liquido). */
+    cargoWeightKg?: number | null;
+    /** Transporte proprio (modFrete 3/4) -> veiculo_proprio "S", sem transportadora. */
+    ownVehicle?: boolean;
+  } | null;
   issueDate: string;
   createdAt?: string;
   /**
@@ -1708,10 +1723,17 @@ async function createOmieOrder(
             }
           }
         ],
-        frete: buildOmieFreight(payload.freightTotalCents, payload.freightModalidade),
+        frete: buildOmieFreight(
+          payload.freightTotalCents,
+          payload.freightModalidade,
+          payload.transport
+        ),
         informacoes_adicionais: {
           codigo_categoria: "1.01.01",
-          ...(accountCode !== null ? { codigo_conta_corrente: accountCode } : {})
+          ...(accountCode !== null ? { codigo_conta_corrente: accountCode } : {}),
+          ...(buildTransportAdditionalData(payload.transport) !== null
+            ? { dados_adicionais_nf: buildTransportAdditionalData(payload.transport) }
+            : {})
         },
         // Parcelamento informado (codigo_parcela "999"): leva os vencimentos e o
         // meio de pagamento (tPag da NF-e) por parcela.
@@ -1950,18 +1972,60 @@ function normalizeFreightModalidade(value: string | null | undefined): string | 
 
 function buildOmieFreight(
   freightTotalCents: number | null | undefined,
-  freightModalidade?: string | null
+  freightModalidade?: string | null,
+  transport?: CreateOrderPayload["transport"]
 ): Record<string, unknown> {
   const hasValue = typeof freightTotalCents === "number" && freightTotalCents > 0;
   // Modalidade escolhida na operacao (CIF/FOB/terceiros/proprio/sem frete). Sem valor
   // valido, mantem o comportamento legado: "0" (CIF) quando ha valor, senao "9".
   const modalidade = normalizeFreightModalidade(freightModalidade) ?? (hasValue ? "0" : "9");
+
+  // Dados de transporte da pesagem: placa, transportadora (codigo OMIE) e pesos da
+  // carga. Granel sem embalagem: peso_bruto = peso_liquido = peso liquido pesado.
+  const plate = transport?.plate?.trim().toUpperCase().replace(/[^A-Z0-9]/g, "") || null;
+  const carrierOmieId =
+    typeof transport?.carrierOmieId === "number" && transport.carrierOmieId > 0
+      ? transport.carrierOmieId
+      : null;
+  const cargoWeightKg =
+    typeof transport?.cargoWeightKg === "number" && transport.cargoWeightKg > 0
+      ? transport.cargoWeightKg
+      : null;
+  const ownVehicle = transport?.ownVehicle === true;
+
   // O OMIE exige a tag valor_frete sempre que o bloco frete e enviado (HTTP 500
   // "tag [valor] obrigatorio" quando ausente). Sem valor de frete, enviamos 0.
   return {
     modalidade,
-    valor_frete: hasValue ? Math.round(freightTotalCents as number) / 100 : 0
+    valor_frete: hasValue ? Math.round(freightTotalCents as number) / 100 : 0,
+    ...(plate !== null ? { placa: plate } : {}),
+    // Transporte proprio (3/4) nao leva transportadora — o emitente transporta.
+    ...(carrierOmieId !== null && !ownVehicle ? { codigo_transportadora: carrierOmieId } : {}),
+    ...(ownVehicle ? { veiculo_proprio: "S" } : {}),
+    ...(cargoWeightKg !== null
+      ? {
+          peso_bruto: cargoWeightKg,
+          peso_liquido: cargoWeightKg,
+          quantidade_volumes: 1
+        }
+      : {})
   };
+}
+
+/**
+ * Texto de transporte para os dados adicionais da NF-e (o motorista nao tem campo
+ * proprio no pedido de venda do OMIE). Retorna null quando nao ha o que registrar.
+ */
+function buildTransportAdditionalData(
+  transport?: CreateOrderPayload["transport"]
+): string | null {
+  if (!transport) return null;
+  const parts: string[] = [];
+  const driverName = transport.driverName?.trim();
+  const plate = transport.plate?.trim().toUpperCase();
+  if (driverName) parts.push(`Motorista: ${driverName}`);
+  if (plate) parts.push(`Placa: ${plate}`);
+  return parts.length > 0 ? parts.join(" - ") : null;
 }
 
 async function createAndBillOmieOrder(

@@ -629,6 +629,130 @@ Deno.test("create_order envia modalidade sem frete (9) sem valor", async () => {
   assertEquals(frete.valor_frete, 0);
 });
 
+Deno.test("create_order envia os dados de transporte no frete e o motorista na NF", async () => {
+  const deviceToken = "token-order-transport";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-order-transport": {
+        id: "device-order-transport",
+        company_id: "company-order-transport",
+        unit_id: "unit-order-transport",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-order-transport": {
+        id: "company-order-transport",
+        is_active: true,
+        omie_app_key: "order-transport",
+        omie_app_secret: "secret-order-transport"
+      }
+    }
+  });
+  const omieQueue = orderQueueStub();
+
+  await postOmieSync(
+    {
+      deviceId: "device-order-transport",
+      deviceToken,
+      action: "create_order",
+      payload: {
+        operationType: "invoice",
+        customerOmieId: 100,
+        productOmieId: 200,
+        quantity: 15,
+        unitPrice: 50,
+        freightTotalCents: 20000,
+        freightModalidade: "2",
+        transport: {
+          plate: "abc-1d23",
+          driverName: "Joao Motorista",
+          carrierOmieId: 987654,
+          cargoWeightKg: 15000,
+          ownVehicle: false
+        },
+        issueDate: "2026-07-16",
+        idempotencyKey: "kyberrock:unit:op-transport:create_sales_order"
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  const body = getParam(findRequest(omieQueue, "IncluirPedido"));
+  const frete = body.frete as Record<string, unknown>;
+  assertEquals(frete.modalidade, "2");
+  assertEquals(frete.valor_frete, 200);
+  // Placa normalizada (maiuscula, sem separadores) e transportadora pelo codigo OMIE.
+  assertEquals(frete.placa, "ABC1D23");
+  assertEquals(frete.codigo_transportadora, 987654);
+  // Granel: peso bruto = liquido = peso pesado, em 1 volume.
+  assertEquals(frete.peso_bruto, 15000);
+  assertEquals(frete.peso_liquido, 15000);
+  assertEquals(frete.quantidade_volumes, 1);
+  // Nao e transporte proprio: veiculo_proprio ausente.
+  assertEquals("veiculo_proprio" in frete, false);
+
+  const infos = body.informacoes_adicionais as Record<string, unknown>;
+  assertEquals(infos.dados_adicionais_nf, "Motorista: Joao Motorista - Placa: ABC-1D23");
+});
+
+Deno.test("create_order com transporte proprio marca veiculo_proprio e omite transportadora", async () => {
+  const deviceToken = "token-order-ownvehicle";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-order-ownvehicle": {
+        id: "device-order-ownvehicle",
+        company_id: "company-order-ownvehicle",
+        unit_id: "unit-order-ownvehicle",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-order-ownvehicle": {
+        id: "company-order-ownvehicle",
+        is_active: true,
+        omie_app_key: "order-ownvehicle",
+        omie_app_secret: "secret-order-ownvehicle"
+      }
+    }
+  });
+  const omieQueue = orderQueueStub();
+
+  await postOmieSync(
+    {
+      deviceId: "device-order-ownvehicle",
+      deviceToken,
+      action: "create_order",
+      payload: {
+        operationType: "invoice",
+        customerOmieId: 100,
+        productOmieId: 200,
+        quantity: 15,
+        unitPrice: 50,
+        freightModalidade: "3",
+        transport: {
+          plate: "XYZ4E56",
+          carrierOmieId: 987654,
+          cargoWeightKg: 12000,
+          ownVehicle: true
+        },
+        issueDate: "2026-07-16",
+        idempotencyKey: "kyberrock:unit:op-ownvehicle:create_sales_order"
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  const frete = getParam(findRequest(omieQueue, "IncluirPedido")).frete as Record<string, unknown>;
+  assertEquals(frete.veiculo_proprio, "S");
+  assertEquals("codigo_transportadora" in frete, false);
+  assertEquals(frete.placa, "XYZ4E56");
+});
+
 Deno.test("create_order cadastra o cliente no OMIE na hora quando ele nao tem codigo", async () => {
   const deviceToken = "token-order-newcustomer";
   const token_hash = await sha256Hex(deviceToken);

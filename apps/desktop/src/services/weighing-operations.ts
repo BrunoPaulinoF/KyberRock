@@ -939,6 +939,22 @@ export interface OmieOrderCustomerCadastro {
   state?: string;
 }
 
+/**
+ * Dados de transporte da operacao enviados ao OMIE no bloco `frete` do pedido de
+ * venda (placa, transportadora, pesos da carga) e nos dados adicionais da NF
+ * (motorista). A transportadora vem do vinculo veiculo <-> transportadora
+ * (vehicle_carriers) e so e enviada quando ja tem codigo OMIE.
+ */
+export interface OmieOrderTransport {
+  plate: string | null;
+  driverName: string | null;
+  carrierOmieId: number | null;
+  /** Peso liquido da carga em kg (vai em peso_bruto/peso_liquido do frete — granel, sem embalagem). */
+  cargoWeightKg: number | null;
+  /** true quando a modalidade e transporte proprio (modFrete 3/4) — veiculo_proprio "S". */
+  ownVehicle: boolean;
+}
+
 export interface OmieBillingJobPayload {
   operationId: string;
   operationType: OperationType;
@@ -964,6 +980,8 @@ export interface OmieBillingJobPayload {
   paymentMethodOmieCode: string | null;
   /** nCodCC (OMIE) da conta vinculada ao meio escolhido; vai em codigo_conta_corrente/nCodCC. */
   accountOmieCode: string | null;
+  /** Placa, motorista, transportadora e pesos da carga para o frete do pedido. */
+  transport: OmieOrderTransport | null;
 }
 
 export interface BuiltOmieBillingJob {
@@ -1045,13 +1063,14 @@ export function buildOmieBillingJob(
 ): BuiltOmieBillingJob | null {
   const row = database
     .prepare(
-      "SELECT unit_id, customer_id, product_id, payment_term_id, payment_method_id, freight_type, exit_weight_captured_at FROM weighing_operations WHERE id = ?"
+      "SELECT unit_id, customer_id, product_id, vehicle_id, payment_term_id, payment_method_id, freight_type, exit_weight_captured_at FROM weighing_operations WHERE id = ?"
     )
     .get(operationId) as
     | {
         unit_id: string;
         customer_id: string | null;
         product_id: string | null;
+        vehicle_id: string | null;
         payment_term_id: string | null;
         payment_method_id: string | null;
         freight_type: string | null;
@@ -1135,6 +1154,32 @@ export function buildOmieBillingJob(
     : undefined;
 
   const operation = getWeighingOperation(database, operationId);
+
+  // Transportadora vinculada ao veiculo da operacao (vinculo mais recente ativo),
+  // apenas quando ja cadastrada no OMIE (codigo > 0).
+  const carrierOmieId = row.vehicle_id
+    ? ((
+        database
+          .prepare(
+            `SELECT c.omie_customer_id AS omie_id
+             FROM vehicle_carriers vc
+             JOIN carriers c ON c.id = vc.carrier_id AND c.deleted_at IS NULL
+             WHERE vc.vehicle_id = ? AND vc.deleted_at IS NULL AND vc.is_active = 1
+             ORDER BY vc.created_at DESC
+             LIMIT 1`
+          )
+          .get(row.vehicle_id) as { omie_id: number | null } | undefined
+      )?.omie_id ?? null)
+    : null;
+  const freightModalidade = resolveFreightModalidade(row.freight_type, operation.freightTotalCents);
+  const transport: OmieOrderTransport = {
+    plate: operation.plate?.trim() || null,
+    driverName: operation.driverName?.trim() || null,
+    carrierOmieId: carrierOmieId && carrierOmieId > 0 ? carrierOmieId : null,
+    cargoWeightKg: operation.netWeightKg,
+    ownVehicle: freightModalidade === "3" || freightModalidade === "4"
+  };
+
   // O app so CRIA o pedido/OS no OMIE; o faturamento (NF-e/NFS-e) e feito no proprio
   // OMIE (pedido entra na etapa "Faturar"). O botao manual de faturar promove o job
   // para create_and_bill_order em processFiscalBillingNow.
@@ -1157,13 +1202,14 @@ export function buildOmieBillingJob(
       quantity: (operation.netWeightKg ?? 0) / 1000,
       unitPrice: operation.unitPriceCents ? operation.unitPriceCents / 100 : 0,
       freightTotalCents: operation.freightTotalCents,
-      freightModalidade: resolveFreightModalidade(row.freight_type, operation.freightTotalCents),
+      freightModalidade,
       issueDate: (row.exit_weight_captured_at ?? "").slice(0, 10),
       paymentTermOmieCode: omieParcela?.code ?? null,
       paymentTermInstallmentCount: omieParcela?.installment_count ?? null,
       paymentTermInstallmentDays: resolveInstallmentDays(omieParcela),
       paymentMethodOmieCode: omiePayment?.method_code ?? null,
-      accountOmieCode: omiePayment?.account_code ?? null
+      accountOmieCode: omiePayment?.account_code ?? null,
+      transport
     }
   };
 }
