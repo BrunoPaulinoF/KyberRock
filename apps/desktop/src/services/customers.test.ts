@@ -83,6 +83,27 @@ describe("customers", () => {
     }
   });
 
+  it("clears the credit limit when creditLimitCents is null and keeps it when undefined", () => {
+    const database = createDatabase();
+
+    try {
+      const customer = createCustomer(database, {
+        companyId: "company-1",
+        tradeName: "Cliente Limite",
+        legalName: "Cliente Limite LTDA",
+        creditLimitCents: 150000
+      });
+
+      const untouched = updateCustomer(database, customer.id, { observations: "sem mexer" });
+      expect(untouched.credit_limit_cents).toBe(150000);
+
+      const cleared = updateCustomer(database, customer.id, { creditLimitCents: null });
+      expect(cleared.credit_limit_cents).toBeNull();
+    } finally {
+      database.close();
+    }
+  });
+
   it("updates billing blocked to false", () => {
     const database = createDatabase();
 

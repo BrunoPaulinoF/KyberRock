@@ -45,7 +45,8 @@ export interface UpdateCustomerInput {
   document?: string;
   phone?: string;
   email?: string;
-  creditLimitCents?: number;
+  /** null limpa o limite de credito; undefined mantem o valor atual. */
+  creditLimitCents?: number | null;
   creditMode?: "normal" | "prepaid";
   omieBillingBlocked?: boolean;
   observations?: string;

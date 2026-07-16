@@ -258,6 +258,8 @@ type PushCustomerPayload = {
   city?: string;
   state?: string;
   defaultPaymentTermId?: string;
+  /** Bloqueia/libera o faturamento do cliente no OMIE (bloquear_faturamento S/N). */
+  billingBlocked?: boolean;
   tags?: string[];
 };
 

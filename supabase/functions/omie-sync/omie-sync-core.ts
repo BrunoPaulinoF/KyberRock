@@ -44,6 +44,8 @@ export type PushCustomerPayload = {
   city?: string;
   state?: string;
   defaultPaymentTermId?: string;
+  /** Bloqueia/libera o faturamento do cliente no OMIE (bloquear_faturamento S/N). */
+  billingBlocked?: boolean;
   tags?: string[];
 };
 
@@ -213,6 +215,10 @@ export function buildCustomerPayload(payload: PushCustomerPayload): Record<strin
     cidade: payload.city,
     estado: payload.state,
     cep: payload.zipcode,
+    // Campo omitido quando o chamador nao informa (ex.: transportadoras), para
+    // nao mexer no bloqueio configurado direto no OMIE.
+    bloquear_faturamento:
+      payload.billingBlocked === undefined ? undefined : payload.billingBlocked ? "S" : "N",
     tags: payload.tags?.map((tag) => ({ tag }))
   };
 }

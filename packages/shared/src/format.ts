@@ -108,12 +108,14 @@ export function normalizeMoneyInput(value: string): string {
   } else if (hasComma) {
     result = cleaned.replace(",", ".");
   } else if (hasDot) {
-    const [, fractional = ""] = cleaned.split(".");
-    if (fractional.length === 0 || fractional.length === 3) {
-      result = cleaned.replace(/\./g, "");
-    } else {
-      result = cleaned;
-    }
+    // Ponto so e decimal quando ha UM ponto com 1-2 digitos depois ("1.5", "1.50").
+    // Qualquer outro arranjo ("1.000", "1.000.000", "1.0005") e separador de milhar:
+    // continuar digitando depois de um valor formatado nao pode deslocar a casa decimal.
+    const groups = cleaned.split(".");
+    const fractional = groups[groups.length - 1] ?? "";
+    const isDecimal =
+      groups.length === 2 && fractional.length >= 1 && fractional.length <= 2;
+    result = isDecimal ? cleaned : cleaned.replace(/\./g, "");
   } else {
     result = cleaned;
   }

@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 
 import {
+  formatMoneyInput,
   isValidDocument,
   isValidEmail,
   normalizeDocument,
@@ -145,7 +146,9 @@ const styles = {
   compactScrollList: {
     display: "grid",
     gap: "4px",
-    maxHeight: "160px",
+    // O modal do cliente e alto e sobrava espaco: a lista de transportadoras
+    // ocupa a area disponivel para mostrar mais itens de uma vez.
+    maxHeight: "min(52vh, 560px)",
     overflow: "auto" as const,
     paddingRight: "4px"
   },
@@ -282,6 +285,7 @@ export function CustomersView({
   const [flash, showFlash] = useFlash();
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [togglingBlockId, setTogglingBlockId] = useState<string | null>(null);
 
   const [carriers, setCarriers] = useState<CarrierOption[]>([]);
   const [paymentTerms, setPaymentTerms] = useState<PaymentTermOption[]>([]);
@@ -466,7 +470,7 @@ export function CustomersView({
       phone: customer.phone ?? "",
       email: customer.email ?? "",
       creditLimitReais: customer.creditLimitCents
-        ? (customer.creditLimitCents / 100).toFixed(2).replace(".", ",")
+        ? formatMoneyInput(String(customer.creditLimitCents / 100))
         : "",
       creditMode: customer.creditMode,
       omieBillingBlocked: customer.omieBillingBlocked,
@@ -629,9 +633,14 @@ export function CustomersView({
       setFormError("Email invalido.");
       return;
     }
-    const creditLimitCents = form.creditLimitReais.trim()
-      ? (parseMoneyInputToCents(form.creditLimitReais) ?? undefined)
+    const creditLimitText = form.creditLimitReais.trim();
+    const creditLimitCents = creditLimitText
+      ? (parseMoneyInputToCents(creditLimitText) ?? undefined)
       : undefined;
+    if (creditLimitText && creditLimitCents === undefined) {
+      setFormError("Limite de credito invalido. Use virgula para os centavos (ex: 1.500,00).");
+      return;
+    }
 
     const creditPeriodicity = form.creditAccountEnabled ? form.creditPeriodicity : "monthly";
     let creditClosingDay: number | null = null;
@@ -719,7 +728,8 @@ export function CustomersView({
           document: normalizedDocument || undefined,
           phone: normalizedPhone || undefined,
           email: normalizedEmail || undefined,
-          creditLimitCents: creditLimitCents ?? undefined,
+          // Campo vazio limpa o limite (null); preenchido grava o valor em centavos.
+          creditLimitCents: creditLimitText ? creditLimitCents : null,
           omieBillingBlocked: form.omieBillingBlocked,
           ...localPatch,
           zipcode: normalizedZipcode || null,
@@ -840,6 +850,37 @@ export function CustomersView({
     if (!desktopApi || !editingId) return;
     setPricePasswordError(null);
     setPendingSpecialPriceAction({ type: "remove", customerId: editingId, productId });
+  }
+
+  // Alterna "Bloqueado para faturamento" direto da lista de clientes. Cliente
+  // origem OMIE precisa do override (vira 'hybrid') para o proximo sync empurrar
+  // o bloqueio/liberacao ao OMIE.
+  async function handleToggleBillingBlocked(customer: CustomerCacheEntry): Promise<void> {
+    if (!desktopApi || togglingBlockId) return;
+    setTogglingBlockId(customer.id);
+    const nextBlocked = !customer.omieBillingBlocked;
+    try {
+      const patch = { omieBillingBlocked: nextBlocked };
+      if (customer.source === "omie") {
+        await desktopApi.customersUpdate(customer.id, patch, { overrideOmieFields: true });
+      } else {
+        await desktopApi.customersUpdate(customer.id, patch);
+      }
+      await loadCustomers();
+      showFlash(
+        "success",
+        nextBlocked
+          ? "Cliente bloqueado para faturamento. Sera enviado ao OMIE no proximo sync."
+          : "Faturamento liberado para o cliente. Sera enviado ao OMIE no proximo sync."
+      );
+    } catch (err) {
+      showFlash(
+        "error",
+        err instanceof Error ? err.message : "Erro ao alterar o bloqueio de faturamento."
+      );
+    } finally {
+      setTogglingBlockId(null);
+    }
   }
 
   async function handleConfirmDelete(): Promise<void> {
@@ -1221,7 +1262,7 @@ export function CustomersView({
                   checked={form.creditAccountEnabled}
                   onChange={(e) => setForm({ ...form, creditAccountEnabled: e.target.checked })}
                 />
-                Habilitar credito do cliente (fiado)
+                Habilitar credito do cliente
               </label>
               {form.creditAccountEnabled ? (
                 <div style={{ display: "grid", gap: "8px" }}>
@@ -1366,15 +1407,6 @@ export function CustomersView({
                   onChange={(e) => setForm({ ...form, nfRequired: e.target.checked })}
                 />
                 Exige nota fiscal
-              </label>
-              <label style={styles.checkbox}>
-                <input
-                  type="checkbox"
-                  checked={form.omieBillingBlocked}
-                  onChange={(e) => setForm({ ...form, omieBillingBlocked: e.target.checked })}
-                  disabled={false}
-                />
-                Bloqueado para faturamento
               </label>
               <Field label="Observacoes internas" hint="Visivel apenas para a operacao">
                 <textarea
@@ -1714,11 +1746,40 @@ export function CustomersView({
           {
             key: "actions",
             header: "Acoes",
-            width: "170px",
+            width: "320px",
             align: "right",
             render: (customer) => (
               <>
                 <EditRowButton onClick={() => openEditForm(customer)} />
+                <button
+                  type="button"
+                  onClick={() => void handleToggleBillingBlocked(customer)}
+                  disabled={togglingBlockId !== null}
+                  title={
+                    customer.omieBillingBlocked
+                      ? "Liberar o faturamento deste cliente (enviado ao OMIE no proximo sync)"
+                      : "Bloquear o faturamento deste cliente (enviado ao OMIE no proximo sync)"
+                  }
+                  style={{
+                    border: customer.omieBillingBlocked
+                      ? "1px solid #bbf7d0"
+                      : "1px solid #fde68a",
+                    background: "var(--kr-surface)",
+                    color: customer.omieBillingBlocked ? "#15803d" : "#b45309",
+                    borderRadius: "10px",
+                    padding: "6px 10px",
+                    cursor: togglingBlockId ? "wait" : "pointer",
+                    fontWeight: 700,
+                    fontSize: "12px",
+                    opacity: togglingBlockId === customer.id ? 0.6 : 1
+                  }}
+                >
+                  {togglingBlockId === customer.id
+                    ? "Salvando..."
+                    : customer.omieBillingBlocked
+                      ? "Liberar faturamento"
+                      : "Bloquear faturamento"}
+                </button>
                 <DeleteRowButton onClick={() => setPendingDeleteId(customer.id)} />
               </>
             )
@@ -1733,7 +1794,7 @@ export function CustomersView({
             ? "Ajuste o termo de busca."
             : "Sincronize com o OMIE ou cadastre o primeiro cliente pelo botao 'Novo cliente'."
         }
-        minWidth="820px"
+        minWidth="980px"
         maxHeight="calc(100vh - 380px)"
         footer={
           <div style={styles.pagination}>
