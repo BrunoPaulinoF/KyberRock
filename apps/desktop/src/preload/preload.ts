@@ -197,8 +197,9 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:list-drivers-by-carrier", carrierId),
   listIndependentDrivers: () => ipcRenderer.invoke("desktop:list-independent-drivers"),
   getOmieStatus: () => ipcRenderer.invoke("desktop:get-omie-status"),
-  scaleConnect: (config: unknown) => ipcRenderer.invoke("desktop:scale-connect", config),
+  scaleConnect: () => ipcRenderer.invoke("desktop:scale-connect"),
   scaleDisconnect: () => ipcRenderer.invoke("desktop:scale-disconnect"),
+  scaleListSerialPorts: () => ipcRenderer.invoke("desktop:scale-list-serial-ports"),
   scaleRead: () => ipcRenderer.invoke("desktop:scale-read"),
   scaleReadSampled: () => ipcRenderer.invoke("desktop:scale-read-sampled"),
   scaleCaptureStable: (options: unknown) =>

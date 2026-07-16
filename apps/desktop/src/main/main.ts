@@ -25,7 +25,6 @@ import type {
 import type { CreateVehicleInput, UpdateVehicleInput } from "../services/vehicles.js";
 import type { CreateDriverInput, UpdateDriverInput } from "../services/drivers.js";
 import type { CreateCarrierInput, UpdateCarrierInput } from "../services/carriers.js";
-import type { ToledoTcpConfig } from "@kyberrock/scale-adapters";
 import type { ScaleConfigurationInput } from "../services/scale-configs.js";
 import type { CreateQuotationInput } from "../services/quotations.js";
 import type {
@@ -1142,13 +1141,19 @@ function registerIpcHandlers(): void {
     return runtime.getOmieSyncStatus();
   });
 
-  ipcMain.handle("desktop:scale-connect", async (_event, config: ToledoTcpConfig) => {
+  ipcMain.handle("desktop:scale-connect", async () => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
-    await runtime.connectScale(config);
+    // Conecta usando a configuracao salva (TCP, serial COM/USB ou virtual)
+    await runtime.connectScale();
     // Register live stream forwarding to renderer
     runtime.onScaleReading((reading) => {
       mainWindow?.webContents.send("desktop:scale-reading", reading);
     });
+  });
+
+  ipcMain.handle("desktop:scale-list-serial-ports", async () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.listScaleSerialPorts();
   });
 
   ipcMain.handle("desktop:scale-disconnect", () => {
@@ -1206,13 +1211,7 @@ function registerIpcHandlers(): void {
     if (config.adapterType !== "virtual") {
       throw new Error("Modo virtual nao esta configurado. Altere em Configuracoes > Balanca.");
     }
-    await runtime.connectScale({
-      host: "127.0.0.1",
-      port: 0,
-      timeoutMs: 3000,
-      reconnectIntervalMs: 5000,
-      maxReconnectAttempts: 0
-    });
+    await runtime.connectScale();
     runtime.onScaleReading((reading) => {
       mainWindow?.webContents.send("desktop:scale-reading", reading);
     });

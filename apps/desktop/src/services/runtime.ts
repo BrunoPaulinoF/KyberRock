@@ -215,23 +215,43 @@ const OMIE_AUTOMATIC_PULL_MAX_ITERATIONS = 10;
 const OMIE_PULL_PAGE_DELAY_MS = 3_000;
 
 import {
+  createToledoSerialAdapter,
   createToledoTcpAdapter,
   createVirtualScaleAdapter,
+  type ToledoSerialAdapter,
   type ToledoTcpAdapter,
-  type ToledoTcpConfig,
   type ToledoTcpAdapterStatus,
   type ParsedToledoReading,
   type ScaleReading
 } from "@kyberrock/scale-adapters";
 import { discoverScale } from "./scale-discovery.js";
 import {
+  createDesktopSerialTransportFactory,
+  listSerialPorts,
+  type SerialPortInfo
+} from "./scale-serial.js";
+import {
   readScaleConfiguration,
   writeScaleConfiguration,
+  SCALE_CONNECTION_TUNING,
+  type ScaleAdapterType,
   type ScaleConnectionConfig,
   type ScaleConfiguration,
   type ScaleConfigurationInput
 } from "./scale-configs.js";
 import { ScaleCaptureService, type ScaleCaptureOperationType } from "./scale-capture.js";
+
+/**
+ * Interface comum dos adaptadores de balanca (TCP, serial e virtual): o que o
+ * runtime precisa depois que a conexao ja foi estabelecida.
+ */
+interface ActiveScaleAdapter {
+  disconnect(): void;
+  read(): Promise<ScaleReading>;
+  getStatus(): ToledoTcpAdapterStatus;
+  onReading(callback: (reading: ParsedToledoReading) => void): () => void;
+  removeAllListeners(): void;
+}
 import {
   applyDefaultNfeEmailToAllCustomers,
   createCustomer,
@@ -367,9 +387,12 @@ export class DesktopRuntime {
   };
   private cacheStore: CacheStore;
   private tcpScaleAdapter: ToledoTcpAdapter = createToledoTcpAdapter();
+  private serialScaleAdapter: ToledoSerialAdapter = createToledoSerialAdapter(
+    createDesktopSerialTransportFactory()
+  );
   private virtualScaleAdapter: ReturnType<typeof createVirtualScaleAdapter> =
     createVirtualScaleAdapter();
-  private activeScaleAdapter: ToledoTcpAdapter = this.tcpScaleAdapter;
+  private activeScaleAdapter: ActiveScaleAdapter = this.tcpScaleAdapter;
   private readonly pendingScaleCaptures = new Map<
     string,
     { operationType: ScaleCaptureOperationType; reading: ScaleReading; expiresAt: number }
@@ -756,9 +779,12 @@ export class DesktopRuntime {
     try {
       const captureService = new ScaleCaptureService({
         adapter: this.activeScaleAdapter,
-        stability: scaleConfig.stability,
-        captureMode: scaleConfig.captureMode,
-        adapterName: scaleConfig.adapterType === "virtual" ? "virtual" : scaleConfig.model,
+        adapterName:
+          scaleConfig.adapterType === "virtual"
+            ? "virtual"
+            : scaleConfig.adapterType === "serial"
+              ? "toledo-serial"
+              : "toledo-tcp",
         deviceId: scaleConfig.id ?? this.ensureIdentity().deviceId
       });
       return await captureService.captureStableWeight({
@@ -1273,18 +1299,56 @@ export class DesktopRuntime {
     return isSupabaseInitialized();
   }
 
-  async connectScale(config: ToledoTcpConfig): Promise<void> {
+  /**
+   * Conecta a balanca usando a configuracao salva (tipo de conexao + campos
+   * do tipo). Unica porta de entrada de conexao: TCP, serial (COM/USB) e
+   * virtual passam todos por aqui.
+   */
+  async connectScale(): Promise<void> {
     const scaleConfig = this.getScaleConfiguration();
     this.activateAdapter(scaleConfig.adapterType);
     this.activeScaleAdapter.removeAllListeners();
-    await this.activeScaleAdapter.connect(config);
+
+    if (scaleConfig.adapterType === "virtual") {
+      await this.virtualScaleAdapter.connect({ host: "virtual", port: 0 });
+      return;
+    }
+
+    if (scaleConfig.adapterType === "serial") {
+      const serialPath = scaleConfig.connection.serialPath.trim();
+      if (!serialPath) {
+        throw new Error(
+          "Nenhuma porta serial (COM/USB) selecionada. Escolha a porta em Configuracoes > Balanca."
+        );
+      }
+      await this.serialScaleAdapter.connect({
+        path: serialPath,
+        baudRate: scaleConfig.connection.baudRate,
+        reconnectIntervalMs: SCALE_CONNECTION_TUNING.reconnectIntervalMs,
+        maxReconnectAttempts: SCALE_CONNECTION_TUNING.maxReconnectAttempts
+      });
+      return;
+    }
+
+    await this.tcpScaleAdapter.connect({
+      host: scaleConfig.connection.host,
+      port: scaleConfig.connection.port,
+      timeoutMs: SCALE_CONNECTION_TUNING.timeoutMs,
+      reconnectIntervalMs: SCALE_CONNECTION_TUNING.reconnectIntervalMs,
+      maxReconnectAttempts: SCALE_CONNECTION_TUNING.maxReconnectAttempts
+    });
   }
 
-  private activateAdapter(adapterType: "tcp" | "virtual"): void {
+  private activateAdapter(adapterType: ScaleAdapterType): void {
     this.tcpScaleAdapter.disconnect();
+    this.serialScaleAdapter.disconnect();
     this.virtualScaleAdapter.disconnect();
     this.activeScaleAdapter =
-      adapterType === "virtual" ? this.virtualScaleAdapter : this.tcpScaleAdapter;
+      adapterType === "virtual"
+        ? this.virtualScaleAdapter
+        : adapterType === "serial"
+          ? this.serialScaleAdapter
+          : this.tcpScaleAdapter;
   }
 
   async virtualScaleSetWeight(weightKg: number): Promise<void> {
@@ -1299,15 +1363,10 @@ export class DesktopRuntime {
     try {
       const scaleConfig = this.getScaleConfiguration();
       if (!scaleConfig.id) return false;
-      this.activateAdapter(scaleConfig.adapterType);
-      this.activeScaleAdapter.removeAllListeners();
-      await this.activeScaleAdapter.connect({
-        host: scaleConfig.connection.host,
-        port: scaleConfig.connection.port,
-        timeoutMs: scaleConfig.connection.timeoutMs,
-        reconnectIntervalMs: scaleConfig.connection.reconnectIntervalMs,
-        maxReconnectAttempts: scaleConfig.connection.maxReconnectAttempts
-      });
+      if (scaleConfig.adapterType === "serial" && !scaleConfig.connection.serialPath.trim()) {
+        return false;
+      }
+      await this.connectScale();
       return true;
     } catch {
       return false;
@@ -1316,7 +1375,12 @@ export class DesktopRuntime {
 
   disconnectScale(): void {
     this.tcpScaleAdapter.disconnect();
+    this.serialScaleAdapter.disconnect();
     this.virtualScaleAdapter.disconnect();
+  }
+
+  listScaleSerialPorts(): Promise<SerialPortInfo[]> {
+    return listSerialPorts();
   }
 
   async readScale(): Promise<ScaleReading> {
@@ -2802,9 +2866,9 @@ function redactScaleConnection(connection: ScaleConnectionConfig): Record<string
   return {
     host: connection.host,
     port: connection.port,
-    timeoutMs: connection.timeoutMs,
-    reconnectIntervalMs: connection.reconnectIntervalMs,
-    maxReconnectAttempts: connection.maxReconnectAttempts,
+    serialPath: connection.serialPath,
+    baudRate: connection.baudRate,
+    serialTransport: connection.serialTransport,
     autoConnect: connection.autoConnect
   };
 }

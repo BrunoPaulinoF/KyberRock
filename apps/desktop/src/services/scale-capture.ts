@@ -1,12 +1,9 @@
-import type { ScaleReading, ScaleStatus } from "@kyberrock/scale-adapters";
-
-import type { ScaleStabilityConfig } from "./scale-configs.js";
+import type { ScaleReading } from "@kyberrock/scale-adapters";
 
 export type ScaleCaptureOperationType = "entry" | "exit";
 
 export interface ScaleCaptureOptions {
   timeoutMs?: number;
-  maxReadingAgeMs?: number;
   operationType: ScaleCaptureOperationType;
 }
 
@@ -14,121 +11,199 @@ export interface ScaleCaptureAdapter {
   read: () => Promise<ScaleReading>;
 }
 
+/**
+ * Politica de captura fixa: apos clicar em "Capturar peso" o sistema aguarda a
+ * balanca estabilizar e captura o valor exibido naquele momento. Condicoes
+ * transitorias (peso instavel, balanca zerada enquanto o caminhao entra,
+ * peso ainda abaixo do minimo) NAO derrubam a captura — apenas continuam
+ * aguardando ate o tempo limite.
+ */
+export interface ScaleCapturePolicy {
+  /** Tempo maximo aguardando a balanca estabilizar (ms) */
+  timeoutMs: number;
+  /** Intervalo entre leituras (ms) */
+  pollIntervalMs: number;
+  /** Janela continua de estabilidade exigida antes de capturar (ms) */
+  minStableMs: number;
+  /** Oscilacao tolerada dentro da janela de estabilidade (kg) */
+  maxVariationKg: number;
+  /** Peso minimo para considerar que ha um veiculo na balanca (kg) */
+  minWeightKg: number;
+  /** Idade maxima de uma leitura para ser considerada atual (ms) */
+  maxReadingAgeMs: number;
+}
+
+export const DEFAULT_SCALE_CAPTURE_POLICY: ScaleCapturePolicy = {
+  timeoutMs: 20_000,
+  pollIntervalMs: 200,
+  minStableMs: 1_000,
+  maxVariationKg: 50,
+  minWeightKg: 500,
+  maxReadingAgeMs: 3_000
+};
+
 export interface ScaleCaptureServiceConfig {
   adapter: ScaleCaptureAdapter;
-  stability: ScaleStabilityConfig;
-  captureMode?: "custom" | "default";
+  policy?: Partial<ScaleCapturePolicy>;
   adapterName?: string;
   deviceId?: string;
 }
 
+/** Ultima condicao observada enquanto se aguardava a estabilizacao. */
+type WaitCondition =
+  | "no_data"
+  | "stale"
+  | "unstable"
+  | "zero"
+  | "below_min"
+  | "negative"
+  | "overload"
+  | "error"
+  | "read_error";
+
 export class ScaleCaptureService {
   private readonly adapter: ScaleCaptureAdapter;
-  private readonly stability: ScaleStabilityConfig;
-  private readonly captureMode: "custom" | "default";
+  private readonly policy: ScaleCapturePolicy;
   private readonly adapterName?: string;
   private readonly deviceId?: string;
 
   constructor(config: ScaleCaptureServiceConfig) {
     this.adapter = config.adapter;
-    this.stability = config.stability;
-    this.captureMode = config.captureMode ?? "custom";
+    this.policy = { ...DEFAULT_SCALE_CAPTURE_POLICY, ...config.policy };
     this.adapterName = config.adapterName;
     this.deviceId = config.deviceId;
   }
 
   async captureStableWeight(options: ScaleCaptureOptions): Promise<ScaleReading> {
-    if (this.captureMode === "default") {
-      const reading = normalizeReading(await this.adapter.read(), this.adapterName, this.deviceId);
-      const blockingMessage = getBlockingStatusMessage(reading.status);
-      if (blockingMessage) {
-        throw new Error(blockingMessage);
-      }
-      return { ...reading, capturedAt: new Date().toISOString() };
-    }
-
     const startedAt = Date.now();
-    const timeoutMs = Math.max(500, options.timeoutMs ?? this.stability.sampleDurationMs);
-    const pollIntervalMs = Math.max(50, this.stability.sampleIntervalMs);
-    const minStableMs = Math.max(0, this.stability.requireStable ? this.stability.minStableMs : 0);
-    const maxReadingAgeMs = Math.max(
-      1000,
-      options.maxReadingAgeMs ?? Math.max(1500, minStableMs + pollIntervalMs * 2)
-    );
-    const maxVariationKg = Math.max(0, this.stability.maxVariationKg);
-    const minWeightKg = Math.max(0, this.stability.minWeightKg);
+    const timeoutMs = Math.max(1000, options.timeoutMs ?? this.policy.timeoutMs);
+    const pollIntervalMs = Math.max(50, this.policy.pollIntervalMs);
+    const minStableMs = Math.max(0, this.policy.minStableMs);
+    const maxReadingAgeMs = Math.max(1000, this.policy.maxReadingAgeMs);
+    const maxVariationKg = Math.max(0, this.policy.maxVariationKg);
+    const minWeightKg = Math.max(0, this.policy.minWeightKg);
+
     let stableSince: number | null = null;
     let stableReferenceWeightKg: number | null = null;
-    let lastStatus: ScaleStatus = "no_data";
+    let lastCondition: WaitCondition = "no_data";
     let lastError: Error | null = null;
 
-    while (Date.now() - startedAt < timeoutMs) {
-      let reading: ScaleReading;
+    for (;;) {
+      let reading: ScaleReading | null = null;
       try {
         reading = normalizeReading(await this.adapter.read(), this.adapterName, this.deviceId);
       } catch (error) {
-        lastStatus = "no_data";
         lastError = error instanceof Error ? error : new Error("Falha desconhecida na balanca.");
+        // Perdeu a conexao: nao adianta insistir — o operador precisa reconectar.
         if (isConnectionError(lastError)) throw lastError;
-        await delay(pollIntervalMs);
-        continue;
+        lastCondition = "read_error";
       }
 
       const now = Date.now();
-      lastStatus = reading.status;
 
-      if (!isFreshReading(reading, startedAt, now, maxReadingAgeMs)) {
-        lastStatus = "no_data";
-        stableSince = null;
-        stableReferenceWeightKg = null;
-        await delay(pollIntervalMs);
-        continue;
+      if (reading) {
+        const condition = classifyReading(reading, {
+          startedAt,
+          now,
+          maxReadingAgeMs,
+          minWeightKg
+        });
+
+        if (condition === null) {
+          // Leitura estavel, recente e com peso valido: acompanha a janela de estabilidade
+          if (
+            stableReferenceWeightKg === null ||
+            Math.abs(reading.weightKg - stableReferenceWeightKg) > maxVariationKg
+          ) {
+            stableReferenceWeightKg = reading.weightKg;
+            stableSince = now;
+          }
+
+          if (stableSince !== null && now - stableSince >= minStableMs) {
+            return { ...reading, capturedAt: new Date().toISOString() };
+          }
+        } else {
+          // Condicao transitoria: zera a janela e continua aguardando
+          lastCondition = condition;
+          stableSince = null;
+          stableReferenceWeightKg = null;
+        }
       }
 
-      const blockingMessage = getBlockingStatusMessage(reading.status);
-      if (blockingMessage) {
-        throw new Error(blockingMessage);
-      }
-
-      if (reading.status !== "stable" || !reading.stable) {
-        stableSince = null;
-        stableReferenceWeightKg = null;
-        await delay(pollIntervalMs);
-        continue;
-      }
-
-      if (!Number.isFinite(reading.weightKg) || reading.weightKg < minWeightKg) {
-        throw new Error(
-          `Peso abaixo do minimo configurado (${Math.round(reading.weightKg)} kg < ${minWeightKg} kg).`
-        );
-      }
-
-      if (
-        stableReferenceWeightKg === null ||
-        Math.abs(reading.weightKg - stableReferenceWeightKg) > maxVariationKg
-      ) {
-        stableReferenceWeightKg = reading.weightKg;
-        stableSince = now;
-      }
-
-      if (stableSince !== null && now - stableSince >= minStableMs) {
-        return { ...reading, capturedAt: new Date().toISOString() };
+      if (Date.now() - startedAt + pollIntervalMs >= timeoutMs) {
+        throw new Error(buildTimeoutMessage(lastCondition, minWeightKg, lastError));
       }
 
       await delay(pollIntervalMs);
     }
-
-    if (lastStatus === "unstable") {
-      throw new Error("Peso instavel. Aguarde o indicador da balanca ficar estavel e tente novamente.");
-    }
-    if (lastError) {
-      throw new Error(`Nao foi possivel ler a balanca: ${lastError.message}.`);
-    }
-    throw new Error("Balanca sem leitura estavel e recente dentro do tempo limite.");
   }
 }
 
-function normalizeReading(reading: ScaleReading, adapterName?: string, deviceId?: string): ScaleReading {
+function classifyReading(
+  reading: ScaleReading,
+  context: { startedAt: number; now: number; maxReadingAgeMs: number; minWeightKg: number }
+): WaitCondition | null {
+  if (!isFreshReading(reading, context.startedAt, context.now, context.maxReadingAgeMs)) {
+    return "stale";
+  }
+
+  switch (reading.status) {
+    case "overload":
+      return "overload";
+    case "negative":
+      return "negative";
+    case "zero":
+      return "zero";
+    case "error":
+      return "error";
+    case "no_data":
+      return "no_data";
+    case "unstable":
+      return "unstable";
+    case "stable":
+      break;
+    default:
+      return "error";
+  }
+
+  if (!reading.stable) return "unstable";
+  if (!Number.isFinite(reading.weightKg)) return "error";
+  if (reading.weightKg < context.minWeightKg) return "below_min";
+  return null;
+}
+
+function buildTimeoutMessage(
+  condition: WaitCondition,
+  minWeightKg: number,
+  lastError: Error | null
+): string {
+  switch (condition) {
+    case "unstable":
+      return "Peso nao estabilizou dentro do tempo limite. Aguarde o caminhao parar totalmente na balanca e capture novamente.";
+    case "zero":
+      return "Balanca zerada: nenhum peso detectado. Posicione o caminhao na balanca e capture novamente.";
+    case "below_min":
+      return `Peso abaixo do minimo para captura (${minWeightKg} kg). Verifique se o caminhao esta totalmente sobre a balanca.`;
+    case "negative":
+      return "Balanca informando peso negativo. Zere o indicador e capture novamente.";
+    case "overload":
+      return "Balanca em sobrecarga ou fora de alcance. Retire o excesso de peso e capture novamente.";
+    case "error":
+      return "Balanca informou erro de leitura. Verifique o indicador e a conexao.";
+    case "read_error":
+      return `Nao foi possivel ler a balanca: ${lastError?.message ?? "falha desconhecida"}.`;
+    case "stale":
+    case "no_data":
+    default:
+      return "Balanca conectada, mas sem enviar leituras recentes. Verifique o cabo/rede e se o indicador esta transmitindo.";
+  }
+}
+
+function normalizeReading(
+  reading: ScaleReading,
+  adapterName?: string,
+  deviceId?: string
+): ScaleReading {
   const partial = reading as Partial<ScaleReading>;
   const status = partial.status ?? (partial.stable ? "stable" : "unstable");
   const receivedAt = partial.receivedAt ?? partial.capturedAt ?? new Date().toISOString();
@@ -154,21 +229,6 @@ function isFreshReading(
   if (now - receivedAt > maxReadingAgeMs) return false;
   if (receivedAt < startedAt && startedAt - receivedAt > maxReadingAgeMs) return false;
   return true;
-}
-
-function getBlockingStatusMessage(status: ScaleStatus): string | null {
-  switch (status) {
-    case "overload":
-      return "Balanca em sobrecarga ou fora de alcance. Retire excesso de peso e tente novamente.";
-    case "negative":
-      return "Balanca informou peso negativo. Zere ou ajuste a balanca antes de capturar.";
-    case "zero":
-      return "Balanca sem peso util para captura. Posicione o caminhao e aguarde estabilidade.";
-    case "error":
-      return "Balanca informou erro de leitura. Verifique o indicador e a conexao.";
-    default:
-      return null;
-  }
 }
 
 function isConnectionError(error: Error): boolean {

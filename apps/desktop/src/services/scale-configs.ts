@@ -1,69 +1,76 @@
 import { randomUUID } from "node:crypto";
 
-import type { ToledoTcpConfig } from "@kyberrock/scale-adapters";
-
 import type { DesktopDatabase } from "../database/sqlite.js";
 import type { LocalDesktopIdentity } from "./bootstrap.js";
 
-export interface ScaleConnectionConfig extends ToledoTcpConfig {
-  timeoutMs: number;
-  reconnectIntervalMs: number;
-  maxReconnectAttempts: number;
+/**
+ * Tipos de conexao suportados pela balanca:
+ * - "tcp": indicador ligado na rede (IP + porta)
+ * - "serial": indicador ligado por cabo serial (COM) ou conversor USB-serial
+ * - "virtual": balanca simulada para testes/demonstracao
+ */
+export type ScaleAdapterType = "tcp" | "serial" | "virtual";
+
+/** Como a porta serial esta fisicamente ligada — apenas para exibicao na UI. */
+export type ScaleSerialTransport = "usb" | "com";
+
+/**
+ * Configuracao de conexao definida pelo usuario. Somente os campos necessarios
+ * para conectar em cada tipo: TCP usa host+port; serial usa serialPath+baudRate.
+ * Os ajustes finos (timeouts, reconexao) sao fixos em SCALE_CONNECTION_TUNING.
+ */
+export interface ScaleConnectionConfig {
+  /** IP ou hostname do indicador (conexao TCP) */
+  host: string;
+  /** Porta TCP do indicador */
+  port: number;
+  /** Caminho da porta serial: "COM3" no Windows, "/dev/ttyUSB0" no Linux */
+  serialPath: string;
+  /** Velocidade da porta serial (bps). Padrao Toledo: 9600 */
+  baudRate: number;
+  /** Origem fisica da porta serial (USB ou COM nativa) — apenas informativo */
+  serialTransport: ScaleSerialTransport;
+  /** Conectar automaticamente ao abrir o aplicativo/telas de pesagem */
   autoConnect: boolean;
 }
 
-export interface ScaleStabilityConfig {
-  sampleDurationMs: number;
-  sampleIntervalMs: number;
-  requireStable: boolean;
-  minStableMs: number;
-  maxVariationKg: number;
-  minWeightKg: number;
-}
+/**
+ * Ajustes internos de conexao. Nao sao expostos ao usuario final: valores
+ * seguros e testados valem para qualquer instalacao.
+ */
+export const SCALE_CONNECTION_TUNING = {
+  timeoutMs: 3000,
+  reconnectIntervalMs: 5000,
+  maxReconnectAttempts: 10
+} as const;
 
 export interface ScaleConfiguration {
   id: string | null;
-  adapterType: "tcp" | "virtual";
-  captureMode: "custom" | "default";
-  manufacturer: string;
-  model: string;
+  adapterType: ScaleAdapterType;
   connection: ScaleConnectionConfig;
-  stability: ScaleStabilityConfig;
 }
 
 export interface ScaleConfigurationInput {
-  adapterType?: "tcp" | "virtual";
-  captureMode?: "custom" | "default";
+  adapterType?: ScaleAdapterType;
   connection?: Partial<ScaleConnectionConfig>;
-  stability?: Partial<ScaleStabilityConfig>;
 }
 
 export const DEFAULT_SCALE_CONNECTION_CONFIG: ScaleConnectionConfig = {
   host: "192.168.1.100",
   port: 4001,
-  timeoutMs: 3000,
-  reconnectIntervalMs: 5000,
-  maxReconnectAttempts: 10,
-  autoConnect: false
+  serialPath: "",
+  baudRate: 9600,
+  serialTransport: "usb",
+  autoConnect: true
 };
 
-export const DEFAULT_SCALE_STABILITY_CONFIG: ScaleStabilityConfig = {
-  sampleDurationMs: 5000,
-  sampleIntervalMs: 250,
-  requireStable: true,
-  minStableMs: 1000,
-  maxVariationKg: 50,
-  minWeightKg: 1000
-};
+/** Velocidades de porta serial aceitas (padroes de mercado). */
+export const SCALE_SERIAL_BAUD_RATES = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200];
 
 interface ScaleConfigRow {
   id: string;
   adapter_type: string;
-  capture_mode: string;
-  manufacturer: string | null;
-  model: string | null;
   connection_config_json: string;
-  stability_config_json: string;
 }
 
 export function readScaleConfiguration(
@@ -72,7 +79,7 @@ export function readScaleConfiguration(
 ): ScaleConfiguration {
   const row = database
     .prepare(
-      `SELECT id, adapter_type, capture_mode, manufacturer, model, connection_config_json, stability_config_json
+      `SELECT id, adapter_type, connection_config_json
        FROM scale_configs
        WHERE device_id = ? AND is_active = 1
        ORDER BY updated_at DESC
@@ -81,17 +88,17 @@ export function readScaleConfiguration(
     .get(identity.deviceId) as ScaleConfigRow | undefined;
 
   if (!row) {
-    return createDefaultScaleConfiguration(null);
+    return {
+      id: null,
+      adapterType: "tcp",
+      connection: { ...DEFAULT_SCALE_CONNECTION_CONFIG }
+    };
   }
 
   return {
     id: row.id,
     adapterType: normalizeAdapterType(row.adapter_type),
-    captureMode: normalizeCaptureMode(row.capture_mode),
-    manufacturer: row.manufacturer?.trim() || "Toledo",
-    model: row.model?.trim() || (row.adapter_type === "virtual" ? "Virtual" : "TCP"),
-    connection: normalizeScaleConnectionConfig(parseJsonObject(row.connection_config_json)),
-    stability: normalizeScaleStabilityConfig(parseJsonObject(row.stability_config_json))
+    connection: normalizeScaleConnectionConfig(parseJsonObject(row.connection_config_json))
   };
 }
 
@@ -102,14 +109,11 @@ export function writeScaleConfiguration(
   now: Date = new Date()
 ): ScaleConfiguration {
   const current = readScaleConfiguration(database, identity);
+  const adapterType = normalizeAdapterType(input.adapterType ?? current.adapterType);
   const next: ScaleConfiguration = {
     id: current.id ?? randomUUID(),
-    adapterType: normalizeAdapterType(input.adapterType ?? current.adapterType),
-    captureMode: normalizeCaptureMode(input.captureMode ?? current.captureMode),
-    manufacturer: "Toledo",
-    model: input.adapterType === "virtual" || current.adapterType === "virtual" ? "Virtual" : "TCP",
-    connection: normalizeScaleConnectionConfig({ ...current.connection, ...input.connection }),
-    stability: normalizeScaleStabilityConfig({ ...current.stability, ...input.stability })
+    adapterType,
+    connection: normalizeScaleConnectionConfig({ ...current.connection, ...input.connection })
   };
   const timestamp = now.toISOString();
 
@@ -142,11 +146,11 @@ export function writeScaleConfiguration(
            @id,
            @deviceId,
            @adapterType,
-           @captureMode,
+           'custom',
            @manufacturer,
            @model,
            @connectionConfigJson,
-           @stabilityConfigJson,
+           '{}',
            'kg',
            1,
            1,
@@ -169,11 +173,9 @@ export function writeScaleConfiguration(
         id: next.id,
         deviceId: identity.deviceId,
         adapterType: next.adapterType,
-        captureMode: next.captureMode,
-        manufacturer: next.manufacturer,
-        model: next.model,
+        manufacturer: "Toledo",
+        model: adapterTypeModelLabel(next.adapterType),
         connectionConfigJson: JSON.stringify(next.connection),
-        stabilityConfigJson: JSON.stringify(next.stability),
         createdAt: timestamp,
         updatedAt: timestamp
       });
@@ -184,84 +186,42 @@ export function writeScaleConfiguration(
 }
 
 export function normalizeScaleConnectionConfig(
-  config: Partial<ScaleConnectionConfig> | null | undefined
+  config: Partial<ScaleConnectionConfig> | Record<string, unknown> | null | undefined
 ): ScaleConnectionConfig {
-  const host = typeof config?.host === "string" ? config.host.trim() : "";
+  const raw = (config ?? {}) as Partial<ScaleConnectionConfig>;
+  const host = typeof raw.host === "string" ? raw.host.trim() : "";
+  const serialPath = sanitizeSerialPath(raw.serialPath);
 
   return {
     host: host || DEFAULT_SCALE_CONNECTION_CONFIG.host,
-    port: clampInteger(config?.port, 1, 65535, DEFAULT_SCALE_CONNECTION_CONFIG.port),
-    timeoutMs: clampInteger(config?.timeoutMs, 500, 30000, DEFAULT_SCALE_CONNECTION_CONFIG.timeoutMs),
-    reconnectIntervalMs: clampInteger(
-      config?.reconnectIntervalMs,
-      1000,
-      60000,
-      DEFAULT_SCALE_CONNECTION_CONFIG.reconnectIntervalMs
-    ),
-    maxReconnectAttempts: clampInteger(
-      config?.maxReconnectAttempts,
-      0,
-      100,
-      DEFAULT_SCALE_CONNECTION_CONFIG.maxReconnectAttempts
-    ),
-    autoConnect: config?.autoConnect === true
+    port: clampInteger(raw.port, 1, 65535, DEFAULT_SCALE_CONNECTION_CONFIG.port),
+    serialPath,
+    baudRate: normalizeBaudRate(raw.baudRate),
+    serialTransport: raw.serialTransport === "com" ? "com" : "usb",
+    autoConnect: raw.autoConnect !== false
   };
 }
 
-export function normalizeScaleStabilityConfig(
-  config: Partial<ScaleStabilityConfig> | null | undefined
-): ScaleStabilityConfig {
-  const sampleDurationMs = clampInteger(
-    config?.sampleDurationMs,
-    500,
-    30000,
-    DEFAULT_SCALE_STABILITY_CONFIG.sampleDurationMs
-  );
-  const minStableMs = Math.min(
-    clampInteger(config?.minStableMs, 0, 30000, DEFAULT_SCALE_STABILITY_CONFIG.minStableMs),
-    sampleDurationMs
-  );
-
-  return {
-    sampleDurationMs,
-    sampleIntervalMs: clampInteger(
-      config?.sampleIntervalMs,
-      50,
-      5000,
-      DEFAULT_SCALE_STABILITY_CONFIG.sampleIntervalMs
-    ),
-    requireStable: config?.requireStable !== false,
-    minStableMs,
-    maxVariationKg: clampInteger(
-      config?.maxVariationKg,
-      0,
-      10000,
-      DEFAULT_SCALE_STABILITY_CONFIG.maxVariationKg
-    ),
-    minWeightKg: clampInteger(
-      config?.minWeightKg,
-      0,
-      200000,
-      DEFAULT_SCALE_STABILITY_CONFIG.minWeightKg
-    )
-  };
+function adapterTypeModelLabel(adapterType: ScaleAdapterType): string {
+  if (adapterType === "virtual") return "Virtual";
+  if (adapterType === "serial") return "Serial";
+  return "TCP";
 }
 
-function createDefaultScaleConfiguration(id: string | null): ScaleConfiguration {
-  return {
-    id,
-    adapterType: "tcp",
-    captureMode: "custom",
-    manufacturer: "Toledo",
-    model: "TCP",
-    connection: { ...DEFAULT_SCALE_CONNECTION_CONFIG },
-    stability: { ...DEFAULT_SCALE_STABILITY_CONFIG }
-  };
+function sanitizeSerialPath(value: unknown): string {
+  if (typeof value !== "string") return "";
+  // Remove caracteres de controle e limita o tamanho para nao propagar lixo
+  // para o driver serial; "COM3" e "/dev/ttyUSB0" passam intactos.
+  // eslint-disable-next-line no-control-regex
+  return value.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 128);
 }
 
-function normalizeCaptureMode(value: string | null | undefined): "custom" | "default" {
-  if (value === "default") return "default";
-  return "custom";
+function normalizeBaudRate(value: unknown): number {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return DEFAULT_SCALE_CONNECTION_CONFIG.baudRate;
+  const rounded = Math.round(numeric);
+  if (SCALE_SERIAL_BAUD_RATES.includes(rounded)) return rounded;
+  return DEFAULT_SCALE_CONNECTION_CONFIG.baudRate;
 }
 
 function parseJsonObject(value: string): Record<string, unknown> | null {
@@ -275,17 +235,13 @@ function parseJsonObject(value: string): Record<string, unknown> | null {
   }
 }
 
-function normalizeAdapterType(value: string | null | undefined): "tcp" | "virtual" {
+function normalizeAdapterType(value: string | null | undefined): ScaleAdapterType {
   if (value === "virtual") return "virtual";
+  if (value === "serial") return "serial";
   return "tcp";
 }
 
-function clampInteger(
-  value: unknown,
-  min: number,
-  max: number,
-  fallback: number
-): number {
+function clampInteger(value: unknown, min: number, max: number, fallback: number): number {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return fallback;
   return Math.min(max, Math.max(min, Math.round(numeric)));

@@ -55,8 +55,8 @@ import type { CreateDriverInput, UpdateDriverInput } from "../services/drivers";
 import type { CreateCarrierInput, UpdateCarrierInput } from "../services/carriers";
 import type { OmieQueueItem } from "../services/sync-queue";
 import type { ScaleConfiguration, ScaleConfigurationInput } from "../services/scale-configs";
+import type { SerialPortInfo } from "../services/scale-serial";
 import type {
-  ToledoTcpConfig,
   ToledoTcpAdapterStatus,
   ParsedToledoReading,
   ScaleReading
@@ -394,8 +394,9 @@ export interface KyberRockDesktopApi {
     pendingOmieJobs: number;
     lastSyncAt: string | null;
   }>;
-  scaleConnect: (config: ToledoTcpConfig) => Promise<void>;
+  scaleConnect: () => Promise<void>;
   scaleDisconnect: () => Promise<void>;
+  scaleListSerialPorts: () => Promise<SerialPortInfo[]>;
   scaleRead: () => Promise<ScaleReading>;
   scaleReadSampled: () => Promise<ScaleReading>;
   scaleCaptureStable: (options: {
