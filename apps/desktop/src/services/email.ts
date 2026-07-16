@@ -8,10 +8,17 @@ export interface SmtpConfig {
   from: string;
 }
 
+export interface EmailAttachment {
+  filename: string;
+  content: Buffer | string;
+  contentType?: string;
+}
+
 export interface EmailSendInput {
   to: string;
   subject: string;
   html: string;
+  attachments?: EmailAttachment[];
 }
 
 export interface EmailSendResult {
@@ -92,7 +99,8 @@ export async function sendEmail(
       from: config.from,
       to: input.to,
       subject: input.subject,
-      html: input.html
+      html: input.html,
+      attachments: input.attachments
     });
     return { success: true, messageId: info.messageId };
   } catch (error) {

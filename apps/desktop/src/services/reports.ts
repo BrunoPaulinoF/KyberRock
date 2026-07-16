@@ -43,6 +43,40 @@ export interface CustomerReport {
   totalValueCents: number;
 }
 
+export type SalesPivotGroupBy = "customer" | "product" | "customer_product" | "day";
+
+export interface SalesPivotFilters {
+  customerId?: string | null;
+  productId?: string | null;
+}
+
+export interface SalesPivotRow {
+  customerName: string | null;
+  productDescription: string | null;
+  date: string | null;
+  totalOperations: number;
+  totalWeightKg: number;
+  totalValueCents: number;
+  avgPriceCentsPerTon: number;
+}
+
+export interface SalesPivotOption {
+  id: string;
+  name: string;
+}
+
+export interface SalesPivotResult {
+  rows: SalesPivotRow[];
+  totals: {
+    totalOperations: number;
+    totalWeightKg: number;
+    totalValueCents: number;
+    avgPriceCentsPerTon: number;
+  };
+  customers: SalesPivotOption[];
+  products: SalesPivotOption[];
+}
+
 export interface DailySeriesPoint {
   date: string;
   totalOperations: number;
@@ -266,6 +300,123 @@ export class ReportService {
       totalWeightKg: row.total_weight,
       totalValueCents: row.total_value
     }));
+  }
+
+  // Tabela dinamica de vendas: agrupa por cliente/produto/cliente+produto/dia,
+  // com filtros opcionais de cliente e produto, e devolve tambem as opcoes de
+  // filtro presentes no periodo (uma unica ida ao IPC).
+  getSalesPivot(
+    startDate: string,
+    endDate: string,
+    unitId: string,
+    groupBy: SalesPivotGroupBy,
+    filters: SalesPivotFilters = {}
+  ): SalesPivotResult {
+    const groupClauses: Record<SalesPivotGroupBy, { select: string; group: string }> = {
+      customer: {
+        select: "c.legal_name as customer_name, NULL as product_description, NULL as day",
+        group: "c.id"
+      },
+      product: {
+        select: "NULL as customer_name, p.description as product_description, NULL as day",
+        group: "p.id"
+      },
+      customer_product: {
+        select: "c.legal_name as customer_name, p.description as product_description, NULL as day",
+        group: "c.id, p.id"
+      },
+      day: {
+        select:
+          "NULL as customer_name, NULL as product_description, date(wo.created_at) as day",
+        group: "date(wo.created_at)"
+      }
+    };
+    const clause = groupClauses[groupBy] ?? groupClauses.customer;
+
+    const conditions = [
+      "wo.unit_id = ?",
+      "wo.status = 'closed_local'",
+      "date(wo.created_at) >= date(?)",
+      "date(wo.created_at) <= date(?)"
+    ];
+    const params: unknown[] = [unitId, startDate, endDate];
+    if (filters.customerId) {
+      conditions.push("wo.customer_id = ?");
+      params.push(filters.customerId);
+    }
+    if (filters.productId) {
+      conditions.push("wo.product_id = ?");
+      params.push(filters.productId);
+    }
+
+    const rows = this.db
+      .prepare(
+        `SELECT
+           ${clause.select},
+           COUNT(*) as total_operations,
+           COALESCE(SUM(wo.net_weight_kg), 0) as total_weight,
+           COALESCE(SUM(wo.product_total_cents), 0) as total_value
+         FROM weighing_operations wo
+         LEFT JOIN customers c ON c.id = wo.customer_id
+         LEFT JOIN products p ON p.id = wo.product_id
+         WHERE ${conditions.join(" AND ")}
+         GROUP BY ${clause.group}
+         ORDER BY total_value DESC`
+      )
+      .all(...params) as Array<{
+      customer_name: string | null;
+      product_description: string | null;
+      day: string | null;
+      total_operations: number;
+      total_weight: number;
+      total_value: number;
+    }>;
+
+    const avgPricePerTon = (valueCents: number, weightKg: number): number =>
+      weightKg > 0 ? Math.round(valueCents / (weightKg / 1000)) : 0;
+
+    const pivotRows: SalesPivotRow[] = rows.map((row) => ({
+      customerName: row.customer_name,
+      productDescription: row.product_description,
+      date: row.day,
+      totalOperations: row.total_operations,
+      totalWeightKg: row.total_weight,
+      totalValueCents: row.total_value,
+      avgPriceCentsPerTon: avgPricePerTon(row.total_value, row.total_weight)
+    }));
+
+    const totals = pivotRows.reduce(
+      (acc, row) => ({
+        totalOperations: acc.totalOperations + row.totalOperations,
+        totalWeightKg: acc.totalWeightKg + row.totalWeightKg,
+        totalValueCents: acc.totalValueCents + row.totalValueCents,
+        avgPriceCentsPerTon: 0
+      }),
+      { totalOperations: 0, totalWeightKg: 0, totalValueCents: 0, avgPriceCentsPerTon: 0 }
+    );
+    totals.avgPriceCentsPerTon = avgPricePerTon(totals.totalValueCents, totals.totalWeightKg);
+
+    const optionConditions = conditions.slice(0, 4).join(" AND ");
+    const customers = this.db
+      .prepare(
+        `SELECT DISTINCT c.id as id, c.legal_name as name
+         FROM weighing_operations wo
+         JOIN customers c ON c.id = wo.customer_id
+         WHERE ${optionConditions}
+         ORDER BY c.legal_name`
+      )
+      .all(unitId, startDate, endDate) as SalesPivotOption[];
+    const products = this.db
+      .prepare(
+        `SELECT DISTINCT p.id as id, p.description as name
+         FROM weighing_operations wo
+         JOIN products p ON p.id = wo.product_id
+         WHERE ${optionConditions}
+         ORDER BY p.description`
+      )
+      .all(unitId, startDate, endDate) as SalesPivotOption[];
+
+    return { rows: pivotRows, totals, customers, products };
   }
 
   getDailySeries(
@@ -591,6 +742,7 @@ export class ReportService {
   ): string {
     const series = this.getDailySeries(startDate, endDate, unitId);
     const topProducts = this.getReportByProduct(startDate, endDate, unitId).slice(0, 5);
+    const topCustomers = this.getReportByCustomer(startDate, endDate, unitId).slice(0, 10);
     const mix = this.getOperationMix(startDate, endDate, unitId);
 
     const operations = series.reduce((sum, point) => sum + point.totalOperations, 0);
@@ -647,6 +799,24 @@ export class ReportService {
           .join("")
       : '<tr><td colspan="6" class="empty">Sem produtos no periodo.</td></tr>';
 
+    const customersBody = topCustomers.length
+      ? topCustomers
+          .map((customer, index) => {
+            const avgPriceCentsPerTon =
+              customer.totalWeightKg > 0
+                ? Math.round(customer.totalValueCents / (customer.totalWeightKg / 1000))
+                : 0;
+            return `<tr><td class="num">${index + 1}</td><td>${escapeHtml(
+              customer.customerName
+            )}</td><td class="num">${customer.totalOperations}</td><td class="num">${formatTons(
+              customer.totalWeightKg
+            )}</td><td class="num">${formatBRL(avgPriceCentsPerTon)}/t</td><td class="num">${formatBRL(
+              customer.totalValueCents
+            )}</td></tr>`;
+          })
+          .join("")
+      : '<tr><td colspan="6" class="empty">Sem clientes no periodo.</td></tr>';
+
     const seriesBody = series.some((point) => point.totalOperations > 0)
       ? series
           .map(
@@ -697,6 +867,7 @@ tfoot td{font-weight:bold;background:#eef2ff;border-top:2px solid var(--brand)}
 <div class="kpis">${kpiCards}</div>
 <section><h2>Mix de operacoes</h2><table><thead><tr><th>Tipo</th><th class="num">Operacoes</th><th class="num">% oper.</th><th class="num">Peso</th><th class="num">Faturamento</th></tr></thead><tbody>${mixBody}</tbody></table></section>
 <section><h2>Top 5 produtos por peso</h2><table><thead><tr><th class="num">#</th><th>Produto</th><th>Codigo</th><th class="num">Operacoes</th><th class="num">Peso</th><th class="num">Valor produto</th></tr></thead><tbody>${productsBody}</tbody></table></section>
+<section><h2>Vendas por cliente</h2><table><thead><tr><th class="num">#</th><th>Cliente</th><th class="num">Operacoes</th><th class="num">Peso</th><th class="num">Preco medio</th><th class="num">Total</th></tr></thead><tbody>${customersBody}</tbody></table></section>
 <section><h2>Evolucao diaria</h2><table><thead><tr><th>Data</th><th class="num">Operacoes</th><th class="num">Peso liquido</th><th class="num">Faturamento</th></tr></thead><tbody>${seriesBody}</tbody><tfoot><tr><td>Total</td><td class="num">${operations.toLocaleString(
       "pt-BR"
     )}</td><td class="num">${formatTons(weightKg)}</td><td class="num">${formatBRL(
