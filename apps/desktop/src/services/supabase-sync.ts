@@ -1434,7 +1434,7 @@ export async function pushOmieCustomersToCloud(
     .prepare(
       `SELECT id, omie_customer_id, omie_integration_code, legal_name, trade_name, document, phone, email,
               zipcode, address_street, address_number, address_complement, neighborhood, city, state,
-              default_payment_term_id
+              default_payment_term_id, omie_billing_blocked
        FROM customers
        WHERE company_id = ? AND deleted_at IS NULL AND needs_push = 1 AND source IN ('local', 'hybrid')
        ORDER BY updated_at ASC
@@ -1457,6 +1457,7 @@ export async function pushOmieCustomersToCloud(
     city: string | null;
     state: string | null;
     default_payment_term_id: string | null;
+    omie_billing_blocked: number;
   }>;
 
   let pushed = 0;
@@ -1529,7 +1530,8 @@ export async function pushOmieCustomersToCloud(
               neighborhood: customer.neighborhood ?? undefined,
               city: customer.city ?? undefined,
               state: customer.state ?? undefined,
-              defaultPaymentTermId: customer.default_payment_term_id ?? undefined
+              defaultPaymentTermId: customer.default_payment_term_id ?? undefined,
+              billingBlocked: customer.omie_billing_blocked === 1
             }
           }
         }
@@ -2589,7 +2591,7 @@ function upsertOmieCustomers(
       ibge_state_code = CASE WHEN customers.needs_push = 0 THEN excluded.ibge_state_code ELSE customers.ibge_state_code END,
       customer_type = excluded.customer_type,
       is_foreign = excluded.is_foreign,
-      omie_billing_blocked = excluded.omie_billing_blocked,
+      omie_billing_blocked = CASE WHEN customers.needs_push = 0 THEN excluded.omie_billing_blocked ELSE customers.omie_billing_blocked END,
       observations = CASE WHEN customers.needs_push = 0 THEN excluded.observations ELSE customers.observations END,
       tags_json = excluded.tags_json,
       salesperson_id = excluded.salesperson_id,

@@ -181,6 +181,17 @@ describe("normalizeMoneyInput", () => {
   it("prefers comma as decimal separator", () => {
     expect(normalizeMoneyInput("1.500,50")).toBe("1500.50");
   });
+
+  it("treats a lone dot with 1-2 digits after it as decimal", () => {
+    expect(normalizeMoneyInput("1.5")).toBe("1.5");
+    expect(normalizeMoneyInput("1.50")).toBe("1.50");
+  });
+
+  it("keeps digits typed after a thousands-formatted value in the integer part", () => {
+    // "1.000" + "5" digitado no fim nao pode virar 1,00 (deslocar a casa decimal).
+    expect(normalizeMoneyInput("1.0005")).toBe("10005");
+    expect(normalizeMoneyInput("1.000.000")).toBe("1000000");
+  });
 });
 
 describe("formatMoneyInput", () => {

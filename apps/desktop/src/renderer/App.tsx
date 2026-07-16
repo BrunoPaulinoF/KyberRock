@@ -8023,7 +8023,7 @@ function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi })
               <>
                 <CellPrimary>{m.displayName}</CellPrimary>
                 <CellMuted>
-                  {[m.alias ? m.name : null, m.isCustomerCredit ? "Credito do cliente (fiado)" : null]
+                  {[m.alias ? m.name : null, m.isCustomerCredit ? "Credito do cliente" : null]
                     .filter(Boolean)
                     .join(" | ") || "-"}
                 </CellMuted>

@@ -1,3 +1,5 @@
+import { useEffect, useRef, useState } from "react";
+
 import { formatMoneyInput, parseMoneyInputToCents } from "@kyberrock/shared";
 
 import { Field, getInputStyle } from "./Field";
@@ -12,6 +14,13 @@ export interface MoneyInputProps {
   id?: string;
   hint?: string;
   allowZero?: boolean;
+}
+
+// Durante a digitacao o texto fica exatamente como o usuario digitou (apenas
+// filtrando caracteres invalidos). Reformatar a cada tecla fazia o valor "pular"
+// de casa decimal (ex.: "1.000" + "0" virava "1,00") e engolia a virgula.
+function sanitizeMoneyTyping(value: string): string {
+  return value.replace(/[^\d.,]/g, "");
 }
 
 export function MoneyInput({
@@ -47,13 +56,18 @@ export function MoneyInput({
         inputMode="decimal"
         autoComplete="off"
         disabled={disabled}
-        value={formatMoneyInput(value)}
+        value={value}
         placeholder={placeholder ?? "0,00"}
         onChange={(e) => {
-          const raw = e.target.value;
-          const formatted = formatMoneyInput(raw);
-          const cents = parseMoneyInputToCents(formatted);
-          onChange(formatted, cents);
+          const raw = sanitizeMoneyTyping(e.target.value);
+          onChange(raw, parseMoneyInputToCents(raw));
+        }}
+        onBlur={() => {
+          // Separador de milhar e zeros dos centavos entram apenas ao sair do campo.
+          const formatted = formatMoneyInput(value);
+          if (formatted !== value) {
+            onChange(formatted, parseMoneyInputToCents(formatted));
+          }
         }}
         style={{
           ...getInputStyle(disabled),
@@ -76,6 +90,10 @@ export interface MoneyCentsInputProps {
   allowZero?: boolean;
 }
 
+function centsToText(cents: number | null): string {
+  return cents === null ? "" : formatMoneyInput(String(cents / 100));
+}
+
 export function MoneyCentsInput({
   label,
   valueCents,
@@ -87,19 +105,34 @@ export function MoneyCentsInput({
   hint,
   allowZero = true
 }: MoneyCentsInputProps) {
-  const display = valueCents === null ? "" : formatMoneyInput(String(valueCents / 100));
+  // Guarda o texto digitado localmente: derivar o texto de valueCents a cada tecla
+  // apagava a virgula/decimal em andamento e deslocava o valor.
+  const [text, setText] = useState(() => centsToText(valueCents));
+  const lastCentsRef = useRef(valueCents);
+
+  useEffect(() => {
+    // Mudanca externa do valor (prefill de frete, reset do formulario): re-sincroniza.
+    if (valueCents !== lastCentsRef.current) {
+      lastCentsRef.current = valueCents;
+      setText(centsToText(valueCents));
+    }
+  }, [valueCents]);
+
   return (
     <MoneyInput
       label={label}
-      value={display}
-      onChange={(_, cents) => {
+      value={text}
+      onChange={(formatted, cents) => {
+        setText(formatted);
         if (cents === null) {
+          lastCentsRef.current = null;
           onChange(null);
           return;
         }
         if (!allowZero && cents === 0) {
           return;
         }
+        lastCentsRef.current = cents;
         onChange(cents);
       }}
       required={required}

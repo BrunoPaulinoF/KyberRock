@@ -3,6 +3,7 @@ import { assert, assertEquals } from "jsr:@std/assert";
 import {
   OmieQueueManager,
   buildCarrierPayload,
+  buildCustomerPayload,
   pushCustomerToOmieCore,
   toOmieIntegrationCode
 } from "./omie-sync-core.ts";
@@ -101,6 +102,29 @@ Deno.test("buildCarrierPayload sempre inclui a tag transportadora sem remover ta
   assertEquals(payload.nome_fantasia, "Transportadora Teste");
   assert(Array.isArray(payload.tags));
   assertEquals(payload.tags, [{ tag: "cliente" }, { tag: "transportadora" }]);
+});
+
+Deno.test("buildCustomerPayload mapeia billingBlocked para bloquear_faturamento S/N e omite quando ausente", () => {
+  const blocked = buildCustomerPayload({
+    localCustomerId: "cliente-1",
+    razaoSocial: "Cliente Bloqueado",
+    billingBlocked: true
+  });
+  assertEquals(blocked.bloquear_faturamento, "S");
+
+  const released = buildCustomerPayload({
+    localCustomerId: "cliente-2",
+    razaoSocial: "Cliente Liberado",
+    billingBlocked: false
+  });
+  assertEquals(released.bloquear_faturamento, "N");
+
+  // Sem o campo (ex.: push de transportadora), nao mexe no bloqueio configurado no OMIE.
+  const omitted = buildCustomerPayload({
+    localCustomerId: "cliente-3",
+    razaoSocial: "Cliente Sem Flag"
+  });
+  assertEquals(omitted.bloquear_faturamento, undefined);
 });
 
 // Golden test: mudar este algoritmo altera o codigo_pedido_integracao de jobs antigos
