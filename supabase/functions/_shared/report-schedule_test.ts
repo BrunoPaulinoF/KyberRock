@@ -27,10 +27,10 @@ describe("shouldSendAt", () => {
     expect(shouldSendAt({ ...base, nowHour: 8 })).toBe(false);
   });
 
-  it("sends weekly reports only on Mondays", () => {
+  it("sends weekly reports only on Fridays", () => {
     const base = { frequency: "weekly", scheduleTime: "08:00", nowHour: 8 };
-    expect(shouldSendAt({ ...base, nowDate: "2026-07-13" })).toBe(true); // segunda
-    expect(shouldSendAt({ ...base, nowDate: "2026-07-14" })).toBe(false); // terca
+    expect(shouldSendAt({ ...base, nowDate: "2026-07-17" })).toBe(true); // sexta
+    expect(shouldSendAt({ ...base, nowDate: "2026-07-16" })).toBe(false); // quinta
   });
 
   it("sends monthly reports only on the 1st", () => {
@@ -57,12 +57,12 @@ describe("reportPeriod", () => {
     expect(period.frequencyLabel).toBe("diario");
   });
 
-  it("covers the previous week (Mon-Sun) for weekly reports", () => {
-    // Enviado na segunda 13/07 → cobre 06/07 a 12/07.
-    const period = reportPeriod("weekly", "2026-07-13");
-    expect(period.start).toBe("2026-07-06");
-    expect(period.endExclusive).toBe("2026-07-13");
-    expect(period.label).toBe("06/07/2026 a 12/07/2026");
+  it("covers the previous 7 days (Fri-Thu) for weekly reports", () => {
+    // Enviado na sexta 17/07 → cobre 10/07 a 16/07.
+    const period = reportPeriod("weekly", "2026-07-17");
+    expect(period.start).toBe("2026-07-10");
+    expect(period.endExclusive).toBe("2026-07-17");
+    expect(period.label).toBe("10/07/2026 a 16/07/2026");
     expect(period.frequencyLabel).toBe("semanal");
   });
 

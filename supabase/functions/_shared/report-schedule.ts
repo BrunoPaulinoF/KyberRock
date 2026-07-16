@@ -51,7 +51,8 @@ export function shouldSendAt(input: {
   if (parseScheduleHour(input.scheduleTime) !== input.nowHour) return false;
   if (input.frequency === "daily") return true;
   const target = utcDateFrom(input.nowDate);
-  if (input.frequency === "weekly") return target.getUTCDay() === 1;
+  // Padronizado: relatorio semanal sempre na sexta-feira (getUTCDay() === 5).
+  if (input.frequency === "weekly") return target.getUTCDay() === 5;
   if (input.frequency === "monthly") return target.getUTCDate() === 1;
   return false;
 }
@@ -100,7 +101,7 @@ function monthLabel(date: string): string {
 
 // Janela de dados coberta pelo relatorio de acordo com a frequencia:
 // - daily: o proprio dia de referencia;
-// - weekly (enviado na segunda): a semana anterior, de segunda a domingo;
+// - weekly (enviado toda sexta-feira): os 7 dias anteriores, de sexta a quinta;
 // - monthly (enviado no dia 1): o mes anterior completo.
 export function reportPeriod(frequency: string, referenceDate: string): ReportPeriod {
   if (frequency === "weekly") {

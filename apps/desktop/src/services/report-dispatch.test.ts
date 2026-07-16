@@ -24,8 +24,10 @@ function stateWith(patch: Partial<ReportDispatchState>): ReportDispatchState {
   return { ...EMPTY_REPORT_DISPATCH_STATE, ...patch };
 }
 
-// 16/07/2026 as 19h (apos o horario padrao de envio, 18h).
+// 16/07/2026 (quinta-feira) as 19h (apos o horario padrao de envio, 18h).
 const NOW = new Date(2026, 6, 16, 19, 0, 0);
+// 17/07/2026 (sexta-feira) as 19h — dia em que o pacote semanal dispara.
+const FRIDAY = new Date(2026, 6, 17, 19, 0, 0);
 
 describe("computeDueBundles", () => {
   it("returns nothing when disabled", () => {
@@ -46,21 +48,30 @@ describe("computeDueBundles", () => {
     expect(computeDueBundles(settingsWith({}), alreadySent, NOW)).toEqual([]);
   });
 
-  it("combines daily and weekly when 7 days have passed", () => {
+  it("combines daily and weekly on Fridays", () => {
     const due = computeDueBundles(
       settingsWith({ weekly: true }),
-      stateWith({ lastWeeklyDate: "2026-07-09" }),
-      NOW
+      stateWith({ lastWeeklyDate: "2026-07-10" }),
+      FRIDAY
     );
     expect(due.map((bundle) => bundle.kind)).toEqual(["daily", "weekly"]);
     const weekly = due.find((bundle) => bundle.kind === "weekly");
-    expect(weekly).toMatchObject({ startDate: "2026-07-10", endDate: "2026-07-16" });
+    expect(weekly).toMatchObject({ startDate: "2026-07-11", endDate: "2026-07-17" });
   });
 
-  it("does not send weekly again before 7 days", () => {
+  it("does not send weekly twice on the same Friday", () => {
     const due = computeDueBundles(
       settingsWith({ weekly: true }),
-      stateWith({ lastWeeklyDate: "2026-07-12" }),
+      stateWith({ lastWeeklyDate: "2026-07-17" }),
+      FRIDAY
+    );
+    expect(due.map((bundle) => bundle.kind)).toEqual(["daily"]);
+  });
+
+  it("does not send weekly on days other than Friday", () => {
+    const due = computeDueBundles(
+      settingsWith({ weekly: true }),
+      stateWith({ lastWeeklyDate: "2026-07-03" }),
       NOW
     );
     expect(due.map((bundle) => bundle.kind)).toEqual(["daily"]);
@@ -97,11 +108,12 @@ describe("computeDueBundles", () => {
   });
 
   it("can combine all three bundles on a coinciding day", () => {
-    const firstOfMonth = new Date(2026, 7, 1, 19, 0, 0);
+    // 01/05/2026 e sexta-feira, entao semanal e mensal vencem no mesmo dia.
+    const firstOfMonthOnFriday = new Date(2026, 4, 1, 19, 0, 0);
     const due = computeDueBundles(
       settingsWith({ weekly: true, monthly: true }),
-      stateWith({ lastWeeklyDate: "2026-07-24", lastMonthlyMonth: "2026-06" }),
-      firstOfMonth
+      stateWith({ lastWeeklyDate: "2026-04-20", lastMonthlyMonth: "2026-03" }),
+      firstOfMonthOnFriday
     );
     expect(due.map((bundle) => bundle.kind)).toEqual(["daily", "weekly", "monthly"]);
   });
@@ -154,18 +166,20 @@ describe("settings persistence", () => {
   it("anchors weekly/monthly state when the bundle is first enabled", () => {
     const db = createDatabase();
     try {
-      const now = new Date(2026, 6, 16, 10, 0, 0);
+      // 17/07/2026 e sexta-feira, entao a ancora e a unica coisa que impede um
+      // envio semanal retroativo no mesmo dia em que o pacote foi ligado.
+      const now = new Date(2026, 6, 17, 10, 0, 0);
       writeReportDispatchSettings(db, { enabled: true, weekly: true, monthly: true }, now);
 
       const state = readReportDispatchState(db);
-      expect(state.lastWeeklyDate).toBe("2026-07-16");
+      expect(state.lastWeeklyDate).toBe("2026-07-17");
       expect(state.lastMonthlyMonth).toBe("2026-06");
 
       // Com a ancora, nada de semanal/mensal vence hoje — so o diario.
       const due = computeDueBundles(
         readReportDispatchSettings(db),
         state,
-        new Date(2026, 6, 16, 19, 0, 0)
+        new Date(2026, 6, 17, 19, 0, 0)
       );
       expect(due.map((bundle) => bundle.kind)).toEqual(["daily"]);
     } finally {
