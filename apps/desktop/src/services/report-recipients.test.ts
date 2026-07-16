@@ -109,7 +109,7 @@ describe("report recipients", () => {
     }
   });
 
-  it("saves and reads custom schedule", () => {
+  it("saves and reads custom schedule, normalizing minutes to the full hour", () => {
     const db = createDatabase();
 
     try {
@@ -117,11 +117,13 @@ describe("report recipients", () => {
         companyId: "comp-1",
         email: "dono@example.com",
         scheduleFrequency: "weekly",
+        // O agendador da nuvem so considera a hora: minutos sao normalizados
+        // para nao salvar um horario que nunca sera executado como digitado.
         scheduleTime: "08:30"
       });
 
       expect(recipient.scheduleFrequency).toBe("weekly");
-      expect(recipient.scheduleTime).toBe("08:30");
+      expect(recipient.scheduleTime).toBe("08:00");
 
       const updated = updateReportRecipient(db, recipient.id, {
         scheduleFrequency: "monthly",
@@ -130,6 +132,24 @@ describe("report recipients", () => {
 
       expect(updated.scheduleFrequency).toBe("monthly");
       expect(updated.scheduleTime).toBe("09:00");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("persists reportTypes on create and update", () => {
+    const db = createDatabase();
+
+    try {
+      const recipient = createReportRecipient(db, {
+        companyId: "comp-1",
+        email: "dono@example.com",
+        reportTypes: "trucks"
+      });
+      expect(recipient.reportTypes).toBe("trucks");
+
+      const updated = updateReportRecipient(db, recipient.id, { reportTypes: "both" });
+      expect(updated.reportTypes).toBe("both");
     } finally {
       db.close();
     }

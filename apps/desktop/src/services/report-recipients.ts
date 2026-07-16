@@ -97,6 +97,16 @@ function mapRow(row: ReportRecipientRow): ReportRecipient {
   };
 }
 
+// O agendador da nuvem roda de hora em hora e considera apenas a HORA do
+// schedule_time — minutos eram aceitos na UI mas silenciosamente ignorados no
+// envio ("12:41" nunca disparava as 12:41). Normaliza para a hora cheia para o
+// que fica salvo ser exatamente o que sera executado.
+export function normalizeScheduleTime(value: string | null | undefined, fallback = "20:00"): string {
+  const hour = parseInt((value ?? "").split(":")[0] ?? "", 10);
+  if (!Number.isInteger(hour) || hour < 0 || hour > 23) return fallback;
+  return `${String(hour).padStart(2, "0")}:00`;
+}
+
 function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
@@ -268,7 +278,7 @@ export function createReportRecipient(
     sendWhatsapp
   });
   const scheduleFrequency = input.scheduleFrequency ?? "daily";
-  const scheduleTime = input.scheduleTime ?? "20:00";
+  const scheduleTime = normalizeScheduleTime(input.scheduleTime);
   const reportTypes = normalizeReportType(input.reportTypes);
   const displayName = input.displayName?.trim() || null;
   const isActive = input.isActive === false ? 0 : 1;
@@ -409,7 +419,7 @@ export function updateReportRecipient(
 
   if (input.scheduleTime !== undefined) {
     sets.push("schedule_time = ?");
-    values.push(input.scheduleTime);
+    values.push(normalizeScheduleTime(input.scheduleTime));
   }
 
   if (input.reportTypes !== undefined) {
