@@ -864,6 +864,11 @@ function registerIpcHandlers(): void {
     return runtime.enrichAllCustomersFromCnpj();
   });
 
+  ipcMain.handle("desktop:enrich-all-carriers-cnpj", async () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.enrichAllCarriersFromCnpj();
+  });
+
   ipcMain.handle("desktop:customers-delete", (_event, id: string) => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");

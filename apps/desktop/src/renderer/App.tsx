@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
   BarChart3,
@@ -86,7 +86,7 @@ import {
   SourceBadge,
   useFlash
 } from "./crud-ui";
-import type { DataTableColumn } from "./crud-ui";
+import type { DataTableColumn, FlashKind } from "./crud-ui";
 import { BlockedScreen } from "./BlockedScreen";
 import { DashboardView } from "./DashboardView";
 import { DocumentationView } from "./DocumentationView";
@@ -4788,15 +4788,26 @@ function WeighingForm({
             Use Tab para avancar e Ctrl+Enter para capturar.
           </p>
         </div>
+        {/* Card unico de peso: mostra a leitura da balanca (real ou virtual) e, apos a
+            captura, o peso capturado — sem o card separado de "peso ao vivo". */}
         <div style={{ display: "flex", gap: "16px", alignItems: "stretch", position: "relative", zIndex: 1 }}>
-          <div style={{ ...styles.liveWeightCard, flex: 1 }}>
+          <div
+            style={{
+              ...styles.liveWeightCard,
+              flex: 1,
+              backgroundColor: capturedWeight !== null ? "#f0fdf4" : undefined,
+              borderColor: capturedWeight !== null ? "#86efac" : undefined
+            }}
+          >
             <div style={styles.metricHeader}>
               <img
                 src="midia/peso.png"
                 alt=""
                 style={{ width: "22px", height: "22px", objectFit: "contain" }}
               />
-              <span style={styles.metricLabel}>Peso ao vivo</span>
+              <span style={styles.metricLabel}>
+                {capturedWeight !== null ? "Peso capturado" : "Peso"}
+              </span>
               <span
                 style={{
                   width: "10px",
@@ -4812,11 +4823,24 @@ function WeighingForm({
                 }}
               />
             </div>
-            <strong style={styles.metricValue}>
-              {liveWeight !== null ? formatWeightKg(liveWeight) : "-- kg"}
+            <strong
+              style={{
+                ...styles.metricValue,
+                color: capturedWeight !== null ? "#15803d" : undefined
+              }}
+            >
+              {capturedWeight !== null
+                ? formatWeightKg(capturedWeight)
+                : liveWeight !== null
+                  ? formatWeightKg(liveWeight)
+                  : "-- kg"}
             </strong>
             <span style={styles.metricHint}>
-              {scaleState === "connected" ? "Leitura em tempo real" : scaleStateMessage}
+              {capturedWeight !== null
+                ? "Leitura estavel capturada"
+                : scaleState === "connected"
+                  ? "Leitura em tempo real"
+                  : scaleStateMessage}
             </span>
             {scaleState !== "connected" ? (
               <button
@@ -4842,34 +4866,6 @@ function WeighingForm({
                 Reconectar balança
               </button>
             ) : null}
-          </div>
-          <div
-            style={{
-              ...styles.liveWeightCard,
-              flex: 1,
-              backgroundColor: capturedWeight !== null ? "#f0fdf4" : undefined,
-              borderColor: capturedWeight !== null ? "#86efac" : undefined
-            }}
-          >
-            <div style={styles.metricHeader}>
-              <img
-                src="midia/peso.png"
-                alt=""
-                style={{ width: "22px", height: "22px", objectFit: "contain" }}
-              />
-              <span style={styles.metricLabel}>Peso capturado</span>
-            </div>
-            <strong
-              style={{
-                ...styles.metricValue,
-                color: capturedWeight !== null ? "#15803d" : undefined
-              }}
-            >
-              {capturedWeight !== null ? formatWeightKg(capturedWeight) : "-- kg"}
-            </strong>
-            <span style={styles.metricHint}>
-              {capturedWeight !== null ? "Leitura estavel capturada" : "Clique em 'Capturar peso'"}
-            </span>
           </div>
         </div>
         {isVirtual && scaleState === "connected" ? (
@@ -6973,6 +6969,13 @@ interface CrudSelectOption {
   label: string;
 }
 
+/** Contexto entregue aos pontos de extensao do formulario generico. */
+interface CrudFieldContext {
+  formData: Record<string, string>;
+  setFieldValue: (key: string, value: string) => void;
+  setFormError: (message: string | null) => void;
+}
+
 interface CrudField {
   key: string;
   label: string;
@@ -6983,6 +6986,8 @@ interface CrudField {
   options?: CrudSelectOption[];
   emptyOption?: string;
   uppercaseMax?: number;
+  /** Conteudo renderizado ao lado do campo (ex.: botao de busca automatica de CNPJ). */
+  trailing?: (ctx: CrudFieldContext) => React.ReactNode;
 }
 
 type CrudPayloadResult = { error: string } | { value: Record<string, unknown> };
@@ -7009,6 +7014,11 @@ interface ResourceCrudProps {
   deleteDescription: string;
   expandedRow?: (item: Record<string, unknown>) => React.ReactNode;
   onChanged?: () => void;
+  /** Barra extra entre o cabecalho e a busca (ex.: acoes em lote da lista). */
+  toolbar?: (ctx: {
+    reload: () => Promise<void>;
+    showFlash: (kind: FlashKind, text: string) => void;
+  }) => React.ReactNode;
 }
 
 const CRUD_DEFAULT_SECTION = "Dados principais";
@@ -7057,7 +7067,8 @@ function ResourceCrud({
   remove,
   deleteDescription,
   expandedRow,
-  onChanged
+  onChanged,
+  toolbar
 }: ResourceCrudProps) {
   const [items, setItems] = useState<Array<Record<string, unknown>>>([]);
   const [search, setSearch] = useState("");
@@ -7225,15 +7236,23 @@ function ResourceCrud({
       );
     }
     if (field.type === "document") {
-      return (
+      const input = (
         <DocumentInput
-          key={field.key}
           label={field.label}
           value={value}
           required={field.required}
           onChange={(v) => setFieldValue(field.key, v)}
         />
       );
+      if (field.trailing) {
+        return (
+          <div key={field.key} style={{ display: "flex", alignItems: "flex-end", gap: "8px" }}>
+            <div style={{ flex: 1 }}>{input}</div>
+            {field.trailing({ formData, setFieldValue, setFormError })}
+          </div>
+        );
+      }
+      return <Fragment key={field.key}>{input}</Fragment>;
     }
     if (field.type === "phone") {
       return (
@@ -7282,6 +7301,7 @@ function ResourceCrud({
         actionLabel={`${newLabel} ${lower}`}
         onAction={openCreate}
       />
+      {toolbar ? toolbar({ reload: loadItems, showFlash }) : null}
       <CrudSearchBar
         value={search}
         onChange={setSearch}
@@ -7455,6 +7475,143 @@ function DriverCrud({
   );
 }
 
+/**
+ * Botao "Busca de dados automatica": consulta o CNPJ digitado na Receita e
+ * preenche os campos do formulario generico (usado no cadastro de transportadora,
+ * espelhando o botao equivalente do cadastro de cliente).
+ */
+function CarrierCnpjAutoFillButton({
+  desktopApi,
+  ctx
+}: {
+  desktopApi: KyberRockDesktopApi;
+  ctx: CrudFieldContext;
+}) {
+  const [busy, setBusy] = useState(false);
+
+  async function handleLookup(): Promise<void> {
+    const digits = (ctx.formData.document ?? "").replace(/\D/g, "");
+    if (digits.length !== 14) {
+      ctx.setFormError("Informe um CNPJ com 14 digitos para buscar.");
+      return;
+    }
+    setBusy(true);
+    ctx.setFormError(null);
+    try {
+      const data = await desktopApi.lookupCnpj(digits);
+      if (!data.found) {
+        ctx.setFormError("CNPJ nao encontrado na base da Receita.");
+        return;
+      }
+      // So sobrescreve os campos que a Receita retornou preenchidos.
+      if (data.legalName) ctx.setFieldValue("name", data.legalName);
+      if (data.phone) ctx.setFieldValue("phone", data.phone);
+      if (data.email) ctx.setFieldValue("email", data.email);
+      if (data.zipcode) ctx.setFieldValue("zipcode", data.zipcode);
+      if (data.addressStreet) ctx.setFieldValue("addressStreet", data.addressStreet);
+      if (data.addressNumber) ctx.setFieldValue("addressNumber", data.addressNumber);
+      if (data.addressComplement) ctx.setFieldValue("addressComplement", data.addressComplement);
+      if (data.neighborhood) ctx.setFieldValue("neighborhood", data.neighborhood);
+      if (data.city) ctx.setFieldValue("city", data.city);
+      if (data.state) ctx.setFieldValue("state", data.state.toUpperCase().slice(0, 2));
+    } catch (err) {
+      ctx.setFormError(err instanceof Error ? err.message : "Falha ao buscar o CNPJ.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => void handleLookup()}
+      disabled={busy}
+      title="Buscar os dados pelo CNPJ (Receita) e preencher o cadastro"
+      style={{
+        ...styles.secondaryButton,
+        height: "38px",
+        whiteSpace: "nowrap",
+        opacity: busy ? 0.6 : 1
+      }}
+    >
+      {busy ? "Buscando..." : "🔍 Busca de dados automatica"}
+    </button>
+  );
+}
+
+/** Botao de busca automatica em lote (todas as transportadoras com CNPJ valido). */
+function CarrierBulkCnpjToolbar({
+  desktopApi,
+  reload,
+  showFlash
+}: {
+  desktopApi: KyberRockDesktopApi;
+  reload: () => Promise<void>;
+  showFlash: (kind: FlashKind, text: string) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+
+  async function handleEnrichAll(): Promise<void> {
+    if (busy) return;
+    const confirmed = window.confirm(
+      "Buscar o CNPJ de todas as transportadoras na Receita e atualizar o cadastro (razao " +
+        "social, endereco, telefone)?\n\nPode levar alguns minutos se houver muitas transportadoras."
+    );
+    if (!confirmed) return;
+    setBusy(true);
+    try {
+      const result = await desktopApi.enrichAllCarriersFromCnpj();
+      await reload();
+      const extras: string[] = [];
+      if (result.notFound > 0) extras.push(`${result.notFound} nao encontrada(s) na Receita`);
+      if (result.failed > 0) extras.push(`${result.failed} com falha`);
+      const suffix = extras.length ? ` (${extras.join(", ")})` : "";
+      showFlash(
+        "success",
+        `Busca automatica concluida: ${result.updated} de ${result.withCnpj} transportadora(s) ` +
+          `com CNPJ atualizada(s)${suffix}. Cadastros atualizados serao enviados ao OMIE no proximo sync.`
+      );
+    } catch (err) {
+      showFlash(
+        "error",
+        err instanceof Error ? err.message : "Falha ao buscar o CNPJ das transportadoras."
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        alignItems: "center",
+        gap: "10px",
+        padding: "12px 14px",
+        marginBottom: "12px",
+        border: "1px solid var(--kr-border)",
+        borderRadius: "12px",
+        background: "var(--kr-surface-soft)"
+      }}
+    >
+      <button
+        type="button"
+        onClick={() => void handleEnrichAll()}
+        disabled={busy}
+        title="Busca o CNPJ de TODAS as transportadoras na Receita e atualiza o cadastro (razao social, endereco, telefone)"
+        style={{ ...styles.secondaryButton, height: "38px", opacity: busy ? 0.6 : 1 }}
+      >
+        {busy ? "Buscando dados..." : "🔍 Busca de dados automatica (todas)"}
+      </button>
+      <span style={{ fontSize: "12px", color: "var(--kr-muted)" }}>
+        Preenche razao social, endereco e telefone pela Receita para todas as transportadoras com
+        CNPJ.
+      </span>
+    </div>
+  );
+}
+
 function CarrierCrud({
   desktopApi,
   onChanged
@@ -7489,7 +7646,13 @@ function CarrierCrud({
 
   const fields: CrudField[] = [
     { key: "name", label: "Nome", required: true, section: "Identificacao" },
-    { key: "document", label: "CNPJ/CPF", type: "document", section: "Identificacao" },
+    {
+      key: "document",
+      label: "CNPJ/CPF",
+      type: "document",
+      section: "Identificacao",
+      trailing: (ctx) => <CarrierCnpjAutoFillButton desktopApi={desktopApi} ctx={ctx} />
+    },
     { key: "phone", label: "Telefone", section: "Contato" },
     { key: "email", label: "Email", section: "Contato" },
     { key: "zipcode", label: "CEP", section: "Endereco" },
@@ -7583,6 +7746,9 @@ function CarrierCrud({
       emptyHint={'Sincronize o OMIE na tela Cloud ou cadastre pelo botao "Nova transportadora".'}
       modalMaxWidth={980}
       minWidth="920px"
+      toolbar={({ reload, showFlash }) => (
+        <CarrierBulkCnpjToolbar desktopApi={desktopApi} reload={reload} showFlash={showFlash} />
+      )}
       fields={fields}
       columns={columns}
       rowToForm={(item) => ({

@@ -321,6 +321,14 @@ export interface KyberRockDesktopApi {
     notFound: number;
     failed: number;
   }>;
+  /** Mesma busca automatica em lote, para todas as transportadoras com CNPJ valido. */
+  enrichAllCarriersFromCnpj: () => Promise<{
+    total: number;
+    withCnpj: number;
+    updated: number;
+    notFound: number;
+    failed: number;
+  }>;
   // Meios de pagamento e contas vem do OMIE (sincronizacao); localmente so ha
   // atualizacao restrita (ativar/desativar, apelido, vinculo forma -> conta).
   paymentMethodsUpdate: (id: string, input: UpdatePaymentMethodInput) => Promise<unknown>;

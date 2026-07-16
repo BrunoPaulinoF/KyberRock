@@ -1940,6 +1940,66 @@ export class DesktopRuntime {
     return summary;
   }
 
+  /**
+   * Mesma busca automatica em lote dos clientes, para TODAS as transportadoras com
+   * CNPJ valido (14 digitos): consulta a Receita em serie e grava os dados retornados.
+   * Cada campo so e sobrescrito quando a consulta traz valor; o update marca
+   * needs_push=1, entao o cadastro atualizado sobe ao OMIE no proximo sync.
+   */
+  async enrichAllCarriersFromCnpj(): Promise<CnpjBulkEnrichResult> {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    const carriers = listCarriers(this.database, identity.companyId);
+    const summary: CnpjBulkEnrichResult = {
+      total: carriers.length,
+      withCnpj: 0,
+      updated: 0,
+      notFound: 0,
+      failed: 0
+    };
+
+    for (const carrier of carriers) {
+      const digits = (carrier.document ?? "").replace(/\D/g, "");
+      if (digits.length !== 14) continue;
+      summary.withCnpj += 1;
+
+      let data: CnpjLookupResult;
+      try {
+        data = await lookupCnpjFromCloud(this.database, identity, digits);
+      } catch {
+        summary.failed += 1;
+        continue;
+      }
+      if (!data.found) {
+        summary.notFound += 1;
+        continue;
+      }
+
+      const patch: UpdateCarrierInput = {};
+      if (data.legalName) patch.name = data.legalName;
+      if (data.phone) patch.phone = data.phone;
+      if (data.email) patch.email = data.email;
+      if (data.zipcode) patch.zipcode = data.zipcode;
+      if (data.addressStreet) patch.addressStreet = data.addressStreet;
+      if (data.addressNumber) patch.addressNumber = data.addressNumber;
+      if (data.addressComplement) patch.addressComplement = data.addressComplement;
+      if (data.neighborhood) patch.neighborhood = data.neighborhood;
+      if (data.city) patch.city = data.city;
+      if (data.state) patch.state = data.state.toUpperCase().slice(0, 2);
+      if (Object.keys(patch).length === 0) continue;
+
+      try {
+        updateCarrier(this.database, carrier.id, patch);
+        summary.updated += 1;
+      } catch {
+        summary.failed += 1;
+      }
+    }
+
+    this.cacheStore.invalidate("carrier", identity.companyId);
+    return summary;
+  }
+
   deleteCustomer(id: string): void {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
