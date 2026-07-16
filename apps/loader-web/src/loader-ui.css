@@ -309,6 +309,16 @@ select {
   box-shadow: none;
 }
 
+.auth-download {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 16px;
+  text-align: center;
+  text-decoration: none;
+}
+
 .auth-switch {
   margin: 24px 0 0;
   text-align: center;
