@@ -3,10 +3,10 @@ import { useEffect, useState } from "react";
 import type { KyberRockDesktopApi, ReportDispatchConfigView } from "../preload/api-types";
 
 // Card "Envios automaticos" da tela de Relatorios: liga/desliga o agendador
-// local, escolhe a hora e quais pacotes saem (diario todo dia, semanal a cada
-// 7 dias, mensal na virada do mes). Quando os pacotes coincidem no mesmo dia,
-// os anexos (PDF Insights + Excel de vendas + PDF de caminhoes) vao juntos em
-// um unico envio para cada destinatario.
+// local, escolhe a hora e quais pacotes saem (diario todo dia, semanal toda
+// sexta-feira, mensal na virada do mes). Quando os pacotes coincidem no mesmo
+// dia, os anexos (PDF Insights + Excel de vendas + PDF de caminhoes) vao
+// juntos em um unico envio para cada destinatario.
 
 const styles = {
   card: {
@@ -295,7 +295,7 @@ export function ReportDispatchSettings({
                 disabled={busy}
                 onChange={(event) => void saveSettings({ weekly: event.target.checked })}
               />
-              Semanal (a cada 7 dias, ultimos 7 dias)
+              Semanal (toda sexta-feira, ultimos 7 dias)
             </label>
             <label style={styles.checkboxLabel}>
               <input

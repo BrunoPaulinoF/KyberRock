@@ -5,7 +5,7 @@
 //
 // Pacotes ("bundles") e seus periodos:
 // - daily:   o proprio dia do envio
-// - weekly:  ultimos 7 dias (a cada 7 dias contados do ultimo envio semanal)
+// - weekly:  ultimos 7 dias, disparado toda sexta-feira (padronizado)
 // - monthly: mes anterior completo (na virada do mes)
 // Quando mais de um pacote vence no mesmo dia (ex.: dia de semanal tambem tem
 // o diario), os anexos sao combinados em um unico envio.
@@ -72,14 +72,6 @@ function addDays(isoDate: string, days: number): string {
   return localIsoDate(date);
 }
 
-function daysBetween(fromIso: string, toIso: string): number {
-  const [fy, fm, fd] = fromIso.split("-").map(Number);
-  const [ty, tm, td] = toIso.split("-").map(Number);
-  const from = new Date(fy ?? 1970, (fm ?? 1) - 1, fd ?? 1);
-  const to = new Date(ty ?? 1970, (tm ?? 1) - 1, td ?? 1);
-  return Math.round((to.getTime() - from.getTime()) / 86_400_000);
-}
-
 // Mes anterior ao dia informado: {month: "YYYY-MM", start, end}.
 function previousMonthOf(todayIso: string): { month: string; start: string; end: string } {
   const [year, month] = todayIso.split("-").map(Number);
@@ -119,10 +111,7 @@ export function computeDueBundles(
     });
   }
 
-  if (
-    settings.weekly &&
-    (state.lastWeeklyDate === null || daysBetween(state.lastWeeklyDate, today) >= 7)
-  ) {
+  if (settings.weekly && now.getDay() === 5 && state.lastWeeklyDate !== today) {
     const start = addDays(today, -6);
     due.push({
       kind: "weekly",
@@ -215,7 +204,7 @@ export function writeReportDispatchState(
 }
 
 // Salva as configuracoes ancorando o estado dos pacotes recem-ligados: semanal
-// passa a contar 7 dias a partir de hoje e o mensal espera a proxima virada —
+// so dispara na proxima sexta-feira e o mensal espera a proxima virada —
 // ligar um pacote nao dispara envio retroativo imediato.
 export function writeReportDispatchSettings(
   database: DesktopDatabase,
