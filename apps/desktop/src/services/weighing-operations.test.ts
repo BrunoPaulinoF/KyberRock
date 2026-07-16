@@ -1259,6 +1259,39 @@ describe("weighing operations", () => {
     }
   });
 
+  it("keeps closed operations in the completed list through every sync status", () => {
+    const database = createDatabase();
+
+    try {
+      const operation = createSimulatedWeighingOperation(database, {
+        identity: createIdentity(database),
+        customerName: "Cliente Sync",
+        plate: "ABC1D23",
+        driverName: "Motorista Sync",
+        productDescription: "Brita 1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, { operationId: operation.id, exitWeightKg: 18_500 });
+      expect(listClosedWeighingOperations(database).map((op) => op.id)).toEqual([operation.id]);
+
+      // A sincronizacao com a nuvem/OMIE promove o status de closed_local ate synced,
+      // passando por pending_cloud/pending_omie (ou parando em sync_error). Em nenhum
+      // desses estados a operacao pode sumir da lista de Concluidas.
+      for (const status of ["pending_cloud", "pending_omie", "sync_error", "synced"] as const) {
+        database
+          .prepare("UPDATE weighing_operations SET status = ? WHERE id = ?")
+          .run(status, operation.id);
+        expect(listClosedWeighingOperations(database).map((op) => op.id)).toEqual([operation.id]);
+      }
+
+      // Uma operacao ja sincronizada continua podendo ser excluida da lista local.
+      deleteClosedWeighingOperation(database, operation.id);
+      expect(listClosedWeighingOperations(database)).toHaveLength(0);
+    } finally {
+      database.close();
+    }
+  });
+
   it("blocks customers and products flagged as unavailable", () => {
     const database = createDatabase();
 

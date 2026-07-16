@@ -29,6 +29,35 @@ type OperationStatus =
   | "sync_error"
   | "cancelled";
 
+/**
+ * Status de uma operacao ja concluida (fechada localmente), em qualquer estagio da
+ * sincronizacao. Uma operacao "concluida" nasce em `closed_local` e caminha por
+ * `pending_cloud`/`pending_omie` ate `synced` — ou para em `sync_error`. Em todos esses
+ * estados a pesagem ja terminou (peso de saida capturado, cupom emitido), entao ela
+ * continua sendo uma operacao concluida: precisa aparecer na lista de Concluidas, entrar
+ * nos relatorios e permitir reimpressao/exclusao. Apenas `cancelled` sai desse conjunto.
+ *
+ * Antes, varias consultas filtravam so por `closed_local`, e a operacao sumia da lista de
+ * Concluidas assim que a sincronizacao com a nuvem/OMIE mudava o status para `synced`.
+ */
+export const CLOSED_OPERATION_STATUSES = [
+  "closed_local",
+  "pending_cloud",
+  "pending_omie",
+  "synced",
+  "sync_error"
+] as const satisfies readonly OperationStatus[];
+
+/** Lista de status concluidos ja formatada para interpolar num `IN (...)` de SQL. */
+export const CLOSED_OPERATION_STATUS_SQL_LIST = CLOSED_OPERATION_STATUSES.map(
+  (status) => `'${status}'`
+).join(", ");
+
+/** True quando o status representa uma operacao concluida (fechada, em qualquer estagio de sync). */
+export function isClosedOperationStatus(status: string): boolean {
+  return (CLOSED_OPERATION_STATUSES as readonly string[]).includes(status);
+}
+
 export type OperationType = "invoice" | "internal";
 export type FreightPayer = "customer" | "quarry" | "third_party";
 
@@ -1513,7 +1542,7 @@ export function listClosedWeighingOperations(
        LEFT JOIN drivers d ON d.id = o.driver_id
        LEFT JOIN products p ON p.id = o.product_id
        LEFT JOIN payment_terms pt ON pt.id = o.payment_term_id
-       WHERE o.status = 'closed_local'
+       WHERE o.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
          AND o.deleted_at IS NULL
        ORDER BY o.updated_at DESC`
     )
@@ -1538,9 +1567,10 @@ export function clearCanceledWeighingOperations(
 }
 
 /**
- * Exclui (soft-delete) uma operacao ja concluida (status closed_local ou synced).
- * Nao remove nada no OMIE — o pedido/OS de la, se ja enviado, deve ser tratado no
- * proprio OMIE. Serve para limpar a lista local de operacoes concluidas.
+ * Exclui (soft-delete) uma operacao ja concluida (qualquer status concluido: closed_local,
+ * pending_cloud, pending_omie, synced ou sync_error). Nao remove nada no OMIE — o pedido/OS
+ * de la, se ja enviado, deve ser tratado no proprio OMIE. Serve para limpar a lista local de
+ * operacoes concluidas.
  */
 export function deleteClosedWeighingOperation(
   database: DesktopDatabase,
@@ -1553,7 +1583,7 @@ export function deleteClosedWeighingOperation(
   if (!existing) {
     throw new Error("Operacao nao encontrada.");
   }
-  if (existing.status !== "closed_local" && existing.status !== "synced") {
+  if (!isClosedOperationStatus(existing.status)) {
     throw new Error("Apenas operacoes concluidas podem ser excluidas por aqui.");
   }
   const timestamp = now.toISOString();
