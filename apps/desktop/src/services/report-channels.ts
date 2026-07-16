@@ -17,7 +17,6 @@ export interface ReportChannelSettings {
   smtpPassword: string;
   smtpSender: string;
   uazapiBaseUrl: string;
-  uazapiAdminToken: string;
   uazapiInstanceToken: string;
   uazapiInstanceName: string;
   uazapiStatus: WhatsappConnectionStatus | "";
@@ -35,7 +34,6 @@ export const EMPTY_REPORT_CHANNEL_SETTINGS: ReportChannelSettings = {
   smtpPassword: "",
   smtpSender: "",
   uazapiBaseUrl: "",
-  uazapiAdminToken: "",
   uazapiInstanceToken: "",
   uazapiInstanceName: "",
   uazapiStatus: "",
@@ -67,8 +65,8 @@ export function writeReportChannelSettings(
   return next;
 }
 
-// Linha enviada ao cloud (tabela report_channel_settings). O admin token do
-// UAZAPI e SOMENTE local: o cloud so precisa do token da instancia para enviar.
+// Linha enviada ao cloud (tabela report_channel_settings). O cloud so precisa
+// do token da instancia (provisionada pelos admins na UAZAPI) para enviar.
 export function toCloudChannelSettingsRow(
   companyId: string,
   settings: ReportChannelSettings
@@ -183,21 +181,6 @@ async function uazapiRequest(
     throw new Error(`UAZAPI ${path} falhou (${response.status}): ${detail}`);
   }
   return json;
-}
-
-// POST /instance/create (header admintoken) — cria a instancia desconectada e
-// devolve o token que autentica todas as demais chamadas.
-export async function uazapiCreateInstance(input: {
-  baseUrl: string;
-  adminToken: string;
-  name: string;
-}): Promise<UazapiInstanceState> {
-  const json = await uazapiRequest(input.baseUrl, "/instance/create", {
-    method: "POST",
-    headers: { admintoken: input.adminToken },
-    body: { name: input.name }
-  });
-  return mapInstanceState(json as Parameters<typeof mapInstanceState>[0]);
 }
 
 // POST /instance/connect (header token) — inicia a conexao; o QR code sai no

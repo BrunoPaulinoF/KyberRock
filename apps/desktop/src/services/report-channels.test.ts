@@ -48,7 +48,7 @@ describe("report channel settings", () => {
     }
   });
 
-  it("maps to the cloud row without exposing the admin token", () => {
+  it("maps to the cloud row with the instance token", () => {
     const row = toCloudChannelSettingsRow("comp-1", {
       ...EMPTY_REPORT_CHANNEL_SETTINGS,
       smtpHost: "smtp.gmail.com",
@@ -56,7 +56,6 @@ describe("report channel settings", () => {
       smtpUser: "a@b.com",
       smtpPassword: "secret",
       uazapiBaseUrl: "https://x.uazapi.com",
-      uazapiAdminToken: "admin-secret",
       uazapiInstanceToken: "tok-1",
       uazapiInstanceName: "kyberrock-abc",
       uazapiStatus: "connected"
@@ -67,8 +66,8 @@ describe("report channel settings", () => {
     expect(row["smtp_sender"]).toBe("a@b.com");
     expect(row["whatsapp_url"]).toBe("https://x.uazapi.com");
     expect(row["whatsapp_instance_token"]).toBe("tok-1");
+    expect(row["whatsapp_instance_name"]).toBe("kyberrock-abc");
     expect(row["whatsapp_status"]).toBe("connected");
-    expect(JSON.stringify(row)).not.toContain("admin-secret");
   });
 
   it("stores empty optional fields as null in the cloud row", () => {

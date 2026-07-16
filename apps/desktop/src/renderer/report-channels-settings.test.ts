@@ -19,7 +19,9 @@ describe("ReportChannelsSettings", () => {
 
   it("has the WhatsApp (UAZAPI) configuration and QR flow", () => {
     expect(source).toContain("Servidor UAZAPI (URL)");
-    expect(source).toContain("Chave de API (admin token)");
+    expect(source).toContain("Nome da instancia");
+    expect(source).toContain("Token da instancia");
+    expect(source).not.toContain("admin token");
     expect(source).toContain("Conectar WhatsApp (gerar QR code)");
     expect(source).toContain("whatsappConnect");
     expect(source).toContain("whatsappDisconnect");
