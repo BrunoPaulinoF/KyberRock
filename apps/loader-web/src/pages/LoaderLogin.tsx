@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { useAuth } from "../contexts/AuthContext";
+import { desktopDownloadUrl } from "../lib/desktop-download";
 
 export function LoaderLogin() {
   const { loginLoader, error, isLoader, clearError } = useAuth();
@@ -123,6 +124,14 @@ export function LoaderLogin() {
             {isLoading ? "Entrando..." : "Entrar"}
           </button>
         </form>
+
+        <a
+          className="secondary-action auth-download"
+          href={desktopDownloadUrl}
+          rel="noopener"
+        >
+          Baixar o app desktop (versao mais recente)
+        </a>
 
         <p className="auth-switch">
           Area administrativa? <a href="/admin/login">Entrar como administrador</a>
