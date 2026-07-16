@@ -117,6 +117,7 @@ import type {
 } from "./customers.types";
 import type { KyberRockDesktopApi } from "./desktop-api";
 import type { ScaleConfiguration, ScaleConfigurationInput } from "../services/scale-configs";
+import type { SerialPortInfo } from "../services/scale-serial";
 import type { OmieQueueItem } from "../services/sync-queue";
 export interface AppProps {
   desktopApi?: KyberRockDesktopApi;
@@ -4665,13 +4666,7 @@ function WeighingForm({
         if (status.state !== "connected") {
           setScaleState("connecting");
           setScaleStateMessage("Tentando conectar à balança...");
-          if (config.adapterType === "virtual") {
-            await api.virtualScaleConnect();
-          } else {
-            await api.scaleConnect(
-              config.connection as unknown as Parameters<KyberRockDesktopApi["scaleConnect"]>[0]
-            );
-          }
+          await api.scaleConnect();
         }
       } catch {
         // Silencioso - o checkStatus periodicamente vai atualizar
@@ -4831,16 +4826,7 @@ function WeighingForm({
                   setScaleState("connecting");
                   setScaleStateMessage("Conectando...");
                   try {
-                    const config = await desktopApi.scaleGetConfig();
-                    if (config.adapterType === "virtual") {
-                      await desktopApi.virtualScaleConnect();
-                    } else {
-                      await desktopApi.scaleConnect(
-                        config.connection as unknown as Parameters<
-                          KyberRockDesktopApi["scaleConnect"]
-                        >[0]
-                      );
-                    }
+                    await desktopApi.scaleConnect();
                   } catch (err) {
                     setScaleState("error");
                     setScaleStateMessage(err instanceof Error ? err.message : "Falha ao conectar");
@@ -5881,13 +5867,7 @@ function CloseOperationWeighingDialog({
         const status = await api.scaleGetStatus();
         if (canceled) return;
         if (status.state !== "connected") {
-          if (config.adapterType === "virtual") {
-            await api.virtualScaleConnect();
-          } else {
-            await api.scaleConnect(
-              config.connection as unknown as Parameters<KyberRockDesktopApi["scaleConnect"]>[0]
-            );
-          }
+          await api.scaleConnect();
         }
       } catch {
         // Silencioso
@@ -6030,16 +6010,7 @@ function CloseOperationWeighingDialog({
                   const api = desktopApi;
                   setScaleState("connecting");
                   try {
-                    const config = await api.scaleGetConfig();
-                    if (config.adapterType === "virtual") {
-                      await api.virtualScaleConnect();
-                    } else {
-                      await api.scaleConnect(
-                        config.connection as unknown as Parameters<
-                          KyberRockDesktopApi["scaleConnect"]
-                        >[0]
-                      );
-                    }
+                    await api.scaleConnect();
                   } catch (err) {
                     setScaleState("error");
                     setScaleMessage(err instanceof Error ? err.message : "Falha ao conectar");
@@ -8450,24 +8421,28 @@ function PaymentRegistrationsView({ desktopApi }: { desktopApi: KyberRockDesktop
   );
 }
 
+/** Tipo de conexao mostrado ao operador. USB e Serial (COM) usam o mesmo driver serial. */
+type ScaleUiConnectionType = "tcp" | "usb" | "com" | "virtual";
+
+const SCALE_UI_BAUD_RATES = ["1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200"];
+const SCALE_UI_VARIATION_ALERT_KG = 50;
+
 function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
+  const [connectionType, setConnectionType] = useState<ScaleUiConnectionType>("tcp");
   const [host, setHost] = useState("192.168.1.100");
   const [port, setPort] = useState("4001");
-  const [adapterType, setAdapterType] = useState<"tcp" | "virtual">("tcp");
-  const [captureMode, setCaptureMode] = useState<"custom" | "default">("custom");
-  const [autoConnect, setAutoConnect] = useState(false);
-  const [sampleDurationSeconds, setSampleDurationSeconds] = useState("5");
-  const [sampleIntervalMs, setSampleIntervalMs] = useState("250");
-  const [requireStable, setRequireStable] = useState(true);
-  const [minStableSeconds, setMinStableSeconds] = useState("1");
-  const [maxVariationKg, setMaxVariationKg] = useState("50");
-  const [minWeightKg, setMinWeightKg] = useState("1000");
+  const [serialPath, setSerialPath] = useState("");
+  const [baudRate, setBaudRate] = useState("9600");
+  const [autoConnect, setAutoConnect] = useState(true);
+  const [serialPorts, setSerialPorts] = useState<SerialPortInfo[]>([]);
+  const [portsLoading, setPortsLoading] = useState(false);
   const [configLoaded, setConfigLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [configMessage, setConfigMessage] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<string | null>(null);
+  const [testProgress, setTestProgress] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const [reading, setReading] = useState<{ weightKg: number; stable: boolean } | null>(null);
   const [status, setStatus] = useState<string>("Desconectado");
@@ -8484,10 +8459,11 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
     stableCount: 0,
     unstableCount: 0
   });
-  const [testProgress, setTestProgress] = useState<string | null>(null);
 
   const connectedRef = useRef(connected);
   connectedRef.current = connected;
+
+  const isSerialType = connectionType === "usb" || connectionType === "com";
 
   useEffect(() => {
     if (!desktopApi) return;
@@ -8531,7 +8507,7 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
         setConfigLoaded(true);
 
         if (config.connection.autoConnect) {
-          await desktopApi.scaleConnect(config.connection);
+          await desktopApi.scaleConnect();
           if (canceled) return;
           setConnected(true);
           setStatus("Conectado");
@@ -8575,6 +8551,39 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
     return () => clearInterval(interval);
   }, [connected, desktopApi]);
 
+  // Atualiza a lista de portas ao entrar em um tipo serial (USB/COM)
+  useEffect(() => {
+    if (!desktopApi || !configLoaded || !isSerialType) return;
+    void refreshSerialPorts();
+  }, [desktopApi, configLoaded, isSerialType]);
+
+  async function refreshSerialPorts(): Promise<void> {
+    if (!desktopApi) return;
+    setPortsLoading(true);
+    setError(null);
+    try {
+      const ports = await desktopApi.scaleListSerialPorts();
+      setSerialPorts(ports);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Falha ao listar portas seriais");
+    } finally {
+      setPortsLoading(false);
+    }
+  }
+
+  // USB mostra so as portas USB quando o sistema consegue identifica-las;
+  // se o driver nao reportar a origem, mostra todas para nao esconder a balanca.
+  const usbPorts = serialPorts.filter((p) => p.isUsb);
+  const visiblePorts =
+    connectionType === "usb" && usbPorts.length > 0 ? usbPorts : serialPorts;
+
+  // Auto-seleciona quando ha exatamente uma porta e nada foi escolhido ainda
+  useEffect(() => {
+    if (!isSerialType || serialPath || visiblePorts.length !== 1) return;
+    const only = visiblePorts[0];
+    if (only) setSerialPath(only.path);
+  }, [isSerialType, serialPath, visiblePorts.length]);
+
   async function handleDiscover(): Promise<void> {
     setDiscovering(true);
     setError(null);
@@ -8595,17 +8604,28 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
     }
   }
 
+  function validateBeforeConnect(): string | null {
+    if (isSerialType && !serialPath.trim()) {
+      return "Selecione a porta da balanca antes de conectar. Use \"Atualizar portas\" se a lista estiver vazia.";
+    }
+    if (connectionType === "tcp" && !host.trim()) {
+      return "Informe o IP da balanca antes de conectar.";
+    }
+    return null;
+  }
+
   async function handleConnect(): Promise<void> {
     setError(null);
     setConfigMessage(null);
+    const validation = validateBeforeConnect();
+    if (validation) {
+      setError(validation);
+      return;
+    }
     try {
       const config = await desktopApi.scaleSaveConfig(buildScaleConfigInput());
       applyScaleConfig(config);
-      if (config.adapterType === "virtual") {
-        await desktopApi.virtualScaleConnect();
-      } else {
-        await desktopApi.scaleConnect(config.connection);
-      }
+      await desktopApi.scaleConnect();
       setConnected(true);
       setStatus("Conectado");
       setConfigMessage("Configuracao salva e balanca conectada.");
@@ -8619,6 +8639,7 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
     await desktopApi.scaleDisconnect();
     setConnected(false);
     setStatus("Desconectado");
+    setReading(null);
     readingsRef.current = [];
     setStats({ count: 0, min: 0, max: 0, avg: 0, variation: 0, stableCount: 0, unstableCount: 0 });
   }
@@ -8638,67 +8659,35 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
     }
   }
 
-  async function handleTestInstant(): Promise<void> {
-    setTesting(true);
-    setError(null);
-    setConfigMessage(null);
-    setTestResult(null);
-    setTestProgress("Fazendo leitura instantanea...");
-
-    try {
-      const config = await desktopApi.scaleSaveConfig(buildScaleConfigInput());
-      applyScaleConfig(config);
-
-      if (!connectedRef.current) {
-        if (config.adapterType === "virtual") {
-          await desktopApi.virtualScaleConnect();
-        } else {
-          await desktopApi.scaleConnect(config.connection);
-        }
-        setConnected(true);
-        setStatus("Conectado");
-      }
-
-      const instant = await desktopApi.scaleRead();
-      setTestProgress(null);
-      setTestResult(
-        `Leitura instantanea: ${new Intl.NumberFormat("pt-BR").format(instant.weightKg)} kg (${instant.stable ? "estavel" : "instavel"})`
-      );
-    } catch (err) {
-      setTestProgress(null);
-      setError(err instanceof Error ? err.message : "Falha na leitura instantanea");
-    } finally {
-      setTesting(false);
-    }
-  }
-
   async function handleTestCapture(): Promise<void> {
     setTesting(true);
     setError(null);
     setConfigMessage(null);
     setTestResult(null);
-    setTestProgress("Iniciando captura de peso estavel...");
+    const validation = validateBeforeConnect();
+    if (validation) {
+      setError(validation);
+      setTesting(false);
+      return;
+    }
+    setTestProgress("Preparando teste de captura...");
 
     try {
       const config = await desktopApi.scaleSaveConfig(buildScaleConfigInput());
       applyScaleConfig(config);
 
       if (!connectedRef.current) {
-        if (config.adapterType === "virtual") {
-          await desktopApi.virtualScaleConnect();
-        } else {
-          await desktopApi.scaleConnect(config.connection);
-        }
+        await desktopApi.scaleConnect();
         setConnected(true);
         setStatus("Conectado");
       }
 
-      setTestProgress("Aguardando leitura estavel e recente da balanca...");
+      setTestProgress("Aguardando a balanca estabilizar...");
 
       const capture = await desktopApi.scaleCaptureStable({ operationType: "entry" });
       setTestProgress(null);
       setTestResult(
-        `Captura aprovada: ${new Intl.NumberFormat("pt-BR").format(capture.reading.weightKg)} kg (${capture.reading.status}).`
+        `Captura aprovada: ${new Intl.NumberFormat("pt-BR").format(capture.reading.weightKg)} kg (peso estavel).`
       );
     } catch (err) {
       setTestProgress(null);
@@ -8709,154 +8698,108 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   }
 
   function applyScaleConfig(config: ScaleConfiguration): void {
-    setAdapterType(config.adapterType);
-    setCaptureMode(config.captureMode);
+    setConnectionType(
+      config.adapterType === "virtual"
+        ? "virtual"
+        : config.adapterType === "serial"
+          ? config.connection.serialTransport === "com"
+            ? "com"
+            : "usb"
+          : "tcp"
+    );
     setHost(config.connection.host);
     setPort(String(config.connection.port));
+    setSerialPath(config.connection.serialPath);
+    setBaudRate(String(config.connection.baudRate));
     setAutoConnect(config.connection.autoConnect);
-    setSampleDurationSeconds(
-      String(Math.max(1, Math.round(config.stability.sampleDurationMs / 1000)))
-    );
-    setSampleIntervalMs(String(config.stability.sampleIntervalMs));
-    setRequireStable(config.stability.requireStable);
-    setMinStableSeconds(String(Math.round(config.stability.minStableMs / 1000)));
-    setMaxVariationKg(String(config.stability.maxVariationKg));
-    setMinWeightKg(String(config.stability.minWeightKg));
   }
 
   function buildScaleConfigInput(): ScaleConfigurationInput {
     return {
-      adapterType,
-      captureMode,
+      adapterType:
+        connectionType === "virtual" ? "virtual" : connectionType === "tcp" ? "tcp" : "serial",
       connection: {
         host: host.trim() || "192.168.1.100",
-        port: parseInteger(port, 4001),
-        timeoutMs: 3000,
-        reconnectIntervalMs: 5000,
-        maxReconnectAttempts: 10,
+        port: parseScaleInteger(port, 4001),
+        serialPath: serialPath.trim(),
+        baudRate: parseScaleInteger(baudRate, 9600),
+        serialTransport: connectionType === "com" ? "com" : "usb",
         autoConnect
-      },
-      stability: {
-        sampleDurationMs: parseInteger(sampleDurationSeconds, 5) * 1000,
-        sampleIntervalMs: parseInteger(sampleIntervalMs, 250),
-        requireStable,
-        minStableMs: parseInteger(minStableSeconds, 1) * 1000,
-        maxVariationKg: parseInteger(maxVariationKg, 50),
-        minWeightKg: parseInteger(minWeightKg, 1000)
       }
     };
   }
 
-  function parseInteger(value: string, fallback: number): number {
-    const parsed = parseInt(value, 10);
-    return Number.isFinite(parsed) ? parsed : fallback;
+  async function handleSelectType(type: ScaleUiConnectionType): Promise<void> {
+    if (type === connectionType) return;
+    setConnectionType(type);
+    setError(null);
+    setConfigMessage(null);
+    setTestResult(null);
+    if (connected) {
+      await handleDisconnect();
+    }
+  }
+
+  function renderTypeButton(type: ScaleUiConnectionType, label: string, hint: string) {
+    const active = connectionType === type;
+    return (
+      <button
+        type="button"
+        onClick={() => void handleSelectType(type)}
+        style={{
+          flex: "1 1 45%",
+          minWidth: "130px",
+          padding: "10px 12px",
+          border: active ? "2px solid var(--kr-accent)" : "1px solid var(--kr-border)",
+          borderRadius: "8px",
+          background: active ? "var(--kr-accent-soft)" : "var(--kr-surface-soft)",
+          color: active ? "var(--kr-info-text)" : "var(--kr-muted)",
+          fontWeight: active ? 700 : 500,
+          fontSize: "13px",
+          cursor: "pointer",
+          textAlign: "left"
+        }}
+      >
+        <span style={{ display: "block" }}>{label}</span>
+        <span style={{ display: "block", fontSize: "11px", fontWeight: 400, marginTop: "2px" }}>
+          {hint}
+        </span>
+      </button>
+    );
   }
 
   return (
     <div>
       <section style={styles.twoColumns}>
         <article style={styles.panel}>
-          <h2 style={styles.panelTitle}>Configuracao da Balanca</h2>
-          <div style={{ display: "flex", gap: "12px", marginBottom: "16px" }}>
-            <button
-              type="button"
-              onClick={async () => {
-                setAdapterType("tcp");
-                await desktopApi.scaleSaveConfig(buildScaleConfigInput());
-                if (connected) {
-                  await handleDisconnect();
-                }
-              }}
-              style={{
-                flex: 1,
-                padding: "10px 16px",
-                border: adapterType === "tcp" ? "2px solid var(--kr-accent)" : "1px solid var(--kr-border)",
-                borderRadius: "8px",
-                background: adapterType === "tcp" ? "var(--kr-accent-soft)" : "var(--kr-surface-soft)",
-                color: adapterType === "tcp" ? "var(--kr-info-text)" : "var(--kr-muted)",
-                fontWeight: adapterType === "tcp" ? 700 : 500,
-                fontSize: "13px",
-                cursor: "pointer"
-              }}
-            >
-              TCP (Real)
-            </button>
-            <button
-              type="button"
-              onClick={async () => {
-                await desktopApi.scaleSaveConfig({ adapterType: "virtual" });
-                setAdapterType("virtual");
-                if (connected) {
-                  await handleDisconnect();
-                }
-              }}
-              style={{
-                flex: 1,
-                padding: "10px 16px",
-                border: adapterType === "virtual" ? "2px solid var(--kr-accent)" : "1px solid var(--kr-border)",
-                borderRadius: "8px",
-                background: adapterType === "virtual" ? "var(--kr-accent-soft)" : "var(--kr-surface-soft)",
-                color: adapterType === "virtual" ? "var(--kr-info-text)" : "var(--kr-muted)",
-                fontWeight: adapterType === "virtual" ? 700 : 500,
-                fontSize: "13px",
-                cursor: "pointer"
-              }}
-            >
-              Virtual (Simulada)
-            </button>
+          <h2 style={styles.panelTitle}>Conexao da Balanca</h2>
+          <p style={styles.muted}>
+            Escolha como a balanca esta ligada ao computador e informe apenas os dados dessa
+            conexao. A captura de peso aguarda a balanca estabilizar automaticamente.
+          </p>
+          <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", margin: "12px 0 16px" }}>
+            {renderTypeButton("tcp", "Rede (IP)", "Balanca ligada na rede")}
+            {renderTypeButton("usb", "USB", "Cabo USB ou conversor USB-serial")}
+            {renderTypeButton("com", "Serial (COM)", "Porta serial do computador")}
+            {renderTypeButton("virtual", "Virtual", "Simulada, para testes")}
           </div>
-          <div style={{ display: "flex", gap: "12px", marginBottom: "16px", marginTop: "8px" }}>
-            <button
-              type="button"
-              onClick={() => setCaptureMode("custom")}
-              style={{
-                flex: 1,
-                padding: "10px 16px",
-                border: captureMode === "custom" ? "2px solid var(--kr-accent)" : "1px solid var(--kr-border)",
-                borderRadius: "8px",
-                background: captureMode === "custom" ? "var(--kr-accent-soft)" : "var(--kr-surface-soft)",
-                color: captureMode === "custom" ? "var(--kr-info-text)" : "var(--kr-muted)",
-                fontWeight: captureMode === "custom" ? 700 : 500,
-                fontSize: "13px",
-                cursor: "pointer"
-              }}
-            >
-              Personalizado (estabilidade)
-            </button>
-            <button
-              type="button"
-              onClick={() => setCaptureMode("default")}
-              style={{
-                flex: 1,
-                padding: "10px 16px",
-                border: captureMode === "default" ? "2px solid var(--kr-accent)" : "1px solid var(--kr-border)",
-                borderRadius: "8px",
-                background: captureMode === "default" ? "var(--kr-accent-soft)" : "var(--kr-surface-soft)",
-                color: captureMode === "default" ? "var(--kr-info-text)" : "var(--kr-muted)",
-                fontWeight: captureMode === "default" ? 700 : 500,
-                fontSize: "13px",
-                cursor: "pointer"
-              }}
-            >
-              Padrão (instantaneo)
-            </button>
-          </div>
-          {adapterType === "tcp" ? (
+
+          {connectionType === "tcp" ? (
             <>
               <TextInput
-                label="Host / IP"
+                label="IP da balanca"
                 value={host}
                 onChange={setHost}
                 placeholder="192.168.1.100"
               />
               <NumberInput
-                label="Porta TCP"
+                label="Porta"
                 value={port}
                 onChange={setPort}
                 placeholder="4001"
                 maxLength={5}
                 minLength={1}
-                hint="Apenas numeros (1-65535)."
+                hint="Porta TCP do indicador (padrao 4001)."
               />
               <div style={{ marginTop: "10px" }}>
                 <button
@@ -8865,11 +8808,66 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                   disabled={discovering}
                   style={{ ...styles.secondaryButton, opacity: discovering ? 0.5 : 1 }}
                 >
-                  {discovering ? "Procurando..." : "Procurar balanca"}
+                  {discovering ? "Procurando..." : "Procurar balanca na rede"}
                 </button>
               </div>
             </>
-          ) : (
+          ) : null}
+
+          {isSerialType ? (
+            <>
+              <Field label={connectionType === "usb" ? "Dispositivo USB" : "Porta COM"}>
+                <select
+                  value={serialPath}
+                  onChange={(event) => setSerialPath(event.target.value)}
+                  style={getInputStyle(false)}
+                >
+                  <option value="">Selecione a porta...</option>
+                  {visiblePorts.map((p) => (
+                    <option key={p.path} value={p.path}>
+                      {p.label}
+                    </option>
+                  ))}
+                  {serialPath && !visiblePorts.some((p) => p.path === serialPath) ? (
+                    <option value={serialPath}>{serialPath} (porta salva)</option>
+                  ) : null}
+                </select>
+              </Field>
+              <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "6px" }}>
+                <button
+                  type="button"
+                  onClick={() => void refreshSerialPorts()}
+                  disabled={portsLoading}
+                  style={{ ...styles.secondaryButton, fontSize: "12px", padding: "6px 12px" }}
+                >
+                  {portsLoading ? "Atualizando..." : "Atualizar portas"}
+                </button>
+                {!portsLoading && visiblePorts.length === 0 ? (
+                  <span style={{ fontSize: "12px", color: "var(--kr-muted)" }}>
+                    Nenhuma porta encontrada. Conecte o cabo da balanca e atualize.
+                  </span>
+                ) : null}
+              </div>
+              <Field label="Velocidade (baud rate)" style={{ marginTop: "12px" }}>
+                <select
+                  value={baudRate}
+                  onChange={(event) => setBaudRate(event.target.value)}
+                  style={getInputStyle(false)}
+                >
+                  {SCALE_UI_BAUD_RATES.map((rate) => (
+                    <option key={rate} value={rate}>
+                      {rate}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <p style={{ ...styles.muted, fontSize: "12px" }}>
+                Use a mesma velocidade configurada no indicador da balanca (padrao Toledo: 9600).
+              </p>
+            </>
+          ) : null}
+
+          {connectionType === "virtual" ? (
             <div
               style={{
                 marginTop: "10px",
@@ -8883,23 +8881,26 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                 Modo Balanca Virtual
               </p>
               <p style={{ margin: "4px 0 0 0", fontSize: "12px", color: "#166534" }}>
-                Conecte para simular leituras de peso manualmente. Use o botao abaixo para conectar.
+                Simula leituras de peso para testes e demonstracao, sem balanca fisica.
               </p>
             </div>
-          )}
-          <label style={{ ...styles.checkboxLabel, marginTop: "10px" }}>
+          ) : null}
+
+          <label style={{ ...styles.checkboxLabel, marginTop: "12px" }}>
             <input
               type="checkbox"
               checked={autoConnect}
               onChange={(event) => setAutoConnect(event.target.checked)}
             />
-            Auto conectar ao abrir a tela da balanca
+            Conectar automaticamente ao abrir o sistema
           </label>
+
           {error ? <p style={styles.errorMessage}>{error}</p> : null}
           {configMessage ? (
             <p style={{ ...styles.muted, color: "#166534", fontWeight: 700 }}>{configMessage}</p>
           ) : null}
-          <div style={{ display: "flex", gap: "12px", marginTop: "16px" }}>
+
+          <div style={{ display: "flex", gap: "12px", marginTop: "16px", flexWrap: "wrap" }}>
             <button
               type="button"
               onClick={handleConnect}
@@ -8915,6 +8916,14 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
               style={{ ...styles.secondaryButton, opacity: connected ? 1 : 0.5 }}
             >
               Desconectar
+            </button>
+            <button
+              type="button"
+              onClick={handleSaveConfig}
+              disabled={saving || !configLoaded}
+              style={{ ...styles.secondaryButton, opacity: saving || !configLoaded ? 0.5 : 1 }}
+            >
+              {saving ? "Salvando..." : "Salvar configuracao"}
             </button>
           </div>
         </article>
@@ -8960,6 +8969,24 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                 {reading.stable ? "Estavel" : "Instavel"}
               </p>
             ) : null}
+          </div>
+
+          {testProgress ? (
+            <p style={{ ...styles.muted, color: "#0369a1", fontWeight: 700 }}>{testProgress}</p>
+          ) : null}
+          {testResult ? (
+            <p style={{ ...styles.muted, color: "#166534", fontWeight: 700 }}>{testResult}</p>
+          ) : null}
+
+          <div style={{ display: "flex", gap: "12px", marginTop: "16px" }}>
+            <button
+              type="button"
+              onClick={handleTestCapture}
+              disabled={testing || !configLoaded}
+              style={{ ...styles.primaryButton, opacity: testing || !configLoaded ? 0.5 : 1 }}
+            >
+              {testing ? "Testando..." : "Testar captura de peso"}
+            </button>
           </div>
 
           {connected && stats.count > 0 && (
@@ -9020,7 +9047,7 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                     style={{
                       fontSize: "16px",
                       fontWeight: 700,
-                      color: stats.variation > parseInt(maxVariationKg, 10) ? "#dc2626" : "#0f172a"
+                      color: stats.variation > SCALE_UI_VARIATION_ALERT_KG ? "#dc2626" : "#0f172a"
                     }}
                   >
                     {new Intl.NumberFormat("pt-BR").format(stats.variation)} kg
@@ -9038,98 +9065,14 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
             </div>
           )}
         </article>
-
-        <article style={styles.panel}>
-          <h2 style={styles.panelTitle}>Criterios de Captura</h2>
-          <NumberInput
-            label="Tempo limite da captura (s)"
-            value={sampleDurationSeconds}
-            onChange={setSampleDurationSeconds}
-            placeholder="5"
-            maxLength={2}
-            minLength={1}
-            hint="Tempo maximo para aguardar uma leitura estavel e recente."
-          />
-          <NumberInput
-            label="Intervalo entre leituras (ms)"
-            value={sampleIntervalMs}
-            onChange={setSampleIntervalMs}
-            placeholder="250"
-            maxLength={4}
-            minLength={2}
-            hint="Quanto menor, mais amostras e precisao."
-          />
-          <label style={{ ...styles.checkboxLabel, marginTop: "10px" }}>
-            <input
-              type="checkbox"
-              checked={requireStable}
-              onChange={(event) => setRequireStable(event.target.checked)}
-            />
-            Exigir peso estavel para capturar
-          </label>
-          <NumberInput
-            label="Tempo minimo estavel (s)"
-            value={minStableSeconds}
-            onChange={setMinStableSeconds}
-            disabled={!requireStable}
-            placeholder="1"
-            maxLength={2}
-            hint="O caminhao precisa ficar parado na balanca por esse tempo."
-          />
-          <NumberInput
-            label="Tolerancia de oscilacao (kg)"
-            value={maxVariationKg}
-            onChange={setMaxVariationKg}
-            placeholder="50"
-            maxLength={5}
-            hint="Se a janela variar mais que isso, a captura e rejeitada."
-          />
-          <NumberInput
-            label="Peso minimo para captura (kg)"
-            value={minWeightKg}
-            onChange={setMinWeightKg}
-            placeholder="1000"
-            maxLength={6}
-            hint="Evita capturar com a balanca vazia."
-          />
-
-          {testProgress ? (
-            <p style={{ ...styles.muted, color: "#0369a1", fontWeight: 700 }}>{testProgress}</p>
-          ) : null}
-          {testResult ? (
-            <p style={{ ...styles.muted, color: "#166534", fontWeight: 700 }}>{testResult}</p>
-          ) : null}
-
-          <div style={{ display: "flex", gap: "12px", marginTop: "16px", flexWrap: "wrap" }}>
-            <button
-              type="button"
-              onClick={handleSaveConfig}
-              disabled={saving || !configLoaded}
-              style={{ ...styles.secondaryButton, opacity: saving || !configLoaded ? 0.5 : 1 }}
-            >
-              {saving ? "Salvando..." : "Salvar configuracao"}
-            </button>
-            <button
-              type="button"
-              onClick={handleTestInstant}
-              disabled={testing || !configLoaded}
-              style={{ ...styles.secondaryButton, opacity: testing || !configLoaded ? 0.5 : 1 }}
-            >
-              {testing ? "Testando..." : "Testar leitura instantanea"}
-            </button>
-            <button
-              type="button"
-              onClick={handleTestCapture}
-              disabled={testing || !configLoaded}
-              style={{ ...styles.primaryButton, opacity: testing || !configLoaded ? 0.5 : 1 }}
-            >
-              {testing ? "Testando..." : "Testar captura estavel"}
-            </button>
-          </div>
-        </article>
       </section>
     </div>
   );
+}
+
+function parseScaleInteger(value: string, fallback: number): number {
+  const parsed = parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {

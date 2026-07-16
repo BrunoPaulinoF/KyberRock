@@ -138,22 +138,22 @@ export const documentationSections: DocumentationSection[] = [
     title: "Integrar balancas",
     eyebrow: "Configuracao de hardware",
     summary:
-      "A balanca e configurada em Configuracoes > Balanca. Informe modelo, conexao, porta e regras de estabilidade para capturar pesos automaticamente.",
+      "A balanca e configurada em Configuracoes > Balanca. Escolha o tipo de conexao (Rede/IP, USB ou Serial COM) e informe apenas os dados dessa conexao.",
     icon: Scale,
     steps: [
       "Clique na engrenagem do topo e escolha Balanca.",
-      "Selecione o adaptador/modelo disponivel para a sua unidade.",
-      "Preencha host/IP, porta, timeout e intervalo de leitura conforme a instalacao da balanca.",
-      "Ajuste estabilidade: tempo minimo estavel, variacao maxima, peso minimo e tentativas de reconexao.",
-      "Salve a configuracao e teste a leitura antes de operar.",
-      "Se precisar simular, use o adaptador virtual somente em ambiente de teste."
+      "Escolha o tipo de conexao: Rede (IP), USB, Serial (COM) ou Virtual (teste).",
+      "Rede (IP): informe o IP e a porta do indicador, ou use \"Procurar balanca na rede\".",
+      "USB ou Serial (COM): selecione a porta na lista e a velocidade (baud rate, padrao 9600).",
+      "Clique em Conectar e use \"Testar captura de peso\" para validar antes de operar.",
+      "Se precisar simular, use a balanca Virtual somente em ambiente de teste."
     ],
     details: [
-      "O modelo Toledo TCP e o primeiro fluxo suportado pela arquitetura atual; novos modelos podem ser adicionados por adaptadores.",
-      "Peso instavel normalmente indica oscilacao fisica, cabo/rede ruim, porta errada ou parametro de estabilidade muito sensivel.",
+      "Ao capturar peso, o sistema aguarda a balanca estabilizar e captura o valor exibido naquele momento — nao ha media nem calculo.",
+      "Peso instavel normalmente indica caminhao em movimento, oscilacao fisica ou cabo/rede com falha.",
       "Quando a balanca falha, pare a operacao e corrija a conexao antes de capturar pesos."
     ],
-    keywords: ["balanca", "toledo", "tcp", "porta", "ip", "host", "estabilidade", "peso"]
+    keywords: ["balanca", "toledo", "tcp", "usb", "serial", "com", "porta", "ip", "host", "peso"]
   },
   {
     id: "printing",
@@ -308,9 +308,9 @@ export const documentationFaqs: DocumentationFaq[] = [
   {
     question: "A balanca nao conecta. O que verificar?",
     answer:
-      "Confira se o IP/host e a porta estao corretos, se o cabo/rede esta funcionando, se o indicador aceita conexao TCP e se outro programa nao esta usando a mesma porta. Depois volte em Configuracoes > Balanca e teste novamente.",
+      "Na conexao por rede, confira o IP e a porta do indicador. Na conexao USB ou Serial (COM), confira se o cabo esta conectado, use \"Atualizar portas\" para reencontrar a porta e verifique se outro programa nao esta usando a mesma porta. Depois volte em Configuracoes > Balanca e teste novamente.",
     category: "balanca",
-    keywords: ["balanca", "tcp", "ip", "porta", "conexao", "host"]
+    keywords: ["balanca", "tcp", "usb", "serial", "com", "ip", "porta", "conexao", "host"]
   },
   {
     question: "O peso fica oscilando e nao estabiliza.",

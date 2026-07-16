@@ -2,6 +2,7 @@ import { createConnection } from "node:net";
 import type { Socket } from "node:net";
 
 import { parseToledoLine } from "./toledo-protocol-parser.js";
+import { normalizeParsedReading } from "./toledo-reading.js";
 import type { ParsedToledoReading, ToledoTcpConfig } from "./toledo-types.js";
 import type { ScaleReading, ScaleSamplingOptions, ScaleStatus } from "../scale-adapter.js";
 
@@ -275,35 +276,6 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
       listeners.length = 0;
     }
   };
-}
-
-function normalizeParsedReading(
-  reading: ParsedToledoReading,
-  receivedAt: string,
-  adapterName: string,
-  deviceId?: string
-): ScaleReading {
-  const status = getScaleStatusFromParsedReading(reading);
-  return {
-    weightKg: Math.round(reading.weightKg),
-    unit: "kg",
-    status,
-    stable: status === "stable",
-    capturedAt: receivedAt,
-    receivedAt,
-    rawFrame: reading.raw,
-    adapterName,
-    deviceId
-  };
-}
-
-function getScaleStatusFromParsedReading(reading: ParsedToledoReading): ScaleStatus {
-  if (!Number.isFinite(reading.weightKg)) return "error";
-  if (reading.statusFlags.outOfRange || reading.weightKg === 90_000) return "overload";
-  if (reading.statusFlags.negative || reading.weightKg < 0) return "negative";
-  if (!reading.stable || reading.statusFlags.inMotion) return "unstable";
-  if (reading.statusFlags.atZero || reading.weightKg === 0) return "zero";
-  return "stable";
 }
 
 function assertNonRecoverableStatus(reading: ScaleReading): void {

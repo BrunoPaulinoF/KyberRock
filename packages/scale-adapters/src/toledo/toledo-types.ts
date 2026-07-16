@@ -26,6 +26,17 @@ export interface ToledoTcpConfig {
   maxReconnectAttempts?: number;
 }
 
+export interface ToledoSerialConfig {
+  /** Caminho da porta serial: "COM3" no Windows, "/dev/ttyUSB0" no Linux */
+  path: string;
+  /** Velocidade da porta (bps). Padrao dos indicadores Toledo: 9600 */
+  baudRate: number;
+  /** Intervalo entre tentativas de reconexao (ms). Padrao: 5000 */
+  reconnectIntervalMs?: number;
+  /** Numero maximo de tentativas de reconexao. Padrao: 10 */
+  maxReconnectAttempts?: number;
+}
+
 export interface ParsedToledoReading {
   /** Peso em kg */
   weightKg: number;
