@@ -62,6 +62,8 @@ async function createMainWindow(): Promise<void> {
   writeStartupLog("omieScheduler:started");
   runtime.startCloudSyncScheduler();
   writeStartupLog("cloudScheduler:started");
+  startReportDispatchScheduler();
+  writeStartupLog("reportDispatchScheduler:started");
 
   mainWindow = new BrowserWindow({
     width: 1180,
@@ -607,6 +609,47 @@ function registerIpcHandlers(): void {
       return { path: filePath };
     }
   );
+
+  ipcMain.handle(
+    "desktop:get-sales-pivot",
+    (
+      _event,
+      startDate: string,
+      endDate: string,
+      groupBy: "customer" | "product" | "customer_product" | "day",
+      filters?: { customerId?: string | null; productId?: string | null }
+    ) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.getSalesPivot(startDate, endDate, groupBy, filters);
+    }
+  );
+
+  ipcMain.handle("desktop:report-dispatch-get-config", () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.getReportDispatchConfig();
+  });
+
+  ipcMain.handle(
+    "desktop:report-dispatch-save-config",
+    (
+      _event,
+      patch: {
+        enabled?: boolean;
+        sendHour?: number;
+        daily?: boolean;
+        weekly?: boolean;
+        monthly?: boolean;
+      }
+    ) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.saveReportDispatchConfig(patch);
+    }
+  );
+
+  ipcMain.handle("desktop:report-dispatch-send-now", async () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.sendReportsNow(renderHtmlToPdf);
+  });
 
   ipcMain.handle("desktop:list-report-recipients", () => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
@@ -1619,6 +1662,32 @@ function writeStartupLog(step: string, detail?: unknown): void {
   } catch {
     // Startup logging must never prevent the app from opening.
   }
+}
+
+// Agendador dos envios automaticos de relatorios (config na tela de Relatorios):
+// checa a cada 5 minutos se algum pacote (diario/semanal/mensal) venceu e envia
+// com os PDFs/Excel anexados. O tick e serializado para nunca sobrepor envios.
+const REPORT_DISPATCH_TICK_MS = 5 * 60 * 1000;
+let reportDispatchRunning = false;
+
+function startReportDispatchScheduler(): void {
+  const tick = async (): Promise<void> => {
+    if (!runtime || reportDispatchRunning) return;
+    reportDispatchRunning = true;
+    try {
+      const result = await runtime.runReportDispatchTick(renderHtmlToPdf);
+      if (result) {
+        writeStartupLog("reportDispatch:sent", result);
+      }
+    } catch (error) {
+      writeStartupLog("reportDispatch:error", error);
+    } finally {
+      reportDispatchRunning = false;
+    }
+  };
+  // Primeiro tick 1 minuto apos abrir (recupera envios perdidos com o app fechado).
+  setTimeout(() => void tick(), 60 * 1000);
+  setInterval(() => void tick(), REPORT_DISPATCH_TICK_MS);
 }
 
 // Renderiza um HTML de relatorio em uma janela oculta e exporta como PDF A4.

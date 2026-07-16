@@ -84,12 +84,18 @@ const desktopApi = {
   whatsappConnect: () => ipcRenderer.invoke("desktop:whatsapp-connect"),
   whatsappStatus: () => ipcRenderer.invoke("desktop:whatsapp-status"),
   whatsappDisconnect: () => ipcRenderer.invoke("desktop:whatsapp-disconnect"),
+  getReportDispatchConfig: () => ipcRenderer.invoke("desktop:report-dispatch-get-config"),
+  saveReportDispatchConfig: (patch: unknown) =>
+    ipcRenderer.invoke("desktop:report-dispatch-save-config", patch),
+  sendReportsNow: () => ipcRenderer.invoke("desktop:report-dispatch-send-now"),
   getReportByProduct: (startDate: string, endDate: string, limit?: number) =>
     ipcRenderer.invoke("desktop:get-report-by-product", startDate, endDate, limit),
   getReportByCustomer: (startDate: string, endDate: string, limit?: number) =>
     ipcRenderer.invoke("desktop:get-report-by-customer", startDate, endDate, limit),
   getDailySeries: (startDate: string, endDate: string) =>
     ipcRenderer.invoke("desktop:get-daily-series", startDate, endDate),
+  getSalesPivot: (startDate: string, endDate: string, groupBy: string, filters?: unknown) =>
+    ipcRenderer.invoke("desktop:get-sales-pivot", startDate, endDate, groupBy, filters),
   getOperationMix: (startDate: string, endDate: string) =>
     ipcRenderer.invoke("desktop:get-operation-mix", startDate, endDate),
   getPriceForCustomerProduct: (customerId: string, productId: string) =>

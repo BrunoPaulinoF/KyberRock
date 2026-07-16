@@ -16,7 +16,13 @@ import {
 } from "recharts";
 
 import type { KyberRockDesktopApi } from "../preload/api-types";
-import type { DailySeriesPoint, OperationMix, ProductReport } from "../services/reports";
+import type {
+  DailySeriesPoint,
+  OperationMix,
+  ProductReport,
+  SalesPivotGroupBy,
+  SalesPivotResult
+} from "../services/reports";
 import type { WeighingOperationSummary } from "../services/weighing-operations";
 import { HelpTooltip } from "./Tooltip";
 import { formatDbDateTime } from "./format-datetime";
@@ -134,8 +140,37 @@ export function InsightsView({
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState<"pdf" | "excel" | null>(null);
   const [exportMessage, setExportMessage] = useState<string | null>(null);
+  const [pivot, setPivot] = useState<SalesPivotResult | null>(null);
+  const [pivotGroupBy, setPivotGroupBy] = useState<SalesPivotGroupBy>("customer");
+  const [pivotCustomerId, setPivotCustomerId] = useState<string>("");
+  const [pivotProductId, setPivotProductId] = useState<string>("");
 
   const range = useMemo(() => resolveRange(period, new Date()), [period]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!desktopApi) return;
+    void desktopApi
+      .getSalesPivot(range.start, range.end, pivotGroupBy, {
+        customerId: pivotCustomerId || null,
+        productId: pivotProductId || null
+      })
+      .then((data) => {
+        if (!cancelled) setPivot(data);
+      })
+      .catch(() => {
+        if (!cancelled) setPivot(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [desktopApi, range.start, range.end, pivotGroupBy, pivotCustomerId, pivotProductId]);
+
+  // Trocar de periodo pode invalidar os filtros selecionados.
+  useEffect(() => {
+    setPivotCustomerId("");
+    setPivotProductId("");
+  }, [range.start, range.end]);
 
   useEffect(() => {
     let cancelled = false;
@@ -518,6 +553,124 @@ export function InsightsView({
           </div>
         </article>
       </div>
+
+      <article style={styles.chartCard}>
+        <header style={styles.chartHeader}>
+          <h3 style={styles.chartTitle}>Tabela dinamica de vendas</h3>
+          <span style={styles.chartHint}>{range.label}</span>
+        </header>
+        <div style={styles.pivotControls}>
+          <label style={styles.pivotLabel}>
+            Agrupar por
+            <select
+              value={pivotGroupBy}
+              onChange={(event) => setPivotGroupBy(event.target.value as SalesPivotGroupBy)}
+              style={styles.pivotSelect}
+            >
+              <option value="customer">Cliente</option>
+              <option value="product">Produto</option>
+              <option value="customer_product">Cliente + Produto</option>
+              <option value="day">Dia</option>
+            </select>
+          </label>
+          <label style={styles.pivotLabel}>
+            Cliente
+            <select
+              value={pivotCustomerId}
+              onChange={(event) => setPivotCustomerId(event.target.value)}
+              style={styles.pivotSelect}
+            >
+              <option value="">Todos</option>
+              {(pivot?.customers ?? []).map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label style={styles.pivotLabel}>
+            Produto
+            <select
+              value={pivotProductId}
+              onChange={(event) => setPivotProductId(event.target.value)}
+              style={styles.pivotSelect}
+            >
+              <option value="">Todos</option>
+              {(pivot?.products ?? []).map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div style={{ overflowX: "auto" }}>
+          <table style={styles.pivotTable}>
+            <thead>
+              <tr>
+                {pivotGroupBy === "day" ? <th style={styles.pivotTh}>Dia</th> : null}
+                {pivotGroupBy === "customer" || pivotGroupBy === "customer_product" ? (
+                  <th style={styles.pivotTh}>Cliente</th>
+                ) : null}
+                {pivotGroupBy === "product" || pivotGroupBy === "customer_product" ? (
+                  <th style={styles.pivotTh}>Produto</th>
+                ) : null}
+                <th style={styles.pivotThNum}>Operacoes</th>
+                <th style={styles.pivotThNum}>Quantidade</th>
+                <th style={styles.pivotThNum}>Preco medio</th>
+                <th style={styles.pivotThNum}>Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(pivot?.rows ?? []).length === 0 ? (
+                <tr>
+                  <td colSpan={6} style={styles.pivotEmpty}>
+                    Sem vendas no periodo com os filtros selecionados.
+                  </td>
+                </tr>
+              ) : (
+                (pivot?.rows ?? []).map((row, index) => (
+                  <tr key={index}>
+                    {pivotGroupBy === "day" ? (
+                      <td style={styles.pivotTd}>{row.date ? formatShortDate(row.date) : "-"}</td>
+                    ) : null}
+                    {pivotGroupBy === "customer" || pivotGroupBy === "customer_product" ? (
+                      <td style={styles.pivotTd}>{row.customerName ?? "N/A"}</td>
+                    ) : null}
+                    {pivotGroupBy === "product" || pivotGroupBy === "customer_product" ? (
+                      <td style={styles.pivotTd}>{row.productDescription ?? "N/A"}</td>
+                    ) : null}
+                    <td style={styles.pivotTdNum}>{row.totalOperations.toLocaleString("pt-BR")}</td>
+                    <td style={styles.pivotTdNum}>{formatTons(row.totalWeightKg)}</td>
+                    <td style={styles.pivotTdNum}>{formatBRL(row.avgPriceCentsPerTon)}/t</td>
+                    <td style={styles.pivotTdNum}>{formatBRL(row.totalValueCents)}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+            {pivot && pivot.rows.length > 0 ? (
+              <tfoot>
+                <tr>
+                  <td
+                    colSpan={pivotGroupBy === "customer_product" ? 2 : 1}
+                    style={styles.pivotTdTotal}
+                  >
+                    TOTAL
+                  </td>
+                  <td style={styles.pivotTdNumTotal}>
+                    {pivot.totals.totalOperations.toLocaleString("pt-BR")}
+                  </td>
+                  <td style={styles.pivotTdNumTotal}>{formatTons(pivot.totals.totalWeightKg)}</td>
+                  <td style={styles.pivotTdNumTotal}>
+                    {formatBRL(pivot.totals.avgPriceCentsPerTon)}/t
+                  </td>
+                  <td style={styles.pivotTdNumTotal}>{formatBRL(pivot.totals.totalValueCents)}</td>
+                </tr>
+              </tfoot>
+            ) : null}
+          </table>
+        </div>
+      </article>
     </section>
   );
 }
@@ -616,6 +769,85 @@ const styles: Record<string, React.CSSProperties> = {
     textTransform: "uppercase",
     letterSpacing: "0.04em",
     margin: 0
+  },
+  pivotControls: {
+    display: "flex",
+    gap: "12px",
+    flexWrap: "wrap",
+    padding: "10px 12px 4px 12px"
+  },
+  pivotLabel: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
+    fontSize: "12px",
+    fontWeight: 700,
+    color: "var(--kr-muted)"
+  },
+  pivotSelect: {
+    border: "1px solid var(--kr-card-border)",
+    borderRadius: "8px",
+    padding: "6px 8px",
+    font: "inherit",
+    fontSize: "13px",
+    background: "var(--kr-card-bg)",
+    color: "var(--kr-text-strong)",
+    minWidth: "160px",
+    maxWidth: "260px"
+  },
+  pivotTable: {
+    width: "100%",
+    borderCollapse: "collapse",
+    fontSize: "13px",
+    margin: "8px 0 4px 0"
+  },
+  pivotTh: {
+    textAlign: "left",
+    padding: "8px 12px",
+    borderBottom: "2px solid var(--kr-card-border)",
+    color: "var(--kr-muted)",
+    fontSize: "11px",
+    textTransform: "uppercase",
+    letterSpacing: "0.04em"
+  },
+  pivotThNum: {
+    textAlign: "right",
+    padding: "8px 12px",
+    borderBottom: "2px solid var(--kr-card-border)",
+    color: "var(--kr-muted)",
+    fontSize: "11px",
+    textTransform: "uppercase",
+    letterSpacing: "0.04em"
+  },
+  pivotTd: {
+    padding: "7px 12px",
+    borderBottom: "1px solid var(--kr-card-border)",
+    color: "var(--kr-text-strong)"
+  },
+  pivotTdNum: {
+    padding: "7px 12px",
+    borderBottom: "1px solid var(--kr-card-border)",
+    color: "var(--kr-text-strong)",
+    textAlign: "right",
+    whiteSpace: "nowrap"
+  },
+  pivotTdTotal: {
+    padding: "8px 12px",
+    fontWeight: 800,
+    color: "var(--kr-text-strong)"
+  },
+  pivotTdNumTotal: {
+    padding: "8px 12px",
+    fontWeight: 800,
+    color: "var(--kr-text-strong)",
+    textAlign: "right",
+    whiteSpace: "nowrap"
+  },
+  pivotEmpty: {
+    padding: "16px 12px",
+    color: "var(--kr-muted)",
+    textAlign: "center",
+    fontStyle: "italic"
   },
   kpiValue: {
     fontSize: "21px",

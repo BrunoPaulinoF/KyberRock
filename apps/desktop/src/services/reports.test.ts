@@ -396,3 +396,78 @@ describe("ReportService", () => {
     }
   });
 });
+
+describe("getSalesPivot", () => {
+  it("groups by customer with average price per ton", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      insertOperations(db);
+
+      const service = new ReportService(db);
+      const pivot = service.getSalesPivot("2026-06-01", "2026-06-30", "unit-1", "customer");
+
+      expect(pivot.rows).toHaveLength(2);
+      expect(pivot.rows[0]).toMatchObject({
+        customerName: "Cliente A",
+        totalOperations: 2,
+        totalWeightKg: 25000,
+        totalValueCents: 1_350_000,
+        avgPriceCentsPerTon: 54_000
+      });
+      expect(pivot.rows[1]).toMatchObject({
+        customerName: "Cliente B",
+        totalOperations: 1,
+        totalWeightKg: 10000,
+        avgPriceCentsPerTon: 50_000
+      });
+      expect(pivot.totals).toMatchObject({
+        totalOperations: 3,
+        totalWeightKg: 35000,
+        totalValueCents: 1_850_000
+      });
+      expect(pivot.customers.map((option) => option.name)).toEqual(["Cliente A", "Cliente B"]);
+      expect(pivot.products.map((option) => option.name)).toEqual(["Brita 0", "Brita 1"]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("applies customer/product filters and other groupings", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      insertOperations(db);
+
+      const service = new ReportService(db);
+
+      const byProduct = service.getSalesPivot("2026-06-01", "2026-06-30", "unit-1", "product", {
+        customerId: "cust-1"
+      });
+      expect(byProduct.rows).toHaveLength(2);
+      expect(byProduct.rows.map((row) => row.productDescription).sort()).toEqual([
+        "Brita 0",
+        "Brita 1"
+      ]);
+
+      const filtered = service.getSalesPivot("2026-06-01", "2026-06-30", "unit-1", "customer", {
+        productId: "prod-1"
+      });
+      expect(filtered.rows).toHaveLength(2);
+      expect(filtered.totals.totalWeightKg).toBe(25000);
+
+      const byDay = service.getSalesPivot("2026-06-01", "2026-06-30", "unit-1", "day");
+      expect(byDay.rows.map((row) => row.date).sort()).toEqual(["2026-06-06", "2026-06-07"]);
+
+      const byBoth = service.getSalesPivot(
+        "2026-06-01",
+        "2026-06-30",
+        "unit-1",
+        "customer_product"
+      );
+      expect(byBoth.rows).toHaveLength(3);
+    } finally {
+      db.close();
+    }
+  });
+});

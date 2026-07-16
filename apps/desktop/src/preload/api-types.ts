@@ -34,6 +34,9 @@ import type {
   OperationMix,
   ProductReport,
   CustomerReport,
+  SalesPivotFilters,
+  SalesPivotGroupBy,
+  SalesPivotResult,
   TruckControlReport
 } from "../services/reports";
 import type { CreateCustomerInput, UpdateCustomerInput } from "../services/customers";
@@ -65,8 +68,18 @@ import type {
   ReportChannelSettings as ReportChannelSettingsView,
   UazapiInstanceState as WhatsappInstanceStateView
 } from "../services/report-channels";
+import type {
+  DispatchSendResult as ReportDispatchSendResultView,
+  ReportDispatchSettings,
+  ReportDispatchState
+} from "../services/report-dispatch";
 
-export type { ReportChannelSettingsView, WhatsappInstanceStateView };
+export type { ReportChannelSettingsView, WhatsappInstanceStateView, ReportDispatchSendResultView };
+
+export interface ReportDispatchConfigView {
+  settings: ReportDispatchSettings;
+  state: ReportDispatchState;
+}
 
 export interface KyberRockDesktopApi {
   getStatus: (internetOnline?: boolean) => Promise<DesktopStatusSnapshot>;
@@ -266,6 +279,11 @@ export interface KyberRockDesktopApi {
   whatsappConnect: () => Promise<WhatsappInstanceStateView>;
   whatsappStatus: () => Promise<WhatsappInstanceStateView>;
   whatsappDisconnect: () => Promise<WhatsappInstanceStateView>;
+  getReportDispatchConfig: () => Promise<ReportDispatchConfigView>;
+  saveReportDispatchConfig: (
+    patch: Partial<ReportDispatchConfigView["settings"]>
+  ) => Promise<ReportDispatchConfigView>;
+  sendReportsNow: () => Promise<ReportDispatchSendResultView>;
   getReportByProduct: (
     startDate: string,
     endDate: string,
@@ -277,6 +295,12 @@ export interface KyberRockDesktopApi {
     limit?: number
   ) => Promise<CustomerReport[]>;
   getDailySeries: (startDate: string, endDate: string) => Promise<DailySeriesPoint[]>;
+  getSalesPivot: (
+    startDate: string,
+    endDate: string,
+    groupBy: SalesPivotGroupBy,
+    filters?: SalesPivotFilters
+  ) => Promise<SalesPivotResult>;
   getOperationMix: (startDate: string, endDate: string) => Promise<OperationMix>;
   getPriceForCustomerProduct: (customerId: string, productId: string) => Promise<number | null>;
   getPriceDetailsForCustomerProduct: (

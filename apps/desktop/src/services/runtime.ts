@@ -142,10 +142,24 @@ import {
   type SmtpOverrides
 } from "./email.js";
 import {
+  computeDueBundles,
+  computeManualBundles,
+  readReportDispatchSettings,
+  readReportDispatchState,
+  writeReportDispatchSettings,
+  writeReportDispatchState,
+  type DispatchSendResult,
+  type DueBundle,
+  type ReportAttachment,
+  type ReportDispatchSettings,
+  type ReportDispatchState
+} from "./report-dispatch.js";
+import {
   normalizeUazapiBaseUrl,
   readReportChannelSettings,
   uazapiConnectInstance,
   uazapiDisconnectInstance,
+  uazapiSendDocument,
   uazapiInstanceStatus,
   writeReportChannelSettings,
   type ReportChannelSettings,
@@ -1492,6 +1506,21 @@ export class DesktopRuntime {
     return this.reportService.getDailySeries(startDate, endDate, this.ensureIdentity().unitId);
   }
 
+  getSalesPivot(
+    startDate: string,
+    endDate: string,
+    groupBy: Parameters<ReportService["getSalesPivot"]>[3],
+    filters?: Parameters<ReportService["getSalesPivot"]>[4]
+  ): ReturnType<ReportService["getSalesPivot"]> {
+    return this.reportService.getSalesPivot(
+      startDate,
+      endDate,
+      this.ensureIdentity().unitId,
+      groupBy,
+      filters
+    );
+  }
+
   getOperationMix(
     startDate: string,
     endDate: string
@@ -1529,6 +1558,186 @@ export class DesktopRuntime {
       endDate,
       this.ensureIdentity().unitId
     );
+  }
+
+  getReportDispatchConfig(): { settings: ReportDispatchSettings; state: ReportDispatchState } {
+    return {
+      settings: readReportDispatchSettings(this.database),
+      state: readReportDispatchState(this.database)
+    };
+  }
+
+  saveReportDispatchConfig(patch: Partial<ReportDispatchSettings>): {
+    settings: ReportDispatchSettings;
+    state: ReportDispatchState;
+  } {
+    const settings = writeReportDispatchSettings(this.database, patch);
+    return { settings, state: readReportDispatchState(this.database) };
+  }
+
+  // Tick do agendador (chamado pelo main a cada poucos minutos): envia os
+  // pacotes vencidos e marca o estado. Depois de uma falha total, espera 30min
+  // antes de tentar de novo para nao martelar SMTP/UAZAPI.
+  async runReportDispatchTick(
+    renderPdf: (html: string) => Promise<Buffer>,
+    now: Date = new Date()
+  ): Promise<DispatchSendResult | null> {
+    const settings = readReportDispatchSettings(this.database);
+    const state = readReportDispatchState(this.database);
+    const due = computeDueBundles(settings, state, now);
+    if (due.length === 0) return null;
+
+    if (state.lastError && state.lastAttemptAt) {
+      const sinceLastAttemptMs = now.getTime() - new Date(state.lastAttemptAt).getTime();
+      if (sinceLastAttemptMs < 30 * 60_000) return null;
+    }
+
+    const result = await this.dispatchBundles(due, renderPdf);
+    const anySuccess = result.emailsSent > 0 || result.whatsappSent > 0;
+    const allErrors = [...result.emailErrors, ...result.whatsappErrors];
+    const statePatch: Partial<ReportDispatchState> = {
+      lastAttemptAt: now.toISOString(),
+      lastError: allErrors.length > 0 ? allErrors[0] : null
+    };
+    // So marca o pacote como enviado se algum destinatario recebeu; falha total
+    // fica pendente para a proxima tentativa.
+    if (anySuccess || result.recipients === 0) {
+      for (const bundle of due) {
+        if (bundle.kind === "daily") statePatch.lastDailyDate = bundle.endDate;
+        if (bundle.kind === "weekly") statePatch.lastWeeklyDate = bundle.endDate;
+        if (bundle.kind === "monthly") statePatch.lastMonthlyMonth = bundle.startDate.slice(0, 7);
+      }
+    }
+    writeReportDispatchState(this.database, statePatch);
+    return result;
+  }
+
+  // Botao "Enviar agora": envia os pacotes marcados nas configuracoes com os
+  // periodos de hoje, sem tocar no estado do agendador.
+  async sendReportsNow(renderPdf: (html: string) => Promise<Buffer>): Promise<DispatchSendResult> {
+    const settings = readReportDispatchSettings(this.database);
+    return this.dispatchBundles(computeManualBundles(settings, new Date()), renderPdf);
+  }
+
+  private async buildBundleAttachments(
+    bundles: DueBundle[],
+    renderPdf: (html: string) => Promise<Buffer>
+  ): Promise<ReportAttachment[]> {
+    const attachments: ReportAttachment[] = [];
+    for (const bundle of bundles) {
+      const suffix =
+        bundle.kind === "daily"
+          ? bundle.endDate
+          : bundle.kind === "weekly"
+            ? `semana-${bundle.startDate}-a-${bundle.endDate}`
+            : `mes-${bundle.startDate.slice(0, 7)}`;
+
+      const insightsPdf = await renderPdf(
+        this.getInsightsHtml(bundle.startDate, bundle.endDate, bundle.label)
+      );
+      attachments.push({
+        filename: `insights-${suffix}.pdf`,
+        mimetype: "application/pdf",
+        content: insightsPdf,
+        reportType: "sales",
+        bundleLabel: bundle.label
+      });
+      attachments.push({
+        filename: `vendas-${suffix}.xls`,
+        mimetype: "application/vnd.ms-excel",
+        content: Buffer.from(this.getReportHtml(bundle.startDate, bundle.endDate), "utf8"),
+        reportType: "sales",
+        bundleLabel: bundle.label
+      });
+
+      const trucksPdf = await renderPdf(this.getTruckControlHtml(bundle.startDate, bundle.endDate));
+      attachments.push({
+        filename: `caminhoes-${suffix}.pdf`,
+        mimetype: "application/pdf",
+        content: trucksPdf,
+        reportType: "trucks",
+        bundleLabel: bundle.label
+      });
+    }
+    return attachments;
+  }
+
+  private async dispatchBundles(
+    bundles: DueBundle[],
+    renderPdf: (html: string) => Promise<Buffer>
+  ): Promise<DispatchSendResult> {
+    const recipients = this.listReportRecipients().filter((recipient) => recipient.isActive);
+    const result: DispatchSendResult = {
+      bundles: bundles.map((bundle) => bundle.kind),
+      recipients: recipients.length,
+      emailsSent: 0,
+      emailErrors: [],
+      whatsappSent: 0,
+      whatsappErrors: []
+    };
+    if (recipients.length === 0) return result;
+
+    const attachments = await this.buildBundleAttachments(bundles, renderPdf);
+    const channelSettings = readReportChannelSettings(this.database);
+    const labels = bundles.map((bundle) => bundle.label).join(" · ");
+    const subject = `Relatorios KyberRock — ${labels}`;
+    const bodyHtml = `<!doctype html><html><head><meta charset="utf-8" /></head><body style="font-family:Arial,sans-serif;padding:16px"><p>Seguem em anexo os relatorios: <strong>${labels}</strong>.</p><p style="color:#64748b;font-size:12px">Enviado automaticamente pelo KyberRock Desktop.</p></body></html>`;
+
+    for (const recipient of recipients) {
+      const recipientAttachments = attachments.filter(
+        (attachment) =>
+          recipient.reportTypes === "both" || attachment.reportType === recipient.reportTypes
+      );
+      if (recipientAttachments.length === 0) continue;
+
+      if (recipient.sendEmail && recipient.email) {
+        const emailResult = await this.sendReportEmail({
+          to: recipient.email,
+          subject,
+          html: bodyHtml,
+          attachments: recipientAttachments.map((attachment) => ({
+            filename: attachment.filename,
+            content: attachment.content,
+            contentType: attachment.mimetype
+          }))
+        });
+        if (emailResult.success) {
+          result.emailsSent += 1;
+        } else {
+          result.emailErrors.push(`${recipient.email}: ${emailResult.error ?? "falha no envio"}`);
+        }
+      }
+
+      if (recipient.sendWhatsapp && recipient.whatsappPhone) {
+        if (!channelSettings.uazapiBaseUrl || !channelSettings.uazapiInstanceToken) {
+          result.whatsappErrors.push(
+            `${recipient.whatsappPhone}: WhatsApp nao configurado (URL/token da instancia).`
+          );
+        } else {
+          for (const [index, attachment] of recipientAttachments.entries()) {
+            try {
+              await uazapiSendDocument({
+                baseUrl: channelSettings.uazapiBaseUrl,
+                instanceToken: channelSettings.uazapiInstanceToken,
+                number: recipient.whatsappPhone,
+                fileBase64: `data:${attachment.mimetype};base64,${attachment.content.toString("base64")}`,
+                docName: attachment.filename,
+                mimetype: attachment.mimetype,
+                caption: index === 0 ? `Relatorios KyberRock — ${labels}` : undefined
+              });
+              result.whatsappSent += 1;
+            } catch (error) {
+              result.whatsappErrors.push(
+                `${recipient.whatsappPhone} (${attachment.filename}): ${
+                  error instanceof Error ? error.message : "falha no envio"
+                }`
+              );
+            }
+          }
+        }
+      }
+    }
+    return result;
   }
 
   listReportRecipients(): ReportRecipient[] {

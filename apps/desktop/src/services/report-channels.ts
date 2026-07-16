@@ -221,3 +221,29 @@ export async function uazapiDisconnectInstance(input: {
   });
   return mapInstanceState(json as Parameters<typeof mapInstanceState>[0]);
 }
+
+// POST /send/media (header token) — envia um arquivo como documento do WhatsApp.
+// O campo file aceita URL ou base64; docName define o nome exibido no chat.
+export async function uazapiSendDocument(input: {
+  baseUrl: string;
+  instanceToken: string;
+  number: string;
+  fileBase64: string;
+  docName: string;
+  mimetype: string;
+  caption?: string;
+}): Promise<void> {
+  await uazapiRequest(input.baseUrl, "/send/media", {
+    method: "POST",
+    headers: { token: input.instanceToken },
+    body: {
+      number: input.number,
+      type: "document",
+      file: input.fileBase64,
+      docName: input.docName,
+      mimetype: input.mimetype,
+      text: input.caption ?? "",
+      async: true
+    }
+  });
+}
