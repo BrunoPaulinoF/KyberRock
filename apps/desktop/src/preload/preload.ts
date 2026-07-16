@@ -124,6 +124,7 @@ const desktopApi = {
   applyDefaultNfeEmailToAll: (email: string) =>
     ipcRenderer.invoke("desktop:apply-default-nfe-email-to-all", email),
   enrichAllCustomersFromCnpj: () => ipcRenderer.invoke("desktop:enrich-all-customers-cnpj"),
+  enrichAllCarriersFromCnpj: () => ipcRenderer.invoke("desktop:enrich-all-carriers-cnpj"),
   // Meios de pagamento e contas vem do OMIE (sincronizacao); localmente so ha
   // atualizacao restrita (ativar/desativar, apelido, vinculo forma -> conta).
   paymentMethodsUpdate: (id: string, input: unknown) =>

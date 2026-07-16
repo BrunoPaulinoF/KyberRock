@@ -427,7 +427,7 @@ export function CustomersView({
       const suffix = extras.length ? ` (${extras.join(", ")})` : "";
       showFlash(
         "success",
-        `Busca de CNPJ concluida: ${result.updated} de ${result.withCnpj} cliente(s) com CNPJ ` +
+        `Busca automatica concluida: ${result.updated} de ${result.withCnpj} cliente(s) com CNPJ ` +
           `atualizado(s)${suffix}. Clientes OMIE serao enviados no proximo sync.`
       );
     } catch (err) {
@@ -1024,7 +1024,7 @@ export function CustomersView({
           title="Busca o CNPJ de TODOS os clientes na Receita e atualiza o cadastro (razao social, endereco, telefone)"
           style={{ ...styles.secondaryButton, height: "38px", opacity: cnpjBulkBusy ? 0.6 : 1 }}
         >
-          {cnpjBulkBusy ? "Buscando CNPJs..." : "🔍 Buscar CNPJ de todos"}
+          {cnpjBulkBusy ? "Buscando dados..." : "🔍 Busca de dados automatica (todos)"}
         </button>
       </div>
 
@@ -1122,7 +1122,7 @@ export function CustomersView({
                       opacity: cnpjBusy ? 0.6 : 1
                     }}
                   >
-                    {cnpjBusy ? "Buscando..." : "🔍 Buscar CNPJ"}
+                    {cnpjBusy ? "Buscando..." : "🔍 Busca de dados automatica"}
                   </button>
                 </div>
                 <MoneyInput
