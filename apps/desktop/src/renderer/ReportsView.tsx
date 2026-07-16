@@ -51,6 +51,18 @@ const REPORT_TYPE_LABEL: Record<ReportType, string> = {
   both: "Vendas + Caminhoes"
 };
 
+// O agendador da nuvem roda de hora em hora: o horario e sempre a hora cheia.
+const HOUR_OPTIONS = Array.from(
+  { length: 24 },
+  (_, hour) => `${String(hour).padStart(2, "0")}:00`
+);
+
+function normalizeHourOption(value: string | null | undefined): string {
+  const hour = parseInt((value ?? "").split(":")[0] ?? "", 10);
+  if (!Number.isInteger(hour) || hour < 0 || hour > 23) return "20:00";
+  return `${String(hour).padStart(2, "0")}:00`;
+}
+
 const styles = {
   page: {
     // flexShrink 0 + sem minHeight 0: dentro do contentBody (flex + overflowY),
@@ -366,7 +378,9 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
             ? "whatsapp"
             : "email",
       scheduleFrequency: recipient.scheduleFrequency ?? "daily",
-      scheduleTime: recipient.scheduleTime ?? "20:00",
+      // Valores antigos com minutos ("14:15") viram a hora cheia correspondente,
+      // que e o que o agendador da nuvem realmente executa.
+      scheduleTime: normalizeHourOption(recipient.scheduleTime),
       reportTypes: recipient.reportTypes ?? "sales",
       displayName: recipient.displayName ?? "",
       isActive: recipient.isActive
@@ -499,12 +513,21 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
                 </label>
                 <label style={styles.fieldLabel}>
                   Horario
-                  <input
-                    type="time"
+                  <select
                     value={form.scheduleTime}
                     onChange={(event) => setForm({ ...form, scheduleTime: event.target.value })}
                     style={styles.input}
-                  />
+                  >
+                    {HOUR_OPTIONS.map((hour) => (
+                      <option key={hour} value={hour}>
+                        {hour}
+                      </option>
+                    ))}
+                  </select>
+                  <small style={styles.helperText}>
+                    O envio acontece na hora cheia (horario de Brasilia). Se a hora escolhida ja
+                    passou hoje, o primeiro envio sera no proximo dia.
+                  </small>
                 </label>
                 <label style={styles.fieldLabel}>
                   Relatorios enviados

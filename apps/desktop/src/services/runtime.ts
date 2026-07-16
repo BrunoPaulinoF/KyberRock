@@ -1535,19 +1535,52 @@ export class DesktopRuntime {
     return listReportRecipients(this.database, this.ensureIdentity().companyId);
   }
 
-  createReportRecipient(input: Omit<CreateReportRecipientInput, "companyId">): ReportRecipient {
-    return createReportRecipient(this.database, {
+  async createReportRecipient(
+    input: Omit<CreateReportRecipientInput, "companyId">
+  ): Promise<ReportRecipient> {
+    const created = createReportRecipient(this.database, {
       companyId: this.ensureIdentity().companyId,
       ...input
     });
+    await this.pushReportRecipientsBestEffort();
+    return this.refreshReportRecipient(created);
   }
 
-  updateReportRecipient(id: string, input: UpdateReportRecipientInput): ReportRecipient {
-    return updateReportRecipient(this.database, id, input);
+  async updateReportRecipient(
+    id: string,
+    input: UpdateReportRecipientInput
+  ): Promise<ReportRecipient> {
+    const updated = updateReportRecipient(this.database, id, input);
+    await this.pushReportRecipientsBestEffort();
+    return this.refreshReportRecipient(updated);
   }
 
-  deleteReportRecipient(id: string): void {
+  async deleteReportRecipient(id: string): Promise<void> {
     deleteReportRecipient(this.database, id);
+    await this.pushReportRecipientsBestEffort();
+  }
+
+  /**
+   * Empurra os destinatarios pendentes para a nuvem IMEDIATAMENTE apos salvar:
+   * o envio automatico roda na nuvem, entao esperar o ciclo de 30 min deixava
+   * uma janela em que o destinatario existia so no desktop e o agendador
+   * despachava "sem destinatarios ativos". Falha aqui nao bloqueia o salvar —
+   * needs_push continua 1 e o ciclo agendado re-tenta.
+   */
+  private async pushReportRecipientsBestEffort(): Promise<void> {
+    try {
+      initializeSupabaseFromSettings(this.database);
+      if (!isSupabaseInitialized()) return;
+      await pushPendingReportRecipients(this.database, this.ensureIdentity());
+    } catch {
+      // sync_status='error' fica registrado na linha; o scheduler re-tenta.
+    }
+  }
+
+  /** Rele o destinatario para devolver o sync_status ja atualizado pelo push. */
+  private refreshReportRecipient(fallback: ReportRecipient): ReportRecipient {
+    const rows = listReportRecipients(this.database, this.ensureIdentity().companyId);
+    return rows.find((row) => row.id === fallback.id) ?? fallback;
   }
 
   // Config SMTP cadastrada na tela de Relatorios; os envs SMTP_* sao fallback.

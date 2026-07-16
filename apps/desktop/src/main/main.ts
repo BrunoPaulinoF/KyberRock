@@ -624,6 +624,7 @@ function registerIpcHandlers(): void {
         sendWhatsapp?: boolean;
         scheduleFrequency?: string;
         scheduleTime?: string;
+        reportTypes?: string;
         displayName?: string | null;
         isActive?: boolean;
       }
@@ -636,6 +637,7 @@ function registerIpcHandlers(): void {
         sendWhatsapp: input.sendWhatsapp,
         scheduleFrequency: input.scheduleFrequency as "daily" | "weekly" | "monthly" | undefined,
         scheduleTime: input.scheduleTime,
+        reportTypes: input.reportTypes as "sales" | "trucks" | "both" | undefined,
         displayName: input.displayName,
         isActive: input.isActive
       });
@@ -654,6 +656,7 @@ function registerIpcHandlers(): void {
         sendWhatsapp?: boolean;
         scheduleFrequency?: string;
         scheduleTime?: string;
+        reportTypes?: string;
         displayName?: string | null;
         isActive?: boolean;
       }
@@ -666,6 +669,7 @@ function registerIpcHandlers(): void {
         sendWhatsapp: input.sendWhatsapp,
         scheduleFrequency: input.scheduleFrequency as "daily" | "weekly" | "monthly" | undefined,
         scheduleTime: input.scheduleTime,
+        reportTypes: input.reportTypes as "sales" | "trucks" | "both" | undefined,
         displayName: input.displayName,
         isActive: input.isActive
       });

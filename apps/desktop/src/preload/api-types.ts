@@ -214,6 +214,7 @@ export interface KyberRockDesktopApi {
       sendWhatsapp: boolean;
       scheduleFrequency: string;
       scheduleTime: string;
+      reportTypes: "sales" | "trucks" | "both";
       displayName: string | null;
       isActive: boolean;
       syncStatus: "synced" | "pending" | "error";
@@ -228,6 +229,7 @@ export interface KyberRockDesktopApi {
     sendWhatsapp?: boolean;
     scheduleFrequency?: string;
     scheduleTime?: string;
+    reportTypes?: "sales" | "trucks" | "both";
     displayName?: string | null;
     isActive?: boolean;
   }) => Promise<unknown>;
@@ -240,6 +242,7 @@ export interface KyberRockDesktopApi {
       sendWhatsapp?: boolean;
       scheduleFrequency?: string;
       scheduleTime?: string;
+      reportTypes?: "sales" | "trucks" | "both";
       displayName?: string | null;
       isActive?: boolean;
     }
