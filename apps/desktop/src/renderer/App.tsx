@@ -20,7 +20,15 @@ import {
   Settings,
   Sun,
   Truck,
-  Upload
+  Upload,
+  User,
+  Users,
+  Package,
+  CreditCard,
+  Building2,
+  Car,
+  Power,
+  Search
 } from "lucide-react";
 
 import { desktopAppInfo } from "../app-info";
@@ -95,7 +103,7 @@ import { ReportsView } from "./ReportsView";
 import { TruckControlView, formatMinutes } from "./TruckControlView";
 import { CustomersView } from "./CustomersView";
 import { HelpTooltip, Tooltip } from "./Tooltip";
-import type { TooltipPlacement } from "./Tooltip";
+import { IconActionButton, OpIcon } from "./IconActionButton";
 import { PriceChangePasswordDialog } from "./PriceChangePasswordDialog";
 import { TIPS } from "./tooltip-messages";
 import {
@@ -2406,27 +2414,39 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
                 <div style={styles.operationsToolbar}>
                   <div style={styles.segmentedTabs}>
-                    <button
-                      type="button"
-                      onClick={() => setOperationsTab("open")}
-                      style={operationsTabStyle(operationsTab === "open")}
-                    >
-                      Abertas
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setOperationsTab("canceled")}
-                      style={operationsTabStyle(operationsTab === "canceled")}
-                    >
-                      Canceladas
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setOperationsTab("closed")}
-                      style={operationsTabStyle(operationsTab === "closed")}
-                    >
-                      Concluidas
-                    </button>
+                    <Tooltip content="Operacoes abertas" placement="bottom">
+                      <button
+                        type="button"
+                        aria-label="Operacoes abertas"
+                        aria-pressed={operationsTab === "open"}
+                        onClick={() => setOperationsTab("open")}
+                        style={operationsTabStyle(operationsTab === "open")}
+                      >
+                        <OpIcon name="clock" />
+                      </button>
+                    </Tooltip>
+                    <Tooltip content="Operacoes canceladas" placement="bottom">
+                      <button
+                        type="button"
+                        aria-label="Operacoes canceladas"
+                        aria-pressed={operationsTab === "canceled"}
+                        onClick={() => setOperationsTab("canceled")}
+                        style={operationsTabStyle(operationsTab === "canceled")}
+                      >
+                        <OpIcon name="ban" />
+                      </button>
+                    </Tooltip>
+                    <Tooltip content="Operacoes concluidas" placement="bottom">
+                      <button
+                        type="button"
+                        aria-label="Operacoes concluidas"
+                        aria-pressed={operationsTab === "closed"}
+                        onClick={() => setOperationsTab("closed")}
+                        style={operationsTabStyle(operationsTab === "closed")}
+                      >
+                        <OpIcon name="check" />
+                      </button>
+                    </Tooltip>
                   </div>
 
                   {operationsTab === "canceled" ? (
@@ -2456,19 +2476,15 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                           <option value="month">Este mes</option>
                         </select>
                       </label>
-                      <button
-                        type="button"
-                        onClick={() => void handleClearCanceledOperations()}
+                      <IconActionButton
+                        icon="trash"
+                        label="Limpar canceladas"
+                        tip={TIPS.operations.clearCanceled}
+                        tone="danger"
+                        placement="bottom"
                         disabled={canceledOperations.length === 0}
-                        style={{
-                          ...styles.secondaryButton,
-                          color: "#b91c1c",
-                          borderColor: "#fecaca"
-                        }}
-                      >
-                        Limpar canceladas
-                      </button>
-                      <HelpTooltip content={TIPS.operations.clearCanceled} placement="bottom" />
+                        onClick={() => void handleClearCanceledOperations()}
+                      />
                     </div>
                   ) : operationsTab === "closed" ? (
                     <div
@@ -2915,34 +2931,50 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
               <section style={styles.panel}>
                 <h2 style={styles.panelTitle}>Cadastros</h2>
                 <nav style={styles.subTabs}>
-                  <button
-                    type="button"
-                    onClick={() => setRegistrationsTab("customers")}
-                    style={subTabStyle(registrationsTab === "customers")}
-                  >
-                    Clientes
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setRegistrationsTab("products")}
-                    style={subTabStyle(registrationsTab === "products")}
-                  >
-                    Produtos
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setRegistrationsTab("payment_terms")}
-                    style={subTabStyle(registrationsTab === "payment_terms")}
-                  >
-                    Pagamento
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setRegistrationsTab("transport")}
-                    style={subTabStyle(registrationsTab === "transport")}
-                  >
-                    Transporte
-                  </button>
+                  <Tooltip content="Clientes" placement="bottom">
+                    <button
+                      type="button"
+                      aria-label="Clientes"
+                      aria-pressed={registrationsTab === "customers"}
+                      onClick={() => setRegistrationsTab("customers")}
+                      style={subTabStyle(registrationsTab === "customers")}
+                    >
+                      <Users size={16} />
+                    </button>
+                  </Tooltip>
+                  <Tooltip content="Produtos" placement="bottom">
+                    <button
+                      type="button"
+                      aria-label="Produtos"
+                      aria-pressed={registrationsTab === "products"}
+                      onClick={() => setRegistrationsTab("products")}
+                      style={subTabStyle(registrationsTab === "products")}
+                    >
+                      <Package size={16} />
+                    </button>
+                  </Tooltip>
+                  <Tooltip content="Pagamento" placement="bottom">
+                    <button
+                      type="button"
+                      aria-label="Pagamento"
+                      aria-pressed={registrationsTab === "payment_terms"}
+                      onClick={() => setRegistrationsTab("payment_terms")}
+                      style={subTabStyle(registrationsTab === "payment_terms")}
+                    >
+                      <CreditCard size={16} />
+                    </button>
+                  </Tooltip>
+                  <Tooltip content="Transporte" placement="bottom">
+                    <button
+                      type="button"
+                      aria-label="Transporte"
+                      aria-pressed={registrationsTab === "transport"}
+                      onClick={() => setRegistrationsTab("transport")}
+                      style={subTabStyle(registrationsTab === "transport")}
+                    >
+                      <Truck size={16} />
+                    </button>
+                  </Tooltip>
                 </nav>
                 <p style={styles.muted}>{TIPS.screens.registrations}</p>
                 <div style={{ marginTop: "20px" }}>
@@ -6496,125 +6528,6 @@ function FiscalProgressDialog({
   );
 }
 
-type OpIconName = "swap" | "check" | "ban" | "printer" | "edit" | "trash" | "retry";
-
-function OpIcon({ name }: { name: OpIconName }) {
-  const common: React.SVGProps<SVGSVGElement> = {
-    width: 16,
-    height: 16,
-    viewBox: "0 0 24 24",
-    fill: "none",
-    stroke: "currentColor",
-    strokeWidth: 2,
-    strokeLinecap: "round",
-    strokeLinejoin: "round",
-    "aria-hidden": true,
-    focusable: false
-  };
-  switch (name) {
-    case "swap":
-      return (
-        <svg {...common}>
-          <polyline points="17 1 21 5 17 9" />
-          <path d="M3 11V9a4 4 0 0 1 4-4h14" />
-          <polyline points="7 23 3 19 7 15" />
-          <path d="M21 13v2a4 4 0 0 1-4 4H3" />
-        </svg>
-      );
-    case "check":
-      return (
-        <svg {...common}>
-          <polyline points="20 6 9 17 4 12" />
-        </svg>
-      );
-    case "ban":
-      return (
-        <svg {...common}>
-          <circle cx="12" cy="12" r="10" />
-          <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
-        </svg>
-      );
-    case "printer":
-      return (
-        <svg {...common}>
-          <polyline points="6 9 6 2 18 2 18 9" />
-          <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
-          <rect x="6" y="14" width="12" height="8" />
-        </svg>
-      );
-    case "edit":
-      return (
-        <svg {...common}>
-          <path d="M12 20h9" />
-          <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
-        </svg>
-      );
-    case "trash":
-      return (
-        <svg {...common}>
-          <polyline points="3 6 5 6 21 6" />
-          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-          <line x1="10" y1="11" x2="10" y2="17" />
-          <line x1="14" y1="11" x2="14" y2="17" />
-        </svg>
-      );
-    case "retry":
-      return (
-        <svg {...common}>
-          <polyline points="23 4 23 10 17 10" />
-          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-        </svg>
-      );
-  }
-}
-
-/**
- * Botao de acao compacto, so com icone: reduz a largura das colunas de acoes
- * (evita o estouro de layout com varios botoes) e mostra, no hover/foco, uma
- * dica explicando o que o botao faz. O `label` vira o nome acessivel (aria).
- */
-function IconActionButton({
-  icon,
-  label,
-  tip,
-  tone = "neutral",
-  placement = "top",
-  disabled = false,
-  onClick
-}: {
-  icon: OpIconName;
-  label: string;
-  tip?: React.ReactNode;
-  tone?: "neutral" | "primary" | "danger";
-  placement?: TooltipPlacement;
-  disabled?: boolean;
-  onClick: () => void;
-}) {
-  const toneStyle =
-    tone === "primary"
-      ? styles.iconButtonPrimary
-      : tone === "danger"
-        ? styles.iconButtonDanger
-        : styles.iconButtonNeutral;
-  return (
-    <Tooltip content={tip ?? label} placement={placement}>
-      <button
-        type="button"
-        aria-label={label}
-        disabled={disabled}
-        onClick={onClick}
-        style={{
-          ...styles.iconButtonBase,
-          ...toneStyle,
-          ...(disabled ? { opacity: 0.5, cursor: "not-allowed" } : {})
-        }}
-      >
-        <OpIcon name={icon} />
-      </button>
-    </Tooltip>
-  );
-}
-
 function FiscalBillingStatus({
   operation,
   retrying,
@@ -6826,7 +6739,11 @@ function subTabStyle(active: boolean) {
     border: "none",
     borderBottom: active ? "2px solid var(--kr-accent)" : "2px solid transparent",
     borderRadius: "0",
-    padding: "7px 12px",
+    padding: "8px 16px",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    lineHeight: 0,
     background: "transparent",
     color: active ? "var(--kr-text-strong)" : "var(--kr-muted)",
     cursor: "pointer",
@@ -6839,7 +6756,11 @@ function operationsTabStyle(active: boolean): React.CSSProperties {
   return {
     border: "1px solid var(--kr-border)",
     borderRadius: "999px",
-    padding: "6px 12px",
+    padding: "7px 14px",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    lineHeight: 0,
     background: active ? "var(--kr-primary-strong)" : "var(--kr-surface)",
     color: active ? "var(--kr-primary-text)" : "var(--kr-text-strong)",
     cursor: "pointer",
@@ -7691,20 +7612,26 @@ function CarrierCnpjAutoFillButton({
   }
 
   return (
-    <button
-      type="button"
-      onClick={() => void handleLookup()}
-      disabled={busy}
-      title="Buscar os dados pelo CNPJ (Receita) e preencher o cadastro"
-      style={{
-        ...styles.secondaryButton,
-        height: "38px",
-        whiteSpace: "nowrap",
-        opacity: busy ? 0.6 : 1
-      }}
-    >
-      {busy ? "Buscando..." : "🔍 Busca de dados automatica"}
-    </button>
+    <Tooltip content="Buscar os dados pelo CNPJ (Receita) e preencher o cadastro">
+      <button
+        type="button"
+        onClick={() => void handleLookup()}
+        disabled={busy}
+        aria-label="Buscar os dados pelo CNPJ"
+        style={{
+          ...styles.secondaryButton,
+          height: "38px",
+          width: "38px",
+          padding: 0,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          opacity: busy ? 0.6 : 1
+        }}
+      >
+        <Search size={16} />
+      </button>
+    </Tooltip>
   );
 }
 
@@ -7769,9 +7696,17 @@ function CarrierBulkCnpjToolbar({
         onClick={() => void handleEnrichAll()}
         disabled={busy}
         title="Busca o CNPJ de TODAS as transportadoras na Receita e atualiza o cadastro (razao social, endereco, telefone)"
-        style={{ ...styles.secondaryButton, height: "38px", opacity: busy ? 0.6 : 1 }}
+        style={{
+          ...styles.secondaryButton,
+          height: "38px",
+          display: "inline-flex",
+          alignItems: "center",
+          gap: "6px",
+          opacity: busy ? 0.6 : 1
+        }}
       >
-        {busy ? "Buscando dados..." : "🔍 Busca de dados automatica (todas)"}
+        <Search size={14} />
+        {busy ? "Buscando dados..." : "Busca de dados automatica (todas)"}
       </button>
       <span style={{ fontSize: "12px", color: "var(--kr-muted)" }}>
         Preenche razao social, endereco e telefone pela Receita para todas as transportadoras com
@@ -8162,27 +8097,39 @@ function TransportView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   return (
     <div>
       <nav style={{ ...styles.subTabs, marginTop: 0 }}>
-        <button
-          type="button"
-          onClick={() => setTransportTab("drivers")}
-          style={subTabStyle(transportTab === "drivers")}
-        >
-          Motoristas
-        </button>
-        <button
-          type="button"
-          onClick={() => setTransportTab("carriers")}
-          style={subTabStyle(transportTab === "carriers")}
-        >
-          Transportadoras
-        </button>
-        <button
-          type="button"
-          onClick={() => setTransportTab("vehicles")}
-          style={subTabStyle(transportTab === "vehicles")}
-        >
-          Placas
-        </button>
+        <Tooltip content="Motoristas" placement="bottom">
+          <button
+            type="button"
+            aria-label="Motoristas"
+            aria-pressed={transportTab === "drivers"}
+            onClick={() => setTransportTab("drivers")}
+            style={subTabStyle(transportTab === "drivers")}
+          >
+            <User size={16} />
+          </button>
+        </Tooltip>
+        <Tooltip content="Transportadoras" placement="bottom">
+          <button
+            type="button"
+            aria-label="Transportadoras"
+            aria-pressed={transportTab === "carriers"}
+            onClick={() => setTransportTab("carriers")}
+            style={subTabStyle(transportTab === "carriers")}
+          >
+            <Building2 size={16} />
+          </button>
+        </Tooltip>
+        <Tooltip content="Placas" placement="bottom">
+          <button
+            type="button"
+            aria-label="Placas"
+            aria-pressed={transportTab === "vehicles"}
+            onClick={() => setTransportTab("vehicles")}
+            style={subTabStyle(transportTab === "vehicles")}
+          >
+            <Car size={16} />
+          </button>
+        </Tooltip>
       </nav>
       <div style={{ marginTop: "20px" }}>
         {transportTab === "drivers" ? (
@@ -8720,18 +8667,35 @@ function AccountsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
             width: "150px",
             align: "right",
             render: (account: AccountCacheEntry) => (
-              <button
-                type="button"
-                onClick={() => void toggleActive(account)}
-                disabled={togglingId === account.id}
-                style={{ ...styles.secondaryButton, fontSize: "11px", padding: "4px 10px" }}
+              <Tooltip
+                content={account.isActive ? "Desativar conta" : "Ativar conta"}
+                placement="left"
               >
-                {togglingId === account.id
-                  ? "Salvando..."
-                  : account.isActive
-                    ? "Desativar"
-                    : "Ativar"}
-              </button>
+                <button
+                  type="button"
+                  onClick={() => void toggleActive(account)}
+                  disabled={togglingId === account.id}
+                  aria-label={account.isActive ? "Desativar conta" : "Ativar conta"}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: "30px",
+                    height: "30px",
+                    padding: 0,
+                    border: "1px solid var(--kr-border)",
+                    background: "var(--kr-surface)",
+                    color: account.isActive ? "var(--kr-success)" : "var(--kr-muted)",
+                    borderRadius: "8px",
+                    cursor: "pointer",
+                    flexShrink: 0,
+                    lineHeight: 0,
+                    opacity: togglingId === account.id ? 0.6 : 1
+                  }}
+                >
+                  <Power size={15} />
+                </button>
+              </Tooltip>
             )
           }
         ]}
@@ -10555,33 +10519,6 @@ const styles = {
     display: "flex",
     gap: "6px",
     justifyContent: "flex-end"
-  },
-  iconButtonBase: {
-    width: "30px",
-    height: "30px",
-    padding: 0,
-    borderRadius: "8px",
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    cursor: "pointer",
-    flexShrink: 0,
-    lineHeight: 0
-  },
-  iconButtonNeutral: {
-    border: "1px solid var(--kr-border)",
-    background: "var(--kr-surface)",
-    color: "var(--kr-text-strong)"
-  },
-  iconButtonPrimary: {
-    border: "1px solid var(--kr-primary-strong)",
-    background: "var(--kr-primary-strong)",
-    color: "var(--kr-primary-text)"
-  },
-  iconButtonDanger: {
-    border: "1px solid var(--kr-danger-border)",
-    background: "var(--kr-danger-soft)",
-    color: "var(--kr-danger)"
   },
   smallPrimaryButton: {
     border: "none",

@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Lock, Search, Unlock } from "lucide-react";
 
 import {
   formatMoneyInput,
@@ -24,6 +25,7 @@ import {
 import type { CepLookupResult } from "./inputs";
 import type { CustomerCacheEntry, CustomerFormData } from "./customers.types";
 import { CrudFormModal } from "./CrudFormModal";
+import { Tooltip } from "./Tooltip";
 import { extractConditionRaw, resolveConditionTermId } from "./payment-condition-helpers";
 import { tryParsePaymentCondition } from "../services/payment-condition-parser";
 import {
@@ -1022,9 +1024,17 @@ export function CustomersView({
           onClick={() => void handleEnrichAllCnpj()}
           disabled={cnpjBulkBusy}
           title="Busca o CNPJ de TODOS os clientes na Receita e atualiza o cadastro (razao social, endereco, telefone)"
-          style={{ ...styles.secondaryButton, height: "38px", opacity: cnpjBulkBusy ? 0.6 : 1 }}
+          style={{
+            ...styles.secondaryButton,
+            height: "38px",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "6px",
+            opacity: cnpjBulkBusy ? 0.6 : 1
+          }}
         >
-          {cnpjBulkBusy ? "Buscando dados..." : "🔍 Busca de dados automatica (todos)"}
+          <Search size={14} />
+          {cnpjBulkBusy ? "Buscando dados..." : "Busca de dados automatica (todos)"}
         </button>
       </div>
 
@@ -1110,20 +1120,26 @@ export function CustomersView({
                       disabled={false}
                     />
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => void handleCnpjLookup()}
-                    disabled={cnpjBusy}
-                    title="Buscar dados pelo CNPJ (Receita) e preencher o cadastro"
-                    style={{
-                      ...styles.secondaryButton,
-                      height: "38px",
-                      whiteSpace: "nowrap",
-                      opacity: cnpjBusy ? 0.6 : 1
-                    }}
-                  >
-                    {cnpjBusy ? "Buscando..." : "🔍 Busca de dados automatica"}
-                  </button>
+                  <Tooltip content="Buscar dados pelo CNPJ (Receita) e preencher o cadastro">
+                    <button
+                      type="button"
+                      onClick={() => void handleCnpjLookup()}
+                      disabled={cnpjBusy}
+                      aria-label="Buscar dados pelo CNPJ"
+                      style={{
+                        ...styles.secondaryButton,
+                        height: "38px",
+                        width: "38px",
+                        padding: 0,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        opacity: cnpjBusy ? 0.6 : 1
+                      }}
+                    >
+                      <Search size={16} />
+                    </button>
+                  </Tooltip>
                 </div>
                 <MoneyInput
                   label="Limite (R$)"
@@ -1746,40 +1762,50 @@ export function CustomersView({
           {
             key: "actions",
             header: "Acoes",
-            width: "320px",
+            width: "150px",
             align: "right",
             render: (customer) => (
               <>
                 <EditRowButton onClick={() => openEditForm(customer)} />
-                <button
-                  type="button"
-                  onClick={() => void handleToggleBillingBlocked(customer)}
-                  disabled={togglingBlockId !== null}
-                  title={
+                <Tooltip
+                  content={
                     customer.omieBillingBlocked
                       ? "Liberar o faturamento deste cliente (enviado ao OMIE no proximo sync)"
                       : "Bloquear o faturamento deste cliente (enviado ao OMIE no proximo sync)"
                   }
-                  style={{
-                    border: customer.omieBillingBlocked
-                      ? "1px solid #bbf7d0"
-                      : "1px solid #fde68a",
-                    background: "var(--kr-surface)",
-                    color: customer.omieBillingBlocked ? "#15803d" : "#b45309",
-                    borderRadius: "10px",
-                    padding: "6px 10px",
-                    cursor: togglingBlockId ? "wait" : "pointer",
-                    fontWeight: 700,
-                    fontSize: "12px",
-                    opacity: togglingBlockId === customer.id ? 0.6 : 1
-                  }}
+                  placement="left"
                 >
-                  {togglingBlockId === customer.id
-                    ? "Salvando..."
-                    : customer.omieBillingBlocked
-                      ? "Liberar faturamento"
-                      : "Bloquear faturamento"}
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleToggleBillingBlocked(customer)}
+                    disabled={togglingBlockId !== null}
+                    aria-label={
+                      customer.omieBillingBlocked ? "Liberar faturamento" : "Bloquear faturamento"
+                    }
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: "30px",
+                      height: "30px",
+                      padding: 0,
+                      border: customer.omieBillingBlocked
+                        ? "1px solid var(--kr-danger-border)"
+                        : "1px solid var(--kr-border)",
+                      background: customer.omieBillingBlocked
+                        ? "var(--kr-danger-soft)"
+                        : "var(--kr-surface)",
+                      color: customer.omieBillingBlocked ? "var(--kr-danger)" : "var(--kr-muted)",
+                      borderRadius: "8px",
+                      cursor: togglingBlockId ? "wait" : "pointer",
+                      flexShrink: 0,
+                      lineHeight: 0,
+                      opacity: togglingBlockId === customer.id ? 0.6 : 1
+                    }}
+                  >
+                    {customer.omieBillingBlocked ? <Lock size={15} /> : <Unlock size={15} />}
+                  </button>
+                </Tooltip>
                 <DeleteRowButton onClick={() => setPendingDeleteId(customer.id)} />
               </>
             )

@@ -3,6 +3,7 @@ import type { CSSProperties, FormEvent, ReactNode } from "react";
 import { Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 
 import { CrudFormModal } from "./CrudFormModal";
+import { Tooltip } from "./Tooltip";
 
 // Primitivas compartilhadas das telas de cadastro. Todas as listas CRUD do
 // KyberRock (clientes, produtos, veiculos, motoristas, transportadoras,
@@ -519,27 +520,32 @@ export function SourceBadge({ source }: { source: string }) {
 
 // Acoes de linha -----------------------------------------------------------
 
-const rowActionBase: CSSProperties = {
+// Botao de acao de linha compacto, so com icone: mostra a dica (o que faz) no
+// hover/foco e usa o `label` como nome acessivel. Mesmo visual (30x30) dos
+// botoes de acao da tela de operacoes.
+const rowIconButtonBase: CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
-  gap: "5px",
+  justifyContent: "center",
+  width: "30px",
+  height: "30px",
+  padding: 0,
   border: "1px solid var(--kr-border)",
   borderRadius: "8px",
-  padding: "6px 9px",
   background: "var(--kr-surface)",
   color: "var(--kr-text-strong)",
   cursor: "pointer",
-  fontWeight: 700,
-  fontSize: "11px",
-  whiteSpace: "nowrap"
+  flexShrink: 0,
+  lineHeight: 0
 };
 
 export function EditRowButton({ onClick, label = "Editar" }: { onClick: () => void; label?: string }) {
   return (
-    <button type="button" onClick={onClick} style={rowActionBase}>
-      <Pencil size={12} />
-      {label}
-    </button>
+    <Tooltip content={label} placement="left">
+      <button type="button" onClick={onClick} aria-label={label} style={rowIconButtonBase}>
+        <Pencil size={15} />
+      </button>
+    </Tooltip>
   );
 }
 
@@ -553,22 +559,24 @@ export function DeleteRowButton({
   label?: string;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      style={{
-        ...rowActionBase,
-        borderColor: "var(--kr-danger-border)",
-        background: "var(--kr-danger-soft)",
-        color: "var(--kr-danger)",
-        opacity: disabled ? 0.55 : 1,
-        cursor: disabled ? "not-allowed" : "pointer"
-      }}
-    >
-      <Trash2 size={12} />
-      {label}
-    </button>
+    <Tooltip content={label} placement="left">
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        aria-label={label}
+        style={{
+          ...rowIconButtonBase,
+          borderColor: "var(--kr-danger-border)",
+          background: "var(--kr-danger-soft)",
+          color: "var(--kr-danger)",
+          opacity: disabled ? 0.55 : 1,
+          cursor: disabled ? "not-allowed" : "pointer"
+        }}
+      >
+        <Trash2 size={15} />
+      </button>
+    </Tooltip>
   );
 }
 
