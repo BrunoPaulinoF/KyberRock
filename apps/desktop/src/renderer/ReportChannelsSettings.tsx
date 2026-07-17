@@ -5,6 +5,8 @@ import type {
   ReportChannelSettingsView,
   WhatsappInstanceStateView
 } from "../preload/api-types";
+import { IconActionButton } from "./IconActionButton";
+import { HelpTooltip } from "./Tooltip";
 
 // Card de configuracao dos canais de envio (E-mail SMTP e WhatsApp/UAZAPI),
 // exibido na tela de Relatorios acima dos destinatarios. A conexao do WhatsApp
@@ -529,7 +531,13 @@ export function ReportChannelsSettings({
               />
             </label>
             <label style={styles.fieldLabel}>
-              Senha
+              <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                Senha
+                <HelpTooltip
+                  content="No Gmail, use uma senha de app (Conta Google > Seguranca > Senhas de app)."
+                  placement="right"
+                />
+              </span>
               <input
                 type="password"
                 value={form.smtpPassword}
@@ -548,22 +556,26 @@ export function ReportChannelsSettings({
               />
             </label>
             <div style={styles.buttonRow}>
-              <button
-                type="button"
-                onClick={() => void handleTestSmtp()}
+              <IconActionButton
+                icon="check"
+                label="Testar conexao SMTP"
+                tip="Salva e verifica a conexao com o servidor SMTP."
+                tone="neutral"
+                placement="top"
                 disabled={busy}
-                style={styles.secondaryButton}
-              >
-                Testar conexao SMTP
-              </button>
+                onClick={() => void handleTestSmtp()}
+              />
             </div>
-            <p style={styles.helperText}>
-              No Gmail, use uma senha de app (Conta Google &gt; Seguranca &gt; Senhas de app).
-            </p>
           </section>
 
           <section style={styles.section}>
-            <h4 style={styles.sectionTitle}>WhatsApp (UAZAPI)</h4>
+            <h4 style={{ ...styles.sectionTitle, display: "flex", alignItems: "center", gap: "6px" }}>
+              WhatsApp (UAZAPI)
+              <HelpTooltip
+                content="A instancia e criada pela administracao direto na UAZAPI (uma por pedreira). Cole aqui o token da instancia e clique em conectar para gerar o QR code."
+                placement="right"
+              />
+            </h4>
             <label style={styles.fieldLabel}>
               Servidor UAZAPI (URL)
               <input
@@ -592,11 +604,6 @@ export function ReportChannelsSettings({
                 style={styles.input}
               />
             </label>
-            <p style={styles.helperText}>
-              A instancia e criada pela administracao direto na UAZAPI (uma por pedreira). Cole aqui
-              o token da instancia e clique em conectar para gerar o QR code.
-            </p>
-
             {showQr ? (
               <div style={styles.qrBox}>
                 <img src={whatsappState?.qrcode ?? undefined} alt="QR code" style={styles.qrImage} />
@@ -638,35 +645,38 @@ export function ReportChannelsSettings({
                   : "Conectar WhatsApp (gerar QR code)"}
               </button>
               {uiStatus === "connected" || uiStatus === "connecting" ? (
-                <button
-                  type="button"
-                  onClick={() => void handleWhatsappDisconnect()}
+                <IconActionButton
+                  icon="ban"
+                  label="Desconectar WhatsApp"
+                  tip="Desconectar o WhatsApp (pede confirmacao). Os relatorios deixarao de ser enviados."
+                  tone="danger"
+                  placement="top"
                   disabled={busy}
-                  style={styles.dangerButton}
-                >
-                  Desconectar
-                </button>
+                  onClick={() => void handleWhatsappDisconnect()}
+                />
               ) : null}
-              <button
-                type="button"
-                onClick={() => void refreshWhatsappStatus()}
+              <IconActionButton
+                icon="retry"
+                label="Atualizar status"
+                tip="Atualizar o status da conexao do WhatsApp."
+                tone="neutral"
+                placement="top"
                 disabled={busy || uiStatus === "unconfigured"}
-                style={styles.secondaryButton}
-              >
-                Atualizar status
-              </button>
+                onClick={() => void refreshWhatsappStatus()}
+              />
             </div>
           </section>
 
           <div style={{ gridColumn: "1 / -1", display: "flex", justifyContent: "flex-end" }}>
-            <button
-              type="button"
-              onClick={() => void handleSave()}
+            <IconActionButton
+              icon="save"
+              label="Salvar configuracao"
+              tip="Salvar a configuracao dos canais de envio."
+              tone="primary"
+              placement="top"
               disabled={busy}
-              style={styles.primaryButton}
-            >
-              Salvar configuracao
-            </button>
+              onClick={() => void handleSave()}
+            />
           </div>
         </div>
       ) : null}

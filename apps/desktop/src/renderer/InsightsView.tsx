@@ -25,6 +25,7 @@ import type {
 } from "../services/reports";
 import type { WeighingOperationSummary } from "../services/weighing-operations";
 import { HelpTooltip } from "./Tooltip";
+import { IconActionButton } from "./IconActionButton";
 import { formatDbDateTime } from "./format-datetime";
 import { TIPS } from "./tooltip-messages";
 
@@ -265,11 +266,12 @@ export function InsightsView({
   return (
     <section style={styles.page}>
       <header style={styles.header}>
-        <div>
+        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <h2 style={styles.title}>Insights</h2>
-          <p style={styles.subtitle}>
-            Acompanhe o andamento da operacao com KPIs, graficos e status de sincronizacao.
-          </p>
+          <HelpTooltip
+            content="Acompanhe o andamento da operacao com KPIs, graficos e status de sincronizacao."
+            placement="right"
+          />
         </div>
         <div style={styles.periodRow}>
           {(
@@ -291,24 +293,24 @@ export function InsightsView({
             </button>
           ))}
           <HelpTooltip content={TIPS.insights.period} placement="bottom" />
-          <button
-            type="button"
+          <IconActionButton
+            icon="file-text"
+            label="Exportar PDF"
+            tip={exporting === "pdf" ? "Gerando PDF..." : TIPS.insights.exportPdf}
+            tone="primary"
+            placement="bottom"
+            disabled={exporting !== null}
             onClick={() => void exportReport("pdf")}
+          />
+          <IconActionButton
+            icon="table"
+            label="Exportar Excel"
+            tip={exporting === "excel" ? "Gerando Excel..." : TIPS.insights.exportExcel}
+            tone="primary"
+            placement="bottom"
             disabled={exporting !== null}
-            style={styles.periodChip}
-          >
-            {exporting === "pdf" ? "Gerando PDF..." : "Exportar PDF"}
-          </button>
-          <HelpTooltip content={TIPS.insights.exportPdf} placement="bottom" />
-          <button
-            type="button"
             onClick={() => void exportReport("excel")}
-            disabled={exporting !== null}
-            style={styles.periodChip}
-          >
-            {exporting === "excel" ? "Gerando Excel..." : "Exportar Excel"}
-          </button>
-          <HelpTooltip content={TIPS.insights.exportExcel} placement="bottom" />
+          />
         </div>
       </header>
 
@@ -509,15 +511,15 @@ export function InsightsView({
                 </p>
               </div>
               <div style={styles.syncActionGroup}>
-                <button
-                  type="button"
-                  onClick={() => void onSyncCloud()}
+                <IconActionButton
+                  icon="retry"
+                  label="Sincronizar nuvem"
+                  tip={cloudSyncing ? "Sincronizando..." : TIPS.insights.syncCloud}
+                  tone="primary"
+                  placement="left"
                   disabled={!cloudConnected || cloudSyncing}
-                  style={styles.syncButton}
-                >
-                  Sincronizar
-                </button>
-                <HelpTooltip content={TIPS.insights.syncCloud} placement="left" />
+                  onClick={() => void onSyncCloud()}
+                />
               </div>
             </div>
 
@@ -534,15 +536,15 @@ export function InsightsView({
                 ) : null}
               </div>
               <div style={styles.syncActionGroup}>
-                <button
-                  type="button"
-                  onClick={() => void onSyncOmie()}
+                <IconActionButton
+                  icon="retry"
+                  label="Sincronizar OMIE"
+                  tip={TIPS.insights.syncOmie}
+                  tone="primary"
+                  placement="left"
                   disabled={!omieStatus?.configured}
-                  style={styles.syncButton}
-                >
-                  Sincronizar
-                </button>
-                <HelpTooltip content={TIPS.insights.syncOmie} placement="left" />
+                  onClick={() => void onSyncOmie()}
+                />
               </div>
             </div>
 

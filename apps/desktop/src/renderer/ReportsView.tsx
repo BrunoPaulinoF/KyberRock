@@ -2,8 +2,10 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 
 import type { KyberRockDesktopApi } from "../preload/api-types";
 import { CrudFormModal } from "./CrudFormModal";
+import { IconActionButton } from "./IconActionButton";
 import { ReportChannelsSettings } from "./ReportChannelsSettings";
 import { ReportDispatchSettings } from "./ReportDispatchSettings";
+import { HelpTooltip } from "./Tooltip";
 import { formatDbDateTime } from "./format-datetime";
 
 type ReportType = "sales" | "trucks" | "both";
@@ -418,15 +420,21 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
   return (
     <section style={styles.page}>
       <header style={styles.header}>
-        <div>
+        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <h2 style={styles.title}>Relatorios e fechamento diario</h2>
-          <p style={styles.subtitle}>
-            Cadastre quem deve receber o fechamento diario por e-mail ou WhatsApp.
-          </p>
+          <HelpTooltip
+            content="Cadastre quem deve receber o fechamento diario por e-mail ou WhatsApp."
+            placement="right"
+          />
         </div>
-        <button type="button" onClick={openCreateForm} style={styles.primaryButton}>
-          + Novo destinatario
-        </button>
+        <IconActionButton
+          icon="plus"
+          label="Novo destinatario"
+          tip="Cadastrar um novo destinatario de relatorios."
+          tone="primary"
+          placement="top"
+          onClick={openCreateForm}
+        />
       </header>
 
       <ReportChannelsSettings desktopApi={desktopApi} />
@@ -526,7 +534,13 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
                   </select>
                 </label>
                 <label style={styles.fieldLabel}>
-                  Horario
+                  <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    Horario
+                    <HelpTooltip
+                      content="O envio acontece na hora cheia (horario de Brasilia). Se a hora escolhida ja passou hoje, o primeiro envio sera no proximo dia."
+                      placement="right"
+                    />
+                  </span>
                   <select
                     value={form.scheduleTime}
                     onChange={(event) => setForm({ ...form, scheduleTime: event.target.value })}
@@ -538,10 +552,6 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
                       </option>
                     ))}
                   </select>
-                  <small style={styles.helperText}>
-                    O envio acontece na hora cheia (horario de Brasilia). Se a hora escolhida ja
-                    passou hoje, o primeiro envio sera no proximo dia.
-                  </small>
                 </label>
                 <label style={styles.fieldLabel}>
                   Relatorios enviados
@@ -657,20 +667,22 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
                         justifyContent: "flex-end"
                       }}
                     >
-                      <button
-                        type="button"
+                      <IconActionButton
+                        icon="edit"
+                        label="Editar destinatario"
+                        tip="Editar este destinatario."
+                        tone="neutral"
+                        placement="left"
                         onClick={() => handleEdit(recipient)}
-                        style={styles.secondaryButton}
-                      >
-                        Editar
-                      </button>
-                      <button
-                        type="button"
+                      />
+                      <IconActionButton
+                        icon="trash"
+                        label="Remover destinatario"
+                        tip="Remover este destinatario (pede confirmacao)."
+                        tone="danger"
+                        placement="left"
                         onClick={() => void handleDelete(recipient.id)}
-                        style={styles.dangerButton}
-                      >
-                        Remover
-                      </button>
+                      />
                     </td>
                   </tr>
                 ))}

@@ -15,7 +15,7 @@ import type { DesktopStatusSnapshot } from "../services/status";
 import type { WeighingOperationSummary } from "../services/weighing-operations";
 import { buildStatusIndicatorViewModels, type StatusIndicatorTone } from "./status-view-model";
 import { parseDbTimestamp } from "./format-datetime";
-import { Tooltip } from "./Tooltip";
+import { HelpTooltip, Tooltip } from "./Tooltip";
 
 type ActiveView =
   | "dashboard"
@@ -281,11 +281,13 @@ export function DashboardView(props: DashboardViewProps) {
       <header style={styles.hero}>
         <div>
           <p style={styles.kicker}>Tela inicial</p>
-          <h2 style={styles.heroTitle}>Painel operacional</h2>
-          <p style={styles.subtitle}>
-            Visao rapida do turno: integridade dos sistemas, movimento do dia e o que precisa de
-            atencao agora.
-          </p>
+          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <h2 style={styles.heroTitle}>Painel operacional</h2>
+            <HelpTooltip
+              content="Visao rapida do turno: integridade dos sistemas, movimento do dia e o que precisa de atencao agora."
+              placement="right"
+            />
+          </div>
         </div>
         <div style={styles.heroActions}>
           <button
