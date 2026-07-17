@@ -25,13 +25,21 @@ function todayIso(): string {
 }
 
 const styles = {
-  page: { padding: 0, display: "grid", gap: "10px", minHeight: 0 },
+  page: {
+    padding: 0,
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "10px",
+    minHeight: 0,
+    flex: 1
+  },
   header: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "flex-start",
     flexWrap: "wrap" as const,
-    gap: "10px"
+    gap: "10px",
+    flexShrink: 0
   },
   title: { margin: 0, color: "var(--kr-text-strong)", fontSize: "18px" },
   subtitle: { margin: "4px 0 0 0", color: "var(--kr-muted)", maxWidth: "720px", fontSize: "13px" },
@@ -44,7 +52,8 @@ const styles = {
     border: "1px solid var(--kr-border)",
     borderRadius: "14px",
     padding: "12px 14px",
-    boxShadow: "var(--kr-shadow)"
+    boxShadow: "var(--kr-shadow)",
+    flexShrink: 0
   },
   field: { display: "flex", flexDirection: "column" as const, gap: "4px", fontSize: "12px", fontWeight: 700, color: "var(--kr-text-strong)" },
   input: {
@@ -74,7 +83,7 @@ const styles = {
     cursor: "pointer",
     fontWeight: 700
   },
-  summary: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "10px" },
+  summary: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "10px", flexShrink: 0 },
   card: {
     background: "var(--kr-surface)",
     border: "1px solid var(--kr-border)",
@@ -86,7 +95,8 @@ const styles = {
   cardValue: { fontSize: "20px", fontWeight: 800, color: "var(--kr-text-strong)" },
   tableScroll: {
     overflow: "auto" as const,
-    maxHeight: "calc(100vh - 360px)",
+    flex: 1,
+    minHeight: 0,
     border: "1px solid var(--kr-border)",
     borderRadius: "14px",
     background: "var(--kr-surface)",

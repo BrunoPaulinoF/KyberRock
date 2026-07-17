@@ -16,8 +16,6 @@ interface RecipientRow {
   whatsappPhone: string | null;
   sendEmail: boolean;
   sendWhatsapp: boolean;
-  scheduleFrequency: string;
-  scheduleTime: string;
   reportTypes: ReportType;
   displayName: string | null;
   isActive: boolean;
@@ -30,8 +28,6 @@ interface RecipientFormState {
   email: string;
   whatsappPhone: string;
   deliveryChannel: "email" | "whatsapp" | "both";
-  scheduleFrequency: string;
-  scheduleTime: string;
   reportTypes: ReportType;
   displayName: string;
   isActive: boolean;
@@ -41,8 +37,6 @@ const initialForm: RecipientFormState = {
   email: "",
   whatsappPhone: "",
   deliveryChannel: "email",
-  scheduleFrequency: "daily",
-  scheduleTime: "20:00",
   reportTypes: "sales",
   displayName: "",
   isActive: true
@@ -53,18 +47,6 @@ const REPORT_TYPE_LABEL: Record<ReportType, string> = {
   trucks: "Caminhoes",
   both: "Vendas + Caminhoes"
 };
-
-// O agendador da nuvem roda de hora em hora: o horario e sempre a hora cheia.
-const HOUR_OPTIONS = Array.from(
-  { length: 24 },
-  (_, hour) => `${String(hour).padStart(2, "0")}:00`
-);
-
-function normalizeHourOption(value: string | null | undefined): string {
-  const hour = parseInt((value ?? "").split(":")[0] ?? "", 10);
-  if (!Number.isInteger(hour) || hour < 0 || hour > 23) return "20:00";
-  return `${String(hour).padStart(2, "0")}:00`;
-}
 
 /**
  * Normaliza o WhatsApp para so-digitos com DDI 55 (ex.: "(11) 99999-9999" -> "5511999999999").
@@ -277,16 +259,6 @@ function badgeForStatus(status: RecipientRow["syncStatus"]) {
   return styles.badge("#b91c1c", "#fee2e2");
 }
 
-function scheduleLabel(frequency: string | null, time: string | null): string {
-  const freqMap: Record<string, string> = {
-    daily: "Diario",
-    weekly: "Semanal",
-    monthly: "Mensal"
-  };
-  const freq = freqMap[frequency ?? "daily"] ?? "Diario";
-  return `${freq} as ${time ?? "20:00"}h`;
-}
-
 export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | null }) {
   const [recipients, setRecipients] = useState<RecipientRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -360,8 +332,6 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
         whatsappPhone: normalizeWhatsapp(form.whatsappPhone),
         sendEmail,
         sendWhatsapp,
-        scheduleFrequency: form.scheduleFrequency,
-        scheduleTime: form.scheduleTime,
         reportTypes: form.reportTypes,
         displayName: form.displayName.trim() || null,
         isActive: form.isActive
@@ -391,10 +361,6 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
           : recipient.sendWhatsapp
             ? "whatsapp"
             : "email",
-      scheduleFrequency: recipient.scheduleFrequency ?? "daily",
-      // Valores antigos com minutos ("14:15") viram a hora cheia correspondente,
-      // que e o que o agendador da nuvem realmente executa.
-      scheduleTime: normalizeHourOption(recipient.scheduleTime),
       reportTypes: recipient.reportTypes ?? "sales",
       displayName: recipient.displayName ?? "",
       isActive: recipient.isActive
@@ -518,43 +484,15 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
                 </label>
               </section>
               <section style={styles.formSection}>
-                <h4 style={styles.formSectionTitle}>Agendamento</h4>
-                <label style={styles.fieldLabel}>
-                  Frequencia
-                  <select
-                    value={form.scheduleFrequency}
-                    onChange={(event) =>
-                      setForm({ ...form, scheduleFrequency: event.target.value })
-                    }
-                    style={styles.input}
-                  >
-                    <option value="daily">Diario</option>
-                    <option value="weekly">Semanal</option>
-                    <option value="monthly">Mensal</option>
-                  </select>
-                </label>
+                <h4 style={styles.formSectionTitle}>Relatorios</h4>
                 <label style={styles.fieldLabel}>
                   <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                    Horario
+                    Relatorios enviados
                     <HelpTooltip
-                      content="O envio acontece na hora cheia (horario de Brasilia). Se a hora escolhida ja passou hoje, o primeiro envio sera no proximo dia."
+                      content="Escolha quais relatorios este destinatario recebe nos envios automaticos. O horario e a frequencia sao definidos em 'Envios automaticos de relatorios'."
                       placement="right"
                     />
                   </span>
-                  <select
-                    value={form.scheduleTime}
-                    onChange={(event) => setForm({ ...form, scheduleTime: event.target.value })}
-                    style={styles.input}
-                  >
-                    {HOUR_OPTIONS.map((hour) => (
-                      <option key={hour} value={hour}>
-                        {hour}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label style={styles.fieldLabel}>
-                  Relatorios enviados
                   <select
                     value={form.reportTypes}
                     onChange={(event) =>
@@ -612,7 +550,6 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
                   <th style={styles.tableHeadCell}>Canal</th>
                   <th style={styles.tableHeadCell}>E-mail</th>
                   <th style={styles.tableHeadCell}>WhatsApp</th>
-                  <th style={styles.tableHeadCell}>Agendamento</th>
                   <th style={styles.tableHeadCell}>Relatorios</th>
                   <th style={styles.tableHeadCell}>Status</th>
                   <th style={styles.tableHeadCell}>Ultima sincronizacao</th>
@@ -633,9 +570,6 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
                     <td style={styles.tableCell}>{recipient.email ?? "-"}</td>
                     <td style={styles.tableCell}>{recipient.whatsappPhone ?? "-"}</td>
                     <td style={styles.tableCell}>
-                      {scheduleLabel(recipient.scheduleFrequency, recipient.scheduleTime)}
-                    </td>
-                    <td style={styles.tableCell}>
                       {REPORT_TYPE_LABEL[recipient.reportTypes ?? "sales"]}
                     </td>
                     <td style={styles.tableCell}>
@@ -655,9 +589,7 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
                       ) : null}
                     </td>
                     <td style={styles.tableCell}>
-                      {recipient.lastSyncedAt
-                        ? formatDbDateTime(recipient.lastSyncedAt)
-                        : "-"}
+                      {recipient.lastSyncedAt ? formatDbDateTime(recipient.lastSyncedAt) : "-"}
                     </td>
                     <td
                       style={{
