@@ -1987,9 +1987,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
               />
             </SidebarSection>
           </nav>
-        </aside>
-        <div style={styles.contentColumn}>
-          <header style={styles.topbar}>
+          <div style={styles.sidebarFooter}>
             <div style={styles.topbarRight}>
               <Tooltip content={themeMode === "light" ? "Tema escuro (F11)" : "Tema claro (F11)"}>
                 <button
@@ -2027,7 +2025,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   ) : null}
                 </button>
                 {showSettings ? (
-                  <div style={styles.settingsDropdown}>
+                  <div style={styles.settingsDropdownUp}>
                     <button
                       type="button"
                       onClick={() => {
@@ -2144,7 +2142,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 ) : null}
               </div>
             </div>
-          </header>
+          </div>
+        </aside>
+        <div style={styles.contentColumn}>
           <div style={styles.contentBody}>
             {showSettings ? (
               <div
@@ -9576,7 +9576,15 @@ const styles = {
     gap: "6px",
     boxShadow: "var(--kr-shadow)",
     minHeight: 0,
-    overflow: "hidden" as const
+    overflow: "visible" as const
+  },
+  sidebarFooter: {
+    marginTop: "auto",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "8px 12px 0 12px",
+    borderTop: "1px solid var(--kr-border)"
   },
   sidebarHeader: {
     display: "flex",
@@ -9673,6 +9681,24 @@ const styles = {
     borderRadius: "8px",
     boxShadow: "var(--kr-shadow)",
     minWidth: "160px",
+    zIndex: 100,
+    padding: "4px",
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "2px"
+  },
+  // Variante do menu de configuracoes ancorada no rodape da sidebar: abre para
+  // cima (o botao fica na base) e transborda a direita sobre o conteudo.
+  settingsDropdownUp: {
+    position: "absolute" as const,
+    left: 0,
+    bottom: "100%",
+    marginBottom: "4px",
+    background: "var(--kr-surface)",
+    border: "1px solid var(--kr-border)",
+    borderRadius: "8px",
+    boxShadow: "var(--kr-shadow)",
+    minWidth: "180px",
     zIndex: 100,
     padding: "4px",
     display: "flex",
