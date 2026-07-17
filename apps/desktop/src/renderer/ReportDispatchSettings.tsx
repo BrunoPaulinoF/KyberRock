@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 
 import type { KyberRockDesktopApi, ReportDispatchConfigView } from "../preload/api-types";
+import { IconActionButton } from "./IconActionButton";
+import { HelpTooltip } from "./Tooltip";
 
 // Card "Envios automaticos" da tela de Relatorios: liga/desliga o agendador
 // local, escolhe a hora e quais pacotes saem (diario todo dia, semanal toda
@@ -232,7 +234,13 @@ export function ReportDispatchSettings({
   return (
     <div style={styles.card}>
       <div style={styles.headerRow}>
-        <h3 style={styles.headerTitle}>Envios automaticos de relatorios</h3>
+        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+          <h3 style={styles.headerTitle}>Envios automaticos de relatorios</h3>
+          <HelpTooltip
+            content="Cada envio leva os mesmos arquivos das telas: PDF do Painel de Insights + Excel de vendas e PDF do Controle de Caminhoes, para os destinatarios ativos conforme o tipo de relatorio de cada um. Quando os periodos coincidem (ex.: dia de semanal), os relatorios vao juntos no mesmo envio. O computador precisa estar ligado com o KyberRock aberto no horario configurado — envios perdidos sao recuperados na proxima abertura do app."
+            placement="right"
+          />
+        </div>
         <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
           {settings?.enabled ? (
             <span style={styles.badge("#166534", "#dcfce7")}>Ativo</span>
@@ -279,42 +287,43 @@ export function ReportDispatchSettings({
           </div>
 
           <div style={styles.row}>
-            <label style={styles.checkboxLabel}>
-              <input
-                type="checkbox"
-                checked={settings.daily}
-                disabled={busy}
-                onChange={(event) => void saveSettings({ daily: event.target.checked })}
-              />
-              Diario (todo dia)
-            </label>
-            <label style={styles.checkboxLabel}>
-              <input
-                type="checkbox"
-                checked={settings.weekly}
-                disabled={busy}
-                onChange={(event) => void saveSettings({ weekly: event.target.checked })}
-              />
-              Semanal (toda sexta-feira, ultimos 7 dias)
-            </label>
-            <label style={styles.checkboxLabel}>
-              <input
-                type="checkbox"
-                checked={settings.monthly}
-                disabled={busy}
-                onChange={(event) => void saveSettings({ monthly: event.target.checked })}
-              />
-              Mensal (na virada do mes, mes anterior)
-            </label>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <label style={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={settings.daily}
+                  disabled={busy}
+                  onChange={(event) => void saveSettings({ daily: event.target.checked })}
+                />
+                Diario
+              </label>
+              <HelpTooltip content="Todo dia" placement="right" />
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <label style={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={settings.weekly}
+                  disabled={busy}
+                  onChange={(event) => void saveSettings({ weekly: event.target.checked })}
+                />
+                Semanal
+              </label>
+              <HelpTooltip content="Toda sexta-feira, ultimos 7 dias" placement="right" />
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <label style={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={settings.monthly}
+                  disabled={busy}
+                  onChange={(event) => void saveSettings({ monthly: event.target.checked })}
+                />
+                Mensal
+              </label>
+              <HelpTooltip content="Na virada do mes, mes anterior" placement="right" />
+            </div>
           </div>
-
-          <p style={styles.hint}>
-            Cada envio leva os mesmos arquivos das telas: PDF do Painel de Insights + Excel de
-            vendas e PDF do Controle de Caminhoes, para os destinatarios ativos conforme o tipo de
-            relatorio de cada um. Quando os periodos coincidem (ex.: dia de semanal), os relatorios
-            vao juntos no mesmo envio. O computador precisa estar ligado com o KyberRock aberto no
-            horario configurado — envios perdidos sao recuperados na proxima abertura do app.
-          </p>
 
           <p style={styles.hint}>
             Ultimo diario: {formatDate(state?.lastDailyDate ?? null)} · Ultimo semanal:{" "}
@@ -324,14 +333,15 @@ export function ReportDispatchSettings({
           </p>
 
           <div style={{ display: "flex", justifyContent: "flex-end" }}>
-            <button
-              type="button"
-              onClick={() => void handleSendNow()}
+            <IconActionButton
+              icon="send"
+              label="Enviar agora"
+              tip={busy ? "Enviando..." : "Enviar agora"}
+              tone="primary"
+              placement="top"
               disabled={busy}
-              style={styles.primaryButton}
-            >
-              {busy ? "Enviando..." : "Enviar agora"}
-            </button>
+              onClick={() => void handleSendNow()}
+            />
           </div>
         </div>
       ) : null}

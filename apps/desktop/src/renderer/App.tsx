@@ -327,7 +327,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [creditMethodIds, setCreditMethodIds] = useState<string[]>([]);
   const [activeView, setActiveView] = useState<ActiveView>("new-weighing");
   const [formError, setFormError] = useState<string | null>(null);
-  const [message, setMessage] = useState("Iniciando KyberRock...");
+  const [message, setMessage] = useState("");
   const [cloudConnected, setCloudConnected] = useState(false);
   const [cloudSyncing, setCloudSyncing] = useState(false);
   const [cloudBootstrapStatus, setCloudBootstrapStatus] = useState<{
@@ -348,8 +348,6 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     totalOperations: number;
     lastSync: string | null;
   } | null>(null);
-  const [companyName, setCompanyName] = useState<string | null>(null);
-  const [unitName, setUnitName] = useState<string | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [availableVersion, setAvailableVersion] = useState<string | null>(null);
   const updateReady =
@@ -403,17 +401,6 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     details?: string;
   }>({ status: "idle", message: "" });
   // const [omieLoop, setOmieLoop] = useState<OmieLoopUiState | null>(null);
-  const [cloudSchedulerStatus, setCloudSchedulerStatus] = useState<{
-    enabled: boolean;
-    intervalMinutes: number;
-    lastRunAt: string | null;
-    nextRunAt: string | null;
-  } | null>(null);
-  const [connectivity, setConnectivity] = useState<{
-    internetOnline: boolean;
-    cloudReachable: boolean;
-    omieReachable: boolean;
-  } | null>(null);
   const themeVars = useMemo(() => getThemeVariables(themeMode), [themeMode]);
   const filteredCanceledOperations = useMemo(
     () => filterCanceledOperations(canceledOperations, canceledFilter),
@@ -699,8 +686,6 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       .getAccessStatus()
       .then((access) => {
         setAccessStatus(access);
-        setCompanyName(access.companyName);
-        setUnitName(access.unitName);
         if (access.canOperate) {
           setPhase("bootstrapping_cloud");
         } else {
@@ -975,7 +960,6 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       try {
         const probe = await desktopApi.probeConnectivity();
         if (!active) return;
-        setConnectivity(probe);
         const connected = probe.cloudReachable;
         setCloudConnected(connected);
         if (connected) {
@@ -984,9 +968,6 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         }
       } catch {
         if (active) {
-          setConnectivity(
-            (prev) => prev ?? { internetOnline: false, cloudReachable: false, omieReachable: false }
-          );
           setCloudConnected(false);
         }
       }
@@ -1013,22 +994,6 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         // OMIE status is optional
       }
 
-      try {
-        const cloudSched = await desktopApi.getCloudSyncSchedulerStatus();
-        if (active) setCloudSchedulerStatus(cloudSched);
-      } catch {
-        // scheduler status is optional
-      }
-
-      if (active) {
-        if (nextStatus.pendingSyncJobs > 0) {
-          setMessage(
-            `Fila: ${nextStatus.pendingSyncJobs} item(ns) pendente(s) - envio automatico a cada ${cloudSchedulerStatus?.intervalMinutes ?? 30} min.`
-          );
-        } else {
-          setMessage("Sincronizacao automatica ativa a cada 30 min.");
-        }
-      }
     }
 
     void refresh();
@@ -1060,7 +1025,6 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       const nextCloudStatus = await desktopApi.getCloudStatus();
       setCloudStatus(nextCloudStatus);
       const probe = await desktopApi.probeConnectivity();
-      setConnectivity(probe);
       setCloudConnected(probe.cloudReachable);
       const refreshStatus = await desktopApi.getStatus(navigator.onLine);
       setStatus(refreshStatus);
@@ -1154,11 +1118,6 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       setMessage(
         "Internet indisponivel - operacao segue normalmente, dados ficarao na fila para envio."
       );
-      setConnectivity((prev) =>
-        prev
-          ? { ...prev, internetOnline: false }
-          : { internetOnline: false, cloudReachable: false, omieReachable: false }
-      );
     };
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", handleOffline);
@@ -1242,8 +1201,6 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
 
     await desktopApi.logoutDesktop();
-    setCompanyName(null);
-    setUnitName(null);
     setAccessStatus(null);
     setPhase("locked");
   }
@@ -1959,6 +1916,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   return (
     <main data-theme={themeMode} style={{ ...styles.page, ...themeVars }}>
       <GlobalUiPolish />
+      <Toast message={message} onClose={() => setMessage("")} />
       <div style={styles.shell}>
         <aside style={styles.sidebar}>
           <div style={styles.sidebarHeader}>
@@ -2032,32 +1990,17 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         </aside>
         <div style={styles.contentColumn}>
           <header style={styles.topbar}>
-            <div style={styles.topbarLeft}>
-              {companyName && unitName ? (
-                <span style={styles.headerMeta}>
-                  {companyName} — {unitName}
-                </span>
-              ) : null}
-              <ConnectivityBadge
-                internetOnline={navigator.onLine}
-                connectivity={connectivity}
-                cloudScheduler={cloudSchedulerStatus}
-                pendingSyncJobs={status?.pendingSyncJobs ?? 0}
-                cloudSyncing={cloudSyncing}
-                onSyncNow={() => void autoSyncCloud()}
-              />
-              <span style={styles.headerMessage}>{message}</span>
-            </div>
             <div style={styles.topbarRight}>
-              <button
-                type="button"
-                onClick={() => setThemeMode((mode) => (mode === "light" ? "dark" : "light"))}
-                style={styles.themeToggle}
-                title="Alternar tema (F11)"
-              >
-                {themeMode === "light" ? <Moon size={14} /> : <Sun size={14} />}
-                {themeMode === "light" ? "Escuro" : "Claro"}
-              </button>
+              <Tooltip content={themeMode === "light" ? "Tema escuro (F11)" : "Tema claro (F11)"}>
+                <button
+                  type="button"
+                  aria-label="Alternar tema"
+                  onClick={() => setThemeMode((mode) => (mode === "light" ? "dark" : "light"))}
+                  style={styles.headerBtn}
+                >
+                  {themeMode === "light" ? <Moon size={17} /> : <Sun size={17} />}
+                </button>
+              </Tooltip>
               <div style={{ position: "relative" }}>
                 <button
                   type="button"
@@ -2253,13 +2196,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     }}
                   >
                     <h2 style={{ ...styles.modalTitle, margin: 0 }}>Logs do sistema</h2>
-                    <button
-                      type="button"
+                    <IconActionButton
+                      icon="trash"
+                      label="Limpar logs"
+                      tip="Limpar a lista de logs exibida (o historico em disco permanece)"
+                      tone="neutral"
                       onClick={() => setErrorLogs([])}
-                      style={styles.secondaryButton}
-                    >
-                      Limpar
-                    </button>
+                    />
                   </div>
                   {errorLogs.length === 0 ? (
                     <p style={styles.muted}>
@@ -2997,8 +2940,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
             {activeView === "printing" ? (
               <section style={styles.twoColumns}>
                 <article style={styles.panel}>
-                  <h2 style={styles.panelTitle}>Perfil de cupom 80 mm</h2>
-                  <p style={styles.muted}>{TIPS.screens.printing}</p>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <h2 style={styles.panelTitle}>Perfil de cupom 80 mm</h2>
+                    <HelpTooltip content={TIPS.screens.printing} placement="right" />
+                  </div>
                   <label style={styles.fieldLabel}>
                     Tipo de impressora
                     <select
@@ -3110,13 +3055,12 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                             style={{ width: "100%", height: "100%", objectFit: receiptLogoFit }}
                           />
                         </div>
-                        <button
-                          type="button"
+                        <IconActionButton
+                          icon="trash"
+                          label="Remover logo"
+                          tone="danger"
                           onClick={() => setReceiptLogoDataUrl(null)}
-                          style={styles.secondaryButton}
-                        >
-                          Remover logo
-                        </button>
+                        />
                       </div>
                     ) : (
                       <p style={styles.muted}>
@@ -3244,33 +3188,32 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                         e valores.
                       </p>
                     )}
-                    <button
-                      type="button"
+                    <IconActionButton
+                      icon="retry"
+                      label="Restaurar modelo padrao"
+                      tone="neutral"
                       onClick={() =>
                         setReceiptTemplateConfig({ ...DEFAULT_RECEIPT_TEMPLATE_CONFIG })
                       }
-                      style={styles.secondaryButton}
-                    >
-                      Restaurar modelo padrao
-                    </button>
+                    />
                   </div>
-                  <button
-                    type="button"
+                  <IconActionButton
+                    icon="save"
+                    label="Salvar perfil 80 mm"
+                    tip={TIPS.printing.saveProfile}
+                    tone="primary"
                     onClick={handleConfigureReceiptPrinter}
-                    style={styles.primaryButton}
-                  >
-                    Salvar perfil 80 mm
-                  </button>
-                  <HelpTooltip content={TIPS.printing.saveProfile} placement="top" />
+                  />
 
-                  <button
-                    type="button"
-                    onClick={() => void handlePrintTest()}
-                    style={{ ...styles.secondaryButton, marginTop: "12px" }}
-                  >
-                    Testar impressora (cupom exemplo)
-                  </button>
-                  <HelpTooltip content={TIPS.printing.testPrint} placement="top" />
+                  <div style={{ marginTop: "12px" }}>
+                    <IconActionButton
+                      icon="printer"
+                      label="Testar impressora (cupom exemplo)"
+                      tip={TIPS.printing.testPrint}
+                      tone="neutral"
+                      onClick={() => void handlePrintTest()}
+                    />
+                  </div>
 
                   <h3>Perfil ativo</h3>
                   {printProfiles.length === 0 ? (
@@ -3308,14 +3251,14 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                           <p style={styles.errorMessage}>{receipt.errorMessage}</p>
                         ) : null}
                       </div>
-                      <button
-                        type="button"
+                      <IconActionButton
+                        icon="printer"
+                        label="Reimprimir segunda via"
+                        tip={TIPS.printing.reprint}
+                        tone="neutral"
+                        placement="left"
                         onClick={() => void handleReprintReceipt(receipt.id)}
-                        style={styles.secondaryButton}
-                      >
-                        Reimprimir segunda via
-                      </button>
-                      <HelpTooltip content={TIPS.printing.reprint} placement="left" />
+                      />
                     </div>
                   ))}
                 </article>
@@ -3325,8 +3268,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
             {activeView === "cloud" ? (
               <section style={styles.twoColumns}>
                 <article style={styles.panel}>
-                  <h2 style={styles.panelTitle}>Sincronizacao Supabase</h2>
-                  <p style={styles.muted}>{TIPS.screens.cloud}</p>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <h2 style={styles.panelTitle}>Sincronizacao Supabase</h2>
+                    <HelpTooltip content={TIPS.screens.cloud} placement="right" />
+                  </div>
 
                   <div style={{ marginBottom: "16px" }}>
                     <p>
@@ -3346,19 +3291,14 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     )}
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={handleSyncToCloud}
+                  <IconActionButton
+                    icon="retry"
+                    label="Sincronizar agora"
+                    tip={cloudSyncing ? "Sincronizando..." : TIPS.cloud.syncNow}
+                    tone="primary"
                     disabled={cloudSyncing}
-                    style={{
-                      ...styles.primaryButton,
-                      opacity: cloudSyncing ? 0.6 : 1,
-                      cursor: cloudSyncing ? "not-allowed" : "pointer"
-                    }}
-                  >
-                    {cloudSyncing ? "Sincronizando..." : "Sincronizar agora"}
-                  </button>
-                  <HelpTooltip content={TIPS.cloud.syncNow} placement="top" />
+                    onClick={handleSyncToCloud}
+                  />
                 </article>
 
                 <article style={styles.panel}>
@@ -3413,23 +3353,17 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                             </div>
                           ) : null}
                           <div style={{ marginTop: "12px" }}>
-                            <button
-                              type="button"
-                              onClick={handleSyncOmie}
+                            <IconActionButton
+                              icon="retry"
+                              label="Sincronizar OMIE (atualizar dados)"
+                              tip={
+                                omieSyncing
+                                  ? "Sincronizando..."
+                                  : "Busca novos clientes e transportadoras do OMIE e atualiza os existentes sem apagar dados locais."
+                              }
+                              tone="primary"
                               disabled={omieSyncing || omieResetting}
-                              style={{
-                                ...styles.primaryButton,
-                                opacity: omieSyncing || omieResetting ? 0.6 : 1,
-                                cursor: omieSyncing || omieResetting ? "not-allowed" : "pointer"
-                              }}
-                            >
-                              {omieSyncing
-                                ? "Sincronizando..."
-                                : "Sincronizar OMIE (atualizar dados)"}
-                            </button>
-                            <HelpTooltip
-                              content="Busca novos clientes e transportadoras do OMIE e atualiza os existentes sem apagar dados locais."
-                              placement="top"
+                              onClick={handleSyncOmie}
                             />
                           </div>
                           <div style={{ marginTop: "12px" }}>
@@ -3478,20 +3412,22 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       gap: "12px"
                     }}
                   >
-                    <h2 style={styles.panelTitle}>Fila OMIE (fechamentos a enviar)</h2>
-                    <button
-                      type="button"
-                      onClick={() => void refreshOmieQueue()}
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                      <h2 style={styles.panelTitle}>Fila OMIE (fechamentos a enviar)</h2>
+                      <HelpTooltip
+                        content="Pedidos/OS de fechamentos que ainda serao enviados ao OMIE. Excluir um item cancela o envio daquele fechamento ao OMIE (a operacao local nao e alterada)."
+                        placement="right"
+                      />
+                    </div>
+                    <IconActionButton
+                      icon="retry"
+                      label="Atualizar fila"
+                      tip={omieQueueLoading ? "Atualizando..." : "Atualizar a fila OMIE"}
+                      tone="neutral"
                       disabled={omieQueueLoading}
-                      style={{ ...styles.secondaryButton, fontSize: "12px" }}
-                    >
-                      {omieQueueLoading ? "Atualizando..." : "Atualizar"}
-                    </button>
+                      onClick={() => void refreshOmieQueue()}
+                    />
                   </div>
-                  <p style={styles.muted}>
-                    Pedidos/OS de fechamentos que ainda serao enviados ao OMIE. Excluir um item
-                    cancela o envio daquele fechamento ao OMIE (a operacao local nao e alterada).
-                  </p>
                   {omieQueue.length === 0 ? (
                     <p style={styles.muted}>
                       {omieQueueLoading
@@ -3520,18 +3456,19 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                             </p>
                           ) : null}
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => void handleOmieQueueSendNow(item.id)}
+                        <IconActionButton
+                          icon="send"
+                          label="Enviar agora"
+                          tip={
+                            omieQueueBusyId === item.id
+                              ? "Enviando..."
+                              : "Enviar este item ao OMIE agora"
+                          }
+                          tone="primary"
+                          placement="left"
                           disabled={omieQueueBusyId !== null}
-                          style={{
-                            ...styles.primaryButton,
-                            fontSize: "12px",
-                            opacity: omieQueueBusyId !== null ? 0.6 : 1
-                          }}
-                        >
-                          {omieQueueBusyId === item.id ? "Enviando..." : "Enviar agora"}
-                        </button>
+                          onClick={() => void handleOmieQueueSendNow(item.id)}
+                        />
                         {omieQueueConfirmDeleteId === item.id ? (
                           <>
                             <button
@@ -3551,14 +3488,15 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                             </button>
                           </>
                         ) : (
-                          <button
-                            type="button"
-                            onClick={() => setOmieQueueConfirmDeleteId(item.id)}
+                          <IconActionButton
+                            icon="trash"
+                            label="Excluir da fila"
+                            tip="Excluir este item da fila (cancela o envio ao OMIE; a operacao local nao muda)"
+                            tone="neutral"
+                            placement="left"
                             disabled={omieQueueBusyId !== null}
-                            style={{ ...styles.secondaryButton, fontSize: "12px" }}
-                          >
-                            Excluir da fila
-                          </button>
+                            onClick={() => setOmieQueueConfirmDeleteId(item.id)}
+                          />
                         )}
                       </div>
                     ))
@@ -3590,142 +3528,64 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   );
 }
 
-function ConnectivityBadge({
-  internetOnline,
-  connectivity,
-  cloudScheduler,
-  pendingSyncJobs,
-  cloudSyncing,
-  onSyncNow
-}: {
-  internetOnline: boolean;
-  connectivity: { internetOnline: boolean; cloudReachable: boolean; omieReachable: boolean } | null;
-  cloudScheduler: { enabled: boolean; intervalMinutes: number; lastRunAt: string | null } | null;
-  pendingSyncJobs: number;
-  cloudSyncing: boolean;
-  onSyncNow: () => void;
-}) {
-  const effectiveInternet = connectivity?.internetOnline ?? internetOnline;
-  const cloudReachable = connectivity?.cloudReachable ?? false;
-  const omieReachable = connectivity?.omieReachable ?? false;
+/**
+ * Aviso flutuante (toast) que mostra o feedback transitorio (`message`): resultado
+ * de sync, erros, impressao, backup, etc. Substitui a linha de mensagem que ficava
+ * no header — some sozinho apos alguns segundos e pode ser dispensado.
+ */
+function Toast({ message, onClose }: { message: string; onClose: () => void }) {
+  useEffect(() => {
+    if (!message) return;
+    const timer = window.setTimeout(onClose, 5000);
+    return () => window.clearTimeout(timer);
+  }, [message, onClose]);
 
-  let tone: "success" | "warning" | "danger" | "neutral" = "neutral";
-  let label = "Verificando...";
-  let detail = "Coletando informacoes de rede";
+  if (!message) return null;
 
-  if (!effectiveInternet) {
-    tone = "danger";
-    label = "Sem internet";
-    detail =
-      pendingSyncJobs > 0
-        ? `${pendingSyncJobs} item(ns) na fila; envio ao reconectar`
-        : "Operacao local segue normalmente";
-  } else if (!cloudReachable && !omieReachable) {
-    tone = "danger";
-    label = "Servicos indisponiveis";
-    detail = "Nuvem e faturamento nao respondem - sincronizacao ficara pendente";
-  } else if (!cloudReachable) {
-    tone = "warning";
-    label = "Nuvem indisponivel";
-    detail = omieReachable
-      ? "Faturamento online; nuvem offline - fila aguardando"
-      : "Nuvem nao responde - fila aguardando";
-  } else if (!omieReachable) {
-    tone = "warning";
-    label = "Faturamento indisponivel";
-    detail = "Nuvem online; faturamento nao responde - pedidos aguardando";
-  } else {
-    tone = "success";
-    label = cloudSyncing ? "Sincronizando..." : "Conectado";
-    const interval = cloudScheduler?.intervalMinutes ?? 30;
-    const last = cloudScheduler?.lastRunAt
-      ? new Date(cloudScheduler.lastRunAt).toLocaleTimeString("pt-BR")
-      : "nunca";
-    detail = `Nuvem + faturamento online · auto a cada ${interval} min · ultimo: ${last}`;
-  }
-
-  const palette = badgePalette(tone);
   return (
     <div
-      title={detail}
+      role="status"
+      aria-live="polite"
       style={{
-        display: "inline-flex",
+        position: "fixed",
+        bottom: "18px",
+        left: "50%",
+        transform: "translateX(-50%)",
+        zIndex: 9998,
+        maxWidth: "min(560px, 90vw)",
+        display: "flex",
         alignItems: "center",
-        gap: "6px",
-        padding: "3px 8px",
-        borderRadius: "999px",
-        background: palette.bg,
-        color: palette.fg,
-        border: `1px solid ${palette.border}`,
-        fontSize: "11px",
-        fontWeight: 700,
-        whiteSpace: "nowrap"
+        gap: "10px",
+        padding: "10px 14px",
+        borderRadius: "12px",
+        background: "var(--kr-surface-elevated)",
+        color: "var(--kr-text-strong)",
+        border: "1px solid var(--kr-border)",
+        boxShadow: "var(--kr-shadow)",
+        fontSize: "13px",
+        fontWeight: 600
       }}
     >
-      <span
+      <span style={{ flex: 1 }}>{message}</span>
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Fechar aviso"
         style={{
-          width: "8px",
-          height: "8px",
-          borderRadius: "50%",
-          background: palette.dot,
-          display: "inline-block"
+          border: "none",
+          background: "transparent",
+          color: "var(--kr-muted)",
+          cursor: "pointer",
+          fontWeight: 900,
+          fontSize: "16px",
+          lineHeight: 1,
+          padding: "0 2px"
         }}
-      />
-      <span>{label}</span>
-      {pendingSyncJobs > 0 ? (
-        <span
-          style={{
-            background: "rgba(0,0,0,0.18)",
-            color: palette.fg,
-            borderRadius: "999px",
-            padding: "0 6px",
-            fontSize: "10px"
-          }}
-        >
-          {pendingSyncJobs} fila
-        </span>
-      ) : null}
-      {effectiveInternet && !cloudSyncing ? (
-        <>
-          <button
-            type="button"
-            onClick={onSyncNow}
-            style={{
-              background: "transparent",
-              color: palette.fg,
-              border: `1px solid ${palette.border}`,
-              borderRadius: "999px",
-              padding: "0 8px",
-              fontSize: "10px",
-              cursor: "pointer",
-              fontWeight: 700
-            }}
-          >
-            Sincronizar
-          </button>
-          <HelpTooltip content={TIPS.header.syncNow} placement="bottom" />
-        </>
-      ) : null}
+      >
+        ×
+      </button>
     </div>
   );
-}
-
-function badgePalette(tone: "success" | "warning" | "danger" | "neutral"): {
-  bg: string;
-  fg: string;
-  border: string;
-  dot: string;
-} {
-  switch (tone) {
-    case "success":
-      return { bg: "#dcfce7", fg: "#166534", border: "#86efac", dot: "#16a34a" };
-    case "warning":
-      return { bg: "#fef3c7", fg: "#92400e", border: "#fcd34d", dot: "#d97706" };
-    case "danger":
-      return { bg: "#fee2e2", fg: "#991b1b", border: "#fca5a5", dot: "#dc2626" };
-    default:
-      return { bg: "#e2e8f0", fg: "#475569", border: "#cbd5e1", dot: "#64748b" };
-  }
 }
 
 function KeyboardShortcutsLegend() {
@@ -9101,14 +8961,14 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                 hint="Porta TCP do indicador (padrao 4001)."
               />
               <div style={{ marginTop: "10px" }}>
-                <button
-                  type="button"
-                  onClick={handleDiscover}
+                <IconActionButton
+                  icon="wifi"
+                  label="Procurar balanca na rede"
+                  tip={discovering ? "Procurando..." : "Procurar a balanca na rede local"}
+                  tone="neutral"
                   disabled={discovering}
-                  style={{ ...styles.secondaryButton, opacity: discovering ? 0.5 : 1 }}
-                >
-                  {discovering ? "Procurando..." : "Procurar balanca na rede"}
-                </button>
+                  onClick={handleDiscover}
+                />
               </div>
             </>
           ) : null}
@@ -9133,14 +8993,14 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                 </select>
               </Field>
               <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "6px" }}>
-                <button
-                  type="button"
-                  onClick={() => void refreshSerialPorts()}
+                <IconActionButton
+                  icon="retry"
+                  label="Atualizar portas"
+                  tip={portsLoading ? "Atualizando..." : "Atualizar a lista de portas seriais"}
+                  tone="neutral"
                   disabled={portsLoading}
-                  style={{ ...styles.secondaryButton, fontSize: "12px", padding: "6px 12px" }}
-                >
-                  {portsLoading ? "Atualizando..." : "Atualizar portas"}
-                </button>
+                  onClick={() => void refreshSerialPorts()}
+                />
                 {!portsLoading && visiblePorts.length === 0 ? (
                   <span style={{ fontSize: "12px", color: "var(--kr-muted)" }}>
                     Nenhuma porta encontrada. Conecte o cabo da balanca e atualize.
@@ -9200,30 +9060,30 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
           ) : null}
 
           <div style={{ display: "flex", gap: "12px", marginTop: "16px", flexWrap: "wrap" }}>
-            <button
-              type="button"
-              onClick={handleConnect}
+            <IconActionButton
+              icon="power"
+              label="Conectar"
+              tip="Conectar a balanca"
+              tone="primary"
               disabled={connected || !configLoaded}
-              style={{ ...styles.primaryButton, opacity: connected || !configLoaded ? 0.5 : 1 }}
-            >
-              Conectar
-            </button>
-            <button
-              type="button"
-              onClick={handleDisconnect}
+              onClick={handleConnect}
+            />
+            <IconActionButton
+              icon="ban"
+              label="Desconectar"
+              tip="Desconectar a balanca"
+              tone="neutral"
               disabled={!connected}
-              style={{ ...styles.secondaryButton, opacity: connected ? 1 : 0.5 }}
-            >
-              Desconectar
-            </button>
-            <button
-              type="button"
-              onClick={handleSaveConfig}
+              onClick={handleDisconnect}
+            />
+            <IconActionButton
+              icon="save"
+              label="Salvar configuracao"
+              tip={saving ? "Salvando..." : "Salvar a configuracao da balanca"}
+              tone="neutral"
               disabled={saving || !configLoaded}
-              style={{ ...styles.secondaryButton, opacity: saving || !configLoaded ? 0.5 : 1 }}
-            >
-              {saving ? "Salvando..." : "Salvar configuracao"}
-            </button>
+              onClick={handleSaveConfig}
+            />
           </div>
         </article>
 
@@ -9278,14 +9138,14 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
           ) : null}
 
           <div style={{ display: "flex", gap: "12px", marginTop: "16px" }}>
-            <button
-              type="button"
-              onClick={handleTestCapture}
+            <IconActionButton
+              icon="check"
+              label="Testar captura de peso"
+              tip={testing ? "Testando..." : "Testar a captura de peso da balanca"}
+              tone="primary"
               disabled={testing || !configLoaded}
-              style={{ ...styles.primaryButton, opacity: testing || !configLoaded ? 0.5 : 1 }}
-            >
-              {testing ? "Testando..." : "Testar captura de peso"}
-            </button>
+              onClick={handleTestCapture}
+            />
           </div>
 
           {connected && stats.count > 0 && (
@@ -9751,13 +9611,9 @@ const styles = {
   },
   topbar: {
     display: "flex",
-    justifyContent: "space-between",
+    justifyContent: "flex-end",
     alignItems: "center",
-    padding: "6px 10px",
-    borderRadius: "14px",
-    background: "var(--kr-surface)",
-    border: "1px solid var(--kr-border)",
-    boxShadow: "var(--kr-shadow)",
+    gap: "8px",
     flexShrink: 0
   },
   topbarLeft: {

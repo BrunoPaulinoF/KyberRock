@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { KyberRockDesktopApi } from "../preload/api-types";
 import type { TruckControlReport } from "../services/reports";
+import { IconActionButton } from "./IconActionButton";
+import { HelpTooltip } from "./Tooltip";
 
 // Formata minutos como "1h 05min" / "42min".
 export function formatMinutes(totalMinutes: number): string {
@@ -189,21 +191,22 @@ export function TruckControlView({ desktopApi }: { desktopApi: KyberRockDesktopA
   return (
     <section style={styles.page}>
       <header style={styles.header}>
-        <div>
+        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <h2 style={styles.title}>Controle de caminhoes</h2>
-          <p style={styles.subtitle}>
-            Tempo dentro da pedreira, numero de operacoes e peso por produto de cada caminhao no
-            periodo. Caminhoes acima do tempo medio ficam destacados.
-          </p>
+          <HelpTooltip
+            content="Tempo dentro da pedreira, numero de operacoes e peso por produto de cada caminhao no periodo. Caminhoes acima do tempo medio ficam destacados."
+            placement="right"
+          />
         </div>
-        <button
-          type="button"
-          onClick={() => void handleExportPdf()}
-          style={styles.primaryButton}
+        <IconActionButton
+          icon="file-text"
+          label="Gerar PDF"
+          tip={exporting ? "Gerando PDF..." : "Gerar PDF"}
+          tone="primary"
+          placement="top"
           disabled={exporting || loading}
-        >
-          {exporting ? "Gerando PDF..." : "Gerar PDF"}
-        </button>
+          onClick={() => void handleExportPdf()}
+        />
       </header>
 
       <div style={styles.filters}>
@@ -237,9 +240,14 @@ export function TruckControlView({ desktopApi }: { desktopApi: KyberRockDesktopA
             style={styles.input}
           />
         </label>
-        <button type="button" onClick={() => void load()} style={styles.secondaryButton}>
-          Atualizar
-        </button>
+        <IconActionButton
+          icon="retry"
+          label="Atualizar"
+          tip="Atualizar"
+          tone="neutral"
+          placement="top"
+          onClick={() => void load()}
+        />
       </div>
 
       {error ? <p style={styles.error}>{error}</p> : null}
