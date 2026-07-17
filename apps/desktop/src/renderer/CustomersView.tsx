@@ -649,13 +649,13 @@ export function CustomersView({
     let creditSecondBoletoDays: number | null = null;
     let creditClosingWeekday: number | null = null;
     if (form.creditAccountEnabled) {
-      creditBoletoDays = Number(form.creditBoletoDays);
+      creditBoletoDays = numberOrNaN(form.creditBoletoDays);
       if (!Number.isInteger(creditBoletoDays) || creditBoletoDays < 0) {
         setFormError("Informe os dias apos o fechamento para o vencimento do boleto.");
         return;
       }
       if (creditPeriodicity === "weekly") {
-        creditClosingWeekday = Number(form.creditClosingWeekday);
+        creditClosingWeekday = numberOrNaN(form.creditClosingWeekday);
         if (
           !Number.isInteger(creditClosingWeekday) ||
           creditClosingWeekday < 0 ||
@@ -665,14 +665,14 @@ export function CustomersView({
           return;
         }
       } else {
-        creditClosingDay = Number(form.creditClosingDay);
+        creditClosingDay = numberOrNaN(form.creditClosingDay);
         if (!Number.isInteger(creditClosingDay) || creditClosingDay < 1 || creditClosingDay > 31) {
           setFormError("Informe o dia de fechamento (1 a 31) para o credito do cliente.");
           return;
         }
         if (creditPeriodicity === "biweekly") {
-          creditSecondClosingDay = Number(form.creditSecondClosingDay);
-          creditSecondBoletoDays = Number(form.creditSecondBoletoDays);
+          creditSecondClosingDay = numberOrNaN(form.creditSecondClosingDay);
+          creditSecondBoletoDays = numberOrNaN(form.creditSecondBoletoDays);
           if (
             !Number.isInteger(creditSecondClosingDay) ||
             creditSecondClosingDay < 1 ||
@@ -1829,6 +1829,15 @@ export function CustomersView({
       />
     </div>
   );
+}
+
+/**
+ * Converte um campo de texto numerico para numero, retornando NaN quando vazio/em branco.
+ * Number("") e 0, o que fazia campos obrigatorios em branco passarem silenciosamente em
+ * validacoes do tipo ">= 0" (ex.: dias do boleto viravam 0, dia da semana virava domingo).
+ */
+function numberOrNaN(value: string): number {
+  return value.trim() === "" ? Number.NaN : Number(value);
 }
 
 function formatDocument(value: string): string {

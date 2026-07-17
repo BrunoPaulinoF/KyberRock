@@ -119,7 +119,11 @@ function formatKg(kg: number): string {
 }
 
 function formatShortDate(iso: string): string {
-  const [, month, day] = iso.split("-");
+  // Aceita tanto "YYYY-MM-DD" (series/pivot do relatorio) quanto um timestamp ISO completo
+  // "YYYY-MM-DDTHH:mm:ss.sssZ" (createdAt das operacoes). Sem cortar em "T", o dia saia como
+  // "16T12:00:00.000Z" no hint "Desde ...".
+  const [datePart] = iso.split("T");
+  const [, month, day] = datePart.split("-");
   return `${day}/${month}`;
 }
 

@@ -78,7 +78,15 @@ Deno.serve(async (req) => {
         is_active: true
       }).select("*").single();
       if (error) throw error;
-      return jsonResponse({ company: { ...data, omie_app_secret: data.omie_app_secret ? "********" : null } });
+      // Mascara tanto a app key quanto o secret na resposta. O caminho "list" ja mascarava a
+      // key (maskSecret), mas o retorno do create devolvia data.omie_app_key cru ao cliente.
+      return jsonResponse({
+        company: {
+          ...data,
+          omie_app_key: data.omie_app_key ? maskSecret(data.omie_app_key) : null,
+          omie_app_secret: data.omie_app_secret ? "********" : null
+        }
+      });
     }
 
     if (body.action === "toggle_company") {

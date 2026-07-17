@@ -7,6 +7,22 @@ export interface EscPosLine {
 const ESC = 0x1b;
 const GS = 0x1d;
 
+/**
+ * Transforma o texto em ASCII imprimivel preservando a legibilidade. A codificacao "ascii" e
+ * 7-bit e transformava qualquer acento (ã, ç, é, Á — comuns em razao social, cidade, endereco)
+ * em bytes corrompidos ("IRMAOS ACUCAR" saia como "IRM?OS A??CAR"). Como a code page real da
+ * impressora de rede e desconhecida, transliteramos acentos para a base ASCII (via NFD + remocao
+ * dos diacriticos combinantes), o que imprime corretamente em qualquer code page.
+ */
+function toAsciiSafe(text: string): string {
+  return text
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/º/g, "o")
+    .replace(/ª/g, "a")
+    .replace(/[^\x20-\x7e]/g, " ");
+}
+
 export function encodeEscPos(lines: string[], paperWidthMm: number): Buffer {
   const buffers: Buffer[] = [];
   const maxChars = paperWidthMm <= 58 ? 32 : 48;
@@ -23,13 +39,13 @@ export function encodeEscPos(lines: string[], paperWidthMm: number): Buffer {
 
     if (isCenterCandidate(trimmed)) {
       buffers.push(Buffer.from([ESC, 0x61, 0x01]));
-      buffers.push(Buffer.from(trimmed.slice(0, maxChars) + "\n", "ascii"));
+      buffers.push(Buffer.from(toAsciiSafe(trimmed.slice(0, maxChars)) + "\n", "ascii"));
       buffers.push(Buffer.from([ESC, 0x61, 0x00]));
       continue;
     }
 
     buffers.push(Buffer.from([ESC, 0x61, 0x00]));
-    buffers.push(Buffer.from(trimmed.slice(0, maxChars) + "\n", "ascii"));
+    buffers.push(Buffer.from(toAsciiSafe(trimmed.slice(0, maxChars)) + "\n", "ascii"));
   }
 
   buffers.push(Buffer.from([ESC, 0x64, 0x03]));

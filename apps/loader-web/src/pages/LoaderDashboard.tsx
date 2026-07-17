@@ -9,7 +9,7 @@ export interface WeighingOperation {
   customerName: string;
   driverName: string;
   productDescription: string;
-  entryWeightKg: number;
+  entryWeightKg: number | null;
   status: string;
   createdAt: string;
   loaderCompletedAt: string | null;
@@ -19,17 +19,24 @@ export interface WeighingOperation {
 // `truck-drive-off` keyframes duration in loader-ui.css.
 const DEPART_ANIMATION_MS = 1150;
 
-function formatWeight(weightKg: number): string {
-  if (!weightKg) {
+function formatWeight(weightKg: number | null): string {
+  // Distingue "sem peso" (null) de um peso legitimamente zero. Antes, `!weightKg` tratava 0
+  // como "A definir" porque o valor nulo era coagido para 0 no mapRow.
+  if (weightKg === null) {
     return "A definir";
   }
 
   return `${weightKg.toLocaleString("pt-BR")} kg`;
 }
 
-function formatDateTime(value: string | null | undefined): string {
+// Fuso da pedreira (unidade), nao o do navegador do carregador. Sem timeZone, o horario de
+// chegada aparecia deslocado para um carregador acessando de outro fuso. Default: America/Sao_Paulo.
+const DEFAULT_UNIT_TIMEZONE = "America/Sao_Paulo";
+
+function formatDateTime(value: string | null | undefined, timeZone?: string | null): string {
   if (!value) return "-";
   return new Date(value).toLocaleString("pt-BR", {
+    timeZone: timeZone || DEFAULT_UNIT_TIMEZONE,
     day: "2-digit",
     month: "2-digit",
     hour: "2-digit",
@@ -56,7 +63,7 @@ function mapRow(row: LoadingRequestRow): WeighingOperation {
     customerName: row.customer_name,
     driverName: row.driver_name,
     productDescription: row.product_description,
-    entryWeightKg: Number(row.entry_weight_kg ?? 0),
+    entryWeightKg: row.entry_weight_kg,
     status: row.status,
     createdAt: row.created_at,
     loaderCompletedAt: row.loader_completed_at
@@ -116,6 +123,7 @@ export function LoaderDashboard() {
   const [pendingCompletions, setPendingCompletions] = useState<Set<string>>(new Set());
   const [departingIds, setDepartingIds] = useState<Set<string>>(new Set());
   const [avgQuarryMinutes, setAvgQuarryMinutes] = useState<number | null>(null);
+  const [unitTimezone, setUnitTimezone] = useState<string | null>(null);
   const [now, setNow] = useState<number>(() => Date.now());
 
   // Relogio para recalcular o tempo decorrido sem depender do polling.
@@ -179,11 +187,16 @@ export function LoaderDashboard() {
       // usada para destacar caminhoes acima da media. Best-effort.
       const { data: unitData } = await supabase
         .from("units")
-        .select("avg_quarry_minutes")
+        .select("avg_quarry_minutes,timezone")
         .eq("id", user.unitId)
         .maybeSingle();
-      const avg = Number((unitData as { avg_quarry_minutes?: number | null } | null)?.avg_quarry_minutes ?? 0);
+      const unitRow = unitData as {
+        avg_quarry_minutes?: number | null;
+        timezone?: string | null;
+      } | null;
+      const avg = Number(unitRow?.avg_quarry_minutes ?? 0);
       setAvgQuarryMinutes(Number.isFinite(avg) && avg > 0 ? avg : null);
+      setUnitTimezone(unitRow?.timezone?.trim() || null);
     } catch (error) {
       console.error("Error loading operations:", error);
       setErrorMessage(
@@ -360,6 +373,7 @@ export function LoaderDashboard() {
                 isSubmitting={pendingCompletions.has(operation.id)}
                 isDeparting={departingIds.has(operation.id)}
                 isOvertime={overtimeIds.has(operation.id)}
+                unitTimezone={unitTimezone}
                 onComplete={() => void handleCompleteOperation(operation)}
                 onDeparted={() => finalizeDeparture(operation.id)}
               />
@@ -377,6 +391,7 @@ function LoadingCard({
   isSubmitting,
   isDeparting,
   isOvertime,
+  unitTimezone,
   onComplete,
   onDeparted
 }: {
@@ -385,6 +400,7 @@ function LoadingCard({
   isSubmitting: boolean;
   isDeparting: boolean;
   isOvertime: boolean;
+  unitTimezone: string | null;
   onComplete: () => void;
   onDeparted: () => void;
 }) {
@@ -417,7 +433,7 @@ function LoadingCard({
           <InfoItem label="Motorista" value={operation.driverName} />
           <InfoItem label="Produto" value={operation.productDescription} />
           <InfoItem label="Quantidade" value={formatWeight(operation.entryWeightKg)} />
-          <InfoItem label="Chegada" value={formatDateTime(operation.createdAt)} />
+          <InfoItem label="Chegada" value={formatDateTime(operation.createdAt, unitTimezone)} />
         </dl>
 
         <button

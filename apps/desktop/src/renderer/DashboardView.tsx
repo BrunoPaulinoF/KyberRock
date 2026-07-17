@@ -14,6 +14,7 @@ import type { PrintProfileSummary } from "../services/printing";
 import type { DesktopStatusSnapshot } from "../services/status";
 import type { WeighingOperationSummary } from "../services/weighing-operations";
 import { buildStatusIndicatorViewModels, type StatusIndicatorTone } from "./status-view-model";
+import { parseDbTimestamp } from "./format-datetime";
 import { Tooltip } from "./Tooltip";
 
 type ActiveView =
@@ -72,13 +73,13 @@ function formatKg(kg: number): string {
 
 function formatHour(iso: string | null): string {
   if (!iso) return "--:--";
-  const date = new Date(iso);
+  const date = parseDbTimestamp(iso);
   if (Number.isNaN(date.getTime())) return "--:--";
   return date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 }
 
 function formatElapsed(fromIso: string, now: Date): string {
-  const start = new Date(fromIso).getTime();
+  const start = parseDbTimestamp(fromIso).getTime();
   if (Number.isNaN(start)) return "tempo desconhecido";
   const diffMs = Math.max(0, now.getTime() - start);
   const hours = Math.floor(diffMs / (1000 * 60 * 60));
@@ -91,7 +92,7 @@ function formatElapsed(fromIso: string, now: Date): string {
 }
 
 function isSameLocalDay(iso: string, now: Date): boolean {
-  const date = new Date(iso);
+  const date = parseDbTimestamp(iso);
   if (Number.isNaN(date.getTime())) return false;
   return (
     date.getFullYear() === now.getFullYear() &&
@@ -247,7 +248,7 @@ export function DashboardView(props: DashboardViewProps) {
       .filter((op) => op.createdAt)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     return sorted.map((op) => {
-      const ageMs = now.getTime() - new Date(op.createdAt).getTime();
+      const ageMs = now.getTime() - parseDbTimestamp(op.createdAt).getTime();
       const hours = ageMs / (1000 * 60 * 60);
       let tone: StatusIndicatorTone = "neutral";
       if (hours >= STALE_OPEN_HOURS_DANGER) tone = "danger";
@@ -478,7 +479,7 @@ export function DashboardView(props: DashboardViewProps) {
               <span>Status</span>
             </div>
             {recentOperations.map((op) => {
-              const updated = new Date(op.updatedAt).getTime();
+              const updated = parseDbTimestamp(op.updatedAt).getTime();
               const isOpen =
                 op.status !== "closed_local" && op.status !== "synced" && op.status !== "cancelled";
               const row = (
@@ -500,7 +501,7 @@ export function DashboardView(props: DashboardViewProps) {
                     {formatHour(op.updatedAt)}
                     {now.getTime() - updated > LONG_AGO_MS ? (
                       <small style={styles.muted}>
-                        {new Date(op.updatedAt).toLocaleDateString("pt-BR")}
+                        {parseDbTimestamp(op.updatedAt).toLocaleDateString("pt-BR")}
                       </small>
                     ) : null}
                   </span>

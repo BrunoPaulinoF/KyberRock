@@ -67,7 +67,7 @@ import {
   parseMoneyInputToCents
 } from "@kyberrock/shared";
 import { ActivationGate } from "./ActivationGate";
-import { formatDbDateTime } from "./format-datetime";
+import { formatDbDateTime, parseDbTimestamp } from "./format-datetime";
 import { MountainOutline } from "./MountainOutline";
 import { CrudFormModal } from "./CrudFormModal";
 import {
@@ -419,7 +419,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     if (truckAverageMinutes <= 0) return [] as WeighingOperationSummary[];
     const now = Date.now();
     return openOperations.filter(
-      (op) => (now - new Date(op.createdAt).getTime()) / 60_000 > truckAverageMinutes
+      (op) => (now - parseDbTimestamp(op.createdAt).getTime()) / 60_000 > truckAverageMinutes
     );
   }, [openOperations, truckAverageMinutes]);
   const overtimeOpenIds = useMemo(
@@ -6611,7 +6611,7 @@ function formatWeightKg(value: number): string {
 // Tempo decorrido desde a entrada do caminhao (ex.: "ha 12 min", "ha 2 h 05 min").
 export function formatElapsedSince(iso: string | null | undefined, now = new Date()): string {
   if (!iso) return "-";
-  const then = new Date(iso);
+  const then = parseDbTimestamp(iso);
   if (Number.isNaN(then.getTime())) return "-";
   const diffMs = now.getTime() - then.getTime();
   if (diffMs < 0) return "agora mesmo";
@@ -6645,7 +6645,7 @@ function filterCanceledOperations(
     start.setDate(1);
   }
 
-  return operations.filter((operation) => new Date(operation.updatedAt) >= start);
+  return operations.filter((operation) => parseDbTimestamp(operation.updatedAt) >= start);
 }
 
 function getErrorMessage(error: unknown): string {

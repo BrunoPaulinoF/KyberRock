@@ -88,7 +88,7 @@ export class CreditService {
     const timestamp = now.toISOString();
 
     const apply = this.db.transaction(() => {
-      if (productDebitCents > 0) {
+      if (productDebitCents > 0 && !this.hasMovementForOperation(operationId, "debit_product")) {
         this.recordMovement(
           companyId,
           customerId,
@@ -99,7 +99,7 @@ export class CreditService {
           timestamp
         );
       }
-      if (freightDebitCents > 0) {
+      if (freightDebitCents > 0 && !this.hasMovementForOperation(operationId, "debit_freight")) {
         this.recordMovement(
           companyId,
           customerId,
@@ -128,7 +128,7 @@ export class CreditService {
     const timestamp = now.toISOString();
 
     const apply = this.db.transaction(() => {
-      if (productRefundCents > 0) {
+      if (productRefundCents > 0 && !this.hasMovementForOperation(operationId, "refund_product")) {
         this.recordMovement(
           companyId,
           customerId,
@@ -139,7 +139,7 @@ export class CreditService {
           timestamp
         );
       }
-      if (freightRefundCents > 0) {
+      if (freightRefundCents > 0 && !this.hasMovementForOperation(operationId, "refund_freight")) {
         this.recordMovement(
           companyId,
           customerId,
@@ -206,6 +206,26 @@ export class CreditService {
          LIMIT ?`
       )
       .all(customerId, limit) as CreditMovementRow[];
+  }
+
+  /**
+   * True quando ja existe um movimento do mesmo tipo para a operacao. Torna applyDebit/
+   * applyRefund idempotentes por operacao: um segundo fechamento/cancelamento (duplo-clique,
+   * retry) nao debita nem estorna o credito do cliente de novo. Defesa em profundidade — o
+   * fluxo normal ja e barrado pela guarda de status em close/cancelWeighingOperation.
+   */
+  private hasMovementForOperation(
+    operationId: string,
+    movementType: CreditMovementType
+  ): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT 1 FROM customer_credit_movements
+         WHERE operation_id = ? AND movement_type = ?
+         LIMIT 1`
+      )
+      .get(operationId, movementType);
+    return row !== undefined;
   }
 
   private recordMovement(

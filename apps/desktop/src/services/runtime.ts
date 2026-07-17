@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 
 import {
   initializeDesktopDatabase,
@@ -7,6 +7,7 @@ import {
 import { runDesktopMigrations } from "../database/migrate.js";
 import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite.js";
 import {
+  assertDatabaseFileHealthy,
   createAutomaticBackup,
   exportManualBackup,
   restoreBackup,
@@ -406,6 +407,13 @@ export class DesktopRuntime {
   private virtualScaleAdapter: ReturnType<typeof createVirtualScaleAdapter> =
     createVirtualScaleAdapter();
   private activeScaleAdapter: ActiveScaleAdapter = this.tcpScaleAdapter;
+  // Forwarders de leitura persistentes (ex.: o que envia desktop:scale-reading ao renderer),
+  // guardados aqui para serem reanexados ao adaptador ativo apos cada (re)conexao — connectScale
+  // chama removeAllListeners() e, sem reanexar, o peso ao vivo congelaria numa reconexao.
+  private readonly scaleReadingUnsubscribes = new Map<
+    (reading: ParsedToledoReading) => void,
+    () => void
+  >();
   private readonly pendingScaleCaptures = new Map<
     string,
     { operationType: ScaleCaptureOperationType; reading: ScaleReading; expiresAt: number }
@@ -460,11 +468,25 @@ export class DesktopRuntime {
   }
 
   restoreFromBackup(backupPath: string): void {
+    // Valida a saude do arquivo de backup ANTES de fechar o banco em uso. Um backup
+    // corrompido/incompleto faz assertDatabaseFileHealthy lancar aqui, com o banco original
+    // ainda aberto e utilizavel. Sem isto, o close() acontecia antes da validacao e uma
+    // falha deixava o runtime com um handle fechado ("database connection is not open" em
+    // toda operacao ate reiniciar o app).
+    assertDatabaseFileHealthy(backupPath);
+
     this.database.close();
-    restoreBackup(backupPath, this.paths.databasePath);
-    this.database = openDesktopDatabase({ databasePath: this.paths.databasePath });
-    runDesktopMigrations(this.database);
-    this.ensureIdentity();
+    try {
+      restoreBackup(backupPath, this.paths.databasePath);
+      this.database = openDesktopDatabase({ databasePath: this.paths.databasePath });
+      runDesktopMigrations(this.database);
+      this.ensureIdentity();
+    } catch (error) {
+      // Rede de seguranca para falhas apos o close (ex.: erro de disco no copyFileSync):
+      // reabre o banco para nao deixar o runtime inutilizavel, e propaga o erro original.
+      this.database = openDesktopDatabase({ databasePath: this.paths.databasePath });
+      throw error;
+    }
   }
 
   startAutomaticBackupScheduler(
@@ -1321,6 +1343,10 @@ export class DesktopRuntime {
     const scaleConfig = this.getScaleConfiguration();
     this.activateAdapter(scaleConfig.adapterType);
     this.activeScaleAdapter.removeAllListeners();
+    // Reanexa os forwarders persistentes ao adaptador recem-ativado. Sem isto, o listener que
+    // envia desktop:scale-reading ao renderer (registrado so no startup/connect no main) some
+    // apos uma reconexao automatica disparada durante a captura, e o peso ao vivo congela.
+    this.reattachScaleReadingListeners();
 
     if (scaleConfig.adapterType === "virtual") {
       await this.virtualScaleAdapter.connect({ host: "virtual", port: 0 });
@@ -1423,7 +1449,25 @@ export class DesktopRuntime {
   }
 
   onScaleReading(callback: (reading: ParsedToledoReading) => void): () => void {
-    return this.activeScaleAdapter.onReading(callback);
+    const unsubscribe = this.activeScaleAdapter.onReading(callback);
+    this.scaleReadingUnsubscribes.set(callback, unsubscribe);
+    return () => {
+      const current = this.scaleReadingUnsubscribes.get(callback);
+      if (current) {
+        current();
+        this.scaleReadingUnsubscribes.delete(callback);
+      }
+    };
+  }
+
+  /** Reinscreve todos os forwarders persistentes no adaptador ativo (usado apos reconexao). */
+  private reattachScaleReadingListeners(): void {
+    const listeners = [...this.scaleReadingUnsubscribes.keys()];
+    this.scaleReadingUnsubscribes.clear();
+    for (const listener of listeners) {
+      const unsubscribe = this.activeScaleAdapter.onReading(listener);
+      this.scaleReadingUnsubscribes.set(listener, unsubscribe);
+    }
   }
 
   verifyPriceChangePassword(password: string): boolean {
@@ -1431,7 +1475,8 @@ export class DesktopRuntime {
     const row = this.database
       .prepare("SELECT price_change_password FROM companies WHERE id = ?")
       .get(identity.companyId) as { price_change_password: string } | undefined;
-    return row ? row.price_change_password === password : false;
+    if (!row) return false;
+    return safeStringEquals(row.price_change_password, password);
   }
 
   close(): void {
@@ -3084,6 +3129,19 @@ export class DesktopRuntime {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Comparacao de strings em tempo constante, para a senha de alteracao de preco nao vazar seu
+ * tamanho/prefixo por timing. Compara os digests SHA-256 (sempre 32 bytes) para que strings de
+ * tamanhos diferentes tambem passem por timingSafeEqual sem lancar. Observacao: a senha ainda e
+ * armazenada em texto puro na tabela companies — endurece-la exige uma migration para migrar as
+ * senhas existentes para hash, feita a parte para nao invalidar cadastros ja gravados.
+ */
+function safeStringEquals(a: string, b: string): boolean {
+  const digestA = createHash("sha256").update(a, "utf8").digest();
+  const digestB = createHash("sha256").update(b, "utf8").digest();
+  return timingSafeEqual(digestA, digestB);
 }
 
 function renderDailyReportHtml(input: {

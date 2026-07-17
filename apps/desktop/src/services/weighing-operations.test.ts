@@ -4,6 +4,7 @@ import { runDesktopMigrations } from "../database/migrate";
 import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite";
 import { ensureInitialDesktopIdentity } from "./bootstrap";
 import { CreditService } from "./credit";
+import { enqueueSyncJob } from "./sync-queue";
 import { buildOmieIntegrationCode } from "@kyberrock/omie-client";
 import {
   buildOmieBillingJob,
@@ -445,6 +446,133 @@ describe("weighing operations", () => {
       cancelWeighingOperation(database, { operationId: operation.id, reason: "cancelado" });
 
       expect(creditService.getBalance("customer-1")).toBe(100_000);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("does not debit prepaid credit twice on a double close (idempotent)", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'").run();
+      const creditService = new CreditService(database);
+      creditService.applyCredit("customer-1", 100_000, "saldo OMIE");
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+
+      const first = closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500
+      });
+      expect(first.productCreditDebitCents).toBe(78_000);
+      expect(creditService.getBalance("customer-1")).toBe(22_000);
+
+      // Segundo fechamento (duplo-clique/retry) e um no-op idempotente: o saldo nao e debitado
+      // de novo e apenas um movimento de debito existe para a operacao.
+      const second = closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500
+      });
+      expect(second.status).toBe(first.status);
+      expect(creditService.getBalance("customer-1")).toBe(22_000);
+
+      const debitCount = database
+        .prepare(
+          "SELECT COUNT(*) FROM customer_credit_movements WHERE operation_id = ? AND movement_type = 'debit_product'"
+        )
+        .pluck()
+        .get(operation.id);
+      expect(debitCount).toBe(1);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("does not refund prepaid credit twice on a double cancel (idempotent)", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'").run();
+      const creditService = new CreditService(database);
+      creditService.applyCredit("customer-1", 100_000, "saldo OMIE");
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, { operationId: operation.id, exitWeightKg: 18_500 });
+      expect(creditService.getBalance("customer-1")).toBe(22_000);
+
+      cancelWeighingOperation(database, { operationId: operation.id, reason: "cancelado" });
+      // Segundo cancelamento e no-op: o credito nao e re-estornado (saldo continua no valor cheio).
+      cancelWeighingOperation(database, { operationId: operation.id, reason: "de novo" });
+
+      expect(creditService.getBalance("customer-1")).toBe(100_000);
+      const refundCount = database
+        .prepare(
+          "SELECT COUNT(*) FROM customer_credit_movements WHERE operation_id = ? AND movement_type = 'refund_product'"
+        )
+        .pluck()
+        .get(operation.id);
+      expect(refundCount).toBe(1);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("neutralizes pending OMIE jobs when a closed operation is deleted", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, { operationId: operation.id, exitWeightKg: 18_500 });
+
+      // Simula um job de criacao OMIE ainda na fila (nao enviado) para a operacao.
+      enqueueSyncJob(database, {
+        target: "omie",
+        action: "create_order",
+        entityType: "weighing_operation",
+        entityId: operation.id,
+        idempotencyKey: `omie:create:${operation.id}`,
+        payload: { operationId: operation.id }
+      });
+
+      deleteClosedWeighingOperation(database, operation.id);
+
+      const job = database
+        .prepare(
+          "SELECT status FROM sync_queue WHERE entity_id = ? AND action = 'create_order'"
+        )
+        .get(operation.id) as { status: string } | undefined;
+      // Excluir a operacao concluida neutraliza o job pendente (dead_letter): nao cria pedido
+      // "fantasma" no OMIE depois que o operador excluiu a operacao localmente.
+      expect(job?.status).toBe("dead_letter");
     } finally {
       database.close();
     }

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { useAuth } from "../contexts/AuthContext";
@@ -8,9 +8,17 @@ export function AdminLogin() {
   const navigate = useNavigate();
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Se ja estiver logado como admin, redireciona para o dashboard
+  // Se ja estiver logado como admin, redireciona para o dashboard. Feito num efeito (nao no
+  // corpo do render) porque navigate() durante o render dispara uma atualizacao de estado do
+  // router enquanto outro componente renderiza ("Cannot update a component while rendering a
+  // different component") e pode causar render duplo.
+  useEffect(() => {
+    if (isAdmin) {
+      navigate("/admin", { replace: true });
+    }
+  }, [isAdmin, navigate]);
+
   if (isAdmin) {
-    navigate("/admin", { replace: true });
     return null;
   }
 

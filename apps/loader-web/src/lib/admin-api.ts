@@ -2,6 +2,18 @@ import { assertSupabaseConfig, supabaseConfig } from "../config/supabase-config"
 
 const ADMIN_SESSION_KEY = "kyberrock_admin_session";
 
+/**
+ * Erro lancado quando a sessao administrativa expirou ou foi rejeitada (401). Tipado para que a
+ * UI possa distingui-lo de erros comuns e forcar logout/redirect em vez de renderizar o dashboard
+ * com listas vazias e nenhuma indicacao de que a sessao caiu.
+ */
+export class AdminSessionExpiredError extends Error {
+  constructor(message = "Sessao administrativa expirada. Faca login novamente.") {
+    super(message);
+    this.name = "AdminSessionExpiredError";
+  }
+}
+
 export interface AdminApiPayload {
   [key: string]: unknown;
 }
@@ -46,7 +58,7 @@ export async function callAdminFunction<TResponse>(
 
   if (functionName === "admin-api" && isTokenExpired(sessionToken)) {
     clearAdminSessionToken();
-    throw new Error("Sessao administrativa expirada. Faca login novamente.");
+    throw new AdminSessionExpiredError();
   }
 
   const response = await fetch(`${supabaseConfig.url}/functions/v1/${functionName}`, {
@@ -63,6 +75,7 @@ export async function callAdminFunction<TResponse>(
   if (!response.ok) {
     if (response.status === 401) {
       clearAdminSessionToken();
+      throw new AdminSessionExpiredError(data.error || undefined);
     }
     throw new Error(data.error || "Erro na API administrativa.");
   }
