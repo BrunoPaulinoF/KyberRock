@@ -3188,14 +3188,6 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                         e valores.
                       </p>
                     )}
-                    <IconActionButton
-                      icon="retry"
-                      label="Restaurar modelo padrao"
-                      tone="neutral"
-                      onClick={() =>
-                        setReceiptTemplateConfig({ ...DEFAULT_RECEIPT_TEMPLATE_CONFIG })
-                      }
-                    />
                   </div>
                   <IconActionButton
                     icon="save"
@@ -3214,60 +3206,106 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       onClick={() => void handlePrintTest()}
                     />
                   </div>
-
-                  <h3>Perfil ativo</h3>
-                  {printProfiles.length === 0 ? (
-                    <p style={styles.muted}>Nenhum perfil de impressao configurado.</p>
-                  ) : (
-                    <p>
-                      {printProfiles[0].printerType === "network"
-                        ? `${printProfiles[0].networkHost}:${printProfiles[0].networkPort ?? 9100}`
-                        : printProfiles[0].windowsPrinterName}{" "}
-                      - {printProfiles[0].paperWidthMm} mm
-                      {` - ${printProfiles[0].copies} vias`}
-                      {printProfiles[0].templateConfig.mode === "custom"
-                        ? " - modelo personalizado"
-                        : ""}
-                    </p>
-                  )}
                 </article>
 
-                <article style={styles.panel}>
+                <article
+                  style={{
+                    ...styles.panel,
+                    display: "flex",
+                    flexDirection: "column",
+                    minHeight: 0
+                  }}
+                >
                   <h2 style={styles.panelTitle}>Cupons emitidos</h2>
-                  {printReceipts.length === 0 ? (
-                    <p style={styles.muted}>Nenhum cupom emitido ainda.</p>
-                  ) : null}
-                  {printReceipts.map((receipt) => (
-                    <div key={receipt.id} style={styles.receiptRow}>
-                      <div>
-                        <strong>
-                          Cupom {receipt.receiptNumber} - via {receipt.copyNumber}
-                        </strong>
-                        <p style={styles.muted}>
-                          {receipt.status === "printed" ? "Impresso" : "Falhou"} em{" "}
-                          {receipt.printerName}
-                        </p>
-                        {receipt.errorMessage ? (
-                          <p style={styles.errorMessage}>{receipt.errorMessage}</p>
-                        ) : null}
+                  <div
+                    style={{
+                      flex: "1 1 auto",
+                      minHeight: 0,
+                      maxHeight: "calc(100vh - 320px)",
+                      overflowY: "auto",
+                      marginTop: "4px"
+                    }}
+                  >
+                    {printReceipts.length === 0 ? (
+                      <p style={styles.muted}>Nenhum cupom emitido ainda.</p>
+                    ) : null}
+                    {printReceipts.map((receipt) => (
+                      <div key={receipt.id} style={styles.receiptRow}>
+                        <div>
+                          <strong>
+                            Cupom {receipt.receiptNumber} - via {receipt.copyNumber}
+                          </strong>
+                          <p style={styles.muted}>
+                            {receipt.status === "printed" ? "Impresso" : "Falhou"} em{" "}
+                            {receipt.printerName}
+                          </p>
+                          {receipt.errorMessage ? (
+                            <p style={styles.errorMessage}>{receipt.errorMessage}</p>
+                          ) : null}
+                        </div>
+                        <IconActionButton
+                          icon="printer"
+                          label="Reimprimir segunda via"
+                          tip={TIPS.printing.reprint}
+                          tone="neutral"
+                          placement="left"
+                          onClick={() => void handleReprintReceipt(receipt.id)}
+                        />
                       </div>
-                      <IconActionButton
-                        icon="printer"
-                        label="Reimprimir segunda via"
-                        tip={TIPS.printing.reprint}
-                        tone="neutral"
-                        placement="left"
-                        onClick={() => void handleReprintReceipt(receipt.id)}
-                      />
+                    ))}
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop: "12px",
+                      paddingTop: "12px",
+                      borderTop: "1px solid var(--kr-border)",
+                      display: "grid",
+                      gap: "8px",
+                      flexShrink: 0
+                    }}
+                  >
+                    <IconActionButton
+                      icon="retry"
+                      label="Restaurar modelo padrao"
+                      tone="neutral"
+                      onClick={() =>
+                        setReceiptTemplateConfig({ ...DEFAULT_RECEIPT_TEMPLATE_CONFIG })
+                      }
+                    />
+                    <div>
+                      <h3 style={{ margin: "0 0 4px 0" }}>Perfil ativo</h3>
+                      {printProfiles.length === 0 ? (
+                        <p style={styles.muted}>Nenhum perfil de impressao configurado.</p>
+                      ) : (
+                        <p style={{ margin: 0 }}>
+                          {printProfiles[0].printerType === "network"
+                            ? `${printProfiles[0].networkHost}:${printProfiles[0].networkPort ?? 9100}`
+                            : printProfiles[0].windowsPrinterName}{" "}
+                          - {printProfiles[0].paperWidthMm} mm
+                          {` - ${printProfiles[0].copies} vias`}
+                          {printProfiles[0].templateConfig.mode === "custom"
+                            ? " - modelo personalizado"
+                            : ""}
+                        </p>
+                      )}
                     </div>
-                  ))}
+                  </div>
                 </article>
               </section>
             ) : null}
 
             {activeView === "cloud" ? (
-              <section style={styles.twoColumns}>
-                <article style={styles.panel}>
+              <section style={styles.cloudGrid}>
+                <article
+                  style={{
+                    ...styles.panel,
+                    gridColumn: "1",
+                    gridRow: "1",
+                    minHeight: 0,
+                    overflow: "auto"
+                  }}
+                >
                   <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                     <h2 style={styles.panelTitle}>Sincronizacao Supabase</h2>
                     <HelpTooltip content={TIPS.screens.cloud} placement="right" />
@@ -3301,7 +3339,15 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   />
                 </article>
 
-                <article style={styles.panel}>
+                <article
+                  style={{
+                    ...styles.panel,
+                    gridColumn: "2",
+                    gridRow: "1 / span 2",
+                    minHeight: 0,
+                    overflow: "auto"
+                  }}
+                >
                   <h2 style={styles.panelTitle}>Status OMIE</h2>
                   {omieStatus ? (
                     <>
@@ -3403,13 +3449,23 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   )}
                 </article>
 
-                <article style={{ ...styles.panel, gridColumn: "1 / -1" }}>
+                <article
+                  style={{
+                    ...styles.panel,
+                    gridColumn: "1",
+                    gridRow: "2",
+                    minHeight: 0,
+                    display: "flex",
+                    flexDirection: "column"
+                  }}
+                >
                   <div
                     style={{
                       display: "flex",
                       justifyContent: "space-between",
                       alignItems: "center",
-                      gap: "12px"
+                      gap: "12px",
+                      flexShrink: 0
                     }}
                   >
                     <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
@@ -3428,6 +3484,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       onClick={() => void refreshOmieQueue()}
                     />
                   </div>
+                  <div style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", marginTop: "8px" }}>
                   {omieQueue.length === 0 ? (
                     <p style={styles.muted}>
                       {omieQueueLoading
@@ -3501,6 +3558,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       </div>
                     ))
                   )}
+                  </div>
                 </article>
               </section>
             ) : null}
@@ -9874,6 +9932,18 @@ const styles = {
     gap: "10px",
     marginTop: 0
   },
+  cloudGrid: {
+    // Supabase (topo-esquerda) + Fila OMIE (baixo-esquerda) na coluna 1; Status OMIE
+    // ocupa a coluna 2 inteira. flex 1 + minHeight 0 faz os cards preencherem o
+    // contentBody ate o fim, sem espaco vazio na metade de baixo.
+    display: "grid",
+    gridTemplateColumns: "repeat(2, minmax(280px, 1fr))",
+    gridTemplateRows: "auto 1fr",
+    gap: "10px",
+    marginTop: 0,
+    flex: 1,
+    minHeight: 0
+  },
   subTabs: {
     display: "flex",
     gap: "2px",
@@ -10090,14 +10160,15 @@ const styles = {
     border: 0
   },
   entryShell: {
-    // flexShrink 0 + sem minHeight 0: dentro do contentBody (flex + overflowY),
-    // encolher aqui comprimia o hero (overflow hidden corta o conteudo) quando o
-    // frete configuravel abria; mantendo a altura natural, o excesso vira scroll.
+    // flex 1 + minHeight 0: preenche o contentBody para os 3 cards descerem ate o
+    // fim da tela. O hero fica flexShrink 0 (nao comprime) e o excesso de cada card
+    // vira scroll interno do proprio card, sem scroll da pagina.
     display: "flex",
     flexDirection: "column" as const,
     gap: "8px",
     marginTop: 0,
-    flexShrink: 0
+    flex: 1,
+    minHeight: 0
   },
   entryHero: {
     position: "relative" as const,
@@ -10111,7 +10182,8 @@ const styles = {
     background: "#1c1917",
     border: "1px solid #292524",
     color: "#ffffff",
-    boxShadow: "0 12px 28px rgba(28, 25, 23, 0.2)"
+    boxShadow: "0 12px 28px rgba(28, 25, 23, 0.2)",
+    flexShrink: 0
   },
   liveWeightCard: {
     minWidth: "180px",
@@ -10149,14 +10221,18 @@ const styles = {
     display: "grid",
     gridTemplateColumns: "minmax(300px, 1fr) minmax(340px, 1fr) minmax(360px, 1.05fr)",
     gap: "8px",
-    alignItems: "start"
+    alignItems: "stretch",
+    flex: 1,
+    minHeight: 0
   },
   entryCard: {
     padding: "10px",
     borderRadius: "14px",
     background: "var(--kr-surface)",
     border: "1px solid var(--kr-border)",
-    boxShadow: "var(--kr-shadow)"
+    boxShadow: "var(--kr-shadow)",
+    minHeight: 0,
+    overflow: "auto" as const
   },
   entrySummaryCard: {
     // Sem sticky: com o frete configuravel aberto o formulario rola, e um card
@@ -10166,7 +10242,9 @@ const styles = {
     borderRadius: "14px",
     background: "var(--kr-surface-soft)",
     border: "1px solid var(--kr-input-border)",
-    boxShadow: "var(--kr-shadow)"
+    boxShadow: "var(--kr-shadow)",
+    minHeight: 0,
+    overflow: "auto" as const
   },
   freightBox: {
     display: "grid",
