@@ -64,6 +64,18 @@ function normalizeHourOption(value: string | null | undefined): string {
   return `${String(hour).padStart(2, "0")}:00`;
 }
 
+/**
+ * Normaliza o WhatsApp para so-digitos com DDI 55 (ex.: "(11) 99999-9999" -> "5511999999999").
+ * A validacao ja usava a forma normalizada, mas o payload salvava o texto cru com mascara — o
+ * destinatario ficava gravado com parenteses/espacos e o envio dependia de normalizacao posterior.
+ * Retorna null quando vazio.
+ */
+function normalizeWhatsapp(value: string): string | null {
+  const digits = value.replace(/\D/g, "");
+  if (!digits) return null;
+  return digits.length === 10 || digits.length === 11 ? `55${digits}` : digits;
+}
+
 const styles = {
   page: {
     // flexShrink 0 + sem minHeight 0: dentro do contentBody (flex + overflowY),
@@ -322,9 +334,8 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
   }
 
   function validateWhatsapp(value: string): string | null {
-    const digits = value.replace(/\D/g, "");
-    const normalized = digits.length === 10 || digits.length === 11 ? `55${digits}` : digits;
     if (!value.trim()) return "WhatsApp obrigatorio.";
+    const normalized = normalizeWhatsapp(value) ?? "";
     if (!/^\d{12,13}$/.test(normalized)) return "WhatsApp invalido. Informe DDD e numero.";
     return null;
   }
@@ -344,7 +355,7 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
     try {
       const payload = {
         email: form.email.trim().toLowerCase() || null,
-        whatsappPhone: form.whatsappPhone.trim() || null,
+        whatsappPhone: normalizeWhatsapp(form.whatsappPhone),
         sendEmail,
         sendWhatsapp,
         scheduleFrequency: form.scheduleFrequency,

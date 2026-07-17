@@ -690,6 +690,16 @@ export function closeWeighingOperation(
 ): WeighingOperationSummary {
   const operation = getWeighingOperation(database, input.operationId);
 
+  // Guarda de idempotencia: uma operacao ja concluida (closed_local/pending_*/synced/
+  // sync_error) ou cancelada nao deve ser reprocessada. Sem isto, um duplo-clique ou retry no
+  // botao "Fechar" re-executava a transacao e debitava o credito do cliente pre-pago uma segunda
+  // vez (o ledger de credito e aditivo). captureStableWeight e assincrono, entao dois IPC podem
+  // chegar aqui em sequencia; a checagem sincrona serializa e o segundo vira um no-op idempotente,
+  // retornando o estado atual (o ledger tambem e idempotente por operacao, como defesa extra).
+  if (isClosedOperationStatus(operation.status) || operation.status === "cancelled") {
+    return operation;
+  }
+
   if (!operation.entryWeightKg) {
     throw new Error("Operation has no entry weight.");
   }
@@ -1310,6 +1320,14 @@ export function cancelWeighingOperation(
   validateRequired("Cancellation reason", input.reason);
 
   const operation = getWeighingOperation(database, input.operationId);
+
+  // Guarda de idempotencia: cancelar de novo estornaria o credito (applyRefund) uma segunda vez
+  // sobre product_credit_debit_cents, inflando o saldo. Retorna o estado atual como no-op (o
+  // cancelamento duplo tambem nao duplica jobs OMIE, pela chave idempotente / ledger idempotente).
+  if (operation.status === "cancelled") {
+    return operation;
+  }
+
   const timestamp = now.toISOString();
 
   const opRow = database
@@ -1587,9 +1605,17 @@ export function deleteClosedWeighingOperation(
     throw new Error("Apenas operacoes concluidas podem ser excluidas por aqui.");
   }
   const timestamp = now.toISOString();
-  database
-    .prepare("UPDATE weighing_operations SET deleted_at = ?, updated_at = ? WHERE id = ?")
-    .run(timestamp, timestamp, operationId);
+  const removeOperation = database.transaction(() => {
+    database
+      .prepare("UPDATE weighing_operations SET deleted_at = ?, updated_at = ? WHERE id = ?")
+      .run(timestamp, timestamp, operationId);
+
+    // Neutraliza jobs de criacao/faturamento OMIE ainda nao enviados. Sem isto, excluir uma
+    // operacao fiscal antes de a fila drenar criava um pedido de venda / NF-e "fantasma" no
+    // OMIE para uma operacao que o operador considera excluida (divergencia local<->nuvem).
+    cancelPendingOmieJobs(database, operationId, now);
+  });
+  removeOperation();
 }
 
 export function getWeighingOperation(

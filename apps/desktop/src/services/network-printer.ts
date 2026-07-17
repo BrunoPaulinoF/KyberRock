@@ -29,26 +29,36 @@ export class NetworkEscPosPrinter implements ReceiptPrinter {
 
     await new Promise<void>((resolve, reject) => {
       const socket: Socket = createConnection({ host: this.host, port: this.port });
-      const timer = setTimeout(() => {
+
+      // Um unico deadline cobre TODA a operacao (conectar + enviar + finalizar). Antes o timer
+      // era limpo no evento "connect", entao uma impressora que aceitava o TCP mas travava sem
+      // consumir/confirmar o write/end deixava a Promise pendente para sempre — o IPC de
+      // impressao nunca resolvia e o botao ficava "imprimindo" indefinidamente.
+      let settled = false;
+      const finish = (error?: Error): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
         socket.destroy();
-        reject(new Error(`Timeout ao conectar com a impressora ${this.host}:${this.port}.`));
+        if (error) reject(error);
+        else resolve();
+      };
+
+      const timer = setTimeout(() => {
+        finish(new Error(`Timeout ao comunicar com a impressora ${this.host}:${this.port}.`));
       }, this.timeoutMs);
 
       socket.on("error", (err: NodeJS.ErrnoException) => {
-        clearTimeout(timer);
-        socket.destroy();
-        reject(new Error(`Erro ao imprimir na rede (${this.host}:${this.port}): ${err.message}.`));
+        finish(new Error(`Erro ao imprimir na rede (${this.host}:${this.port}): ${err.message}.`));
       });
 
       socket.on("connect", () => {
-        clearTimeout(timer);
         socket.write(data, (writeErr) => {
           if (writeErr) {
-            socket.destroy();
-            reject(new Error(`Erro ao enviar dados para a impressora: ${writeErr.message}.`));
+            finish(new Error(`Erro ao enviar dados para a impressora: ${writeErr.message}.`));
             return;
           }
-          socket.end(() => resolve());
+          socket.end(() => finish());
         });
       });
     });

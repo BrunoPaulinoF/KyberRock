@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "../contexts/AuthContext";
-import { callAdminFunction } from "../lib/admin-api";
+import { AdminSessionExpiredError, callAdminFunction } from "../lib/admin-api";
 
 interface Company {
   id: string;
@@ -47,6 +47,25 @@ const TWO_COLUMN_GRID = "repeat(auto-fit, minmax(min(100%, 320px), 1fr))";
 const COMPACT_GRID = "repeat(auto-fit, minmax(min(100%, 240px), 1fr))";
 const MODAL_Z_INDEX = 1200;
 
+/**
+ * Copia o codigo de ativacao com feedback fiel. navigator.clipboard e undefined em contexto nao
+ * seguro (HTTP puro, plausivel atras de proxy interno) e a escrita e assincrona: a versao antiga
+ * podia lancar TypeError e sempre mostrava "Codigo copiado!" mesmo quando a copia falhava. Aqui
+ * so confirmamos apos o sucesso e caimos para copia manual (prompt) quando a API nao esta disponivel.
+ */
+async function copyActivationCode(code: string): Promise<void> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(code);
+      alert("Codigo copiado!");
+      return;
+    }
+  } catch {
+    // cai para a copia manual abaixo
+  }
+  window.prompt("Copie o codigo de ativacao:", code);
+}
+
 export function AdminDashboard() {
   const { logout } = useAuth();
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -68,6 +87,17 @@ export function AdminDashboard() {
   useEffect(() => {
     loadData();
   }, []);
+
+  // Sessao expirou no meio do uso: desloga (o guard PrivateAdminRoute redireciona para
+  // /admin/login quando isAdmin vira false). Sem isto, callAdminFunction lancava e o dashboard
+  // ficava renderizado com todas as listas vazias, sem erro nem redirect ("parece que apagou tudo").
+  function handleAdminError(error: unknown): boolean {
+    if (error instanceof AdminSessionExpiredError) {
+      void logout();
+      return true;
+    }
+    return false;
+  }
 
   async function loadData() {
     setIsLoading(true);
@@ -158,7 +188,9 @@ export function AdminDashboard() {
         }))
       );
     } catch (error) {
-      console.error("Error loading data:", error);
+      if (!handleAdminError(error)) {
+        console.error("Error loading data:", error);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -1210,10 +1242,7 @@ export function AdminDashboard() {
                                   {company.desktopActivationCode}
                                 </p>
                                 <button
-                                  onClick={() => {
-                                    navigator.clipboard.writeText(company.desktopActivationCode!);
-                                    alert("Codigo copiado!");
-                                  }}
+                                  onClick={() => void copyActivationCode(company.desktopActivationCode!)}
                                   style={{
                                     padding: "6px 12px",
                                     borderRadius: "6px",

@@ -2,6 +2,15 @@
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { contextBridge, ipcRenderer } = require("electron");
 
+// ipcRenderer.on recebe (event, ...args), mas os callbacks do renderer esperam so o payload.
+// Guardamos o wrapper real registrado por callback para que offScaleReading consiga remover
+// exatamente o listener que onScaleReading adicionou (passar o callback original para .off nao
+// remove nada, pois a referencia registrada e o wrapper) — senao os listeners vazam e acumulam.
+const scaleReadingWrappers = new Map<
+  (reading: unknown) => void,
+  (event: unknown, reading: unknown) => void
+>();
+
 const desktopApi = {
   getStatus: (internetOnline?: boolean) => ipcRenderer.invoke("desktop:get-status", internetOnline),
   exportBackup: () => ipcRenderer.invoke("desktop:export-backup"),
@@ -260,12 +269,18 @@ const desktopApi = {
     ipcRenderer.off("desktop:update-downloaded", callback),
   onPlateScanned: (callback: (plate: string) => void) =>
     ipcRenderer.on("desktop:plate-scanned", (_event: unknown, plate: string) => callback(plate)),
-  onScaleReading: (callback: (reading: unknown) => void) =>
-    ipcRenderer.on("desktop:scale-reading", (_event: unknown, reading: unknown) =>
-      callback(reading)
-    ),
-  offScaleReading: (callback: (reading: unknown) => void) =>
-    ipcRenderer.off("desktop:scale-reading", callback)
+  onScaleReading: (callback: (reading: unknown) => void) => {
+    const wrapper = (_event: unknown, reading: unknown) => callback(reading);
+    scaleReadingWrappers.set(callback, wrapper);
+    ipcRenderer.on("desktop:scale-reading", wrapper);
+  },
+  offScaleReading: (callback: (reading: unknown) => void) => {
+    const wrapper = scaleReadingWrappers.get(callback);
+    if (wrapper) {
+      ipcRenderer.off("desktop:scale-reading", wrapper);
+      scaleReadingWrappers.delete(callback);
+    }
+  }
 };
 
 contextBridge.exposeInMainWorld("kyberrockDesktop", desktopApi);

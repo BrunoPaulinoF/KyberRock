@@ -82,6 +82,17 @@ async function createMainWindow(): Promise<void> {
   Menu.setApplicationMenu(null);
   writeStartupLog("browserWindow:created");
   mainWindow.maximize();
+
+  // Defesa em profundidade (recomendacao de seguranca do Electron): o conteudo carregado e local
+  // e confiavel, mas bloqueamos qualquer abertura de nova janela e qualquer navegacao para fora
+  // do documento atual do app, contendo navegacao acidental/induzida no renderer (window.open,
+  // location=, links). A navegacao interna do SPA usa estado React e nao dispara will-navigate.
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (url !== mainWindow?.webContents.getURL()) {
+      event.preventDefault();
+    }
+  });
   mainWindow.webContents.on("did-finish-load", () => {
     writeStartupLog("renderer:did-finish-load", mainWindow?.webContents.getURL());
   });

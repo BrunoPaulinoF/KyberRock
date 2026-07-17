@@ -49,12 +49,18 @@ async function probeHost(
       reconnectIntervalMs: 0
     });
 
+    // Guarda o handle do timeout e o cancela quando adapter.read() vence a corrida. Sem isto,
+    // o setTimeout do ramo perdedor continuava vivo por ate timeoutMs para cada host — numa
+    // varredura de /24 (254 hosts) isso deixava muitos timers pendentes atrasando o encerramento.
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const reading = await Promise.race([
       adapter.read(),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("timeout")), timeoutMs)
-      )
-    ]);
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("timeout")), timeoutMs);
+      })
+    ]).finally(() => {
+      if (timer) clearTimeout(timer);
+    });
 
     adapter.disconnect();
     return { host, port, reading };

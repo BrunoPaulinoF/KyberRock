@@ -51,13 +51,23 @@ export function resolveSupabaseConfig(
 
 export const supabaseConfig = resolveSupabaseConfig(import.meta.env, getRuntimeConfig());
 
+/**
+ * True quando a URL e a publishable key estao realmente configuradas (nao os placeholders/
+ * sentinelas de fallback). Usado para avisar cedo e claramente quando o container/build subiu
+ * sem as variaveis de ambiente, em vez de deixar o app apontar em silencio para o projeto
+ * default com uma chave invalida e falhar de formas obscuras depois.
+ */
+export function isSupabaseConfigured(config: SupabaseConfig = supabaseConfig): boolean {
+  return Boolean(
+    config.url &&
+      config.publishableKey &&
+      config.publishableKey !== MISSING_PUBLISHABLE_KEY &&
+      config.publishableKey !== "your_publishable_key_here"
+  );
+}
+
 export function assertSupabaseConfig(config: SupabaseConfig = supabaseConfig): void {
-  if (
-    !config.url ||
-    !config.publishableKey ||
-    config.publishableKey === MISSING_PUBLISHABLE_KEY ||
-    config.publishableKey === "your_publishable_key_here"
-  ) {
+  if (!isSupabaseConfigured(config)) {
     throw new Error(
       "Supabase nao configurado. Defina VITE_SUPABASE_URL e VITE_SUPABASE_PUBLISHABLE_KEY no build, ou SUPABASE_URL e SUPABASE_PUBLISHABLE_KEY no container Docker."
     );

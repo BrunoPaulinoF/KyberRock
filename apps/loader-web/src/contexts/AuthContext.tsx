@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { assertSupabaseConfig } from "../config/supabase-config";
 import { callAdminFunction, clearAdminSessionToken, getAdminSessionToken, setAdminSessionToken, getAdminSessionStatus } from "../lib/admin-api";
@@ -47,6 +47,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // True enquanto loginLoader carrega o perfil explicitamente. Evita que o evento
+  // onAuthStateChange(SIGNED_IN) dispare uma segunda carga concorrente do mesmo perfil.
+  const explicitAuthRef = useRef(false);
 
   const isAdmin = user?.role === "admin";
   const isLoader = user?.role === "loader";
@@ -68,17 +71,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(null);
     }
 
-    auth.getSession().then(({ data }) => {
-      if (data.session?.user && !adminToken) {
-        void loadLoaderProfile(data.session.user.id);
-      } else {
+    auth
+      .getSession()
+      .then(({ data }) => {
+        if (data.session?.user && !adminToken) {
+          void loadLoaderProfile(data.session.user.id);
+        } else {
+          setIsLoading(false);
+        }
+      })
+      .catch(() => {
+        // Sem tratamento, uma rejeicao de getSession (rede instavel no boot, chave invalida)
+        // deixava isLoading preso em true e a tela travada em "Carregando..." para sempre.
         setIsLoading(false);
-      }
-    });
+      });
 
     const { data: subscription } = auth.onAuthStateChange((_event, session) => {
       const currentToken = getAdminSessionToken();
       if (session?.user && !currentToken) {
+        // loginLoader ja carrega o perfil; evita a carga duplicada disparada pelo SIGNED_IN.
+        if (explicitAuthRef.current) return;
         void loadLoaderProfile(session.user.id);
       } else if (!currentToken) {
         setUser(null);
@@ -88,7 +100,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => subscription.subscription.unsubscribe();
   }, []);
 
-  async function loadLoaderProfile(userId: string): Promise<void> {
+  async function loadLoaderProfile(userId: string): Promise<boolean> {
     setIsLoading(true);
     try {
       const { data, error: profileError } = await supabase
@@ -101,7 +113,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await auth.signOut();
         setUser(null);
         setError("Usuario inativo ou sem perfil de carregador.");
-        return;
+        return false;
       }
 
       setUser({
@@ -113,6 +125,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         unitId: data.unit_id,
         isActive: data.is_active
       });
+      return true;
     } finally {
       setIsLoading(false);
     }
@@ -142,15 +155,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function loginLoader(email: string, password: string): Promise<void> {
     setError(null);
     clearAdminSessionToken();
+    explicitAuthRef.current = true;
     try {
       assertSupabaseConfig();
       const { data, error: loginError } = await auth.signInWithPassword({ email, password });
       if (loginError) throw loginError;
       if (!data.user) throw new Error("Login nao retornou um usuario valido. Tente novamente.");
-      await loadLoaderProfile(data.user.id);
+      // Propaga a falha de perfil inativo/ausente como excecao para que a tela de login NAO
+      // navegue para /loader (o guard PrivateLoaderRoute redirecionaria de volta, causando um
+      // "flash" de navegacao) e a mensagem de erro definida em loadLoaderProfile permaneca.
+      const ok = await loadLoaderProfile(data.user.id);
+      if (!ok) throw new Error("Usuario inativo ou sem perfil de carregador.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro no login do carregador.");
       throw err;
+    } finally {
+      explicitAuthRef.current = false;
     }
   }
 
