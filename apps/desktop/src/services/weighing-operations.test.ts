@@ -13,6 +13,7 @@ import {
   createWeighingOperation,
   createSimulatedWeighingOperation,
   deleteClosedWeighingOperation,
+  listCanceledWeighingOperations,
   listClosedWeighingOperations,
   listOpenWeighingOperations,
   validateCustomerFiscalReadiness
@@ -340,6 +341,62 @@ describe("weighing operations", () => {
       expect(jobs).toHaveLength(1);
       const payload = JSON.parse(jobs[0].payload_json) as { orderType: string; omieOrderId: number };
       expect(payload).toMatchObject({ orderType: "service", omieOrderId: 555 });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("moves a completed OMIE-synced sale out of the closed list and cancels it in OMIE", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+      // Cenario do botao "Venda cancelada" na aba Concluidas: a venda ja foi concluida
+      // e sincronizada com o OMIE, mas o cliente desistiu antes do faturamento.
+      database
+        .prepare(
+          "UPDATE weighing_operations SET status = 'synced', omie_sales_order_id = 4321 WHERE id = ?"
+        )
+        .run(operation.id);
+
+      expect(listClosedWeighingOperations(database).map((op) => op.id)).toContain(operation.id);
+      expect(listCanceledWeighingOperations(database).map((op) => op.id)).not.toContain(
+        operation.id
+      );
+
+      const cancelled = cancelWeighingOperation(database, {
+        operationId: operation.id,
+        reason: "Cliente desistiu da compra antes do faturamento"
+      });
+
+      expect(cancelled).toMatchObject({ status: "cancelled" });
+      // Sai de Concluidas (portanto dos insights/relatorios) e entra em Canceladas.
+      expect(listClosedWeighingOperations(database).map((op) => op.id)).not.toContain(operation.id);
+      expect(listCanceledWeighingOperations(database).map((op) => op.id)).toContain(operation.id);
+      // O cancelamento do pedido ja enviado e solicitado ao OMIE.
+      const cancelJob = database
+        .prepare("SELECT payload_json FROM sync_queue WHERE action = 'cancel_order'")
+        .get() as { payload_json: string } | undefined;
+      expect(cancelJob).toBeDefined();
+      expect(JSON.parse(cancelJob!.payload_json)).toMatchObject({
+        orderType: "sales",
+        omieOrderId: 4321
+      });
     } finally {
       database.close();
     }
