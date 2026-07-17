@@ -618,6 +618,13 @@ export class OmieSyncService {
    * Puxa as contas correntes do OMIE (nome + nCodCC) para accounts. Idempotente:
    * contas ja puxadas (mesmo omie_code) nao mudam; contas locais sem codigo com o
    * mesmo nome sao adotadas; as demais entram como novas contas vindas do OMIE.
+   *
+   * Alem da adocao por nome exato, as contas padrao do KyberRock (Caixinha, OMIE Cash,
+   * GetNet) sao reconciliadas com a conta corrente correspondente do OMIE por nome
+   * canonico (ignorando espacos/acentos/pontuacao), de modo que variacoes de grafia
+   * do OMIE ("OMIECASH", "Omie Cash", "Get Net") ainda vinculem o nCodCC certo. Assim
+   * o meio de pagamento apontado para a conta padrao (ex.: boleto -> OMIE Cash) leva a
+   * conta corrente correta no pedido/OS em vez de cair na conta padrao do tenant.
    */
   async syncCheckingAccounts(companyId: string): Promise<MasterEntitySyncCounters> {
     const omieAccounts = await this.checkingAccountsService.listAll();
@@ -630,6 +637,27 @@ export class OmieSyncService {
 
     const existsByOmieCode = this.db.prepare(
       "SELECT 1 FROM accounts WHERE company_id = ? AND omie_code = ?"
+    );
+    // Conta padrao (caixinha/omie_cash/getnet) da empresa, alvo da reconciliacao canonica.
+    const findDefaultByCode = this.db.prepare(
+      "SELECT id, name, omie_code FROM accounts WHERE company_id = ? AND code = ? AND deleted_at IS NULL"
+    );
+    // Conta (qualquer) que ja carrega este nCodCC — usada para detectar a duplicata que
+    // um sync antigo criou quando o nome canonico ainda nao era reconhecido.
+    const findByOmieCode = this.db.prepare(
+      "SELECT id, is_system FROM accounts WHERE company_id = ? AND omie_code = ? AND deleted_at IS NULL"
+    );
+    const setOmieCode = this.db.prepare(
+      "UPDATE accounts SET omie_code = ?, updated_at = datetime('now') WHERE id = ?"
+    );
+    // Transfere as formas de pagamento da conta duplicada para a conta padrao antes de aposenta-la.
+    const repointPaymentMethods = this.db.prepare(
+      "UPDATE payment_methods SET account_id = ?, updated_at = datetime('now') WHERE account_id = ? AND deleted_at IS NULL"
+    );
+    const retireDuplicate = this.db.prepare(
+      `UPDATE accounts
+         SET omie_code = NULL, is_active = 0, deleted_at = datetime('now'), updated_at = datetime('now')
+       WHERE id = ?`
     );
     const findAdoptable = this.db.prepare(
       `SELECT id FROM accounts
@@ -661,6 +689,39 @@ export class OmieSyncService {
 
       for (const account of omieAccounts) {
         const omieCode = String(account.code);
+
+        // 1) Reconcilia a conta padrao do KyberRock (Caixinha/OMIE Cash/GetNet) com a conta
+        //    corrente do OMIE por nome canonico, tolerando variacoes de grafia.
+        const canonicalCode = canonicalDefaultAccountCode(account.name);
+        if (canonicalCode) {
+          const seed = findDefaultByCode.get(companyId, canonicalCode) as
+            | { id: string; name: string; omie_code: string | null }
+            | undefined;
+          if (seed) {
+            if (seed.omie_code === omieCode) {
+              counters.skipped++;
+              continue;
+            }
+            if (seed.omie_code === null) {
+              // Um sync antigo pode ter criado uma conta separada com este nCodCC; aposenta-a
+              // e transfere para a conta padrao as formas de pagamento que apontavam para ela.
+              const duplicate = findByOmieCode.get(companyId, omieCode) as
+                | { id: string; is_system: number }
+                | undefined;
+              if (duplicate && duplicate.id !== seed.id && duplicate.is_system === 0) {
+                repointPaymentMethods.run(seed.id, duplicate.id);
+                retireDuplicate.run(duplicate.id);
+              }
+              setOmieCode.run(omieCode, seed.id);
+              adoptableByName.delete(normalizeAccountName(seed.name));
+              counters.updated++;
+              continue;
+            }
+            // seed ja vinculado a outro nCodCC: segue no fluxo padrao abaixo.
+          }
+        }
+
+        // 2) Fluxo padrao: pula quem ja tem o codigo, adota conta local de mesmo nome, senao insere.
         if (existsByOmieCode.get(companyId, omieCode)) {
           counters.skipped++;
           continue;
@@ -885,4 +946,25 @@ function normalizeAccountName(name: string): string {
     .trim()
     .toLowerCase()
     .replace(/\s+/g, " ");
+}
+
+/**
+ * Mapeia o nome de uma conta corrente do OMIE para o codigo da conta padrao do
+ * KyberRock (caixinha/omie_cash/getnet), ou null quando nao e uma das contas
+ * conhecidas. A comparacao usa o nome "achatado" (sem acentos, espacos ou
+ * pontuacao) para tolerar as variacoes de grafia do OMIE — "OMIE Cash",
+ * "OMIECASH", "Omie-Cash", "Get Net" etc. — e garantir que a conta padrao adote o
+ * nCodCC correto mesmo quando o nome nao bate exatamente.
+ */
+function canonicalDefaultAccountCode(name: string): string | null {
+  const flat = name
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+  if (!flat) return null;
+  if (flat.includes("omiecash")) return "omie_cash";
+  if (flat.includes("getnet")) return "getnet";
+  if (flat.includes("caixinha")) return "caixinha";
+  return null;
 }

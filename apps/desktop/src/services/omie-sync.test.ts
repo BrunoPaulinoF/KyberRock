@@ -488,6 +488,114 @@ describe("OmieSyncService", () => {
     }
   });
 
+  it("reconciles the default accounts with OMIE despite name spelling variations", async () => {
+    const db = openDesktopDatabase({ databasePath: ":memory:" });
+
+    try {
+      runDesktopMigrations(db);
+      db.exec(`
+        INSERT INTO companies (id, legal_name, trade_name, created_at, updated_at)
+        VALUES ('company-1', 'Empresa Teste', 'Empresa', datetime('now'), datetime('now'));
+      `);
+      ensureDefaultAccounts(db, "company-1");
+
+      const service = new OmieSyncService(createMockClient(), db);
+      vi.spyOn(
+        (service as unknown as Record<string, unknown>)
+          .checkingAccountsService as { listAll: () => Promise<unknown[]> },
+        "listAll"
+      ).mockResolvedValue([
+        { code: 111, integrationCode: null, name: "Caixinha", type: null, isActive: true },
+        // Sem espaco: "OMIECASH" nao bate o nome exato "OMIE Cash", mas bate o nome canonico.
+        { code: 222, integrationCode: null, name: "OMIECASH", type: null, isActive: true },
+        { code: 333, integrationCode: null, name: "Get Net", type: null, isActive: true }
+      ]);
+
+      const result = await service.syncCheckingAccounts("company-1");
+
+      // As tres contas padrao adotam o nCodCC do OMIE — nenhuma conta duplicada e criada.
+      expect(result).toEqual({ fetched: 3, created: 0, updated: 3, skipped: 0 });
+      const codeFor = (code: string): unknown =>
+        db
+          .prepare("SELECT omie_code FROM accounts WHERE company_id = 'company-1' AND code = ?")
+          .pluck()
+          .get(code);
+      expect(codeFor("caixinha")).toBe("111");
+      expect(codeFor("omie_cash")).toBe("222");
+      expect(codeFor("getnet")).toBe("333");
+      expect(
+        db
+          .prepare("SELECT COUNT(*) FROM accounts WHERE company_id = 'company-1' AND deleted_at IS NULL")
+          .pluck()
+          .get()
+      ).toBe(3);
+
+      // Idempotente: re-sincronizar nao mexe nas contas ja reconciliadas.
+      const second = await service.syncCheckingAccounts("company-1");
+      expect(second).toEqual({ fetched: 3, created: 0, updated: 0, skipped: 3 });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("heals a duplicate OMIE Cash account from an older sync and repoints its methods", async () => {
+    const db = openDesktopDatabase({ databasePath: ":memory:" });
+
+    try {
+      runDesktopMigrations(db);
+      db.exec(`
+        INSERT INTO companies (id, legal_name, trade_name, created_at, updated_at)
+        VALUES ('company-1', 'Empresa Teste', 'Empresa', datetime('now'), datetime('now'));
+      `);
+      ensureDefaultAccounts(db, "company-1");
+      // Estado herdado de um sync antigo: a conta corrente do OMIE entrou como uma conta
+      // separada "OMIECASH" (nCodCC 222) e o boleto ficou vinculado a ela, enquanto a
+      // conta padrao "OMIE Cash" seguiu sem codigo.
+      db.prepare(
+        `INSERT INTO accounts (id, company_id, code, name, omie_code, is_system, sort_order, is_active, created_at, updated_at)
+         VALUES ('dup-omiecash', 'company-1', NULL, 'OMIECASH', '222', 0, 9, 1, datetime('now'), datetime('now'))`
+      ).run();
+      db.prepare(
+        `INSERT INTO payment_methods (id, company_id, code, name, omie_code, account_id, is_system, is_customer_credit, sort_order, is_active, created_at, updated_at)
+         VALUES ('pm-boleto', 'company-1', 'boleto', 'Boleto', '15', 'dup-omiecash', 1, 0, 5, 1, datetime('now'), datetime('now'))`
+      ).run();
+
+      const service = new OmieSyncService(createMockClient(), db);
+      vi.spyOn(
+        (service as unknown as Record<string, unknown>)
+          .checkingAccountsService as { listAll: () => Promise<unknown[]> },
+        "listAll"
+      ).mockResolvedValue([
+        { code: 222, integrationCode: null, name: "OMIECASH", type: null, isActive: true }
+      ]);
+
+      const result = await service.syncCheckingAccounts("company-1");
+      expect(result).toEqual({ fetched: 1, created: 0, updated: 1, skipped: 0 });
+
+      // A conta padrao passou a carregar o nCodCC...
+      const seedId = db
+        .prepare("SELECT id FROM accounts WHERE company_id = 'company-1' AND code = 'omie_cash'")
+        .pluck()
+        .get();
+      expect(
+        db
+          .prepare("SELECT omie_code FROM accounts WHERE id = ?")
+          .pluck()
+          .get(seedId as string)
+      ).toBe("222");
+      // ...a duplicata foi aposentada...
+      expect(
+        db.prepare("SELECT deleted_at FROM accounts WHERE id = 'dup-omiecash'").pluck().get()
+      ).not.toBeNull();
+      // ...e o boleto foi repontado para a conta padrao.
+      expect(
+        db.prepare("SELECT account_id FROM payment_methods WHERE id = 'pm-boleto'").pluck().get()
+      ).toBe(seedId);
+    } finally {
+      db.close();
+    }
+  });
+
   it("syncAll returns counts and collects errors", async () => {
     const db = createMockDb();
     const client = createMockClient();
