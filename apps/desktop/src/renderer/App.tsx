@@ -366,7 +366,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   } | null>(null);
   const [registrationsTab, setRegistrationsTab] = useState<RegistrationsTab>("customers");
   const [closingOperation, setClosingOperation] = useState<WeighingOperationSummary | null>(null);
-  const [cancelOperationId, setCancelOperationId] = useState<string | null>(null);
+  const [cancelTarget, setCancelTarget] = useState<{
+    operation: WeighingOperationSummary;
+    context: "open" | "completed";
+  } | null>(null);
   const [changeProductOperation, setChangeProductOperation] =
     useState<WeighingOperationSummary | null>(null);
   const [changeProductOptions, setChangeProductOptions] = useState<
@@ -651,14 +654,14 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
             showLogsModal ||
             showSettings ||
             closingOperation ||
-            cancelOperationId ||
+            cancelTarget ||
             changeProductOperation
           ) {
             setShowUpdateModal(false);
             setShowLogsModal(false);
             setShowSettings(false);
             setClosingOperation(null);
-            setCancelOperationId(null);
+            setCancelTarget(null);
             setChangeProductOperation(null);
           } else {
             setActiveView("dashboard");
@@ -673,7 +676,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     showLogsModal,
     showSettings,
     closingOperation,
-    cancelOperationId,
+    cancelTarget,
     changeProductOperation
   ]);
 
@@ -1782,7 +1785,11 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
     try {
       const operation = await desktopApi.cancelWeighing(operationId, reason);
-      setMessage(`Operacao cancelada: ${operation.cancelReason}.`);
+      setMessage(
+        operation.omieSalesOrderId
+          ? `Venda cancelada. Cancelamento do pedido OMIE ${operation.omieSalesOrderId} solicitado; a operacao saiu dos insights e relatorios.`
+          : `Operacao cancelada: ${operation.cancelReason}.`
+      );
       await refreshOpenOperations();
     } catch (error) {
       setMessage(getErrorMessage(error));
@@ -2652,7 +2659,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                             <HelpTooltip content={TIPS.operations.close} placement="left" />
                             <button
                               type="button"
-                              onClick={() => setCancelOperationId(operation.id)}
+                              onClick={() => setCancelTarget({ operation, context: "open" })}
                               style={styles.smallDangerButton}
                             >
                               Cancelar
@@ -2754,7 +2761,15 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                           <button
                             type="button"
                             style={styles.smallDangerButton}
-                            title="Excluir esta operacao concluida da lista"
+                            title="Registrar venda cancelada: cancela o pedido no OMIE (se ja enviado), estorna o credito e remove a operacao dos insights e relatorios"
+                            onClick={() => setCancelTarget({ operation, context: "completed" })}
+                          >
+                            Venda cancelada
+                          </button>
+                          <button
+                            type="button"
+                            style={styles.smallSecondaryButton}
+                            title="Excluir esta operacao concluida da lista (nao afeta o OMIE)"
                             onClick={() => setDeleteClosedOperationId(operation.id)}
                           >
                             Excluir
@@ -2780,14 +2795,16 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
               />
             ) : null}
 
-            {cancelOperationId ? (
+            {cancelTarget ? (
               <CancelOperationDialog
+                operation={cancelTarget.operation}
+                context={cancelTarget.context}
                 onConfirm={(reason) => {
-                  const id = cancelOperationId;
-                  setCancelOperationId(null);
+                  const id = cancelTarget.operation.id;
+                  setCancelTarget(null);
                   void handleCancelOperation(id, reason);
                 }}
-                onCancel={() => setCancelOperationId(null)}
+                onCancel={() => setCancelTarget(null)}
               />
             ) : null}
 
@@ -6304,21 +6321,53 @@ function OmieDirectSyncDialog({
 }
 
 function CancelOperationDialog({
+  operation,
+  context,
   onConfirm,
   onCancel
 }: {
+  operation: WeighingOperationSummary;
+  context: "open" | "completed";
   onConfirm: (reason: string) => void;
   onCancel: () => void;
 }) {
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  const isCompleted = context === "completed";
+  // Operacao concluida ja foi enviada ao OMIE quando tem pedido criado ou ja foi faturada.
+  const hasOmieOrder =
+    operation.omieSalesOrderId != null || operation.omieBillingStatus === "billed";
+  const title = isCompleted ? "Registrar venda cancelada" : "Cancelar operacao";
+  const confirmLabel = isCompleted ? "Confirmar venda cancelada" : "Confirmar cancelamento";
+
   return (
     <div style={modalOverlayStyle}>
       <div style={modalContentStyle}>
         <h3 style={{ margin: "0 0 8px 0", color: "var(--kr-text-strong)", fontSize: "15px" }}>
-          Cancelar operacao
+          {title}
         </h3>
+        {isCompleted ? (
+          <div
+            style={{
+              background: "#fee2e2",
+              color: "#991b1b",
+              border: "1px solid #fecaca",
+              borderRadius: "10px",
+              padding: "8px 10px",
+              fontSize: "12px",
+              fontWeight: 700,
+              lineHeight: 1.4,
+              marginBottom: "8px"
+            }}
+          >
+            {hasOmieOrder
+              ? `Esta venda ja foi concluida e enviada ao OMIE${
+                  operation.omieSalesOrderId ? ` (Pedido ${operation.omieSalesOrderId})` : ""
+                }. Ao confirmar, o cancelamento do pedido sera solicitado no OMIE e os valores desta operacao sairao dos insights e relatorios.`
+              : "A operacao sera marcada como cancelada e seus valores sairao dos insights e relatorios."}
+          </div>
+        ) : null}
         <p style={styles.muted}>Informe o motivo do cancelamento.</p>
         {error ? <p style={styles.errorMessage}>{error}</p> : null}
         <label style={styles.fieldLabel}>
@@ -6331,7 +6380,11 @@ function CancelOperationDialog({
             }}
             rows={4}
             style={{ ...styles.input, resize: "vertical" }}
-            placeholder="Ex.: Cliente desistiu da carga"
+            placeholder={
+              isCompleted
+                ? "Ex.: Cliente desistiu da compra antes do faturamento"
+                : "Ex.: Cliente desistiu da carga"
+            }
           />
         </label>
         <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
@@ -6347,7 +6400,7 @@ function CancelOperationDialog({
             }}
             style={styles.primaryButton}
           >
-            Confirmar cancelamento
+            {confirmLabel}
           </button>
           <HelpTooltip content={TIPS.operations.cancel} placement="top" />
           <button type="button" onClick={onCancel} style={styles.secondaryButton}>
