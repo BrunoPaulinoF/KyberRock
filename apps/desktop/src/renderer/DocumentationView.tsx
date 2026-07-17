@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
@@ -19,14 +19,12 @@ import {
   Rocket,
   RotateCcw,
   Scale,
-  Search,
   Settings,
   ShieldCheck,
   Truck,
   Users,
   Wrench
 } from "lucide-react";
-import { MountainOutline } from "./MountainOutline";
 
 // ---------------------------------------------------------------------------
 // Central de ajuda do KyberRock.
@@ -762,8 +760,6 @@ const documentationTabs: Array<{ id: DocumentationTabId; label: string; icon: Lu
 ];
 
 export function DocumentationView() {
-  const [search, setSearch] = useState("");
-  const deferredSearch = useDeferredValue(search);
   const [activeTab, setActiveTab] = useState<DocumentationTabId>("start");
   const [activeSectionId, setActiveSectionId] = useState(documentationSections[0]?.id ?? "");
   const [expandedFaq, setExpandedFaq] = useState<string | null>(null);
@@ -785,35 +781,9 @@ export function DocumentationView() {
     storeJson(GUIDE_STEPS_STORAGE_KEY, doneGuideSteps);
   }, [doneGuideSteps]);
 
-  const hasSearch = deferredSearch.trim().length > 0;
-  const searchResults = useMemo(
-    () => ({
-      ...filterDocumentationContent(deferredSearch),
-      flows: filterTroubleshootingFlows(deferredSearch)
-    }),
-    [deferredSearch]
-  );
-  const totalResults = hasSearch
-    ? searchResults.sections.length + searchResults.faqs.length + searchResults.flows.length
-    : 0;
-
   const openGuide = (sectionId: string) => {
     setActiveSectionId(sectionId);
     setActiveTab("guides");
-    setSearch("");
-  };
-
-  const openFaq = (question: string) => {
-    setFaqCategory("all");
-    setExpandedFaq(question);
-    setActiveTab("faq");
-    setSearch("");
-  };
-
-  const openFlow = (flowId: string) => {
-    setActiveFlowId(flowId);
-    setActiveTab("troubleshoot");
-    setSearch("");
   };
 
   const toggleQuickStartTask = (taskId: string) => {
@@ -840,61 +810,15 @@ export function DocumentationView() {
     <section style={styles.page} aria-labelledby="documentation-title">
       <style>{documentationCss}</style>
 
-      <header style={styles.hero}>
-        <MountainOutline
-          opacity={0.3}
-          style={{
-            position: "absolute",
-            left: "-6px",
-            bottom: "-8px",
-            width: "210px",
-            height: "79px",
-            pointerEvents: "none",
-            zIndex: 0
-          }}
-        />
-        <div style={styles.heroText}>
-          <p style={styles.kicker}>Central de ajuda</p>
-          <h1 id="documentation-title" style={styles.title}>
-            Como operar o KyberRock
-          </h1>
-          <p style={styles.subtitle}>
-            Guias passo a passo, respostas rapidas e diagnostico de problemas para operar a
-            balanca com seguranca.
-          </p>
-        </div>
-        <div style={styles.heroSearch}>
-          <label style={styles.searchLabel} htmlFor="documentation-search">
-            <Search size={15} />
-            Qual e a sua duvida?
-          </label>
-          <div style={styles.searchRow}>
-            <input
-              id="documentation-search"
-              className="krdoc-input"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Ex.: balanca nao conecta, reimpressao, credito..."
-              style={styles.searchInput}
-            />
-            {search ? (
-              <button
-                type="button"
-                className="krdoc-ghost-btn"
-                onClick={() => setSearch("")}
-                style={styles.clearButton}
-              >
-                Limpar
-              </button>
-            ) : null}
-          </div>
-        </div>
-      </header>
-
-      <nav aria-label="Areas da documentacao" style={styles.tabBar} role="tablist">
+      <nav
+        id="documentation-title"
+        aria-label="Areas da documentacao"
+        style={styles.tabBar}
+        role="tablist"
+      >
         {documentationTabs.map((tab) => {
           const Icon = tab.icon;
-          const isActive = !hasSearch && activeTab === tab.id;
+          const isActive = activeTab === tab.id;
           return (
             <button
               key={tab.id}
@@ -902,10 +826,7 @@ export function DocumentationView() {
               role="tab"
               aria-selected={isActive}
               className={isActive ? "krdoc-tab krdoc-tab-active" : "krdoc-tab"}
-              onClick={() => {
-                setActiveTab(tab.id);
-                setSearch("");
-              }}
+              onClick={() => setActiveTab(tab.id)}
             >
               <Icon size={15} />
               {tab.label}
@@ -914,182 +835,44 @@ export function DocumentationView() {
         })}
       </nav>
 
-      {hasSearch ? (
-        <SearchResultsPanel
-          query={deferredSearch}
-          totalResults={totalResults}
-          sections={searchResults.sections}
-          faqs={searchResults.faqs}
-          flows={searchResults.flows}
+      {activeTab === "start" ? (
+        <StartTab
+          doneTasks={doneQuickStart}
+          onToggleTask={toggleQuickStartTask}
           onOpenGuide={openGuide}
-          onOpenFaq={openFaq}
-          onOpenFlow={openFlow}
         />
-      ) : (
-        <>
-          {activeTab === "start" ? (
-            <StartTab
-              doneTasks={doneQuickStart}
-              onToggleTask={toggleQuickStartTask}
-              onOpenGuide={openGuide}
-            />
-          ) : null}
-          {activeTab === "guides" ? (
-            <GuidesTab
-              activeSectionId={activeSectionId}
-              onSelectSection={setActiveSectionId}
-              doneSteps={doneGuideSteps}
-              onToggleStep={toggleGuideStep}
-              onResetSteps={resetGuideSteps}
-            />
-          ) : null}
-          {activeTab === "faq" ? (
-            <FaqTab
-              category={faqCategory}
-              onSelectCategory={(next) => {
-                setFaqCategory(next);
-                setExpandedFaq(null);
-              }}
-              expandedQuestion={expandedFaq}
-              onToggleQuestion={(question) =>
-                setExpandedFaq((current) => (current === question ? null : question))
-              }
-            />
-          ) : null}
-          {activeTab === "troubleshoot" ? (
-            <TroubleshootTab
-              activeFlowId={activeFlowId}
-              onSelectFlow={setActiveFlowId}
-              onOpenSupport={() => setActiveTab("support")}
-            />
-          ) : null}
-          {activeTab === "support" ? <SupportTab /> : null}
-        </>
-      )}
+      ) : null}
+      {activeTab === "guides" ? (
+        <GuidesTab
+          activeSectionId={activeSectionId}
+          onSelectSection={setActiveSectionId}
+          doneSteps={doneGuideSteps}
+          onToggleStep={toggleGuideStep}
+          onResetSteps={resetGuideSteps}
+        />
+      ) : null}
+      {activeTab === "faq" ? (
+        <FaqTab
+          category={faqCategory}
+          onSelectCategory={(next) => {
+            setFaqCategory(next);
+            setExpandedFaq(null);
+          }}
+          expandedQuestion={expandedFaq}
+          onToggleQuestion={(question) =>
+            setExpandedFaq((current) => (current === question ? null : question))
+          }
+        />
+      ) : null}
+      {activeTab === "troubleshoot" ? (
+        <TroubleshootTab
+          activeFlowId={activeFlowId}
+          onSelectFlow={setActiveFlowId}
+          onOpenSupport={() => setActiveTab("support")}
+        />
+      ) : null}
+      {activeTab === "support" ? <SupportTab /> : null}
     </section>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Busca global
-// ---------------------------------------------------------------------------
-
-function SearchResultsPanel({
-  query,
-  totalResults,
-  sections,
-  faqs,
-  flows,
-  onOpenGuide,
-  onOpenFaq,
-  onOpenFlow
-}: {
-  query: string;
-  totalResults: number;
-  sections: DocumentationSection[];
-  faqs: DocumentationFaq[];
-  flows: TroubleshootingFlow[];
-  onOpenGuide: (sectionId: string) => void;
-  onOpenFaq: (question: string) => void;
-  onOpenFlow: (flowId: string) => void;
-}) {
-  if (totalResults === 0) {
-    return (
-      <div style={styles.emptyState}>
-        <AlertTriangle size={24} />
-        <strong>Nenhum resultado para &quot;{query}&quot;.</strong>
-        <span>Tente termos mais simples, como balanca, impressora, cloud ou credito.</span>
-      </div>
-    );
-  }
-
-  return (
-    <div style={styles.searchResults}>
-      <p style={styles.searchHint}>
-        {totalResults} resultado(s) para &quot;{query}&quot;. Clique para abrir.
-      </p>
-
-      {sections.length > 0 ? (
-        <div style={styles.resultGroup}>
-          <h2 style={styles.resultGroupTitle}>
-            <BookOpen size={15} /> Guias
-          </h2>
-          {sections.map((section) => {
-            const Icon = section.icon;
-            return (
-              <button
-                key={section.id}
-                type="button"
-                className="krdoc-result"
-                onClick={() => onOpenGuide(section.id)}
-              >
-                <span style={styles.resultIcon}>
-                  <Icon size={16} />
-                </span>
-                <span style={styles.resultText}>
-                  <strong>{section.title}</strong>
-                  <small>{section.summary}</small>
-                </span>
-                <ArrowRight size={15} style={{ flexShrink: 0 }} />
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
-
-      {faqs.length > 0 ? (
-        <div style={styles.resultGroup}>
-          <h2 style={styles.resultGroupTitle}>
-            <HelpCircle size={15} /> Duvidas
-          </h2>
-          {faqs.map((faq) => (
-            <button
-              key={faq.question}
-              type="button"
-              className="krdoc-result"
-              onClick={() => onOpenFaq(faq.question)}
-            >
-              <span style={styles.resultIcon}>
-                <HelpCircle size={16} />
-              </span>
-              <span style={styles.resultText}>
-                <strong>{faq.question}</strong>
-                <small>{faq.answer}</small>
-              </span>
-              <ArrowRight size={15} style={{ flexShrink: 0 }} />
-            </button>
-          ))}
-        </div>
-      ) : null}
-
-      {flows.length > 0 ? (
-        <div style={styles.resultGroup}>
-          <h2 style={styles.resultGroupTitle}>
-            <Wrench size={15} /> Diagnostico
-          </h2>
-          {flows.map((flow) => {
-            const Icon = flow.icon;
-            return (
-              <button
-                key={flow.id}
-                type="button"
-                className="krdoc-result"
-                onClick={() => onOpenFlow(flow.id)}
-              >
-                <span style={styles.resultIcon}>
-                  <Icon size={16} />
-                </span>
-                <span style={styles.resultText}>
-                  <strong>{flow.title}</strong>
-                  <small>{flow.symptom}</small>
-                </span>
-                <ArrowRight size={15} style={{ flexShrink: 0 }} />
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
-    </div>
   );
 }
 
