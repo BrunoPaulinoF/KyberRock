@@ -94,7 +94,8 @@ import { InsightsView } from "./InsightsView";
 import { ReportsView } from "./ReportsView";
 import { TruckControlView, formatMinutes } from "./TruckControlView";
 import { CustomersView } from "./CustomersView";
-import { HelpTooltip } from "./Tooltip";
+import { HelpTooltip, Tooltip } from "./Tooltip";
+import type { TooltipPlacement } from "./Tooltip";
 import { PriceChangePasswordDialog } from "./PriceChangePasswordDialog";
 import { TIPS } from "./tooltip-messages";
 import {
@@ -2642,29 +2643,30 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                             </small>
                           </span>
                           <span style={styles.rowActions}>
-                            <button
-                              type="button"
+                            <IconActionButton
+                              icon="swap"
+                              label="Alterar material"
+                              tip={TIPS.operations.changeProduct}
+                              tone="neutral"
+                              placement="left"
                               onClick={() => void handleOpenChangeProduct(operation)}
-                              style={styles.smallSecondaryButton}
-                            >
-                              Alterar material
-                            </button>
-                            <button
-                              type="button"
+                            />
+                            <IconActionButton
+                              icon="check"
+                              label="Fechar operacao"
+                              tip={TIPS.operations.close}
+                              tone="primary"
+                              placement="left"
                               onClick={() => setClosingOperation(operation)}
-                              style={styles.smallPrimaryButton}
-                            >
-                              Fechar
-                            </button>
-                            <HelpTooltip content={TIPS.operations.close} placement="left" />
-                            <button
-                              type="button"
+                            />
+                            <IconActionButton
+                              icon="ban"
+                              label="Cancelar operacao"
+                              tip={TIPS.operations.cancel}
+                              tone="danger"
+                              placement="left"
                               onClick={() => setCancelTarget({ operation, context: "open" })}
-                              style={styles.smallDangerButton}
-                            >
-                              Cancelar
-                            </button>
-                            <HelpTooltip content={TIPS.operations.cancel} placement="left" />
+                            />
                           </span>
                         </div>
                         );
@@ -2739,41 +2741,43 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                           onRetry={() => void handleRetryFiscalBilling(operation.id)}
                         />
                         <span style={styles.rowActions}>
-                          <button
-                            type="button"
-                            style={styles.smallSecondaryButton}
-                            title="Reimprimir a nota desta operacao (emite uma nova via)"
+                          <IconActionButton
+                            icon="printer"
+                            label="Reimprimir nota"
+                            tip={
+                              reprintingOperationId === operation.id
+                                ? "Reimprimindo..."
+                                : TIPS.printing.reprint
+                            }
+                            tone="neutral"
+                            placement="left"
                             disabled={reprintingOperationId === operation.id}
                             onClick={() => void handleReprintOperationReceipt(operation.id)}
-                          >
-                            {reprintingOperationId === operation.id
-                              ? "Reimprimindo..."
-                              : "Reimprimir nota"}
-                          </button>
-                          <button
-                            type="button"
-                            style={styles.smallSecondaryButton}
-                            title="Editar o cadastro do cliente desta operacao"
+                          />
+                          <IconActionButton
+                            icon="edit"
+                            label="Editar cliente"
+                            tip={TIPS.operations.editCustomer}
+                            tone="neutral"
+                            placement="left"
                             onClick={() => handleEditOperationCustomer(operation)}
-                          >
-                            Editar cliente
-                          </button>
-                          <button
-                            type="button"
-                            style={styles.smallDangerButton}
-                            title="Registrar venda cancelada: cancela o pedido no OMIE (se ja enviado), estorna o credito e remove a operacao dos insights e relatorios"
+                          />
+                          <IconActionButton
+                            icon="ban"
+                            label="Venda cancelada"
+                            tip={TIPS.operations.saleCancelled}
+                            tone="danger"
+                            placement="left"
                             onClick={() => setCancelTarget({ operation, context: "completed" })}
-                          >
-                            Venda cancelada
-                          </button>
-                          <button
-                            type="button"
-                            style={styles.smallSecondaryButton}
-                            title="Excluir esta operacao concluida da lista (nao afeta o OMIE)"
+                          />
+                          <IconActionButton
+                            icon="trash"
+                            label="Excluir da lista"
+                            tip={TIPS.operations.deleteClosed}
+                            tone="neutral"
+                            placement="left"
                             onClick={() => setDeleteClosedOperationId(operation.id)}
-                          >
-                            Excluir
-                          </button>
+                          />
                         </span>
                       </div>
                     ))}
@@ -6492,6 +6496,125 @@ function FiscalProgressDialog({
   );
 }
 
+type OpIconName = "swap" | "check" | "ban" | "printer" | "edit" | "trash" | "retry";
+
+function OpIcon({ name }: { name: OpIconName }) {
+  const common: React.SVGProps<SVGSVGElement> = {
+    width: 16,
+    height: 16,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 2,
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    "aria-hidden": true,
+    focusable: false
+  };
+  switch (name) {
+    case "swap":
+      return (
+        <svg {...common}>
+          <polyline points="17 1 21 5 17 9" />
+          <path d="M3 11V9a4 4 0 0 1 4-4h14" />
+          <polyline points="7 23 3 19 7 15" />
+          <path d="M21 13v2a4 4 0 0 1-4 4H3" />
+        </svg>
+      );
+    case "check":
+      return (
+        <svg {...common}>
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
+      );
+    case "ban":
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="10" />
+          <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
+        </svg>
+      );
+    case "printer":
+      return (
+        <svg {...common}>
+          <polyline points="6 9 6 2 18 2 18 9" />
+          <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+          <rect x="6" y="14" width="12" height="8" />
+        </svg>
+      );
+    case "edit":
+      return (
+        <svg {...common}>
+          <path d="M12 20h9" />
+          <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+        </svg>
+      );
+    case "trash":
+      return (
+        <svg {...common}>
+          <polyline points="3 6 5 6 21 6" />
+          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+          <line x1="10" y1="11" x2="10" y2="17" />
+          <line x1="14" y1="11" x2="14" y2="17" />
+        </svg>
+      );
+    case "retry":
+      return (
+        <svg {...common}>
+          <polyline points="23 4 23 10 17 10" />
+          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+        </svg>
+      );
+  }
+}
+
+/**
+ * Botao de acao compacto, so com icone: reduz a largura das colunas de acoes
+ * (evita o estouro de layout com varios botoes) e mostra, no hover/foco, uma
+ * dica explicando o que o botao faz. O `label` vira o nome acessivel (aria).
+ */
+function IconActionButton({
+  icon,
+  label,
+  tip,
+  tone = "neutral",
+  placement = "top",
+  disabled = false,
+  onClick
+}: {
+  icon: OpIconName;
+  label: string;
+  tip?: React.ReactNode;
+  tone?: "neutral" | "primary" | "danger";
+  placement?: TooltipPlacement;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  const toneStyle =
+    tone === "primary"
+      ? styles.iconButtonPrimary
+      : tone === "danger"
+        ? styles.iconButtonDanger
+        : styles.iconButtonNeutral;
+  return (
+    <Tooltip content={tip ?? label} placement={placement}>
+      <button
+        type="button"
+        aria-label={label}
+        disabled={disabled}
+        onClick={onClick}
+        style={{
+          ...styles.iconButtonBase,
+          ...toneStyle,
+          ...(disabled ? { opacity: 0.5, cursor: "not-allowed" } : {})
+        }}
+      >
+        <OpIcon name={icon} />
+      </button>
+    </Tooltip>
+  );
+}
+
 function FiscalBillingStatus({
   operation,
   retrying,
@@ -6508,22 +6631,15 @@ function FiscalBillingStatus({
       <span style={fiscalBillingPillStyle(status.tone)}>{status.label}</span>
       <small>{status.detail}</small>
       {status.canRetry ? (
-        <>
-          <button
-            type="button"
-            onClick={onRetry}
-            disabled={retrying}
-            style={{
-              ...styles.smallPrimaryButton,
-              width: "fit-content",
-              opacity: retrying ? 0.6 : 1,
-              cursor: retrying ? "not-allowed" : "pointer"
-            }}
-          >
-            {retrying ? "Retentando..." : "Retentar OMIE"}
-          </button>
-          <HelpTooltip content={TIPS.operations.retryOmie} placement="left" />
-        </>
+        <IconActionButton
+          icon="retry"
+          label="Retentar OMIE"
+          tip={retrying ? "Retentando..." : TIPS.operations.retryOmie}
+          tone="primary"
+          placement="left"
+          disabled={retrying}
+          onClick={onRetry}
+        />
       ) : null}
     </span>
   );
@@ -10439,6 +10555,33 @@ const styles = {
     display: "flex",
     gap: "6px",
     justifyContent: "flex-end"
+  },
+  iconButtonBase: {
+    width: "30px",
+    height: "30px",
+    padding: 0,
+    borderRadius: "8px",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+    flexShrink: 0,
+    lineHeight: 0
+  },
+  iconButtonNeutral: {
+    border: "1px solid var(--kr-border)",
+    background: "var(--kr-surface)",
+    color: "var(--kr-text-strong)"
+  },
+  iconButtonPrimary: {
+    border: "1px solid var(--kr-primary-strong)",
+    background: "var(--kr-primary-strong)",
+    color: "var(--kr-primary-text)"
+  },
+  iconButtonDanger: {
+    border: "1px solid var(--kr-danger-border)",
+    background: "var(--kr-danger-soft)",
+    color: "var(--kr-danger)"
   },
   smallPrimaryButton: {
     border: "none",

@@ -61,8 +61,13 @@ export const TIPS = {
     filterPeriod: "Filtra canceladas por periodo: hoje, 7 dias, mes atual ou todas.",
     filterProduct: "Filtra operacoes concluidas por produto.",
     clearCanceled: "Apaga da lista todas as operacoes canceladas (somente a lista, o historico fica).",
+    changeProduct: "Alterar material: troca o produto desta operacao aberta.",
     close: "Fecha a pesagem: captura a saida e finaliza a operacao (fiscal ou interna).",
     cancel: "Cancela esta pesagem. O motivo fica registrado para auditoria.",
+    editCustomer: "Editar o cadastro do cliente desta operacao concluida.",
+    saleCancelled:
+      "Venda cancelada: cancela o pedido no OMIE (se ja enviado), estorna o credito e remove a operacao dos insights e relatorios.",
+    deleteClosed: "Excluir esta operacao concluida da lista. Nao afeta o pedido no OMIE.",
     retryOmie: "Reenvia o faturamento de uma operacao que falhou."
   },
   printing: {
