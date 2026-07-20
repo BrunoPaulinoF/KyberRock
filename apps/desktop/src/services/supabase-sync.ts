@@ -2016,6 +2016,7 @@ export async function processOmieSyncQueue(
       paymentTermInstallmentDays?: number[] | null;
       paymentMethodOmieCode?: string | null;
       accountOmieCode?: string | null;
+      accountName?: string | null;
       transport?: {
         plate?: string | null;
         driverName?: string | null;
@@ -2056,6 +2057,7 @@ export async function processOmieSyncQueue(
             installmentDays: payload.paymentTermInstallmentDays ?? undefined,
             paymentMethodOmieCode: payload.paymentMethodOmieCode ?? undefined,
             accountOmieCode: payload.accountOmieCode ?? undefined,
+            accountName: payload.accountName ?? undefined,
             transport: payload.transport ?? undefined,
             idempotencyKey: job.idempotencyKey
           }
@@ -2288,6 +2290,7 @@ export async function processFiscalBillingNow(
     paymentTermInstallmentDays?: number[] | null;
     paymentMethodOmieCode?: string | null;
     accountOmieCode?: string | null;
+    accountName?: string | null;
     transport?: {
       plate?: string | null;
       driverName?: string | null;
@@ -2329,6 +2332,7 @@ export async function processFiscalBillingNow(
           installmentDays: payload.paymentTermInstallmentDays ?? undefined,
           paymentMethodOmieCode: payload.paymentMethodOmieCode ?? undefined,
           accountOmieCode: payload.accountOmieCode ?? undefined,
+          accountName: payload.accountName ?? undefined,
           transport: payload.transport ?? undefined,
           idempotencyKey: job.idempotency_key
         }

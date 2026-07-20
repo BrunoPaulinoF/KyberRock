@@ -239,6 +239,14 @@ type CreateOrderPayload = {
    */
   accountOmieCode?: string | number;
   /**
+   * Nome da conta vinculada ao meio de pagamento (ex.: "OMIE Cash", "Caixinha").
+   * Usado para resolver o nCodCC pelo nome canonico direto no OMIE quando o desktop
+   * nao mandou accountOmieCode (o omie_code local ainda esta nulo/desatualizado).
+   * Garante que o meio de pagamento sempre caia na conta vinculada a ele em vez de
+   * cair silenciosamente na primeira conta corrente do tenant (a caixinha).
+   */
+  accountName?: string | null;
+  /**
    * Cadastro do cliente para criar/localizar no OMIE na hora do envio quando ele ainda
    * nao tem codigo OMIE (customerOmieId ausente/0). O edge faz find-or-create por CNPJ/CPF
    * (pushCustomerToOmie) e usa o codigo resultante no pedido, devolvendo omieCustomerId
@@ -1679,13 +1687,18 @@ async function createOmieOrder(
   const integrationCode = toOmieIntegrationCode(payload.idempotencyKey);
   // Garante o cliente no OMIE (cadastra na hora quando ainda nao existe) antes do pedido.
   const customerOmieId = await resolveOrderCustomerOmieId(credentials, payload);
-  // Conta corrente escolhida na operacao (meio de pagamento -> conta). Sem ela,
-  // mantem o fallback historico: primeira conta corrente do tenant.
+  // Conta corrente escolhida na operacao (meio de pagamento -> conta vinculada).
+  // Prioridade: (1) nCodCC vindo do desktop; (2) resolucao pelo nome da conta
+  // vinculada direto no OMIE (cobre o caso do omie_code local nulo/desatualizado,
+  // garantindo que o meio de pagamento sempre use a conta a ele vinculada); (3) por
+  // ultimo, o fallback historico da primeira conta corrente do tenant — usado so
+  // quando a operacao nao tem conta vinculada.
   const selectedAccountCode = toNumber(payload.accountOmieCode ?? null);
   const accountCode =
     selectedAccountCode !== null && selectedAccountCode > 0
       ? selectedAccountCode
-      : await resolveOmieAccountCode(credentials);
+      : ((await resolveOmieAccountCodeByName(credentials, payload.accountName)) ??
+        (await resolveOmieAccountCode(credentials)));
   const installmentCount =
     typeof payload.installmentCount === "number" && payload.installmentCount > 0
       ? Math.floor(payload.installmentCount)
@@ -1882,29 +1895,107 @@ async function resolveOmieAccountCode(credentials: OmieCredentials): Promise<num
   }
 }
 
-function extractFirstAccountCode(response: Record<string, unknown> | null): number | null {
-  if (!response || typeof response !== "object") return null;
+function extractAccountRows(
+  response: Record<string, unknown> | null
+): Record<string, unknown>[] {
+  if (!response || typeof response !== "object") return [];
   const knownKeys = ["ListarContasCorrentes", "conta_corrente_lista", "contaCorrenteLista"];
   const lists = [
     ...knownKeys.map((key) => response[key]),
     ...Object.values(response).filter((value) => Array.isArray(value))
   ];
+  const rows: Record<string, unknown>[] = [];
   for (const list of lists) {
     if (!Array.isArray(list)) continue;
     for (const entry of list) {
-      if (!entry || typeof entry !== "object") continue;
-      const row = entry as Record<string, unknown>;
-      const code = toNumber(
-        pickFirst(
-          row.nCodCC as string | number | null | undefined,
-          row.codigo_conta_corrente as string | number | null | undefined,
-          row.codigoContaCorrente as string | number | null | undefined
-        )
-      );
-      if (code !== null && code > 0) return code;
+      if (entry && typeof entry === "object") rows.push(entry as Record<string, unknown>);
     }
   }
+  return rows;
+}
+
+function accountRowCode(row: Record<string, unknown>): number | null {
+  return toNumber(
+    pickFirst(
+      row.nCodCC as string | number | null | undefined,
+      row.codigo_conta_corrente as string | number | null | undefined,
+      row.codigoContaCorrente as string | number | null | undefined
+    )
+  );
+}
+
+function extractFirstAccountCode(response: Record<string, unknown> | null): number | null {
+  for (const row of extractAccountRows(response)) {
+    const code = accountRowCode(row);
+    if (code !== null && code > 0) return code;
+  }
   return null;
+}
+
+// "Achata" o nome da conta (sem acentos, espacos ou pontuacao) para casar variacoes de
+// grafia entre a conta do KyberRock e a conta corrente do OMIE ("OMIE Cash" <-> "OMIECASH",
+// "GetNet" <-> "Get Net"). Mesma regra usada no sync de contas correntes do desktop.
+function canonicalizeAccountName(name: string): string {
+  return name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+// Cache das contas correntes por app_key: nome canonico -> nCodCC. Evita repetir o
+// ListarContasCorrentes a cada pedido. Falhas nao sao cacheadas (permite nova tentativa).
+const omieAccountsByCanonicalNameCache = new Map<string, Map<string, number>>();
+
+async function loadOmieAccountsByCanonicalName(
+  credentials: OmieCredentials
+): Promise<Map<string, number>> {
+  const cached = omieAccountsByCanonicalNameCache.get(credentials.appKey);
+  if (cached !== undefined) return cached;
+
+  const byName = new Map<string, number>();
+  try {
+    // Pagina o cadastro de contas correntes do OMIE ate um teto seguro.
+    const pageSize = 50;
+    for (let page = 1; page <= 20; page++) {
+      const response = await callOmie<unknown, Record<string, unknown>>(
+        credentials,
+        "/geral/contacorrente/",
+        "ListarContasCorrentes",
+        { pagina: page, registros_por_pagina: pageSize }
+      );
+      const rows = extractAccountRows(response);
+      if (rows.length === 0) break;
+      for (const row of rows) {
+        const code = accountRowCode(row);
+        const rawName = row.descricao;
+        const name = typeof rawName === "string" ? rawName.trim() : "";
+        if (code === null || code <= 0 || !name) continue;
+        const canonical = canonicalizeAccountName(name);
+        // Primeira ocorrencia vence: mantem a conta correspondente estavel entre paginas.
+        if (canonical && !byName.has(canonical)) byName.set(canonical, code);
+      }
+      if (rows.length < pageSize) break;
+    }
+  } catch {
+    return byName;
+  }
+  if (byName.size > 0) omieAccountsByCanonicalNameCache.set(credentials.appKey, byName);
+  return byName;
+}
+
+// Resolve o nCodCC da conta corrente do OMIE cujo nome canonico bate com o nome da conta
+// vinculada ao meio de pagamento. Retorna null quando nao ha nome ou nao ha correspondencia,
+// caindo entao no fallback da primeira conta corrente.
+async function resolveOmieAccountCodeByName(
+  credentials: OmieCredentials,
+  accountName: string | null | undefined
+): Promise<number | null> {
+  if (!accountName) return null;
+  const canonical = canonicalizeAccountName(accountName);
+  if (!canonical) return null;
+  const byName = await loadOmieAccountsByCanonicalName(credentials);
+  return byName.get(canonical) ?? null;
 }
 
 // O IncluirOS tambem exige o Codigo do Servico Municipal (cCodServMun) e o Codigo
