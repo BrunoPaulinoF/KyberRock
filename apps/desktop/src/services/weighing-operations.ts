@@ -1019,6 +1019,12 @@ export interface OmieBillingJobPayload {
   paymentMethodOmieCode: string | null;
   /** nCodCC (OMIE) da conta vinculada ao meio escolhido; vai em codigo_conta_corrente/nCodCC. */
   accountOmieCode: string | null;
+  /**
+   * Nome da conta vinculada ao meio (ex.: "OMIE Cash"). Usado pelo edge para resolver o
+   * nCodCC pelo nome direto no OMIE quando o accountOmieCode local ainda esta nulo,
+   * garantindo que o meio de pagamento sempre caia na conta a ele vinculada.
+   */
+  accountName: string | null;
   /** Placa, motorista, transportadora e pesos da carga para o frete do pedido. */
   transport: OmieOrderTransport | null;
 }
@@ -1182,13 +1188,13 @@ export function buildOmieBillingJob(
   const omiePayment = row.payment_method_id
     ? (database
         .prepare(
-          `SELECT pm.omie_code AS method_code, ac.omie_code AS account_code
+          `SELECT pm.omie_code AS method_code, ac.omie_code AS account_code, ac.name AS account_name
            FROM payment_methods pm
            LEFT JOIN accounts ac ON ac.id = pm.account_id AND ac.deleted_at IS NULL
            WHERE pm.id = ?`
         )
         .get(row.payment_method_id) as
-        | { method_code: string | null; account_code: string | null }
+        | { method_code: string | null; account_code: string | null; account_name: string | null }
         | undefined)
     : undefined;
 
@@ -1248,6 +1254,7 @@ export function buildOmieBillingJob(
       paymentTermInstallmentDays: resolveInstallmentDays(omieParcela),
       paymentMethodOmieCode: omiePayment?.method_code ?? null,
       accountOmieCode: omiePayment?.account_code ?? null,
+      accountName: omiePayment?.account_name ?? null,
       transport
     }
   };

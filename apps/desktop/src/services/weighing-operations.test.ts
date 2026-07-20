@@ -1235,9 +1235,68 @@ describe("weighing operations", () => {
       const payload = JSON.parse(payloadJson) as {
         paymentMethodOmieCode: string | null;
         accountOmieCode: string | null;
+        accountName: string | null;
       };
       expect(payload.paymentMethodOmieCode).toBe("04");
       expect(payload.accountOmieCode).toBe("4321");
+      // O nome da conta vinculada vai junto para o edge resolver o nCodCC pelo nome
+      // quando o omie_code local ainda estiver nulo.
+      expect(payload.accountName).toBe("GetNet");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("still sends the linked account name when its OMIE code was not synced yet", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET omie_customer_id = 456 WHERE id = 'customer-1'").run();
+      const now = "2026-06-06T12:00:00.000Z";
+      // Conta OMIE Cash ainda SEM omie_code (sync de contas correntes nao rodou/nao casou o nome).
+      database
+        .prepare(
+          `INSERT INTO accounts (id, company_id, code, name, omie_code, is_system, sort_order, is_active, created_at, updated_at)
+           VALUES ('account-omiecash', 'company-1', 'omie_cash', 'OMIE Cash', NULL, 1, 2, 1, ?, ?)`
+        )
+        .run(now, now);
+      database
+        .prepare(
+          `INSERT INTO payment_methods (id, company_id, code, name, omie_code, account_id, is_system, is_customer_credit, sort_order, is_active, created_at, updated_at)
+           VALUES ('method-boleto', 'company-1', 'boleto', 'Boleto', '15', 'account-omiecash', 1, 0, 5, 1, ?, ?)`
+        )
+        .run(now, now);
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        paymentMethodId: "method-boleto",
+        entryWeightKg: 12_000
+      });
+
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      const payloadJson = database
+        .prepare("SELECT payload_json FROM sync_queue WHERE target = 'omie'")
+        .pluck()
+        .get() as string;
+      const payload = JSON.parse(payloadJson) as {
+        accountOmieCode: string | null;
+        accountName: string | null;
+      };
+      // Sem nCodCC local, mas com o nome da conta: o edge resolve o nCodCC pelo nome e o
+      // boleto cai na OMIE Cash em vez da primeira conta corrente do tenant (a caixinha).
+      expect(payload.accountOmieCode).toBeNull();
+      expect(payload.accountName).toBe("OMIE Cash");
     } finally {
       database.close();
     }
