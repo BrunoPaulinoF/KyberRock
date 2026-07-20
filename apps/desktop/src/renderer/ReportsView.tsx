@@ -17,6 +17,7 @@ interface RecipientRow {
   sendEmail: boolean;
   sendWhatsapp: boolean;
   reportTypes: ReportType;
+  sendFinancial: boolean;
   displayName: string | null;
   isActive: boolean;
   syncStatus: "synced" | "pending" | "error";
@@ -29,6 +30,7 @@ interface RecipientFormState {
   whatsappPhone: string;
   deliveryChannel: "email" | "whatsapp" | "both";
   reportTypes: ReportType;
+  sendFinancial: boolean;
   displayName: string;
   isActive: boolean;
 }
@@ -38,6 +40,7 @@ const initialForm: RecipientFormState = {
   whatsappPhone: "",
   deliveryChannel: "email",
   reportTypes: "sales",
+  sendFinancial: false,
   displayName: "",
   isActive: true
 };
@@ -333,6 +336,7 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
         sendEmail,
         sendWhatsapp,
         reportTypes: form.reportTypes,
+        sendFinancial: form.sendFinancial,
         displayName: form.displayName.trim() || null,
         isActive: form.isActive
       };
@@ -362,6 +366,7 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
             ? "whatsapp"
             : "email",
       reportTypes: recipient.reportTypes ?? "sales",
+      sendFinancial: recipient.sendFinancial,
       displayName: recipient.displayName ?? "",
       isActive: recipient.isActive
     });
@@ -505,6 +510,29 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
                     <option value="both">Vendas + Caminhoes</option>
                   </select>
                 </label>
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    fontWeight: 700,
+                    fontSize: "13px",
+                    color: "var(--kr-text-strong)"
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={form.sendFinancial}
+                    onChange={(event) => setForm({ ...form, sendFinancial: event.target.checked })}
+                  />
+                  <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    Financeiro (OMIE)
+                    <HelpTooltip
+                      content="Envia tambem o extrato financeiro e as contas a pagar consultados direto no OMIE, como PDF, no horario configurado em 'Envios automaticos de relatorios'."
+                      placement="right"
+                    />
+                  </span>
+                </label>
               </section>
             </div>
             <div style={styles.formFooter}>
@@ -551,6 +579,7 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
                   <th style={styles.tableHeadCell}>E-mail</th>
                   <th style={styles.tableHeadCell}>WhatsApp</th>
                   <th style={styles.tableHeadCell}>Relatorios</th>
+                  <th style={styles.tableHeadCell}>Financeiro</th>
                   <th style={styles.tableHeadCell}>Status</th>
                   <th style={styles.tableHeadCell}>Ultima sincronizacao</th>
                   <th style={{ ...styles.tableHeadCell, textAlign: "right" }}>Acoes</th>
@@ -572,6 +601,7 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
                     <td style={styles.tableCell}>
                       {REPORT_TYPE_LABEL[recipient.reportTypes ?? "sales"]}
                     </td>
+                    <td style={styles.tableCell}>{recipient.sendFinancial ? "Sim" : "Nao"}</td>
                     <td style={styles.tableCell}>
                       <span style={badgeForStatus(recipient.syncStatus)}>
                         {recipient.syncStatus === "synced"

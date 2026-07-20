@@ -679,6 +679,7 @@ function registerIpcHandlers(): void {
         scheduleFrequency?: string;
         scheduleTime?: string;
         reportTypes?: string;
+        sendFinancial?: boolean;
         displayName?: string | null;
         isActive?: boolean;
       }
@@ -692,6 +693,7 @@ function registerIpcHandlers(): void {
         scheduleFrequency: input.scheduleFrequency as "daily" | "weekly" | "monthly" | undefined,
         scheduleTime: input.scheduleTime,
         reportTypes: input.reportTypes as "sales" | "trucks" | "both" | undefined,
+        sendFinancial: input.sendFinancial,
         displayName: input.displayName,
         isActive: input.isActive
       });
@@ -711,6 +713,7 @@ function registerIpcHandlers(): void {
         scheduleFrequency?: string;
         scheduleTime?: string;
         reportTypes?: string;
+        sendFinancial?: boolean;
         displayName?: string | null;
         isActive?: boolean;
       }
@@ -724,6 +727,7 @@ function registerIpcHandlers(): void {
         scheduleFrequency: input.scheduleFrequency as "daily" | "weekly" | "monthly" | undefined,
         scheduleTime: input.scheduleTime,
         reportTypes: input.reportTypes as "sales" | "trucks" | "both" | undefined,
+        sendFinancial: input.sendFinancial,
         displayName: input.displayName,
         isActive: input.isActive
       });

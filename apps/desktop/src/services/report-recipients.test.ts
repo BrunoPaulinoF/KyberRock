@@ -155,6 +155,23 @@ describe("report recipients", () => {
     }
   });
 
+  it("persists sendFinancial on create and update, defaulting to false", () => {
+    const db = createDatabase();
+
+    try {
+      const recipient = createReportRecipient(db, {
+        companyId: "comp-1",
+        email: "dono@example.com"
+      });
+      expect(recipient.sendFinancial).toBe(false);
+
+      const updated = updateReportRecipient(db, recipient.id, { sendFinancial: true });
+      expect(updated.sendFinancial).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
   it("requires a valid contact for the selected channel", () => {
     const db = createDatabase();
 

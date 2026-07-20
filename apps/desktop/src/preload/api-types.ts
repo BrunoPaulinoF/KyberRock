@@ -228,6 +228,7 @@ export interface KyberRockDesktopApi {
       scheduleFrequency: string;
       scheduleTime: string;
       reportTypes: "sales" | "trucks" | "both";
+      sendFinancial: boolean;
       displayName: string | null;
       isActive: boolean;
       syncStatus: "synced" | "pending" | "error";
@@ -243,6 +244,7 @@ export interface KyberRockDesktopApi {
     scheduleFrequency?: string;
     scheduleTime?: string;
     reportTypes?: "sales" | "trucks" | "both";
+    sendFinancial?: boolean;
     displayName?: string | null;
     isActive?: boolean;
   }) => Promise<unknown>;
@@ -256,6 +258,7 @@ export interface KyberRockDesktopApi {
       scheduleFrequency?: string;
       scheduleTime?: string;
       reportTypes?: "sales" | "trucks" | "both";
+      sendFinancial?: boolean;
       displayName?: string | null;
       isActive?: boolean;
     }

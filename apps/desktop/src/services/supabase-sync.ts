@@ -2466,6 +2466,7 @@ export async function pushPendingReportRecipients(
     schedule_frequency: row.schedule_frequency,
     schedule_time: row.schedule_time,
     report_types: row.report_types || "sales",
+    send_financial: row.send_financial === 1,
     display_name: row.display_name,
     is_active: row.is_active === 1 && row.deleted_at === null,
     updated_at: new Date().toISOString()
