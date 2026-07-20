@@ -21,6 +21,7 @@ export interface ReportRecipientRow {
   schedule_frequency: ScheduleFrequency;
   schedule_time: string;
   report_types: string;
+  send_financial: number;
   display_name: string | null;
   is_active: number;
   needs_push: number;
@@ -42,6 +43,8 @@ export interface ReportRecipient {
   scheduleFrequency: ScheduleFrequency;
   scheduleTime: string;
   reportTypes: ReportType;
+  /** Recebe tambem o relatorio financeiro OMIE (contas a pagar + extrato), independente de reportTypes. */
+  sendFinancial: boolean;
   displayName: string | null;
   isActive: boolean;
   syncStatus: "synced" | "pending" | "error";
@@ -60,6 +63,7 @@ export interface CreateReportRecipientInput {
   scheduleFrequency?: ScheduleFrequency;
   scheduleTime?: string;
   reportTypes?: ReportType;
+  sendFinancial?: boolean;
   displayName?: string | null;
   isActive?: boolean;
 }
@@ -72,6 +76,7 @@ export interface UpdateReportRecipientInput {
   scheduleFrequency?: ScheduleFrequency;
   scheduleTime?: string;
   reportTypes?: ReportType;
+  sendFinancial?: boolean;
   displayName?: string | null;
   isActive?: boolean;
 }
@@ -87,6 +92,7 @@ function mapRow(row: ReportRecipientRow): ReportRecipient {
     scheduleFrequency: row.schedule_frequency,
     scheduleTime: row.schedule_time,
     reportTypes: normalizeReportType(row.report_types),
+    sendFinancial: row.send_financial === 1,
     displayName: row.display_name,
     isActive: row.is_active === 1,
     syncStatus: row.sync_status,
@@ -155,6 +161,7 @@ function ensureRecipientsTable(database: DesktopDatabase): void {
       schedule_frequency TEXT NOT NULL DEFAULT 'daily' CHECK (schedule_frequency IN ('daily', 'weekly', 'monthly')),
       schedule_time TEXT NOT NULL DEFAULT '20:00',
       report_types TEXT NOT NULL DEFAULT 'sales' CHECK (report_types IN ('sales', 'trucks', 'both')),
+      send_financial INTEGER NOT NULL DEFAULT 0 CHECK (send_financial IN (0, 1)),
       display_name TEXT,
       is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
       needs_push INTEGER NOT NULL DEFAULT 0,
@@ -216,6 +223,13 @@ function ensureRecipientsTable(database: DesktopDatabase): void {
       )
       .run();
   }
+  if (!existingColumns.has("send_financial")) {
+    database
+      .prepare(
+        "ALTER TABLE report_recipients ADD COLUMN send_financial INTEGER NOT NULL DEFAULT 0 CHECK (send_financial IN (0, 1))"
+      )
+      .run();
+  }
   const currentColumns = database.prepare("PRAGMA table_info(report_recipients)").all() as Array<{
     name: string;
     notnull: number;
@@ -226,14 +240,14 @@ function ensureRecipientsTable(database: DesktopDatabase): void {
       ${createTableSql}
       INSERT INTO report_recipients (
         id, company_id, email, whatsapp_phone, send_email, send_whatsapp,
-        schedule_frequency, schedule_time, report_types,
+        schedule_frequency, schedule_time, report_types, send_financial,
         display_name, is_active,
         needs_push, sync_status, last_synced_at, last_error, created_at, updated_at, deleted_at
       )
       SELECT
         id, company_id, email, whatsapp_phone, send_email, send_whatsapp,
         COALESCE(schedule_frequency, 'daily'), COALESCE(schedule_time, '20:00'),
-        COALESCE(report_types, 'sales'),
+        COALESCE(report_types, 'sales'), COALESCE(send_financial, 0),
         display_name, is_active,
         needs_push, sync_status, last_synced_at, last_error, created_at, updated_at, deleted_at
       FROM report_recipients_old;
@@ -280,6 +294,7 @@ export function createReportRecipient(
   const scheduleFrequency = input.scheduleFrequency ?? "daily";
   const scheduleTime = normalizeScheduleTime(input.scheduleTime);
   const reportTypes = normalizeReportType(input.reportTypes);
+  const sendFinancial = input.sendFinancial === true;
   const displayName = input.displayName?.trim() || null;
   const isActive = input.isActive === false ? 0 : 1;
   const timestamp = now.toISOString();
@@ -310,10 +325,10 @@ export function createReportRecipient(
     .prepare(
       `INSERT INTO report_recipients (
         id, company_id, email, whatsapp_phone, send_email, send_whatsapp,
-        schedule_frequency, schedule_time, report_types,
+        schedule_frequency, schedule_time, report_types, send_financial,
         display_name, is_active,
         needs_push, sync_status, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'pending', ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'pending', ?, ?)`
     )
     .run(
       id,
@@ -325,6 +340,7 @@ export function createReportRecipient(
       scheduleFrequency,
       scheduleTime,
       reportTypes,
+      sendFinancial ? 1 : 0,
       displayName,
       isActive,
       timestamp,
@@ -425,6 +441,11 @@ export function updateReportRecipient(
   if (input.reportTypes !== undefined) {
     sets.push("report_types = ?");
     values.push(normalizeReportType(input.reportTypes));
+  }
+
+  if (input.sendFinancial !== undefined) {
+    sets.push("send_financial = ?");
+    values.push(input.sendFinancial ? 1 : 0);
   }
 
   if (input.displayName !== undefined) {
