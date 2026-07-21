@@ -1099,6 +1099,76 @@ Deno.test("create_order resolve a conta corrente pelo nome vinculado quando falt
   assertEquals(infos.codigo_conta_corrente, 222);
 });
 
+Deno.test("create_order usa a conta padrao do meio de pagamento quando o payload nao traz a conta", async () => {
+  const deviceToken = "token-order-method-default";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-order-method-default": {
+        id: "device-order-method-default",
+        company_id: "company-order-method-default",
+        unit_id: "unit-order-method-default",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-order-method-default": {
+        id: "company-order-method-default",
+        is_active: true,
+        omie_app_key: "order-method-default",
+        omie_app_secret: "secret-order-method-default"
+      }
+    }
+  });
+  // Desktop antigo: manda so o codigo do meio ("15" = boleto), sem accountOmieCode nem
+  // accountName. O vinculo padrao boleto -> OMIE Cash resolve o nCodCC 222 pelo nome no
+  // OMIE em vez de cair na primeira conta (7, Caixinha).
+  const omieQueue = createOmieQueueStub((input) => {
+    if (input.call === "ListarContasCorrentes") {
+      return {
+        conta_corrente_lista: [
+          { nCodCC: 7, descricao: "Caixinha" },
+          { nCodCC: 222, descricao: "OMIECASH" }
+        ]
+      };
+    }
+    if (input.call === "ListarCadastroServico") {
+      return { cadastros: [{ cCodServMun: "1.07" }] };
+    }
+    if (input.call === "IncluirPedido") {
+      return { codigo_pedido: 12345 };
+    }
+    return defaultOmieListResponse(input);
+  });
+
+  const response = await postOmieSync(
+    {
+      deviceId: "device-order-method-default",
+      deviceToken,
+      action: "create_order",
+      payload: {
+        operationType: "invoice",
+        customerOmieId: 100,
+        productOmieId: 200,
+        quantity: 30.5,
+        unitPrice: 85,
+        issueDate: "2026-07-07",
+        idempotencyKey: "kyberrock:unit:op7:create_sales_order",
+        paymentMethodOmieCode: "15"
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  assertObjectMatch(response, { ok: true, orderId: 12345 });
+  const infos = getParam(findRequest(omieQueue, "IncluirPedido")).informacoes_adicionais as Record<
+    string,
+    unknown
+  >;
+  assertEquals(infos.codigo_conta_corrente, 222);
+});
+
 function parcelaAwareOrderStub(options: {
   existingParcelas?: Array<Record<string, unknown>>;
   createdParcelaCode?: string;

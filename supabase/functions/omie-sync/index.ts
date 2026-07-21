@@ -1690,14 +1690,20 @@ async function createOmieOrder(
   // Conta corrente escolhida na operacao (meio de pagamento -> conta vinculada).
   // Prioridade: (1) nCodCC vindo do desktop; (2) resolucao pelo nome da conta
   // vinculada direto no OMIE (cobre o caso do omie_code local nulo/desatualizado,
-  // garantindo que o meio de pagamento sempre use a conta a ele vinculada); (3) por
-  // ultimo, o fallback historico da primeira conta corrente do tenant — usado so
-  // quando a operacao nao tem conta vinculada.
+  // garantindo que o meio de pagamento sempre use a conta a ele vinculada); (3) conta
+  // padrao do meio de pagamento (dinheiro -> Caixinha, PIX/boleto -> OMIE Cash,
+  // cartoes -> GetNet) resolvida pelo nome no OMIE — cobre desktops antigos que ainda
+  // nao mandam accountName; (4) por ultimo, o fallback historico da primeira conta
+  // corrente do tenant — usado so quando nem o meio de pagamento e conhecido.
   const selectedAccountCode = toNumber(payload.accountOmieCode ?? null);
   const accountCode =
     selectedAccountCode !== null && selectedAccountCode > 0
       ? selectedAccountCode
       : ((await resolveOmieAccountCodeByName(credentials, payload.accountName)) ??
+        (await resolveOmieAccountCodeByName(
+          credentials,
+          defaultAccountNameForMethod(payload.paymentMethodOmieCode)
+        )) ??
         (await resolveOmieAccountCode(credentials)));
   const installmentCount =
     typeof payload.installmentCount === "number" && payload.installmentCount > 0
@@ -1985,8 +1991,10 @@ async function loadOmieAccountsByCanonicalName(
 }
 
 // Resolve o nCodCC da conta corrente do OMIE cujo nome canonico bate com o nome da conta
-// vinculada ao meio de pagamento. Retorna null quando nao ha nome ou nao ha correspondencia,
-// caindo entao no fallback da primeira conta corrente.
+// vinculada ao meio de pagamento. Alem do casamento exato, aceita a UNICA conta cujo nome
+// canonico contem o procurado (ex.: "Conta OMIE Cash" para "OMIE Cash"); com mais de uma
+// candidata a correspondencia e ambigua e devolve null. Retorna null tambem quando nao ha
+// nome ou correspondencia, caindo entao nos fallbacks seguintes.
 async function resolveOmieAccountCodeByName(
   credentials: OmieCredentials,
   accountName: string | null | undefined
@@ -1995,7 +2003,34 @@ async function resolveOmieAccountCodeByName(
   const canonical = canonicalizeAccountName(accountName);
   if (!canonical) return null;
   const byName = await loadOmieAccountsByCanonicalName(credentials);
-  return byName.get(canonical) ?? null;
+  const exact = byName.get(canonical);
+  if (exact !== undefined) return exact;
+  const partial = [...byName.entries()].filter(([name]) => name.includes(canonical));
+  return partial.length === 1 ? partial[0][1] : null;
+}
+
+/**
+ * Vinculos padrao do KyberRock entre o meio de pagamento (codigo NFe/OMIE) e a conta
+ * padrao que o recebe — os mesmos do seed do desktop (payment_methods -> accounts):
+ * dinheiro -> Caixinha; PIX e boleto -> OMIE Cash; cartoes -> GetNet.
+ *
+ * Usado como fallback quando o payload nao trouxe nem o nCodCC nem o nome da conta
+ * (desktop antigo, ou meio de pagamento local sem conta vinculada): resolve a conta
+ * padrao pelo nome direto no OMIE em vez de cair na primeira conta corrente do tenant.
+ * Quando o desktop manda a conta explicitamente (accountOmieCode/accountName), ela tem
+ * prioridade — vinculos personalizados continuam respeitados.
+ */
+const DEFAULT_ACCOUNT_NAME_BY_METHOD_CODE = new Map<string, string>([
+  ["01", "caixinha"], // dinheiro
+  ["03", "getnet"], // cartao de credito
+  ["04", "getnet"], // cartao de debito
+  ["15", "omiecash"], // boleto
+  ["17", "omiecash"] // pix
+]);
+
+function defaultAccountNameForMethod(methodCode: string | null | undefined): string | null {
+  if (!methodCode) return null;
+  return DEFAULT_ACCOUNT_NAME_BY_METHOD_CODE.get(methodCode.trim()) ?? null;
 }
 
 // O IncluirOS tambem exige o Codigo do Servico Municipal (cCodServMun) e o Codigo
