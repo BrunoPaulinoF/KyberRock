@@ -131,12 +131,71 @@ jobs:
           fi
 
       - name: Build and publish to GitHub Releases
+        id: publish
         shell: bash
+        # continue-on-error: o upload do electron-builder tem uma race conhecida
+        # (ver run 29839470541: publicou o .exe mas abortou com 422 antes do
+        # latest.yml/blockmap, deixando o auto-update cego). O passo seguinte
+        # confere e completa os assets; se o build em si falhou, ele reprova o
+        # job porque os arquivos nao existem localmente.
+        continue-on-error: true
         env:
           # Token de PUBLICACAO (escrita) -- o GITHUB_TOKEN automatico do Actions,
           # limitado a este repo e ao run. Distinto do token de leitura embutido.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run dist:win:publish --workspace @kyberrock/desktop
+
+      - name: Ensure every release asset is uploaded (self-heal)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Uma release sem latest.yml (ou sem o .exe/.blockmap) quebra o
+        # electron-updater silenciosamente. Este passo garante o trio completo:
+        # sobe qualquer asset que o electron-builder nao subiu e falha o run se
+        # o build nao produziu os arquivos.
+        run: |
+          set -euo pipefail
+          TAG="v${{ steps.version.outputs.version }}"
+          REPO="${{ github.repository }}"
+          DIR="apps/desktop/release"
+
+          exe=$(find "$DIR" -maxdepth 1 -name "*.exe" -not -name "*uninstaller*" | head -n1)
+          blockmap=$(find "$DIR" -maxdepth 1 -name "*.exe.blockmap" | head -n1)
+          latest="$DIR/latest.yml"
+          for f in "$exe" "$blockmap" "$latest"; do
+            if [ -z "$f" ] || [ ! -f "$f" ]; then
+              echo "::error title=Build incompleto::Arquivo de release ausente localmente (exe='$exe' blockmap='$blockmap' latest.yml existe=$([ -f "$latest" ] && echo sim || echo nao)). O dist:win:publish falhou antes de gerar o instalador."
+              exit 1
+            fi
+          done
+
+          release=$(curl -s -f \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$REPO/releases/tags/$TAG")
+          release_id=$(echo "$release" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).id))")
+          existing=$(echo "$release" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>JSON.parse(s).assets.forEach(a=>console.log(a.name)))")
+          echo "Assets ja presentes na release $TAG:"
+          echo "${existing:-<nenhum>}"
+
+          for f in "$exe" "$blockmap" "$latest"; do
+            base=$(basename "$f")
+            name="${base// /-}" # electron-builder troca espacos por '-' no nome do asset
+            if printf '%s\n' "$existing" | grep -qxF "$name"; then
+              echo "OK: $name"
+            else
+              echo "Subindo asset ausente: $name"
+              curl -s -f -X POST \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                -H "Content-Type: application/octet-stream" \
+                --data-binary @"$f" \
+                "https://uploads.github.com/repos/$REPO/releases/$release_id/assets?name=$name" > /dev/null
+              echo "Enviado: $name"
+            fi
+          done
+          echo "Release $TAG completa (exe + blockmap + latest.yml)."
 
       - name: Verify the native module is inside the package
         shell: bash
