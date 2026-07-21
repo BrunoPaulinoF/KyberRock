@@ -27,7 +27,8 @@ export type OpIconName =
   | "power"
   | "wifi"
   | "file-text"
-  | "table";
+  | "table"
+  | "truck";
 
 export function OpIcon({ name }: { name: OpIconName }) {
   const common: SVGProps<SVGSVGElement> = {
@@ -191,6 +192,15 @@ export function OpIcon({ name }: { name: OpIconName }) {
           <rect width="18" height="18" x="3" y="3" rx="2" />
           <path d="M3 9h18" />
           <path d="M3 15h18" />
+        </svg>
+      );
+    case "truck":
+      return (
+        <svg {...common}>
+          <path d="M1 3h15v13H1z" />
+          <path d="M16 8h4l3 3v5h-7V8z" />
+          <circle cx="5.5" cy="18.5" r="2.5" />
+          <circle cx="18.5" cy="18.5" r="2.5" />
         </svg>
       );
   }

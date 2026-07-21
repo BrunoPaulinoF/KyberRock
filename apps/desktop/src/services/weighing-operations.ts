@@ -1811,6 +1811,230 @@ export function updateWeighingOperationProduct(
   return getWeighingOperation(database, input.operationId);
 }
 
+export interface UpdateWeighingOperationCustomerInput {
+  operationId: string;
+  newCustomerId: string;
+}
+
+export function updateWeighingOperationCustomer(
+  database: DesktopDatabase,
+  input: UpdateWeighingOperationCustomerInput,
+  now: Date = new Date()
+): WeighingOperationSummary {
+  const operation = getWeighingOperation(database, input.operationId);
+
+  const openStatuses: OperationStatus[] = [
+    "draft",
+    "entry_registered",
+    "loading_requested",
+    "awaiting_exit"
+  ];
+  if (!openStatuses.includes(operation.status)) {
+    throw new Error("Somente operacoes abertas podem ter o cliente alterado.");
+  }
+
+  const customer = database
+    .prepare(
+      "SELECT trade_name, is_active, omie_billing_blocked FROM customers WHERE id = ? AND deleted_at IS NULL"
+    )
+    .get(input.newCustomerId) as
+    | { trade_name: string; is_active: number; omie_billing_blocked: number }
+    | undefined;
+
+  if (!customer) throw new Error("Cliente selecionado nao foi encontrado.");
+  if (customer.is_active !== 1) throw new Error("Cliente inativo nao pode ser selecionado.");
+  if (customer.omie_billing_blocked === 1) {
+    throw new Error("Cliente bloqueado no OMIE nao pode ser selecionado.");
+  }
+
+  const financialBlock = new FinancialBlockService(database).canStartLoading(input.newCustomerId);
+  if (!financialBlock.allowed) {
+    throw new Error(financialBlock.message ?? "Cliente bloqueado por limite financeiro.");
+  }
+
+  const productId = database
+    .prepare("SELECT product_id FROM weighing_operations WHERE id = ?")
+    .pluck()
+    .get(input.operationId) as string | undefined;
+
+  if (!productId) {
+    throw new Error("Operacao sem produto vinculado.");
+  }
+
+  const priceDetails = new PricingService(database).getPriceDetailsForCustomerProduct(
+    input.newCustomerId,
+    productId
+  );
+  if (!priceDetails || priceDetails.appliedUnitPriceCents === null) {
+    throw new Error(
+      "Sem preco cadastrado para este cliente/produto. Cadastre um preco padrao no produto ou um preco especial no cliente."
+    );
+  }
+
+  const timestamp = now.toISOString();
+
+  const updateCustomer = database.transaction(() => {
+    database
+      .prepare(
+        `UPDATE weighing_operations
+         SET customer_id = ?, unit_price_cents = ?, base_unit_price_cents = ?,
+             applied_price_table_id = NULL, applied_price_table_name = NULL,
+             applied_price_table_item_id = NULL, price_savings_percent = ?,
+             updated_at = ?
+         WHERE id = ?`
+      )
+      .run(
+        input.newCustomerId,
+        priceDetails.appliedUnitPriceCents,
+        priceDetails.baseUnitPriceCents ?? null,
+        priceDetails.savingsPercent ?? null,
+        timestamp,
+        input.operationId
+      );
+
+    database
+      .prepare(
+        `UPDATE loading_requests
+         SET customer_name = ?, updated_at = ?
+         WHERE operation_id = ?`
+      )
+      .run(customer.trade_name, timestamp, input.operationId);
+
+    insertAuditLog(
+      database,
+      null,
+      input.operationId,
+      "customer_changed",
+      { customerId: operation.customerId, customerName: operation.customerName },
+      {
+        newCustomerId: input.newCustomerId,
+        newCustomerName: customer.trade_name,
+        unitPriceCents: priceDetails.appliedUnitPriceCents,
+        priceDetails: serializePriceDetails(priceDetails)
+      },
+      timestamp
+    );
+
+    enqueueSyncJob(
+      database,
+      {
+        target: "cloud",
+        action: "upsert_operation",
+        entityType: "operation",
+        entityId: input.operationId,
+        idempotencyKey: `cloud:operation:${input.operationId}:customer_changed`,
+        payload: { operationId: input.operationId }
+      },
+      now
+    );
+
+    const loadingRequest = database
+      .prepare("SELECT id FROM loading_requests WHERE operation_id = ?")
+      .get(input.operationId) as { id: string } | undefined;
+
+    if (loadingRequest) {
+      enqueueSyncJob(
+        database,
+        {
+          target: "cloud",
+          action: "upsert_loading_request",
+          entityType: "loading_request",
+          entityId: loadingRequest.id,
+          idempotencyKey: `cloud:loading_request:${loadingRequest.id}:customer_changed`,
+          payload: { operationId: input.operationId }
+        },
+        now
+      );
+    }
+  });
+
+  updateCustomer();
+
+  return getWeighingOperation(database, input.operationId);
+}
+
+export interface UpdateWeighingOperationCarrierInput {
+  operationId: string;
+  newCarrierId: string | null;
+}
+
+export function updateWeighingOperationCarrier(
+  database: DesktopDatabase,
+  input: UpdateWeighingOperationCarrierInput,
+  now: Date = new Date()
+): WeighingOperationSummary {
+  const operation = getWeighingOperation(database, input.operationId);
+
+  const openStatuses: OperationStatus[] = [
+    "draft",
+    "entry_registered",
+    "loading_requested",
+    "awaiting_exit"
+  ];
+  if (!openStatuses.includes(operation.status)) {
+    throw new Error("Somente operacoes abertas podem ter a transportadora alterada.");
+  }
+
+  let carrierName: string | null = null;
+  if (input.newCarrierId) {
+    const carrier = database
+      .prepare(
+        "SELECT name, is_active FROM carriers WHERE id = ? AND deleted_at IS NULL"
+      )
+      .get(input.newCarrierId) as { name: string; is_active: number } | undefined;
+
+    if (!carrier) throw new Error("Transportadora selecionada nao foi encontrada.");
+    if (carrier.is_active !== 1) {
+      throw new Error("Transportadora inativa nao pode ser selecionada.");
+    }
+    carrierName = carrier.name;
+  }
+
+  const previousCarrierId = database
+    .prepare("SELECT carrier_id FROM weighing_operations WHERE id = ?")
+    .pluck()
+    .get(input.operationId) as string | null | undefined;
+
+  const timestamp = now.toISOString();
+
+  const updateCarrier = database.transaction(() => {
+    database
+      .prepare(
+        `UPDATE weighing_operations
+         SET carrier_id = ?, updated_at = ?
+         WHERE id = ?`
+      )
+      .run(input.newCarrierId ?? null, timestamp, input.operationId);
+
+    insertAuditLog(
+      database,
+      null,
+      input.operationId,
+      "carrier_changed",
+      { carrierId: previousCarrierId ?? null },
+      { newCarrierId: input.newCarrierId ?? null, newCarrierName: carrierName },
+      timestamp
+    );
+
+    enqueueSyncJob(
+      database,
+      {
+        target: "cloud",
+        action: "upsert_operation",
+        entityType: "operation",
+        entityId: input.operationId,
+        idempotencyKey: `cloud:operation:${input.operationId}:carrier_changed`,
+        payload: { operationId: input.operationId }
+      },
+      now
+    );
+  });
+
+  updateCarrier();
+
+  return getWeighingOperation(database, input.operationId);
+}
+
 function calculateNetWeightKg(entryWeightKg: number, exitWeightKg: number): number {
   if (exitWeightKg <= entryWeightKg) {
     throw new Error("Exit weight must be greater than entry weight.");

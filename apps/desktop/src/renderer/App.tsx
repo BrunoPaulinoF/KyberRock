@@ -383,6 +383,14 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     Array<{ id: string; description: string }>
   >([]);
   const [changeProductLoading, setChangeProductLoading] = useState(false);
+  const [changeCustomerOperation, setChangeCustomerOperation] =
+    useState<WeighingOperationSummary | null>(null);
+  const [changeCustomerOptions, setChangeCustomerOptions] = useState<CacheSelectOption[]>([]);
+  const [changeCustomerLoading, setChangeCustomerLoading] = useState(false);
+  const [changeCarrierOperation, setChangeCarrierOperation] =
+    useState<WeighingOperationSummary | null>(null);
+  const [changeCarrierOptions, setChangeCarrierOptions] = useState<CacheSelectOption[]>([]);
+  const [changeCarrierLoading, setChangeCarrierLoading] = useState(false);
   const [fiscalCloseProgress, setFiscalCloseProgress] = useState<FiscalCloseProgress | null>(null);
   const [retryingFiscalOperationId, setRetryingFiscalOperationId] = useState<string | null>(null);
   const [reprintingOperationId, setReprintingOperationId] = useState<string | null>(null);
@@ -651,7 +659,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
             showSettings ||
             closingOperation ||
             cancelTarget ||
-            changeProductOperation
+            changeProductOperation ||
+            changeCustomerOperation ||
+            changeCarrierOperation
           ) {
             setShowUpdateModal(false);
             setShowLogsModal(false);
@@ -659,6 +669,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
             setClosingOperation(null);
             setCancelTarget(null);
             setChangeProductOperation(null);
+            setChangeCustomerOperation(null);
+            setChangeCarrierOperation(null);
           } else {
             setActiveView("dashboard");
           }
@@ -673,7 +685,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     showSettings,
     closingOperation,
     cancelTarget,
-    changeProductOperation
+    changeProductOperation,
+    changeCustomerOperation,
+    changeCarrierOperation
   ]);
 
   useEffect(() => {
@@ -1814,6 +1828,74 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
   }
 
+  async function handleOpenChangeCustomer(operation: WeighingOperationSummary): Promise<void> {
+    if (!desktopApi) return;
+    setChangeCustomerOperation(operation);
+    setChangeCustomerLoading(true);
+    try {
+      const result = await desktopApi.queryCache({
+        entityType: "customer",
+        activeOnly: true,
+        limit: 500
+      });
+      setChangeCustomerOptions(
+        createCacheSelectOptions(result.rows as Array<Record<string, unknown>>).sort((a, b) =>
+          a.label.localeCompare(b.label)
+        )
+      );
+    } catch {
+      setChangeCustomerOptions([]);
+    } finally {
+      setChangeCustomerLoading(false);
+    }
+  }
+
+  async function handleConfirmChangeCustomer(newCustomerId: string): Promise<void> {
+    if (!desktopApi || !changeCustomerOperation) return;
+    try {
+      await desktopApi.updateWeighingCustomer(changeCustomerOperation.id, newCustomerId);
+      setMessage("Cliente alterado com sucesso.");
+      setChangeCustomerOperation(null);
+      await refreshOpenOperations();
+    } catch (error) {
+      setMessage(getErrorMessage(error));
+    }
+  }
+
+  async function handleOpenChangeCarrier(operation: WeighingOperationSummary): Promise<void> {
+    if (!desktopApi) return;
+    setChangeCarrierOperation(operation);
+    setChangeCarrierLoading(true);
+    try {
+      const result = await desktopApi.queryCache({
+        entityType: "carrier",
+        activeOnly: true,
+        limit: 500
+      });
+      setChangeCarrierOptions(
+        createCacheSelectOptions(result.rows as Array<Record<string, unknown>>).sort((a, b) =>
+          a.label.localeCompare(b.label)
+        )
+      );
+    } catch {
+      setChangeCarrierOptions([]);
+    } finally {
+      setChangeCarrierLoading(false);
+    }
+  }
+
+  async function handleConfirmChangeCarrier(newCarrierId: string | null): Promise<void> {
+    if (!desktopApi || !changeCarrierOperation) return;
+    try {
+      await desktopApi.updateWeighingCarrier(changeCarrierOperation.id, newCarrierId);
+      setMessage("Transportadora alterada com sucesso.");
+      setChangeCarrierOperation(null);
+      await refreshOpenOperations();
+    } catch (error) {
+      setMessage(getErrorMessage(error));
+    }
+  }
+
   if (phase === "checking_access") {
     return (
       <main style={{ ...styles.page, ...getThemeVariables("light") }}>
@@ -2611,6 +2693,22 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                               onClick={() => void handleOpenChangeProduct(operation)}
                             />
                             <IconActionButton
+                              icon="edit"
+                              label="Alterar cliente"
+                              tip={TIPS.operations.changeCustomer}
+                              tone="neutral"
+                              placement="left"
+                              onClick={() => void handleOpenChangeCustomer(operation)}
+                            />
+                            <IconActionButton
+                              icon="truck"
+                              label="Alterar transportadora"
+                              tip={TIPS.operations.changeCarrier}
+                              tone="neutral"
+                              placement="left"
+                              onClick={() => void handleOpenChangeCarrier(operation)}
+                            />
+                            <IconActionButton
                               icon="check"
                               label="Fechar operacao"
                               tip={TIPS.operations.close}
@@ -2836,6 +2934,148 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     <button
                       type="button"
                       onClick={() => setChangeProductOperation(null)}
+                      style={{
+                        border: "1px solid var(--kr-border)",
+                        background: "var(--kr-surface)",
+                        color: "var(--kr-text-strong)",
+                        borderRadius: "10px",
+                        padding: "8px 12px",
+                        cursor: "pointer",
+                        fontWeight: 700,
+                        fontSize: "12px"
+                      }}
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              </CrudFormModal>
+            ) : null}
+
+            {changeCustomerOperation ? (
+              <CrudFormModal onClose={() => setChangeCustomerOperation(null)} maxWidth={480}>
+                <div style={{ padding: "18px" }}>
+                  <h3 style={{ margin: "0 0 12px 0", fontSize: "16px", fontWeight: 700 }}>
+                    Alterar cliente
+                  </h3>
+                  <p style={{ margin: "0 0 12px 0", fontSize: "13px", color: "var(--kr-muted)" }}>
+                    Operacao: {changeCustomerOperation.plate} —{" "}
+                    {changeCustomerOperation.productDescription}
+                    <br />
+                    Cliente atual: {changeCustomerOperation.customerName}
+                  </p>
+                  <label
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "6px",
+                      fontWeight: 700,
+                      fontSize: "13px"
+                    }}
+                  >
+                    Novo cliente
+                    <select
+                      value={changeCustomerOperation.customerId ?? ""}
+                      onChange={(e) => {
+                        if (!e.target.value) return;
+                        setChangeCustomerOperation(null);
+                        void handleConfirmChangeCustomer(e.target.value);
+                      }}
+                      disabled={changeCustomerLoading}
+                      style={{
+                        border: "1px solid var(--kr-input-border)",
+                        borderRadius: "10px",
+                        padding: "8px 10px",
+                        fontSize: "13px",
+                        background: "var(--kr-input-bg)",
+                        color: "var(--kr-text-strong)"
+                      }}
+                    >
+                      <option value="">
+                        {changeCustomerLoading
+                          ? "Carregando clientes..."
+                          : "Selecione o novo cliente"}
+                      </option>
+                      {changeCustomerOptions.map((customer) => (
+                        <option key={customer.id} value={customer.id}>
+                          {customer.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "16px" }}>
+                    <button
+                      type="button"
+                      onClick={() => setChangeCustomerOperation(null)}
+                      style={{
+                        border: "1px solid var(--kr-border)",
+                        background: "var(--kr-surface)",
+                        color: "var(--kr-text-strong)",
+                        borderRadius: "10px",
+                        padding: "8px 12px",
+                        cursor: "pointer",
+                        fontWeight: 700,
+                        fontSize: "12px"
+                      }}
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              </CrudFormModal>
+            ) : null}
+
+            {changeCarrierOperation ? (
+              <CrudFormModal onClose={() => setChangeCarrierOperation(null)} maxWidth={480}>
+                <div style={{ padding: "18px" }}>
+                  <h3 style={{ margin: "0 0 12px 0", fontSize: "16px", fontWeight: 700 }}>
+                    Alterar transportadora
+                  </h3>
+                  <p style={{ margin: "0 0 12px 0", fontSize: "13px", color: "var(--kr-muted)" }}>
+                    Operacao: {changeCarrierOperation.plate} — {changeCarrierOperation.customerName}
+                  </p>
+                  <label
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "6px",
+                      fontWeight: 700,
+                      fontSize: "13px"
+                    }}
+                  >
+                    Nova transportadora
+                    <select
+                      defaultValue=""
+                      onChange={(e) => {
+                        setChangeCarrierOperation(null);
+                        void handleConfirmChangeCarrier(e.target.value || null);
+                      }}
+                      disabled={changeCarrierLoading}
+                      style={{
+                        border: "1px solid var(--kr-input-border)",
+                        borderRadius: "10px",
+                        padding: "8px 10px",
+                        fontSize: "13px",
+                        background: "var(--kr-input-bg)",
+                        color: "var(--kr-text-strong)"
+                      }}
+                    >
+                      <option value="">
+                        {changeCarrierLoading
+                          ? "Carregando transportadoras..."
+                          : "Selecione a nova transportadora"}
+                      </option>
+                      {changeCarrierOptions.map((carrier) => (
+                        <option key={carrier.id} value={carrier.id}>
+                          {carrier.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "16px" }}>
+                    <button
+                      type="button"
+                      onClick={() => setChangeCarrierOperation(null)}
                       style={{
                         border: "1px solid var(--kr-border)",
                         background: "var(--kr-surface)",

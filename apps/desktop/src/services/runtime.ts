@@ -68,11 +68,15 @@ import {
   listClosedWeighingOperations,
   listOpenWeighingOperations,
   updateWeighingOperationProduct,
+  updateWeighingOperationCustomer,
+  updateWeighingOperationCarrier,
   type OperationType,
   type OperationFreightInput,
   type ScaleCaptureAudit,
   type WeighingOperationSummary,
-  type UpdateWeighingOperationProductInput
+  type UpdateWeighingOperationProductInput,
+  type UpdateWeighingOperationCustomerInput,
+  type UpdateWeighingOperationCarrierInput
 } from "./weighing-operations.js";
 import {
   getCustomerFreightRules,
@@ -898,6 +902,24 @@ export class DesktopRuntime {
     this.assertDesktopAccess();
     const operation = updateWeighingOperationProduct(this.database, input);
     this.triggerBackgroundCloudSync("operation_product_changed", {
+      operationId: input.operationId
+    });
+    return operation;
+  }
+
+  updateWeighingCustomer(input: UpdateWeighingOperationCustomerInput): WeighingOperationSummary {
+    this.assertDesktopAccess();
+    const operation = updateWeighingOperationCustomer(this.database, input);
+    this.triggerBackgroundCloudSync("operation_customer_changed", {
+      operationId: input.operationId
+    });
+    return operation;
+  }
+
+  updateWeighingCarrier(input: UpdateWeighingOperationCarrierInput): WeighingOperationSummary {
+    this.assertDesktopAccess();
+    const operation = updateWeighingOperationCarrier(this.database, input);
+    this.triggerBackgroundCloudSync("operation_carrier_changed", {
       operationId: input.operationId
     });
     return operation;

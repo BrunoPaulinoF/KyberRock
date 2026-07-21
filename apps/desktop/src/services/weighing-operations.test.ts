@@ -16,6 +16,8 @@ import {
   listCanceledWeighingOperations,
   listClosedWeighingOperations,
   listOpenWeighingOperations,
+  updateWeighingOperationCustomer,
+  updateWeighingOperationCarrier,
   validateCustomerFiscalReadiness
 } from "./weighing-operations";
 
@@ -1569,6 +1571,146 @@ describe("weighing operations", () => {
           entryWeightKg: 12_000
         })
       ).toThrow("Produto inativo ou bloqueado");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("changes the customer of an open operation and reprices", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      const now = "2026-06-06T12:00:00.000Z";
+      database
+        .prepare(
+          `INSERT INTO customers (
+            id, company_id, source, legal_name, trade_name, email, address_number, omie_billing_blocked, created_at, updated_at
+          ) VALUES ('customer-2', 'company-1', 'omie', 'Outro Cliente LTDA', 'Outro Cliente', 'outro@example.com', '456', 0, ?, ?)`
+        )
+        .run(now, now);
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+
+      const updated = updateWeighingOperationCustomer(database, {
+        operationId: operation.id,
+        newCustomerId: "customer-2"
+      });
+
+      expect(updated).toMatchObject({
+        customerId: "customer-2",
+        customerName: "Outro Cliente",
+        unitPriceCents: 12_000
+      });
+      expect(
+        database
+          .prepare("SELECT customer_name FROM loading_requests WHERE operation_id = ?")
+          .pluck()
+          .get(operation.id)
+      ).toBe("Outro Cliente");
+      expect(
+        database
+          .prepare(
+            "SELECT COUNT(*) FROM audit_logs WHERE entity_id = ? AND action = 'customer_changed'"
+          )
+          .pluck()
+          .get(operation.id)
+      ).toBe(1);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("rejects changing the customer of a closed operation", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database
+        .prepare(
+          `INSERT INTO customers (
+            id, company_id, source, legal_name, trade_name, email, address_number, omie_billing_blocked, created_at, updated_at
+          ) VALUES ('customer-2', 'company-1', 'omie', 'Outro Cliente LTDA', 'Outro Cliente', 'outro@example.com', '456', 0, datetime('now'), datetime('now'))`
+        )
+        .run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "internal"
+      });
+
+      expect(() =>
+        updateWeighingOperationCustomer(database, {
+          operationId: operation.id,
+          newCustomerId: "customer-2"
+        })
+      ).toThrow("Somente operacoes abertas");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("sets and clears the carrier of an open operation", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database
+        .prepare(
+          `INSERT INTO carriers (id, company_id, omie_customer_id, name, source, created_at, updated_at)
+           VALUES ('carrier-1', 'company-1', 987654, 'Transportadora Teste', 'omie', datetime('now'), datetime('now'))`
+        )
+        .run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+
+      updateWeighingOperationCarrier(database, {
+        operationId: operation.id,
+        newCarrierId: "carrier-1"
+      });
+      expect(
+        database
+          .prepare("SELECT carrier_id FROM weighing_operations WHERE id = ?")
+          .pluck()
+          .get(operation.id)
+      ).toBe("carrier-1");
+
+      updateWeighingOperationCarrier(database, {
+        operationId: operation.id,
+        newCarrierId: null
+      });
+      expect(
+        database
+          .prepare("SELECT carrier_id FROM weighing_operations WHERE id = ?")
+          .pluck()
+          .get(operation.id)
+      ).toBeNull();
     } finally {
       database.close();
     }
