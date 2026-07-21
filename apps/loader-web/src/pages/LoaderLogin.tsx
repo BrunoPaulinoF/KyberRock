@@ -7,6 +7,7 @@ import {
   WHATSAPP_DISPLAY_NUMBER
 } from "../config/marketing";
 import { desktopDownloadUrl } from "../lib/desktop-download";
+import { documentationUrl } from "../lib/documentation";
 
 const whatsAppLink = buildWhatsAppLink();
 
@@ -345,6 +346,10 @@ export function LoaderLogin() {
               Baixar o app desktop (versao mais recente)
             </a>
 
+            <a className="secondary-action auth-download" href={documentationUrl} download>
+              Baixar guia de instalacao e manual (PDF)
+            </a>
+
             <p className="auth-switch">
               Area administrativa? <a href="/admin/login">Entrar como administrador</a>
             </p>
@@ -419,6 +424,9 @@ export function LoaderLogin() {
           <a href="#como-funciona">Como funciona</a>
           <a href={desktopDownloadUrl} rel="noopener">
             Baixar app desktop
+          </a>
+          <a href={documentationUrl} download>
+            Guia e manual (PDF)
           </a>
           <a href="/admin/login">Area administrativa</a>
         </nav>
