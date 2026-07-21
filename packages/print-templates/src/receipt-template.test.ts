@@ -61,6 +61,24 @@ describe("buildReceiptLines", () => {
     expect(dateLine).not.toContain("Assinatura");
     expect(lines).toContain("Assinatura do Recebimento:");
   });
+
+  it("leaves a wide line and space for the customer to sign", () => {
+    const lines = buildReceiptLines(baseInput());
+
+    const signatureLineIndex = lines.findIndex((line) => /^_{10,}$/.test(line));
+    // Ha uma linha continua larga para o cliente assinar...
+    expect(signatureLineIndex).toBeGreaterThanOrEqual(0);
+    expect(lines[signatureLineIndex].length).toBe(48);
+    // ...com o rotulo logo abaixo dela.
+    expect(lines[signatureLineIndex + 1]).toBe("Assinatura do Cliente");
+
+    // Ha espaco em branco reservado acima da linha para a assinatura fisica.
+    const receiptLabelIndex = lines.indexOf("Assinatura do Recebimento:");
+    const blankLinesBefore = lines
+      .slice(receiptLabelIndex + 1, signatureLineIndex)
+      .filter((line) => line === "").length;
+    expect(blankLinesBefore).toBeGreaterThanOrEqual(3);
+  });
 });
 
 function baseInput(): Parameters<typeof buildReceiptLines>[0] {

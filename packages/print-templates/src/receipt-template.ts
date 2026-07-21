@@ -209,6 +209,10 @@ export function buildReceiptLinesWithConfig(
       `Data: ${formatDateTime(input.printedAt)}`,
       "Assinatura do Recebimento:",
       "",
+      "",
+      "",
+      signatureLine(),
+      "Assinatura do Cliente",
       ""
     );
   }
@@ -260,6 +264,14 @@ function divider(): string {
 
 function dashed(): string {
   return "------------------------------------------------";
+}
+
+/**
+ * Linha continua para o cliente assinar. Tem a mesma largura do divisor (48
+ * caracteres) para ocupar toda a faixa util do papel de 80 mm.
+ */
+function signatureLine(): string {
+  return "________________________________________________";
 }
 
 function formatCompanyDocuments(document: string | null, stateRegistration: string | null): string {
