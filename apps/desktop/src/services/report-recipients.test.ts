@@ -172,6 +172,38 @@ describe("report recipients", () => {
     }
   });
 
+  it("persists a financial schedule time, normalizing minutes and treating blank as null", () => {
+    const db = createDatabase();
+
+    try {
+      const recipient = createReportRecipient(db, {
+        companyId: "comp-1",
+        email: "dono@example.com",
+        sendFinancial: true,
+        financialScheduleTime: "07:45"
+      });
+      // So a hora e considerada — minutos sao normalizados para a hora cheia.
+      expect(recipient.financialScheduleTime).toBe("07:00");
+
+      // Em branco volta a null (usa o horario dos demais relatorios).
+      const cleared = updateReportRecipient(db, recipient.id, { financialScheduleTime: "" });
+      expect(cleared.financialScheduleTime).toBeNull();
+
+      // Default (sem informar) tambem e null.
+      const other = createReportRecipient(db, {
+        companyId: "comp-1",
+        email: "outro@example.com",
+        sendFinancial: true
+      });
+      expect(other.financialScheduleTime).toBeNull();
+
+      const updated = updateReportRecipient(db, other.id, { financialScheduleTime: "18:00" });
+      expect(updated.financialScheduleTime).toBe("18:00");
+    } finally {
+      db.close();
+    }
+  });
+
   it("requires a valid contact for the selected channel", () => {
     const db = createDatabase();
 

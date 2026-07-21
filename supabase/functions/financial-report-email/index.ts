@@ -450,6 +450,16 @@ interface FinancialRecipient {
   scheduleTime: string;
 }
 
+// Hora efetiva do relatorio financeiro: usa a hora especifica (financial_schedule_time)
+// quando o destinatario definiu uma; caso contrario, cai no schedule_time geral.
+function resolveFinancialScheduleTime(
+  financialScheduleTime: string | null,
+  scheduleTime: string
+): string {
+  const trimmed = financialScheduleTime?.trim();
+  return trimmed ? trimmed : scheduleTime;
+}
+
 interface DispatchResult {
   companyId: string;
   date: string;
@@ -584,7 +594,9 @@ async function dispatchForCompany(params: {
 
   const { data: recipientRows, error: recipientsError } = await supabase
     .from("report_recipients")
-    .select("email, whatsapp_phone, send_email, send_whatsapp, schedule_frequency, schedule_time")
+    .select(
+      "email, whatsapp_phone, send_email, send_whatsapp, schedule_frequency, schedule_time, financial_schedule_time"
+    )
     .eq("company_id", company.id)
     .eq("is_active", true)
     .eq("send_financial", true);
@@ -604,7 +616,10 @@ async function dispatchForCompany(params: {
     sendEmail: row.send_email !== false,
     sendWhatsapp: row.send_whatsapp === true,
     scheduleFrequency: (row.schedule_frequency as string | null) ?? "daily",
-    scheduleTime: (row.schedule_time as string | null) ?? "20:00"
+    scheduleTime: resolveFinancialScheduleTime(
+      (row.financial_schedule_time as string | null) ?? null,
+      (row.schedule_time as string | null) ?? "20:00"
+    )
   }));
 
   if (recipients.length === 0) {

@@ -22,6 +22,7 @@ export interface ReportRecipientRow {
   schedule_time: string;
   report_types: string;
   send_financial: number;
+  financial_schedule_time: string | null;
   display_name: string | null;
   is_active: number;
   needs_push: number;
@@ -45,6 +46,8 @@ export interface ReportRecipient {
   reportTypes: ReportType;
   /** Recebe tambem o relatorio financeiro OMIE (contas a pagar + extrato), independente de reportTypes. */
   sendFinancial: boolean;
+  /** Hora especifica de envio do relatorio financeiro OMIE ("HH:00"); null usa o schedule_time geral. */
+  financialScheduleTime: string | null;
   displayName: string | null;
   isActive: boolean;
   syncStatus: "synced" | "pending" | "error";
@@ -64,6 +67,7 @@ export interface CreateReportRecipientInput {
   scheduleTime?: string;
   reportTypes?: ReportType;
   sendFinancial?: boolean;
+  financialScheduleTime?: string | null;
   displayName?: string | null;
   isActive?: boolean;
 }
@@ -77,6 +81,7 @@ export interface UpdateReportRecipientInput {
   scheduleTime?: string;
   reportTypes?: ReportType;
   sendFinancial?: boolean;
+  financialScheduleTime?: string | null;
   displayName?: string | null;
   isActive?: boolean;
 }
@@ -93,6 +98,7 @@ function mapRow(row: ReportRecipientRow): ReportRecipient {
     scheduleTime: row.schedule_time,
     reportTypes: normalizeReportType(row.report_types),
     sendFinancial: row.send_financial === 1,
+    financialScheduleTime: row.financial_schedule_time,
     displayName: row.display_name,
     isActive: row.is_active === 1,
     syncStatus: row.sync_status,
@@ -110,6 +116,15 @@ function mapRow(row: ReportRecipientRow): ReportRecipient {
 export function normalizeScheduleTime(value: string | null | undefined, fallback = "20:00"): string {
   const hour = parseInt((value ?? "").split(":")[0] ?? "", 10);
   if (!Number.isInteger(hour) || hour < 0 || hour > 23) return fallback;
+  return `${String(hour).padStart(2, "0")}:00`;
+}
+
+// Hora do relatorio financeiro e opcional: vazio significa "usar o schedule_time
+// geral", entao null e um valor valido (nao cai no fallback de 20:00).
+export function normalizeOptionalScheduleTime(value: string | null | undefined): string | null {
+  if (value === null || value === undefined || value.trim() === "") return null;
+  const hour = parseInt(value.split(":")[0] ?? "", 10);
+  if (!Number.isInteger(hour) || hour < 0 || hour > 23) return null;
   return `${String(hour).padStart(2, "0")}:00`;
 }
 
@@ -162,6 +177,7 @@ function ensureRecipientsTable(database: DesktopDatabase): void {
       schedule_time TEXT NOT NULL DEFAULT '20:00',
       report_types TEXT NOT NULL DEFAULT 'sales' CHECK (report_types IN ('sales', 'trucks', 'both')),
       send_financial INTEGER NOT NULL DEFAULT 0 CHECK (send_financial IN (0, 1)),
+      financial_schedule_time TEXT,
       display_name TEXT,
       is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
       needs_push INTEGER NOT NULL DEFAULT 0,
@@ -230,6 +246,11 @@ function ensureRecipientsTable(database: DesktopDatabase): void {
       )
       .run();
   }
+  if (!existingColumns.has("financial_schedule_time")) {
+    database
+      .prepare("ALTER TABLE report_recipients ADD COLUMN financial_schedule_time TEXT")
+      .run();
+  }
   const currentColumns = database.prepare("PRAGMA table_info(report_recipients)").all() as Array<{
     name: string;
     notnull: number;
@@ -241,14 +262,14 @@ function ensureRecipientsTable(database: DesktopDatabase): void {
       INSERT INTO report_recipients (
         id, company_id, email, whatsapp_phone, send_email, send_whatsapp,
         schedule_frequency, schedule_time, report_types, send_financial,
-        display_name, is_active,
+        financial_schedule_time, display_name, is_active,
         needs_push, sync_status, last_synced_at, last_error, created_at, updated_at, deleted_at
       )
       SELECT
         id, company_id, email, whatsapp_phone, send_email, send_whatsapp,
         COALESCE(schedule_frequency, 'daily'), COALESCE(schedule_time, '20:00'),
         COALESCE(report_types, 'sales'), COALESCE(send_financial, 0),
-        display_name, is_active,
+        financial_schedule_time, display_name, is_active,
         needs_push, sync_status, last_synced_at, last_error, created_at, updated_at, deleted_at
       FROM report_recipients_old;
       DROP TABLE report_recipients_old;
@@ -295,6 +316,7 @@ export function createReportRecipient(
   const scheduleTime = normalizeScheduleTime(input.scheduleTime);
   const reportTypes = normalizeReportType(input.reportTypes);
   const sendFinancial = input.sendFinancial === true;
+  const financialScheduleTime = normalizeOptionalScheduleTime(input.financialScheduleTime);
   const displayName = input.displayName?.trim() || null;
   const isActive = input.isActive === false ? 0 : 1;
   const timestamp = now.toISOString();
@@ -326,9 +348,9 @@ export function createReportRecipient(
       `INSERT INTO report_recipients (
         id, company_id, email, whatsapp_phone, send_email, send_whatsapp,
         schedule_frequency, schedule_time, report_types, send_financial,
-        display_name, is_active,
+        financial_schedule_time, display_name, is_active,
         needs_push, sync_status, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'pending', ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'pending', ?, ?)`
     )
     .run(
       id,
@@ -341,6 +363,7 @@ export function createReportRecipient(
       scheduleTime,
       reportTypes,
       sendFinancial ? 1 : 0,
+      financialScheduleTime,
       displayName,
       isActive,
       timestamp,
@@ -446,6 +469,11 @@ export function updateReportRecipient(
   if (input.sendFinancial !== undefined) {
     sets.push("send_financial = ?");
     values.push(input.sendFinancial ? 1 : 0);
+  }
+
+  if (input.financialScheduleTime !== undefined) {
+    sets.push("financial_schedule_time = ?");
+    values.push(normalizeOptionalScheduleTime(input.financialScheduleTime));
   }
 
   if (input.displayName !== undefined) {
