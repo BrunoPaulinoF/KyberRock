@@ -3,12 +3,25 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 import type { KyberRockDesktopApi } from "../preload/api-types";
 import { CrudFormModal } from "./CrudFormModal";
 import { IconActionButton } from "./IconActionButton";
+import { PriceChangePasswordDialog } from "./PriceChangePasswordDialog";
 import { ReportChannelsSettings } from "./ReportChannelsSettings";
 import { ReportDispatchSettings } from "./ReportDispatchSettings";
 import { HelpTooltip } from "./Tooltip";
 import { formatDbDateTime } from "./format-datetime";
 
 type ReportType = "sales" | "trucks" | "both";
+
+interface RecipientPayload {
+  email: string | null;
+  whatsappPhone: string | null;
+  sendEmail: boolean;
+  sendWhatsapp: boolean;
+  reportTypes: ReportType;
+  sendFinancial: boolean;
+  financialScheduleTime: string | null;
+  displayName: string | null;
+  isActive: boolean;
+}
 
 interface RecipientRow {
   id: string;
@@ -18,6 +31,7 @@ interface RecipientRow {
   sendWhatsapp: boolean;
   reportTypes: ReportType;
   sendFinancial: boolean;
+  financialScheduleTime: string | null;
   displayName: string | null;
   isActive: boolean;
   syncStatus: "synced" | "pending" | "error";
@@ -31,6 +45,7 @@ interface RecipientFormState {
   deliveryChannel: "email" | "whatsapp" | "both";
   reportTypes: ReportType;
   sendFinancial: boolean;
+  financialScheduleTime: string;
   displayName: string;
   isActive: boolean;
 }
@@ -41,6 +56,7 @@ const initialForm: RecipientFormState = {
   deliveryChannel: "email",
   reportTypes: "sales",
   sendFinancial: false,
+  financialScheduleTime: "",
   displayName: "",
   isActive: true
 };
@@ -270,6 +286,15 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  // Liberar o relatorio financeiro (OMIE) para um destinatario exige a senha
+  // padrao da unidade (a mesma de alteracao de precos). O save fica pendente
+  // ate a confirmacao da senha.
+  const [pendingFinancialSave, setPendingFinancialSave] = useState<{
+    payload: RecipientPayload;
+    targetId: string | null;
+  } | null>(null);
+  const [pricePasswordError, setPricePasswordError] = useState<string | null>(null);
+  const [verifyingPassword, setVerifyingPassword] = useState(false);
 
   const loadRecipients = useCallback(async () => {
     if (!desktopApi) return;
@@ -317,6 +342,19 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
     return null;
   }
 
+  async function persistRecipient(payload: RecipientPayload, targetId: string | null): Promise<void> {
+    if (!desktopApi) return;
+    if (targetId) {
+      await desktopApi.updateReportRecipient(targetId, payload);
+      setSuccess("Destinatario atualizado.");
+    } else {
+      await desktopApi.createReportRecipient(payload);
+      setSuccess("Destinatario adicionado.");
+    }
+    resetForm();
+    await loadRecipients();
+  }
+
   async function handleSave(): Promise<void> {
     if (!desktopApi) return;
     const sendEmail = form.deliveryChannel === "email" || form.deliveryChannel === "both";
@@ -329,28 +367,58 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
     }
     setError(null);
     setSuccess(null);
+    const payload: RecipientPayload = {
+      email: form.email.trim().toLowerCase() || null,
+      whatsappPhone: normalizeWhatsapp(form.whatsappPhone),
+      sendEmail,
+      sendWhatsapp,
+      reportTypes: form.reportTypes,
+      sendFinancial: form.sendFinancial,
+      // Hora propria do relatorio financeiro; em branco (ou financeiro desligado)
+      // grava null e o envio cai no horario dos demais relatorios.
+      financialScheduleTime: form.sendFinancial
+        ? form.financialScheduleTime.trim() || null
+        : null,
+      displayName: form.displayName.trim() || null,
+      isActive: form.isActive
+    };
+
+    // Habilitar o relatorio financeiro (OMIE) exige a senha padrao da unidade
+    // (a mesma de alteracao de precos). So desafia ao LIGAR o financeiro; editar
+    // outros campos de quem ja recebe, ou desligar, nao pede senha.
+    const original = editingId ? recipients.find((row) => row.id === editingId) ?? null : null;
+    const enablingFinancial = payload.sendFinancial && !(original?.sendFinancial ?? false);
+    if (enablingFinancial) {
+      setPricePasswordError(null);
+      setPendingFinancialSave({ payload, targetId: editingId });
+      return;
+    }
+
     try {
-      const payload = {
-        email: form.email.trim().toLowerCase() || null,
-        whatsappPhone: normalizeWhatsapp(form.whatsappPhone),
-        sendEmail,
-        sendWhatsapp,
-        reportTypes: form.reportTypes,
-        sendFinancial: form.sendFinancial,
-        displayName: form.displayName.trim() || null,
-        isActive: form.isActive
-      };
-      if (editingId) {
-        await desktopApi.updateReportRecipient(editingId, payload);
-        setSuccess("Destinatario atualizado.");
-      } else {
-        await desktopApi.createReportRecipient(payload);
-        setSuccess("Destinatario adicionado.");
-      }
-      resetForm();
-      await loadRecipients();
+      await persistRecipient(payload, editingId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Falha ao salvar destinatario.");
+    }
+  }
+
+  async function handleConfirmFinancialPassword(password: string): Promise<void> {
+    if (!desktopApi || !pendingFinancialSave || verifyingPassword) return;
+    setVerifyingPassword(true);
+    try {
+      const valid = await desktopApi.verifyPriceChangePassword(password);
+      if (!valid) {
+        setPricePasswordError("Senha incorreta.");
+        return;
+      }
+      await persistRecipient(pendingFinancialSave.payload, pendingFinancialSave.targetId);
+      setPendingFinancialSave(null);
+      setPricePasswordError(null);
+    } catch (err) {
+      setPricePasswordError(
+        err instanceof Error ? err.message : "Falha ao liberar o relatorio financeiro."
+      );
+    } finally {
+      setVerifyingPassword(false);
     }
   }
 
@@ -367,6 +435,7 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
             : "email",
       reportTypes: recipient.reportTypes ?? "sales",
       sendFinancial: recipient.sendFinancial,
+      financialScheduleTime: recipient.financialScheduleTime ?? "",
       displayName: recipient.displayName ?? "",
       isActive: recipient.isActive
     });
@@ -528,11 +597,31 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
                   <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                     Financeiro (OMIE)
                     <HelpTooltip
-                      content="Envia tambem o extrato financeiro e as contas a pagar consultados direto no OMIE, como PDF, no horario configurado em 'Envios automaticos de relatorios'."
+                      content="Envia tambem o resumo executivo de financas do OMIE (extrato e contas a pagar) como PDF, diariamente junto com os outros relatorios. Liberar este relatorio pede a senha padrao da unidade (a mesma de alteracao de precos)."
                       placement="right"
                     />
                   </span>
                 </label>
+                {form.sendFinancial ? (
+                  <label style={styles.fieldLabel}>
+                    <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                      Horario do financeiro
+                      <HelpTooltip
+                        content="Horario proprio para o resumo executivo de financas do OMIE. Deixe em branco para enviar no mesmo horario dos demais relatorios. So a hora e considerada."
+                        placement="right"
+                      />
+                    </span>
+                    <input
+                      type="time"
+                      step={3600}
+                      value={form.financialScheduleTime}
+                      onChange={(event) =>
+                        setForm({ ...form, financialScheduleTime: event.target.value })
+                      }
+                      style={styles.input}
+                    />
+                  </label>
+                ) : null}
               </section>
             </div>
             <div style={styles.formFooter}>
@@ -547,6 +636,20 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
             </div>
           </Fragment>
         </CrudFormModal>
+      ) : null}
+
+      {pendingFinancialSave ? (
+        <PriceChangePasswordDialog
+          title="Liberar relatorio financeiro (OMIE)"
+          description="Digite a senha padrao da unidade (a mesma usada para alterar precos) para liberar o resumo executivo de financas do OMIE para este destinatario."
+          error={pricePasswordError}
+          submitting={verifyingPassword}
+          onCancel={() => {
+            setPendingFinancialSave(null);
+            setPricePasswordError(null);
+          }}
+          onSubmit={(password) => void handleConfirmFinancialPassword(password)}
+        />
       ) : null}
 
       {!showForm && success ? <p style={styles.success}>{success}</p> : null}
@@ -601,7 +704,13 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
                     <td style={styles.tableCell}>
                       {REPORT_TYPE_LABEL[recipient.reportTypes ?? "sales"]}
                     </td>
-                    <td style={styles.tableCell}>{recipient.sendFinancial ? "Sim" : "Nao"}</td>
+                    <td style={styles.tableCell}>
+                      {recipient.sendFinancial
+                        ? recipient.financialScheduleTime
+                          ? `Sim (${recipient.financialScheduleTime})`
+                          : "Sim"
+                        : "Nao"}
+                    </td>
                     <td style={styles.tableCell}>
                       <span style={badgeForStatus(recipient.syncStatus)}>
                         {recipient.syncStatus === "synced"

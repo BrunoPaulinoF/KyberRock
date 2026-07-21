@@ -229,6 +229,7 @@ export interface KyberRockDesktopApi {
       scheduleTime: string;
       reportTypes: "sales" | "trucks" | "both";
       sendFinancial: boolean;
+      financialScheduleTime: string | null;
       displayName: string | null;
       isActive: boolean;
       syncStatus: "synced" | "pending" | "error";
@@ -245,6 +246,7 @@ export interface KyberRockDesktopApi {
     scheduleTime?: string;
     reportTypes?: "sales" | "trucks" | "both";
     sendFinancial?: boolean;
+    financialScheduleTime?: string | null;
     displayName?: string | null;
     isActive?: boolean;
   }) => Promise<unknown>;
