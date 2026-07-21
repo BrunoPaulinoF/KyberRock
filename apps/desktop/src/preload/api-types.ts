@@ -128,6 +128,14 @@ export interface KyberRockDesktopApi {
     operationId: string,
     newProductId: string
   ) => Promise<WeighingOperationSummary>;
+  updateWeighingCustomer: (
+    operationId: string,
+    newCustomerId: string
+  ) => Promise<WeighingOperationSummary>;
+  updateWeighingCarrier: (
+    operationId: string,
+    newCarrierId: string | null
+  ) => Promise<WeighingOperationSummary>;
   getCustomerFreightRules: (customerId: string) => Promise<
     Array<{
       id: string;

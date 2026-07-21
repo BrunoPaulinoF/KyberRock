@@ -383,6 +383,28 @@ function registerIpcHandlers(): void {
     }
   );
 
+  ipcMain.handle(
+    "desktop:update-weighing-customer",
+    (_event, operationId: string, newCustomerId: string) => {
+      if (!runtime) {
+        throw new Error("Desktop runtime is not ready.");
+      }
+
+      return runtime.updateWeighingCustomer({ operationId, newCustomerId });
+    }
+  );
+
+  ipcMain.handle(
+    "desktop:update-weighing-carrier",
+    (_event, operationId: string, newCarrierId: string | null) => {
+      if (!runtime) {
+        throw new Error("Desktop runtime is not ready.");
+      }
+
+      return runtime.updateWeighingCarrier({ operationId, newCarrierId });
+    }
+  );
+
   ipcMain.handle("desktop:get-customer-freight-rules", (_event, customerId: string) => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");

@@ -62,6 +62,8 @@ export const TIPS = {
     filterProduct: "Filtra operacoes concluidas por produto.",
     clearCanceled: "Apaga da lista todas as operacoes canceladas (somente a lista, o historico fica).",
     changeProduct: "Alterar material: troca o produto desta operacao aberta.",
+    changeCustomer: "Alterar cliente: troca o cliente desta operacao aberta e recalcula o preco.",
+    changeCarrier: "Alterar transportadora: troca a transportadora desta operacao aberta.",
     close: "Fecha a pesagem: captura a saida e finaliza a operacao (fiscal ou interna).",
     cancel: "Cancela esta pesagem. O motivo fica registrado para auditoria.",
     editCustomer: "Editar o cadastro do cliente desta operacao concluida.",
