@@ -17,10 +17,18 @@ const LB_TO_KG = 0.45359237;
 
 /**
  * Posicao do ponto decimal codificada nos bits 0-2 do SWA (Status Word A) do
- * protocolo continuo Toledo/Mettler: 0=x100, 1=x10, 2=x1, 3=/10, 4=/100,
- * 5=/1000, 6=/10000, 7=/100000.
+ * protocolo continuo Toledo/Mettler. Os 6 digitos de peso ja chegam EXATAMENTE
+ * como aparecem no visor, incluindo os zeros finais — o codigo do SWA apenas
+ * indica ONDE fica o ponto decimal entre esses digitos, nunca acrescenta
+ * digitos significativos. Por isso os formatos inteiros (XXXX00, XXXXX0,
+ * XXXXXX) valem x1: multiplicar por 100/10 duplicaria os zeros ja transmitidos
+ * e faria o peso sair com um zero a mais (ex.: visor 14990 -> 149900). Apenas
+ * os formatos fracionarios (3-7) dividem para posicionar a virgula.
+ *
+ * 0=XXXX00 (x1), 1=XXXXX0 (x1), 2=XXXXXX (x1), 3=/10, 4=/100, 5=/1000,
+ * 6=/10000, 7=/100000.
  */
-const SWA_DECIMAL_MULTIPLIERS = [100, 10, 1, 0.1, 0.01, 0.001, 0.0001, 0.00001] as const;
+const SWA_DECIMAL_MULTIPLIERS = [1, 1, 1, 0.1, 0.01, 0.001, 0.0001, 0.00001] as const;
 
 /**
  * Parse a single line of data from a Toledo indicator (950i / TLC-G2 and
