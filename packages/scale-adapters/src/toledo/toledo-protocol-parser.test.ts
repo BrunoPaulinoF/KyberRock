@@ -42,9 +42,19 @@ describe("parseToledoLine - protocolo continuo Toledo (950i / TLC-G2)", () => {
     expect(reading?.statusFlags.isGross).toBe(true);
   });
 
-  it("aplica a posicao decimal do SWA (x10 para divisoes de 10 kg)", () => {
-    const reading = parseToledoLine(continuousFrame({ weight: "001167", swa: 0x21 }));
-    expect(reading?.weightKg).toBe(11_670);
+  it("nao amplifica o peso em divisoes de 10 kg (visor 14990 nao vira 149900)", () => {
+    // Balanca com divisao de 10 kg transmite os 6 digitos do visor com o zero
+    // final ("014990"), nao apenas os significativos. O codigo decimal x10 do
+    // SWA nao pode multiplicar de novo, senao sai peso com um zero a mais.
+    const reading = parseToledoLine(continuousFrame({ weight: "014990", swa: 0x21 }));
+    expect(reading?.weightKg).toBe(14_990);
+  });
+
+  it("formatos inteiros do SWA (XXXX00/XXXXX0/XXXXXX) preservam os digitos do visor", () => {
+    for (const swa of [0x20, 0x21, 0x22]) {
+      const reading = parseToledoLine(continuousFrame({ weight: "011670", swa }));
+      expect(reading?.weightKg).toBe(11_670);
+    }
   });
 
   it("aplica a posicao decimal fracionaria do SWA (XXX.XXX)", () => {
