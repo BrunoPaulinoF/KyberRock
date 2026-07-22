@@ -37,6 +37,7 @@ import {
   isOmieProtectedRecordFault
 } from "./omie-fault-classifier.js";
 import { provisionPaymentTermsFromOmieMirror } from "./payment-terms.js";
+import { upsertUnitDevices } from "./unit-devices.js";
 
 let client: SupabaseClient | null = null;
 let clientConfigKey: string | null = null;
@@ -105,6 +106,7 @@ interface DesktopPullResponse {
   operations?: Array<Record<string, unknown>>;
   loadingRequests?: Array<Record<string, unknown>>;
   printReceipts?: Array<Record<string, unknown>>;
+  devices?: Array<Record<string, unknown>>;
 }
 
 export interface OmieCloudSyncResult {
@@ -538,6 +540,13 @@ export async function pullDesktopDataFromCloud(
 
   const payload = data ?? {};
   const apply = database.transaction(() => {
+    // Dispositivos primeiro: operacoes criadas em outras maquinas referenciam
+    // o device delas (FK weighing_operations.device_id) e a legenda usa nome/cor.
+    upsertUnitDevices(
+      database,
+      { companyId: settings.companyId, unitId: settings.unitId },
+      payload.devices ?? []
+    );
     const customers = upsertCloudCustomers(database, settings.companyId, payload.customers ?? []);
     const products = upsertCloudProducts(database, settings.companyId, payload.products ?? []);
     const operations = upsertCloudOperations(database, settings, payload.operations ?? []);
@@ -747,11 +756,33 @@ function upsertCloudOperations(
       quotation_id = excluded.quotation_id
   `);
 
+  const readLocal = database.prepare(
+    "SELECT status, updated_at FROM weighing_operations WHERE id = ?"
+  );
+
   let count = 0;
   for (const row of rows) {
     const id = stringValue(row.id);
     if (!id) continue;
     const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
+    // Multi-desktop: a projecao da nuvem pode estar atras da copia local (esta
+    // maquina fechou/alterou e ainda nao terminou o push). Nunca sobrescreve
+    // uma versao local mais nova nem regride status terminal para aberto.
+    const local = readLocal.get(id) as { status: string; updated_at: string } | undefined;
+    if (local) {
+      const localTs = Date.parse(local.updated_at ?? "");
+      const cloudTs = Date.parse(updatedAt);
+      if (Number.isFinite(localTs) && Number.isFinite(cloudTs) && cloudTs < localTs) {
+        continue;
+      }
+      const incomingStatus = mapCloudOperationStatus(row.status);
+      if (
+        TERMINAL_LOCAL_OPERATION_STATUSES.has(local.status) &&
+        !TERMINAL_LOCAL_OPERATION_STATUSES.has(incomingStatus)
+      ) {
+        continue;
+      }
+    }
     const closedAt = isoStringValue(row.closed_at);
     const customerId = existingId(database, "customers", row.customer_id);
     const productId = existingId(database, "products", row.product_id);
@@ -759,7 +790,7 @@ function upsertCloudOperations(
       id,
       settings.companyId,
       settings.unitId,
-      stringValue(row.device_id) || settings.deviceId,
+      existingId(database, "devices", row.device_id) ?? settings.deviceId,
       mapCloudOperationStatus(row.status),
       mapCloudOperationType(row.operation_type),
       customerId,
@@ -821,12 +852,27 @@ function upsertCloudLoadingRequests(
       loader_completed_at = excluded.loader_completed_at
   `);
 
+  const readLocal = database.prepare("SELECT status, updated_at FROM loading_requests WHERE id = ?");
+
   let count = 0;
   for (const row of rows) {
     const id = stringValue(row.id);
     const operationId = existingId(database, "weighing_operations", row.operation_id);
     if (!id || !operationId) continue;
     const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
+    // Mesmo criterio das operacoes: a projecao da nuvem nao sobrescreve uma
+    // versao local mais nova nem reabre uma solicitacao ja fechada localmente.
+    const local = readLocal.get(id) as { status: string; updated_at: string } | undefined;
+    if (local) {
+      const localTs = Date.parse(local.updated_at ?? "");
+      const cloudTs = Date.parse(updatedAt);
+      if (Number.isFinite(localTs) && Number.isFinite(cloudTs) && cloudTs < localTs) {
+        continue;
+      }
+      if (local.status !== "open" && mapLoadingRequestStatus(row.status) === "open") {
+        continue;
+      }
+    }
     upsert.run(
       id,
       operationId,
@@ -894,6 +940,16 @@ function upsertCloudPrintReceipts(
   }
   return count;
 }
+
+// Status local que nao pode ser regredido por uma projecao atrasada da nuvem.
+const TERMINAL_LOCAL_OPERATION_STATUSES = new Set([
+  "closed_local",
+  "pending_cloud",
+  "pending_omie",
+  "synced",
+  "sync_error",
+  "cancelled"
+]);
 
 function mapCloudOperationStatus(value: unknown): string {
   const status = stringValue(value);
@@ -1342,7 +1398,7 @@ function getOperationPayload(
     id: operation.id,
     company_id: settings.companyId,
     unit_id: settings.unitId,
-    device_id: settings.deviceId,
+    device_id: resolveCreatorDeviceId(database, operation.device_id, settings),
     status:
       operation.status === "loading_requested" || operation.status === "awaiting_exit"
         ? "open"
@@ -1376,6 +1432,25 @@ function getOperationPayload(
     closed_at: operation.exit_weight_captured_at,
     synced_at: new Date().toISOString()
   };
+}
+
+/**
+ * Preserva o computador criador da operacao no payload da nuvem. So envia ids
+ * que a nuvem conhece: o proprio dispositivo ou um espelho remoto recebido de
+ * desktop-status/pull (installation_id 'remote-…'). Ids puramente locais (ex.:
+ * "setup-device" do modo emergencia) caem para o dispositivo atual, como antes.
+ */
+function resolveCreatorDeviceId(
+  database: DesktopDatabase,
+  value: unknown,
+  settings: CloudSettings
+): string {
+  const raw = stringValue(value);
+  if (!raw || raw === settings.deviceId) return settings.deviceId;
+  const remote = database
+    .prepare("SELECT id FROM devices WHERE id = ? AND installation_id LIKE 'remote-%'")
+    .get(raw) as { id: string } | undefined;
+  return remote ? remote.id : settings.deviceId;
 }
 
 function getLoadingRequestPayload(

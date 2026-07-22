@@ -1,6 +1,7 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { sha256Hex } from "../_shared/crypto.ts";
+import { pickNextDeviceColor } from "../_shared/device-colors.ts";
 
 type CompanyRow = {
   id: string;
@@ -28,10 +29,12 @@ Deno.serve(async (req) => {
   const body = (await req.json().catch(() => ({}))) as {
     activationCode?: string;
     deviceName?: string;
+    installationId?: string;
   };
 
   const activationCode = String(body.activationCode ?? "").trim();
   const deviceName = String(body.deviceName ?? "").trim() || "Desktop balanca";
+  const installationId = String(body.installationId ?? "").trim() || null;
 
   if (!/^\d{6}$/.test(activationCode)) {
     return jsonResponse({ error: "Codigo de ativacao invalido" }, 400);
@@ -72,17 +75,37 @@ Deno.serve(async (req) => {
   const tokenHash = await sha256Hex(deviceToken);
   const now = new Date().toISOString();
 
-  const { data: existingDevices, error: existingDeviceError } = await supabase
+  // Multiplos desktops por pedreira: cada computador (installation_id) tem seu
+  // proprio registro e token. Ativar um computador novo NAO rotaciona o token
+  // dos demais — todos continuam operando em paralelo na mesma unidade.
+  const { data: companyDevices, error: existingDeviceError } = await supabase
     .from("device_registrations")
-    .select("id")
+    .select("id, installation_id, color, is_active")
     .eq("company_id", typedCompany.id)
     .order("last_seen_at", { ascending: false, nullsFirst: false })
-    .order("updated_at", { ascending: false, nullsFirst: false })
-    .limit(1);
+    .order("updated_at", { ascending: false, nullsFirst: false });
 
   if (existingDeviceError) throw existingDeviceError;
-  const existingDevice = existingDevices?.[0] as { id: string } | undefined;
+  type ExistingDevice = {
+    id: string;
+    installation_id: string | null;
+    color: string | null;
+    is_active: boolean;
+  };
+  const typedDevices = (companyDevices ?? []) as ExistingDevice[];
+  // Reativacao do mesmo computador: reusa o registro daquela instalacao.
+  // Sem correspondencia, adota o registro legado (anterior ao multi-desktop,
+  // sem installation_id) mais recente, preservando o id historico das operacoes.
+  const existingDevice = installationId
+    ? (typedDevices.find((device) => device.installation_id === installationId) ??
+      typedDevices.find((device) => !device.installation_id))
+    : typedDevices.find((device) => !device.installation_id);
   const deviceId = existingDevice?.id ?? `desktop-${crypto.randomUUID()}`;
+  const deviceColor =
+    existingDevice?.color ??
+    pickNextDeviceColor(
+      typedDevices.filter((device) => device.id !== deviceId).map((device) => device.color)
+    );
 
   if (existingDevice) {
     const { error: updateDeviceError } = await supabase
@@ -90,6 +113,8 @@ Deno.serve(async (req) => {
       .update({
         unit_id: typedUnit.id,
         name: deviceName,
+        installation_id: installationId ?? existingDevice.installation_id,
+        color: deviceColor,
         token_hash: tokenHash,
         is_active: true,
         last_seen_at: now,
@@ -103,6 +128,8 @@ Deno.serve(async (req) => {
       company_id: typedCompany.id,
       unit_id: typedUnit.id,
       name: deviceName,
+      installation_id: installationId,
+      color: deviceColor,
       token_hash: tokenHash,
       is_active: true,
       last_seen_at: now,
@@ -131,6 +158,9 @@ Deno.serve(async (req) => {
     unitTimezone: typedUnit.timezone,
     deviceId,
     deviceToken,
+    deviceName,
+    deviceColor,
+    installationId,
     supabaseUrl,
     publishableKey,
     checkedAt: now

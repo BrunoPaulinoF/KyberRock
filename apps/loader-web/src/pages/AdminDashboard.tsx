@@ -27,6 +27,7 @@ interface LoaderUser {
   id: string;
   email: string;
   name: string;
+  role: "loader" | "comercial";
   companyId: string;
   unitId: string;
   isActive: boolean;
@@ -126,6 +127,7 @@ export function AdminDashboard() {
           id: string;
           email: string;
           name: string;
+          role?: string;
           company_id: string;
           unit_id: string;
           is_active: boolean;
@@ -170,6 +172,7 @@ export function AdminDashboard() {
           id: user.id,
           email: user.email,
           name: user.name,
+          role: user.role === "comercial" ? "comercial" : "loader",
           companyId: user.company_id,
           unitId: user.unit_id,
           isActive: user.is_active
@@ -269,7 +272,8 @@ export function AdminDashboard() {
           email,
           password,
           name: formData.get("name"),
-          unitId: formData.get("unitId")
+          unitId: formData.get("unitId"),
+          role: formData.get("role") || "loader"
         }
       });
 
@@ -915,7 +919,7 @@ export function AdminDashboard() {
           {activeTab === "users" && (
             <section style={{ display: "grid", gridTemplateColumns: TWO_COLUMN_GRID, gap: "24px" }}>
               <article style={{ background: "#fff", padding: "24px", borderRadius: "16px" }}>
-                <h2 style={{ margin: "0 0 16px 0" }}>Usuarios Carregadores</h2>
+                <h2 style={{ margin: "0 0 16px 0" }}>Usuarios (Carregador e Comercial)</h2>
                 {users.length === 0 && (
                   <p style={{ color: "#64748b" }}>Nenhum usuario cadastrado.</p>
                 )}
@@ -938,6 +942,17 @@ export function AdminDashboard() {
                         </p>
                       </div>
                       <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                        <span
+                          style={{
+                            padding: "4px 8px",
+                            borderRadius: "6px",
+                            fontSize: "12px",
+                            background: user.role === "comercial" ? "#e0e7ff" : "#f1f5f9",
+                            color: user.role === "comercial" ? "#3730a3" : "#334155"
+                          }}
+                        >
+                          {user.role === "comercial" ? "Comercial" : "Carregador"}
+                        </span>
                         <span
                           style={{
                             padding: "4px 8px",
@@ -1011,6 +1026,15 @@ export function AdminDashboard() {
                           {u.name}
                         </option>
                       ))}
+                  </select>
+                  <select
+                    name="role"
+                    required
+                    defaultValue="loader"
+                    style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
+                  >
+                    <option value="loader">Carregador (fila de carregamento)</option>
+                    <option value="comercial">Comercial (relatorios de venda)</option>
                   </select>
                   <button
                     type="submit"

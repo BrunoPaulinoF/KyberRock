@@ -138,6 +138,7 @@ import {
 } from "./desktop-activation.js";
 import { CacheStore, type CacheQueryOptions, type CacheQueryResult } from "./cache-store.js";
 import { readOmiePullState, writeOmiePullState } from "./supabase-sync.js";
+import { listUnitDevices, type UnitDeviceInfo } from "./unit-devices.js";
 import { ReportService } from "./reports.js";
 import {
   sendEmail,
@@ -931,6 +932,52 @@ export class DesktopRuntime {
   }
 
   /**
+   * Computadores da unidade (multi-desktop): nome + cor de cada maquina para a
+   * legenda e o contorno das operacoes. Vem do espelho local alimentado por
+   * desktop-status/desktop-pull; funciona offline.
+   */
+  listUnitDevices(): UnitDeviceInfo[] {
+    const identity = getLocalDesktopIdentity(this.database);
+    if (!identity) return [];
+    return listUnitDevices(this.database, identity);
+  }
+
+  /**
+   * Pull leve da projecao cloud (operacoes/solicitacoes/cadastros da unidade),
+   * sem processar filas de push nem OMIE. Usado pelo renderer para enxergar em
+   * perto de tempo real o que os outros computadores da pedreira registraram.
+   */
+  async pullCloudNow(): Promise<{ pulled: number; errors: string[] }> {
+    this.assertDesktopAccess();
+    if (this.cloudSyncInProgress) {
+      return { pulled: 0, errors: [] };
+    }
+    try {
+      initializeSupabaseFromSettings(this.database);
+      if (!isSupabaseInitialized()) {
+        return { pulled: 0, errors: [] };
+      }
+      const identity = this.ensureIdentity();
+      const pulled = await pullDesktopDataFromCloud(this.database, identity);
+      this.cacheStore.loadAll(identity.companyId);
+      return {
+        pulled:
+          pulled.customers +
+          pulled.products +
+          pulled.operations +
+          pulled.loadingRequests +
+          pulled.printReceipts,
+        errors: []
+      };
+    } catch (error) {
+      return {
+        pulled: 0,
+        errors: [error instanceof Error ? error.message : "Falha ao atualizar dados da nuvem."]
+      };
+    }
+  }
+
+  /**
    * Busca no cloud apenas as conclusoes do carregador (loader-web) e as projeta
    * no SQLite local. E uma consulta leve (uma tabela, filtrada por unidade) que
    * o renderer pode chamar com frequencia para manter a "luz" de conclusao
@@ -1174,8 +1221,13 @@ export class DesktopRuntime {
         );
       }
 
-      // Sync open operations
-      const openOperations = listOpenWeighingOperations(this.database);
+      // Sync open operations. Com multi-desktop, cada maquina so re-envia as
+      // operacoes abertas criadas por ela (edicoes em operacoes de outras
+      // maquinas seguem pela fila de jobs) — evita empurrar copia desatualizada
+      // do trabalho das demais.
+      const openOperations = listOpenWeighingOperations(this.database).filter(
+        (operation) => !operation.deviceId || operation.deviceId === identity.deviceId
+      );
       for (const operation of openOperations) {
         try {
           await syncOperationToSupabase(this.database, operation.id, identity);

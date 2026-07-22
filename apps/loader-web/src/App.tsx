@@ -5,6 +5,7 @@ import { AdminLogin } from "./pages/AdminLogin";
 import { AdminDashboard } from "./pages/AdminDashboard";
 import { LoaderLogin } from "./pages/LoaderLogin";
 import { LoaderDashboard } from "./pages/LoaderDashboard";
+import { SalesReport } from "./pages/SalesReport";
 
 function PrivateAdminRoute({ children }: { children: React.ReactNode }) {
   const { isAdmin, isLoading } = useAuth();
@@ -34,6 +35,20 @@ function PrivateLoaderRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function PrivateComercialRoute({ children }: { children: React.ReactNode }) {
+  const { isComercial, isLoading } = useAuth();
+
+  if (isLoading) {
+    return <div>Carregando...</div>;
+  }
+
+  if (!isComercial) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return <>{children}</>;
+}
+
 function AppRoutes() {
   return (
     <Routes>
@@ -45,6 +60,14 @@ function AppRoutes() {
           <PrivateLoaderRoute>
             <LoaderDashboard />
           </PrivateLoaderRoute>
+        }
+      />
+      <Route
+        path="/relatorios"
+        element={
+          <PrivateComercialRoute>
+            <SalesReport />
+          </PrivateComercialRoute>
         }
       />
       <Route path="/admin/login" element={<AdminLogin />} />

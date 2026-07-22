@@ -81,23 +81,33 @@ Deno.serve(async (req) => {
       }
     }
     if (body.operations?.length) {
-      const { error } = await supabase
-        .from("weighing_operations")
-        .upsert(body.operations, { onConflict: "id" });
-      if (error) {
-        stepErrors.push(`weighing_operations: ${error.message} (code=${error.code ?? "n/a"})`);
-      } else {
-        counts.operations = body.operations.length;
+      // Com varios desktops na mesma pedreira, uma maquina pode re-enviar uma
+      // copia desatualizada de operacao criada/fechada em outra. Descarta
+      // escritas mais antigas que a versao ja projetada na nuvem e nunca
+      // regride um status terminal (fechada/cancelada) para um status aberto.
+      const operations = await dropStaleOperationWrites(supabase, body.operations);
+      if (operations.length) {
+        const { error } = await supabase
+          .from("weighing_operations")
+          .upsert(operations, { onConflict: "id" });
+        if (error) {
+          stepErrors.push(`weighing_operations: ${error.message} (code=${error.code ?? "n/a"})`);
+        } else {
+          counts.operations = operations.length;
+        }
       }
     }
     if (body.loadingRequests?.length) {
-      const { error } = await supabase
-        .from("loading_requests")
-        .upsert(body.loadingRequests, { onConflict: "id" });
-      if (error) {
-        stepErrors.push(`loading_requests: ${error.message} (code=${error.code ?? "n/a"})`);
-      } else {
-        counts.loadingRequests = body.loadingRequests.length;
+      const loadingRequests = await mergeLoadingRequestWrites(supabase, body.loadingRequests);
+      if (loadingRequests.length) {
+        const { error } = await supabase
+          .from("loading_requests")
+          .upsert(loadingRequests, { onConflict: "id" });
+        if (error) {
+          stepErrors.push(`loading_requests: ${error.message} (code=${error.code ?? "n/a"})`);
+        } else {
+          counts.loadingRequests = loadingRequests.length;
+        }
       }
     }
     if (body.printReceipts?.length) {
@@ -176,3 +186,98 @@ Deno.serve(async (req) => {
     );
   }
 });
+
+// Status de operacao que nao pode voltar para aberto por um re-envio atrasado.
+const TERMINAL_OPERATION_STATUSES = new Set([
+  "closed_local",
+  "pending_cloud",
+  "pending_omie",
+  "synced",
+  "sync_error",
+  "cancelled"
+]);
+
+type SupabaseServiceClient = ReturnType<typeof createClient>;
+
+async function dropStaleOperationWrites(
+  supabase: SupabaseServiceClient,
+  rows: Record<string, unknown>[]
+): Promise<Record<string, unknown>[]> {
+  const ids = rows.map((row) => String(row.id ?? "")).filter(Boolean);
+  if (!ids.length) return rows;
+  const { data: existing, error } = await supabase
+    .from("weighing_operations")
+    .select("id, status, updated_at")
+    .in("id", ids);
+  // Sem como comparar, mantem o comportamento antigo (upsert direto).
+  if (error || !existing) return rows;
+  const currentById = new Map(
+    (existing as Array<{ id: string; status: string | null; updated_at: string | null }>).map(
+      (row) => [row.id, row]
+    )
+  );
+  return rows.filter((row) => {
+    const current = currentById.get(String(row.id ?? ""));
+    if (!current) return true;
+    const incomingStatus = String(row.status ?? "");
+    const currentStatus = String(current.status ?? "");
+    if (TERMINAL_OPERATION_STATUSES.has(currentStatus) && !TERMINAL_OPERATION_STATUSES.has(incomingStatus)) {
+      return false;
+    }
+    const incomingTs = Date.parse(String(row.updated_at ?? ""));
+    const currentTs = Date.parse(String(current.updated_at ?? ""));
+    if (Number.isFinite(incomingTs) && Number.isFinite(currentTs) && incomingTs < currentTs) {
+      return false;
+    }
+    return true;
+  });
+}
+
+async function mergeLoadingRequestWrites(
+  supabase: SupabaseServiceClient,
+  rows: Record<string, unknown>[]
+): Promise<Record<string, unknown>[]> {
+  const ids = rows.map((row) => String(row.id ?? "")).filter(Boolean);
+  if (!ids.length) return rows;
+  const { data: existing, error } = await supabase
+    .from("loading_requests")
+    .select("id, status, updated_at, loader_completed_at")
+    .in("id", ids);
+  if (error || !existing) return rows;
+  const currentById = new Map(
+    (
+      existing as Array<{
+        id: string;
+        status: string | null;
+        updated_at: string | null;
+        loader_completed_at: string | null;
+      }>
+    ).map((row) => [row.id, row])
+  );
+  const merged: Record<string, unknown>[] = [];
+  for (const row of rows) {
+    const current = currentById.get(String(row.id ?? ""));
+    if (!current) {
+      merged.push(row);
+      continue;
+    }
+    const incomingStatus = String(row.status ?? "");
+    const currentStatus = String(current.status ?? "");
+    if (currentStatus !== "open" && incomingStatus === "open") {
+      continue; // fechada/cancelada em outra maquina; nao reabre
+    }
+    const incomingTs = Date.parse(String(row.updated_at ?? ""));
+    const currentTs = Date.parse(String(current.updated_at ?? ""));
+    if (Number.isFinite(incomingTs) && Number.isFinite(currentTs) && incomingTs < currentTs) {
+      continue;
+    }
+    // Conclusao do carregador chega direto na nuvem (loader-web); um re-envio do
+    // desktop sem esse campo nao pode apaga-la.
+    if (!row.loader_completed_at && current.loader_completed_at) {
+      merged.push({ ...row, loader_completed_at: current.loader_completed_at });
+    } else {
+      merged.push(row);
+    }
+  }
+  return merged;
+}

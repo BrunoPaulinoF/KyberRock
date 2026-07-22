@@ -198,7 +198,7 @@ const STEPS = [
 ];
 
 export function LoaderLogin() {
-  const { loginLoader, error, isLoader, clearError } = useAuth();
+  const { loginLoader, error, isLoader, isComercial, clearError } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -207,15 +207,18 @@ export function LoaderLogin() {
   useEffect(() => {
     if (isLoader) {
       navigate("/loader", { replace: true });
+    } else if (isComercial) {
+      navigate("/relatorios", { replace: true });
     }
-  }, [isLoader, navigate]);
+  }, [isLoader, isComercial, navigate]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setIsLoading(true);
     try {
       await loginLoader(email, password);
-      navigate("/loader", { replace: true });
+      // O redirecionamento por papel (carregador vs. comercial) acontece no
+      // useEffect acima, apos o perfil carregar.
     } catch {
       // O contexto de auth ja expoe a mensagem para a tela.
     } finally {
