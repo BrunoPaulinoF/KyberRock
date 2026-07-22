@@ -6,6 +6,8 @@ type DeviceRow = {
   id: string;
   company_id: string;
   unit_id: string;
+  name: string;
+  color: string | null;
   token_hash: string;
   is_active: boolean;
 };
@@ -27,7 +29,7 @@ Deno.serve(async (req) => {
 
   const { data: device, error: deviceError } = await supabase
     .from("device_registrations")
-    .select("id, company_id, unit_id, token_hash, is_active")
+    .select("id, company_id, unit_id, name, color, token_hash, is_active")
     .eq("id", deviceId)
     .single();
 
@@ -73,6 +75,14 @@ Deno.serve(async (req) => {
     .update({ last_seen_at: checkedAt, updated_at: checkedAt })
     .eq("id", typedDevice.id);
 
+  // Legenda multi-desktop: todos os computadores da unidade (nome + cor), para o
+  // desktop identificar o responsavel por cada operacao criada por outra maquina.
+  const { data: unitDevices } = await supabase
+    .from("device_registrations")
+    .select("id, name, color, is_active, last_seen_at")
+    .eq("unit_id", typedDevice.unit_id)
+    .order("created_at", { ascending: true });
+
   return jsonResponse({
     status: "approved",
     allowed: true,
@@ -80,6 +90,9 @@ Deno.serve(async (req) => {
     companyId: typedDevice.company_id,
     unitId: typedDevice.unit_id,
     deviceId: typedDevice.id,
+    deviceName: typedDevice.name,
+    deviceColor: typedDevice.color,
+    unitDevices: unitDevices ?? [],
     checkedAt
   });
 });

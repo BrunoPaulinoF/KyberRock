@@ -72,8 +72,10 @@ import {
   normalizeEmail,
   normalizePhone,
   normalizePlate,
-  parseMoneyInputToCents
+  parseMoneyInputToCents,
+  resolveDeviceColor
 } from "@kyberrock/shared";
+import type { UnitDeviceInfo } from "../services/unit-devices";
 import { ActivationGate } from "./ActivationGate";
 import { formatDbDateTime, parseDbTimestamp } from "./format-datetime";
 import { MountainOutline } from "./MountainOutline";
@@ -300,6 +302,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [canceledOperations, setCanceledOperations] = useState<WeighingOperationSummary[]>([]);
   const [closedOperations, setClosedOperations] = useState<WeighingOperationSummary[]>([]);
   const [operationsTab, setOperationsTab] = useState<OperationsTab>("open");
+  // Multi-desktop: computadores da unidade (nome + cor) para a legenda e o
+  // contorno colorido das operacoes por responsavel.
+  const [unitDevices, setUnitDevices] = useState<UnitDeviceInfo[]>([]);
   const [loaderCompletionNotice, setLoaderCompletionNotice] = useState<string | null>(null);
   // Estado anterior (id -> concluida?) para detectar a transicao aguardando->concluida
   // e disparar o aviso de "carga concluida pelo carregador".
@@ -437,6 +442,23 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     () => openOperations.some((op) => !op.loaderCompletedAt),
     [openOperations]
   );
+  // Contorno colorido por computador criador: so faz sentido (e so aparece)
+  // quando a pedreira tem mais de um desktop trabalhando junto.
+  const showDeviceColors = unitDevices.length > 1;
+  const unitDeviceById = useMemo(
+    () => new Map(unitDevices.map((device) => [device.id, device])),
+    [unitDevices]
+  );
+  const operationOutlineStyle = useCallback(
+    (operation: WeighingOperationSummary): React.CSSProperties => {
+      if (!showDeviceColors || !operation.deviceId) return {};
+      const color =
+        unitDeviceById.get(operation.deviceId)?.color ??
+        resolveDeviceColor(operation.deviceId, operation.deviceColor);
+      return { boxShadow: `inset 0 0 0 2px ${color}` };
+    },
+    [showDeviceColors, unitDeviceById]
+  );
 
   // Detecta a transicao aguardando -> concluida (o carregador clicou em "Concluir
   // carga" no loader-web) e dispara um aviso verde temporario no desktop.
@@ -501,6 +523,42 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       window.clearInterval(intervalId);
     };
   }, [desktopApi, phase, hasAwaitingLoader]);
+
+  // Multi-desktop: pull leve periodico da nuvem para enxergar as operacoes
+  // registradas pelos outros computadores da pedreira sem esperar a
+  // sincronizacao completa agendada.
+  useEffect(() => {
+    if (!desktopApi || phase !== "unlocked") return;
+    let cancelled = false;
+    const api = desktopApi;
+
+    async function tick(): Promise<void> {
+      if (cancelled || !navigator.onLine) return;
+      try {
+        const result = await api.pullCloudNow();
+        if (cancelled || result.pulled <= 0) return;
+        const [nextOpen, nextCanceled, nextClosed, nextDevices] = await Promise.all([
+          api.listOpenWeighingOperations(),
+          api.listCanceledWeighingOperations(),
+          api.listClosedWeighingOperations(),
+          api.listUnitDevices()
+        ]);
+        if (cancelled) return;
+        setOpenOperations(nextOpen);
+        setCanceledOperations(nextCanceled);
+        setClosedOperations(nextClosed);
+        setUnitDevices(nextDevices);
+      } catch {
+        // best-effort: a proxima sincronizacao (agendada ou por evento) cobre
+      }
+    }
+
+    const intervalId = window.setInterval(() => void tick(), 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [desktopApi, phase]);
 
   useEffect(() => {
     writeStoredThemeMode(themeMode);
@@ -938,6 +996,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         nextOpenOperations,
         nextCanceledOperations,
         nextClosedOperations,
+        nextUnitDevices,
         nextPrinters,
         nextProfiles,
         nextReceipts
@@ -947,6 +1006,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         desktopApi.listOpenWeighingOperations(),
         desktopApi.listCanceledWeighingOperations(),
         desktopApi.listClosedWeighingOperations(),
+        desktopApi.listUnitDevices(),
         desktopApi.listWindowsPrinters(),
         desktopApi.listPrintProfiles(),
         desktopApi.listPrintReceipts()
@@ -959,6 +1019,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       setOpenOperations(nextOpenOperations);
       setCanceledOperations(nextCanceledOperations);
       setClosedOperations(nextClosedOperations);
+      setUnitDevices(nextUnitDevices);
       setPrinters(nextPrinters);
       setPrintProfiles(nextProfiles);
       setPrintReceipts(nextReceipts);
@@ -1146,16 +1207,23 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       return;
     }
 
-    const [nextOpenOperations, nextCanceledOperations, nextClosedOperations, nextStatus] =
-      await Promise.all([
-        desktopApi.listOpenWeighingOperations(),
-        desktopApi.listCanceledWeighingOperations(),
-        desktopApi.listClosedWeighingOperations(),
-        desktopApi.getStatus(navigator.onLine)
-      ]);
+    const [
+      nextOpenOperations,
+      nextCanceledOperations,
+      nextClosedOperations,
+      nextUnitDevices,
+      nextStatus
+    ] = await Promise.all([
+      desktopApi.listOpenWeighingOperations(),
+      desktopApi.listCanceledWeighingOperations(),
+      desktopApi.listClosedWeighingOperations(),
+      desktopApi.listUnitDevices(),
+      desktopApi.getStatus(navigator.onLine)
+    ]);
     setOpenOperations(nextOpenOperations);
     setCanceledOperations(nextCanceledOperations);
     setClosedOperations(nextClosedOperations);
+    setUnitDevices(nextUnitDevices);
     setStatus(nextStatus);
   }
 
@@ -2544,6 +2612,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   ) : null}
                 </div>
 
+                {showDeviceColors ? <DeviceColorLegend devices={unitDevices} /> : null}
+
                 {operationsTab === "open" ? (
                   openOperations.length === 0 ? (
                     <div style={styles.emptyState}>
@@ -2649,7 +2719,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                           key={operation.id}
                           style={{
                             ...styles.operationsTableRow,
-                            ...(isOvertime ? { background: "#fef2f2" } : {})
+                            ...(isOvertime ? { background: "#fef2f2" } : {}),
+                            ...operationOutlineStyle(operation)
                           }}
                         >
                           <span
@@ -2750,7 +2821,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                         <span>Motivo</span>
                       </div>
                       {filteredCanceledOperations.map((operation) => (
-                        <div key={operation.id} style={styles.canceledOperationsTableRow}>
+                        <div
+                          key={operation.id}
+                          style={{
+                            ...styles.canceledOperationsTableRow,
+                            ...operationOutlineStyle(operation)
+                          }}
+                        >
                           <strong style={styles.plateBadge}>{operation.plate || "--"}</strong>
                           <span style={styles.operationCellStack}>
                             <strong>{operation.customerName || "Cliente nao informado"}</strong>
@@ -2780,7 +2857,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       <span>Acoes</span>
                     </div>
                     {filteredClosedOperations.map((operation) => (
-                      <div key={operation.id} style={styles.closedOperationsTableRow}>
+                      <div
+                        key={operation.id}
+                        style={{
+                          ...styles.closedOperationsTableRow,
+                          ...operationOutlineStyle(operation)
+                        }}
+                      >
                         <strong style={styles.plateBadge}>{operation.plate || "--"}</strong>
                         <span style={styles.operationCellStack}>
                           <strong>{operation.customerName || "Cliente nao informado"}</strong>
@@ -4006,6 +4089,61 @@ function GlobalUiPolish() {
 
 function getWindowDesktopApi(): KyberRockDesktopApi | undefined {
   return typeof window === "undefined" ? undefined : window.kyberrockDesktop;
+}
+
+/**
+ * Legenda multi-desktop: mostra a cor e o nome de cada computador da pedreira.
+ * As operacoes das listas ganham um contorno na cor do computador que as criou,
+ * identificando o responsavel por cada tarefa quando ha mais de um desktop.
+ */
+function DeviceColorLegend({ devices }: { devices: UnitDeviceInfo[] }) {
+  return (
+    <div
+      role="note"
+      aria-label="Legenda de cores por computador"
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        alignItems: "center",
+        gap: "12px",
+        padding: "8px 12px",
+        borderRadius: "10px",
+        border: "1px solid var(--kr-border)",
+        background: "var(--kr-surface-soft)",
+        fontSize: "12px",
+        color: "var(--kr-text)"
+      }}
+    >
+      <span style={{ fontWeight: 700, color: "var(--kr-muted)" }}>
+        Responsavel (cor por computador):
+      </span>
+      {devices.map((device) => (
+        <span
+          key={device.id}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "6px",
+            fontWeight: 600,
+            opacity: device.isActive ? 1 : 0.6
+          }}
+        >
+          <span
+            aria-hidden="true"
+            style={{
+              width: "12px",
+              height: "12px",
+              borderRadius: "4px",
+              background: device.color,
+              flexShrink: 0
+            }}
+          />
+          {device.name}
+          {device.isSelf ? " (este computador)" : ""}
+        </span>
+      ))}
+    </div>
+  );
 }
 
 /**

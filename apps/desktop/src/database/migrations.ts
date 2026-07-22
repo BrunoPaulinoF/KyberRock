@@ -1127,5 +1127,17 @@ UPDATE payment_methods SET omie_code = '03' WHERE code = 'credit_card' AND omie_
 UPDATE payment_methods SET omie_code = '04' WHERE code = 'debit_card' AND omie_code IS NULL AND is_system = 1 AND deleted_at IS NULL;
 UPDATE payment_methods SET omie_code = '15' WHERE code = 'boleto' AND omie_code IS NULL AND is_system = 1 AND deleted_at IS NULL;
 `
+  },
+  {
+    version: 34,
+    name: "device_color_multi_desktop",
+    sql: `
+-- Multi-desktop por pedreira: cada computador tem uma cor (atribuida na nuvem
+-- pela ativacao) usada no contorno das operacoes e na legenda. A tabela devices
+-- passa a espelhar tambem os dispositivos das outras maquinas da unidade
+-- (recebidos via desktop-status/desktop-pull) para satisfazer a FK
+-- weighing_operations.device_id e alimentar a legenda.
+ALTER TABLE devices ADD COLUMN color TEXT;
+`
   }
 ];

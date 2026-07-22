@@ -161,6 +161,13 @@ export interface WeighingOperationSummary {
   createdAt: string;
   updatedAt: string;
   /**
+   * Computador da pedreira que criou a operacao (multi-desktop). Alimenta o
+   * contorno colorido e a legenda da tela de Operacoes.
+   */
+  deviceId: string | null;
+  deviceName: string | null;
+  deviceColor: string | null;
+  /**
    * Quando o carregador marcou a carga como concluida no loader-web (projetado
    * de volta para o desktop pela sincronizacao cloud). `null` enquanto a carga
    * ainda aguarda o carregador. So e populado por `listOpenWeighingOperations`.
@@ -205,6 +212,9 @@ interface OperationRow {
   driver_name: string | null;
   product_description: string | null;
   payment_term_name: string | null;
+  device_id?: string | null;
+  device_name?: string | null;
+  device_color?: string | null;
   loader_completed_at?: string | null;
 }
 
@@ -1486,6 +1496,7 @@ export function listOpenWeighingOperations(database: DesktopDatabase): WeighingO
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
         c.id AS customer_id, c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
+        o.device_id, dv.name AS device_name, dv.color AS device_color,
         lr.loader_completed_at AS loader_completed_at,
         CASE
           WHEN o.manual_installments = 1 THEN '1 parcela'
@@ -1498,6 +1509,7 @@ export function listOpenWeighingOperations(database: DesktopDatabase): WeighingO
        LEFT JOIN drivers d ON d.id = o.driver_id
        LEFT JOIN products p ON p.id = o.product_id
        LEFT JOIN payment_terms pt ON pt.id = o.payment_term_id
+       LEFT JOIN devices dv ON dv.id = o.device_id
        LEFT JOIN loading_requests lr ON lr.operation_id = o.id
         WHERE o.status IN ('loading_requested', 'awaiting_exit', 'entry_registered')
           AND o.deleted_at IS NULL
@@ -1522,6 +1534,7 @@ export function listCanceledWeighingOperations(
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
         c.id AS customer_id, c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
+        o.device_id, dv.name AS device_name, dv.color AS device_color,
         CASE
           WHEN o.manual_installments = 1 THEN '1 parcela'
           WHEN o.manual_installments > 1 THEN CAST(o.manual_installments AS TEXT) || ' parcelas'
@@ -1533,6 +1546,7 @@ export function listCanceledWeighingOperations(
        LEFT JOIN drivers d ON d.id = o.driver_id
        LEFT JOIN products p ON p.id = o.product_id
        LEFT JOIN payment_terms pt ON pt.id = o.payment_term_id
+       LEFT JOIN devices dv ON dv.id = o.device_id
        WHERE o.status = 'cancelled'
          AND o.deleted_at IS NULL
        ORDER BY o.updated_at DESC`
@@ -1556,6 +1570,7 @@ export function listClosedWeighingOperations(
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
         c.id AS customer_id, c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
+        o.device_id, dv.name AS device_name, dv.color AS device_color,
         CASE
           WHEN o.manual_installments = 1 THEN '1 parcela'
           WHEN o.manual_installments > 1 THEN CAST(o.manual_installments AS TEXT) || ' parcelas'
@@ -1567,6 +1582,7 @@ export function listClosedWeighingOperations(
        LEFT JOIN drivers d ON d.id = o.driver_id
        LEFT JOIN products p ON p.id = o.product_id
        LEFT JOIN payment_terms pt ON pt.id = o.payment_term_id
+       LEFT JOIN devices dv ON dv.id = o.device_id
        WHERE o.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
          AND o.deleted_at IS NULL
        ORDER BY o.updated_at DESC`
@@ -1641,6 +1657,7 @@ export function getWeighingOperation(
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
         c.id AS customer_id, c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
+        o.device_id, dv.name AS device_name, dv.color AS device_color,
         CASE
           WHEN o.manual_installments = 1 THEN '1 parcela'
           WHEN o.manual_installments > 1 THEN CAST(o.manual_installments AS TEXT) || ' parcelas'
@@ -1652,6 +1669,7 @@ export function getWeighingOperation(
        LEFT JOIN drivers d ON d.id = o.driver_id
        LEFT JOIN products p ON p.id = o.product_id
        LEFT JOIN payment_terms pt ON pt.id = o.payment_term_id
+       LEFT JOIN devices dv ON dv.id = o.device_id
        WHERE o.id = ?`
     )
     .get(operationId) as OperationRow | undefined;
@@ -2140,6 +2158,9 @@ function mapOperationRow(row: OperationRow): WeighingOperationSummary {
     cancelReason: row.cancel_reason,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    deviceId: row.device_id ?? null,
+    deviceName: row.device_name ?? null,
+    deviceColor: row.device_color ?? null,
     loaderCompletedAt: row.loader_completed_at ?? null
   };
 }

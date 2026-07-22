@@ -51,7 +51,7 @@ Deno.serve(async (req) => {
         supabase.from("user_profiles").select("*").order("created_at", { ascending: false }),
         supabase
           .from("device_registrations")
-          .select("id, company_id, unit_id, name, is_active, last_seen_at, created_at, updated_at")
+          .select("id, company_id, unit_id, name, color, installation_id, is_active, last_seen_at, created_at, updated_at")
           .order("created_at", { ascending: false })
       ]);
       if (companies.error) throw companies.error;
@@ -138,6 +138,9 @@ Deno.serve(async (req) => {
       const password = String(payload.password ?? "");
       const name = String(payload.name ?? "").trim();
       const unitId = String(payload.unitId ?? "");
+      // "loader" (carregador, ve fila da unidade) ou "comercial" (extrai
+      // relatorios de venda da empresa inteira no loader-web).
+      const role = String(payload.role ?? "loader") === "comercial" ? "comercial" : "loader";
       const { data: unit, error: unitError } = await supabase.from("units").select("company_id").eq("id", unitId).single();
       if (unitError) throw unitError;
       const created = await supabase.auth.admin.createUser({ email, password, email_confirm: true });
@@ -146,7 +149,7 @@ Deno.serve(async (req) => {
         id: created.data.user.id,
         email,
         name,
-        role: "loader",
+        role,
         company_id: unit.company_id,
         unit_id: unitId,
         is_active: true

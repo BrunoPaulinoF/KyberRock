@@ -1630,3 +1630,113 @@ html {
     align-items: flex-start;
   }
 }
+
+/* ===== Relatorio de vendas (usuario Comercial) ===== */
+
+.report-page .queue-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.report-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.report-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 14px;
+}
+
+.report-field {
+  min-width: 170px;
+}
+
+.report-tabs {
+  display: inline-flex;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.06);
+}
+
+.report-tab {
+  border: none;
+  background: transparent;
+  padding: 8px 14px;
+  border-radius: 9px;
+  font-weight: 600;
+  color: #334155;
+  cursor: pointer;
+}
+
+.report-tab--active {
+  background: #0f172a;
+  color: #f8fafc;
+}
+
+.report-table-wrap {
+  overflow-x: auto;
+}
+
+.report-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.report-table th,
+.report-table td {
+  padding: 10px 12px;
+  text-align: right;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.12);
+  white-space: nowrap;
+}
+
+.report-table .report-th-text,
+.report-table .report-td-text {
+  text-align: left;
+  white-space: normal;
+}
+
+.report-table thead th {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #475569;
+}
+
+.report-table tfoot td {
+  border-top: 2px solid rgba(15, 23, 42, 0.35);
+  border-bottom: none;
+}
+
+.report-empty {
+  margin: 8px 0 0;
+  color: #475569;
+}
+
+.report-warning {
+  margin: 0;
+  color: #b45309;
+  font-weight: 600;
+}
+
+@media print {
+  .report-no-print {
+    display: none !important;
+  }
+
+  body {
+    background: #fff;
+  }
+
+  .report-page .queue-panel {
+    box-shadow: none;
+    border: none;
+  }
+}

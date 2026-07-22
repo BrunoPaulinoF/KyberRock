@@ -309,6 +309,22 @@ function registerIpcHandlers(): void {
     return runtime.pullLoaderCompletions();
   });
 
+  ipcMain.handle("desktop:list-unit-devices", () => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.listUnitDevices();
+  });
+
+  ipcMain.handle("desktop:pull-cloud-now", () => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.pullCloudNow();
+  });
+
   ipcMain.handle("desktop:list-canceled-weighing-operations", () => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");

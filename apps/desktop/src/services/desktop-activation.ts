@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import type { DesktopDatabase } from "../database/sqlite.js";
 import {
   ensureInitialDesktopIdentity,
@@ -9,6 +11,7 @@ import {
   writeStoredSupabaseConfig
 } from "./supabase-sync.js";
 import { readStringLocalSetting, writeLocalSetting } from "./local-settings.js";
+import { upsertUnitDevices, type CloudUnitDevice } from "./unit-devices.js";
 
 export const DESKTOP_ACCESS_GRACE_PERIOD_MS = 7 * 24 * 60 * 60 * 1000;
 export const DESKTOP_ACCESS_CHECK_INTERVAL_MS = 30 * 1000; // 30 segundos quando online para detectar bloqueio em tempo real
@@ -64,6 +67,8 @@ interface ActivateDesktopResponse {
   unitTimezone?: string;
   deviceId?: string;
   deviceToken?: string;
+  deviceName?: string;
+  deviceColor?: string | null;
   supabaseUrl?: string | null;
   publishableKey?: string | null;
   checkedAt?: string;
@@ -76,6 +81,9 @@ interface DesktopStatusResponse {
   companyId?: string;
   unitId?: string;
   deviceId?: string;
+  deviceName?: string;
+  deviceColor?: string | null;
+  unitDevices?: CloudUnitDevice[];
   checkedAt?: string;
 }
 
@@ -89,13 +97,18 @@ export async function activateDesktop(
     throw new Error("Informe o codigo de 6 digitos da pedreira.");
   }
 
+  // O installation_id identifica ESTE computador na nuvem: cada instalacao tem
+  // seu proprio registro/token, permitindo varios desktops ativos na pedreira.
+  const installationId = ensureInstallationId(database, now);
+
   const supabase = getSupabaseActivationClient();
   const { data, error } = await supabase.functions.invoke<ActivateDesktopResponse>(
     "desktop-activate",
     {
       body: {
         activationCode,
-        deviceName: input.deviceName.trim() || "Desktop balanca"
+        deviceName: input.deviceName.trim() || "Desktop balanca",
+        installationId
       }
     }
   );
@@ -119,7 +132,9 @@ export async function activateDesktop(
     unitTimezone: data.unitTimezone,
     deviceId: data.deviceId,
     deviceName: input.deviceName.trim() || "Desktop balanca",
-    installationId: getLocalDesktopIdentity(database)?.installationId
+    deviceColor: data.deviceColor ?? null,
+    installationId,
+    adoptDeviceId: true
   }, new Date(checkedAt));
 
   saveCloudCredentials(database, {
@@ -194,6 +209,19 @@ export async function validateDesktopAccess(
     saveAccessStatus(database, status, message, checkedAt);
     if (data?.allowed) {
       writeLocalSetting(database, "last_license_check_at", checkedAt, checkedAt);
+      // Atualiza a legenda multi-desktop (nome + cor de cada computador da
+      // unidade). Best-effort: nunca derruba a validacao de acesso.
+      if (Array.isArray(data.unitDevices) && data.unitDevices.length > 0) {
+        try {
+          upsertUnitDevices(
+            database,
+            { companyId: credentials.companyId, unitId: credentials.unitId },
+            data.unitDevices
+          );
+        } catch {
+          // Ignora falha do espelho de dispositivos.
+        }
+      }
     }
     return buildAccessStatus(database, {
       status,
@@ -282,6 +310,18 @@ function buildOfflineStatus(
     message: "Sem internet. Operando offline dentro do prazo de 7 dias.",
     checkedAt: now.toISOString()
   });
+}
+
+function ensureInstallationId(database: DesktopDatabase, now: Date): string {
+  const existing =
+    getLocalDesktopIdentity(database)?.installationId ??
+    readStringLocalSetting(database, "installation_id");
+  if (existing) {
+    return existing;
+  }
+  const generated = randomUUID();
+  writeLocalSetting(database, "installation_id", generated, now.toISOString());
+  return generated;
 }
 
 function saveCloudCredentials(database: DesktopDatabase, credentials: CloudCredentials, updatedAt: string): void {

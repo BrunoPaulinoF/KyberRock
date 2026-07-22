@@ -8,7 +8,7 @@ interface AuthUser {
   uid: string;
   email: string | null;
   name: string | null;
-  role: "admin" | "loader" | null;
+  role: "admin" | "loader" | "comercial" | null;
   companyId: string | null;
   unitId: string | null;
   isActive: boolean;
@@ -19,6 +19,8 @@ interface AuthContextType {
   isLoading: boolean;
   isAdmin: boolean;
   isLoader: boolean;
+  /** Usuario do Comercial: extrai relatorios de venda da empresa. */
+  isComercial: boolean;
   loginAdmin: (username: string, password: string) => Promise<void>;
   loginLoader: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -37,7 +39,7 @@ interface LoaderProfileRow {
   id: string;
   email: string;
   name: string;
-  role: "loader";
+  role: "loader" | "comercial";
   company_id: string;
   unit_id: string;
   is_active: boolean;
@@ -53,6 +55,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const isAdmin = user?.role === "admin";
   const isLoader = user?.role === "loader";
+  const isComercial = user?.role === "comercial";
 
   useEffect(() => {
     const { token: adminToken, isExpired } = getAdminSessionStatus();
@@ -112,7 +115,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (profileError || !data || !data.is_active) {
         await auth.signOut();
         setUser(null);
-        setError("Usuario inativo ou sem perfil de carregador.");
+        setError("Usuario inativo ou sem perfil de acesso.");
         return false;
       }
 
@@ -120,7 +123,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         uid: data.id,
         email: data.email,
         name: data.name,
-        role: "loader",
+        role: data.role === "comercial" ? "comercial" : "loader",
         companyId: data.company_id,
         unitId: data.unit_id,
         isActive: data.is_active
@@ -165,9 +168,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // navegue para /loader (o guard PrivateLoaderRoute redirecionaria de volta, causando um
       // "flash" de navegacao) e a mensagem de erro definida em loadLoaderProfile permaneca.
       const ok = await loadLoaderProfile(data.user.id);
-      if (!ok) throw new Error("Usuario inativo ou sem perfil de carregador.");
+      if (!ok) throw new Error("Usuario inativo ou sem perfil de acesso.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro no login do carregador.");
+      setError(err instanceof Error ? err.message : "Erro no login.");
       throw err;
     } finally {
       explicitAuthRef.current = false;
@@ -185,7 +188,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, isAdmin, isLoader, loginAdmin, loginLoader, logout, error, clearError }}>
+    <AuthContext.Provider value={{ user, isLoading, isAdmin, isLoader, isComercial, loginAdmin, loginLoader, logout, error, clearError }}>
       {children}
     </AuthContext.Provider>
   );

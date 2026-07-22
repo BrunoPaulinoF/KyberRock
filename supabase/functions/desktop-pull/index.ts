@@ -51,7 +51,8 @@ Deno.serve(async (req) => {
       { data: products, error: prodErr },
       { data: operations, error: opsErr },
       { data: loadingRequests, error: lrErr },
-      { data: printReceipts, error: prErr }
+      { data: printReceipts, error: prErr },
+      { data: devices, error: devErr }
     ] = await Promise.all([
       supabase
         .from("customers")
@@ -82,7 +83,13 @@ Deno.serve(async (req) => {
         .select("*")
         .eq("unit_id", unitId)
         .order("printed_at", { ascending: false })
-        .limit(1000)
+        .limit(1000),
+      // Dispositivos da unidade: nome + cor para a legenda multi-desktop e para
+      // satisfazer a FK local device_id das operacoes criadas em outras maquinas.
+      supabase
+        .from("device_registrations")
+        .select("id, company_id, unit_id, name, color, installation_id, is_active, created_at, updated_at")
+        .eq("unit_id", unitId)
     ]);
 
     const errors: string[] = [];
@@ -91,6 +98,7 @@ Deno.serve(async (req) => {
     if (opsErr) errors.push(`weighing_operations: ${opsErr.message}`);
     if (lrErr) errors.push(`loading_requests: ${lrErr.message}`);
     if (prErr) errors.push(`print_receipts: ${prErr.message}`);
+    if (devErr) errors.push(`device_registrations: ${devErr.message}`);
 
     await supabase
       .from("device_registrations")
@@ -110,7 +118,8 @@ Deno.serve(async (req) => {
       products: products ?? [],
       operations: operations ?? [],
       loadingRequests: loadingRequests ?? [],
-      printReceipts: printReceipts ?? []
+      printReceipts: printReceipts ?? [],
+      devices: devices ?? []
     });
   } catch (error) {
     return jsonResponse(

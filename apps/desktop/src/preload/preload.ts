@@ -25,6 +25,8 @@ const desktopApi = {
   downloadAndInstallUpdate: () => ipcRenderer.invoke("desktop:download-and-install-update"),
   listOpenWeighingOperations: () => ipcRenderer.invoke("desktop:list-open-weighing-operations"),
   pullLoaderCompletions: () => ipcRenderer.invoke("desktop:pull-loader-completions"),
+  listUnitDevices: () => ipcRenderer.invoke("desktop:list-unit-devices"),
+  pullCloudNow: () => ipcRenderer.invoke("desktop:pull-cloud-now"),
   listCanceledWeighingOperations: () =>
     ipcRenderer.invoke("desktop:list-canceled-weighing-operations"),
   listClosedWeighingOperations: () => ipcRenderer.invoke("desktop:list-closed-weighing-operations"),

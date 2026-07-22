@@ -81,10 +81,12 @@ describe("omie-sync Edge Function", () => {
     // Payload carrega o meio e a conta escolhidos na operacao do desktop.
     expect(source).toContain("paymentMethodOmieCode?: string;");
     expect(source).toContain("accountOmieCode?: string | number;");
-    // A conta selecionada tem precedencia sobre resolveOmieAccountCode (fallback historico).
+    // A conta selecionada tem precedencia; sem ela, resolve pelo nome (do desktop ou
+    // padrao do meio de pagamento) e, por ultimo, o fallback historico da primeira conta.
     expect(source).toContain("const selectedAccountCode = toNumber(payload.accountOmieCode ?? null);");
     expect(source).toContain("? selectedAccountCode");
-    expect(source).toContain(": await resolveOmieAccountCode(credentials);");
+    expect(source).toContain("resolveOmieAccountCodeByName(credentials, payload.accountName)");
+    expect(source).toContain("(await resolveOmieAccountCode(credentials))");
   });
 
   it("creates orders at the 'Faturar' stage so billing happens inside OMIE", () => {

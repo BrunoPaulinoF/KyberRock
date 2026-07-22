@@ -26,6 +26,7 @@ import type {
 import type { CreditMovementRow } from "../services/credit";
 import type { CreateQuotationInput, QuotationRow, QuotationSummary } from "../services/quotations";
 import type { ActivateDesktopInput, DesktopAccessStatus } from "../services/desktop-activation";
+import type { UnitDeviceInfo } from "../services/unit-devices";
 import type { CacheQueryOptions, CacheQueryResult } from "../services/cache-store";
 import type {
   DailyReport,
@@ -97,6 +98,10 @@ export interface KyberRockDesktopApi {
   downloadAndInstallUpdate: () => Promise<UpdateState>;
   listOpenWeighingOperations: () => Promise<WeighingOperationSummary[]>;
   pullLoaderCompletions: () => Promise<{ pulled: number; errors: string[] }>;
+  /** Computadores da unidade (nome + cor) para a legenda multi-desktop. */
+  listUnitDevices: () => Promise<UnitDeviceInfo[]>;
+  /** Pull leve da nuvem para enxergar operacoes dos outros computadores. */
+  pullCloudNow: () => Promise<{ pulled: number; errors: string[] }>;
   listCanceledWeighingOperations: () => Promise<WeighingOperationSummary[]>;
   listClosedWeighingOperations: () => Promise<WeighingOperationSummary[]>;
   clearCanceledWeighingOperations: () => Promise<number>;
