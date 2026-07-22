@@ -197,9 +197,23 @@ const STEPS = [
   }
 ];
 
+type LoginRole = "loader" | "comercial";
+
+const LOGIN_ROLE_COPY: Record<LoginRole, { title: string; subtitle: string }> = {
+  loader: {
+    title: "Acesso do carregador",
+    subtitle: "Entre para acompanhar as cargas da sua unidade."
+  },
+  comercial: {
+    title: "Acesso do comercial",
+    subtitle: "Entre para consultar os relatorios de venda da sua pedreira."
+  }
+};
+
 export function LoaderLogin() {
   const { loginLoader, error, isLoader, isComercial, clearError } = useAuth();
   const navigate = useNavigate();
+  const [loginRole, setLoginRole] = useState<LoginRole | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -233,6 +247,18 @@ export function LoaderLogin() {
 
   function handlePasswordChange(value: string) {
     setPassword(value);
+    if (error) clearError();
+  }
+
+  function handleSelectRole(role: LoginRole) {
+    setLoginRole(role);
+    if (error) clearError();
+  }
+
+  function handleBackToRoleChoice() {
+    setLoginRole(null);
+    setEmail("");
+    setPassword("");
     if (error) clearError();
   }
 
@@ -300,9 +326,13 @@ export function LoaderLogin() {
               <img className="auth-card-logo" src="/kyberrocklogo.png" alt="KyberRock" />
               <div>
                 <h1 id="loader-login-title" className="auth-card-title">
-                  Acesso do carregador
+                  {loginRole ? LOGIN_ROLE_COPY[loginRole].title : "Ja e cliente?"}
                 </h1>
-                <p className="auth-card-subtitle">Ja e cliente? Entre para acompanhar as cargas da sua unidade.</p>
+                <p className="auth-card-subtitle">
+                  {loginRole
+                    ? LOGIN_ROLE_COPY[loginRole].subtitle
+                    : "Escolha como deseja entrar no KyberRock."}
+                </p>
               </div>
             </div>
 
@@ -313,37 +343,64 @@ export function LoaderLogin() {
               </div>
             )}
 
-            <form className="auth-form" onSubmit={handleSubmit}>
-              <label htmlFor="loader-login-email" className="field-label">
-                E-mail
-                <input
-                  className="field-input"
-                  id="loader-login-email"
-                  name="email"
-                  type="email"
-                  autoComplete="username"
-                  value={email}
-                  onChange={(e) => handleEmailChange(e.target.value)}
-                  required
-                />
-              </label>
-              <label htmlFor="loader-login-password" className="field-label">
-                Senha
-                <input
-                  className="field-input"
-                  id="loader-login-password"
-                  name="password"
-                  type="password"
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(e) => handlePasswordChange(e.target.value)}
-                  required
-                />
-              </label>
-              <button type="submit" disabled={isLoading} className="primary-action">
-                {isLoading ? "Entrando..." : "Entrar"}
-              </button>
-            </form>
+            {loginRole === null ? (
+              <div className="auth-form">
+                <button
+                  type="button"
+                  className="primary-action"
+                  onClick={() => handleSelectRole("loader")}
+                >
+                  Entrar como carregador
+                </button>
+                <button
+                  type="button"
+                  className="primary-action"
+                  onClick={() => handleSelectRole("comercial")}
+                >
+                  Entrar como comercial
+                </button>
+              </div>
+            ) : (
+              <form className="auth-form" onSubmit={handleSubmit}>
+                <label htmlFor="loader-login-email" className="field-label">
+                  E-mail
+                  <input
+                    className="field-input"
+                    id="loader-login-email"
+                    name="email"
+                    type="email"
+                    autoComplete="username"
+                    value={email}
+                    onChange={(e) => handleEmailChange(e.target.value)}
+                    required
+                  />
+                </label>
+                <label htmlFor="loader-login-password" className="field-label">
+                  Senha
+                  <input
+                    className="field-input"
+                    id="loader-login-password"
+                    name="password"
+                    type="password"
+                    autoComplete="current-password"
+                    value={password}
+                    onChange={(e) => handlePasswordChange(e.target.value)}
+                    required
+                  />
+                </label>
+                <button type="submit" disabled={isLoading} className="primary-action">
+                  {isLoading ? "Entrando..." : "Entrar"}
+                </button>
+                <button
+                  type="button"
+                  className="secondary-action"
+                  onClick={handleBackToRoleChoice}
+                  disabled={isLoading}
+                >
+                  Voltar
+                </button>
+              </form>
+            )}
 
             <a className="secondary-action auth-download" href={desktopDownloadUrl} rel="noopener">
               Baixar o app desktop (versao mais recente)
@@ -352,10 +409,6 @@ export function LoaderLogin() {
             <a className="secondary-action auth-download" href={documentationUrl} download>
               Baixar guia de instalacao e manual (PDF)
             </a>
-
-            <p className="auth-switch">
-              Area administrativa? <a href="/admin/login">Entrar como administrador</a>
-            </p>
 
             <p className="lp-login-hint">
               Ainda nao e cliente?{" "}
@@ -431,7 +484,6 @@ export function LoaderLogin() {
           <a href={documentationUrl} download>
             Guia e manual (PDF)
           </a>
-          <a href="/admin/login">Area administrativa</a>
         </nav>
       </footer>
 

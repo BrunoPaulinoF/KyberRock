@@ -73,7 +73,11 @@ export function AdminDashboard() {
   const [units, setUnits] = useState<Unit[]>([]);
   const [users, setUsers] = useState<LoaderUser[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
-  const [activeTab, setActiveTab] = useState<"companies" | "users" | "devices">("companies");
+  const [activeTab, setActiveTab] = useState<"companies" | "loaders" | "comercial" | "devices">(
+    "companies"
+  );
+  // Filtro por pedreira (empresa) aplicado as listagens de todas as abas. "" = todas.
+  const [filterCompanyId, setFilterCompanyId] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [generatedCode, setGeneratedCode] = useState<string | null>(null);
   const [editingCompany, setEditingCompany] = useState<Company | null>(null);
@@ -258,7 +262,10 @@ export function AdminDashboard() {
     }
   }
 
-  async function handleCreateUser(event: React.FormEvent<HTMLFormElement>) {
+  async function handleCreateUser(
+    event: React.FormEvent<HTMLFormElement>,
+    role: "loader" | "comercial"
+  ) {
     event.preventDefault();
     const form = event.currentTarget;
     const formData = new FormData(form);
@@ -273,7 +280,7 @@ export function AdminDashboard() {
           password,
           name: formData.get("name"),
           unitId: formData.get("unitId"),
-          role: formData.get("role") || "loader"
+          role
         }
       });
 
@@ -411,6 +418,159 @@ export function AdminDashboard() {
     }
   }
 
+  const filteredCompanies = filterCompanyId
+    ? companies.filter((company) => company.id === filterCompanyId)
+    : companies;
+  const filteredUnits = filterCompanyId
+    ? units.filter((unit) => unit.companyId === filterCompanyId)
+    : units;
+  const filteredDevices = filterCompanyId
+    ? devices.filter((device) => device.companyId === filterCompanyId)
+    : devices;
+
+  function filteredUsersByRole(role: "loader" | "comercial"): LoaderUser[] {
+    return users.filter(
+      (user) => user.role === role && (!filterCompanyId || user.companyId === filterCompanyId)
+    );
+  }
+
+  function renderUsersTab(role: "loader" | "comercial") {
+    const roleLabel = role === "comercial" ? "Comercial" : "Carregador";
+    const roleUsers = filteredUsersByRole(role);
+    return (
+      <section style={{ display: "grid", gridTemplateColumns: TWO_COLUMN_GRID, gap: "24px" }}>
+        <article style={{ background: "#fff", padding: "24px", borderRadius: "16px" }}>
+          <h2 style={{ margin: "0 0 16px 0" }}>
+            {role === "comercial" ? "Usuarios Comerciais" : "Usuarios Carregadores"}
+          </h2>
+          {roleUsers.length === 0 && (
+            <p style={{ color: "#64748b" }}>
+              {filterCompanyId
+                ? `Nenhum usuario ${roleLabel.toLowerCase()} nesta pedreira.`
+                : `Nenhum usuario ${roleLabel.toLowerCase()} cadastrado.`}
+            </p>
+          )}
+          {roleUsers.map((user) => (
+            <div key={user.id} style={{ padding: "12px 0", borderBottom: "1px solid #e2e8f0" }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center"
+                }}
+              >
+                <div>
+                  <strong>{user.name}</strong>
+                  <p style={{ margin: "2px 0 0 0", fontSize: "14px", color: "#64748b" }}>
+                    {user.email}
+                  </p>
+                </div>
+                <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                  <span
+                    style={{
+                      padding: "4px 8px",
+                      borderRadius: "6px",
+                      fontSize: "12px",
+                      background: user.isActive ? "#dcfce7" : "#fee2e2",
+                      color: user.isActive ? "#166534" : "#991b1b"
+                    }}
+                  >
+                    {user.isActive ? "Ativo" : "Inativo"}
+                  </span>
+                  <button
+                    onClick={() => handleToggleUser(user.id, user.isActive)}
+                    style={{
+                      padding: "6px 12px",
+                      borderRadius: "6px",
+                      border: "1px solid #cbd5e1",
+                      background: "#fff",
+                      cursor: "pointer",
+                      fontSize: "12px"
+                    }}
+                  >
+                    {user.isActive ? "Bloquear" : "Liberar"}
+                  </button>
+                </div>
+              </div>
+              <p style={{ margin: "8px 0 0 0", fontSize: "12px", color: "#64748b" }}>
+                Pedreira: {companies.find((c) => c.id === user.companyId)?.name || "N/A"} | Unidade:{" "}
+                {units.find((u) => u.id === user.unitId)?.name || "N/A"}
+              </p>
+            </div>
+          ))}
+        </article>
+
+        <article style={{ background: "#fff", padding: "24px", borderRadius: "16px" }}>
+          <h2 style={{ margin: "0 0 16px 0" }}>
+            {role === "comercial" ? "Novo Usuario Comercial" : "Novo Carregador"}
+          </h2>
+          <p style={{ margin: "0 0 16px 0", fontSize: "13px", color: "#64748b" }}>
+            {role === "comercial"
+              ? "Acessa os relatorios de venda da pedreira."
+              : "Acessa a fila de carregamento da unidade."}
+          </p>
+          <form
+            onSubmit={(event) => handleCreateUser(event, role)}
+            style={{ display: "flex", flexDirection: "column", gap: "12px" }}
+          >
+            <input
+              name="name"
+              placeholder="Nome completo"
+              required
+              style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
+            />
+            <input
+              name="email"
+              type="email"
+              placeholder="E-mail"
+              required
+              style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
+            />
+            <input
+              name="password"
+              type="password"
+              placeholder="Senha"
+              required
+              minLength={6}
+              style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
+            />
+            <select
+              name="unitId"
+              required
+              style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
+            >
+              <option value="">Selecione a unidade</option>
+              {filteredUnits
+                .filter((u) => u.isActive)
+                .map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.name}
+                    {filterCompanyId
+                      ? ""
+                      : ` — ${companies.find((c) => c.id === u.companyId)?.name ?? ""}`}
+                  </option>
+                ))}
+            </select>
+            <button
+              type="submit"
+              style={{
+                padding: "10px",
+                borderRadius: "8px",
+                border: "none",
+                background: "#0f172a",
+                color: "#fff",
+                cursor: "pointer",
+                fontWeight: 700
+              }}
+            >
+              {role === "comercial" ? "Criar Usuario Comercial" : "Criar Carregador"}
+            </button>
+          </form>
+        </article>
+      </section>
+    );
+  }
+
   return (
     <main className="admin-page">
       <header className="admin-shell-header">
@@ -434,10 +594,16 @@ export function AdminDashboard() {
           Empresas e Unidades
         </button>
         <button
-          onClick={() => setActiveTab("users")}
-          className={`admin-tab ${activeTab === "users" ? "admin-tab-active" : ""}`}
+          onClick={() => setActiveTab("loaders")}
+          className={`admin-tab ${activeTab === "loaders" ? "admin-tab-active" : ""}`}
         >
-          Usuarios Carregadores
+          Carregadores
+        </button>
+        <button
+          onClick={() => setActiveTab("comercial")}
+          className={`admin-tab ${activeTab === "comercial" ? "admin-tab-active" : ""}`}
+        >
+          Comercial
         </button>
         <button
           onClick={() => setActiveTab("devices")}
@@ -446,6 +612,58 @@ export function AdminDashboard() {
           Dispositivos e Licencas
         </button>
       </nav>
+
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "10px",
+          flexWrap: "wrap",
+          margin: "0 0 24px 0"
+        }}
+      >
+        <label
+          htmlFor="admin-company-filter"
+          style={{ fontSize: "14px", fontWeight: 700, color: "#334155" }}
+        >
+          Filtrar por pedreira
+        </label>
+        <select
+          id="admin-company-filter"
+          value={filterCompanyId}
+          onChange={(e) => setFilterCompanyId(e.target.value)}
+          style={{
+            padding: "8px 12px",
+            borderRadius: "8px",
+            border: "1px solid #cbd5e1",
+            background: "#fff",
+            minWidth: "220px"
+          }}
+        >
+          <option value="">Todas as pedreiras</option>
+          {companies.map((company) => (
+            <option key={company.id} value={company.id}>
+              {company.name}
+            </option>
+          ))}
+        </select>
+        {filterCompanyId && (
+          <button
+            type="button"
+            onClick={() => setFilterCompanyId("")}
+            style={{
+              padding: "8px 12px",
+              borderRadius: "8px",
+              border: "1px solid #cbd5e1",
+              background: "#fff",
+              cursor: "pointer",
+              fontSize: "13px"
+            }}
+          >
+            Limpar filtro
+          </button>
+        )}
+      </div>
 
       {confirmDelete && (
         <div
@@ -537,10 +755,10 @@ export function AdminDashboard() {
               {/* Companies List */}
               <article style={{ background: "#fff", padding: "24px", borderRadius: "16px" }}>
                 <h2 style={{ margin: "0 0 16px 0" }}>Empresas</h2>
-                {companies.length === 0 && (
+                {filteredCompanies.length === 0 && (
                   <p style={{ color: "#64748b" }}>Nenhuma empresa cadastrada.</p>
                 )}
-                {companies.map((company) => (
+                {filteredCompanies.map((company) => (
                   <div
                     key={company.id}
                     style={{ padding: "12px 0", borderBottom: "1px solid #e2e8f0" }}
@@ -916,144 +1134,9 @@ export function AdminDashboard() {
             </section>
           )}
 
-          {activeTab === "users" && (
-            <section style={{ display: "grid", gridTemplateColumns: TWO_COLUMN_GRID, gap: "24px" }}>
-              <article style={{ background: "#fff", padding: "24px", borderRadius: "16px" }}>
-                <h2 style={{ margin: "0 0 16px 0" }}>Usuarios (Carregador e Comercial)</h2>
-                {users.length === 0 && (
-                  <p style={{ color: "#64748b" }}>Nenhum usuario cadastrado.</p>
-                )}
-                {users.map((user) => (
-                  <div
-                    key={user.id}
-                    style={{ padding: "12px 0", borderBottom: "1px solid #e2e8f0" }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center"
-                      }}
-                    >
-                      <div>
-                        <strong>{user.name}</strong>
-                        <p style={{ margin: "2px 0 0 0", fontSize: "14px", color: "#64748b" }}>
-                          {user.email}
-                        </p>
-                      </div>
-                      <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                        <span
-                          style={{
-                            padding: "4px 8px",
-                            borderRadius: "6px",
-                            fontSize: "12px",
-                            background: user.role === "comercial" ? "#e0e7ff" : "#f1f5f9",
-                            color: user.role === "comercial" ? "#3730a3" : "#334155"
-                          }}
-                        >
-                          {user.role === "comercial" ? "Comercial" : "Carregador"}
-                        </span>
-                        <span
-                          style={{
-                            padding: "4px 8px",
-                            borderRadius: "6px",
-                            fontSize: "12px",
-                            background: user.isActive ? "#dcfce7" : "#fee2e2",
-                            color: user.isActive ? "#166534" : "#991b1b"
-                          }}
-                        >
-                          {user.isActive ? "Ativo" : "Inativo"}
-                        </span>
-                        <button
-                          onClick={() => handleToggleUser(user.id, user.isActive)}
-                          style={{
-                            padding: "6px 12px",
-                            borderRadius: "6px",
-                            border: "1px solid #cbd5e1",
-                            background: "#fff",
-                            cursor: "pointer",
-                            fontSize: "12px"
-                          }}
-                        >
-                          {user.isActive ? "Bloquear" : "Liberar"}
-                        </button>
-                      </div>
-                    </div>
-                    <p style={{ margin: "8px 0 0 0", fontSize: "12px", color: "#64748b" }}>
-                      Unidade: {units.find((u) => u.id === user.unitId)?.name || "N/A"}
-                    </p>
-                  </div>
-                ))}
-              </article>
+          {activeTab === "loaders" && renderUsersTab("loader")}
 
-              <article style={{ background: "#fff", padding: "24px", borderRadius: "16px" }}>
-                <h2 style={{ margin: "0 0 16px 0" }}>Novo Usuario</h2>
-                <form
-                  onSubmit={handleCreateUser}
-                  style={{ display: "flex", flexDirection: "column", gap: "12px" }}
-                >
-                  <input
-                    name="name"
-                    placeholder="Nome completo"
-                    required
-                    style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
-                  />
-                  <input
-                    name="email"
-                    type="email"
-                    placeholder="E-mail"
-                    required
-                    style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
-                  />
-                  <input
-                    name="password"
-                    type="password"
-                    placeholder="Senha"
-                    required
-                    minLength={6}
-                    style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
-                  />
-                  <select
-                    name="unitId"
-                    required
-                    style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
-                  >
-                    <option value="">Selecione a unidade</option>
-                    {units
-                      .filter((u) => u.isActive)
-                      .map((u) => (
-                        <option key={u.id} value={u.id}>
-                          {u.name}
-                        </option>
-                      ))}
-                  </select>
-                  <select
-                    name="role"
-                    required
-                    defaultValue="loader"
-                    style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
-                  >
-                    <option value="loader">Carregador (fila de carregamento)</option>
-                    <option value="comercial">Comercial (relatorios de venda)</option>
-                  </select>
-                  <button
-                    type="submit"
-                    style={{
-                      padding: "10px",
-                      borderRadius: "8px",
-                      border: "none",
-                      background: "#0f172a",
-                      color: "#fff",
-                      cursor: "pointer",
-                      fontWeight: 700
-                    }}
-                  >
-                    Criar Usuario
-                  </button>
-                </form>
-              </article>
-            </section>
-          )}
+          {activeTab === "comercial" && renderUsersTab("comercial")}
 
           {activeTab === "devices" && (
             <section style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
@@ -1103,10 +1186,10 @@ export function AdminDashboard() {
               <div style={{ display: "grid", gridTemplateColumns: TWO_COLUMN_GRID, gap: "24px" }}>
                 <article style={{ background: "#fff", padding: "24px", borderRadius: "16px" }}>
                   <h2 style={{ margin: "0 0 16px 0" }}>Desktops Ativados</h2>
-                  {devices.length === 0 ? (
+                  {filteredDevices.length === 0 ? (
                     <p style={{ color: "#64748b" }}>Nenhum desktop ativado ainda.</p>
                   ) : (
-                    devices.map((device) => {
+                    filteredDevices.map((device) => {
                       const unit = units.find((u) => u.id === device.unitId);
                       const company = companies.find((c) => c.id === device.companyId);
                       return (
@@ -1187,13 +1270,13 @@ export function AdminDashboard() {
                     gerar um novo, o anterior e invalidado. Usuarios carregadores continuam por
                     unidade.
                   </p>
-                  {companies.length === 0 ? (
+                  {filteredCompanies.length === 0 ? (
                     <p style={{ color: "#b91c1c" }}>Nenhuma pedreira cadastrada.</p>
                   ) : (
                     <div
                       style={{ display: "grid", gridTemplateColumns: COMPACT_GRID, gap: "16px" }}
                     >
-                      {companies.map((company) => {
+                      {filteredCompanies.map((company) => {
                         const companyUnits = units.filter((unit) => unit.companyId === company.id);
                         const hasActiveUnit = companyUnits.some((unit) => unit.isActive);
                         return (
