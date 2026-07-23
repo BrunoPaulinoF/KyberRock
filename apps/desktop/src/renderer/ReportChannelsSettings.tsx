@@ -7,6 +7,7 @@ import type {
 } from "../preload/api-types";
 import { IconActionButton } from "./IconActionButton";
 import { HelpTooltip } from "./Tooltip";
+import { useConfirm } from "./crud-ui";
 
 // Card de configuracao dos canais de envio (E-mail SMTP e WhatsApp/UAZAPI),
 // exibido na tela de Relatorios acima dos destinatarios. A conexao do WhatsApp
@@ -272,6 +273,7 @@ export function ReportChannelsSettings({
   const [success, setSuccess] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const { confirmElement, requestConfirm } = useConfirm();
 
   const applySettings = useCallback((next: ReportChannelSettingsView) => {
     setSettings(next);
@@ -449,7 +451,13 @@ export function ReportChannelsSettings({
 
   async function handleWhatsappDisconnect() {
     if (!desktopApi) return;
-    if (!window.confirm("Desconectar o WhatsApp? Os relatorios deixarao de ser enviados.")) return;
+    const confirmed = await requestConfirm({
+      title: "Desconectar o WhatsApp?",
+      description: "Os relatorios deixarao de ser enviados por WhatsApp.",
+      confirmLabel: "Desconectar",
+      tone: "danger"
+    });
+    if (!confirmed) return;
     clearMessages();
     setBusy(true);
     try {
@@ -477,6 +485,7 @@ export function ReportChannelsSettings({
 
   return (
     <div style={styles.card}>
+      {confirmElement}
       <div style={styles.headerRow}>
         <h3 style={styles.headerTitle}>Configuracao de envio (E-mail e WhatsApp)</h3>
         <div style={styles.headerBadges}>

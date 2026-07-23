@@ -93,10 +93,12 @@ import {
   EditRowButton,
   FlashBanner,
   FormSection,
+  RecordDetailModal,
   SourceBadge,
+  useConfirm,
   useFlash
 } from "./crud-ui";
-import type { DataTableColumn, FlashKind } from "./crud-ui";
+import type { DataTableColumn, DetailSectionData, FlashKind } from "./crud-ui";
 import { BlockedScreen } from "./BlockedScreen";
 import { DashboardView } from "./DashboardView";
 import { DocumentationView } from "./DocumentationView";
@@ -295,6 +297,8 @@ export function writeStoredThemeMode(
 
 export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }: AppProps = {}) {
   const [phase, setPhase] = useState<AppPhase>("checking_access");
+  // Confirmacoes estilizadas do app (logout, reset OMIE, limpar canceladas).
+  const { confirmElement: appConfirmElement, requestConfirm: requestAppConfirm } = useConfirm();
   const [status, setStatus] = useState<DesktopStatusSnapshot | null>(initialStatus);
   const [updateState, setUpdateState] = useState<UpdateState>(createInitialUpdateState());
   const [openOperations, setOpenOperations] = useState<WeighingOperationSummary[]>([]);
@@ -1274,9 +1278,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       return;
     }
 
-    const confirmed = window.confirm(
-      "Deseja realmente sair da conta?\n\nVocê precisará de um novo código de ativação para acessar novamente."
-    );
+    const confirmed = await requestAppConfirm({
+      title: "Sair da conta?",
+      description:
+        "Você precisará de um novo código de ativação para acessar novamente.",
+      confirmLabel: "Sair da conta",
+      tone: "danger"
+    });
 
     if (!confirmed) {
       return;
@@ -1388,9 +1396,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   async function handleResetOmieMaster(): Promise<void> {
     if (!desktopApi) return;
 
-    const confirmed = window.confirm(
-      "Isso vai apagar todos os clientes, transportadoras e dados de sincronizacao OMIE locais, e depois forcar uma re-sincronizacao completa. Deseja continuar?"
-    );
+    const confirmed = await requestAppConfirm({
+      title: "Resetar dados OMIE locais?",
+      description:
+        "Isso vai apagar todos os clientes, transportadoras e dados de sincronizacao OMIE locais, e depois forcar uma re-sincronizacao completa.",
+      confirmLabel: "Resetar e sincronizar",
+      tone: "danger"
+    });
     if (!confirmed) return;
 
     setOmieResetting(true);
@@ -1848,7 +1860,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     if (!desktopApi) {
       return;
     }
-    if (!window.confirm("Limpar todas as operacoes canceladas da lista?")) {
+    const confirmed = await requestAppConfirm({
+      title: "Limpar operacoes canceladas",
+      description: "Limpar todas as operacoes canceladas da lista?",
+      confirmLabel: "Limpar lista",
+      tone: "danger"
+    });
+    if (!confirmed) {
       return;
     }
 
@@ -2066,6 +2084,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   return (
     <main data-theme={themeMode} style={{ ...styles.page, ...themeVars }}>
       <GlobalUiPolish />
+      {appConfirmElement}
       <Toast message={message} onClose={() => setMessage("")} />
       <div style={styles.shell}>
         <aside style={styles.sidebar}>
@@ -7467,6 +7486,12 @@ function ResourceCrud({
   const [saving, setSaving] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  // Visualizacao (duplo clique na linha): item + dados ja resolvidos p/ exibicao.
+  const [viewingItem, setViewingItem] = useState<Record<string, unknown> | null>(null);
+  const [viewData, setViewData] = useState<Record<string, string>>({});
+  // Snapshot do formulario ao abrir, para avisar antes de descartar alteracoes.
+  const formBaselineRef = useRef<string>("");
+  const { confirmElement, requestConfirm } = useConfirm();
 
   const article = gender === "f" ? "a" : "o";
   const newLabel = gender === "f" ? "Nova" : "Novo";
@@ -7497,25 +7522,63 @@ function ResourceCrud({
   }, [fields]);
 
   function openCreate(): void {
-    setFormData(emptyForm());
+    const initial = emptyForm();
+    setFormData(initial);
+    formBaselineRef.current = JSON.stringify(initial);
     setEditingId(null);
     setFormError(null);
     setShowForm(true);
   }
 
   async function openEdit(item: Record<string, unknown>): Promise<void> {
-    setFormData({ ...emptyForm(), ...rowToForm(item) });
+    let data = { ...emptyForm(), ...rowToForm(item) };
+    setFormData(data);
+    formBaselineRef.current = JSON.stringify(data);
     setEditingId(String(item.id));
     setFormError(null);
+    setViewingItem(null);
     setShowForm(true);
     if (enrichForm) {
       try {
         const extra = await enrichForm(item);
+        data = { ...data, ...extra };
         setFormData((prev) => ({ ...prev, ...extra }));
+        // O enriquecimento faz parte do estado inicial: nao conta como alteracao.
+        formBaselineRef.current = JSON.stringify(data);
       } catch {
         // mantem o formulario base se o enriquecimento assincrono falhar
       }
     }
+  }
+
+  async function openView(item: Record<string, unknown>): Promise<void> {
+    let data = { ...emptyForm(), ...rowToForm(item) };
+    setViewData(data);
+    setViewingItem(item);
+    if (enrichForm) {
+      try {
+        const extra = await enrichForm(item);
+        data = { ...data, ...extra };
+        setViewData(data);
+      } catch {
+        // exibe os dados base se o enriquecimento assincrono falhar
+      }
+    }
+  }
+
+  async function requestCloseForm(): Promise<void> {
+    const dirty = JSON.stringify(formData) !== formBaselineRef.current;
+    if (dirty) {
+      const discard = await requestConfirm({
+        title: "Descartar alteracoes?",
+        description: "Ha alteracoes nao salvas neste formulario. Fechar sem salvar?",
+        confirmLabel: "Descartar",
+        cancelLabel: "Continuar editando",
+        tone: "danger"
+      });
+      if (!discard) return;
+    }
+    setShowForm(false);
   }
 
   async function handleSave(): Promise<void> {
@@ -7678,6 +7741,26 @@ function ResourceCrud({
     );
   }
 
+  // Dados do modal de visualizacao derivados da mesma config declarativa do
+  // formulario: cada campo vira um par rotulo/valor legivel.
+  function detailValueFor(field: CrudField): string {
+    const value = viewData[field.key] ?? "";
+    if (field.type === "checkbox") return value === "true" ? "Sim" : "Nao";
+    if (field.type === "select") {
+      if (!value) return "";
+      return (field.options ?? []).find((option) => option.value === value)?.label ?? value;
+    }
+    return value;
+  }
+
+  const detailSections: DetailSectionData[] = sections.map((section) => ({
+    title: section.name,
+    items: section.fields.map((field) => ({
+      label: field.label,
+      value: detailValueFor(field)
+    }))
+  }));
+
   return (
     <div>
       <CrudSectionHeader
@@ -7702,7 +7785,7 @@ function ResourceCrud({
           error={formError}
           saving={saving}
           maxWidth={modalMaxWidth}
-          onClose={() => setShowForm(false)}
+          onClose={() => void requestCloseForm()}
           onSubmit={() => void handleSave()}
         >
           {sections.map((section) => (
@@ -7712,6 +7795,30 @@ function ResourceCrud({
           ))}
         </CrudFormShell>
       ) : null}
+
+      {viewingItem && !showForm ? (
+        <RecordDetailModal
+          title={String(
+            viewingItem.name ?? viewingItem.plate ?? viewingItem.description ?? singular
+          )}
+          subtitle={`Visualizacao d${article === "a" ? "a" : "o"} ${lower}`}
+          badge={
+            typeof viewingItem.source === "string" ? (
+              <SourceBadge source={viewingItem.source} />
+            ) : undefined
+          }
+          sections={detailSections}
+          maxWidth={modalMaxWidth}
+          onClose={() => setViewingItem(null)}
+          onEdit={() => {
+            const item = viewingItem;
+            setViewingItem(null);
+            void openEdit(item);
+          }}
+        />
+      ) : null}
+
+      {confirmElement}
 
       {pendingDeleteId ? (
         <ConfirmDialog
@@ -7748,6 +7855,7 @@ function ResourceCrud({
         }
         emptyHint={search ? "Ajuste o termo de busca." : emptyHint}
         expandedRow={expandedRow}
+        onRowOpen={(item) => void openView(item)}
       />
     </div>
   );
@@ -7942,13 +8050,18 @@ function CarrierBulkCnpjToolbar({
   showFlash: (kind: FlashKind, text: string) => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const { confirmElement, requestConfirm } = useConfirm();
 
   async function handleEnrichAll(): Promise<void> {
     if (busy) return;
-    const confirmed = window.confirm(
-      "Buscar o CNPJ de todas as transportadoras na Receita e atualizar o cadastro (razao " +
-        "social, endereco, telefone)?\n\nPode levar alguns minutos se houver muitas transportadoras."
-    );
+    const confirmed = await requestConfirm({
+      title: "Busca automatica de CNPJ",
+      description:
+        "Buscar o CNPJ de todas as transportadoras na Receita e atualizar o cadastro (razao " +
+        "social, endereco, telefone)? Pode levar alguns minutos se houver muitas transportadoras.",
+      confirmLabel: "Buscar dados",
+      tone: "primary"
+    });
     if (!confirmed) return;
     setBusy(true);
     try {
@@ -8008,6 +8121,7 @@ function CarrierBulkCnpjToolbar({
         Preenche razao social, endereco e telefone pela Receita para todas as transportadoras com
         CNPJ.
       </span>
+      {confirmElement}
     </div>
   );
 }
@@ -8642,6 +8756,7 @@ function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi })
         minWidth="760px"
         emptyTitle="Nenhuma forma de pagamento."
         emptyHint="Sincronize com o OMIE para puxar os meios de pagamento."
+        onRowOpen={openEdit}
       />
     </div>
   );
@@ -8882,6 +8997,7 @@ function PaymentConditionsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi
         minWidth="800px"
         emptyTitle="Nenhuma condicao cadastrada."
         emptyHint='Crie uma condicao pelo botao "Nova condicao".'
+        onRowOpen={openEdit}
       />
     </div>
   );

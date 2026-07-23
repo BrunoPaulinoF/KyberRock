@@ -255,6 +255,15 @@ export interface DataTableColumn<T> {
   render: (row: T) => ReactNode;
 }
 
+// Cliques em botoes/inputs dentro da linha nao devem disparar a abertura do
+// registro (duplo clique): o alvo interativo ja tem acao propria.
+function isInteractiveTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    target.closest("button, a, input, select, textarea, label") !== null
+  );
+}
+
 export function DataTable<T>({
   columns,
   rows,
@@ -265,7 +274,8 @@ export function DataTable<T>({
   minWidth = "680px",
   maxHeight,
   footer,
-  expandedRow
+  expandedRow,
+  onRowOpen
 }: {
   columns: Array<DataTableColumn<T>>;
   rows: T[];
@@ -277,6 +287,11 @@ export function DataTable<T>({
   maxHeight?: string;
   footer?: ReactNode;
   expandedRow?: (row: T) => ReactNode;
+  /**
+   * Abre o registro da linha: duplo clique (fora de botoes/inputs) ou Enter com
+   * a linha focada. Usado para abrir o modal de visualizacao dos cadastros.
+   */
+  onRowOpen?: (row: T) => void;
 }) {
   const gridTemplateColumns = columns.map((column) => column.width).join(" ");
 
@@ -317,6 +332,11 @@ export function DataTable<T>({
       <style>{`
         .kr-table-row { transition: background-color 100ms ease; }
         .kr-table-row:hover { background: var(--kr-card-hover); }
+        .kr-table-row:focus-visible {
+          outline: 2px solid var(--kr-accent);
+          outline-offset: -2px;
+          background: var(--kr-card-hover);
+        }
         @keyframes krSkeleton {
           0% { opacity: 0.45; }
           50% { opacity: 1; }
@@ -385,6 +405,29 @@ export function DataTable<T>({
                 <div
                   className="kr-table-row"
                   role="row"
+                  tabIndex={onRowOpen ? 0 : undefined}
+                  title={onRowOpen ? "Duplo clique para visualizar" : undefined}
+                  onDoubleClick={
+                    onRowOpen
+                      ? (event) => {
+                          if (isInteractiveTarget(event.target)) return;
+                          // O duplo clique seleciona texto da celula; limpa a
+                          // selecao antes de abrir a visualizacao.
+                          window.getSelection()?.removeAllRanges();
+                          onRowOpen(row);
+                        }
+                      : undefined
+                  }
+                  onKeyDown={
+                    onRowOpen
+                      ? (event) => {
+                          if (event.key === "Enter" && event.target === event.currentTarget) {
+                            event.preventDefault();
+                            onRowOpen(row);
+                          }
+                        }
+                      : undefined
+                  }
                   style={{
                     display: "grid",
                     gridTemplateColumns,
@@ -589,6 +632,8 @@ export function ConfirmDialog({
   description,
   confirmLabel = "Excluir",
   cancelLabel = "Cancelar",
+  busyLabel = "Excluindo...",
+  tone = "danger",
   busy = false,
   onCancel,
   onConfirm
@@ -597,6 +642,9 @@ export function ConfirmDialog({
   description: string;
   confirmLabel?: string;
   cancelLabel?: string;
+  busyLabel?: string;
+  /** "danger" (padrao) para acoes destrutivas; "primary" para confirmacoes neutras. */
+  tone?: "danger" | "primary";
   busy?: boolean;
   onCancel: () => void;
   onConfirm: () => void;
@@ -672,19 +720,262 @@ export function ConfirmDialog({
               border: "none",
               borderRadius: "10px",
               padding: "8px 14px",
-              background: "var(--kr-danger-strong)",
-              color: "#ffffff",
+              background: tone === "danger" ? "var(--kr-danger-strong)" : "var(--kr-primary-strong)",
+              color: tone === "danger" ? "#ffffff" : "var(--kr-primary-text)",
               cursor: busy ? "wait" : "pointer",
               fontWeight: 700,
               fontSize: "13px",
               opacity: busy ? 0.7 : 1
             }}
           >
-            {busy ? "Excluindo..." : confirmLabel}
+            {busy ? busyLabel : confirmLabel}
           </button>
         </div>
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// useConfirm: confirmacao imperativa (substitui window.confirm)
+// ---------------------------------------------------------------------------
+
+export interface ConfirmRequest {
+  title: string;
+  description: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  tone?: "danger" | "primary";
+}
+
+/**
+ * Confirmacao com a mesma ergonomia do window.confirm, mas usando o
+ * ConfirmDialog estilizado: `const ok = await requestConfirm({...})`.
+ * Renderize `confirmElement` no JSX do componente que usa o hook.
+ */
+export function useConfirm(): {
+  confirmElement: ReactNode;
+  requestConfirm: (request: ConfirmRequest) => Promise<boolean>;
+} {
+  const [pending, setPending] = useState<{
+    request: ConfirmRequest;
+    resolve: (confirmed: boolean) => void;
+  } | null>(null);
+
+  const requestConfirm = useCallback(
+    (request: ConfirmRequest) =>
+      new Promise<boolean>((resolve) => {
+        setPending({ request, resolve });
+      }),
+    []
+  );
+
+  function settle(confirmed: boolean): void {
+    pending?.resolve(confirmed);
+    setPending(null);
+  }
+
+  const confirmElement = pending ? (
+    <ConfirmDialog
+      title={pending.request.title}
+      description={pending.request.description}
+      confirmLabel={pending.request.confirmLabel ?? "Confirmar"}
+      cancelLabel={pending.request.cancelLabel ?? "Cancelar"}
+      tone={pending.request.tone ?? "primary"}
+      onCancel={() => settle(false)}
+      onConfirm={() => settle(true)}
+    />
+  ) : null;
+
+  return { confirmElement, requestConfirm };
+}
+
+// ---------------------------------------------------------------------------
+// Modal de visualizacao de cadastro (abre com duplo clique na linha)
+// ---------------------------------------------------------------------------
+
+export interface DetailItem {
+  label: string;
+  /** Valor vazio ("", null, undefined) e exibido como "—". */
+  value: ReactNode;
+}
+
+export interface DetailSectionData {
+  title: string;
+  items: DetailItem[];
+}
+
+function detailDisplayValue(value: ReactNode): ReactNode {
+  if (value === null || value === undefined) return "—";
+  if (typeof value === "string" && value.trim() === "") return "—";
+  return value;
+}
+
+/**
+ * Modal grande, somente leitura, com todas as informacoes de um cadastro
+ * agrupadas por secao. O botao "Editar" transiciona para o modal de edicao
+ * ja existente da tela (via `onEdit`).
+ */
+export function RecordDetailModal({
+  title,
+  subtitle,
+  badge,
+  sections,
+  onClose,
+  onEdit,
+  editLabel = "Editar",
+  maxWidth = 860
+}: {
+  title: string;
+  subtitle?: string;
+  /** Selos exibidos ao lado do titulo (ex.: origem OMIE/LOCAL, bloqueado). */
+  badge?: ReactNode;
+  sections: DetailSectionData[];
+  onClose: () => void;
+  onEdit?: () => void;
+  editLabel?: string;
+  maxWidth?: number;
+}) {
+  return (
+    <CrudFormModal onClose={onClose} maxWidth={maxWidth}>
+      <div
+        style={{
+          padding: "16px 56px 12px 18px",
+          borderBottom: "1px solid var(--kr-border)",
+          background: "var(--kr-surface-soft)",
+          borderTopLeftRadius: "16px",
+          borderTopRightRadius: "16px"
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+          <h3 style={{ margin: 0, color: "var(--kr-text-strong)", fontSize: "16px", fontWeight: 700 }}>
+            {title}
+          </h3>
+          {badge}
+        </div>
+        {subtitle ? (
+          <p style={{ margin: "4px 0 0 0", color: "var(--kr-muted)", fontSize: "12px" }}>
+            {subtitle}
+          </p>
+        ) : null}
+      </div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+          gap: "14px",
+          padding: "18px"
+        }}
+      >
+        {sections.map((section) => (
+          <section
+            key={section.title}
+            style={{
+              display: "grid",
+              alignContent: "start",
+              gap: "10px",
+              padding: "14px",
+              border: "1px solid var(--kr-border)",
+              borderRadius: "12px",
+              background: "var(--kr-surface-soft)",
+              minWidth: 0
+            }}
+          >
+            <h4
+              style={{
+                margin: "0 0 4px 0",
+                fontSize: "11px",
+                fontWeight: 800,
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+                color: "var(--kr-muted)"
+              }}
+            >
+              {section.title}
+            </h4>
+            <dl style={{ margin: 0, display: "grid", gap: "10px" }}>
+              {section.items.map((item) => (
+                <div key={item.label} style={{ minWidth: 0 }}>
+                  <dt
+                    style={{
+                      fontSize: "11px",
+                      fontWeight: 700,
+                      color: "var(--kr-muted)",
+                      marginBottom: "2px"
+                    }}
+                  >
+                    {item.label}
+                  </dt>
+                  <dd
+                    style={{
+                      margin: 0,
+                      fontSize: "13px",
+                      fontWeight: 600,
+                      color: "var(--kr-text-strong)",
+                      overflowWrap: "anywhere"
+                    }}
+                  >
+                    {detailDisplayValue(item.value)}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        ))}
+      </div>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "flex-end",
+          gap: "8px",
+          padding: "14px 18px",
+          borderTop: "1px solid var(--kr-border)",
+          background: "var(--kr-surface-soft)",
+          borderBottomLeftRadius: "16px",
+          borderBottomRightRadius: "16px"
+        }}
+      >
+        <button
+          type="button"
+          onClick={onClose}
+          style={{
+            border: "1px solid var(--kr-input-border)",
+            borderRadius: "10px",
+            padding: "9px 14px",
+            background: "var(--kr-surface)",
+            color: "var(--kr-text-strong)",
+            cursor: "pointer",
+            fontWeight: 700,
+            fontSize: "13px"
+          }}
+        >
+          Fechar
+        </button>
+        {onEdit ? (
+          <button
+            type="button"
+            onClick={onEdit}
+            autoFocus
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              border: "none",
+              borderRadius: "10px",
+              padding: "9px 16px",
+              background: "var(--kr-primary-strong)",
+              color: "var(--kr-primary-text)",
+              cursor: "pointer",
+              fontWeight: 700,
+              fontSize: "13px"
+            }}
+          >
+            <Pencil size={15} />
+            {editLabel}
+          </button>
+        ) : null}
+      </div>
+    </CrudFormModal>
   );
 }
 
