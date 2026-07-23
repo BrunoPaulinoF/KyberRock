@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Lock, Search, Unlock } from "lucide-react";
 
 import {
@@ -38,9 +38,12 @@ import {
   DeleteRowButton,
   EditRowButton,
   FlashBanner,
+  RecordDetailModal,
   SourceBadge,
+  useConfirm,
   useFlash
 } from "./crud-ui";
+import type { DetailSectionData } from "./crud-ui";
 import { PriceChangePasswordDialog } from "./PriceChangePasswordDialog";
 
 const initialForm: CustomerFormData = {
@@ -288,6 +291,11 @@ export function CustomersView({
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [togglingBlockId, setTogglingBlockId] = useState<string | null>(null);
+  // Visualizacao do cliente (duplo clique na linha) com botao "Editar".
+  const [viewingCustomer, setViewingCustomer] = useState<CustomerCacheEntry | null>(null);
+  // Snapshot do formulario ao abrir, para avisar antes de descartar alteracoes.
+  const formBaselineRef = useRef<string>("");
+  const { confirmElement, requestConfirm } = useConfirm();
 
   const [carriers, setCarriers] = useState<CarrierOption[]>([]);
   const [paymentTerms, setPaymentTerms] = useState<PaymentTermOption[]>([]);
@@ -414,10 +422,14 @@ export function CustomersView({
   // nao estourar o limite da BrasilAPI.
   async function handleEnrichAllCnpj(): Promise<void> {
     if (!desktopApi || cnpjBulkBusy) return;
-    const confirmed = window.confirm(
-      "Buscar o CNPJ de todos os clientes na Receita e atualizar o cadastro (razao social, " +
-        "endereco, telefone)?\n\nPode levar alguns minutos se houver muitos clientes."
-    );
+    const confirmed = await requestConfirm({
+      title: "Busca automatica de CNPJ",
+      description:
+        "Buscar o CNPJ de todos os clientes na Receita e atualizar o cadastro (razao social, " +
+        "endereco, telefone)? Pode levar alguns minutos se houver muitos clientes.",
+      confirmLabel: "Buscar dados",
+      tone: "primary"
+    });
     if (!confirmed) return;
     setCnpjBulkBusy(true);
     try {
@@ -461,11 +473,28 @@ export function CustomersView({
 
   function openCreateForm(): void {
     resetForm();
+    formBaselineRef.current = JSON.stringify({ form: initialForm, defaultConditionText: "" });
     setShowForm(true);
   }
 
+  async function requestCloseForm(): Promise<void> {
+    const dirty =
+      JSON.stringify({ form, defaultConditionText }) !== formBaselineRef.current;
+    if (dirty) {
+      const discard = await requestConfirm({
+        title: "Descartar alteracoes?",
+        description: "Ha alteracoes nao salvas neste cadastro. Fechar sem salvar?",
+        confirmLabel: "Descartar",
+        cancelLabel: "Continuar editando",
+        tone: "danger"
+      });
+      if (!discard) return;
+    }
+    setShowForm(false);
+  }
+
   function openEditForm(customer: CustomerCacheEntry): void {
-    setForm({
+    const nextForm: CustomerFormData = {
       tradeName: customer.tradeName,
       legalName: customer.legalName,
       document: customer.document ?? "",
@@ -500,14 +529,23 @@ export function CustomersView({
       neighborhood: customer.neighborhood ?? "",
       city: customer.city ?? "",
       state: customer.state ?? ""
-    });
+    };
+    setForm(nextForm);
     // Condicao padrao aparece como texto editavel (regra da condicao vinculada).
     const defaultTerm = customer.defaultPaymentTermId
       ? paymentTerms.find((term) => term.id === customer.defaultPaymentTermId)
       : undefined;
-    setDefaultConditionText(
-      defaultTerm ? extractConditionRaw(defaultTerm.rulesJson ?? "") || defaultTerm.name : ""
-    );
+    const nextConditionText = defaultTerm
+      ? extractConditionRaw(defaultTerm.rulesJson ?? "") || defaultTerm.name
+      : "";
+    setDefaultConditionText(nextConditionText);
+    formBaselineRef.current = JSON.stringify({
+      form: nextForm,
+      defaultConditionText: nextConditionText
+    });
+    // Se veio do modal de visualizacao, fecha-o: ao sair da edicao o usuario
+    // volta para a lista, nao para a visualizacao desatualizada.
+    setViewingCustomer(null);
     setActiveFormSection("identificacao");
     setEditingId(customer.id);
     setEditingSource(customer.source);
@@ -975,6 +1013,80 @@ export function CustomersView({
 
   const isOmie = editingSource === "omie";
 
+  // Modal de visualizacao: todas as informacoes do cliente agrupadas por secao,
+  // espelhando as abas do formulario de edicao.
+  function buildCustomerDetailSections(customer: CustomerCacheEntry): DetailSectionData[] {
+    const carrierName = customer.defaultCarrierId
+      ? carriers.find((carrier) => carrier.id === customer.defaultCarrierId)?.name ?? ""
+      : "";
+    const termName = customer.defaultPaymentTermId
+      ? paymentTerms.find((term) => term.id === customer.defaultPaymentTermId)?.name ?? ""
+      : "";
+    const methodName = customer.defaultPaymentMethodId
+      ? paymentMethods.find((method) => method.id === customer.defaultPaymentMethodId)?.name ?? ""
+      : "";
+    return [
+      {
+        title: "Identificacao",
+        items: [
+          { label: "Razao social", value: customer.legalName },
+          { label: "Nome fantasia", value: customer.tradeName },
+          { label: "CNPJ/CPF", value: formatDocument(customer.document ?? "") },
+          {
+            label: "Limite de credito",
+            value: customer.creditLimitCents ? formatMoney(customer.creditLimitCents) : ""
+          }
+        ]
+      },
+      {
+        title: "Contato",
+        items: [
+          { label: "Telefone", value: formatPhone(customer.phone ?? "") },
+          { label: "E-mail", value: customer.email ?? "" }
+        ]
+      },
+      {
+        title: "Endereco",
+        items: [
+          { label: "CEP", value: customer.zipcode ?? "" },
+          {
+            label: "Endereco",
+            value: [customer.addressStreet, customer.addressNumber].filter(Boolean).join(", ")
+          },
+          { label: "Complemento", value: customer.addressComplement ?? "" },
+          { label: "Bairro", value: customer.neighborhood ?? "" },
+          {
+            label: "Cidade/UF",
+            value: [customer.city, customer.state].filter(Boolean).join(" / ")
+          }
+        ]
+      },
+      {
+        title: "Comercial",
+        items: [
+          { label: "Forma de pagamento padrao", value: methodName },
+          { label: "Condicao de pagamento padrao", value: termName },
+          { label: "Transportadora padrao", value: carrierName },
+          {
+            label: "Credito do cliente",
+            value: customer.creditAccountEnabled ? "Habilitado" : "Nao habilitado"
+          },
+          {
+            label: "Uso de credito OMIE",
+            value:
+              customer.creditMode === "prepaid" ? "Debitar credito pre-pago" : "Nao debitar credito"
+          },
+          { label: "Exige nota fiscal", value: customer.nfRequired ? "Sim" : "Nao" },
+          {
+            label: "Bloqueado para faturamento",
+            value: customer.omieBillingBlocked ? "Sim" : "Nao"
+          },
+          { label: "Observacoes internas", value: customer.observations ?? "" }
+        ]
+      }
+    ];
+  }
+
   return (
     <div>
       <CrudSectionHeader
@@ -1047,7 +1159,7 @@ export function CustomersView({
       <FlashBanner flash={flash} />
 
       {showForm ? (
-        <CrudFormModal onClose={() => setShowForm(false)} maxWidth={1040} fixedHeight>
+        <CrudFormModal onClose={() => void requestCloseForm()} maxWidth={1040} fixedHeight>
         <Fragment>
           <div style={styles.formHeader}>
             <h3 style={styles.formTitle}>
@@ -1653,7 +1765,11 @@ export function CustomersView({
           ) : null}
           </div>
           <div style={styles.formFooter}>
-            <button type="button" onClick={() => setShowForm(false)} style={styles.secondaryButton}>
+            <button
+              type="button"
+              onClick={() => void requestCloseForm()}
+              style={styles.secondaryButton}
+            >
               Cancelar
             </button>
             <div style={{ display: "flex", gap: "8px" }}>
@@ -1683,6 +1799,34 @@ export function CustomersView({
         </Fragment>
         </CrudFormModal>
       ) : null}
+
+      {viewingCustomer && !showForm ? (
+        <RecordDetailModal
+          title={viewingCustomer.tradeName || viewingCustomer.legalName}
+          subtitle="Visualizacao do cliente"
+          badge={
+            <>
+              <SourceBadge source={viewingCustomer.source} />
+              {viewingCustomer.omieBillingBlocked ? (
+                <span
+                  style={{
+                    ...styles.pill("#b91c1c", "#fee2e2"),
+                    width: "fit-content"
+                  }}
+                >
+                  Bloqueado
+                </span>
+              ) : null}
+            </>
+          }
+          sections={buildCustomerDetailSections(viewingCustomer)}
+          maxWidth={1040}
+          onClose={() => setViewingCustomer(null)}
+          onEdit={() => openEditForm(viewingCustomer)}
+        />
+      ) : null}
+
+      {confirmElement}
 
       {pendingDeleteId ? (
         <ConfirmDialog
@@ -1814,6 +1958,7 @@ export function CustomersView({
         rows={customers}
         rowKey={(customer) => customer.id}
         loading={loading}
+        onRowOpen={(customer) => setViewingCustomer(customer)}
         emptyTitle={search ? "Nenhum cliente encontrado." : "Nenhum cliente cadastrado."}
         emptyHint={
           search

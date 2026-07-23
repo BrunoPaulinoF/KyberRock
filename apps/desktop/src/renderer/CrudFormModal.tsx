@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type { CSSProperties, ReactNode } from "react";
 
 interface CrudFormModalProps {
@@ -77,6 +77,8 @@ export function CrudFormModal({
   maxWidth = 920,
   fixedHeight = false
 }: CrudFormModalProps) {
+  const panelRef = useRef<HTMLDivElement | null>(null);
+
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
       if (e.key === "Escape") onClose();
@@ -90,9 +92,28 @@ export function CrudFormModal({
     };
   }, [onClose]);
 
+  // Foca o primeiro campo editavel ao abrir, para digitar direto sem clicar.
+  // Se algum elemento do conteudo pedir autoFocus (ex.: botao "Editar" do modal
+  // de visualizacao), respeita e nao rouba o foco.
+  useEffect(() => {
+    const panel = panelRef.current;
+    if (!panel) return;
+    const frame = requestAnimationFrame(() => {
+      if (panel.contains(document.activeElement) && document.activeElement !== document.body) {
+        return;
+      }
+      const firstField = panel.querySelector<HTMLElement>(
+        "input:not([type=hidden]):not(:disabled), select:not(:disabled), textarea:not(:disabled)"
+      );
+      firstField?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
   return (
     <div className="kr-modal-overlay" style={overlayStyle} onClick={onClose} role="presentation">
       <div
+        ref={panelRef}
         className="kr-modal-panel"
         style={{ ...panelBaseStyle, maxWidth, ...(fixedHeight ? fixedHeightStyle : {}) }}
         onClick={(e) => e.stopPropagation()}

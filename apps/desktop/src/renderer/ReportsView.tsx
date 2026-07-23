@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 
 import type { KyberRockDesktopApi } from "../preload/api-types";
 import { CrudFormModal } from "./CrudFormModal";
+import { useConfirm } from "./crud-ui";
 import { IconActionButton } from "./IconActionButton";
 import { PriceChangePasswordDialog } from "./PriceChangePasswordDialog";
 import { ReportChannelsSettings } from "./ReportChannelsSettings";
@@ -295,6 +296,7 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
   } | null>(null);
   const [pricePasswordError, setPricePasswordError] = useState<string | null>(null);
   const [verifyingPassword, setVerifyingPassword] = useState(false);
+  const { confirmElement, requestConfirm } = useConfirm();
 
   const loadRecipients = useCallback(async () => {
     if (!desktopApi) return;
@@ -446,7 +448,13 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
 
   async function handleDelete(id: string): Promise<void> {
     if (!desktopApi) return;
-    if (!window.confirm("Confirmar exclusao do destinatario?")) return;
+    const confirmed = await requestConfirm({
+      title: "Excluir destinatario",
+      description: "Confirmar exclusao do destinatario?",
+      confirmLabel: "Excluir",
+      tone: "danger"
+    });
+    if (!confirmed) return;
     try {
       await desktopApi.deleteReportRecipient(id);
       setSuccess("Destinatario removido.");
@@ -459,6 +467,7 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
 
   return (
     <section style={styles.page}>
+      {confirmElement}
       <header style={styles.header}>
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <h2 style={styles.title}>Relatorios e fechamento diario</h2>
