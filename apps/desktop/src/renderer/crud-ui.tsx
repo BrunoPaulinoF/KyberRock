@@ -803,6 +803,11 @@ export interface DetailItem {
 export interface DetailSectionData {
   title: string;
   items: DetailItem[];
+  /**
+   * Secao com muitos campos: ocupa a linha inteira do grid e distribui os itens
+   * em varias colunas, evitando uma coluna alta e estreita que forcaria scroll.
+   */
+  fullWidth?: boolean;
 }
 
 function detailDisplayValue(value: ReactNode): ReactNode {
@@ -878,7 +883,8 @@ export function RecordDetailModal({
               border: "1px solid var(--kr-border)",
               borderRadius: "12px",
               background: "var(--kr-surface-soft)",
-              minWidth: 0
+              minWidth: 0,
+              ...(section.fullWidth ? { gridColumn: "1 / -1" } : {})
             }}
           >
             <h4
@@ -893,7 +899,16 @@ export function RecordDetailModal({
             >
               {section.title}
             </h4>
-            <dl style={{ margin: 0, display: "grid", gap: "10px" }}>
+            <dl
+              style={{
+                margin: 0,
+                display: "grid",
+                gap: "10px 18px",
+                ...(section.fullWidth
+                  ? { gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }
+                  : {})
+              }}
+            >
               {section.items.map((item) => (
                 <div key={item.label} style={{ minWidth: 0 }}>
                   <dt
