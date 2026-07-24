@@ -1063,6 +1063,7 @@ export function CustomersView({
       },
       {
         title: "Comercial",
+        fullWidth: true,
         items: [
           { label: "Forma de pagamento padrao", value: methodName },
           { label: "Condicao de pagamento padrao", value: termName },
