@@ -115,6 +115,51 @@ describe("desktop activation", () => {
     expect(stored.publishableKey).toBe("");
   });
 
+  it("nao envia previousDeviceId na primeira ativacao e envia o id ja usado na reativacao", async () => {
+    const database = createDatabase();
+    const activationResponse = (deviceId: string) => ({
+      data: {
+        status: "approved",
+        message: "Desktop ativado com sucesso.",
+        companyId: "company-1",
+        companyLegalName: "Empresa Teste",
+        companyTradeName: "Empresa Teste",
+        companyDocument: null,
+        unitId: "unit-1",
+        unitName: "Unidade Teste",
+        unitTimezone: "America/Sao_Paulo",
+        deviceId,
+        deviceToken: "device-token-1",
+        supabaseUrl: "https://example.supabase.co",
+        publishableKey: "sb_publishable_from_activation",
+        checkedAt: "2026-07-28T15:00:00.000Z"
+      },
+      error: null
+    });
+
+    // Maquina nova: sem id anterior, a nuvem nunca adota o registro de outro
+    // computador da pedreira (era assim que o primeiro PC ficava bloqueado).
+    invokeMock.mockResolvedValueOnce(activationResponse("desktop-device-1"));
+    await activateDesktop(database, {
+      activationCode: "123456",
+      deviceName: "Balanca 2"
+    });
+    expect(invokeMock.mock.calls[0][1].body.previousDeviceId).toBeUndefined();
+    const installationId = invokeMock.mock.calls[0][1].body.installationId;
+    expect(installationId).toBeTruthy();
+
+    // Reativacao da mesma maquina: apresenta o registro que ja usava.
+    invokeMock.mockResolvedValueOnce(activationResponse("desktop-device-1"));
+    await activateDesktop(database, {
+      activationCode: "123456",
+      deviceName: "Balanca 2"
+    });
+    expect(invokeMock.mock.calls[1][1].body).toMatchObject({
+      installationId,
+      previousDeviceId: "desktop-device-1"
+    });
+  });
+
   it("keeps supabase connection settings after logout so the desktop can be reactivated", () => {
     const database = createDatabase();
     writeStoredSupabaseConfig(database, {

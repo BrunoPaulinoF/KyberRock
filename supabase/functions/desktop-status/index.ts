@@ -40,7 +40,14 @@ Deno.serve(async (req) => {
   const typedDevice = device as DeviceRow;
   const tokenHash = await sha256Hex(deviceToken);
   if (!safeEqual(tokenHash, typedDevice.token_hash)) {
-    return jsonResponse({ status: "invalid_device", allowed: false, message: "Token do desktop invalido." });
+    // O registro existe, mas com outro token: este computador precisa ser
+    // reativado (nao e bloqueio do administrador).
+    return jsonResponse({
+      status: "invalid_device",
+      allowed: false,
+      message:
+        "Este computador precisa ser reativado com o codigo da pedreira. Os demais computadores continuam operando normalmente."
+    });
   }
 
   if (!typedDevice.is_active) {

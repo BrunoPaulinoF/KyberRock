@@ -200,11 +200,20 @@ export function ActivationGate({ desktopApi, onUnlocked }: ActivationGateProps) 
   }
 
   const isCompanyBlocked = status?.status === "company_blocked";
+  // Registro renovado em outra ativacao (ex.: reinstalacao deste computador):
+  // nao e bloqueio do administrador, e so reativar com o codigo da pedreira.
+  const needsReactivation = status?.status === "invalid_device";
 
   return (
     <main style={styles.page}>
       <div style={{ ...styles.card, maxWidth: "480px" }}>
-        <h1 style={styles.title}>{isCompanyBlocked ? "Não autorizado" : "Acesso Bloqueado"}</h1>
+        <h1 style={styles.title}>
+          {isCompanyBlocked
+            ? "Não autorizado"
+            : needsReactivation
+              ? "Reative este computador"
+              : "Acesso Bloqueado"}
+        </h1>
         <p style={styles.subtitle}>{message}</p>
         {status && (
           <div style={styles.statusBox}>
@@ -225,7 +234,20 @@ export function ActivationGate({ desktopApi, onUnlocked }: ActivationGateProps) 
         )}
 
         <div style={styles.buttonColumn}>
-          <button type="button" onClick={handleRetryValidation} style={styles.primaryButton}>
+          {needsReactivation ? (
+            <button
+              type="button"
+              onClick={() => setScreen("activate")}
+              style={styles.primaryButton}
+            >
+              Reativar com o codigo da pedreira
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={handleRetryValidation}
+            style={needsReactivation ? styles.secondaryButton : styles.primaryButton}
+          >
               Tentar validar novamente
             </button>
           <button type="button" onClick={() => setScreen("activate")} style={styles.secondaryButton}>
