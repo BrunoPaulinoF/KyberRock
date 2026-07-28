@@ -27,6 +27,20 @@ describe("buildReceiptLines", () => {
     expect(lines).toContain("Cond.Pagto.: NAO INFORMADA");
   });
 
+  it("imprime o numero do computador como sufixo quando a pedreira tem mais de um", () => {
+    // Cada balanca numera offline pela propria sequencia: sem o sufixo, duas
+    // maquinas emitiriam o mesmo numero de cupom para caminhoes diferentes.
+    const lines = buildReceiptLines({ ...baseInput(), receiptNumber: 101, deviceNumber: 2 });
+
+    expect(lines).toContain("COPIA NRO 000000101-2");
+  });
+
+  it("mantem o numero sem sufixo na pedreira de um computador so", () => {
+    const lines = buildReceiptLines({ ...baseInput(), receiptNumber: 101, deviceNumber: null });
+
+    expect(lines).toContain("COPIA NRO 000000101");
+  });
+
   it("prints the payment method alongside the condition", () => {
     const lines = buildReceiptLines(baseInput());
 

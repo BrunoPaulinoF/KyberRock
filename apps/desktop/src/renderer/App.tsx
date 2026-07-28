@@ -41,6 +41,7 @@ import type {
 } from "../services/printing";
 import {
   DEFAULT_RECEIPT_TEMPLATE_CONFIG,
+  formatReceiptNumber,
   type ReceiptTemplateConfig
 } from "@kyberrock/print-templates";
 import type { DesktopAccessStatus } from "../services/desktop-activation";
@@ -1581,7 +1582,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         const receipt = await desktopApi.printReceipt(operation.id);
         receiptStatus =
           receipt.status === "printed"
-            ? `Cupom ${receipt.receiptNumber} impresso.`
+            ? `Cupom ${formatReceiptNumber(receipt.receiptNumber, receipt.deviceNumber)} impresso.`
             : `Falha ao imprimir cupom: ${receipt.errorMessage}.`;
       } catch (error) {
         receiptStatus = `Cupom nao impresso: ${getErrorMessage(error)}.`;
@@ -1791,7 +1792,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       const receipt = await desktopApi.reprintReceipt(receiptId);
       setMessage(
         receipt.status === "printed"
-          ? `Segunda via impressa: cupom ${receipt.receiptNumber}, via ${receipt.copyNumber}.`
+          ? `Segunda via impressa: cupom ${formatReceiptNumber(receipt.receiptNumber, receipt.deviceNumber)}, via ${receipt.copyNumber}.`
           : `Falha ao reimprimir: ${receipt.errorMessage}.`
       );
       await refreshPrintData();
@@ -1812,7 +1813,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       const receipt = await desktopApi.printReceipt(operationId);
       setMessage(
         receipt.status === "printed"
-          ? `Nota reimpressa: cupom ${receipt.receiptNumber}, via ${receipt.copyNumber}.`
+          ? `Nota reimpressa: cupom ${formatReceiptNumber(receipt.receiptNumber, receipt.deviceNumber)}, via ${receipt.copyNumber}.`
           : `Falha ao reimprimir nota: ${receipt.errorMessage}.`
       );
       await refreshPrintData();
@@ -3586,7 +3587,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       <div key={receipt.id} style={styles.receiptRow}>
                         <div>
                           <strong>
-                            Cupom {receipt.receiptNumber} - via {receipt.copyNumber}
+                            Cupom {formatReceiptNumber(receipt.receiptNumber, receipt.deviceNumber)} - via{" "}
+                            {receipt.copyNumber}
                           </strong>
                           <p style={styles.muted}>
                             {receipt.status === "printed" ? "Impresso" : "Falhou"} em{" "}

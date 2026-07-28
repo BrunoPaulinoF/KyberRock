@@ -170,6 +170,177 @@ describe("cadastro compartilhado da pedreira", () => {
     }
   });
 
+  it("soma o credito lancado na outra maquina em vez de sobrescrever o saldo", async () => {
+    const database = createMachine("desktop-a");
+
+    try {
+      const identity = readIdentity(database);
+      seedLocalCadastro(database);
+      // Debito lancado nesta maquina: saldo local ja reflete -30,00.
+      insertCreditMovement(database, {
+        id: "mov-local",
+        movementType: "debit_product",
+        amountCents: 3_000,
+        balanceAfterCents: 7_000,
+        createdAt: "2026-07-27T12:00:00.000Z"
+      });
+      database
+        .prepare(
+          `INSERT INTO customer_credit_balances (customer_id, balance_cents, updated_at)
+           VALUES ('cust-1', 7000, '2026-07-27T12:00:00.000Z')`
+        )
+        .run();
+
+      // A outra balanca lancou um debito de 20,00 no mesmo cliente.
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          customerCreditMovements: [
+            {
+              id: "mov-remoto",
+              customer_id: "cust-1",
+              operation_id: "op-que-nao-existe-aqui",
+              movement_type: "debit_freight",
+              amount_cents: 2_000,
+              balance_after_cents: 8_000,
+              created_at: "2026-07-27T12:05:00.000Z"
+            },
+            {
+              id: "mov-credito",
+              customer_id: "cust-1",
+              movement_type: "credit",
+              amount_cents: 10_000,
+              balance_after_cents: 10_000,
+              created_at: "2026-07-27T11:00:00.000Z"
+            }
+          ]
+        },
+        error: null
+      });
+
+      const pulled = await pullDesktopDataFromCloud(database, identity);
+
+      expect(pulled.cadastro).toBe(2);
+      // Saldo recalculado pelo log inteiro: +100,00 -30,00 -20,00 = 50,00.
+      expect(
+        database
+          .prepare("SELECT balance_cents FROM customer_credit_balances WHERE customer_id = 'cust-1'")
+          .pluck()
+          .get()
+      ).toBe(5_000);
+      // Movimento de operacao que nao existe nesta maquina entra sem o vinculo.
+      expect(
+        database
+          .prepare("SELECT operation_id FROM customer_credit_movements WHERE id = 'mov-remoto'")
+          .pluck()
+          .get()
+      ).toBeNull();
+    } finally {
+      database.close();
+    }
+  });
+
+  it("projeta tabelas de preco, frete, condicoes/formas de pagamento e contas", async () => {
+    const database = createMachine("desktop-b");
+
+    try {
+      const identity = readIdentity(database);
+      seedLocalCadastro(database);
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          priceTables: [
+            {
+              id: "pt-1",
+              name: "Tabela 2026",
+              is_active: true,
+              updated_at: "2026-07-27T10:00:00.000Z"
+            }
+          ],
+          priceTableItems: [
+            {
+              id: "pti-1",
+              price_table_id: "pt-1",
+              product_id: "prod-1",
+              unit_price_cents: 9_500,
+              unit: "ton",
+              updated_at: "2026-07-27T10:00:00.000Z"
+            }
+          ],
+          customerPriceTables: [
+            {
+              id: "cpt-1",
+              customer_id: "cust-1",
+              price_table_id: "pt-1",
+              is_active: true,
+              updated_at: "2026-07-27T10:00:00.000Z"
+            }
+          ],
+          customerFreightRules: [
+            {
+              id: "fr-1",
+              customer_id: "cust-1",
+              product_id: null,
+              rule_json: { mode: "per_ton", price_cents: 1_200 },
+              is_active: true,
+              updated_at: "2026-07-27T10:00:00.000Z"
+            }
+          ],
+          paymentTerms: [
+            {
+              id: "term-1",
+              name: "30 dias",
+              omie_code: "30",
+              rules_json: { installments: 1 },
+              is_active: true,
+              updated_at: "2026-07-27T10:00:00.000Z"
+            }
+          ],
+          paymentMethods: [
+            {
+              id: "pm-remoto",
+              code: "boleto_especial",
+              name: "Boleto especial",
+              is_system: false,
+              is_customer_credit: false,
+              sort_order: 9,
+              is_active: true,
+              updated_at: "2026-07-27T10:00:00.000Z"
+            }
+          ],
+          accounts: [
+            {
+              id: "acc-1",
+              code: "CX2",
+              name: "Caixa 2",
+              is_system: false,
+              sort_order: 2,
+              is_active: true,
+              updated_at: "2026-07-27T10:00:00.000Z"
+            }
+          ]
+        },
+        error: null
+      });
+
+      const pulled = await pullDesktopDataFromCloud(database, identity);
+
+      expect(pulled.cadastro).toBe(7);
+      expect(count(database, "price_tables")).toBe(1);
+      expect(count(database, "price_table_items")).toBe(1);
+      expect(count(database, "customer_price_tables")).toBe(1);
+      expect(count(database, "customer_freight_rules")).toBe(1);
+      expect(count(database, "payment_terms")).toBe(1);
+      expect(count(database, "accounts")).toBe(1);
+      expect(
+        database
+          .prepare("SELECT rule_json FROM customer_freight_rules WHERE id = 'fr-1'")
+          .pluck()
+          .get()
+      ).toBe('{"mode":"per_ton","price_cents":1200}');
+    } finally {
+      database.close();
+    }
+  });
+
   it("ignora vinculo cuja ponta ainda nao chegou em vez de derrubar o pull", async () => {
     const database = createMachine("desktop-b");
 
@@ -407,6 +578,32 @@ describe("cadastro compartilhado da pedreira", () => {
 function payloadFor(key: string): Array<Record<string, unknown>> {
   const call = invokeMock.mock.calls.find(([, options]) => Array.isArray(options?.body?.[key]));
   return (call?.[1].body[key] ?? []) as Array<Record<string, unknown>>;
+}
+
+function insertCreditMovement(
+  database: DesktopDatabase,
+  movement: {
+    id: string;
+    movementType: string;
+    amountCents: number;
+    balanceAfterCents: number;
+    createdAt: string;
+  }
+): void {
+  database
+    .prepare(
+      `INSERT INTO customer_credit_movements (
+         id, company_id, customer_id, operation_id, movement_type, amount_cents,
+         balance_after_cents, reason, created_at
+       ) VALUES (?, 'company-1', 'cust-1', NULL, ?, ?, ?, NULL, ?)`
+    )
+    .run(
+      movement.id,
+      movement.movementType,
+      movement.amountCents,
+      movement.balanceAfterCents,
+      movement.createdAt
+    );
 }
 
 function count(database: DesktopDatabase, table: string): number {

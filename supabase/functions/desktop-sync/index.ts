@@ -18,6 +18,14 @@ type CloudPayload = {
   vehicleCarriers?: Record<string, unknown>[];
   productDefaultPrices?: Record<string, unknown>[];
   customerSpecialPrices?: Record<string, unknown>[];
+  priceTables?: Record<string, unknown>[];
+  priceTableItems?: Record<string, unknown>[];
+  customerPriceTables?: Record<string, unknown>[];
+  customerFreightRules?: Record<string, unknown>[];
+  paymentTerms?: Record<string, unknown>[];
+  paymentMethods?: Record<string, unknown>[];
+  accounts?: Record<string, unknown>[];
+  customerCreditMovements?: Record<string, unknown>[];
   reportRecipients?: Record<string, unknown>[];
   reportChannelSettings?: Record<string, unknown>;
   avgQuarryMinutes?: number;
@@ -34,7 +42,19 @@ const CADASTRO_TABLES = [
   { key: "driverCarriers", table: "driver_carriers" },
   { key: "vehicleCarriers", table: "vehicle_carriers" },
   { key: "productDefaultPrices", table: "product_default_prices" },
-  { key: "customerSpecialPrices", table: "customer_special_prices" }
+  { key: "customerSpecialPrices", table: "customer_special_prices" },
+  { key: "priceTables", table: "price_tables" },
+  { key: "priceTableItems", table: "price_table_items" },
+  { key: "customerPriceTables", table: "customer_price_tables" },
+  { key: "customerFreightRules", table: "customer_freight_rules" },
+  { key: "paymentTerms", table: "payment_terms" },
+  { key: "paymentMethods", table: "payment_methods" },
+  { key: "accounts", table: "accounts" },
+  // Credito do cliente: sincroniza so o log de movimentos, que e append-only e
+  // por isso funde sem conflito. O saldo e recalculado a partir dele em cada
+  // maquina — sincronizar o saldo direto faria uma maquina sobrescrever o
+  // debito que a outra acabou de lancar.
+  { key: "customerCreditMovements", table: "customer_credit_movements" }
 ] as const;
 
 Deno.serve(async (req) => {

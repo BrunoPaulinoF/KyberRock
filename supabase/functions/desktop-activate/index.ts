@@ -147,6 +147,14 @@ Deno.serve(async (req) => {
     if (deviceError) throw deviceError;
   }
 
+  // Numero do computador na unidade: sufixo do cupom para duas balancas nunca
+  // emitirem o mesmo numero. Falha aqui nao impede a ativacao — o desktop volta
+  // a pedir na proxima validacao de acesso.
+  const { data: assignedNumber } = await supabase.rpc("assign_device_number", {
+    p_device_id: deviceId
+  });
+  const deviceNumber = typeof assignedNumber === "number" ? assignedNumber : null;
+
   const publishableKey =
     Deno.env.get("SUPABASE_PUBLISHABLE_KEY") ??
     Deno.env.get("SUPABASE_ANON_KEY") ??
@@ -167,6 +175,7 @@ Deno.serve(async (req) => {
     deviceToken,
     deviceName,
     deviceColor,
+    deviceNumber,
     installationId,
     supabaseUrl,
     publishableKey,
