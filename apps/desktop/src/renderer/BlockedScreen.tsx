@@ -85,14 +85,33 @@ export function BlockedScreen({
   // pelo admin: reativar aqui nao adiantaria. Ja o "invalid_device" e problema
   // da credencial desta maquina, que a propria tela consegue resolver.
   const canReactivate = status?.status === "invalid_device" || status?.status === "validation_error";
+  // Sem contato com a nuvem, o que aparece e o ULTIMO status conhecido, guardado
+  // nesta maquina — nao uma decisao do administrador tomada agora. Dizer isso
+  // evita a caca ao fantasma de um bloqueio que ja foi liberado no admin.
+  const staleStatus = Boolean(status?.lastError);
 
   return (
     <main style={styles.page}>
       <div style={styles.content}>
-        <h1 style={styles.title}>{canReactivate ? "Reative este computador" : "Acesso Bloqueado"}</h1>
+        <h1 style={styles.title}>
+          {staleStatus
+            ? "Nao foi possivel validar o acesso"
+            : canReactivate
+              ? "Reative este computador"
+              : "Acesso Bloqueado"}
+        </h1>
         <p style={styles.message}>
-          {resolveBlockedMessage(status)}
+          {staleStatus
+            ? "O computador nao esta conseguindo falar com a nuvem. O que aparece abaixo e a ultima situacao conhecida, guardada nesta maquina — pode ja ter sido liberada no admin."
+            : resolveBlockedMessage(status)}
         </p>
+        {staleStatus && (
+          <p style={styles.checking}>
+            Ultima situacao conhecida: {resolveBlockedMessage(status)}
+            <br />
+            Erro da ultima tentativa: {status?.lastError}
+          </p>
+        )}
         {checking && (
           <p style={styles.checking}>Verificando status...</p>
         )}

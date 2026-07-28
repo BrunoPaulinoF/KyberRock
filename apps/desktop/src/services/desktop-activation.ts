@@ -40,6 +40,12 @@ export interface DesktopAccessStatus {
   deviceId: string | null;
   lastSuccessfulCheckAt: string | null;
   graceExpiresAt: string | null;
+  /**
+   * Erro tecnico da ultima tentativa de validar na nuvem. Quando presente, o
+   * bloqueio exibido pode ser apenas o ultimo status conhecido (em cache), e
+   * nao uma decisao do administrador — a tela mostra isso ao operador.
+   */
+  lastError: string | null;
   checkedAt: string;
 }
 
@@ -230,6 +236,8 @@ export async function validateDesktopAccess(
 
     const status = data?.status ?? "validation_error";
     const message = data?.message ?? "Falha ao validar acesso.";
+    // Resposta da nuvem obtida: o bloqueio (ou a liberacao) vale como verdade.
+    clearAccessLastError(database);
     const checkedAt = data?.checkedAt ?? now.toISOString();
     saveAccessStatus(database, status, message, checkedAt);
     if (data?.allowed) {
@@ -255,9 +263,24 @@ export async function validateDesktopAccess(
       message,
       checkedAt
     });
-  } catch {
+  } catch (error) {
+    // Nao conseguimos falar com a nuvem: o status exibido daqui em diante e o
+    // ultimo conhecido, nao uma decisao do administrador. Guarda o motivo para
+    // a tela de bloqueio poder dizer isso em vez de acusar bloqueio.
+    writeLocalSetting(
+      database,
+      ACCESS_LAST_ERROR_KEY,
+      error instanceof Error ? error.message : "Falha ao validar acesso na nuvem.",
+      now.toISOString()
+    );
     return buildOfflineStatus(database, stored, now);
   }
+}
+
+const ACCESS_LAST_ERROR_KEY = "desktop_access_last_error";
+
+function clearAccessLastError(database: DesktopDatabase): void {
+  database.prepare("DELETE FROM local_settings WHERE key = ?").run(ACCESS_LAST_ERROR_KEY);
 }
 
 export function getStoredDesktopAccessStatus(
@@ -325,7 +348,10 @@ function buildOfflineStatus(
   now: Date
 ): DesktopAccessStatus {
   if (!stored.canOperate) {
-    return stored;
+    // Relê o erro tecnico: `stored` foi montado antes da tentativa de validar,
+    // e e justamente esse erro que diz que o bloqueio exibido e so o ultimo
+    // conhecido, nao uma decisao tomada agora pelo administrador.
+    return { ...stored, lastError: readStringLocalSetting(database, ACCESS_LAST_ERROR_KEY) };
   }
 
   return buildAccessStatus(database, {
@@ -411,7 +437,8 @@ function buildAccessStatus(
     unitName,
     deviceId: credentials?.deviceId ?? null,
     lastSuccessfulCheckAt,
-    graceExpiresAt
+    graceExpiresAt,
+    lastError: readStringLocalSetting(database, ACCESS_LAST_ERROR_KEY)
   };
 }
 
