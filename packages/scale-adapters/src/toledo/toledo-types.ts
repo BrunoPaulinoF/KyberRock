@@ -31,6 +31,16 @@ export interface ToledoTcpConfig {
    * do conversor entregue a outro cliente), e nao peso parado.
    */
   staleReadingMs?: number;
+  /**
+   * Sondar o indicador enquanto nenhum byte chegar. Indicadores em modo sob demanda
+   * so respondem a um comando; do lado do cliente isso e indistinguivel de um
+   * indicador mudo. Padrao: `true`. A sondagem se desliga ao primeiro byte recebido.
+   */
+  autoPoll?: boolean;
+  /** Comandos de consulta enviados na sondagem. Padrao: ENQ, "P\r\n", "W\r\n". */
+  pollCommands?: string[];
+  /** Intervalo entre comandos de sondagem (ms). Padrao: 1500 */
+  pollIntervalMs?: number;
 }
 
 export interface ToledoSerialConfig {

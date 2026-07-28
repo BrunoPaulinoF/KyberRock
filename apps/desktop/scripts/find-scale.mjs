@@ -51,11 +51,30 @@ const OUI_HINTS = [
   ["8c:1f:64", "IEEE registro pequeno (OEM embarcado)"]
 ];
 
+/**
+ * Comandos de consulta para indicadores em modo sob demanda. Todos apenas pedem a
+ * leitura atual — nenhum altera estado da balanca.
+ */
+const POLL_COMMANDS = [
+  { label: "ENQ (0x05) — pedido padrao Toledo", bytes: "\x05" },
+  { label: "P CR LF — print", bytes: "P\r\n" },
+  { label: "W CR LF — weight", bytes: "W\r\n" },
+  { label: "S CR LF — send", bytes: "S\r\n" },
+  { label: "CR apenas", bytes: "\r" }
+];
+
 function parseArgs(argv) {
-  const args = { subnets: [], ports: DEFAULT_PORTS, timeoutMs: 700, concurrency: 128 };
+  const args = {
+    subnets: [],
+    ports: DEFAULT_PORTS,
+    timeoutMs: 700,
+    concurrency: 128,
+    probe: null
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
-    if (arg === "--subnet") args.subnets.push(argv[(i += 1)]);
+    if (arg === "--probe") args.probe = argv[(i += 1)];
+    else if (arg === "--subnet") args.subnets.push(argv[(i += 1)]);
     else if (arg === "--ports")
       args.ports = argv[(i += 1)]
         .split(",")
@@ -164,8 +183,95 @@ function describeBanner(banner) {
   return `${printable}${looksLikeToledo ? "  <-- parece leitura de peso" : ""}`;
 }
 
+/**
+ * Sonda dirigida a um host:porta ja conhecido. Escuta em silencio e, se nada chegar,
+ * testa os comandos de consulta um a um — e assim distingue tres casos que na tela do
+ * sistema parecem identicos: indicador mudo, indicador em modo sob demanda, e
+ * indicador falando um protocolo que o parser nao reconhece.
+ */
+async function probeTarget(target) {
+  const [host, rawPort] = target.split(":");
+  const port = Number(rawPort ?? 4001);
+
+  console.log(`=== Sonda dirigida: ${host}:${port} ===\n`);
+
+  await new Promise((resolve) => {
+    let totalBytes = 0;
+    let commandIndex = -1;
+    const socket = createConnection({ host, port });
+    socket.setTimeout(20000);
+
+    const dump = (chunk) => {
+      const ascii = chunk.toString("binary").replace(/[^\x20-\x7e]/g, ".");
+      const hex = chunk.toString("hex").match(/.{1,2}/g)?.join(" ") ?? "";
+      console.log(`  RECEBIDO (${chunk.length} bytes)`);
+      console.log(`    ascii: ${ascii}`);
+      console.log(`    hex  : ${hex.slice(0, 200)}`);
+    };
+
+    const nextCommand = () => {
+      commandIndex += 1;
+      if (commandIndex >= POLL_COMMANDS.length) {
+        console.log("\nNenhum comando produziu resposta.");
+        console.log("O indicador nao esta transmitindo nem respondendo nesta porta.");
+        console.log("Provaveis causas:");
+        console.log("  - a porta TCP do conversor nao corresponde ao canal serial do indicador");
+        console.log("  - o cabo serial entre indicador e conversor esta solto ou invertido (RX/TX)");
+        console.log("  - o indicador esta desligado ou com a saida serial desabilitada");
+        socket.end();
+        socket.destroy();
+        resolve();
+        return;
+      }
+      const command = POLL_COMMANDS[commandIndex];
+      console.log(`\nEnviando comando: ${command.label}`);
+      socket.write(Buffer.from(command.bytes, "binary"));
+      setTimeout(() => {
+        if (totalBytes === 0) nextCommand();
+      }, 2000);
+    };
+
+    socket.on("connect", () => {
+      console.log("Conectado. Escutando 5s em silencio (modo transmissao continua)...\n");
+      setTimeout(() => {
+        if (totalBytes > 0) {
+          console.log("\nO indicador transmite sozinho. Se o sistema nao le o peso,");
+          console.log("o problema esta no formato do quadro, nao na conexao.");
+          socket.end();
+          socket.destroy();
+          resolve();
+          return;
+        }
+        console.log("Nada recebido em silencio. Testando modo sob demanda...");
+        nextCommand();
+      }, 5000);
+    });
+
+    socket.on("data", (chunk) => {
+      totalBytes += chunk.length;
+      dump(chunk);
+    });
+
+    socket.on("timeout", () => {
+      console.log("\nTimeout geral da sonda.");
+      socket.destroy();
+      resolve();
+    });
+
+    socket.on("error", (err) => {
+      console.log(`\nErro de conexao: ${err.message}`);
+      resolve();
+    });
+  });
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+
+  if (args.probe) {
+    await probeTarget(args.probe);
+    return;
+  }
 
   console.log("=== Busca do indicador da balanca ===\n");
 
