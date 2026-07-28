@@ -139,6 +139,12 @@ import {
 import { CacheStore, type CacheQueryOptions, type CacheQueryResult } from "./cache-store.js";
 import { readOmiePullState, writeOmiePullState } from "./supabase-sync.js";
 import { listUnitDevices, type UnitDeviceInfo } from "./unit-devices.js";
+import { CustomerReportService, type CustomerReportVariant } from "./customer-report.js";
+import {
+  customerReportFileBaseName,
+  renderCustomerReportHtml,
+  renderCustomerReportSpreadsheet
+} from "./customer-report-render.js";
 import { ReportService } from "./reports.js";
 import {
   sendEmail,
@@ -424,12 +430,14 @@ export class DesktopRuntime {
     { operationType: ScaleCaptureOperationType; reading: ScaleReading; expiresAt: number }
   >();
   private reportService: ReportService;
+  private customerReportService: CustomerReportService;
 
   private constructor(initialized: InitializedDesktopDatabase) {
     this.database = initialized.database;
     this.paths = initialized.paths;
     this.cacheStore = new CacheStore(this.database);
     this.reportService = new ReportService(this.database);
+    this.customerReportService = new CustomerReportService(this.database);
     this.ensureIdentity();
     ensureDefaultAccounts(this.database, this.ensureIdentity().companyId);
     ensureDefaultPaymentMethods(this.database, this.ensureIdentity().companyId);
@@ -1679,6 +1687,64 @@ export class DesktopRuntime {
       endDate,
       this.ensureIdentity().unitId
     );
+  }
+
+  // --- Relatorio por cliente -------------------------------------------------
+
+  listCustomerReportOptions(): ReturnType<CustomerReportService["listCustomerOptions"]> {
+    return this.customerReportService.listCustomerOptions(this.ensureIdentity().unitId);
+  }
+
+  getCustomerReport(
+    customerId: string,
+    startDate: string,
+    endDate: string,
+    periodLabel?: string | null
+  ): ReturnType<CustomerReportService["getCustomerReport"]> {
+    return this.customerReportService.getCustomerReport(
+      customerId,
+      startDate,
+      endDate,
+      this.ensureIdentity().unitId,
+      periodLabel
+    );
+  }
+
+  /**
+   * Documentos do relatorio por cliente prontos para gravar em disco. O main so escolhe
+   * o destino e escreve: PDF passa pelo `renderHtmlToPdf` (HTML A4) e Excel e gravado
+   * direto (HTML de tabelas com extensao `.xls`).
+   */
+  buildCustomerReportDocuments(
+    customerId: string,
+    startDate: string,
+    endDate: string,
+    variants: CustomerReportVariant[],
+    formats: Array<"pdf" | "excel">,
+    periodLabel?: string | null
+  ): Array<{ variant: CustomerReportVariant; format: "pdf" | "excel"; fileName: string; html: string }> {
+    const report = this.getCustomerReport(customerId, startDate, endDate, periodLabel);
+    const documents: Array<{
+      variant: CustomerReportVariant;
+      format: "pdf" | "excel";
+      fileName: string;
+      html: string;
+    }> = [];
+    for (const variant of variants) {
+      const baseName = customerReportFileBaseName(report, variant);
+      for (const format of formats) {
+        documents.push({
+          variant,
+          format,
+          fileName: `${baseName}.${format === "pdf" ? "pdf" : "xls"}`,
+          html:
+            format === "pdf"
+              ? renderCustomerReportHtml(report, variant)
+              : renderCustomerReportSpreadsheet(report, variant)
+        });
+      }
+    }
+    return documents;
   }
 
   getReportDispatchConfig(): { settings: ReportDispatchSettings; state: ReportDispatchState } {

@@ -16,6 +16,8 @@ export const TIPS = {
       "Sincronizacao dos dados com a nuvem. Dispare envios manuais se precisar.",
     insights:
       "Insights: KPIs, graficos de peso por dia, top produtos e mix de operacoes no periodo.",
+    customerReport:
+      "Relatorio por cliente: escolha o cliente e o periodo e gere o relatorio simplificado e/ou completo em PDF e/ou Excel.",
     reports: "Relatorios: cadastre destinatarios que receberao os relatorios automaticos por e-mail.",
     documentation: "Documentacao do produto (em breve)."
   },
@@ -28,6 +30,8 @@ export const TIPS = {
     scale: "Diagnostico e leitura da balanca. Atalho: F6.",
     printing: "Configure a impressora de cupom de 80 mm. Atalho: F7.",
     cloud: "Sincronizacao de dados com a nuvem. Atalho: F8.",
+    customerReport:
+      "Relatorio completo ou simplificado de um cliente no periodo, em PDF ou Excel.",
     reports: "Destinatarios dos relatorios automaticos por e-mail.",
     documentation: "Documentacao do produto (em breve)."
   },

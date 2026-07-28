@@ -40,6 +40,11 @@ import type {
   SalesPivotResult,
   TruckControlReport
 } from "../services/reports";
+import type {
+  CustomerReport as CustomerFullReport,
+  CustomerReportOption,
+  CustomerReportVariant
+} from "../services/customer-report";
 import type { CreateCustomerInput, UpdateCustomerInput } from "../services/customers";
 import type { UpdatePaymentMethodInput } from "../services/payment-methods";
 import type { UpdateAccountInput } from "../services/accounts";
@@ -231,6 +236,21 @@ export interface KyberRockDesktopApi {
     endDate: string
   ) => Promise<{ path: string } | null>;
   exportReportExcel: (startDate: string, endDate: string) => Promise<{ path: string } | null>;
+  listCustomerReportCustomers: () => Promise<CustomerReportOption[]>;
+  getCustomerReport: (
+    customerId: string,
+    startDate: string,
+    endDate: string,
+    periodLabel?: string
+  ) => Promise<CustomerFullReport>;
+  exportCustomerReport: (
+    customerId: string,
+    startDate: string,
+    endDate: string,
+    variants: CustomerReportVariant[],
+    formats: Array<"pdf" | "excel">,
+    periodLabel?: string
+  ) => Promise<{ files: string[] } | null>;
   listReportRecipients: () => Promise<
     Array<{
       id: string;

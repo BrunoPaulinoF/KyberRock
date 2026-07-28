@@ -40,6 +40,7 @@ import {
   createInitialUpdateState,
   type UpdateState
 } from "../services/update-flow.js";
+import { isCustomerReportVariant } from "../services/customer-report.js";
 import { GITHUB_UPDATER_TOKEN } from "./updater-config.js";
 import type { OperationType } from "../services/weighing-operations.js";
 
@@ -656,6 +657,96 @@ function registerIpcHandlers(): void {
       const fs = await import("node:fs/promises");
       await fs.writeFile(filePath, html, "utf8");
       return { path: filePath };
+    }
+  );
+
+  ipcMain.handle("desktop:list-customer-report-customers", () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.listCustomerReportOptions();
+  });
+
+  ipcMain.handle(
+    "desktop:get-customer-report",
+    (_event, customerId: string, startDate: string, endDate: string, periodLabel?: string) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.getCustomerReport(customerId, startDate, endDate, periodLabel);
+    }
+  );
+
+  // Exporta o relatorio por cliente nos modelos (simplificado/completo) e formatos
+  // (PDF/Excel) escolhidos. Um unico arquivo usa o "salvar como" de sempre; a partir de
+  // dois, pede a pasta uma vez so em vez de abrir um dialogo por arquivo.
+  ipcMain.handle(
+    "desktop:export-customer-report",
+    async (
+      _event,
+      customerId: string,
+      startDate: string,
+      endDate: string,
+      variants: Array<"simplified" | "complete">,
+      formats: Array<"pdf" | "excel">,
+      periodLabel?: string
+    ) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      if (!mainWindow) return null;
+
+      const selectedVariants = (variants ?? []).filter(isCustomerReportVariant);
+      const selectedFormats = (formats ?? []).filter(
+        (format): format is "pdf" | "excel" => format === "pdf" || format === "excel"
+      );
+      if (selectedVariants.length === 0) {
+        throw new Error("Selecione ao menos um modelo de relatorio (simplificado ou completo).");
+      }
+      if (selectedFormats.length === 0) {
+        throw new Error("Selecione ao menos um formato de arquivo (PDF ou Excel).");
+      }
+
+      const documents = runtime.buildCustomerReportDocuments(
+        customerId,
+        startDate,
+        endDate,
+        selectedVariants,
+        selectedFormats,
+        periodLabel
+      );
+
+      const fs = await import("node:fs/promises");
+      const path = await import("node:path");
+
+      const writeDocument = async (
+        document: (typeof documents)[number],
+        filePath: string
+      ): Promise<void> => {
+        if (document.format === "pdf") {
+          await fs.writeFile(filePath, await renderHtmlToPdf(document.html));
+          return;
+        }
+        await fs.writeFile(filePath, document.html, "utf8");
+      };
+
+      if (documents.length === 1) {
+        const [document] = documents;
+        const filePath = await pickReportFilePath(document.fileName, [
+          document.format === "pdf" ? "pdf" : "xls"
+        ]);
+        if (!filePath) return null;
+        await writeDocument(document, filePath);
+        return { files: [filePath] };
+      }
+
+      const folder = await dialog.showOpenDialog(mainWindow, {
+        title: "Escolher a pasta dos relatorios",
+        properties: ["openDirectory", "createDirectory"]
+      });
+      if (folder.canceled || folder.filePaths.length === 0) return null;
+
+      const files: string[] = [];
+      for (const document of documents) {
+        const filePath = path.join(folder.filePaths[0], document.fileName);
+        await writeDocument(document, filePath);
+        files.push(filePath);
+      }
+      return { files };
     }
   );
 
