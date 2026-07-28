@@ -41,7 +41,13 @@ export interface ScaleConnectionConfig {
 export const SCALE_CONNECTION_TUNING = {
   timeoutMs: 3000,
   reconnectIntervalMs: 5000,
-  maxReconnectAttempts: 10
+  maxReconnectAttempts: 10,
+  /**
+   * Silencio maximo tolerado com a conexao aberta. Passado disso a leitura vence,
+   * a conexao e derrubada e a reconexao entra — em vez de a tela seguir exibindo
+   * o peso do caminhao anterior.
+   */
+  staleReadingMs: 4000
 } as const;
 
 export interface ScaleConfiguration {

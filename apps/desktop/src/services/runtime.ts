@@ -1438,7 +1438,8 @@ export class DesktopRuntime {
         path: serialPath,
         baudRate: scaleConfig.connection.baudRate,
         reconnectIntervalMs: SCALE_CONNECTION_TUNING.reconnectIntervalMs,
-        maxReconnectAttempts: SCALE_CONNECTION_TUNING.maxReconnectAttempts
+        maxReconnectAttempts: SCALE_CONNECTION_TUNING.maxReconnectAttempts,
+        staleReadingMs: SCALE_CONNECTION_TUNING.staleReadingMs
       });
       return;
     }
@@ -1448,7 +1449,8 @@ export class DesktopRuntime {
       port: scaleConfig.connection.port,
       timeoutMs: SCALE_CONNECTION_TUNING.timeoutMs,
       reconnectIntervalMs: SCALE_CONNECTION_TUNING.reconnectIntervalMs,
-      maxReconnectAttempts: SCALE_CONNECTION_TUNING.maxReconnectAttempts
+      maxReconnectAttempts: SCALE_CONNECTION_TUNING.maxReconnectAttempts,
+      staleReadingMs: SCALE_CONNECTION_TUNING.staleReadingMs
     });
   }
 

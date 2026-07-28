@@ -2,6 +2,7 @@ import { parseToledoLine } from "./toledo-protocol-parser.js";
 import { normalizeParsedReading } from "./toledo-reading.js";
 import type { ParsedToledoReading, ToledoSerialConfig } from "./toledo-types.js";
 import type { ScaleReading } from "../scale-adapter.js";
+import { DEFAULT_STALE_READING_MS } from "./toledo-tcp-adapter.js";
 import type { ToledoConnectionState, ToledoTcpAdapterStatus } from "./toledo-tcp-adapter.js";
 
 /**
@@ -62,6 +63,22 @@ export function createToledoSerialAdapter(
     return config?.path;
   }
 
+  function staleThresholdMs(): number {
+    return config?.staleReadingMs ?? DEFAULT_STALE_READING_MS;
+  }
+
+  function isStale(): boolean {
+    if (!lastReadingAt) return true;
+    const receivedAt = Date.parse(lastReadingAt);
+    if (!Number.isFinite(receivedAt)) return true;
+    return Date.now() - receivedAt > staleThresholdMs();
+  }
+
+  function clearLastReading(): void {
+    lastReading = null;
+    lastReadingAt = null;
+  }
+
   function getLastScaleReading(): ScaleReading | null {
     if (!lastReading || !lastReadingAt) return null;
     return normalizeParsedReading(lastReading, lastReadingAt, "toledo-serial", getDeviceId());
@@ -100,6 +117,8 @@ export function createToledoSerialAdapter(
     config = null;
     reconnectCount = 0;
     buffer = "";
+    // Zera a leitura: peso de uma sessao anterior nunca pode reaparecer apos reconectar.
+    clearLastReading();
   }
 
   function scheduleReconnect(): void {
@@ -209,18 +228,32 @@ export function createToledoSerialAdapter(
       }
 
       const reading = getLastScaleReading();
-      if (reading) return reading;
+      if (!reading) {
+        throw new Error("Nenhuma leitura disponivel da balanca.");
+      }
 
-      throw new Error("Nenhuma leitura disponivel da balanca.");
+      // Ha leitura, mas ja venceu: melhor falhar do que devolver um peso antigo.
+      if (isStale()) {
+        throw new Error(
+          "Balanca conectada, mas sem leitura recente. Confirme se o indicador esta em " +
+            "modo de transmissao continua e se o baud rate da porta esta correto."
+        );
+      }
+
+      return reading;
     },
 
     getStatus(): ToledoTcpAdapterStatus {
+      const stale = isStale();
       return {
         state,
-        lastReading,
+        // Leitura vencida nao sai daqui: evita a tela continuar exibindo o peso do
+        // caminhao anterior quando o indicador para de transmitir.
+        lastReading: stale ? null : lastReading,
         lastReadingAt,
         errorMessage,
-        reconnectAttempts: reconnectCount
+        reconnectAttempts: reconnectCount,
+        stale
       };
     },
 
