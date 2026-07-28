@@ -6,6 +6,7 @@ import type {
   CustomerReportOption,
   CustomerReportVariant
 } from "../services/customer-report";
+import { INSTALLMENT_NOTE, INSTALLMENT_SITUATION_LABEL } from "../services/customer-report-render";
 import { IconActionButton } from "./IconActionButton";
 import { HelpTooltip } from "./Tooltip";
 
@@ -15,7 +16,16 @@ import { HelpTooltip } from "./Tooltip";
  * (PDF e/ou Excel). A tela mostra a previa dos mesmos dados que vao para o arquivo:
  * transporte, compras, pagamentos, produtos, tonelagem e placas.
  */
-type PeriodPreset = "today" | "7d" | "30d" | "month" | "lastMonth" | "year" | "custom";
+type PeriodPreset =
+  | "today"
+  | "7d"
+  | "30d"
+  | "month"
+  | "lastMonth"
+  | "year"
+  | "next30d"
+  | "next90d"
+  | "custom";
 
 interface DateRange {
   start: string;
@@ -30,6 +40,8 @@ const PERIOD_OPTIONS: Array<{ id: PeriodPreset; label: string }> = [
   { id: "month", label: "Mes atual" },
   { id: "lastMonth", label: "Mes anterior" },
   { id: "year", label: "Ano atual" },
+  { id: "next30d", label: "Proximos 30 dias" },
+  { id: "next90d", label: "Proximos 90 dias" },
   { id: "custom", label: "Personalizado" }
 ];
 
@@ -75,6 +87,18 @@ function resolveRange(
   if (preset === "year") {
     const start = new Date(today.getFullYear(), 0, 1);
     return { start: toIsoDate(start), end: toIsoDate(today), label: "Ano atual" };
+  }
+  // Periodos futuros: nao ha carregamento a mostrar, e o objetivo e ver os dias em que
+  // o cliente ainda tem parcelas a pagar.
+  if (preset === "next30d" || preset === "next90d") {
+    const days = preset === "next30d" ? 29 : 89;
+    const end = new Date(today);
+    end.setDate(end.getDate() + days);
+    return {
+      start: toIsoDate(today),
+      end: toIsoDate(end),
+      label: preset === "next30d" ? "Proximos 30 dias" : "Proximos 90 dias"
+    };
   }
   const lastMonthEnd = new Date(today.getFullYear(), today.getMonth(), 0);
   const lastMonthStart = new Date(lastMonthEnd.getFullYear(), lastMonthEnd.getMonth(), 1);
@@ -260,6 +284,7 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
 
   const showComplete = variants.complete;
   const totals = report?.totals ?? null;
+  const dues = report?.installmentTotals ?? null;
   const fileCount = selectedVariants.length * selectedFormats.length;
 
   return (
@@ -268,7 +293,7 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <h2 style={styles.title}>Relatorio por cliente</h2>
           <HelpTooltip
-            content="Gera o relatorio de um cliente no periodo escolhido, com transporte, compras, pagamentos, produtos, tonelagem e placas. Escolha os modelos (simplificado e/ou completo) e os formatos (PDF e/ou Excel)."
+            content="Gera o relatorio de um cliente no periodo escolhido, com transporte, compras, pagamentos, produtos, tonelagem, placas e as parcelas a vencer. Use datas futuras para ver os dias em que o cliente ainda tem parcelas a pagar. Escolha os modelos (simplificado e/ou completo) e os formatos (PDF e/ou Excel)."
             placement="right"
           />
         </div>
@@ -352,6 +377,10 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
             <p style={styles.hint}>
               {formatDayLabel(range.start)} a {formatDayLabel(range.end)}
             </p>
+            <p style={styles.hint}>
+              Datas futuras sao aceitas: os carregamentos ficam vazios e o relatorio mostra as
+              parcelas que o cliente ainda tem a pagar naqueles dias.
+            </p>
           </div>
 
           <div style={styles.filterBlock}>
@@ -367,7 +396,7 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
               <span>
                 Simplificado
                 <span style={styles.checkboxHint}>
-                  Dados principais: cadastro, KPIs, produtos, placas e compras por mes.
+                  Dados principais: cadastro, KPIs, vencimentos, produtos, placas e compras por mes.
                 </span>
               </span>
             </label>
@@ -433,7 +462,7 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
         <div style={styles.card}>
           <p style={styles.hint}>Carregando relatorio...</p>
         </div>
-      ) : report && totals ? (
+      ) : report && totals && dues ? (
         <>
           <div style={styles.card}>
             <h3 style={styles.cardTitle}>
@@ -482,7 +511,74 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
               value={`${formatBRL(totals.avgPriceCentsPerTon)}/t`}
               hint={`Ticket medio ${formatBRL(totals.avgTicketCents)}`}
             />
+            <Kpi
+              label="A vencer no periodo"
+              value={formatBRL(dues.upcomingCents)}
+              hint={`${formatNumber(dues.upcomingInstallments)} parcela(s)`}
+            />
+            <Kpi
+              label="Proximo vencimento"
+              value={dues.nextDueDate ? formatDayLabel(dues.nextDueDate) : "-"}
+              hint={dues.nextDueDate ? formatBRL(dues.nextDueCents) : "Sem parcelas no periodo"}
+            />
+            <Kpi
+              label="Vencidas no periodo"
+              value={formatBRL(dues.overdueCents)}
+              hint={`${formatNumber(dues.overdueInstallments)} parcela(s)`}
+            />
+            <Kpi
+              label="Parcelas no periodo"
+              value={formatNumber(dues.installments)}
+              hint={formatBRL(dues.amountCents)}
+            />
           </div>
+
+          <DataCard
+            title="Vencimentos no periodo"
+            empty={report.installmentsByMonth.length === 0}
+            footNote={INSTALLMENT_NOTE}
+            emptyMessage="Nenhuma parcela vence neste periodo. Escolha datas futuras para ver os proximos vencimentos."
+          >
+            <Table
+              headers={["Mes", "Parcelas", "Valor"]}
+              rows={report.installmentsByMonth.map((row) => [
+                formatMonthLabel(row.period),
+                formatNumber(row.installments),
+                formatBRL(row.amountCents)
+              ])}
+            />
+          </DataCard>
+
+          <DataCard
+            title="Parcelas a pagar"
+            empty={report.installments.length === 0}
+            emptyMessage="Nenhuma parcela vence neste periodo."
+          >
+            <Table
+              headers={[
+                "Vencimento",
+                "Situacao",
+                "Parcela",
+                "Valor",
+                "Data da compra",
+                "Produto",
+                "Placa",
+                "Condicao",
+                "Forma"
+              ]}
+              rows={report.installments.map((installment) => [
+                formatDayLabel(installment.dueDate),
+                INSTALLMENT_SITUATION_LABEL[installment.situation],
+                `${installment.number}/${installment.installmentCount}`,
+                formatBRL(installment.amountCents),
+                formatDayLabel(installment.operationDate),
+                installment.productDescription,
+                installment.plate,
+                installment.paymentTermName ?? "-",
+                installment.paymentMethodName ?? "-"
+              ])}
+            />
+          </DataCard>
 
           <DataCard title="Produtos comprados" empty={report.byProduct.length === 0}>
             <Table
@@ -685,16 +781,21 @@ function Kpi({ label, value, hint }: { label: string; value: string; hint?: stri
 function DataCard({
   title,
   empty,
-  children
+  children,
+  footNote,
+  emptyMessage
 }: {
   title: string;
   empty: boolean;
   children: React.ReactNode;
+  footNote?: string;
+  emptyMessage?: string;
 }) {
   return (
     <div style={styles.card}>
       <h3 style={styles.cardTitle}>{title}</h3>
-      {empty ? <p style={styles.hint}>Sem dados no periodo.</p> : children}
+      {empty ? <p style={styles.hint}>{emptyMessage ?? "Sem dados no periodo."}</p> : children}
+      {footNote ? <p style={styles.footNote}>{footNote}</p> : null}
     </div>
   );
 }
@@ -849,6 +950,12 @@ const styles: Record<string, React.CSSProperties> = {
     color: "var(--kr-muted)",
     margin: 0,
     whiteSpace: "pre-line"
+  },
+  footNote: {
+    fontSize: "11px",
+    color: "var(--kr-muted)",
+    fontStyle: "italic",
+    margin: "8px 0 0 0"
   },
   identityGrid: {
     display: "grid",

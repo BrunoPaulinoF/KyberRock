@@ -166,6 +166,50 @@ export interface CustomerReportPeriodRow {
   totalCents: number;
 }
 
+/**
+ * Situacao do vencimento em relacao ao dia de referencia (hoje). A BAIXA (pagamento
+ * efetivo) e controlada no OMIE, nao aqui — "vencida" significa apenas que a data ja
+ * passou, nao que o cliente esta inadimplente.
+ */
+export type CustomerReportInstallmentSituation = "overdue" | "today" | "upcoming";
+
+export interface CustomerReportInstallment {
+  operationId: string;
+  /** Data da operacao que originou a parcela (saida da balanca, ou criacao). */
+  operationDate: string;
+  /** Data de vencimento calculada (YYYY-MM-DD). */
+  dueDate: string;
+  /** Numero da parcela dentro da operacao (1-based) e o total de parcelas dela. */
+  number: number;
+  installmentCount: number;
+  amountCents: number;
+  situation: CustomerReportInstallmentSituation;
+  /** Dias ate o vencimento (negativo quando ja venceu). */
+  daysUntilDue: number;
+  productDescription: string;
+  plate: string;
+  paymentTermName: string | null;
+  paymentMethodName: string | null;
+  omieSalesOrderId: number | null;
+}
+
+export interface CustomerReportInstallmentMonthRow {
+  period: string;
+  installments: number;
+  amountCents: number;
+}
+
+export interface CustomerReportInstallmentTotals {
+  installments: number;
+  amountCents: number;
+  overdueInstallments: number;
+  overdueCents: number;
+  upcomingInstallments: number;
+  upcomingCents: number;
+  nextDueDate: string | null;
+  nextDueCents: number;
+}
+
 export interface CustomerReport {
   customer: CustomerReportCustomer;
   startDate: string;
@@ -182,6 +226,16 @@ export interface CustomerReport {
   byMonth: CustomerReportPeriodRow[];
   operations: CustomerReportOperation[];
   cancelledOperations: CustomerReportOperation[];
+  /**
+   * Parcelas com vencimento DENTRO do periodo, vindas de operacoes de qualquer data
+   * (inclusive anteriores ao periodo). E o que permite pedir um periodo futuro e ver
+   * os dias em que o cliente ainda tem parcelas a pagar.
+   */
+  installments: CustomerReportInstallment[];
+  installmentsByMonth: CustomerReportInstallmentMonthRow[];
+  installmentTotals: CustomerReportInstallmentTotals;
+  /** Dia usado para classificar vencida/hoje/a vencer. */
+  referenceDate: string;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -294,7 +348,8 @@ export class CustomerReportService {
     startDate: string,
     endDate: string,
     unitId: string,
-    periodLabel?: string | null
+    periodLabel?: string | null,
+    now: Date = new Date()
   ): CustomerReport {
     const customer = this.loadCustomer(customerId);
     const rows = this.loadOperations(customerId, startDate, endDate, unitId);
@@ -303,7 +358,20 @@ export class CustomerReportService {
     const operations = all.filter((operation) => !operation.cancelled);
     const cancelledOperations = all.filter((operation) => operation.cancelled);
 
+    const referenceDate = toLocalIsoDate(now);
+    const installments = this.loadInstallments(
+      customerId,
+      startDate,
+      endDate,
+      unitId,
+      referenceDate
+    );
+
     return {
+      installments,
+      installmentsByMonth: groupInstallmentsByMonth(installments),
+      installmentTotals: buildInstallmentTotals(installments),
+      referenceDate,
       customer,
       startDate,
       endDate,
@@ -403,6 +471,232 @@ export class CustomerReportService {
       )
       .all(unitId, customerId, startDate, endDate) as OperationRow[];
   }
+
+  /**
+   * Parcelas que vencem no periodo. Le TODAS as operacoes concluidas do cliente ate o
+   * fim do periodo (sem limite inferior): uma compra de marco pode ter parcela vencendo
+   * em dezembro, e essa parcela precisa aparecer quando o usuario pede dezembro. Sem
+   * limite superior de data de operacao porque uma operacao posterior ao periodo so
+   * geraria vencimentos posteriores ainda.
+   */
+  private loadInstallments(
+    customerId: string,
+    startDate: string,
+    endDate: string,
+    unitId: string,
+    referenceDate: string
+  ): CustomerReportInstallment[] {
+    const rows = this.db
+      .prepare(
+        `SELECT
+           o.id, o.created_at, o.exit_weight_captured_at as exit_at,
+           o.total_cents, o.manual_installments, o.omie_sales_order_id,
+           p.description as product_description,
+           v.plate as plate,
+           pm.name as payment_method_name,
+           pt.name as payment_term_name,
+           COALESCE(opt.installment_days_json, pt.installment_days_json) as term_days_json,
+           COALESCE(opt.first_installment_days, pt.first_installment_days) as term_first_days,
+           COALESCE(opt.installment_interval_days, pt.installment_interval_days) as term_interval_days,
+           COALESCE(opt.installment_count, pt.installment_count) as term_count
+         FROM weighing_operations o
+         LEFT JOIN products p ON p.id = o.product_id
+         LEFT JOIN vehicles v ON v.id = o.vehicle_id
+         LEFT JOIN payment_methods pm ON pm.id = o.payment_method_id
+         LEFT JOIN payment_terms pt ON pt.id = o.payment_term_id
+         LEFT JOIN omie_payment_terms opt
+           ON opt.company_id = pt.company_id
+          AND opt.code = pt.omie_parcela_code
+          AND opt.is_active = 1
+         WHERE o.unit_id = ?
+           AND o.customer_id = ?
+           AND o.deleted_at IS NULL
+           AND o.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
+           AND date(COALESCE(o.exit_weight_captured_at, o.created_at)) <= date(?)
+         ORDER BY o.created_at ASC`
+      )
+      .all(unitId, customerId, endDate) as InstallmentSourceRow[];
+
+    const installments: CustomerReportInstallment[] = [];
+    for (const row of rows) {
+      const baseDate = (row.exit_at ?? row.created_at).slice(0, 10);
+      const dueDays = resolveInstallmentDueDays(row);
+      const amounts = splitInstallmentAmounts(row.total_cents ?? 0, dueDays.length);
+
+      dueDays.forEach((days, index) => {
+        const dueDate = addDaysToIsoDate(baseDate, days);
+        if (dueDate < startDate || dueDate > endDate) return;
+        const daysUntilDue = daysBetweenIsoDates(referenceDate, dueDate);
+        installments.push({
+          operationId: row.id,
+          operationDate: baseDate,
+          dueDate,
+          number: index + 1,
+          installmentCount: dueDays.length,
+          amountCents: amounts[index],
+          situation: daysUntilDue < 0 ? "overdue" : daysUntilDue === 0 ? "today" : "upcoming",
+          daysUntilDue,
+          productDescription: (row.product_description ?? "").trim() || "N/A",
+          plate: (row.plate ?? "").trim() || "SEM PLACA",
+          paymentTermName: resolveInstallmentTermName(row),
+          paymentMethodName: row.payment_method_name,
+          omieSalesOrderId: row.omie_sales_order_id
+        });
+      });
+    }
+
+    return installments.sort(
+      (a, b) => a.dueDate.localeCompare(b.dueDate) || a.operationId.localeCompare(b.operationId)
+    );
+  }
+}
+
+interface InstallmentSourceRow {
+  id: string;
+  created_at: string;
+  exit_at: string | null;
+  total_cents: number | null;
+  manual_installments: number | null;
+  omie_sales_order_id: number | null;
+  product_description: string | null;
+  plate: string | null;
+  payment_method_name: string | null;
+  payment_term_name: string | null;
+  term_days_json: string | null;
+  term_first_days: number | null;
+  term_interval_days: number | null;
+  term_count: number | null;
+}
+
+/**
+ * Dias de vencimento de cada parcela, na MESMA regra que o pedido enviado ao OMIE
+ * (`resolveInstallmentDays` em weighing-operations + `orderDueDays` na edge omie-sync):
+ * dias explicitos da condicao; senao primeiro dia + intervalo x quantidade; senao a
+ * quantidade de parcelas (manual da operacao tem precedencia, como no rotulo da lista
+ * de operacoes) em intervalos mensais de 30 dias; sem nada disso, a vista (0 dias).
+ */
+function resolveInstallmentDueDays(row: InstallmentSourceRow): number[] {
+  if (row.term_days_json) {
+    try {
+      const parsed = JSON.parse(row.term_days_json) as unknown;
+      if (Array.isArray(parsed)) {
+        const days = parsed
+          .map((value) => Number(value))
+          .filter((value) => Number.isInteger(value) && value >= 0);
+        if (days.length > 0) return days;
+      }
+    } catch {
+      // Condicao com JSON invalido: cai na derivacao abaixo.
+    }
+  }
+
+  const termCount = row.term_count;
+  const first = row.term_first_days;
+  if (termCount && termCount >= 1 && first !== null && first >= 0) {
+    const interval = row.term_interval_days ?? 0;
+    return Array.from({ length: termCount }, (_, index) => first + index * interval);
+  }
+
+  const count = row.manual_installments ?? termCount ?? 1;
+  if (!Number.isInteger(count) || count <= 1) return [0];
+  return Array.from({ length: count }, (_, index) => MONTHLY_INSTALLMENT_DAYS * (index + 1));
+}
+
+/** Rotulo da condicao: parcelamento manual tem precedencia sobre a condicao cadastrada. */
+function resolveInstallmentTermName(row: InstallmentSourceRow): string | null {
+  if (row.manual_installments === 1) return "1 parcela";
+  if (row.manual_installments && row.manual_installments > 1) {
+    return `${row.manual_installments} parcelas`;
+  }
+  return row.payment_term_name;
+}
+
+/**
+ * Rateio do total pelas parcelas na mesma regra do pedido OMIE (percentual igual, com a
+ * ultima parcela absorvendo o arredondamento para a soma bater exatamente o total).
+ */
+export function splitInstallmentAmounts(totalCents: number, count: number): number[] {
+  if (count <= 0) return [];
+  if (count === 1) return [totalCents];
+  const basePercent = Math.floor(10000 / count) / 100;
+  const amounts: number[] = [];
+  let allocated = 0;
+  for (let index = 0; index < count; index += 1) {
+    if (index === count - 1) {
+      amounts.push(totalCents - allocated);
+      continue;
+    }
+    const value = Math.round((totalCents * basePercent) / 100);
+    amounts.push(value);
+    allocated += value;
+  }
+  return amounts;
+}
+
+/** Numero de dias tratado como "1 mes" quando so ha a quantidade de parcelas. */
+const MONTHLY_INSTALLMENT_DAYS = 30;
+
+/** "2026-07-15" + 30 -> "2026-08-14". Devolve a entrada crua se a data for invalida. */
+export function addDaysToIsoDate(isoDate: string, days: number): string {
+  const base = new Date(`${isoDate.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(base.getTime())) return isoDate;
+  base.setUTCDate(base.getUTCDate() + days);
+  return base.toISOString().slice(0, 10);
+}
+
+/** Dias inteiros de `from` ate `to` (negativo quando `to` ja passou). */
+function daysBetweenIsoDates(from: string, to: string): number {
+  const start = new Date(`${from}T00:00:00Z`).getTime();
+  const end = new Date(`${to}T00:00:00Z`).getTime();
+  if (Number.isNaN(start) || Number.isNaN(end)) return 0;
+  return Math.round((end - start) / 86_400_000);
+}
+
+/** Data local (nao UTC) em ISO — o vencimento e comparado com o dia do operador. */
+function toLocalIsoDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function groupInstallmentsByMonth(
+  installments: CustomerReportInstallment[]
+): CustomerReportInstallmentMonthRow[] {
+  const map = new Map<string, CustomerReportInstallmentMonthRow>();
+  for (const installment of installments) {
+    const period = installment.dueDate.slice(0, 7);
+    const row = map.get(period) ?? { period, installments: 0, amountCents: 0 };
+    row.installments += 1;
+    row.amountCents += installment.amountCents;
+    map.set(period, row);
+  }
+  return Array.from(map.values()).sort((a, b) => a.period.localeCompare(b.period));
+}
+
+function buildInstallmentTotals(
+  installments: CustomerReportInstallment[]
+): CustomerReportInstallmentTotals {
+  const overdue = installments.filter((item) => item.situation === "overdue");
+  // "A vencer" inclui as de hoje: sao as que o cliente ainda precisa pagar.
+  const upcoming = installments.filter((item) => item.situation !== "overdue");
+  const nextDueDate = upcoming[0]?.dueDate ?? null;
+
+  return {
+    installments: installments.length,
+    amountCents: sum(installments, (item) => item.amountCents),
+    overdueInstallments: overdue.length,
+    overdueCents: sum(overdue, (item) => item.amountCents),
+    upcomingInstallments: upcoming.length,
+    upcomingCents: sum(upcoming, (item) => item.amountCents),
+    nextDueDate,
+    nextDueCents: nextDueDate
+      ? sum(
+          upcoming.filter((item) => item.dueDate === nextDueDate),
+          (item) => item.amountCents
+        )
+      : 0
+  };
 }
 
 function mapOperation(row: OperationRow): CustomerReportOperation {

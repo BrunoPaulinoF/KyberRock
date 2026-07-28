@@ -1,6 +1,7 @@
 import type {
   CustomerReport,
   CustomerReportCarrierRow,
+  CustomerReportInstallment,
   CustomerReportOperation,
   CustomerReportPaymentRow,
   CustomerReportPeriodRow,
@@ -26,6 +27,22 @@ export const VARIANT_LABEL: Record<CustomerReportVariant, string> = {
   simplified: "Simplificado",
   complete: "Completo"
 };
+
+export const INSTALLMENT_SITUATION_LABEL: Record<CustomerReportInstallment["situation"], string> = {
+  overdue: "Vencida",
+  today: "Vence hoje",
+  upcoming: "A vencer"
+};
+
+/**
+ * O desktop calcula os vencimentos a partir da condicao de pagamento de cada operacao
+ * (mesma regra do pedido enviado ao OMIE), mas nao sabe o que ja foi pago: a baixa dos
+ * titulos e do OMIE. A nota deixa isso explicito em todo documento gerado.
+ */
+export const INSTALLMENT_NOTE =
+  "Vencimentos calculados pela condicao de pagamento de cada operacao (mesma regra do pedido " +
+  "enviado ao OMIE). A baixa dos titulos e feita no OMIE: uma parcela marcada como vencida " +
+  "pode ja ter sido paga.";
 
 export function customerReportFileBaseName(
   report: CustomerReport,
@@ -65,11 +82,21 @@ export function renderCustomerReportHtml(
     );
   }
 
+  const dues = report.installmentTotals;
   const kpis: Array<[string, string]> = [
     ["Carregamentos", totals.operations.toLocaleString("pt-BR")],
     ["Tonelagem", formatTons(totals.netWeightKg)],
     ["Total comprado", formatBRL(totals.totalCents)],
-    ["Preco medio", `${formatBRL(totals.avgPriceCentsPerTon)}/t`]
+    ["Preco medio", `${formatBRL(totals.avgPriceCentsPerTon)}/t`],
+    ["A vencer no periodo", formatBRL(dues.upcomingCents)],
+    [
+      "Proximo vencimento",
+      dues.nextDueDate
+        ? `${formatDayLabel(dues.nextDueDate)} - ${formatBRL(dues.nextDueCents)}`
+        : "-"
+    ],
+    ["Vencidas no periodo", formatBRL(dues.overdueCents)],
+    ["Parcelas no periodo", dues.installments.toLocaleString("pt-BR")]
   ];
   if (complete) {
     kpis.push(
@@ -92,6 +119,49 @@ export function renderCustomerReportHtml(
         .join("")}</tbody></table>`
     )
   );
+
+  sections.push(
+    section(
+      "Vencimentos no periodo",
+      `${table(
+        ["Mes", "Parcelas", "Valor"],
+        report.installmentsByMonth.map((row) => [
+          formatMonthLabel(row.period),
+          num(row.installments),
+          formatBRL(row.amountCents)
+        ]),
+        report.installmentsByMonth.length > 0
+          ? ["TOTAL", num(dues.installments), formatBRL(dues.amountCents)]
+          : null,
+        "Sem parcelas com vencimento no periodo."
+      )}<p class="note">${escapeHtml(INSTALLMENT_NOTE)}</p>`
+    )
+  );
+
+  if (complete) {
+    sections.push(
+      section(
+        "Parcelas a pagar (detalhado)",
+        table(
+          [
+            "Vencimento",
+            "Situacao",
+            "Parcela",
+            "Valor",
+            "Data da compra",
+            "Produto",
+            "Placa",
+            "Condicao",
+            "Forma",
+            "Pedido OMIE"
+          ],
+          report.installments.map((installment) => installmentCells(installment)),
+          null,
+          "Sem parcelas com vencimento no periodo."
+        )
+      )
+    );
+  }
 
   sections.push(
     section(
@@ -293,6 +363,7 @@ tbody tr:nth-child(even){background:var(--soft)}
 tr{break-inside:avoid}
 .num{text-align:right;white-space:nowrap}
 .empty{text-align:center;color:var(--muted);font-style:italic}
+.note{margin:6px 0 0;font-size:10px;color:var(--muted);font-style:italic}
 tfoot td{font-weight:bold;background:#eef2ff;border-top:2px solid var(--brand)}
 @page{size:A4 ${complete ? "landscape" : "portrait"};margin:12mm}
 </style></head><body>
@@ -322,6 +393,7 @@ export function renderCustomerReportSpreadsheet(
 ): string {
   const complete = variant === "complete";
   const { customer, totals } = report;
+  const dues = report.installmentTotals;
 
   const blocks: string[] = [];
 
@@ -367,8 +439,51 @@ export function renderCustomerReportSpreadsheet(
           "Primeira compra",
           totals.firstOperationDate ? formatDayLabel(totals.firstOperationDate) : "-"
         ],
-        ["Ultima compra", totals.lastOperationDate ? formatDayLabel(totals.lastOperationDate) : "-"]
+        [
+          "Ultima compra",
+          totals.lastOperationDate ? formatDayLabel(totals.lastOperationDate) : "-"
+        ],
+        ["Parcelas com vencimento no periodo", num(dues.installments)],
+        ["Valor das parcelas no periodo", formatBRL(dues.amountCents)],
+        ["Parcelas vencidas no periodo", num(dues.overdueInstallments)],
+        ["Valor vencido no periodo", formatBRL(dues.overdueCents)],
+        ["Parcelas a vencer no periodo", num(dues.upcomingInstallments)],
+        ["Valor a vencer no periodo", formatBRL(dues.upcomingCents)],
+        ["Proximo vencimento", dues.nextDueDate ? formatDayLabel(dues.nextDueDate) : "-"],
+        ["Valor do proximo vencimento", formatBRL(dues.nextDueCents)],
+        ["Observacao sobre vencimentos", INSTALLMENT_NOTE]
       ]
+    )
+  );
+
+  blocks.push(
+    sheetTable(
+      "Vencimentos por mes",
+      ["Mes", "Parcelas", "Valor"],
+      report.installmentsByMonth.map((row) => [
+        formatMonthLabel(row.period),
+        num(row.installments),
+        formatBRL(row.amountCents)
+      ])
+    )
+  );
+
+  blocks.push(
+    sheetTable(
+      "Parcelas a pagar",
+      [
+        "Vencimento",
+        "Situacao",
+        "Parcela",
+        "Valor",
+        "Data da compra",
+        "Produto",
+        "Placa",
+        "Condicao",
+        "Forma",
+        "Pedido OMIE"
+      ],
+      report.installments.map((installment) => installmentCells(installment))
     )
   );
 
@@ -499,6 +614,21 @@ th{background:#e2e8f0;font-weight:bold}
   )})</h1>
 ${blocks.join("\n")}
 </body></html>`;
+}
+
+function installmentCells(installment: CustomerReportInstallment): string[] {
+  return [
+    formatDayLabel(installment.dueDate),
+    INSTALLMENT_SITUATION_LABEL[installment.situation],
+    `${installment.number}/${installment.installmentCount}`,
+    formatBRL(installment.amountCents),
+    formatDayLabel(installment.operationDate),
+    installment.productDescription,
+    installment.plate,
+    installment.paymentTermName ?? "-",
+    installment.paymentMethodName ?? "-",
+    installment.omieSalesOrderId === null ? "-" : String(installment.omieSalesOrderId)
+  ];
 }
 
 function productCells(row: CustomerReportProductRow): string[] {
