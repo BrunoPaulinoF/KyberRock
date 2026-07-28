@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { runDesktopMigrations } from "../database/migrate";
 import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite";
-import { activateDesktop, logoutDesktop } from "./desktop-activation";
+import { activateDesktop, logoutDesktop, validateDesktopAccess } from "./desktop-activation";
 import { readStoredSupabaseConfig, writeStoredSupabaseConfig } from "./supabase-sync";
 
 const invokeMock = vi.fn();
@@ -158,6 +158,48 @@ describe("desktop activation", () => {
       installationId,
       previousDeviceId: "desktop-device-1"
     });
+  });
+
+  it("registra o erro tecnico quando a nuvem nao responde e limpa quando volta", async () => {
+    const database = createDatabase();
+    // Maquina ja ativada e com bloqueio guardado de uma verificacao anterior.
+    for (const [key, value] of [
+      ["cloud_company_id", "company-1"],
+      ["cloud_unit_id", "unit-1"],
+      ["cloud_device_id", "desktop-device-1"],
+      ["cloud_device_token", "device-token-1"],
+      ["desktop_access_status", "device_blocked"],
+      ["desktop_access_message", "Este desktop foi bloqueado pelo administrador."]
+    ] as Array<[string, string]>) {
+      database
+        .prepare(
+          `INSERT INTO local_settings (key, value_json, updated_at) VALUES (?, ?, ?)
+           ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json`
+        )
+        .run(key, JSON.stringify(value), "2026-07-28T10:00:00.000Z");
+    }
+
+    invokeMock.mockRejectedValueOnce(new Error("Failed to fetch"));
+    const offline = await validateDesktopAccess(database, { internetOnline: true, force: true });
+
+    // Sem resposta da nuvem, o bloqueio exibido e apenas o ultimo conhecido: a
+    // tela precisa do erro para nao acusar bloqueio do administrador.
+    expect(offline.canOperate).toBe(false);
+    expect(offline.lastError).toBe("Failed to fetch");
+
+    invokeMock.mockResolvedValueOnce({
+      data: {
+        status: "approved",
+        allowed: true,
+        message: "Acesso aprovado. Sistema liberado.",
+        checkedAt: "2026-07-28T10:05:00.000Z"
+      },
+      error: null
+    });
+    const recovered = await validateDesktopAccess(database, { internetOnline: true, force: true });
+
+    expect(recovered.canOperate).toBe(true);
+    expect(recovered.lastError).toBeNull();
   });
 
   it("keeps supabase connection settings after logout so the desktop can be reactivated", () => {
