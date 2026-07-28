@@ -163,3 +163,65 @@ describe("parseToledoLine - formatos de texto/impressao (compatibilidade)", () =
     expect(reading?.statusFlags.negative).toBe(true);
   });
 });
+
+describe("captura real do indicador Toledo da pedreira (porta 9001)", () => {
+  // Bytes exatos capturados no campo com a balanca vazia. O quadro tem 18 bytes:
+  // STX + SWA + SWB + SWC + 6 digitos de peso + 6 de tara + CR + checksum.
+  const FRAME_HEX = "022970603030303030303030303030300db8";
+
+  it("interpreta o quadro capturado", () => {
+    const frame = Buffer.from(FRAME_HEX, "hex");
+    // O adaptador quebra o stream em CR/LF, entao o parser recebe a linha sem
+    // o CR final e sem o checksum, que fica grudado na linha seguinte.
+    const line = frame.subarray(0, frame.indexOf(0x0d));
+
+    const reading = parseToledoLine(line);
+
+    expect(reading).not.toBeNull();
+    expect(reading?.weightKg).toBe(0);
+    expect(reading?.unit).toBe("kg");
+    expect(reading?.stable).toBe(true);
+    expect(reading?.statusFlags.inMotion).toBe(false);
+    expect(reading?.statusFlags.isGross).toBe(true);
+    expect(reading?.statusFlags.outOfRange).toBe(false);
+  });
+
+  it("descarta o checksum que o split de linhas gruda no quadro seguinte", () => {
+    // Dois quadros consecutivos, como chegam no socket: o byte de checksum do
+    // primeiro (0xb8) antecede o STX do segundo.
+    const stream = Buffer.from(FRAME_HEX + FRAME_HEX, "hex");
+    const lines: Buffer[] = [];
+    let start = 0;
+    for (let i = 0; i < stream.length; i++) {
+      if (stream[i] === 0x0d) {
+        lines.push(stream.subarray(start, i));
+        start = i + 1;
+      }
+    }
+
+    expect(lines).toHaveLength(2);
+    // A segunda linha comeca com o checksum do quadro anterior.
+    expect(lines[1]?.[0]).toBe(0xb8);
+
+    for (const line of lines) {
+      const reading = parseToledoLine(line);
+      expect(reading).not.toBeNull();
+      expect(reading?.weightKg).toBe(0);
+    }
+  });
+
+  it("interpreta peso real usando os mesmos status words do campo", () => {
+    // Mesmos SWA/SWB/SWC capturados, com 15.200 kg no lugar dos zeros.
+    const frame = Buffer.from([
+      0x02, 0x29, 0x70, 0x60,
+      ...Buffer.from("015200", "ascii"),
+      ...Buffer.from("000000", "ascii")
+    ]);
+
+    const reading = parseToledoLine(frame);
+
+    expect(reading?.weightKg).toBe(15_200);
+    expect(reading?.unit).toBe("kg");
+    expect(reading?.stable).toBe(true);
+  });
+});

@@ -14,7 +14,7 @@ export interface DiscoveredScale {
  * padrao dos conversores tipo Moxa NPort, mas instalacoes reais aparecem tambem
  * em 10001 (Lantronix), 2101 (Digi) e nas portas 2/3 do mesmo conversor.
  */
-const DEFAULT_DISCOVERY_PORTS = [4001, 10001, 2101, 4002, 4003];
+const DEFAULT_DISCOVERY_PORTS = [4001, 9001, 10001, 2101, 4002, 4003];
 
 /**
  * Sub-redes /24 das interfaces IPv4 locais ativas.
