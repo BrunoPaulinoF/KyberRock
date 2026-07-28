@@ -108,7 +108,9 @@ export function createVirtualScaleAdapter(): ToledoTcpAdapter & {
         errorMessage,
         reconnectAttempts: 0,
         // A balanca virtual mantem o peso definido pelo operador; nunca vence por silencio.
-        stale: lastReading === null
+        stale: lastReading === null,
+        receivingRawData: lastReading !== null,
+        lastRawSample: null
       };
     },
 

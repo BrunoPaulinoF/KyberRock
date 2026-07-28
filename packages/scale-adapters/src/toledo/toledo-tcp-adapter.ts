@@ -20,10 +20,28 @@ export interface ToledoTcpAdapterStatus {
    * aparecendo na tela depois que o caminhao saiu da balanca.
    */
   stale: boolean;
+  /**
+   * `true` quando bytes estao chegando pela conexao, mesmo que nenhum deles forme
+   * um quadro valido. Separa dois diagnosticos que antes eram indistinguiveis:
+   * indicador mudo (nada chega) versus protocolo/baud errado (chega lixo).
+   */
+  receivingRawData: boolean;
+  /** Amostra legivel do ultimo trecho bruto recebido, para identificar o protocolo. */
+  lastRawSample: string | null;
 }
 
 /** Silencio maximo tolerado com a conexao aberta antes de considerar a leitura vencida. */
 export const DEFAULT_STALE_READING_MS = 4000;
+
+/**
+ * Comandos de leitura aceitos por indicadores em modo sob demanda. ENQ (0x05) e o
+ * pedido padrao da Toledo; "P" (print) e "W" (weight) cobrem os demais firmwares
+ * comuns. Todos sao comandos de consulta — nenhum altera estado da balanca.
+ */
+export const DEFAULT_POLL_COMMANDS = ["\x05", "P\r\n", "W\r\n"];
+
+/** Intervalo entre comandos de sondagem enquanto nenhum byte chega. */
+export const DEFAULT_POLL_INTERVAL_MS = 1500;
 
 export interface ToledoTcpAdapter {
   /** Conectar ao indicador Toledo via TCP */
@@ -53,11 +71,17 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
   let state: ToledoConnectionState = "disconnected";
   let lastReading: ParsedToledoReading | null = null;
   let lastReadingAt: string | null = null;
+  // Trafego bruto, contado antes do parser. Sem isto, "nao chega nada" e "chega
+  // conteudo que o parser rejeita" produziam exatamente o mesmo estado, e os dois
+  // exigem correcoes opostas no campo.
+  let lastDataAt: number | null = null;
+  let lastRawSample: string | null = null;
   let errorMessage: string | null = null;
   let reconnectCount = 0;
   let config: ToledoTcpConfig | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let dataWatchdog: ReturnType<typeof setTimeout> | null = null;
+  let pollTimer: ReturnType<typeof setInterval> | null = null;
   let buffer = "";
   // Invalida handlers de tentativas antigas: sem isto, uma tentativa de conexao ainda
   // em voo sobrescrevia o socket da tentativa nova e dois sockets ficavam vivos ao
@@ -90,6 +114,59 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
     lastReadingAt = null;
   }
 
+  /** Ha bytes recentes na conexao, independentemente de formarem quadro valido. */
+  function isReceivingRawData(): boolean {
+    if (lastDataAt === null) return false;
+    return Date.now() - lastDataAt <= staleThresholdMs();
+  }
+
+  /** Guarda uma amostra legivel do trafego bruto para identificar o protocolo em campo. */
+  function recordRawData(chunk: string): void {
+    lastDataAt = Date.now();
+    lastRawSample = chunk.replace(/[^\x20-\x7e]/g, ".").slice(-120);
+    // Chegou algo: o indicador nao esta em modo sob demanda, entao para de sondar.
+    stopPolling();
+  }
+
+  function stopPolling(): void {
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+  }
+
+  /**
+   * Indicadores em modo sob demanda so respondem quando recebem um comando; conectados
+   * em transmissao continua eles falam sozinhos. Como os dois casos sao indistinguiveis
+   * do lado do cliente — socket aberto e silencio absoluto —, a sondagem cobre o
+   * primeiro sem prejudicar o segundo, e se desliga assim que qualquer byte chega.
+   */
+  function startPolling(): void {
+    stopPolling();
+    const cfg = config;
+    if (!cfg || cfg.autoPoll === false) return;
+
+    const commands = cfg.pollCommands ?? DEFAULT_POLL_COMMANDS;
+    if (commands.length === 0) return;
+
+    const currentGeneration = generation;
+    let index = 0;
+    pollTimer = setInterval(() => {
+      if (currentGeneration !== generation || state !== "connected" || !socket) return;
+      if (lastDataAt !== null) {
+        stopPolling();
+        return;
+      }
+      const command = commands[index % commands.length] ?? "";
+      index++;
+      try {
+        socket.write(Buffer.from(command, "binary"));
+      } catch {
+        // Falha de escrita e tratada pelos handlers de erro/close do socket
+      }
+    }, cfg.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS);
+  }
+
   function clearDataWatchdog(): void {
     if (dataWatchdog) {
       clearTimeout(dataWatchdog);
@@ -107,9 +184,11 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
     const currentGeneration = generation;
     dataWatchdog = setTimeout(() => {
       if (currentGeneration !== generation || state !== "connected") return;
+      // Chegou aqui: o trafego bruto parou. Link morto de fato — derruba e reconecta.
       errorMessage =
-        "Conexao aberta, mas o indicador parou de enviar leituras. Verifique se outro " +
-        "programa esta conectado na balanca e se o indicador esta em transmissao continua.";
+        "Conexao aberta, mas o indicador nao envia nada. Verifique se outro programa " +
+        "esta conectado na balanca, se a porta do conversor corresponde ao canal serial " +
+        "ligado ao indicador e se ele esta em transmissao continua.";
       clearLastReading();
       teardownSocket();
       state = "disconnected";
@@ -120,6 +199,7 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
   /** Encerra o socket com FIN limpo antes de destruir, para o conversor liberar a sessao. */
   function teardownSocket(): void {
     clearDataWatchdog();
+    stopPolling();
     if (socket) {
       const current = socket;
       socket = null;
@@ -159,6 +239,8 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
     buffer = "";
     // Zera a leitura: peso de uma sessao anterior nunca pode reaparecer apos reconectar.
     clearLastReading();
+    lastDataAt = null;
+    lastRawSample = null;
   }
 
   function scheduleReconnect(): void {
@@ -204,13 +286,23 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
         // o silencio e o watchdog de dados, que sabe distinguir conexao morta de peso parado.
         sock.setTimeout(0);
         armDataWatchdog();
+        // Cada sessao comeca sem historico de trafego: o que chegou na anterior nao
+        // diz nada sobre esta, e a sondagem precisa saber que ainda nao veio nada.
+        lastDataAt = null;
+        startPolling();
         resolve();
       });
       socket = sock;
 
       sock.on("data", (chunk: Buffer) => {
         if (currentGeneration !== generation) return;
-        buffer += chunk.toString("binary");
+        const text = chunk.toString("binary");
+        // Registrado antes do parser: trafego ilegivel tambem e sinal de diagnostico.
+        recordRawData(text);
+        // O watchdog acompanha trafego, nao quadros validos. Um indicador que envia
+        // lixo continuo esta vivo; derrubar a conexao a cada 4s so esconderia a pista.
+        armDataWatchdog();
+        buffer += text;
 
         // Protecao contra indicadores que nunca enviam CR/LF: nao deixa o buffer crescer sem limite
         if (buffer.length > 4096) {
@@ -375,15 +467,26 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
 
     getStatus(): ToledoTcpAdapterStatus {
       const stale = isStale();
+      const receivingRawData = isReceivingRawData();
+      // Link vivo entregando conteudo que o parser rejeita: o watchdog nao dispara
+      // (ha trafego), entao a pista so chega ao operador por aqui.
+      const protocolMismatch =
+        state === "connected" && stale && receivingRawData
+          ? "Recebendo dados, mas nenhum quadro reconhecido como Toledo. Confira o baud " +
+            `rate no conversor e o formato do indicador. Amostra: "${lastRawSample ?? ""}"`
+          : null;
+
       return {
         state,
         // Leitura vencida nao sai daqui: quem consome o status desenha o peso ao vivo,
         // e devolver o valor antigo e o que congelava a tela apos o caminhao sair.
         lastReading: stale ? null : lastReading,
         lastReadingAt,
-        errorMessage,
+        errorMessage: protocolMismatch ?? errorMessage,
         reconnectAttempts: reconnectCount,
-        stale
+        stale,
+        receivingRawData,
+        lastRawSample
       };
     },
 

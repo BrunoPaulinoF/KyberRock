@@ -151,6 +151,65 @@ describe("toledo-tcp-adapter leitura vencida", () => {
     adapter.disconnect();
   });
 
+  it("distingue lixo no protocolo de indicador mudo", async () => {
+    framesBeforeSilence = 0;
+    const garbage = createServer((socket) => {
+      // Bytes contínuos que o parser Toledo rejeita — sintoma de baud rate divergente
+      // no conversor. Antes isso era indistinguivel de um indicador que nao envia nada.
+      const interval = setInterval(() => socket.write("\xff\xfe\x01lixo"), 50);
+      socket.on("close", () => clearInterval(interval));
+      socket.on("error", () => clearInterval(interval));
+    });
+    await new Promise<void>((resolve) => garbage.listen(0, "127.0.0.1", resolve));
+    const garbagePort = (garbage.address() as AddressInfo).port;
+
+    const adapter = createToledoTcpAdapter();
+    await adapter.connect({
+      host: "127.0.0.1",
+      port: garbagePort,
+      staleReadingMs: 300,
+      autoPoll: false
+    });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    const status = adapter.getStatus();
+    expect(status.receivingRawData).toBe(true);
+    expect(status.stale).toBe(true);
+    expect(status.lastReading).toBeNull();
+    expect(status.errorMessage).toMatch(/baud/i);
+    expect(status.lastRawSample).toBeTruthy();
+
+    adapter.disconnect();
+    await new Promise<void>((resolve) => garbage.close(() => resolve()));
+  });
+
+  it("sonda o indicador que so responde sob demanda", async () => {
+    framesBeforeSilence = 0;
+    // Servidor mudo até receber um comando: reproduz indicador em modo sob demanda,
+    // que do lado do cliente e identico a um indicador desligado.
+    const onDemand = createServer((socket) => {
+      socket.on("data", () => socket.write("       000012500kg\r\n"));
+    });
+    await new Promise<void>((resolve) => onDemand.listen(0, "127.0.0.1", resolve));
+    const onDemandPort = (onDemand.address() as AddressInfo).port;
+
+    const adapter = createToledoTcpAdapter();
+    await adapter.connect({
+      host: "127.0.0.1",
+      port: onDemandPort,
+      staleReadingMs: 3000,
+      pollIntervalMs: 100
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 600));
+
+    const reading = await adapter.read();
+    expect(reading.weightKg).toBe(12_500);
+
+    adapter.disconnect();
+    await new Promise<void>((resolve) => onDemand.close(() => resolve()));
+  });
+
   it("descarta a leitura da sessao anterior ao desconectar", async () => {
     framesBeforeSilence = 5;
     const adapter = createToledoTcpAdapter();

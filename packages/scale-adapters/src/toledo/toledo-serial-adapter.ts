@@ -52,6 +52,8 @@ export function createToledoSerialAdapter(
   let state: ToledoConnectionState = "disconnected";
   let lastReading: ParsedToledoReading | null = null;
   let lastReadingAt: string | null = null;
+  let lastDataAt: number | null = null;
+  let lastRawSample: string | null = null;
   let errorMessage: string | null = null;
   let reconnectCount = 0;
   let config: ToledoSerialConfig | null = null;
@@ -77,6 +79,14 @@ export function createToledoSerialAdapter(
   function clearLastReading(): void {
     lastReading = null;
     lastReadingAt = null;
+    lastDataAt = null;
+    lastRawSample = null;
+  }
+
+  /** Ha bytes recentes na porta, independentemente de formarem quadro valido. */
+  function isReceivingRawData(): boolean {
+    if (lastDataAt === null) return false;
+    return Date.now() - lastDataAt <= staleThresholdMs();
   }
 
   function getLastScaleReading(): ScaleReading | null {
@@ -146,7 +156,12 @@ export function createToledoSerialAdapter(
   }
 
   function handleChunk(chunk: Uint8Array): void {
-    buffer += Buffer.from(chunk).toString("binary");
+    const text = Buffer.from(chunk).toString("binary");
+    // Registrado antes do parser: numa porta serial, baud errado entrega lixo em vez
+    // de silencio, e sem esta distincao os dois casos ficavam identicos na tela.
+    lastDataAt = Date.now();
+    lastRawSample = text.replace(/[^\x20-\x7e]/g, ".").slice(-120);
+    buffer += text;
 
     // Protecao contra indicadores que nunca enviam CR/LF: nao deixa o buffer crescer sem limite
     if (buffer.length > 4096) {
@@ -245,15 +260,25 @@ export function createToledoSerialAdapter(
 
     getStatus(): ToledoTcpAdapterStatus {
       const stale = isStale();
+      const receivingRawData = isReceivingRawData();
+      // Porta viva entregando conteudo ilegivel: quase sempre baud rate divergente.
+      const protocolMismatch =
+        state === "connected" && stale && receivingRawData
+          ? "Recebendo dados na porta, mas nenhum quadro reconhecido como Toledo. " +
+            `Confira o baud rate configurado. Amostra: "${lastRawSample ?? ""}"`
+          : null;
+
       return {
         state,
         // Leitura vencida nao sai daqui: evita a tela continuar exibindo o peso do
         // caminhao anterior quando o indicador para de transmitir.
         lastReading: stale ? null : lastReading,
         lastReadingAt,
-        errorMessage,
+        errorMessage: protocolMismatch ?? errorMessage,
         reconnectAttempts: reconnectCount,
-        stale
+        stale,
+        receivingRawData,
+        lastRawSample
       };
     },
 
