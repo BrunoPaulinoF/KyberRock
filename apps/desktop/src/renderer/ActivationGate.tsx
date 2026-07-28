@@ -117,6 +117,28 @@ export function ActivationGate({ desktopApi, onUnlocked }: ActivationGateProps) 
     await checkAccess();
   }
 
+  /**
+   * Limpa a ativacao guardada nesta maquina e volta para a tela de codigo.
+   * E a saida para um desktop que ficou preso em bloqueado com credencial
+   * velha (ex.: registro renovado em outra ativacao): reinstalar nao resolve,
+   * porque o banco local fica fora da pasta do programa. Operacoes, cadastro e
+   * backups continuam onde estao — so a credencial da nuvem e apagada.
+   */
+  async function handleClearActivation(): Promise<void> {
+    setScreen("checking");
+    setMessage("Limpando a ativacao desta maquina...");
+    try {
+      await desktopApi.logoutDesktop();
+      setStatus(null);
+      setActivationCode(["", "", "", "", "", ""]);
+      setScreen("activate");
+      setMessage("Ativacao limpa. Informe o codigo de 6 digitos da pedreira.");
+    } catch (error) {
+      setScreen("blocked");
+      setMessage(error instanceof Error ? error.message : "Falha ao limpar a ativacao.");
+    }
+  }
+
   async function handleExportBackup(): Promise<void> {
     try {
       const result = await desktopApi.exportBackup();
@@ -252,6 +274,13 @@ export function ActivationGate({ desktopApi, onUnlocked }: ActivationGateProps) 
             </button>
           <button type="button" onClick={() => setScreen("activate")} style={styles.secondaryButton}>
               Ver diagnostico
+            </button>
+          <button
+            type="button"
+            onClick={handleClearActivation}
+            style={styles.secondaryButton}
+          >
+              Limpar ativacao e ativar de novo
             </button>
           <button type="button" onClick={handleExportBackup} style={styles.secondaryButton}>
               Exportar backup
