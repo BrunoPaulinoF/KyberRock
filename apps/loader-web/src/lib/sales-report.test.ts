@@ -3,6 +3,11 @@ import { describe, expect, it } from "vitest";
 import {
   aggregateSalesReport,
   buildSalesReportCsv,
+  freightTypeLabel,
+  isSalesFreightFilter,
+  matchesFreightFilter,
+  normalizeFreightType,
+  SALES_FREIGHT_ALL,
   toReportDay,
   type SalesOperationRow
 } from "./sales-report";
@@ -13,6 +18,7 @@ const rows: SalesOperationRow[] = [
     customer_name: "Construtora Alfa",
     product_id: "p1",
     product_description: "Brita 1",
+    freight_type: "cif",
     net_weight_kg: 10_000,
     product_total_cents: 70_000,
     freight_total_cents: 10_000,
@@ -24,6 +30,7 @@ const rows: SalesOperationRow[] = [
     customer_name: "Construtora Alfa",
     product_id: "p2",
     product_description: "Areia",
+    freight_type: "fob",
     net_weight_kg: 5_000,
     product_total_cents: 20_000,
     freight_total_cents: 0,
@@ -35,6 +42,7 @@ const rows: SalesOperationRow[] = [
     customer_name: "Obras Beta",
     product_id: "p1",
     product_description: "Brita 1",
+    freight_type: "fob",
     net_weight_kg: 20_000,
     product_total_cents: 140_000,
     freight_total_cents: 30_000,
@@ -84,6 +92,54 @@ describe("aggregateSalesReport", () => {
   it("usa media nula quando nao ha peso", () => {
     const { totals } = aggregateSalesReport([], "product");
     expect(totals.avgPriceCentsPerTon).toBeNull();
+  });
+});
+
+describe("filtro por modalidade de frete", () => {
+  it("normaliza modalidades desconhecidas/ausentes para 'none'", () => {
+    expect(normalizeFreightType("cif")).toBe("cif");
+    expect(normalizeFreightType("fob")).toBe("fob");
+    expect(normalizeFreightType("own_recipient")).toBe("own_recipient");
+    expect(normalizeFreightType(null)).toBe("none");
+    expect(normalizeFreightType("modalidade-nova")).toBe("none");
+  });
+
+  it("rotula as modalidades do catalogo", () => {
+    expect(freightTypeLabel("cif")).toBe("CIF");
+    expect(freightTypeLabel("fob")).toBe("FOB");
+    expect(freightTypeLabel(undefined)).toBe("Sem frete");
+  });
+
+  it("aceita apenas valores do catalogo (ou 'all') como filtro", () => {
+    expect(isSalesFreightFilter(SALES_FREIGHT_ALL)).toBe(true);
+    expect(isSalesFreightFilter("cif")).toBe(true);
+    expect(isSalesFreightFilter("qualquer")).toBe(false);
+  });
+
+  it("'all' mantem todas as linhas", () => {
+    expect(rows.filter((row) => matchesFreightFilter(row, SALES_FREIGHT_ALL))).toHaveLength(3);
+  });
+
+  it("separa CIF de FOB somando so as vendas da modalidade", () => {
+    const cif = aggregateSalesReport(
+      rows.filter((row) => matchesFreightFilter(row, "cif")),
+      "product"
+    );
+    expect(cif.totals.operations).toBe(1);
+    expect(cif.totals.totalCents).toBe(80_000);
+
+    const fob = aggregateSalesReport(
+      rows.filter((row) => matchesFreightFilter(row, "fob")),
+      "product"
+    );
+    expect(fob.totals.operations).toBe(2);
+    expect(fob.totals.totalCents).toBe(190_000);
+  });
+
+  it("trata operacao sem modalidade projetada como 'sem frete'", () => {
+    const legacy: SalesOperationRow = { created_at: "2026-07-20T12:00:00Z" };
+    expect(matchesFreightFilter(legacy, "none")).toBe(true);
+    expect(matchesFreightFilter(legacy, "cif")).toBe(false);
   });
 });
 
