@@ -24,6 +24,13 @@ export interface ToledoTcpConfig {
   reconnectIntervalMs?: number;
   /** Numero maximo de tentativas de reconexao. Padrao: 10 */
   maxReconnectAttempts?: number;
+  /**
+   * Silencio maximo tolerado com o socket aberto (ms). Padrao: 4000.
+   * Indicadores em transmissao continua enviam varios quadros por segundo; passar
+   * deste tempo sem quadro significa conexao morta (socket meio-aberto ou sessao
+   * do conversor entregue a outro cliente), e nao peso parado.
+   */
+  staleReadingMs?: number;
 }
 
 export interface ToledoSerialConfig {
@@ -35,6 +42,8 @@ export interface ToledoSerialConfig {
   reconnectIntervalMs?: number;
   /** Numero maximo de tentativas de reconexao. Padrao: 10 */
   maxReconnectAttempts?: number;
+  /** Silencio maximo tolerado com a porta aberta (ms). Padrao: 4000. */
+  staleReadingMs?: number;
 }
 
 export interface ParsedToledoReading {

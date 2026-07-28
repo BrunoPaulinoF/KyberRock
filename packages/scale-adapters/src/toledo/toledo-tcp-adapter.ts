@@ -14,7 +14,16 @@ export interface ToledoTcpAdapterStatus {
   lastReadingAt: string | null;
   errorMessage: string | null;
   reconnectAttempts: number;
+  /**
+   * `true` quando a ultima leitura ja passou do tempo de validade. A UI nunca deve
+   * exibir peso com `stale: true` — foi exatamente esse peso vencido que continuou
+   * aparecendo na tela depois que o caminhao saiu da balanca.
+   */
+  stale: boolean;
 }
+
+/** Silencio maximo tolerado com a conexao aberta antes de considerar a leitura vencida. */
+export const DEFAULT_STALE_READING_MS = 4000;
 
 export interface ToledoTcpAdapter {
   /** Conectar ao indicador Toledo via TCP */
@@ -48,11 +57,27 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
   let reconnectCount = 0;
   let config: ToledoTcpConfig | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let dataWatchdog: ReturnType<typeof setTimeout> | null = null;
   let buffer = "";
+  // Invalida handlers de tentativas antigas: sem isto, uma tentativa de conexao ainda
+  // em voo sobrescrevia o socket da tentativa nova e dois sockets ficavam vivos ao
+  // mesmo tempo. Conversores serial<->TCP aceitam uma sessao por vez e travam assim.
+  let generation = 0;
   const listeners: Array<(reading: ParsedToledoReading) => void> = [];
 
   function getDeviceId(): string | undefined {
     return config ? `${config.host}:${config.port}` : undefined;
+  }
+
+  function staleThresholdMs(): number {
+    return config?.staleReadingMs ?? DEFAULT_STALE_READING_MS;
+  }
+
+  function isStale(): boolean {
+    if (!lastReadingAt) return true;
+    const receivedAt = Date.parse(lastReadingAt);
+    if (!Number.isFinite(receivedAt)) return true;
+    return Date.now() - receivedAt > staleThresholdMs();
   }
 
   function getLastScaleReading(): ScaleReading | null {
@@ -60,9 +85,58 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
     return normalizeParsedReading(lastReading, lastReadingAt, "toledo-tcp", getDeviceId());
   }
 
+  function clearLastReading(): void {
+    lastReading = null;
+    lastReadingAt = null;
+  }
+
+  function clearDataWatchdog(): void {
+    if (dataWatchdog) {
+      clearTimeout(dataWatchdog);
+      dataWatchdog = null;
+    }
+  }
+
+  /**
+   * Rearma a cada quadro recebido. Se o indicador parar de transmitir com o socket
+   * ainda aberto, derruba a conexao e reconecta em vez de manter "connected" exibindo
+   * um peso que nao existe mais.
+   */
+  function armDataWatchdog(): void {
+    clearDataWatchdog();
+    const currentGeneration = generation;
+    dataWatchdog = setTimeout(() => {
+      if (currentGeneration !== generation || state !== "connected") return;
+      errorMessage =
+        "Conexao aberta, mas o indicador parou de enviar leituras. Verifique se outro " +
+        "programa esta conectado na balanca e se o indicador esta em transmissao continua.";
+      clearLastReading();
+      teardownSocket();
+      state = "disconnected";
+      scheduleReconnect();
+    }, staleThresholdMs());
+  }
+
+  /** Encerra o socket com FIN limpo antes de destruir, para o conversor liberar a sessao. */
+  function teardownSocket(): void {
+    clearDataWatchdog();
+    if (socket) {
+      const current = socket;
+      socket = null;
+      current.removeAllListeners();
+      try {
+        current.end();
+      } catch {
+        // socket ja invalido
+      }
+      current.destroy();
+    }
+  }
+
   function notify(reading: ParsedToledoReading): void {
     lastReading = reading;
     lastReadingAt = new Date().toISOString();
+    armDataWatchdog();
     for (const listener of listeners) {
       try {
         listener(reading);
@@ -73,18 +147,18 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
   }
 
   function doDisconnect(): void {
+    generation++;
     if (reconnectTimer) {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
     }
-    if (socket) {
-      socket.destroy();
-      socket = null;
-    }
+    teardownSocket();
     state = "disconnected";
     config = null;
     reconnectCount = 0;
     buffer = "";
+    // Zera a leitura: peso de uma sessao anterior nunca pode reaparecer apos reconectar.
+    clearLastReading();
   }
 
   function scheduleReconnect(): void {
@@ -103,22 +177,45 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
     state = "connecting";
 
     reconnectTimer = setTimeout(() => {
-      if (config) void attemptConnect(config);
+      // `catch` obrigatorio: a rejeicao desta tentativa em segundo plano nao tem
+      // quem a aguarde, e sem tratamento virava unhandled rejection no processo main.
+      if (config) void attemptConnect(config).catch(() => undefined);
     }, interval);
   }
 
   async function attemptConnect(cfg: ToledoTcpConfig): Promise<void> {
+    const currentGeneration = generation;
+
     return new Promise<void>((resolve, reject) => {
-      socket = createConnection({ host: cfg.host, port: cfg.port }, () => {
+      // Garante uma unica sessao TCP viva: qualquer socket remanescente sai antes de abrir outro.
+      teardownSocket();
+
+      const sock = createConnection({ host: cfg.host, port: cfg.port }, () => {
+        if (currentGeneration !== generation) {
+          sock.end();
+          sock.destroy();
+          return;
+        }
         state = "connected";
         errorMessage = null;
         reconnectCount = 0;
         buffer = "";
+        // O timeout de socket cobre so a fase de conexao; a partir daqui quem vigia
+        // o silencio e o watchdog de dados, que sabe distinguir conexao morta de peso parado.
+        sock.setTimeout(0);
+        armDataWatchdog();
         resolve();
       });
+      socket = sock;
 
-      socket.on("data", (chunk: Buffer) => {
+      sock.on("data", (chunk: Buffer) => {
+        if (currentGeneration !== generation) return;
         buffer += chunk.toString("binary");
+
+        // Protecao contra indicadores que nunca enviam CR/LF: nao deixa o buffer crescer sem limite
+        if (buffer.length > 4096) {
+          buffer = buffer.slice(-1024);
+        }
 
         // Process complete lines (terminated by CR/LF)
         const lines = buffer.split(/\r\n|\r|\n/);
@@ -133,27 +230,38 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
         }
       });
 
-      socket.on("error", (err: Error) => {
+      sock.on("error", (err: Error) => {
+        if (currentGeneration !== generation) return;
         errorMessage = err.message;
         state = "error";
+        clearDataWatchdog();
+        clearLastReading();
         socket = null;
         scheduleReconnect();
         reject(err);
       });
 
-      socket.on("close", () => {
+      sock.on("close", () => {
+        if (currentGeneration !== generation) return;
         socket = null;
+        clearDataWatchdog();
         if (state === "connected") {
           state = "disconnected";
+          // A conexao caiu: o peso exibido morre junto, senao a tela segue mostrando
+          // o ultimo caminhao pesado como se a balanca ainda estivesse respondendo.
+          clearLastReading();
           scheduleReconnect();
         }
       });
 
       const timeout = cfg.timeoutMs ?? 3000;
-      socket.setTimeout(timeout, () => {
+      sock.setTimeout(timeout, () => {
+        if (currentGeneration !== generation) return;
         if (state === "connecting") {
-          socket?.destroy();
-          reject(new Error(`Timeout de conexao (${timeout}ms)`));
+          teardownSocket();
+          state = "error";
+          errorMessage = `Timeout de conexao (${timeout}ms)`;
+          reject(new Error(errorMessage));
         }
       });
     });
@@ -177,9 +285,20 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
       }
 
       const reading = getLastScaleReading();
-      if (reading) return reading;
+      if (!reading) {
+        throw new Error("Nenhuma leitura disponivel da balanca.");
+      }
 
-      throw new Error("Nenhuma leitura disponivel da balanca.");
+      // Ha leitura, mas ja venceu: melhor falhar do que devolver um peso antigo.
+      if (isStale()) {
+        throw new Error(
+          "Balanca conectada, mas sem leitura recente. O indicador nao esta transmitindo: " +
+            "confirme se ele esta em modo de transmissao continua e se nenhum outro " +
+            "programa esta ocupando a conexao."
+        );
+      }
+
+      return reading;
     },
 
     async readSampled(options: ScaleSamplingOptions = {}): Promise<ScaleReading> {
@@ -255,12 +374,16 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
     },
 
     getStatus(): ToledoTcpAdapterStatus {
+      const stale = isStale();
       return {
         state,
-        lastReading,
+        // Leitura vencida nao sai daqui: quem consome o status desenha o peso ao vivo,
+        // e devolver o valor antigo e o que congelava a tela apos o caminhao sair.
+        lastReading: stale ? null : lastReading,
         lastReadingAt,
         errorMessage,
-        reconnectAttempts: reconnectCount
+        reconnectAttempts: reconnectCount,
+        stale
       };
     },
 

@@ -4995,7 +4995,12 @@ function WeighingForm({
         const status = await api.scaleGetStatus();
         if (canceled) return;
         setScaleState(status.state);
-        if (status.state === "connected") {
+        if (status.state === "connected" && status.stale) {
+          // Socket aberto nao significa balanca funcionando: sem leitura recente o
+          // rotulo precisa dizer isso, senao a tela afirma "conectada" enquanto a
+          // captura de peso falha — a contradicao vista na operacao.
+          setScaleStateMessage("Conectada, mas sem leitura do indicador");
+        } else if (status.state === "connected") {
           setScaleStateMessage("Balança conectada");
         } else if (status.state === "connecting") {
           setScaleStateMessage("Conectando à balança...");
@@ -6195,7 +6200,9 @@ function CloseOperationWeighingDialog({
         const status = await api.scaleGetStatus();
         if (canceled) return;
         setScaleState(status.state);
-        if (status.state === "connected") {
+        if (status.state === "connected" && status.stale) {
+          setScaleMessage("Conectada, mas sem leitura do indicador");
+        } else if (status.state === "connected") {
           setScaleMessage("Balança conectada");
         } else if (status.state === "connecting") {
           setScaleMessage("Conectando...");
@@ -9250,8 +9257,13 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
         if (s.state === "disconnected" || s.state === "error") {
           setConnected(false);
           setStatus(s.errorMessage ?? "Desconectado");
+        } else if (s.state === "connected") {
+          // Tela de Configuracoes > Balanca: distingue socket aberto de balanca lendo.
+          // Antes ela exibia "Conectado" mesmo sem quadro nenhum chegando, enquanto a
+          // Nova Entrada — que exige leitura recente — pedia para reconectar.
+          setStatus(s.stale ? "Conectado, sem leitura do indicador" : "Conectado");
         } else {
-          setStatus(s.state === "connected" ? "Conectado" : "Conectando...");
+          setStatus("Conectando...");
         }
         if (s.errorMessage) setError(s.errorMessage);
       } catch {

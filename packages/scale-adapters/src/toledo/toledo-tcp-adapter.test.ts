@@ -84,3 +84,84 @@ describe("toledo-tcp-adapter readSampled", () => {
     adapter.disconnect();
   });
 });
+
+describe("toledo-tcp-adapter leitura vencida", () => {
+  let server: ReturnType<typeof createServer> | null = null;
+  let port = 0;
+  /** Quantos quadros o servidor envia antes de silenciar mantendo o socket aberto. */
+  let framesBeforeSilence = 2;
+
+  beforeEach(async () => {
+    server = createServer((socket) => {
+      let sent = 0;
+      const interval = setInterval(() => {
+        if (sent >= framesBeforeSilence) {
+          // Silencia sem fechar: reproduz o indicador que para de transmitir com o
+          // socket ainda aberto — foi assim que o peso ficou congelado na tela.
+          clearInterval(interval);
+          return;
+        }
+        sent++;
+        socket.write("       000015200kg\r\n");
+      }, 50);
+      socket.on("close", () => clearInterval(interval));
+      socket.on("error", () => clearInterval(interval));
+    });
+    await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
+    port = (server!.address() as AddressInfo).port;
+  });
+
+  afterEach(async () => {
+    await new Promise<void>((resolve) => server?.close(() => resolve()));
+    server = null;
+  });
+
+  it("nao devolve o peso antigo quando o indicador para de transmitir", async () => {
+    framesBeforeSilence = 2;
+    const adapter = createToledoTcpAdapter();
+    await adapter.connect({ host: "127.0.0.1", port, staleReadingMs: 300 });
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect((await adapter.read()).weightKg).toBe(15_200);
+
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    await expect(adapter.read()).rejects.toThrow(
+      /sem leitura recente|nao esta conectada|nenhuma leitura disponivel/i
+    );
+    expect(adapter.getStatus().lastReading).toBeNull();
+    adapter.disconnect();
+  });
+
+  it("marca o status como vencido em vez de manter o peso na tela", async () => {
+    framesBeforeSilence = 1;
+    const adapter = createToledoTcpAdapter();
+    await adapter.connect({
+      host: "127.0.0.1",
+      port,
+      staleReadingMs: 250,
+      maxReconnectAttempts: 0
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    const status = adapter.getStatus();
+    expect(status.stale).toBe(true);
+    expect(status.lastReading).toBeNull();
+    adapter.disconnect();
+  });
+
+  it("descarta a leitura da sessao anterior ao desconectar", async () => {
+    framesBeforeSilence = 5;
+    const adapter = createToledoTcpAdapter();
+    await adapter.connect({ host: "127.0.0.1", port });
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(adapter.getStatus().lastReading).not.toBeNull();
+
+    adapter.disconnect();
+
+    expect(adapter.getStatus().lastReading).toBeNull();
+    expect(adapter.getStatus().stale).toBe(true);
+  });
+});
