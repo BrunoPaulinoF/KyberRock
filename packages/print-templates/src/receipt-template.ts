@@ -4,6 +4,13 @@ export interface ReceiptTemplateInput {
   companyStateRegistration: string | null;
   unitName: string;
   receiptNumber: number;
+  /**
+   * Numero do computador dentro da pedreira, impresso como sufixo do cupom
+   * (ex.: 000000101-2). Cada balanca numera a propria sequencia offline, entao
+   * o sufixo e o que garante que duas maquinas nunca emitam o mesmo cupom.
+   * Ausente/0 em pedreira de um computador so: o numero sai como antes.
+   */
+  deviceNumber?: number | null;
   copyNumber: number;
   printedAt: string;
   operationId: string;
@@ -121,7 +128,7 @@ export function buildReceiptLinesWithConfig(
 
   if (config.showCopyInfo) {
     lines.push(
-      `COPIA NRO ${input.receiptNumber.toString().padStart(9, "0")}`,
+      `COPIA NRO ${formatReceiptNumber(input.receiptNumber, input.deviceNumber)}`,
       input.copyNumber > 1 ? `${input.copyNumber}a VIA` : "1a VIA"
     );
   }
@@ -256,6 +263,18 @@ function threeColumns(col1: string, col2: string, col3: string): string {
     col2.padStart(RECEIPT_COLUMN_WIDTH) +
     col3.padStart(RECEIPT_COLUMN_WIDTH)
   );
+}
+
+/**
+ * Numero do cupom como sai no papel: sequencia da balanca com o numero do
+ * computador como sufixo quando a pedreira tem mais de um (000000101-2).
+ */
+export function formatReceiptNumber(
+  receiptNumber: number,
+  deviceNumber?: number | null
+): string {
+  const base = receiptNumber.toString().padStart(9, "0");
+  return deviceNumber && deviceNumber > 0 ? `${base}-${deviceNumber}` : base;
 }
 
 function divider(): string {

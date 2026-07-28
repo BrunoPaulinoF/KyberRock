@@ -69,6 +69,7 @@ interface ActivateDesktopResponse {
   deviceToken?: string;
   deviceName?: string;
   deviceColor?: string | null;
+  deviceNumber?: number | null;
   supabaseUrl?: string | null;
   publishableKey?: string | null;
   checkedAt?: string;
@@ -83,6 +84,7 @@ interface DesktopStatusResponse {
   deviceId?: string;
   deviceName?: string;
   deviceColor?: string | null;
+  deviceNumber?: number | null;
   unitDevices?: CloudUnitDevice[];
   checkedAt?: string;
 }
@@ -141,6 +143,24 @@ export async function activateDesktop(
     installationId,
     adoptDeviceId: true
   }, new Date(checkedAt));
+
+  // Numero deste computador na pedreira (sufixo do cupom), disponivel ja na
+  // primeira impressao apos a ativacao.
+  if (typeof data.deviceNumber === "number" && data.deviceNumber > 0) {
+    upsertUnitDevices(
+      database,
+      { companyId: data.companyId, unitId: data.unitId },
+      [
+        {
+          id: data.deviceId,
+          name: data.deviceName ?? (input.deviceName.trim() || "Desktop balanca"),
+          color: data.deviceColor ?? null,
+          device_number: data.deviceNumber,
+          is_active: true
+        }
+      ]
+    );
+  }
 
   saveCloudCredentials(database, {
     companyId: data.companyId,

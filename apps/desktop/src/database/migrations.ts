@@ -1185,5 +1185,22 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_report_recipients_company_whatsapp
 CREATE INDEX IF NOT EXISTS idx_vehicle_carriers_vehicle ON vehicle_carriers(vehicle_id, is_active, deleted_at);
 CREATE INDEX IF NOT EXISTS idx_vehicle_carriers_carrier ON vehicle_carriers(carrier_id, is_active, deleted_at);
 `
+  },
+  {
+    version: 36,
+    name: "device_number_receipt_suffix",
+    sql: `
+-- Numero do computador dentro da pedreira, atribuido pela nuvem na ativacao.
+-- Cada balanca continua numerando o cupom offline pela propria sequencia; o
+-- sufixo (000000101-2) e o que impede duas maquinas de emitirem o mesmo numero.
+ALTER TABLE devices ADD COLUMN device_number INTEGER;
+
+-- Numero gravado junto do cupom: o reimpresso e os relatorios mostram
+-- exatamente o que saiu no papel, mesmo vindo de outra maquina.
+ALTER TABLE print_receipts ADD COLUMN device_number INTEGER;
+
+CREATE INDEX IF NOT EXISTS idx_print_receipts_unit_number
+  ON print_receipts(unit_id, receipt_number, device_number);
+`
   }
 ];

@@ -137,6 +137,14 @@ Deno.serve(async (req) => {
       vehicleCarriers,
       productDefaultPrices,
       customerSpecialPrices,
+      priceTables,
+      priceTableItems,
+      customerPriceTables,
+      customerFreightRules,
+      paymentTerms,
+      paymentMethods,
+      accounts,
+      customerCreditMovements,
       reportRecipients
     ] = await Promise.all([
       byCompany("customers"),
@@ -202,6 +210,15 @@ Deno.serve(async (req) => {
       byCompany("vehicle_carriers"),
       byCompany("product_default_prices"),
       byCompany("customer_special_prices"),
+      byCompany("price_tables"),
+      byCompany("price_table_items"),
+      byCompany("customer_price_tables"),
+      byCompany("customer_freight_rules"),
+      byCompany("payment_terms"),
+      byCompany("payment_methods"),
+      byCompany("accounts"),
+      // Log de credito (fiado): append-only, fonte do saldo recalculado localmente.
+      byCompany("customer_credit_movements"),
       byCompany("report_recipients")
     ]);
 
@@ -222,6 +239,14 @@ Deno.serve(async (req) => {
       vehicleCarriers,
       productDefaultPrices,
       customerSpecialPrices,
+      priceTables,
+      priceTableItems,
+      customerPriceTables,
+      customerFreightRules,
+      paymentTerms,
+      paymentMethods,
+      accounts,
+      customerCreditMovements,
       reportRecipients
     ]
       .map((result) => result.warning)
@@ -251,6 +276,14 @@ Deno.serve(async (req) => {
       vehicleCarriers: vehicleCarriers.rows,
       productDefaultPrices: productDefaultPrices.rows,
       customerSpecialPrices: customerSpecialPrices.rows,
+      priceTables: priceTables.rows,
+      priceTableItems: priceTableItems.rows,
+      customerPriceTables: customerPriceTables.rows,
+      customerFreightRules: customerFreightRules.rows,
+      paymentTerms: paymentTerms.rows,
+      paymentMethods: paymentMethods.rows,
+      accounts: accounts.rows,
+      customerCreditMovements: customerCreditMovements.rows,
       reportRecipients: reportRecipients.rows,
       warnings
     });

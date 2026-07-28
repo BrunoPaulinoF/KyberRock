@@ -98,6 +98,8 @@ export interface PrintReceiptSummary {
   operationId: string;
   unitId: string;
   receiptNumber: number;
+  /** Numero do computador que emitiu, impresso como sufixo do cupom. */
+  deviceNumber: number | null;
   copyNumber: number;
   printerName: string;
   status: PrintReceiptStatus;
@@ -167,6 +169,7 @@ interface PrintReceiptRow {
   operation_id: string;
   unit_id: string;
   receipt_number: number;
+  device_number: number | null;
   copy_number: number;
   printed_at: string;
   printer_name: string;
@@ -268,6 +271,7 @@ export async function printWeighingReceipt(
   const profile = getActiveReceiptPrintProfile(database, input.identity.deviceId);
   const copies = Math.max(profile?.copies ?? 2, 2);
   const receiptNumber = getNextReceiptNumber(database, input.identity.unitId);
+  const deviceNumber = getDeviceNumber(database, input.identity.deviceId);
   let lastReceipt: PrintReceiptSummary | null = null;
 
   for (let copyNumber = 1; copyNumber <= copies; copyNumber += 1) {
@@ -277,6 +281,7 @@ export async function printWeighingReceipt(
       operation,
       printer,
       receiptNumber,
+      deviceNumber,
       copyNumber,
       now
     );
@@ -305,6 +310,7 @@ export async function reprintWeighingReceipt(
     operation,
     printer,
     originalReceipt.receiptNumber,
+    originalReceipt.deviceNumber,
     copyNumber,
     now,
     originalReceipt
@@ -414,6 +420,7 @@ async function writeReceiptAttempt(
   operation: OperationReceiptRow,
   printer: ReceiptPrinter,
   receiptNumber: number,
+  deviceNumber: number | null,
   copyNumber: number,
   now: Date,
   originalReceipt?: PrintReceiptSummary
@@ -429,6 +436,7 @@ async function writeReceiptAttempt(
   const snapshot = buildReceiptSnapshot(
     operation,
     receiptNumber,
+    deviceNumber,
     copyNumber,
     timestamp,
     profile.receiptLogo,
@@ -464,15 +472,17 @@ async function writeReceiptAttempt(
     database
       .prepare(
         `INSERT INTO print_receipts (
-          id, operation_id, unit_id, receipt_number, copy_number, content_snapshot_json,
-          printed_at, printer_name, status, error_message, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          id, operation_id, unit_id, receipt_number, device_number, copy_number,
+          content_snapshot_json, printed_at, printer_name, status, error_message,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         receiptId,
         operation.id,
         operation.unit_id,
         receiptNumber,
+        deviceNumber,
         copyNumber,
         JSON.stringify(snapshot),
         timestamp,
@@ -599,6 +609,19 @@ function getOperationForReceipt(
   return row;
 }
 
+/**
+ * Numero deste computador dentro da pedreira (atribuido pela nuvem na ativacao).
+ * Null enquanto a maquina nao recebeu numero — a pedreira de um computador so
+ * continua imprimindo o cupom sem sufixo, como sempre foi.
+ */
+function getDeviceNumber(database: DesktopDatabase, deviceId: string): number | null {
+  const value = database
+    .prepare("SELECT device_number FROM devices WHERE id = ?")
+    .pluck()
+    .get(deviceId) as number | null | undefined;
+  return typeof value === "number" && value > 0 ? value : null;
+}
+
 function getNextReceiptNumber(database: DesktopDatabase, unitId: string): number {
   const current = database
     .prepare("SELECT receipt_sequence FROM units WHERE id = ?")
@@ -624,6 +647,7 @@ function getNextCopyNumber(database: DesktopDatabase, operationId: string): numb
 function buildReceiptSnapshot(
   operation: OperationReceiptRow,
   receiptNumber: number,
+  deviceNumber: number | null,
   copyNumber: number,
   printedAt: string,
   receiptLogo: ReceiptLogoConfig,
@@ -645,6 +669,7 @@ function buildReceiptSnapshot(
     companyStateRegistration: operation.company_state_registration,
     unitName: operation.unit_name,
     receiptNumber,
+    deviceNumber,
     copyNumber,
     printedAt,
     operationId: operation.id,
@@ -842,6 +867,7 @@ function mapPrintReceiptRow(row: PrintReceiptRow): PrintReceiptSummary {
     operationId: row.operation_id,
     unitId: row.unit_id,
     receiptNumber: row.receipt_number,
+    deviceNumber: row.device_number,
     copyNumber: row.copy_number,
     printerName: row.printer_name,
     status: row.status,

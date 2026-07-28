@@ -111,6 +111,41 @@ describe("printing", () => {
     }
   });
 
+  it("imprime o numero do computador como sufixo e mantem o mesmo numero na reimpressao", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createIdentity(database);
+      // Numero atribuido pela nuvem a esta balanca (a segunda da pedreira).
+      database
+        .prepare("UPDATE devices SET device_number = 2 WHERE id = ?")
+        .run(identity.deviceId);
+      configureReceiptPrintProfile(database, { identity, windowsPrinterName: "TERMICA-80" });
+      const operation = createClosedOperation(database, identity);
+
+      const receipt = await printWeighingReceipt(
+        database,
+        { operationId: operation.id, identity },
+        printer
+      );
+
+      expect(receipt.deviceNumber).toBe(2);
+      expect(printer.calls[0].lines).toContain("COPIA NRO 000000001-2");
+
+      const reprint = await reprintWeighingReceipt(
+        database,
+        { receiptId: receipt.id, identity },
+        printer
+      );
+
+      expect(reprint.deviceNumber).toBe(2);
+      expect(printer.calls.at(-1)?.lines).toContain("COPIA NRO 000000001-2");
+    } finally {
+      database.close();
+    }
+  });
+
   it("records printer failures without changing the closed operation", async () => {
     const database = createDatabase();
     const printer = createFakePrinter(new Error("Printer offline"));

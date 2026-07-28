@@ -121,6 +121,14 @@ interface DesktopPullResponse {
   vehicleCarriers?: Array<Record<string, unknown>>;
   productDefaultPrices?: Array<Record<string, unknown>>;
   customerSpecialPrices?: Array<Record<string, unknown>>;
+  priceTables?: Array<Record<string, unknown>>;
+  priceTableItems?: Array<Record<string, unknown>>;
+  customerPriceTables?: Array<Record<string, unknown>>;
+  customerFreightRules?: Array<Record<string, unknown>>;
+  paymentTerms?: Array<Record<string, unknown>>;
+  paymentMethods?: Array<Record<string, unknown>>;
+  accounts?: Array<Record<string, unknown>>;
+  customerCreditMovements?: Array<Record<string, unknown>>;
   reportRecipients?: Array<Record<string, unknown>>;
   warnings?: string[];
   /** Relogio do servidor no momento do pull, usado como marca do proximo incremento. */
@@ -640,8 +648,446 @@ function upsertCloudCadastro(
   count += upsertCloudJunction(database, "vehicle_carriers", "vehicle_id", payload.vehicleCarriers ?? []);
   count += upsertCloudProductDefaultPrices(database, companyId, payload.productDefaultPrices ?? []);
   count += upsertCloudCustomerSpecialPrices(database, companyId, payload.customerSpecialPrices ?? []);
+  count += upsertCloudPriceTables(database, companyId, payload.priceTables ?? []);
+  count += upsertCloudPriceTableItems(database, payload.priceTableItems ?? []);
+  count += upsertCloudCustomerPriceTables(database, payload.customerPriceTables ?? []);
+  count += upsertCloudCustomerFreightRules(database, payload.customerFreightRules ?? []);
+  count += upsertCloudPaymentTerms(database, companyId, payload.paymentTerms ?? []);
+  count += upsertCloudPaymentMethods(database, companyId, payload.paymentMethods ?? []);
+  count += upsertCloudAccounts(database, companyId, payload.accounts ?? []);
+  count += upsertCloudCreditMovements(database, companyId, payload.customerCreditMovements ?? []);
   count += upsertCloudReportRecipients(database, companyId, payload.reportRecipients ?? []);
   return count;
+}
+
+function upsertCloudPriceTables(
+  database: DesktopDatabase,
+  companyId: string,
+  rows: Array<Record<string, unknown>>
+): number {
+  const upsert = database.prepare(`
+    INSERT INTO price_tables (
+      id, company_id, name, is_active, valid_from, valid_to, created_at, updated_at, deleted_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      company_id = excluded.company_id,
+      name = excluded.name,
+      is_active = excluded.is_active,
+      valid_from = excluded.valid_from,
+      valid_to = excluded.valid_to,
+      updated_at = excluded.updated_at,
+      deleted_at = excluded.deleted_at
+  `);
+
+  let count = 0;
+  for (const row of rows) {
+    const id = stringValue(row.id);
+    const name = stringValue(row.name);
+    if (!id || !name) continue;
+    const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
+    upsert.run(
+      id,
+      companyId,
+      name,
+      booleanToSql(row.is_active, true),
+      nullableStringValue(row.valid_from),
+      nullableStringValue(row.valid_to),
+      isoStringValue(row.created_at) || updatedAt,
+      updatedAt,
+      isoStringValue(row.deleted_at)
+    );
+    count++;
+  }
+  return count;
+}
+
+function upsertCloudPriceTableItems(
+  database: DesktopDatabase,
+  rows: Array<Record<string, unknown>>
+): number {
+  const upsert = database.prepare(`
+    INSERT INTO price_table_items (
+      id, price_table_id, product_id, unit_price_cents, unit, valid_from, valid_to,
+      created_at, updated_at, deleted_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      price_table_id = excluded.price_table_id,
+      product_id = excluded.product_id,
+      unit_price_cents = excluded.unit_price_cents,
+      unit = excluded.unit,
+      valid_from = excluded.valid_from,
+      valid_to = excluded.valid_to,
+      updated_at = excluded.updated_at,
+      deleted_at = excluded.deleted_at
+  `);
+
+  let count = 0;
+  for (const row of rows) {
+    const id = stringValue(row.id);
+    const priceTableId = existingId(database, "price_tables", row.price_table_id);
+    const productId = existingId(database, "products", row.product_id);
+    const price = integerValue(row.unit_price_cents);
+    if (!id || !priceTableId || !productId || price === null) continue;
+    const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
+    upsert.run(
+      id,
+      priceTableId,
+      productId,
+      price,
+      stringValue(row.unit) || "ton",
+      nullableStringValue(row.valid_from),
+      nullableStringValue(row.valid_to),
+      isoStringValue(row.created_at) || updatedAt,
+      updatedAt,
+      isoStringValue(row.deleted_at)
+    );
+    count++;
+  }
+  return count;
+}
+
+function upsertCloudCustomerPriceTables(
+  database: DesktopDatabase,
+  rows: Array<Record<string, unknown>>
+): number {
+  const upsert = database.prepare(`
+    INSERT INTO customer_price_tables (
+      id, customer_id, price_table_id, valid_from, valid_to, is_active,
+      created_at, updated_at, deleted_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      customer_id = excluded.customer_id,
+      price_table_id = excluded.price_table_id,
+      valid_from = excluded.valid_from,
+      valid_to = excluded.valid_to,
+      is_active = excluded.is_active,
+      updated_at = excluded.updated_at,
+      deleted_at = excluded.deleted_at
+  `);
+
+  let count = 0;
+  for (const row of rows) {
+    const id = stringValue(row.id);
+    const customerId = existingId(database, "customers", row.customer_id);
+    const priceTableId = existingId(database, "price_tables", row.price_table_id);
+    if (!id || !customerId || !priceTableId) continue;
+    const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
+    upsert.run(
+      id,
+      customerId,
+      priceTableId,
+      nullableStringValue(row.valid_from),
+      nullableStringValue(row.valid_to),
+      booleanToSql(row.is_active, true),
+      isoStringValue(row.created_at) || updatedAt,
+      updatedAt,
+      isoStringValue(row.deleted_at)
+    );
+    count++;
+  }
+  return count;
+}
+
+function upsertCloudCustomerFreightRules(
+  database: DesktopDatabase,
+  rows: Array<Record<string, unknown>>
+): number {
+  // Indice unico local por (cliente, produto) e por regra padrao do cliente:
+  // mantem a local quando a da nuvem chega com outro id para o mesmo par.
+  const findConflictForProduct = database.prepare(
+    `SELECT id FROM customer_freight_rules
+     WHERE customer_id = ? AND product_id = ? AND deleted_at IS NULL LIMIT 1`
+  );
+  const findConflictForDefault = database.prepare(
+    `SELECT id FROM customer_freight_rules
+     WHERE customer_id = ? AND product_id IS NULL AND deleted_at IS NULL LIMIT 1`
+  );
+  const upsert = database.prepare(`
+    INSERT INTO customer_freight_rules (
+      id, customer_id, product_id, rule_json, is_active, created_at, updated_at, deleted_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      customer_id = excluded.customer_id,
+      product_id = excluded.product_id,
+      rule_json = excluded.rule_json,
+      is_active = excluded.is_active,
+      updated_at = excluded.updated_at,
+      deleted_at = excluded.deleted_at
+  `);
+
+  let count = 0;
+  for (const row of rows) {
+    const id = stringValue(row.id);
+    const customerId = existingId(database, "customers", row.customer_id);
+    if (!id || !customerId) continue;
+    const productId = row.product_id ? existingId(database, "products", row.product_id) : null;
+    if (row.product_id && !productId) continue;
+    const deletedAt = isoStringValue(row.deleted_at);
+    if (!deletedAt) {
+      const conflict = (
+        productId
+          ? findConflictForProduct.get(customerId, productId)
+          : findConflictForDefault.get(customerId)
+      ) as { id: string } | undefined;
+      if (conflict && conflict.id !== id) continue;
+    }
+    const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
+    upsert.run(
+      id,
+      customerId,
+      productId,
+      jsonStringValue(row.rule_json) ?? "{}",
+      booleanToSql(row.is_active, true),
+      isoStringValue(row.created_at) || updatedAt,
+      updatedAt,
+      deletedAt
+    );
+    count++;
+  }
+  return count;
+}
+
+function upsertCloudPaymentTerms(
+  database: DesktopDatabase,
+  companyId: string,
+  rows: Array<Record<string, unknown>>
+): number {
+  const upsert = database.prepare(`
+    INSERT INTO payment_terms (
+      id, company_id, omie_code, name, rules_json, is_active, created_at, updated_at, deleted_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      company_id = excluded.company_id,
+      omie_code = excluded.omie_code,
+      name = excluded.name,
+      rules_json = excluded.rules_json,
+      is_active = excluded.is_active,
+      updated_at = excluded.updated_at,
+      deleted_at = excluded.deleted_at
+  `);
+
+  let count = 0;
+  for (const row of rows) {
+    const id = stringValue(row.id);
+    const name = stringValue(row.name);
+    if (!id || !name) continue;
+    const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
+    upsert.run(
+      id,
+      companyId,
+      nullableStringValue(row.omie_code),
+      name,
+      jsonStringValue(row.rules_json) ?? "{}",
+      booleanToSql(row.is_active, true),
+      isoStringValue(row.created_at) || updatedAt,
+      updatedAt,
+      isoStringValue(row.deleted_at)
+    );
+    count++;
+  }
+  return count;
+}
+
+function upsertCloudPaymentMethods(
+  database: DesktopDatabase,
+  companyId: string,
+  rows: Array<Record<string, unknown>>
+): number {
+  // UNIQUE(company_id, code) entre os nao excluidos: a forma padrao do sistema
+  // ja existe nas duas maquinas com ids diferentes, entao a local prevalece.
+  const findConflict = database.prepare(
+    `SELECT id FROM payment_methods
+     WHERE company_id = ? AND code = ? AND deleted_at IS NULL LIMIT 1`
+  );
+  const upsert = database.prepare(`
+    INSERT INTO payment_methods (
+      id, company_id, code, name, omie_code, is_system, is_customer_credit,
+      sort_order, is_active, created_at, updated_at, deleted_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      company_id = excluded.company_id,
+      name = excluded.name,
+      omie_code = excluded.omie_code,
+      is_customer_credit = excluded.is_customer_credit,
+      sort_order = excluded.sort_order,
+      is_active = excluded.is_active,
+      updated_at = excluded.updated_at,
+      deleted_at = excluded.deleted_at
+  `);
+
+  let count = 0;
+  for (const row of rows) {
+    const id = stringValue(row.id);
+    const code = stringValue(row.code);
+    const name = stringValue(row.name);
+    if (!id || !code || !name) continue;
+    const deletedAt = isoStringValue(row.deleted_at);
+    if (!deletedAt) {
+      const conflict = findConflict.get(companyId, code) as { id: string } | undefined;
+      if (conflict && conflict.id !== id) continue;
+    }
+    const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
+    upsert.run(
+      id,
+      companyId,
+      code,
+      name,
+      nullableStringValue(row.omie_code),
+      booleanToSql(row.is_system, false),
+      booleanToSql(row.is_customer_credit, false),
+      integerValue(row.sort_order) ?? 0,
+      booleanToSql(row.is_active, true),
+      isoStringValue(row.created_at) || updatedAt,
+      updatedAt,
+      deletedAt
+    );
+    count++;
+  }
+  return count;
+}
+
+function upsertCloudAccounts(
+  database: DesktopDatabase,
+  companyId: string,
+  rows: Array<Record<string, unknown>>
+): number {
+  // UNIQUE(company_id, code) entre as nao excluidas (code e opcional).
+  const findConflict = database.prepare(
+    `SELECT id FROM accounts
+     WHERE company_id = ? AND code = ? AND deleted_at IS NULL LIMIT 1`
+  );
+  const upsert = database.prepare(`
+    INSERT INTO accounts (
+      id, company_id, code, name, omie_code, is_system, sort_order, is_active,
+      created_at, updated_at, deleted_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      company_id = excluded.company_id,
+      name = excluded.name,
+      omie_code = excluded.omie_code,
+      sort_order = excluded.sort_order,
+      is_active = excluded.is_active,
+      updated_at = excluded.updated_at,
+      deleted_at = excluded.deleted_at
+  `);
+
+  let count = 0;
+  for (const row of rows) {
+    const id = stringValue(row.id);
+    const name = stringValue(row.name);
+    if (!id || !name) continue;
+    const code = nullableStringValue(row.code);
+    const deletedAt = isoStringValue(row.deleted_at);
+    if (!deletedAt && code) {
+      const conflict = findConflict.get(companyId, code) as { id: string } | undefined;
+      if (conflict && conflict.id !== id) continue;
+    }
+    const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
+    upsert.run(
+      id,
+      companyId,
+      code,
+      name,
+      nullableStringValue(row.omie_code),
+      booleanToSql(row.is_system, false),
+      integerValue(row.sort_order) ?? 0,
+      booleanToSql(row.is_active, true),
+      isoStringValue(row.created_at) || updatedAt,
+      updatedAt,
+      deletedAt
+    );
+    count++;
+  }
+  return count;
+}
+
+/**
+ * Projeta o log de credito (fiado) vindo das outras maquinas e recalcula o saldo
+ * de cada cliente afetado a partir do log inteiro. O saldo nunca e copiado da
+ * nuvem: soma-se o que as duas maquinas lancaram, entao um debito feito na outra
+ * balanca nunca some por sobrescrita.
+ */
+function upsertCloudCreditMovements(
+  database: DesktopDatabase,
+  companyId: string,
+  rows: Array<Record<string, unknown>>
+): number {
+  // Movimento e imutavel: id ja conhecido nao e reescrito.
+  const insert = database.prepare(`
+    INSERT INTO customer_credit_movements (
+      id, company_id, customer_id, operation_id, movement_type, amount_cents,
+      balance_after_cents, reason, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO NOTHING
+  `);
+
+  const touchedCustomers = new Set<string>();
+  let count = 0;
+  for (const row of rows) {
+    const id = stringValue(row.id);
+    const customerId = existingId(database, "customers", row.customer_id);
+    const movementType = stringValue(row.movement_type);
+    if (!id || !customerId || !CREDIT_MOVEMENT_TYPES.has(movementType)) continue;
+    // A operacao de origem pode nao estar nesta maquina (historico limitado):
+    // o vinculo vira nulo, mas o valor do movimento continua valendo.
+    const operationId = existingId(database, "weighing_operations", row.operation_id);
+    const result = insert.run(
+      id,
+      companyId,
+      customerId,
+      operationId,
+      movementType,
+      integerValue(row.amount_cents) ?? 0,
+      integerValue(row.balance_after_cents) ?? 0,
+      nullableStringValue(row.reason),
+      isoStringValue(row.created_at) || new Date().toISOString()
+    );
+    if (result.changes > 0) {
+      touchedCustomers.add(customerId);
+      count++;
+    }
+  }
+
+  if (touchedCustomers.size > 0) {
+    recalculateCreditBalances(database, [...touchedCustomers]);
+  }
+  return count;
+}
+
+const CREDIT_MOVEMENT_TYPES: ReadonlySet<string> = new Set([
+  "credit",
+  "debit_product",
+  "debit_freight",
+  "refund_product",
+  "refund_freight",
+  "manual_adjustment"
+]);
+
+/** Saldo = soma do log (debitos negativos), recalculado por cliente. */
+function recalculateCreditBalances(database: DesktopDatabase, customerIds: string[]): void {
+  const balanceOf = database.prepare(`
+    SELECT COALESCE(SUM(
+      CASE
+        WHEN movement_type IN ('debit_product', 'debit_freight') THEN -amount_cents
+        ELSE amount_cents
+      END
+    ), 0) AS balance
+    FROM customer_credit_movements
+    WHERE customer_id = ?
+  `);
+  const upsert = database.prepare(`
+    INSERT INTO customer_credit_balances (customer_id, balance_cents, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(customer_id) DO UPDATE SET
+      balance_cents = excluded.balance_cents,
+      updated_at = excluded.updated_at
+  `);
+
+  const timestamp = new Date().toISOString();
+  for (const customerId of customerIds) {
+    const row = balanceOf.get(customerId) as { balance: number } | undefined;
+    upsert.run(customerId, row?.balance ?? 0, timestamp);
+  }
 }
 
 function upsertCloudCarriers(
@@ -1363,13 +1809,15 @@ function upsertCloudPrintReceipts(
 ): number {
   const upsert = database.prepare(`
     INSERT INTO print_receipts (
-      id, operation_id, unit_id, receipt_number, copy_number, content_snapshot_json, printed_at,
-      printer_name, status, error_message, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      id, operation_id, unit_id, receipt_number, device_number, copy_number,
+      content_snapshot_json, printed_at, printer_name, status, error_message,
+      created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       operation_id = excluded.operation_id,
       unit_id = excluded.unit_id,
       receipt_number = excluded.receipt_number,
+      device_number = excluded.device_number,
       copy_number = excluded.copy_number,
       content_snapshot_json = excluded.content_snapshot_json,
       printed_at = excluded.printed_at,
@@ -1391,6 +1839,7 @@ function upsertCloudPrintReceipts(
       operationId,
       unitId,
       integerValue(row.receipt_number) ?? 0,
+      integerValue(row.device_number),
       integerValue(row.copy_number) ?? 1,
       jsonStringValue(row.content_snapshot_json) ?? "{}",
       isoStringValue(row.printed_at) || updatedAt,
@@ -2285,6 +2734,7 @@ function getPrintReceiptPayload(
     operation_id: receipt.operation_id,
     unit_id: settings.unitId,
     receipt_number: receipt.receipt_number,
+    device_number: integerValue(receipt.device_number),
     copy_number: receipt.copy_number,
     content_snapshot_json: parseJsonValue(receipt.content_snapshot_json),
     printed_at: receipt.printed_at,
@@ -3534,8 +3984,8 @@ interface CadastroPushEntity {
   map: (row: Record<string, unknown>, companyId: string) => Record<string, unknown>;
 }
 
-function cursorExpression(alias: string): string {
-  return `REPLACE(SUBSTR(${alias}.updated_at, 1, 19), 'T', ' ')`;
+function cursorExpression(alias: string, column: string): string {
+  return `REPLACE(SUBSTR(${alias}.${column}, 1, 19), 'T', ' ')`;
 }
 
 function buildCadastroSelect(options: {
@@ -3544,8 +3994,10 @@ function buildCadastroSelect(options: {
   columns: string;
   joins?: string;
   where: string;
+  /** Coluna que ordena o cursor. O log de credito e imutavel e so tem created_at. */
+  cursorColumn?: string;
 }): string {
-  const cursor = cursorExpression(options.alias);
+  const cursor = cursorExpression(options.alias, options.cursorColumn ?? "updated_at");
   return `
     SELECT ${options.columns}, ${cursor} AS cursor_at
     FROM ${options.table} ${options.alias}
@@ -3827,6 +4279,221 @@ const CADASTRO_PUSH_ENTITIES: readonly CadastroPushEntity[] = [
         created_at: cloudTimestamp(row.created_at, updatedAt),
         updated_at: updatedAt,
         deleted_at: row.deleted_at ? cloudTimestamp(row.deleted_at, updatedAt) : null
+      };
+    }
+  },
+  {
+    key: "priceTables",
+    label: "tabelas de preco",
+    sql: buildCadastroSelect({
+      table: "price_tables",
+      alias: "pt",
+      columns:
+        "pt.id, pt.name, pt.is_active, pt.valid_from, pt.valid_to, pt.created_at, pt.updated_at, pt.deleted_at",
+      where: "pt.company_id = @companyId"
+    }),
+    map: (row, companyId) => {
+      const updatedAt = cloudTimestamp(row.updated_at, new Date().toISOString());
+      return {
+        id: stringValue(row.id),
+        company_id: companyId,
+        name: stringValue(row.name) || "Tabela de preco",
+        is_active: cloudActive(row),
+        valid_from: nullableStringValue(row.valid_from),
+        valid_to: nullableStringValue(row.valid_to),
+        created_at: cloudTimestamp(row.created_at, updatedAt),
+        updated_at: updatedAt,
+        deleted_at: row.deleted_at ? cloudTimestamp(row.deleted_at, updatedAt) : null
+      };
+    }
+  },
+  {
+    key: "priceTableItems",
+    label: "itens da tabela de preco",
+    sql: buildCadastroSelect({
+      table: "price_table_items",
+      alias: "pti",
+      columns:
+        "pti.id, pti.price_table_id, pti.product_id, pti.unit_price_cents, pti.unit, pti.valid_from, pti.valid_to, pti.created_at, pti.updated_at, pti.deleted_at",
+      joins: "JOIN price_tables ptp ON ptp.id = pti.price_table_id",
+      where: "ptp.company_id = @companyId"
+    }),
+    map: (row, companyId) => {
+      const updatedAt = cloudTimestamp(row.updated_at, new Date().toISOString());
+      return {
+        id: stringValue(row.id),
+        company_id: companyId,
+        price_table_id: stringValue(row.price_table_id),
+        product_id: stringValue(row.product_id),
+        unit_price_cents: integerValue(row.unit_price_cents),
+        unit: stringValue(row.unit) || "ton",
+        valid_from: nullableStringValue(row.valid_from),
+        valid_to: nullableStringValue(row.valid_to),
+        created_at: cloudTimestamp(row.created_at, updatedAt),
+        updated_at: updatedAt,
+        deleted_at: row.deleted_at ? cloudTimestamp(row.deleted_at, updatedAt) : null
+      };
+    }
+  },
+  {
+    key: "customerPriceTables",
+    label: "tabelas de preco por cliente",
+    sql: buildCadastroSelect({
+      table: "customer_price_tables",
+      alias: "cpt",
+      columns:
+        "cpt.id, cpt.customer_id, cpt.price_table_id, cpt.valid_from, cpt.valid_to, cpt.is_active, cpt.created_at, cpt.updated_at, cpt.deleted_at",
+      joins: "JOIN customers cptc ON cptc.id = cpt.customer_id",
+      where: "cptc.company_id = @companyId"
+    }),
+    map: (row, companyId) => {
+      const updatedAt = cloudTimestamp(row.updated_at, new Date().toISOString());
+      return {
+        id: stringValue(row.id),
+        company_id: companyId,
+        customer_id: stringValue(row.customer_id),
+        price_table_id: stringValue(row.price_table_id),
+        valid_from: nullableStringValue(row.valid_from),
+        valid_to: nullableStringValue(row.valid_to),
+        is_active: cloudActive(row),
+        created_at: cloudTimestamp(row.created_at, updatedAt),
+        updated_at: updatedAt,
+        deleted_at: row.deleted_at ? cloudTimestamp(row.deleted_at, updatedAt) : null
+      };
+    }
+  },
+  {
+    key: "customerFreightRules",
+    label: "regras de frete",
+    sql: buildCadastroSelect({
+      table: "customer_freight_rules",
+      alias: "fr",
+      columns:
+        "fr.id, fr.customer_id, fr.product_id, fr.rule_json, fr.is_active, fr.created_at, fr.updated_at, fr.deleted_at",
+      joins: "JOIN customers frc ON frc.id = fr.customer_id",
+      where: "frc.company_id = @companyId"
+    }),
+    map: (row, companyId) => {
+      const updatedAt = cloudTimestamp(row.updated_at, new Date().toISOString());
+      return {
+        id: stringValue(row.id),
+        company_id: companyId,
+        customer_id: stringValue(row.customer_id),
+        product_id: nullableStringValue(row.product_id),
+        rule_json: parseJsonValue(row.rule_json) ?? {},
+        is_active: cloudActive(row),
+        created_at: cloudTimestamp(row.created_at, updatedAt),
+        updated_at: updatedAt,
+        deleted_at: row.deleted_at ? cloudTimestamp(row.deleted_at, updatedAt) : null
+      };
+    }
+  },
+  {
+    key: "paymentTerms",
+    label: "condicoes de pagamento",
+    sql: buildCadastroSelect({
+      table: "payment_terms",
+      alias: "ptm",
+      columns:
+        "ptm.id, ptm.omie_code, ptm.name, ptm.rules_json, ptm.is_active, ptm.created_at, ptm.updated_at, ptm.deleted_at",
+      where: "ptm.company_id = @companyId"
+    }),
+    map: (row, companyId) => {
+      const updatedAt = cloudTimestamp(row.updated_at, new Date().toISOString());
+      return {
+        id: stringValue(row.id),
+        company_id: companyId,
+        omie_code: nullableStringValue(row.omie_code),
+        name: stringValue(row.name) || "Condicao de pagamento",
+        rules_json: parseJsonValue(row.rules_json) ?? {},
+        is_active: cloudActive(row),
+        created_at: cloudTimestamp(row.created_at, updatedAt),
+        updated_at: updatedAt,
+        deleted_at: row.deleted_at ? cloudTimestamp(row.deleted_at, updatedAt) : null
+      };
+    }
+  },
+  {
+    key: "paymentMethods",
+    label: "formas de pagamento",
+    sql: buildCadastroSelect({
+      table: "payment_methods",
+      alias: "pm",
+      columns:
+        "pm.id, pm.code, pm.name, pm.omie_code, pm.is_system, pm.is_customer_credit, pm.sort_order, pm.is_active, pm.created_at, pm.updated_at, pm.deleted_at",
+      where: "pm.company_id = @companyId"
+    }),
+    map: (row, companyId) => {
+      const updatedAt = cloudTimestamp(row.updated_at, new Date().toISOString());
+      return {
+        id: stringValue(row.id),
+        company_id: companyId,
+        code: stringValue(row.code) || stringValue(row.id),
+        name: stringValue(row.name) || "Forma de pagamento",
+        omie_code: nullableStringValue(row.omie_code),
+        is_system: Number(row.is_system ?? 0) === 1,
+        is_customer_credit: Number(row.is_customer_credit ?? 0) === 1,
+        sort_order: integerValue(row.sort_order) ?? 0,
+        is_active: cloudActive(row),
+        created_at: cloudTimestamp(row.created_at, updatedAt),
+        updated_at: updatedAt,
+        deleted_at: row.deleted_at ? cloudTimestamp(row.deleted_at, updatedAt) : null
+      };
+    }
+  },
+  {
+    key: "accounts",
+    label: "contas",
+    sql: buildCadastroSelect({
+      table: "accounts",
+      alias: "ac",
+      columns:
+        "ac.id, ac.code, ac.name, ac.omie_code, ac.is_system, ac.sort_order, ac.is_active, ac.created_at, ac.updated_at, ac.deleted_at",
+      where: "ac.company_id = @companyId"
+    }),
+    map: (row, companyId) => {
+      const updatedAt = cloudTimestamp(row.updated_at, new Date().toISOString());
+      return {
+        id: stringValue(row.id),
+        company_id: companyId,
+        code: nullableStringValue(row.code),
+        name: stringValue(row.name) || "Conta",
+        omie_code: nullableStringValue(row.omie_code),
+        is_system: Number(row.is_system ?? 0) === 1,
+        sort_order: integerValue(row.sort_order) ?? 0,
+        is_active: cloudActive(row),
+        created_at: cloudTimestamp(row.created_at, updatedAt),
+        updated_at: updatedAt,
+        deleted_at: row.deleted_at ? cloudTimestamp(row.deleted_at, updatedAt) : null
+      };
+    }
+  },
+  {
+    // Log de credito (fiado): registro imutavel, entao o cursor segue o
+    // created_at e a nuvem so precisa acumular o que cada maquina lancou.
+    key: "customerCreditMovements",
+    label: "movimentos de credito",
+    sql: buildCadastroSelect({
+      table: "customer_credit_movements",
+      alias: "cm",
+      columns:
+        "cm.id, cm.customer_id, cm.operation_id, cm.movement_type, cm.amount_cents, cm.balance_after_cents, cm.reason, cm.created_at",
+      where: "cm.company_id = @companyId",
+      cursorColumn: "created_at"
+    }),
+    map: (row, companyId) => {
+      const createdAt = cloudTimestamp(row.created_at, new Date().toISOString());
+      return {
+        id: stringValue(row.id),
+        company_id: companyId,
+        customer_id: stringValue(row.customer_id),
+        operation_id: nullableStringValue(row.operation_id),
+        movement_type: stringValue(row.movement_type),
+        amount_cents: integerValue(row.amount_cents) ?? 0,
+        balance_after_cents: integerValue(row.balance_after_cents) ?? 0,
+        reason: nullableStringValue(row.reason),
+        created_at: createdAt,
+        updated_at: createdAt
       };
     }
   }

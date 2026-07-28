@@ -14,6 +14,7 @@ export interface CloudUnitDevice {
   id?: unknown;
   name?: unknown;
   color?: unknown;
+  device_number?: unknown;
   is_active?: unknown;
 }
 
@@ -21,6 +22,8 @@ export interface UnitDeviceInfo {
   id: string;
   name: string;
   color: string;
+  /** Numero do computador na pedreira, sufixo do cupom que ele emite. */
+  deviceNumber: number | null;
   isActive: boolean;
   isSelf: boolean;
 }
@@ -37,11 +40,12 @@ export function upsertUnitDevices(
   // remotas usam um placeholder unico e estavel, ja que o installation_id real
   // de outra maquina nao interessa localmente.
   const upsert = database.prepare(`
-    INSERT INTO devices (id, company_id, unit_id, name, device_type, installation_id, color, is_active, created_at, updated_at)
-    VALUES (@id, @companyId, @unitId, @name, 'desktop_scale', @installationId, @color, @isActive, @timestamp, @timestamp)
+    INSERT INTO devices (id, company_id, unit_id, name, device_type, installation_id, color, device_number, is_active, created_at, updated_at)
+    VALUES (@id, @companyId, @unitId, @name, 'desktop_scale', @installationId, @color, @deviceNumber, @isActive, @timestamp, @timestamp)
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
       color = COALESCE(excluded.color, devices.color),
+      device_number = COALESCE(excluded.device_number, devices.device_number),
       is_active = excluded.is_active,
       updated_at = excluded.updated_at
   `);
@@ -55,6 +59,10 @@ export function upsertUnitDevices(
         typeof device.name === "string" && device.name.trim() ? device.name.trim() : "Computador";
       const color =
         typeof device.color === "string" && device.color.trim() ? device.color.trim() : null;
+      const deviceNumber =
+        typeof device.device_number === "number" && device.device_number > 0
+          ? device.device_number
+          : null;
       upsert.run({
         id,
         companyId: identity.companyId,
@@ -62,6 +70,7 @@ export function upsertUnitDevices(
         name,
         installationId: `remote-${id}`,
         color,
+        deviceNumber,
         isActive: device.is_active === false ? 0 : 1,
         timestamp
       });
@@ -79,7 +88,7 @@ export function listUnitDevices(
 ): UnitDeviceInfo[] {
   const rows = database
     .prepare(
-      `SELECT id, name, color, is_active
+      `SELECT id, name, color, device_number, is_active
        FROM devices
        WHERE unit_id = ? AND deleted_at IS NULL
        ORDER BY created_at ASC, id ASC`
@@ -88,6 +97,7 @@ export function listUnitDevices(
     id: string;
     name: string;
     color: string | null;
+    device_number: number | null;
     is_active: number;
   }>;
 
@@ -95,6 +105,7 @@ export function listUnitDevices(
     id: row.id,
     name: row.name,
     color: resolveDeviceColor(row.id, row.color),
+    deviceNumber: row.device_number,
     isActive: row.is_active === 1,
     isSelf: row.id === identity.deviceId
   }));

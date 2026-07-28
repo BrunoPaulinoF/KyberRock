@@ -8,6 +8,7 @@ type DeviceRow = {
   unit_id: string;
   name: string;
   color: string | null;
+  device_number: number | null;
   token_hash: string;
   is_active: boolean;
 };
@@ -29,7 +30,7 @@ Deno.serve(async (req) => {
 
   const { data: device, error: deviceError } = await supabase
     .from("device_registrations")
-    .select("id, company_id, unit_id, name, color, token_hash, is_active")
+    .select("id, company_id, unit_id, name, color, device_number, token_hash, is_active")
     .eq("id", deviceId)
     .single();
 
@@ -76,6 +77,16 @@ Deno.serve(async (req) => {
     return jsonResponse({ status: "payment_blocked", allowed: false, message: "Acesso bloqueado por falta de pagamento. Regularize a pendência para reativar o acesso." });
   }
 
+  // Numero do computador na unidade (sufixo do cupom): maquinas ativadas antes
+  // desta versao recebem o numero na primeira validacao, sem precisar reativar.
+  let deviceNumber = typedDevice.device_number;
+  if (deviceNumber === null || deviceNumber === undefined) {
+    const { data: assigned } = await supabase.rpc("assign_device_number", {
+      p_device_id: typedDevice.id
+    });
+    deviceNumber = typeof assigned === "number" ? assigned : null;
+  }
+
   const checkedAt = new Date().toISOString();
   await supabase
     .from("device_registrations")
@@ -86,7 +97,7 @@ Deno.serve(async (req) => {
   // desktop identificar o responsavel por cada operacao criada por outra maquina.
   const { data: unitDevices } = await supabase
     .from("device_registrations")
-    .select("id, name, color, is_active, last_seen_at")
+    .select("id, name, color, device_number, is_active, last_seen_at")
     .eq("unit_id", typedDevice.unit_id)
     .order("created_at", { ascending: true });
 
@@ -99,6 +110,7 @@ Deno.serve(async (req) => {
     deviceId: typedDevice.id,
     deviceName: typedDevice.name,
     deviceColor: typedDevice.color,
+    deviceNumber,
     unitDevices: unitDevices ?? [],
     checkedAt
   });
