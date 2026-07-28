@@ -1,6 +1,7 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage } from "electron";
 import type * as ElectronUpdater from "electron-updater";
-import { appendFileSync, mkdirSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { appendFileSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -33,7 +34,12 @@ import type {
   ReceiptPrinter,
   WindowsPrinterSummary
 } from "../services/printing.js";
-import { NetworkEscPosPrinter } from "../services/network-printer.js";
+import { NetworkEscPosPrinter, type ReceiptLogoRasterizer } from "../services/network-printer.js";
+import { packRasterImage } from "../services/escpos-encoder.js";
+import {
+  computeLogoRasterLayout,
+  RECEIPT_PRINTER_DOTS_PER_MM
+} from "../services/receipt-logo-raster.js";
 import {
   AUTO_DOWNLOAD_UPDATES,
   AUTO_INSTALL_ON_QUIT,
@@ -1578,7 +1584,8 @@ function createElectronReceiptPrinter(parentWindow: BrowserWindow): ReceiptPrint
 
         await new NetworkEscPosPrinter({
           host: payload.networkHost,
-          port: payload.networkPort ?? 9100
+          port: payload.networkPort ?? 9100,
+          rasterizeLogo: rasterizeReceiptLogo
         }).printReceipt(payload);
         return;
       }
@@ -1592,11 +1599,14 @@ function createElectronReceiptPrinter(parentWindow: BrowserWindow): ReceiptPrint
           sandbox: true
         }
       });
+      // O cupom vai para um arquivo temporario em vez de uma data: URL: uma logo grande
+      // estourava o limite de tamanho de URL do Chromium e derrubava a pagina inteira.
+      const htmlPath = path.join(app.getPath("temp"), `kyberrock-cupom-${randomUUID()}.html`);
 
       try {
-        await printWindow.loadURL(
-          `data:text/html;charset=utf-8,${encodeURIComponent(buildReceiptHtml(payload))}`
-        );
+        writeFileSync(htmlPath, buildReceiptHtml(payload), "utf8");
+        await printWindow.loadFile(htmlPath);
+        await waitForReceiptImages(printWindow);
         await new Promise<void>((resolve, reject) => {
           printWindow.webContents.print(
             {
@@ -1616,10 +1626,81 @@ function createElectronReceiptPrinter(parentWindow: BrowserWindow): ReceiptPrint
         });
       } finally {
         printWindow.close();
+        rmSync(htmlPath, { force: true });
       }
     }
   };
 }
+
+/**
+ * A janela de impressao fica oculta e o `webContents.print` dispara assim que a pagina termina
+ * de carregar. Sem esperar a decodificacao das imagens, a logo entrava no PDF de impressao ainda
+ * vazia e o cupom saia sem ela. Se a imagem for invalida, ela e removida para nao imprimir o
+ * icone de imagem quebrada.
+ */
+async function waitForReceiptImages(printWindow: BrowserWindow): Promise<void> {
+  try {
+    await printWindow.webContents.executeJavaScript(
+      `Promise.all(
+         Array.from(document.images).map((image) =>
+           image.decode().catch(() => { image.remove(); })
+         )
+       ).then(() => true)`
+    );
+  } catch (error) {
+    writeStartupLog("receipt-print:image-wait-failed", error);
+  }
+}
+
+/**
+ * Impressora de rede nao interpreta HTML: a logo precisa ir como bit image ESC/POS. Aqui o
+ * data URL configurado e decodificado pelo Electron, enquadrado igual a previa da tela e
+ * convertido em preto e branco.
+ */
+const rasterizeReceiptLogo: ReceiptLogoRasterizer = (logo, maxWidthPx) => {
+  if (!logo.dataUrl) {
+    return null;
+  }
+
+  const source = nativeImage.createFromDataURL(logo.dataUrl);
+
+  if (source.isEmpty()) {
+    writeStartupLog("receipt-print:logo-decode-failed");
+    return null;
+  }
+
+  const sourceSize = source.getSize();
+  const layout = computeLogoRasterLayout(
+    sourceSize.width,
+    sourceSize.height,
+    Math.min(Math.round(logo.widthMm * RECEIPT_PRINTER_DOTS_PER_MM), maxWidthPx),
+    Math.round(logo.heightMm * RECEIPT_PRINTER_DOTS_PER_MM),
+    logo.fit
+  );
+
+  if (!layout) {
+    return null;
+  }
+
+  let rendered = source.resize({
+    width: layout.resizeWidth,
+    height: layout.resizeHeight,
+    quality: "best"
+  });
+
+  if (layout.cropWidth !== layout.resizeWidth || layout.cropHeight !== layout.resizeHeight) {
+    rendered = rendered.crop({
+      x: layout.cropX,
+      y: layout.cropY,
+      width: layout.cropWidth,
+      height: layout.cropHeight
+    });
+  }
+
+  const renderedSize = rendered.getSize();
+
+  return packRasterImage(rendered.toBitmap(), renderedSize.width, renderedSize.height);
+};
 
 function createElectronFiscalDocumentPrinter(parentWindow: BrowserWindow): FiscalDocumentPrinter {
   return {
@@ -1679,13 +1760,13 @@ function buildReceiptHtml(payload: ReceiptPrintPayload): string {
     <meta charset="utf-8" />
     <style>
       @page { size: ${payload.paperWidthMm}mm auto; margin: 4mm; }
-      body { margin: 0; font-family: Consolas, "Courier New", monospace; font-size: 11px; color: #000; }
+      body { margin: 0; font-family: Consolas, "Courier New", monospace; font-size: 11px; color: #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       .receipt { width: 100%; }
       .top-company { font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
       .rule { border-top: 1px solid #000; margin: 4px 0 8px; }
       .header { text-align: center; }
       .logo-slot { width: ${logo.widthMm}mm; height: ${logo.heightMm}mm; margin: 0 auto 4px; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-      .logo-slot img { max-width: 100%; max-height: 100%; object-fit: ${logo.fit}; }
+      .logo-slot img { width: 100%; height: 100%; object-fit: ${logo.fit}; }
       .logo-fallback { font-size: 18px; font-weight: 800; text-align: center; line-height: 1.05; }
       .datetime { text-align: center; font-size: 14px; font-weight: 700; line-height: 1.35; }
       .copy { margin: 8px 0 2px; text-align: center; font-size: 17px; font-weight: 900; letter-spacing: 0.04em; }
