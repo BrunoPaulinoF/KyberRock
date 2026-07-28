@@ -13,6 +13,7 @@ import type { LocalDesktopIdentity } from "./bootstrap.js";
 import { readLocalSetting, readStringLocalSetting, writeLocalSetting } from "./local-settings.js";
 import { ReportService } from "./reports.js";
 import {
+  ensureReportRecipientsTable,
   markRecipientSynced,
   markRecipientSyncError,
   type ReportRecipientRow
@@ -98,6 +99,10 @@ export interface CloudBootstrapResult extends SyncResult {
     operations: number;
     loadingRequests: number;
     printReceipts: number;
+    /** Cadastro compartilhado da pedreira (transportadoras, motoristas, veiculos, vinculos, precos, destinatarios). */
+    cadastro: number;
+    /** Avisos por tabela vindos do desktop-pull (ex.: tabela ausente na nuvem). */
+    warnings: string[];
   };
 }
 
@@ -108,6 +113,18 @@ interface DesktopPullResponse {
   loadingRequests?: Array<Record<string, unknown>>;
   printReceipts?: Array<Record<string, unknown>>;
   devices?: Array<Record<string, unknown>>;
+  carriers?: Array<Record<string, unknown>>;
+  drivers?: Array<Record<string, unknown>>;
+  vehicles?: Array<Record<string, unknown>>;
+  customerCarriers?: Array<Record<string, unknown>>;
+  driverCarriers?: Array<Record<string, unknown>>;
+  vehicleCarriers?: Array<Record<string, unknown>>;
+  productDefaultPrices?: Array<Record<string, unknown>>;
+  customerSpecialPrices?: Array<Record<string, unknown>>;
+  reportRecipients?: Array<Record<string, unknown>>;
+  warnings?: string[];
+  /** Relogio do servidor no momento do pull, usado como marca do proximo incremento. */
+  serverTime?: string;
 }
 
 export interface OmieCloudSyncResult {
@@ -528,14 +545,36 @@ export async function processCloudSyncQueue(
   return { processed, failed, errors };
 }
 
+export const CADASTRO_LAST_PULL_KEY = "cloud_cadastro_last_pull_at";
+/** Janela de sobreposicao do pull incremental, para absorver diferenca de relogio. */
+const CADASTRO_INCREMENTAL_OVERLAP_MS = 5 * 60 * 1000;
+
+/**
+ * Traz da nuvem o que as outras maquinas da pedreira registraram.
+ *
+ * `incremental` pede so o cadastro alterado desde o ultimo pull — e o modo dos
+ * pulls frequentes (a cada minuto). A sincronizacao completa e o bootstrap
+ * pedem o cadastro inteiro, o que tambem recupera qualquer registro que uma
+ * passada incremental tenha deixado de gravar.
+ */
 export async function pullDesktopDataFromCloud(
   database: DesktopDatabase,
-  identity: LocalDesktopIdentity
+  identity: LocalDesktopIdentity,
+  options: { incremental?: boolean } = {}
 ): Promise<CloudBootstrapResult["pulled"]> {
   const settings = getCloudSettings(database, identity);
   const supabase = getSupabaseClient();
+  const lastPullAt = readStringLocalSetting(database, CADASTRO_LAST_PULL_KEY);
+  const cadastroSince =
+    options.incremental && lastPullAt
+      ? new Date(new Date(lastPullAt).getTime() - CADASTRO_INCREMENTAL_OVERLAP_MS).toISOString()
+      : undefined;
   const { data, error } = await supabase.functions.invoke<DesktopPullResponse>("desktop-pull", {
-    body: { deviceId: settings.deviceId, deviceToken: settings.deviceToken }
+    body: {
+      deviceId: settings.deviceId,
+      deviceToken: settings.deviceToken,
+      ...(cadastroSince ? { cadastroSince } : {})
+    }
   });
   if (error) throw new Error(await getFunctionErrorMessage(error));
 
@@ -550,14 +589,434 @@ export async function pullDesktopDataFromCloud(
     );
     const customers = upsertCloudCustomers(database, settings.companyId, payload.customers ?? []);
     const products = upsertCloudProducts(database, settings.companyId, payload.products ?? []);
+    // Cadastro compartilhado antes das operacoes: veiculo/transportadora/motorista
+    // sao referenciados pelas operacoes vindas das outras maquinas da pedreira.
+    const cadastro = upsertCloudCadastro(database, settings.companyId, payload);
     const operations = upsertCloudOperations(database, settings, payload.operations ?? []);
     const loadingRequests = upsertCloudLoadingRequests(database, settings, payload.loadingRequests ?? []);
     const printReceipts = upsertCloudPrintReceipts(database, payload.printReceipts ?? []);
     writeLocalSetting(database, "cloud_bootstrap_last_pull_at", new Date().toISOString());
-    return { customers, products, operations, loadingRequests, printReceipts };
+    // Marca do relogio do servidor para o proximo pull incremental do cadastro.
+    // Se alguma tabela veio com aviso, nao avanca a marca: o proximo pull tenta
+    // de novo o mesmo intervalo em vez de deixar um buraco no espelho.
+    if ((payload.warnings ?? []).length === 0) {
+      writeLocalSetting(
+        database,
+        CADASTRO_LAST_PULL_KEY,
+        payload.serverTime ?? new Date().toISOString()
+      );
+    }
+    return {
+      customers,
+      products,
+      operations,
+      loadingRequests,
+      printReceipts,
+      cadastro,
+      warnings: payload.warnings ?? []
+    };
   });
 
   return apply();
+}
+
+/**
+ * Projeta no SQLite o cadastro compartilhado da pedreira que veio do desktop-pull:
+ * transportadoras, motoristas, veiculos, os vinculos entre eles e os precos.
+ * E o que faz um computador recem-instalado enxergar exatamente o mesmo cadastro
+ * das demais maquinas da mesma pedreira, sem depender de refazer o pull do OMIE.
+ */
+function upsertCloudCadastro(
+  database: DesktopDatabase,
+  companyId: string,
+  payload: DesktopPullResponse
+): number {
+  let count = 0;
+  count += upsertCloudCarriers(database, companyId, payload.carriers ?? []);
+  count += upsertCloudDrivers(database, companyId, payload.drivers ?? []);
+  count += upsertCloudVehicles(database, companyId, payload.vehicles ?? []);
+  count += upsertCloudJunction(database, "customer_carriers", "customer_id", payload.customerCarriers ?? []);
+  count += upsertCloudJunction(database, "driver_carriers", "driver_id", payload.driverCarriers ?? []);
+  count += upsertCloudJunction(database, "vehicle_carriers", "vehicle_id", payload.vehicleCarriers ?? []);
+  count += upsertCloudProductDefaultPrices(database, companyId, payload.productDefaultPrices ?? []);
+  count += upsertCloudCustomerSpecialPrices(database, companyId, payload.customerSpecialPrices ?? []);
+  count += upsertCloudReportRecipients(database, companyId, payload.reportRecipients ?? []);
+  return count;
+}
+
+function upsertCloudCarriers(
+  database: DesktopDatabase,
+  companyId: string,
+  rows: Array<Record<string, unknown>>
+): number {
+  const upsert = database.prepare(`
+    INSERT INTO carriers (
+      id, company_id, omie_customer_id, name, document, source, is_active,
+      created_at, updated_at, deleted_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+    ON CONFLICT(id) DO UPDATE SET
+      company_id = excluded.company_id,
+      omie_customer_id = COALESCE(excluded.omie_customer_id, carriers.omie_customer_id),
+      name = CASE WHEN carriers.needs_push = 0 THEN excluded.name ELSE carriers.name END,
+      document = CASE WHEN carriers.needs_push = 0 THEN excluded.document ELSE carriers.document END,
+      is_active = excluded.is_active,
+      updated_at = excluded.updated_at,
+      deleted_at = NULL
+  `);
+
+  let count = 0;
+  for (const row of rows) {
+    const id = stringValue(row.id);
+    const name = stringValue(row.name);
+    if (!id || !name) continue;
+    const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
+    upsert.run(
+      id,
+      companyId,
+      integerValue(row.omie_customer_id),
+      name,
+      nullableStringValue(row.document),
+      stringValue(row.source) === "omie" ? "omie" : "local",
+      booleanToSql(row.is_active, true),
+      isoStringValue(row.created_at) || updatedAt,
+      updatedAt
+    );
+    count++;
+  }
+  return count;
+}
+
+function upsertCloudDrivers(
+  database: DesktopDatabase,
+  companyId: string,
+  rows: Array<Record<string, unknown>>
+): number {
+  const upsert = database.prepare(`
+    INSERT INTO drivers (
+      id, company_id, name, document, phone, is_independent, is_active,
+      created_at, updated_at, deleted_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+    ON CONFLICT(id) DO UPDATE SET
+      company_id = excluded.company_id,
+      name = excluded.name,
+      document = excluded.document,
+      phone = excluded.phone,
+      is_independent = excluded.is_independent,
+      is_active = excluded.is_active,
+      updated_at = excluded.updated_at,
+      deleted_at = NULL
+  `);
+
+  let count = 0;
+  for (const row of rows) {
+    const id = stringValue(row.id);
+    const name = stringValue(row.name);
+    if (!id || !name) continue;
+    const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
+    upsert.run(
+      id,
+      companyId,
+      name,
+      nullableStringValue(row.document),
+      nullableStringValue(row.phone),
+      booleanToSql(row.is_independent, false),
+      booleanToSql(row.is_active, true),
+      isoStringValue(row.created_at) || updatedAt,
+      updatedAt
+    );
+    count++;
+  }
+  return count;
+}
+
+function upsertCloudVehicles(
+  database: DesktopDatabase,
+  companyId: string,
+  rows: Array<Record<string, unknown>>
+): number {
+  const upsert = database.prepare(`
+    INSERT INTO vehicles (
+      id, company_id, plate, plate_normalized, description, carrier_id, is_active,
+      created_at, updated_at, deleted_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+    ON CONFLICT(id) DO UPDATE SET
+      company_id = excluded.company_id,
+      plate = excluded.plate,
+      plate_normalized = excluded.plate_normalized,
+      description = excluded.description,
+      carrier_id = excluded.carrier_id,
+      is_active = excluded.is_active,
+      updated_at = excluded.updated_at,
+      deleted_at = NULL
+  `);
+
+  let count = 0;
+  for (const row of rows) {
+    const id = stringValue(row.id);
+    const plate = stringValue(row.plate);
+    if (!id || !plate) continue;
+    const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
+    // Veiculo com transportadora que ainda nao chegou: grava sem o vinculo em vez
+    // de estourar a FK e derrubar o pull inteiro.
+    const carrierId = existingId(database, "carriers", row.carrier_id);
+    upsert.run(
+      id,
+      companyId,
+      plate,
+      plate.replace(/\s/g, "").toUpperCase(),
+      nullableStringValue(row.description),
+      carrierId,
+      booleanToSql(row.is_active, true),
+      isoStringValue(row.created_at) || updatedAt,
+      updatedAt
+    );
+    count++;
+  }
+  return count;
+}
+
+const JUNCTION_PARENT_TABLE: Record<string, string> = {
+  customer_id: "customers",
+  driver_id: "drivers",
+  vehicle_id: "vehicles"
+};
+
+function upsertCloudJunction(
+  database: DesktopDatabase,
+  table: "customer_carriers" | "driver_carriers" | "vehicle_carriers",
+  parentColumn: "customer_id" | "driver_id" | "vehicle_id",
+  rows: Array<Record<string, unknown>>
+): number {
+  const upsert = database.prepare(`
+    INSERT INTO ${table} (id, ${parentColumn}, carrier_id, is_active, created_at, updated_at, deleted_at)
+    VALUES (?, ?, ?, ?, ?, ?, NULL)
+    ON CONFLICT(id) DO UPDATE SET
+      ${parentColumn} = excluded.${parentColumn},
+      carrier_id = excluded.carrier_id,
+      is_active = excluded.is_active,
+      updated_at = excluded.updated_at,
+      deleted_at = NULL
+  `);
+
+  let count = 0;
+  for (const row of rows) {
+    const id = stringValue(row.id);
+    if (!id) continue;
+    // Vinculo cuja ponta ainda nao existe localmente e ignorado nesta passada;
+    // o proximo pull (ja com o cadastro pai) grava o vinculo.
+    const parentId = existingId(database, JUNCTION_PARENT_TABLE[parentColumn], row[parentColumn]);
+    const carrierId = existingId(database, "carriers", row.carrier_id);
+    if (!parentId || !carrierId) continue;
+    const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
+    upsert.run(
+      id,
+      parentId,
+      carrierId,
+      booleanToSql(row.is_active, true),
+      isoStringValue(row.created_at) || updatedAt,
+      updatedAt
+    );
+    count++;
+  }
+  return count;
+}
+
+function upsertCloudProductDefaultPrices(
+  database: DesktopDatabase,
+  companyId: string,
+  rows: Array<Record<string, unknown>>
+): number {
+  const upsert = database.prepare(`
+    INSERT INTO product_default_prices (
+      id, company_id, product_id, unit_price_cents, unit, valid_from, valid_to,
+      is_active, created_at, updated_at, deleted_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      company_id = excluded.company_id,
+      product_id = excluded.product_id,
+      unit_price_cents = excluded.unit_price_cents,
+      unit = excluded.unit,
+      valid_from = excluded.valid_from,
+      valid_to = excluded.valid_to,
+      is_active = excluded.is_active,
+      updated_at = excluded.updated_at,
+      deleted_at = excluded.deleted_at
+  `);
+
+  // Indice unico local (product_id, is_active) entre os nao excluidos: se a mesma
+  // tabela de preco ja existe localmente com outro id, mantem a local e ignora a
+  // copia da nuvem (gravar as duas violaria o indice e derrubaria o pull).
+  const findConflict = database.prepare(
+    `SELECT id FROM product_default_prices
+     WHERE product_id = ? AND is_active = ? AND deleted_at IS NULL LIMIT 1`
+  );
+
+  let count = 0;
+  for (const row of rows) {
+    const id = stringValue(row.id);
+    const productId = existingId(database, "products", row.product_id);
+    const price = integerValue(row.unit_price_cents);
+    if (!id || !productId || price === null) continue;
+    const isActive = booleanToSql(row.is_active, true);
+    const deletedAt = isoStringValue(row.deleted_at);
+    if (!deletedAt) {
+      const conflict = findConflict.get(productId, isActive) as { id: string } | undefined;
+      if (conflict && conflict.id !== id) continue;
+    }
+    const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
+    upsert.run(
+      id,
+      companyId,
+      productId,
+      price,
+      stringValue(row.unit) || "ton",
+      nullableStringValue(row.valid_from),
+      nullableStringValue(row.valid_to),
+      isActive,
+      isoStringValue(row.created_at) || updatedAt,
+      updatedAt,
+      deletedAt
+    );
+    count++;
+  }
+  return count;
+}
+
+function upsertCloudCustomerSpecialPrices(
+  database: DesktopDatabase,
+  companyId: string,
+  rows: Array<Record<string, unknown>>
+): number {
+  const upsert = database.prepare(`
+    INSERT INTO customer_special_prices (
+      id, company_id, customer_id, product_id, unit_price_cents, unit,
+      is_active, created_at, updated_at, deleted_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      company_id = excluded.company_id,
+      customer_id = excluded.customer_id,
+      product_id = excluded.product_id,
+      unit_price_cents = excluded.unit_price_cents,
+      unit = excluded.unit,
+      is_active = excluded.is_active,
+      updated_at = excluded.updated_at,
+      deleted_at = excluded.deleted_at
+  `);
+
+  // Indice unico local (customer_id, product_id) entre os nao excluidos.
+  const findConflict = database.prepare(
+    `SELECT id FROM customer_special_prices
+     WHERE customer_id = ? AND product_id = ? AND deleted_at IS NULL LIMIT 1`
+  );
+
+  let count = 0;
+  for (const row of rows) {
+    const id = stringValue(row.id);
+    const customerId = existingId(database, "customers", row.customer_id);
+    const productId = existingId(database, "products", row.product_id);
+    const price = integerValue(row.unit_price_cents);
+    if (!id || !customerId || !productId || price === null) continue;
+    const deletedAt = isoStringValue(row.deleted_at);
+    if (!deletedAt) {
+      const conflict = findConflict.get(customerId, productId) as { id: string } | undefined;
+      if (conflict && conflict.id !== id) continue;
+    }
+    const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
+    upsert.run(
+      id,
+      companyId,
+      customerId,
+      productId,
+      price,
+      stringValue(row.unit) || "ton",
+      booleanToSql(row.is_active, true),
+      isoStringValue(row.created_at) || updatedAt,
+      updatedAt,
+      deletedAt
+    );
+    count++;
+  }
+  return count;
+}
+
+function upsertCloudReportRecipients(
+  database: DesktopDatabase,
+  companyId: string,
+  rows: Array<Record<string, unknown>>
+): number {
+  ensureReportRecipientsTable(database);
+  // needs_push = 1 significa alteracao local ainda nao enviada: a versao da
+  // nuvem nao pode sobrescreve-la (senao a edicao feita offline se perde).
+  const upsert = database.prepare(`
+    INSERT INTO report_recipients (
+      id, company_id, email, whatsapp_phone, send_email, send_whatsapp,
+      schedule_frequency, schedule_time, report_types, send_financial,
+      financial_schedule_time, display_name, is_active, needs_push, sync_status,
+      last_synced_at, created_at, updated_at, deleted_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'synced', ?, ?, ?, NULL)
+    ON CONFLICT(id) DO UPDATE SET
+      email = CASE WHEN report_recipients.needs_push = 0 THEN excluded.email ELSE report_recipients.email END,
+      whatsapp_phone = CASE WHEN report_recipients.needs_push = 0 THEN excluded.whatsapp_phone ELSE report_recipients.whatsapp_phone END,
+      send_email = CASE WHEN report_recipients.needs_push = 0 THEN excluded.send_email ELSE report_recipients.send_email END,
+      send_whatsapp = CASE WHEN report_recipients.needs_push = 0 THEN excluded.send_whatsapp ELSE report_recipients.send_whatsapp END,
+      schedule_frequency = CASE WHEN report_recipients.needs_push = 0 THEN excluded.schedule_frequency ELSE report_recipients.schedule_frequency END,
+      schedule_time = CASE WHEN report_recipients.needs_push = 0 THEN excluded.schedule_time ELSE report_recipients.schedule_time END,
+      report_types = CASE WHEN report_recipients.needs_push = 0 THEN excluded.report_types ELSE report_recipients.report_types END,
+      send_financial = CASE WHEN report_recipients.needs_push = 0 THEN excluded.send_financial ELSE report_recipients.send_financial END,
+      financial_schedule_time = CASE WHEN report_recipients.needs_push = 0 THEN excluded.financial_schedule_time ELSE report_recipients.financial_schedule_time END,
+      display_name = CASE WHEN report_recipients.needs_push = 0 THEN excluded.display_name ELSE report_recipients.display_name END,
+      is_active = CASE WHEN report_recipients.needs_push = 0 THEN excluded.is_active ELSE report_recipients.is_active END,
+      updated_at = excluded.updated_at,
+      deleted_at = CASE WHEN report_recipients.needs_push = 0 THEN NULL ELSE report_recipients.deleted_at END
+  `);
+
+  // UNIQUE(company_id, email) e o indice unico de whatsapp: o mesmo destinatario
+  // cadastrado em duas maquinas antes do primeiro sync tem ids diferentes; mantem
+  // o local e ignora a copia para nao violar o indice.
+  const findConflict = database.prepare(
+    `SELECT id FROM report_recipients
+     WHERE company_id = ?
+       AND ((? IS NOT NULL AND email = ?) OR (? IS NOT NULL AND whatsapp_phone = ?))
+     LIMIT 1`
+  );
+
+  const frequencies = new Set(["daily", "weekly", "monthly"]);
+  const reportTypes = new Set(["sales", "trucks", "both"]);
+  let count = 0;
+  for (const row of rows) {
+    const id = stringValue(row.id);
+    if (!id) continue;
+    const email = nullableStringValue(row.email);
+    const whatsapp = nullableStringValue(row.whatsapp_phone);
+    if (!email && !whatsapp) continue;
+    const conflict = findConflict.get(companyId, email, email, whatsapp, whatsapp) as
+      | { id: string }
+      | undefined;
+    if (conflict && conflict.id !== id) continue;
+    const frequency = stringValue(row.schedule_frequency);
+    const type = stringValue(row.report_types);
+    const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
+    upsert.run(
+      id,
+      companyId,
+      email,
+      whatsapp,
+      booleanToSql(row.send_email, Boolean(email)),
+      booleanToSql(row.send_whatsapp, Boolean(whatsapp)),
+      frequencies.has(frequency) ? frequency : "daily",
+      stringValue(row.schedule_time) || "20:00",
+      reportTypes.has(type) ? type : "sales",
+      booleanToSql(row.send_financial, false),
+      nullableStringValue(row.financial_schedule_time),
+      nullableStringValue(row.display_name),
+      booleanToSql(row.is_active, true),
+      updatedAt,
+      isoStringValue(row.created_at) || updatedAt,
+      updatedAt
+    );
+    count++;
+  }
+  return count;
 }
 
 export interface CnpjLookupResult {
@@ -2530,6 +2989,9 @@ export async function pushPendingReportRecipients(
   identity: LocalDesktopIdentity
 ): Promise<number> {
   const settings = getCloudSettings(database, identity);
+  // Bases criadas antes da migracao 35 so ganhavam a tabela ao abrir a tela de
+  // Relatorios; sem isto a sincronizacao quebrava com "no such table".
+  ensureReportRecipientsTable(database);
   const rows = database
     .prepare(
       `SELECT * FROM report_recipients WHERE company_id = ? AND needs_push = 1
@@ -3036,182 +3498,470 @@ export async function pullCompanyPricePasswordFromCloud(
   return true;
 }
 
-export async function syncCustomerCarriersToCloud(
+// ---------------------------------------------------------------------------
+// Cadastro compartilhado da pedreira (push)
+//
+// Todo desktop da mesma pedreira precisa ver o mesmo cadastro. O push envia para
+// a nuvem, em lotes e por ordem de dependencia, o que esta maquina conhece;
+// o desktop-pull devolve o conjunto para as demais. O avanco e controlado por um
+// cursor (updated_at, id) por entidade, entao cada ciclo manda so o que mudou.
+//
+// O cursor normaliza o formato do updated_at ("2026-07-28 10:00:00" gravado pelo
+// SQLite e "2026-07-28T10:00:00.000Z" gravado a partir da nuvem) para os dois
+// ordenarem igual.
+// ---------------------------------------------------------------------------
+
+const CADASTRO_PUSH_STATE_KEY = "cloud_cadastro_push_state";
+const CADASTRO_PUSH_BATCH_SIZE = 100;
+const CADASTRO_PUSH_MAX_ROUNDS = 60;
+/** Linhas seguidas rejeitadas, sem nenhuma aceita, que caracterizam falha sistemica. */
+const CADASTRO_PUSH_SYSTEMIC_PROBE = 2;
+
+interface CadastroCursor {
+  at: string;
+  id: string;
+}
+
+type CadastroPushState = Record<string, CadastroCursor | undefined>;
+
+interface CadastroPushEntity {
+  /** Chave do payload aceita pela edge function desktop-sync. */
+  key: string;
+  /** Nome legivel usado nas mensagens de erro. */
+  label: string;
+  /** SELECT com os parametros nomeados @companyId, @cursorAt, @cursorId e @limit. */
+  sql: string;
+  map: (row: Record<string, unknown>, companyId: string) => Record<string, unknown>;
+}
+
+function cursorExpression(alias: string): string {
+  return `REPLACE(SUBSTR(${alias}.updated_at, 1, 19), 'T', ' ')`;
+}
+
+function buildCadastroSelect(options: {
+  table: string;
+  alias: string;
+  columns: string;
+  joins?: string;
+  where: string;
+}): string {
+  const cursor = cursorExpression(options.alias);
+  return `
+    SELECT ${options.columns}, ${cursor} AS cursor_at
+    FROM ${options.table} ${options.alias}
+    ${options.joins ?? ""}
+    WHERE ${options.where}
+      AND (
+        @cursorAt IS NULL
+        OR ${cursor} > @cursorAt
+        OR (${cursor} = @cursorAt AND ${options.alias}.id > @cursorId)
+      )
+    ORDER BY cursor_at ASC, ${options.alias}.id ASC
+    LIMIT @limit
+  `;
+}
+
+function cloudTimestamp(value: unknown, fallback: string): string {
+  const text = stringValue(value);
+  if (!text) return fallback;
+  const normalized = text.includes("T") ? text : `${text.replace(" ", "T")}Z`;
+  const parsed = new Date(normalized);
+  return Number.isNaN(parsed.getTime()) ? fallback : parsed.toISOString();
+}
+
+// is_active na nuvem embute a exclusao logica local: as tabelas espelhadas de
+// cadastro nao tem deleted_at, entao um registro apagado aqui vira inativo la.
+function cloudActive(row: Record<string, unknown>): boolean {
+  return Number(row.is_active ?? 1) === 1 && !row.deleted_at;
+}
+
+const CADASTRO_PUSH_ENTITIES: readonly CadastroPushEntity[] = [
+  {
+    key: "customers",
+    label: "clientes",
+    sql: buildCadastroSelect({
+      table: "customers",
+      alias: "c",
+      columns:
+        "c.id, c.omie_customer_id, c.legal_name, c.trade_name, c.document, c.phone, c.email, c.credit_limit_cents, c.open_receivables_cents, c.is_active, c.created_at, c.updated_at, c.deleted_at",
+      where: "c.company_id = @companyId"
+    }),
+    map: (row, companyId) => {
+      const updatedAt = cloudTimestamp(row.updated_at, new Date().toISOString());
+      const legalName = stringValue(row.legal_name) || stringValue(row.trade_name) || "Cliente";
+      return {
+        id: stringValue(row.id),
+        company_id: companyId,
+        omie_customer_id: integerValue(row.omie_customer_id),
+        legal_name: legalName,
+        trade_name: stringValue(row.trade_name) || legalName,
+        document: nullableStringValue(row.document),
+        phone: nullableStringValue(row.phone),
+        email: nullableStringValue(row.email),
+        credit_limit_cents: integerValue(row.credit_limit_cents),
+        open_receivables_cents: integerValue(row.open_receivables_cents) ?? 0,
+        is_active: cloudActive(row),
+        created_at: cloudTimestamp(row.created_at, updatedAt),
+        updated_at: updatedAt
+      };
+    }
+  },
+  {
+    key: "products",
+    label: "produtos",
+    sql: buildCadastroSelect({
+      table: "products",
+      alias: "p",
+      columns:
+        "p.id, p.omie_product_id, p.code, p.description, p.unit, p.is_active, p.created_at, p.updated_at, p.deleted_at",
+      where: "p.company_id = @companyId"
+    }),
+    map: (row, companyId) => {
+      const updatedAt = cloudTimestamp(row.updated_at, new Date().toISOString());
+      return {
+        id: stringValue(row.id),
+        company_id: companyId,
+        omie_product_id: integerValue(row.omie_product_id),
+        code: stringValue(row.code) || stringValue(row.id),
+        description: stringValue(row.description) || "Produto",
+        unit: stringValue(row.unit) || "KG",
+        is_active: cloudActive(row),
+        created_at: cloudTimestamp(row.created_at, updatedAt),
+        updated_at: updatedAt
+      };
+    }
+  },
+  {
+    key: "carriers",
+    label: "transportadoras",
+    sql: buildCadastroSelect({
+      table: "carriers",
+      alias: "ca",
+      columns:
+        "ca.id, ca.omie_customer_id, ca.name, ca.document, ca.source, ca.is_active, ca.created_at, ca.updated_at, ca.deleted_at",
+      where: "ca.company_id = @companyId"
+    }),
+    map: (row, companyId) => {
+      const updatedAt = cloudTimestamp(row.updated_at, new Date().toISOString());
+      return {
+        id: stringValue(row.id),
+        company_id: companyId,
+        omie_customer_id: integerValue(row.omie_customer_id),
+        name: stringValue(row.name) || "Transportadora",
+        document: nullableStringValue(row.document),
+        source: stringValue(row.source) === "omie" ? "omie" : "local",
+        is_active: cloudActive(row),
+        created_at: cloudTimestamp(row.created_at, updatedAt),
+        updated_at: updatedAt
+      };
+    }
+  },
+  {
+    key: "drivers",
+    label: "motoristas",
+    sql: buildCadastroSelect({
+      table: "drivers",
+      alias: "d",
+      columns:
+        "d.id, d.name, d.document, d.phone, d.is_independent, d.is_active, d.created_at, d.updated_at, d.deleted_at",
+      where: "d.company_id = @companyId"
+    }),
+    map: (row, companyId) => {
+      const updatedAt = cloudTimestamp(row.updated_at, new Date().toISOString());
+      return {
+        id: stringValue(row.id),
+        company_id: companyId,
+        name: stringValue(row.name) || "Motorista",
+        document: nullableStringValue(row.document),
+        phone: nullableStringValue(row.phone),
+        is_independent: Number(row.is_independent ?? 0) === 1,
+        is_active: cloudActive(row),
+        created_at: cloudTimestamp(row.created_at, updatedAt),
+        updated_at: updatedAt
+      };
+    }
+  },
+  {
+    key: "vehicles",
+    label: "veiculos",
+    sql: buildCadastroSelect({
+      table: "vehicles",
+      alias: "v",
+      columns:
+        "v.id, v.plate, v.description, v.carrier_id, v.is_active, v.created_at, v.updated_at, v.deleted_at",
+      where: "v.company_id = @companyId"
+    }),
+    map: (row, companyId) => {
+      const updatedAt = cloudTimestamp(row.updated_at, new Date().toISOString());
+      return {
+        id: stringValue(row.id),
+        company_id: companyId,
+        plate: stringValue(row.plate),
+        description: nullableStringValue(row.description),
+        carrier_id: nullableStringValue(row.carrier_id),
+        is_active: cloudActive(row),
+        created_at: cloudTimestamp(row.created_at, updatedAt),
+        updated_at: updatedAt
+      };
+    }
+  },
+  {
+    key: "customerCarriers",
+    label: "vinculos cliente/transportadora",
+    sql: buildCadastroSelect({
+      table: "customer_carriers",
+      alias: "cc",
+      columns:
+        "cc.id, cc.customer_id, cc.carrier_id, cc.is_active, cc.created_at, cc.updated_at, cc.deleted_at",
+      joins: "JOIN customers cust ON cust.id = cc.customer_id",
+      where: "cust.company_id = @companyId"
+    }),
+    map: (row, companyId) => {
+      const updatedAt = cloudTimestamp(row.updated_at, new Date().toISOString());
+      return {
+        id: stringValue(row.id),
+        company_id: companyId,
+        customer_id: stringValue(row.customer_id),
+        carrier_id: stringValue(row.carrier_id),
+        is_active: cloudActive(row),
+        created_at: cloudTimestamp(row.created_at, updatedAt),
+        updated_at: updatedAt
+      };
+    }
+  },
+  {
+    key: "driverCarriers",
+    label: "vinculos motorista/transportadora",
+    sql: buildCadastroSelect({
+      table: "driver_carriers",
+      alias: "dc",
+      columns:
+        "dc.id, dc.driver_id, dc.carrier_id, dc.is_active, dc.created_at, dc.updated_at, dc.deleted_at",
+      joins: "JOIN drivers drv ON drv.id = dc.driver_id",
+      where: "drv.company_id = @companyId"
+    }),
+    map: (row, companyId) => {
+      const updatedAt = cloudTimestamp(row.updated_at, new Date().toISOString());
+      return {
+        id: stringValue(row.id),
+        company_id: companyId,
+        driver_id: stringValue(row.driver_id),
+        carrier_id: stringValue(row.carrier_id),
+        is_active: cloudActive(row),
+        created_at: cloudTimestamp(row.created_at, updatedAt),
+        updated_at: updatedAt
+      };
+    }
+  },
+  {
+    key: "vehicleCarriers",
+    label: "vinculos veiculo/transportadora",
+    sql: buildCadastroSelect({
+      table: "vehicle_carriers",
+      alias: "vc",
+      columns:
+        "vc.id, vc.vehicle_id, vc.carrier_id, vc.is_active, vc.created_at, vc.updated_at, vc.deleted_at",
+      joins: "JOIN vehicles veh ON veh.id = vc.vehicle_id",
+      where: "veh.company_id = @companyId"
+    }),
+    map: (row, companyId) => {
+      const updatedAt = cloudTimestamp(row.updated_at, new Date().toISOString());
+      return {
+        id: stringValue(row.id),
+        company_id: companyId,
+        vehicle_id: stringValue(row.vehicle_id),
+        carrier_id: stringValue(row.carrier_id),
+        is_active: cloudActive(row),
+        created_at: cloudTimestamp(row.created_at, updatedAt),
+        updated_at: updatedAt
+      };
+    }
+  },
+  {
+    key: "productDefaultPrices",
+    label: "precos padrao",
+    sql: buildCadastroSelect({
+      table: "product_default_prices",
+      alias: "pp",
+      columns:
+        "pp.id, pp.product_id, pp.unit_price_cents, pp.unit, pp.valid_from, pp.valid_to, pp.is_active, pp.created_at, pp.updated_at, pp.deleted_at",
+      where: "pp.company_id = @companyId AND pp.unit_price_cents > 0"
+    }),
+    map: (row, companyId) => {
+      const updatedAt = cloudTimestamp(row.updated_at, new Date().toISOString());
+      return {
+        id: stringValue(row.id),
+        company_id: companyId,
+        product_id: stringValue(row.product_id),
+        unit_price_cents: integerValue(row.unit_price_cents),
+        unit: stringValue(row.unit) || "ton",
+        valid_from: nullableStringValue(row.valid_from),
+        valid_to: nullableStringValue(row.valid_to),
+        is_active: cloudActive(row),
+        created_at: cloudTimestamp(row.created_at, updatedAt),
+        updated_at: updatedAt,
+        deleted_at: row.deleted_at ? cloudTimestamp(row.deleted_at, updatedAt) : null
+      };
+    }
+  },
+  {
+    key: "customerSpecialPrices",
+    label: "precos especiais",
+    sql: buildCadastroSelect({
+      table: "customer_special_prices",
+      alias: "sp",
+      columns:
+        "sp.id, sp.customer_id, sp.product_id, sp.unit_price_cents, sp.unit, sp.is_active, sp.created_at, sp.updated_at, sp.deleted_at",
+      where: "sp.company_id = @companyId AND sp.unit_price_cents > 0"
+    }),
+    map: (row, companyId) => {
+      const updatedAt = cloudTimestamp(row.updated_at, new Date().toISOString());
+      return {
+        id: stringValue(row.id),
+        company_id: companyId,
+        customer_id: stringValue(row.customer_id),
+        product_id: stringValue(row.product_id),
+        unit_price_cents: integerValue(row.unit_price_cents),
+        unit: stringValue(row.unit) || "ton",
+        is_active: cloudActive(row),
+        created_at: cloudTimestamp(row.created_at, updatedAt),
+        updated_at: updatedAt,
+        deleted_at: row.deleted_at ? cloudTimestamp(row.deleted_at, updatedAt) : null
+      };
+    }
+  }
+];
+
+function readCadastroPushState(database: DesktopDatabase): CadastroPushState {
+  return readLocalSetting<CadastroPushState>(database, CADASTRO_PUSH_STATE_KEY) ?? {};
+}
+
+function writeCadastroPushCursor(
   database: DesktopDatabase,
-  identity: LocalDesktopIdentity
-): Promise<{ synced: number; errors: string[] }> {
-  const supabase = getSupabaseClient();
-  const rows = database
-    .prepare(`
-      SELECT cc.id, cc.customer_id, cc.carrier_id, cc.is_active, cc.created_at, cc.updated_at
-      FROM customer_carriers cc
-      JOIN customers c ON c.id = cc.customer_id
-      WHERE c.company_id = ? AND cc.deleted_at IS NULL
-    `)
-    .all(identity.companyId) as Array<{
-      id: string;
-      customer_id: string;
-      carrier_id: string;
-      is_active: number;
-      created_at: string;
-      updated_at: string;
-    }>;
+  key: string,
+  cursor: CadastroCursor
+): void {
+  const state = readCadastroPushState(database);
+  writeLocalSetting(database, CADASTRO_PUSH_STATE_KEY, { ...state, [key]: cursor });
+}
 
-  const errors: string[] = [];
-  let synced = 0;
+/**
+ * Reinicia os cursores para o proximo push reenviar todo o cadastro da empresa.
+ * Usado quando a maquina ainda nao publicou nada (primeira sincronizacao apos a
+ * ativacao) ou quando o operador pede uma ressincronizacao completa.
+ */
+export function resetSharedCadastroPushState(database: DesktopDatabase): void {
+  writeLocalSetting(database, CADASTRO_PUSH_STATE_KEY, {});
+}
 
-  for (const row of rows) {
-    try {
-      const { error } = await supabase.from("customer_carriers").upsert({
-        id: row.id,
-        customer_id: row.customer_id,
-        carrier_id: row.carrier_id,
-        is_active: Boolean(row.is_active),
-        created_at: row.created_at,
-        updated_at: row.updated_at
-      }, { onConflict: "id" });
+/**
+ * Envia um lote de cadastro. Se o lote inteiro falhar, testa uma linha sozinha
+ * para separar os dois casos: nuvem indisponivel / tabela ausente (falha
+ * sistemica, nada avanca e o proximo ciclo repete) e registro invalido isolado
+ * (as demais linhas seguem uma a uma e so a problematica vira erro) — assim uma
+ * linha ruim nao trava o cadastro inteiro para sempre.
+ */
+async function sendCadastroBatch(
+  settings: CloudSettings,
+  entity: CadastroPushEntity,
+  payload: Array<Record<string, unknown>>,
+  errors: string[]
+): Promise<{ pushed: number; systemicFailure: boolean }> {
+  if (payload.length === 0) return { pushed: 0, systemicFailure: false };
 
-      if (error) throw error;
-      synced++;
-    } catch (err) {
-      errors.push(`customer_carrier ${row.id}: ${err instanceof Error ? err.message : "Erro"}`);
+  try {
+    await invokeDesktopSync(settings, { [entity.key]: payload });
+    return { pushed: payload.length, systemicFailure: false };
+  } catch (error) {
+    if (payload.length === 1) {
+      errors.push(
+        `Cadastro ${entity.label} (${String(payload[0].id)}): ${
+          error instanceof Error ? error.message : "falha ao enviar"
+        }`
+      );
+      return { pushed: 0, systemicFailure: true };
     }
   }
 
-  return { synced, errors };
-}
-
-export async function syncDriverCarriersToCloud(
-  database: DesktopDatabase,
-  identity: LocalDesktopIdentity
-): Promise<{ synced: number; errors: string[] }> {
-  const supabase = getSupabaseClient();
-  const rows = database
-    .prepare(`
-      SELECT dc.id, dc.driver_id, dc.carrier_id, dc.is_active, dc.created_at, dc.updated_at
-      FROM driver_carriers dc
-      JOIN drivers d ON d.id = dc.driver_id
-      WHERE d.company_id = ? AND dc.deleted_at IS NULL
-    `)
-    .all(identity.companyId) as Array<{
-      id: string;
-      driver_id: string;
-      carrier_id: string;
-      is_active: number;
-      created_at: string;
-      updated_at: string;
-    }>;
-
-  const errors: string[] = [];
-  let synced = 0;
-
-  for (const row of rows) {
+  let pushed = 0;
+  let failed = 0;
+  for (const row of payload) {
     try {
-      const { error } = await supabase.from("driver_carriers").upsert({
-        id: row.id,
-        driver_id: row.driver_id,
-        carrier_id: row.carrier_id,
-        is_active: Boolean(row.is_active),
-        created_at: row.created_at,
-        updated_at: row.updated_at
-      }, { onConflict: "id" });
-
-      if (error) throw error;
-      synced++;
-    } catch (err) {
-      errors.push(`driver_carrier ${row.id}: ${err instanceof Error ? err.message : "Erro"}`);
+      await invokeDesktopSync(settings, { [entity.key]: [row] });
+      pushed++;
+    } catch (error) {
+      failed++;
+      errors.push(
+        `Cadastro ${entity.label} (${String(row.id)}): ${
+          error instanceof Error ? error.message : "falha ao enviar"
+        }`
+      );
+      // Nada passou ate agora: e falha sistemica, nao adianta insistir linha a linha.
+      if (pushed === 0 && failed >= CADASTRO_PUSH_SYSTEMIC_PROBE) {
+        return { pushed, systemicFailure: true };
+      }
     }
   }
 
-  return { synced, errors };
+  return { pushed, systemicFailure: pushed === 0 };
 }
 
-export async function pullCustomerCarriersFromCloud(
+/**
+ * Publica na nuvem o cadastro compartilhado desta maquina (clientes, produtos,
+ * transportadoras, motoristas, veiculos, vinculos e precos) para as outras
+ * maquinas da mesma pedreira receberem no proximo pull.
+ */
+export async function pushSharedCadastroToCloud(
   database: DesktopDatabase,
-  identity: LocalDesktopIdentity
-): Promise<{ pulled: number; errors: string[] }> {
-  const supabase = getSupabaseClient();
-  const { data, error } = await supabase
-    .from("customer_carriers")
-    .select("id, customer_id, carrier_id, is_active, created_at, updated_at")
-    .eq("customer_id", identity.companyId)
-    .eq("is_active", true);
-
+  identity: LocalDesktopIdentity,
+  options: { batchSize?: number; maxRounds?: number } = {}
+): Promise<{ pushed: number; errors: string[] }> {
+  const settings = getCloudSettings(database, identity);
+  const batchSize = options.batchSize ?? CADASTRO_PUSH_BATCH_SIZE;
+  const maxRounds = options.maxRounds ?? CADASTRO_PUSH_MAX_ROUNDS;
   const errors: string[] = [];
-  if (error) {
-    errors.push(`pullCustomerCarriers: ${error.message}`);
-    return { pulled: 0, errors };
+  let pushed = 0;
+
+  for (const entity of CADASTRO_PUSH_ENTITIES) {
+    let cursor = readCadastroPushState(database)[entity.key] ?? null;
+
+    for (let round = 0; round < maxRounds; round++) {
+      let rows: Array<Record<string, unknown>>;
+      try {
+        rows = database.prepare(entity.sql).all({
+          companyId: settings.companyId,
+          cursorAt: cursor?.at ?? null,
+          cursorId: cursor?.id ?? "",
+          limit: batchSize
+        }) as Array<Record<string, unknown>>;
+      } catch (error) {
+        errors.push(
+          `Cadastro ${entity.label}: ${error instanceof Error ? error.message : "erro ao ler base local"}`
+        );
+        break;
+      }
+
+      if (rows.length === 0) break;
+
+      const payload = rows
+        .map((row) => entity.map(row, settings.companyId))
+        .filter((row) => Boolean(row.id));
+
+      const sent = await sendCadastroBatch(settings, entity, payload, errors);
+      pushed += sent.pushed;
+      // Falha sistemica (nuvem fora do ar, tabela ausente): mantem o cursor onde
+      // esta para o proximo ciclo tentar o mesmo lote de novo.
+      if (sent.systemicFailure) break;
+
+      const last = rows[rows.length - 1];
+      cursor = { at: String(last.cursor_at ?? ""), id: String(last.id ?? "") };
+      writeCadastroPushCursor(database, entity.key, cursor);
+
+      if (rows.length < batchSize) break;
+    }
   }
 
-  const upsert = database.prepare(`
-    INSERT INTO customer_carriers (id, customer_id, carrier_id, is_active, created_at, updated_at, deleted_at)
-    VALUES (?, ?, ?, ?, ?, ?, NULL)
-    ON CONFLICT(id) DO UPDATE SET
-      customer_id = excluded.customer_id,
-      carrier_id = excluded.carrier_id,
-      is_active = excluded.is_active,
-      updated_at = excluded.updated_at,
-      deleted_at = NULL
-  `);
-
-  let pulled = 0;
-  for (const row of (data ?? [])) {
-    upsert.run(
-      row.id,
-      row.customer_id,
-      row.carrier_id,
-      row.is_active ? 1 : 0,
-      row.created_at,
-      row.updated_at
-    );
-    pulled++;
-  }
-
-  return { pulled, errors };
-}
-
-export async function pullDriverCarriersFromCloud(
-  database: DesktopDatabase,
-  identity: LocalDesktopIdentity
-): Promise<{ pulled: number; errors: string[] }> {
-  const supabase = getSupabaseClient();
-  const { data, error } = await supabase
-    .from("driver_carriers")
-    .select("id, driver_id, carrier_id, is_active, created_at, updated_at")
-    .eq("driver_id", identity.companyId)
-    .eq("is_active", true);
-
-  const errors: string[] = [];
-  if (error) {
-    errors.push(`pullDriverCarriers: ${error.message}`);
-    return { pulled: 0, errors };
-  }
-
-  const upsert = database.prepare(`
-    INSERT INTO driver_carriers (id, driver_id, carrier_id, is_active, created_at, updated_at, deleted_at)
-    VALUES (?, ?, ?, ?, ?, ?, NULL)
-    ON CONFLICT(id) DO UPDATE SET
-      driver_id = excluded.driver_id,
-      carrier_id = excluded.carrier_id,
-      is_active = excluded.is_active,
-      updated_at = excluded.updated_at,
-      deleted_at = NULL
-  `);
-
-  let pulled = 0;
-  for (const row of (data ?? [])) {
-    upsert.run(
-      row.id,
-      row.driver_id,
-      row.carrier_id,
-      row.is_active ? 1 : 0,
-      row.created_at,
-      row.updated_at
-    );
-    pulled++;
-  }
-
-  return { pulled, errors };
+  return { pushed, errors };
 }
 
 export async function pullLoaderCompletionsFromCloud(
