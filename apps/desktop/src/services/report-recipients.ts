@@ -164,7 +164,12 @@ function ensureValidRecipient(input: {
   return { email, whatsappPhone };
 }
 
-function ensureRecipientsTable(database: DesktopDatabase): void {
+/**
+ * Garante a tabela de destinatarios (e as colunas adicionadas depois) na base
+ * local. A tabela nasce na migracao 35; esta funcao continua cuidando das bases
+ * antigas, criadas antes de ela existir no schema.
+ */
+export function ensureReportRecipientsTable(database: DesktopDatabase): void {
   const createTableSql = `
     CREATE TABLE IF NOT EXISTS report_recipients (
       id TEXT PRIMARY KEY,
@@ -287,7 +292,7 @@ export function listReportRecipients(
   database: DesktopDatabase,
   companyId: string
 ): ReportRecipient[] {
-  ensureRecipientsTable(database);
+  ensureReportRecipientsTable(database);
   const rows = database
     .prepare(
       `SELECT * FROM report_recipients
@@ -303,7 +308,7 @@ export function createReportRecipient(
   input: CreateReportRecipientInput,
   now: Date = new Date()
 ): ReportRecipient {
-  ensureRecipientsTable(database);
+  ensureReportRecipientsTable(database);
   const sendEmail = input.sendEmail !== false;
   const sendWhatsapp = input.sendWhatsapp === true;
   const { email, whatsappPhone } = ensureValidRecipient({
@@ -381,7 +386,7 @@ export function updateReportRecipient(
   input: UpdateReportRecipientInput,
   now: Date = new Date()
 ): ReportRecipient {
-  ensureRecipientsTable(database);
+  ensureReportRecipientsTable(database);
   const existing = database
     .prepare("SELECT * FROM report_recipients WHERE id = ? AND deleted_at IS NULL")
     .get(id) as ReportRecipientRow | undefined;
@@ -508,7 +513,7 @@ export function deleteReportRecipient(
   id: string,
   now: Date = new Date()
 ): void {
-  ensureRecipientsTable(database);
+  ensureReportRecipientsTable(database);
   const existing = database
     .prepare("SELECT id FROM report_recipients WHERE id = ? AND deleted_at IS NULL")
     .get(id) as { id: string } | undefined;

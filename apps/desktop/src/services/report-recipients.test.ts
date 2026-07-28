@@ -55,7 +55,10 @@ describe("report recipients", () => {
         VALUES ('comp-1', 'Empresa', 'Empresa', datetime('now'), datetime('now'))
       `
       ).run();
+      // Base antiga: a tabela existia com o formato anterior a migracao 35 (sem
+      // as colunas de WhatsApp/agenda), criada sob demanda pela tela de Relatorios.
       db.exec(`
+        DROP TABLE IF EXISTS report_recipients;
         CREATE TABLE report_recipients (
           id TEXT PRIMARY KEY,
           company_id TEXT NOT NULL REFERENCES companies(id),

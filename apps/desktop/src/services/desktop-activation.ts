@@ -100,6 +100,10 @@ export async function activateDesktop(
   // O installation_id identifica ESTE computador na nuvem: cada instalacao tem
   // seu proprio registro/token, permitindo varios desktops ativos na pedreira.
   const installationId = ensureInstallationId(database, now);
+  // Registro que esta maquina ja usava: permite a nuvem reconhecer a reativacao
+  // de um computador anterior ao multi-desktop sem tomar o registro (e o token)
+  // de outro computador da mesma pedreira.
+  const previousDeviceId = readPreviousCloudDeviceId(database);
 
   const supabase = getSupabaseActivationClient();
   const { data, error } = await supabase.functions.invoke<ActivateDesktopResponse>(
@@ -108,7 +112,8 @@ export async function activateDesktop(
       body: {
         activationCode,
         deviceName: input.deviceName.trim() || "Desktop balanca",
-        installationId
+        installationId,
+        ...(previousDeviceId ? { previousDeviceId } : {})
       }
     }
   );
@@ -322,6 +327,17 @@ function ensureInstallationId(database: DesktopDatabase, now: Date): string {
   const generated = randomUUID();
   writeLocalSetting(database, "installation_id", generated, now.toISOString());
   return generated;
+}
+
+/** Id de dispositivo salvo por uma ativacao anterior desta maquina (nunca o placeholder local). */
+function readPreviousCloudDeviceId(database: DesktopDatabase): string | null {
+  const stored =
+    readStringLocalSetting(database, "cloud_device_id") ??
+    getLocalDesktopIdentity(database)?.deviceId ??
+    null;
+  const deviceId = stored?.trim() ?? "";
+  if (!deviceId || deviceId === "setup-device") return null;
+  return deviceId;
 }
 
 function saveCloudCredentials(database: DesktopDatabase, credentials: CloudCredentials, updatedAt: string): void {

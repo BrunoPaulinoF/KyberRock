@@ -5,7 +5,66 @@ import { safeEqual, sha256Hex } from "../_shared/crypto.ts";
 type PullBody = {
   deviceId?: string;
   deviceToken?: string;
+  /**
+   * Quando informado, o cadastro compartilhado volta so com o que mudou depois
+   * deste instante. O desktop usa nos pulls frequentes (a cada minuto) e omite
+   * na sincronizacao completa, que reenvia o cadastro inteiro e se auto-corrige.
+   */
+  cadastroSince?: string;
 };
+
+// PostgREST limita cada resposta (max-rows, 1000 por padrao). Sem paginacao a
+// pedreira com mais de mil clientes recebia so o primeiro lote e o desktop novo
+// ficava com cadastro pela metade — por isso todo select aqui passa por fetchAll.
+const PAGE_SIZE = 1000;
+const MAX_PAGES = 200;
+// Historico (operacoes, solicitacoes, cupons) cresce sem limite: o desktop so
+// precisa da janela recente. Ja o cadastro (clientes, produtos, transportadoras,
+// motoristas, veiculos, vinculos, precos) vem inteiro — e o que precisa ficar
+// igual em todos os computadores da pedreira.
+const HISTORY_MAX_ROWS = 2000;
+
+// Tabela ausente no projeto (migracao nao aplicada). Nao pode derrubar o pull
+// inteiro: o desktop ainda precisa receber as demais tabelas.
+function isMissingTableError(error: { code?: string | null; message?: string | null }): boolean {
+  const code = error.code ?? "";
+  if (code === "42P01" || code === "PGRST205" || code === "PGRST204") return true;
+  return /schema cache|does not exist|no such table/i.test(error.message ?? "");
+}
+
+type FetchResult = { rows: Record<string, unknown>[]; warning: string | null };
+
+type QueryOutcome = {
+  data: Record<string, unknown>[] | null;
+  error: { code?: string | null; message?: string | null } | null;
+};
+
+/** Executa a consulta em faixas sucessivas ate a ultima pagina parcial. */
+async function fetchAll(
+  table: string,
+  run: (from: number, to: number) => PromiseLike<QueryOutcome>,
+  maxRows = Number.POSITIVE_INFINITY
+): Promise<FetchResult> {
+  const rows: Record<string, unknown>[] = [];
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const from = page * PAGE_SIZE;
+    if (from >= maxRows) break;
+    const { data, error } = await run(from, Math.min(from + PAGE_SIZE, maxRows) - 1);
+    if (error) {
+      if (isMissingTableError(error)) {
+        return {
+          rows,
+          warning: `${table}: tabela ausente na nuvem (aplique as migracoes do Supabase) — ${error.message}`
+        };
+      }
+      return { rows, warning: `${table}: ${error.message} (code=${error.code ?? "n/a"})` };
+    }
+    const batch = (data ?? []) as Record<string, unknown>[];
+    rows.push(...batch);
+    if (batch.length < PAGE_SIZE) break;
+  }
+  return { rows, warning: null };
+}
 
 Deno.serve(async (req) => {
   try {
@@ -46,80 +105,154 @@ Deno.serve(async (req) => {
     const companyId = device.company_id;
     const unitId = device.unit_id;
 
+    const cadastroSince =
+      typeof body.cadastroSince === "string" && body.cadastroSince.trim()
+        ? body.cadastroSince.trim()
+        : null;
+
+    // Ordenacao por id garante paginacao estavel (sem pular/repetir linha entre
+    // faixas quando varios registros tem o mesmo created_at).
+    const byCompany = (table: string) =>
+      fetchAll(table, (from, to) => {
+        const query = supabase
+          .from(table)
+          .select("*")
+          .eq("company_id", companyId)
+          .order("id", { ascending: true });
+        return (cadastroSince ? query.gt("updated_at", cadastroSince) : query).range(from, to);
+      });
+
     const [
-      { data: customers, error: custErr },
-      { data: products, error: prodErr },
-      { data: operations, error: opsErr },
-      { data: loadingRequests, error: lrErr },
-      { data: printReceipts, error: prErr },
-      { data: devices, error: devErr }
+      customers,
+      products,
+      operations,
+      loadingRequests,
+      printReceipts,
+      devices,
+      carriers,
+      drivers,
+      vehicles,
+      customerCarriers,
+      driverCarriers,
+      vehicleCarriers,
+      productDefaultPrices,
+      customerSpecialPrices,
+      reportRecipients
     ] = await Promise.all([
-      supabase
-        .from("customers")
-        .select("*")
-        .eq("company_id", companyId)
-        .eq("is_active", true),
-      supabase
-        .from("products")
-        .select("*")
-        .eq("company_id", companyId)
-        .eq("is_active", true),
-      supabase
-        .from("weighing_operations")
-        .select("*")
-        .eq("company_id", companyId)
-        .eq("unit_id", unitId)
-        .order("created_at", { ascending: false })
-        .limit(1000),
-      supabase
-        .from("loading_requests")
-        .select("*")
-        .eq("company_id", companyId)
-        .eq("unit_id", unitId)
-        .order("created_at", { ascending: false })
-        .limit(1000),
-      supabase
-        .from("print_receipts")
-        .select("*")
-        .eq("unit_id", unitId)
-        .order("printed_at", { ascending: false })
-        .limit(1000),
+      byCompany("customers"),
+      byCompany("products"),
+      fetchAll(
+        "weighing_operations",
+        (from, to) =>
+          supabase
+            .from("weighing_operations")
+            .select("*")
+            .eq("company_id", companyId)
+            .eq("unit_id", unitId)
+            .order("created_at", { ascending: false })
+            .order("id", { ascending: true })
+            .range(from, to),
+        HISTORY_MAX_ROWS
+      ),
+      fetchAll(
+        "loading_requests",
+        (from, to) =>
+          supabase
+            .from("loading_requests")
+            .select("*")
+            .eq("company_id", companyId)
+            .eq("unit_id", unitId)
+            .order("created_at", { ascending: false })
+            .order("id", { ascending: true })
+            .range(from, to),
+        HISTORY_MAX_ROWS
+      ),
+      fetchAll(
+        "print_receipts",
+        (from, to) =>
+          supabase
+            .from("print_receipts")
+            .select("*")
+            .eq("unit_id", unitId)
+            .order("printed_at", { ascending: false })
+            .order("id", { ascending: true })
+            .range(from, to),
+        HISTORY_MAX_ROWS
+      ),
       // Dispositivos da unidade: nome + cor para a legenda multi-desktop e para
       // satisfazer a FK local device_id das operacoes criadas em outras maquinas.
-      supabase
-        .from("device_registrations")
-        .select("id, company_id, unit_id, name, color, installation_id, is_active, created_at, updated_at")
-        .eq("unit_id", unitId)
+      fetchAll("device_registrations", (from, to) =>
+        supabase
+          .from("device_registrations")
+          .select(
+            "id, company_id, unit_id, name, color, installation_id, is_active, created_at, updated_at"
+          )
+          .eq("unit_id", unitId)
+          .order("id", { ascending: true })
+          .range(from, to)
+      ),
+      // Cadastro compartilhado da pedreira: sem ele um desktop novo entrava sem
+      // transportadoras/motoristas/veiculos/precos ate refazer todo o pull do OMIE
+      // (e mesmo assim perdia o que foi cadastrado localmente na outra maquina).
+      byCompany("carriers"),
+      byCompany("drivers"),
+      byCompany("vehicles"),
+      byCompany("customer_carriers"),
+      byCompany("driver_carriers"),
+      byCompany("vehicle_carriers"),
+      byCompany("product_default_prices"),
+      byCompany("customer_special_prices"),
+      byCompany("report_recipients")
     ]);
 
-    const errors: string[] = [];
-    if (custErr) errors.push(`customers: ${custErr.message}`);
-    if (prodErr) errors.push(`products: ${prodErr.message}`);
-    if (opsErr) errors.push(`weighing_operations: ${opsErr.message}`);
-    if (lrErr) errors.push(`loading_requests: ${lrErr.message}`);
-    if (prErr) errors.push(`print_receipts: ${prErr.message}`);
-    if (devErr) errors.push(`device_registrations: ${devErr.message}`);
+    // Falha por tabela nao derruba o pull: o desktop recebe o que deu certo e a
+    // lista de avisos (mostrada nos erros de sincronizacao) diz o que faltou.
+    const warnings = [
+      customers,
+      products,
+      operations,
+      loadingRequests,
+      printReceipts,
+      devices,
+      carriers,
+      drivers,
+      vehicles,
+      customerCarriers,
+      driverCarriers,
+      vehicleCarriers,
+      productDefaultPrices,
+      customerSpecialPrices,
+      reportRecipients
+    ]
+      .map((result) => result.warning)
+      .filter((warning): warning is string => Boolean(warning));
 
     await supabase
       .from("device_registrations")
       .update({ last_seen_at: new Date().toISOString() })
       .eq("id", deviceId);
 
-    if (errors.length > 0) {
-      return jsonResponse(
-        { error: "Falha ao buscar dados", details: errors },
-        500
-      );
-    }
-
     return jsonResponse({
       ok: true,
-      customers: customers ?? [],
-      products: products ?? [],
-      operations: operations ?? [],
-      loadingRequests: loadingRequests ?? [],
-      printReceipts: printReceipts ?? [],
-      devices: devices ?? []
+      // Relogio do servidor: o desktop guarda para pedir o proximo incremento do
+      // cadastro sem depender do relogio local da maquina.
+      serverTime: new Date().toISOString(),
+      customers: customers.rows,
+      products: products.rows,
+      operations: operations.rows,
+      loadingRequests: loadingRequests.rows,
+      printReceipts: printReceipts.rows,
+      devices: devices.rows,
+      carriers: carriers.rows,
+      drivers: drivers.rows,
+      vehicles: vehicles.rows,
+      customerCarriers: customerCarriers.rows,
+      driverCarriers: driverCarriers.rows,
+      vehicleCarriers: vehicleCarriers.rows,
+      productDefaultPrices: productDefaultPrices.rows,
+      customerSpecialPrices: customerSpecialPrices.rows,
+      reportRecipients: reportRecipients.rows,
+      warnings
     });
   } catch (error) {
     return jsonResponse(

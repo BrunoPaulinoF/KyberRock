@@ -2,6 +2,7 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { sha256Hex } from "../_shared/crypto.ts";
 import { pickNextDeviceColor } from "../_shared/device-colors.ts";
+import { selectDeviceRegistration } from "../_shared/device-registration.ts";
 
 type CompanyRow = {
   id: string;
@@ -30,11 +31,17 @@ Deno.serve(async (req) => {
     activationCode?: string;
     deviceName?: string;
     installationId?: string;
+    previousDeviceId?: string;
   };
 
   const activationCode = String(body.activationCode ?? "").trim();
   const deviceName = String(body.deviceName ?? "").trim() || "Desktop balanca";
   const installationId = String(body.installationId ?? "").trim() || null;
+  // Registro que ESTE computador ja usava (guardado localmente na ativacao
+  // anterior). E a unica prova de que um registro legado, sem installation_id,
+  // pertence a esta maquina — sem ela, ativar um computador novo tomaria o
+  // registro de outro e derrubaria o token dele.
+  const previousDeviceId = String(body.previousDeviceId ?? "").trim() || null;
 
   if (!/^\d{6}$/.test(activationCode)) {
     return jsonResponse({ error: "Codigo de ativacao invalido" }, 400);
@@ -93,13 +100,13 @@ Deno.serve(async (req) => {
     is_active: boolean;
   };
   const typedDevices = (companyDevices ?? []) as ExistingDevice[];
-  // Reativacao do mesmo computador: reusa o registro daquela instalacao.
-  // Sem correspondencia, adota o registro legado (anterior ao multi-desktop,
-  // sem installation_id) mais recente, preservando o id historico das operacoes.
-  const existingDevice = installationId
-    ? (typedDevices.find((device) => device.installation_id === installationId) ??
-      typedDevices.find((device) => !device.installation_id))
-    : typedDevices.find((device) => !device.installation_id);
+  // Reusa o registro desta maquina (mesma instalacao, ou registro legado que ela
+  // apresenta pelo id que ja usava) e nunca o de outro computador da pedreira.
+  const existingDevice = selectDeviceRegistration({
+    devices: typedDevices,
+    installationId,
+    previousDeviceId
+  });
   const deviceId = existingDevice?.id ?? `desktop-${crypto.randomUUID()}`;
   const deviceColor =
     existingDevice?.color ??

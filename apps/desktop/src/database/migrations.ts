@@ -1139,5 +1139,51 @@ UPDATE payment_methods SET omie_code = '15' WHERE code = 'boleto' AND omie_code 
 -- weighing_operations.device_id e alimentar a legenda.
 ALTER TABLE devices ADD COLUMN color TEXT;
 `
+  },
+  {
+    version: 35,
+    name: "report_recipients_base_table",
+    sql: `
+-- Destinatarios dos relatorios automaticos. A tabela era criada sob demanda
+-- (so quando a tela de Relatorios era aberta), entao um desktop recem-instalado
+-- quebrava a sincronizacao cloud com "no such table: report_recipients" antes de
+-- o operador abrir a tela. Criada aqui para existir em toda instalacao nova; o
+-- ensureRecipientsTable continua cuidando das bases antigas (colunas legadas).
+CREATE TABLE IF NOT EXISTS report_recipients (
+  id TEXT PRIMARY KEY,
+  company_id TEXT NOT NULL REFERENCES companies(id),
+  email TEXT,
+  whatsapp_phone TEXT,
+  send_email INTEGER NOT NULL DEFAULT 1 CHECK (send_email IN (0, 1)),
+  send_whatsapp INTEGER NOT NULL DEFAULT 0 CHECK (send_whatsapp IN (0, 1)),
+  schedule_frequency TEXT NOT NULL DEFAULT 'daily' CHECK (schedule_frequency IN ('daily', 'weekly', 'monthly')),
+  schedule_time TEXT NOT NULL DEFAULT '20:00',
+  report_types TEXT NOT NULL DEFAULT 'sales' CHECK (report_types IN ('sales', 'trucks', 'both')),
+  send_financial INTEGER NOT NULL DEFAULT 0 CHECK (send_financial IN (0, 1)),
+  financial_schedule_time TEXT,
+  display_name TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+  needs_push INTEGER NOT NULL DEFAULT 0,
+  sync_status TEXT NOT NULL DEFAULT 'pending' CHECK (sync_status IN ('synced', 'pending', 'error')),
+  last_synced_at TEXT,
+  last_error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT,
+  UNIQUE(company_id, email)
+);
+
+CREATE INDEX IF NOT EXISTS idx_report_recipients_company_active
+  ON report_recipients(company_id, is_active, deleted_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_report_recipients_company_whatsapp
+  ON report_recipients(company_id, whatsapp_phone)
+  WHERE whatsapp_phone IS NOT NULL;
+
+-- Vinculo veiculo <-> transportadora (v3) tambem entra no espelho compartilhado
+-- da pedreira: os indices abaixo servem a leitura por veiculo/transportadora
+-- feita a cada sincronizacao.
+CREATE INDEX IF NOT EXISTS idx_vehicle_carriers_vehicle ON vehicle_carriers(vehicle_id, is_active, deleted_at);
+CREATE INDEX IF NOT EXISTS idx_vehicle_carriers_carrier ON vehicle_carriers(carrier_id, is_active, deleted_at);
+`
   }
 ];

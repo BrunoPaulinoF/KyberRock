@@ -116,15 +116,13 @@ import {
   getSupabaseSyncStatus,
   isSupabaseInitialized,
   pullCompanyPricePasswordFromCloud,
-  syncCustomerCarriersToCloud,
-  syncDriverCarriersToCloud,
-  pullCustomerCarriersFromCloud,
-  pullDriverCarriersFromCloud,
+  pushSharedCadastroToCloud,
   pullLoaderCompletionsFromCloud,
   pullDesktopDataFromCloud,
   lookupCnpjFromCloud,
   type CloudBootstrapResult,
   type CnpjLookupResult,
+  type OmieCloudSyncResult,
   type FiscalBillingResult,
   type SyncResult
 } from "./supabase-sync.js";
@@ -238,6 +236,9 @@ export interface FiscalDocumentPrinter {
 
 const OMIE_AUTOMATIC_PULL_MAX_ITERATIONS = 10;
 const OMIE_PULL_PAGE_DELAY_MS = 3_000;
+/** Tentativas seguidas na mesma pagina do OMIE antes de adiar o resto do pull. */
+const OMIE_PULL_MAX_CONSECUTIVE_FAILURES = 3;
+const OMIE_PULL_RETRY_DELAY_MS = 5_000;
 
 import {
   createToledoSerialAdapter,
@@ -966,7 +967,11 @@ export class DesktopRuntime {
         return { pulled: 0, errors: [] };
       }
       const identity = this.ensureIdentity();
-      const pulled = await pullDesktopDataFromCloud(this.database, identity);
+      // Pull leve: cadastro so com o que mudou desde o ultimo ciclo (a varredura
+      // completa, a cada sincronizacao, reenvia o cadastro inteiro).
+      const pulled = await pullDesktopDataFromCloud(this.database, identity, {
+        incremental: true
+      });
       this.cacheStore.loadAll(identity.companyId);
       return {
         pulled:
@@ -974,8 +979,9 @@ export class DesktopRuntime {
           pulled.products +
           pulled.operations +
           pulled.loadingRequests +
-          pulled.printReceipts,
-        errors: []
+          pulled.printReceipts +
+          pulled.cadastro,
+        errors: pulled.warnings
       };
     } catch (error) {
       return {
@@ -1124,7 +1130,9 @@ export class DesktopRuntime {
       products: 0,
       operations: 0,
       loadingRequests: 0,
-      printReceipts: 0
+      printReceipts: 0,
+      cadastro: 0,
+      warnings: [] as string[]
     };
 
     initializeSupabaseFromSettings(this.database);
@@ -1160,7 +1168,21 @@ export class DesktopRuntime {
     failed += queue.failed;
     errors.push(...queue.errors);
 
+    // Publica o cadastro desta maquina antes do pull: assim, no primeiro login de
+    // um desktop novo, a nuvem ja tem o cadastro das demais e ele entra com a
+    // mesma base da pedreira.
+    try {
+      const cadastroPush = await pushSharedCadastroToCloud(this.database, identity);
+      synced += cadastroPush.pushed;
+      errors.push(...cadastroPush.errors);
+    } catch (error) {
+      errors.push(
+        `Cadastro compartilhado: ${error instanceof Error ? error.message : "Unknown error"}`
+      );
+    }
+
     const pulled = await pullDesktopDataFromCloud(this.database, identity);
+    errors.push(...pulled.warnings.map((warning) => `Cloud pull: ${warning}`));
     recordCloudSyncRanAt(this.database);
     ensureDefaultAccounts(this.database, identity.companyId);
     ensureDefaultPaymentMethods(this.database, identity.companyId);
@@ -1300,45 +1322,16 @@ export class DesktopRuntime {
         );
       }
 
-      // Sync junction tables to cloud
+      // Cadastro compartilhado da pedreira (clientes, produtos, transportadoras,
+      // motoristas, veiculos, vinculos e precos): publica o que esta maquina
+      // conhece para as demais receberem no pull logo abaixo.
       try {
-        const ccResult = await syncCustomerCarriersToCloud(this.database, identity);
-        synced += ccResult.synced;
-        errors.push(...ccResult.errors);
+        const cadastroPush = await pushSharedCadastroToCloud(this.database, identity);
+        synced += cadastroPush.pushed;
+        errors.push(...cadastroPush.errors);
       } catch (error) {
         errors.push(
-          `Customer carriers sync: ${error instanceof Error ? error.message : "Unknown error"}`
-        );
-      }
-
-      try {
-        const dcResult = await syncDriverCarriersToCloud(this.database, identity);
-        synced += dcResult.synced;
-        errors.push(...dcResult.errors);
-      } catch (error) {
-        errors.push(
-          `Driver carriers sync: ${error instanceof Error ? error.message : "Unknown error"}`
-        );
-      }
-
-      // Pull junction tables from cloud
-      try {
-        const ccPull = await pullCustomerCarriersFromCloud(this.database, identity);
-        synced += ccPull.pulled;
-        errors.push(...ccPull.errors);
-      } catch (error) {
-        errors.push(
-          `Customer carriers pull: ${error instanceof Error ? error.message : "Unknown error"}`
-        );
-      }
-
-      try {
-        const dcPull = await pullDriverCarriersFromCloud(this.database, identity);
-        synced += dcPull.pulled;
-        errors.push(...dcPull.errors);
-      } catch (error) {
-        errors.push(
-          `Driver carriers pull: ${error instanceof Error ? error.message : "Unknown error"}`
+          `Cadastro compartilhado: ${error instanceof Error ? error.message : "Unknown error"}`
         );
       }
 
@@ -1361,7 +1354,11 @@ export class DesktopRuntime {
           cloudPull.products +
           cloudPull.operations +
           cloudPull.loadingRequests +
-          cloudPull.printReceipts;
+          cloudPull.printReceipts +
+          cloudPull.cadastro;
+        // Avisos por tabela (ex.: migracao pendente na nuvem) chegam como erros
+        // de sincronizacao para nao passarem despercebidos.
+        errors.push(...cloudPull.warnings.map((warning) => `Cloud pull: ${warning}`));
       } catch (error) {
         errors.push(`Cloud pull: ${error instanceof Error ? error.message : "Unknown error"}`);
       }
@@ -2974,6 +2971,8 @@ export class DesktopRuntime {
       reset?: boolean;
       maxIterations?: number;
       delayBetweenPagesMs?: number;
+      /** Espera antes de repetir a pagina que falhou (cresce a cada tentativa). */
+      retryDelayMs?: number;
       onProgress?: (progress: OmieLoopProgress) => void;
     } = {}
   ): Promise<{
@@ -2988,6 +2987,7 @@ export class DesktopRuntime {
     const identity = this.ensureIdentity();
     const maxIterations = options.maxIterations ?? 200;
     const delayBetweenPagesMs = options.delayBetweenPagesMs ?? OMIE_PULL_PAGE_DELAY_MS;
+    const retryDelayMs = options.retryDelayMs ?? OMIE_PULL_RETRY_DELAY_MS;
     let customersPulled = 0;
     let productsSynced = 0;
     let paymentTermsSynced = 0;
@@ -3010,9 +3010,40 @@ export class DesktopRuntime {
       });
     }
 
+    // Falha numa pagina (timeout/instabilidade do OMIE) nao pode abortar o pull
+    // inteiro: antes, um erro na pagina 3 deixava a base so com as duas primeiras
+    // (200 clientes) e sem nenhuma re-tentativa. Agora a mesma pagina e tentada
+    // de novo com espera crescente e, se ainda assim falhar, o estado fica
+    // marcado como em andamento para o proximo ciclo retomar de onde parou.
+    let consecutiveFailures = 0;
+
     while (iterations < maxIterations) {
       const before = readOmiePullState(this.database);
-      const result = await syncOmieReferenceDataFromCloud(this.database, identity);
+      let result: OmieCloudSyncResult;
+      try {
+        result = await syncOmieReferenceDataFromCloud(this.database, identity);
+        consecutiveFailures = 0;
+      } catch (error) {
+        consecutiveFailures += 1;
+        const message = error instanceof Error ? error.message : "Falha no pull do OMIE";
+        errors.push(
+          `Pull OMIE (pagina clientes ${before.customersPage}/produtos ${before.productsPage}): ${message}`
+        );
+        if (consecutiveFailures >= OMIE_PULL_MAX_CONSECUTIVE_FAILURES) {
+          this.cacheStore.invalidateAll(identity.companyId);
+          return {
+            customersPulled,
+            productsSynced,
+            paymentTermsSynced,
+            suppliersSynced,
+            iterations,
+            finished: false,
+            errors
+          };
+        }
+        if (retryDelayMs > 0) await sleep(retryDelayMs * consecutiveFailures);
+        continue;
+      }
       const after = readOmiePullState(this.database);
       iterations += 1;
       customersPulled += result.customersPulled;

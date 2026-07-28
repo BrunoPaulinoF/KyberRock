@@ -10,10 +10,32 @@ type CloudPayload = {
   printReceipts?: Record<string, unknown>[];
   customers?: Record<string, unknown>[];
   products?: Record<string, unknown>[];
+  carriers?: Record<string, unknown>[];
+  drivers?: Record<string, unknown>[];
+  vehicles?: Record<string, unknown>[];
+  customerCarriers?: Record<string, unknown>[];
+  driverCarriers?: Record<string, unknown>[];
+  vehicleCarriers?: Record<string, unknown>[];
+  productDefaultPrices?: Record<string, unknown>[];
+  customerSpecialPrices?: Record<string, unknown>[];
   reportRecipients?: Record<string, unknown>[];
   reportChannelSettings?: Record<string, unknown>;
   avgQuarryMinutes?: number;
 };
+
+// Cadastro compartilhado da pedreira, na ordem em que precisa ser gravado
+// (dependencias de FK antes dos dependentes). Cada desktop empurra o que
+// cadastrou e o desktop-pull devolve o conjunto para todas as maquinas.
+const CADASTRO_TABLES = [
+  { key: "carriers", table: "carriers" },
+  { key: "drivers", table: "drivers" },
+  { key: "vehicles", table: "vehicles" },
+  { key: "customerCarriers", table: "customer_carriers" },
+  { key: "driverCarriers", table: "driver_carriers" },
+  { key: "vehicleCarriers", table: "vehicle_carriers" },
+  { key: "productDefaultPrices", table: "product_default_prices" },
+  { key: "customerSpecialPrices", table: "customer_special_prices" }
+] as const;
 
 Deno.serve(async (req) => {
   try {
@@ -39,7 +61,7 @@ Deno.serve(async (req) => {
 
     const { data: device, error: deviceError } = await supabase
       .from("device_registrations")
-      .select("id, token_hash, is_active, unit_id")
+      .select("id, token_hash, is_active, unit_id, company_id")
       .eq("id", deviceId)
       .single();
     if (deviceError || !device?.is_active) {
@@ -57,7 +79,8 @@ Deno.serve(async (req) => {
       operations: 0,
       loadingRequests: 0,
       printReceipts: 0,
-      reportRecipients: 0
+      reportRecipients: 0,
+      cadastro: 0
     };
     const stepErrors: string[] = [];
 
@@ -78,6 +101,19 @@ Deno.serve(async (req) => {
         stepErrors.push(`products: ${error.message} (code=${error.code ?? "n/a"})`);
       } else {
         counts.products = body.products.length;
+      }
+    }
+    for (const { key, table } of CADASTRO_TABLES) {
+      const rows = body[key];
+      if (!rows?.length) continue;
+      // company_id vem sempre do registro do dispositivo: um desktop nunca grava
+      // cadastro em outra pedreira, mesmo que envie outro id no payload.
+      const scoped = rows.map((row) => ({ ...row, company_id: device.company_id }));
+      const { error } = await supabase.from(table).upsert(scoped, { onConflict: "id" });
+      if (error) {
+        stepErrors.push(`${table}: ${error.message} (code=${error.code ?? "n/a"})`);
+      } else {
+        counts.cadastro += rows.length;
       }
     }
     if (body.operations?.length) {
