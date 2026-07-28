@@ -17,6 +17,7 @@ import {
   markRecipientSyncError,
   type ReportRecipientRow
 } from "./report-recipients.js";
+import { getFreightModalityInfo } from "./freight.js";
 import { isSellableProduct } from "./product-classification.js";
 import { readReportChannelSettings, toCloudChannelSettingsRow } from "./report-channels.js";
 import {
@@ -714,12 +715,13 @@ function upsertCloudOperations(
       id, company_id, unit_id, device_id, status, operation_type, customer_id, vehicle_id, driver_id,
       product_id, payment_term_id, entry_weight_kg, entry_weight_captured_at, exit_weight_kg,
       exit_weight_captured_at, net_weight_kg, unit_price_cents, product_total_cents,
-      freight_total_cents, total_cents, freight_json, omie_sales_order_id, omie_service_order_id,
-      cloud_synced_at, cancel_reason, created_at, updated_at, base_unit_price_cents,
-      applied_price_table_id, applied_price_table_name, applied_price_table_item_id, price_unit,
+      freight_total_cents, total_cents, freight_json, freight_type, omie_sales_order_id,
+      omie_service_order_id, cloud_synced_at, cancel_reason, created_at, updated_at,
+      base_unit_price_cents, applied_price_table_id, applied_price_table_name,
+      applied_price_table_item_id, price_unit,
       price_savings_percent, deduct_freight_from_credit, product_credit_debit_cents,
       freight_credit_debit_cents, quotation_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
       unit_id = excluded.unit_id,
@@ -739,6 +741,7 @@ function upsertCloudOperations(
       freight_total_cents = excluded.freight_total_cents,
       total_cents = excluded.total_cents,
       freight_json = excluded.freight_json,
+      freight_type = excluded.freight_type,
       omie_sales_order_id = excluded.omie_sales_order_id,
       omie_service_order_id = excluded.omie_service_order_id,
       cloud_synced_at = excluded.cloud_synced_at,
@@ -806,6 +809,8 @@ function upsertCloudOperations(
       integerValue(row.freight_total_cents) ?? 0,
       integerValue(row.total_cents),
       jsonStringValue(row.freight_json),
+      // Projecoes antigas (antes da coluna na nuvem) chegam sem modalidade: cai em 'none'.
+      getFreightModalityInfo(stringValue(row.freight_type)).key,
       integerValue(row.omie_sales_order_id),
       integerValue(row.omie_service_order_id),
       isoStringValue(row.synced_at) || updatedAt,
@@ -1423,6 +1428,8 @@ function getOperationPayload(
     price_savings_percent: operation.price_savings_percent,
     product_total_cents: operation.product_total_cents,
     freight_total_cents: operation.freight_total_cents,
+    // Modalidade do frete (CIF/FOB/…): o relatorio de vendas do comercial filtra por ela.
+    freight_type: getFreightModalityInfo(stringValue(operation.freight_type)).key,
     total_cents: operation.total_cents,
     omie_sales_order_id: operation.omie_sales_order_id,
     omie_service_order_id: operation.omie_service_order_id,

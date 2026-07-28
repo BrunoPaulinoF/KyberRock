@@ -5,7 +5,13 @@ import { supabase } from "../lib/supabase";
 import {
   aggregateSalesReport,
   buildSalesReportCsv,
+  freightTypeLabel,
+  isSalesFreightFilter,
+  matchesFreightFilter,
   SALES_CLOSED_STATUSES,
+  SALES_FREIGHT_ALL,
+  SALES_FREIGHT_TYPES,
+  type SalesFreightFilter,
   type SalesGroupBy,
   type SalesOperationRow
 } from "../lib/sales-report";
@@ -17,6 +23,7 @@ interface FetchedRow extends SalesOperationRow {
   customer_name: string | null;
   product_id: string | null;
   product_description: string | null;
+  freight_type: string | null;
 }
 
 const GROUP_OPTIONS: Array<{ value: SalesGroupBy; label: string }> = [
@@ -124,6 +131,7 @@ export function SalesReport() {
   const [customEnd, setCustomEnd] = useState("");
   const [customerFilter, setCustomerFilter] = useState("all");
   const [productFilter, setProductFilter] = useState("all");
+  const [freightFilter, setFreightFilter] = useState<SalesFreightFilter>(SALES_FREIGHT_ALL);
   const [rows, setRows] = useState<FetchedRow[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -145,7 +153,7 @@ export function SalesReport() {
         const { data, error } = await supabase
           .from("weighing_operations")
           .select(
-            "customer_id, customer_name, product_id, product_description, net_weight_kg, product_total_cents, freight_total_cents, total_cents, created_at"
+            "customer_id, customer_name, product_id, product_description, freight_type, net_weight_kg, product_total_cents, freight_total_cents, total_cents, created_at"
           )
           .eq("company_id", user.companyId)
           .in("status", [...SALES_CLOSED_STATUSES])
@@ -203,9 +211,10 @@ export function SalesReport() {
         ) {
           return false;
         }
+        if (!matchesFreightFilter(row, freightFilter)) return false;
         return true;
       }),
-    [rows, customerFilter, productFilter]
+    [rows, customerFilter, productFilter, freightFilter]
   );
 
   const report = useMemo(
@@ -219,8 +228,9 @@ export function SalesReport() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     const today = new Date().toISOString().slice(0, 10);
+    const freightSuffix = freightFilter === SALES_FREIGHT_ALL ? "" : `-${freightFilter}`;
     link.href = url;
-    link.download = `relatorio-vendas-${groupBy}-${today}.csv`;
+    link.download = `relatorio-vendas-${groupBy}${freightSuffix}-${today}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -261,6 +271,9 @@ export function SalesReport() {
             </h2>
             <p className="queue-panel-subtitle">
               Visões por produto, cliente e período — {resolvedPeriod?.label ?? "período inválido"}
+              {freightFilter === SALES_FREIGHT_ALL
+                ? ""
+                : ` · frete ${freightTypeLabel(freightFilter)}`}
             </p>
           </div>
           <div className="report-actions">
@@ -364,6 +377,26 @@ export function SalesReport() {
               {productOptions.map(([id, name]) => (
                 <option key={id} value={id}>
                   {name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="field-label report-field">
+            Frete
+            <select
+              className="field-input"
+              value={freightFilter}
+              onChange={(event) =>
+                setFreightFilter(
+                  isSalesFreightFilter(event.target.value) ? event.target.value : SALES_FREIGHT_ALL
+                )
+              }
+            >
+              <option value={SALES_FREIGHT_ALL}>Todos</option>
+              {SALES_FREIGHT_TYPES.map((type) => (
+                <option key={type.value} value={type.value}>
+                  {type.label}
                 </option>
               ))}
             </select>

@@ -12,16 +12,67 @@ export const REPORT_UTC_OFFSET_MINUTES = -180;
 
 export type SalesGroupBy = "product" | "customer" | "customer_product" | "day";
 
+/**
+ * Modalidade de frete da operacao (`weighing_operations.freight_type`), espelhada
+ * do catalogo do desktop (`apps/desktop/src/services/freight.ts`). CIF e FOB sao as
+ * duas modalidades que o comercial usa para separar "frete da Pedreira" x "cliente
+ * busca"; as demais existem no dominio e aparecem no filtro para nao esconder venda.
+ */
+export type SalesFreightType =
+  | "cif"
+  | "fob"
+  | "third_party"
+  | "own_sender"
+  | "own_recipient"
+  | "none";
+
+/** Valor usado no filtro quando nenhuma modalidade esta selecionada. */
+export const SALES_FREIGHT_ALL = "all" as const;
+
+export type SalesFreightFilter = SalesFreightType | typeof SALES_FREIGHT_ALL;
+
+export const SALES_FREIGHT_TYPES: ReadonlyArray<{ value: SalesFreightType; label: string }> = [
+  { value: "cif", label: "CIF" },
+  { value: "fob", label: "FOB" },
+  { value: "third_party", label: "Terceiros" },
+  { value: "own_sender", label: "Transp. próprio (Pedreira)" },
+  { value: "own_recipient", label: "Transp. próprio do cliente" },
+  { value: "none", label: "Sem frete" }
+];
+
+/** Modalidade valida da linha; qualquer coisa fora do catalogo cai em "sem frete". */
+export function normalizeFreightType(value: unknown): SalesFreightType {
+  return SALES_FREIGHT_TYPES.some((type) => type.value === value)
+    ? (value as SalesFreightType)
+    : "none";
+}
+
+export function freightTypeLabel(value: unknown): string {
+  const key = normalizeFreightType(value);
+  return SALES_FREIGHT_TYPES.find((type) => type.value === key)?.label ?? "Sem frete";
+}
+
+export function isSalesFreightFilter(value: unknown): value is SalesFreightFilter {
+  return value === SALES_FREIGHT_ALL || SALES_FREIGHT_TYPES.some((type) => type.value === value);
+}
+
 export interface SalesOperationRow {
   customer_id?: string | null;
   customer_name?: string | null;
   product_id?: string | null;
   product_description?: string | null;
+  freight_type?: string | null;
   net_weight_kg?: number | string | null;
   product_total_cents?: number | string | null;
   freight_total_cents?: number | string | null;
   total_cents?: number | string | null;
   created_at: string;
+}
+
+/** `all` passa tudo; caso contrario compara com a modalidade normalizada da linha. */
+export function matchesFreightFilter(row: SalesOperationRow, filter: SalesFreightFilter): boolean {
+  if (filter === SALES_FREIGHT_ALL) return true;
+  return normalizeFreightType(row.freight_type) === filter;
 }
 
 export interface SalesReportLine {
