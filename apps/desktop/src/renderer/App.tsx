@@ -2012,7 +2012,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     // Se o desktop ja esta ativado mas foi bloqueado (ex: empresa desativada), mostra tela de bloqueio
     // Se ainda nao esta ativado, mostra a tela de ativacao
     if (accessStatus && !accessStatus.requiresActivation) {
-      return <BlockedScreen desktopApi={desktopApi} onUnlocked={handleUnlocked} />;
+      return (
+        <BlockedScreen
+          desktopApi={desktopApi}
+          onUnlocked={handleUnlocked}
+          onRequireActivation={() => setAccessStatus(null)}
+        />
+      );
     }
 
     return <ActivationGate desktopApi={desktopApi} onUnlocked={handleUnlocked} />;
