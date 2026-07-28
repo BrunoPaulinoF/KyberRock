@@ -22,6 +22,7 @@ import {
   Truck,
   Upload,
   User,
+  UserSearch,
   Users,
   Package,
   CreditCard,
@@ -103,6 +104,7 @@ import { BlockedScreen } from "./BlockedScreen";
 import { DashboardView } from "./DashboardView";
 import { DocumentationView } from "./DocumentationView";
 import { InsightsView } from "./InsightsView";
+import { CustomerReportView } from "./CustomerReportView";
 import { ReportsView } from "./ReportsView";
 import { TruckControlView, formatMinutes } from "./TruckControlView";
 import { CustomersView } from "./CustomersView";
@@ -177,6 +179,7 @@ type ActiveView =
   | "cloud"
   | "insights"
   | "truck-control"
+  | "customer-report"
   | "reports"
   | "documentation";
 
@@ -2141,6 +2144,14 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 onSelect={setActiveView}
               />
               <SidebarItem
+                id="customer-report"
+                label="Relatorio por cliente"
+                icon={UserSearch}
+                activeView={activeView}
+                onSelect={setActiveView}
+                tooltip={TIPS.nav.customerReport}
+              />
+              <SidebarItem
                 id="reports"
                 label="Relatorios"
                 icon={FileText}
@@ -3917,6 +3928,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
             ) : null}
             {activeView === "truck-control" ? (
               <TruckControlView desktopApi={desktopApi} />
+            ) : null}
+            {activeView === "customer-report" ? (
+              <CustomerReportView desktopApi={desktopApi} />
             ) : null}
             {activeView === "reports" ? <ReportsView desktopApi={desktopApi} /> : null}
             {activeView === "documentation" ? <DocumentationView /> : null}

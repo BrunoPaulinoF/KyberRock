@@ -77,6 +77,37 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:export-report-pdf", startDate, endDate, periodLabel),
   exportReportExcel: (startDate: string, endDate: string) =>
     ipcRenderer.invoke("desktop:export-report-excel", startDate, endDate),
+  listCustomerReportCustomers: () => ipcRenderer.invoke("desktop:list-customer-report-customers"),
+  getCustomerReport: (
+    customerId: string,
+    startDate: string,
+    endDate: string,
+    periodLabel?: string
+  ) =>
+    ipcRenderer.invoke(
+      "desktop:get-customer-report",
+      customerId,
+      startDate,
+      endDate,
+      periodLabel
+    ),
+  exportCustomerReport: (
+    customerId: string,
+    startDate: string,
+    endDate: string,
+    variants: string[],
+    formats: string[],
+    periodLabel?: string
+  ) =>
+    ipcRenderer.invoke(
+      "desktop:export-customer-report",
+      customerId,
+      startDate,
+      endDate,
+      variants,
+      formats,
+      periodLabel
+    ),
   getTruckControl: (startDate: string, endDate: string) =>
     ipcRenderer.invoke("desktop:get-truck-control", startDate, endDate),
   exportTruckControlPdf: (startDate: string, endDate: string) =>
