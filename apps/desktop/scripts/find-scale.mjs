@@ -26,6 +26,7 @@ const execFileAsync = promisify(execFile);
 /** Portas usadas por indicadores e por conversores serial<->TCP. */
 const DEFAULT_PORTS = [
   4001, // Moxa NPort / conversores genericos, porta serial 1
+  9001, // Ethernet nativa de indicadores Toledo (confirmado em campo)
   4002,
   4003,
   10001, // Lantronix
