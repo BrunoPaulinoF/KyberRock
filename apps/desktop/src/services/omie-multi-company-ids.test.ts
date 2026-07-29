@@ -1,0 +1,165 @@
+import { describe, expect, it } from "vitest";
+
+import { runDesktopMigrations } from "../database/migrate";
+import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite";
+import { applyOmieReferenceData } from "./supabase-sync";
+
+/**
+ * Duas pedreiras ligadas na MESMA conta OMIE (ou a mesma maquina reativada em
+ * outra pedreira) espelhavam o cadastro no mesmo id derivado (`omie_<id>`).
+ * Como o upsert e `ON CONFLICT(id) DO UPDATE SET company_id = excluded.company_id`,
+ * cada sincronizacao mudava a linha de dono em vez de criar a copia da pedreira
+ * que sincronizou: a outra perdia o cliente sem erro nenhum aparecer, e o total
+ * baixado nunca batia com o que existe no OMIE.
+ */
+describe("cadastro OMIE espelhado em duas pedreiras da mesma conta", () => {
+  it("da a cada empresa a sua copia em vez de mudar a linha de dono", () => {
+    const database = createDatabase();
+
+    try {
+      applyOmieReferenceData(database, "company-a", referenceData());
+      applyOmieReferenceData(database, "company-b", referenceData());
+
+      expect(countCustomers(database, "company-a")).toBe(1);
+      expect(countCustomers(database, "company-b")).toBe(1);
+      expect(countProducts(database, "company-a")).toBe(1);
+      expect(countProducts(database, "company-b")).toBe(1);
+      expect(countCarriers(database, "company-a")).toBe(1);
+      expect(countCarriers(database, "company-b")).toBe(1);
+
+      // Re-sincronizar a primeira empresa nao pode tomar de volta a copia da segunda.
+      applyOmieReferenceData(database, "company-a", referenceData());
+      expect(countCustomers(database, "company-b")).toBe(1);
+      expect(countProducts(database, "company-b")).toBe(1);
+      expect(countCarriers(database, "company-b")).toBe(1);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("continua atualizando a linha que ja e da propria empresa", () => {
+    const database = createDatabase();
+
+    try {
+      applyOmieReferenceData(database, "company-a", referenceData());
+      const before = customerIds(database, "company-a");
+
+      applyOmieReferenceData(database, "company-a", referenceData("Cliente Renomeado"));
+
+      expect(customerIds(database, "company-a")).toEqual(before);
+      expect(
+        database
+          .prepare("SELECT legal_name FROM customers WHERE company_id = 'company-a'")
+          .pluck()
+          .get()
+      ).toBe("Cliente Renomeado");
+    } finally {
+      database.close();
+    }
+  });
+});
+
+function referenceData(customerName = "Cliente Compartilhado"): Parameters<
+  typeof applyOmieReferenceData
+>[2] {
+  return {
+    customers: [
+      {
+        id: 11455923824,
+        name: customerName,
+        tradeName: customerName,
+        document: "12345678000199",
+        email: null,
+        phone: null,
+        zipcode: null,
+        addressStreet: null,
+        addressNumber: null,
+        neighborhood: null,
+        city: null,
+        state: null,
+        isIndividual: false,
+        isActive: true,
+        defaultPaymentTermId: null
+      }
+    ],
+    products: [
+      {
+        id: 999_001,
+        code: "BRITA1",
+        description: "Brita 1",
+        unit: "TON",
+        ncm: null,
+        ean: null,
+        unitPriceCents: 1000,
+        itemType: "04",
+        isActive: true
+      }
+    ],
+    suppliers: [
+      {
+        id: 11455923999,
+        name: "Transportadora Compartilhada",
+        document: "98765432000155"
+      }
+    ],
+    paymentTerms: [],
+    pageSize: 100,
+    pagination: {
+      customersPage: 1,
+      customersReturned: 1,
+      customersFinished: true,
+      customersTotalPages: 1,
+      customersTotalRecords: 1,
+      productsPage: 1,
+      productsReturned: 1,
+      productsFinished: true,
+      productsTotalPages: 1,
+      productsTotalRecords: 1,
+      paymentTermsPage: 1,
+      paymentTermsReturned: 0,
+      paymentTermsFinished: true,
+      paymentTermsTotalPages: 1,
+      paymentTermsTotalRecords: 0
+    }
+  } as Parameters<typeof applyOmieReferenceData>[2];
+}
+
+function createDatabase(): DesktopDatabase {
+  const database = openDesktopDatabase({ databasePath: ":memory:" });
+  runDesktopMigrations(database);
+  const at = "2026-07-29T10:00:00.000Z";
+  const company = database.prepare(
+    "INSERT INTO companies (id, legal_name, trade_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)"
+  );
+  company.run("company-a", "Pedreira A", "Pedreira A", at, at);
+  company.run("company-b", "Pedreira B", "Pedreira B", at, at);
+  return database;
+}
+
+function countCustomers(database: DesktopDatabase, companyId: string): number {
+  return database
+    .prepare("SELECT COUNT(*) FROM customers WHERE company_id = ? AND deleted_at IS NULL")
+    .pluck()
+    .get(companyId) as number;
+}
+
+function countProducts(database: DesktopDatabase, companyId: string): number {
+  return database
+    .prepare("SELECT COUNT(*) FROM products WHERE company_id = ? AND deleted_at IS NULL")
+    .pluck()
+    .get(companyId) as number;
+}
+
+function countCarriers(database: DesktopDatabase, companyId: string): number {
+  return database
+    .prepare("SELECT COUNT(*) FROM carriers WHERE company_id = ? AND deleted_at IS NULL")
+    .pluck()
+    .get(companyId) as number;
+}
+
+function customerIds(database: DesktopDatabase, companyId: string): string[] {
+  return database
+    .prepare("SELECT id FROM customers WHERE company_id = ? ORDER BY id")
+    .pluck()
+    .all(companyId) as string[];
+}

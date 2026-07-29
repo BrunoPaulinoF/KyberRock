@@ -18,6 +18,7 @@ import {
 import type { DesktopDatabase } from "../database/sqlite.js";
 import { isSellableProduct } from "./product-classification.js";
 import {
+  resolveOmieLocalId,
   upsertOmiePaymentTerms,
   type OmieReferencePaymentTerm
 } from "./supabase-sync.js";
@@ -171,7 +172,7 @@ export class OmieSyncService {
 
     for (const customer of customers) {
       upsert.run(
-        `omie_${customer.id}`,
+        resolveOmieLocalId(this.db, "customers", companyId, `omie_${customer.id}`),
         companyId,
         customer.id,
         customer.name,
@@ -395,7 +396,12 @@ export class OmieSyncService {
       if (!normalizedOmie) continue;
 
       if (!localDocs.has(normalizedOmie)) {
-        const localId = `omie_${omieCustomer.id}`;
+        const localId = resolveOmieLocalId(
+          this.db,
+          "customers",
+          companyId,
+          `omie_${omieCustomer.id}`
+        );
         insertReconciled.run(
           localId,
           companyId,
@@ -471,7 +477,7 @@ export class OmieSyncService {
         continue;
       }
 
-      const id = `omie_${product.id}`;
+      const id = resolveOmieLocalId(this.db, "products", companyId, `omie_${product.id}`);
       insert.run(
         id,
         companyId,

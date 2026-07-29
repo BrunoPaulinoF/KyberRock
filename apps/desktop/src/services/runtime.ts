@@ -136,7 +136,7 @@ import {
   type DesktopAccessStatus
 } from "./desktop-activation.js";
 import { CacheStore, type CacheQueryOptions, type CacheQueryResult } from "./cache-store.js";
-import { readOmiePullState, writeOmiePullState } from "./supabase-sync.js";
+import { readOmiePullState, writeOmiePullState, SETUP_COMPANY_ID } from "./supabase-sync.js";
 import { listUnitDevices, type UnitDeviceInfo } from "./unit-devices.js";
 import { CustomerReportService, type CustomerReportVariant } from "./customer-report.js";
 import {
@@ -406,6 +406,10 @@ export class DesktopRuntime {
   private omieScheduler: OmieSchedulerHandle | null = null;
   private cloudSyncScheduler: CloudSyncSchedulerHandle | null = null;
   private cloudSyncInProgress = false;
+  /** Pedido de varredura que chegou com outra em andamento — roda ao terminar. */
+  private cloudSyncRerunRequested = false;
+  /** Serializa os envios avulsos de operacao (um de cada vez, em ordem). */
+  private operationPushChain: Promise<void> = Promise.resolve();
   private omieSyncInProgress = false;
   private omieQueueProcessing = false;
   private receiptPrinter: ReceiptPrinter = { printReceipt: async () => undefined };
@@ -653,7 +657,7 @@ export class DesktopRuntime {
     });
     // A entrada pode ter gravado condicao/forma como padrao do cliente (primeira escolha).
     this.cacheStore.invalidate("customer", this.ensureIdentity().companyId);
-    this.triggerBackgroundCloudSync("entry_registered", { operationId: operation.id });
+    this.triggerOperationCloudPush("entry_registered", operation.id);
     return operation;
   }
 
@@ -685,7 +689,7 @@ export class DesktopRuntime {
     // padrao) em vez de deixar o faturamento pendente por falta de dados. Nao bloqueia
     // nem falha o fechamento se a busca nao der certo.
     await this.autoCompleteCustomerForNfe(operationId).catch(() => undefined);
-    this.triggerBackgroundCloudSync("exit_registered", { operationId });
+    this.triggerOperationCloudPush("exit_registered", operationId);
     // O pedido/OS do fechamento vai para o OMIE imediatamente (apenas os jobs desta
     // operacao), sem esperar a varredura completa de sincronizacao.
     this.triggerBackgroundOmieOrderPush("operation_closed", operationId);
@@ -903,7 +907,7 @@ export class DesktopRuntime {
   cancelWeighing(operationId: string, reason: string): WeighingOperationSummary {
     this.assertDesktopAccess();
     const operation = cancelWeighingOperation(this.database, { operationId, reason });
-    this.triggerBackgroundCloudSync("operation_cancelled", { operationId });
+    this.triggerOperationCloudPush("operation_cancelled", operationId);
     // Se ja existe pedido no OMIE, o cancel_order enfileirado tambem segue de imediato.
     this.triggerBackgroundOmieOrderPush("operation_cancelled", operationId);
     return operation;
@@ -912,27 +916,21 @@ export class DesktopRuntime {
   updateWeighingProduct(input: UpdateWeighingOperationProductInput): WeighingOperationSummary {
     this.assertDesktopAccess();
     const operation = updateWeighingOperationProduct(this.database, input);
-    this.triggerBackgroundCloudSync("operation_product_changed", {
-      operationId: input.operationId
-    });
+    this.triggerOperationCloudPush("operation_product_changed", input.operationId);
     return operation;
   }
 
   updateWeighingCustomer(input: UpdateWeighingOperationCustomerInput): WeighingOperationSummary {
     this.assertDesktopAccess();
     const operation = updateWeighingOperationCustomer(this.database, input);
-    this.triggerBackgroundCloudSync("operation_customer_changed", {
-      operationId: input.operationId
-    });
+    this.triggerOperationCloudPush("operation_customer_changed", input.operationId);
     return operation;
   }
 
   updateWeighingCarrier(input: UpdateWeighingOperationCarrierInput): WeighingOperationSummary {
     this.assertDesktopAccess();
     const operation = updateWeighingOperationCarrier(this.database, input);
-    this.triggerBackgroundCloudSync("operation_carrier_changed", {
-      operationId: input.operationId
-    });
+    this.triggerOperationCloudPush("operation_carrier_changed", input.operationId);
     return operation;
   }
 
@@ -1203,11 +1201,15 @@ export class DesktopRuntime {
   async syncCloudNow(): Promise<SyncResult> {
     this.assertDesktopAccess();
     if (this.cloudSyncInProgress) {
+      // O pedido nao pode ser jogado fora: era assim que uma alteracao feita
+      // durante uma varredura longa (cadastro inteiro + fila OMIE) ficava
+      // esperando o proximo ciclo agendado — 30 minutos, por padrao.
+      this.cloudSyncRerunRequested = true;
       return {
         success: true,
         synced: 0,
         failed: 0,
-        errors: ["Sincronizacao cloud ja em andamento."]
+        errors: ["Sincronizacao cloud ja em andamento; nova passada agendada ao terminar."]
       };
     }
 
@@ -1394,6 +1396,17 @@ export class DesktopRuntime {
       };
     } finally {
       this.cloudSyncInProgress = false;
+      if (this.cloudSyncRerunRequested) {
+        this.cloudSyncRerunRequested = false;
+        void this.syncCloudNow().catch((error: unknown) => {
+          this.recordTechnicalLog(
+            "error",
+            "cloud-sync",
+            error instanceof Error ? error.message : "Nova passada da sincronizacao cloud falhou.",
+            {}
+          );
+        });
+      }
     }
   }
 
@@ -3149,7 +3162,7 @@ export class DesktopRuntime {
     return (
       getLocalDesktopIdentity(this.database) ??
       ensureInitialDesktopIdentity(this.database, {
-        companyId: "setup-company",
+        companyId: SETUP_COMPANY_ID,
         companyLegalName: "KyberRock - Configuracao Inicial",
         companyTradeName: "KyberRock",
         unitId: "setup-unit",
@@ -3170,6 +3183,51 @@ export class DesktopRuntime {
       .pluck()
       .get() as number;
     return count === 4;
+  }
+
+  /**
+   * Publica UMA operacao (e a solicitacao de carregamento dela) na nuvem agora,
+   * sem esperar a varredura completa.
+   *
+   * `syncCloudNow` e pesado — fila cloud, fila OMIE, cadastro compartilhado
+   * inteiro e pull — e desiste na hora quando ja existe outra em andamento.
+   * Enquanto isso a troca de produto/cliente/transportadora numa operacao aberta
+   * ficava so no SQLite desta maquina ate o proximo ciclo agendado, que e o que
+   * fazia a outra balanca da pedreira enxergar a mudanca apenas depois do
+   * fechamento. Este caminho e uma chamada HTTP curta, roda em serie consigo
+   * mesmo e nao concorre com a varredura.
+   */
+  private triggerOperationCloudPush(reason: string, operationId: string): void {
+    this.operationPushChain = this.operationPushChain
+      .then(() => this.pushOperationToCloud(operationId))
+      .catch((error: unknown) => {
+        // A fila de jobs e a reconciliacao reenviam na proxima varredura:
+        // aqui a falha so precisa ficar registrada.
+        this.recordTechnicalLog(
+          "warning",
+          "cloud-sync",
+          error instanceof Error ? error.message : "Envio imediato da operacao falhou.",
+          { reason, operationId }
+        );
+      });
+    // A varredura completa continua sendo disparada: leva o resto (fila OMIE,
+    // cadastro compartilhado, pull) quando nao houver outra em andamento.
+    this.triggerBackgroundCloudSync(reason, { operationId });
+  }
+
+  private async pushOperationToCloud(operationId: string): Promise<void> {
+    if (!this.hasCloudCredentials()) return;
+    initializeSupabaseFromSettings(this.database);
+    if (!isSupabaseInitialized()) return;
+    const identity = this.ensureIdentity();
+    await syncOperationToSupabase(this.database, operationId, identity);
+    const loadingRequestId = this.database
+      .prepare("SELECT id FROM loading_requests WHERE operation_id = ?")
+      .pluck()
+      .get(operationId) as string | undefined;
+    if (loadingRequestId) {
+      await syncLoadingRequestToSupabase(this.database, loadingRequestId, identity);
+    }
   }
 
   private triggerBackgroundCloudSync(reason: string, context: Record<string, unknown> = {}): void {

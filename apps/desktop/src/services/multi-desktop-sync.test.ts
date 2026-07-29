@@ -514,6 +514,168 @@ describe("multi-desktop na mesma pedreira", () => {
     }
   });
 
+  it("troca de produto, cliente e transportadora na operacao aberta chega na outra balanca", async () => {
+    // Cenario relatado na pedreira: a operacao ainda esta aberta e o operador
+    // troca produto/cliente/transportadora numa balanca. Antes so produto e
+    // cliente trafegavam — `carrier_id` nao existia na projecao da nuvem, entao
+    // a transportadora nunca chegava, nem depois do fechamento.
+    const origin = createMachine("desktop-a");
+    const mirror = createMachine("desktop-b");
+
+    try {
+      const originIdentity = readIdentity(origin);
+      const mirrorIdentity = readIdentity(mirror);
+      for (const database of [origin, mirror]) {
+        insertCadastro(database);
+      }
+      origin
+        .prepare(
+          `INSERT INTO weighing_operations (
+            id, company_id, unit_id, device_id, status, operation_type,
+            customer_id, product_id, carrier_id, entry_weight_kg, created_at, updated_at
+          ) VALUES ('op-open', 'company-1', 'unit-1', 'desktop-a', 'loading_requested', 'invoice',
+            'cust-1', 'prod-1', 'carr-1', 10000, '2026-07-22T11:00:00.000Z', '2026-07-22T11:00:00.000Z')`
+        )
+        .run();
+
+      await syncOperationToSupabase(origin, "op-open", originIdentity);
+      await pullPushedOperation(mirror, mirrorIdentity);
+
+      expect(listOpenWeighingOperations(mirror)[0]).toMatchObject({
+        customerName: "Cliente Um",
+        productDescription: "Brita 1"
+      });
+      expect(readCarrierId(mirror, "op-open")).toBe("carr-1");
+
+      origin
+        .prepare(
+          `UPDATE weighing_operations
+           SET customer_id = 'cust-2', product_id = 'prod-2', carrier_id = 'carr-2',
+               updated_at = '2026-07-22T11:30:00.000Z'
+           WHERE id = 'op-open'`
+        )
+        .run();
+
+      await syncOperationToSupabase(origin, "op-open", originIdentity);
+      await pullPushedOperation(mirror, mirrorIdentity);
+
+      expect(listOpenWeighingOperations(mirror)[0]).toMatchObject({
+        customerName: "Cliente Dois",
+        productDescription: "Po de Pedra"
+      });
+      expect(readCarrierId(mirror, "op-open")).toBe("carr-2");
+    } finally {
+      origin.close();
+      mirror.close();
+    }
+  });
+
+  it("pull limpa a transportadora quando a outra balanca passou para transporte proprio", async () => {
+    const database = createMachine("desktop-b");
+
+    try {
+      const identity = readIdentity(database);
+      upsertUnitDevices(database, identity, [
+        { id: "desktop-a", name: "Balanca 1", color: "#2563eb", is_active: true }
+      ]);
+      insertCadastro(database);
+      insertOperation(database, {
+        id: "op-own-transport",
+        deviceId: "desktop-a",
+        status: "awaiting_exit",
+        updatedAt: "2026-07-22T11:00:00.000Z"
+      });
+      database
+        .prepare("UPDATE weighing_operations SET carrier_id = 'carr-1' WHERE id = 'op-own-transport'")
+        .run();
+
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          operations: [
+            {
+              id: "op-own-transport",
+              company_id: "company-1",
+              unit_id: "unit-1",
+              device_id: "desktop-a",
+              status: "open",
+              operation_type: "invoice",
+              carrier_id: null,
+              created_at: "2026-07-22T11:00:00.000Z",
+              updated_at: "2026-07-22T11:30:00.000Z"
+            }
+          ]
+        },
+        error: null
+      });
+
+      await pullDesktopDataFromCloud(database, identity);
+
+      expect(readCarrierId(database, "op-own-transport")).toBeNull();
+    } finally {
+      database.close();
+    }
+  });
+
+  it("pull preserva o vinculo local quando o cadastro referenciado ainda nao chegou", async () => {
+    // O cadastro compartilhado vem no mesmo pull, mas pode falhar por tabela.
+    // Nesse caso apagar o vinculo deixaria a operacao pior do que estava.
+    const database = createMachine("desktop-b");
+
+    try {
+      const identity = readIdentity(database);
+      upsertUnitDevices(database, identity, [
+        { id: "desktop-a", name: "Balanca 1", color: "#2563eb", is_active: true }
+      ]);
+      insertCadastro(database);
+      insertOperation(database, {
+        id: "op-unknown-cadastro",
+        deviceId: "desktop-a",
+        status: "awaiting_exit",
+        updatedAt: "2026-07-22T11:00:00.000Z"
+      });
+      database
+        .prepare(
+          `UPDATE weighing_operations
+           SET customer_id = 'cust-1', product_id = 'prod-1', carrier_id = 'carr-1'
+           WHERE id = 'op-unknown-cadastro'`
+        )
+        .run();
+
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          operations: [
+            {
+              id: "op-unknown-cadastro",
+              company_id: "company-1",
+              unit_id: "unit-1",
+              device_id: "desktop-a",
+              status: "open",
+              operation_type: "invoice",
+              customer_id: "cust-nao-espelhado",
+              product_id: "prod-nao-espelhado",
+              carrier_id: "carr-nao-espelhado",
+              created_at: "2026-07-22T11:00:00.000Z",
+              updated_at: "2026-07-22T11:30:00.000Z"
+            }
+          ]
+        },
+        error: null
+      });
+
+      await pullDesktopDataFromCloud(database, identity);
+
+      expect(
+        database
+          .prepare(
+            "SELECT customer_id, product_id, carrier_id FROM weighing_operations WHERE id = 'op-unknown-cadastro'"
+          )
+          .get()
+      ).toEqual({ customer_id: "cust-1", product_id: "prod-1", carrier_id: "carr-1" });
+    } finally {
+      database.close();
+    }
+  });
+
   it("pull nao sobrescreve versao local mais nova nem reabre solicitacao fechada", async () => {
     const database = createMachine("desktop-a");
 
@@ -613,6 +775,49 @@ function readIdentity(database: DesktopDatabase): LocalDesktopIdentity {
     deviceId: JSON.parse(identity) as string,
     installationId: "install"
   };
+}
+
+/** Cadastro minimo compartilhado pelas duas balancas (clientes/produtos/transportadoras). */
+function insertCadastro(database: DesktopDatabase): void {
+  const at = "2026-07-22T10:00:00.000Z";
+  const customer = database.prepare(
+    `INSERT INTO customers (id, company_id, source, legal_name, trade_name, document, is_active, created_at, updated_at)
+     VALUES (?, 'company-1', 'local', ?, ?, ?, 1, ?, ?)`
+  );
+  const product = database.prepare(
+    `INSERT INTO products (id, company_id, code, description, unit, is_active, created_at, updated_at)
+     VALUES (?, 'company-1', ?, ?, 'KG', 1, ?, ?)`
+  );
+  const carrier = database.prepare(
+    `INSERT INTO carriers (id, company_id, name, source, is_active, created_at, updated_at)
+     VALUES (?, 'company-1', ?, 'local', 1, ?, ?)`
+  );
+  customer.run("cust-1", "Cliente Um", "Cliente Um", "cust-1", at, at);
+  customer.run("cust-2", "Cliente Dois", "Cliente Dois", "cust-2", at, at);
+  product.run("prod-1", "prod-1", "Brita 1", at, at);
+  product.run("prod-2", "prod-2", "Po de Pedra", at, at);
+  carrier.run("carr-1", "Transportadora Um", at, at);
+  carrier.run("carr-2", "Transportadora Dois", at, at);
+}
+
+/** Devolve para a outra maquina exatamente o payload que o ultimo push enviou. */
+async function pullPushedOperation(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity
+): Promise<void> {
+  const body = invokeMock.mock.calls.at(-1)?.[1] as { body: { operations: unknown[] } };
+  invokeMock.mockResolvedValueOnce({
+    data: { operations: body.body.operations },
+    error: null
+  });
+  await pullDesktopDataFromCloud(database, identity);
+}
+
+function readCarrierId(database: DesktopDatabase, operationId: string): string | null {
+  return (database
+    .prepare("SELECT carrier_id FROM weighing_operations WHERE id = ?")
+    .pluck()
+    .get(operationId) ?? null) as string | null;
 }
 
 function insertOperation(

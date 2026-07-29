@@ -613,6 +613,9 @@ export async function processCloudSyncQueue(
   return { processed, failed, errors };
 }
 
+/** Empresa provisoria usada antes da ativacao do dispositivo (ver runtime.ensureIdentity). */
+export const SETUP_COMPANY_ID = "setup-company";
+
 export const CADASTRO_LAST_PULL_KEY = "cloud_cadastro_last_pull_at";
 /** Janela de sobreposicao do pull incremental, para absorver diferenca de relogio. */
 const CADASTRO_INCREMENTAL_OVERLAP_MS = 5 * 60 * 1000;
@@ -1712,6 +1715,37 @@ function upsertCloudProducts(
   return count;
 }
 
+/** Copia local usada para decidir o que a projecao da nuvem pode sobrescrever. */
+type LocalOperationSnapshot = {
+  status: string;
+  updated_at: string;
+  customer_id: string | null;
+  product_id: string | null;
+  carrier_id: string | null;
+};
+
+/**
+ * Id de cadastro vindo da nuvem traduzido para o espelho local.
+ *
+ * Tres casos, e cada um precisa de um desfecho diferente:
+ * - a nuvem mandou vazio ⇒ vazio (ex.: transportadora removida porque o cliente
+ *   passou a usar transporte proprio). Precisa limpar o vinculo local.
+ * - a nuvem mandou um id que existe aqui ⇒ e o valor novo.
+ * - a nuvem mandou um id que esta maquina ainda nao espelhou (cadastro chega no
+ *   mesmo pull, mas pode ter falhado) ⇒ mantem o que ja estava, em vez de apagar
+ *   o vinculo por causa de um cadastro atrasado.
+ */
+function resolveMirroredId(
+  database: DesktopDatabase,
+  table: string,
+  value: unknown,
+  localValue: string | null | undefined
+): string | null {
+  const incoming = nullableStringValue(value);
+  if (!incoming) return null;
+  return existingId(database, table, incoming) ?? localValue ?? null;
+}
+
 function upsertCloudOperations(
   database: DesktopDatabase,
   settings: CloudSettings,
@@ -1721,6 +1755,7 @@ function upsertCloudOperations(
   const upsert = database.prepare(`
     INSERT INTO weighing_operations (
       id, company_id, unit_id, device_id, status, operation_type, customer_id, vehicle_id, driver_id,
+      carrier_id,
       product_id, payment_term_id, entry_weight_kg, entry_weight_captured_at, exit_weight_kg,
       exit_weight_captured_at, net_weight_kg, unit_price_cents, product_total_cents,
       freight_total_cents, total_cents, freight_json, freight_type, omie_sales_order_id,
@@ -1730,7 +1765,7 @@ function upsertCloudOperations(
       price_savings_percent, deduct_freight_from_credit, product_credit_debit_cents,
       freight_credit_debit_cents, quotation_id,
       remote_plate, remote_driver_name, remote_customer_name, remote_product_description
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
       unit_id = excluded.unit_id,
@@ -1742,6 +1777,10 @@ function upsertCloudOperations(
       -- placa/motorista, mas nunca apaga o vinculo que esta maquina ja tinha.
       vehicle_id = COALESCE(excluded.vehicle_id, weighing_operations.vehicle_id),
       driver_id = COALESCE(excluded.driver_id, weighing_operations.driver_id),
+      -- carrier_id chega resolvido de resolveMirroredId: quando a nuvem manda um
+      -- id que esta maquina ainda nao espelhou, o valor local e mantido; quando a
+      -- nuvem manda vazio (transporte proprio do cliente), o vinculo e limpo.
+      carrier_id = excluded.carrier_id,
       product_id = excluded.product_id,
       payment_term_id = excluded.payment_term_id,
       entry_weight_kg = excluded.entry_weight_kg,
@@ -1777,7 +1816,7 @@ function upsertCloudOperations(
   `);
 
   const readLocal = database.prepare(
-    "SELECT status, updated_at FROM weighing_operations WHERE id = ?"
+    "SELECT status, updated_at, customer_id, product_id, carrier_id FROM weighing_operations WHERE id = ?"
   );
 
   let count = 0;
@@ -1788,7 +1827,7 @@ function upsertCloudOperations(
     // Multi-desktop: a projecao da nuvem pode estar atras da copia local (esta
     // maquina fechou/alterou e ainda nao terminou o push). Nunca sobrescreve
     // uma versao local mais nova nem regride status terminal para aberto.
-    const local = readLocal.get(id) as { status: string; updated_at: string } | undefined;
+    const local = readLocal.get(id) as LocalOperationSnapshot | undefined;
     if (local) {
       const localTs = parseTimestamp(local.updated_at);
       const cloudTs = parseTimestamp(updatedAt);
@@ -1804,8 +1843,9 @@ function upsertCloudOperations(
       }
     }
     const closedAt = isoStringValue(row.closed_at);
-    const customerId = existingId(database, "customers", row.customer_id);
-    const productId = existingId(database, "products", row.product_id);
+    const customerId = resolveMirroredId(database, "customers", row.customer_id, local?.customer_id);
+    const productId = resolveMirroredId(database, "products", row.product_id, local?.product_id);
+    const carrierId = resolveMirroredId(database, "carriers", row.carrier_id, local?.carrier_id);
     // A nuvem guarda placa/motorista so como texto. Casa com o cadastro local
     // (que ja veio no mesmo pull) para a operacao da outra balanca aparecer
     // completa; o texto fica gravado como fallback de exibicao.
@@ -1824,6 +1864,7 @@ function upsertCloudOperations(
         customerId,
         vehicleId,
         driverId,
+        carrierId,
         productId,
         // FK payment_terms: uma condicao ainda nao espelhada nesta maquina
         // derrubaria a gravacao inteira da operacao.
@@ -2492,12 +2533,14 @@ function getOperationPayload(
   const operation = database
     .prepare(
       `SELECT
-    o.*, c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description
+    o.*, c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
+    ca.name AS carrier_name
     FROM weighing_operations o
     LEFT JOIN customers c ON c.id = o.customer_id
     LEFT JOIN vehicles v ON v.id = o.vehicle_id
     LEFT JOIN drivers d ON d.id = o.driver_id
     LEFT JOIN products p ON p.id = o.product_id
+    LEFT JOIN carriers ca ON ca.id = o.carrier_id
     WHERE o.id = ?`
     )
     .get(operationId) as Record<string, unknown> | undefined;
@@ -2514,6 +2557,11 @@ function getOperationPayload(
     operation_type: operation.operation_type,
     customer_id: operation.customer_id,
     product_id: operation.product_id,
+    // Transportadora: as tres trocas permitidas numa operacao aberta sao
+    // produto, cliente e transportadora — sem estas duas colunas a terceira
+    // nunca chegava na outra balanca da pedreira.
+    carrier_id: operation.carrier_id,
+    carrier_name: operation.carrier_name,
     payment_term_id: operation.payment_term_id,
     plate: operation.plate,
     customer_name: operation.customer_name,
@@ -3748,6 +3796,38 @@ function getErrorLikeMessage(error: unknown): string {
   return "Erro desconhecido";
 }
 
+/**
+ * Id local de um cadastro espelhado do OMIE, garantidamente por empresa.
+ *
+ * O id derivado direto do OMIE (`omie_<id>`) nao carrega empresa nenhuma, e o
+ * upsert e `ON CONFLICT(id) DO UPDATE SET company_id = excluded.company_id`.
+ * Com duas pedreiras na MESMA conta OMIE (ou a mesma maquina reativada em outra
+ * pedreira), cada sincronizacao *mudava a linha de dono* em vez de criar a copia
+ * da pedreira que sincronizou: a outra pedreira simplesmente perdia o cliente,
+ * sem erro nenhum aparecer. Era o que fazia o total baixado nunca bater com o
+ * que existe no OMIE — nao faltava download, sobrava roubo de linha.
+ *
+ * Quando o id preferido ja pertence a outra empresa, esta empresa ganha o seu
+ * proprio id derivado. Ids ja existentes ficam como estao (nada e renumerado).
+ *
+ * Excecao: a identidade provisoria de antes da ativacao (`setup-company`) nao e
+ * uma pedreira — as linhas gravadas sob ela continuam sendo adotadas pela
+ * empresa real, senao a ativacao deixaria o cadastro duplicado e invisivel.
+ */
+export function resolveOmieLocalId(
+  database: DesktopDatabase,
+  table: "customers" | "products" | "carriers",
+  companyId: string,
+  preferredId: string
+): string {
+  const owner = database.prepare(`SELECT company_id FROM ${table} WHERE id = ?`).get(preferredId) as
+    | { company_id: string }
+    | undefined;
+  if (!owner || owner.company_id === companyId) return preferredId;
+  if (owner.company_id === SETUP_COMPANY_ID) return preferredId;
+  return `${preferredId}__${companyId}`;
+}
+
 function upsertOmieCustomers(
   database: DesktopDatabase,
   companyId: string,
@@ -3824,7 +3904,11 @@ function upsertOmieCustomers(
     const byDocument = customer.document
       ? (findByDocument.get(companyId, customer.document) as { id: string } | undefined)
       : undefined;
-    const localId = existing?.id ?? byIntegrationCode?.id ?? byDocument?.id ?? `omie_${customer.id}`;
+    const localId =
+      existing?.id ??
+      byIntegrationCode?.id ??
+      byDocument?.id ??
+      resolveOmieLocalId(database, "customers", companyId, `omie_${customer.id}`);
     upsert.run(
       localId,
       companyId,
@@ -3938,7 +4022,8 @@ function upsertOmieProducts(
     }
 
     upsert.run(
-      `omie_${product.id}`,
+      findProductLocalId(database, companyId, product.id) ??
+        resolveOmieLocalId(database, "products", companyId, `omie_${product.id}`),
       companyId,
       product.id,
       product.integrationCode ?? null,
@@ -3970,6 +4055,18 @@ function upsertOmieProducts(
     synced++;
   }
   return synced;
+}
+
+/** Produto ja espelhado nesta empresa, achado pelo id do OMIE. */
+function findProductLocalId(
+  database: DesktopDatabase,
+  companyId: string,
+  omieProductId: number
+): string | null {
+  const row = database
+    .prepare("SELECT id FROM products WHERE company_id = ? AND omie_product_id = ? LIMIT 1")
+    .get(companyId, omieProductId) as { id: string } | undefined;
+  return row?.id ?? null;
 }
 
 function upsertOmieSuppliers(
@@ -4012,7 +4109,7 @@ function upsertOmieSuppliers(
     if (!Number.isFinite(supplier.id) || !supplier.name.trim()) continue;
     const localId =
       findCarrierLocalId(database, companyId, supplier) ??
-      `omie_supplier_${supplier.id}`;
+      resolveOmieLocalId(database, "carriers", companyId, `omie_supplier_${supplier.id}`);
     upsert.run(
       localId,
       companyId,
