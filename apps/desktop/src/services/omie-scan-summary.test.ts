@@ -22,7 +22,9 @@ describe("resumo da varredura de clientes do OMIE", () => {
           finished: true
         })
       )
-    ).toBe("12/12 paginas, 1165 de 1165 registros, 1132 clientes, 33 transportadoras, 0 ignorados por tag");
+    ).toBe(
+      "12/12 paginas, 1165 de 1165 registros, 1132 clientes, 33 transportadoras, 0 sem codigo/razao social"
+    );
   });
 
   it("avisa quando a varredura parou antes do fim declarado pelo OMIE", () => {
@@ -32,6 +34,8 @@ describe("resumo da varredura de clientes do OMIE", () => {
         rawRecords: 300,
         classifiedCustomers: 214,
         classifiedCarriers: 33,
+        supplierOnly: 50,
+        invalid: 3,
         omieTotalPages: 12,
         omieTotalRecords: 1165,
         finished: false
@@ -40,7 +44,8 @@ describe("resumo da varredura de clientes do OMIE", () => {
 
     expect(summary).toContain("3/12 paginas");
     expect(summary).toContain("300 de 1165 registros");
-    expect(summary).toContain("53 ignorados por tag");
+    expect(summary).toContain("50 fora da classificacao");
+    expect(summary).toContain("3 sem codigo/razao social");
     expect(summary).toContain("varredura NAO concluida");
   });
 
@@ -55,6 +60,8 @@ function scan(overrides: Partial<OmieCustomersScan>): OmieCustomersScan {
     rawRecords: 0,
     classifiedCustomers: 0,
     classifiedCarriers: 0,
+    invalid: 0,
+    supplierOnly: 0,
     omieTotalPages: null,
     omieTotalRecords: null,
     finished: false,

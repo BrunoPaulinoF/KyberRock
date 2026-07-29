@@ -518,6 +518,10 @@ type PageResult<T> = {
 type CustomersPageResult = PageResult<OmieCustomer> & {
   carriers: OmieSupplier[];
   returned: number;
+  /** Cadastros que o OMIE devolveu sem codigo ou sem razao social. */
+  invalid: number;
+  /** Cadastros validos que ficaram de fora por serem fornecedor puro. */
+  supplierOnly: number;
 };
 
 function emptyPage<T>(page: number): PageResult<T> {
@@ -525,7 +529,7 @@ function emptyPage<T>(page: number): PageResult<T> {
 }
 
 function emptyCustomerPage(page: number): CustomersPageResult {
-  return { ...emptyPage<OmieCustomer>(page), carriers: [], returned: 0 };
+  return { ...emptyPage<OmieCustomer>(page), carriers: [], returned: 0, invalid: 0, supplierOnly: 0 };
 }
 
 async function pullReferenceDataPage(
@@ -561,6 +565,8 @@ async function pullReferenceDataPage(
     pagination: {
       customersPage: customersResult.page,
       customersReturned: customersResult.returned,
+      customersInvalid: customersResult.invalid,
+      customersSupplierOnly: customersResult.supplierOnly,
       customersFinished: customersResult.finished,
       customersTotalPages: customersResult.totalPages,
       customersTotalRecords: customersResult.totalRecords,
@@ -741,6 +747,8 @@ async function listCustomersPage(
       items: cached.items.filter(isOmieCustomer),
       carriers: cached.items.filter(isOmieCarrier).map(mapCustomerToCarrier),
       returned: cached.returned,
+      invalid: cached.returned - cached.items.length,
+      supplierOnly: cached.items.filter(isOmieSupplierOnly).length,
       page,
       finished: cached.finished,
       totalPages: cached.totalPages,
@@ -784,6 +792,8 @@ async function listCustomersPage(
     items: items.filter(isOmieCustomer),
     carriers: items.filter(isOmieCarrier).map(mapCustomerToCarrier),
     returned: rawItems.length,
+    invalid: rawItems.length - items.length,
+    supplierOnly: items.filter(isOmieSupplierOnly).length,
     page,
     finished,
     totalPages,
@@ -1106,11 +1116,17 @@ function computeFinished(
 }
 
 function isOmieCustomer(customer: OmieCustomer): boolean {
-  return classifyOmieCustomer(customer.tagsJson).isCustomer;
+  return classifyOmieCustomer(customer.tagsJson, customer.customerType).isCustomer;
 }
 
 function isOmieCarrier(customer: OmieCustomer): boolean {
-  return classifyOmieCustomer(customer.tagsJson).isCarrier;
+  return classifyOmieCustomer(customer.tagsJson, customer.customerType).isCarrier;
+}
+
+/** Cadastro que nao entra nem como cliente nem como transportadora (fornecedor puro). */
+function isOmieSupplierOnly(customer: OmieCustomer): boolean {
+  const { isCustomer, isCarrier } = classifyOmieCustomer(customer.tagsJson, customer.customerType);
+  return !isCustomer && !isCarrier;
 }
 
 function mapCustomerToCarrier(customer: OmieCustomer): OmieSupplier {

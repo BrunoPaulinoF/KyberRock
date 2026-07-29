@@ -37,12 +37,13 @@ describe("classifyOmieCustomer", () => {
     });
   });
 
-  it("nao traz fornecedor puro como cliente", () => {
+  it("traz fornecedor como cliente: cliente faltando e caminhao parado", () => {
+    // Era aqui que 701 dos 948 cadastros do OMIE ficavam de fora. Fornecedor
+    // sobrando na busca e ruido; cliente faltando trava a balanca.
     expect(classifyOmieCustomer(tags("Fornecedor"))).toEqual({
-      isCustomer: false,
+      isCustomer: true,
       isCarrier: false
     });
-    // Fornecedor que tambem compra continua entrando como cliente.
     expect(classifyOmieCustomer(tags("Fornecedor", "Cliente"))).toEqual({
       isCustomer: true,
       isCarrier: false
@@ -60,6 +61,61 @@ describe("classifyOmieCustomer", () => {
     expect(classifyOmieCustomer(tags("Obra", "Regiao Sul"))).toEqual({
       isCustomer: true,
       isCarrier: false
+    });
+  });
+
+  it("o tipo do OMIE marca como cliente mesmo quem so tem tag de transportadora", () => {
+    // `cliente_fornecedor` e o campo do proprio OMIE para isto, populado mesmo
+    // em quem nao usa tags — quando ele diz que o cadastro compra, vale.
+    expect(classifyOmieCustomer(tags("Transportadora"), "C")).toEqual({
+      isCustomer: true,
+      isCarrier: true
+    });
+    // "A" = ambos (cliente e fornecedor).
+    expect(classifyOmieCustomer(tags("Transportadora"), "A")).toEqual({
+      isCustomer: true,
+      isCarrier: true
+    });
+  });
+
+  it("tipo transportadora entra como transportadora mesmo sem tag", () => {
+    expect(classifyOmieCustomer(null, "T")).toEqual({ isCustomer: false, isCarrier: true });
+  });
+
+  it("tipo fornecedor nao exclui: so transportadora fica fora dos clientes", () => {
+    expect(classifyOmieCustomer(null, "F")).toEqual({ isCustomer: true, isCarrier: false });
+    expect(classifyOmieCustomer(tags("Fornecedor"), "F")).toEqual({
+      isCustomer: true,
+      isCarrier: false
+    });
+  });
+
+  it("aceita o tipo escrito por extenso e com caixa/acento variados", () => {
+    expect(classifyOmieCustomer(tags("Fornecedor"), " Cliente ")).toEqual({
+      isCustomer: true,
+      isCarrier: false
+    });
+    expect(classifyOmieCustomer(null, "TRANSPORTADORA")).toEqual({
+      isCustomer: false,
+      isCarrier: true
+    });
+  });
+
+  it("tipo ausente ou desconhecido nao muda nada: o cadastro entra como cliente", () => {
+    expect(classifyOmieCustomer(tags("Fornecedor"), null)).toEqual({
+      isCustomer: true,
+      isCarrier: false
+    });
+    expect(classifyOmieCustomer(tags("Fornecedor"), "Z")).toEqual({
+      isCustomer: true,
+      isCarrier: false
+    });
+  });
+
+  it("transportadora pura continua sendo o unico cadastro fora dos clientes", () => {
+    expect(classifyOmieCustomer(tags("Transportadora"), "F")).toEqual({
+      isCustomer: false,
+      isCarrier: true
     });
   });
 });

@@ -48,8 +48,14 @@ describe("omie-sync Edge Function", () => {
     expect(source).toContain(
       'import { classifyOmieCustomer } from "../_shared/omie-customer-classification.ts";'
     );
-    expect(source).toContain("classifyOmieCustomer(customer.tagsJson).isCustomer");
-    expect(source).toContain("classifyOmieCustomer(customer.tagsJson).isCarrier");
+    // O tipo do OMIE (`cliente_fornecedor`) entra junto das tags: e o campo que
+    // classifica o cadastro em quem nao usa tags.
+    expect(source).toContain(
+      "classifyOmieCustomer(customer.tagsJson, customer.customerType).isCustomer"
+    );
+    expect(source).toContain(
+      "classifyOmieCustomer(customer.tagsJson, customer.customerType).isCarrier"
+    );
     expect(source).toContain("items.filter(isOmieCustomer)");
     expect(source).toContain("items.filter(isOmieCarrier).map(mapCustomerToCarrier)");
   });
