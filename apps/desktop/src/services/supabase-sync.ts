@@ -165,6 +165,10 @@ export interface OmieCustomersPageInfo {
   /** Quantos viraram cliente e quantos viraram transportadora. */
   classifiedCustomers: number;
   classifiedCarriers: number;
+  /** Sem codigo ou sem razao social no OMIE. */
+  invalid: number;
+  /** Fornecedor puro: nao compra da pedreira. */
+  supplierOnly: number;
   finished: boolean;
   /** Totais declarados pelo proprio OMIE. */
   totalPages: number | null;
@@ -294,6 +298,8 @@ interface OmieReferenceDataResponse {
     paymentTermsPage: number;
     suppliersPage?: number;
     customersReturned: number;
+    customersInvalid?: number;
+    customersSupplierOnly?: number;
     productsReturned: number;
     paymentTermsReturned: number;
     suppliersReturned?: number;
@@ -2528,6 +2534,8 @@ export function applyOmieReferenceData(
             returned: pagination.customersReturned,
             classifiedCustomers: customers.length,
             classifiedCarriers: suppliers.length,
+            invalid: pagination.customersInvalid ?? 0,
+            supplierOnly: pagination.customersSupplierOnly ?? 0,
             finished: pagination.customersFinished ?? false,
             totalPages: pagination.customersTotalPages ?? null,
             totalRecords: pagination.customersTotalRecords ?? null

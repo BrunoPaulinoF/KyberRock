@@ -228,17 +228,27 @@ export function describeOmieCustomersScan(scan: OmieCustomersScan): string | nul
   const records = scan.omieTotalRecords
     ? `${scan.rawRecords} de ${scan.omieTotalRecords} registros`
     : `${scan.rawRecords} registros`;
-  const ignored = Math.max(
+  // Nomeia o motivo em vez de um "ignorados" generico: cadastro invalido e
+  // cadastro fora da classificacao pedem acoes diferentes.
+  const unaccounted = Math.max(
     0,
-    scan.rawRecords - scan.classifiedCustomers - scan.classifiedCarriers
+    scan.rawRecords -
+      scan.classifiedCustomers -
+      scan.classifiedCarriers -
+      scan.supplierOnly -
+      scan.invalid
   );
   const parts = [
     pages,
     records,
     `${scan.classifiedCustomers} clientes`,
     `${scan.classifiedCarriers} transportadoras`,
-    `${ignored} ignorados por tag`
+    `${scan.invalid} sem codigo/razao social`
   ];
+  // Deve ficar em zero: so transportadora pura fica fora dos clientes, e ela ja
+  // esta contada acima. Qualquer numero aqui e cadastro sumindo em silencio.
+  if (scan.supplierOnly > 0) parts.push(`${scan.supplierOnly} fora da classificacao`);
+  if (unaccounted > 0) parts.push(`${unaccounted} nao classificados`);
   if (!scan.finished) parts.push("varredura NAO concluida");
   return parts.join(", ");
 }
@@ -249,6 +259,8 @@ export interface OmieCustomersScan {
   rawRecords: number;
   classifiedCustomers: number;
   classifiedCarriers: number;
+  invalid: number;
+  supplierOnly: number;
   omieTotalPages: number | null;
   omieTotalRecords: number | null;
   finished: boolean;
@@ -3083,6 +3095,8 @@ export class DesktopRuntime {
       rawRecords: 0,
       classifiedCustomers: 0,
       classifiedCarriers: 0,
+      invalid: 0,
+      supplierOnly: 0,
       omieTotalPages: null,
       omieTotalRecords: null,
       finished: false
@@ -3151,6 +3165,8 @@ export class DesktopRuntime {
         customersScan.rawRecords += page.returned;
         customersScan.classifiedCustomers += page.classifiedCustomers;
         customersScan.classifiedCarriers += page.classifiedCarriers;
+        customersScan.invalid += page.invalid;
+        customersScan.supplierOnly += page.supplierOnly;
         customersScan.omieTotalPages = page.totalPages ?? customersScan.omieTotalPages;
         customersScan.omieTotalRecords = page.totalRecords ?? customersScan.omieTotalRecords;
         customersScan.finished = page.finished;
