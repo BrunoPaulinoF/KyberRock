@@ -2435,16 +2435,37 @@ export function applyOmieReferenceData(
   // apenas espelhamos os codigos de parcela do OMIE (omie_payment_terms) para vinculo.
   let paymentTermsPersisted = 0;
   let suppliersPersisted = 0;
-  const apply = database.transaction(() => {
-    customersPersisted = upsertOmieCustomers(database, companyId, customers);
-    productsSynced = upsertOmieProducts(database, companyId, products);
-    suppliersPersisted = upsertOmieSuppliers(database, companyId, suppliers);
-    paymentTermsPersisted = upsertOmiePaymentTerms(database, companyId, paymentTerms);
+  // Uma transacao por bloco, e nao uma para a pagina inteira: uma linha
+  // problematica numa tabela nao pode desfazer o que as outras gravaram. Era o
+  // que acontecia com o espelho de parcelas — a pagina inteira voltava atras e a
+  // pedreira ficava com zero cliente, sem nenhuma pista de que o problema estava
+  // nas condicoes de pagamento.
+  const errors: string[] = [];
+  const applyBlock = (label: string, run: () => number): number => {
+    try {
+      return database.transaction(run)();
+    } catch (error) {
+      errors.push(`${label}: ${error instanceof Error ? error.message : String(error)}`);
+      return 0;
+    }
+  };
+
+  customersPersisted = applyBlock("clientes", () =>
+    upsertOmieCustomers(database, companyId, customers)
+  );
+  productsSynced = applyBlock("produtos", () =>
+    upsertOmieProducts(database, companyId, products)
+  );
+  suppliersPersisted = applyBlock("transportadoras", () =>
+    upsertOmieSuppliers(database, companyId, suppliers)
+  );
+  paymentTermsPersisted = applyBlock("condicoes de pagamento", () => {
+    const persisted = upsertOmiePaymentTerms(database, companyId, paymentTerms);
     // Materializa parcelas novas do espelho como condicoes locais selecionaveis
     // (aparecem na Nova Entrada e no cadastro do cliente).
     provisionPaymentTermsFromOmieMirror(database, companyId);
+    return persisted;
   });
-  apply();
 
   if (pagination) {
     const pageSize = data.pageSize ?? 100;
@@ -2526,7 +2547,7 @@ export function applyOmieReferenceData(
     productsSynced,
     paymentTermsSynced: paymentTermsPersisted,
     suppliersSynced: suppliersPersisted,
-    errors: [],
+    errors,
     ...(pagination
       ? {
           customersPage: {
@@ -3855,18 +3876,26 @@ function getErrorLikeMessage(error: unknown): string {
  * Excecao: a identidade provisoria de antes da ativacao (`setup-company`) nao e
  * uma pedreira — as linhas gravadas sob ela continuam sendo adotadas pela
  * empresa real, senao a ativacao deixaria o cadastro duplicado e invisivel.
+ *
+ * `adoptSetupCompanyRows: false` desliga essa adocao. E obrigatorio em tabela
+ * cujo upsert resolve conflito por outra chave que nao o id (o espelho de
+ * parcelas casa por empresa+codigo): la, devolver um id de outro dono nao adota
+ * a linha — bate na chave primaria e estoura.
  */
 export function resolveOmieLocalId(
   database: DesktopDatabase,
-  table: "customers" | "products" | "carriers",
+  table: "customers" | "products" | "carriers" | "omie_payment_terms",
   companyId: string,
-  preferredId: string
+  preferredId: string,
+  options: { adoptSetupCompanyRows?: boolean } = {}
 ): string {
   const owner = database.prepare(`SELECT company_id FROM ${table} WHERE id = ?`).get(preferredId) as
     | { company_id: string }
     | undefined;
   if (!owner || owner.company_id === companyId) return preferredId;
-  if (owner.company_id === SETUP_COMPANY_ID) return preferredId;
+  if (options.adoptSetupCompanyRows !== false && owner.company_id === SETUP_COMPANY_ID) {
+    return preferredId;
+  }
   return `${preferredId}__${companyId}`;
 }
 
@@ -4201,13 +4230,25 @@ export function upsertOmiePaymentTerms(
       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
   `);
 
+  const findByCode = database.prepare(
+    "SELECT id FROM omie_payment_terms WHERE company_id = ? AND code = ? LIMIT 1"
+  );
+
   let persisted = 0;
   for (const term of paymentTerms) {
     // code e o identificador do codigo_parcela do OMIE; preserva zeros a esquerda (TEXT).
     const code = (term.code ?? "").trim();
     if (!code) continue;
+    // O id derivado (`omie_parcela_<codigo>`) nao carrega empresa, mas a clausula
+    // de conflito cobre so (company_id, code). Numa maquina que ja espelhou o
+    // OMIE de outra pedreira o INSERT nao casava com o conflito, batia na chave
+    // primaria e estourava — derrubando a pagina inteira, clientes incluidos.
+    const existing = findByCode.get(companyId, code) as { id: string } | undefined;
     upsert.run(
-      `omie_parcela_${code}`,
+      existing?.id ??
+        resolveOmieLocalId(database, "omie_payment_terms", companyId, `omie_parcela_${code}`, {
+          adoptSetupCompanyRows: false
+        }),
       companyId,
       Number.isFinite(term.id) ? term.id : null,
       code,
