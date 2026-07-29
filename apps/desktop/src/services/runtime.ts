@@ -136,7 +136,7 @@ import {
   type DesktopAccessStatus
 } from "./desktop-activation.js";
 import { CacheStore, type CacheQueryOptions, type CacheQueryResult } from "./cache-store.js";
-import { readOmiePullState, writeOmiePullState } from "./supabase-sync.js";
+import { readOmiePullState, writeOmiePullState, SETUP_COMPANY_ID } from "./supabase-sync.js";
 import { listUnitDevices, type UnitDeviceInfo } from "./unit-devices.js";
 import { CustomerReportService, type CustomerReportVariant } from "./customer-report.js";
 import {
@@ -3162,7 +3162,7 @@ export class DesktopRuntime {
     return (
       getLocalDesktopIdentity(this.database) ??
       ensureInitialDesktopIdentity(this.database, {
-        companyId: "setup-company",
+        companyId: SETUP_COMPANY_ID,
         companyLegalName: "KyberRock - Configuracao Inicial",
         companyTradeName: "KyberRock",
         unitId: "setup-unit",

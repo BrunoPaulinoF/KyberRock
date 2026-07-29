@@ -669,6 +669,16 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Erro OMIE inesperado";
 }
 
+/**
+ * Chave do cache de paginas por conta OMIE. Precisa incluir o segredo: a app_key
+ * identifica a aplicacao, nao a empresa, entao duas pedreiras com contas OMIE
+ * diferentes na mesma app_key compartilhariam pagina cacheada — cada uma leria o
+ * cadastro da outra.
+ */
+function omieTenantKey(credentials: OmieCredentials): string {
+  return `${credentials.appKey}:${credentials.appSecret}`;
+}
+
 const OMIE_PAGE_CACHE_TTL_MS = 60_000;
 const omiePageCache = new Map<
   string,
@@ -724,7 +734,7 @@ async function listCustomersPage(
   credentials: OmieCredentials,
   page: number
 ): Promise<CustomersPageResult> {
-  const cacheKey = `clientes:${credentials.appKey}:${page}`;
+  const cacheKey = `clientes:${omieTenantKey(credentials)}:${page}`;
   const cached = getCachedPage<OmieCustomer>(cacheKey);
   if (cached) {
     return {
@@ -895,7 +905,7 @@ async function listProductsPage(
   credentials: OmieCredentials,
   page: number
 ): Promise<PageResult<OmieProduct>> {
-  const cacheKey = `produtos:${credentials.appKey}:${page}`;
+  const cacheKey = `produtos:${omieTenantKey(credentials)}:${page}`;
   const cached = getCachedPage<OmieProduct>(cacheKey);
   if (cached) {
     return {
@@ -1128,7 +1138,7 @@ async function listPaymentTermsPage(
   credentials: OmieCredentials,
   page: number
 ): Promise<PageResult<OmiePaymentTerm>> {
-  const cacheKey = `parcelas:${credentials.appKey}:${page}`;
+  const cacheKey = `parcelas:${omieTenantKey(credentials)}:${page}`;
   const cached = getCachedPage<OmiePaymentTerm>(cacheKey);
   if (cached) {
     return {
@@ -1478,7 +1488,7 @@ async function ensureOmieParcelaCode(
         ? `${days[0]} dias`
         : String(count);
 
-  const cacheKey = `${credentials.appKey}:${conditionText}`;
+  const cacheKey = `${omieTenantKey(credentials)}:${conditionText}`;
   const cached = omieParcelaCodeCache.get(cacheKey);
   if (cached !== undefined) return cached;
 

@@ -613,6 +613,9 @@ export async function processCloudSyncQueue(
   return { processed, failed, errors };
 }
 
+/** Empresa provisoria usada antes da ativacao do dispositivo (ver runtime.ensureIdentity). */
+export const SETUP_COMPANY_ID = "setup-company";
+
 export const CADASTRO_LAST_PULL_KEY = "cloud_cadastro_last_pull_at";
 /** Janela de sobreposicao do pull incremental, para absorver diferenca de relogio. */
 const CADASTRO_INCREMENTAL_OVERLAP_MS = 5 * 60 * 1000;
@@ -3793,6 +3796,38 @@ function getErrorLikeMessage(error: unknown): string {
   return "Erro desconhecido";
 }
 
+/**
+ * Id local de um cadastro espelhado do OMIE, garantidamente por empresa.
+ *
+ * O id derivado direto do OMIE (`omie_<id>`) nao carrega empresa nenhuma, e o
+ * upsert e `ON CONFLICT(id) DO UPDATE SET company_id = excluded.company_id`.
+ * Com duas pedreiras na MESMA conta OMIE (ou a mesma maquina reativada em outra
+ * pedreira), cada sincronizacao *mudava a linha de dono* em vez de criar a copia
+ * da pedreira que sincronizou: a outra pedreira simplesmente perdia o cliente,
+ * sem erro nenhum aparecer. Era o que fazia o total baixado nunca bater com o
+ * que existe no OMIE — nao faltava download, sobrava roubo de linha.
+ *
+ * Quando o id preferido ja pertence a outra empresa, esta empresa ganha o seu
+ * proprio id derivado. Ids ja existentes ficam como estao (nada e renumerado).
+ *
+ * Excecao: a identidade provisoria de antes da ativacao (`setup-company`) nao e
+ * uma pedreira — as linhas gravadas sob ela continuam sendo adotadas pela
+ * empresa real, senao a ativacao deixaria o cadastro duplicado e invisivel.
+ */
+export function resolveOmieLocalId(
+  database: DesktopDatabase,
+  table: "customers" | "products" | "carriers",
+  companyId: string,
+  preferredId: string
+): string {
+  const owner = database.prepare(`SELECT company_id FROM ${table} WHERE id = ?`).get(preferredId) as
+    | { company_id: string }
+    | undefined;
+  if (!owner || owner.company_id === companyId) return preferredId;
+  if (owner.company_id === SETUP_COMPANY_ID) return preferredId;
+  return `${preferredId}__${companyId}`;
+}
+
 function upsertOmieCustomers(
   database: DesktopDatabase,
   companyId: string,
@@ -3869,7 +3904,11 @@ function upsertOmieCustomers(
     const byDocument = customer.document
       ? (findByDocument.get(companyId, customer.document) as { id: string } | undefined)
       : undefined;
-    const localId = existing?.id ?? byIntegrationCode?.id ?? byDocument?.id ?? `omie_${customer.id}`;
+    const localId =
+      existing?.id ??
+      byIntegrationCode?.id ??
+      byDocument?.id ??
+      resolveOmieLocalId(database, "customers", companyId, `omie_${customer.id}`);
     upsert.run(
       localId,
       companyId,
@@ -3983,7 +4022,8 @@ function upsertOmieProducts(
     }
 
     upsert.run(
-      `omie_${product.id}`,
+      findProductLocalId(database, companyId, product.id) ??
+        resolveOmieLocalId(database, "products", companyId, `omie_${product.id}`),
       companyId,
       product.id,
       product.integrationCode ?? null,
@@ -4015,6 +4055,18 @@ function upsertOmieProducts(
     synced++;
   }
   return synced;
+}
+
+/** Produto ja espelhado nesta empresa, achado pelo id do OMIE. */
+function findProductLocalId(
+  database: DesktopDatabase,
+  companyId: string,
+  omieProductId: number
+): string | null {
+  const row = database
+    .prepare("SELECT id FROM products WHERE company_id = ? AND omie_product_id = ? LIMIT 1")
+    .get(companyId, omieProductId) as { id: string } | undefined;
+  return row?.id ?? null;
 }
 
 function upsertOmieSuppliers(
@@ -4057,7 +4109,7 @@ function upsertOmieSuppliers(
     if (!Number.isFinite(supplier.id) || !supplier.name.trim()) continue;
     const localId =
       findCarrierLocalId(database, companyId, supplier) ??
-      `omie_supplier_${supplier.id}`;
+      resolveOmieLocalId(database, "carriers", companyId, `omie_supplier_${supplier.id}`);
     upsert.run(
       localId,
       companyId,
