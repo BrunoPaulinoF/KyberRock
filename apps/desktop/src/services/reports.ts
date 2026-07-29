@@ -555,9 +555,9 @@ export class ReportService {
       .prepare(
         `
       SELECT
-        v.plate as plate,
-        d.name as driver_name,
-        p.description as product_description,
+        COALESCE(v.plate, wo.remote_plate) as plate,
+        COALESCE(d.name, wo.remote_driver_name) as driver_name,
+        COALESCE(p.description, wo.remote_product_description) as product_description,
         wo.net_weight_kg as net_weight_kg,
         wo.entry_weight_captured_at as entry_at,
         wo.exit_weight_captured_at as exit_at

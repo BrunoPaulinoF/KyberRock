@@ -441,9 +441,11 @@ export class CustomerReportService {
       .prepare(
         `SELECT
            o.id, o.status, o.operation_type, o.cancel_reason, o.created_at,
-           p.code as product_code, p.description as product_description, p.unit as product_unit,
-           v.plate as plate, v.description as vehicle_description,
-           d.name as driver_name, d.document as driver_document,
+           p.code as product_code,
+           COALESCE(p.description, o.remote_product_description) as product_description,
+           p.unit as product_unit,
+           COALESCE(v.plate, o.remote_plate) as plate, v.description as vehicle_description,
+           COALESCE(d.name, o.remote_driver_name) as driver_name, d.document as driver_document,
            ca.name as carrier_name, ca.document as carrier_document,
            o.freight_type, o.freight_json, o.freight_total_cents,
            o.entry_weight_kg, o.exit_weight_kg, o.net_weight_kg,
@@ -491,8 +493,8 @@ export class CustomerReportService {
         `SELECT
            o.id, o.created_at, o.exit_weight_captured_at as exit_at,
            o.total_cents, o.manual_installments, o.omie_sales_order_id,
-           p.description as product_description,
-           v.plate as plate,
+           COALESCE(p.description, o.remote_product_description) as product_description,
+           COALESCE(v.plate, o.remote_plate) as plate,
            pm.name as payment_method_name,
            pt.name as payment_term_name,
            COALESCE(opt.installment_days_json, pt.installment_days_json) as term_days_json,

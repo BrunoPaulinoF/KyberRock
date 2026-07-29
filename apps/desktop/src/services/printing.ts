@@ -579,10 +579,15 @@ function getOperationForReceipt(
         NULL AS company_state_registration, u.name AS unit_name, o.status, o.operation_type,
         o.entry_weight_captured_at, o.entry_weight_kg, o.exit_weight_captured_at, o.exit_weight_kg,
         o.net_weight_kg, o.unit_price_cents, o.product_total_cents, o.freight_total_cents,
-        o.total_cents, c.trade_name AS customer_name, c.document AS customer_document,
+        o.total_cents,
+        COALESCE(c.trade_name, o.remote_customer_name) AS customer_name,
+        c.document AS customer_document,
         c.phone AS customer_phone, c.zipcode AS customer_zipcode, c.city AS customer_city,
-        c.state AS customer_state, v.plate, d.name AS driver_name, p.code AS product_code,
-        p.description AS product_description,
+        c.state AS customer_state,
+        COALESCE(v.plate, o.remote_plate) AS plate,
+        COALESCE(d.name, o.remote_driver_name) AS driver_name,
+        p.code AS product_code,
+        COALESCE(p.description, o.remote_product_description) AS product_description,
         CASE
           WHEN o.manual_installments = 1 THEN '1 parcela'
           WHEN o.manual_installments > 1 THEN CAST(o.manual_installments AS TEXT) || ' parcelas'

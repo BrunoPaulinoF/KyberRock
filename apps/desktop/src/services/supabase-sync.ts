@@ -44,6 +44,12 @@ import { upsertUnitDevices } from "./unit-devices.js";
 let client: SupabaseClient | null = null;
 let clientConfigKey: string | null = null;
 
+// Carimbos de tempo gravados por SQL usam strftime ISO ('...T...Z') em vez de
+// strftime('%Y-%m-%dT%H:%M:%fZ', 'now') ("2026-07-29 17:00:48", UTC mas sem indicador de fuso). Com
+// duas balancas na mesma pedreira os dois formatos se misturavam na mesma
+// coluna, e tanto a comparacao lexical no SQL quanto Date.parse (que le o
+// segundo formato como hora local) davam a versao errada como a mais nova.
+
 export const CLOUD_SUPABASE_URL_KEY = "cloud_supabase_url";
 export const CLOUD_PUBLISHABLE_KEY_KEY = "cloud_publishable_key";
 const OMIE_BATCH_DELAY_MS = 3_000;
@@ -452,7 +458,61 @@ export async function syncOperationToSupabase(
   const operation = getOperationPayload(database, operationId, settings);
   const dependencies = collectCloudSyncDependencies(database, operation);
   await invokeDesktopSync(settings, { operations: [operation], ...dependencies });
+  // Confirma o envio na propria operacao. E o que permite a reconciliacao
+  // (listOperationsPendingCloudPush) reenviar fechamentos e cancelamentos cujo
+  // job da fila morreu depois das tentativas — sem isso a outra balanca nunca
+  // ficava sabendo do fechamento.
+  markOperationCloudSynced(database, operationId, stringValue(operation.synced_at));
   return true;
+}
+
+function markOperationCloudSynced(
+  database: DesktopDatabase,
+  operationId: string,
+  syncedAt: string
+): void {
+  database
+    .prepare("UPDATE weighing_operations SET cloud_synced_at = ? WHERE id = ?")
+    .run(syncedAt || new Date().toISOString(), operationId);
+}
+
+/** Janela da reconciliacao: operacao mexida ha mais de 30 dias nao volta a fila. */
+const CLOUD_RECONCILE_WINDOW_DAYS = 30;
+const CLOUD_RECONCILE_LIMIT = 200;
+
+/**
+ * Operacoes com alteracao local ainda nao confirmada na nuvem — inclusive as
+ * fechadas e canceladas, que a fila de jobs sozinha podia perder de vez ao
+ * marcar o job como `dead_letter` depois de 10 falhas (uma queda de internet de
+ * uma hora bastava). Enquanto `cloud_synced_at` estiver atras de `updated_at` a
+ * operacao volta a ser enviada a cada sincronizacao.
+ */
+export function listOperationsPendingCloudPush(
+  database: DesktopDatabase,
+  now: Date = new Date()
+): Array<{ id: string; loadingRequestId: string | null }> {
+  const windowStart = new Date(
+    now.getTime() - CLOUD_RECONCILE_WINDOW_DAYS * 24 * 60 * 60 * 1000
+  ).toISOString();
+  const rows = database
+    .prepare(
+      `SELECT o.id AS id, lr.id AS loading_request_id
+       FROM weighing_operations o
+       LEFT JOIN loading_requests lr ON lr.operation_id = o.id
+       WHERE o.deleted_at IS NULL
+         AND REPLACE(o.updated_at, ' ', 'T') >= ?
+         AND (
+           o.cloud_synced_at IS NULL
+           OR REPLACE(o.cloud_synced_at, ' ', 'T') < REPLACE(o.updated_at, ' ', 'T')
+         )
+       ORDER BY o.updated_at ASC
+       LIMIT ?`
+    )
+    .all(windowStart, CLOUD_RECONCILE_LIMIT) as Array<{
+    id: string;
+    loading_request_id: string | null;
+  }>;
+  return rows.map((row) => ({ id: row.id, loadingRequestId: row.loading_request_id }));
 }
 
 // Media (30 dias) de tempo dentro da pedreira, projetada na unidade para o
@@ -573,7 +633,7 @@ export async function pullDesktopDataFromCloud(
   const settings = getCloudSettings(database, identity);
   const supabase = getSupabaseClient();
   const lastPullAt = readStringLocalSetting(database, CADASTRO_LAST_PULL_KEY);
-  const cadastroSince =
+  const since =
     options.incremental && lastPullAt
       ? new Date(new Date(lastPullAt).getTime() - CADASTRO_INCREMENTAL_OVERLAP_MS).toISOString()
       : undefined;
@@ -581,32 +641,52 @@ export async function pullDesktopDataFromCloud(
     body: {
       deviceId: settings.deviceId,
       deviceToken: settings.deviceToken,
-      ...(cadastroSince ? { cadastroSince } : {})
+      // Cadastro e historico usam a mesma marca: no pull frequente a resposta
+      // traz so o que mudou, o que deixa o ciclo curto o bastante para as duas
+      // balancas enxergarem uma a outra em segundos.
+      ...(since ? { cadastroSince: since, historySince: since } : {})
     }
   });
   if (error) throw new Error(await getFunctionErrorMessage(error));
 
   const payload = data ?? {};
+  // Avisos locais (linha que nao pode ser gravada) somam aos avisos por tabela
+  // que vieram do desktop-pull.
+  const warnings = [...(payload.warnings ?? [])];
   const apply = database.transaction(() => {
     // Dispositivos primeiro: operacoes criadas em outras maquinas referenciam
     // o device delas (FK weighing_operations.device_id) e a legenda usa nome/cor.
-    upsertUnitDevices(
-      database,
-      { companyId: settings.companyId, unitId: settings.unitId },
-      payload.devices ?? []
+    applySection(warnings, "devices", () =>
+      upsertUnitDevices(
+        database,
+        { companyId: settings.companyId, unitId: settings.unitId },
+        payload.devices ?? []
+      )
     );
-    const customers = upsertCloudCustomers(database, settings.companyId, payload.customers ?? []);
-    const products = upsertCloudProducts(database, settings.companyId, payload.products ?? []);
+    const customers = applySection(warnings, "customers", () =>
+      upsertCloudCustomers(database, settings.companyId, payload.customers ?? [])
+    );
+    const products = applySection(warnings, "products", () =>
+      upsertCloudProducts(database, settings.companyId, payload.products ?? [])
+    );
     // Cadastro compartilhado antes das operacoes: veiculo/transportadora/motorista
     // sao referenciados pelas operacoes vindas das outras maquinas da pedreira.
-    const cadastro = upsertCloudCadastro(database, settings.companyId, payload);
-    const operations = upsertCloudOperations(database, settings, payload.operations ?? []);
-    const loadingRequests = upsertCloudLoadingRequests(database, settings, payload.loadingRequests ?? []);
-    const printReceipts = upsertCloudPrintReceipts(database, payload.printReceipts ?? []);
+    const cadastro = upsertCloudCadastro(database, settings.companyId, payload, warnings);
+    const operations = applySection(warnings, "weighing_operations", () =>
+      upsertCloudOperations(database, settings, payload.operations ?? [], warnings)
+    );
+    const loadingRequests = applySection(warnings, "loading_requests", () =>
+      upsertCloudLoadingRequests(database, settings, payload.loadingRequests ?? [], warnings)
+    );
+    const printReceipts = applySection(warnings, "print_receipts", () =>
+      upsertCloudPrintReceipts(database, payload.printReceipts ?? [])
+    );
     writeLocalSetting(database, "cloud_bootstrap_last_pull_at", new Date().toISOString());
-    // Marca do relogio do servidor para o proximo pull incremental do cadastro.
-    // Se alguma tabela veio com aviso, nao avanca a marca: o proximo pull tenta
-    // de novo o mesmo intervalo em vez de deixar um buraco no espelho.
+    // Marca do relogio do servidor para o proximo pull incremental. Se alguma
+    // tabela veio com aviso do servidor, nao avanca a marca: o proximo pull
+    // tenta de novo o mesmo intervalo em vez de deixar um buraco no espelho.
+    // Falha de linha local nao segura a marca (senao a janela cresceria sem
+    // fim); a varredura completa, que pede tudo, recupera o que ficou de fora.
     if ((payload.warnings ?? []).length === 0) {
       writeLocalSetting(
         database,
@@ -621,11 +701,26 @@ export async function pullDesktopDataFromCloud(
       loadingRequests,
       printReceipts,
       cadastro,
-      warnings: payload.warnings ?? []
+      warnings
     };
   });
 
   return apply();
+}
+
+/**
+ * Grava um bloco do pull isolando a falha: uma tabela que nao pode ser escrita
+ * (migracao local pendente, linha invalida) vira aviso em vez de derrubar a
+ * transacao inteira — sem isso um unico registro problematico deixava a maquina
+ * permanentemente cega para tudo que as outras balancas registram.
+ */
+function applySection(warnings: string[], table: string, run: () => number): number {
+  try {
+    return run();
+  } catch (error) {
+    warnings.push(`${table}: ${error instanceof Error ? error.message : String(error)}`);
+    return 0;
+  }
 }
 
 /**
@@ -637,26 +732,33 @@ export async function pullDesktopDataFromCloud(
 function upsertCloudCadastro(
   database: DesktopDatabase,
   companyId: string,
-  payload: DesktopPullResponse
+  payload: DesktopPullResponse,
+  warnings: string[] = []
 ): number {
+  const sections: Array<[string, () => number]> = [
+    ["carriers", () => upsertCloudCarriers(database, companyId, payload.carriers ?? [])],
+    ["drivers", () => upsertCloudDrivers(database, companyId, payload.drivers ?? [])],
+    ["vehicles", () => upsertCloudVehicles(database, companyId, payload.vehicles ?? [])],
+    ["customer_carriers", () => upsertCloudJunction(database, "customer_carriers", "customer_id", payload.customerCarriers ?? [])],
+    ["driver_carriers", () => upsertCloudJunction(database, "driver_carriers", "driver_id", payload.driverCarriers ?? [])],
+    ["vehicle_carriers", () => upsertCloudJunction(database, "vehicle_carriers", "vehicle_id", payload.vehicleCarriers ?? [])],
+    ["product_default_prices", () => upsertCloudProductDefaultPrices(database, companyId, payload.productDefaultPrices ?? [])],
+    ["customer_special_prices", () => upsertCloudCustomerSpecialPrices(database, companyId, payload.customerSpecialPrices ?? [])],
+    ["price_tables", () => upsertCloudPriceTables(database, companyId, payload.priceTables ?? [])],
+    ["price_table_items", () => upsertCloudPriceTableItems(database, payload.priceTableItems ?? [])],
+    ["customer_price_tables", () => upsertCloudCustomerPriceTables(database, payload.customerPriceTables ?? [])],
+    ["customer_freight_rules", () => upsertCloudCustomerFreightRules(database, payload.customerFreightRules ?? [])],
+    ["payment_terms", () => upsertCloudPaymentTerms(database, companyId, payload.paymentTerms ?? [])],
+    ["payment_methods", () => upsertCloudPaymentMethods(database, companyId, payload.paymentMethods ?? [])],
+    ["accounts", () => upsertCloudAccounts(database, companyId, payload.accounts ?? [])],
+    ["customer_credit_movements", () => upsertCloudCreditMovements(database, companyId, payload.customerCreditMovements ?? [])],
+    ["report_recipients", () => upsertCloudReportRecipients(database, companyId, payload.reportRecipients ?? [])]
+  ];
+
   let count = 0;
-  count += upsertCloudCarriers(database, companyId, payload.carriers ?? []);
-  count += upsertCloudDrivers(database, companyId, payload.drivers ?? []);
-  count += upsertCloudVehicles(database, companyId, payload.vehicles ?? []);
-  count += upsertCloudJunction(database, "customer_carriers", "customer_id", payload.customerCarriers ?? []);
-  count += upsertCloudJunction(database, "driver_carriers", "driver_id", payload.driverCarriers ?? []);
-  count += upsertCloudJunction(database, "vehicle_carriers", "vehicle_id", payload.vehicleCarriers ?? []);
-  count += upsertCloudProductDefaultPrices(database, companyId, payload.productDefaultPrices ?? []);
-  count += upsertCloudCustomerSpecialPrices(database, companyId, payload.customerSpecialPrices ?? []);
-  count += upsertCloudPriceTables(database, companyId, payload.priceTables ?? []);
-  count += upsertCloudPriceTableItems(database, payload.priceTableItems ?? []);
-  count += upsertCloudCustomerPriceTables(database, payload.customerPriceTables ?? []);
-  count += upsertCloudCustomerFreightRules(database, payload.customerFreightRules ?? []);
-  count += upsertCloudPaymentTerms(database, companyId, payload.paymentTerms ?? []);
-  count += upsertCloudPaymentMethods(database, companyId, payload.paymentMethods ?? []);
-  count += upsertCloudAccounts(database, companyId, payload.accounts ?? []);
-  count += upsertCloudCreditMovements(database, companyId, payload.customerCreditMovements ?? []);
-  count += upsertCloudReportRecipients(database, companyId, payload.reportRecipients ?? []);
+  for (const [table, run] of sections) {
+    count += applySection(warnings, table, run);
+  }
   return count;
 }
 
@@ -1613,7 +1715,8 @@ function upsertCloudProducts(
 function upsertCloudOperations(
   database: DesktopDatabase,
   settings: CloudSettings,
-  rows: Array<Record<string, unknown>>
+  rows: Array<Record<string, unknown>>,
+  warnings: string[] = []
 ): number {
   const upsert = database.prepare(`
     INSERT INTO weighing_operations (
@@ -1625,8 +1728,9 @@ function upsertCloudOperations(
       base_unit_price_cents, applied_price_table_id, applied_price_table_name,
       applied_price_table_item_id, price_unit,
       price_savings_percent, deduct_freight_from_credit, product_credit_debit_cents,
-      freight_credit_debit_cents, quotation_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      freight_credit_debit_cents, quotation_id,
+      remote_plate, remote_driver_name, remote_customer_name, remote_product_description
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
       unit_id = excluded.unit_id,
@@ -1634,6 +1738,10 @@ function upsertCloudOperations(
       status = excluded.status,
       operation_type = excluded.operation_type,
       customer_id = excluded.customer_id,
+      -- Vinculo com o cadastro local: preenche quando a projecao conseguiu casar
+      -- placa/motorista, mas nunca apaga o vinculo que esta maquina ja tinha.
+      vehicle_id = COALESCE(excluded.vehicle_id, weighing_operations.vehicle_id),
+      driver_id = COALESCE(excluded.driver_id, weighing_operations.driver_id),
       product_id = excluded.product_id,
       payment_term_id = excluded.payment_term_id,
       entry_weight_kg = excluded.entry_weight_kg,
@@ -1661,7 +1769,11 @@ function upsertCloudOperations(
       deduct_freight_from_credit = excluded.deduct_freight_from_credit,
       product_credit_debit_cents = excluded.product_credit_debit_cents,
       freight_credit_debit_cents = excluded.freight_credit_debit_cents,
-      quotation_id = excluded.quotation_id
+      quotation_id = excluded.quotation_id,
+      remote_plate = COALESCE(excluded.remote_plate, weighing_operations.remote_plate),
+      remote_driver_name = COALESCE(excluded.remote_driver_name, weighing_operations.remote_driver_name),
+      remote_customer_name = COALESCE(excluded.remote_customer_name, weighing_operations.remote_customer_name),
+      remote_product_description = COALESCE(excluded.remote_product_description, weighing_operations.remote_product_description)
   `);
 
   const readLocal = database.prepare(
@@ -1678,9 +1790,9 @@ function upsertCloudOperations(
     // uma versao local mais nova nem regride status terminal para aberto.
     const local = readLocal.get(id) as { status: string; updated_at: string } | undefined;
     if (local) {
-      const localTs = Date.parse(local.updated_at ?? "");
-      const cloudTs = Date.parse(updatedAt);
-      if (Number.isFinite(localTs) && Number.isFinite(cloudTs) && cloudTs < localTs) {
+      const localTs = parseTimestamp(local.updated_at);
+      const cloudTs = parseTimestamp(updatedAt);
+      if (localTs !== null && cloudTs !== null && cloudTs < localTs) {
         continue;
       }
       const incomingStatus = mapCloudOperationStatus(row.status);
@@ -1694,54 +1806,114 @@ function upsertCloudOperations(
     const closedAt = isoStringValue(row.closed_at);
     const customerId = existingId(database, "customers", row.customer_id);
     const productId = existingId(database, "products", row.product_id);
-    upsert.run(
-      id,
-      settings.companyId,
-      settings.unitId,
-      existingId(database, "devices", row.device_id) ?? settings.deviceId,
-      mapCloudOperationStatus(row.status),
-      mapCloudOperationType(row.operation_type),
-      customerId,
-      productId,
-      nullableStringValue(row.payment_term_id),
-      numberValue(row.entry_weight_kg),
-      isoStringValue(row.created_at) || updatedAt,
-      numberValue(row.exit_weight_kg),
-      closedAt,
-      numberValue(row.net_weight_kg),
-      integerValue(row.unit_price_cents),
-      integerValue(row.product_total_cents),
-      integerValue(row.freight_total_cents) ?? 0,
-      integerValue(row.total_cents),
-      jsonStringValue(row.freight_json),
-      // Projecoes antigas (antes da coluna na nuvem) chegam sem modalidade: cai em 'none'.
-      getFreightModalityInfo(stringValue(row.freight_type)).key,
-      integerValue(row.omie_sales_order_id),
-      integerValue(row.omie_service_order_id),
-      isoStringValue(row.synced_at) || updatedAt,
-      nullableStringValue(row.cancel_reason),
-      isoStringValue(row.created_at) || updatedAt,
-      updatedAt,
-      integerValue(row.base_unit_price_cents),
-      nullableStringValue(row.applied_price_table_id),
-      nullableStringValue(row.applied_price_table_name),
-      nullableStringValue(row.applied_price_table_item_id),
-      stringValue(row.price_unit) || "ton",
-      numberValue(row.price_savings_percent),
-      booleanToSql(row.deduct_freight_from_credit, false),
-      integerValue(row.product_credit_debit_cents) ?? 0,
-      integerValue(row.freight_credit_debit_cents) ?? 0,
-      existingId(database, "quotations", row.quotation_id)
-    );
-    count++;
+    // A nuvem guarda placa/motorista so como texto. Casa com o cadastro local
+    // (que ja veio no mesmo pull) para a operacao da outra balanca aparecer
+    // completa; o texto fica gravado como fallback de exibicao.
+    const remotePlate = nullableStringValue(row.plate);
+    const remoteDriverName = nullableStringValue(row.driver_name);
+    const vehicleId = findVehicleIdByPlate(database, settings.companyId, remotePlate);
+    const driverId = findDriverIdByName(database, settings.companyId, remoteDriverName);
+    try {
+      upsert.run(
+        id,
+        settings.companyId,
+        settings.unitId,
+        existingId(database, "devices", row.device_id) ?? settings.deviceId,
+        mapCloudOperationStatus(row.status),
+        mapCloudOperationType(row.operation_type),
+        customerId,
+        vehicleId,
+        driverId,
+        productId,
+        // FK payment_terms: uma condicao ainda nao espelhada nesta maquina
+        // derrubaria a gravacao inteira da operacao.
+        existingId(database, "payment_terms", row.payment_term_id),
+        numberValue(row.entry_weight_kg),
+        isoStringValue(row.created_at) || updatedAt,
+        numberValue(row.exit_weight_kg),
+        closedAt,
+        numberValue(row.net_weight_kg),
+        integerValue(row.unit_price_cents),
+        integerValue(row.product_total_cents),
+        integerValue(row.freight_total_cents) ?? 0,
+        integerValue(row.total_cents),
+        jsonStringValue(row.freight_json),
+        // Projecoes antigas (antes da coluna na nuvem) chegam sem modalidade: cai em 'none'.
+        getFreightModalityInfo(stringValue(row.freight_type)).key,
+        integerValue(row.omie_sales_order_id),
+        integerValue(row.omie_service_order_id),
+        isoStringValue(row.synced_at) || updatedAt,
+        nullableStringValue(row.cancel_reason),
+        isoStringValue(row.created_at) || updatedAt,
+        updatedAt,
+        integerValue(row.base_unit_price_cents),
+        nullableStringValue(row.applied_price_table_id),
+        nullableStringValue(row.applied_price_table_name),
+        nullableStringValue(row.applied_price_table_item_id),
+        stringValue(row.price_unit) || "ton",
+        numberValue(row.price_savings_percent),
+        booleanToSql(row.deduct_freight_from_credit, false),
+        integerValue(row.product_credit_debit_cents) ?? 0,
+        integerValue(row.freight_credit_debit_cents) ?? 0,
+        existingId(database, "quotations", row.quotation_id),
+        remotePlate,
+        remoteDriverName,
+        nullableStringValue(row.customer_name),
+        nullableStringValue(row.product_description)
+      );
+      count++;
+    } catch (error) {
+      // Uma operacao problematica nao pode cegar a maquina para todas as demais:
+      // registra o aviso e segue com o resto do lote.
+      warnings.push(
+        `weighing_operations ${id}: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
   }
   return count;
+}
+
+/** Veiculo local com a mesma placa (normalizada) da projecao da nuvem. */
+function findVehicleIdByPlate(
+  database: DesktopDatabase,
+  companyId: string,
+  plate: string | null
+): string | null {
+  if (!plate) return null;
+  const normalized = plate.replace(/\s/g, "").toUpperCase();
+  const row = database
+    .prepare(
+      `SELECT id FROM vehicles
+       WHERE company_id = ? AND UPPER(REPLACE(COALESCE(plate_normalized, plate), ' ', '')) = ?
+         AND deleted_at IS NULL
+       ORDER BY created_at ASC LIMIT 1`
+    )
+    .get(companyId, normalized) as { id: string } | undefined;
+  return row?.id ?? null;
+}
+
+/** Motorista local com o mesmo nome da projecao da nuvem. */
+function findDriverIdByName(
+  database: DesktopDatabase,
+  companyId: string,
+  name: string | null
+): string | null {
+  if (!name) return null;
+  const row = database
+    .prepare(
+      `SELECT id FROM drivers
+       WHERE company_id = ? AND UPPER(TRIM(name)) = UPPER(TRIM(?)) AND deleted_at IS NULL
+       ORDER BY created_at ASC LIMIT 1`
+    )
+    .get(companyId, name) as { id: string } | undefined;
+  return row?.id ?? null;
 }
 
 function upsertCloudLoadingRequests(
   database: DesktopDatabase,
   settings: CloudSettings,
-  rows: Array<Record<string, unknown>>
+  rows: Array<Record<string, unknown>>,
+  warnings: string[] = []
 ): number {
   const upsert = database.prepare(`
     INSERT INTO loading_requests (
@@ -1774,31 +1946,37 @@ function upsertCloudLoadingRequests(
     // versao local mais nova nem reabre uma solicitacao ja fechada localmente.
     const local = readLocal.get(id) as { status: string; updated_at: string } | undefined;
     if (local) {
-      const localTs = Date.parse(local.updated_at ?? "");
-      const cloudTs = Date.parse(updatedAt);
-      if (Number.isFinite(localTs) && Number.isFinite(cloudTs) && cloudTs < localTs) {
+      const localTs = parseTimestamp(local.updated_at);
+      const cloudTs = parseTimestamp(updatedAt);
+      if (localTs !== null && cloudTs !== null && cloudTs < localTs) {
         continue;
       }
       if (local.status !== "open" && mapLoadingRequestStatus(row.status) === "open") {
         continue;
       }
     }
-    upsert.run(
-      id,
-      operationId,
-      settings.companyId,
-      settings.unitId,
-      mapLoadingRequestStatus(row.status),
-      stringValue(row.plate) || "SEMPLACA",
-      stringValue(row.customer_name) || "Cliente",
-      stringValue(row.driver_name) || "Motorista",
-      stringValue(row.product_description) || "Produto",
-      isoStringValue(row.created_at) || updatedAt,
-      updatedAt,
-      isoStringValue(row.closed_at),
-      isoStringValue(row.loader_completed_at)
-    );
-    count++;
+    try {
+      upsert.run(
+        id,
+        operationId,
+        settings.companyId,
+        settings.unitId,
+        mapLoadingRequestStatus(row.status),
+        stringValue(row.plate) || "SEMPLACA",
+        stringValue(row.customer_name) || "Cliente",
+        stringValue(row.driver_name) || "Motorista",
+        stringValue(row.product_description) || "Produto",
+        isoStringValue(row.created_at) || updatedAt,
+        updatedAt,
+        isoStringValue(row.closed_at),
+        isoStringValue(row.loader_completed_at)
+      );
+      count++;
+    } catch (error) {
+      warnings.push(
+        `loading_requests ${id}: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
   }
   return count;
 }
@@ -1893,6 +2071,23 @@ function mapCloudOperationType(value: unknown): "invoice" | "internal" {
 function mapLoadingRequestStatus(value: unknown): string {
   const status = stringValue(value);
   return status || "open";
+}
+
+/**
+ * Instante de um carimbo de tempo, aceitando os dois formatos que convivem no
+ * SQLite local: ISO com fuso (`new Date().toISOString()`) e o formato do
+ * `strftime('%Y-%m-%dT%H:%M:%fZ', 'now')` do SQLite ("2026-07-29 17:00:48"), que e UTC mas sem o
+ * indicador de fuso — `Date.parse` o leria como hora local e jogaria a
+ * comparacao com a nuvem horas para frente.
+ */
+function parseTimestamp(value: unknown): number | null {
+  const text = stringValue(value);
+  if (!text) return null;
+  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?$/.test(text)
+    ? `${text.replace(" ", "T")}Z`
+    : text;
+  const parsed = Date.parse(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function existingId(database: DesktopDatabase, table: string, value: unknown): string | null {
@@ -2455,24 +2650,24 @@ export async function pushOmieCustomersToCloud(
   const errors: string[] = [];
   const setOmieId = database.prepare(`
     UPDATE customers
-    SET omie_customer_id = ?, needs_push = 0, last_synced_at = datetime('now'), sync_status = 'synced', updated_at = datetime('now')
+    SET omie_customer_id = ?, needs_push = 0, last_synced_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), sync_status = 'synced', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     WHERE id = ?
   `);
   const markSynced = database.prepare(`
     UPDATE customers
-    SET needs_push = 0, last_synced_at = datetime('now'), sync_status = 'synced', updated_at = datetime('now')
+    SET needs_push = 0, last_synced_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), sync_status = 'synced', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     WHERE id = ?
   `);
   const markError = database.prepare(`
     UPDATE customers
-    SET sync_status = 'error', updated_at = datetime('now')
+    SET sync_status = 'error', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     WHERE id = ?
   `);
   // Falha deterministica: para de re-tentar (needs_push=0) ate o operador editar o
   // cadastro (o update re-arma needs_push=1).
   const markBlocked = database.prepare(`
     UPDATE customers
-    SET sync_status = 'error', needs_push = 0, updated_at = datetime('now')
+    SET sync_status = 'error', needs_push = 0, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     WHERE id = ?
   `);
 
@@ -2618,24 +2813,24 @@ export async function pushOmieCarriersToCloud(
   const errors: string[] = [];
   const setOmieId = database.prepare(`
     UPDATE carriers
-    SET omie_customer_id = ?, needs_push = 0, last_synced_at = datetime('now'), sync_status = 'synced', updated_at = datetime('now')
+    SET omie_customer_id = ?, needs_push = 0, last_synced_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), sync_status = 'synced', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     WHERE id = ?
   `);
   const markSynced = database.prepare(`
     UPDATE carriers
-    SET needs_push = 0, last_synced_at = datetime('now'), sync_status = 'synced', updated_at = datetime('now')
+    SET needs_push = 0, last_synced_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), sync_status = 'synced', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     WHERE id = ?
   `);
   const markError = database.prepare(`
     UPDATE carriers
-    SET sync_status = 'error', updated_at = datetime('now')
+    SET sync_status = 'error', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     WHERE id = ?
   `);
   // Falha deterministica: para de re-tentar (needs_push=0) ate o operador editar a
   // transportadora (o update re-arma needs_push=1).
   const markBlocked = database.prepare(`
     UPDATE carriers
-    SET sync_status = 'error', needs_push = 0, updated_at = datetime('now')
+    SET sync_status = 'error', needs_push = 0, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     WHERE id = ?
   `);
 
@@ -2862,7 +3057,7 @@ function reconcileCancelledAfterCreate(
 
   // O update de sucesso do create sobrescreveu o status; devolve para 'cancelled'.
   database
-    .prepare("UPDATE weighing_operations SET status = 'cancelled', updated_at = datetime('now') WHERE id = ?")
+    .prepare("UPDATE weighing_operations SET status = 'cancelled', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?")
     .run(operationId);
 
   enqueueSyncJob(database, {
@@ -2925,7 +3120,7 @@ async function processOmieCancelJob(
           `UPDATE weighing_operations
            SET omie_billing_status = 'cancel_blocked',
                omie_billing_message = ?,
-               updated_at = datetime('now')
+               updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
            WHERE id = ?`
         )
         .run(data.blockedReason ?? "Cancelamento negado pelo OMIE.", payload.operationId);
@@ -2939,7 +3134,7 @@ async function processOmieCancelJob(
         `UPDATE weighing_operations
          SET omie_billing_status = 'cancelled_in_omie',
              omie_billing_message = ?,
-             updated_at = datetime('now')
+             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
          WHERE id = ?`
       )
       .run(
@@ -3072,7 +3267,7 @@ export async function processOmieSyncQueue(
         database
           .prepare(
             `UPDATE customers
-             SET omie_customer_id = ?, needs_push = 0, sync_status = 'synced', updated_at = datetime('now')
+             SET omie_customer_id = ?, needs_push = 0, sync_status = 'synced', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
              WHERE id = ? AND (omie_customer_id IS NULL OR omie_customer_id = 0)`
           )
           .run(data.omieCustomerId, payload.localCustomerId);
@@ -3084,13 +3279,13 @@ export async function processOmieSyncQueue(
            SET omie_sales_order_id = ?,
                omie_billing_status = CASE WHEN ? THEN 'billed' ELSE omie_billing_status END,
                omie_billing_message = CASE WHEN ? THEN ? ELSE omie_billing_message END,
-               omie_billed_at = CASE WHEN ? THEN datetime('now') ELSE omie_billed_at END,
+               omie_billed_at = CASE WHEN ? THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now') ELSE omie_billed_at END,
                omie_document_url = COALESCE(?, omie_document_url),
                status = 'synced',
-               omie_synced_at = datetime('now'),
-               updated_at = datetime('now')
+               omie_synced_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+               updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
            WHERE id = ?`
-          : "UPDATE weighing_operations SET omie_service_order_id = ?, status = 'synced', omie_synced_at = datetime('now'), updated_at = datetime('now') WHERE id = ?";
+          : "UPDATE weighing_operations SET omie_service_order_id = ?, status = 'synced', omie_synced_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?";
 
       if (payload.operationType === "invoice") {
         const billed = data.billed === true;
@@ -3125,7 +3320,7 @@ export async function processOmieSyncQueue(
           database
             .prepare(
               `UPDATE weighing_operations
-               SET omie_billing_status = 'cadastro_incompleto', omie_billing_message = ?, updated_at = datetime('now')
+               SET omie_billing_status = 'cadastro_incompleto', omie_billing_message = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
                WHERE id = ?`
             )
             .run(message, blockedOperationId);
@@ -3180,7 +3375,7 @@ export async function processFiscalBillingNow(
     database
       .prepare(
         `UPDATE weighing_operations
-         SET omie_billing_status = 'cadastro_incompleto', omie_billing_message = ?, updated_at = datetime('now')
+         SET omie_billing_status = 'cadastro_incompleto', omie_billing_message = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
          WHERE id = ?`
       )
       .run(readiness.message, operationId);
@@ -3246,7 +3441,7 @@ export async function processFiscalBillingNow(
     database
       .prepare(
         `UPDATE weighing_operations
-         SET omie_billing_status = 'cadastro_incompleto', omie_billing_message = ?, updated_at = datetime('now')
+         SET omie_billing_status = 'cadastro_incompleto', omie_billing_message = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
          WHERE id = ?`
       )
       .run(reason, operationId);
@@ -3346,7 +3541,7 @@ export async function processFiscalBillingNow(
       database
         .prepare(
           `UPDATE customers
-           SET omie_customer_id = ?, needs_push = 0, sync_status = 'synced', updated_at = datetime('now')
+           SET omie_customer_id = ?, needs_push = 0, sync_status = 'synced', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
            WHERE id = ? AND (omie_customer_id IS NULL OR omie_customer_id = 0)`
         )
         .run(data.omieCustomerId, payload.localCustomerId);
@@ -3366,9 +3561,9 @@ export async function processFiscalBillingNow(
          SET omie_sales_order_id = ?,
              omie_billing_status = 'billed',
              omie_billing_message = ?,
-             omie_billed_at = datetime('now'),
+             omie_billed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
              omie_document_url = COALESCE(?, omie_document_url),
-             updated_at = datetime('now')
+             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
          WHERE id = ?`
       )
       .run(
@@ -3398,7 +3593,7 @@ export async function processFiscalBillingNow(
       database
         .prepare(
           `UPDATE weighing_operations
-           SET omie_billing_status = 'cadastro_incompleto', omie_billing_message = ?, updated_at = datetime('now')
+           SET omie_billing_status = 'cadastro_incompleto', omie_billing_message = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
            WHERE id = ?`
         )
         .run(message, operationId);
@@ -3421,7 +3616,7 @@ export async function processFiscalBillingNow(
         `UPDATE weighing_operations
          SET omie_billing_status = 'failed',
              omie_billing_message = ?,
-             updated_at = datetime('now')
+             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
          WHERE id = ?`
       )
       .run(message, operationId);
@@ -3578,7 +3773,7 @@ function upsertOmieCustomers(
       omie_billing_blocked, observations, tags_json, salesperson_id,
       default_payment_term_id, is_active, sync_status, last_synced_at,
       omie_updated_at, needs_push, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, 'omie', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced', datetime('now'), datetime('now'), 0, datetime('now'), datetime('now'))
+    ) VALUES (?, ?, ?, ?, 'omie', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
       omie_customer_id = excluded.omie_customer_id,
@@ -3615,9 +3810,9 @@ function upsertOmieCustomers(
       is_active = excluded.is_active,
       deleted_at = NULL,
       sync_status = CASE WHEN customers.needs_push = 0 THEN 'synced' ELSE customers.sync_status END,
-      last_synced_at = datetime('now'),
-      omie_updated_at = datetime('now'),
-      updated_at = datetime('now')
+      last_synced_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+      omie_updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+      updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
   `);
 
   let persisted = 0;
@@ -3679,9 +3874,9 @@ function upsertOmieProducts(
   const removeFromKyberRock = database.prepare(`
     UPDATE products
     SET is_active = 0,
-        deleted_at = datetime('now'),
-        updated_from_omie_at = datetime('now'),
-        updated_at = datetime('now')
+        deleted_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+        updated_from_omie_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     WHERE company_id = ?
       AND omie_product_id = ?
   `);
@@ -3693,7 +3888,7 @@ function upsertOmieProducts(
       gross_weight_kg, net_weight_kg, height_m, width_m, depth_m,
       cest, item_type, icms_origin, blocked, tracks_stock, fiscal_recommendations_json,
       is_active, updated_from_omie_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), datetime('now'))
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
       omie_product_id = excluded.omie_product_id,
@@ -3723,8 +3918,8 @@ function upsertOmieProducts(
       fiscal_recommendations_json = excluded.fiscal_recommendations_json,
       is_active = excluded.is_active,
       deleted_at = NULL,
-      updated_from_omie_at = datetime('now'),
-      updated_at = datetime('now')
+      updated_from_omie_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+      updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
   `);
 
   let synced = 0;
@@ -3788,7 +3983,7 @@ function upsertOmieSuppliers(
       phone, email, zipcode, address_street, address_number, address_complement,
       neighborhood, city, state, source, sync_status, needs_push, last_synced_at,
       is_active, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'omie', 'synced', 0, datetime('now'), ?, datetime('now'), datetime('now'))
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'omie', 'synced', 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
       omie_customer_id = excluded.omie_customer_id,
@@ -3807,9 +4002,9 @@ function upsertOmieSuppliers(
       is_active = excluded.is_active,
       sync_status = CASE WHEN carriers.needs_push = 0 THEN 'synced' ELSE carriers.sync_status END,
       needs_push = CASE WHEN carriers.needs_push = 0 THEN 0 ELSE carriers.needs_push END,
-      last_synced_at = datetime('now'),
+      last_synced_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
       deleted_at = NULL,
-      updated_at = datetime('now')
+      updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
   `);
 
   let persisted = 0;
@@ -3852,7 +4047,7 @@ export function upsertOmiePaymentTerms(
       first_installment_days, installment_interval_days, installment_count,
       installment_type, installment_days_json, is_active, visible,
       updated_from_omie_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), datetime('now'))
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     ON CONFLICT(company_id, code) DO UPDATE SET
       omie_id = excluded.omie_id,
       description = excluded.description,
@@ -3863,8 +4058,8 @@ export function upsertOmiePaymentTerms(
       installment_days_json = excluded.installment_days_json,
       is_active = excluded.is_active,
       visible = excluded.visible,
-      updated_from_omie_at = datetime('now'),
-      updated_at = datetime('now')
+      updated_from_omie_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+      updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
   `);
 
   let persisted = 0;
@@ -3941,7 +4136,7 @@ export async function pullCompanyPricePasswordFromCloud(
   database.prepare(`
     UPDATE companies
     SET price_change_password = ?,
-        updated_at = datetime('now')
+        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     WHERE id = ?
   `).run(String(data.price_change_password ?? "0000"), identity.companyId);
 
