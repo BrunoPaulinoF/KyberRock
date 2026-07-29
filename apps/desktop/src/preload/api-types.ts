@@ -495,6 +495,8 @@ export interface KyberRockDesktopApi {
     ordersFailed: number;
     customersPushFailed: number;
     errors: string[];
+    /** Paginas/registros que o OMIE declarou nesta varredura de clientes. */
+    customersScanSummary: string | null;
   }>;
   omieQueueList: () => Promise<OmieQueueItem[]>;
   omieQueueDelete: (jobId: string) => Promise<{ deleted: boolean }>;

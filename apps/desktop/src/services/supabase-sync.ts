@@ -148,6 +148,27 @@ export interface OmieCloudSyncResult {
   paymentTermsSynced: number;
   suppliersSynced: number;
   errors: string[];
+  /**
+   * O que o OMIE respondeu nesta pagina de clientes. Sem isto, um pull que traz
+   * menos do que existe no OMIE fica indistinguivel de um pull completo: a tela
+   * so mostra o total baixado, e nao da para saber se a varredura parou cedo
+   * (paginas) ou se o cadastro foi descartado na classificacao (tags).
+   */
+  customersPage?: OmieCustomersPageInfo;
+}
+
+export interface OmieCustomersPageInfo {
+  /** Pagina pedida ao OMIE. */
+  page: number;
+  /** Registros crus que o OMIE devolveu nesta pagina (antes da classificacao). */
+  returned: number;
+  /** Quantos viraram cliente e quantos viraram transportadora. */
+  classifiedCustomers: number;
+  classifiedCarriers: number;
+  finished: boolean;
+  /** Totais declarados pelo proprio OMIE. */
+  totalPages: number | null;
+  totalRecords: number | null;
 }
 
 export interface FiscalBillingResult {
@@ -2499,7 +2520,20 @@ export function applyOmieReferenceData(
     productsSynced,
     paymentTermsSynced: paymentTermsPersisted,
     suppliersSynced: suppliersPersisted,
-    errors: []
+    errors: [],
+    ...(pagination
+      ? {
+          customersPage: {
+            page: pagination.customersPage,
+            returned: pagination.customersReturned,
+            classifiedCustomers: customers.length,
+            classifiedCarriers: suppliers.length,
+            finished: pagination.customersFinished ?? false,
+            totalPages: pagination.customersTotalPages ?? null,
+            totalRecords: pagination.customersTotalRecords ?? null
+          }
+        }
+      : {})
   };
 }
 

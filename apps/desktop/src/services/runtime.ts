@@ -214,6 +214,46 @@ import {
   type SyncOmieMasterDataOptions
 } from "./omie-master-sync.js";
 
+/**
+ * Traduz a varredura para uma linha que responde sozinha a pergunta "por que nao
+ * veio tudo?": quantas paginas rodaram das que o OMIE declara, quantos registros
+ * crus chegaram e quantos foram descartados na classificacao por tag.
+ */
+export function describeOmieCustomersScan(scan: OmieCustomersScan): string | null {
+  if (scan.pagesRun === 0) return null;
+  const pages =
+    scan.omieTotalPages && scan.omieTotalPages > 0
+      ? `${scan.pagesRun}/${scan.omieTotalPages} paginas`
+      : `${scan.pagesRun} paginas`;
+  const records = scan.omieTotalRecords
+    ? `${scan.rawRecords} de ${scan.omieTotalRecords} registros`
+    : `${scan.rawRecords} registros`;
+  const ignored = Math.max(
+    0,
+    scan.rawRecords - scan.classifiedCustomers - scan.classifiedCarriers
+  );
+  const parts = [
+    pages,
+    records,
+    `${scan.classifiedCustomers} clientes`,
+    `${scan.classifiedCarriers} transportadoras`,
+    `${ignored} ignorados por tag`
+  ];
+  if (!scan.finished) parts.push("varredura NAO concluida");
+  return parts.join(", ");
+}
+
+/** Resumo do que a varredura de clientes pediu e recebeu do OMIE. */
+export interface OmieCustomersScan {
+  pagesRun: number;
+  rawRecords: number;
+  classifiedCustomers: number;
+  classifiedCarriers: number;
+  omieTotalPages: number | null;
+  omieTotalRecords: number | null;
+  finished: boolean;
+}
+
 export interface OmieLoopProgress {
   iteration: number;
   customersPulled: number;
@@ -2768,9 +2808,13 @@ export class DesktopRuntime {
   } {
     const identity = this.ensureIdentity();
 
+    // Espelhados do OMIE = tem id do OMIE. Filtrar por `source = 'omie'` contava
+    // menos do que existe: o cliente que chega antes pelo pull da nuvem entra como
+    // 'hybrid' e o upsert do OMIE nao reescreve `source`, entao a tela mostrava 1 ou 2
+    // enquanto a base tinha centenas.
     const totalCustomers = this.database
       .prepare(
-        "SELECT COUNT(*) FROM customers WHERE company_id = ? AND deleted_at IS NULL AND source = 'omie'"
+        "SELECT COUNT(*) FROM customers WHERE company_id = ? AND deleted_at IS NULL AND omie_customer_id IS NOT NULL"
       )
       .pluck()
       .get(identity.companyId) as number;
@@ -2889,6 +2933,8 @@ export class DesktopRuntime {
     ordersFailed: number;
     customersPushFailed: number;
     errors: string[];
+    /** Diagnostico legivel da varredura de clientes (paginas/registros do OMIE). */
+    customersScanSummary: string | null;
   }> {
     if (this.omieSyncInProgress) {
       return {
@@ -2900,7 +2946,8 @@ export class DesktopRuntime {
         ordersProcessed: 0,
         ordersFailed: 0,
         customersPushFailed: 0,
-        errors: ["Sincronizacao OMIE ja em andamento."]
+        errors: ["Sincronizacao OMIE ja em andamento."],
+        customersScanSummary: null
       };
     }
 
@@ -2919,7 +2966,8 @@ export class DesktopRuntime {
           customersPushFailed: 0,
           errors: [
             "Supabase nao configurado. Defina SUPABASE_PUBLISHABLE_KEY na pedreira no admin (loader-web) e reative o desktop."
-          ]
+          ],
+          customersScanSummary: null
         };
       }
       const identity = this.ensureIdentity();
@@ -2940,7 +2988,8 @@ export class DesktopRuntime {
         ordersProcessed: queue.processed,
         ordersFailed: queue.failed,
         customersPushFailed: customerPush.failed + carrierPush.failed,
-        errors: customerPush.errors.concat(carrierPush.errors, loop.errors, queue.errors)
+        errors: customerPush.errors.concat(carrierPush.errors, loop.errors, queue.errors),
+        customersScanSummary: describeOmieCustomersScan(loop.customersScan)
       };
     } finally {
       this.omieSyncInProgress = false;
@@ -3012,6 +3061,7 @@ export class DesktopRuntime {
     iterations: number;
     finished: boolean;
     errors: string[];
+    customersScan: OmieCustomersScan;
   }> {
     const identity = this.ensureIdentity();
     const maxIterations = options.maxIterations ?? 200;
@@ -3023,6 +3073,20 @@ export class DesktopRuntime {
     let suppliersSynced = 0;
     const errors: string[] = [];
     let iterations = 0;
+    // Diagnostico da varredura de clientes: sem isto, um pull que traz menos do
+    // que existe no OMIE fica indistinguivel de um pull completo — a tela so
+    // mostra o total baixado. Com os numeros do proprio OMIE (paginas e
+    // registros) da para separar "a varredura parou cedo" de "o cadastro foi
+    // descartado na classificacao por tag".
+    const customersScan: OmieCustomersScan = {
+      pagesRun: 0,
+      rawRecords: 0,
+      classifiedCustomers: 0,
+      classifiedCarriers: 0,
+      omieTotalPages: null,
+      omieTotalRecords: null,
+      finished: false
+    };
 
     const initialState = readOmiePullState(this.database);
     if (options.reset || !initialState.inProgress) {
@@ -3067,7 +3131,8 @@ export class DesktopRuntime {
             suppliersSynced,
             iterations,
             finished: false,
-            errors
+            errors,
+            customersScan
           };
         }
         if (retryDelayMs > 0) await sleep(retryDelayMs * consecutiveFailures);
@@ -3080,6 +3145,16 @@ export class DesktopRuntime {
       paymentTermsSynced += result.paymentTermsSynced;
       suppliersSynced += result.suppliersSynced;
       errors.push(...result.errors);
+      if (result.customersPage) {
+        const page = result.customersPage;
+        customersScan.pagesRun += 1;
+        customersScan.rawRecords += page.returned;
+        customersScan.classifiedCustomers += page.classifiedCustomers;
+        customersScan.classifiedCarriers += page.classifiedCarriers;
+        customersScan.omieTotalPages = page.totalPages ?? customersScan.omieTotalPages;
+        customersScan.omieTotalRecords = page.totalRecords ?? customersScan.omieTotalRecords;
+        customersScan.finished = page.finished;
+      }
 
       const progress: OmieLoopProgress = {
         iteration: iterations,
@@ -3117,7 +3192,8 @@ export class DesktopRuntime {
           suppliersSynced,
           iterations,
           finished: !after.inProgress,
-          errors
+          errors,
+          customersScan
         };
       }
 
@@ -3134,7 +3210,8 @@ export class DesktopRuntime {
       suppliersSynced,
       iterations,
       finished: false,
-      errors
+      errors,
+      customersScan
     };
   }
 
