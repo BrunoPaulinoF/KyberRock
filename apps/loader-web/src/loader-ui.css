@@ -1727,16 +1727,77 @@ html {
 }
 
 @media print {
+  /* Paisagem: a tabela de vendas tem ate 8 colunas e nao cabe em A4 retrato. */
+  @page {
+    size: A4 landscape;
+    margin: 10mm;
+  }
+
   .report-no-print {
     display: none !important;
   }
 
+  html,
   body {
+    margin: 0;
     background: #fff;
   }
 
+  /* O layout de tela recorta o excedente (overflow hidden/auto); na impressao
+     isso cortava as colunas da direita para fora do PDF. */
+  .report-page {
+    min-height: 0;
+    padding: 0;
+    overflow: visible;
+    background: none;
+  }
+
   .report-page .queue-panel {
-    box-shadow: none;
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    gap: 8px;
     border: none;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+    overflow: visible;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .report-table-wrap {
+    overflow: visible;
+  }
+
+  .report-table {
+    width: 100%;
+    font-size: 9pt;
+  }
+
+  .report-table th,
+  .report-table td {
+    padding: 5px 6px;
+  }
+
+  /* Colunas numericas seguem sem quebra (valores nunca partem no meio); as
+     colunas de texto quebram em qualquer ponto para a tabela caber na pagina. */
+  .report-table .report-th-text,
+  .report-table .report-td-text {
+    overflow-wrap: anywhere;
+  }
+
+  /* Cabecalho/rodape repetem em relatorios de varias paginas. */
+  .report-table thead {
+    display: table-header-group;
+  }
+
+  .report-table tfoot {
+    display: table-footer-group;
+  }
+
+  .report-table tr {
+    page-break-inside: avoid;
+    break-inside: avoid;
   }
 }
