@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
-import type { DesktopAccessStatus } from "../services/desktop-activation";
+import type {
+  DesktopAccessStatus,
+  DesktopActivationUnitOption
+} from "../services/desktop-activation";
 import type { KyberRockDesktopApi } from "./desktop-api";
 import { formatDbDateTime } from "./format-datetime";
 import { HelpTooltip } from "./Tooltip";
@@ -19,6 +22,11 @@ export function ActivationGate({ desktopApi, onUnlocked }: ActivationGateProps) 
   const [deviceName, setDeviceName] = useState("");
   const [activating, setActivating] = useState(false);
   const [message, setMessage] = useState("Verificando acesso...");
+  // Empresa com mais de uma pedreira: a nuvem devolve a lista e a ativacao so
+  // segue depois que o operador diz em qual pedreira esta balanca esta. Vincular
+  // a pedreira errada e o que sumia com a operacao na tela do carregador.
+  const [unitOptions, setUnitOptions] = useState<DesktopActivationUnitOption[]>([]);
+  const [selectedUnitId, setSelectedUnitId] = useState("");
 
   useEffect(() => {
     checkAccess();
@@ -90,13 +98,25 @@ export function ActivationGate({ desktopApi, onUnlocked }: ActivationGateProps) 
       return;
     }
 
+    if (unitOptions.length > 0 && !selectedUnitId) {
+      setMessage("Escolha a pedreira onde este computador esta instalado.");
+      return;
+    }
+
     setActivating(true);
     setMessage("Ativando...");
     try {
       const result = await desktopApi.activateDesktop({
         activationCode: code,
-        deviceName: deviceName.trim() || "Desktop balanca"
+        deviceName: deviceName.trim() || "Desktop balanca",
+        ...(selectedUnitId ? { unitId: selectedUnitId } : {})
       });
+
+      if (result.status === "unit_selection_required") {
+        setUnitOptions(result.unitOptions ?? []);
+        setMessage(result.message);
+        return;
+      }
 
       if (result.canOperate) {
         onUnlocked();
@@ -131,6 +151,8 @@ export function ActivationGate({ desktopApi, onUnlocked }: ActivationGateProps) 
       await desktopApi.logoutDesktop();
       setStatus(null);
       setActivationCode(["", "", "", "", "", ""]);
+      setUnitOptions([]);
+      setSelectedUnitId("");
       setScreen("activate");
       setMessage("Ativacao limpa. Informe o codigo de 6 digitos da pedreira.");
     } catch (error) {
@@ -158,6 +180,9 @@ export function ActivationGate({ desktopApi, onUnlocked }: ActivationGateProps) 
       </main>
     );
   }
+
+  const canSubmitActivation =
+    activationCode.join("").length === 6 && (unitOptions.length === 0 || Boolean(selectedUnitId));
 
   if (screen === "activate") {
     return (
@@ -190,6 +215,28 @@ export function ActivationGate({ desktopApi, onUnlocked }: ActivationGateProps) 
             </div>
           </label>
 
+          {unitOptions.length > 0 ? (
+            <label style={styles.fieldLabel}>
+              Pedreira deste computador
+              <select
+                value={selectedUnitId}
+                onChange={(e) => setSelectedUnitId(e.target.value)}
+                style={styles.textInput}
+              >
+                <option value="">Selecione a pedreira...</option>
+                {unitOptions.map((unit) => (
+                  <option key={unit.id} value={unit.id}>
+                    {unit.name}
+                  </option>
+                ))}
+              </select>
+              <span style={styles.muted}>
+                A fila do carregador e por pedreira: as entradas registradas aqui aparecem para o
+                carregador da pedreira escolhida.
+              </span>
+            </label>
+          ) : null}
+
           <label style={styles.fieldLabel} title={TIPS.activation.deviceName}>
             Nome do equipamento (opcional)
             <input
@@ -206,11 +253,11 @@ export function ActivationGate({ desktopApi, onUnlocked }: ActivationGateProps) 
           <button
               type="button"
               onClick={handleActivate}
-              disabled={activating || activationCode.join("").length !== 6}
+              disabled={activating || !canSubmitActivation}
               style={{
                 ...styles.primaryButton,
-                opacity: activating || activationCode.join("").length !== 6 ? 0.5 : 1,
-                cursor: activating || activationCode.join("").length !== 6 ? "not-allowed" : "pointer"
+                opacity: activating || !canSubmitActivation ? 0.5 : 1,
+                cursor: activating || !canSubmitActivation ? "not-allowed" : "pointer"
               }}
             >
               {activating ? "Ativando..." : "Ativar"}
