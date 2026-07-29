@@ -9,6 +9,7 @@ import {
   type OmieCredentials,
   type OmieRequester
 } from "./omie-sync-core.ts";
+import { classifyOmieCustomer } from "../_shared/omie-customer-classification.ts";
 
 const PAGE_SIZE = 100;
 const PUSH_PAGE_SIZE = 25;
@@ -727,8 +728,8 @@ async function listCustomersPage(
   const cached = getCachedPage<OmieCustomer>(cacheKey);
   if (cached) {
     return {
-      items: cached.items.filter(hasClienteTag),
-      carriers: cached.items.filter(hasTransportadoraTag).map(mapCustomerToCarrier),
+      items: cached.items.filter(isOmieCustomer),
+      carriers: cached.items.filter(isOmieCarrier).map(mapCustomerToCarrier),
       returned: cached.returned,
       page,
       finished: cached.finished,
@@ -770,8 +771,8 @@ async function listCustomersPage(
 
   setCachedPage(cacheKey, items, finished, totalPages, totalRecords, rawItems.length);
   return {
-    items: items.filter(hasClienteTag),
-    carriers: items.filter(hasTransportadoraTag).map(mapCustomerToCarrier),
+    items: items.filter(isOmieCustomer),
+    carriers: items.filter(isOmieCarrier).map(mapCustomerToCarrier),
     returned: rawItems.length,
     page,
     finished,
@@ -1094,47 +1095,12 @@ function computeFinished(
   return returned < PAGE_SIZE;
 }
 
-function hasClienteTag(customer: OmieCustomer): boolean {
-  return hasOmieTag(customer.tagsJson, "cliente");
+function isOmieCustomer(customer: OmieCustomer): boolean {
+  return classifyOmieCustomer(customer.tagsJson).isCustomer;
 }
 
-function hasTransportadoraTag(customer: OmieCustomer): boolean {
-  return hasOmieTag(customer.tagsJson, "transportadora");
-}
-
-function hasOmieTag(
-  tagsJson: Record<string, unknown> | unknown[] | null,
-  expected: string
-): boolean {
-  const tagValues = getOmieTagValues(tagsJson);
-  const normalizedExpected = normalizeTag(expected);
-  return tagValues.some((tag) => normalizeTag(tag) === normalizedExpected);
-}
-
-function getOmieTagValues(tagsJson: Record<string, unknown> | unknown[] | null): string[] {
-  if (!tagsJson) return [];
-  const tagValues: string[] = [];
-  if (Array.isArray(tagsJson)) {
-    tagValues.push(...tagsJson.map(readTagValue));
-  } else {
-    const tags = tagsJson.tags;
-    if (Array.isArray(tags)) tagValues.push(...tags.map(readTagValue));
-  }
-  return tagValues;
-}
-
-function readTagValue(tag: unknown): string {
-  return typeof tag === "object" && tag !== null && "tag" in tag
-    ? String((tag as { tag?: unknown }).tag ?? "")
-    : String(tag ?? "");
-}
-
-function normalizeTag(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim()
-    .toLowerCase();
+function isOmieCarrier(customer: OmieCustomer): boolean {
+  return classifyOmieCustomer(customer.tagsJson).isCarrier;
 }
 
 function mapCustomerToCarrier(customer: OmieCustomer): OmieSupplier {

@@ -487,6 +487,8 @@ export interface KyberRockDesktopApi {
   omieSync: () => Promise<{
     customersPulled: number;
     customersPushed: number;
+    /** Transportadoras vindas do cadastro do OMIE (clientes com a tag "transportadora"). */
+    suppliersSynced: number;
     productsSynced: number;
     paymentTermsSynced: number;
     ordersProcessed: number;

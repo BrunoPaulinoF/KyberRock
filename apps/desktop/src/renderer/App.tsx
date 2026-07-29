@@ -1361,6 +1361,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         parts.push(`${result.customersPushFailed} clientes com falha`);
       parts.push(
         `${result.customersPulled} clientes baixados`,
+        // As transportadoras vem do mesmo cadastro de clientes do OMIE (marcadas
+        // com a tag "transportadora"): sem este numero nao da para saber se elas
+        // chegaram, que e a duvida mais comum depois de sincronizar.
+        `${result.suppliersSynced} transportadoras`,
         `${result.productsSynced} produtos`,
         `${result.paymentTermsSynced} condicoes`
       );
@@ -1435,6 +1439,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         parts.push(`${syncResult.customersPushFailed} clientes com falha`);
       parts.push(
         `${syncResult.customersPulled} clientes baixados`,
+        `${syncResult.suppliersSynced} transportadoras`,
         `${syncResult.productsSynced} produtos`,
         `${syncResult.paymentTermsSynced} condicoes`
       );

@@ -39,11 +39,19 @@ describe("omie-sync Edge Function", () => {
     expect(source).toContain("return emptyPage<OmiePaymentTerm>(page)");
   });
 
-  it("classifies OMIE customers strictly by tag in the cloud path", () => {
+  it("classifica cliente e transportadora pela regra compartilhada", () => {
+    // A regra estrita anterior (so entrava quem tinha a tag "cliente")
+    // descartava em silencio a maior parte do cadastro de uma pedreira que nao
+    // usa tags no OMIE. A regra agora vive em _shared, com testes proprios.
     const source = getOmieSyncSource();
 
-    expect(source).toContain('return hasOmieTag(customer.tagsJson, "cliente");');
-    expect(source).not.toContain("getOmieTagValues(customer.tagsJson).length === 0");
+    expect(source).toContain(
+      'import { classifyOmieCustomer } from "../_shared/omie-customer-classification.ts";'
+    );
+    expect(source).toContain("classifyOmieCustomer(customer.tagsJson).isCustomer");
+    expect(source).toContain("classifyOmieCustomer(customer.tagsJson).isCarrier");
+    expect(source).toContain("items.filter(isOmieCustomer)");
+    expect(source).toContain("items.filter(isOmieCarrier).map(mapCustomerToCarrier)");
   });
 
   it("uses a resilient queue manager with throttling and backoff for OMIE calls", () => {
