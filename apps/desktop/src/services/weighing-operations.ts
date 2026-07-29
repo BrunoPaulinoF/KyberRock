@@ -1495,7 +1495,11 @@ export function listOpenWeighingOperations(database: DesktopDatabase): WeighingO
         o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
-        c.id AS customer_id, c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
+        c.id AS customer_id,
+        COALESCE(c.trade_name, o.remote_customer_name) AS customer_name,
+        COALESCE(v.plate, o.remote_plate) AS plate,
+        COALESCE(d.name, o.remote_driver_name) AS driver_name,
+        COALESCE(p.description, o.remote_product_description) AS product_description,
         o.device_id, dv.name AS device_name, dv.color AS device_color,
         lr.loader_completed_at AS loader_completed_at,
         CASE
@@ -1533,7 +1537,11 @@ export function listCanceledWeighingOperations(
         o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
-        c.id AS customer_id, c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
+        c.id AS customer_id,
+        COALESCE(c.trade_name, o.remote_customer_name) AS customer_name,
+        COALESCE(v.plate, o.remote_plate) AS plate,
+        COALESCE(d.name, o.remote_driver_name) AS driver_name,
+        COALESCE(p.description, o.remote_product_description) AS product_description,
         o.device_id, dv.name AS device_name, dv.color AS device_color,
         CASE
           WHEN o.manual_installments = 1 THEN '1 parcela'
@@ -1569,7 +1577,11 @@ export function listClosedWeighingOperations(
         o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
-        c.id AS customer_id, c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
+        c.id AS customer_id,
+        COALESCE(c.trade_name, o.remote_customer_name) AS customer_name,
+        COALESCE(v.plate, o.remote_plate) AS plate,
+        COALESCE(d.name, o.remote_driver_name) AS driver_name,
+        COALESCE(p.description, o.remote_product_description) AS product_description,
         o.device_id, dv.name AS device_name, dv.color AS device_color,
         CASE
           WHEN o.manual_installments = 1 THEN '1 parcela'
@@ -1656,7 +1668,11 @@ export function getWeighingOperation(
         o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
-        c.id AS customer_id, c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
+        c.id AS customer_id,
+        COALESCE(c.trade_name, o.remote_customer_name) AS customer_name,
+        COALESCE(v.plate, o.remote_plate) AS plate,
+        COALESCE(d.name, o.remote_driver_name) AS driver_name,
+        COALESCE(p.description, o.remote_product_description) AS product_description,
         o.device_id, dv.name AS device_name, dv.color AS device_color,
         CASE
           WHEN o.manual_installments = 1 THEN '1 parcela'

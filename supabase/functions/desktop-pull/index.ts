@@ -7,10 +7,17 @@ type PullBody = {
   deviceToken?: string;
   /**
    * Quando informado, o cadastro compartilhado volta so com o que mudou depois
-   * deste instante. O desktop usa nos pulls frequentes (a cada minuto) e omite
-   * na sincronizacao completa, que reenvia o cadastro inteiro e se auto-corrige.
+   * deste instante. O desktop usa nos pulls frequentes e omite na sincronizacao
+   * completa, que reenvia o cadastro inteiro e se auto-corrige.
    */
   cadastroSince?: string;
+  /**
+   * Mesma ideia para o historico (operacoes, solicitacoes e cupons): o pull
+   * frequente do desktop so precisa do que as outras balancas mexeram desde o
+   * ciclo anterior, o que deixa a resposta pequena o bastante para rodar a cada
+   * poucos segundos. Sem ela a janela recente inteira volta a cada chamada.
+   */
+  historySince?: string;
 };
 
 // PostgREST limita cada resposta (max-rows, 1000 por padrao). Sem paginacao a
@@ -109,6 +116,10 @@ Deno.serve(async (req) => {
       typeof body.cadastroSince === "string" && body.cadastroSince.trim()
         ? body.cadastroSince.trim()
         : null;
+    const historySince =
+      typeof body.historySince === "string" && body.historySince.trim()
+        ? body.historySince.trim()
+        : null;
 
     // Ordenacao por id garante paginacao estavel (sem pular/repetir linha entre
     // faixas quando varios registros tem o mesmo created_at).
@@ -151,40 +162,43 @@ Deno.serve(async (req) => {
       byCompany("products"),
       fetchAll(
         "weighing_operations",
-        (from, to) =>
-          supabase
+        (from, to) => {
+          const query = supabase
             .from("weighing_operations")
             .select("*")
             .eq("company_id", companyId)
             .eq("unit_id", unitId)
             .order("created_at", { ascending: false })
-            .order("id", { ascending: true })
-            .range(from, to),
+            .order("id", { ascending: true });
+          return (historySince ? query.gt("updated_at", historySince) : query).range(from, to);
+        },
         HISTORY_MAX_ROWS
       ),
       fetchAll(
         "loading_requests",
-        (from, to) =>
-          supabase
+        (from, to) => {
+          const query = supabase
             .from("loading_requests")
             .select("*")
             .eq("company_id", companyId)
             .eq("unit_id", unitId)
             .order("created_at", { ascending: false })
-            .order("id", { ascending: true })
-            .range(from, to),
+            .order("id", { ascending: true });
+          return (historySince ? query.gt("updated_at", historySince) : query).range(from, to);
+        },
         HISTORY_MAX_ROWS
       ),
       fetchAll(
         "print_receipts",
-        (from, to) =>
-          supabase
+        (from, to) => {
+          const query = supabase
             .from("print_receipts")
             .select("*")
             .eq("unit_id", unitId)
             .order("printed_at", { ascending: false })
-            .order("id", { ascending: true })
-            .range(from, to),
+            .order("id", { ascending: true });
+          return (historySince ? query.gt("updated_at", historySince) : query).range(from, to);
+        },
         HISTORY_MAX_ROWS
       ),
       // Dispositivos da unidade: nome + cor para a legenda multi-desktop e para

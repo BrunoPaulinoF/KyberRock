@@ -299,6 +299,13 @@ export function writeStoredThemeMode(
   }
 }
 
+/**
+ * Ritmo do espelho multi-desktop. Com o pull incremental a chamada devolve so o
+ * que a outra balanca mexeu desde o ciclo anterior, entao 15 s mantem as duas
+ * telas praticamente juntas sem peso na rede da pedreira.
+ */
+const MULTI_DESKTOP_PULL_INTERVAL_MS = 15_000;
+
 export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }: AppProps = {}) {
   const [phase, setPhase] = useState<AppPhase>("checking_access");
   // Confirmacoes estilizadas do app (logout, reset OMIE, limpar canceladas).
@@ -534,7 +541,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
   // Multi-desktop: pull leve periodico da nuvem para enxergar as operacoes
   // registradas pelos outros computadores da pedreira sem esperar a
-  // sincronizacao completa agendada.
+  // sincronizacao completa agendada. O pull pede so o que mudou desde o ciclo
+  // anterior, entao o intervalo curto e barato e o operador ve a entrada, o
+  // fechamento e o cancelamento da outra balanca quase na hora.
   useEffect(() => {
     if (!desktopApi || phase !== "unlocked") return;
     let cancelled = false;
@@ -543,8 +552,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     async function tick(): Promise<void> {
       if (cancelled || !navigator.onLine) return;
       try {
-        const result = await api.pullCloudNow();
-        if (cancelled || result.pulled <= 0) return;
+        await api.pullCloudNow();
+        if (cancelled) return;
+        // Sempre rele as listas: o pull tambem grava mudanca de status (fechada,
+        // cancelada) que nao aumenta a contagem de linhas trazidas.
         const [nextOpen, nextCanceled, nextClosed, nextDevices] = await Promise.all([
           api.listOpenWeighingOperations(),
           api.listCanceledWeighingOperations(),
@@ -561,7 +572,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       }
     }
 
-    const intervalId = window.setInterval(() => void tick(), 60_000);
+    void tick();
+    const intervalId = window.setInterval(() => void tick(), MULTI_DESKTOP_PULL_INTERVAL_MS);
     return () => {
       cancelled = true;
       window.clearInterval(intervalId);

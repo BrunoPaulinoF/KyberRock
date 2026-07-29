@@ -1202,5 +1202,45 @@ ALTER TABLE print_receipts ADD COLUMN device_number INTEGER;
 CREATE INDEX IF NOT EXISTS idx_print_receipts_unit_number
   ON print_receipts(unit_id, receipt_number, device_number);
 `
+  },
+  {
+    version: 37,
+    name: "remote_operation_snapshot",
+    sql: `
+-- Multi-desktop: a projecao cloud de uma operacao carrega placa/motorista/cliente/produto
+-- como texto (a nuvem nao guarda o vinculo com o cadastro local). Sem estas colunas a
+-- operacao criada na outra balanca chegava sem placa nem motorista — visualmente vazia
+-- na tela de Operacoes. O snapshot e apenas fallback de exibicao: quando o cadastro
+-- correspondente existe localmente, o vinculo real (vehicle_id/driver_id/...) prevalece.
+ALTER TABLE weighing_operations ADD COLUMN remote_plate TEXT;
+ALTER TABLE weighing_operations ADD COLUMN remote_driver_name TEXT;
+ALTER TABLE weighing_operations ADD COLUMN remote_customer_name TEXT;
+ALTER TABLE weighing_operations ADD COLUMN remote_product_description TEXT;
+
+-- Reconciliacao de envio: operacao com alteracao local ainda nao confirmada na nuvem
+-- (cloud_synced_at nulo ou anterior a updated_at) e reenviada a cada sincronizacao,
+-- mesmo que o job da fila tenha morrido depois das tentativas.
+CREATE INDEX IF NOT EXISTS idx_operations_cloud_pending
+  ON weighing_operations(updated_at, cloud_synced_at);
+
+-- Carimbos gravados por datetime('now') ("2026-07-29 17:00:48") sao UTC mas sem o
+-- indicador de fuso, e conviviam na mesma coluna com o ISO do lado JS. Misturados,
+-- a comparacao de qual versao e a mais nova (entre as duas balancas) dava errado.
+-- Normaliza o historico para ISO; o instante e exatamente o mesmo.
+UPDATE weighing_operations
+SET updated_at = REPLACE(updated_at, ' ', 'T') || 'Z'
+WHERE updated_at LIKE '____-__-__ __:__:__';
+UPDATE weighing_operations
+SET cloud_synced_at = REPLACE(cloud_synced_at, ' ', 'T') || 'Z'
+WHERE cloud_synced_at LIKE '____-__-__ __:__:__';
+
+-- Historico antigo entra como ja confirmado: a reconciliacao existe para
+-- recuperar o que ficou preso nos ultimos dias, nao para reenviar meses de
+-- operacoes de uma vez na primeira sincronizacao apos a atualizacao.
+UPDATE weighing_operations
+SET cloud_synced_at = updated_at
+WHERE cloud_synced_at IS NULL
+  AND updated_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-7 days');
+`
   }
 ];

@@ -4,10 +4,17 @@ import { runDesktopMigrations } from "../database/migrate";
 import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite";
 import { ensureInitialDesktopIdentity, type LocalDesktopIdentity } from "./bootstrap";
 import { enqueueSyncJob } from "./sync-queue";
-import { processCloudSyncQueue, pullDesktopDataFromCloud } from "./supabase-sync";
+import {
+  listOperationsPendingCloudPush,
+  processCloudSyncQueue,
+  pullDesktopDataFromCloud,
+  syncOperationToSupabase
+} from "./supabase-sync";
 import { listUnitDevices, upsertUnitDevices } from "./unit-devices";
 import {
   createSimulatedWeighingOperation,
+  listCanceledWeighingOperations,
+  listClosedWeighingOperations,
   listOpenWeighingOperations
 } from "./weighing-operations";
 
@@ -215,6 +222,250 @@ describe("multi-desktop na mesma pedreira", () => {
       expect(
         listUnitDevices(database, identity).map((device) => device.id)
       ).toEqual(expect.arrayContaining(["desktop-a", "desktop-b"]));
+    } finally {
+      database.close();
+    }
+  });
+
+  it("pull traz placa, motorista, cliente e produto da operacao da outra balanca", async () => {
+    const database = createMachine("desktop-a");
+
+    try {
+      const identity = readIdentity(database);
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          devices: [{ id: "desktop-b", name: "Balanca 2", color: "#ea580c", is_active: true }],
+          // Cadastro compartilhado chega no mesmo pull: a placa da nuvem casa
+          // com o veiculo local e a operacao fica vinculada ao cadastro.
+          carriers: [
+            {
+              id: "carrier-1",
+              name: "Transportes Serra",
+              updated_at: "2026-07-22T10:00:00.000Z"
+            }
+          ],
+          drivers: [
+            { id: "driver-1", name: "Joao da Silva", updated_at: "2026-07-22T10:00:00.000Z" }
+          ],
+          vehicles: [
+            {
+              id: "vehicle-1",
+              plate: "ABC1D23",
+              carrier_id: "carrier-1",
+              updated_at: "2026-07-22T10:00:00.000Z"
+            }
+          ],
+          operations: [
+            {
+              id: "op-b1",
+              company_id: "company-1",
+              unit_id: "unit-1",
+              device_id: "desktop-b",
+              status: "open",
+              operation_type: "invoice",
+              plate: "ABC1D23",
+              driver_name: "Joao da Silva",
+              customer_name: "Construtora Norte",
+              product_description: "Brita 1",
+              entry_weight_kg: 8_000,
+              created_at: "2026-07-22T11:00:00.000Z",
+              updated_at: "2026-07-22T11:00:00.000Z"
+            }
+          ]
+        },
+        error: null
+      });
+
+      await pullDesktopDataFromCloud(database, identity);
+
+      const operation = listOpenWeighingOperations(database).find((op) => op.id === "op-b1");
+      expect(operation).toMatchObject({
+        plate: "ABC1D23",
+        driverName: "Joao da Silva",
+        // Sem o cliente espelhado localmente, o texto da nuvem sustenta a tela.
+        customerName: "Construtora Norte",
+        productDescription: "Brita 1"
+      });
+      expect(
+        database
+          .prepare("SELECT vehicle_id, driver_id FROM weighing_operations WHERE id = 'op-b1'")
+          .get()
+      ).toMatchObject({ vehicle_id: "vehicle-1", driver_id: "driver-1" });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("pull traz o fechamento e o cancelamento feitos na outra balanca", async () => {
+    const database = createMachine("desktop-a");
+
+    try {
+      const identity = readIdentity(database);
+      upsertUnitDevices(database, identity, [
+        { id: "desktop-b", name: "Balanca 2", color: "#ea580c", is_active: true }
+      ]);
+      insertOperation(database, {
+        id: "op-to-close",
+        deviceId: "desktop-b",
+        status: "awaiting_exit",
+        updatedAt: "2026-07-22T11:00:00.000Z"
+      });
+      insertOperation(database, {
+        id: "op-to-cancel",
+        deviceId: "desktop-b",
+        status: "awaiting_exit",
+        updatedAt: "2026-07-22T11:00:00.000Z"
+      });
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          operations: [
+            {
+              id: "op-to-close",
+              company_id: "company-1",
+              unit_id: "unit-1",
+              device_id: "desktop-b",
+              status: "closed_local",
+              operation_type: "invoice",
+              exit_weight_kg: 5_000,
+              net_weight_kg: 5_000,
+              created_at: "2026-07-22T11:00:00.000Z",
+              updated_at: "2026-07-22T12:00:00.000Z"
+            },
+            {
+              id: "op-to-cancel",
+              company_id: "company-1",
+              unit_id: "unit-1",
+              device_id: "desktop-b",
+              status: "cancelled",
+              operation_type: "invoice",
+              cancel_reason: "Caminhao desistiu",
+              created_at: "2026-07-22T11:00:00.000Z",
+              updated_at: "2026-07-22T12:05:00.000Z"
+            }
+          ]
+        },
+        error: null
+      });
+
+      await pullDesktopDataFromCloud(database, identity);
+
+      expect(listOpenWeighingOperations(database)).toHaveLength(0);
+      expect(listClosedWeighingOperations(database).map((op) => op.id)).toContain("op-to-close");
+      expect(listCanceledWeighingOperations(database).map((op) => op.id)).toContain("op-to-cancel");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("pull nao deixa uma tabela quebrada derrubar o restante do lote", async () => {
+    const database = createMachine("desktop-a");
+
+    try {
+      const identity = readIdentity(database);
+      // Simula o que uma migracao local pendente provoca: a tabela de cupons
+      // nao existe nesta maquina. Antes isso abortava a transacao inteira do
+      // pull e a balanca ficava permanentemente cega para as operacoes da outra.
+      database.exec("DROP TABLE print_receipts");
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          operations: [
+            {
+              id: "op-good",
+              company_id: "company-1",
+              unit_id: "unit-1",
+              status: "open",
+              operation_type: "invoice",
+              plate: "XYZ9A88",
+              entry_weight_kg: 9_000,
+              created_at: "2026-07-22T11:10:00.000Z",
+              updated_at: "2026-07-22T11:10:00.000Z"
+            }
+          ],
+          printReceipts: [
+            {
+              id: "receipt-1",
+              operation_id: "op-good",
+              unit_id: "unit-1",
+              receipt_number: 1,
+              printed_at: "2026-07-22T11:20:00.000Z",
+              updated_at: "2026-07-22T11:20:00.000Z"
+            }
+          ]
+        },
+        error: null
+      });
+
+      const pulled = await pullDesktopDataFromCloud(database, identity);
+
+      expect(listOpenWeighingOperations(database).map((op) => op.id)).toEqual(["op-good"]);
+      expect(pulled.warnings.join(" ")).toContain("print_receipts");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("pull incremental pede so o que mudou desde o ciclo anterior", async () => {
+    const database = createMachine("desktop-a");
+
+    try {
+      const identity = readIdentity(database);
+      invokeMock.mockResolvedValueOnce({
+        data: { serverTime: "2026-07-22T12:00:00.000Z" },
+        error: null
+      });
+      await pullDesktopDataFromCloud(database, identity);
+
+      invokeMock.mockResolvedValueOnce({ data: {}, error: null });
+      await pullDesktopDataFromCloud(database, identity, { incremental: true });
+
+      const body = invokeMock.mock.calls[1][1].body as Record<string, string>;
+      expect(body.historySince).toBe(body.cadastroSince);
+      expect(Date.parse(body.historySince)).toBeLessThan(Date.parse("2026-07-22T12:00:00.000Z"));
+    } finally {
+      database.close();
+    }
+  });
+
+  it("reconciliacao reenvia o fechamento cujo job da fila morreu", async () => {
+    const database = createMachine("desktop-a");
+
+    try {
+      const identity = readIdentity(database);
+      // Fechada localmente e nunca confirmada na nuvem (job em dead_letter).
+      insertOperation(database, {
+        id: "op-closed-unsent",
+        deviceId: "desktop-a",
+        status: "closed_local",
+        updatedAt: "2026-07-22T12:30:00.000Z"
+      });
+      // Ja confirmada: nao pode voltar para a fila a cada ciclo.
+      insertOperation(database, {
+        id: "op-already-sent",
+        deviceId: "desktop-a",
+        status: "closed_local",
+        updatedAt: "2026-07-22T12:30:00.000Z"
+      });
+      database
+        .prepare("UPDATE weighing_operations SET cloud_synced_at = ? WHERE id = 'op-already-sent'")
+        .run("2026-07-22T12:31:00.000Z");
+
+      const pending = listOperationsPendingCloudPush(
+        database,
+        new Date("2026-07-22T13:00:00.000Z")
+      );
+      expect(pending.map((item) => item.id)).toEqual(["op-closed-unsent"]);
+
+      await syncOperationToSupabase(database, "op-closed-unsent", identity);
+      expect(invokeMock).toHaveBeenCalledWith("desktop-sync", {
+        body: expect.objectContaining({
+          operations: [expect.objectContaining({ id: "op-closed-unsent", status: "closed_local" })]
+        })
+      });
+
+      // Confirmado o envio, a operacao sai da reconciliacao.
+      expect(
+        listOperationsPendingCloudPush(database, new Date("2026-07-22T13:00:00.000Z"))
+      ).toHaveLength(0);
     } finally {
       database.close();
     }

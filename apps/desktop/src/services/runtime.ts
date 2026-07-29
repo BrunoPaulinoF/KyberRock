@@ -106,6 +106,7 @@ import {
   pushReportChannelSettings,
   syncOperationToSupabase,
   syncLoadingRequestToSupabase,
+  listOperationsPendingCloudPush,
   syncOmieReferenceDataFromCloud,
   listOmieDocumentTypesFromCloud,
   type OmieDocumentTypeOption,
@@ -1251,21 +1252,35 @@ export class DesktopRuntime {
         );
       }
 
-      // Sync open operations. Com multi-desktop, cada maquina so re-envia as
-      // operacoes abertas criadas por ela (edicoes em operacoes de outras
-      // maquinas seguem pela fila de jobs) — evita empurrar copia desatualizada
-      // do trabalho das demais.
-      const openOperations = listOpenWeighingOperations(this.database).filter(
-        (operation) => !operation.deviceId || operation.deviceId === identity.deviceId
-      );
-      for (const operation of openOperations) {
+      // Reconciliacao: toda operacao cuja versao local esta na frente do que a
+      // nuvem confirmou volta a ser enviada — abertas, fechadas e canceladas,
+      // criadas aqui ou em outra balanca. E a rede de seguranca da fila de jobs,
+      // que descarta o job depois de 10 falhas (uma queda de internet longa
+      // bastava para o fechamento nunca chegar na outra maquina).
+      const pendingOperations = listOperationsPendingCloudPush(this.database);
+      const pushedRequestIds = new Set<string>();
+      for (const pending of pendingOperations) {
         try {
-          await syncOperationToSupabase(this.database, operation.id, identity);
+          await syncOperationToSupabase(this.database, pending.id, identity);
           synced++;
         } catch (error) {
           failed++;
           errors.push(
-            `Operation ${operation.id}: ${error instanceof Error ? error.message : "Unknown error"}`
+            `Operation ${pending.id}: ${error instanceof Error ? error.message : "Unknown error"}`
+          );
+          continue;
+        }
+        // A solicitacao de carregamento acompanha a operacao: e o que fecha a
+        // luz do carregador na outra balanca junto com o fechamento.
+        if (!pending.loadingRequestId) continue;
+        try {
+          await syncLoadingRequestToSupabase(this.database, pending.loadingRequestId, identity);
+          pushedRequestIds.add(pending.loadingRequestId);
+          synced++;
+        } catch (error) {
+          failed++;
+          errors.push(
+            `Loading request ${pending.loadingRequestId}: ${error instanceof Error ? error.message : "Unknown error"}`
           );
         }
       }
@@ -1276,6 +1291,7 @@ export class DesktopRuntime {
         .all() as Array<{ id: string }>;
 
       for (const request of loadingRequests) {
+        if (pushedRequestIds.has(request.id)) continue;
         try {
           await syncLoadingRequestToSupabase(this.database, request.id, identity);
           synced++;
