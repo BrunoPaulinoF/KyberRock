@@ -1381,6 +1381,11 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         `${result.paymentTermsSynced} condicoes`
       );
       parts.push(`pedidos: ${result.ordersProcessed} ok, ${result.ordersFailed} falhas`);
+      // Numeros do proprio OMIE (paginas e registros): e o que diz se o total
+      // baixado corresponde ao cadastro inteiro ou se a varredura parou no meio.
+      if (result.customersScanSummary) {
+        parts.push(`varredura: ${result.customersScanSummary}`);
+      }
       if (result.errors.length > 0) {
         parts.push(`${result.errors.length} erro(s)`);
       }
