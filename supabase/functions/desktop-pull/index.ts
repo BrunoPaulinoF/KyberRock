@@ -207,7 +207,7 @@ Deno.serve(async (req) => {
         supabase
           .from("device_registrations")
           .select(
-            "id, company_id, unit_id, name, color, installation_id, is_active, created_at, updated_at"
+            "id, company_id, unit_id, name, color, device_number, installation_id, is_active, created_at, updated_at"
           )
           .eq("unit_id", unitId)
           .order("id", { ascending: true })
