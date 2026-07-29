@@ -1712,6 +1712,37 @@ function upsertCloudProducts(
   return count;
 }
 
+/** Copia local usada para decidir o que a projecao da nuvem pode sobrescrever. */
+type LocalOperationSnapshot = {
+  status: string;
+  updated_at: string;
+  customer_id: string | null;
+  product_id: string | null;
+  carrier_id: string | null;
+};
+
+/**
+ * Id de cadastro vindo da nuvem traduzido para o espelho local.
+ *
+ * Tres casos, e cada um precisa de um desfecho diferente:
+ * - a nuvem mandou vazio ⇒ vazio (ex.: transportadora removida porque o cliente
+ *   passou a usar transporte proprio). Precisa limpar o vinculo local.
+ * - a nuvem mandou um id que existe aqui ⇒ e o valor novo.
+ * - a nuvem mandou um id que esta maquina ainda nao espelhou (cadastro chega no
+ *   mesmo pull, mas pode ter falhado) ⇒ mantem o que ja estava, em vez de apagar
+ *   o vinculo por causa de um cadastro atrasado.
+ */
+function resolveMirroredId(
+  database: DesktopDatabase,
+  table: string,
+  value: unknown,
+  localValue: string | null | undefined
+): string | null {
+  const incoming = nullableStringValue(value);
+  if (!incoming) return null;
+  return existingId(database, table, incoming) ?? localValue ?? null;
+}
+
 function upsertCloudOperations(
   database: DesktopDatabase,
   settings: CloudSettings,
@@ -1721,6 +1752,7 @@ function upsertCloudOperations(
   const upsert = database.prepare(`
     INSERT INTO weighing_operations (
       id, company_id, unit_id, device_id, status, operation_type, customer_id, vehicle_id, driver_id,
+      carrier_id,
       product_id, payment_term_id, entry_weight_kg, entry_weight_captured_at, exit_weight_kg,
       exit_weight_captured_at, net_weight_kg, unit_price_cents, product_total_cents,
       freight_total_cents, total_cents, freight_json, freight_type, omie_sales_order_id,
@@ -1730,7 +1762,7 @@ function upsertCloudOperations(
       price_savings_percent, deduct_freight_from_credit, product_credit_debit_cents,
       freight_credit_debit_cents, quotation_id,
       remote_plate, remote_driver_name, remote_customer_name, remote_product_description
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
       unit_id = excluded.unit_id,
@@ -1742,6 +1774,10 @@ function upsertCloudOperations(
       -- placa/motorista, mas nunca apaga o vinculo que esta maquina ja tinha.
       vehicle_id = COALESCE(excluded.vehicle_id, weighing_operations.vehicle_id),
       driver_id = COALESCE(excluded.driver_id, weighing_operations.driver_id),
+      -- carrier_id chega resolvido de resolveMirroredId: quando a nuvem manda um
+      -- id que esta maquina ainda nao espelhou, o valor local e mantido; quando a
+      -- nuvem manda vazio (transporte proprio do cliente), o vinculo e limpo.
+      carrier_id = excluded.carrier_id,
       product_id = excluded.product_id,
       payment_term_id = excluded.payment_term_id,
       entry_weight_kg = excluded.entry_weight_kg,
@@ -1777,7 +1813,7 @@ function upsertCloudOperations(
   `);
 
   const readLocal = database.prepare(
-    "SELECT status, updated_at FROM weighing_operations WHERE id = ?"
+    "SELECT status, updated_at, customer_id, product_id, carrier_id FROM weighing_operations WHERE id = ?"
   );
 
   let count = 0;
@@ -1788,7 +1824,7 @@ function upsertCloudOperations(
     // Multi-desktop: a projecao da nuvem pode estar atras da copia local (esta
     // maquina fechou/alterou e ainda nao terminou o push). Nunca sobrescreve
     // uma versao local mais nova nem regride status terminal para aberto.
-    const local = readLocal.get(id) as { status: string; updated_at: string } | undefined;
+    const local = readLocal.get(id) as LocalOperationSnapshot | undefined;
     if (local) {
       const localTs = parseTimestamp(local.updated_at);
       const cloudTs = parseTimestamp(updatedAt);
@@ -1804,8 +1840,9 @@ function upsertCloudOperations(
       }
     }
     const closedAt = isoStringValue(row.closed_at);
-    const customerId = existingId(database, "customers", row.customer_id);
-    const productId = existingId(database, "products", row.product_id);
+    const customerId = resolveMirroredId(database, "customers", row.customer_id, local?.customer_id);
+    const productId = resolveMirroredId(database, "products", row.product_id, local?.product_id);
+    const carrierId = resolveMirroredId(database, "carriers", row.carrier_id, local?.carrier_id);
     // A nuvem guarda placa/motorista so como texto. Casa com o cadastro local
     // (que ja veio no mesmo pull) para a operacao da outra balanca aparecer
     // completa; o texto fica gravado como fallback de exibicao.
@@ -1824,6 +1861,7 @@ function upsertCloudOperations(
         customerId,
         vehicleId,
         driverId,
+        carrierId,
         productId,
         // FK payment_terms: uma condicao ainda nao espelhada nesta maquina
         // derrubaria a gravacao inteira da operacao.
@@ -2492,12 +2530,14 @@ function getOperationPayload(
   const operation = database
     .prepare(
       `SELECT
-    o.*, c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description
+    o.*, c.trade_name AS customer_name, v.plate, d.name AS driver_name, p.description AS product_description,
+    ca.name AS carrier_name
     FROM weighing_operations o
     LEFT JOIN customers c ON c.id = o.customer_id
     LEFT JOIN vehicles v ON v.id = o.vehicle_id
     LEFT JOIN drivers d ON d.id = o.driver_id
     LEFT JOIN products p ON p.id = o.product_id
+    LEFT JOIN carriers ca ON ca.id = o.carrier_id
     WHERE o.id = ?`
     )
     .get(operationId) as Record<string, unknown> | undefined;
@@ -2514,6 +2554,11 @@ function getOperationPayload(
     operation_type: operation.operation_type,
     customer_id: operation.customer_id,
     product_id: operation.product_id,
+    // Transportadora: as tres trocas permitidas numa operacao aberta sao
+    // produto, cliente e transportadora — sem estas duas colunas a terceira
+    // nunca chegava na outra balanca da pedreira.
+    carrier_id: operation.carrier_id,
+    carrier_name: operation.carrier_name,
     payment_term_id: operation.payment_term_id,
     plate: operation.plate,
     customer_name: operation.customer_name,
