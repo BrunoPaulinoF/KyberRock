@@ -332,6 +332,25 @@ export function AdminDashboard() {
     }
   }
 
+  /**
+   * Corrige a pedreira de um desktop ja ativado. A fila do carregador e por
+   * pedreira: com o desktop vinculado a pedreira errada, as entradas dele
+   * apareciam na fila de outra pedreira (ou de nenhuma).
+   */
+  async function handleChangeDeviceUnit(deviceId: string, unitId: string): Promise<void> {
+    if (!unitId) return;
+    try {
+      await callAdminFunction("admin-api", {
+        action: "update_device_unit",
+        payload: { deviceId, unitId }
+      });
+      await loadData();
+    } catch (error) {
+      console.error("Error changing device unit:", error);
+      alert(error instanceof Error ? error.message : "Erro ao mudar a pedreira do desktop");
+    }
+  }
+
   async function handleDeleteCompany(company: Company) {
     setConfirmDelete({ type: "company", id: company.id, name: company.name });
     setConfirmPassword("");
@@ -1229,6 +1248,38 @@ export function AdminDashboard() {
                                   {new Date(device.lastSeenAt).toLocaleString("pt-BR")}
                                 </p>
                               ) : null}
+                              <label
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "8px",
+                                  margin: "8px 0 0 0",
+                                  fontSize: "12px",
+                                  color: "#475569"
+                                }}
+                              >
+                                Pedreira:
+                                <select
+                                  value={device.unitId}
+                                  onChange={(e) =>
+                                    void handleChangeDeviceUnit(device.id, e.target.value)
+                                  }
+                                  style={{
+                                    padding: "4px 8px",
+                                    borderRadius: "6px",
+                                    border: "1px solid #cbd5e1",
+                                    fontSize: "12px"
+                                  }}
+                                >
+                                  {units
+                                    .filter((u) => u.companyId === device.companyId)
+                                    .map((u) => (
+                                      <option key={u.id} value={u.id}>
+                                        {u.name}
+                                      </option>
+                                    ))}
+                                </select>
+                              </label>
                             </div>
                             <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
                               <span

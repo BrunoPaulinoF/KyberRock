@@ -17,7 +17,8 @@ type AdminAction =
   | "generate_desktop_activation_code"
   | "create_loader"
   | "toggle_loader"
-  | "toggle_device";
+  | "toggle_device"
+  | "update_device_unit";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -172,6 +173,35 @@ Deno.serve(async (req) => {
         is_active: Boolean(payload.isActive),
         updated_at: new Date().toISOString()
       }).eq("id", String(payload.deviceId));
+      if (error) throw error;
+      return jsonResponse({ ok: true });
+    }
+
+    // Move um desktop ja ativado para a pedreira certa. A projecao das operacoes
+    // segue o registro do dispositivo (desktop-sync), entao a fila do carregador
+    // da pedreira escolhida passa a receber as entradas dessa balanca.
+    if (body.action === "update_device_unit") {
+      const deviceId = String(payload.deviceId ?? "");
+      const unitId = String(payload.unitId ?? "");
+      const { data: device, error: deviceError } = await supabase
+        .from("device_registrations")
+        .select("company_id")
+        .eq("id", deviceId)
+        .single();
+      if (deviceError) throw deviceError;
+      const { data: unit, error: unitError } = await supabase
+        .from("units")
+        .select("id, company_id")
+        .eq("id", unitId)
+        .single();
+      if (unitError) throw unitError;
+      if (unit.company_id !== device.company_id) {
+        return jsonResponse({ error: "A pedreira escolhida e de outra empresa" }, 400);
+      }
+      const { error } = await supabase
+        .from("device_registrations")
+        .update({ unit_id: unitId, updated_at: new Date().toISOString() })
+        .eq("id", deviceId);
       if (error) throw error;
       return jsonResponse({ ok: true });
     }

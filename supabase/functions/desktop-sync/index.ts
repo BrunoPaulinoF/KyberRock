@@ -1,6 +1,7 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { safeEqual, sha256Hex } from "../_shared/crypto.ts";
+import { scopeRowsToDevice } from "../_shared/device-scope.ts";
 
 type CloudPayload = {
   deviceId?: string;
@@ -141,7 +142,10 @@ Deno.serve(async (req) => {
       // copia desatualizada de operacao criada/fechada em outra. Descarta
       // escritas mais antigas que a versao ja projetada na nuvem e nunca
       // regride um status terminal (fechada/cancelada) para um status aberto.
-      const operations = await dropStaleOperationWrites(supabase, body.operations);
+      const operations = await dropStaleOperationWrites(
+        supabase,
+        scopeRowsToDevice(body.operations, device)
+      );
       if (operations.length) {
         const { error } = await supabase
           .from("weighing_operations")
@@ -154,7 +158,10 @@ Deno.serve(async (req) => {
       }
     }
     if (body.loadingRequests?.length) {
-      const loadingRequests = await mergeLoadingRequestWrites(supabase, body.loadingRequests);
+      const loadingRequests = await mergeLoadingRequestWrites(
+        supabase,
+        scopeRowsToDevice(body.loadingRequests, device)
+      );
       if (loadingRequests.length) {
         const { error } = await supabase
           .from("loading_requests")

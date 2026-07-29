@@ -18,6 +18,8 @@ export const DESKTOP_ACCESS_CHECK_INTERVAL_MS = 30 * 1000; // 30 segundos quando
 
 export type DesktopAccessStatusCode =
   | "not_activated"
+  /** A empresa tem mais de uma pedreira: falta o operador dizer qual e esta. */
+  | "unit_selection_required"
   | "approved"
   | "offline_grace"
   | "validation_expired"
@@ -47,11 +49,24 @@ export interface DesktopAccessStatus {
    */
   lastError: string | null;
   checkedAt: string;
+  /**
+   * Pedreiras ativas da empresa, devolvidas quando a ativacao precisa saber em
+   * qual delas este computador esta. Presente apenas no status
+   * `unit_selection_required`.
+   */
+  unitOptions?: DesktopActivationUnitOption[];
+}
+
+export interface DesktopActivationUnitOption {
+  id: string;
+  name: string;
 }
 
 export interface ActivateDesktopInput {
   activationCode: string;
   deviceName: string;
+  /** Pedreira escolhida pelo operador quando a empresa tem mais de uma. */
+  unitId?: string;
 }
 
 interface CloudCredentials {
@@ -79,6 +94,8 @@ interface ActivateDesktopResponse {
   supabaseUrl?: string | null;
   publishableKey?: string | null;
   checkedAt?: string;
+  /** Pedreiras da empresa, quando a nuvem devolve `unit_selection_required`. */
+  units?: DesktopActivationUnitOption[];
 }
 
 interface DesktopStatusResponse {
@@ -121,13 +138,30 @@ export async function activateDesktop(
         activationCode,
         deviceName: input.deviceName.trim() || "Desktop balanca",
         installationId,
-        ...(previousDeviceId ? { previousDeviceId } : {})
+        ...(previousDeviceId ? { previousDeviceId } : {}),
+        ...(input.unitId?.trim() ? { unitId: input.unitId.trim() } : {})
       }
     }
   );
 
   if (error) {
     throw new Error(error.message || "Falha ao ativar desktop.");
+  }
+
+  // Empresa com mais de uma pedreira: a nuvem devolve a lista em vez de vincular
+  // esta balanca a uma pedreira chutada. Nada e gravado ate a escolha chegar.
+  if (data?.status === "unit_selection_required") {
+    return {
+      ...buildAccessStatus(database, {
+        status: "unit_selection_required",
+        canOperate: false,
+        requiresActivation: true,
+        message:
+          data.message ?? "Escolha em qual pedreira este computador esta instalado.",
+        checkedAt: data.checkedAt ?? now.toISOString()
+      }),
+      unitOptions: data.units ?? []
+    };
   }
 
   if (!data?.companyId || !data.unitId || !data.deviceId || !data.deviceToken) {

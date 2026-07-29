@@ -160,6 +160,70 @@ describe("desktop activation", () => {
     });
   });
 
+  it("nao ativa enquanto a pedreira nao for escolhida e reenvia a escolha", async () => {
+    const database = createDatabase();
+    // Empresa com mais de uma pedreira: a nuvem devolve a lista em vez de
+    // vincular a balanca a uma pedreira chutada — era assim que a entrada ia
+    // parar na unidade errada e sumia da fila do carregador.
+    invokeMock.mockResolvedValueOnce({
+      data: {
+        status: "unit_selection_required",
+        message: "Escolha em qual pedreira este computador esta instalado.",
+        companyId: "company-1",
+        units: [
+          { id: "unit-1", name: "Pedreira Centro" },
+          { id: "unit-2", name: "Pedreira Ibiuna" }
+        ]
+      },
+      error: null
+    });
+
+    const pending = await activateDesktop(database, {
+      activationCode: "123456",
+      deviceName: "Balanca principal"
+    });
+
+    expect(pending.status).toBe("unit_selection_required");
+    expect(pending.canOperate).toBe(false);
+    expect(pending.requiresActivation).toBe(true);
+    expect(pending.unitOptions).toEqual([
+      { id: "unit-1", name: "Pedreira Centro" },
+      { id: "unit-2", name: "Pedreira Ibiuna" }
+    ]);
+    // Nenhuma credencial gravada: a maquina continua sem pedreira definida.
+    expect(pending.unitId).toBeNull();
+
+    invokeMock.mockResolvedValueOnce({
+      data: {
+        status: "approved",
+        message: "Desktop ativado com sucesso.",
+        companyId: "company-1",
+        companyLegalName: "Empresa Teste",
+        companyTradeName: "Empresa Teste",
+        unitId: "unit-2",
+        unitName: "Pedreira Ibiuna",
+        unitTimezone: "America/Sao_Paulo",
+        deviceId: "desktop-device-1",
+        deviceToken: "device-token-1",
+        supabaseUrl: "https://example.supabase.co",
+        publishableKey: "sb_publishable_from_activation",
+        checkedAt: "2026-07-29T15:00:00.000Z"
+      },
+      error: null
+    });
+
+    const activated = await activateDesktop(database, {
+      activationCode: "123456",
+      deviceName: "Balanca principal",
+      unitId: "unit-2"
+    });
+
+    expect(invokeMock.mock.calls[1][1].body.unitId).toBe("unit-2");
+    expect(activated.canOperate).toBe(true);
+    expect(activated.unitId).toBe("unit-2");
+    expect(activated.unitName).toBe("Pedreira Ibiuna");
+  });
+
   it("registra o erro tecnico quando a nuvem nao responde e limpa quando volta", async () => {
     const database = createDatabase();
     // Maquina ja ativada e com bloqueio guardado de uma verificacao anterior.

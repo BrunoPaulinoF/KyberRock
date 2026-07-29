@@ -1,4 +1,5 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { resolveActivationUnit } from "../_shared/activation-unit.ts";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { sha256Hex } from "../_shared/crypto.ts";
 import { pickNextDeviceColor } from "../_shared/device-colors.ts";
@@ -32,11 +33,15 @@ Deno.serve(async (req) => {
     deviceName?: string;
     installationId?: string;
     previousDeviceId?: string;
+    unitId?: string;
   };
 
   const activationCode = String(body.activationCode ?? "").trim();
   const deviceName = String(body.deviceName ?? "").trim() || "Desktop balanca";
   const installationId = String(body.installationId ?? "").trim() || null;
+  // Pedreira escolhida pelo operador quando a empresa tem mais de uma. O codigo
+  // de ativacao e da empresa e nao diz em qual pedreira a balanca esta.
+  const requestedUnitId = String(body.unitId ?? "").trim() || null;
   // Registro que ESTE computador ja usava (guardado localmente na ativacao
   // anterior). E a unica prova de que um registro legado, sem installation_id,
   // pertence a esta maquina — sem ela, ativar um computador novo tomaria o
@@ -69,25 +74,17 @@ Deno.serve(async (req) => {
     .select("id, company_id, name, timezone, is_active")
     .eq("company_id", typedCompany.id)
     .eq("is_active", true)
-    .order("created_at", { ascending: true })
-    .limit(1);
+    .order("created_at", { ascending: true });
 
   if (unitsError) throw unitsError;
-  const typedUnit = (units?.[0] ?? null) as UnitRow | null;
-  if (!typedUnit) {
-    return jsonResponse({ error: "Pedreira sem unidade ativa cadastrada" }, 403);
-  }
-
-  const deviceToken = createDeviceToken();
-  const tokenHash = await sha256Hex(deviceToken);
-  const now = new Date().toISOString();
+  const typedUnits = (units ?? []) as UnitRow[];
 
   // Multiplos desktops por pedreira: cada computador (installation_id) tem seu
   // proprio registro e token. Ativar um computador novo NAO rotaciona o token
   // dos demais — todos continuam operando em paralelo na mesma unidade.
   const { data: companyDevices, error: existingDeviceError } = await supabase
     .from("device_registrations")
-    .select("id, installation_id, color, is_active")
+    .select("id, installation_id, unit_id, color, is_active")
     .eq("company_id", typedCompany.id)
     .order("last_seen_at", { ascending: false, nullsFirst: false })
     .order("updated_at", { ascending: false, nullsFirst: false });
@@ -96,6 +93,7 @@ Deno.serve(async (req) => {
   type ExistingDevice = {
     id: string;
     installation_id: string | null;
+    unit_id: string | null;
     color: string | null;
     is_active: boolean;
   };
@@ -107,6 +105,36 @@ Deno.serve(async (req) => {
     installationId,
     previousDeviceId
   });
+
+  // Em qual pedreira esta balanca esta. O codigo e da empresa: com mais de uma
+  // pedreira ativa a ativacao pergunta em vez de chutar a mais antiga (era o que
+  // deixava a operacao invisivel para o carregador da outra pedreira).
+  const unitChoice = resolveActivationUnit({
+    units: typedUnits,
+    requestedUnitId,
+    currentDeviceUnitId: existingDevice?.unit_id ?? null
+  });
+  if (unitChoice.kind === "no_units") {
+    return jsonResponse({ error: "Pedreira sem unidade ativa cadastrada" }, 403);
+  }
+  if (unitChoice.kind === "unit_not_found") {
+    return jsonResponse({ error: "Pedreira invalida para este codigo de ativacao" }, 400);
+  }
+  if (unitChoice.kind === "selection_required") {
+    return jsonResponse({
+      status: "unit_selection_required",
+      message: "Escolha em qual pedreira este computador esta instalado.",
+      companyId: typedCompany.id,
+      companyTradeName: typedCompany.name,
+      units: unitChoice.units.map((unit) => ({ id: unit.id, name: unit.name }))
+    });
+  }
+  const typedUnit = unitChoice.unit;
+
+  const deviceToken = createDeviceToken();
+  const tokenHash = await sha256Hex(deviceToken);
+  const now = new Date().toISOString();
+
   const deviceId = existingDevice?.id ?? `desktop-${crypto.randomUUID()}`;
   const deviceColor =
     existingDevice?.color ??
