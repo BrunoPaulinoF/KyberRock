@@ -23,7 +23,7 @@ import type {
   CustomerSpecialPriceSummary,
   ProductDefaultPriceSummary
 } from "../services/product-prices";
-import type { CreditMovementRow } from "../services/credit";
+import type { CreditMovementRow, CustomerCreditSummary } from "../services/credit";
 import type { CreateQuotationInput, QuotationRow, QuotationSummary } from "../services/quotations";
 import type { ActivateDesktopInput, DesktopAccessStatus } from "../services/desktop-activation";
 import type { UnitDeviceInfo } from "../services/unit-devices";
@@ -369,6 +369,17 @@ export interface KyberRockDesktopApi {
   }) => Promise<unknown>;
   customerSpecialPricesRemove: (customerId: string, productId: string) => Promise<void>;
   customerCreditBalance: (customerId: string) => Promise<number>;
+  customerCreditSummary: (customerId: string) => Promise<CustomerCreditSummary>;
+  customerCreditPayment: (
+    customerId: string,
+    amountCents: number,
+    reason?: string
+  ) => Promise<CustomerCreditSummary>;
+  customerCreditAdjust: (
+    customerId: string,
+    amountCents: number,
+    reason: string
+  ) => Promise<CustomerCreditSummary>;
   customerCreditMovements: (customerId: string, limit?: number) => Promise<CreditMovementRow[]>;
   quotationsCreate: (input: Omit<CreateQuotationInput, "companyId">) => Promise<QuotationRow>;
   quotationsCancel: (id: string) => Promise<void>;

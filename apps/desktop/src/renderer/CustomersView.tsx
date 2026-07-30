@@ -24,6 +24,7 @@ import {
 } from "./inputs";
 import type { CepLookupResult } from "./inputs";
 import type { CustomerCacheEntry, CustomerFormData } from "./customers.types";
+import type { CreditMovementRow, CustomerCreditSummary } from "../services/credit";
 import { CrudFormModal } from "./CrudFormModal";
 import { Tooltip } from "./Tooltip";
 import { extractConditionRaw, resolveConditionTermId } from "./payment-condition-helpers";
@@ -217,6 +218,84 @@ interface CarrierOption {
   id: string;
   name: string;
 }
+
+/** Rotulos dos lancamentos do extrato de credito. */
+const CREDIT_MOVEMENT_LABELS: Record<string, string> = {
+  credit: "Pagamento/credito",
+  debit_product: "Venda (produto)",
+  debit_freight: "Venda (frete)",
+  refund_product: "Estorno (produto)",
+  refund_freight: "Estorno (frete)",
+  manual_adjustment: "Ajuste manual"
+};
+
+/** Tipos de lancamento manual oferecidos na aba Credito. */
+type CreditEntryKind = "payment" | "adjustment_credit" | "adjustment_debit";
+
+/**
+ * Valor com sinal para o extrato: as vendas gravam `amount_cents` positivo e o
+ * tipo do movimento e que diz se ele soma ou subtrai do saldo.
+ */
+export function creditMovementSignedCents(movement: {
+  movement_type: string;
+  amount_cents: number;
+}): number {
+  return movement.movement_type === "debit_product" || movement.movement_type === "debit_freight"
+    ? -movement.amount_cents
+    : movement.amount_cents;
+}
+
+/**
+ * Filtro da busca de transportadoras: ignora acentos e caixa para "sao" achar
+ * "São" — o cadastro tem nomes acentuados e o operador digita sem acento.
+ */
+export function filterCarriersBySearch<T extends { name: string }>(
+  carriers: T[],
+  search: string
+): T[] {
+  const term = normalizeSearchTerm(search);
+  if (!term) return carriers;
+  return carriers.filter((carrier) => normalizeSearchTerm(carrier.name).includes(term));
+}
+
+function normalizeSearchTerm(value: string): string {
+  return value
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function CreditTotal({
+  label,
+  value,
+  strong = false
+}: {
+  label: string;
+  value: string;
+  strong?: boolean;
+}) {
+  return (
+    <div
+      style={{
+        padding: "8px 10px",
+        borderRadius: "10px",
+        border: "1px solid var(--kr-border)",
+        background: "var(--kr-surface)"
+      }}
+    >
+      <span style={{ ...styles.formSectionTitle, display: "block", margin: 0 }}>{label}</span>
+      <strong
+        style={{
+          fontSize: strong ? "16px" : "14px",
+          color: strong ? "var(--kr-accent)" : "var(--kr-text-strong)"
+        }}
+      >
+        {value}
+      </strong>
+    </div>
+  );
+}
 interface PaymentTermOption {
   id: string;
   name: string;
@@ -229,6 +308,7 @@ const CUSTOMER_FORM_SECTIONS = [
   { key: "contato", label: "Contato" },
   { key: "endereco", label: "Endereco" },
   { key: "comercial", label: "Comercial" },
+  { key: "credito", label: "Credito" },
   { key: "transportadoras", label: "Transportadoras" },
   { key: "frete", label: "Frete" },
   { key: "precos", label: "Precos" }
@@ -293,6 +373,7 @@ export function CustomersView({
   const [togglingBlockId, setTogglingBlockId] = useState<string | null>(null);
   // Visualizacao do cliente (duplo clique na linha) com botao "Editar".
   const [viewingCustomer, setViewingCustomer] = useState<CustomerCacheEntry | null>(null);
+  const [viewingCredit, setViewingCredit] = useState<CustomerCreditSummary | null>(null);
   // Snapshot do formulario ao abrir, para avisar antes de descartar alteracoes.
   const formBaselineRef = useRef<string>("");
   const { confirmElement, requestConfirm } = useConfirm();
@@ -318,6 +399,15 @@ export function CustomersView({
   const [pricePasswordError, setPricePasswordError] = useState<string | null>(null);
   const [savingSpecialPrice, setSavingSpecialPrice] = useState(false);
   const [linkedCarrierIds, setLinkedCarrierIds] = useState<string[]>([]);
+  // Busca da aba "Transportadoras": a lista cresce com o cadastro e rolar ate
+  // achar a transportadora certa ficava inviavel.
+  const [carrierSearch, setCarrierSearch] = useState("");
+  const [creditSummary, setCreditSummary] = useState<CustomerCreditSummary | null>(null);
+  const [creditMovements, setCreditMovements] = useState<CreditMovementRow[]>([]);
+  const [creditAmountReais, setCreditAmountReais] = useState("");
+  const [creditEntryKind, setCreditEntryKind] = useState<CreditEntryKind>("payment");
+  const [creditReason, setCreditReason] = useState("");
+  const [creditBusy, setCreditBusy] = useState(false);
   const [customerFreightRules, setCustomerFreightRules] = useState<Array<{
     id: string;
     customerId: string;
@@ -463,6 +553,12 @@ export function CustomersView({
     setSpecialProductId("");
     setSpecialPriceReais("");
     setLinkedCarrierIds([]);
+    setCarrierSearch("");
+    setCreditSummary(null);
+    setCreditMovements([]);
+    setCreditAmountReais("");
+    setCreditReason("");
+    setCreditEntryKind("payment");
     setCustomerFreightRules([]);
     setFreightProductId("");
     setFreightValueReais("");
@@ -547,6 +643,10 @@ export function CustomersView({
     // volta para a lista, nao para a visualizacao desatualizada.
     setViewingCustomer(null);
     setActiveFormSection("identificacao");
+    setCarrierSearch("");
+    setCreditAmountReais("");
+    setCreditReason("");
+    setCreditEntryKind("payment");
     setEditingId(customer.id);
     setEditingSource(customer.source);
     setFormError(null);
@@ -557,6 +657,7 @@ export function CustomersView({
     void loadOptions();
     void loadSpecialPrices(customer.id);
     void loadLinkedCarriers(customer.id);
+    void loadCustomerCredit(customer.id);
     void loadCustomerFreightRules(customer.id);
   }
 
@@ -573,6 +674,64 @@ export function CustomersView({
       setLinkedCarrierIds(rows.map((r) => r.id));
     } catch {
       setLinkedCarrierIds([]);
+    }
+  }
+
+  async function loadCustomerCredit(customerId: string): Promise<void> {
+    if (!desktopApi) return;
+    try {
+      const [summary, movements] = await Promise.all([
+        desktopApi.customerCreditSummary(customerId),
+        desktopApi.customerCreditMovements(customerId, 50)
+      ]);
+      setCreditSummary(summary);
+      setCreditMovements(movements);
+    } catch {
+      setCreditSummary(null);
+      setCreditMovements([]);
+    }
+  }
+
+  /**
+   * Lanca no extrato o pagamento recebido (libera o limite consumido) ou um ajuste
+   * manual a favor/contra o cliente para corrigir o saldo.
+   */
+  async function handleCreditEntry(): Promise<void> {
+    if (!desktopApi || !editingId) return;
+    const cents = parseMoneyInputToCents(creditAmountReais);
+    if (cents === null || cents === 0) {
+      setFormError("Informe um valor valido para o lancamento de credito.");
+      return;
+    }
+    if (creditEntryKind !== "payment" && !creditReason.trim()) {
+      setFormError("Informe o motivo do ajuste manual.");
+      return;
+    }
+    setCreditBusy(true);
+    setFormError(null);
+    try {
+      const summary =
+        creditEntryKind === "payment"
+          ? await desktopApi.customerCreditPayment(editingId, cents, creditReason.trim())
+          : await desktopApi.customerCreditAdjust(
+              editingId,
+              creditEntryKind === "adjustment_debit" ? -cents : cents,
+              creditReason.trim()
+            );
+      setCreditSummary(summary);
+      setCreditMovements(await desktopApi.customerCreditMovements(editingId, 50));
+      setCreditAmountReais("");
+      setCreditReason("");
+      showFlash(
+        "success",
+        creditEntryKind === "payment"
+          ? "Pagamento lancado no credito do cliente."
+          : "Ajuste lancado no credito do cliente."
+      );
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Falha ao lancar o credito.");
+    } finally {
+      setCreditBusy(false);
     }
   }
 
@@ -1011,6 +1170,32 @@ export function CustomersView({
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total]);
 
+  const visibleCarriers = useMemo(
+    () => filterCarriersBySearch(carriers, carrierSearch),
+    [carriers, carrierSearch]
+  );
+
+  // Credito do cliente aberto na visualizacao (limite x utilizado x disponivel).
+  useEffect(() => {
+    if (!desktopApi || !viewingCustomer) {
+      setViewingCredit(null);
+      return;
+    }
+    let cancelled = false;
+    const customerId = viewingCustomer.id;
+    void desktopApi
+      .customerCreditSummary(customerId)
+      .then((summary) => {
+        if (!cancelled) setViewingCredit(summary);
+      })
+      .catch(() => {
+        if (!cancelled) setViewingCredit(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [desktopApi, viewingCustomer]);
+
   const isOmie = editingSource === "omie";
 
   // Modal de visualizacao: todas as informacoes do cliente agrupadas por secao,
@@ -1071,6 +1256,15 @@ export function CustomersView({
           {
             label: "Credito do cliente",
             value: customer.creditAccountEnabled ? "Habilitado" : "Nao habilitado"
+          },
+          {
+            label: "Credito disponivel",
+            value:
+              viewingCredit === null
+                ? ""
+                : viewingCredit.availableCents === null
+                  ? "Sem limite"
+                  : `${formatMoney(viewingCredit.availableCents)} (utilizado ${formatMoney(viewingCredit.usedCents)})`
           },
           {
             label: "Uso de credito OMIE",
@@ -1549,27 +1743,156 @@ export function CustomersView({
             </section>
           ) : null}
 
+          {activeFormSection === "credito" ? (
+            <section style={styles.formSection}>
+              <h4 style={styles.formSectionTitle}>Credito do cliente</h4>
+              {editingId ? (
+                <div style={{ display: "grid", gap: "10px" }}>
+                  <p style={styles.cellMuted}>
+                    O limite de credito (aba Identificacao) e o que banca as vendas na forma
+                    &quot;Credito do cliente&quot;. Cada venda consome o limite e cada pagamento
+                    recebido devolve o valor, liberando novas compras.
+                  </p>
+                  <div style={styles.fieldRow}>
+                    <CreditTotal
+                      label="Limite de credito"
+                      value={
+                        creditSummary?.creditLimitCents != null
+                          ? formatMoney(creditSummary.creditLimitCents)
+                          : "Sem limite"
+                      }
+                    />
+                    <CreditTotal
+                      label="Utilizado"
+                      value={formatMoney(creditSummary?.usedCents ?? 0)}
+                    />
+                    <CreditTotal
+                      label="Disponivel"
+                      value={
+                        creditSummary?.availableCents != null
+                          ? formatMoney(creditSummary.availableCents)
+                          : "Sem limite"
+                      }
+                      strong
+                    />
+                  </div>
+                  <div style={styles.fieldRow}>
+                    <Field label="Tipo do lancamento">
+                      <select
+                        value={creditEntryKind}
+                        onChange={(e) =>
+                          setCreditEntryKind(e.target.value as CreditEntryKind)
+                        }
+                        style={getInputStyle(false)}
+                      >
+                        <option value="payment">Pagamento recebido (libera limite)</option>
+                        <option value="adjustment_credit">Ajuste a favor do cliente</option>
+                        <option value="adjustment_debit">Ajuste contra o cliente</option>
+                      </select>
+                    </Field>
+                    <MoneyInput
+                      label="Valor"
+                      value={creditAmountReais}
+                      onChange={setCreditAmountReais}
+                      allowZero={false}
+                    />
+                    <TextInput
+                      label="Motivo"
+                      value={creditReason}
+                      onChange={setCreditReason}
+                      placeholder="Ex: boleto 12/08 pago"
+                      required={creditEntryKind !== "payment"}
+                    />
+                  </div>
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() => void handleCreditEntry()}
+                      disabled={creditBusy}
+                      style={{ ...styles.primaryButton, opacity: creditBusy ? 0.6 : 1 }}
+                    >
+                      {creditBusy ? "Lancando..." : "Lancar no extrato"}
+                    </button>
+                  </div>
+                  <h4 style={styles.formSectionTitle}>Extrato</h4>
+                  <div style={styles.compactScrollList}>
+                    {creditMovements.length === 0 ? (
+                      <p style={styles.cellMuted}>Nenhum lancamento de credito ate agora.</p>
+                    ) : (
+                      creditMovements.map((movement) => (
+                        <div
+                          key={movement.id}
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            gap: "10px",
+                            padding: "6px 8px",
+                            borderRadius: "8px",
+                            background: "var(--kr-surface)",
+                            border: "1px solid var(--kr-border)",
+                            fontSize: "12px"
+                          }}
+                        >
+                          <span style={{ color: "var(--kr-text-strong)", fontWeight: 700 }}>
+                            {CREDIT_MOVEMENT_LABELS[movement.movement_type] ??
+                              movement.movement_type}
+                            {movement.reason ? (
+                              <span style={{ fontWeight: 400 }}> &mdash; {movement.reason}</span>
+                            ) : null}
+                          </span>
+                          <span style={{ whiteSpace: "nowrap", color: "var(--kr-muted)" }}>
+                            {movement.created_at.slice(0, 10).split("-").reverse().join("/")}{" "}
+                            <strong style={{ color: "var(--kr-text-strong)" }}>
+                              {formatMoney(creditMovementSignedCents(movement))}
+                            </strong>
+                          </span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <p style={styles.cellMuted}>Salve o cliente antes de lancar credito.</p>
+              )}
+            </section>
+          ) : null}
+
           {activeFormSection === "transportadoras" ? (
             <section style={styles.formSection}>
               <div style={{ display: "grid", gap: "8px" }}>
                 <h4 style={styles.formSectionTitle}>Transportadoras vinculadas</h4>
                 {editingId ? (
-                  <div style={styles.compactScrollList}>
-                    {carriers.length === 0 ? (
-                      <p style={styles.cellMuted}>Nenhuma transportadora cadastrada.</p>
-                    ) : (
-                      carriers.map((carrier) => (
-                        <label key={carrier.id} style={styles.checkbox}>
-                          <input
-                            type="checkbox"
-                            checked={linkedCarrierIds.includes(carrier.id)}
-                            onChange={() => void handleToggleCarrier(carrier.id)}
-                          />
-                          {carrier.name}
-                        </label>
-                      ))
-                    )}
-                  </div>
+                  <>
+                    <Field label="Pesquisar transportadora">
+                      <input
+                        type="text"
+                        value={carrierSearch}
+                        onChange={(e) => setCarrierSearch(e.target.value)}
+                        placeholder="Nome da transportadora"
+                        style={getInputStyle(false)}
+                      />
+                    </Field>
+                    <div style={styles.compactScrollList}>
+                      {carriers.length === 0 ? (
+                        <p style={styles.cellMuted}>Nenhuma transportadora cadastrada.</p>
+                      ) : visibleCarriers.length === 0 ? (
+                        <p style={styles.cellMuted}>
+                          Nenhuma transportadora encontrada para &quot;{carrierSearch.trim()}&quot;.
+                        </p>
+                      ) : (
+                        visibleCarriers.map((carrier) => (
+                          <label key={carrier.id} style={styles.checkbox}>
+                            <input
+                              type="checkbox"
+                              checked={linkedCarrierIds.includes(carrier.id)}
+                              onChange={() => void handleToggleCarrier(carrier.id)}
+                            />
+                            {carrier.name}
+                          </label>
+                        ))
+                      )}
+                    </div>
+                  </>
                 ) : (
                   <p style={styles.cellMuted}>Salve o cliente antes de vincular transportadoras.</p>
                 )}

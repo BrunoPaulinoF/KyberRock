@@ -12,6 +12,7 @@ import {
   omieQueueActionLabel,
   omieQueueStatusLabel,
   readStoredThemeMode,
+  resolveCarrierPrefill,
   shouldLinkCreatedDriverToCarrier
 } from "./App";
 
@@ -129,6 +130,20 @@ describe("App", () => {
     expect(carrierSelectorFilterIds([])).toBeUndefined();
     // Nenhum cliente selecionado ainda: continua sem filtro.
     expect(carrierSelectorFilterIds(undefined)).toBeUndefined();
+  });
+
+  it("prefers the carrier linked to the customer over the registered default", () => {
+    // Bug relatado: a transportadora "<cliente> (padrão)" criada junto com o cadastro
+    // vinha no campo e escondia a transportadora que o usuario vinculou de fato.
+    expect(resolveCarrierPrefill("carrier-default", ["carrier-linked"])).toBe("carrier-linked");
+    // A selecao atual esta entre os vinculos: mantem (inclusive escolha manual do operador).
+    expect(resolveCarrierPrefill("carrier-b", ["carrier-a", "carrier-b"])).toBe("carrier-b");
+    // Varios vinculos e o padrao entre eles: o padrao continua valendo.
+    expect(resolveCarrierPrefill("carrier-a", ["carrier-a", "carrier-b"])).toBe("carrier-a");
+    // Varios vinculos e o padrao fora deles: limpa para o operador escolher na lista.
+    expect(resolveCarrierPrefill("carrier-default", ["carrier-a", "carrier-b"])).toBe("");
+    // Cliente sem vinculos: o seletor mostra todas, entao o padrao e mantido.
+    expect(resolveCarrierPrefill("carrier-default", [])).toBe("carrier-default");
   });
 
   it("labels OMIE queue items in plain portuguese for the cloud screen", () => {

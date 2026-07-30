@@ -723,10 +723,19 @@ export function closeWeighingOperation(
 
   const opRow = database
     .prepare(
-      `SELECT customer_id, deduct_freight_from_credit, quotation_id FROM weighing_operations WHERE id = ?`
+      `SELECT o.customer_id, o.deduct_freight_from_credit, o.quotation_id,
+              COALESCE(pm.is_customer_credit, 0) AS payment_is_customer_credit
+       FROM weighing_operations o
+       LEFT JOIN payment_methods pm ON pm.id = o.payment_method_id
+       WHERE o.id = ?`
     )
     .get(input.operationId) as
-    | { customer_id: string | null; deduct_freight_from_credit: number; quotation_id: string | null }
+    | {
+        customer_id: string | null;
+        deduct_freight_from_credit: number;
+        quotation_id: string | null;
+        payment_is_customer_credit: number;
+      }
     | undefined;
 
   let productCreditDebitCents = 0;
@@ -734,9 +743,14 @@ export function closeWeighingOperation(
 
   if (opRow?.customer_id && productTotalCents !== null) {
     const creditService = new CreditService(database);
-    const isPrepaid = creditService.isCustomerPrepaid(opRow.customer_id);
+    // A venda entra no extrato de credito do cliente quando o operador escolheu a
+    // forma "credito do cliente" (fiado) ou quando o cadastro debita credito
+    // pre-pago. Sem isso, uma venda no fiado nao consumia o limite nem aparecia
+    // no extrato para cobranca posterior.
+    const usesCustomerCredit =
+      opRow.payment_is_customer_credit === 1 || creditService.isCustomerPrepaid(opRow.customer_id);
 
-    if (isPrepaid) {
+    if (usesCustomerCredit) {
       const deductFreight = opRow.deduct_freight_from_credit === 1;
       const required = deductFreight
         ? productTotalCents + (freightTotalCents ?? 0)

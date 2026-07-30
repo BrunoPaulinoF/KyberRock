@@ -4,6 +4,7 @@ import { runDesktopMigrations } from "../database/migrate";
 import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite";
 import { ensureInitialDesktopIdentity } from "./bootstrap";
 import { CreditService } from "./credit";
+import { CustomerReportService } from "./customer-report";
 import { enqueueSyncJob } from "./sync-queue";
 import { buildOmieIntegrationCode } from "@kyberrock/omie-client";
 import {
@@ -724,6 +725,167 @@ describe("weighing operations", () => {
         freightCreditDebitCents: 65_000
       });
       expect(creditService.getBalance("customer-1")).toBe(57_000);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("closes a credit sale funded by the customer credit limit", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      // Cadastro do cliente relatado: limite de R$ 20.000 e debito de credito
+      // pre-pago, mas sem nenhum deposito no extrato. Antes o fechamento acusava
+      // "Credito insuficiente. Disponivel: R$ 0,00" e a venda nao fechava.
+      database
+        .prepare(
+          "UPDATE customers SET credit_mode = 'prepaid', credit_limit_cents = 2000000 WHERE id = 'customer-1'"
+        )
+        .run();
+      const creditService = new CreditService(database);
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+
+      const closed = closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500
+      });
+
+      expect(closed).toMatchObject({
+        status: "closed_local",
+        productTotalCents: 78_000,
+        productCreditDebitCents: 78_000
+      });
+      // O limite consumido fica no extrato (saldo negativo) para a cobranca posterior.
+      expect(creditService.getSummary("customer-1")).toMatchObject({
+        balanceCents: -78_000,
+        usedCents: 78_000,
+        availableCents: 1_922_000
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("debits the credit ledger when the payment method is customer credit", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      const now = "2026-06-06T12:00:00.000Z";
+      database
+        .prepare(
+          `INSERT INTO payment_methods (id, company_id, code, name, is_system, is_customer_credit, sort_order, is_active, created_at, updated_at)
+           VALUES ('method-credit', 'company-1', 'customer_credit', 'Credito do cliente', 1, 1, 6, 1, ?, ?)`
+        )
+        .run(now, now);
+      // Cliente no modo normal ("nao debitar credito"): e a FORMA de pagamento
+      // escolhida na entrada que joga a venda no fiado.
+      database
+        .prepare("UPDATE customers SET credit_limit_cents = 100000 WHERE id = 'customer-1'")
+        .run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        paymentMethodId: "method-credit",
+        entryWeightKg: 12_000
+      });
+
+      const closed = closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 13_000
+      });
+
+      expect(closed.productCreditDebitCents).toBe(12_000);
+      expect(new CreditService(database).getSummary("customer-1")).toMatchObject({
+        usedCents: 12_000,
+        availableCents: 88_000
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("sends the credit sale installments and due dates to the customer report", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      const now = "2026-06-06T12:00:00.000Z";
+      database
+        .prepare(
+          `INSERT INTO payment_methods (id, company_id, code, name, is_system, is_customer_credit, sort_order, is_active, created_at, updated_at)
+           VALUES ('method-credit', 'company-1', 'customer_credit', 'Credito do cliente', 1, 1, 6, 1, ?, ?)`
+        )
+        .run(now, now);
+      // Condicao do cliente relatado: 3 parcelas em 10/20/30 dias.
+      database
+        .prepare(
+          `INSERT INTO payment_terms (
+             id, company_id, name, rules_json, first_installment_days, installment_interval_days,
+             installment_count, installment_days_json, created_at, updated_at
+           ) VALUES ('term-10-20-30', 'company-1', '3 parcelas', '{"raw":"10/20/30"}', 10, 10, 3, '[10,20,30]', ?, ?)`
+        )
+        .run(now, now);
+      database
+        .prepare("UPDATE customers SET credit_limit_cents = 2000000 WHERE id = 'customer-1'")
+        .run();
+
+      const operation = createWeighingOperation(
+        database,
+        {
+          identity,
+          customerId: "customer-1",
+          vehicleId: "vehicle-1",
+          driverId: "driver-1",
+          productId: "product-1",
+          paymentMethodId: "method-credit",
+          paymentTermId: "term-10-20-30",
+          entryWeightKg: 12_000
+        },
+        new Date("2026-06-06T12:00:00.000Z")
+      );
+      closeWeighingOperation(
+        database,
+        { operationId: operation.id, exitWeightKg: 18_500 },
+        new Date("2026-06-06T13:00:00.000Z")
+      );
+
+      const report = new CustomerReportService(database).getCustomerReport(
+        "customer-1",
+        "2026-06-01",
+        "2026-07-31",
+        identity.unitId,
+        null,
+        new Date("2026-06-07T12:00:00.000Z")
+      );
+
+      // Cada parcela vira uma cobranca datada no relatorio do cliente.
+      expect(report.installments.map((item) => item.dueDate)).toEqual([
+        "2026-06-16",
+        "2026-06-26",
+        "2026-07-06"
+      ]);
+      // Rateio no mesmo criterio do pedido OMIE (percentual igual, ultima parcela
+      // absorve o arredondamento) para a cobranca bater com o que foi faturado.
+      expect(report.installments.map((item) => item.amountCents)).toEqual([25_997, 25_997, 26_006]);
+      expect(report.installments[0].paymentMethodName).toBe("Credito do cliente");
+      expect(report.installmentTotals.amountCents).toBe(78_000);
     } finally {
       database.close();
     }
