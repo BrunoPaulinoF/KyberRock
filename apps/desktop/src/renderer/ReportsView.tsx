@@ -3,8 +3,8 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 import type { KyberRockDesktopApi } from "../preload/api-types";
 import { CrudFormModal } from "./CrudFormModal";
 import { useConfirm } from "./crud-ui";
+import { FinancialReportSettings } from "./FinancialReportSettings";
 import { IconActionButton } from "./IconActionButton";
-import { PriceChangePasswordDialog } from "./PriceChangePasswordDialog";
 import { ReportChannelsSettings } from "./ReportChannelsSettings";
 import { ReportDispatchSettings } from "./ReportDispatchSettings";
 import { HelpTooltip } from "./Tooltip";
@@ -12,14 +12,16 @@ import { formatDbDateTime } from "./format-datetime";
 
 type ReportType = "sales" | "trucks" | "both";
 
+// O financeiro do OMIE (sendFinancial/financialScheduleTime) nao entra no
+// payload: ele e configurado no card "Relatorio financeiro (OMIE)", que tem o
+// gate de senha da unidade. Editar um destinatario aqui nao pode ligar, desligar
+// nem mexer no horario do OMIE.
 interface RecipientPayload {
   email: string | null;
   whatsappPhone: string | null;
   sendEmail: boolean;
   sendWhatsapp: boolean;
   reportTypes: ReportType;
-  sendFinancial: boolean;
-  financialScheduleTime: string | null;
   displayName: string | null;
   isActive: boolean;
 }
@@ -287,15 +289,6 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  // Liberar o relatorio financeiro (OMIE) para um destinatario exige a senha
-  // padrao da unidade (a mesma de alteracao de precos). O save fica pendente
-  // ate a confirmacao da senha.
-  const [pendingFinancialSave, setPendingFinancialSave] = useState<{
-    payload: RecipientPayload;
-    targetId: string | null;
-  } | null>(null);
-  const [pricePasswordError, setPricePasswordError] = useState<string | null>(null);
-  const [verifyingPassword, setVerifyingPassword] = useState(false);
   const { confirmElement, requestConfirm } = useConfirm();
 
   const loadRecipients = useCallback(async () => {
@@ -375,52 +368,14 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
       sendEmail,
       sendWhatsapp,
       reportTypes: form.reportTypes,
-      sendFinancial: form.sendFinancial,
-      // Hora propria do relatorio financeiro; em branco (ou financeiro desligado)
-      // grava null e o envio cai no horario dos demais relatorios.
-      financialScheduleTime: form.sendFinancial
-        ? form.financialScheduleTime.trim() || null
-        : null,
       displayName: form.displayName.trim() || null,
       isActive: form.isActive
     };
-
-    // Habilitar o relatorio financeiro (OMIE) exige a senha padrao da unidade
-    // (a mesma de alteracao de precos). So desafia ao LIGAR o financeiro; editar
-    // outros campos de quem ja recebe, ou desligar, nao pede senha.
-    const original = editingId ? recipients.find((row) => row.id === editingId) ?? null : null;
-    const enablingFinancial = payload.sendFinancial && !(original?.sendFinancial ?? false);
-    if (enablingFinancial) {
-      setPricePasswordError(null);
-      setPendingFinancialSave({ payload, targetId: editingId });
-      return;
-    }
 
     try {
       await persistRecipient(payload, editingId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Falha ao salvar destinatario.");
-    }
-  }
-
-  async function handleConfirmFinancialPassword(password: string): Promise<void> {
-    if (!desktopApi || !pendingFinancialSave || verifyingPassword) return;
-    setVerifyingPassword(true);
-    try {
-      const valid = await desktopApi.verifyPriceChangePassword(password);
-      if (!valid) {
-        setPricePasswordError("Senha incorreta.");
-        return;
-      }
-      await persistRecipient(pendingFinancialSave.payload, pendingFinancialSave.targetId);
-      setPendingFinancialSave(null);
-      setPricePasswordError(null);
-    } catch (err) {
-      setPricePasswordError(
-        err instanceof Error ? err.message : "Falha ao liberar o relatorio financeiro."
-      );
-    } finally {
-      setVerifyingPassword(false);
     }
   }
 
@@ -489,6 +444,12 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
       <ReportChannelsSettings desktopApi={desktopApi} />
 
       <ReportDispatchSettings desktopApi={desktopApi} />
+
+      <FinancialReportSettings
+        desktopApi={desktopApi}
+        recipients={recipients}
+        onChanged={loadRecipients}
+      />
 
       {showForm ? (
         <CrudFormModal onClose={resetForm} maxWidth={920}>
@@ -588,49 +549,15 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
                     <option value="both">Vendas + Caminhoes</option>
                   </select>
                 </label>
-                <label
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "8px",
-                    fontWeight: 700,
-                    fontSize: "13px",
-                    color: "var(--kr-text-strong)"
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={form.sendFinancial}
-                    onChange={(event) => setForm({ ...form, sendFinancial: event.target.checked })}
-                  />
-                  <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                    Financeiro (OMIE)
-                    <HelpTooltip
-                      content="Envia tambem o resumo executivo de financas do OMIE (extrato e contas a pagar) como PDF, diariamente junto com os outros relatorios. Liberar este relatorio pede a senha padrao da unidade (a mesma de alteracao de precos)."
-                      placement="right"
-                    />
-                  </span>
-                </label>
-                {form.sendFinancial ? (
-                  <label style={styles.fieldLabel}>
-                    <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                      Horario do financeiro
-                      <HelpTooltip
-                        content="Horario proprio para o resumo executivo de financas do OMIE. Deixe em branco para enviar no mesmo horario dos demais relatorios. So a hora e considerada."
-                        placement="right"
-                      />
-                    </span>
-                    <input
-                      type="time"
-                      step={3600}
-                      value={form.financialScheduleTime}
-                      onChange={(event) =>
-                        setForm({ ...form, financialScheduleTime: event.target.value })
-                      }
-                      style={styles.input}
-                    />
-                  </label>
-                ) : null}
+                <p style={styles.helperText}>
+                  O resumo executivo de financas do OMIE tem horario proprio e e configurado no
+                  card &quot;Relatorio financeiro (OMIE)&quot;, no topo desta tela.
+                  {form.sendFinancial
+                    ? ` Hoje este destinatario recebe o financeiro${
+                        form.financialScheduleTime ? ` as ${form.financialScheduleTime}` : ""
+                      }.`
+                    : ""}
+                </p>
               </section>
             </div>
             <div style={styles.formFooter}>
@@ -645,20 +572,6 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
             </div>
           </Fragment>
         </CrudFormModal>
-      ) : null}
-
-      {pendingFinancialSave ? (
-        <PriceChangePasswordDialog
-          title="Liberar relatorio financeiro (OMIE)"
-          description="Digite a senha padrao da unidade (a mesma usada para alterar precos) para liberar o resumo executivo de financas do OMIE para este destinatario."
-          error={pricePasswordError}
-          submitting={verifyingPassword}
-          onCancel={() => {
-            setPendingFinancialSave(null);
-            setPricePasswordError(null);
-          }}
-          onSubmit={(password) => void handleConfirmFinancialPassword(password)}
-        />
       ) : null}
 
       {!showForm && success ? <p style={styles.success}>{success}</p> : null}

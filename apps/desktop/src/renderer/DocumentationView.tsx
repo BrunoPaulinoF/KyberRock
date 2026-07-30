@@ -269,11 +269,13 @@ export const documentationSections: DocumentationSection[] = [
       "Abra Painel para status operacional, pendencias e alertas rapidos.",
       "Use Insights para acompanhar indicadores e acionar sincronizacoes quando necessario.",
       "Abra Relatorios para cadastrar destinatarios do fechamento diario por e-mail.",
+      "No card 'Relatorio financeiro (OMIE)' escolha quem recebe o resumo de financas do OMIE e o horario proprio de cada um.",
       "Exporte ou imprima relatorios quando o perfil de impressao estiver configurado.",
       "Compare dia, mes, ano, cliente, produto e operacoes internas/fiscais conforme a necessidade."
     ],
     details: [
       "O fechamento diario pode ser enviado automaticamente pela cloud aos destinatarios ativos.",
+      "O financeiro do OMIE tem horario proprio, separado dos relatorios do KyberRock: ele e montado e enviado pela cloud, entao nao depende do computador estar ligado.",
       "Relatorios dependem dos dados locais e sincronizados; pendencias podem atrasar consolidacoes externas.",
       "Operacoes canceladas devem ser analisadas com motivo e horario para controle interno."
     ],
