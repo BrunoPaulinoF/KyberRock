@@ -16,7 +16,9 @@ import {
   buildAccountsPayableTable,
   buildFinancialWhatsappCaption,
   buildStatementTable,
+  dispatchFailureReason,
   formatCentsBRL,
+  hasActiveChannel,
   type AccountPayableItem,
   type AccountPayableStatus,
   type StatementEntryItem
@@ -838,11 +840,24 @@ async function dispatchForCompany(params: {
     return content;
   };
 
+  // Canais antes do conteudo: montar o relatorio do OMIE leva minutos (uma
+  // chamada a cada 3s, mais a busca de nome de cada fornecedor), e nao vale
+  // gastar isso para descobrir no fim que ninguem tem canal ativo.
+  const reachable = due.filter(hasActiveChannel);
+  if (reachable.length === 0) {
+    return recordFailure(supabase, {
+      companyId: company.id,
+      date: targetDate,
+      scheduleHour: nowHour,
+      error: "Sem canais ativos para envio"
+    });
+  }
+
   let dispatched = 0;
   let targets = 0;
   const errors: string[] = [];
 
-  for (const recipient of due) {
+  for (const recipient of reachable) {
     let content: Awaited<ReturnType<typeof contentFor>>;
     try {
       content = await contentFor(recipient.scheduleFrequency);
@@ -908,12 +923,16 @@ async function dispatchForCompany(params: {
 
   const lastError = errors.length > 0 ? truncate(errors.join(" | "), 2000) : null;
 
+  // Chegar aqui com targets 0 significa que o conteudo do OMIE falhou para
+  // todos os destinatarios alcancaveis — o canal existe, o relatorio e que nao
+  // ficou pronto. Registrar "sem canais ativos" aqui escondia o erro real do
+  // OMIE e fazia o envio falhar todo dia sem ninguem saber por que.
   if (targets === 0) {
     return recordFailure(supabase, {
       companyId: company.id,
       date: targetDate,
       scheduleHour: nowHour,
-      error: "Sem canais ativos para envio"
+      error: truncate(dispatchFailureReason(errors), 2000)
     });
   }
 
