@@ -3314,6 +3314,7 @@ export async function processOmieSyncQueue(
       paymentMethodOmieCode?: string | null;
       accountOmieCode?: string | null;
       accountName?: string | null;
+      omieCategoryCode?: string | null;
       transport?: {
         plate?: string | null;
         driverName?: string | null;
@@ -3321,6 +3322,8 @@ export async function processOmieSyncQueue(
         cargoWeightKg?: number | null;
         ownVehicle?: boolean;
       } | null;
+      localCarrierId?: string | null;
+      carrier?: Record<string, unknown> | null;
     };
 
     try {
@@ -3329,6 +3332,7 @@ export async function processOmieSyncQueue(
       const { data, error } = await supabase.functions.invoke<{
         orderId?: number;
         omieCustomerId?: number;
+        omieCarrierId?: number;
         billed?: boolean;
         billingStatusCode?: string | null;
         billingStatusMessage?: string | null;
@@ -3355,7 +3359,9 @@ export async function processOmieSyncQueue(
             paymentMethodOmieCode: payload.paymentMethodOmieCode ?? undefined,
             accountOmieCode: payload.accountOmieCode ?? undefined,
             accountName: payload.accountName ?? undefined,
+            omieCategoryCode: payload.omieCategoryCode ?? undefined,
             transport: payload.transport ?? undefined,
+            carrier: payload.carrier ?? undefined,
             idempotencyKey: job.idempotencyKey
           }
         }
@@ -3382,6 +3388,18 @@ export async function processOmieSyncQueue(
              WHERE id = ? AND (omie_customer_id IS NULL OR omie_customer_id = 0)`
           )
           .run(data.omieCustomerId, payload.localCustomerId);
+      }
+
+      // Transportadora cadastrada no OMIE na hora do envio: grava o codigo devolvido para
+      // os proximos pedidos ja irem vinculados (e nao recriarem a transportadora).
+      if (data.omieCarrierId && payload.localCarrierId) {
+        database
+          .prepare(
+            `UPDATE carriers
+             SET omie_customer_id = ?, needs_push = 0, sync_status = 'synced', last_synced_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE id = ? AND (omie_customer_id IS NULL OR omie_customer_id = 0)`
+          )
+          .run(data.omieCarrierId, payload.localCarrierId);
       }
 
       const updateSql =
