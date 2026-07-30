@@ -1276,5 +1276,215 @@ ALTER TABLE products ADD COLUMN omie_category_code TEXT;
 CREATE INDEX IF NOT EXISTS idx_products_omie_category
   ON products(company_id, omie_category_code);
 `
+  },
+  {
+    version: 39,
+    name: "merge_duplicate_customers_and_carriers",
+    sql: `
+-- Limpeza das duplicatas que ja existem no banco. Elas nasceram de dois furos ja
+-- fechados: cadastro sem trava por CNPJ/CPF, e o pull do OMIE inserindo o cadastro
+-- que voltava de la como linha nova ao lado da local. A trava impede novas, mas as
+-- antigas continuariam aparecendo em duplicidade na lista.
+--
+-- Sobrevive, por grupo (empresa + digitos do documento): a linha ja vinculada ao
+-- OMIE; empatando, a mais antiga. As demais tem suas referencias repontadas para a
+-- sobrevivente e viram soft-delete.
+
+CREATE TEMP TABLE customer_dedup AS
+SELECT c.id AS loser_id,
+       (SELECT k.id
+          FROM customers k
+         WHERE k.company_id = c.company_id
+           AND k.deleted_at IS NULL
+           AND replace(replace(replace(replace(COALESCE(k.document, ''), '.', ''), '-', ''), '/', ''), ' ', '')
+             = replace(replace(replace(replace(COALESCE(c.document, ''), '.', ''), '-', ''), '/', ''), ' ', '')
+         ORDER BY (CASE WHEN k.omie_customer_id IS NOT NULL THEN 0 ELSE 1 END), k.created_at, k.id
+         LIMIT 1) AS keeper_id
+  FROM customers c
+ WHERE c.deleted_at IS NULL
+   AND replace(replace(replace(replace(COALESCE(c.document, ''), '.', ''), '-', ''), '/', ''), ' ', '') <> '';
+
+DELETE FROM customer_dedup WHERE keeper_id IS NULL OR keeper_id = loser_id;
+
+-- Vinculos com indice unico por (cliente, ...): a linha da perdedora que colidiria
+-- com uma ja existente na sobrevivente e descartada antes do repontamento.
+UPDATE customer_special_prices
+   SET deleted_at = datetime('now'), is_active = 0, updated_at = datetime('now')
+ WHERE deleted_at IS NULL
+   AND customer_id IN (SELECT loser_id FROM customer_dedup)
+   AND EXISTS (
+     SELECT 1 FROM customer_special_prices keep
+      JOIN customer_dedup d ON d.loser_id = customer_special_prices.customer_id
+      WHERE keep.customer_id = d.keeper_id
+        AND keep.product_id = customer_special_prices.product_id
+        AND keep.deleted_at IS NULL
+   );
+
+UPDATE customer_freight_rules
+   SET deleted_at = datetime('now'), is_active = 0, updated_at = datetime('now')
+ WHERE deleted_at IS NULL
+   AND customer_id IN (SELECT loser_id FROM customer_dedup)
+   AND EXISTS (
+     SELECT 1 FROM customer_freight_rules keep
+      JOIN customer_dedup d ON d.loser_id = customer_freight_rules.customer_id
+      WHERE keep.customer_id = d.keeper_id
+        AND keep.deleted_at IS NULL
+        AND ((keep.product_id IS NULL AND customer_freight_rules.product_id IS NULL)
+             OR keep.product_id = customer_freight_rules.product_id)
+   );
+
+UPDATE customer_carriers
+   SET deleted_at = datetime('now'), is_active = 0, updated_at = datetime('now')
+ WHERE deleted_at IS NULL
+   AND customer_id IN (SELECT loser_id FROM customer_dedup)
+   AND EXISTS (
+     SELECT 1 FROM customer_carriers keep
+      JOIN customer_dedup d ON d.loser_id = customer_carriers.customer_id
+      WHERE keep.customer_id = d.keeper_id
+        AND keep.carrier_id = customer_carriers.carrier_id
+        AND keep.deleted_at IS NULL
+   );
+
+UPDATE weighing_operations
+   SET customer_id = (SELECT keeper_id FROM customer_dedup WHERE loser_id = weighing_operations.customer_id)
+ WHERE customer_id IN (SELECT loser_id FROM customer_dedup);
+
+UPDATE quotations
+   SET customer_id = (SELECT keeper_id FROM customer_dedup WHERE loser_id = quotations.customer_id)
+ WHERE customer_id IN (SELECT loser_id FROM customer_dedup);
+
+UPDATE customer_price_tables
+   SET customer_id = (SELECT keeper_id FROM customer_dedup WHERE loser_id = customer_price_tables.customer_id)
+ WHERE customer_id IN (SELECT loser_id FROM customer_dedup);
+
+UPDATE customer_special_prices
+   SET customer_id = (SELECT keeper_id FROM customer_dedup WHERE loser_id = customer_special_prices.customer_id)
+ WHERE customer_id IN (SELECT loser_id FROM customer_dedup);
+
+UPDATE customer_freight_rules
+   SET customer_id = (SELECT keeper_id FROM customer_dedup WHERE loser_id = customer_freight_rules.customer_id)
+ WHERE customer_id IN (SELECT loser_id FROM customer_dedup);
+
+UPDATE customer_carriers
+   SET customer_id = (SELECT keeper_id FROM customer_dedup WHERE loser_id = customer_carriers.customer_id)
+ WHERE customer_id IN (SELECT loser_id FROM customer_dedup);
+
+-- Extrato de credito: os movimentos das duas linhas viram um so, e o saldo da
+-- sobrevivente e recalculado a partir do log unificado.
+UPDATE customer_credit_movements
+   SET customer_id = (SELECT keeper_id FROM customer_dedup WHERE loser_id = customer_credit_movements.customer_id)
+ WHERE customer_id IN (SELECT loser_id FROM customer_dedup);
+
+DELETE FROM customer_credit_balances WHERE customer_id IN (SELECT loser_id FROM customer_dedup);
+
+INSERT INTO customer_credit_balances (customer_id, balance_cents, updated_at)
+SELECT d.keeper_id,
+       COALESCE((SELECT SUM(CASE WHEN m.movement_type IN ('debit_product', 'debit_freight')
+                                 THEN -m.amount_cents ELSE m.amount_cents END)
+                   FROM customer_credit_movements m
+                  WHERE m.customer_id = d.keeper_id), 0),
+       datetime('now')
+  FROM (SELECT DISTINCT keeper_id FROM customer_dedup) d
+-- WHERE obrigatorio: sem ele o SQLite le "d ON CONFLICT" como um JOIN e falha.
+ WHERE true
+    ON CONFLICT(customer_id) DO UPDATE SET
+      balance_cents = excluded.balance_cents,
+      updated_at = excluded.updated_at;
+
+UPDATE customers
+   SET deleted_at = datetime('now'),
+       is_active = 0,
+       needs_push = 0,
+       updated_at = datetime('now')
+ WHERE id IN (SELECT loser_id FROM customer_dedup);
+
+DROP TABLE customer_dedup;
+
+-- Mesma limpeza para transportadoras.
+CREATE TEMP TABLE carrier_dedup AS
+SELECT c.id AS loser_id,
+       (SELECT k.id
+          FROM carriers k
+         WHERE k.company_id = c.company_id
+           AND k.deleted_at IS NULL
+           AND replace(replace(replace(replace(COALESCE(k.document, ''), '.', ''), '-', ''), '/', ''), ' ', '')
+             = replace(replace(replace(replace(COALESCE(c.document, ''), '.', ''), '-', ''), '/', ''), ' ', '')
+         ORDER BY (CASE WHEN k.omie_customer_id IS NOT NULL THEN 0 ELSE 1 END), k.created_at, k.id
+         LIMIT 1) AS keeper_id
+  FROM carriers c
+ WHERE c.deleted_at IS NULL
+   AND replace(replace(replace(replace(COALESCE(c.document, ''), '.', ''), '-', ''), '/', ''), ' ', '') <> '';
+
+DELETE FROM carrier_dedup WHERE keeper_id IS NULL OR keeper_id = loser_id;
+
+UPDATE customer_carriers
+   SET deleted_at = datetime('now'), is_active = 0, updated_at = datetime('now')
+ WHERE deleted_at IS NULL
+   AND carrier_id IN (SELECT loser_id FROM carrier_dedup)
+   AND EXISTS (
+     SELECT 1 FROM customer_carriers keep
+      JOIN carrier_dedup d ON d.loser_id = customer_carriers.carrier_id
+      WHERE keep.carrier_id = d.keeper_id
+        AND keep.customer_id = customer_carriers.customer_id
+        AND keep.deleted_at IS NULL
+   );
+
+UPDATE vehicle_carriers
+   SET deleted_at = datetime('now'), is_active = 0, updated_at = datetime('now')
+ WHERE deleted_at IS NULL
+   AND carrier_id IN (SELECT loser_id FROM carrier_dedup)
+   AND EXISTS (
+     SELECT 1 FROM vehicle_carriers keep
+      JOIN carrier_dedup d ON d.loser_id = vehicle_carriers.carrier_id
+      WHERE keep.carrier_id = d.keeper_id
+        AND keep.vehicle_id = vehicle_carriers.vehicle_id
+        AND keep.deleted_at IS NULL
+   );
+
+UPDATE driver_carriers
+   SET deleted_at = datetime('now'), is_active = 0, updated_at = datetime('now')
+ WHERE deleted_at IS NULL
+   AND carrier_id IN (SELECT loser_id FROM carrier_dedup)
+   AND EXISTS (
+     SELECT 1 FROM driver_carriers keep
+      JOIN carrier_dedup d ON d.loser_id = driver_carriers.carrier_id
+      WHERE keep.carrier_id = d.keeper_id
+        AND keep.driver_id = driver_carriers.driver_id
+        AND keep.deleted_at IS NULL
+   );
+
+UPDATE customer_carriers
+   SET carrier_id = (SELECT keeper_id FROM carrier_dedup WHERE loser_id = customer_carriers.carrier_id)
+ WHERE carrier_id IN (SELECT loser_id FROM carrier_dedup);
+
+UPDATE vehicle_carriers
+   SET carrier_id = (SELECT keeper_id FROM carrier_dedup WHERE loser_id = vehicle_carriers.carrier_id)
+ WHERE carrier_id IN (SELECT loser_id FROM carrier_dedup);
+
+UPDATE driver_carriers
+   SET carrier_id = (SELECT keeper_id FROM carrier_dedup WHERE loser_id = driver_carriers.carrier_id)
+ WHERE carrier_id IN (SELECT loser_id FROM carrier_dedup);
+
+UPDATE vehicles
+   SET carrier_id = (SELECT keeper_id FROM carrier_dedup WHERE loser_id = vehicles.carrier_id)
+ WHERE carrier_id IN (SELECT loser_id FROM carrier_dedup);
+
+UPDATE weighing_operations
+   SET carrier_id = (SELECT keeper_id FROM carrier_dedup WHERE loser_id = weighing_operations.carrier_id)
+ WHERE carrier_id IN (SELECT loser_id FROM carrier_dedup);
+
+UPDATE customers
+   SET default_carrier_id = (SELECT keeper_id FROM carrier_dedup WHERE loser_id = customers.default_carrier_id)
+ WHERE default_carrier_id IN (SELECT loser_id FROM carrier_dedup);
+
+UPDATE carriers
+   SET deleted_at = datetime('now'),
+       is_active = 0,
+       needs_push = 0,
+       updated_at = datetime('now')
+ WHERE id IN (SELECT loser_id FROM carrier_dedup);
+
+DROP TABLE carrier_dedup;
+`
   }
 ];

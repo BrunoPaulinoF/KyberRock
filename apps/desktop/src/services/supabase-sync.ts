@@ -1222,6 +1222,36 @@ function recalculateCreditBalances(database: DesktopDatabase, customerIds: strin
   }
 }
 
+/**
+ * Cadastro local (nao apagado) que ja usa este CNPJ/CPF sob OUTRO id.
+ *
+ * O upsert da nuvem casa apenas por id e limpa `deleted_at`, entao uma linha da
+ * nuvem com id diferente reintroduzia — ou ressuscitava — o gemeo de um cadastro
+ * que ja existe aqui. Quando o documento ja esta em uso localmente, a linha da
+ * nuvem e ignorada: o cadastro local e o dono do documento.
+ */
+function hasLocalCadastroWithDocument(
+  database: DesktopDatabase,
+  table: "customers" | "carriers",
+  companyId: string,
+  document: string | null,
+  cloudId: string
+): boolean {
+  const digits = (document ?? "").replace(/\D/g, "");
+  if (!digits) return false;
+  const row = database
+    .prepare(
+      `SELECT 1 FROM ${table}
+       WHERE company_id = ?
+         AND id <> ?
+         AND deleted_at IS NULL
+         AND replace(replace(replace(replace(COALESCE(document, ''), '.', ''), '-', ''), '/', ''), ' ', '') = ?
+       LIMIT 1`
+    )
+    .get(companyId, cloudId, digits);
+  return row !== undefined;
+}
+
 function upsertCloudCarriers(
   database: DesktopDatabase,
   companyId: string,
@@ -1247,13 +1277,15 @@ function upsertCloudCarriers(
     const id = stringValue(row.id);
     const name = stringValue(row.name);
     if (!id || !name) continue;
+    const document = nullableStringValue(row.document);
+    if (hasLocalCadastroWithDocument(database, "carriers", companyId, document, id)) continue;
     const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
     upsert.run(
       id,
       companyId,
       integerValue(row.omie_customer_id),
       name,
-      nullableStringValue(row.document),
+      document,
       stringValue(row.source) === "omie" ? "omie" : "local",
       booleanToSql(row.is_active, true),
       isoStringValue(row.created_at) || updatedAt,
@@ -1673,6 +1705,8 @@ function upsertCloudCustomers(
   for (const row of rows) {
     const id = stringValue(row.id);
     if (!id) continue;
+    const document = nullableStringValue(row.document);
+    if (hasLocalCadastroWithDocument(database, "customers", companyId, document, id)) continue;
     const legalName = stringValue(row.legal_name) || stringValue(row.trade_name) || "Cliente";
     const tradeName = stringValue(row.trade_name) || legalName;
     const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
@@ -1682,7 +1716,7 @@ function upsertCloudCustomers(
       integerValue(row.omie_customer_id),
       legalName,
       tradeName,
-      nullableStringValue(row.document),
+      document,
       nullableStringValue(row.phone),
       nullableStringValue(row.email),
       integerValue(row.credit_limit_cents),

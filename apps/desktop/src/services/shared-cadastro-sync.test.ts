@@ -30,6 +30,67 @@ describe("cadastro compartilhado da pedreira", () => {
     invokeMock.mockResolvedValue({ data: { ok: true }, error: null });
   });
 
+  it("nao reintroduz nem ressuscita um cadastro que ja existe localmente pelo documento", async () => {
+    const database = createMachine("desktop-b");
+
+    try {
+      const identity = readIdentity(database);
+      const companyId = identity.companyId;
+      database
+        .prepare(
+          `INSERT INTO customers (id, company_id, source, legal_name, trade_name, document, is_active, created_at, updated_at)
+           VALUES ('local-uuid', ?, 'local', 'Apenas Teste LTDA', 'Apenas Teste', '26463463000183', 1, ?, ?)`
+        )
+        .run(companyId, "2026-07-27T10:00:00.000Z", "2026-07-27T10:00:00.000Z");
+      database
+        .prepare(
+          `INSERT INTO carriers (id, company_id, name, document, source, is_active, created_at, updated_at)
+           VALUES ('carrier-uuid', ?, 'Transportes Alfa', '11222333000144', 'local', 1, ?, ?)`
+        )
+        .run(companyId, "2026-07-27T10:00:00.000Z", "2026-07-27T10:00:00.000Z");
+
+      // A nuvem devolve o MESMO cadastro sob outro id (o gemeo que ja existiu la).
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          customers: [
+            {
+              id: "omie_777",
+              legal_name: "Apenas Teste LTDA",
+              trade_name: "Apenas Teste",
+              document: "26463463000183",
+              is_active: true,
+              updated_at: "2026-07-28T10:00:00.000Z"
+            }
+          ],
+          carriers: [
+            {
+              id: "omie_supplier_888",
+              name: "Transportes Alfa",
+              document: "11222333000144",
+              source: "local",
+              is_active: true,
+              updated_at: "2026-07-28T10:00:00.000Z"
+            }
+          ]
+        },
+        error: null
+      });
+
+      await pullDesktopDataFromCloud(database, identity);
+
+      // O upsert casava so por id (e limpava deleted_at): a linha da nuvem entrava
+      // ao lado da local, deixando a lista duplicada de novo depois de cada pull.
+      expect(
+        database.prepare("SELECT id FROM customers WHERE deleted_at IS NULL").pluck().all()
+      ).toEqual(["local-uuid"]);
+      expect(
+        database.prepare("SELECT id FROM carriers WHERE deleted_at IS NULL").pluck().all()
+      ).toEqual(["carrier-uuid"]);
+    } finally {
+      database.close();
+    }
+  });
+
   it("projeta no SQLite o cadastro que veio do desktop-pull", async () => {
     const database = createMachine("desktop-b");
 
