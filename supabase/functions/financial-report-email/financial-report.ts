@@ -132,6 +132,26 @@ export function buildStatementTable(entries: StatementEntryItem[]): PdfTableData
   };
 }
 
+/** Quantos codigos de fornecedor cabem em cada consulta ao espelho do cadastro. */
+export const SUPPLIER_LOOKUP_BLOCK = 200;
+
+/** Quebra a lista em blocos para a consulta nao passar do tamanho de URL do PostgREST. */
+export function chunk<T>(items: readonly T[], size: number): T[][] {
+  if (size < 1) return items.length > 0 ? [[...items]] : [];
+  const blocks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) blocks.push(items.slice(i, i + size));
+  return blocks;
+}
+
+/** Nome do fornecedor no espelho do cadastro OMIE: razao social, senao nome fantasia. */
+export function pickSupplierName(row: Record<string, unknown>): string | null {
+  for (const field of ["legal_name", "trade_name"]) {
+    const value = row[field];
+    if (typeof value === "string" && value.trim().length > 0) return value.trim();
+  }
+  return null;
+}
+
 /**
  * Corpo da chamada ListarExtrato (/financas/extrato/).
  *
