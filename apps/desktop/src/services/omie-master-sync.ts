@@ -233,6 +233,17 @@ export async function syncOmieMasterData(
       return { fetched: 0, created: 0, updated: 0, skipped: 0 };
     }));
 
+    // 9. Categorias (plano gerencial) — para o produto escolher em qual categoria a
+    //    venda entra no OMIE, em vez do codigo fixo antigo.
+    entities.push(await syncEntity("categorias", async () => {
+      if (options.appKey && options.appSecret) {
+        const client = createOmieClient({ appKey: options.appKey, appSecret: options.appSecret });
+        const service = new OmieSyncService(client, database);
+        return await service.syncCategories(companyId);
+      }
+      return { fetched: 0, created: 0, updated: 0, skipped: 0 };
+    }));
+
     const success = entities.every((e) => e.success);
     const finishedAt = new Date();
 

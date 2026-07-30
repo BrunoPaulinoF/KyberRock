@@ -77,6 +77,7 @@ import {
   parseMoneyInputToCents,
   resolveDeviceColor
 } from "@kyberrock/shared";
+import type { OmieCategoryOption } from "../services/omie-categories";
 import type { UnitDeviceInfo } from "../services/unit-devices";
 import { ActivationGate } from "./ActivationGate";
 import { formatDbDateTime, parseDbTimestamp } from "./format-datetime";
@@ -9875,6 +9876,7 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
       productDescription: string;
       unitPriceCents: number | null;
       unit: string;
+      omieCategoryCode: string | null;
     }>
   >([]);
   const [search, setSearch] = useState("");
@@ -9888,14 +9890,66 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   >(null);
   const [pricePasswordError, setPricePasswordError] = useState<string | null>(null);
   const [savingDefaultPrice, setSavingDefaultPrice] = useState(false);
+  // Categorias do plano gerencial do OMIE: definem em qual categoria a venda de cada
+  // produto entra la (antes o pedido ia com um codigo fixo para todos os produtos).
+  const [categories, setCategories] = useState<OmieCategoryOption[]>([]);
+  const [defaultCategoryCode, setDefaultCategoryCode] = useState("");
 
   useEffect(() => {
     void loadPrices();
+    void loadCategories();
   }, []);
 
   async function loadPrices(): Promise<void> {
     const list = await desktopApi.productDefaultPricesList();
     setItems(list);
+  }
+
+  async function loadCategories(): Promise<void> {
+    try {
+      const [list, current] = await Promise.all([
+        desktopApi.omieCategoriesList(),
+        desktopApi.omieDefaultCategoryGet()
+      ]);
+      setCategories(list);
+      setDefaultCategoryCode(current ?? "");
+    } catch {
+      setCategories([]);
+    }
+  }
+
+  async function handleChangeProductCategory(
+    productId: string,
+    categoryCode: string
+  ): Promise<void> {
+    try {
+      await desktopApi.productOmieCategorySet(productId, categoryCode || null);
+      setItems((prev) =>
+        prev.map((item) =>
+          item.productId === productId
+            ? { ...item, omieCategoryCode: categoryCode || null }
+            : item
+        )
+      );
+      showFlash("success", "Categoria OMIE do produto atualizada.");
+    } catch (err) {
+      showFlash("error", getErrorMessage(err));
+    }
+  }
+
+  async function handleChangeDefaultCategory(categoryCode: string): Promise<void> {
+    try {
+      await desktopApi.omieDefaultCategorySet(categoryCode || null);
+      setDefaultCategoryCode(categoryCode);
+      showFlash("success", "Categoria padrao atualizada.");
+    } catch (err) {
+      showFlash("error", getErrorMessage(err));
+    }
+  }
+
+  function categoryLabel(code: string): string {
+    const found = categories.find((category) => category.code === code);
+    return found ? `${found.code} - ${found.description}` : code;
   }
 
   async function handleSaveDefaultPrice(): Promise<void> {
@@ -10021,13 +10075,42 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
         >
           Salvar preco
         </button>
+        <Field
+          label="Categoria OMIE padrao"
+          hint="Usada pelos produtos sem categoria propria."
+          style={{ flex: 1, minWidth: "260px", marginBottom: 0 }}
+        >
+          <select
+            value={defaultCategoryCode}
+            onChange={(e) => void handleChangeDefaultCategory(e.target.value)}
+            disabled={categories.length === 0}
+            style={getInputStyle(false)}
+          >
+            <option value="">Padrao do sistema (1.01.01)</option>
+            {categories.map((category) => (
+              <option key={category.code} value={category.code}>
+                {category.code} - {category.description}
+              </option>
+            ))}
+          </select>
+        </Field>
       </div>
+
+      {categories.length === 0 ? (
+        <p style={{ ...styles.helperText, color: "#d97706", marginBottom: "12px" }}>
+          Nenhuma categoria do OMIE sincronizada &mdash; execute a sincronizacao na tela Cloud
+          para escolher em qual categoria cada produto entra.
+        </p>
+      ) : null}
 
       <CrudSearchBar
         value={search}
         onChange={setSearch}
         placeholder="Buscar produto por nome ou codigo..."
-        onRefresh={() => void loadPrices()}
+        onRefresh={() => {
+          void loadPrices();
+          void loadCategories();
+        }}
       />
 
       <DataTable
@@ -10056,6 +10139,36 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                 <span style={{ color: "var(--kr-warning)", fontWeight: 700 }}>Sem preco</span>
               ) : (
                 <CellPrimary>{`${formatMoney(item.unitPriceCents)}/ton`}</CellPrimary>
+              )
+          },
+          {
+            key: "category",
+            header: "Categoria OMIE",
+            width: "minmax(220px, 1fr)",
+            render: (item) =>
+              categories.length === 0 ? (
+                <CellMuted>
+                  {item.omieCategoryCode ? categoryLabel(item.omieCategoryCode) : "-"}
+                </CellMuted>
+              ) : (
+                <select
+                  value={item.omieCategoryCode ?? ""}
+                  onChange={(e) =>
+                    void handleChangeProductCategory(item.productId, e.target.value)
+                  }
+                  style={{ ...getInputStyle(false), padding: "4px 6px", fontSize: "12px" }}
+                >
+                  <option value="">
+                    {defaultCategoryCode
+                      ? `Padrao (${categoryLabel(defaultCategoryCode)})`
+                      : "Padrao (1.01.01)"}
+                  </option>
+                  {categories.map((category) => (
+                    <option key={category.code} value={category.code}>
+                      {category.code} - {category.description}
+                    </option>
+                  ))}
+                </select>
               )
           },
           {

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import {
+  OmieCategoriesService,
   OmieClient,
   OmieCheckingAccountsService,
   OmieCustomersService,
@@ -62,6 +63,7 @@ export class OmieSyncService {
   private readonly productsService: OmieProductsService;
   private readonly paymentMethodsService: OmiePaymentMethodsService;
   private readonly checkingAccountsService: OmieCheckingAccountsService;
+  private readonly categoriesService: OmieCategoriesService;
   private readonly parcelasService: OmieParcelasService;
 
   constructor(
@@ -72,6 +74,7 @@ export class OmieSyncService {
     this.productsService = new OmieProductsService(client);
     this.paymentMethodsService = new OmiePaymentMethodsService(client);
     this.checkingAccountsService = new OmieCheckingAccountsService(client);
+    this.categoriesService = new OmieCategoriesService(client);
     this.parcelasService = new OmieParcelasService(client);
   }
 
@@ -618,6 +621,67 @@ export class OmieSyncService {
       updated: upserted - created > 0 ? upserted - created : 0,
       skipped: parcelas.length - upserted
     };
+  }
+
+  /**
+   * Espelha as categorias (plano de contas gerencial) do OMIE em omie_categories,
+   * para que cada produto possa apontar a categoria em que sua venda entra. Sem isso
+   * o pedido ia com um codigo fixo e toda venda caia na mesma categoria no OMIE.
+   * Idempotente: o mesmo codigo e atualizado no lugar.
+   */
+  async syncCategories(companyId: string): Promise<MasterEntitySyncCounters> {
+    const categories = await this.categoriesService.listAll();
+    const counters: MasterEntitySyncCounters = {
+      fetched: categories.length,
+      created: 0,
+      updated: 0,
+      skipped: 0
+    };
+
+    const findByCode = this.db.prepare(
+      "SELECT id FROM omie_categories WHERE company_id = ? AND code = ?"
+    );
+    const update = this.db.prepare(
+      `UPDATE omie_categories
+         SET description = ?, category_type = ?, parent_code = ?, is_active = ?,
+             updated_from_omie_at = datetime('now'), updated_at = datetime('now')
+       WHERE id = ?`
+    );
+    const insert = this.db.prepare(
+      `INSERT INTO omie_categories
+         (id, company_id, code, description, category_type, parent_code, is_active,
+          updated_from_omie_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), datetime('now'))`
+    );
+
+    this.runInTransaction(() => {
+      for (const category of categories) {
+        const existing = findByCode.get(companyId, category.code) as { id: string } | undefined;
+        if (existing) {
+          update.run(
+            category.description,
+            category.categoryType,
+            category.parentCode,
+            category.isActive ? 1 : 0,
+            existing.id
+          );
+          counters.updated++;
+          continue;
+        }
+        insert.run(
+          randomUUID(),
+          companyId,
+          category.code,
+          category.description,
+          category.categoryType,
+          category.parentCode,
+          category.isActive ? 1 : 0
+        );
+        counters.created++;
+      }
+    });
+
+    return counters;
   }
 
   /**

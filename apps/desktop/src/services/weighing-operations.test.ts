@@ -1243,6 +1243,73 @@ describe("weighing operations", () => {
     }
   });
 
+  it("sends the product OMIE category in the order job", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET omie_customer_id = 456 WHERE id = 'customer-1'").run();
+      const now = "2026-06-06T12:00:00.000Z";
+      database
+        .prepare(
+          `INSERT INTO omie_categories (id, company_id, code, description, is_active, created_at, updated_at)
+           VALUES ('cat-aterro', 'company-1', '1.01.02', 'Clientes - Aterro', 1, ?, ?)`
+        )
+        .run(now, now);
+      database
+        .prepare("UPDATE products SET omie_category_code = '1.01.02' WHERE id = 'product-1'")
+        .run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      // Antes o edge mandava "1.01.01" fixo: toda venda caia na mesma categoria no OMIE.
+      expect(buildOmieBillingJob(database, operation.id)!.payload.omieCategoryCode).toBe("1.01.02");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("falls back to the historic category when the product has none", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET omie_customer_id = 456 WHERE id = 'customer-1'").run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      expect(buildOmieBillingJob(database, operation.id)!.payload.omieCategoryCode).toBe("1.01.01");
+    } finally {
+      database.close();
+    }
+  });
+
   it("sends the charged freight value and modality in the OMIE job", () => {
     const database = createDatabase();
 

@@ -204,6 +204,13 @@ import {
   type CustomerCreditSummary
 } from "./credit.js";
 import {
+  getDefaultOmieCategory,
+  listOmieCategories,
+  setDefaultOmieCategory,
+  setProductOmieCategory,
+  type OmieCategoryOption
+} from "./omie-categories.js";
+import {
   cancelQuotation,
   createQuotation,
   listOpenQuotationsForCustomer,
@@ -2318,6 +2325,31 @@ export class DesktopRuntime {
   removeCustomerSpecialPrice(customerId: string, productId: string): void {
     this.assertDesktopAccess();
     removeCustomerSpecialPrice(this.database, customerId, productId);
+  }
+
+  listOmieCategories(): OmieCategoryOption[] {
+    this.assertDesktopAccess();
+    return listOmieCategories(this.database, this.ensureIdentity().companyId);
+  }
+
+  setProductOmieCategory(productId: string, categoryCode: string | null): void {
+    this.assertDesktopAccess();
+    setProductOmieCategory(
+      this.database,
+      this.ensureIdentity().companyId,
+      productId,
+      categoryCode
+    );
+  }
+
+  getDefaultOmieCategory(): string | null {
+    this.assertDesktopAccess();
+    return getDefaultOmieCategory(this.database);
+  }
+
+  setDefaultOmieCategory(categoryCode: string | null): string | null {
+    this.assertDesktopAccess();
+    return setDefaultOmieCategory(this.database, this.ensureIdentity().companyId, categoryCode);
   }
 
   getCustomerCreditBalance(customerId: string): number {

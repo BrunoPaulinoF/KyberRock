@@ -24,6 +24,7 @@ import type {
   ProductDefaultPriceSummary
 } from "../services/product-prices";
 import type { CreditMovementRow, CustomerCreditSummary } from "../services/credit";
+import type { OmieCategoryOption } from "../services/omie-categories";
 import type { CreateQuotationInput, QuotationRow, QuotationSummary } from "../services/quotations";
 import type { ActivateDesktopInput, DesktopAccessStatus } from "../services/desktop-activation";
 import type { UnitDeviceInfo } from "../services/unit-devices";
@@ -368,6 +369,10 @@ export interface KyberRockDesktopApi {
     unit?: string;
   }) => Promise<unknown>;
   customerSpecialPricesRemove: (customerId: string, productId: string) => Promise<void>;
+  omieCategoriesList: () => Promise<OmieCategoryOption[]>;
+  productOmieCategorySet: (productId: string, categoryCode: string | null) => Promise<void>;
+  omieDefaultCategoryGet: () => Promise<string | null>;
+  omieDefaultCategorySet: (categoryCode: string | null) => Promise<string | null>;
   customerCreditBalance: (customerId: string) => Promise<number>;
   customerCreditSummary: (customerId: string) => Promise<CustomerCreditSummary>;
   customerCreditPayment: (

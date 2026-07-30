@@ -37,6 +37,8 @@ export interface ProductDefaultPriceSummary {
   productDescription: string;
   unitPriceCents: number | null;
   unit: string;
+  /** Categoria OMIE em que a venda deste produto entra (null = padrao da unidade). */
+  omieCategoryCode: string | null;
 }
 
 export interface CustomerSpecialPriceSummary {
@@ -251,6 +253,7 @@ export function listProductDefaultPriceSummaries(
           p.id AS product_id, p.code AS product_code, p.description AS product_description,
           p.unit_price_cents AS product_unit_price_cents, p.omie_product_id, p.item_type,
           p.fiscal_recommendations_json, p.is_active AS product_is_active,
+          p.omie_category_code,
           pdp.id AS default_price_id, pdp.unit_price_cents AS default_unit_price_cents,
           COALESCE(pdp.unit, 'ton') AS unit
        FROM products p
@@ -287,6 +290,7 @@ export function listProductDefaultPriceSummaries(
         default_price_id: string | null;
         default_unit_price_cents: number | null;
         unit: string | null;
+        omie_category_code: string | null;
       };
       return {
         id: r.default_price_id,
@@ -294,7 +298,8 @@ export function listProductDefaultPriceSummaries(
         productCode: r.product_code,
         productDescription: r.product_description ?? r.product_id,
         unitPriceCents: r.default_unit_price_cents ?? r.product_unit_price_cents,
-        unit: r.unit ?? "ton"
+        unit: r.unit ?? "ton",
+        omieCategoryCode: r.omie_category_code
       };
     });
 }

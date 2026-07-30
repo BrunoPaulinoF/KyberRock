@@ -248,6 +248,12 @@ type CreateOrderPayload = {
    */
   accountName?: string | null;
   /**
+   * Categoria do plano gerencial (codigo_categoria) em que a venda entra no OMIE,
+   * resolvida no desktop a partir do produto (senao padrao da unidade). Ausente ->
+   * OMIE_DEFAULT_CATEGORY_CODE, o comportamento historico.
+   */
+  omieCategoryCode?: string | null;
+  /**
    * Cadastro do cliente para criar/localizar no OMIE na hora do envio quando ele ainda
    * nao tem codigo OMIE (customerOmieId ausente/0). O edge faz find-or-create por CNPJ/CPF
    * (pushCustomerToOmie) e usa o codigo resultante no pedido, devolvendo omieCustomerId
@@ -1740,7 +1746,7 @@ async function createOmieOrder(
           payload.transport
         ),
         informacoes_adicionais: {
-          codigo_categoria: "1.01.01",
+          codigo_categoria: resolveCategoryCode(payload.omieCategoryCode),
           ...(accountCode !== null ? { codigo_conta_corrente: accountCode } : {}),
           ...(buildTransportAdditionalData(payload.transport) !== null
             ? { dados_adicionais_nf: buildTransportAdditionalData(payload.transport) }
@@ -2077,6 +2083,16 @@ function findStringByKey(value: unknown, key: string): string | null {
     }
   }
   return null;
+}
+
+/**
+ * Categoria usada quando o desktop nao informa uma (versao antiga, ou produto e
+ * unidade sem categoria configurada). Era o valor fixo de todo pedido ate agora.
+ */
+const OMIE_DEFAULT_CATEGORY_CODE = "1.01.01";
+
+function resolveCategoryCode(code: string | null | undefined): string {
+  return typeof code === "string" && code.trim() ? code.trim() : OMIE_DEFAULT_CATEGORY_CODE;
 }
 
 /** Codigos "modalidade" (modFrete) validos no frete do pedido de venda do OMIE. */

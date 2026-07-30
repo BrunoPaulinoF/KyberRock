@@ -1242,5 +1242,39 @@ SET cloud_synced_at = updated_at
 WHERE cloud_synced_at IS NULL
   AND updated_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-7 days');
 `
+  },
+  {
+    version: 38,
+    name: "omie_categories_and_product_category",
+    sql: `
+-- Categorias (plano de contas gerencial) espelhadas do OMIE, apenas para consulta e
+-- vinculo. O pedido de venda enviava um codigo de categoria FIXO ("1.01.01"), entao toda
+-- venda caia na mesma categoria no OMIE independentemente do produto vendido.
+CREATE TABLE IF NOT EXISTS omie_categories (
+  id TEXT PRIMARY KEY,
+  company_id TEXT NOT NULL REFERENCES companies(id),
+  code TEXT NOT NULL,
+  description TEXT NOT NULL,
+  category_type TEXT,
+  parent_code TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+  updated_from_omie_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_omie_categories_company_code
+  ON omie_categories(company_id, code);
+CREATE INDEX IF NOT EXISTS idx_omie_categories_company_active
+  ON omie_categories(company_id, is_active);
+
+-- Categoria OMIE do produto: quando definida, vai no codigo_categoria do pedido de
+-- venda daquela operacao. Vazia = cai no padrao da unidade (local_settings) e, sem ele,
+-- no "1.01.01" historico.
+ALTER TABLE products ADD COLUMN omie_category_code TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_products_omie_category
+  ON products(company_id, omie_category_code);
+`
   }
 ];
