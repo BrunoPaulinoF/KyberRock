@@ -3,6 +3,7 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 import type { KyberRockDesktopApi } from "../preload/api-types";
 import { CrudFormModal } from "./CrudFormModal";
 import { useConfirm } from "./crud-ui";
+import { FinancialReportSettings } from "./FinancialReportSettings";
 import { IconActionButton } from "./IconActionButton";
 import { PriceChangePasswordDialog } from "./PriceChangePasswordDialog";
 import { ReportChannelsSettings } from "./ReportChannelsSettings";
@@ -61,6 +62,13 @@ const initialForm: RecipientFormState = {
   displayName: "",
   isActive: true
 };
+
+// O agendador da nuvem roda de hora em hora e so considera a HORA do horario
+// configurado, entao a escolha e sempre hora cheia.
+const FINANCIAL_HOURS = Array.from(
+  { length: 24 },
+  (_, hour) => `${String(hour).padStart(2, "0")}:00`
+);
 
 const REPORT_TYPE_LABEL: Record<ReportType, string> = {
   sales: "Vendas",
@@ -490,6 +498,12 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
 
       <ReportDispatchSettings desktopApi={desktopApi} />
 
+      <FinancialReportSettings
+        desktopApi={desktopApi}
+        recipients={recipients}
+        onChanged={loadRecipients}
+      />
+
       {showForm ? (
         <CrudFormModal onClose={resetForm} maxWidth={920}>
           <Fragment>
@@ -620,15 +634,20 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
                         placement="right"
                       />
                     </span>
-                    <input
-                      type="time"
-                      step={3600}
+                    <select
                       value={form.financialScheduleTime}
                       onChange={(event) =>
                         setForm({ ...form, financialScheduleTime: event.target.value })
                       }
                       style={styles.input}
-                    />
+                    >
+                      <option value="">Mesmo horario dos demais relatorios</option>
+                      {FINANCIAL_HOURS.map((hour) => (
+                        <option key={hour} value={hour}>
+                          {hour}
+                        </option>
+                      ))}
+                    </select>
                   </label>
                 ) : null}
               </section>

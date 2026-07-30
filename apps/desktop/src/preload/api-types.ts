@@ -294,6 +294,7 @@ export interface KyberRockDesktopApi {
       scheduleTime?: string;
       reportTypes?: "sales" | "trucks" | "both";
       sendFinancial?: boolean;
+      financialScheduleTime?: string | null;
       displayName?: string | null;
       isActive?: boolean;
     }
