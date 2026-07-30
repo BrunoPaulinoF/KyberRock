@@ -992,6 +992,29 @@ function registerIpcHandlers(): void {
     }
   );
 
+  ipcMain.handle("desktop:omie-categories-list", () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.listOmieCategories();
+  });
+
+  ipcMain.handle(
+    "desktop:product-omie-category-set",
+    (_event, productId: string, categoryCode: string | null) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      runtime.setProductOmieCategory(productId, categoryCode);
+    }
+  );
+
+  ipcMain.handle("desktop:omie-default-category-get", () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.getDefaultOmieCategory();
+  });
+
+  ipcMain.handle("desktop:omie-default-category-set", (_event, categoryCode: string | null) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.setDefaultOmieCategory(categoryCode);
+  });
+
   ipcMain.handle("desktop:customer-credit-balance", (_event, customerId: string) => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.getCustomerCreditBalance(customerId);

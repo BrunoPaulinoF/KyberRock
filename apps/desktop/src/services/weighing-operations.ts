@@ -15,6 +15,11 @@ import { PricingService, type PriceDetails } from "./pricing.js";
 import { cancelPendingOmieJobs, enqueueSyncJob } from "./sync-queue.js";
 import { CreditService } from "./credit.js";
 import { buildOmieIntegrationCode } from "@kyberrock/omie-client";
+import { readStringLocalSetting } from "./local-settings.js";
+import {
+  DEFAULT_OMIE_CATEGORY_SETTING_KEY,
+  resolveOrderCategoryCode
+} from "./omie-categories.js";
 import { consumeQuotation } from "./quotations.js";
 
 type OperationStatus =
@@ -1049,6 +1054,11 @@ export interface OmieBillingJobPayload {
    * garantindo que o meio de pagamento sempre caia na conta a ele vinculada.
    */
   accountName: string | null;
+  /**
+   * Categoria do plano gerencial do OMIE (codigo_categoria) em que a venda entra:
+   * a cadastrada no produto, senao a padrao da unidade, senao "1.01.01".
+   */
+  omieCategoryCode: string;
   /** Placa, motorista, transportadora e pesos da carga para o frete do pedido. */
   transport: OmieOrderTransport | null;
 }
@@ -1172,13 +1182,22 @@ export function buildOmieBillingJob(
       ? buildOrderCustomerCadastro(row.customer_id, customerRow)
       : null;
 
-  const omieProductId = row.product_id
-    ? (
-        database
-          .prepare("SELECT omie_product_id FROM products WHERE id = ?")
-          .get(row.product_id) as { omie_product_id: number | null } | undefined
-      )?.omie_product_id ?? null
-    : null;
+  const productRow = row.product_id
+    ? (database
+        .prepare("SELECT omie_product_id, omie_category_code FROM products WHERE id = ?")
+        .get(row.product_id) as
+        | { omie_product_id: number | null; omie_category_code: string | null }
+        | undefined)
+    : undefined;
+  const omieProductId = productRow?.omie_product_id ?? null;
+
+  // Categoria do plano gerencial em que a venda entra no OMIE: a do produto manda,
+  // depois a padrao da unidade. Antes o edge mandava um codigo fixo, entao toda venda
+  // era classificada na mesma categoria independentemente do produto.
+  const omieCategoryCode = resolveOrderCategoryCode(
+    productRow?.omie_category_code,
+    readStringLocalSetting(database, DEFAULT_OMIE_CATEGORY_SETTING_KEY)
+  );
 
   // Espelho OMIE (quando a condicao local esta vinculada a um codigo) tem precedencia;
   // sem vinculo, os campos da propria condicao local (parse do texto digitado) valem —
@@ -1270,6 +1289,7 @@ export function buildOmieBillingJob(
       paymentMethodOmieCode: omiePayment?.method_code ?? null,
       accountOmieCode: omiePayment?.account_code ?? null,
       accountName: omiePayment?.account_name ?? null,
+      omieCategoryCode,
       transport
     }
   };
