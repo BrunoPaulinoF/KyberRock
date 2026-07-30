@@ -3800,6 +3800,36 @@ export async function pushReportChannelSettings(
   });
 }
 
+/** Resultado por empresa devolvido pela edge function financial-report-email. */
+export interface FinancialReportDispatchResult {
+  companyId: string;
+  date: string;
+  recipients: number;
+  status: "sent" | "partial" | "failed" | "skipped";
+  reason?: string;
+  error?: string;
+}
+
+// Dispara o relatorio financeiro do OMIE na hora, pelo botao "Enviar agora" da
+// tela de Relatorios (serve para testar a configuracao sem esperar o horario).
+// Quem monta e envia o relatorio e sempre a nuvem — o OMIE nunca e chamado do
+// desktop; aqui so pedimos o disparo autenticando com o par deviceId/deviceToken
+// do dispositivo, e a edge function restringe o envio a empresa dele.
+export async function sendFinancialReportNow(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity
+): Promise<FinancialReportDispatchResult[]> {
+  const settings = getCloudSettings(database, identity);
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.functions.invoke<{
+    results?: FinancialReportDispatchResult[];
+  }>("financial-report-email", {
+    body: { deviceId: settings.deviceId, deviceToken: settings.deviceToken }
+  });
+  if (error) throw new Error(await getFunctionErrorMessage(error));
+  return data?.results ?? [];
+}
+
 async function invokeDesktopSync(
   settings: CloudSettings,
   payload: Record<string, unknown>

@@ -79,8 +79,14 @@ import type {
   ReportDispatchSettings,
   ReportDispatchState
 } from "../services/report-dispatch";
+import type { FinancialReportDispatchResult as FinancialReportDispatchResultView } from "../services/supabase-sync";
 
-export type { ReportChannelSettingsView, WhatsappInstanceStateView, ReportDispatchSendResultView };
+export type {
+  ReportChannelSettingsView,
+  WhatsappInstanceStateView,
+  ReportDispatchSendResultView,
+  FinancialReportDispatchResultView
+};
 
 export interface ReportDispatchConfigView {
   settings: ReportDispatchSettings;
@@ -323,6 +329,7 @@ export interface KyberRockDesktopApi {
     patch: Partial<ReportDispatchConfigView["settings"]>
   ) => Promise<ReportDispatchConfigView>;
   sendReportsNow: () => Promise<ReportDispatchSendResultView>;
+  sendFinancialReportNow: () => Promise<FinancialReportDispatchResultView[]>;
   getReportByProduct: (
     startDate: string,
     endDate: string,

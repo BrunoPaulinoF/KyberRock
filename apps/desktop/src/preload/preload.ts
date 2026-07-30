@@ -134,6 +134,7 @@ const desktopApi = {
   saveReportDispatchConfig: (patch: unknown) =>
     ipcRenderer.invoke("desktop:report-dispatch-save-config", patch),
   sendReportsNow: () => ipcRenderer.invoke("desktop:report-dispatch-send-now"),
+  sendFinancialReportNow: () => ipcRenderer.invoke("desktop:send-financial-report-now"),
   getReportByProduct: (startDate: string, endDate: string, limit?: number) =>
     ipcRenderer.invoke("desktop:get-report-by-product", startDate, endDate, limit),
   getReportByCustomer: (startDate: string, endDate: string, limit?: number) =>

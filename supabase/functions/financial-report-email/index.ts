@@ -2,6 +2,7 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 // Mesma lib de SMTP usada no daily-report-email/desktop (sendTestEmail); o
 // bundler das Edge Functions so resolve especificadores jsr:/npm:.
 import nodemailer from "npm:nodemailer@9.0.1";
+import { safeEqual, sha256Hex } from "../_shared/crypto.ts";
 import { buildTablePdf } from "../_shared/pdf.ts";
 import {
   addDays,
@@ -485,24 +486,36 @@ Deno.serve(async (req) => {
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
   const supabase = createClient(supabaseUrl, serviceRoleKey);
 
-  if (!(await isAuthorized(req, supabase, serviceRoleKey))) {
-    return jsonResponse({ error: "Acesso negado." }, 401);
-  }
-
+  // O corpo e lido antes da autorizacao porque o desktop se autentica por
+  // deviceId/deviceToken no payload (mesmo esquema do desktop-sync), e nao por
+  // header — o cron e o service-role continuam autenticando por header.
   const body = (await req.json().catch(() => ({}))) as {
     date?: string;
     companyId?: string;
     force?: boolean;
+    deviceId?: string;
+    deviceToken?: string;
   };
+
+  const auth = await authorize(req, supabase, serviceRoleKey, body);
+  if (!auth.authorized) {
+    return jsonResponse({ error: "Acesso negado." }, 401);
+  }
+
   const now = localNow(new Date());
   const targetDate = body.date ?? now.date;
-  const force = body.force === true;
+  // Disparo pelo desktop ("Enviar agora", usado para teste): sai na hora,
+  // ignorando o horario agendado e a deduplicacao da hora corrente, e sempre
+  // restrito a empresa do proprio dispositivo — nunca a que veio no payload.
+  const onDemandCompanyId = auth.deviceCompanyId;
+  const scopedCompanyId = onDemandCompanyId ?? body.companyId;
+  const force = onDemandCompanyId ? true : body.force === true;
 
-  const companyFilter = body.companyId
+  const companyFilter = scopedCompanyId
     ? supabase
         .from("companies")
         .select("id, name, omie_app_key, omie_app_secret")
-        .eq("id", body.companyId)
+        .eq("id", scopedCompanyId)
     : supabase
         .from("companies")
         .select("id, name, omie_app_key, omie_app_secret")
@@ -558,21 +571,64 @@ Deno.serve(async (req) => {
   return jsonResponse({ results });
 });
 
-async function isAuthorized(
+interface AuthorizationResult {
+  authorized: boolean;
+  /** Empresa do dispositivo quando a chamada veio do desktop; null para cron/service-role. */
+  deviceCompanyId: string | null;
+}
+
+async function authorize(
   req: Request,
   supabase: ReturnType<typeof createClient>,
-  serviceRoleKey: string
-): Promise<boolean> {
+  serviceRoleKey: string,
+  body: { deviceId?: string; deviceToken?: string }
+): Promise<AuthorizationResult> {
   const authHeader = req.headers.get("authorization") ?? "";
-  if (serviceRoleKey && authHeader === `Bearer ${serviceRoleKey}`) return true;
+  if (serviceRoleKey && authHeader === `Bearer ${serviceRoleKey}`) {
+    return { authorized: true, deviceCompanyId: null };
+  }
 
   const providedSecret = req.headers.get("x-cron-secret") ?? "";
-  if (!providedSecret) return false;
-  const envSecret = Deno.env.get("CRON_SHARED_SECRET") ?? "";
-  if (envSecret && providedSecret === envSecret) return true;
+  if (providedSecret) {
+    const envSecret = Deno.env.get("CRON_SHARED_SECRET") ?? "";
+    if (envSecret && providedSecret === envSecret) {
+      return { authorized: true, deviceCompanyId: null };
+    }
+    const { data } = await supabase.rpc("get_cron_secret");
+    if (typeof data === "string" && data.length > 0 && providedSecret === data) {
+      return { authorized: true, deviceCompanyId: null };
+    }
+    return { authorized: false, deviceCompanyId: null };
+  }
 
-  const { data } = await supabase.rpc("get_cron_secret");
-  return typeof data === "string" && data.length > 0 && providedSecret === data;
+  return authorizeDevice(supabase, body);
+}
+
+// Mesma validacao do desktop-sync: dispositivo ativo cujo token bate com o hash
+// gravado. A empresa vem do registro do dispositivo, nunca do payload.
+async function authorizeDevice(
+  supabase: ReturnType<typeof createClient>,
+  body: { deviceId?: string; deviceToken?: string }
+): Promise<AuthorizationResult> {
+  const deviceId = String(body.deviceId ?? "");
+  const deviceToken = String(body.deviceToken ?? "");
+  if (!deviceId || !deviceToken) return { authorized: false, deviceCompanyId: null };
+
+  const { data: device, error } = await supabase
+    .from("device_registrations")
+    .select("id, token_hash, is_active, company_id")
+    .eq("id", deviceId)
+    .maybeSingle();
+  if (error || !device?.is_active) return { authorized: false, deviceCompanyId: null };
+
+  const tokenHash = await sha256Hex(deviceToken);
+  if (!safeEqual(tokenHash, String(device.token_hash ?? ""))) {
+    return { authorized: false, deviceCompanyId: null };
+  }
+
+  const companyId = (device.company_id as string | null) ?? null;
+  if (!companyId) return { authorized: false, deviceCompanyId: null };
+  return { authorized: true, deviceCompanyId: companyId };
 }
 
 async function dispatchForCompany(params: {

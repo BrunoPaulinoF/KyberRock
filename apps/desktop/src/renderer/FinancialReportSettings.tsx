@@ -1,8 +1,15 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { KyberRockDesktopApi } from "../preload/api-types";
+import { IconActionButton } from "./IconActionButton";
 import { PriceChangePasswordDialog } from "./PriceChangePasswordDialog";
 import { HelpTooltip } from "./Tooltip";
+import {
+  FINANCIAL_HOURS,
+  defaultFinancialTime,
+  isSameHourAsKyberRock,
+  kyberRockHourLabel
+} from "./financial-report-schedule";
 
 // Card "Relatorio financeiro (OMIE)" da tela de Relatorios: em uma unica lista o
 // usuario marca quais destinatarios ja cadastrados recebem o resumo executivo de
@@ -10,9 +17,12 @@ import { HelpTooltip } from "./Tooltip";
 // um. Sem este card so dava para mexer no financeiro abrindo o formulario de cada
 // destinatario, um a um.
 //
-// O envio do financeiro e feito pela nuvem (edge function financial-report-email,
-// unico lugar que fala com o OMIE), que roda de hora em hora e usa exatamente
-// estes campos: send_financial e financial_schedule_time. Por isso o horario e
+// O horario do financeiro e sempre proprio, nunca "o mesmo dos outros": o
+// relatorio do OMIE e montado e enviado pela nuvem (edge function
+// financial-report-email, unico lugar que fala com o OMIE), enquanto os
+// relatorios do KyberRock saem do proprio computador no horario do card "Envios
+// automaticos". Sao dois envios distintos e o usuario escolhe a hora de cada um.
+// Como o agendador da nuvem roda de hora em hora e le so a hora, a escolha e
 // sempre hora cheia — minutos seriam ignorados no envio.
 
 export interface FinancialRecipientRow {
@@ -24,8 +34,6 @@ export interface FinancialRecipientRow {
   displayName: string | null;
   isActive: boolean;
 }
-
-const HOURS = Array.from({ length: 24 }, (_, hour) => `${String(hour).padStart(2, "0")}:00`);
 
 const styles = {
   card: {
@@ -95,6 +103,15 @@ const styles = {
     cursor: "pointer",
     fontWeight: 700
   },
+  primaryButton: {
+    border: "none",
+    background: "var(--kr-primary-strong)",
+    color: "var(--kr-primary-text)",
+    borderRadius: "10px",
+    padding: "9px 14px",
+    cursor: "pointer",
+    fontWeight: 700
+  },
   badge: (color: string, background: string) => ({
     display: "inline-flex",
     alignItems: "center",
@@ -111,6 +128,15 @@ const styles = {
     fontSize: "12px",
     margin: 0
   },
+  warning: {
+    color: "#b45309",
+    background: "#fef3c7",
+    border: "1px solid #fde68a",
+    padding: "8px 12px",
+    borderRadius: "8px",
+    fontSize: "13px",
+    margin: 0
+  },
   error: {
     color: "#b91c1c",
     background: "#fef2f2",
@@ -119,6 +145,45 @@ const styles = {
     borderRadius: "8px",
     fontSize: "13px",
     margin: 0
+  },
+  modalOverlay: {
+    position: "fixed" as const,
+    inset: 0,
+    background: "rgba(15, 23, 42, 0.55)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "20px",
+    zIndex: 1000
+  },
+  modalCard: {
+    background: "var(--kr-surface)",
+    border: "1px solid var(--kr-border)",
+    borderRadius: "16px",
+    boxShadow: "0 20px 60px rgba(0, 0, 0, 0.35)",
+    padding: "22px",
+    width: "min(460px, 100%)",
+    display: "grid",
+    gap: "12px",
+    textAlign: "center" as const
+  },
+  modalIcon: {
+    fontSize: "40px",
+    lineHeight: 1
+  },
+  modalTitle: {
+    margin: 0,
+    fontSize: "16px",
+    fontWeight: 800,
+    color: "var(--kr-text-strong)"
+  },
+  modalMessage: {
+    margin: 0,
+    fontSize: "14px",
+    color: "var(--kr-muted)",
+    wordBreak: "break-word" as const,
+    whiteSpace: "pre-line" as const,
+    textAlign: "left" as const
   }
 };
 
@@ -128,6 +193,12 @@ function recipientLabel(recipient: FinancialRecipientRow): string {
 
 function channelLabel(recipient: FinancialRecipientRow): string {
   return recipient.email ?? recipient.whatsappPhone ?? "-";
+}
+
+interface ModalContent {
+  success: boolean;
+  title: string;
+  message: string;
 }
 
 export function FinancialReportSettings({
@@ -140,8 +211,12 @@ export function FinancialReportSettings({
   onChanged: () => Promise<void> | void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [busyId, setBusyId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [modal, setModal] = useState<ModalContent | null>(null);
+  // Hora dos relatorios do KyberRock (card "Envios automaticos"), usada para
+  // sugerir uma hora diferente para o OMIE e avisar quando os dois coincidem.
+  const [kyberRockHour, setKyberRockHour] = useState(18);
   // Liberar o financeiro para um destinatario exige a senha padrao da unidade (a
   // mesma de alteracao de precos). Depois de confirmada uma vez, o card fica
   // liberado enquanto a tela estiver aberta — marcar varios destinatarios de uma
@@ -151,8 +226,25 @@ export function FinancialReportSettings({
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [verifyingPassword, setVerifyingPassword] = useState(false);
 
+  useEffect(() => {
+    if (!desktopApi) return;
+    let cancelled = false;
+    void desktopApi
+      .getReportDispatchConfig()
+      .then((config) => {
+        if (!cancelled) setKyberRockHour(config.settings.sendHour);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [desktopApi]);
+
   const activeFinancial = recipients.filter(
     (recipient) => recipient.sendFinancial && recipient.isActive
+  );
+  const collisions = activeFinancial.filter((recipient) =>
+    isSameHourAsKyberRock(recipient.financialScheduleTime, kyberRockHour)
   );
 
   async function applyPatch(
@@ -160,7 +252,7 @@ export function FinancialReportSettings({
     patch: { sendFinancial?: boolean; financialScheduleTime?: string | null }
   ): Promise<void> {
     if (!desktopApi) return;
-    setBusyId(id);
+    setBusy(true);
     setError(null);
     try {
       await desktopApi.updateReportRecipient(id, patch);
@@ -172,8 +264,18 @@ export function FinancialReportSettings({
           : "Falha ao salvar o relatorio financeiro do destinatario."
       );
     } finally {
-      setBusyId(null);
+      setBusy(false);
     }
+  }
+
+  function enableFor(recipient: FinancialRecipientRow): void {
+    // Ligar ja grava uma hora propria: o financeiro nunca herda o horario dos
+    // relatorios do KyberRock.
+    void applyPatch(recipient.id, {
+      sendFinancial: true,
+      financialScheduleTime:
+        recipient.financialScheduleTime ?? defaultFinancialTime(kyberRockHour)
+    });
   }
 
   function handleToggle(recipient: FinancialRecipientRow, checked: boolean): void {
@@ -188,7 +290,7 @@ export function FinancialReportSettings({
       setPendingEnableId(recipient.id);
       return;
     }
-    void applyPatch(recipient.id, { sendFinancial: true });
+    enableFor(recipient);
   }
 
   async function handleConfirmPassword(password: string): Promise<void> {
@@ -200,11 +302,11 @@ export function FinancialReportSettings({
         setPasswordError("Senha incorreta.");
         return;
       }
-      const id = pendingEnableId;
+      const target = recipients.find((row) => row.id === pendingEnableId);
       setUnlocked(true);
       setPendingEnableId(null);
       setPasswordError(null);
-      await applyPatch(id, { sendFinancial: true });
+      if (target) enableFor(target);
     } catch (verifyError) {
       setPasswordError(
         verifyError instanceof Error
@@ -216,13 +318,57 @@ export function FinancialReportSettings({
     }
   }
 
+  // "Enviar agora" serve para testar a configuracao sem esperar o horario: a
+  // nuvem monta os PDFs do OMIE e envia para os destinatarios marcados.
+  async function handleSendNow(): Promise<void> {
+    if (!desktopApi) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const results = await desktopApi.sendFinancialReportNow();
+      const sent = results.reduce((total, result) => total + result.recipients, 0);
+      const problems = results
+        .filter((result) => result.status === "failed" || result.status === "skipped")
+        .map((result) => result.error ?? result.reason ?? result.status);
+      const lines: string[] = [];
+      lines.push(`Envios concluidos: ${sent}`);
+      if (problems.length > 0) {
+        lines.push("", "Avisos:", ...problems.slice(0, 5));
+      }
+      if (results.length === 0) {
+        lines.push("A nuvem nao retornou nenhum resultado para esta unidade.");
+      }
+      setModal({
+        success: sent > 0 && problems.length === 0,
+        title:
+          sent > 0 && problems.length === 0
+            ? "Relatorio financeiro enviado!"
+            : sent > 0
+              ? "Envio parcial"
+              : "Nada foi enviado",
+        message: lines.join("\n")
+      });
+    } catch (sendError) {
+      setModal({
+        success: false,
+        title: "Falha no envio",
+        message:
+          sendError instanceof Error
+            ? sendError.message
+            : "Falha ao enviar o relatorio financeiro do OMIE."
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div style={styles.card}>
       <div style={styles.headerRow}>
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <h3 style={styles.headerTitle}>Relatorio financeiro (OMIE)</h3>
           <HelpTooltip
-            content="Escolha quais destinatarios recebem o resumo executivo de financas do OMIE (contas a pagar + extrato, em PDF) e o horario de envio de cada um. Este relatorio e enviado pela nuvem, entao nao depende do computador estar ligado. Liberar o financeiro pede a senha padrao da unidade (a mesma de alteracao de precos)."
+            content="Escolha quais destinatarios recebem o resumo executivo de financas do OMIE (contas a pagar + extrato, em PDF) e o horario de cada um. Este relatorio tem horario proprio, separado do horario dos relatorios do KyberRock, porque quem monta e envia e a nuvem — nao depende do computador estar ligado. Liberar o financeiro pede a senha padrao da unidade (a mesma de alteracao de precos)."
             placement="right"
           />
         </div>
@@ -247,6 +393,13 @@ export function FinancialReportSettings({
       {expanded ? (
         <div style={styles.body}>
           {error ? <p style={styles.error}>{error}</p> : null}
+          {collisions.length > 0 ? (
+            <p style={styles.warning}>
+              {collisions.length} destinatario(s) com o financeiro no mesmo horario dos relatorios
+              do KyberRock ({kyberRockHourLabel(kyberRockHour)}). Escolha uma hora diferente para o
+              relatorio do OMIE chegar separado.
+            </p>
+          ) : null}
           {recipients.length === 0 ? (
             <p style={styles.hint}>
               Cadastre um destinatario primeiro para escolher quem recebe o financeiro do OMIE.
@@ -268,7 +421,7 @@ export function FinancialReportSettings({
                     <th style={styles.tableHeadCell}>Destinatario</th>
                     <th style={styles.tableHeadCell}>Contato</th>
                     <th style={styles.tableHeadCell}>Recebe o financeiro</th>
-                    <th style={styles.tableHeadCell}>Horario do envio</th>
+                    <th style={styles.tableHeadCell}>Horario do OMIE</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -288,30 +441,38 @@ export function FinancialReportSettings({
                           <input
                             type="checkbox"
                             checked={recipient.sendFinancial}
-                            disabled={busyId !== null}
+                            disabled={busy}
                             onChange={(event) => handleToggle(recipient, event.target.checked)}
                           />
                           {recipient.sendFinancial ? "Sim" : "Nao"}
                         </label>
                       </td>
                       <td style={styles.tableCell}>
-                        <select
-                          value={recipient.financialScheduleTime ?? ""}
-                          disabled={busyId !== null || !recipient.sendFinancial}
-                          onChange={(event) =>
-                            void applyPatch(recipient.id, {
-                              financialScheduleTime: event.target.value || null
-                            })
-                          }
-                          style={styles.select}
-                        >
-                          <option value="">Mesmo horario dos demais relatorios</option>
-                          {HOURS.map((hour) => (
-                            <option key={hour} value={hour}>
-                              {hour}
-                            </option>
-                          ))}
-                        </select>
+                        {recipient.sendFinancial ? (
+                          <select
+                            value={
+                              recipient.financialScheduleTime ??
+                              defaultFinancialTime(kyberRockHour)
+                            }
+                            disabled={busy}
+                            onChange={(event) =>
+                              void applyPatch(recipient.id, {
+                                financialScheduleTime: event.target.value
+                              })
+                            }
+                            style={styles.select}
+                          >
+                            {FINANCIAL_HOURS.map((hour, index) => (
+                              <option key={hour} value={hour}>
+                                {index === kyberRockHour
+                                  ? `${hour} (horario dos relatorios KyberRock)`
+                                  : hour}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span style={styles.hint}>-</span>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -320,9 +481,26 @@ export function FinancialReportSettings({
             </div>
           )}
           <p style={styles.hint}>
-            O envio roda na hora cheia escolhida. Destinatarios inativos nao recebem, mesmo com o
-            financeiro marcado.
+            Os relatorios do KyberRock saem as {kyberRockHourLabel(kyberRockHour)} pelo computador; o
+            financeiro do OMIE sai pela nuvem no horario escolhido acima, na hora cheia.
+            Destinatarios inativos nao recebem, mesmo com o financeiro marcado.
           </p>
+
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <IconActionButton
+              icon="send"
+              label="Enviar financeiro agora"
+              tip={
+                busy
+                  ? "Enviando..."
+                  : "Enviar o relatorio financeiro do OMIE agora para os destinatarios marcados (para teste)."
+              }
+              tone="primary"
+              placement="top"
+              disabled={busy || activeFinancial.length === 0}
+              onClick={() => void handleSendNow()}
+            />
+          </div>
         </div>
       ) : null}
 
@@ -338,6 +516,26 @@ export function FinancialReportSettings({
           }}
           onSubmit={(password) => void handleConfirmPassword(password)}
         />
+      ) : null}
+
+      {modal ? (
+        <div
+          style={styles.modalOverlay}
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setModal(null)}
+        >
+          <div style={styles.modalCard} onClick={(event) => event.stopPropagation()}>
+            <div style={styles.modalIcon}>{modal.success ? "✅" : "❌"}</div>
+            <h4 style={styles.modalTitle}>{modal.title}</h4>
+            <p style={styles.modalMessage}>{modal.message}</p>
+            <div style={{ display: "flex", justifyContent: "center" }}>
+              <button type="button" onClick={() => setModal(null)} style={styles.primaryButton}>
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
     </div>
   );

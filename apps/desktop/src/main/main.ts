@@ -797,6 +797,11 @@ function registerIpcHandlers(): void {
     return runtime.sendReportsNow(renderHtmlToPdf);
   });
 
+  ipcMain.handle("desktop:send-financial-report-now", () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.sendFinancialReportNow();
+  });
+
   ipcMain.handle("desktop:list-report-recipients", () => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.listReportRecipients();

@@ -104,6 +104,8 @@ import {
   processCloudSyncQueue,
   pushPendingReportRecipients,
   pushReportChannelSettings,
+  sendFinancialReportNow,
+  type FinancialReportDispatchResult,
   syncOperationToSupabase,
   syncLoadingRequestToSupabase,
   listOperationsPendingCloudPush,
@@ -1882,6 +1884,14 @@ export class DesktopRuntime {
   async sendReportsNow(renderPdf: (html: string) => Promise<Buffer>): Promise<DispatchSendResult> {
     const settings = readReportDispatchSettings(this.database);
     return this.dispatchBundles(computeManualBundles(settings, new Date()), renderPdf);
+  }
+
+  // Botao "Enviar agora" do relatorio financeiro do OMIE. Diferente dos demais
+  // relatorios, este e montado e enviado pela nuvem (unico lugar que fala com o
+  // OMIE): aqui so pedimos o disparo imediato para os destinatarios marcados.
+  async sendFinancialReportNow(): Promise<FinancialReportDispatchResult[]> {
+    const identity = this.ensureIdentity();
+    return sendFinancialReportNow(this.database, identity);
   }
 
   private async buildBundleAttachments(
