@@ -97,6 +97,7 @@ function page(
     productsFinished: options.finished,
     paymentTermsFinished: options.finished,
     suppliersFinished: options.finished,
+    categoriesFinished: options.finished,
     inProgress: !options.finished
   });
   return {
@@ -105,6 +106,7 @@ function page(
     productsSynced: 0,
     paymentTermsSynced: 0,
     suppliersSynced: 0,
+    categoriesSynced: 0,
     errors: []
   };
 }
@@ -114,6 +116,7 @@ function readState(database: DesktopDatabase): {
   productsPage: number;
   paymentTermsPage: number;
   suppliersPage: number;
+  categoriesPage: number;
 } {
   const raw = database
     .prepare("SELECT value_json FROM local_settings WHERE key = 'omie_pull_state'")
@@ -124,7 +127,8 @@ function readState(database: DesktopDatabase): {
     customersPage: parsed.customersPage ?? 1,
     productsPage: parsed.productsPage ?? 1,
     paymentTermsPage: parsed.paymentTermsPage ?? 1,
-    suppliersPage: parsed.suppliersPage ?? 1
+    suppliersPage: parsed.suppliersPage ?? 1,
+    categoriesPage: parsed.categoriesPage ?? 1
   };
 }
 

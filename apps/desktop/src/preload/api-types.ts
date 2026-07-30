@@ -521,6 +521,8 @@ export interface KyberRockDesktopApi {
     suppliersSynced: number;
     productsSynced: number;
     paymentTermsSynced: number;
+    /** Categorias do plano gerencial espelhadas (categoria OMIE por produto). */
+    categoriesSynced: number;
     ordersProcessed: number;
     ordersFailed: number;
     customersPushFailed: number;
@@ -542,6 +544,8 @@ export interface KyberRockDesktopApi {
     productsSynced: number;
     paymentTermsSynced: number;
     suppliersSynced: number;
+    /** Categorias do plano gerencial espelhadas (categoria OMIE por produto). */
+    categoriesSynced: number;
     errors: string[];
   }>;
   resetOmieMaster: () => Promise<{

@@ -59,9 +59,11 @@ type PullResume = {
   customersPage?: number;
   productsPage?: number;
   paymentTermsPage?: number;
+  categoriesPage?: number;
   customersFinished?: boolean;
   productsFinished?: boolean;
   paymentTermsFinished?: boolean;
+  categoriesFinished?: boolean;
 };
 
 type DeviceRow = {
@@ -174,6 +176,19 @@ type OmieSupplier = {
   state: string | null;
   isActive: boolean;
   tagsJson: Record<string, unknown> | unknown[] | null;
+};
+
+/**
+ * Categoria do plano gerencial do OMIE: e o `codigo_categoria` de
+ * `informacoes_adicionais` no pedido de venda, que classifica a receita no DRE.
+ * Espelhada no desktop (omie_categories) para cada produto apontar a sua.
+ */
+type OmieCategory = {
+  code: string;
+  description: string;
+  categoryType: string | null;
+  parentCode: string | null;
+  isActive: boolean;
 };
 
 type CreateOrderPayload = {
@@ -464,6 +479,7 @@ export async function handleOmieSyncRequest(
         products: pull.products,
         paymentTerms: pull.paymentTerms,
         suppliers: pull.suppliers,
+        categories: pull.categories,
         checkedAt,
         pageSize: pull.pageSize,
         pagination: pull.pagination
@@ -558,12 +574,14 @@ async function pullReferenceDataPage(
   products: OmieProduct[];
   paymentTerms: OmiePaymentTerm[];
   suppliers: OmieSupplier[];
+  categories: OmieCategory[];
   pageSize: number;
   pagination: Record<string, number | boolean | null>;
 }> {
   const customersPage = resume.customersPage ?? 1;
   const productsPage = resume.productsPage ?? 1;
   const paymentTermsPage = resume.paymentTermsPage ?? 1;
+  const categoriesPage = resume.categoriesPage ?? 1;
   const customersResult = resume.customersFinished
     ? emptyCustomerPage(customersPage)
     : await listCustomersPage(credentials, customersPage);
@@ -573,14 +591,23 @@ async function pullReferenceDataPage(
   const paymentTermsResult = resume.paymentTermsFinished
     ? emptyPage<OmiePaymentTerm>(paymentTermsPage)
     : await listOptionalPaymentTermsPage(credentials, paymentTermsPage);
+  const categoriesResult = resume.categoriesFinished
+    ? emptyPage<OmieCategory>(categoriesPage)
+    : await listOptionalCategoriesPage(credentials, categoriesPage);
 
   return {
     customers: customersResult.items,
     products: productsResult.items,
     paymentTerms: paymentTermsResult.items,
     suppliers: customersResult.carriers,
+    categories: categoriesResult.items,
     pageSize: PAGE_SIZE,
     pagination: {
+      categoriesPage: categoriesResult.page,
+      categoriesReturned: categoriesResult.items.length,
+      categoriesFinished: categoriesResult.finished,
+      categoriesTotalPages: categoriesResult.totalPages,
+      categoriesTotalRecords: categoriesResult.totalRecords,
       customersPage: customersResult.page,
       customersReturned: customersResult.returned,
       customersInvalid: customersResult.invalid,
@@ -1241,6 +1268,108 @@ async function listOptionalPaymentTermsPage(
 function isPaymentTermsUnavailableError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   return /OMIE HTTP 404:.*ListarParcelas|\/geral\/parcelas\//i.test(error.message);
+}
+
+type OmieCategoryRaw = {
+  codigo?: string | number;
+  codigo_categoria?: string | number;
+  descricao?: string;
+  descricao_padrao?: string;
+  tipo_categoria?: string;
+  categoria_superior?: string;
+  conta_inativa?: string;
+  nao_exibir?: string;
+};
+
+/**
+ * Uma pagina do plano gerencial (ListarCategorias). Sem esta etapa o espelho
+ * omie_categories do desktop ficava vazio pelo caminho da nuvem — que e o unico
+ * que a pedreira usa — e todo pedido caia na categoria fixa "1.01.01".
+ */
+async function listCategoriesPage(
+  credentials: OmieCredentials,
+  page: number
+): Promise<PageResult<OmieCategory>> {
+  const cacheKey = `categorias:${omieTenantKey(credentials)}:${page}`;
+  const cached = getCachedPage<OmieCategory>(cacheKey);
+  if (cached) {
+    return {
+      items: cached.items,
+      page,
+      finished: cached.finished,
+      totalPages: cached.totalPages,
+      totalRecords: cached.totalRecords
+    };
+  }
+
+  const response = await callOmie<
+    { pagina: number; registros_por_pagina: number },
+    {
+      pagina?: number;
+      total_de_paginas?: number;
+      total_de_registros?: number;
+      categoria_cadastro?: OmieCategoryRaw[];
+      categoriaCadastro?: OmieCategoryRaw[];
+    } | null
+  >(credentials, "/geral/categorias/", "ListarCategorias", {
+    pagina: page,
+    registros_por_pagina: PAGE_SIZE
+  });
+
+  const rawItems = response?.categoria_cadastro ?? response?.categoriaCadastro ?? [];
+  const items: OmieCategory[] = [];
+  for (const item of rawItems) {
+    const category = mapOmieCategoryRaw(item);
+    if (category) items.push(category);
+  }
+
+  const totalPages = toIntOrNull(response?.total_de_paginas);
+  const totalRecords = toIntOrNull(response?.total_de_registros);
+  const finished = computeFinished(page, rawItems.length, totalPages);
+
+  setCachedPage(cacheKey, items, finished, totalPages, totalRecords, rawItems.length);
+  return { items, page, finished, totalPages, totalRecords };
+}
+
+/**
+ * Categoria e um extra do pull: se o endpoint nao existir para o tenant, o
+ * cadastro de clientes/produtos (o que a balanca precisa para operar) nao pode
+ * cair junto.
+ */
+async function listOptionalCategoriesPage(
+  credentials: OmieCredentials,
+  page: number
+): Promise<PageResult<OmieCategory>> {
+  try {
+    return await listCategoriesPage(credentials, page);
+  } catch (error) {
+    if (isCategoriesUnavailableError(error)) return emptyPage<OmieCategory>(page);
+    throw error;
+  }
+}
+
+function isCategoriesUnavailableError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return /OMIE HTTP 404:.*ListarCategorias|\/geral\/categorias\//i.test(error.message);
+}
+
+function mapOmieCategoryRaw(item: OmieCategoryRaw): OmieCategory | null {
+  if (!item || typeof item !== "object") return null;
+  const code = pickFirstAsString(item.codigo, item.codigo_categoria);
+  const description = pickFirst(item.descricao, item.descricao_padrao);
+  if (!code || !description) return null;
+  // `nao_exibir` marca categorias totalizadoras (estruturais): o OMIE recusa o
+  // pedido quando o codigo nao e lancavel, entao elas entram como inativas para
+  // ficarem fora da escolha do produto.
+  const hidden = (item.nao_exibir ?? "").trim().toUpperCase() === "S";
+  const inactive = (item.conta_inativa ?? "").trim().toUpperCase() === "S";
+  return {
+    code,
+    description,
+    categoryType: item.tipo_categoria?.trim() || null,
+    parentCode: item.categoria_superior?.trim() || null,
+    isActive: !hidden && !inactive
+  };
 }
 
 type OmiePaymentTermRaw = {

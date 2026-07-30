@@ -1379,7 +1379,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         // chegaram, que e a duvida mais comum depois de sincronizar.
         `${result.suppliersSynced} transportadoras`,
         `${result.productsSynced} produtos`,
-        `${result.paymentTermsSynced} condicoes`
+        `${result.paymentTermsSynced} condicoes`,
+        `${result.categoriesSynced} categorias`
       );
       parts.push(`pedidos: ${result.ordersProcessed} ok, ${result.ordersFailed} falhas`);
       // Numeros do proprio OMIE (paginas e registros): e o que diz se o total
@@ -1459,7 +1460,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         `${syncResult.customersPulled} clientes baixados`,
         `${syncResult.suppliersSynced} transportadoras`,
         `${syncResult.productsSynced} produtos`,
-        `${syncResult.paymentTermsSynced} condicoes`
+        `${syncResult.paymentTermsSynced} condicoes`,
+        `${syncResult.categoriesSynced} categorias`
       );
       parts.push(`pedidos: ${syncResult.ordersProcessed} ok, ${syncResult.ordersFailed} falhas`);
       if (syncResult.errors.length > 0) {
@@ -6695,6 +6697,7 @@ function OmieDirectSyncDialog({
       if (res.productsSynced > 0) parts.push(`${res.productsSynced} produtos`);
       if (res.paymentTermsSynced > 0) parts.push(`${res.paymentTermsSynced} condicoes`);
       if (res.suppliersSynced > 0) parts.push(`${res.suppliersSynced} transportadoras`);
+      if (res.categoriesSynced > 0) parts.push(`${res.categoriesSynced} categorias`);
       if (res.errors.length > 0) parts.push(`${res.errors.length} erro(s)`);
       setResult(parts.join(" | ") || "Nenhum dado sincronizado.");
     } catch (err) {
@@ -9867,25 +9870,42 @@ function parseScaleInteger(value: string, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+interface ProductPriceRow {
+  id: string | null;
+  productId: string;
+  productCode: string | null;
+  productDescription: string;
+  unitPriceCents: number | null;
+  unit: string;
+  omieCategoryCode: string | null;
+}
+
 function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
-  const [items, setItems] = useState<
-    Array<{
-      id: string | null;
-      productId: string;
-      productCode: string | null;
-      productDescription: string;
-      unitPriceCents: number | null;
-      unit: string;
-      omieCategoryCode: string | null;
-    }>
-  >([]);
+  const [items, setItems] = useState<ProductPriceRow[]>([]);
   const [search, setSearch] = useState("");
-  const [selectedProductId, setSelectedProductId] = useState("");
-  const [priceReais, setPriceReais] = useState("");
   const [flash, showFlash] = useFlash();
+  // Edicao do produto: o lapis abre este formulario (como nos demais cadastros).
+  // Antes ele so preenchia um formulario no topo da tela — fora da vista de quem
+  // rolou a lista, parecia que o botao nao fazia nada.
+  const [editing, setEditing] = useState<ProductPriceRow | null>(null);
+  const [editPriceReais, setEditPriceReais] = useState("");
+  const [editCategoryCode, setEditCategoryCode] = useState("");
+  const [editError, setEditError] = useState<string | null>(null);
+  const [savingCategory, setSavingCategory] = useState(false);
   const [pendingDefaultPrice, setPendingDefaultPrice] = useState<
-    | { action: "save"; productId: string; unitPriceCents: number }
-    | { action: "remove"; productId: string; productDescription: string }
+    | {
+        action: "save";
+        productId: string;
+        unitPriceCents: number;
+        /** Categoria a gravar junto (undefined = nao mexer na categoria). */
+        categoryCode?: string | null;
+      }
+    | {
+        action: "remove";
+        productId: string;
+        productDescription: string;
+        categoryCode?: string | null;
+      }
     | null
   >(null);
   const [pricePasswordError, setPricePasswordError] = useState<string | null>(null);
@@ -9918,25 +9938,6 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
     }
   }
 
-  async function handleChangeProductCategory(
-    productId: string,
-    categoryCode: string
-  ): Promise<void> {
-    try {
-      await desktopApi.productOmieCategorySet(productId, categoryCode || null);
-      setItems((prev) =>
-        prev.map((item) =>
-          item.productId === productId
-            ? { ...item, omieCategoryCode: categoryCode || null }
-            : item
-        )
-      );
-      showFlash("success", "Categoria OMIE do produto atualizada.");
-    } catch (err) {
-      showFlash("error", getErrorMessage(err));
-    }
-  }
-
   async function handleChangeDefaultCategory(categoryCode: string): Promise<void> {
     try {
       await desktopApi.omieDefaultCategorySet(categoryCode || null);
@@ -9952,20 +9953,92 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
     return found ? `${found.code} - ${found.description}` : code;
   }
 
-  async function handleSaveDefaultPrice(): Promise<void> {
-    if (!selectedProductId || !priceReais.trim()) return;
-    const unitPriceCents = parseMoneyInputToCents(priceReais);
-    if (unitPriceCents === null) return;
-
-    setPricePasswordError(null);
-    setPendingDefaultPrice({ action: "save", productId: selectedProductId, unitPriceCents });
+  function defaultCategoryLabel(): string {
+    return defaultCategoryCode ? `Padrao (${categoryLabel(defaultCategoryCode)})` : "Padrao (1.01.01)";
   }
 
-  function handleRemoveDefaultPrice(item: {
-    productId: string;
-    productDescription: string;
-    unitPriceCents: number | null;
-  }): void {
+  function openEdit(item: ProductPriceRow): void {
+    setEditing(item);
+    setEditPriceReais(
+      item.unitPriceCents === null ? "" : (item.unitPriceCents / 100).toFixed(2).replace(".", ",")
+    );
+    setEditCategoryCode(item.omieCategoryCode ?? "");
+    setEditError(null);
+  }
+
+  function closeEdit(): void {
+    setEditing(null);
+    setEditError(null);
+  }
+
+  /**
+   * Grava o que mudou no produto. Preco passa pela senha de alteracao (como no
+   * resto do sistema); categoria nao e preco, entao vai direto.
+   */
+  async function handleSubmitEdit(): Promise<void> {
+    if (!editing || savingCategory || savingDefaultPrice) return;
+    const priceText = editPriceReais.trim();
+    const unitPriceCents = priceText ? parseMoneyInputToCents(priceText) : null;
+    if (priceText && (unitPriceCents === null || unitPriceCents <= 0)) {
+      setEditError("Informe um preco valido (ex: 45,50).");
+      return;
+    }
+
+    const categoryCode = editCategoryCode || null;
+    const categoryChanged = categoryCode !== (editing.omieCategoryCode ?? null);
+    const priceChanged = unitPriceCents !== editing.unitPriceCents;
+
+    if (!priceChanged && !categoryChanged) {
+      closeEdit();
+      return;
+    }
+
+    setEditError(null);
+    if (!priceChanged) {
+      setSavingCategory(true);
+      try {
+        await applyProductCategory(editing.productId, categoryCode);
+        showFlash("success", "Categoria OMIE do produto atualizada.");
+        closeEdit();
+      } catch (err) {
+        setEditError(getErrorMessage(err));
+      } finally {
+        setSavingCategory(false);
+      }
+      return;
+    }
+
+    setPricePasswordError(null);
+    setPendingDefaultPrice(
+      unitPriceCents === null
+        ? {
+            action: "remove",
+            productId: editing.productId,
+            productDescription: editing.productDescription,
+            categoryCode: categoryChanged ? categoryCode : undefined
+          }
+        : {
+            action: "save",
+            productId: editing.productId,
+            unitPriceCents,
+            categoryCode: categoryChanged ? categoryCode : undefined
+          }
+    );
+  }
+
+  async function applyProductCategory(
+    productId: string,
+    categoryCode: string | null
+  ): Promise<void> {
+    await desktopApi.productOmieCategorySet(productId, categoryCode);
+    setItems((prev) =>
+      prev.map((item) =>
+        item.productId === productId ? { ...item, omieCategoryCode: categoryCode } : item
+      )
+    );
+  }
+
+  function handleRemoveDefaultPrice(item: ProductPriceRow): void {
     if (item.unitPriceCents === null) return;
     setPricePasswordError(null);
     setPendingDefaultPrice({
@@ -9977,6 +10050,7 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
 
   async function handleConfirmDefaultPrice(password: string): Promise<void> {
     if (!pendingDefaultPrice || savingDefaultPrice) return;
+    const pending = pendingDefaultPrice;
     setSavingDefaultPrice(true);
     try {
       const valid = await desktopApi.verifyPriceChangePassword(password);
@@ -9985,27 +10059,43 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
         return;
       }
 
-      if (pendingDefaultPrice.action === "save") {
+      if (pending.action === "save") {
         await desktopApi.productDefaultPricesUpsert({
-          productId: pendingDefaultPrice.productId,
-          unitPriceCents: pendingDefaultPrice.unitPriceCents,
+          productId: pending.productId,
+          unitPriceCents: pending.unitPriceCents,
           unit: "ton"
         });
-        setSelectedProductId("");
-        setPriceReais("");
-        showFlash("success", "Preco padrao salvo.");
       } else {
-        await desktopApi.productDefaultPricesRemove(pendingDefaultPrice.productId);
-        showFlash("success", "Preco padrao removido.");
+        await desktopApi.productDefaultPricesRemove(pending.productId);
       }
-      await loadPrices();
-      setPendingDefaultPrice(null);
-      setPricePasswordError(null);
     } catch (err) {
       setPricePasswordError(err instanceof Error ? err.message : "Erro ao salvar preco padrao.");
+      return;
     } finally {
       setSavingDefaultPrice(false);
     }
+
+    // Preco gravado: fecha a senha antes de mexer na categoria, para uma recusa
+    // da categoria nao aparecer como erro de senha.
+    setPendingDefaultPrice(null);
+    setPricePasswordError(null);
+    showFlash("success", pending.action === "save" ? "Preco padrao salvo." : "Preco padrao removido.");
+
+    let categoryError: string | null = null;
+    if (pending.categoryCode !== undefined) {
+      try {
+        await applyProductCategory(pending.productId, pending.categoryCode);
+      } catch (err) {
+        categoryError = getErrorMessage(err);
+      }
+    }
+    await loadPrices();
+    if (categoryError) {
+      setEditError(categoryError);
+      showFlash("error", categoryError);
+      return;
+    }
+    closeEdit();
   }
 
   const visibleItems = items.filter((item) => {
@@ -10039,46 +10129,10 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
           marginBottom: "12px"
         }}
       >
-        <Field label="Produto" style={{ flex: 1, minWidth: "260px", marginBottom: 0 }}>
-          <select
-            value={selectedProductId}
-            onChange={(e) => setSelectedProductId(e.target.value)}
-            style={getInputStyle(false)}
-          >
-            <option value="">Selecione...</option>
-            {items.map((item) => (
-              <option key={item.productId} value={item.productId}>
-                {item.productCode ? `${item.productCode} - ` : ""}
-                {item.productDescription}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <div style={{ width: "180px" }}>
-          <MoneyInput
-            label="Preco/ton (R$)"
-            value={priceReais}
-            onChange={setPriceReais}
-            placeholder="150,00"
-            allowZero={false}
-          />
-        </div>
-        <button
-          type="button"
-          onClick={() => void handleSaveDefaultPrice()}
-          disabled={!selectedProductId || !priceReais.trim()}
-          style={{
-            ...styles.primaryButton,
-            padding: "10px 14px",
-            opacity: !selectedProductId || !priceReais.trim() ? 0.55 : 1
-          }}
-        >
-          Salvar preco
-        </button>
         <Field
           label="Categoria OMIE padrao"
-          hint="Usada pelos produtos sem categoria propria."
-          style={{ flex: 1, minWidth: "260px", marginBottom: 0 }}
+          hint="Usada pelos produtos sem categoria propria. O preco e a categoria de cada produto ficam no botao editar da lista."
+          style={{ flex: 1, minWidth: "320px", marginBottom: 0 }}
         >
           <select
             value={defaultCategoryCode}
@@ -10119,9 +10173,7 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
             key: "product",
             header: "Produto",
             width: "minmax(240px, 1fr)",
-            render: (item: (typeof items)[number]) => (
-              <CellPrimary>{item.productDescription}</CellPrimary>
-            )
+            render: (item: ProductPriceRow) => <CellPrimary>{item.productDescription}</CellPrimary>
           },
           {
             key: "code",
@@ -10144,53 +10196,26 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
           {
             key: "category",
             header: "Categoria OMIE",
-            width: "minmax(220px, 1fr)",
-            render: (item) =>
-              categories.length === 0 ? (
-                <CellMuted>
-                  {item.omieCategoryCode ? categoryLabel(item.omieCategoryCode) : "-"}
-                </CellMuted>
-              ) : (
-                <select
-                  value={item.omieCategoryCode ?? ""}
-                  onChange={(e) =>
-                    void handleChangeProductCategory(item.productId, e.target.value)
-                  }
-                  style={{ ...getInputStyle(false), padding: "4px 6px", fontSize: "12px" }}
-                >
-                  <option value="">
-                    {defaultCategoryCode
-                      ? `Padrao (${categoryLabel(defaultCategoryCode)})`
-                      : "Padrao (1.01.01)"}
-                  </option>
-                  {categories.map((category) => (
-                    <option key={category.code} value={category.code}>
-                      {category.code} - {category.description}
-                    </option>
-                  ))}
-                </select>
-              )
+            width: "minmax(200px, 1fr)",
+            render: (item) => (
+              <CellMuted>
+                {item.omieCategoryCode ? categoryLabel(item.omieCategoryCode) : defaultCategoryLabel()}
+              </CellMuted>
+            )
           },
           {
             key: "actions",
             header: "Acoes",
-            width: "210px",
+            width: "150px",
             align: "right",
             render: (item) => (
               <>
                 <EditRowButton
-                  label={item.unitPriceCents === null ? "Definir preco" : "Alterar"}
-                  onClick={() => {
-                    setSelectedProductId(item.productId);
-                    setPriceReais(
-                      item.unitPriceCents === null
-                        ? ""
-                        : (item.unitPriceCents / 100).toFixed(2).replace(".", ",")
-                    );
-                  }}
+                  label={item.unitPriceCents === null ? "Definir preco" : "Editar produto"}
+                  onClick={() => openEdit(item)}
                 />
                 <DeleteRowButton
-                  label="Remover"
+                  label="Remover preco"
                   disabled={item.unitPriceCents === null}
                   onClick={() => handleRemoveDefaultPrice(item)}
                 />
@@ -10200,6 +10225,7 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
         ]}
         rows={visibleItems}
         rowKey={(item) => item.productId}
+        onRowOpen={openEdit}
         emptyTitle={items.length === 0 ? "Nenhum produto sincronizado." : "Nenhum produto encontrado."}
         emptyHint={
           items.length === 0
@@ -10207,6 +10233,55 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
             : "Ajuste o termo de busca para localizar o produto."
         }
       />
+
+      {editing ? (
+        <CrudFormShell
+          title={editing.productDescription}
+          subtitle={`Produto do OMIE${editing.productCode ? ` - codigo ${editing.productCode}` : ""}. Nome e codigo sao mantidos pelo OMIE.`}
+          error={editError}
+          saving={savingCategory || savingDefaultPrice}
+          maxWidth={560}
+          onClose={closeEdit}
+          onSubmit={() => void handleSubmitEdit()}
+        >
+          <FormSection title="Preco">
+            <MoneyInput
+              label="Preco/ton (R$)"
+              value={editPriceReais}
+              onChange={setEditPriceReais}
+              placeholder="150,00"
+              allowZero={false}
+              hint="Vazio remove o preco padrao. Alterar preco pede a senha de 4 digitos."
+            />
+          </FormSection>
+          <FormSection title="Integracao OMIE">
+            <Field
+              label="Categoria OMIE"
+              hint="Categoria do plano gerencial em que a venda deste produto entra."
+            >
+              {categories.length > 0 ? (
+                <select
+                  value={editCategoryCode}
+                  onChange={(e) => setEditCategoryCode(e.target.value)}
+                  style={getInputStyle(false)}
+                >
+                  <option value="">{defaultCategoryLabel()}</option>
+                  {categories.map((category) => (
+                    <option key={category.code} value={category.code}>
+                      {category.code} - {category.description}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <p style={{ ...styles.helperText, margin: 0 }}>
+                  Nenhuma categoria sincronizada. Rode a sincronizacao na tela Cloud para escolher
+                  a categoria; ate la a venda entra em {defaultCategoryLabel().toLowerCase()}.
+                </p>
+              )}
+            </Field>
+          </FormSection>
+        </CrudFormShell>
+      ) : null}
 
       {pendingDefaultPrice ? (
         <PriceChangePasswordDialog

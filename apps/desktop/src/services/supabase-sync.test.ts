@@ -9,6 +9,7 @@ import {
 import { runDesktopMigrations } from "../database/migrate";
 import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite";
 import { ensureInitialDesktopIdentity, type LocalDesktopIdentity } from "./bootstrap";
+import { listOmieCategories } from "./omie-categories";
 import { BLOCKED_NEXT_ATTEMPT_AT, enqueueSyncJob } from "./sync-queue";
 import { createSimulatedWeighingOperation } from "./weighing-operations";
 import {
@@ -21,6 +22,7 @@ import {
   processOmieSyncQueue,
   pushOmieCarriersToCloud,
   pushOmieCustomersToCloud,
+  readOmiePullState,
   readStoredSupabaseConfig,
   syncOmieReferenceDataFromCloud,
   writeStoredSupabaseConfig
@@ -470,9 +472,11 @@ describe("supabase sync", () => {
             customersPage: 1,
             productsPage: 1,
             paymentTermsPage: 1,
+            categoriesPage: 1,
             customersFinished: false,
             productsFinished: false,
-            paymentTermsFinished: false
+            paymentTermsFinished: false,
+            categoriesFinished: false
           }
         }
       });
@@ -853,6 +857,132 @@ describe("supabase sync", () => {
       expect(
         database.prepare("SELECT description FROM products WHERE id = 'omie_456'").pluck().get()
       ).toBeUndefined();
+    } finally {
+      database.close();
+    }
+  });
+
+  // O pull da nuvem e o unico caminho de sincronizacao da pedreira; sem gravar as
+  // categorias aqui, a tela Produtos ficava presa no aviso de "nenhuma categoria
+  // sincronizada" e o pedido saia sempre na categoria fixa.
+  it("mirrors OMIE categories returned by the cloud bridge", () => {
+    const database = createDatabase();
+
+    try {
+      createIdentity(database);
+      const result = applyOmieReferenceData(database, "company-1", {
+        customers: [],
+        products: [],
+        paymentTerms: [],
+        suppliers: [],
+        categories: [
+          { code: "1.01.01", description: "Venda de brita", categoryType: "R", isActive: true },
+          {
+            code: "1.01.02",
+            description: "Venda de aterro",
+            categoryType: "R",
+            parentCode: "1.01",
+            isActive: true
+          },
+          { code: "1.01", description: "Totalizadora", categoryType: "R", isActive: false }
+        ]
+      });
+
+      expect(result.categoriesSynced).toBe(3);
+      expect(listOmieCategories(database, "company-1").map((category) => category.code)).toEqual([
+        "1.01.01",
+        "1.01.02"
+      ]);
+      expect(
+        database
+          .prepare("SELECT parent_code FROM omie_categories WHERE company_id = ? AND code = ?")
+          .pluck()
+          .get("company-1", "1.01.02")
+      ).toBe("1.01");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("updates mirrored OMIE categories in place instead of duplicating them", () => {
+    const database = createDatabase();
+
+    try {
+      createIdentity(database);
+      applyOmieReferenceData(database, "company-1", {
+        categories: [{ code: "1.01.01", description: "Venda de brita", isActive: true }]
+      });
+      applyOmieReferenceData(database, "company-1", {
+        categories: [{ code: "1.01.01", description: "Venda de agregados", isActive: true }]
+      });
+
+      const rows = database
+        .prepare("SELECT description FROM omie_categories WHERE company_id = ? AND code = ?")
+        .all("company-1", "1.01.01") as Array<{ description: string }>;
+      expect(rows).toEqual([{ description: "Venda de agregados" }]);
+    } finally {
+      database.close();
+    }
+  });
+
+  // Desktop novo + edge antigo: sem paginacao de categorias na resposta, o pull
+  // nao pode ficar pedindo eternamente uma pagina que nunca vem.
+  it("treats categories as finished when the cloud response has no category pagination", () => {
+    const database = createDatabase();
+
+    try {
+      createIdentity(database);
+      applyOmieReferenceData(database, "company-1", {
+        customers: [],
+        products: [],
+        paymentTerms: [],
+        suppliers: [],
+        pageSize: 100,
+        pagination: {
+          customersPage: 1,
+          productsPage: 1,
+          paymentTermsPage: 1,
+          customersReturned: 0,
+          productsReturned: 0,
+          paymentTermsReturned: 0
+        }
+      });
+
+      const state = readOmiePullState(database);
+      expect(state.categoriesFinished).toBe(true);
+      expect(state.categoriesPage).toBe(1);
+      expect(state.inProgress).toBe(false);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("keeps pulling while the cloud still has category pages", () => {
+    const database = createDatabase();
+
+    try {
+      createIdentity(database);
+      applyOmieReferenceData(database, "company-1", {
+        categories: [{ code: "1.01.01", description: "Venda de brita" }],
+        pageSize: 1,
+        pagination: {
+          customersPage: 1,
+          productsPage: 1,
+          paymentTermsPage: 1,
+          categoriesPage: 1,
+          customersReturned: 0,
+          productsReturned: 0,
+          paymentTermsReturned: 0,
+          categoriesReturned: 1,
+          categoriesFinished: false,
+          categoriesTotalPages: 2
+        }
+      });
+
+      const state = readOmiePullState(database);
+      expect(state.categoriesFinished).toBe(false);
+      expect(state.categoriesPage).toBe(2);
+      expect(state.inProgress).toBe(true);
     } finally {
       database.close();
     }

@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 import {
@@ -147,6 +149,8 @@ export interface OmieCloudSyncResult {
   productsSynced: number;
   paymentTermsSynced: number;
   suppliersSynced: number;
+  /** Categorias do plano gerencial espelhadas nesta pagina (omie_categories). */
+  categoriesSynced: number;
   errors: string[];
   /**
    * O que o OMIE respondeu nesta pagina de clientes. Sem isto, um pull que traz
@@ -286,27 +290,41 @@ interface OmieReferenceSupplier {
   tagsJson?: Record<string, unknown> | unknown[] | null;
 }
 
+/** Categoria do plano gerencial do OMIE, como o edge devolve no pull. */
+export interface OmieReferenceCategory {
+  code: string;
+  description: string;
+  categoryType?: string | null;
+  parentCode?: string | null;
+  isActive?: boolean;
+}
+
 interface OmieReferenceDataResponse {
   customers?: OmieReferenceCustomer[];
   products?: OmieReferenceProduct[];
   paymentTerms?: OmieReferencePaymentTerm[];
   suppliers?: OmieReferenceSupplier[];
+  categories?: OmieReferenceCategory[];
   pageSize?: number;
   pagination?: {
     customersPage: number;
     productsPage: number;
     paymentTermsPage: number;
     suppliersPage?: number;
+    /** Ausente quando o edge ainda nao envia categorias (versao antiga). */
+    categoriesPage?: number;
     customersReturned: number;
     customersInvalid?: number;
     customersSupplierOnly?: number;
     productsReturned: number;
     paymentTermsReturned: number;
     suppliersReturned?: number;
+    categoriesReturned?: number;
     customersFinished?: boolean;
     productsFinished?: boolean;
     paymentTermsFinished?: boolean;
     suppliersFinished?: boolean;
+    categoriesFinished?: boolean;
     customersTotalPages?: number | null;
     customersTotalRecords?: number | null;
     productsTotalPages?: number | null;
@@ -315,6 +333,8 @@ interface OmieReferenceDataResponse {
     paymentTermsTotalRecords?: number | null;
     suppliersTotalPages?: number | null;
     suppliersTotalRecords?: number | null;
+    categoriesTotalPages?: number | null;
+    categoriesTotalRecords?: number | null;
   };
 }
 
@@ -323,10 +343,12 @@ interface OmiePullState {
   productsPage: number;
   paymentTermsPage: number;
   suppliersPage: number;
+  categoriesPage: number;
   customersFinished: boolean;
   productsFinished: boolean;
   paymentTermsFinished: boolean;
   suppliersFinished: boolean;
+  categoriesFinished: boolean;
   inProgress: boolean;
   lastUpdatedAt: string | null;
 }
@@ -340,10 +362,12 @@ export function readOmiePullState(database: DesktopDatabase): OmiePullState {
     productsPage: 1,
     paymentTermsPage: 1,
     suppliersPage: 1,
+    categoriesPage: 1,
     customersFinished: false,
     productsFinished: false,
     paymentTermsFinished: false,
     suppliersFinished: false,
+    categoriesFinished: false,
     inProgress: false,
     lastUpdatedAt: null,
     ...(stored ?? {})
@@ -352,7 +376,9 @@ export function readOmiePullState(database: DesktopDatabase): OmiePullState {
 
 export function writeOmiePullState(
   database: DesktopDatabase,
-  patch: Partial<OmiePullState> & { markDone?: "customers" | "products" | "paymentTerms" }
+  patch: Partial<OmiePullState> & {
+    markDone?: "customers" | "products" | "paymentTerms" | "categories";
+  }
 ): OmiePullState {
   const current = readOmiePullState(database);
   const next: OmiePullState = {
@@ -374,7 +400,16 @@ export function writeOmiePullState(
     next.paymentTermsPage = 1;
     next.paymentTermsFinished = true;
   }
-  if (next.customersFinished && next.productsFinished && next.paymentTermsFinished) {
+  if (patch.markDone === "categories") {
+    next.categoriesPage = 1;
+    next.categoriesFinished = true;
+  }
+  if (
+    next.customersFinished &&
+    next.productsFinished &&
+    next.paymentTermsFinished &&
+    next.categoriesFinished
+  ) {
     next.inProgress = false;
   }
   writeLocalSetting(database, OMIE_PULL_STATE_KEY, next);
@@ -2361,10 +2396,12 @@ export async function syncOmieReferenceDataFromCloud(
       productsPage: 1,
       paymentTermsPage: 1,
       suppliersPage: 1,
+      categoriesPage: 1,
       customersFinished: false,
       productsFinished: false,
       paymentTermsFinished: false,
       suppliersFinished: false,
+      categoriesFinished: false,
       inProgress: false
     });
   }
@@ -2377,9 +2414,11 @@ export async function syncOmieReferenceDataFromCloud(
       customersPage: state.customersPage,
       productsPage: state.productsPage,
       paymentTermsPage: state.paymentTermsPage,
+      categoriesPage: state.categoriesPage,
       customersFinished: state.customersFinished,
       productsFinished: state.productsFinished,
-      paymentTermsFinished: state.paymentTermsFinished
+      paymentTermsFinished: state.paymentTermsFinished,
+      categoriesFinished: state.categoriesFinished
     }
   };
 
@@ -2459,6 +2498,7 @@ export function applyOmieReferenceData(
   const products = data.products ?? [];
   const suppliers = data.suppliers ?? [];
   const paymentTerms = data.paymentTerms ?? [];
+  const categories = data.categories ?? [];
   const pagination = data.pagination;
 
   // Contadores refletem linhas realmente gravadas no SQLite (nao o tamanho do payload),
@@ -2469,6 +2509,7 @@ export function applyOmieReferenceData(
   // apenas espelhamos os codigos de parcela do OMIE (omie_payment_terms) para vinculo.
   let paymentTermsPersisted = 0;
   let suppliersPersisted = 0;
+  let categoriesPersisted = 0;
   // Uma transacao por bloco, e nao uma para a pagina inteira: uma linha
   // problematica numa tabela nao pode desfazer o que as outras gravaram. Era o
   // que acontecia com o espelho de parcelas — a pagina inteira voltava atras e a
@@ -2500,6 +2541,9 @@ export function applyOmieReferenceData(
     provisionPaymentTermsFromOmieMirror(database, companyId);
     return persisted;
   });
+  categoriesPersisted = applyBlock("categorias", () =>
+    upsertOmieCategories(database, companyId, categories)
+  );
 
   if (pagination) {
     const pageSize = data.pageSize ?? 100;
@@ -2538,12 +2582,26 @@ export function applyOmieReferenceData(
         pagination.suppliersReturned ?? 0,
         pagination.suppliersFinished,
         pagination.suppliersTotalPages ?? pagination.customersTotalPages
-      )
+      ),
+      // Edge antigo (sem a etapa de categorias) nao manda nada aqui: tratar como
+      // concluido evita um pull que nunca termina esperando uma pagina que nao vem.
+      categories:
+        pagination.categoriesPage === undefined
+          ? true
+          : isFinished(
+              pagination.categoriesPage,
+              pagination.categoriesReturned ?? 0,
+              pagination.categoriesFinished,
+              pagination.categoriesTotalPages
+            )
     };
     const current = readOmiePullState(database);
     writeOmiePullState(database, {
       inProgress:
-        !finished.customers || !finished.products || !finished.paymentTerms,
+        !finished.customers ||
+        !finished.products ||
+        !finished.paymentTerms ||
+        !finished.categories,
       customersPage: !finished.customers
         ? Math.max(pagination.customersPage + 1, current.customersPage)
         : 1,
@@ -2556,10 +2614,15 @@ export function applyOmieReferenceData(
       suppliersPage: !finished.customers
         ? Math.max(pagination.customersPage + 1, current.suppliersPage)
         : 1,
+      categoriesPage:
+        !finished.categories && pagination.categoriesPage !== undefined
+          ? Math.max(pagination.categoriesPage + 1, current.categoriesPage)
+          : 1,
       customersFinished: finished.customers,
       productsFinished: finished.products,
       paymentTermsFinished: finished.paymentTerms,
-      suppliersFinished: finished.customers
+      suppliersFinished: finished.customers,
+      categoriesFinished: finished.categories
     });
   } else {
     writeOmiePullState(database, {
@@ -2567,10 +2630,12 @@ export function applyOmieReferenceData(
       productsPage: 1,
       paymentTermsPage: 1,
       suppliersPage: 1,
+      categoriesPage: 1,
       customersFinished: true,
       productsFinished: true,
       paymentTermsFinished: true,
       suppliersFinished: true,
+      categoriesFinished: true,
       inProgress: false
     });
   }
@@ -2581,6 +2646,7 @@ export function applyOmieReferenceData(
     productsSynced,
     paymentTermsSynced: paymentTermsPersisted,
     suppliersSynced: suppliersPersisted,
+    categoriesSynced: categoriesPersisted,
     errors,
     ...(pagination
       ? {
@@ -4343,6 +4409,66 @@ export function upsertOmiePaymentTerms(
       term.isActive === false ? 0 : 1,
       term.visible === false ? 0 : 1
     );
+    persisted++;
+  }
+  return persisted;
+}
+
+/**
+ * Espelha o plano gerencial do OMIE em omie_categories (idempotente por
+ * company_id + code). E o que alimenta a escolha de categoria por produto: sem
+ * esta gravacao a tela Produtos so mostrava o aviso de "nenhuma categoria
+ * sincronizada" e todo pedido saia na categoria fixa "1.01.01".
+ */
+export function upsertOmieCategories(
+  database: DesktopDatabase,
+  companyId: string,
+  categories: OmieReferenceCategory[]
+): number {
+  const findByCode = database.prepare(
+    "SELECT id FROM omie_categories WHERE company_id = ? AND code = ? LIMIT 1"
+  );
+  const update = database.prepare(
+    `UPDATE omie_categories
+        SET description = ?, category_type = ?, parent_code = ?, is_active = ?,
+            updated_from_omie_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      WHERE id = ?`
+  );
+  const insert = database.prepare(
+    `INSERT INTO omie_categories
+       (id, company_id, code, description, category_type, parent_code, is_active,
+        updated_from_omie_at, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+             strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`
+  );
+
+  let persisted = 0;
+  for (const category of categories) {
+    const code = (category.code ?? "").trim();
+    const description = (category.description ?? "").trim();
+    if (!code || !description) continue;
+    const isActive = category.isActive === false ? 0 : 1;
+    const existing = findByCode.get(companyId, code) as { id: string } | undefined;
+    if (existing) {
+      update.run(
+        description,
+        category.categoryType?.trim() || null,
+        category.parentCode?.trim() || null,
+        isActive,
+        existing.id
+      );
+    } else {
+      insert.run(
+        randomUUID(),
+        companyId,
+        code,
+        description,
+        category.categoryType?.trim() || null,
+        category.parentCode?.trim() || null,
+        isActive
+      );
+    }
     persisted++;
   }
   return persisted;

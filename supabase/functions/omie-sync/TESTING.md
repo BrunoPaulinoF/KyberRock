@@ -18,6 +18,7 @@ Use `--allow-env` porque o handler le `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KE
 - Resiliencia da fila OMIE com HTTP 429, `retry-after`, backoff exponencial e repeticao exata do payload original.
 - Push de clientes e transportadoras a partir de uma fila local simulada com `needs_push = 1`, incluindo limpeza do flag apos sucesso mockado.
 - Pull paginado de clientes OMIE, com mapeamento de registros marcados com `transportadora` para a tabela local simulada de `carriers`.
+- Pull das categorias do plano gerencial (`ListarCategorias`), incluindo o descarte de categorias totalizadoras (`nao_exibir`) e o retomar por `resume` sem chamadas repetidas ao OMIE.
 
 ## CI/CD
 
