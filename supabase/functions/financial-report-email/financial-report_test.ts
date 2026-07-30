@@ -6,10 +6,12 @@ import {
   buildFinancialWhatsappCaption,
   buildStatementRequestParam,
   buildStatementTable,
+  chunk,
   dispatchFailureReason,
   formatCentsBRL,
   formatDateBr,
   hasActiveChannel,
+  pickSupplierName,
   STATEMENT_LIST_KEYS
 } from "./financial-report";
 
@@ -235,5 +237,32 @@ describe("buildStatementRequestParam", () => {
 describe("STATEMENT_LIST_KEYS", () => {
   it("procura primeiro o nome documentado do array de movimentos", () => {
     expect(STATEMENT_LIST_KEYS[0]).toBe("listaMovimentos");
+  });
+});
+
+describe("chunk", () => {
+  it("quebra em blocos do tamanho pedido, com resto no ultimo", () => {
+    expect(chunk([1, 2, 3, 4, 5], 2)).toEqual([[1, 2], [3, 4], [5]]);
+    expect(chunk([1, 2], 5)).toEqual([[1, 2]]);
+    expect(chunk([], 3)).toEqual([]);
+  });
+
+  it("nao entra em laco infinito com tamanho invalido", () => {
+    expect(chunk([1, 2], 0)).toEqual([[1, 2]]);
+    expect(chunk([], 0)).toEqual([]);
+  });
+});
+
+describe("pickSupplierName", () => {
+  it("prefere razao social e cai para nome fantasia", () => {
+    expect(pickSupplierName({ legal_name: "PEDREIRA X LTDA", trade_name: "Pedreira X" })).toBe(
+      "PEDREIRA X LTDA"
+    );
+    expect(pickSupplierName({ legal_name: "  ", trade_name: "Pedreira X" })).toBe("Pedreira X");
+  });
+
+  it("devolve nulo sem nome, para o relatorio usar o fallback do codigo", () => {
+    expect(pickSupplierName({ legal_name: null, trade_name: "" })).toBeNull();
+    expect(pickSupplierName({})).toBeNull();
   });
 });

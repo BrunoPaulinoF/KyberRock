@@ -17,10 +17,13 @@ import {
   buildFinancialWhatsappCaption,
   buildStatementRequestParam,
   buildStatementTable,
+  chunk,
   dispatchFailureReason,
   formatCentsBRL,
   hasActiveChannel,
+  pickSupplierName,
   STATEMENT_LIST_KEYS,
+  SUPPLIER_LOOKUP_BLOCK,
   type AccountPayableItem,
   type AccountPayableStatus,
   type StatementEntryItem
@@ -52,7 +55,6 @@ const OMIE_BASE_URL = "https://app.omie.com.br/api/v1";
 const OMIE_REQUEST_DELAY_MS = 3_000;
 const OMIE_REDUNDANT_WAIT_MS = 65_000;
 const OMIE_MAX_RETRIES = 1;
-const MAX_SUPPLIER_LOOKUPS = 60;
 
 interface OmieCredentials {
   appKey: string;
@@ -238,32 +240,41 @@ function computeStatus(input: {
   return "open";
 }
 
+/**
+ * Nome dos fornecedores pelo espelho do cadastro OMIE que ja vive no Postgres,
+ * nao pela API do OMIE.
+ *
+ * Antes era um ConsultarCliente por fornecedor, com 3s de espera entre chamadas
+ * e teto de 60 — ou seja, ate 180s so para resolver nomes, mais que os 150s de
+ * limite da Edge Function. O relatorio estourava o tempo e nao saia. A tabela
+ * `customers` guarda o cadastro OMIE espelhado (clientes e fornecedores) com o
+ * `omie_customer_id`, entao uma consulta em bloco resolve tudo em milissegundos.
+ * Fornecedor ausente do espelho cai no fallback "Fornecedor #codigo", visivel no
+ * proprio PDF.
+ */
 async function resolveSupplierNames(
-  credentials: OmieCredentials,
+  supabase: ReturnType<typeof createClient>,
+  companyId: string,
   supplierCodes: number[]
-): Promise<{ names: Map<number, string>; capped: boolean }> {
-  const unique = Array.from(new Set(supplierCodes));
-  const capped = unique.length > MAX_SUPPLIER_LOOKUPS;
-  const toResolve = unique.slice(0, MAX_SUPPLIER_LOOKUPS);
+): Promise<Map<number, string>> {
   const names = new Map<number, string>();
+  const unique = Array.from(new Set(supplierCodes));
+  if (unique.length === 0) return names;
 
-  for (const code of toResolve) {
-    await sleep(OMIE_REQUEST_DELAY_MS);
-    try {
-      const response = await callOmie<Record<string, unknown>, Record<string, unknown>>(
-        credentials,
-        "/geral/clientes/",
-        "ConsultarCliente",
-        { codigo_cliente_omie: code }
-      );
-      const name = pickFirst(response.razao_social as string, response.razaoSocial as string);
-      if (name) names.set(code, name);
-    } catch {
-      // Sem nome resolvido, o relatorio cai no fallback "Fornecedor #codigo".
+  for (const block of chunk(unique, SUPPLIER_LOOKUP_BLOCK)) {
+    const { data } = await supabase
+      .from("customers")
+      .select("omie_customer_id, legal_name, trade_name")
+      .eq("company_id", companyId)
+      .in("omie_customer_id", block);
+    for (const row of data ?? []) {
+      const code = Number(row.omie_customer_id);
+      const name = pickSupplierName(row as Record<string, unknown>);
+      if (Number.isFinite(code) && name) names.set(code, name);
     }
   }
 
-  return { names, capped };
+  return names;
 }
 
 // --- Extrato de conta corrente (ListarContasCorrentes + ListarExtrato) -----
@@ -755,8 +766,9 @@ async function dispatchForCompany(params: {
       payableWindowEnd
     );
     const pendingPayables = allPayables.filter((item) => item.status !== "paid");
-    const { names: supplierNames } = await resolveSupplierNames(
-      params.credentials,
+    const supplierNames = await resolveSupplierNames(
+      supabase,
+      company.id,
       pendingPayables
         .map((item) => item.supplierOmieCode)
         .filter((code): code is number => code !== null)
