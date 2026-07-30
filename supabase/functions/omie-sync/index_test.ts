@@ -161,6 +161,15 @@ function defaultOmieListResponse(input: OmieRequestInput<unknown>): unknown {
     };
   }
 
+  if (input.call === "ListarCategorias") {
+    return {
+      pagina: param.pagina,
+      total_de_paginas: 0,
+      total_de_registros: 0,
+      categoria_cadastro: []
+    };
+  }
+
   return null;
 }
 
@@ -449,6 +458,137 @@ Deno.test("fluxo pull processa paginas e mapeia clientes OMIE com tag transporta
     city: "Campinas",
     state: "SP"
   });
+});
+
+// O desktop so alcanca o OMIE por aqui: sem as categorias no pull, o espelho
+// local fica vazio e todo pedido de venda cai na categoria fixa "1.01.01".
+Deno.test("fluxo pull devolve as categorias do plano gerencial do OMIE", async () => {
+  const deviceToken = "token-pull-categorias";
+  const supabase = createSupabaseDependencies({
+    devices: {
+      "device-categorias": {
+        id: "device-categorias",
+        company_id: "company-categorias",
+        unit_id: "unit-categorias",
+        token_hash: await sha256Hex(deviceToken),
+        is_active: true
+      }
+    },
+    companies: {
+      "company-categorias": {
+        id: "company-categorias",
+        is_active: true,
+        omie_app_key: "key-categorias",
+        omie_app_secret: "secret-categorias"
+      }
+    }
+  });
+  const omieQueue = createOmieQueueStub((input) => {
+    if (input.call !== "ListarCategorias") return defaultOmieListResponse(input);
+    return {
+      pagina: Number(getParam(input).pagina),
+      total_de_paginas: 1,
+      total_de_registros: 3,
+      categoria_cadastro: [
+        { codigo: "1.01.01", descricao: "Venda de brita", tipo_categoria: "R" },
+        {
+          codigo: "1.01.02",
+          descricao: "Venda de aterro",
+          tipo_categoria: "R",
+          categoria_superior: "1.01"
+        },
+        // Totalizadora: o OMIE recusa o pedido com um codigo nao lancavel.
+        { codigo: "1.01", descricao: "Receitas de vendas", nao_exibir: "S" }
+      ]
+    };
+  });
+
+  const body = await postOmieSync(
+    {
+      deviceId: "device-categorias",
+      deviceToken,
+      action: "pull_reference_data",
+      resume: { customersFinished: true, productsFinished: true, paymentTermsFinished: true }
+    },
+    { createClient: supabase.createClient, omieQueue }
+  );
+
+  assertEquals(body.categories, [
+    {
+      code: "1.01.01",
+      description: "Venda de brita",
+      categoryType: "R",
+      parentCode: null,
+      isActive: true
+    },
+    {
+      code: "1.01.02",
+      description: "Venda de aterro",
+      categoryType: "R",
+      parentCode: "1.01",
+      isActive: true
+    },
+    {
+      code: "1.01",
+      description: "Receitas de vendas",
+      categoryType: null,
+      parentCode: null,
+      isActive: false
+    }
+  ]);
+  assertObjectMatch(body.pagination as Record<string, unknown>, {
+    categoriesPage: 1,
+    categoriesReturned: 3,
+    categoriesFinished: true,
+    categoriesTotalPages: 1
+  });
+});
+
+// Pagina ja concluida nao pode custar uma chamada nova ao OMIE a cada iteracao
+// do loop de pull (a API tem limite de consumo por minuto).
+Deno.test("fluxo pull nao chama ListarCategorias quando o resume ja marcou concluido", async () => {
+  const deviceToken = "token-pull-categorias-fim";
+  const supabase = createSupabaseDependencies({
+    devices: {
+      "device-categorias-fim": {
+        id: "device-categorias-fim",
+        company_id: "company-categorias-fim",
+        unit_id: "unit-categorias-fim",
+        token_hash: await sha256Hex(deviceToken),
+        is_active: true
+      }
+    },
+    companies: {
+      "company-categorias-fim": {
+        id: "company-categorias-fim",
+        is_active: true,
+        omie_app_key: "key-categorias-fim",
+        omie_app_secret: "secret-categorias-fim"
+      }
+    }
+  });
+  const omieQueue = createOmieQueueStub((input) => defaultOmieListResponse(input));
+
+  const body = await postOmieSync(
+    {
+      deviceId: "device-categorias-fim",
+      deviceToken,
+      action: "pull_reference_data",
+      resume: {
+        customersFinished: true,
+        productsFinished: true,
+        paymentTermsFinished: true,
+        categoriesFinished: true
+      }
+    },
+    { createClient: supabase.createClient, omieQueue }
+  );
+
+  assertEquals(body.categories, []);
+  assertEquals(
+    omieQueue.requests.filter((request) => request.call === "ListarCategorias").length,
+    0
+  );
 });
 
 function orderQueueStub() {

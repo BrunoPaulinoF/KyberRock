@@ -3042,6 +3042,8 @@ export class DesktopRuntime {
     productsSynced: number;
     paymentTermsSynced: number;
     suppliersSynced: number;
+    /** Categorias do plano gerencial espelhadas (usadas na categoria por produto). */
+    categoriesSynced: number;
     ordersProcessed: number;
     ordersFailed: number;
     customersPushFailed: number;
@@ -3056,6 +3058,7 @@ export class DesktopRuntime {
         productsSynced: 0,
         paymentTermsSynced: 0,
         suppliersSynced: 0,
+        categoriesSynced: 0,
         ordersProcessed: 0,
         ordersFailed: 0,
         customersPushFailed: 0,
@@ -3074,6 +3077,7 @@ export class DesktopRuntime {
           productsSynced: 0,
           paymentTermsSynced: 0,
           suppliersSynced: 0,
+          categoriesSynced: 0,
           ordersProcessed: 0,
           ordersFailed: 0,
           customersPushFailed: 0,
@@ -3098,6 +3102,7 @@ export class DesktopRuntime {
         productsSynced: loop.productsSynced,
         paymentTermsSynced: loop.paymentTermsSynced,
         suppliersSynced: loop.suppliersSynced,
+        categoriesSynced: loop.categoriesSynced,
         ordersProcessed: queue.processed,
         ordersFailed: queue.failed,
         customersPushFailed: customerPush.failed + carrierPush.failed,
@@ -3118,6 +3123,7 @@ export class DesktopRuntime {
     productsSynced: number;
     paymentTermsSynced: number;
     suppliersSynced: number;
+    categoriesSynced: number;
     errors: string[];
   }> {
     this.assertDesktopAccess();
@@ -3133,6 +3139,7 @@ export class DesktopRuntime {
       productsSynced: result.productsSynced,
       paymentTermsSynced: result.paymentTermsSynced,
       suppliersSynced: result.suppliersSynced,
+      categoriesSynced: result.categoriesSynced,
       errors: result.errors
     };
   }
@@ -3171,6 +3178,7 @@ export class DesktopRuntime {
     productsSynced: number;
     paymentTermsSynced: number;
     suppliersSynced: number;
+    categoriesSynced: number;
     iterations: number;
     finished: boolean;
     errors: string[];
@@ -3184,6 +3192,7 @@ export class DesktopRuntime {
     let productsSynced = 0;
     let paymentTermsSynced = 0;
     let suppliersSynced = 0;
+    let categoriesSynced = 0;
     const errors: string[] = [];
     let iterations = 0;
     // Diagnostico da varredura de clientes: sem isto, um pull que traz menos do
@@ -3210,10 +3219,12 @@ export class DesktopRuntime {
         productsPage: 1,
         paymentTermsPage: 1,
         suppliersPage: 1,
+        categoriesPage: 1,
         customersFinished: false,
         productsFinished: false,
         paymentTermsFinished: false,
         suppliersFinished: false,
+        categoriesFinished: false,
         inProgress: true
       });
     }
@@ -3244,6 +3255,7 @@ export class DesktopRuntime {
             productsSynced,
             paymentTermsSynced,
             suppliersSynced,
+            categoriesSynced,
             iterations,
             finished: false,
             errors,
@@ -3259,6 +3271,7 @@ export class DesktopRuntime {
       productsSynced += result.productsSynced;
       paymentTermsSynced += result.paymentTermsSynced;
       suppliersSynced += result.suppliersSynced;
+      categoriesSynced += result.categoriesSynced;
       errors.push(...result.errors);
       if (result.customersPage) {
         const page = result.customersPage;
@@ -3290,14 +3303,17 @@ export class DesktopRuntime {
       };
       options.onProgress?.(progress);
 
-      const totalBefore = before.customersPage + before.productsPage + before.paymentTermsPage;
-      const totalAfter = after.customersPage + after.productsPage + after.paymentTermsPage;
+      const totalBefore =
+        before.customersPage + before.productsPage + before.paymentTermsPage + before.categoriesPage;
+      const totalAfter =
+        after.customersPage + after.productsPage + after.paymentTermsPage + after.categoriesPage;
       const noProgress =
         totalAfter <= totalBefore &&
         result.customersPulled +
           result.productsSynced +
           result.paymentTermsSynced +
-          result.suppliersSynced ===
+          result.suppliersSynced +
+          result.categoriesSynced ===
           0;
       if (noProgress || !after.inProgress) {
         writeOmiePullState(this.database, { inProgress: false });
@@ -3307,6 +3323,7 @@ export class DesktopRuntime {
           productsSynced,
           paymentTermsSynced,
           suppliersSynced,
+          categoriesSynced,
           iterations,
           finished: !after.inProgress,
           errors,
@@ -3325,6 +3342,7 @@ export class DesktopRuntime {
       productsSynced,
       paymentTermsSynced,
       suppliersSynced,
+      categoriesSynced,
       iterations,
       finished: false,
       errors,

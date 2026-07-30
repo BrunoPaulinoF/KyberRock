@@ -36,6 +36,8 @@ export interface OmieSyncResult {
   productsSynced: number;
   paymentTermsSynced: number;
   suppliersSynced: number;
+  /** Categorias do plano gerencial espelhadas em omie_categories. */
+  categoriesSynced: number;
   errors: string[];
 }
 
@@ -85,6 +87,7 @@ export class OmieSyncService {
       productsSynced: 0,
       paymentTermsSynced: 0,
       suppliersSynced: 0,
+      categoriesSynced: 0,
       errors: []
     };
 
@@ -104,6 +107,15 @@ export class OmieSyncService {
 
     // Condicoes de pagamento sao cadastradas localmente e nao vem mais do OMIE.
     result.paymentTermsSynced = await this.syncPaymentTerms();
+
+    // Categorias alimentam a escolha de categoria OMIE por produto; falhar aqui
+    // nao pode derrubar o cadastro que a balanca precisa para operar.
+    try {
+      const categories = await this.syncCategories(companyId);
+      result.categoriesSynced = categories.created + categories.updated;
+    } catch (err) {
+      result.errors.push(`Categorias: ${(err as Error).message}`);
+    }
 
     return result;
   }
