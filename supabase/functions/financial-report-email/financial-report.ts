@@ -132,6 +132,36 @@ export function buildStatementTable(entries: StatementEntryItem[]): PdfTableData
   };
 }
 
+/**
+ * Corpo da chamada ListarExtrato (/financas/extrato/).
+ *
+ * O tipo eccListarExtratoRequest aceita apenas conta e periodo — nao tem
+ * paginacao. Mandar `pagina`/`registros_por_pagina` fazia a OMIE recusar a
+ * chamada inteira com "Tag [PAGINA] nao faz parte da estrutura do tipo complexo
+ * [eccListarExtratoRequest]", derrubando o relatorio financeiro todo dia. As
+ * datas vao no formato dd/mm/aaaa da OMIE.
+ */
+export function buildStatementRequestParam(input: {
+  accountCode: number;
+  startDateBr: string;
+  endDateBr: string;
+}): Record<string, unknown> {
+  return {
+    nCodCC: input.accountCode,
+    dPeriodoInicial: input.startDateBr,
+    dPeriodoFinal: input.endDateBr
+  };
+}
+
+/** Nomes ja vistos para o array de movimentos do extrato; `listaMovimentos` e o documentado. */
+export const STATEMENT_LIST_KEYS = [
+  "listaMovimentos",
+  "listaMovimento",
+  "lista_movimento",
+  "movimentos",
+  "extrato"
+];
+
 /** Destinatario que tem por onde receber: e-mail ligado com e-mail, ou WhatsApp ligado com numero. */
 export function hasActiveChannel(recipient: {
   email: string | null;
