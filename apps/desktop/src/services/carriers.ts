@@ -36,11 +36,58 @@ export interface UpdateCarrierInput {
   isActive?: boolean;
 }
 
+function onlyDigits(value: string | null | undefined): string {
+  return (value ?? "").replace(/\D/g, "");
+}
+
+/**
+ * Transportadora ativa com o mesmo CNPJ/CPF na empresa, ignorando mascara. E o mesmo
+ * criterio que o OMIE usa para identificar o cadastro (find-or-create por CNPJ/CPF),
+ * entao duas linhas com o mesmo documento virariam o mesmo cadastro la.
+ */
+export function findCarrierByDocument(
+  database: DesktopDatabase,
+  companyId: string,
+  document: string,
+  excludeId?: string
+): { id: string; name: string } | null {
+  const digits = onlyDigits(document);
+  if (!digits) return null;
+  const row = database
+    .prepare(
+      `SELECT id, name FROM carriers
+       WHERE company_id = ?
+         AND deleted_at IS NULL
+         AND replace(replace(replace(replace(COALESCE(document, ''), '.', ''), '-', ''), '/', ''), ' ', '') = ?
+         AND (? IS NULL OR id <> ?)
+       LIMIT 1`
+    )
+    .get(companyId, digits, excludeId ?? null, excludeId ?? null) as
+    | { id: string; name: string }
+    | undefined;
+  return row ?? null;
+}
+
+function assertCarrierDocumentIsFree(
+  database: DesktopDatabase,
+  companyId: string,
+  document: string | null | undefined,
+  excludeId?: string
+): void {
+  if (!document?.trim()) return;
+  const existing = findCarrierByDocument(database, companyId, document, excludeId);
+  if (existing) {
+    throw new Error(`Ja existe uma transportadora com este CNPJ/CPF: ${existing.name}.`);
+  }
+}
+
 export function createCarrier(
   database: DesktopDatabase,
   input: CreateCarrierInput,
   now: Date = new Date()
 ): unknown {
+  assertCarrierDocumentIsFree(database, input.companyId, input.document);
+
   const id = randomUUID();
   const nowIso = now.toISOString();
 
@@ -86,6 +133,15 @@ export function updateCarrier(
     .get(id) as Record<string, unknown> | undefined;
 
   if (!existing) throw new Error("Transportadora nao encontrada.");
+
+  // So checa quando o documento MUDA, para nao travar a edicao de um cadastro que
+  // ja tem duplicata (ver mesma regra em updateCustomer).
+  if (
+    input.document !== undefined &&
+    onlyDigits(input.document) !== onlyDigits(existing.document as string | null)
+  ) {
+    assertCarrierDocumentIsFree(database, String(existing.company_id), input.document, id);
+  }
 
   const nowIso = now.toISOString();
   const sets: string[] = [];
