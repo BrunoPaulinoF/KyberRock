@@ -984,6 +984,69 @@ describe("supabase sync", () => {
     }
   });
 
+  it("forwards the order category and the carrier cadastro to the bridge", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertWeighingOperation(database);
+      database
+        .prepare(
+          `INSERT INTO carriers (id, company_id, name, document, source, created_at, updated_at)
+           VALUES ('carrier-1', 'company-1', 'Transportadora Nova', '11222333000144', 'local', datetime('now'), datetime('now'))`
+        )
+        .run();
+      enqueueSyncJob(database, {
+        id: "omie-job-1",
+        target: "omie",
+        action: "create_order",
+        entityType: "weighing_operation",
+        entityId: "operation-1",
+        idempotencyKey: "kyberrock:unit-1:operation-1:create_sales_order",
+        payload: {
+          operationId: "operation-1",
+          operationType: "invoice",
+          customerOmieId: 123,
+          productOmieId: 456,
+          quantity: 10,
+          unitPrice: 25,
+          issueDate: "2026-06-12",
+          omieCategoryCode: "1.01.02",
+          localCarrierId: "carrier-1",
+          carrier: { localCarrierId: "carrier-1", name: "Transportadora Nova", cnpjCpf: "11222333000144" }
+        }
+      });
+      invokeMock.mockResolvedValueOnce({
+        error: null,
+        data: { orderId: 987, omieCarrierId: 555 }
+      });
+
+      await processOmieSyncQueue(database, identity);
+
+      // A ponte monta o corpo campo a campo: um campo novo que nao entre aqui e
+      // silenciosamente descartado e o edge cai no comportamento antigo.
+      expect(invokeMock).toHaveBeenCalledWith("omie-sync", {
+        body: expect.objectContaining({
+          payload: expect.objectContaining({
+            omieCategoryCode: "1.01.02",
+            carrier: expect.objectContaining({ cnpjCpf: "11222333000144" })
+          })
+        })
+      });
+      // Transportadora criada no OMIE durante o envio: o codigo devolvido fica gravado
+      // para os proximos pedidos ja irem vinculados.
+      expect(
+        database
+          .prepare("SELECT omie_customer_id FROM carriers WHERE id = 'carrier-1'")
+          .pluck()
+          .get()
+      ).toBe(555);
+    } finally {
+      database.close();
+    }
+  });
+
   it("limits OMIE queue batches to avoid long request bursts", async () => {
     const database = createDatabase();
 

@@ -260,12 +260,21 @@ type CreateOrderPayload = {
    * para o desktop vincular o cliente localmente.
    */
   customer?: PushCustomerPayload;
+  /**
+   * Cadastro da transportadora para criar/localizar no OMIE ANTES de montar o pedido,
+   * quando ela ainda nao tem codigo la (transport.carrierOmieId ausente). O codigo
+   * resultante vai em `codigo_transportadora` do bloco frete e volta como omieCarrierId
+   * para o desktop vincular a transportadora localmente. Falhar aqui NAO derruba o
+   * pedido: ele segue sem transportadora, como antes.
+   */
+  carrier?: PushCarrierPayload;
   idempotencyKey: string;
 };
 
 type CreateAndBillOrderResult = {
   orderId: number;
   omieCustomerId: number;
+  omieCarrierId: number | null;
   billed: boolean;
   billingStatusCode: string | null;
   billingStatusMessage: string | null;
@@ -468,8 +477,11 @@ export async function handleOmieSyncRequest(
 
     if (action === "create_order") {
       const payload = body.payload as CreateOrderPayload;
-      const { orderId, omieCustomerId } = await createOmieOrder(credentials, payload);
-      return jsonResponse({ ok: true, orderId, omieCustomerId });
+      const { orderId, omieCustomerId, omieCarrierId } = await createOmieOrder(
+        credentials,
+        payload
+      );
+      return jsonResponse({ ok: true, orderId, omieCustomerId, omieCarrierId });
     }
 
     if (action === "create_and_bill_order") {
@@ -1678,13 +1690,41 @@ async function resolveOrderCustomerOmieId(
   throw new Error("Cliente sem codigo OMIE e sem dados de cadastro para criar no OMIE.");
 }
 
+/**
+ * Codigo OMIE da transportadora do pedido. Ja vinculada -> usa direto. Sem codigo mas
+ * com cadastro no payload -> cadastra no OMIE na hora (find-or-create por CNPJ/CPF, com
+ * a tag "transportadora") e devolve o codigo.
+ *
+ * Nunca lanca: a transportadora e um dado de transporte, nao um requisito do pedido.
+ * Se o cadastro falhar (documento recusado, indisponibilidade), o pedido segue sem ela
+ * — exatamente o comportamento anterior — em vez de o fechamento inteiro falhar.
+ */
+async function resolveOrderCarrierOmieId(
+  credentials: OmieCredentials,
+  payload: CreateOrderPayload
+): Promise<number | null> {
+  const linked = payload.transport?.carrierOmieId;
+  if (typeof linked === "number" && linked > 0) return linked;
+  if (!payload.carrier) return null;
+  try {
+    const carrierOmieId = await pushCarrierToOmie(credentials, payload.carrier);
+    return carrierOmieId > 0 ? carrierOmieId : null;
+  } catch (error) {
+    console.error("Falha ao cadastrar a transportadora no OMIE; pedido segue sem ela", error);
+    return null;
+  }
+}
+
 async function createOmieOrder(
   credentials: OmieCredentials,
   payload: CreateOrderPayload
-): Promise<{ orderId: number; omieCustomerId: number }> {
+): Promise<{ orderId: number; omieCustomerId: number; omieCarrierId: number | null }> {
   const integrationCode = toOmieIntegrationCode(payload.idempotencyKey);
   // Garante o cliente no OMIE (cadastra na hora quando ainda nao existe) antes do pedido.
   const customerOmieId = await resolveOrderCustomerOmieId(credentials, payload);
+  // Mesma ideia para a transportadora: sobe o cadastro antes de montar o pedido para o
+  // primeiro fechamento com uma transportadora nova ja sair com ela preenchida.
+  const carrierOmieId = await resolveOrderCarrierOmieId(credentials, payload);
   // Conta corrente escolhida na operacao (meio de pagamento -> conta vinculada).
   // Prioridade: (1) nCodCC vindo do desktop; (2) resolucao pelo nome da conta
   // vinculada direto no OMIE (cobre o caso do omie_code local nulo/desatualizado,
@@ -1740,11 +1780,10 @@ async function createOmieOrder(
             }
           }
         ],
-        frete: buildOmieFreight(
-          payload.freightTotalCents,
-          payload.freightModalidade,
-          payload.transport
-        ),
+        frete: buildOmieFreight(payload.freightTotalCents, payload.freightModalidade, {
+          ...(payload.transport ?? {}),
+          carrierOmieId
+        }),
         informacoes_adicionais: {
           codigo_categoria: resolveCategoryCode(payload.omieCategoryCode),
           ...(accountCode !== null ? { codigo_conta_corrente: accountCode } : {}),
@@ -1775,7 +1814,7 @@ async function createOmieOrder(
     if (!orderId) {
       throw new Error("OMIE nao retornou codigoPedido");
     }
-    return { orderId, omieCustomerId: customerOmieId };
+    return { orderId, omieCustomerId: customerOmieId, omieCarrierId: carrierOmieId };
   }
 
   const serviceCodes = await resolveOmieServiceCodes(credentials);
@@ -1834,7 +1873,7 @@ async function createOmieOrder(
   if (!orderId) {
     throw new Error("OMIE nao retornou codigoOS");
   }
-  return { orderId, omieCustomerId: customerOmieId };
+  return { orderId, omieCustomerId: customerOmieId, omieCarrierId: carrierOmieId };
 }
 
 async function consultServiceOrderByIntegrationCode(
@@ -2170,7 +2209,7 @@ async function createAndBillOmieOrder(
     throw new Error("Faturamento automatico disponivel apenas para pedido de venda fiscal");
   }
 
-  const { orderId, omieCustomerId } = await createOmieOrder(credentials, payload);
+  const { orderId, omieCustomerId, omieCarrierId } = await createOmieOrder(credentials, payload);
   const billing = await billSalesOrder(
     credentials,
     orderId,
@@ -2186,6 +2225,7 @@ async function createAndBillOmieOrder(
   return {
     orderId,
     omieCustomerId,
+    omieCarrierId,
     billed: true,
     billingStatusCode: billing.statusCode,
     billingStatusMessage: billing.statusMessage,

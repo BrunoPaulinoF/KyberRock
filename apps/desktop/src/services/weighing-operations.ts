@@ -1008,10 +1008,34 @@ export interface OmieOrderCustomerCadastro {
 }
 
 /**
+ * Cadastro da transportadora enviado junto com o pedido quando ela ainda nao existe
+ * no OMIE. O edge cria/localiza (find-or-create por CNPJ/CPF, com a tag
+ * "transportadora") ANTES de montar o pedido e usa o codigo resultante em
+ * `codigo_transportadora` — assim o primeiro fechamento com uma transportadora nova
+ * ja sai com ela preenchida, sem depender do proximo sync de cadastros.
+ */
+export interface OmieOrderCarrierCadastro {
+  localCarrierId: string;
+  name: string;
+  /** Obrigatorio no OMIE: sem CNPJ/CPF nao da para cadastrar, entao nem enviamos. */
+  cnpjCpf: string;
+  email?: string;
+  telefone1Ddd?: string;
+  telefone1Numero?: string;
+  zipcode?: string;
+  addressStreet?: string;
+  addressNumber?: string;
+  neighborhood?: string;
+  city?: string;
+  state?: string;
+}
+
+/**
  * Dados de transporte da operacao enviados ao OMIE no bloco `frete` do pedido de
  * venda (placa, transportadora, pesos da carga) e nos dados adicionais da NF
- * (motorista). A transportadora vem do vinculo veiculo <-> transportadora
- * (vehicle_carriers) e so e enviada quando ja tem codigo OMIE.
+ * (motorista). A transportadora e a escolhida na operacao (senao a vinculada ao
+ * veiculo) e so vai como codigo quando ja existe no OMIE; quando nao existe, o
+ * cadastro segue em `carrier` para o edge cria-la antes do pedido.
  */
 export interface OmieOrderTransport {
   plate: string | null;
@@ -1061,6 +1085,10 @@ export interface OmieBillingJobPayload {
   omieCategoryCode: string;
   /** Placa, motorista, transportadora e pesos da carga para o frete do pedido. */
   transport: OmieOrderTransport | null;
+  /** Id local da transportadora, para gravar o codigo OMIE devolvido pelo envio. */
+  localCarrierId: string | null;
+  /** Cadastro da transportadora a criar no OMIE antes do pedido (null = ja existe la). */
+  carrier: OmieOrderCarrierCadastro | null;
 }
 
 export interface BuiltOmieBillingJob {
@@ -1249,7 +1277,14 @@ export function buildOmieBillingJob(
   // ativo) — antes so o vinculo do veiculo era consultado, entao a transportadora
   // que o operador selecionou na entrada nao chegava ao pedido e o campo
   // "Transportadora" ficava vazio no OMIE.
-  const carrierOmieId = resolveOrderCarrierOmieId(database, row.carrier_id, row.vehicle_id);
+  const orderCarrier = resolveOrderCarrier(database, row.carrier_id, row.vehicle_id);
+  const carrierOmieId =
+    orderCarrier?.omie_customer_id && orderCarrier.omie_customer_id > 0
+      ? orderCarrier.omie_customer_id
+      : null;
+  // Ainda sem codigo OMIE: o cadastro sobe junto e o edge cria a transportadora
+  // antes de montar o pedido, para o primeiro fechamento ja sair com ela.
+  const carrierCadastro = buildOrderCarrierCadastro(orderCarrier);
   const freightModalidade = resolveFreightModalidade(row.freight_type, operation.freightTotalCents);
   const transport: OmieOrderTransport = {
     plate: operation.plate?.trim() || null,
@@ -1290,7 +1325,9 @@ export function buildOmieBillingJob(
       accountOmieCode: omiePayment?.account_code ?? null,
       accountName: omiePayment?.account_name ?? null,
       omieCategoryCode,
-      transport
+      transport,
+      localCarrierId: orderCarrier?.id ?? null,
+      carrier: carrierCadastro
     }
   };
 }
@@ -1302,37 +1339,84 @@ export function buildOmieBillingJob(
  * nesse caso o OMIE nao tem como referenciar o cadastro e o campo fica em branco ate
  * a transportadora ser sincronizada.
  */
-function resolveOrderCarrierOmieId(
+function resolveOrderCarrier(
   database: DesktopDatabase,
   carrierId: string | null,
   vehicleId: string | null
-): number | null {
+): OrderCarrierRow | null {
   const fromOperation = carrierId
-    ? (
-        database
-          .prepare(
-            "SELECT omie_customer_id AS omie_id FROM carriers WHERE id = ? AND deleted_at IS NULL"
-          )
-          .get(carrierId) as { omie_id: number | null } | undefined
-      )?.omie_id ?? null
-    : null;
-  if (fromOperation && fromOperation > 0) return fromOperation;
+    ? (database
+        .prepare(`SELECT ${ORDER_CARRIER_COLUMNS} FROM carriers WHERE id = ? AND deleted_at IS NULL`)
+        .get(carrierId) as OrderCarrierRow | undefined)
+    : undefined;
+  // A escolhida na operacao manda mesmo sem codigo OMIE: nesse caso ela sobe ao OMIE
+  // junto com o pedido. So caimos no vinculo do veiculo quando a operacao nao tem uma.
+  if (fromOperation) return fromOperation;
 
   const fromVehicle = vehicleId
-    ? (
-        database
-          .prepare(
-            `SELECT c.omie_customer_id AS omie_id
-             FROM vehicle_carriers vc
-             JOIN carriers c ON c.id = vc.carrier_id AND c.deleted_at IS NULL
-             WHERE vc.vehicle_id = ? AND vc.deleted_at IS NULL AND vc.is_active = 1
-             ORDER BY vc.created_at DESC
-             LIMIT 1`
-          )
-          .get(vehicleId) as { omie_id: number | null } | undefined
-      )?.omie_id ?? null
-    : null;
-  return fromVehicle && fromVehicle > 0 ? fromVehicle : null;
+    ? (database
+        .prepare(
+          `SELECT ${ORDER_CARRIER_COLUMNS.split(", ")
+            .map((column) => `c.${column}`)
+            .join(", ")}
+           FROM vehicle_carriers vc
+           JOIN carriers c ON c.id = vc.carrier_id AND c.deleted_at IS NULL
+           WHERE vc.vehicle_id = ? AND vc.deleted_at IS NULL AND vc.is_active = 1
+           ORDER BY vc.created_at DESC
+           LIMIT 1`
+        )
+        .get(vehicleId) as OrderCarrierRow | undefined)
+    : undefined;
+  return fromVehicle ?? null;
+}
+
+const ORDER_CARRIER_COLUMNS =
+  "id, omie_customer_id, name, document, phone, email, zipcode, address_street, address_number, neighborhood, city, state";
+
+interface OrderCarrierRow {
+  id: string;
+  omie_customer_id: number | null;
+  name: string;
+  document: string | null;
+  phone: string | null;
+  email: string | null;
+  zipcode: string | null;
+  address_street: string | null;
+  address_number: string | null;
+  neighborhood: string | null;
+  city: string | null;
+  state: string | null;
+}
+
+/**
+ * Cadastro a enviar para o edge criar a transportadora no OMIE antes do pedido.
+ * `null` quando ela ja tem codigo OMIE (nada a criar) ou quando nao tem CNPJ/CPF —
+ * o OMIE exige o documento, e falhar aqui derrubaria o pedido inteiro; sem ele o
+ * pedido segue sem transportadora, como antes.
+ */
+function buildOrderCarrierCadastro(
+  carrier: OrderCarrierRow | null
+): OmieOrderCarrierCadastro | null {
+  if (!carrier) return null;
+  if (carrier.omie_customer_id && carrier.omie_customer_id > 0) return null;
+  const document = carrier.document?.trim();
+  if (!document) return null;
+
+  const phone = splitPhoneForOmie(carrier.phone);
+  return {
+    localCarrierId: carrier.id,
+    name: carrier.name,
+    cnpjCpf: document,
+    email: carrier.email ?? undefined,
+    telefone1Ddd: phone.ddd,
+    telefone1Numero: phone.numero,
+    zipcode: carrier.zipcode ?? undefined,
+    addressStreet: carrier.address_street ?? undefined,
+    addressNumber: carrier.address_number ?? undefined,
+    neighborhood: carrier.neighborhood ?? undefined,
+    city: carrier.city ?? undefined,
+    state: carrier.state ?? undefined
+  };
 }
 
 /**
