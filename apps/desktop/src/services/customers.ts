@@ -117,11 +117,60 @@ export interface CustomerRow {
   deleted_at: string | null;
 }
 
+/**
+ * Cliente ativo com o mesmo CNPJ/CPF na empresa, ignorando mascara. O documento
+ * identifica o cliente no OMIE (find-or-create por CNPJ/CPF), entao dois cadastros
+ * com o mesmo documento sao sempre o mesmo cliente — e virariam o mesmo cadastro la.
+ */
+function onlyDigits(value: string | null | undefined): string {
+  return (value ?? "").replace(/\D/g, "");
+}
+
+export function findCustomerByDocument(
+  database: DesktopDatabase,
+  companyId: string,
+  document: string,
+  excludeId?: string
+): { id: string; trade_name: string; legal_name: string } | null {
+  const digits = onlyDigits(document);
+  if (!digits) return null;
+  const row = database
+    .prepare(
+      `SELECT id, trade_name, legal_name FROM customers
+       WHERE company_id = ?
+         AND deleted_at IS NULL
+         AND replace(replace(replace(replace(COALESCE(document, ''), '.', ''), '-', ''), '/', ''), ' ', '') = ?
+         AND (? IS NULL OR id <> ?)
+       LIMIT 1`
+    )
+    .get(companyId, digits, excludeId ?? null, excludeId ?? null) as
+    | { id: string; trade_name: string; legal_name: string }
+    | undefined;
+  return row ?? null;
+}
+
+function assertDocumentIsFree(
+  database: DesktopDatabase,
+  companyId: string,
+  document: string | null | undefined,
+  excludeId?: string
+): void {
+  if (!document?.trim()) return;
+  const existing = findCustomerByDocument(database, companyId, document, excludeId);
+  if (!existing) return;
+  const name = existing.trade_name?.trim() || existing.legal_name?.trim() || "sem nome";
+  throw new Error(`Ja existe um cliente com este CNPJ/CPF: ${name}.`);
+}
+
 export function createCustomer(
   database: DesktopDatabase,
   input: CreateCustomerInput,
   now: Date = new Date()
 ): CustomerRow {
+  // Sem esta trava, salvar o mesmo cadastro duas vezes (duplo clique, repetir o
+  // cadastro sem procurar antes) criava dois clientes identicos na lista.
+  assertDocumentIsFree(database, input.companyId, input.document);
+
   const id = randomUUID();
   const nowIso = now.toISOString();
 
@@ -251,6 +300,16 @@ export function updateCustomer(
     if (changedProtectedField) {
       throw new Error("Campos vindos do OMIE nao podem ser alterados localmente.");
     }
+  }
+
+  // So checa quando o documento MUDA: um cadastro que ja tem duplicata precisa
+  // continuar editavel (ex.: ajustar o limite de credito) enquanto o usuario nao
+  // apaga a copia.
+  if (
+    input.document !== undefined &&
+    onlyDigits(input.document) !== onlyDigits(existing.document)
+  ) {
+    assertDocumentIsFree(database, existing.company_id, input.document, id);
   }
 
   const nowIso = now.toISOString();

@@ -107,6 +107,69 @@ describe("OmieSyncService", () => {
     expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining("INSERT INTO products"));
   });
 
+  it("adopts the existing local cadastro instead of creating a twin on the OMIE pull", async () => {
+    const db = openDesktopDatabase({ databasePath: ":memory:" });
+
+    try {
+      runDesktopMigrations(db);
+      db.exec(`
+        INSERT INTO companies (id, legal_name, trade_name, created_at, updated_at)
+        VALUES ('company-1', 'Empresa Teste', 'Empresa', datetime('now'), datetime('now'));
+
+        -- Cliente criado localmente e ja enviado ao OMIE (ganhou o codigo de la).
+        INSERT INTO customers (id, company_id, source, legal_name, trade_name, document, omie_customer_id, is_active, created_at, updated_at)
+        VALUES ('local-uuid', 'company-1', 'local', 'Apenas Teste LTDA', 'Apenas Teste', '26463463000183', 777, 1, datetime('now'), datetime('now'));
+
+        -- Transportadora local, ainda sem codigo OMIE, casada pelo documento.
+        INSERT INTO carriers (id, company_id, name, document, source, is_active, created_at, updated_at)
+        VALUES ('carrier-uuid', 'company-1', 'Transportes Alfa', '11222333000144', 'local', 1, datetime('now'), datetime('now'));
+      `);
+
+      const service = new OmieSyncService(createMockClient(), db);
+      vi.spyOn(
+        (service as unknown as Record<string, unknown>).customersService as {
+          listAll: () => Promise<unknown[]>;
+        },
+        "listAll"
+      ).mockResolvedValue([
+        {
+          id: 777,
+          name: "Apenas Teste LTDA",
+          tradeName: "Apenas Teste",
+          document: "26463463000183",
+          isActive: true,
+          tags: { tags: ["Cliente"] }
+        },
+        {
+          id: 888,
+          name: "Transportes Alfa",
+          document: "11222333000144",
+          isActive: true,
+          tags: { tags: ["Transportadora"] }
+        }
+      ]);
+
+      await service.rebuildCustomersAndCarriersFromOmie("company-1");
+
+      // O pull casava so por id: o cadastro local (uuid) sobrevivia e o do OMIE entrava
+      // como linha nova, deixando dois cadastros identicos na lista.
+      expect(
+        db.prepare("SELECT COUNT(*) FROM customers WHERE deleted_at IS NULL").pluck().get()
+      ).toBe(1);
+      expect(
+        db.prepare("SELECT id FROM customers WHERE deleted_at IS NULL").pluck().get()
+      ).toBe("local-uuid");
+      expect(
+        db.prepare("SELECT COUNT(*) FROM carriers WHERE deleted_at IS NULL").pluck().get()
+      ).toBe(1);
+      expect(
+        db.prepare("SELECT omie_customer_id FROM carriers WHERE id = 'carrier-uuid'").pluck().get()
+      ).toBe(888);
+    } finally {
+      db.close();
+    }
+  });
+
   it("rebuilds customers and carriers from ListarClientes tags while preserving local registrations", async () => {
     const db = openDesktopDatabase({ databasePath: ":memory:" });
 

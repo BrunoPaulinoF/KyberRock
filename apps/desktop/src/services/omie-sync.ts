@@ -175,7 +175,7 @@ export class OmieSyncService {
 
     for (const customer of customers) {
       upsert.run(
-        resolveOmieLocalId(this.db, "customers", companyId, `omie_${customer.id}`),
+        this.resolveExistingCustomerId(companyId, customer),
         companyId,
         customer.id,
         customer.name,
@@ -861,7 +861,7 @@ export class OmieSyncService {
 
     for (const supplier of carriers) {
       upsert.run(
-        `omie_supplier_${supplier.id}`,
+        this.resolveExistingCarrierId(companyId, supplier),
         companyId,
         supplier.id,
         supplier.integrationCode || null,
@@ -879,6 +879,66 @@ export class OmieSyncService {
         supplier.isActive ? 1 : 0
       );
     }
+  }
+
+  /**
+   * Id local a usar para um cliente vindo do OMIE. Adota o cadastro que ja existe
+   * aqui — primeiro pelo codigo OMIE, depois pelo CNPJ/CPF — antes de cair no id
+   * derivado `omie_<id>`.
+   *
+   * Sem isso, um cliente criado localmente e depois enviado ao OMIE voltava no pull
+   * seguinte como uma LINHA NOVA (o upsert so casa por id, e o local tem uuid): a
+   * lista ficava com dois cadastros identicos do mesmo cliente.
+   */
+  private resolveExistingCustomerId(companyId: string, customer: Customer): string {
+    const byOmieId = this.db
+      .prepare(
+        "SELECT id FROM customers WHERE company_id = ? AND omie_customer_id = ? AND deleted_at IS NULL LIMIT 1"
+      )
+      .get(companyId, customer.id) as { id: string } | undefined;
+    if (byOmieId) return byOmieId.id;
+
+    const digits = (customer.document ?? "").replace(/\D/g, "");
+    if (digits) {
+      const byDocument = this.db
+        .prepare(
+          `SELECT id FROM customers
+           WHERE company_id = ?
+             AND deleted_at IS NULL
+             AND replace(replace(replace(replace(COALESCE(document, ''), '.', ''), '-', ''), '/', ''), ' ', '') = ?
+           LIMIT 1`
+        )
+        .get(companyId, digits) as { id: string } | undefined;
+      if (byDocument) return byDocument.id;
+    }
+
+    return resolveOmieLocalId(this.db, "customers", companyId, `omie_${customer.id}`);
+  }
+
+  /** Mesma adocao do cliente, para a transportadora (ver resolveExistingCustomerId). */
+  private resolveExistingCarrierId(companyId: string, carrier: Customer): string {
+    const byOmieId = this.db
+      .prepare(
+        "SELECT id FROM carriers WHERE company_id = ? AND omie_customer_id = ? AND deleted_at IS NULL LIMIT 1"
+      )
+      .get(companyId, carrier.id) as { id: string } | undefined;
+    if (byOmieId) return byOmieId.id;
+
+    const digits = (carrier.document ?? "").replace(/\D/g, "");
+    if (digits) {
+      const byDocument = this.db
+        .prepare(
+          `SELECT id FROM carriers
+           WHERE company_id = ?
+             AND deleted_at IS NULL
+             AND replace(replace(replace(replace(COALESCE(document, ''), '.', ''), '-', ''), '/', ''), ' ', '') = ?
+           LIMIT 1`
+        )
+        .get(companyId, digits) as { id: string } | undefined;
+      if (byDocument) return byDocument.id;
+    }
+
+    return resolveOmieLocalId(this.db, "carriers", companyId, `omie_supplier_${carrier.id}`);
   }
 
   private clearCustomerCarrierRegistrations(companyId: string): void {
