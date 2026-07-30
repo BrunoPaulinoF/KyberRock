@@ -37,6 +37,26 @@ export interface CreditValidationResult {
   requiredCents: number;
 }
 
+export interface CustomerCreditSettings {
+  creditMode: "normal" | "prepaid";
+  /** Limite de credito concedido ao cliente (null = nenhum limite cadastrado). */
+  creditLimitCents: number | null;
+  /** Conta de credito (fiado) habilitada no cadastro. */
+  creditAccountEnabled: boolean;
+}
+
+export interface CustomerCreditSummary extends CustomerCreditSettings {
+  /**
+   * Saldo do extrato. Positivo = credito a favor do cliente (pre-pago/pagamento
+   * adiantado); negativo = quanto ele ja consumiu do limite e ainda deve.
+   */
+  balanceCents: number;
+  /** Parte do limite ja consumida (0 quando o saldo esta positivo). */
+  usedCents: number;
+  /** Credito disponivel para novas vendas; `null` = sem teto cadastrado. */
+  availableCents: number | null;
+}
+
 export class CreditService {
   constructor(private readonly db: DesktopDatabase) {}
 
@@ -50,25 +70,88 @@ export class CreditService {
   }
 
   isCustomerPrepaid(customerId: string): boolean {
-    const row = this.db
-      .prepare(
-        `SELECT credit_mode FROM customers WHERE id = ? AND deleted_at IS NULL`
-      )
-      .get(customerId) as { credit_mode: string } | undefined;
-    return row?.credit_mode === "prepaid";
+    return this.getSettings(customerId)?.creditMode === "prepaid";
   }
 
+  getSettings(customerId: string): CustomerCreditSettings | null {
+    const row = this.db
+      .prepare(
+        `SELECT credit_mode, credit_limit_cents, credit_account_enabled
+         FROM customers WHERE id = ? AND deleted_at IS NULL`
+      )
+      .get(customerId) as
+      | {
+          credit_mode: string;
+          credit_limit_cents: number | null;
+          credit_account_enabled: number;
+        }
+      | undefined;
+    if (!row) return null;
+    return {
+      creditMode: row.credit_mode === "prepaid" ? "prepaid" : "normal",
+      creditLimitCents: row.credit_limit_cents,
+      creditAccountEnabled: row.credit_account_enabled === 1
+    };
+  }
+
+  /**
+   * Extrato resumido do credito do cliente: limite concedido, quanto ja foi
+   * consumido e quanto ainda da para vender. Alimenta a aba "Credito" do cadastro.
+   */
+  getSummary(customerId: string): CustomerCreditSummary {
+    const settings = this.getSettings(customerId) ?? {
+      creditMode: "normal" as const,
+      creditLimitCents: null,
+      creditAccountEnabled: false
+    };
+    const balanceCents = this.getBalance(customerId);
+    return {
+      ...settings,
+      balanceCents,
+      usedCents: balanceCents < 0 ? -balanceCents : 0,
+      availableCents: availableCreditCents(settings, balanceCents)
+    };
+  }
+
+  /**
+   * Valida uma venda no credito do cliente.
+   *
+   * O disponivel e `saldo do extrato + limite de credito`: o limite cadastrado no
+   * cliente e o que efetivamente banca a venda no fiado, e o saldo (que fica
+   * NEGATIVO conforme as vendas consomem o limite) registra quanto ja foi usado.
+   * Quando o cliente paga a fatura, um lancamento de credito devolve o saldo e
+   * libera o limite de novo.
+   *
+   * Cliente sem limite cadastrado nao tem teto — exceto no modo pre-pago, em que o
+   * teto e o proprio saldo depositado.
+   */
   validateDebit(
     customerId: string,
     requiredCents: number
   ): CreditValidationResult {
-    const available = this.getBalance(customerId);
-    if (available >= requiredCents) {
-      return { allowed: true, availableBalanceCents: available, requiredCents };
+    const settings = this.getSettings(customerId);
+    const balance = this.getBalance(customerId);
+    const available = availableCreditCents(settings, balance);
+
+    if (available === null || available >= requiredCents) {
+      return {
+        allowed: true,
+        availableBalanceCents: available ?? balance,
+        requiredCents
+      };
     }
+
+    const limit = settings?.creditLimitCents ?? null;
+    const limitDetail =
+      limit === null
+        ? ""
+        : ` (limite R$ ${(limit / 100).toFixed(2)}, utilizado R$ ${((balance < 0 ? -balance : 0) / 100).toFixed(2)})`;
     return {
       allowed: false,
-      message: `Crédito insuficiente. Disponível: R$ ${(available / 100).toFixed(2)}, Necessário: R$ ${(requiredCents / 100).toFixed(2)}.`,
+      message:
+        `Crédito insuficiente. Disponível: R$ ${(available / 100).toFixed(2)}${limitDetail}, ` +
+        `Necessário: R$ ${(requiredCents / 100).toFixed(2)}. ` +
+        "Aumente o limite de credito do cliente ou registre o pagamento em Clientes > Credito.",
       availableBalanceCents: available,
       requiredCents
     };
@@ -277,6 +360,25 @@ export class CreditService {
     if (!row) throw new Error(`Customer ${customerId} not found.`);
     return row.company_id;
   }
+}
+
+/**
+ * Credito disponivel para novas vendas. `null` = sem teto.
+ *
+ * Limite nulo ou zero significa "nenhum limite cadastrado" (mesma convencao de
+ * `FinancialBlockService`): o cliente vende no fiado sem bloqueio, como antes —
+ * a maioria dos cadastros vindos do OMIE chega com zero. No pre-pago, sem limite
+ * cadastrado o teto e o proprio saldo depositado.
+ */
+function availableCreditCents(
+  settings: CustomerCreditSettings | null,
+  balanceCents: number
+): number | null {
+  const limit = settings?.creditLimitCents ?? null;
+  if (limit === null || limit === 0) {
+    return settings?.creditMode === "prepaid" ? balanceCents : null;
+  }
+  return balanceCents + limit;
 }
 
 function getBalanceDelta(movementType: CreditMovementType, amountCents: number): number {

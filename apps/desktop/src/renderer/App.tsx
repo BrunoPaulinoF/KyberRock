@@ -4564,6 +4564,30 @@ export function carrierSelectorFilterIds(
     : undefined;
 }
 
+/**
+ * Transportadora a exibir na nova entrada depois de carregar os vinculos do cliente.
+ *
+ * A selecao inicial vem da "transportadora padrao" do cadastro, mas o seletor so
+ * lista as transportadoras VINCULADAS ao cliente. Um cliente criado sem padrao
+ * ganha uma transportadora automatica "<nome> (padrão)" que normalmente nao esta
+ * vinculada — antes ela ficava presa no campo e escondia a transportadora que o
+ * usuario realmente vinculou. Por isso a lista de vinculos manda:
+ *  - nenhum vinculo: mantem o padrao (o seletor mostra todas as cadastradas);
+ *  - a atual esta vinculada: mantem;
+ *  - exatamente um vinculo: seleciona ele;
+ *  - varios vinculos: usa o padrao quando ele estiver entre eles, senao limpa
+ *    para o operador escolher.
+ */
+export function resolveCarrierPrefill(
+  currentCarrierId: string,
+  linkedCarrierIds: string[]
+): string {
+  if (linkedCarrierIds.length === 0) return currentCarrierId;
+  if (currentCarrierId && linkedCarrierIds.includes(currentCarrierId)) return currentCarrierId;
+  if (linkedCarrierIds.length === 1) return linkedCarrierIds[0];
+  return "";
+}
+
 function CacheSelect({
   label,
   entityType,
@@ -4946,16 +4970,16 @@ function WeighingForm({
       }
       try {
         const carriers = await desktopApi.listCarriersByCustomer(form.customerId);
-        setAvailableCarrierIds(carriers.map((c) => c.id));
-        // Se o cliente tem exatamente uma transportadora vinculada e nenhuma
-        // foi definida pelo padrao, ja preenchemos para agilizar a entrada.
-        if (carriers.length === 1) {
-          setForm((prev) =>
-            prev.carrierId || isCustomerOwnTransport(prev)
-              ? prev
-              : { ...prev, carrierId: carriers[0].id }
-          );
-        }
+        const linkedIds = carriers.map((c) => c.id);
+        setAvailableCarrierIds(linkedIds);
+        // Reconcilia a selecao com os vinculos do cliente: a transportadora padrao
+        // do cadastro nao pode sobrepor a que foi vinculada de fato (ver
+        // resolveCarrierPrefill).
+        setForm((prev) => {
+          if (isCustomerOwnTransport(prev)) return prev;
+          const nextCarrierId = resolveCarrierPrefill(prev.carrierId, linkedIds);
+          return nextCarrierId === prev.carrierId ? prev : { ...prev, carrierId: nextCarrierId };
+        });
       } catch {
         setAvailableCarrierIds(undefined);
       }

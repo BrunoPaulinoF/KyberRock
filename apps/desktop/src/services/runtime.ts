@@ -198,7 +198,11 @@ import {
   type CustomerSpecialPriceSummary,
   type ProductDefaultPriceSummary
 } from "./product-prices.js";
-import { CreditService, type CreditMovementRow } from "./credit.js";
+import {
+  CreditService,
+  type CreditMovementRow,
+  type CustomerCreditSummary
+} from "./credit.js";
 import {
   cancelQuotation,
   createQuotation,
@@ -2318,6 +2322,47 @@ export class DesktopRuntime {
   getCustomerCreditBalance(customerId: string): number {
     this.assertDesktopAccess();
     return new CreditService(this.database).getBalance(customerId);
+  }
+
+  getCustomerCreditSummary(customerId: string): CustomerCreditSummary {
+    this.assertDesktopAccess();
+    return new CreditService(this.database).getSummary(customerId);
+  }
+
+  /**
+   * Baixa do fiado: o pagamento recebido do cliente volta como credito no extrato
+   * e libera o limite consumido pelas vendas anteriores.
+   */
+  registerCustomerCreditPayment(
+    customerId: string,
+    amountCents: number,
+    reason?: string
+  ): CustomerCreditSummary {
+    this.assertDesktopAccess();
+    if (!Number.isInteger(amountCents) || amountCents <= 0) {
+      throw new Error("Informe um valor de pagamento maior que zero.");
+    }
+    const service = new CreditService(this.database);
+    service.applyCredit(customerId, amountCents, reason?.trim() || "Pagamento do cliente");
+    return service.getSummary(customerId);
+  }
+
+  /** Correcao manual do extrato (positiva ou negativa), sempre com justificativa. */
+  adjustCustomerCredit(
+    customerId: string,
+    amountCents: number,
+    reason: string
+  ): CustomerCreditSummary {
+    this.assertDesktopAccess();
+    if (!Number.isInteger(amountCents) || amountCents === 0) {
+      throw new Error("Informe um valor de ajuste diferente de zero.");
+    }
+    if (!reason?.trim()) {
+      throw new Error("Informe o motivo do ajuste.");
+    }
+    const service = new CreditService(this.database);
+    service.applyManualAdjustment(customerId, amountCents, reason.trim());
+    return service.getSummary(customerId);
   }
 
   listCustomerCreditMovements(customerId: string, limit?: number): CreditMovementRow[] {
