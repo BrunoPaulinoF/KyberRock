@@ -139,7 +139,7 @@ function pickFirst(...values: Array<string | number | null | undefined>): string
   return null;
 }
 
-function firstArray(response: Record<string, unknown>, knownKeys: string[]): unknown[] {
+function firstArray(response: Record<string, unknown>, knownKeys: readonly string[]): unknown[] {
   for (const key of knownKeys) {
     const value = response[key];
     if (Array.isArray(value)) return value;
