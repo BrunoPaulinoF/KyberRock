@@ -1132,7 +1132,7 @@ export function buildOmieBillingJob(
 ): BuiltOmieBillingJob | null {
   const row = database
     .prepare(
-      "SELECT unit_id, customer_id, product_id, vehicle_id, payment_term_id, payment_method_id, freight_type, exit_weight_captured_at FROM weighing_operations WHERE id = ?"
+      "SELECT unit_id, customer_id, product_id, vehicle_id, carrier_id, payment_term_id, payment_method_id, freight_type, exit_weight_captured_at FROM weighing_operations WHERE id = ?"
     )
     .get(operationId) as
     | {
@@ -1140,6 +1140,7 @@ export function buildOmieBillingJob(
         customer_id: string | null;
         product_id: string | null;
         vehicle_id: string | null;
+        carrier_id: string | null;
         payment_term_id: string | null;
         payment_method_id: string | null;
         freight_type: string | null;
@@ -1224,22 +1225,12 @@ export function buildOmieBillingJob(
 
   const operation = getWeighingOperation(database, operationId);
 
-  // Transportadora vinculada ao veiculo da operacao (vinculo mais recente ativo),
-  // apenas quando ja cadastrada no OMIE (codigo > 0).
-  const carrierOmieId = row.vehicle_id
-    ? ((
-        database
-          .prepare(
-            `SELECT c.omie_customer_id AS omie_id
-             FROM vehicle_carriers vc
-             JOIN carriers c ON c.id = vc.carrier_id AND c.deleted_at IS NULL
-             WHERE vc.vehicle_id = ? AND vc.deleted_at IS NULL AND vc.is_active = 1
-             ORDER BY vc.created_at DESC
-             LIMIT 1`
-          )
-          .get(row.vehicle_id) as { omie_id: number | null } | undefined
-      )?.omie_id ?? null)
-    : null;
+  // Transportadora do pedido OMIE: a ESCOLHIDA na operacao manda. So quando a
+  // operacao nao tem transportadora caimos no vinculo do veiculo (mais recente
+  // ativo) — antes so o vinculo do veiculo era consultado, entao a transportadora
+  // que o operador selecionou na entrada nao chegava ao pedido e o campo
+  // "Transportadora" ficava vazio no OMIE.
+  const carrierOmieId = resolveOrderCarrierOmieId(database, row.carrier_id, row.vehicle_id);
   const freightModalidade = resolveFreightModalidade(row.freight_type, operation.freightTotalCents);
   const transport: OmieOrderTransport = {
     plate: operation.plate?.trim() || null,
@@ -1282,6 +1273,46 @@ export function buildOmieBillingJob(
       transport
     }
   };
+}
+
+/**
+ * Codigo OMIE da transportadora que vai no bloco `frete` do pedido. A transportadora
+ * escolhida na operacao tem precedencia; sem ela, usa a vinculada ao veiculo. Retorna
+ * null quando a transportadora ainda nao existe no OMIE (`omie_customer_id` vazio) —
+ * nesse caso o OMIE nao tem como referenciar o cadastro e o campo fica em branco ate
+ * a transportadora ser sincronizada.
+ */
+function resolveOrderCarrierOmieId(
+  database: DesktopDatabase,
+  carrierId: string | null,
+  vehicleId: string | null
+): number | null {
+  const fromOperation = carrierId
+    ? (
+        database
+          .prepare(
+            "SELECT omie_customer_id AS omie_id FROM carriers WHERE id = ? AND deleted_at IS NULL"
+          )
+          .get(carrierId) as { omie_id: number | null } | undefined
+      )?.omie_id ?? null
+    : null;
+  if (fromOperation && fromOperation > 0) return fromOperation;
+
+  const fromVehicle = vehicleId
+    ? (
+        database
+          .prepare(
+            `SELECT c.omie_customer_id AS omie_id
+             FROM vehicle_carriers vc
+             JOIN carriers c ON c.id = vc.carrier_id AND c.deleted_at IS NULL
+             WHERE vc.vehicle_id = ? AND vc.deleted_at IS NULL AND vc.is_active = 1
+             ORDER BY vc.created_at DESC
+             LIMIT 1`
+          )
+          .get(vehicleId) as { omie_id: number | null } | undefined
+      )?.omie_id ?? null
+    : null;
+  return fromVehicle && fromVehicle > 0 ? fromVehicle : null;
 }
 
 /**

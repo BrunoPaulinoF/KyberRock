@@ -1142,6 +1142,151 @@ describe("weighing operations", () => {
     }
   });
 
+  it("sends the carrier chosen on the operation, not the one linked to the vehicle", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET omie_customer_id = 456 WHERE id = 'customer-1'").run();
+      // Veiculo vinculado a uma transportadora antiga; o operador escolheu outra na entrada.
+      database
+        .prepare(
+          `INSERT INTO carriers (id, company_id, omie_customer_id, name, source, created_at, updated_at)
+           VALUES ('carrier-vehicle', 'company-1', 111111, 'Transportadora do Veiculo', 'omie', datetime('now'), datetime('now'))`
+        )
+        .run();
+      database
+        .prepare(
+          `INSERT INTO carriers (id, company_id, omie_customer_id, name, source, created_at, updated_at)
+           VALUES ('carrier-chosen', 'company-1', 222222, 'Transportadora Escolhida', 'omie', datetime('now'), datetime('now'))`
+        )
+        .run();
+      database
+        .prepare(
+          `INSERT INTO vehicle_carriers (id, vehicle_id, carrier_id, is_active, created_at, updated_at)
+           VALUES ('vc-1', 'vehicle-1', 'carrier-vehicle', 1, datetime('now'), datetime('now'))`
+        )
+        .run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        carrierId: "carrier-chosen",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      const built = buildOmieBillingJob(database, operation.id);
+      // Antes o pedido so olhava vehicle_carriers: a transportadora selecionada na
+      // entrada nao chegava ao OMIE e o campo ficava em branco no pedido.
+      expect(built!.payload.transport).toMatchObject({ carrierOmieId: 222222 });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("falls back to the vehicle carrier when the operation one has no OMIE code", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET omie_customer_id = 456 WHERE id = 'customer-1'").run();
+      // Transportadora local, ainda sem cadastro no OMIE (omie_customer_id nulo).
+      database
+        .prepare(
+          `INSERT INTO carriers (id, company_id, name, source, created_at, updated_at)
+           VALUES ('carrier-local', 'company-1', 'Transportadora Local', 'local', datetime('now'), datetime('now'))`
+        )
+        .run();
+      database
+        .prepare(
+          `INSERT INTO carriers (id, company_id, omie_customer_id, name, source, created_at, updated_at)
+           VALUES ('carrier-vehicle', 'company-1', 111111, 'Transportadora do Veiculo', 'omie', datetime('now'), datetime('now'))`
+        )
+        .run();
+      database
+        .prepare(
+          `INSERT INTO vehicle_carriers (id, vehicle_id, carrier_id, is_active, created_at, updated_at)
+           VALUES ('vc-1', 'vehicle-1', 'carrier-vehicle', 1, datetime('now'), datetime('now'))`
+        )
+        .run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        carrierId: "carrier-local",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      expect(buildOmieBillingJob(database, operation.id)!.payload.transport).toMatchObject({
+        carrierOmieId: 111111
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("sends the charged freight value and modality in the OMIE job", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET omie_customer_id = 456 WHERE id = 'customer-1'").run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000,
+        freight: {
+          payer: "customer",
+          rule: {
+            id: "freight-1",
+            name: "Frete por tonelada",
+            type: "per_ton",
+            baseValueCents: 10_000,
+            unit: "ton"
+          }
+        }
+      });
+      database
+        .prepare("UPDATE weighing_operations SET freight_type = 'fob' WHERE id = ?")
+        .run(operation.id);
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      const built = buildOmieBillingJob(database, operation.id);
+      // 6,5 t x R$ 100,00 = R$ 650,00 -> vai como valor_frete no bloco frete do pedido.
+      expect(built!.payload.freightTotalCents).toBe(65_000);
+      expect(built!.payload.freightModalidade).toBe("1");
+    } finally {
+      database.close();
+    }
+  });
+
   it("omits the carrier and marks own vehicle when there is no OMIE-linked carrier", () => {
     const database = createDatabase();
 

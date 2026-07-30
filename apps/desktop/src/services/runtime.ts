@@ -395,6 +395,7 @@ import {
   type UpdateCarrierInput
 } from "./carriers.js";
 import {
+  getCustomerDefaultCarrierId,
   linkCustomerCarrier,
   unlinkCustomerCarrier,
   listCarriersByCustomer,
@@ -2812,14 +2813,27 @@ export class DesktopRuntime {
     return getCarrierVehicles(this.database, carrierId);
   }
 
-  linkCustomerCarrier(customerId: string, carrierId: string): unknown {
+  /**
+   * Devolve a transportadora padrao resultante: vincular/desvincular pode promover
+   * (ou trocar) o padrao do cliente, e o formulario aberto precisa saber disso para
+   * nao regravar o valor antigo ao salvar.
+   */
+  linkCustomerCarrier(
+    customerId: string,
+    carrierId: string
+  ): { defaultCarrierId: string | null } {
     this.assertDesktopAccess();
-    return linkCustomerCarrier(this.database, customerId, carrierId);
+    linkCustomerCarrier(this.database, customerId, carrierId);
+    return { defaultCarrierId: getCustomerDefaultCarrierId(this.database, customerId) };
   }
 
-  unlinkCustomerCarrier(customerId: string, carrierId: string): void {
+  unlinkCustomerCarrier(
+    customerId: string,
+    carrierId: string
+  ): { defaultCarrierId: string | null } {
     this.assertDesktopAccess();
     unlinkCustomerCarrier(this.database, customerId, carrierId);
+    return { defaultCarrierId: getCustomerDefaultCarrierId(this.database, customerId) };
   }
 
   listCarriersByCustomer(

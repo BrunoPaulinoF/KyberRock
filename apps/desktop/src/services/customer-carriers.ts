@@ -48,9 +48,98 @@ export function linkCustomerCarrier(
     )
     .run(id, customerId, carrierId, nowIso, nowIso);
 
+  promoteDefaultCarrier(database, customerId, carrierId, nowIso);
+
   return database
     .prepare("SELECT * FROM customer_carriers WHERE id = ?")
     .get(id) as CustomerCarrierRow;
+}
+
+/**
+ * Nome da transportadora automatica criada junto com o cliente quando nenhuma foi
+ * informada ("<cliente> (padrão)"). Ela e apenas um marcador de "sem transportadora
+ * definida" — nao representa uma transportadora real.
+ */
+export function isPlaceholderDefaultCarrierName(
+  carrierName: string,
+  tradeName: string | null,
+  legalName: string | null
+): boolean {
+  const name = normalizeName(carrierName);
+  if (!name.endsWith("(padrao)")) return false;
+  const base = name.slice(0, -"(padrao)".length).trim();
+  return base === normalizeName(tradeName ?? "") || base === normalizeName(legalName ?? "");
+}
+
+function normalizeName(value: string): string {
+  return value
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+/**
+ * Promove a transportadora recem-vinculada a padrao do cliente quando ele ainda nao
+ * tem uma de verdade: sem padrao, ou com o marcador "<cliente> (padrão)" criado
+ * automaticamente no cadastro. Sem isso o cadastro continuava mostrando (e a nova
+ * entrada continuava puxando) o marcador mesmo depois de o usuario vincular uma
+ * transportadora. Um padrao ja definido pelo usuario nunca e sobrescrito.
+ */
+function promoteDefaultCarrier(
+  database: DesktopDatabase,
+  customerId: string,
+  carrierId: string,
+  nowIso: string
+): void {
+  const customer = database
+    .prepare(
+      `SELECT trade_name, legal_name, default_carrier_id
+       FROM customers WHERE id = ? AND deleted_at IS NULL`
+    )
+    .get(customerId) as
+    | { trade_name: string | null; legal_name: string | null; default_carrier_id: string | null }
+    | undefined;
+  if (!customer) return;
+  if (customer.default_carrier_id === carrierId) return;
+
+  if (customer.default_carrier_id) {
+    const current = database
+      .prepare("SELECT name FROM carriers WHERE id = ? AND deleted_at IS NULL")
+      .get(customer.default_carrier_id) as { name: string } | undefined;
+    const replaceable =
+      !current ||
+      isPlaceholderDefaultCarrierName(current.name, customer.trade_name, customer.legal_name);
+    if (!replaceable) return;
+  }
+
+  setDefaultCarrier(database, customerId, carrierId, nowIso);
+}
+
+/** Transportadora padrao atual do cliente, para o formulario nao salvar um valor velho. */
+export function getCustomerDefaultCarrierId(
+  database: DesktopDatabase,
+  customerId: string
+): string | null {
+  const row = database
+    .prepare("SELECT default_carrier_id FROM customers WHERE id = ? AND deleted_at IS NULL")
+    .get(customerId) as { default_carrier_id: string | null } | undefined;
+  return row?.default_carrier_id ?? null;
+}
+
+function setDefaultCarrier(
+  database: DesktopDatabase,
+  customerId: string,
+  carrierId: string | null,
+  nowIso: string
+): void {
+  database
+    .prepare(
+      `UPDATE customers
+       SET default_carrier_id = ?, needs_push = 1, local_updated_at = ?, updated_at = ?
+       WHERE id = ?`
+    )
+    .run(carrierId, nowIso, nowIso, customerId);
 }
 
 export function unlinkCustomerCarrier(
@@ -66,6 +155,17 @@ export function unlinkCustomerCarrier(
        WHERE customer_id = ? AND carrier_id = ? AND deleted_at IS NULL`
     )
     .run(nowIso, nowIso, customerId, carrierId);
+
+  // Desvincular a transportadora padrao deixaria o cadastro apontando para uma
+  // transportadora que o seletor da nova entrada nao lista mais: cai para outra
+  // vinculada, ou fica sem padrao.
+  const isDefault = database
+    .prepare("SELECT 1 FROM customers WHERE id = ? AND default_carrier_id = ?")
+    .get(customerId, carrierId);
+  if (isDefault) {
+    const remaining = listCarriersByCustomer(database, customerId);
+    setDefaultCarrier(database, customerId, remaining[0]?.id ?? null, nowIso);
+  }
 }
 
 export function listCarriersByCustomer(
