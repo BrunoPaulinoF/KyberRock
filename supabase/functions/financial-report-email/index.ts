@@ -15,10 +15,12 @@ import {
   accountsPayableTotalsCents,
   buildAccountsPayableTable,
   buildFinancialWhatsappCaption,
+  buildStatementRequestParam,
   buildStatementTable,
   dispatchFailureReason,
   formatCentsBRL,
   hasActiveChannel,
+  STATEMENT_LIST_KEYS,
   type AccountPayableItem,
   type AccountPayableStatus,
   type StatementEntryItem
@@ -314,21 +316,14 @@ async function fetchAccountStatement(
     credentials,
     "/financas/extrato/",
     "ListarExtrato",
-    {
-      nCodCC: account.code,
-      dPeriodoInicial: formatOmieDate(startIsoDate),
-      dPeriodoFinal: formatOmieDate(endIsoDate),
-      pagina: 1,
-      registros_por_pagina: 500
-    }
+    buildStatementRequestParam({
+      accountCode: account.code,
+      startDateBr: formatOmieDate(startIsoDate),
+      endDateBr: formatOmieDate(endIsoDate)
+    })
   );
 
-  const rawItems = firstArray(response, [
-    "listaMovimento",
-    "lista_movimento",
-    "movimentos",
-    "extrato"
-  ]);
+  const rawItems = firstArray(response, STATEMENT_LIST_KEYS);
   const entries: StatementEntryItem[] = [];
   for (const raw of rawItems) {
     const item = raw as Record<string, unknown>;

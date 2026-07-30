@@ -4,11 +4,13 @@ import {
   accountsPayableTotalsCents,
   buildAccountsPayableTable,
   buildFinancialWhatsappCaption,
+  buildStatementRequestParam,
   buildStatementTable,
   dispatchFailureReason,
   formatCentsBRL,
   formatDateBr,
-  hasActiveChannel
+  hasActiveChannel,
+  STATEMENT_LIST_KEYS
 } from "./financial-report";
 
 describe("formatCentsBRL / formatDateBr", () => {
@@ -204,5 +206,34 @@ describe("dispatchFailureReason", () => {
     expect(dispatchFailureReason(["", "   "])).toBe(
       "Falha ao montar o relatorio financeiro do OMIE"
     );
+  });
+});
+
+describe("buildStatementRequestParam", () => {
+  const param = buildStatementRequestParam({
+    accountCode: 4321,
+    startDateBr: "01/07/2026",
+    endDateBr: "30/07/2026"
+  });
+
+  it("manda conta e periodo no formato da OMIE", () => {
+    expect(param).toEqual({
+      nCodCC: 4321,
+      dPeriodoInicial: "01/07/2026",
+      dPeriodoFinal: "30/07/2026"
+    });
+  });
+
+  it("nao manda paginacao: eccListarExtratoRequest recusa a chamada inteira", () => {
+    // "Tag [PAGINA] nao faz parte da estrutura do tipo complexo
+    // [eccListarExtratoRequest]" derrubava o relatorio financeiro todo dia.
+    expect(Object.keys(param)).not.toContain("pagina");
+    expect(Object.keys(param)).not.toContain("registros_por_pagina");
+  });
+});
+
+describe("STATEMENT_LIST_KEYS", () => {
+  it("procura primeiro o nome documentado do array de movimentos", () => {
+    expect(STATEMENT_LIST_KEYS[0]).toBe("listaMovimentos");
   });
 });
