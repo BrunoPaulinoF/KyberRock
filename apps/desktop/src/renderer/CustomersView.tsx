@@ -738,13 +738,16 @@ export function CustomersView({
   async function handleToggleCarrier(carrierId: string): Promise<void> {
     if (!desktopApi || !editingId) return;
     try {
-      if (linkedCarrierIds.includes(carrierId)) {
-        await desktopApi.unlinkCustomerCarrier(editingId, carrierId);
-        setLinkedCarrierIds((prev) => prev.filter((id) => id !== carrierId));
-      } else {
-        await desktopApi.linkCustomerCarrier(editingId, carrierId);
-        setLinkedCarrierIds((prev) => [...prev, carrierId]);
-      }
+      const linked = linkedCarrierIds.includes(carrierId);
+      const result = linked
+        ? await desktopApi.unlinkCustomerCarrier(editingId, carrierId)
+        : await desktopApi.linkCustomerCarrier(editingId, carrierId);
+      setLinkedCarrierIds((prev) =>
+        linked ? prev.filter((id) => id !== carrierId) : [...prev, carrierId]
+      );
+      // Vincular/desvincular pode promover ou trocar a transportadora padrao no
+      // banco; sem trazer isso para o formulario, salvar regravaria o valor antigo.
+      setForm((prev) => ({ ...prev, defaultCarrierId: result?.defaultCarrierId ?? "" }));
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Erro ao vincular transportadora");
     }
@@ -1175,6 +1178,18 @@ export function CustomersView({
     [carriers, carrierSearch]
   );
 
+  // Vinculadas primeiro no seletor de transportadora padrao: sao as que a Nova
+  // entrada realmente oferece para este cliente.
+  const defaultCarrierOptions = useMemo(
+    () =>
+      [...carriers].sort((a, b) => {
+        const aLinked = linkedCarrierIds.includes(a.id) ? 0 : 1;
+        const bLinked = linkedCarrierIds.includes(b.id) ? 0 : 1;
+        return aLinked - bLinked || a.name.localeCompare(b.name, "pt-BR");
+      }),
+    [carriers, linkedCarrierIds]
+  );
+
   // Credito do cliente aberto na visualizacao (limite x utilizado x disponivel).
   useEffect(() => {
     if (!desktopApi || !viewingCustomer) {
@@ -1220,6 +1235,22 @@ export function CustomersView({
           {
             label: "Limite de credito",
             value: customer.creditLimitCents ? formatMoney(customer.creditLimitCents) : ""
+          },
+          // Ao lado do limite: o limite nao muda com as vendas, quem cai e o
+          // disponivel. Ver so o limite dava a impressao de que a venda no
+          // credito nao tinha descontado nada.
+          {
+            label: "Credito disponivel",
+            value:
+              viewingCredit === null
+                ? ""
+                : viewingCredit.availableCents === null
+                  ? "Sem limite"
+                  : formatMoney(viewingCredit.availableCents)
+          },
+          {
+            label: "Credito utilizado",
+            value: viewingCredit === null ? "" : formatMoney(viewingCredit.usedCents)
           }
         ]
       },
@@ -1256,15 +1287,6 @@ export function CustomersView({
           {
             label: "Credito do cliente",
             value: customer.creditAccountEnabled ? "Habilitado" : "Nao habilitado"
-          },
-          {
-            label: "Credito disponivel",
-            value:
-              viewingCredit === null
-                ? ""
-                : viewingCredit.availableCents === null
-                  ? "Sem limite"
-                  : `${formatMoney(viewingCredit.availableCents)} (utilizado ${formatMoney(viewingCredit.usedCents)})`
           },
           {
             label: "Uso de credito OMIE",
@@ -1578,6 +1600,24 @@ export function CustomersView({
                   placeholder='Ex.: "7/14/21"'
                   style={getInputStyle(false)}
                 />
+              </Field>
+              <Field
+                label="Transportadora padrao"
+                hint="Puxada automaticamente na Nova entrada. Vincular uma transportadora na aba Transportadoras ja assume o padrao quando ele ainda nao foi definido."
+              >
+                <select
+                  value={form.defaultCarrierId}
+                  onChange={(e) => setForm({ ...form, defaultCarrierId: e.target.value })}
+                  style={getInputStyle(false)}
+                >
+                  <option value="">Sem transportadora padrao</option>
+                  {defaultCarrierOptions.map((carrier) => (
+                    <option key={carrier.id} value={carrier.id}>
+                      {carrier.name}
+                      {linkedCarrierIds.includes(carrier.id) ? " (vinculada)" : ""}
+                    </option>
+                  ))}
+                </select>
               </Field>
               <label style={styles.checkbox}>
                 <input

@@ -453,8 +453,14 @@ export interface KyberRockDesktopApi {
   carriersGetVehicles: (
     carrierId: string
   ) => Promise<Array<{ id: string; plate: string; description: string | null }>>;
-  linkCustomerCarrier: (customerId: string, carrierId: string) => Promise<unknown>;
-  unlinkCustomerCarrier: (customerId: string, carrierId: string) => Promise<void>;
+  linkCustomerCarrier: (
+    customerId: string,
+    carrierId: string
+  ) => Promise<{ defaultCarrierId: string | null }>;
+  unlinkCustomerCarrier: (
+    customerId: string,
+    carrierId: string
+  ) => Promise<{ defaultCarrierId: string | null }>;
   listCarriersByCustomer: (
     customerId: string
   ) => Promise<Array<{ id: string; name: string; document: string | null }>>;
