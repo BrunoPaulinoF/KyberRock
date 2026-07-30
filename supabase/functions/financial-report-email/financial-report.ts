@@ -132,6 +132,29 @@ export function buildStatementTable(entries: StatementEntryItem[]): PdfTableData
   };
 }
 
+/** Destinatario que tem por onde receber: e-mail ligado com e-mail, ou WhatsApp ligado com numero. */
+export function hasActiveChannel(recipient: {
+  email: string | null;
+  whatsappPhone: string | null;
+  sendEmail: boolean;
+  sendWhatsapp: boolean;
+}): boolean {
+  return Boolean(
+    (recipient.sendEmail && recipient.email) || (recipient.sendWhatsapp && recipient.whatsappPhone)
+  );
+}
+
+/**
+ * Motivo registrado quando nenhum envio saiu apesar de existir destinatario com
+ * canal ativo: sempre o erro real acumulado (OMIE, SMTP, WhatsApp). Registrar
+ * "sem canais ativos" nesse caso escondia a falha verdadeira e fazia o envio
+ * quebrar todo dia sem ninguem saber por que.
+ */
+export function dispatchFailureReason(errors: readonly string[]): string {
+  const joined = errors.filter((entry) => entry.trim().length > 0).join(" | ");
+  return joined.length > 0 ? joined : "Falha ao montar o relatorio financeiro do OMIE";
+}
+
 export function buildFinancialWhatsappCaption(input: {
   companyName: string;
   periodLabel: string;

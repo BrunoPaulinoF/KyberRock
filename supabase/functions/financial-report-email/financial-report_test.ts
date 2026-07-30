@@ -5,8 +5,10 @@ import {
   buildAccountsPayableTable,
   buildFinancialWhatsappCaption,
   buildStatementTable,
+  dispatchFailureReason,
   formatCentsBRL,
-  formatDateBr
+  formatDateBr,
+  hasActiveChannel
 } from "./financial-report";
 
 describe("formatCentsBRL / formatDateBr", () => {
@@ -166,5 +168,41 @@ describe("buildFinancialWhatsappCaption", () => {
     expect(caption).not.toContain("Vencidas:");
     expect(caption).toContain("Pedreira X");
     expect(caption).toContain("5 lancamento(s)");
+  });
+});
+
+describe("hasActiveChannel", () => {
+  const base = { email: null, whatsappPhone: null, sendEmail: false, sendWhatsapp: false };
+
+  it("aceita e-mail ligado com endereco e WhatsApp ligado com numero", () => {
+    expect(hasActiveChannel({ ...base, sendEmail: true, email: "dono@pedreira.com" })).toBe(true);
+    expect(hasActiveChannel({ ...base, sendWhatsapp: true, whatsappPhone: "5511999999999" })).toBe(
+      true
+    );
+  });
+
+  it("recusa canal ligado sem destino e destino sem canal ligado", () => {
+    expect(hasActiveChannel({ ...base, sendEmail: true })).toBe(false);
+    expect(hasActiveChannel({ ...base, sendWhatsapp: true })).toBe(false);
+    expect(hasActiveChannel({ ...base, email: "dono@pedreira.com" })).toBe(false);
+    expect(hasActiveChannel(base)).toBe(false);
+  });
+});
+
+describe("dispatchFailureReason", () => {
+  it("preserva o erro real em vez de culpar os canais", () => {
+    expect(dispatchFailureReason(["omie: ListarContasPagar falhou (500)"])).toBe(
+      "omie: ListarContasPagar falhou (500)"
+    );
+    expect(dispatchFailureReason(["omie: falhou", "email x@y.com: SMTP recusou"])).toBe(
+      "omie: falhou | email x@y.com: SMTP recusou"
+    );
+  });
+
+  it("cai num motivo generico so quando nao ha erro coletado", () => {
+    expect(dispatchFailureReason([])).toBe("Falha ao montar o relatorio financeiro do OMIE");
+    expect(dispatchFailureReason(["", "   "])).toBe(
+      "Falha ao montar o relatorio financeiro do OMIE"
+    );
   });
 });
