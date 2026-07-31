@@ -4167,7 +4167,7 @@ async function getFunctionErrorMessage(error: unknown): Promise<string> {
           (body as { error?: unknown; message?: unknown }).error ??
           (body as { error?: unknown; message?: unknown }).message;
         if (typeof candidate === "string" && candidate.trim()) {
-          return candidate;
+          return withErrorDetails(candidate, (body as { details?: unknown }).details);
         }
         return JSON.stringify(body);
       }
@@ -4179,6 +4179,23 @@ async function getFunctionErrorMessage(error: unknown): Promise<string> {
   const statusText =
     "statusText" in context ? (context as { statusText?: unknown }).statusText : null;
   return typeof statusText === "string" && statusText.trim() ? statusText : fallback;
+}
+
+/**
+ * Junta ao resumo da edge function a causa real que veio em `details`.
+ *
+ * O desktop-sync responde 500 com um resumo generico ("Falha ao persistir
+ * alguns payloads") e a lista por tabela em `details`. Enquanto so o resumo
+ * chegava aqui, o log do operador repetia a mesma frase para qualquer motivo —
+ * coluna estourada, FK ausente, coluna inexistente — e nao dava para saber
+ * onde a sincronizacao travou sem abrir o painel do Supabase.
+ */
+function withErrorDetails(message: string, details: unknown): string {
+  const parts = (Array.isArray(details) ? details : [details])
+    .filter((detail) => detail !== null && detail !== undefined)
+    .map((detail) => (typeof detail === "string" ? detail : JSON.stringify(detail)))
+    .filter((detail) => detail.trim().length > 0);
+  return parts.length > 0 ? `${message}: ${parts.join("; ")}` : message;
 }
 
 function getErrorLikeMessage(error: unknown): string {
