@@ -114,6 +114,38 @@ builds still publish, but installed apps cannot authenticate to download the upd
    or re-run the workflow from an older commit to publish a higher version built from good code.
    `dist:win:publish` (used by CI) is the publishing variant of `dist:win`.
 
+## Edge Functions deploy
+
+**Automated (default).** `.github/workflows/edge-functions-deploy.yml` deploys the Deno Edge
+Functions on every push to `main` that touches `supabase/functions/**` or `supabase/config.toml`
+(also runnable via **workflow_dispatch**, optionally with a space-separated list of functions).
+It deploys only what the push changed; a change under `supabase/functions/_shared/**` redeploys
+every function, since any of them may import from there. Nothing is pruned: a function deleted
+from the repo stays live in the project until removed by hand.
+
+Required repo secret: `SUPABASE_ACCESS_TOKEN` — a personal access token from
+<https://supabase.com/dashboard/account/tokens>. Without it the job fails with an actionable error
+instead of silently skipping the deploy.
+
+**`verify_jwt` lives in `supabase/config.toml`, not in the dashboard.** Most functions authenticate
+themselves in the request body (`deviceId` + `deviceToken`, admin session) and run with
+`verify_jwt = false`; `cnpj-lookup` is the exception. Two consequences:
+
+- **A function with no `[functions.<slug>]` block deploys with `verify_jwt = true`** (CLI default)
+  and starts answering 401 to the desktop. Always add the block when creating a function.
+- **Never pass `--no-verify-jwt` on a multi-function deploy**: the flag overrides the file for the
+  whole batch and would silently open up `cnpj-lookup`.
+
+**Manual deploy (local / fallback):**
+
+```bash
+npx supabase@latest login
+npx supabase@latest functions deploy omie-sync --project-ref vksihzfrgqoemcqpquit --use-api
+```
+
+`--use-api` bundles server-side, so Docker is not needed. The project ref is not a secret (it is
+already in `.env.example`). Omit `--no-verify-jwt`: `config.toml` now carries that setting.
+
 ## Subagents
 
 All subagents (`explore`, `qa-build`, `qa-lint`, `qa-test`) **must** use the model `minimax-m3`. Other models require explicit user approval.

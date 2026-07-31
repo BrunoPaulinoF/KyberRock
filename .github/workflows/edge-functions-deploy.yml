@@ -1,0 +1,139 @@
+name: Deploy edge functions
+
+# Implanta as Deno Edge Functions de `supabase/functions/` no projeto Supabase
+# sempre que a `main` muda. Antes o deploy era manual: um merge que mexia so em
+# `supabase/functions/**` nao mudava nada em producao ate alguem rodar a CLI na
+# mao, e o codigo do repositorio ficava adiantado em relacao ao que estava no ar.
+#
+# Fluxo:
+#   1. push na main tocando supabase/ (ou disparo manual);
+#   2. descobre quais funcoes mudaram no push (mudanca em `_shared/` = todas,
+#      porque qualquer funcao pode importar de la);
+#   3. implanta uma a uma com a CLI oficial.
+#
+# O `verify_jwt` de cada funcao vem de `supabase/config.toml` — nao passe
+# `--no-verify-jwt` aqui, senao a flag da linha de comando sobrescreve o arquivo
+# e vale para todas as funcoes do lote (inclusive a cnpj-lookup, que exige JWT).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "supabase/functions/**"
+      - "supabase/config.toml"
+      - ".github/workflows/edge-functions-deploy.yml"
+  workflow_dispatch:
+    inputs:
+      functions:
+        description: "Funcoes a implantar, separadas por espaco. Vazio = todas."
+        required: false
+        default: ""
+
+# Deploys em serie: dois jobs simultaneos sobre o mesmo projeto podem publicar
+# versoes fora de ordem. `cancel-in-progress: false` para nunca abortar um
+# deploy pela metade.
+concurrency:
+  group: edge-functions-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Precisa do commit anterior para diffar o que mudou no push.
+          fetch-depth: 0
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Descobrir funcoes a implantar
+        id: targets
+        env:
+          MANUAL_INPUT: ${{ inputs.functions }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          all_functions() {
+            find supabase/functions -mindepth 1 -maxdepth 1 -type d \
+              -not -name '_shared' -printf '%f\n' | sort
+          }
+
+          if [ -n "${MANUAL_INPUT// /}" ]; then
+            echo "Disparo manual: usando a lista informada."
+            targets=$(printf '%s\n' $MANUAL_INPUT | sort -u)
+          elif [ "${{ github.event_name }}" != "push" ] \
+            || [ -z "${BEFORE_SHA:-}" ] \
+            || [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ] \
+            || ! git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null; then
+            # Sem base confiavel para o diff (disparo manual sem lista, branch
+            # nova, force-push): implanta tudo em vez de arriscar pular alguma.
+            echo "Sem base para o diff: implantando todas as funcoes."
+            targets=$(all_functions)
+          else
+            changed=$(git diff --name-only "$BEFORE_SHA" "$AFTER_SHA" -- supabase/functions/ || true)
+            if [ -z "$changed" ]; then
+              echo "Nenhum arquivo de funcao mudou."
+              targets=""
+            elif printf '%s\n' "$changed" | grep -q '^supabase/functions/_shared/'; then
+              # `_shared/` e importado por varias funcoes; nao da para saber por
+              # quais sem parsear os imports, entao reimplanta todas.
+              echo "_shared/ mudou: implantando todas as funcoes."
+              targets=$(all_functions)
+            else
+              targets=$(printf '%s\n' "$changed" \
+                | sed -n 's#^supabase/functions/\([^/]*\)/.*#\1#p' | sort -u)
+            fi
+          fi
+
+          # So implanta o que existe no repositorio: uma funcao removida daqui
+          # continua no ar (nao usamos --prune) e um nome digitado errado no
+          # disparo manual falha cedo, com a lista do que era valido.
+          valid=""
+          for fn in $targets; do
+            if [ -d "supabase/functions/$fn" ]; then
+              valid="$valid $fn"
+            else
+              echo "::error::Funcao '$fn' nao existe em supabase/functions/. Disponiveis: $(all_functions | tr '\n' ' ')"
+              exit 1
+            fi
+          done
+
+          echo "functions=$(echo $valid)" >> "$GITHUB_OUTPUT"
+          echo "Funcoes a implantar:${valid:- (nenhuma)}"
+
+      - name: Implantar
+        if: steps.targets.outputs.functions != ''
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          # Ref do projeto KyberRock. Nao e segredo: ja aparece na URL publica
+          # do Supabase (ver .env.example).
+          PROJECT_REF: vksihzfrgqoemcqpquit
+        run: |
+          set -euo pipefail
+
+          if [ -z "${SUPABASE_ACCESS_TOKEN:-}" ]; then
+            echo "::error::Secret SUPABASE_ACCESS_TOKEN nao configurado. Crie um token em https://supabase.com/dashboard/account/tokens e adicione em Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+
+          for fn in ${{ steps.targets.outputs.functions }}; do
+            echo "::group::deploy $fn"
+            # --use-api: bundle no servidor, sem depender de Docker no runner.
+            supabase functions deploy "$fn" --project-ref "$PROJECT_REF" --use-api
+            echo "::endgroup::"
+          done
+
+      - name: Resumo
+        if: always()
+        run: |
+          alvos="${{ steps.targets.outputs.functions }}"
+          if [ -z "$alvos" ]; then
+            echo "Nenhuma funcao para implantar." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Funcoes implantadas: \`$alvos\`" >> "$GITHUB_STEP_SUMMARY"
+          fi
