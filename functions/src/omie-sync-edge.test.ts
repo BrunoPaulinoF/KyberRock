@@ -140,14 +140,37 @@ describe("omie-sync Edge Function", () => {
     expect(source).toContain("installmentDays?: number[];");
     expect(source).toContain("function buildServiceOrderParcelas");
     expect(source).toContain(
-      "const osParcelas = linkedParcelaCode === null ? buildServiceOrderParcelas(payload) : null;"
+      "linkedParcelaCode === null || isBoletoPaymentMethod(payload.paymentMethodOmieCode)"
     );
+    expect(source).toContain("? buildServiceOrderParcelas(payload)");
     expect(source).toContain("dDtVenc: toOmieDate(item.dueDate)");
     expect(source).toContain("nParcela: item.number");
     expect(source).toContain("nDias: item.dueInDays");
     expect(source).toContain("{ Parcelas: parcelas }");
     expect(source).toContain('osParcelas !== null ? "999"');
     expect(source).toContain("nQtdeParc: parcelas !== null ? parcelas.length : installmentCount");
+  });
+
+  it("liga o gerar boleto do OMIE quando a forma de pagamento e boleto", () => {
+    const source = getOmieSyncSource();
+
+    // O campo do OMIE e NEGATIVO ("nao_gerar_boleto"): "N" gera o boleto no faturamento
+    // e "S" nao gera. Boleto ("15") -> "N" + tipo de documento "BOL"; qualquer outro meio
+    // conhecido -> "S"; sem meio (fiado/desktop antigo) -> nada, vale o padrao do OMIE.
+    expect(source).toContain('const OMIE_BOLETO_PAYMENT_METHOD_CODE = "15";');
+    expect(source).toContain('const OMIE_BOLETO_DOCUMENT_TYPE = "BOL";');
+    expect(source).toContain("function boletoGenerationFlag");
+    expect(source).toContain('return meio === OMIE_BOLETO_PAYMENT_METHOD_CODE ? "N" : "S";');
+    expect(source).toContain("function buildBoletoParcelaFields");
+    expect(source).toContain("nao_gerar_boleto: naoGerarBoleto");
+    expect(source).toContain("{ tipo_documento: OMIE_BOLETO_DOCUMENT_TYPE }");
+    // O mesmo flag vai no pedido de venda (cabecalho + lista_parcelas) e na OS (Parcelas).
+    expect(source).toContain("const boletoFields = buildBoletoParcelaFields(meio)");
+    expect(source).toContain(
+      "const boletoFields = buildBoletoParcelaFields(payload.paymentMethodOmieCode)"
+    );
+    expect(source).toContain("...cabecalhoBoleto");
+    expect(source).toContain("...boletoFields");
   });
 
   it("falls back to the OMIE parcelas cadastro when the OS structure is rejected", () => {

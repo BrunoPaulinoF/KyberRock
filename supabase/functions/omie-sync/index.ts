@@ -247,10 +247,9 @@ type CreateOrderPayload = {
   installmentDays?: number[];
   /**
    * Codigo NFe/OMIE do meio de pagamento selecionado no desktop ("01" dinheiro,
-   * "17" PIX...). Transportado no payload; como o pedido/OS referencia a condicao
-   * pelo codigo do cadastro de parcelas, o meio (tPag da NF-e) ainda nao entra no
-   * corpo do pedido — exigiria parcelamento informado (codigo_parcela "999" +
-   * lista_parcelas), a validar com credenciais reais.
+   * "17" PIX, "15" boleto...). Vai como `meio_pagamento` (tPag da NF-e) em cada parcela
+   * do parcelamento informado do pedido e define o "gerar boleto" da parcela no pedido
+   * e na OS (ver boletoGenerationFlag).
    */
   paymentMethodOmieCode?: string;
   /**
@@ -1795,6 +1794,61 @@ function buildInstallmentPlan(payload: CreateOrderPayload): InstallmentPlanItem[
   });
 }
 
+/**
+ * Codigo do meio de pagamento "boleto bancario" no OMIE/NF-e (tPag "15"). E por ele que
+ * o pedido/OS reconhece a venda em boleto — o codigo local da forma ("boleto") nao viaja
+ * no payload, so o codigo OMIE vinculado a ela.
+ */
+const OMIE_BOLETO_PAYMENT_METHOD_CODE = "15";
+
+/**
+ * Tipo de documento da parcela paga em boleto (aba "Parcelas" do OMIE). Sem ele o OMIE
+ * tipa a conta a receber gerada no faturamento como "Nota Fiscal Eletronica" e o titulo
+ * nao nasce como boleto.
+ */
+const OMIE_BOLETO_DOCUMENT_TYPE = "BOL";
+
+/** A operacao foi paga em boleto (meio de pagamento "15" do OMIE/NF-e). */
+function isBoletoPaymentMethod(paymentMethodOmieCode: string | undefined): boolean {
+  return (paymentMethodOmieCode ?? "").trim() === OMIE_BOLETO_PAYMENT_METHOD_CODE;
+}
+
+/**
+ * Valor do `nao_gerar_boleto` do OMIE para o meio de pagamento escolhido na operacao.
+ * O OMIE expoe a opcao pela NEGATIVA: "S" NAO gera o boleto no faturamento, "N" gera
+ * (padrao). Como o valor informado no pedido/OS tem prioridade sobre a recomendacao do
+ * cadastro do cliente ("Gerar Boletos ao Emitir NF-e"), mandar o flag explicito e o que
+ * garante que o boleto siga a forma escolhida no KyberRock:
+ *
+ * - boleto ("15") -> "N": gerar boleto ATIVO, o OMIE emite a cobranca no faturamento;
+ * - qualquer outro meio conhecido -> "S": venda em dinheiro/PIX/cartao nao emite boleto;
+ * - meio desconhecido (credito do cliente, desktop antigo sem o codigo) -> null: nada e
+ *   enviado e vale o padrao do OMIE, como antes.
+ */
+function boletoGenerationFlag(paymentMethodOmieCode: string | undefined): string | null {
+  const meio = (paymentMethodOmieCode ?? "").trim();
+  if (!meio) return null;
+  return meio === OMIE_BOLETO_PAYMENT_METHOD_CODE ? "N" : "S";
+}
+
+/**
+ * Campos de boleto de uma parcela. O pedido de venda (`lista_parcelas`) e a OS
+ * (`Parcelas`) usam os MESMOS nomes de tag, entao as duas saidas levam o mesmo
+ * "gerar boleto" a partir da mesma forma de pagamento.
+ */
+function buildBoletoParcelaFields(
+  paymentMethodOmieCode: string | undefined
+): Record<string, unknown> {
+  const naoGerarBoleto = boletoGenerationFlag(paymentMethodOmieCode);
+  if (naoGerarBoleto === null) return {};
+  return {
+    nao_gerar_boleto: naoGerarBoleto,
+    ...(isBoletoPaymentMethod(paymentMethodOmieCode)
+      ? { tipo_documento: OMIE_BOLETO_DOCUMENT_TYPE }
+      : {})
+  };
+}
+
 type OrderParcelamento = {
   /** Campos do cabecalho (codigo_parcela + qtde_parcelas quando "999"). */
   cabecalho: Record<string, unknown>;
@@ -1808,30 +1862,38 @@ type OrderParcelamento = {
  * codigo_parcela "999" + lista_parcelas com data_vencimento, percentual e
  * meio_pagamento (tPag da NF-e) por parcela. Sem meio e a vista, usa o codigo
  * vinculado (ou "000").
+ *
+ * O "gerar boleto" acompanha o meio: em boleto ("15") as parcelas vao com
+ * nao_gerar_boleto "N" (ativo) e tipo_documento "BOL"; nos demais meios conhecidos vao
+ * com "S". O cabecalho leva o mesmo flag como padrao das parcelas.
  */
 function buildOrderParcelamento(payload: CreateOrderPayload): OrderParcelamento {
   const meio = (payload.paymentMethodOmieCode ?? "").trim();
   const plan = buildInstallmentPlan(payload);
   const useLista = meio.length > 0 || plan.length > 1 || plan[0].dueInDays > 0;
+  const naoGerarBoleto = boletoGenerationFlag(meio);
+  const cabecalhoBoleto = naoGerarBoleto !== null ? { nao_gerar_boleto: naoGerarBoleto } : {};
 
   if (!useLista) {
     const code = normalizeParcelaCode(payload.paymentTermOmieCode) ?? "000";
-    return { cabecalho: { codigo_parcela: code }, listaParcelas: null };
+    return { cabecalho: { codigo_parcela: code, ...cabecalhoBoleto }, listaParcelas: null };
   }
 
   const count = plan.length;
+  const boletoFields = buildBoletoParcelaFields(meio);
   const parcela = plan.map((item) => ({
     numero_parcela: item.number,
     data_vencimento: toOmieDate(item.dueDate),
     percentual: item.percent,
     valor: item.valueCents / 100,
-    ...(meio ? { meio_pagamento: meio } : {})
+    ...(meio ? { meio_pagamento: meio } : {}),
+    ...boletoFields
   }));
 
   return {
     // OMIE: o campo do cabecalho e "qtde_parcelas" — "quantidade_parcelas" e rejeitado
     // ("Tag [QUANTIDADE_PARCELAS] nao faz parte da estrutura do tipo complexo [cabecalho]").
-    cabecalho: { codigo_parcela: "999", qtde_parcelas: count },
+    cabecalho: { codigo_parcela: "999", qtde_parcelas: count, ...cabecalhoBoleto },
     listaParcelas: { parcela }
   };
 }
@@ -1842,19 +1904,24 @@ function buildOrderParcelamento(payload: CreateOrderPayload): OrderParcelamento 
  * operacao, em vez de depender de a condicao existir no cadastro de parcelas do OMIE.
  *
  * Retorna null so quando a operacao e mesmo a vista (uma parcela no dia da emissao) —
- * ai o codigo "000"/vinculado do cabecalho ja representa a condicao.
+ * ai o codigo "000"/vinculado do cabecalho ja representa a condicao. Em boleto o bloco
+ * vai mesmo a vista: o cabecalho da OS nao tem o campo de boleto, entao a parcela e o
+ * unico lugar que carrega o "gerar boleto" ate o OMIE.
  */
 function buildServiceOrderParcelas(
   payload: CreateOrderPayload
 ): Array<Record<string, unknown>> | null {
   const plan = buildInstallmentPlan(payload);
-  if (plan.length === 1 && plan[0].dueInDays === 0) return null;
+  const isBoleto = isBoletoPaymentMethod(payload.paymentMethodOmieCode);
+  if (plan.length === 1 && plan[0].dueInDays === 0 && !isBoleto) return null;
+  const boletoFields = buildBoletoParcelaFields(payload.paymentMethodOmieCode);
   return plan.map((item) => ({
     nParcela: item.number,
     nDias: item.dueInDays,
     dDtVenc: toOmieDate(item.dueDate),
     nPercentual: item.percent,
-    nValor: item.valueCents / 100
+    nValor: item.valueCents / 100,
+    ...boletoFields
   }));
 }
 
@@ -2039,8 +2106,15 @@ async function createOmieOrder(
   // como o pedido de venda ja faz com lista_parcelas. Antes esse caso dependia de achar
   // ou criar a condicao no cadastro do OMIE e, quando nao dava, caia em "000" — a OS
   // nascia A VISTA mesmo com "9/18/27" digitado na operacao.
+  //
+  // Em boleto o parcelamento informado e obrigatorio mesmo com codigo vinculado: o
+  // "gerar boleto" so existe na parcela da OS, e os vencimentos informados sao os
+  // mesmos da condicao vinculada (vem da mesma condicao escolhida na operacao).
   const linkedParcelaCode = normalizeParcelaCode(payload.paymentTermOmieCode);
-  const osParcelas = linkedParcelaCode === null ? buildServiceOrderParcelas(payload) : null;
+  const osParcelas =
+    linkedParcelaCode === null || isBoletoPaymentMethod(payload.paymentMethodOmieCode)
+      ? buildServiceOrderParcelas(payload)
+      : null;
   const buildServiceOrderBody = (
     parcelaCode: string,
     parcelas: Array<Record<string, unknown>> | null
@@ -2116,7 +2190,10 @@ async function createOmieOrder(
         "[omie] IncluirOS recusou o parcelamento informado; reenviando pelo cadastro de parcelas",
         error
       );
-      const fallbackCode = (await ensureOmieParcelaCode(credentials, payload)) ?? "000";
+      // O codigo ja vinculado a condicao manda no reenvio (o boleto pode ter escolhido o
+      // parcelamento informado mesmo com vinculo); so sem ele a condicao e resolvida/criada.
+      const fallbackCode =
+        linkedParcelaCode ?? (await ensureOmieParcelaCode(credentials, payload)) ?? "000";
       return await callOmie<unknown, OmieServiceOrderResponse>(
         credentials,
         "/servicos/os/",

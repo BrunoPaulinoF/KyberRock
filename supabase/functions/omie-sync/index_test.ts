@@ -1659,6 +1659,322 @@ Deno.test("create_order leva o meio de pagamento em cada parcela (tPag da NF-e)"
   assertEquals(parcela[0].data_vencimento, "07/07/2026");
 });
 
+Deno.test("create_order ativa o gerar boleto do pedido quando o meio e boleto", async () => {
+  const deviceToken = "token-order-boleto";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-order-boleto": {
+        id: "device-order-boleto",
+        company_id: "company-order-boleto",
+        unit_id: "unit-order-boleto",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-order-boleto": {
+        id: "company-order-boleto",
+        is_active: true,
+        omie_app_key: "order-boleto",
+        omie_app_secret: "secret-order-boleto"
+      }
+    }
+  });
+  const omieQueue = parcelaAwareOrderStub({});
+
+  await postOmieSync(
+    {
+      deviceId: "device-order-boleto",
+      deviceToken,
+      action: "create_order",
+      payload: {
+        operationType: "invoice",
+        customerOmieId: 100,
+        productOmieId: 200,
+        quantity: 10,
+        unitPrice: 50,
+        issueDate: "2026-07-07",
+        idempotencyKey: "kyberrock:unit:op10:create_sales_order",
+        paymentMethodOmieCode: "15",
+        installmentDays: [7, 14]
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  const body = getParam(findRequest(omieQueue, "IncluirPedido"));
+  // "N" = NAO nao gerar, ou seja, o boleto SAI no faturamento (o campo do OMIE e negativo).
+  assertEquals((body.cabecalho as Record<string, unknown>).nao_gerar_boleto, "N");
+  const parcela = (body.lista_parcelas as { parcela: Array<Record<string, unknown>> }).parcela;
+  assertEquals(parcela.length, 2);
+  for (const item of parcela) {
+    assertEquals(item.meio_pagamento, "15");
+    assertEquals(item.nao_gerar_boleto, "N");
+    // A conta a receber nasce tipada como boleto (sem isso o OMIE grava "NF-e").
+    assertEquals(item.tipo_documento, "BOL");
+  }
+});
+
+Deno.test("create_order nao gera boleto no pedido quando o meio nao e boleto", async () => {
+  const deviceToken = "token-order-sem-boleto";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-order-sem-boleto": {
+        id: "device-order-sem-boleto",
+        company_id: "company-order-sem-boleto",
+        unit_id: "unit-order-sem-boleto",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-order-sem-boleto": {
+        id: "company-order-sem-boleto",
+        is_active: true,
+        omie_app_key: "order-sem-boleto",
+        omie_app_secret: "secret-order-sem-boleto"
+      }
+    }
+  });
+  const omieQueue = parcelaAwareOrderStub({});
+
+  await postOmieSync(
+    {
+      deviceId: "device-order-sem-boleto",
+      deviceToken,
+      action: "create_order",
+      payload: {
+        operationType: "invoice",
+        customerOmieId: 100,
+        productOmieId: 200,
+        quantity: 10,
+        unitPrice: 50,
+        issueDate: "2026-07-07",
+        idempotencyKey: "kyberrock:unit:op11:create_sales_order",
+        paymentMethodOmieCode: "17"
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  const body = getParam(findRequest(omieQueue, "IncluirPedido"));
+  assertEquals((body.cabecalho as Record<string, unknown>).nao_gerar_boleto, "S");
+  const parcela = (body.lista_parcelas as { parcela: Array<Record<string, unknown>> }).parcela;
+  assertEquals(parcela[0].nao_gerar_boleto, "S");
+  // Sem boleto, a conta a receber segue com o tipo de documento padrao do OMIE.
+  assertEquals(parcela[0].tipo_documento, undefined);
+});
+
+Deno.test("create_order nao decide o boleto do pedido sem meio de pagamento", async () => {
+  const deviceToken = "token-order-boleto-omisso";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-order-boleto-omisso": {
+        id: "device-order-boleto-omisso",
+        company_id: "company-order-boleto-omisso",
+        unit_id: "unit-order-boleto-omisso",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-order-boleto-omisso": {
+        id: "company-order-boleto-omisso",
+        is_active: true,
+        omie_app_key: "order-boleto-omisso",
+        omie_app_secret: "secret-order-boleto-omisso"
+      }
+    }
+  });
+  const omieQueue = parcelaAwareOrderStub({});
+
+  // Credito do cliente (fiado) e desktops antigos sobem sem o codigo do meio: nesse caso
+  // o pedido nao opina sobre o boleto e vale o padrao do cadastro do cliente no OMIE.
+  await postOmieSync(
+    {
+      deviceId: "device-order-boleto-omisso",
+      deviceToken,
+      action: "create_order",
+      payload: {
+        operationType: "invoice",
+        customerOmieId: 100,
+        productOmieId: 200,
+        quantity: 10,
+        unitPrice: 50,
+        issueDate: "2026-07-07",
+        idempotencyKey: "kyberrock:unit:op12:create_sales_order",
+        installmentDays: [7, 14]
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  const body = getParam(findRequest(omieQueue, "IncluirPedido"));
+  assertEquals((body.cabecalho as Record<string, unknown>).nao_gerar_boleto, undefined);
+  const parcela = (body.lista_parcelas as { parcela: Array<Record<string, unknown>> }).parcela;
+  assertEquals(parcela[0].nao_gerar_boleto, undefined);
+  assertEquals(parcela[0].tipo_documento, undefined);
+});
+
+Deno.test("create_order leva o gerar boleto para a ordem de servico", async () => {
+  const deviceToken = "token-order-os-boleto";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-order-os-boleto": {
+        id: "device-order-os-boleto",
+        company_id: "company-order-os-boleto",
+        unit_id: "unit-order-os-boleto",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-order-os-boleto": {
+        id: "company-order-os-boleto",
+        is_active: true,
+        omie_app_key: "order-os-boleto",
+        omie_app_secret: "secret-order-os-boleto"
+      }
+    }
+  });
+  const omieQueue = parcelaAwareOrderStub({});
+
+  // A vista E com a condicao ja vinculada a um codigo do cadastro: mesmo assim a OS vai
+  // com o bloco Parcelas, porque so a parcela carrega o "gerar boleto" ate o OMIE.
+  await postOmieSync(
+    {
+      deviceId: "device-order-os-boleto",
+      deviceToken,
+      action: "create_order",
+      payload: {
+        operationType: "internal",
+        customerOmieId: 100,
+        serviceDescription: "Pesagem interna",
+        quantity: 5,
+        unitPrice: 20,
+        issueDate: "2026-07-07",
+        idempotencyKey: "kyberrock:unit:op13:create_service_order",
+        paymentTermOmieCode: "030",
+        paymentMethodOmieCode: "15"
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  const body = getParam(findRequest(omieQueue, "IncluirOS"));
+  assertEquals((body.Cabecalho as Record<string, unknown>).cCodParc, "999");
+  const parcelas = body.Parcelas as Array<Record<string, unknown>>;
+  assertEquals(parcelas.length, 1);
+  assertEquals(parcelas[0].nao_gerar_boleto, "N");
+  assertEquals(parcelas[0].tipo_documento, "BOL");
+});
+
+Deno.test("create_order mantem a OS sem boleto no caminho historico", async () => {
+  const deviceToken = "token-order-os-sem-boleto";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-order-os-sem-boleto": {
+        id: "device-order-os-sem-boleto",
+        company_id: "company-order-os-sem-boleto",
+        unit_id: "unit-order-os-sem-boleto",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-order-os-sem-boleto": {
+        id: "company-order-os-sem-boleto",
+        is_active: true,
+        omie_app_key: "order-os-sem-boleto",
+        omie_app_secret: "secret-order-os-sem-boleto"
+      }
+    }
+  });
+  const omieQueue = parcelaAwareOrderStub({});
+
+  // PIX a vista com codigo vinculado: segue pelo cadastro de parcelas, sem bloco Parcelas.
+  await postOmieSync(
+    {
+      deviceId: "device-order-os-sem-boleto",
+      deviceToken,
+      action: "create_order",
+      payload: {
+        operationType: "internal",
+        customerOmieId: 100,
+        serviceDescription: "Pesagem interna",
+        quantity: 5,
+        unitPrice: 20,
+        issueDate: "2026-07-07",
+        idempotencyKey: "kyberrock:unit:op14:create_service_order",
+        paymentTermOmieCode: "030",
+        paymentMethodOmieCode: "17"
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  const body = getParam(findRequest(omieQueue, "IncluirOS"));
+  assertEquals((body.Cabecalho as Record<string, unknown>).cCodParc, "030");
+  assertEquals(body.Parcelas, undefined);
+});
+
+Deno.test("create_order marca as parcelas da OS sem boleto nos demais meios", async () => {
+  const deviceToken = "token-order-os-pix-parcelado";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-order-os-pix-parcelado": {
+        id: "device-order-os-pix-parcelado",
+        company_id: "company-order-os-pix-parcelado",
+        unit_id: "unit-order-os-pix-parcelado",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-order-os-pix-parcelado": {
+        id: "company-order-os-pix-parcelado",
+        is_active: true,
+        omie_app_key: "order-os-pix-parcelado",
+        omie_app_secret: "secret-order-os-pix-parcelado"
+      }
+    }
+  });
+  const omieQueue = parcelaAwareOrderStub({});
+
+  await postOmieSync(
+    {
+      deviceId: "device-order-os-pix-parcelado",
+      deviceToken,
+      action: "create_order",
+      payload: {
+        operationType: "internal",
+        customerOmieId: 100,
+        serviceDescription: "Pesagem interna",
+        quantity: 12,
+        unitPrice: 40,
+        issueDate: "2026-07-07",
+        idempotencyKey: "kyberrock:unit:op15:create_service_order",
+        installmentDays: [30, 60],
+        paymentMethodOmieCode: "17"
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  const parcelas = getParam(findRequest(omieQueue, "IncluirOS")).Parcelas as Array<
+    Record<string, unknown>
+  >;
+  assertEquals(parcelas.length, 2);
+  assertEquals(parcelas[0].nao_gerar_boleto, "S");
+  assertEquals(parcelas[0].tipo_documento, undefined);
+});
+
 Deno.test("create_order manda os vencimentos digitados na ordem de servico", async () => {
   const deviceToken = "token-order-os-parcela";
   const token_hash = await sha256Hex(deviceToken);
