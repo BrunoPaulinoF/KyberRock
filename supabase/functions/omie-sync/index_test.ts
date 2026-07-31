@@ -516,7 +516,15 @@ Deno.test("fluxo pull processa paginas e mapeia clientes OMIE com tag transporta
     customersFinished: true,
     customersTotalPages: 2
   });
-  assertEquals(omieQueue.requests.map((request) => getParam(request).pagina), [1, 2]);
+  // Filtra por ListarClientes: o pull da mesma chamada percorre outros cadastros
+  // (categorias, por exemplo) que tambem paginam, e a paginacao de clientes e o
+  // que este teste cobre.
+  assertEquals(
+    omieQueue.requests
+      .filter((request) => request.call === "ListarClientes")
+      .map((request) => getParam(request).pagina),
+    [1, 2]
+  );
   assertEquals(localTables.customers.length, 2);
   assertEquals(localTables.carriers.length, 2);
   assertObjectMatch(localTables.carriers[0] as Record<string, unknown>, {
