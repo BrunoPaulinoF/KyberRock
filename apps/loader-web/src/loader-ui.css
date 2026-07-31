@@ -502,112 +502,133 @@ select {
   font-weight: 900;
 }
 
+/* Cards compactos: o carregador precisa enxergar varias cargas da fila de uma
+   vez no celular, entao cada operacao ocupa uma unica linha curta
+   (placa + resumo + acao) em vez de um bloco de tela cheia. */
 .card-list {
   display: grid;
-  gap: 14px;
-  padding: 18px;
+  gap: 8px;
+  padding: 10px;
 }
 
 .operation-card {
   position: relative;
-  display: grid;
-  gap: 16px;
-  padding: 18px;
   border: 1px solid #e2e8f0;
-  border-radius: 22px;
+  border-radius: 14px;
   background: #ffffff;
-  box-shadow: 0 16px 44px rgba(15, 23, 42, 0.07);
-}
-
-.operation-top-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 14px;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.06);
 }
 
 .queue-position {
-  width: 46px;
-  height: 46px;
-  flex: 0 0 46px;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
   display: grid;
   place-items: center;
-  border-radius: 16px;
+  border-radius: 10px;
   background: linear-gradient(135deg, #1d4ed8, #0f172a);
   color: #ffffff;
-  font-size: 15px;
+  font-size: 12px;
   font-weight: 900;
-  box-shadow: 0 14px 30px rgba(29, 78, 216, 0.22);
 }
 
-.operation-identity {
-  flex: 1;
+.operation-summary {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+/* Cada card tem sempre 3 linhas curtas (placa+chegada / cliente / produto+
+   motorista) para que a altura nao varie conforme o tamanho dos nomes. */
+.operation-headline {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 8px;
   min-width: 0;
 }
 
 .operation-plate {
   margin: 0;
+  flex: 0 1 auto;
+  min-width: 0;
   color: #0f172a;
-  font-size: clamp(24px, 3vw, 34px);
-  line-height: 0.95;
-  letter-spacing: 0.035em;
+  font-size: 17px;
+  line-height: 1.15;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.operation-arrival {
+  flex: 0 0 auto;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.operation-customer,
+.operation-meta {
+  margin: 0;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .operation-customer {
-  margin: 7px 0 0;
+  color: #0f172a;
+  font-weight: 900;
+}
+
+.operation-meta {
   color: #475569;
-  font-size: 15px;
-  font-weight: 800;
+  font-weight: 700;
+}
+
+.operation-meta__driver {
+  color: #64748b;
+}
+
+.operation-meta__sep {
+  margin: 0 4px;
+  color: #cbd5e1;
 }
 
 .waiting-pill {
+  flex: 0 0 auto;
   white-space: nowrap;
   border: 1px solid #fde68a;
   border-radius: 999px;
   background: #fffbeb;
   color: #92400e;
-  padding: 7px 11px;
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.details-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 10px;
-  margin: 0;
-}
-
-.detail-card {
-  padding: 12px;
-  border: 1px solid #e2e8f0;
-  border-radius: 16px;
-  background: #f8fafc;
-}
-
-.detail-label {
-  color: #64748b;
-  font-size: 11px;
-  font-weight: 900;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-.detail-value {
-  margin: 5px 0 0;
-  color: #0f172a;
-  font-size: 14px;
+  padding: 2px 7px;
+  font-size: 10px;
   font-weight: 900;
 }
 
 .complete-button {
-  width: 100%;
+  flex: 0 0 auto;
+  min-height: 38px;
+  padding: 8px 14px;
+  border-radius: 11px;
+  font-size: 13px;
+  white-space: nowrap;
+  box-shadow: 0 8px 18px rgba(29, 78, 216, 0.2);
 }
 
 /* --- Truck departure animation ------------------------------------------- */
 
 .operation-card__content {
   display: grid;
-  gap: 16px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
 }
 
 /* The truck overlay sits on top of the card content and only becomes visible
@@ -618,21 +639,23 @@ select {
   inset: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 20px;
+  gap: 8px;
+  padding: 0 12px;
   opacity: 0;
   pointer-events: none;
 }
 
+/* Dimensionado para caber na altura do card compacto (o SVG tem proporcao
+   132x72, entao 74px de largura => ~40px de altura). */
 .operation-card__truck-svg {
   flex: 0 0 auto;
-  width: clamp(96px, 22vw, 132px);
+  width: clamp(58px, 16vw, 78px);
   height: auto;
 }
 
 .operation-card__truck-trail {
   flex: 1;
-  height: 4px;
+  height: 3px;
   border-radius: 999px;
   background: repeating-linear-gradient(
     90deg,
@@ -939,15 +962,68 @@ select {
 }
 
 @media (max-width: 560px) {
-  .loader-header,
-  .operation-top-row,
-  .queue-panel-header {
+  .loader-header {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .waiting-pill {
-    width: fit-content;
+  /* No celular a lista precisa mostrar o maximo de cargas por tela: o cabecalho
+     do painel encolhe e cada card fica ainda mais compacto. */
+  .queue-panel {
+    border-radius: 20px;
+  }
+
+  .queue-panel-header {
+    align-items: center;
+    padding: 12px 14px;
+  }
+
+  .queue-panel-title {
+    font-size: 17px;
+  }
+
+  .queue-panel-subtitle {
+    margin-top: 3px;
+    font-size: 12px;
+  }
+
+  .queue-count-badge {
+    min-width: 32px;
+    height: 32px;
+    border-radius: 11px;
+    font-size: 14px;
+  }
+
+  .card-list {
+    gap: 7px;
+    padding: 8px;
+  }
+
+  .operation-card__content {
+    gap: 8px;
+    padding: 8px 9px;
+  }
+
+  .queue-position {
+    width: 26px;
+    height: 26px;
+    flex-basis: 26px;
+    border-radius: 9px;
+    font-size: 11px;
+  }
+
+  .operation-plate {
+    font-size: 16px;
+  }
+
+  .operation-meta {
+    font-size: 11px;
+  }
+
+  .complete-button {
+    min-height: 36px;
+    padding: 8px 11px;
+    font-size: 12px;
   }
 
   .auth-card {
