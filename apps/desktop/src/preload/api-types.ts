@@ -375,16 +375,6 @@ export interface KyberRockDesktopApi {
   omieDefaultCategorySet: (categoryCode: string | null) => Promise<string | null>;
   customerCreditBalance: (customerId: string) => Promise<number>;
   customerCreditSummary: (customerId: string) => Promise<CustomerCreditSummary>;
-  customerCreditPayment: (
-    customerId: string,
-    amountCents: number,
-    reason?: string
-  ) => Promise<CustomerCreditSummary>;
-  customerCreditAdjust: (
-    customerId: string,
-    amountCents: number,
-    reason: string
-  ) => Promise<CustomerCreditSummary>;
   customerCreditMovements: (customerId: string, limit?: number) => Promise<CreditMovementRow[]>;
   /** Espelha os adiantamentos do OMIE no extrato de credito dos clientes. */
   customerCreditSyncAdvances: (options?: {

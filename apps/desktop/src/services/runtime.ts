@@ -2389,44 +2389,10 @@ export class DesktopRuntime {
     return new CreditService(this.database).getSummary(customerId);
   }
 
-  /**
-   * Baixa do fiado: o pagamento recebido do cliente volta como credito no extrato
-   * e libera o limite consumido pelas vendas anteriores.
-   */
-  registerCustomerCreditPayment(
-    customerId: string,
-    amountCents: number,
-    reason?: string
-  ): CustomerCreditSummary {
-    this.assertDesktopAccess();
-    if (!Number.isInteger(amountCents) || amountCents <= 0) {
-      throw new Error("Informe um valor de pagamento maior que zero.");
-    }
-    const service = new CreditService(this.database);
-    // Pre-pago recebe adiantamento pelo OMIE: lancar o mesmo deposito a mao
-    // contaria o dinheiro duas vezes.
-    service.assertManualPaymentAllowed(customerId);
-    service.applyCredit(customerId, amountCents, reason?.trim() || "Pagamento do cliente");
-    return service.getSummary(customerId);
-  }
-
-  /** Correcao manual do extrato (positiva ou negativa), sempre com justificativa. */
-  adjustCustomerCredit(
-    customerId: string,
-    amountCents: number,
-    reason: string
-  ): CustomerCreditSummary {
-    this.assertDesktopAccess();
-    if (!Number.isInteger(amountCents) || amountCents === 0) {
-      throw new Error("Informe um valor de ajuste diferente de zero.");
-    }
-    if (!reason?.trim()) {
-      throw new Error("Informe o motivo do ajuste.");
-    }
-    const service = new CreditService(this.database);
-    service.applyManualAdjustment(customerId, amountCents, reason.trim());
-    return service.getSummary(customerId);
-  }
+  // Nao existe lancamento de credito pelo KyberRock: o adiantamento e feito no
+  // financeiro do OMIE e chega pelo espelho da sincronizacao
+  // (`syncCustomerAdvancesFromOmie`). O que o desktop escreve no extrato e o
+  // consumo da compra (debito no fechamento) e o estorno do cancelamento.
 
   listCustomerCreditMovements(customerId: string, limit?: number): CreditMovementRow[] {
     this.assertDesktopAccess();

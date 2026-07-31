@@ -222,7 +222,7 @@ interface CarrierOption {
 
 /** Rotulos dos lancamentos do extrato de credito. */
 const CREDIT_MOVEMENT_LABELS: Record<string, string> = {
-  credit: "Pagamento/credito",
+  credit: "Credito",
   debit_product: "Venda (produto)",
   debit_freight: "Venda (frete)",
   refund_product: "Estorno (produto)",
@@ -241,9 +241,6 @@ export function creditMovementLabel(movement: { movement_type: string; source?: 
   }
   return CREDIT_MOVEMENT_LABELS[movement.movement_type] ?? movement.movement_type;
 }
-
-/** Tipos de lancamento manual oferecidos na aba Credito. */
-type CreditEntryKind = "payment" | "adjustment_credit" | "adjustment_debit";
 
 /**
  * Valor com sinal para o extrato: as vendas gravam `amount_cents` positivo e o
@@ -417,9 +414,6 @@ export function CustomersView({
   const [carrierSearch, setCarrierSearch] = useState("");
   const [creditSummary, setCreditSummary] = useState<CustomerCreditSummary | null>(null);
   const [creditMovements, setCreditMovements] = useState<CreditMovementRow[]>([]);
-  const [creditAmountReais, setCreditAmountReais] = useState("");
-  const [creditEntryKind, setCreditEntryKind] = useState<CreditEntryKind>("payment");
-  const [creditReason, setCreditReason] = useState("");
   const [creditBusy, setCreditBusy] = useState(false);
   const [customerFreightRules, setCustomerFreightRules] = useState<
     Array<{
@@ -571,9 +565,6 @@ export function CustomersView({
     setCarrierSearch("");
     setCreditSummary(null);
     setCreditMovements([]);
-    setCreditAmountReais("");
-    setCreditReason("");
-    setCreditEntryKind("payment");
     setCustomerFreightRules([]);
     setFreightProductId("");
     setFreightValueReais("");
@@ -656,9 +647,6 @@ export function CustomersView({
     setViewingCustomer(null);
     setActiveFormSection("identificacao");
     setCarrierSearch("");
-    setCreditAmountReais("");
-    setCreditReason("");
-    setCreditEntryKind("payment");
     setEditingId(customer.id);
     setEditingSource(customer.source);
     setFormError(null);
@@ -698,57 +686,9 @@ export function CustomersView({
       ]);
       setCreditSummary(summary);
       setCreditMovements(movements);
-      // Pre-pago nao tem "pagamento recebido" (o deposito vem do OMIE): cai no
-      // ajuste, que exige motivo, para o operador nao duplicar o adiantamento.
-      if (summary.creditMode === "prepaid") {
-        setCreditEntryKind((kind) => (kind === "payment" ? "adjustment_credit" : kind));
-      }
     } catch {
       setCreditSummary(null);
       setCreditMovements([]);
-    }
-  }
-
-  /**
-   * Lanca no extrato o pagamento recebido (libera o limite consumido) ou um ajuste
-   * manual a favor/contra o cliente para corrigir o saldo.
-   */
-  async function handleCreditEntry(): Promise<void> {
-    if (!desktopApi || !editingId) return;
-    const cents = parseMoneyInputToCents(creditAmountReais);
-    if (cents === null || cents === 0) {
-      setFormError("Informe um valor valido para o lancamento de credito.");
-      return;
-    }
-    if (creditEntryKind !== "payment" && !creditReason.trim()) {
-      setFormError("Informe o motivo do ajuste manual.");
-      return;
-    }
-    setCreditBusy(true);
-    setFormError(null);
-    try {
-      const summary =
-        creditEntryKind === "payment"
-          ? await desktopApi.customerCreditPayment(editingId, cents, creditReason.trim())
-          : await desktopApi.customerCreditAdjust(
-              editingId,
-              creditEntryKind === "adjustment_debit" ? -cents : cents,
-              creditReason.trim()
-            );
-      setCreditSummary(summary);
-      setCreditMovements(await desktopApi.customerCreditMovements(editingId, 50));
-      setCreditAmountReais("");
-      setCreditReason("");
-      showFlash(
-        "success",
-        creditEntryKind === "payment"
-          ? "Pagamento lancado no credito do cliente."
-          : "Ajuste lancado no credito do cliente."
-      );
-    } catch (err) {
-      setFormError(err instanceof Error ? err.message : "Falha ao lancar o credito.");
-    } finally {
-      setCreditBusy(false);
     }
   }
 
@@ -1847,10 +1787,11 @@ export function CustomersView({
                   {editingId ? (
                     <div style={{ display: "grid", gap: "10px" }}>
                       <p style={styles.cellMuted}>
-                        O adiantamento e o dinheiro que o cliente ja depositou: ele e registrado no
-                        financeiro do OMIE e espelhado aqui, e cada compra e abatida desse saldo. O
-                        limite de credito (aba Identificacao) banca as vendas no fiado; cada
-                        pagamento recebido devolve o valor, liberando novas compras.
+                        O adiantamento e o dinheiro que o cliente ja depositou. Ele e lancado no
+                        financeiro do OMIE (contas a receber na categoria de adiantamento) e chega
+                        aqui pela sincronizacao — nao ha lancamento de credito pelo KyberRock. Cada
+                        compra e abatida desse saldo e baixada no OMIE; o limite de credito (aba
+                        Identificacao) banca o que passar do adiantamento, no fiado.
                       </p>
                       <div style={styles.fieldRow}>
                         <CreditTotal
@@ -1900,52 +1841,6 @@ export function CustomersView({
                             ? `Ultimo adiantamento do OMIE: ${formatDbDateTime(creditSummary.omieSyncedAt)}`
                             : "Nenhum adiantamento vindo do OMIE ate agora."}
                         </span>
-                      </div>
-                      {creditSummary?.creditMode === "prepaid" ? (
-                        <p style={styles.cellMuted}>
-                          Cliente pre-pago: o deposito e lancado no OMIE (contas a receber na
-                          categoria de adiantamento) e chega aqui pela sincronizacao. Nao lance o
-                          mesmo deposito a mao — use ajuste, com motivo, so para corrigir o saldo.
-                        </p>
-                      ) : null}
-                      <div style={styles.fieldRow}>
-                        <Field label="Tipo do lancamento">
-                          <select
-                            value={creditEntryKind}
-                            onChange={(e) => setCreditEntryKind(e.target.value as CreditEntryKind)}
-                            style={getInputStyle(false)}
-                          >
-                            {/* Pre-pago nao recebe pagamento manual: o adiantamento vem do OMIE. */}
-                            {creditSummary?.creditMode === "prepaid" ? null : (
-                              <option value="payment">Pagamento recebido (libera limite)</option>
-                            )}
-                            <option value="adjustment_credit">Ajuste a favor do cliente</option>
-                            <option value="adjustment_debit">Ajuste contra o cliente</option>
-                          </select>
-                        </Field>
-                        <MoneyInput
-                          label="Valor"
-                          value={creditAmountReais}
-                          onChange={setCreditAmountReais}
-                          allowZero={false}
-                        />
-                        <TextInput
-                          label="Motivo"
-                          value={creditReason}
-                          onChange={setCreditReason}
-                          placeholder="Ex: boleto 12/08 pago"
-                          required={creditEntryKind !== "payment"}
-                        />
-                      </div>
-                      <div>
-                        <button
-                          type="button"
-                          onClick={() => void handleCreditEntry()}
-                          disabled={creditBusy}
-                          style={{ ...styles.primaryButton, opacity: creditBusy ? 0.6 : 1 }}
-                        >
-                          {creditBusy ? "Lancando..." : "Lancar no extrato"}
-                        </button>
                       </div>
                       <h4 style={styles.formSectionTitle}>Extrato</h4>
                       <div style={styles.compactScrollList}>
