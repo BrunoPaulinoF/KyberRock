@@ -207,10 +207,16 @@ export async function syncOmieMasterData(
       return result;
     }));
 
-    // 6. Vehicles (veiculos) - prepared structure, source must be configured
+    // 6. Vehicles (veiculos) — cadastro de veiculos do OMIE, pela UF da placa: a NF-e
+    //    pede placa E UF do veiculo e o bloco frete do pedido leva as duas.
+    //    Sem credenciais diretas, cai no adaptador configuravel (mapping).
     entities.push(await syncEntity("veiculos", async () => {
-      const result = await syncVehiclesFromSource(database, companyId, mapping.veiculos);
-      return result;
+      if (options.appKey && options.appSecret) {
+        const client = createOmieClient({ appKey: options.appKey, appSecret: options.appSecret });
+        const service = new OmieSyncService(client, database);
+        return await service.syncVehicles(companyId);
+      }
+      return await syncVehiclesFromSource(database, companyId, mapping.veiculos);
     }));
 
     // 7. Payment methods (meios de pagamento) — nome + codigo OMIE, idempotente.

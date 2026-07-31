@@ -659,6 +659,103 @@ describe("OmieSyncService", () => {
     }
   });
 
+  it("syncVehicles brings the plate UF from the OMIE vehicle registry", async () => {
+    const db = openDesktopDatabase({ databasePath: ":memory:" });
+
+    try {
+      runDesktopMigrations(db);
+      db.exec(`
+        INSERT INTO companies (id, legal_name, trade_name, created_at, updated_at)
+        VALUES ('company-1', 'Empresa Teste', 'Empresa', datetime('now'), datetime('now'));
+      `);
+      // Placa ja cadastrada localmente (com tracinho, como o operador digitou) e ainda
+      // sem UF: e ela que o sync precisa completar, sem criar uma linha nova.
+      db.prepare(
+        `INSERT INTO vehicles (id, company_id, plate, plate_normalized, is_active, created_at, updated_at)
+         VALUES ('veh-local', 'company-1', 'ABC-1D23', 'ABC-1D23', 1, datetime('now'), datetime('now'))`
+      ).run();
+
+      const service = new OmieSyncService(createMockClient(), db);
+      const listAll = vi
+        .spyOn(
+          (service as unknown as Record<string, unknown>)
+            .vehiclesService as { listAll: () => Promise<unknown[]> },
+          "listAll"
+        )
+        .mockResolvedValue([
+          { id: 11, plate: "ABC1D23", plateState: "MG", description: "Volvo FH", isActive: true },
+          { id: 22, plate: "XYZ4A56", plateState: "SP", description: null, isActive: true }
+        ]);
+
+      const first = await service.syncVehicles("company-1");
+      // A placa local ganhou a UF; a que so existia no OMIE entrou no cadastro.
+      expect(first).toEqual({ fetched: 2, created: 1, updated: 1, skipped: 0 });
+      expect(
+        db.prepare("SELECT plate_state FROM vehicles WHERE id = 'veh-local'").pluck().get()
+      ).toBe("MG");
+      expect(
+        db.prepare("SELECT omie_vehicle_id FROM vehicles WHERE id = 'veh-local'").pluck().get()
+      ).toBe(11);
+      expect(
+        db
+          .prepare(
+            "SELECT plate_state FROM vehicles WHERE company_id = 'company-1' AND plate = 'XYZ4A56'"
+          )
+          .pluck()
+          .get()
+      ).toBe("SP");
+      expect(
+        db
+          .prepare("SELECT source FROM vehicles WHERE company_id = 'company-1' AND plate = 'XYZ4A56'")
+          .pluck()
+          .get()
+      ).toBe("omie");
+
+      // Segunda passada nao mexe em nada (idempotente).
+      const second = await service.syncVehicles("company-1");
+      expect(second).toEqual({ fetched: 2, created: 0, updated: 0, skipped: 2 });
+      expect(
+        db.prepare("SELECT COUNT(*) FROM vehicles WHERE company_id = 'company-1'").pluck().get()
+      ).toBe(2);
+      expect(listAll).toHaveBeenCalledTimes(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("syncVehicles keeps a UF typed locally when OMIE has none", async () => {
+    const db = openDesktopDatabase({ databasePath: ":memory:" });
+
+    try {
+      runDesktopMigrations(db);
+      db.exec(`
+        INSERT INTO companies (id, legal_name, trade_name, created_at, updated_at)
+        VALUES ('company-1', 'Empresa Teste', 'Empresa', datetime('now'), datetime('now'));
+      `);
+      db.prepare(
+        `INSERT INTO vehicles (id, company_id, plate, plate_normalized, plate_state, is_active, created_at, updated_at)
+         VALUES ('veh-local', 'company-1', 'ABC1D23', 'ABC1D23', 'MG', 1, datetime('now'), datetime('now'))`
+      ).run();
+
+      const service = new OmieSyncService(createMockClient(), db);
+      vi.spyOn(
+        (service as unknown as Record<string, unknown>)
+          .vehiclesService as { listAll: () => Promise<unknown[]> },
+        "listAll"
+      ).mockResolvedValue([
+        { id: 0, plate: "ABC1D23", plateState: null, description: null, isActive: true }
+      ]);
+
+      const result = await service.syncVehicles("company-1");
+      expect(result).toEqual({ fetched: 1, created: 0, updated: 0, skipped: 1 });
+      expect(
+        db.prepare("SELECT plate_state FROM vehicles WHERE id = 'veh-local'").pluck().get()
+      ).toBe("MG");
+    } finally {
+      db.close();
+    }
+  });
+
   it("syncAll returns counts and collects errors", async () => {
     const db = createMockDb();
     const client = createMockClient();

@@ -5,12 +5,15 @@ import type { DesktopDatabase } from "../database/sqlite.js";
 export interface CreateVehicleInput {
   companyId: string;
   plate: string;
+  /** UF de emplacamento (2 letras). Vai no `uf_placa` do frete do pedido no OMIE. */
+  plateState?: string | null;
   description?: string;
   carrierId?: string;
 }
 
 export interface UpdateVehicleInput {
   plate?: string;
+  plateState?: string | null;
   description?: string;
   carrierId?: string | null;
   isActive?: boolean;
@@ -20,12 +23,22 @@ export interface VehicleRow {
   id: string;
   company_id: string;
   plate: string;
+  plate_state: string | null;
   description: string | null;
   carrier_id: string | null;
   is_active: number;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+}
+
+/**
+ * UF em 2 letras maiusculas, ou null. O `uf_placa` do frete e campo fiscal: melhor
+ * ficar vazio do que ir com texto invalido e o OMIE recusar a nota.
+ */
+function normalizePlateState(value: string | null | undefined): string | null {
+  const text = (value ?? "").trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(text) ? text : null;
 }
 
 export function createVehicle(
@@ -38,13 +51,14 @@ export function createVehicle(
 
   database
     .prepare(
-      `INSERT INTO vehicles (id, company_id, plate, description, carrier_id, is_active, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 1, ?, ?)`
+      `INSERT INTO vehicles (id, company_id, plate, plate_state, description, carrier_id, is_active, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`
     )
     .run(
       id,
       input.companyId,
       input.plate.toUpperCase(),
+      normalizePlateState(input.plateState),
       input.description ?? null,
       input.carrierId ?? null,
       nowIso,
@@ -73,6 +87,10 @@ export function updateVehicle(
   if (input.plate !== undefined) {
     sets.push("plate = ?");
     values.push(input.plate.toUpperCase());
+  }
+  if (input.plateState !== undefined) {
+    sets.push("plate_state = ?");
+    values.push(normalizePlateState(input.plateState));
   }
   if (input.description !== undefined) {
     sets.push("description = ?");
