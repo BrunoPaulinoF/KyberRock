@@ -18,6 +18,15 @@ type PullBody = {
    * poucos segundos. Sem ela a janela recente inteira volta a cada chamada.
    */
   historySince?: string;
+  /**
+   * Modo leve para a "luz" do carregador: devolve so as solicitacoes de
+   * carregamento abertas da unidade (id, status, loader_completed_at,
+   * updated_at). O desktop chama com frequencia para refletir concluir/cancelar
+   * carga do loader-web quase em tempo real — a leitura direta da tabela nao
+   * funciona no desktop porque a RLS de loading_requests so atende o perfil
+   * autenticado do carregador.
+   */
+  loaderCompletionsOnly?: boolean;
 };
 
 // PostgREST limita cada resposta (max-rows, 1000 por padrao). Sem paginacao a
@@ -111,6 +120,27 @@ Deno.serve(async (req) => {
 
     const companyId = device.company_id;
     const unitId = device.unit_id;
+
+    if (body.loaderCompletionsOnly) {
+      const loaderCompletions = await fetchAll(
+        "loading_requests",
+        (from, to) =>
+          supabase
+            .from("loading_requests")
+            .select("id, status, loader_completed_at, updated_at")
+            .eq("unit_id", unitId)
+            .eq("status", "open")
+            .order("id", { ascending: true })
+            .range(from, to),
+        HISTORY_MAX_ROWS
+      );
+      return jsonResponse({
+        ok: true,
+        serverTime: new Date().toISOString(),
+        loadingRequests: loaderCompletions.rows,
+        warnings: loaderCompletions.warning ? [loaderCompletions.warning] : []
+      });
+    }
 
     const cadastroSince =
       typeof body.cadastroSince === "string" && body.cadastroSince.trim()

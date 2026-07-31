@@ -1,0 +1,27 @@
+{
+  "name": "KyberRock Carregador",
+  "short_name": "Carregador",
+  "description": "Fila de cargas da pedreira para o carregador: veja as cargas em andamento e conclua o carregamento.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#07111f",
+  "theme_color": "#0f172a",
+  "lang": "pt-BR",
+  "icons": [
+    {
+      "src": "/kyberrocklogo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/favicon.png",
+      "sizes": "64x64",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

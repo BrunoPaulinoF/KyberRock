@@ -58,9 +58,10 @@ const OMIE_BATCH_DELAY_MS = 3_000;
 const OMIE_PUSH_CUSTOMER_BATCH_LIMIT = 10;
 const OMIE_QUEUE_BATCH_LIMIT = 10;
 
-export function readStoredSupabaseConfig(
-  database: DesktopDatabase
-): { url: string; publishableKey: string } {
+export function readStoredSupabaseConfig(database: DesktopDatabase): {
+  url: string;
+  publishableKey: string;
+} {
   const url = readStringLocalSetting(database, CLOUD_SUPABASE_URL_KEY) ?? "";
   const publishableKey = readStringLocalSetting(database, CLOUD_PUBLISHABLE_KEY_KEY) ?? "";
   return { url, publishableKey };
@@ -804,20 +805,70 @@ function upsertCloudCadastro(
     ["carriers", () => upsertCloudCarriers(database, companyId, payload.carriers ?? [])],
     ["drivers", () => upsertCloudDrivers(database, companyId, payload.drivers ?? [])],
     ["vehicles", () => upsertCloudVehicles(database, companyId, payload.vehicles ?? [])],
-    ["customer_carriers", () => upsertCloudJunction(database, "customer_carriers", "customer_id", payload.customerCarriers ?? [])],
-    ["driver_carriers", () => upsertCloudJunction(database, "driver_carriers", "driver_id", payload.driverCarriers ?? [])],
-    ["vehicle_carriers", () => upsertCloudJunction(database, "vehicle_carriers", "vehicle_id", payload.vehicleCarriers ?? [])],
-    ["product_default_prices", () => upsertCloudProductDefaultPrices(database, companyId, payload.productDefaultPrices ?? [])],
-    ["customer_special_prices", () => upsertCloudCustomerSpecialPrices(database, companyId, payload.customerSpecialPrices ?? [])],
+    [
+      "customer_carriers",
+      () =>
+        upsertCloudJunction(
+          database,
+          "customer_carriers",
+          "customer_id",
+          payload.customerCarriers ?? []
+        )
+    ],
+    [
+      "driver_carriers",
+      () =>
+        upsertCloudJunction(database, "driver_carriers", "driver_id", payload.driverCarriers ?? [])
+    ],
+    [
+      "vehicle_carriers",
+      () =>
+        upsertCloudJunction(
+          database,
+          "vehicle_carriers",
+          "vehicle_id",
+          payload.vehicleCarriers ?? []
+        )
+    ],
+    [
+      "product_default_prices",
+      () => upsertCloudProductDefaultPrices(database, companyId, payload.productDefaultPrices ?? [])
+    ],
+    [
+      "customer_special_prices",
+      () =>
+        upsertCloudCustomerSpecialPrices(database, companyId, payload.customerSpecialPrices ?? [])
+    ],
     ["price_tables", () => upsertCloudPriceTables(database, companyId, payload.priceTables ?? [])],
-    ["price_table_items", () => upsertCloudPriceTableItems(database, payload.priceTableItems ?? [])],
-    ["customer_price_tables", () => upsertCloudCustomerPriceTables(database, payload.customerPriceTables ?? [])],
-    ["customer_freight_rules", () => upsertCloudCustomerFreightRules(database, payload.customerFreightRules ?? [])],
-    ["payment_terms", () => upsertCloudPaymentTerms(database, companyId, payload.paymentTerms ?? [])],
-    ["payment_methods", () => upsertCloudPaymentMethods(database, companyId, payload.paymentMethods ?? [])],
+    [
+      "price_table_items",
+      () => upsertCloudPriceTableItems(database, payload.priceTableItems ?? [])
+    ],
+    [
+      "customer_price_tables",
+      () => upsertCloudCustomerPriceTables(database, payload.customerPriceTables ?? [])
+    ],
+    [
+      "customer_freight_rules",
+      () => upsertCloudCustomerFreightRules(database, payload.customerFreightRules ?? [])
+    ],
+    [
+      "payment_terms",
+      () => upsertCloudPaymentTerms(database, companyId, payload.paymentTerms ?? [])
+    ],
+    [
+      "payment_methods",
+      () => upsertCloudPaymentMethods(database, companyId, payload.paymentMethods ?? [])
+    ],
     ["accounts", () => upsertCloudAccounts(database, companyId, payload.accounts ?? [])],
-    ["customer_credit_movements", () => upsertCloudCreditMovements(database, companyId, payload.customerCreditMovements ?? [])],
-    ["report_recipients", () => upsertCloudReportRecipients(database, companyId, payload.reportRecipients ?? [])]
+    [
+      "customer_credit_movements",
+      () => upsertCloudCreditMovements(database, companyId, payload.customerCreditMovements ?? [])
+    ],
+    [
+      "report_recipients",
+      () => upsertCloudReportRecipients(database, companyId, payload.reportRecipients ?? [])
+    ]
   ];
 
   let count = 0;
@@ -1939,7 +1990,12 @@ function upsertCloudOperations(
       }
     }
     const closedAt = isoStringValue(row.closed_at);
-    const customerId = resolveMirroredId(database, "customers", row.customer_id, local?.customer_id);
+    const customerId = resolveMirroredId(
+      database,
+      "customers",
+      row.customer_id,
+      local?.customer_id
+    );
     const productId = resolveMirroredId(database, "products", row.product_id, local?.product_id);
     const carrierId = resolveMirroredId(database, "carriers", row.carrier_id, local?.carrier_id);
     // A nuvem guarda placa/motorista so como texto. Casa com o cadastro local
@@ -2071,7 +2127,9 @@ function upsertCloudLoadingRequests(
       loader_completed_at = excluded.loader_completed_at
   `);
 
-  const readLocal = database.prepare("SELECT status, updated_at FROM loading_requests WHERE id = ?");
+  const readLocal = database.prepare(
+    "SELECT status, updated_at FROM loading_requests WHERE id = ?"
+  );
 
   let count = 0;
   for (const row of rows) {
@@ -2302,9 +2360,9 @@ export async function syncCustomerToSupabase(
   customerId: string
 ): Promise<boolean> {
   const settings = getCloudSettings(database);
-  const customer = database
-    .prepare("SELECT * FROM customers WHERE id = ?")
-    .get(customerId) as Record<string, unknown> | undefined;
+  const customer = database.prepare("SELECT * FROM customers WHERE id = ?").get(customerId) as
+    | Record<string, unknown>
+    | undefined;
   if (!customer) throw new Error(`Customer ${customerId} not found`);
   await invokeDesktopSync(settings, {
     customers: [
@@ -2332,9 +2390,9 @@ export async function syncProductToSupabase(
   productId: string
 ): Promise<boolean> {
   const settings = getCloudSettings(database);
-  const product = database
-    .prepare("SELECT * FROM products WHERE id = ?")
-    .get(productId) as Record<string, unknown> | undefined;
+  const product = database.prepare("SELECT * FROM products WHERE id = ?").get(productId) as
+    | Record<string, unknown>
+    | undefined;
   if (!product) throw new Error(`Product ${productId} not found`);
   await invokeDesktopSync(settings, {
     products: [
@@ -2528,9 +2586,7 @@ export function applyOmieReferenceData(
   customersPersisted = applyBlock("clientes", () =>
     upsertOmieCustomers(database, companyId, customers)
   );
-  productsSynced = applyBlock("produtos", () =>
-    upsertOmieProducts(database, companyId, products)
-  );
+  productsSynced = applyBlock("produtos", () => upsertOmieProducts(database, companyId, products));
   suppliersPersisted = applyBlock("transportadoras", () =>
     upsertOmieSuppliers(database, companyId, suppliers)
   );
@@ -2598,10 +2654,7 @@ export function applyOmieReferenceData(
     const current = readOmiePullState(database);
     writeOmiePullState(database, {
       inProgress:
-        !finished.customers ||
-        !finished.products ||
-        !finished.paymentTerms ||
-        !finished.categories,
+        !finished.customers || !finished.products || !finished.paymentTerms || !finished.categories,
       customersPage: !finished.customers
         ? Math.max(pagination.customersPage + 1, current.customersPage)
         : 1,
@@ -3268,7 +3321,9 @@ function reconcileCancelledAfterCreate(
 
   // O update de sucesso do create sobrescreveu o status; devolve para 'cancelled'.
   database
-    .prepare("UPDATE weighing_operations SET status = 'cancelled', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?")
+    .prepare(
+      "UPDATE weighing_operations SET status = 'cancelled', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?"
+    )
     .run(operationId);
 
   enqueueSyncJob(database, {
@@ -3555,7 +3610,12 @@ export async function processOmieSyncQueue(
       // Corrida create x cancel: se a operacao foi cancelada localmente enquanto o pedido
       // era criado, o update acima marcou 'synced' por engano. Restaura o cancelamento e
       // solicita o cancelamento do pedido recem-criado no OMIE.
-      reconcileCancelledAfterCreate(database, payload.operationId, data.orderId, payload.operationType);
+      reconcileCancelledAfterCreate(
+        database,
+        payload.operationId,
+        data.orderId,
+        payload.operationType
+      );
       processed++;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Erro OMIE";
@@ -4164,9 +4224,9 @@ export function resolveOmieLocalId(
   preferredId: string,
   options: { adoptSetupCompanyRows?: boolean } = {}
 ): string {
-  const owner = database.prepare(`SELECT company_id FROM ${table} WHERE id = ?`).get(preferredId) as
-    | { company_id: string }
-    | undefined;
+  const owner = database
+    .prepare(`SELECT company_id FROM ${table} WHERE id = ?`)
+    .get(preferredId) as { company_id: string } | undefined;
   if (!owner || owner.company_id === companyId) return preferredId;
   if (options.adoptSetupCompanyRows !== false && owner.company_id === SETUP_COMPANY_ID) {
     return preferredId;
@@ -4245,7 +4305,9 @@ function upsertOmieCustomers(
   for (const customer of customers) {
     const existing = findLocalId.get(companyId, customer.id) as { id: string } | undefined;
     const byIntegrationCode = customer.integrationCode
-      ? (findByIntegrationCode.get(companyId, customer.integrationCode) as { id: string } | undefined)
+      ? (findByIntegrationCode.get(companyId, customer.integrationCode) as
+          | { id: string }
+          | undefined)
       : undefined;
     const byDocument = customer.document
       ? (findByDocument.get(companyId, customer.document) as { id: string } | undefined)
@@ -4648,12 +4710,16 @@ export async function pullCompanyPricePasswordFromCloud(
 
   if (error || !data) return false;
 
-  database.prepare(`
+  database
+    .prepare(
+      `
     UPDATE companies
     SET price_change_password = ?,
         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     WHERE id = ?
-  `).run(String(data.price_change_password ?? "0000"), identity.companyId);
+  `
+    )
+    .run(String(data.price_change_password ?? "0000"), identity.companyId);
 
   return true;
 }
@@ -5345,35 +5411,65 @@ export async function pullLoaderCompletionsFromCloud(
   database: DesktopDatabase,
   identity: LocalDesktopIdentity
 ): Promise<{ pulled: number; errors: string[] }> {
+  // A consulta precisa passar pelo desktop-pull (service role): a RLS de
+  // loading_requests so permite SELECT ao perfil autenticado do carregador,
+  // entao a leitura direta com a chave publishable voltava sempre vazia — e a
+  // conclusao so aparecia na balanca depois do pull completo (reinicio do app).
+  const settings = getCloudSettings(database, identity);
   const supabase = getSupabaseClient();
-  const { data, error } = await supabase
-    .from("loading_requests")
-    .select("id, loader_completed_at, updated_at")
-    .eq("unit_id", identity.unitId)
-    .not("loader_completed_at", "is", null);
+  const { data, error } = await supabase.functions.invoke<{
+    loadingRequests?: Array<Record<string, unknown>>;
+    warnings?: string[];
+  }>("desktop-pull", {
+    body: {
+      deviceId: settings.deviceId,
+      deviceToken: settings.deviceToken,
+      loaderCompletionsOnly: true
+    }
+  });
 
   const errors: string[] = [];
   if (error) {
-    errors.push(`pullLoaderCompletions: ${error.message}`);
+    errors.push(`pullLoaderCompletions: ${await getFunctionErrorMessage(error)}`);
     return { pulled: 0, errors };
   }
+  errors.push(...(data?.warnings ?? []).map((warning) => `pullLoaderCompletions: ${warning}`));
 
+  return { pulled: applyLoaderCompletionRows(database, data?.loadingRequests ?? []), errors };
+}
+
+/**
+ * Projeta no SQLite o estado de conclusao do carregador vindo da nuvem —
+ * inclusive o cancelamento (loader_completed_at de volta a NULL), que devolve a
+ * carga para "aguardando" e apaga a luz verde no desktop. O campo e escrito
+ * exclusivamente pelo loader-web, entao espelhar o valor da nuvem e sempre
+ * correto; `updated_at` local so anda para frente para nao regredir o guard de
+ * push/pull das balancas.
+ */
+export function applyLoaderCompletionRows(
+  database: DesktopDatabase,
+  rows: Array<Record<string, unknown>>
+): number {
   const update = database.prepare(`
     UPDATE loading_requests
-    SET loader_completed_at = ?, updated_at = ?
-    WHERE id = ? AND (loader_completed_at IS NULL OR loader_completed_at < ?)
+    SET loader_completed_at = ?,
+        updated_at = CASE
+          WHEN ? IS NOT NULL AND (updated_at IS NULL OR REPLACE(updated_at, ' ', 'T') < ?) THEN ?
+          ELSE updated_at
+        END
+    WHERE id = ? AND loader_completed_at IS NOT ?
   `);
 
   let pulled = 0;
-  for (const row of data ?? []) {
-    if (!row.loader_completed_at) continue;
-    const completedAt = String(row.loader_completed_at);
-    const updatedAt = String(row.updated_at ?? completedAt);
-    const result = update.run(completedAt, updatedAt, row.id, completedAt);
+  for (const row of rows) {
+    const id = stringValue(row.id);
+    if (!id) continue;
+    const completedAt = isoStringValue(row.loader_completed_at);
+    const updatedAt = isoStringValue(row.updated_at);
+    const result = update.run(completedAt, updatedAt, updatedAt, updatedAt, id, completedAt);
     if (result.changes > 0) {
       pulled++;
     }
   }
-
-  return { pulled, errors };
+  return pulled;
 }

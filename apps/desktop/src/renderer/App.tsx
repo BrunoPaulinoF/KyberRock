@@ -217,9 +217,7 @@ const initialWeighingForm: WeighingFormState = {
  * transportadora da Pedreira nao se aplica (modalidade own_recipient). Substitui a
  * antiga caixa "transportadora propria do cliente".
  */
-export function isCustomerOwnTransport(
-  form: Pick<WeighingFormState, "freightModality">
-): boolean {
+export function isCustomerOwnTransport(form: Pick<WeighingFormState, "freightModality">): boolean {
   return form.freightModality === "own_recipient";
 }
 
@@ -280,7 +278,9 @@ function getThemeModeStorage(): ThemeModeStorage | null {
   }
 }
 
-export function readStoredThemeMode(storage: Pick<Storage, "getItem"> | null = getThemeModeStorage()): ThemeMode {
+export function readStoredThemeMode(
+  storage: Pick<Storage, "getItem"> | null = getThemeModeStorage()
+): ThemeMode {
   try {
     const value = storage?.getItem(THEME_MODE_STORAGE_KEY);
     return value === "dark" || value === "light" ? value : "light";
@@ -321,9 +321,12 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   // Multi-desktop: computadores da unidade (nome + cor) para a legenda e o
   // contorno colorido das operacoes por responsavel.
   const [unitDevices, setUnitDevices] = useState<UnitDeviceInfo[]>([]);
-  const [loaderCompletionNotice, setLoaderCompletionNotice] = useState<string | null>(null);
-  // Estado anterior (id -> concluida?) para detectar a transicao aguardando->concluida
-  // e disparar o aviso de "carga concluida pelo carregador".
+  const [loaderCompletionNotice, setLoaderCompletionNotice] = useState<{
+    text: string;
+    kind: "completed" | "reverted";
+  } | null>(null);
+  // Estado anterior (id -> concluida?) para detectar as transicoes
+  // aguardando <-> concluida e disparar o aviso do carregador.
   const loaderCompletedStateRef = useRef<Map<string, boolean>>(new Map());
   const loaderStateSeededRef = useRef(false);
   const loaderNoticeTimerRef = useRef<number | null>(null);
@@ -371,8 +374,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   } | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [availableVersion, setAvailableVersion] = useState<string | null>(null);
-  const updateReady =
-    updateState.status === "available" || updateState.status === "downloaded";
+  const updateReady = updateState.status === "available" || updateState.status === "downloaded";
   const [showLogsModal, setShowLogsModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => readStoredThemeMode());
@@ -454,10 +456,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     () => new Set(overtimeOpenOperations.map((op) => op.id)),
     [overtimeOpenOperations]
   );
-  const hasAwaitingLoader = useMemo(
-    () => openOperations.some((op) => !op.loaderCompletedAt),
-    [openOperations]
-  );
+  // O polling da "luz" fica ligado enquanto houver operacao aberta (nao so as
+  // aguardando): o carregador tambem pode CANCELAR uma conclusao no loader-web,
+  // e a luz precisa voltar para "aguardando" sem esperar o pull completo.
+  const hasOpenOperations = openOperations.length > 0;
   // Contorno colorido por computador criador: so faz sentido (e so aparece)
   // quando a pedreira tem mais de um desktop trabalhando junto.
   const showDeviceColors = unitDevices.length > 1;
@@ -476,28 +478,48 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     [showDeviceColors, unitDeviceById]
   );
 
-  // Detecta a transicao aguardando -> concluida (o carregador clicou em "Concluir
-  // carga" no loader-web) e dispara um aviso verde temporario no desktop.
+  // Detecta as transicoes aguardando <-> concluida (o carregador clicou em
+  // "Concluir carga" ou em "Cancelar carga" no loader-web) e dispara um aviso
+  // temporario no desktop.
   useEffect(() => {
     const prev = loaderCompletedStateRef.current;
     const next = new Map<string, boolean>();
     const newlyCompleted: string[] = [];
+    const newlyReverted: string[] = [];
     for (const op of openOperations) {
       const done = Boolean(op.loaderCompletedAt);
       next.set(op.id, done);
       if (loaderStateSeededRef.current && done && prev.get(op.id) === false) {
         newlyCompleted.push(op.plate || "SEM PLACA");
       }
+      if (loaderStateSeededRef.current && !done && prev.get(op.id) === true) {
+        newlyReverted.push(op.plate || "SEM PLACA");
+      }
     }
     loaderCompletedStateRef.current = next;
     loaderStateSeededRef.current = true;
 
-    if (newlyCompleted.length > 0) {
-      setLoaderCompletionNotice(
-        newlyCompleted.length === 1
-          ? `Carga da placa ${newlyCompleted[0]} concluida pelo carregador — pronta para fechar.`
-          : `${newlyCompleted.length} cargas concluidas pelo carregador — prontas para fechar.`
-      );
+    const notice: { text: string; kind: "completed" | "reverted" } | null =
+      newlyCompleted.length > 0
+        ? {
+            kind: "completed",
+            text:
+              newlyCompleted.length === 1
+                ? `Carga da placa ${newlyCompleted[0]} concluida pelo carregador — pronta para fechar.`
+                : `${newlyCompleted.length} cargas concluidas pelo carregador — prontas para fechar.`
+          }
+        : newlyReverted.length > 0
+          ? {
+              kind: "reverted",
+              text:
+                newlyReverted.length === 1
+                  ? `Conclusao da carga da placa ${newlyReverted[0]} cancelada pelo carregador — carga de volta em andamento.`
+                  : `${newlyReverted.length} conclusoes canceladas pelo carregador — cargas de volta em andamento.`
+            }
+          : null;
+
+    if (notice) {
+      setLoaderCompletionNotice(notice);
       if (loaderNoticeTimerRef.current) window.clearTimeout(loaderNoticeTimerRef.current);
       loaderNoticeTimerRef.current = window.setTimeout(
         () => setLoaderCompletionNotice(null),
@@ -513,11 +535,12 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     []
   );
 
-  // Enquanto houver carga aguardando o carregador, busca so as conclusoes no
-  // cloud com frequencia (consulta leve por unidade) para a luz virar verde
-  // quase em tempo real, sem esperar a sincronizacao completa de 30 min.
+  // Enquanto houver operacao aberta, busca so o estado do carregador no cloud
+  // com frequencia (consulta leve por unidade) para a luz virar verde — ou
+  // voltar a vermelha apos um "Cancelar carga" — quase em tempo real, sem
+  // esperar a sincronizacao completa de 30 min.
   useEffect(() => {
-    if (!desktopApi || phase !== "unlocked" || !hasAwaitingLoader) return;
+    if (!desktopApi || phase !== "unlocked" || !hasOpenOperations) return;
     let cancelled = false;
     const api = desktopApi;
 
@@ -533,12 +556,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       }
     }
 
+    void tick();
     const intervalId = window.setInterval(() => void tick(), 20_000);
     return () => {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [desktopApi, phase, hasAwaitingLoader]);
+  }, [desktopApi, phase, hasOpenOperations]);
 
   // Multi-desktop: pull leve periodico da nuvem para enxergar as operacoes
   // registradas pelos outros computadores da pedreira sem esperar a
@@ -1089,7 +1113,6 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       } catch {
         // OMIE status is optional
       }
-
     }
 
     void refresh();
@@ -1297,8 +1320,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
     const confirmed = await requestAppConfirm({
       title: "Sair da conta?",
-      description:
-        "Você precisará de um novo código de ativação para acessar novamente.",
+      description: "Você precisará de um novo código de ativação para acessar novamente.",
       confirmLabel: "Sair da conta",
       tone: "danger"
     });
@@ -1509,9 +1531,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
     const paymentGuard = await resolvePaymentConditionGuard(desktopApi, form);
     if (!paymentGuard.allowed) {
-      setFormError(
-        paymentGuard.message ?? "Combinacao de forma e condicao de pagamento invalida."
-      );
+      setFormError(paymentGuard.message ?? "Combinacao de forma e condicao de pagamento invalida.");
       return;
     }
 
@@ -2247,9 +2267,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   type="button"
                   onClick={() => setShowSettings((s) => !s)}
                   style={styles.headerBtn}
-                  title={
-                    updateReady ? "Atualizacao disponivel" : "Configuracoes"
-                  }
+                  title={updateReady ? "Atualizacao disponivel" : "Configuracoes"}
                 >
                   <Settings size={17} />
                   {updateReady ? (
@@ -2727,9 +2745,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                             padding: "10px 12px",
                             marginBottom: "8px",
                             borderRadius: "10px",
-                            border: "1px solid #86efac",
-                            background: "#f0fdf4",
-                            color: "#15803d",
+                            border: `1px solid ${
+                              loaderCompletionNotice.kind === "completed" ? "#86efac" : "#fcd34d"
+                            }`,
+                            background:
+                              loaderCompletionNotice.kind === "completed" ? "#f0fdf4" : "#fffbeb",
+                            color:
+                              loaderCompletionNotice.kind === "completed" ? "#15803d" : "#92400e",
                             fontSize: "13px",
                             fontWeight: 700
                           }}
@@ -2740,11 +2762,15 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                               width: "10px",
                               height: "10px",
                               borderRadius: "50%",
-                              background: "#22c55e",
+                              background:
+                                loaderCompletionNotice.kind === "completed" ? "#22c55e" : "#f59e0b",
                               flexShrink: 0
                             }}
                           />
-                          <span style={{ flex: 1 }}>✓ {loaderCompletionNotice}</span>
+                          <span style={{ flex: 1 }}>
+                            {loaderCompletionNotice.kind === "completed" ? "✓ " : "↩ "}
+                            {loaderCompletionNotice.text}
+                          </span>
                           <button
                             type="button"
                             onClick={() => setLoaderCompletionNotice(null)}
@@ -2752,7 +2778,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                             style={{
                               border: "none",
                               background: "transparent",
-                              color: "#15803d",
+                              color:
+                                loaderCompletionNotice.kind === "completed" ? "#15803d" : "#92400e",
                               cursor: "pointer",
                               fontWeight: 900,
                               fontSize: "15px",
@@ -2782,7 +2809,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                             fontWeight: 700
                           }}
                         >
-                          <span>⚠ Acima do tempo medio ({formatMinutes(truckAverageMinutes)}):</span>
+                          <span>
+                            ⚠ Acima do tempo medio ({formatMinutes(truckAverageMinutes)}):
+                          </span>
                           {overtimeOpenOperations.map((op) => (
                             <span
                               key={op.id}
@@ -2808,88 +2837,88 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       {openOperations.map((operation) => {
                         const isOvertime = overtimeOpenIds.has(operation.id);
                         return (
-                        <div
-                          key={operation.id}
-                          style={{
-                            ...styles.operationsTableRow,
-                            ...(isOvertime ? { background: "#fef2f2" } : {}),
-                            ...operationOutlineStyle(operation)
-                          }}
-                        >
-                          <span
+                          <div
+                            key={operation.id}
                             style={{
-                              display: "flex",
-                              flexDirection: "column",
-                              alignItems: "flex-start",
-                              gap: "5px",
-                              minWidth: 0
+                              ...styles.operationsTableRow,
+                              ...(isOvertime ? { background: "#fef2f2" } : {}),
+                              ...operationOutlineStyle(operation)
                             }}
                           >
-                            <strong style={styles.plateBadge}>{operation.plate}</strong>
-                            <LoaderStatusLight completedAt={operation.loaderCompletedAt} />
-                          </span>
-                          <span style={styles.operationCellStack}>
-                            <strong>{operation.customerName}</strong>
-                            <span>{operation.productDescription}</span>
-                            <small>Motorista: {operation.driverName}</small>
-                          </span>
-                          <span style={styles.operationCellStack}>
-                            <strong>{formatWeightKg(operation.entryWeightKg ?? 0)}</strong>
-                            <span>{formatMoney(operation.unitPriceCents)}/ton</span>
-                            <small
+                            <span
                               style={{
-                                color: isOvertime ? "#b91c1c" : "var(--kr-muted)",
-                                fontWeight: isOvertime ? 700 : undefined
+                                display: "flex",
+                                flexDirection: "column",
+                                alignItems: "flex-start",
+                                gap: "5px",
+                                minWidth: 0
                               }}
-                              title={formatDbDateTime(operation.createdAt)}
                             >
-                              Entrou {formatElapsedSince(operation.createdAt)}
-                              {isOvertime ? " · acima da media ▲" : ""}
-                            </small>
-                          </span>
-                          <span style={styles.rowActions}>
-                            <IconActionButton
-                              icon="swap"
-                              label="Alterar material"
-                              tip={TIPS.operations.changeProduct}
-                              tone="neutral"
-                              placement="left"
-                              onClick={() => void handleOpenChangeProduct(operation)}
-                            />
-                            <IconActionButton
-                              icon="edit"
-                              label="Alterar cliente"
-                              tip={TIPS.operations.changeCustomer}
-                              tone="neutral"
-                              placement="left"
-                              onClick={() => void handleOpenChangeCustomer(operation)}
-                            />
-                            <IconActionButton
-                              icon="truck"
-                              label="Alterar transportadora"
-                              tip={TIPS.operations.changeCarrier}
-                              tone="neutral"
-                              placement="left"
-                              onClick={() => void handleOpenChangeCarrier(operation)}
-                            />
-                            <IconActionButton
-                              icon="check"
-                              label="Fechar operacao"
-                              tip={TIPS.operations.close}
-                              tone="primary"
-                              placement="left"
-                              onClick={() => setClosingOperation(operation)}
-                            />
-                            <IconActionButton
-                              icon="ban"
-                              label="Cancelar operacao"
-                              tip={TIPS.operations.cancel}
-                              tone="danger"
-                              placement="left"
-                              onClick={() => setCancelTarget({ operation, context: "open" })}
-                            />
-                          </span>
-                        </div>
+                              <strong style={styles.plateBadge}>{operation.plate}</strong>
+                              <LoaderStatusLight completedAt={operation.loaderCompletedAt} />
+                            </span>
+                            <span style={styles.operationCellStack}>
+                              <strong>{operation.customerName}</strong>
+                              <span>{operation.productDescription}</span>
+                              <small>Motorista: {operation.driverName}</small>
+                            </span>
+                            <span style={styles.operationCellStack}>
+                              <strong>{formatWeightKg(operation.entryWeightKg ?? 0)}</strong>
+                              <span>{formatMoney(operation.unitPriceCents)}/ton</span>
+                              <small
+                                style={{
+                                  color: isOvertime ? "#b91c1c" : "var(--kr-muted)",
+                                  fontWeight: isOvertime ? 700 : undefined
+                                }}
+                                title={formatDbDateTime(operation.createdAt)}
+                              >
+                                Entrou {formatElapsedSince(operation.createdAt)}
+                                {isOvertime ? " · acima da media ▲" : ""}
+                              </small>
+                            </span>
+                            <span style={styles.rowActions}>
+                              <IconActionButton
+                                icon="swap"
+                                label="Alterar material"
+                                tip={TIPS.operations.changeProduct}
+                                tone="neutral"
+                                placement="left"
+                                onClick={() => void handleOpenChangeProduct(operation)}
+                              />
+                              <IconActionButton
+                                icon="edit"
+                                label="Alterar cliente"
+                                tip={TIPS.operations.changeCustomer}
+                                tone="neutral"
+                                placement="left"
+                                onClick={() => void handleOpenChangeCustomer(operation)}
+                              />
+                              <IconActionButton
+                                icon="truck"
+                                label="Alterar transportadora"
+                                tip={TIPS.operations.changeCarrier}
+                                tone="neutral"
+                                placement="left"
+                                onClick={() => void handleOpenChangeCarrier(operation)}
+                              />
+                              <IconActionButton
+                                icon="check"
+                                label="Fechar operacao"
+                                tip={TIPS.operations.close}
+                                tone="primary"
+                                placement="left"
+                                onClick={() => setClosingOperation(operation)}
+                              />
+                              <IconActionButton
+                                icon="ban"
+                                label="Cancelar operacao"
+                                tip={TIPS.operations.cancel}
+                                tone="danger"
+                                placement="left"
+                                onClick={() => setCancelTarget({ operation, context: "open" })}
+                              />
+                            </span>
+                          </div>
                         );
                       })}
                     </div>
@@ -3651,8 +3680,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       <div key={receipt.id} style={styles.receiptRow}>
                         <div>
                           <strong>
-                            Cupom {formatReceiptNumber(receipt.receiptNumber, receipt.deviceNumber)} - via{" "}
-                            {receipt.copyNumber}
+                            Cupom {formatReceiptNumber(receipt.receiptNumber, receipt.deviceNumber)}{" "}
+                            - via {receipt.copyNumber}
                           </strong>
                           <p style={styles.muted}>
                             {receipt.status === "printed" ? "Impresso" : "Falhou"} em{" "}
@@ -3740,9 +3769,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                         <p>Operacoes sincronizadas: {cloudStatus.totalOperations}</p>
                         <p>
                           Ultima sincronizacao:{" "}
-                          {cloudStatus.lastSync
-                            ? formatDbDateTime(cloudStatus.lastSync)
-                            : "Nunca"}
+                          {cloudStatus.lastSync ? formatDbDateTime(cloudStatus.lastSync) : "Nunca"}
                         </p>
                       </>
                     )}
@@ -3903,80 +3930,82 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       onClick={() => void refreshOmieQueue()}
                     />
                   </div>
-                  <div style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", marginTop: "8px" }}>
-                  {omieQueue.length === 0 ? (
-                    <p style={styles.muted}>
-                      {omieQueueLoading
-                        ? "Carregando fila OMIE..."
-                        : "Nenhum item na fila: todos os fechamentos foram enviados ao OMIE."}
-                    </p>
-                  ) : (
-                    omieQueue.map((item) => (
-                      <div key={item.id} style={styles.receiptRow}>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <strong>
-                            {item.customerName ?? "Cliente nao identificado"}
-                            {item.plate ? ` - ${item.plate}` : ""}
-                            {item.totalCents !== null ? ` - ${formatMoney(item.totalCents)}` : ""}
-                          </strong>
-                          <p style={styles.muted}>
-                            {omieQueueActionLabel(item.action, item.operationType)} -{" "}
-                            {omieQueueStatusLabel(item.status)}
-                            {item.attemptCount > 0 ? ` (${item.attemptCount} tentativas)` : ""}
-                            {" - "}
-                            {formatDbDateTime(item.closedAt ?? item.createdAt)}
-                          </p>
-                          {item.lastError ? (
-                            <p style={{ ...styles.errorMessage, wordBreak: "break-word" }}>
-                              {item.lastError}
+                  <div
+                    style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", marginTop: "8px" }}
+                  >
+                    {omieQueue.length === 0 ? (
+                      <p style={styles.muted}>
+                        {omieQueueLoading
+                          ? "Carregando fila OMIE..."
+                          : "Nenhum item na fila: todos os fechamentos foram enviados ao OMIE."}
+                      </p>
+                    ) : (
+                      omieQueue.map((item) => (
+                        <div key={item.id} style={styles.receiptRow}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <strong>
+                              {item.customerName ?? "Cliente nao identificado"}
+                              {item.plate ? ` - ${item.plate}` : ""}
+                              {item.totalCents !== null ? ` - ${formatMoney(item.totalCents)}` : ""}
+                            </strong>
+                            <p style={styles.muted}>
+                              {omieQueueActionLabel(item.action, item.operationType)} -{" "}
+                              {omieQueueStatusLabel(item.status)}
+                              {item.attemptCount > 0 ? ` (${item.attemptCount} tentativas)` : ""}
+                              {" - "}
+                              {formatDbDateTime(item.closedAt ?? item.createdAt)}
                             </p>
-                          ) : null}
-                        </div>
-                        <IconActionButton
-                          icon="send"
-                          label="Enviar agora"
-                          tip={
-                            omieQueueBusyId === item.id
-                              ? "Enviando..."
-                              : "Enviar este item ao OMIE agora"
-                          }
-                          tone="primary"
-                          placement="left"
-                          disabled={omieQueueBusyId !== null}
-                          onClick={() => void handleOmieQueueSendNow(item.id)}
-                        />
-                        {omieQueueConfirmDeleteId === item.id ? (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => void handleOmieQueueDelete(item.id)}
-                              disabled={omieQueueBusyId !== null}
-                              style={{ ...styles.dangerButton, fontSize: "12px" }}
-                            >
-                              Confirmar exclusao
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setOmieQueueConfirmDeleteId(null)}
-                              style={{ ...styles.secondaryButton, fontSize: "12px" }}
-                            >
-                              Cancelar
-                            </button>
-                          </>
-                        ) : (
+                            {item.lastError ? (
+                              <p style={{ ...styles.errorMessage, wordBreak: "break-word" }}>
+                                {item.lastError}
+                              </p>
+                            ) : null}
+                          </div>
                           <IconActionButton
-                            icon="trash"
-                            label="Excluir da fila"
-                            tip="Excluir este item da fila (cancela o envio ao OMIE; a operacao local nao muda)"
-                            tone="neutral"
+                            icon="send"
+                            label="Enviar agora"
+                            tip={
+                              omieQueueBusyId === item.id
+                                ? "Enviando..."
+                                : "Enviar este item ao OMIE agora"
+                            }
+                            tone="primary"
                             placement="left"
                             disabled={omieQueueBusyId !== null}
-                            onClick={() => setOmieQueueConfirmDeleteId(item.id)}
+                            onClick={() => void handleOmieQueueSendNow(item.id)}
                           />
-                        )}
-                      </div>
-                    ))
-                  )}
+                          {omieQueueConfirmDeleteId === item.id ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => void handleOmieQueueDelete(item.id)}
+                                disabled={omieQueueBusyId !== null}
+                                style={{ ...styles.dangerButton, fontSize: "12px" }}
+                              >
+                                Confirmar exclusao
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setOmieQueueConfirmDeleteId(null)}
+                                style={{ ...styles.secondaryButton, fontSize: "12px" }}
+                              >
+                                Cancelar
+                              </button>
+                            </>
+                          ) : (
+                            <IconActionButton
+                              icon="trash"
+                              label="Excluir da fila"
+                              tip="Excluir este item da fila (cancela o envio ao OMIE; a operacao local nao muda)"
+                              tone="neutral"
+                              placement="left"
+                              disabled={omieQueueBusyId !== null}
+                              onClick={() => setOmieQueueConfirmDeleteId(item.id)}
+                            />
+                          )}
+                        </div>
+                      ))
+                    )}
                   </div>
                 </article>
               </section>
@@ -3992,9 +4021,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 onSyncCloud={handleSyncToCloud}
               />
             ) : null}
-            {activeView === "truck-control" ? (
-              <TruckControlView desktopApi={desktopApi} />
-            ) : null}
+            {activeView === "truck-control" ? <TruckControlView desktopApi={desktopApi} /> : null}
             {activeView === "customer-report" ? (
               <CustomerReportView desktopApi={desktopApi} />
             ) : null}
@@ -4601,7 +4628,9 @@ export function createCacheSelectOptions(
 ): CacheSelectOption[] {
   return rows.map((item) => ({
     id: String(item.id ?? item.omieCode ?? ""),
-    label: String(item.tradeName ?? item.plate ?? item.name ?? item.description ?? item.fullName ?? ""),
+    label: String(
+      item.tradeName ?? item.plate ?? item.name ?? item.description ?? item.fullName ?? ""
+    ),
     raw: item
   }));
 }
@@ -4610,7 +4639,9 @@ export function filterCacheSelectOptions(
   options: CacheSelectOption[],
   filterIds: string[] | undefined
 ): CacheSelectOption[] {
-  return filterIds !== undefined ? options.filter((option) => filterIds.includes(option.id)) : options;
+  return filterIds !== undefined
+    ? options.filter((option) => filterIds.includes(option.id))
+    : options;
 }
 
 /**
@@ -4618,10 +4649,7 @@ export function filterCacheSelectOptions(
  * filtrado por vinculo (ex.: transportadoras do cliente), para o item aparecer de
  * imediato mesmo antes da releitura do vinculo no banco. `undefined` = sem filtro.
  */
-export function appendAvailableId(
-  ids: string[] | undefined,
-  id: string
-): string[] | undefined {
+export function appendAvailableId(ids: string[] | undefined, id: string): string[] | undefined {
   if (ids === undefined) return undefined;
   return ids.includes(id) ? ids : [...ids, id];
 }
@@ -4636,9 +4664,7 @@ export function appendAvailableId(
 export function carrierSelectorFilterIds(
   availableCarrierIds: string[] | undefined
 ): string[] | undefined {
-  return availableCarrierIds && availableCarrierIds.length > 0
-    ? availableCarrierIds
-    : undefined;
+  return availableCarrierIds && availableCarrierIds.length > 0 ? availableCarrierIds : undefined;
 }
 
 /**
@@ -5308,7 +5334,15 @@ function WeighingForm({
         </div>
         {/* Card unico de peso: mostra a leitura da balanca (real ou virtual) e, apos a
             captura, o peso capturado — sem o card separado de "peso ao vivo". */}
-        <div style={{ display: "flex", gap: "16px", alignItems: "stretch", position: "relative", zIndex: 1 }}>
+        <div
+          style={{
+            display: "flex",
+            gap: "16px",
+            alignItems: "stretch",
+            position: "relative",
+            zIndex: 1
+          }}
+        >
           <div
             style={{
               ...styles.liveWeightCard,
@@ -5584,7 +5618,9 @@ function WeighingForm({
                 flexWrap: "wrap"
               }}
             >
-              <div style={{ display: "flex", flexDirection: "column", gap: "2px", minWidth: "160px" }}>
+              <div
+                style={{ display: "flex", flexDirection: "column", gap: "2px", minWidth: "160px" }}
+              >
                 <span style={{ fontWeight: 600, fontSize: "13px" }}>Tipo de frete</span>
                 <span style={styles.helperText}>
                   {form.freightModality === "none"
@@ -5729,7 +5765,8 @@ function WeighingForm({
           {form.customerId && availableCarrierIds && availableCarrierIds.length === 0 ? (
             <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" }}>
               <p style={{ ...styles.helperText, color: "#d97706", margin: 0 }}>
-                Nenhuma transportadora vinculada a este cliente &mdash; exibindo todas as cadastradas.
+                Nenhuma transportadora vinculada a este cliente &mdash; exibindo todas as
+                cadastradas.
               </p>
               <button
                 type="button"
@@ -5961,7 +5998,9 @@ function FreightTypeModal({
                   padding: "10px 12px",
                   borderRadius: "10px",
                   border: `1px solid ${isSelected ? "var(--kr-accent, #2563eb)" : "var(--kr-border)"}`,
-                  background: isSelected ? "var(--kr-accent-soft, rgba(37,99,235,0.08))" : "var(--kr-surface)",
+                  background: isSelected
+                    ? "var(--kr-accent-soft, rgba(37,99,235,0.08))"
+                    : "var(--kr-surface)",
                   color: "var(--kr-text)",
                   cursor: "pointer"
                 }}
@@ -7266,7 +7305,11 @@ function fiscalStepDotStyle(input: {
   failed: boolean;
 }): React.CSSProperties {
   const tone = input.failed
-    ? { background: "var(--kr-danger-strong)", color: "#ffffff", borderColor: "var(--kr-danger-strong)" }
+    ? {
+        background: "var(--kr-danger-strong)",
+        color: "#ffffff",
+        borderColor: "var(--kr-danger-strong)"
+      }
     : input.done
       ? { background: "#16a34a", color: "#ffffff", borderColor: "#16a34a" }
       : input.active
@@ -8082,7 +8125,9 @@ function DriverCrud({
       key: "name",
       header: "Nome",
       width: "minmax(220px, 1.3fr)",
-      render: (item) => <CellPrimary>{String(item.name ?? item.document ?? item.id ?? "")}</CellPrimary>
+      render: (item) => (
+        <CellPrimary>{String(item.name ?? item.document ?? item.id ?? "")}</CellPrimary>
+      )
     },
     {
       key: "details",
@@ -8430,9 +8475,7 @@ function CarrierCrud({
       header: "Cidade/UF",
       width: "minmax(130px, 0.8fr)",
       render: (item) => (
-        <CellText>
-          {[item.city, item.state].filter(Boolean).join("/") || "-"}
-        </CellText>
+        <CellText>{[item.city, item.state].filter(Boolean).join("/") || "-"}</CellText>
       )
     },
     {
@@ -8860,7 +8903,9 @@ function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi })
             <Field label="Forma" hint="Nome e codigo vem do OMIE e nao sao editaveis aqui.">
               <p style={{ ...styles.helperText, margin: 0 }}>
                 {name}
-                {omieCode ? ` | Cod. OMIE ${omieCode}` : " | Sem codigo OMIE (sincronize com o OMIE)"}
+                {omieCode
+                  ? ` | Cod. OMIE ${omieCode}`
+                  : " | Sem codigo OMIE (sincronize com o OMIE)"}
               </p>
             </Field>
             <TextInput
@@ -9155,7 +9200,9 @@ function PaymentConditionsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi
             key: "parcelas",
             header: "Parcelamento",
             width: "minmax(180px, 1fr)",
-            render: (t: PaymentTermCacheEntry) => <CellMuted>{paymentConditionSummary(t)}</CellMuted>
+            render: (t: PaymentTermCacheEntry) => (
+              <CellMuted>{paymentConditionSummary(t)}</CellMuted>
+            )
           },
           {
             key: "omie",
@@ -9256,9 +9303,7 @@ function AccountsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
             key: "omie",
             header: "Cod. OMIE",
             width: "140px",
-            render: (account: AccountCacheEntry) => (
-              <CellMuted>{account.omieCode ?? "-"}</CellMuted>
-            )
+            render: (account: AccountCacheEntry) => <CellMuted>{account.omieCode ?? "-"}</CellMuted>
           },
           {
             key: "status",
@@ -9485,8 +9530,7 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   // USB mostra so as portas USB quando o sistema consegue identifica-las;
   // se o driver nao reportar a origem, mostra todas para nao esconder a balanca.
   const usbPorts = serialPorts.filter((p) => p.isUsb);
-  const visiblePorts =
-    connectionType === "usb" && usbPorts.length > 0 ? usbPorts : serialPorts;
+  const visiblePorts = connectionType === "usb" && usbPorts.length > 0 ? usbPorts : serialPorts;
 
   // Auto-seleciona quando ha exatamente uma porta e nada foi escolhido ainda
   useEffect(() => {
@@ -9517,7 +9561,7 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
 
   function validateBeforeConnect(): string | null {
     if (isSerialType && !serialPath.trim()) {
-      return "Selecione a porta da balanca antes de conectar. Use \"Atualizar portas\" se a lista estiver vazia.";
+      return 'Selecione a porta da balanca antes de conectar. Use "Atualizar portas" se a lista estiver vazia.';
     }
     if (connectionType === "tcp" && !host.trim()) {
       return "Informe o IP da balanca antes de conectar.";
@@ -10070,7 +10114,9 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   }
 
   function defaultCategoryLabel(): string {
-    return defaultCategoryCode ? `Padrao (${categoryLabel(defaultCategoryCode)})` : "Padrao (1.01.01)";
+    return defaultCategoryCode
+      ? `Padrao (${categoryLabel(defaultCategoryCode)})`
+      : "Padrao (1.01.01)";
   }
 
   function openEdit(item: ProductPriceRow): void {
@@ -10195,7 +10241,10 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
     // da categoria nao aparecer como erro de senha.
     setPendingDefaultPrice(null);
     setPricePasswordError(null);
-    showFlash("success", pending.action === "save" ? "Preco padrao salvo." : "Preco padrao removido.");
+    showFlash(
+      "success",
+      pending.action === "save" ? "Preco padrao salvo." : "Preco padrao removido."
+    );
 
     let categoryError: string | null = null;
     if (pending.categoryCode !== undefined) {
@@ -10268,8 +10317,8 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
 
       {categories.length === 0 ? (
         <p style={{ ...styles.helperText, color: "#d97706", marginBottom: "12px" }}>
-          Nenhuma categoria do OMIE sincronizada &mdash; execute a sincronizacao na tela Cloud
-          para escolher em qual categoria cada produto entra.
+          Nenhuma categoria do OMIE sincronizada &mdash; execute a sincronizacao na tela Cloud para
+          escolher em qual categoria cada produto entra.
         </p>
       ) : null}
 
@@ -10315,7 +10364,9 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
             width: "minmax(200px, 1fr)",
             render: (item) => (
               <CellMuted>
-                {item.omieCategoryCode ? categoryLabel(item.omieCategoryCode) : defaultCategoryLabel()}
+                {item.omieCategoryCode
+                  ? categoryLabel(item.omieCategoryCode)
+                  : defaultCategoryLabel()}
               </CellMuted>
             )
           },
@@ -10342,7 +10393,9 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
         rows={visibleItems}
         rowKey={(item) => item.productId}
         onRowOpen={openEdit}
-        emptyTitle={items.length === 0 ? "Nenhum produto sincronizado." : "Nenhum produto encontrado."}
+        emptyTitle={
+          items.length === 0 ? "Nenhum produto sincronizado." : "Nenhum produto encontrado."
+        }
         emptyHint={
           items.length === 0
             ? "Execute a sincronizacao OMIE na tela Cloud para baixar os produtos."
@@ -10390,8 +10443,8 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                 </select>
               ) : (
                 <p style={{ ...styles.helperText, margin: 0 }}>
-                  Nenhuma categoria sincronizada. Rode a sincronizacao na tela Cloud para escolher
-                  a categoria; ate la a venda entra em {defaultCategoryLabel().toLowerCase()}.
+                  Nenhuma categoria sincronizada. Rode a sincronizacao na tela Cloud para escolher a
+                  categoria; ate la a venda entra em {defaultCategoryLabel().toLowerCase()}.
                 </p>
               )}
             </Field>
