@@ -1550,5 +1550,56 @@ ALTER TABLE weighing_operations ADD COLUMN omie_advance_settled_at TEXT;
 CREATE INDEX IF NOT EXISTS idx_weighing_operations_advance_settlement
   ON weighing_operations(customer_id, omie_advance_status);
 `
+  },
+  {
+    version: 43,
+    name: "wallet_payment_method_and_settlement",
+    sql: `
+-- Forma de pagamento "Em carteira": a venda sai da balanca sem forma de recebimento
+-- definida e fica na carteira ate um fechamento futuro, onde o operador define COMO o
+-- cliente paga (dinheiro, PIX, boleto, ...) e para quando. Distinto do credito do
+-- cliente (fiado), que consome o limite/saldo do cadastro: em carteira a venda nao
+-- mexe no credito, apenas fica aguardando o fechamento.
+ALTER TABLE payment_methods ADD COLUMN is_wallet INTEGER NOT NULL DEFAULT 0
+  CHECK (is_wallet IN (0, 1));
+
+-- Seed da forma para as empresas ja cadastradas (as novas passam pelo
+-- ensureDefaultPaymentMethods). O tPag "99" (outros) faz o pedido/OS sair com
+-- nao_gerar_boleto "S": a NF e emitida, mas o OMIE nao gera cobranca — ela so nasce
+-- quando o fechamento define a forma de recebimento.
+INSERT INTO payment_methods
+  (id, company_id, code, name, omie_code, is_system, is_customer_credit, is_wallet,
+   sort_order, is_active, created_at, updated_at)
+SELECT lower(hex(randomblob(16))), c.id, 'wallet', 'Em carteira', '99', 1, 0, 1,
+       7, 1, datetime('now'), datetime('now')
+FROM companies c
+WHERE NOT EXISTS (
+  SELECT 1 FROM payment_methods pm
+  WHERE pm.company_id = c.id AND pm.code = 'wallet' AND pm.deleted_at IS NULL
+);
+
+-- A carteira e lancada no OMIE pela OMIE Cash, como o fiado e o boleto.
+UPDATE payment_methods SET
+  account_id = (
+    SELECT ac.id FROM accounts ac
+    WHERE ac.company_id = payment_methods.company_id AND ac.code = 'omie_cash'
+      AND ac.deleted_at IS NULL
+  ),
+  updated_at = datetime('now')
+WHERE code = 'wallet' AND account_id IS NULL AND deleted_at IS NULL;
+
+-- Fechamento da venda em carteira, guardado na propria operacao: qual forma de
+-- recebimento foi definida, para quando, quando o fechamento foi feito e a observacao
+-- do operador. Enquanto wallet_settled_at for NULL a venda esta em aberto na carteira.
+ALTER TABLE weighing_operations ADD COLUMN wallet_settlement_method_id TEXT
+  REFERENCES payment_methods(id);
+ALTER TABLE weighing_operations ADD COLUMN wallet_settlement_due_date TEXT;
+ALTER TABLE weighing_operations ADD COLUMN wallet_settled_at TEXT;
+ALTER TABLE weighing_operations ADD COLUMN wallet_settlement_note TEXT;
+
+-- Leitura da tela Carteira: as vendas em aberto de um meio "em carteira".
+CREATE INDEX IF NOT EXISTS idx_weighing_operations_wallet
+  ON weighing_operations(payment_method_id, wallet_settled_at);
+`
   }
 ];

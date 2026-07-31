@@ -29,7 +29,8 @@ import {
   Building2,
   Car,
   Power,
-  Search
+  Search,
+  Wallet
 } from "lucide-react";
 
 import { desktopAppInfo } from "../app-info";
@@ -109,6 +110,7 @@ import { InsightsView } from "./InsightsView";
 import { CustomerReportView } from "./CustomerReportView";
 import { ReportsView } from "./ReportsView";
 import { TruckControlView, formatMinutes } from "./TruckControlView";
+import { WalletView } from "./WalletView";
 import { CustomersView } from "./CustomersView";
 import { HelpTooltip, Tooltip } from "./Tooltip";
 import { IconActionButton, OpIcon } from "./IconActionButton";
@@ -175,6 +177,7 @@ type ActiveView =
   | "dashboard"
   | "new-weighing"
   | "open-operations"
+  | "wallet"
   | "scale"
   | "registrations"
   | "printing"
@@ -2203,6 +2206,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 onSelect={setActiveView}
               />
               <SidebarItem
+                id="wallet"
+                label="Carteira"
+                icon={Wallet}
+                activeView={activeView}
+                onSelect={setActiveView}
+              />
+              <SidebarItem
                 id="registrations"
                 label="Cadastros"
                 icon={Database}
@@ -4029,6 +4039,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 onSyncCloud={handleSyncToCloud}
               />
             ) : null}
+            {activeView === "wallet" ? <WalletView desktopApi={desktopApi} /> : null}
             {activeView === "truck-control" ? <TruckControlView desktopApi={desktopApi} /> : null}
             {activeView === "customer-report" ? (
               <CustomerReportView desktopApi={desktopApi} />
@@ -5071,6 +5082,32 @@ function WeighingForm({
   const [availableCarrierIds, setAvailableCarrierIds] = useState<string[] | undefined>(undefined);
   const [availableVehicleIds, setAvailableVehicleIds] = useState<string[] | undefined>(undefined);
   const [availableDriverIds, setAvailableDriverIds] = useState<string[] | undefined>(undefined);
+  const [isWalletMethod, setIsWalletMethod] = useState(false);
+
+  // A forma "em carteira" fecha a venda sem definir o recebimento: avisa o operador
+  // de que a cobranca so nasce no fechamento da carteira.
+  useEffect(() => {
+    if (!desktopApi || !form.paymentMethodId) {
+      setIsWalletMethod(false);
+      return;
+    }
+    let cancelled = false;
+    void desktopApi
+      .queryCache({ entityType: "payment_method", activeOnly: false, limit: 200 })
+      .then((result) => {
+        if (cancelled) return;
+        const method = (result.rows as PaymentMethodCacheEntry[]).find(
+          (row) => row.id === form.paymentMethodId
+        );
+        setIsWalletMethod(method?.isWallet === true);
+      })
+      .catch(() => {
+        if (!cancelled) setIsWalletMethod(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [desktopApi, form.paymentMethodId]);
 
   // Buscar transportadoras vinculadas ao cliente
   useEffect(() => {
@@ -5590,6 +5627,12 @@ function WeighingForm({
             onChange={(id) => setForm((prev) => ({ ...prev, paymentMethodId: id }))}
             desktopApi={desktopApi}
           />
+          {isWalletMethod ? (
+            <p style={styles.muted}>
+              Venda em carteira: a nota sai sem cobranca e a venda fica na tela Carteira ate o
+              fechamento, onde voce define como o cliente vai pagar.
+            </p>
+          ) : null}
           <Field
             label="Condicao de pagamento"
             hint='Digite: "5" (5 parcelas mensais), "7 14 21" ou "7/14/21" (prazos), "A Vista". Vazio = a vista. Se a condicao nao existir no OMIE, ela e criada automaticamente no envio.'
@@ -9006,7 +9049,11 @@ function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi })
               <>
                 <CellPrimary>{m.displayName}</CellPrimary>
                 <CellMuted>
-                  {[m.alias ? m.name : null, m.isCustomerCredit ? "Credito do cliente" : null]
+                  {[
+                    m.alias ? m.name : null,
+                    m.isCustomerCredit ? "Credito do cliente" : null,
+                    m.isWallet ? "Em carteira | recebimento definido no fechamento" : null
+                  ]
                     .filter(Boolean)
                     .join(" | ") || "-"}
                 </CellMuted>

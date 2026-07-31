@@ -74,6 +74,8 @@ export interface PaymentMethodCacheEntry {
   accountName: string | null;
   isSystem: boolean;
   isCustomerCredit: boolean;
+  /** Venda "em carteira": o recebimento e definido depois, no fechamento. */
+  isWallet: boolean;
   sortOrder: number;
   isActive: boolean;
 }

@@ -23,6 +23,7 @@ import {
   ShieldCheck,
   Truck,
   Users,
+  Wallet,
   Wrench
 } from "lucide-react";
 
@@ -235,6 +236,35 @@ export const documentationSections: DocumentationSection[] = [
       "motorista",
       "transportadora",
       "credito"
+    ]
+  },
+  {
+    id: "wallet",
+    title: "Vendas em carteira",
+    eyebrow: "Financeiro",
+    summary:
+      "A forma de pagamento 'Em carteira' fecha a venda sem definir o recebimento: ela fica na tela Carteira ate o fechamento, quando voce escolhe como o cliente vai pagar.",
+    icon: Wallet,
+    steps: [
+      "Na entrada, escolha a forma de pagamento 'Em carteira' quando o pagamento ficar para um fechamento futuro.",
+      "Feche a operacao normalmente: a nota sai, mas o OMIE nao gera cobranca ainda.",
+      "Abra Carteira pela sidebar para ver as vendas em aberto agrupadas por cliente.",
+      "Selecione as vendas do cliente, escolha a forma de recebimento e o vencimento combinado e clique em Fechar.",
+      "Use 'Reabrir fechamento' se a forma tiver sido lancada errada."
+    ],
+    details: [
+      "A venda em carteira vai ao OMIE como meio '99 - outros' e com o boleto desativado; a cobranca so nasce depois do fechamento.",
+      "Diferente do credito do cliente (fiado), a carteira nao consome limite nem saldo do cadastro e o fechamento e manual.",
+      "O fechamento fica no computador que o registrou: a forma 'Em carteira' e compartilhada entre as balancas, o fechamento nao."
+    ],
+    keywords: [
+      "carteira",
+      "fechamento",
+      "recebimento",
+      "cobranca",
+      "pagamento",
+      "boleto",
+      "fiado"
     ]
   },
   {

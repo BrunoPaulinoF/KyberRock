@@ -12,6 +12,7 @@ import type { ActivateDesktopInput } from "../services/desktop-activation.js";
 import type { CacheQueryOptions } from "../services/cache-store.js";
 import type { CreateCustomerInput, UpdateCustomerInput } from "../services/customers.js";
 import type { UpdatePaymentMethodInput } from "../services/payment-methods.js";
+import type { SettleWalletInput, WalletQuery } from "../services/wallet.js";
 import type { UpdateAccountInput } from "../services/accounts.js";
 import type {
   CreatePaymentTermInput,
@@ -1160,6 +1161,22 @@ function registerIpcHandlers(): void {
       return runtime.updatePaymentMethod(id, input);
     }
   );
+
+  // Carteira: vendas em carteira e o fechamento que define a forma de recebimento.
+  ipcMain.handle("desktop:wallet-report", (_event, query: WalletQuery) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.getWalletReport(query ?? {});
+  });
+
+  ipcMain.handle("desktop:wallet-settle", (_event, input: SettleWalletInput) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.settleWalletOperations(input);
+  });
+
+  ipcMain.handle("desktop:wallet-reopen", (_event, operationIds: string[]) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.reopenWalletOperations(operationIds);
+  });
 
   ipcMain.handle("desktop:accounts-list", () => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");

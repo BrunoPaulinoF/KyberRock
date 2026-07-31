@@ -173,6 +173,17 @@ describe("omie-sync Edge Function", () => {
     expect(source).toContain("...boletoFields");
   });
 
+  it("manda a venda em carteira como '99 - outros', sem boleto e pela OMIE Cash", () => {
+    const source = getOmieSyncSource();
+
+    // "Em carteira" e a venda que fecha sem forma de recebimento definida: ela sai com o
+    // meio "99" (outros), que cai no ramo generico do boletoGenerationFlag ("S", sem
+    // boleto) — a cobranca so nasce no fechamento da carteira, no desktop. A conta
+    // acompanha o seed local do meio (payment_methods.account_id -> OMIE Cash).
+    expect(source).toContain('["99", "omiecash"]');
+    expect(source).toContain("function defaultAccountNameForMethod");
+  });
+
   it("falls back to the OMIE parcelas cadastro when the OS structure is rejected", () => {
     const source = getOmieSyncSource();
 

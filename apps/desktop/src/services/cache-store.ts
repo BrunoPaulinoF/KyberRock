@@ -117,6 +117,8 @@ export interface PaymentMethodCacheEntry {
   accountName: string | null;
   isSystem: boolean;
   isCustomerCredit: boolean;
+  /** Venda "em carteira": o recebimento e definido depois, no fechamento. */
+  isWallet: boolean;
   sortOrder: number;
   isActive: boolean;
 }
@@ -294,6 +296,7 @@ interface PaymentMethodRow {
   account_name: string | null;
   is_system: number;
   is_customer_credit: number;
+  is_wallet: number;
   sort_order: number;
   is_active: number;
 }
@@ -482,6 +485,7 @@ function mapPaymentMethod(row: PaymentMethodRow): PaymentMethodCacheEntry {
     accountName: row.account_name,
     isSystem: row.is_system === 1,
     isCustomerCredit: row.is_customer_credit === 1,
+    isWallet: row.is_wallet === 1,
     sortOrder: row.sort_order,
     isActive: row.is_active === 1
   };
@@ -851,7 +855,7 @@ export class CacheStore {
       .prepare(
         `SELECT pm.id, pm.code, pm.name, pm.alias, pm.omie_code, pm.account_id,
                 ac.name AS account_name,
-                pm.is_system, pm.is_customer_credit, pm.sort_order, pm.is_active
+                pm.is_system, pm.is_customer_credit, pm.is_wallet, pm.sort_order, pm.is_active
          FROM payment_methods pm
          LEFT JOIN accounts ac ON ac.id = pm.account_id AND ac.deleted_at IS NULL
          WHERE pm.company_id = ? AND pm.deleted_at IS NULL`
