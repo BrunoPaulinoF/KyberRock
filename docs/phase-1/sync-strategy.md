@@ -138,6 +138,28 @@ Financeiro:
 - Enviar cliente, condicao, servico/produto interno e quantidade.
 - Salvar `nCodOS` retornado.
 
+#### Paridade com o pedido de venda (implementado)
+
+A venda sem nota carrega os MESMOS dados da venda com nota; muda o modulo do OMIE
+(Servicos em vez de Vendas), nao o conteudo. A OS nasce em `cEtapa` `"50"` ("Faturar"),
+como o pedido de venda, e o faturamento (NFS-e) e feito dentro do OMIE.
+
+- `cCodCateg` usa a categoria do plano gerencial do produto (senao a padrao da unidade),
+  a mesma resolvida para `codigo_categoria` do pedido de venda.
+- `nCodCC` usa a conta corrente vinculada ao meio de pagamento da operacao.
+- A OS nao tem bloco `frete`: o frete entra como uma segunda linha de `ServicosPrestados`
+  ("FRETE", com a modalidade no texto) e o peso liquido/placa vao em `cDadosAdicItem`.
+- `cDadosAdicNF` concentra o que o pedido espalha entre `frete` e o cadastro da
+  transportadora: marcacao de venda sem valor fiscal, id da operacao, motorista, placa,
+  transportadora (ou transporte proprio), peso liquido e valor do frete.
+- `cCodServMun` e `cCodServLC116` saem do MESMO cadastro de servico do tenant
+  (`ListarCadastroServico`) — combinar codigos de servicos diferentes faz o OMIE recusar a OS.
+- O cupom termico da operacao interna e igual ao da fiscal, com o aviso
+  **VENDA SEM VALOR FISCAL** no topo e no pe (nao desligavel pelo template).
+- Fechamento sem como criar a OS (cliente sem codigo OMIE e sem CNPJ/CPF) marca
+  `omie_billing_status = 'cadastro_incompleto'` na operacao, em vez de nao enfileirar nada
+  em silencio. Envio recusado pelo OMIE marca `'service_order_failed'` com a mensagem.
+
 ## Cancelamento E Alteracao
 
 ### Antes Do OMIE

@@ -14,6 +14,7 @@ import {
   createWeighingOperation,
   createSimulatedWeighingOperation,
   deleteClosedWeighingOperation,
+  getWeighingOperation,
   listCanceledWeighingOperations,
   listClosedWeighingOperations,
   listOpenWeighingOperations,
@@ -1134,6 +1135,7 @@ describe("weighing operations", () => {
         plate: "ABC1D23",
         driverName: "Motorista Teste",
         carrierOmieId: 987654,
+        carrierName: "Transportadora Teste",
         cargoWeightKg: 6_500,
         ownVehicle: false
       });
@@ -1515,6 +1517,74 @@ describe("weighing operations", () => {
         action: "create_order",
         idempotency_key: buildOmieIntegrationCode("unit-1", operation.id, "create_service_order")
       });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("flags an internal close as cadastro_incompleto instead of dropping the service order", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      // Cliente SEM omie_customer_id e SEM documento: nao da para criar a OS no OMIE.
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        operationType: "internal",
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+
+      const closed = closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "internal"
+      });
+
+      expect(
+        database.prepare("SELECT COUNT(*) AS n FROM sync_queue WHERE target = 'omie'").get()
+      ).toMatchObject({ n: 0 });
+      // Antes a venda sem nota sumia em silencio: fechava local e nao ia para lugar nenhum.
+      expect(closed.omieBillingStatus).toBe("cadastro_incompleto");
+      expect(closed.omieBillingMessage).toContain("ordem de servico");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("exposes the OMIE service order id of an internal operation", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET omie_customer_id = 456 WHERE id = 'customer-1'").run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        operationType: "internal",
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "internal"
+      });
+      database
+        .prepare("UPDATE weighing_operations SET omie_service_order_id = 777 WHERE id = ?")
+        .run(operation.id);
+
+      // Sem isto a tela de concluidas nao tinha como mostrar a OS criada no OMIE.
+      expect(getWeighingOperation(database, operation.id).omieServiceOrderId).toBe(777);
     } finally {
       database.close();
     }

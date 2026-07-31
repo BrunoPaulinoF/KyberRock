@@ -8,6 +8,7 @@ import {
   createCacheSelectOptions,
   filterCacheSelectOptions,
   formatElapsedSince,
+  getFiscalBillingStatus,
   isTransportReady,
   omieQueueActionLabel,
   omieQueueStatusLabel,
@@ -158,6 +159,34 @@ describe("App", () => {
     expect(omieQueueStatusLabel("dead_letter")).toBe("parado apos varias falhas");
   });
 
+  it("shows the OMIE service order state of an internal operation", () => {
+    // Antes toda operacao interna aparecia como "Sem nota fiscal de venda": uma OS que
+    // nunca chegou ao OMIE ficava indistinguivel de uma que chegou.
+    expect(
+      getFiscalBillingStatus(createInternalOperationForTest({ omieServiceOrderId: 777 }))
+    ).toMatchObject({ label: "OS enviada", tone: "success" });
+
+    expect(getFiscalBillingStatus(createInternalOperationForTest({}))).toMatchObject({
+      label: "Enviando OS",
+      tone: "neutral"
+    });
+
+    expect(
+      getFiscalBillingStatus(
+        createInternalOperationForTest({
+          omieBillingStatus: "service_order_failed",
+          omieBillingMessage: "ERROR: - tag: [cCodServMun]"
+        })
+      )
+    ).toMatchObject({ label: "OS falhou", tone: "danger", detail: "ERROR: - tag: [cCodServMun]" });
+
+    expect(
+      getFiscalBillingStatus(
+        createInternalOperationForTest({ omieBillingStatus: "cadastro_incompleto" })
+      )
+    ).toMatchObject({ label: "Cadastro incompleto", tone: "warning" });
+  });
+
   it("builds and filters cache select modal options", () => {
     const options = createCacheSelectOptions([
       { id: "customer-1", tradeName: "Cliente A" },
@@ -170,3 +199,51 @@ describe("App", () => {
     expect(filterCacheSelectOptions(options, undefined)).toEqual(options);
   });
 });
+
+function createInternalOperationForTest(
+  overrides: Partial<Parameters<typeof getFiscalBillingStatus>[0]>
+): Parameters<typeof getFiscalBillingStatus>[0] {
+  return {
+    id: "operation-1",
+    status: "closed_local",
+    operationType: "internal",
+    customerId: "customer-1",
+    customerName: "Cliente Teste",
+    plate: "ABC1D23",
+    driverName: "Motorista Teste",
+    productDescription: "Brita 1",
+    paymentTermName: null,
+    entryWeightKg: 12_000,
+    exitWeightKg: 18_500,
+    netWeightKg: 6_500,
+    unitPriceCents: 10_000,
+    baseUnitPriceCents: null,
+    appliedPriceTableId: null,
+    appliedPriceTableName: null,
+    appliedPriceTableItemId: null,
+    priceUnit: "ton",
+    priceSavingsPercent: null,
+    productTotalCents: 65_000,
+    freightTotalCents: 0,
+    freightJson: null,
+    freightModality: "none",
+    totalCents: 65_000,
+    deductFreightFromCredit: false,
+    productCreditDebitCents: 0,
+    freightCreditDebitCents: 0,
+    quotationId: null,
+    omieSalesOrderId: null,
+    omieServiceOrderId: null,
+    omieBillingStatus: null,
+    omieBillingMessage: null,
+    omieBilledAt: null,
+    omieDocumentUrl: null,
+    cancelReason: null,
+    createdAt: "2026-07-07T10:00:00.000Z",
+    updatedAt: "2026-07-07T11:00:00.000Z",
+    deviceId: null,
+    deviceName: null,
+    deviceColor: null,
+    ...overrides
+  };
+}

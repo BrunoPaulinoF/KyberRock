@@ -70,6 +70,36 @@ describe("printing", () => {
     }
   });
 
+  it("prints the internal operation receipt marked as a non-fiscal sale", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createIdentity(database);
+      configureReceiptPrintProfile(database, {
+        identity,
+        windowsPrinterName: "TERMICA-80",
+        paperWidthMm: 80
+      });
+      const operation = createClosedOperation(database, identity, "internal");
+
+      await printWeighingReceipt(
+        database,
+        { operationId: operation.id, identity },
+        printer,
+        new Date("2026-06-07T12:00:00.000Z")
+      );
+
+      // Mesmo cupom da venda com nota, com o aviso de que nao vale como documento fiscal.
+      const lines = printer.calls[0].lines;
+      expect(lines.some((line) => line.includes("VENDA SEM VALOR FISCAL"))).toBe(true);
+      expect(lines).toContain("Cliente: Cliente Teste");
+      expect(lines.some((line) => line.startsWith("LIQUIDO:"))).toBe(true);
+    } finally {
+      database.close();
+    }
+  });
+
   it("reprints a receipt as the next copy", async () => {
     const database = createDatabase();
     const printer = createFakePrinter();
@@ -302,10 +332,14 @@ function createIdentity(database: DesktopDatabase): LocalDesktopIdentity {
   });
 }
 
-function createClosedOperation(database: DesktopDatabase, identity: LocalDesktopIdentity) {
+function createClosedOperation(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity,
+  operationType: "invoice" | "internal" = "invoice"
+) {
   const operation = createSimulatedWeighingOperation(database, {
     identity,
-    operationType: "invoice",
+    operationType,
     customerName: "Cliente Teste",
     plate: "ABC1D23",
     driverName: "Motorista Teste",
@@ -317,7 +351,8 @@ function createClosedOperation(database: DesktopDatabase, identity: LocalDesktop
 
   return closeWeighingOperation(database, {
     operationId: operation.id,
-    exitWeightKg: 18_500
+    exitWeightKg: 18_500,
+    operationType
   });
 }
 

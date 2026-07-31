@@ -1168,6 +1168,199 @@ Deno.test("create_order usa a conta corrente selecionada no desktop na ordem de 
   assertEquals(infos.nCodCC, 4321);
 });
 
+Deno.test("create_order leva os dados da operacao interna para a ordem de servico", async () => {
+  const deviceToken = "token-order-os-data";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-order-os-data": {
+        id: "device-order-os-data",
+        company_id: "company-order-os-data",
+        unit_id: "unit-order-os-data",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-order-os-data": {
+        id: "company-order-os-data",
+        is_active: true,
+        omie_app_key: "order-os-data",
+        omie_app_secret: "secret-order-os-data"
+      }
+    }
+  });
+  const omieQueue = orderQueueStub();
+
+  const response = await postOmieSync(
+    {
+      deviceId: "device-order-os-data",
+      deviceToken,
+      action: "create_order",
+      payload: {
+        localOperationId: "operation-interna-1",
+        operationType: "internal",
+        customerOmieId: 100,
+        serviceDescription: "Brita 1",
+        quantity: 12,
+        unitPrice: 40,
+        issueDate: "2026-07-07",
+        idempotencyKey: "kyberrock:unit:op6:create_service_order",
+        omieCategoryCode: "1.02.05",
+        freightTotalCents: 25_000,
+        freightModalidade: "1",
+        transport: {
+          plate: "abc1d23",
+          driverName: "Motorista Teste",
+          carrierName: "Transportadora Teste",
+          cargoWeightKg: 12_000
+        }
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  assertObjectMatch(response, { ok: true, orderId: 555 });
+  const param = getParam(findRequest(omieQueue, "IncluirOS"));
+  const infos = param.InformacoesAdicionais as Record<string, unknown>;
+  // A categoria do produto vale para a OS como vale para o pedido de venda.
+  assertEquals(infos.cCodCateg, "1.02.05");
+
+  const dadosAdicionais = infos.cDadosAdicNF as string;
+  assertEquals(dadosAdicionais.includes("VENDA SEM VALOR FISCAL"), true);
+  assertEquals(dadosAdicionais.includes("operation-interna-1"), true);
+  assertEquals(dadosAdicionais.includes("Motorista: Motorista Teste"), true);
+  assertEquals(dadosAdicionais.includes("Placa: ABC1D23"), true);
+  assertEquals(dadosAdicionais.includes("Transportadora: Transportadora Teste"), true);
+  assertEquals(dadosAdicionais.includes("Peso liquido: 12000 kg"), true);
+
+  // O frete vira uma segunda linha de servico: a OS nao tem bloco `frete`.
+  const servicos = param.ServicosPrestados as Record<string, unknown>[];
+  assertEquals(servicos.length, 2);
+  assertEquals(servicos[0].cDescServ, "Brita 1");
+  assertEquals(servicos[0].nValUnit, 40);
+  assertEquals(String(servicos[0].cDadosAdicItem).includes("Peso liquido: 12000 kg"), true);
+  assertEquals(servicos[1].cDescServ, "FRETE (FOB)");
+  assertEquals(servicos[1].nQtde, 1);
+  assertEquals(servicos[1].nValUnit, 250);
+  // Os impostos do servico se repetem na linha de frete (obrigatorios no IncluirOS).
+  assertEquals(servicos[1].cTribServ, "01");
+  assertEquals(servicos[1].cRetemISS, "N");
+});
+
+Deno.test("create_order nao cria linha de frete na OS quando a operacao nao tem frete", async () => {
+  const deviceToken = "token-order-os-nofreight";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-order-os-nofreight": {
+        id: "device-order-os-nofreight",
+        company_id: "company-order-os-nofreight",
+        unit_id: "unit-order-os-nofreight",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-order-os-nofreight": {
+        id: "company-order-os-nofreight",
+        is_active: true,
+        omie_app_key: "order-os-nofreight",
+        omie_app_secret: "secret-order-os-nofreight"
+      }
+    }
+  });
+  const omieQueue = orderQueueStub();
+
+  await postOmieSync(
+    {
+      deviceId: "device-order-os-nofreight",
+      deviceToken,
+      action: "create_order",
+      payload: {
+        operationType: "internal",
+        customerOmieId: 100,
+        serviceDescription: "Brita 1",
+        quantity: 12,
+        unitPrice: 40,
+        issueDate: "2026-07-07",
+        idempotencyKey: "kyberrock:unit:op7:create_service_order"
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  const servicos = getParam(findRequest(omieQueue, "IncluirOS")).ServicosPrestados as Record<
+    string,
+    unknown
+  >[];
+  assertEquals(servicos.length, 1);
+});
+
+Deno.test("create_order tira os dois codigos de servico do mesmo cadastro do OMIE", async () => {
+  const deviceToken = "token-order-os-codes";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-order-os-codes": {
+        id: "device-order-os-codes",
+        company_id: "company-order-os-codes",
+        unit_id: "unit-order-os-codes",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-order-os-codes": {
+        id: "company-order-os-codes",
+        is_active: true,
+        omie_app_key: "order-os-codes",
+        omie_app_secret: "secret-order-os-codes"
+      }
+    }
+  });
+  // Dois servicos cadastrados: o codigo municipal do primeiro nao pode ser combinado
+  // com o LC116 do segundo — o OMIE recusa a combinacao e a OS nunca era criada.
+  const omieQueue = createOmieQueueStub((input) => {
+    if (input.call === "ListarCadastroServico") {
+      return {
+        cadastroServico: [
+          { cCodServMun: "1.07", cCodLC116: "01.07" },
+          { cCodServMun: "9.99", cCodLC116: "09.99" }
+        ]
+      };
+    }
+    if (input.call === "ListarContasCorrentes") return { conta_corrente_lista: [{ nCodCC: 7 }] };
+    if (input.call === "IncluirOS") return { nCodOS: 555 };
+    return defaultOmieListResponse(input);
+  });
+
+  await postOmieSync(
+    {
+      deviceId: "device-order-os-codes",
+      deviceToken,
+      action: "create_order",
+      payload: {
+        operationType: "internal",
+        customerOmieId: 100,
+        serviceDescription: "Brita 1",
+        quantity: 12,
+        unitPrice: 40,
+        issueDate: "2026-07-07",
+        idempotencyKey: "kyberrock:unit:op8:create_service_order"
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  const servicos = getParam(findRequest(omieQueue, "IncluirOS")).ServicosPrestados as Record<
+    string,
+    unknown
+  >[];
+  assertEquals(servicos[0].cCodServMun, "1.07");
+  assertEquals(servicos[0].cCodServLC116, "01.07");
+});
+
 Deno.test("create_order resolve a conta corrente pelo nome vinculado quando falta o nCodCC", async () => {
   const deviceToken = "token-order-account-name";
   const token_hash = await sha256Hex(deviceToken);

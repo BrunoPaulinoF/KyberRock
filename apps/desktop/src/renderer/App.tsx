@@ -1564,13 +1564,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   ): Promise<void> {
     if (!desktopApi) return;
 
-    // O faturamento (NF-e) e feito INTEIRAMENTE no OMIE: o fechamento apenas cria o
-    // pedido de venda (etapa "Faturar"). Nao ha mais faturamento automatico aqui — por
-    // isso nao exigimos internet no fechamento (o pedido sobe na proxima sincronizacao).
+    // O faturamento (NF-e/NFS-e) e feito INTEIRAMENTE no OMIE: o fechamento apenas cria o
+    // registro na etapa "Faturar" — pedido de venda na operacao fiscal, ordem de servico na
+    // interna. Nao exigimos internet no fechamento (o envio sobe na proxima sincronizacao).
     setMessage(
       operationType === "invoice"
         ? "Fechando operacao fiscal e enviando o pedido ao OMIE."
-        : "Fechando operacao interna."
+        : "Fechando operacao interna e enviando a ordem de servico ao OMIE."
     );
 
     try {
@@ -1617,7 +1617,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       const fiscalStatus =
         operationType === "invoice"
           ? 'Pedido enviado ao OMIE para faturar (coluna "Faturar"). '
-          : "";
+          : 'Ordem de servico enviada ao OMIE para faturar (etapa "Faturar"). ';
       setMessage(
         `${operationLabel}. Peso liquido: ${operation.netWeightKg} kg. ${fiscalStatus}${receiptStatus}`
       );
@@ -1648,11 +1648,21 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
   }
 
-  async function handleRetryFiscalBilling(operationId: string): Promise<void> {
+  // Mesmo botao para os dois tipos: na operacao fiscal ele refatura o pedido de venda,
+  // na interna ele reenvia a ordem de servico (o backend decide pelo operation_type).
+  async function handleRetryFiscalBilling(
+    operationId: string,
+    operationType: OperationType
+  ): Promise<void> {
     if (!desktopApi) return;
 
+    const isInternal = operationType !== "invoice";
     if (!navigator.onLine) {
-      setMessage("Retry fiscal exige internet conectada para falar com o OMIE.");
+      setMessage(
+        isInternal
+          ? "Reenvio da ordem de servico exige internet conectada para falar com o OMIE."
+          : "Retry fiscal exige internet conectada para falar com o OMIE."
+      );
       return;
     }
 
@@ -1661,8 +1671,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       operationId,
       status: "running",
       step: "billing",
-      title: "Retentando faturamento OMIE",
-      detail: "Reprocessando o job fiscal pendente desta operacao."
+      title: isInternal ? "Reenviando ordem de servico" : "Retentando faturamento OMIE",
+      detail: isInternal
+        ? "Reprocessando a ordem de servico pendente desta operacao interna."
+        : "Reprocessando o job fiscal pendente desta operacao."
     });
 
     try {
@@ -1671,15 +1683,32 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         // Cadastro ainda incompleto: aviso acionavel, nao erro. O job segue re-executavel.
         const reason =
           billingStatus.blockReason ??
-          "Cadastro do cliente incompleto para NF-e (Numero do Endereco + E-mail).";
+          (isInternal
+            ? "Cadastro do cliente incompleto para a ordem de servico (CNPJ/CPF)."
+            : "Cadastro do cliente incompleto para NF-e (Numero do Endereco + E-mail).");
         setFiscalCloseProgress({
           operationId,
           status: "success",
           step: "billing",
-          title: "Faturamento pendente — cadastro incompleto",
+          title: isInternal
+            ? "Ordem de servico pendente — cadastro incompleto"
+            : "Faturamento pendente — cadastro incompleto",
           detail: reason
         });
         setMessage(reason);
+        await refreshOpenOperations();
+        return;
+      }
+      if (isInternal) {
+        const detail = `Ordem de servico OMIE ${billingStatus.orderId} criada. Fature na etapa "Faturar" do OMIE.`;
+        setFiscalCloseProgress({
+          operationId,
+          status: "success",
+          step: "billing",
+          title: "Ordem de servico enviada",
+          detail
+        });
+        setMessage(detail);
         await refreshOpenOperations();
         return;
       }
@@ -1703,7 +1732,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         operationId,
         status: "error",
         step: "billing",
-        title: "Retry fiscal falhou",
+        title: isInternal ? "Reenvio da ordem de servico falhou" : "Retry fiscal falhou",
         detail: errorMessage
       });
       setMessage(errorMessage);
@@ -1877,7 +1906,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       setMessage(
         operation.omieSalesOrderId
           ? `Venda cancelada. Cancelamento do pedido OMIE ${operation.omieSalesOrderId} solicitado; a operacao saiu dos insights e relatorios.`
-          : `Operacao cancelada: ${operation.cancelReason}.`
+          : operation.omieServiceOrderId
+            ? `Venda cancelada. Cancelamento da OS OMIE ${operation.omieServiceOrderId} solicitado; a operacao saiu dos insights e relatorios.`
+            : `Operacao cancelada: ${operation.cancelReason}.`
       );
       await refreshOpenOperations();
     } catch (error) {
@@ -2940,7 +2971,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                         <FiscalBillingStatus
                           operation={operation}
                           retrying={retryingFiscalOperationId === operation.id}
-                          onRetry={() => void handleRetryFiscalBilling(operation.id)}
+                          onRetry={() =>
+                            void handleRetryFiscalBilling(operation.id, operation.operationType)
+                          }
                         />
                         <span style={styles.rowActions}>
                           <IconActionButton
@@ -6765,9 +6798,18 @@ function CancelOperationDialog({
   const [error, setError] = useState<string | null>(null);
 
   const isCompleted = context === "completed";
-  // Operacao concluida ja foi enviada ao OMIE quando tem pedido criado ou ja foi faturada.
+  // Operacao concluida ja foi enviada ao OMIE quando tem pedido/OS criado ou ja foi faturada.
+  // A interna conta pela ordem de servico — o cancelamento dela tambem sobe para o OMIE.
   const hasOmieOrder =
-    operation.omieSalesOrderId != null || operation.omieBillingStatus === "billed";
+    operation.omieSalesOrderId != null ||
+    operation.omieServiceOrderId != null ||
+    operation.omieBillingStatus === "billed";
+  const omieOrderLabel =
+    operation.omieSalesOrderId != null
+      ? ` (Pedido ${operation.omieSalesOrderId})`
+      : operation.omieServiceOrderId != null
+        ? ` (OS ${operation.omieServiceOrderId})`
+        : "";
   const title = isCompleted ? "Registrar venda cancelada" : "Cancelar operacao";
   const confirmLabel = isCompleted ? "Confirmar venda cancelada" : "Confirmar cancelamento";
 
@@ -6792,9 +6834,7 @@ function CancelOperationDialog({
             }}
           >
             {hasOmieOrder
-              ? `Esta venda ja foi concluida e enviada ao OMIE${
-                  operation.omieSalesOrderId ? ` (Pedido ${operation.omieSalesOrderId})` : ""
-                }. Ao confirmar, o cancelamento do pedido sera solicitado no OMIE e os valores desta operacao sairao dos insights e relatorios.`
+              ? `Esta venda ja foi concluida e enviada ao OMIE${omieOrderLabel}. Ao confirmar, o cancelamento do pedido sera solicitado no OMIE e os valores desta operacao sairao dos insights e relatorios.`
               : "A operacao sera marcada como cancelada e seus valores sairao dos insights e relatorios."}
           </div>
         ) : null}
@@ -7213,16 +7253,51 @@ function fiscalStepDotStyle(input: {
   };
 }
 
-function getFiscalBillingStatus(operation: WeighingOperationSummary): {
+export function getFiscalBillingStatus(operation: WeighingOperationSummary): {
   label: string;
   detail: string;
   tone: "success" | "warning" | "danger" | "neutral";
   canRetry: boolean;
 } {
+  // Operacao interna (venda sem nota): vira ordem de servico no OMIE, na mesma etapa
+  // "Faturar" do pedido de venda — so em outro modulo. O estado do envio precisa ficar
+  // visivel aqui; antes toda interna aparecia como "Sem nota fiscal de venda" e uma OS
+  // que nunca chegou ao OMIE era indistinguivel de uma que chegou.
   if (operation.operationType !== "invoice") {
+    if (operation.omieServiceOrderId) {
+      return {
+        label: "OS enviada",
+        detail: `Ordem de servico OMIE ${operation.omieServiceOrderId} — fature na etapa "Faturar" do OMIE.`,
+        tone: "success",
+        canRetry: false
+      };
+    }
+
+    if (operation.omieBillingStatus === "cadastro_incompleto") {
+      return {
+        label: "Cadastro incompleto",
+        detail:
+          operation.omieBillingMessage ??
+          "Falta o CNPJ/CPF do cliente para cadastra-lo no OMIE e enviar a ordem de servico.",
+        tone: "warning",
+        canRetry: true
+      };
+    }
+
+    if (operation.omieBillingStatus === "service_order_failed") {
+      return {
+        label: "OS falhou",
+        detail:
+          operation.omieBillingMessage ??
+          "O OMIE recusou a ordem de servico. Corrija o cadastro e reenvie.",
+        tone: "danger",
+        canRetry: true
+      };
+    }
+
     return {
-      label: "Interna",
-      detail: "Sem nota fiscal de venda.",
+      label: "Enviando OS",
+      detail: "Ordem de servico sera enviada ao OMIE na proxima sincronizacao.",
       tone: "neutral",
       canRetry: false
     };
