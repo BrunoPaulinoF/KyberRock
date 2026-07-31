@@ -93,7 +93,6 @@ export class CreditService {
     return this.getSettings(customerId)?.creditMode === "prepaid";
   }
 
-
   getSettings(customerId: string): CustomerCreditSettings | null {
     const row = this.db
       .prepare(
