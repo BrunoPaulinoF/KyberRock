@@ -702,6 +702,11 @@ export function CustomersView({
       ]);
       setCreditSummary(summary);
       setCreditMovements(movements);
+      // Pre-pago nao tem "pagamento recebido" (o deposito vem do OMIE): cai no
+      // ajuste, que exige motivo, para o operador nao duplicar o adiantamento.
+      if (summary.creditMode === "prepaid") {
+        setCreditEntryKind((kind) => (kind === "payment" ? "adjustment_credit" : kind));
+      }
     } catch {
       setCreditSummary(null);
       setCreditMovements([]);
@@ -1886,6 +1891,13 @@ export function CustomersView({
                         : "Nenhum adiantamento vindo do OMIE ate agora."}
                     </span>
                   </div>
+                  {creditSummary?.creditMode === "prepaid" ? (
+                    <p style={styles.cellMuted}>
+                      Cliente pre-pago: o deposito e lancado no OMIE (contas a receber na
+                      categoria de adiantamento) e chega aqui pela sincronizacao. Nao lance o
+                      mesmo deposito a mao — use ajuste, com motivo, so para corrigir o saldo.
+                    </p>
+                  ) : null}
                   <div style={styles.fieldRow}>
                     <Field label="Tipo do lancamento">
                       <select
@@ -1895,7 +1907,10 @@ export function CustomersView({
                         }
                         style={getInputStyle(false)}
                       >
-                        <option value="payment">Pagamento recebido (libera limite)</option>
+                        {/* Pre-pago nao recebe pagamento manual: o adiantamento vem do OMIE. */}
+                        {creditSummary?.creditMode === "prepaid" ? null : (
+                          <option value="payment">Pagamento recebido (libera limite)</option>
+                        )}
                         <option value="adjustment_credit">Ajuste a favor do cliente</option>
                         <option value="adjustment_debit">Ajuste contra o cliente</option>
                       </select>

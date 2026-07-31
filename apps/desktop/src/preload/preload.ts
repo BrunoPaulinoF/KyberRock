@@ -178,6 +178,12 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:customer-credit-movements", customerId, limit),
   customerCreditSyncAdvances: (options?: { fullRescan?: boolean }) =>
     ipcRenderer.invoke("desktop:customer-credit-sync-advances", options),
+  omieAdvanceConfigGet: () => ipcRenderer.invoke("desktop:omie-advance-config-get"),
+  omieAdvanceConfigSet: (patch: {
+    categoryCodes?: string[];
+    accountCode?: number | null;
+    accountName?: string | null;
+  }) => ipcRenderer.invoke("desktop:omie-advance-config-set", patch),
   quotationsCreate: (input: unknown) => ipcRenderer.invoke("desktop:quotations-create", input),
   quotationsCancel: (id: string) => ipcRenderer.invoke("desktop:quotations-cancel", id),
   quotationsListOpenForCustomer: (customerId: string) =>

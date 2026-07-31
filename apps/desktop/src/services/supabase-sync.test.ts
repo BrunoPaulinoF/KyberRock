@@ -10,6 +10,7 @@ import { runDesktopMigrations } from "../database/migrate";
 import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite";
 import { ensureInitialDesktopIdentity, type LocalDesktopIdentity } from "./bootstrap";
 import { listOmieCategories } from "./omie-categories";
+import { readOmieAdvanceConfig } from "./omie-advance-config";
 import { BLOCKED_NEXT_ATTEMPT_AT, enqueueSyncJob } from "./sync-queue";
 import { createSimulatedWeighingOperation } from "./weighing-operations";
 import {
@@ -2201,6 +2202,133 @@ describe("supabase sync", () => {
       });
       const payload = (options.body as { payload: Record<string, unknown> }).payload;
       expect(typeof payload.startDate).toBe("string");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("baixa no OMIE o adiantamento reservado pela operacao", async () => {
+    const database = createDatabase();
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      initializeSupabase();
+      insertLocalCustomer(database, "customer-1", { omieCustomerId: 42 });
+      const operation = createSimulatedWeighingOperation(database, {
+        identity,
+        customerName: "Cliente Teste",
+        plate: "ABC1D23",
+        driverName: "Motorista Teste",
+        productDescription: "Brita 1",
+        entryWeightKg: 12_000
+      });
+      database
+        .prepare(
+          `UPDATE weighing_operations
+             SET omie_advance_settle_cents = 78000, omie_advance_status = 'pending'
+           WHERE id = ?`
+        )
+        .run(operation.id);
+      enqueueSyncJob(database, {
+        target: "omie",
+        action: "settle_advance",
+        entityType: "weighing_operation",
+        entityId: operation.id,
+        idempotencyKey: `omie:settle_advance:${operation.id}`,
+        payload: {
+          operationId: operation.id,
+          customerOmieId: 42,
+          omieOrderId: 888,
+          amountCents: 78_000,
+          issueDate: "2026-07-20"
+        }
+      });
+
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          ok: true,
+          settledCents: 78_000,
+          titles: [{ titleId: 3001, amountCents: 78_000 }],
+          advanceAccountCode: 22,
+          pendingReceivable: false
+        },
+        error: null
+      });
+
+      const result = await processOmieSyncQueue(database, identity);
+
+      expect(result).toMatchObject({ processed: 1, failed: 0 });
+      const row = database
+        .prepare(
+          `SELECT omie_advance_settled_cents, omie_advance_status
+           FROM weighing_operations WHERE id = ?`
+        )
+        .get(operation.id) as { omie_advance_settled_cents: number; omie_advance_status: string };
+      expect(row).toEqual({ omie_advance_settled_cents: 78_000, omie_advance_status: "settled" });
+      // Conta corrente descoberta pelo OMIE fica guardada para os proximos jobs.
+      expect(readOmieAdvanceConfig(database).accountCode).toBe(22);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("mantem a baixa na fila enquanto o pedido nao tem titulo no OMIE", async () => {
+    const database = createDatabase();
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      initializeSupabase();
+      insertLocalCustomer(database, "customer-1", { omieCustomerId: 42 });
+      const operation = createSimulatedWeighingOperation(database, {
+        identity,
+        customerName: "Cliente Teste",
+        plate: "ABC1D23",
+        driverName: "Motorista Teste",
+        productDescription: "Brita 1",
+        entryWeightKg: 12_000
+      });
+      database
+        .prepare(
+          `UPDATE weighing_operations
+             SET omie_advance_settle_cents = 50000, omie_advance_status = 'pending'
+           WHERE id = ?`
+        )
+        .run(operation.id);
+      enqueueSyncJob(database, {
+        target: "omie",
+        action: "settle_advance",
+        entityType: "weighing_operation",
+        entityId: operation.id,
+        idempotencyKey: `omie:settle_advance:${operation.id}`,
+        payload: {
+          operationId: operation.id,
+          customerOmieId: 42,
+          omieOrderId: 999,
+          amountCents: 50_000
+        }
+      });
+
+      invokeMock.mockResolvedValueOnce({
+        data: { ok: true, settledCents: 0, pendingReceivable: true, advanceAccountCode: 22 },
+        error: null
+      });
+
+      const result = await processOmieSyncQueue(database, identity);
+
+      // Nao amortizado: o job volta para a fila em vez de dar a operacao como
+      // acertada no OMIE.
+      expect(result.failed).toBe(1);
+      const row = database
+        .prepare(
+          `SELECT omie_advance_settled_cents, omie_advance_status
+           FROM weighing_operations WHERE id = ?`
+        )
+        .get(operation.id) as { omie_advance_settled_cents: number; omie_advance_status: string };
+      expect(row).toEqual({ omie_advance_settled_cents: 0, omie_advance_status: "pending" });
+      const job = database
+        .prepare("SELECT status FROM sync_queue WHERE entity_id = ? AND action = 'settle_advance'")
+        .get(operation.id) as { status: string };
+      expect(job.status).toBe("failed");
     } finally {
       database.close();
     }

@@ -13,6 +13,7 @@ import {
 import type { DesktopDatabase } from "../database/sqlite.js";
 import type { LocalDesktopIdentity } from "./bootstrap.js";
 import { readLocalSetting, readStringLocalSetting, writeLocalSetting } from "./local-settings.js";
+import { readOmieAdvanceConfig, rememberDetectedAdvanceConfig } from "./omie-advance-config.js";
 import { ReportService } from "./reports.js";
 import {
   ensureReportRecipientsTable,
@@ -2571,6 +2572,9 @@ export async function syncCustomerAdvancesFromCloud(
   const state = options.fullRescan
     ? {}
     : (readLocalSetting<OmieAdvancesState>(database, OMIE_ADVANCES_STATE_KEY) ?? {});
+  // Categoria fixada na configuracao vence a deteccao por nome: pedreira que
+  // renomeou a categoria de adiantamento continua sincronizando.
+  const configuredCategoryCodes = readOmieAdvanceConfig(database).categoryCodes;
   const today = toIsoDate(new Date());
   // Ciclo anterior parou no meio (tenant grande, queda de rede): retoma a mesma
   // janela na pagina seguinte, senao a varredura recomecaria do zero e nunca
@@ -2596,7 +2600,7 @@ export async function syncCustomerAdvancesFromCloud(
     movementsApplied: 0,
     pages: 0,
     finished: false,
-    categoryCodes: state.categoryCodes ?? []
+    categoryCodes: configuredCategoryCodes.length > 0 ? configuredCategoryCodes : (state.categoryCodes ?? [])
   };
 
   try {
@@ -2623,7 +2627,10 @@ export async function syncCustomerAdvancesFromCloud(
       result.adjusted += data.adjusted ?? 0;
       result.unchanged += data.unchanged ?? 0;
       result.unknownCustomers += data.unknownCustomers ?? 0;
-      if (data.categoryCodes?.length) result.categoryCodes = data.categoryCodes;
+      if (data.categoryCodes?.length && configuredCategoryCodes.length === 0) {
+        result.categoryCodes = data.categoryCodes;
+        rememberDetectedAdvanceConfig(database, { categoryCodes: data.categoryCodes });
+      }
 
       const movements = data.movements ?? [];
       if (movements.length > 0) {
@@ -3540,6 +3547,184 @@ function reconcileCancelledAfterCreate(
   });
 }
 
+/**
+ * Enfileira a baixa do adiantamento no OMIE para a operacao, quando ela consumiu
+ * dinheiro que o cliente ja tinha depositado la. Idempotente: a chave e a propria
+ * operacao, entao um segundo envio do pedido nao cria uma segunda baixa.
+ */
+function enqueueAdvanceSettlementJob(
+  database: DesktopDatabase,
+  input: {
+    operationId: string;
+    customerOmieId?: number | null;
+    omieOrderId: number;
+    issueDate?: string;
+  }
+): void {
+  const row = database
+    .prepare(
+      `SELECT omie_advance_settle_cents, omie_advance_settled_cents, status
+       FROM weighing_operations WHERE id = ?`
+    )
+    .get(input.operationId) as
+    | {
+        omie_advance_settle_cents: number | null;
+        omie_advance_settled_cents: number | null;
+        status: string;
+      }
+    | undefined;
+  if (!row || row.status === "cancelled") return;
+
+  const pendingCents = (row.omie_advance_settle_cents ?? 0) - (row.omie_advance_settled_cents ?? 0);
+  if (pendingCents <= 0) return;
+  if (!input.customerOmieId || input.customerOmieId <= 0) return;
+
+  const advanceConfig = readOmieAdvanceConfig(database);
+  enqueueSyncJob(database, {
+    target: "omie",
+    action: "settle_advance",
+    entityType: "weighing_operation",
+    entityId: input.operationId,
+    idempotencyKey: `omie:settle_advance:${input.operationId}`,
+    payload: {
+      operationId: input.operationId,
+      customerOmieId: input.customerOmieId,
+      omieOrderId: input.omieOrderId,
+      amountCents: pendingCents,
+      issueDate: input.issueDate,
+      advanceAccountCode: advanceConfig.accountCode ?? undefined
+    }
+  });
+}
+
+/**
+ * Baixa no OMIE o adiantamento consumido pela operacao. O titulo do pedido pode
+ * demorar a existir (faturamento recem-enviado): nesse caso o job volta para a
+ * fila em vez de dar a operacao como amortizada.
+ */
+async function processOmieAdvanceSettlementJob(
+  database: DesktopDatabase,
+  supabase: SupabaseClient,
+  settings: CloudSettings,
+  job: { id: string; idempotencyKey: string; payload: unknown }
+): Promise<{ status: "processed" | "failed"; error?: string }> {
+  const payload = job.payload as {
+    operationId: string;
+    customerOmieId: number;
+    omieOrderId: number;
+    amountCents: number;
+    issueDate?: string;
+    advanceAccountCode?: number;
+  };
+
+  try {
+    const { data, error } = await supabase.functions.invoke<{
+      settledCents?: number;
+      titles?: Array<{ titleId: number; amountCents: number }>;
+      advanceAccountCode?: number | null;
+      pendingReceivable?: boolean;
+      message?: string | null;
+    }>("omie-sync", {
+      body: {
+        deviceId: settings.deviceId,
+        deviceToken: settings.deviceToken,
+        action: "settle_advance",
+        payload: {
+          localOperationId: payload.operationId,
+          customerOmieId: payload.customerOmieId,
+          omieOrderId: payload.omieOrderId,
+          amountCents: payload.amountCents,
+          issueDate: payload.issueDate,
+          advanceAccountCode: payload.advanceAccountCode,
+          idempotencyKey: job.idempotencyKey
+        }
+      }
+    });
+
+    if (error) throw new Error(await getFunctionErrorMessage(error));
+    if (!data) throw new Error("Resposta OMIE vazia.");
+
+    if (data.advanceAccountCode) {
+      rememberDetectedAdvanceConfig(database, { accountCode: data.advanceAccountCode });
+    }
+
+    if (data.pendingReceivable) {
+      const message = data.message ?? "Pedido ainda sem titulo a receber no OMIE.";
+      updateOperationAdvanceSettlement(database, payload.operationId, {
+        settledCents: 0,
+        status: "pending",
+        message
+      });
+      markSyncJobFailed(database, job.id, message);
+      return { status: "failed", error: message };
+    }
+
+    const settledCents = data.settledCents ?? 0;
+    const totalSettled = updateOperationAdvanceSettlement(database, payload.operationId, {
+      settledCents,
+      status: "settled",
+      message: data.message ?? null
+    });
+    markSyncJobDone(database, job.id);
+    // Baixa parcial (os titulos do pedido nao cobriram tudo): o restante fica
+    // registrado na operacao para o financeiro ver, sem novo job em loop.
+    if (totalSettled.pendingCents > 0) {
+      updateOperationAdvanceSettlement(database, payload.operationId, {
+        settledCents: 0,
+        status: "partial",
+        message:
+          data.message ??
+          `Faltou baixar R$ ${(totalSettled.pendingCents / 100).toFixed(2)} do adiantamento no OMIE.`
+      });
+    }
+    return { status: "processed" };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Erro OMIE";
+    updateOperationAdvanceSettlement(database, payload.operationId, {
+      settledCents: 0,
+      status: "error",
+      message
+    });
+    markSyncJobFailed(database, job.id, message);
+    return { status: "failed", error: message };
+  }
+}
+
+/** Soma o baixado na operacao e devolve o que ainda falta amortizar. */
+function updateOperationAdvanceSettlement(
+  database: DesktopDatabase,
+  operationId: string,
+  input: { settledCents: number; status: string; message: string | null }
+): { pendingCents: number } {
+  database
+    .prepare(
+      `UPDATE weighing_operations
+         SET omie_advance_settled_cents = omie_advance_settled_cents + ?,
+             omie_advance_status = ?,
+             omie_advance_message = ?,
+             omie_advance_settled_at = CASE WHEN ? > 0
+               THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now') ELSE omie_advance_settled_at END,
+             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+       WHERE id = ?`
+    )
+    .run(input.settledCents, input.status, input.message, input.settledCents, operationId);
+
+  const row = database
+    .prepare(
+      `SELECT omie_advance_settle_cents, omie_advance_settled_cents
+       FROM weighing_operations WHERE id = ?`
+    )
+    .get(operationId) as
+    | { omie_advance_settle_cents: number | null; omie_advance_settled_cents: number | null }
+    | undefined;
+  return {
+    pendingCents: Math.max(
+      0,
+      (row?.omie_advance_settle_cents ?? 0) - (row?.omie_advance_settled_cents ?? 0)
+    )
+  };
+}
+
 async function processOmieCancelJob(
   database: DesktopDatabase,
   supabase: SupabaseClient,
@@ -3642,6 +3827,19 @@ export async function processOmieSyncQueue(
       else {
         failed++;
         errors.push(`Job ${job.id}: falha ao cancelar pedido OMIE`);
+      }
+      if (index < jobs.length - 1) {
+        await sleep(delayMs);
+      }
+      continue;
+    }
+
+    if (job.action === "settle_advance") {
+      const outcome = await processOmieAdvanceSettlementJob(database, supabase, settings, job);
+      if (outcome.status === "processed") processed++;
+      else {
+        failed++;
+        errors.push(`Job ${job.id}: ${outcome.error}`);
       }
       if (index < jobs.length - 1) {
         await sleep(delayMs);
@@ -3808,6 +4006,15 @@ export async function processOmieSyncQueue(
           );
       }
       markSyncJobDone(database, job.id);
+      // Compra paga com adiantamento: agora que o pedido existe (e, na venda com
+      // nota, ja foi faturado), o titulo gerado no OMIE pode ser baixado contra a
+      // conta de adiantamentos — e o saldo cai la como caiu aqui.
+      enqueueAdvanceSettlementJob(database, {
+        operationId: payload.operationId,
+        customerOmieId: data.omieCustomerId ?? payload.customerOmieId,
+        omieOrderId: data.orderId,
+        issueDate: payload.issueDate
+      });
       // Corrida create x cancel: se a operacao foi cancelada localmente enquanto o pedido
       // era criado, o update acima marcou 'synced' por engano. Restaura o cancelamento e
       // solicita o cancelamento do pedido recem-criado no OMIE.
