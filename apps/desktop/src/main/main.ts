@@ -1021,22 +1021,6 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle(
-    "desktop:customer-credit-payment",
-    (_event, customerId: string, amountCents: number, reason?: string) => {
-      if (!runtime) throw new Error("Desktop runtime is not ready.");
-      return runtime.registerCustomerCreditPayment(customerId, amountCents, reason);
-    }
-  );
-
-  ipcMain.handle(
-    "desktop:customer-credit-adjust",
-    (_event, customerId: string, amountCents: number, reason: string) => {
-      if (!runtime) throw new Error("Desktop runtime is not ready.");
-      return runtime.adjustCustomerCredit(customerId, amountCents, reason);
-    }
-  );
-
-  ipcMain.handle(
     "desktop:customer-credit-movements",
     (_event, customerId: string, limit?: number) => {
       if (!runtime) throw new Error("Desktop runtime is not ready.");

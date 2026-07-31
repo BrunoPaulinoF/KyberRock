@@ -212,9 +212,15 @@ lancamento financeiro e feito no OMIE — o KyberRock nao cria nem baixa titulo 
 - Categoria e conta corrente do adiantamento sao descobertas pela descricao, mas
   podem ser fixadas na tela de precos/categorias (`omie.advanceConfig`): o que o
   operador escolhe vence a deteccao automatica.
-- **Pagamento manual do pre-pago e bloqueado**: o deposito do cliente pre-pago
-  nasce no OMIE, entao repetir o lancamento a mao contaria o dinheiro duas vezes.
-  Correcao de saldo continua possivel pelo ajuste, que exige motivo.
+- **Nao existe lancamento de credito pelo KyberRock**: o desktop nao tem tela nem
+  IPC para inserir valor de credito. O extrato so recebe credito pelo espelho do
+  OMIE (`source = 'omie'`); o que nasce aqui e o consumo — debito no fechamento e
+  estorno no cancelamento. A aba Credito e somente leitura (totais, extrato e o
+  botao de sincronizar).
+- Consequencia no fiado: como o pagamento do boleto nao e mais lancado aqui, o
+  limite consumido so volta quando o pagamento chegar do OMIE. Enquanto o espelho
+  cobrir apenas titulos de adiantamento, o recebimento de uma fatura de fiado
+  precisa ser lancado no OMIE como adiantamento para devolver o saldo.
 
 #### Baixa do adiantamento no OMIE
 

@@ -164,10 +164,6 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:customer-credit-balance", customerId),
   customerCreditSummary: (customerId: string) =>
     ipcRenderer.invoke("desktop:customer-credit-summary", customerId),
-  customerCreditPayment: (customerId: string, amountCents: number, reason?: string) =>
-    ipcRenderer.invoke("desktop:customer-credit-payment", customerId, amountCents, reason),
-  customerCreditAdjust: (customerId: string, amountCents: number, reason: string) =>
-    ipcRenderer.invoke("desktop:customer-credit-adjust", customerId, amountCents, reason),
   customerCreditMovements: (customerId: string, limit?: number) =>
     ipcRenderer.invoke("desktop:customer-credit-movements", customerId, limit),
   customerCreditSyncAdvances: (options?: { fullRescan?: boolean }) =>

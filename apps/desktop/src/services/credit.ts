@@ -1,3 +1,13 @@
+/**
+ * Extrato de credito do cliente.
+ *
+ * O credito (adiantamento) e dinheiro que o cliente depositou e que o
+ * financeiro registra no OMIE: ele entra aqui apenas pelo espelho da
+ * sincronizacao (`source = 'omie'`), nunca por digitacao no KyberRock. O que
+ * nasce aqui e o consumo: a compra debita no fechamento e o cancelamento
+ * estorna. Assim o saldo que autoriza a venda e sempre o mesmo dos dois lados.
+ */
+
 import { randomUUID } from "node:crypto";
 
 import type { DesktopDatabase } from "../database/sqlite.js";
@@ -83,19 +93,6 @@ export class CreditService {
     return this.getSettings(customerId)?.creditMode === "prepaid";
   }
 
-  /**
-   * Barra o pagamento manual do cliente pre-pago. O adiantamento dele nasce no
-   * financeiro do OMIE e chega aqui espelhado: repetir o mesmo deposito a mao
-   * contaria o dinheiro duas vezes no saldo que autoriza a compra. Correcao de
-   * saldo continua possivel pelo ajuste, que exige motivo.
-   */
-  assertManualPaymentAllowed(customerId: string): void {
-    if (!this.isCustomerPrepaid(customerId)) return;
-    throw new Error(
-      "Cliente pre-pago: o adiantamento e lancado no OMIE (contas a receber na categoria de " +
-        "adiantamento) e espelhado aqui na sincronizacao. Para corrigir o saldo, use um ajuste com motivo."
-    );
-  }
 
   getSettings(customerId: string): CustomerCreditSettings | null {
     const row = this.db
@@ -188,8 +185,8 @@ export class CreditService {
    * O disponivel e `saldo do extrato + limite de credito`: o limite cadastrado no
    * cliente e o que efetivamente banca a venda no fiado, e o saldo (que fica
    * NEGATIVO conforme as vendas consomem o limite) registra quanto ja foi usado.
-   * Quando o cliente paga a fatura, um lancamento de credito devolve o saldo e
-   * libera o limite de novo.
+   * O saldo so volta a subir quando o financeiro registra um adiantamento no
+   * OMIE e a sincronizacao espelha o credito aqui.
    *
    * Cliente sem limite cadastrado nao tem teto — exceto no modo pre-pago, em que o
    * teto e o proprio saldo depositado.
@@ -301,38 +298,6 @@ export class CreditService {
       }
     });
     apply();
-  }
-
-  applyCredit(
-    customerId: string,
-    amountCents: number,
-    reason: string | null = null,
-    now: Date = new Date()
-  ): void {
-    if (amountCents <= 0) return;
-    const companyId = this.getCustomerCompanyId(customerId);
-    const timestamp = now.toISOString();
-    this.recordMovement(companyId, customerId, null, "credit", amountCents, reason, timestamp);
-  }
-
-  applyManualAdjustment(
-    customerId: string,
-    amountCents: number,
-    reason: string,
-    now: Date = new Date()
-  ): void {
-    if (amountCents === 0) return;
-    const companyId = this.getCustomerCompanyId(customerId);
-    const timestamp = now.toISOString();
-    this.recordMovement(
-      companyId,
-      customerId,
-      null,
-      "manual_adjustment",
-      amountCents,
-      reason,
-      timestamp
-    );
   }
 
   listMovements(customerId: string, limit: number = 100): CreditMovementRow[] {

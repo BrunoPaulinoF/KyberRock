@@ -487,7 +487,7 @@ describe("weighing operations", () => {
         .prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'")
         .run();
       const creditService = new CreditService(database);
-      creditService.applyCredit("customer-1", 100_000, "saldo OMIE");
+      seedOmieAdvance(database, identity.companyId, 100_000);
 
       const operation = createWeighingOperation(database, {
         identity,
@@ -545,8 +545,7 @@ describe("weighing operations", () => {
            ON CONFLICT(customer_id) DO UPDATE SET balance_cents = excluded.balance_cents`
         )
         .run();
-      const creditService = new CreditService(database);
-      creditService.applyManualAdjustment("customer-1", 60_000, "acerto");
+      seedLocalCredit(database, identity.companyId, 60_000, "local-ajuste");
 
       const operation = createWeighingOperation(database, {
         identity,
@@ -581,7 +580,7 @@ describe("weighing operations", () => {
       database
         .prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'")
         .run();
-      new CreditService(database).applyCredit("customer-1", 100_000, "saldo lancado aqui");
+      seedLocalCredit(database, identity.companyId, 100_000);
 
       const operation = createWeighingOperation(database, {
         identity,
@@ -618,7 +617,7 @@ describe("weighing operations", () => {
         .prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'")
         .run();
       const creditService = new CreditService(database);
-      creditService.applyCredit("customer-1", 100_000, "saldo OMIE");
+      seedOmieAdvance(database, identity.companyId, 100_000);
 
       const operation = createWeighingOperation(database, {
         identity,
@@ -667,7 +666,7 @@ describe("weighing operations", () => {
         .prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'")
         .run();
       const creditService = new CreditService(database);
-      creditService.applyCredit("customer-1", 100_000, "saldo OMIE");
+      seedOmieAdvance(database, identity.companyId, 100_000);
 
       const operation = createWeighingOperation(database, {
         identity,
@@ -747,7 +746,7 @@ describe("weighing operations", () => {
         .prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'")
         .run();
       const creditService = new CreditService(database);
-      creditService.applyCredit("customer-1", 200_000, "saldo OMIE");
+      seedOmieAdvance(database, identity.companyId, 200_000);
 
       const operation = createWeighingOperation(database, {
         identity,
@@ -795,7 +794,7 @@ describe("weighing operations", () => {
         .prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'")
         .run();
       const creditService = new CreditService(database);
-      creditService.applyCredit("customer-1", 200_000, "saldo OMIE");
+      seedOmieAdvance(database, identity.companyId, 200_000);
 
       const operation = createWeighingOperation(database, {
         identity,
@@ -1003,7 +1002,7 @@ describe("weighing operations", () => {
       database
         .prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'")
         .run();
-      new CreditService(database).applyCredit("customer-1", 70_000, "saldo OMIE");
+      seedOmieAdvance(database, identity.companyId, 70_000);
 
       const operation = createWeighingOperation(database, {
         identity,
@@ -2508,4 +2507,60 @@ function insertCatalog(
       ) VALUES ('default-price-1', 'company-1', 'product-1', 12000, 'ton', ?, ?)`
     )
     .run(now, now);
+}
+
+/**
+ * Saldo vindo do financeiro do OMIE (adiantamento espelhado). E a unica forma de
+ * o cliente ter credito: o KyberRock nao lanca credito.
+ */
+function seedOmieAdvance(
+  database: DesktopDatabase,
+  companyId: string,
+  amountCents: number,
+  id = "omie-adv-seed"
+): void {
+  database
+    .prepare(
+      `INSERT INTO customer_credit_movements (
+        id, company_id, customer_id, operation_id, movement_type, amount_cents,
+        balance_after_cents, reason, source, omie_title_id, created_at
+      ) VALUES (?, ?, 'customer-1', NULL, 'credit', ?, ?, 'Adiantamento OMIE', 'omie', 7001, ?)`
+    )
+    .run(id, companyId, amountCents, amountCents, "2026-07-20T10:00:00.000Z");
+  recalculateCreditBalance(database);
+}
+
+/** Movimento local herdado (de quando o desktop ainda lancava credito). */
+function seedLocalCredit(
+  database: DesktopDatabase,
+  companyId: string,
+  amountCents: number,
+  id = "local-credit-seed"
+): void {
+  database
+    .prepare(
+      `INSERT INTO customer_credit_movements (
+        id, company_id, customer_id, operation_id, movement_type, amount_cents,
+        balance_after_cents, reason, source, omie_title_id, created_at
+      ) VALUES (?, ?, 'customer-1', NULL, 'manual_adjustment', ?, ?, 'lancamento antigo', 'local', NULL, ?)`
+    )
+    .run(id, companyId, amountCents, amountCents, "2026-07-21T10:00:00.000Z");
+  recalculateCreditBalance(database);
+}
+
+function recalculateCreditBalance(database: DesktopDatabase): void {
+  database
+    .prepare(
+      `INSERT INTO customer_credit_balances (customer_id, balance_cents, updated_at)
+       VALUES ('customer-1', (
+         SELECT COALESCE(SUM(
+           CASE WHEN movement_type IN ('debit_product', 'debit_freight')
+             THEN -amount_cents ELSE amount_cents END
+         ), 0) FROM customer_credit_movements WHERE customer_id = 'customer-1'
+       ), '2026-07-21T10:00:00.000Z')
+       ON CONFLICT(customer_id) DO UPDATE SET
+         balance_cents = excluded.balance_cents,
+         updated_at = excluded.updated_at`
+    )
+    .run();
 }

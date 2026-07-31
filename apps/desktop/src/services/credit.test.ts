@@ -48,8 +48,13 @@ describe("credit service", () => {
       });
       expect(service.validateDebit("customer-1", 50_000).allowed).toBe(false);
 
-      // Cliente pagou a fatura: o credito volta e libera o limite para novas compras.
-      service.applyCredit("customer-1", 60_000, "boleto pago");
+      // Cliente pagou: o credito volta pelo espelho do OMIE e libera o limite.
+      insertOmieAdvance(database, {
+        id: "omie-adv-pagamento",
+        titleId: 8001,
+        amountCents: 60_000,
+        createdAt: "2026-07-30T13:00:00.000Z"
+      });
       expect(service.getSummary("customer-1")).toMatchObject({
         balanceCents: 0,
         usedCents: 0,
@@ -84,8 +89,13 @@ describe("credit service", () => {
 
     try {
       insertCustomer(database, { creditLimitCents: null, creditMode: "prepaid" });
+      insertOmieAdvance(database, {
+        id: "omie-adv-deposito",
+        titleId: 8002,
+        amountCents: 70_000,
+        createdAt: "2026-07-30T13:00:00.000Z"
+      });
       const service = new CreditService(database);
-      service.applyCredit("customer-1", 70_000, "deposito");
 
       expect(service.validateDebit("customer-1", 70_000).allowed).toBe(true);
       expect(service.validateDebit("customer-1", 78_000).allowed).toBe(false);
@@ -182,8 +192,10 @@ describe("adiantamentos espelhados do OMIE", () => {
         amountCents: 50_000,
         createdAt: "2026-07-20T10:00:00.000Z"
       });
+      // Lancamento local herdado (o KyberRock nao cria mais credito): entra no
+      // saldo, mas nao conta como adiantamento vindo do financeiro.
+      insertLocalCredit(database, { id: "local-1", amountCents: 20_000 });
       const service = new CreditService(database);
-      service.applyCredit("customer-1", 20_000, "acerto em dinheiro");
 
       const summary = service.getSummary("customer-1");
       expect(summary.balanceCents).toBe(70_000);
@@ -293,20 +305,7 @@ function insertOmieAdvance(
       options.titleId,
       options.createdAt
     );
-  database
-    .prepare(
-      `INSERT INTO customer_credit_balances (customer_id, balance_cents, updated_at)
-       VALUES ('customer-1', (
-         SELECT COALESCE(SUM(
-           CASE WHEN movement_type IN ('debit_product', 'debit_freight')
-             THEN -amount_cents ELSE amount_cents END
-         ), 0) FROM customer_credit_movements WHERE customer_id = 'customer-1'
-       ), ?)
-       ON CONFLICT(customer_id) DO UPDATE SET
-         balance_cents = excluded.balance_cents,
-         updated_at = excluded.updated_at`
-    )
-    .run(options.createdAt);
+  recalculateBalance(database, options.createdAt);
 }
 
 describe("reserva da baixa do adiantamento no OMIE", () => {
@@ -382,33 +381,36 @@ describe("reserva da baixa do adiantamento no OMIE", () => {
   });
 });
 
-describe("pagamento manual x adiantamento do OMIE", () => {
-  it("barra o pagamento manual do cliente pre-pago", () => {
-    const database = createDatabase();
+/** Movimento local antigo, de quando o KyberRock ainda lancava credito. */
+function insertLocalCredit(
+  database: DesktopDatabase,
+  options: { id: string; amountCents: number }
+): void {
+  database
+    .prepare(
+      `INSERT INTO customer_credit_movements (
+        id, company_id, customer_id, operation_id, movement_type, amount_cents,
+        balance_after_cents, reason, source, omie_title_id, created_at
+      ) VALUES (?, 'company-1', 'customer-1', NULL, 'credit', ?, ?, 'lancamento antigo', 'local', NULL, ?)`
+    )
+    .run(options.id, options.amountCents, options.amountCents, "2026-07-21T10:00:00.000Z");
+  recalculateBalance(database, "2026-07-21T10:00:00.000Z");
+}
 
-    try {
-      insertCustomer(database, { creditLimitCents: 0, creditMode: "prepaid" });
-      const service = new CreditService(database);
-
-      expect(() => service.assertManualPaymentAllowed("customer-1")).toThrow(/pre-pago/i);
-      // O ajuste continua liberado: e o caminho de correcao, com motivo.
-      service.applyManualAdjustment("customer-1", 5_000, "acerto de caixa");
-      expect(service.getBalance("customer-1")).toBe(5_000);
-    } finally {
-      database.close();
-    }
-  });
-
-  it("mantem o pagamento manual no fiado (baixa da fatura)", () => {
-    const database = createDatabase();
-
-    try {
-      insertCustomer(database, { creditLimitCents: 100_000, creditMode: "normal" });
-      const service = new CreditService(database);
-
-      expect(() => service.assertManualPaymentAllowed("customer-1")).not.toThrow();
-    } finally {
-      database.close();
-    }
-  });
-});
+/** Saldo = soma do log, como o desktop recalcula a cada movimento recebido. */
+function recalculateBalance(database: DesktopDatabase, timestamp: string): void {
+  database
+    .prepare(
+      `INSERT INTO customer_credit_balances (customer_id, balance_cents, updated_at)
+       VALUES ('customer-1', (
+         SELECT COALESCE(SUM(
+           CASE WHEN movement_type IN ('debit_product', 'debit_freight')
+             THEN -amount_cents ELSE amount_cents END
+         ), 0) FROM customer_credit_movements WHERE customer_id = 'customer-1'
+       ), ?)
+       ON CONFLICT(customer_id) DO UPDATE SET
+         balance_cents = excluded.balance_cents,
+         updated_at = excluded.updated_at`
+    )
+    .run(timestamp);
+}
