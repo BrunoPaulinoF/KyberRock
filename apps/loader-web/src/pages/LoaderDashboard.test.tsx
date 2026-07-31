@@ -4,8 +4,10 @@ import {
   formatArrival,
   getInProgressOperations,
   getOvertimeOperations,
+  getRecentCompletedOperations,
   getRenderedOperations,
-  minutesSinceArrival
+  minutesSinceArrival,
+  RECENT_COMPLETION_WINDOW_MS
 } from "./LoaderDashboard";
 import type { WeighingOperation } from "./LoaderDashboard";
 
@@ -108,6 +110,37 @@ describe("LoaderDashboard compact arrival label", () => {
     expect(formatArrival(arrival, null, now)).toBe("08:12");
     expect(formatArrival(null, timeZone, now)).toBe("-");
     expect(formatArrival("invalid", timeZone, now)).toBe("-");
+  });
+});
+
+describe("LoaderDashboard recent completions history", () => {
+  const now = new Date("2026-07-31T12:00:00.000Z").getTime();
+
+  it("lists only loads completed inside the 30 minute window, most recent first", () => {
+    const justDone = makeOperation("1", "2026-07-31T11:00:00.000Z", "2026-07-31T11:55:00.000Z");
+    const older = makeOperation("2", "2026-07-31T10:00:00.000Z", "2026-07-31T11:40:00.000Z");
+    const tooOld = makeOperation("3", "2026-07-31T09:00:00.000Z", "2026-07-31T11:00:00.000Z");
+    const inProgress = makeOperation("4", "2026-07-31T11:50:00.000Z");
+
+    const recent = getRecentCompletedOperations([older, tooOld, inProgress, justDone], now);
+
+    expect(recent.map((o) => o.id)).toEqual(["1", "2"]);
+  });
+
+  it("keeps a load completed exactly at the window edge and drops invalid timestamps", () => {
+    const edge = makeOperation(
+      "1",
+      "2026-07-31T10:00:00.000Z",
+      new Date(now - RECENT_COMPLETION_WINDOW_MS).toISOString()
+    );
+    const invalid = makeOperation("2", "2026-07-31T10:00:00.000Z", "not-a-date");
+
+    expect(getRecentCompletedOperations([edge, invalid], now).map((o) => o.id)).toEqual(["1"]);
+  });
+
+  it("returns an empty list when nothing was completed", () => {
+    const waiting = makeOperation("1", "2026-07-31T11:50:00.000Z");
+    expect(getRecentCompletedOperations([waiting], now)).toEqual([]);
   });
 });
 

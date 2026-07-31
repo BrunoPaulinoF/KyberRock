@@ -162,6 +162,95 @@ describe("supabase sync", () => {
     }
   });
 
+  it("applies loader completions and cancellations pulled from the cloud", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      const operation = createSimulatedWeighingOperation(database, {
+        identity,
+        customerName: "Cliente Teste",
+        plate: "ABC1D23",
+        driverName: "Motorista Teste",
+        productDescription: "Brita 1",
+        entryWeightKg: 12_000
+      });
+      const requestId = database
+        .prepare("SELECT id FROM loading_requests WHERE operation_id = ?")
+        .pluck()
+        .get(operation.id) as string;
+
+      const { applyLoaderCompletionRows } = await import("./supabase-sync");
+
+      // Relativos ao relogio real: a linha local acabou de ser criada com
+      // new Date().toISOString(), e updated_at local nunca anda para tras.
+      const completedAt = new Date(Date.now() + 60_000).toISOString();
+      const completedUpdatedAt = new Date(Date.now() + 61_000).toISOString();
+      const revertedUpdatedAt = new Date(Date.now() + 120_000).toISOString();
+      const applied = applyLoaderCompletionRows(database, [
+        {
+          id: requestId,
+          status: "open",
+          loader_completed_at: completedAt,
+          updated_at: completedUpdatedAt
+        }
+      ]);
+      expect(applied).toBe(1);
+      expect(
+        database
+          .prepare("SELECT loader_completed_at FROM loading_requests WHERE id = ?")
+          .pluck()
+          .get(requestId)
+      ).toBe(completedAt);
+
+      // Reaplicar o mesmo estado nao conta como mudanca (evita re-render inutil).
+      expect(
+        applyLoaderCompletionRows(database, [
+          {
+            id: requestId,
+            status: "open",
+            loader_completed_at: completedAt,
+            updated_at: completedUpdatedAt
+          }
+        ])
+      ).toBe(0);
+
+      // Cancelamento no loader-web: loader_completed_at volta a NULL no cloud e
+      // o espelho local limpa a conclusao (a luz volta para "aguardando").
+      const reverted = applyLoaderCompletionRows(database, [
+        {
+          id: requestId,
+          status: "open",
+          loader_completed_at: null,
+          updated_at: revertedUpdatedAt
+        }
+      ]);
+      expect(reverted).toBe(1);
+      expect(
+        database
+          .prepare("SELECT loader_completed_at FROM loading_requests WHERE id = ?")
+          .pluck()
+          .get(requestId)
+      ).toBeNull();
+      // updated_at local so anda para frente (guard de push/pull das balancas).
+      expect(
+        database
+          .prepare("SELECT updated_at FROM loading_requests WHERE id = ?")
+          .pluck()
+          .get(requestId)
+      ).toBe(revertedUpdatedAt);
+
+      // Linha desconhecida nao explode nem conta.
+      expect(
+        applyLoaderCompletionRows(database, [
+          { id: "nao-existe", status: "open", loader_completed_at: completedAt, updated_at: null }
+        ])
+      ).toBe(0);
+    } finally {
+      database.close();
+    }
+  });
+
   it("processes queued cloud jobs for operations and receipts", async () => {
     const database = createDatabase();
 
@@ -303,7 +392,9 @@ describe("supabase sync", () => {
 
       // Idempotente: reprocessar nao duplica nem altera contagem de linhas.
       applyOmieReferenceData(database, "company-1", {
-        paymentTerms: [{ id: 30, code: "030", description: "30 dias (novo texto)", installmentCount: 1 }]
+        paymentTerms: [
+          { id: 30, code: "030", description: "30 dias (novo texto)", installmentCount: 1 }
+        ]
       });
       expect(
         database
@@ -363,9 +454,7 @@ describe("supabase sync", () => {
             email: null
           }
         ],
-        products: [
-          { id: 456, code: "BRITA1", description: "Brita 1", unit: "M3", itemType: "04" }
-        ],
+        products: [{ id: 456, code: "BRITA1", description: "Brita 1", unit: "M3", itemType: "04" }],
         paymentTerms: [],
         suppliers: []
       });
@@ -693,8 +782,12 @@ describe("supabase sync", () => {
           .pluck()
           .get()
       ).toBe(654);
-      expect(database.prepare("SELECT needs_push FROM carriers WHERE id = 'carrier-1'").pluck().get()).toBe(0);
-      expect(database.prepare("SELECT sync_status FROM carriers WHERE id = 'carrier-1'").pluck().get()).toBe("synced");
+      expect(
+        database.prepare("SELECT needs_push FROM carriers WHERE id = 'carrier-1'").pluck().get()
+      ).toBe(0);
+      expect(
+        database.prepare("SELECT sync_status FROM carriers WHERE id = 'carrier-1'").pluck().get()
+      ).toBe("synced");
     } finally {
       database.close();
     }
@@ -803,7 +896,9 @@ describe("supabase sync", () => {
       expect(result).toMatchObject({ pushed: 0, failed: 1 });
       expect(result.errors[0]).toContain("CPF/CNPJ");
       expect(
-        database.prepare("SELECT needs_push, sync_status FROM carriers WHERE id = 'carrier-1'").get()
+        database
+          .prepare("SELECT needs_push, sync_status FROM carriers WHERE id = 'carrier-1'")
+          .get()
       ).toEqual({ needs_push: 0, sync_status: "error" });
 
       // Segunda passada nao repete a chamada nem o erro.
@@ -848,7 +943,9 @@ describe("supabase sync", () => {
       createIdentity(database);
       const result = applyOmieReferenceData(database, "company-1", {
         customers: [],
-        products: [{ id: 456, code: "SERV", description: "Servico OMIE", unit: "UN", itemType: "99" }],
+        products: [
+          { id: 456, code: "SERV", description: "Servico OMIE", unit: "UN", itemType: "99" }
+        ],
         paymentTerms: [],
         suppliers: []
       });
@@ -1004,8 +1101,12 @@ describe("supabase sync", () => {
 
       expect(result).toMatchObject({ pushed: 0, failed: 1 });
       expect(result.errors[0]).toContain("Documento invalido");
-      expect(database.prepare("SELECT needs_push FROM carriers WHERE id = 'carrier-1'").pluck().get()).toBe(1);
-      expect(database.prepare("SELECT sync_status FROM carriers WHERE id = 'carrier-1'").pluck().get()).toBe("error");
+      expect(
+        database.prepare("SELECT needs_push FROM carriers WHERE id = 'carrier-1'").pluck().get()
+      ).toBe(1);
+      expect(
+        database.prepare("SELECT sync_status FROM carriers WHERE id = 'carrier-1'").pluck().get()
+      ).toBe("error");
     } finally {
       database.close();
     }
@@ -1031,7 +1132,9 @@ describe("supabase sync", () => {
         })
       });
       expect(result).toMatchObject({ pushed: 1, failed: 0 });
-      expect(database.prepare("SELECT needs_push FROM carriers WHERE id = 'carrier-1'").pluck().get()).toBe(0);
+      expect(
+        database.prepare("SELECT needs_push FROM carriers WHERE id = 'carrier-1'").pluck().get()
+      ).toBe(0);
     } finally {
       database.close();
     }
@@ -1144,7 +1247,11 @@ describe("supabase sync", () => {
           issueDate: "2026-06-12",
           omieCategoryCode: "1.01.02",
           localCarrierId: "carrier-1",
-          carrier: { localCarrierId: "carrier-1", name: "Transportadora Nova", cnpjCpf: "11222333000144" }
+          carrier: {
+            localCarrierId: "carrier-1",
+            name: "Transportadora Nova",
+            cnpjCpf: "11222333000144"
+          }
         }
       });
       invokeMock.mockResolvedValueOnce({
@@ -1406,10 +1513,7 @@ describe("supabase sync", () => {
         })
       });
       expect(
-        database
-          .prepare("SELECT COUNT(*) FROM sync_queue WHERE target = 'omie'")
-          .pluck()
-          .get()
+        database.prepare("SELECT COUNT(*) FROM sync_queue WHERE target = 'omie'").pluck().get()
       ).toBe(1);
       expect(
         database

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { useAuth } from "../contexts/AuthContext";
+import { isIosDevice, useInstallPrompt } from "../lib/pwa-install";
 import { supabase } from "../lib/supabase";
 
 export interface WeighingOperation {
@@ -110,6 +111,32 @@ export function minutesSinceArrival(createdAt: string, now: number): number {
   return Math.max(0, (now - arrived) / 60_000);
 }
 
+/** Janela do historico de conclusoes que ainda podem ser desfeitas pelo carregador. */
+export const RECENT_COMPLETION_WINDOW_MS = 30 * 60_000;
+
+/**
+ * Cargas concluidas pelo carregador nos ultimos 30 minutos, mais recente
+ * primeiro. So enxerga solicitacoes ainda abertas (a RLS esconde as que o
+ * desktop ja fechou — e essas nao podem mais ser desfeitas mesmo).
+ */
+export function getRecentCompletedOperations(
+  operations: WeighingOperation[],
+  now: number,
+  windowMs: number = RECENT_COMPLETION_WINDOW_MS
+): WeighingOperation[] {
+  return operations
+    .filter((operation) => {
+      if (!operation.loaderCompletedAt) return false;
+      const completed = new Date(operation.loaderCompletedAt).getTime();
+      if (Number.isNaN(completed)) return false;
+      return now - completed <= windowMs;
+    })
+    .sort(
+      (a, b) =>
+        new Date(b.loaderCompletedAt ?? 0).getTime() - new Date(a.loaderCompletedAt ?? 0).getTime()
+    );
+}
+
 /**
  * Operacoes em andamento cujo caminhao ja passou do tempo medio dentro da
  * pedreira (projetado pelo desktop na unidade). Vazio se nao ha media.
@@ -136,6 +163,10 @@ export function LoaderDashboard() {
   const [avgQuarryMinutes, setAvgQuarryMinutes] = useState<number | null>(null);
   const [unitTimezone, setUnitTimezone] = useState<string | null>(null);
   const [now, setNow] = useState<number>(() => Date.now());
+  const [showCompletedModal, setShowCompletedModal] = useState(false);
+  const [pendingCancellations, setPendingCancellations] = useState<Set<string>>(new Set());
+  const [showInstallHelp, setShowInstallHelp] = useState(false);
+  const { isInstalled, install } = useInstallPrompt();
 
   // Relogio para recalcular o tempo decorrido sem depender do polling.
   useEffect(() => {
@@ -286,8 +317,68 @@ export function LoaderDashboard() {
     }
   }
 
+  /**
+   * Desfaz o "Concluir carga": a carga volta para a fila em andamento e o
+   * desktop apaga o status de carregado assim que a projecao chega (pull leve).
+   */
+  async function handleCancelCompletion(operation: WeighingOperation) {
+    if (!user?.unitId) return;
+    if (!operation.loaderCompletedAt) return;
+    if (pendingCancellations.has(operation.id)) return;
+
+    const previousCompletedAt = operation.loaderCompletedAt;
+    setPendingCancellations((current) => {
+      const next = new Set(current);
+      next.add(operation.id);
+      return next;
+    });
+    // A carga pode ainda estar com a animacao de saida pendente; cancelar tudo.
+    finalizeDeparture(operation.id);
+    setOperations((current) =>
+      current.map((item) =>
+        item.id === operation.id ? { ...item, loaderCompletedAt: null } : item
+      )
+    );
+
+    try {
+      const { error } = await supabase
+        .from("loading_requests")
+        .update({ loader_completed_at: null })
+        .eq("id", operation.id)
+        .eq("unit_id", user.unitId)
+        .eq("status", "open");
+
+      if (error) throw error;
+      setErrorMessage(null);
+    } catch (error) {
+      console.error("Error cancelling loading completion:", error);
+      setErrorMessage(
+        error instanceof Error ? error.message : "Nao foi possivel cancelar a conclusao da carga."
+      );
+      setOperations((current) =>
+        current.map((item) =>
+          item.id === operation.id ? { ...item, loaderCompletedAt: previousCompletedAt } : item
+        )
+      );
+    } finally {
+      setPendingCancellations((current) => {
+        const next = new Set(current);
+        next.delete(operation.id);
+        return next;
+      });
+    }
+  }
+
+  async function handleInstallApp() {
+    const result = await install();
+    if (result === "instructions") {
+      setShowInstallHelp(true);
+    }
+  }
+
   const inProgressOperations = getInProgressOperations(operations);
   const renderedOperations = getRenderedOperations(operations, departingIds);
+  const recentCompletedOperations = getRecentCompletedOperations(operations, now);
   const overtimeOperations = getOvertimeOperations(inProgressOperations, avgQuarryMinutes, now);
   const overtimeIds = new Set(overtimeOperations.map((operation) => operation.id));
   const operatorName = user?.name ?? "Carregador";
@@ -304,26 +395,42 @@ export function LoaderDashboard() {
             <span className="operator-role">Carregador</span>
           </span>
         </div>
-        <button onClick={logout} className="secondary-action">
-          Sair
-        </button>
+        <div className="loader-header-actions">
+          {!isInstalled ? (
+            <button
+              type="button"
+              onClick={() => void handleInstallApp()}
+              className="secondary-action install-button"
+            >
+              ⬇ Instalar app
+            </button>
+          ) : null}
+          <button onClick={logout} className="secondary-action">
+            Sair
+          </button>
+        </div>
       </header>
 
-      <section className="loader-hero" aria-labelledby="loader-dashboard-title">
-        <div>
-          <p className="loader-eyebrow">Fila operacional</p>
-          <h1 id="loader-dashboard-title" className="loader-title">
-            Cargas prontas para atendimento
-          </h1>
-          <p className="loader-description">
-            Atenda a fila em ordem de chegada. Marque a carga como concluida assim que o veiculo
-            terminar o carregamento.
-          </p>
-        </div>
-        <div className="queue-stat" aria-label={`${inProgressOperations.length} cargas abertas`}>
+      {/* Barra compacta: um card pequeno com o total em aberto + acesso ao
+          historico de conclusoes. O foco da tela e a lista de cargas abaixo. */}
+      <section className="loader-toolbar" aria-label="Resumo da fila">
+        <div
+          className="queue-stat queue-stat--compact"
+          aria-label={`${inProgressOperations.length} cargas em aberto`}
+        >
           <strong>{inProgressOperations.length}</strong>
           <span>em aberto</span>
         </div>
+        <button
+          type="button"
+          className="secondary-action completed-history-button"
+          onClick={() => setShowCompletedModal(true)}
+        >
+          Concluidas ha pouco
+          <span className="completed-history-count" aria-hidden="true">
+            {recentCompletedOperations.length}
+          </span>
+        </button>
       </section>
 
       {errorMessage ? (
@@ -357,9 +464,10 @@ export function LoaderDashboard() {
       <section className="queue-panel" aria-labelledby="in-progress-title">
         <div className="queue-panel-header">
           <div>
-            <h2 id="in-progress-title" className="queue-panel-title">
+            {/* h1: com o hero removido, o painel da fila e o titulo principal da tela. */}
+            <h1 id="in-progress-title" className="queue-panel-title">
               Cargas em andamento
-            </h2>
+            </h1>
             <p className="queue-panel-subtitle">
               Atenda de cima para baixo. Ao concluir, a carga sai desta lista.
             </p>
@@ -395,7 +503,157 @@ export function LoaderDashboard() {
           </div>
         )}
       </section>
+
+      {showCompletedModal ? (
+        <CompletedHistoryModal
+          operations={recentCompletedOperations}
+          pendingCancellations={pendingCancellations}
+          unitTimezone={unitTimezone}
+          onCancelCompletion={(operation) => void handleCancelCompletion(operation)}
+          onClose={() => setShowCompletedModal(false)}
+        />
+      ) : null}
+
+      {showInstallHelp ? <InstallHelpModal onClose={() => setShowInstallHelp(false)} /> : null}
     </main>
+  );
+}
+
+/**
+ * Historico das cargas concluidas nos ultimos 30 minutos. "Cancelar carga"
+ * desfaz a conclusao: a carga volta para a fila em andamento e o desktop apaga
+ * o status de carregado na proxima projecao.
+ */
+function CompletedHistoryModal({
+  operations,
+  pendingCancellations,
+  unitTimezone,
+  onCancelCompletion,
+  onClose
+}: {
+  operations: WeighingOperation[];
+  pendingCancellations: ReadonlySet<string>;
+  unitTimezone: string | null;
+  onCancelCompletion: (operation: WeighingOperation) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="loader-modal-overlay" role="presentation" onClick={onClose}>
+      <div
+        className="loader-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="completed-history-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="loader-modal-header">
+          <div>
+            <h2 id="completed-history-title" className="loader-modal-title">
+              Concluidas nos ultimos 30 min
+            </h2>
+            <p className="loader-modal-subtitle">
+              Concluiu sem querer? Cancele e a carga volta para a fila em andamento.
+            </p>
+          </div>
+          <button type="button" className="secondary-action" onClick={onClose} aria-label="Fechar">
+            Fechar
+          </button>
+        </div>
+
+        {operations.length === 0 ? (
+          <p className="loader-modal-empty">
+            Nenhuma carga concluida nos ultimos 30 minutos. As cargas que voce concluir aparecem
+            aqui por meia hora.
+          </p>
+        ) : (
+          <ul className="completed-list">
+            {operations.map((operation) => (
+              <li key={operation.id} className="completed-item">
+                <div className="completed-item__summary">
+                  <div className="operation-headline">
+                    <h3 className="operation-plate">{operation.plate || "SEM PLACA"}</h3>
+                    <span className="operation-arrival" title="Concluida em">
+                      {formatArrival(operation.loaderCompletedAt, unitTimezone)}
+                    </span>
+                  </div>
+                  <p className="operation-customer" title={operation.customerName}>
+                    {operation.customerName}
+                  </p>
+                  <p className="operation-meta">
+                    <span className="operation-meta__product">{operation.productDescription}</span>
+                    <span className="operation-meta__sep" aria-hidden="true">
+                      ·
+                    </span>
+                    <span className="operation-meta__driver">{operation.driverName}</span>
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="danger-action cancel-completion-button"
+                  disabled={pendingCancellations.has(operation.id)}
+                  onClick={() => onCancelCompletion(operation)}
+                  aria-label={`Cancelar carga da placa ${operation.plate || "sem placa"}`}
+                >
+                  {pendingCancellations.has(operation.id) ? "..." : "Cancelar carga"}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Passo a passo de instalacao manual, para quando o navegador nao oferece o
+ * prompt nativo (Safari/iOS, ou Chrome antes de liberar o evento).
+ */
+function InstallHelpModal({ onClose }: { onClose: () => void }) {
+  const ios = isIosDevice();
+  return (
+    <div className="loader-modal-overlay" role="presentation" onClick={onClose}>
+      <div
+        className="loader-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="install-help-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="loader-modal-header">
+          <h2 id="install-help-title" className="loader-modal-title">
+            Instalar como aplicativo
+          </h2>
+          <button type="button" className="secondary-action" onClick={onClose} aria-label="Fechar">
+            Fechar
+          </button>
+        </div>
+        {ios ? (
+          <ol className="install-steps">
+            <li>
+              Toque no botao <strong>Compartilhar</strong> do Safari (quadrado com seta para cima).
+            </li>
+            <li>
+              Role a lista e toque em <strong>Adicionar a Tela de Inicio</strong>.
+            </li>
+            <li>
+              Confirme em <strong>Adicionar</strong>. O Carregador vira um icone na tela inicial.
+            </li>
+          </ol>
+        ) : (
+          <ol className="install-steps">
+            <li>
+              Abra o menu do navegador (<strong>⋮</strong> no canto superior direito).
+            </li>
+            <li>
+              Toque em <strong>Instalar aplicativo</strong> (ou{" "}
+              <strong>Adicionar a tela inicial</strong>).
+            </li>
+            <li>Confirme. O Carregador abre em tela cheia, como um app.</li>
+          </ol>
+        )}
+      </div>
+    </div>
   );
 }
 
