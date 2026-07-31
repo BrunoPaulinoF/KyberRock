@@ -4327,6 +4327,7 @@ function SidebarItem({
   badge,
   tooltip
 }: SidebarItemProps) {
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
   const isActive = activeView === id;
   const baseStyle: React.CSSProperties = {
     display: "flex",
@@ -4343,22 +4344,62 @@ function SidebarItem({
     borderLeft: isActive ? "3px solid var(--kr-accent)" : "3px solid transparent",
     borderRadius: "0 10px 10px 0",
     cursor: disabled ? "not-allowed" : "pointer",
-    textAlign: "left"
+    textAlign: "left",
+    // O item nunca muda de altura: sem isso, rotulos longos ("Controle de
+    // caminhoes") quebram em duas linhas assim que a largura util muda (barra
+    // de rolagem do menu aparecendo, por exemplo) e a lista inteira "estica".
+    minHeight: "32px",
+    flexShrink: 0,
+    // Quando o menu rola para trazer o item ativo a tela, deixa uma folga para
+    // o item nao encostar na borda (e continuar clicavel por inteiro).
+    scrollMargin: "8px"
+  };
+
+  // O menu pode ficar rolavel em telas baixas (ou com escala do Windows em
+  // 125%/150%). Se o item ativo estiver fora da area visivel, traz ele para a
+  // tela — sem isso os ultimos itens (ex.: Documentacao) ficam cortados.
+  useEffect(() => {
+    if (!isActive) return;
+    buttonRef.current?.scrollIntoView({ block: "nearest" });
+  }, [isActive]);
+
+  const activate = () => {
+    if (!disabled) onSelect(id);
   };
 
   return (
     <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
       <button
+        ref={buttonRef}
         type="button"
-        onClick={() => {
-          if (!disabled) onSelect(id);
+        // A troca de tela acontece ja no clique do mouse (pointerdown) porque o
+        // menu pode reposicionar entre apertar e soltar o botao — quando isso
+        // acontece o navegador nao chega a disparar o "click" e a navegacao se
+        // perde (era preciso clicar varias vezes para abrir a tela). No toque,
+        // continua valendo o clique normal, para nao navegar durante o arrasto
+        // de rolagem do menu.
+        onPointerDown={(event) => {
+          if (event.pointerType === "touch" || event.button !== 0) return;
+          activate();
         }}
+        onClick={activate}
         style={baseStyle}
         disabled={disabled}
         aria-current={isActive ? "page" : undefined}
       >
-        <Icon size={16} strokeWidth={2.2} />
-        <span style={{ flex: 1 }}>{label}</span>
+        <Icon size={16} strokeWidth={2.2} style={{ flexShrink: 0 }} />
+        <span
+          title={label}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis"
+          }}
+        >
+          {label}
+        </span>
         {badge ? (
           <span
             style={{
@@ -10460,7 +10501,9 @@ const styles = {
     minHeight: 0
   },
   sidebar: {
-    width: "204px",
+    // Largura suficiente para os rotulos mais longos ("Controle de caminhoes")
+    // caberem em uma linha ja descontando o espaco fixo da barra de rolagem.
+    width: "224px",
     flexShrink: 0,
     background: "var(--kr-surface)",
     border: "1px solid var(--kr-border)",
@@ -10501,7 +10544,12 @@ const styles = {
     display: "flex",
     flexDirection: "column" as const,
     gap: "4px",
+    minHeight: 0,
     overflowY: "auto" as const,
+    // Reserva o espaco da barra de rolagem sempre: sem isso, quando o menu passa
+    // a rolar (telas baixas / escala do Windows), os itens perdem 10px de largura
+    // de uma vez e a lista inteira se remexe na hora de trocar de tela.
+    scrollbarGutter: "stable" as const,
     paddingRight: "4px"
   },
   contentColumn: {

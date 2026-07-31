@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
@@ -808,10 +808,17 @@ export function DocumentationView() {
     setDoneGuideSteps((current) => ({ ...current, [sectionId]: [] }));
   };
 
+  // A folha de estilo entra uma unica vez no <head> e fica la. Quando ela era
+  // renderizada dentro da tela (<style> no meio da arvore), abrir e fechar a
+  // documentacao inseria/removia um stylesheet, e cada insercao obriga o
+  // navegador a recalcular o estilo do app inteiro — era isso que travava o
+  // clique e remexia os itens do menu lateral.
+  useLayoutEffect(() => {
+    ensureDocumentationStyles();
+  }, []);
+
   return (
     <section style={styles.page} aria-labelledby="documentation-title">
-      <style>{documentationCss}</style>
-
       <nav
         id="documentation-title"
         aria-label="Areas da documentacao"
@@ -1496,6 +1503,22 @@ function SupportTab() {
 // ---------------------------------------------------------------------------
 // Estilos
 // ---------------------------------------------------------------------------
+
+export const DOCUMENTATION_STYLE_ELEMENT_ID = "kyberrock-documentation-styles";
+
+/**
+ * Injeta a folha de estilo da documentacao no `<head>` uma unica vez por sessao.
+ * Idempotente: chamadas repetidas (reabrir a tela) nao mexem no DOM.
+ */
+export function ensureDocumentationStyles(): void {
+  if (typeof document === "undefined") return;
+  if (document.getElementById(DOCUMENTATION_STYLE_ELEMENT_ID)) return;
+
+  const style = document.createElement("style");
+  style.id = DOCUMENTATION_STYLE_ELEMENT_ID;
+  style.textContent = documentationCss;
+  document.head.appendChild(style);
+}
 
 // Estados interativos (hover/focus) nao sao possiveis com style inline, entao
 // os componentes clicaveis usam classes com o prefixo krdoc-.

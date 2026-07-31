@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DOCUMENTATION_STYLE_ELEMENT_ID,
   buildSupportClipboardText,
+  ensureDocumentationStyles,
   documentationFaqCategories,
   documentationFaqs,
   documentationSections,
@@ -81,6 +83,51 @@ describe("DocumentationView cross-links", () => {
     for (const stage of operationFlowStages) {
       expect(sectionIds).toContain(stage.sectionId);
     }
+  });
+});
+
+describe("DocumentationView stylesheet injection", () => {
+  interface FakeStyleElement {
+    id: string;
+    textContent: string;
+  }
+
+  function withFakeDocument(run: () => void): FakeStyleElement[] {
+    const appended: FakeStyleElement[] = [];
+    const fakeDocument = {
+      getElementById: (id: string) => appended.find((element) => element.id === id) ?? null,
+      createElement: (): FakeStyleElement => ({ id: "", textContent: "" }),
+      head: {
+        appendChild: (element: FakeStyleElement) => appended.push(element)
+      }
+    };
+
+    const globalWithDocument = globalThis as { document?: unknown };
+    const previous = globalWithDocument.document;
+    globalWithDocument.document = fakeDocument;
+    try {
+      run();
+    } finally {
+      if (previous === undefined) delete globalWithDocument.document;
+      else globalWithDocument.document = previous;
+    }
+    return appended;
+  }
+
+  it("injects the stylesheet once, even when the screen is reopened", () => {
+    const appended = withFakeDocument(() => {
+      ensureDocumentationStyles();
+      ensureDocumentationStyles();
+      ensureDocumentationStyles();
+    });
+
+    expect(appended).toHaveLength(1);
+    expect(appended[0]?.id).toBe(DOCUMENTATION_STYLE_ELEMENT_ID);
+    expect(appended[0]?.textContent).toContain(".krdoc-tab");
+  });
+
+  it("does nothing when there is no DOM available", () => {
+    expect(() => ensureDocumentationStyles()).not.toThrow();
   });
 });
 
