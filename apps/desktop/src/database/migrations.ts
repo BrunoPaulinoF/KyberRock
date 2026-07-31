@@ -1496,5 +1496,32 @@ DROP TABLE carrier_dedup;
 -- OMIE no sync (\`ListarVeiculos\`) e pode ser corrigida a mao no cadastro local.
 ALTER TABLE vehicles ADD COLUMN plate_state TEXT;
 `
+  },
+  {
+    version: 41,
+    name: "credit_movement_omie_origin",
+    sql: `
+-- Origem do lancamento no extrato de credito. Os adiantamentos do cliente sao
+-- registrados no financeiro do OMIE (titulo a receber numa categoria de
+-- adiantamento, baixado quando o dinheiro entra); o desktop apenas espelha esse
+-- valor para que as compras da balanca sejam abatidas do saldo. Sem marcar a
+-- origem nao da para distinguir o que veio do OMIE do que o operador lancou a
+-- mao — e o mesmo adiantamento entraria duas vezes no saldo.
+ALTER TABLE customer_credit_movements ADD COLUMN source TEXT NOT NULL DEFAULT 'local';
+
+-- codigo_lancamento_omie do titulo a receber que originou o adiantamento.
+-- E a chave de idempotencia: reimportar a mesma pagina do OMIE nao pode somar
+-- credito de novo.
+ALTER TABLE customer_credit_movements ADD COLUMN omie_title_id INTEGER;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_credit_movements_omie_title
+  ON customer_credit_movements(company_id, omie_title_id, movement_type)
+  WHERE omie_title_id IS NOT NULL;
+
+-- Leitura da aba Credito: separa no extrato o que veio do OMIE do que foi
+-- lancado na balanca.
+CREATE INDEX IF NOT EXISTS idx_customer_credit_movements_source
+  ON customer_credit_movements(customer_id, source);
+`
   }
 ];

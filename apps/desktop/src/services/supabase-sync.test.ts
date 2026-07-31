@@ -24,6 +24,7 @@ import {
   pushOmieCustomersToCloud,
   readOmiePullState,
   readStoredSupabaseConfig,
+  syncCustomerAdvancesFromCloud,
   syncOmieReferenceDataFromCloud,
   writeStoredSupabaseConfig
 } from "./supabase-sync";
@@ -2083,6 +2084,155 @@ describe("supabase sync", () => {
       invokeMock.mockClear();
       await processOmieSyncQueue(database, identity);
       expect(invokeMock).not.toHaveBeenCalled();
+    } finally {
+      database.close();
+    }
+  });
+
+  it("espelha os adiantamentos do OMIE no extrato e recalcula o saldo", async () => {
+    const database = createDatabase();
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      initializeSupabase();
+      insertLocalCustomer(database, "customer-1", { omieCustomerId: 42 });
+
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          ok: true,
+          advances: 1,
+          imported: 1,
+          adjusted: 0,
+          unchanged: 0,
+          unknownCustomers: 0,
+          categoryCodes: ["1.01.05"],
+          finished: true,
+          movements: [
+            {
+              id: "omie-adv-company-1-7001-0",
+              customer_id: "customer-1",
+              operation_id: null,
+              movement_type: "credit",
+              amount_cents: 150_000,
+              balance_after_cents: 150_000,
+              reason: "Adiantamento OMIE #7001",
+              source: "omie",
+              omie_title_id: 7001,
+              created_at: "2026-07-20T10:00:00.000Z"
+            }
+          ]
+        },
+        error: null
+      });
+
+      const result = await syncCustomerAdvancesFromCloud(database, identity);
+
+      expect(result).toMatchObject({
+        imported: 1,
+        movementsApplied: 1,
+        finished: true,
+        categoryCodes: ["1.01.05"]
+      });
+      const [, options] = invokeMock.mock.calls[0] as [string, { body: Record<string, unknown> }];
+      expect(options.body).toMatchObject({ action: "pull_customer_advances" });
+
+      const movement = database
+        .prepare("SELECT source, omie_title_id FROM customer_credit_movements WHERE id = ?")
+        .get("omie-adv-company-1-7001-0") as { source: string; omie_title_id: number };
+      expect(movement).toEqual({ source: "omie", omie_title_id: 7001 });
+
+      const balance = database
+        .prepare("SELECT balance_cents FROM customer_credit_balances WHERE customer_id = ?")
+        .get("customer-1") as { balance_cents: number };
+      expect(balance.balance_cents).toBe(150_000);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("nao soma o mesmo adiantamento duas vezes ao repetir o ciclo", async () => {
+    const database = createDatabase();
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      initializeSupabase();
+      insertLocalCustomer(database, "customer-1", { omieCustomerId: 42 });
+
+      const page = {
+        data: {
+          ok: true,
+          advances: 1,
+          imported: 1,
+          categoryCodes: ["1.01.05"],
+          finished: true,
+          movements: [
+            {
+              id: "omie-adv-company-1-7001-0",
+              customer_id: "customer-1",
+              movement_type: "credit",
+              amount_cents: 150_000,
+              balance_after_cents: 150_000,
+              source: "omie",
+              omie_title_id: 7001,
+              created_at: "2026-07-20T10:00:00.000Z"
+            }
+          ]
+        },
+        error: null
+      };
+      invokeMock.mockResolvedValueOnce(page).mockResolvedValueOnce(page);
+
+      await syncCustomerAdvancesFromCloud(database, identity);
+      const second = await syncCustomerAdvancesFromCloud(database, identity);
+
+      // Movimento ja conhecido: nada e reaplicado e o saldo continua o mesmo.
+      expect(second.movementsApplied).toBe(0);
+      const total = database
+        .prepare(
+          "SELECT COUNT(*) AS rows, COALESCE(SUM(amount_cents), 0) AS cents FROM customer_credit_movements"
+        )
+        .get() as { rows: number; cents: number };
+      expect(total).toEqual({ rows: 1, cents: 150_000 });
+
+      // A segunda chamada ja vai com a janela incremental e as categorias conhecidas.
+      const [, options] = invokeMock.mock.calls[1] as [string, { body: Record<string, unknown> }];
+      expect(options.body).toMatchObject({
+        payload: expect.objectContaining({ categoryCodes: ["1.01.05"] })
+      });
+      const payload = (options.body as { payload: Record<string, unknown> }).payload;
+      expect(typeof payload.startDate).toBe("string");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("retoma a varredura de adiantamentos na pagina onde o ciclo anterior parou", async () => {
+    const database = createDatabase();
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      initializeSupabase();
+
+      // Tenant grande: o ciclo bate no teto de paginas sem terminar a varredura.
+      invokeMock.mockResolvedValue({
+        data: { ok: true, finished: false, categoryCodes: ["1.01.05"], movements: [] },
+        error: null
+      });
+      const first = await syncCustomerAdvancesFromCloud(database, identity);
+      expect(first.finished).toBe(false);
+      const pagesScanned = first.pages;
+
+      invokeMock.mockResolvedValue({
+        data: { ok: true, finished: true, categoryCodes: ["1.01.05"], movements: [] },
+        error: null
+      });
+      await syncCustomerAdvancesFromCloud(database, identity);
+
+      const [, options] = invokeMock.mock.calls[pagesScanned] as [
+        string,
+        { body: { payload: Record<string, unknown> } }
+      ];
+      expect(options.body.payload.page).toBe(pagesScanned + 1);
     } finally {
       database.close();
     }

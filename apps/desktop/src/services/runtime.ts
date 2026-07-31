@@ -110,6 +110,8 @@ import {
   syncLoadingRequestToSupabase,
   listOperationsPendingCloudPush,
   syncOmieReferenceDataFromCloud,
+  syncCustomerAdvancesFromCloud,
+  type CustomerAdvancesSyncResult,
   listOmieDocumentTypesFromCloud,
   type OmieDocumentTypeOption,
   pushOmieCarriersToCloud,
@@ -600,6 +602,18 @@ export class DesktopRuntime {
         this.omieSyncInProgress = true;
         try {
           await this.runOmieDataEntryLoop({ maxIterations: OMIE_AUTOMATIC_PULL_MAX_ITERATIONS });
+          // Adiantamentos entram no mesmo ciclo: o saldo que banca as compras
+          // envelhece rapido. Falha aqui nao derruba o pull de cadastros.
+          try {
+            await this.syncCustomerAdvancesFromOmie();
+          } catch (error) {
+            this.recordTechnicalLog(
+              "warning",
+              "omie-sync",
+              "Falha ao sincronizar adiantamentos do OMIE.",
+              { error: error instanceof Error ? error.message : String(error) }
+            );
+          }
         } finally {
           this.omieSyncInProgress = false;
         }
@@ -2401,6 +2415,28 @@ export class DesktopRuntime {
   listCustomerCreditMovements(customerId: string, limit?: number): CreditMovementRow[] {
     this.assertDesktopAccess();
     return new CreditService(this.database).listMovements(customerId, limit ?? 100);
+  }
+
+  /**
+   * Traz do OMIE os adiantamentos dos clientes (dinheiro ja depositado) e os
+   * espelha no extrato de credito, de onde as compras da balanca sao abatidas.
+   * O financeiro continua sendo feito no OMIE: aqui nada e criado la.
+   */
+  async syncCustomerAdvancesFromOmie(
+    options: { fullRescan?: boolean } = {}
+  ): Promise<CustomerAdvancesSyncResult> {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    const result = await syncCustomerAdvancesFromCloud(this.database, identity, options);
+    this.recordTechnicalLog("info", "omie-sync", "Adiantamentos do OMIE sincronizados.", {
+      advances: result.advances,
+      imported: result.imported,
+      adjusted: result.adjusted,
+      unknownCustomers: result.unknownCustomers,
+      pages: result.pages,
+      finished: result.finished
+    });
+    return result;
   }
 
   createQuotation(input: Omit<CreateQuotationInput, "companyId">): QuotationRow {

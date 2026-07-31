@@ -1225,7 +1225,7 @@ function upsertCloudAccounts(
  * nuvem: soma-se o que as duas maquinas lancaram, entao um debito feito na outra
  * balanca nunca some por sobrescrita.
  */
-function upsertCloudCreditMovements(
+export function upsertCloudCreditMovements(
   database: DesktopDatabase,
   companyId: string,
   rows: Array<Record<string, unknown>>
@@ -1234,8 +1234,8 @@ function upsertCloudCreditMovements(
   const insert = database.prepare(`
     INSERT INTO customer_credit_movements (
       id, company_id, customer_id, operation_id, movement_type, amount_cents,
-      balance_after_cents, reason, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      balance_after_cents, reason, source, omie_title_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO NOTHING
   `);
 
@@ -1258,6 +1258,10 @@ function upsertCloudCreditMovements(
       integerValue(row.amount_cents) ?? 0,
       integerValue(row.balance_after_cents) ?? 0,
       nullableStringValue(row.reason),
+      // Adiantamento espelhado do OMIE chega marcado: o extrato distingue o que
+      // veio do financeiro do que foi lancado na balanca.
+      nullableStringValue(row.source) ?? "local",
+      integerValue(row.omie_title_id),
       isoStringValue(row.created_at) || new Date().toISOString()
     );
     if (result.changes > 0) {
@@ -2504,6 +2508,201 @@ export async function syncOmieReferenceDataFromCloud(
   }
 
   throw new Error("OMIE sync redundant retry exhausted.");
+}
+
+/** Estado do espelhamento dos adiantamentos, guardado entre ciclos. */
+interface OmieAdvancesState {
+  /** Categorias de adiantamento ja descobertas (evita revarrer o plano de contas). */
+  categoryCodes?: string[];
+  /** Fim da ultima janela sincronizada com sucesso (ISO yyyy-mm-dd). */
+  lastSyncedDate?: string;
+  lastSyncedAt?: string;
+  /** Pagina em que o ciclo anterior parou (varredura ainda incompleta). */
+  pendingPage?: number;
+  /** Janela do ciclo interrompido, para retomar exatamente onde parou. */
+  pendingStartDate?: string | null;
+  pendingEndDate?: string | null;
+}
+
+const OMIE_ADVANCES_STATE_KEY = "omie_advances_state";
+/** Paginas de contas a receber por ciclo: teto para nao prender a sincronizacao. */
+const OMIE_ADVANCES_MAX_PAGES = 20;
+/**
+ * Reprocessa alguns dias ja sincronizados a cada ciclo. A janela filtra por
+ * inclusao/alteracao no OMIE, e uma baixa lancada com data retroativa (ou um
+ * ciclo que caiu no meio) apareceria fora da janela seguinte.
+ */
+const OMIE_ADVANCES_OVERLAP_DAYS = 7;
+
+export interface CustomerAdvancesSyncResult {
+  /** Adiantamentos vistos no OMIE (todas as paginas do ciclo). */
+  advances: number;
+  /** Adiantamentos novos espelhados no extrato. */
+  imported: number;
+  /** Adiantamentos que mudaram no OMIE e foram acertados. */
+  adjusted: number;
+  unchanged: number;
+  /** Titulos de clientes que nao existem nesta pedreira. */
+  unknownCustomers: number;
+  /** Lancamentos aplicados no extrato local. */
+  movementsApplied: number;
+  pages: number;
+  finished: boolean;
+  categoryCodes: string[];
+}
+
+/**
+ * Espelha os adiantamentos do cliente (dinheiro depositado, registrado no
+ * financeiro do OMIE) no extrato de credito local, para que as compras da
+ * balanca sejam abatidas desse saldo.
+ *
+ * Quem le o OMIE e grava o lancamento e a Edge Function (credencial e escritor
+ * unico ficam na nuvem); aqui so aplicamos as linhas que voltam, pelo mesmo
+ * caminho de qualquer movimento vindo de outra maquina — entao o saldo continua
+ * sendo recalculado pelo log e o que foi lancado offline nao se perde.
+ */
+export async function syncCustomerAdvancesFromCloud(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity,
+  options: { fullRescan?: boolean; customerOmieCode?: number } = {}
+): Promise<CustomerAdvancesSyncResult> {
+  const settings = getCloudSettings(database, identity);
+  const supabase = getSupabaseClient();
+  const state = options.fullRescan
+    ? {}
+    : (readLocalSetting<OmieAdvancesState>(database, OMIE_ADVANCES_STATE_KEY) ?? {});
+  const today = toIsoDate(new Date());
+  // Ciclo anterior parou no meio (tenant grande, queda de rede): retoma a mesma
+  // janela na pagina seguinte, senao a varredura recomecaria do zero e nunca
+  // passaria do teto de paginas.
+  const resuming = typeof state.pendingPage === "number" && state.pendingPage > 1;
+  // Sem sincronizacao anterior (ou varredura completa pedida): sem janela, para
+  // trazer todo o historico de adiantamentos que ainda tem saldo.
+  const startDate = resuming
+    ? (state.pendingStartDate ?? undefined)
+    : state.lastSyncedDate
+      ? addDaysToIsoDateString(state.lastSyncedDate, -OMIE_ADVANCES_OVERLAP_DAYS)
+      : undefined;
+  const endDate = resuming ? (state.pendingEndDate ?? undefined) : startDate ? today : undefined;
+  const firstPage = resuming ? (state.pendingPage as number) : 1;
+  let lastCompletedPage = firstPage - 1;
+
+  const result: CustomerAdvancesSyncResult = {
+    advances: 0,
+    imported: 0,
+    adjusted: 0,
+    unchanged: 0,
+    unknownCustomers: 0,
+    movementsApplied: 0,
+    pages: 0,
+    finished: false,
+    categoryCodes: state.categoryCodes ?? []
+  };
+
+  try {
+    for (let index = 0; index < OMIE_ADVANCES_MAX_PAGES; index++) {
+      const page = firstPage + index;
+      const body = {
+        deviceId: settings.deviceId,
+        deviceToken: settings.deviceToken,
+        action: "pull_customer_advances",
+        payload: {
+          page,
+          startDate,
+          endDate,
+          categoryCodes: result.categoryCodes.length > 0 ? result.categoryCodes : undefined,
+          customerOmieCode: options.customerOmieCode
+        }
+      };
+
+      const data = await invokeCustomerAdvancesPage(supabase, body);
+      lastCompletedPage = page;
+      result.pages++;
+      result.advances += data.advances ?? 0;
+      result.imported += data.imported ?? 0;
+      result.adjusted += data.adjusted ?? 0;
+      result.unchanged += data.unchanged ?? 0;
+      result.unknownCustomers += data.unknownCustomers ?? 0;
+      if (data.categoryCodes?.length) result.categoryCodes = data.categoryCodes;
+
+      const movements = data.movements ?? [];
+      if (movements.length > 0) {
+        result.movementsApplied += upsertCloudCreditMovements(
+          database,
+          identity.companyId,
+          movements
+        );
+      }
+
+      if (data.finished !== false) {
+        result.finished = true;
+        break;
+      }
+    }
+  } finally {
+    // Guarda o progresso ate no erro: uma queda na pagina 15 nao pode obrigar o
+    // proximo ciclo a varrer as 14 anteriores de novo. As paginas ja aplicadas
+    // sao idempotentes (movimento com id conhecido nao entra duas vezes).
+    writeLocalSetting(database, OMIE_ADVANCES_STATE_KEY, {
+      categoryCodes: result.categoryCodes,
+      // A janela so avanca quando o ciclo varreu ate a ultima pagina; senao o
+      // proximo ciclo retoma na pagina seguinte e nada fica para tras.
+      lastSyncedDate: result.finished ? (endDate ?? today) : state.lastSyncedDate,
+      lastSyncedAt: new Date().toISOString(),
+      pendingPage: result.finished ? undefined : lastCompletedPage + 1,
+      pendingStartDate: result.finished ? undefined : (startDate ?? null),
+      pendingEndDate: result.finished ? undefined : (endDate ?? null)
+    } satisfies OmieAdvancesState);
+  }
+
+  return result;
+}
+
+interface CustomerAdvancesPageResponse {
+  advances?: number;
+  imported?: number;
+  adjusted?: number;
+  unchanged?: number;
+  unknownCustomers?: number;
+  categoryCodes?: string[];
+  finished?: boolean;
+  movements?: Array<Record<string, unknown>>;
+}
+
+async function invokeCustomerAdvancesPage(
+  supabase: ReturnType<typeof getSupabaseClient>,
+  body: Record<string, unknown>
+): Promise<CustomerAdvancesPageResponse> {
+  for (let attempt = 0; attempt <= OMIE_SYNC_REDUNDANT_MAX_RETRIES; attempt++) {
+    const { data, error } = await supabase.functions.invoke<CustomerAdvancesPageResponse>(
+      "omie-sync",
+      { body }
+    );
+
+    if (error) {
+      const message = await getFunctionErrorMessage(error);
+      if (isOmieSyncRedundantError(message) && attempt < OMIE_SYNC_REDUNDANT_MAX_RETRIES) {
+        await new Promise((resolve) => setTimeout(resolve, parseOmieSyncRedundantWaitMs(message)));
+        continue;
+      }
+      throw new Error(message);
+    }
+
+    if (!data) throw new Error("Resposta OMIE vazia.");
+    return data;
+  }
+
+  throw new Error("OMIE sync redundant retry exhausted.");
+}
+
+function toIsoDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function addDaysToIsoDateString(isoDate: string, days: number): string {
+  const date = new Date(`${isoDate}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return toIsoDate(date);
 }
 
 export interface OmieDocumentTypeOption {
@@ -5274,7 +5473,7 @@ const CADASTRO_PUSH_ENTITIES: readonly CadastroPushEntity[] = [
       table: "customer_credit_movements",
       alias: "cm",
       columns:
-        "cm.id, cm.customer_id, cm.operation_id, cm.movement_type, cm.amount_cents, cm.balance_after_cents, cm.reason, cm.created_at",
+        "cm.id, cm.customer_id, cm.operation_id, cm.movement_type, cm.amount_cents, cm.balance_after_cents, cm.reason, cm.source, cm.omie_title_id, cm.created_at",
       where: "cm.company_id = @companyId",
       cursorColumn: "created_at"
     }),
@@ -5289,6 +5488,8 @@ const CADASTRO_PUSH_ENTITIES: readonly CadastroPushEntity[] = [
         amount_cents: integerValue(row.amount_cents) ?? 0,
         balance_after_cents: integerValue(row.balance_after_cents) ?? 0,
         reason: nullableStringValue(row.reason),
+        source: nullableStringValue(row.source) ?? "local",
+        omie_title_id: integerValue(row.omie_title_id),
         created_at: createdAt,
         updated_at: createdAt
       };

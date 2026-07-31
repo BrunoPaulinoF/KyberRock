@@ -15,6 +15,7 @@ import type {
 import type { FreightModality } from "../services/freight";
 import type {
   CloudBootstrapResult,
+  CustomerAdvancesSyncResult,
   FiscalBillingResult,
   SyncResult
 } from "../services/supabase-sync";
@@ -386,6 +387,10 @@ export interface KyberRockDesktopApi {
     reason: string
   ) => Promise<CustomerCreditSummary>;
   customerCreditMovements: (customerId: string, limit?: number) => Promise<CreditMovementRow[]>;
+  /** Espelha os adiantamentos do OMIE no extrato de credito dos clientes. */
+  customerCreditSyncAdvances: (options?: {
+    fullRescan?: boolean;
+  }) => Promise<CustomerAdvancesSyncResult>;
   quotationsCreate: (input: Omit<CreateQuotationInput, "companyId">) => Promise<QuotationRow>;
   quotationsCancel: (id: string) => Promise<void>;
   quotationsListOpenForCustomer: (customerId: string) => Promise<QuotationSummary[]>;

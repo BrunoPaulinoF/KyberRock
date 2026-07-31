@@ -46,6 +46,7 @@ import {
 } from "./crud-ui";
 import type { DetailSectionData } from "./crud-ui";
 import { PriceChangePasswordDialog } from "./PriceChangePasswordDialog";
+import { formatDbDateTime } from "./format-datetime";
 
 const initialForm: CustomerFormData = {
   tradeName: "",
@@ -228,6 +229,21 @@ const CREDIT_MOVEMENT_LABELS: Record<string, string> = {
   refund_freight: "Estorno (frete)",
   manual_adjustment: "Ajuste manual"
 };
+
+/**
+ * Rotulo do lancamento no extrato. O que vem do OMIE e adiantamento (deposito do
+ * cliente) ou acerto desse adiantamento — chamar de "pagamento" confundiria com a
+ * baixa do fiado, que continua sendo lancada aqui.
+ */
+export function creditMovementLabel(movement: {
+  movement_type: string;
+  source?: string;
+}): string {
+  if (movement.source === "omie") {
+    return movement.movement_type === "credit" ? "Adiantamento (OMIE)" : "Acerto do adiantamento";
+  }
+  return CREDIT_MOVEMENT_LABELS[movement.movement_type] ?? movement.movement_type;
+}
 
 /** Tipos de lancamento manual oferecidos na aba Credito. */
 type CreditEntryKind = "payment" | "adjustment_credit" | "adjustment_debit";
@@ -730,6 +746,33 @@ export function CustomersView({
       );
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Falha ao lancar o credito.");
+    } finally {
+      setCreditBusy(false);
+    }
+  }
+
+  /**
+   * Confere os adiantamentos do cliente com o financeiro do OMIE. O saldo
+   * depositado nasce la (titulo a receber baixado); aqui ele so e espelhado para
+   * abater as compras da balanca.
+   */
+  async function handleSyncAdvances(): Promise<void> {
+    if (!desktopApi || !editingId) return;
+    setCreditBusy(true);
+    setFormError(null);
+    try {
+      const result = await desktopApi.customerCreditSyncAdvances();
+      await loadCustomerCredit(editingId);
+      showFlash(
+        "success",
+        result.imported + result.adjusted > 0
+          ? `Adiantamentos do OMIE atualizados (${result.imported} novo(s), ${result.adjusted} acerto(s)).`
+          : "Adiantamentos do OMIE conferidos: nenhuma diferenca."
+      );
+    } catch (err) {
+      setFormError(
+        err instanceof Error ? err.message : "Falha ao sincronizar os adiantamentos do OMIE."
+      );
     } finally {
       setCreditBusy(false);
     }
@@ -1789,11 +1832,16 @@ export function CustomersView({
               {editingId ? (
                 <div style={{ display: "grid", gap: "10px" }}>
                   <p style={styles.cellMuted}>
-                    O limite de credito (aba Identificacao) e o que banca as vendas na forma
-                    &quot;Credito do cliente&quot;. Cada venda consome o limite e cada pagamento
+                    O adiantamento e o dinheiro que o cliente ja depositou: ele e registrado no
+                    financeiro do OMIE e espelhado aqui, e cada compra e abatida desse saldo. O
+                    limite de credito (aba Identificacao) banca as vendas no fiado; cada pagamento
                     recebido devolve o valor, liberando novas compras.
                   </p>
                   <div style={styles.fieldRow}>
+                    <CreditTotal
+                      label="Adiantamento (OMIE)"
+                      value={formatMoney(creditSummary?.omieAdvanceCents ?? 0)}
+                    />
                     <CreditTotal
                       label="Limite de credito"
                       value={
@@ -1815,6 +1863,28 @@ export function CustomersView({
                       }
                       strong
                     />
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "10px",
+                      flexWrap: "wrap"
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => void handleSyncAdvances()}
+                      disabled={creditBusy}
+                      style={{ ...styles.secondaryButton, opacity: creditBusy ? 0.6 : 1 }}
+                    >
+                      {creditBusy ? "Sincronizando..." : "Sincronizar adiantamentos (OMIE)"}
+                    </button>
+                    <span style={styles.cellMuted}>
+                      {creditSummary?.omieSyncedAt
+                        ? `Ultimo adiantamento do OMIE: ${formatDbDateTime(creditSummary.omieSyncedAt)}`
+                        : "Nenhum adiantamento vindo do OMIE ate agora."}
+                    </span>
                   </div>
                   <div style={styles.fieldRow}>
                     <Field label="Tipo do lancamento">
@@ -1874,8 +1944,22 @@ export function CustomersView({
                           }}
                         >
                           <span style={{ color: "var(--kr-text-strong)", fontWeight: 700 }}>
-                            {CREDIT_MOVEMENT_LABELS[movement.movement_type] ??
-                              movement.movement_type}
+                            {creditMovementLabel(movement)}
+                            {movement.source === "omie" ? (
+                              <span
+                                style={{
+                                  marginLeft: "6px",
+                                  padding: "1px 6px",
+                                  borderRadius: "999px",
+                                  border: "1px solid var(--kr-border)",
+                                  color: "var(--kr-muted)",
+                                  fontSize: "10px",
+                                  fontWeight: 700
+                                }}
+                              >
+                                OMIE
+                              </span>
+                            ) : null}
                             {movement.reason ? (
                               <span style={{ fontWeight: 400 }}> &mdash; {movement.reason}</span>
                             ) : null}

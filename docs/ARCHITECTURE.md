@@ -84,6 +84,7 @@ Loader web
 | Tabela de preco             | KyberRock          | Sim                       | Vinculada ao cliente/produto                               |
 | Veiculo/motorista           | KyberRock          | Sim                       | Pode ter vinculos com cliente/transportadora               |
 | Transportadora              | OMIE               | Parcial                   | OMIE usa cadastro de clientes/fornecedores/transportadoras |
+| Adiantamento do cliente     | OMIE               | Nao                       | Espelhado no extrato de credito; abate as compras          |
 | Operacao de pesagem         | KyberRock local    | Sim                       | Sincronizada para cloud/OMIE                            |
 | Cupom                       | KyberRock local    | Sim                       | Reimpressao gera auditoria                                 |
 | Solicitacao carregamento    | KyberRock/Supabase | Sim local, cloud via sync | Site le somente abertas                                    |
@@ -187,6 +188,27 @@ Campos OMIE observados na documentacao publica que afetam o modelo:
 - veiculo: `nCodVeic`, `cPlaca`, `cUF` (cadastro de `/transportador/veiculo/`, origem da UF do frete);
 - OS: `cCodIntOS`, `nCodOS`, `nCodCli`, `cCodParc`, `nQtdeParc`, `ServicosPrestados`, `Parcelas`;
 - contas a receber: `codigo_cliente_fornecedor`, `valor_documento`, `data_vencimento`, `status_titulo`.
+
+### Adiantamento do cliente (credito pre-pago)
+
+O saldo que banca as compras pre-pagas e dinheiro que o cliente ja depositou, e o
+lancamento financeiro e feito no OMIE — o KyberRock nao cria nem baixa titulo la.
+
+- No OMIE, o adiantamento e um titulo de **contas a receber** classificado numa
+  **categoria de adiantamento de clientes** (o padrao `Adiantamento de Clientes`, do
+  plano de contas) e **baixado** quando o dinheiro entra. Enquanto nao ha baixa, nao
+  ha saldo.
+- A Edge Function `omie-sync` (acao `pull_customer_advances`) descobre as categorias
+  de adiantamento pela descricao, lista `ListarContasReceber` filtrando por
+  inclusao/alteracao e espelha cada titulo no extrato de credito
+  (`customer_credit_movements`, `source = 'omie'`, `omie_title_id`).
+- A Edge Function e o **unico escritor** desse espelho: o titulo do OMIE e a chave de
+  idempotencia e o lancamento sempre entra como **delta** sobre o que ja foi
+  espelhado, entao reprocessar a mesma pagina nao altera o saldo, e baixa parcial ou
+  cancelamento no OMIE viram acerto no extrato.
+- O desktop apenas aplica as linhas recebidas (mesmo caminho de qualquer movimento
+  vindo de outra maquina) e continua recalculando o saldo pelo log. As compras
+  seguem debitando localmente no fechamento — e o que abate o adiantamento.
 
 ## Supabase
 
