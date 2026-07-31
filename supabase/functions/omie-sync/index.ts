@@ -645,7 +645,13 @@ function emptyPage<T>(page: number): PageResult<T> {
 }
 
 function emptyCustomerPage(page: number): CustomersPageResult {
-  return { ...emptyPage<OmieCustomer>(page), carriers: [], returned: 0, invalid: 0, supplierOnly: 0 };
+  return {
+    ...emptyPage<OmieCustomer>(page),
+    carriers: [],
+    returned: 0,
+    invalid: 0,
+    supplierOnly: 0
+  };
 }
 
 async function pullReferenceDataPage(
@@ -1530,7 +1536,9 @@ function mapOmiePaymentTermRaw(item: OmiePaymentTermRaw): OmiePaymentTerm | null
       pickFirst(item.nDiasPrimeiraParcela, item.dias_primeira_parcela)
     ),
     installmentIntervalDays: toNumber(pickFirst(item.nIntervaloParcelas, item.intervalo_parcelas)),
-    installmentCount: toNumber(pickFirst(item.nParcelas, item.nNumeroParcelas, item.numero_parcelas)),
+    installmentCount: toNumber(
+      pickFirst(item.nParcelas, item.nNumeroParcelas, item.numero_parcelas)
+    ),
     installmentType: pickFirst(item.cTipoParcelas, item.tipo_parcelas),
     installmentDaysJson: days && days.length > 0 ? days : null,
     isActive: !isYesFlag(pickFirst(item.cInativo, item.inativo)),
@@ -1756,7 +1764,10 @@ async function projectCustomerAdvances(
     const signed = signedMovementCents(row.movement_type, row.amount_cents ?? 0);
     balanceByCustomer.set(row.customer_id, (balanceByCustomer.get(row.customer_id) ?? 0) + signed);
     if (row.omie_title_id !== null) {
-      mirroredByTitle.set(row.omie_title_id, (mirroredByTitle.get(row.omie_title_id) ?? 0) + signed);
+      mirroredByTitle.set(
+        row.omie_title_id,
+        (mirroredByTitle.get(row.omie_title_id) ?? 0) + signed
+      );
       movementsByTitle.set(row.omie_title_id, (movementsByTitle.get(row.omie_title_id) ?? 0) + 1);
     }
   }
@@ -2286,11 +2297,7 @@ async function ensureOmieParcelaCode(
   if (isAVista) return null;
 
   const conditionText =
-    days.length > 1
-      ? days.join("/")
-      : days.length === 1
-        ? `${days[0]} dias`
-        : String(count);
+    days.length > 1 ? days.join("/") : days.length === 1 ? `${days[0]} dias` : String(count);
 
   const cacheKey = `${omieTenantKey(credentials)}:${conditionText}`;
   const cached = omieParcelaCodeCache.get(cacheKey);
@@ -2713,10 +2720,9 @@ async function createOmieOrder(
       // caso contrario propaga o erro original do IncluirPedido (antes, uma
       // resposta vazia da consulta mascarava a causa real com
       // "OMIE nao retornou codigoPedido").
-      const existing = await consultSalesOrderByIntegrationCode(
-        credentials,
-        integrationCode
-      ).catch(() => null);
+      const existing = await consultSalesOrderByIntegrationCode(credentials, integrationCode).catch(
+        () => null
+      );
       if (existing && extractSalesOrderId(existing) !== null) return existing;
       throw error;
     });
@@ -2916,9 +2922,7 @@ async function resolveOmieAccountCode(credentials: OmieCredentials): Promise<num
   }
 }
 
-function extractAccountRows(
-  response: Record<string, unknown> | null
-): Record<string, unknown>[] {
+function extractAccountRows(response: Record<string, unknown> | null): Record<string, unknown>[] {
   if (!response || typeof response !== "object") return [];
   const knownKeys = ["ListarContasCorrentes", "conta_corrente_lista", "contaCorrenteLista"];
   const lists = [
@@ -3170,7 +3174,11 @@ function buildOmieFreight(
 
   // Dados de transporte da pesagem: placa, transportadora (codigo OMIE) e pesos da
   // carga. Granel sem embalagem: peso_bruto = peso_liquido = peso liquido pesado.
-  const plate = transport?.plate?.trim().toUpperCase().replace(/[^A-Z0-9]/g, "") || null;
+  const plate =
+    transport?.plate
+      ?.trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "") || null;
   // UF da placa: a NF-e pede placa E UF do veiculo no transporte. So vai quando e uma
   // UF valida (2 letras) — campo fiscal nao aceita lixo, e sem ela o pedido segue como
   // antes, so com a placa.
@@ -3209,9 +3217,7 @@ function buildOmieFreight(
  * Texto de transporte para os dados adicionais da NF-e (o motorista nao tem campo
  * proprio no pedido de venda do OMIE). Retorna null quando nao ha o que registrar.
  */
-function buildTransportAdditionalData(
-  transport?: CreateOrderPayload["transport"]
-): string | null {
+function buildTransportAdditionalData(transport?: CreateOrderPayload["transport"]): string | null {
   if (!transport) return null;
   const parts: string[] = [];
   const driverName = transport.driverName?.trim();
@@ -3365,7 +3371,10 @@ async function consultSalesOrder(credentials: OmieCredentials, orderId: number):
   });
 }
 
-async function consultServiceOrder(credentials: OmieCredentials, orderId: number): Promise<unknown> {
+async function consultServiceOrder(
+  credentials: OmieCredentials,
+  orderId: number
+): Promise<unknown> {
   return callOmie<unknown, unknown>(credentials, "/servicos/os/", "ConsultarOS", {
     nCodOS: orderId
   });

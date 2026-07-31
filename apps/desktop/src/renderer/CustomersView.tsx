@@ -235,10 +235,7 @@ const CREDIT_MOVEMENT_LABELS: Record<string, string> = {
  * cliente) ou acerto desse adiantamento — chamar de "pagamento" confundiria com a
  * baixa do fiado, que continua sendo lancada aqui.
  */
-export function creditMovementLabel(movement: {
-  movement_type: string;
-  source?: string;
-}): string {
+export function creditMovementLabel(movement: { movement_type: string; source?: string }): string {
   if (movement.source === "omie") {
     return movement.movement_type === "credit" ? "Adiantamento (OMIE)" : "Acerto do adiantamento";
   }
@@ -424,14 +421,16 @@ export function CustomersView({
   const [creditEntryKind, setCreditEntryKind] = useState<CreditEntryKind>("payment");
   const [creditReason, setCreditReason] = useState("");
   const [creditBusy, setCreditBusy] = useState(false);
-  const [customerFreightRules, setCustomerFreightRules] = useState<Array<{
-    id: string;
-    customerId: string;
-    productId: string | null;
-    productDescription: string | null;
-    rule: { id: string; name: string; type: string; baseValueCents: number; unit: string };
-    isActive: boolean;
-  }>>([]);
+  const [customerFreightRules, setCustomerFreightRules] = useState<
+    Array<{
+      id: string;
+      customerId: string;
+      productId: string | null;
+      productDescription: string | null;
+      rule: { id: string; name: string; type: string; baseValueCents: number; unit: string };
+      isActive: boolean;
+    }>
+  >([]);
   const [freightProductId, setFreightProductId] = useState("");
   const [freightValueReais, setFreightValueReais] = useState("");
   const [freightMode, setFreightMode] = useState<"default" | "product">("default");
@@ -590,8 +589,7 @@ export function CustomersView({
   }
 
   async function requestCloseForm(): Promise<void> {
-    const dirty =
-      JSON.stringify({ form, defaultConditionText }) !== formBaselineRef.current;
+    const dirty = JSON.stringify({ form, defaultConditionText }) !== formBaselineRef.current;
     if (dirty) {
       const discard = await requestConfirm({
         title: "Descartar alteracoes?",
@@ -622,10 +620,8 @@ export function CustomersView({
       defaultPaymentTermId: customer.defaultPaymentTermId ?? "",
       defaultPaymentMethodId: customer.defaultPaymentMethodId ?? "",
       creditAccountEnabled: customer.creditAccountEnabled,
-      creditClosingDay:
-        customer.creditClosingDay != null ? String(customer.creditClosingDay) : "",
-      creditBoletoDays:
-        customer.creditBoletoDays != null ? String(customer.creditBoletoDays) : "",
+      creditClosingDay: customer.creditClosingDay != null ? String(customer.creditClosingDay) : "",
+      creditBoletoDays: customer.creditBoletoDays != null ? String(customer.creditBoletoDays) : "",
       nfRequired: customer.nfRequired,
       creditPeriodicity: customer.creditPeriodicity ?? "monthly",
       creditSecondClosingDay:
@@ -823,11 +819,13 @@ export function CustomersView({
       await desktopApi.setCustomerFreightRule({
         customerId: editingId,
         productId: freightMode === "product" ? freightProductId || null : null,
-          rule: {
+        rule: {
           id: crypto.randomUUID(),
-          name: freightMode === "product" && freightProductId
-            ? products.find((p) => p.id === freightProductId)?.description ?? "Frete por produto"
-            : "Frete fixo",
+          name:
+            freightMode === "product" && freightProductId
+              ? (products.find((p) => p.id === freightProductId)?.description ??
+                "Frete por produto")
+              : "Frete fixo",
           type: "per_ton",
           baseValueCents: unitPriceCents,
           unit: "ton"
@@ -1265,13 +1263,13 @@ export function CustomersView({
   // espelhando as abas do formulario de edicao.
   function buildCustomerDetailSections(customer: CustomerCacheEntry): DetailSectionData[] {
     const carrierName = customer.defaultCarrierId
-      ? carriers.find((carrier) => carrier.id === customer.defaultCarrierId)?.name ?? ""
+      ? (carriers.find((carrier) => carrier.id === customer.defaultCarrierId)?.name ?? "")
       : "";
     const termName = customer.defaultPaymentTermId
-      ? paymentTerms.find((term) => term.id === customer.defaultPaymentTermId)?.name ?? ""
+      ? (paymentTerms.find((term) => term.id === customer.defaultPaymentTermId)?.name ?? "")
       : "";
     const methodName = customer.defaultPaymentMethodId
-      ? paymentMethods.find((method) => method.id === customer.defaultPaymentMethodId)?.name ?? ""
+      ? (paymentMethods.find((method) => method.id === customer.defaultPaymentMethodId)?.name ?? "")
       : "";
     return [
       {
@@ -1425,841 +1423,879 @@ export function CustomersView({
 
       {showForm ? (
         <CrudFormModal onClose={() => void requestCloseForm()} maxWidth={1040} fixedHeight>
-        <Fragment>
-          <div style={styles.formHeader}>
-            <h3 style={styles.formTitle}>
-              {editingId
-                ? `Editar cliente ${isOmie ? "(alteracoes serao enviadas ao OMIE)" : ""}`
-                : "Novo cliente"}
-            </h3>
-            {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
-          </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", padding: "14px 18px 0" }}>
-            {CUSTOMER_FORM_SECTIONS.map((section) => {
-              const active = activeFormSection === section.key;
-              return (
-                <button
-                  key={section.key}
-                  type="button"
-                  onClick={() => setActiveFormSection(section.key)}
-                  style={{
-                    padding: "8px 14px",
-                    borderRadius: "999px",
-                    border: active ? "2px solid var(--kr-accent)" : "1px solid var(--kr-border)",
-                    background: active ? "var(--kr-accent-soft)" : "var(--kr-surface)",
-                    color: active ? "var(--kr-info-text)" : "var(--kr-muted)",
-                    fontWeight: active ? 800 : 600,
-                    fontSize: "12px",
-                    cursor: "pointer"
-                  }}
-                >
-                  {section.label}
-                </button>
-              );
-            })}
-          </div>
-          <div
-            style={{
-              ...styles.formShell,
-              gridTemplateColumns: "1fr",
-              // O modal tem altura fixa: o miolo da aba rola por dentro, mantendo
-              // cabecalho, botoes de secao e rodape sempre visiveis.
-              flex: 1,
-              minHeight: 0,
-              overflowY: "auto",
-              alignContent: "start"
-            }}
-          >
-          {activeFormSection === "identificacao" ? (
-            <section style={styles.formSection}>
-              <h4 style={styles.formSectionTitle}>Identificacao</h4>
-              <TextInput
-                label="Razao social"
-                value={form.legalName}
-                onChange={(legalName) => setForm({ ...form, legalName })}
-                required
-                disabled={false}
-              />
-              <TextInput
-                label="Nome fantasia"
-                value={form.tradeName}
-                onChange={(tradeName) => setForm({ ...form, tradeName })}
-                required
-                disabled={false}
-              />
-              <div style={styles.fieldRow}>
-                <div style={{ display: "flex", alignItems: "flex-end", gap: "8px" }}>
-                  <div style={{ flex: 1 }}>
-                    <DocumentInput
-                      label="CNPJ/CPF"
-                      value={form.document}
-                      onChange={(document) => setForm({ ...form, document })}
+          <Fragment>
+            <div style={styles.formHeader}>
+              <h3 style={styles.formTitle}>
+                {editingId
+                  ? `Editar cliente ${isOmie ? "(alteracoes serao enviadas ao OMIE)" : ""}`
+                  : "Novo cliente"}
+              </h3>
+              {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", padding: "14px 18px 0" }}>
+              {CUSTOMER_FORM_SECTIONS.map((section) => {
+                const active = activeFormSection === section.key;
+                return (
+                  <button
+                    key={section.key}
+                    type="button"
+                    onClick={() => setActiveFormSection(section.key)}
+                    style={{
+                      padding: "8px 14px",
+                      borderRadius: "999px",
+                      border: active ? "2px solid var(--kr-accent)" : "1px solid var(--kr-border)",
+                      background: active ? "var(--kr-accent-soft)" : "var(--kr-surface)",
+                      color: active ? "var(--kr-info-text)" : "var(--kr-muted)",
+                      fontWeight: active ? 800 : 600,
+                      fontSize: "12px",
+                      cursor: "pointer"
+                    }}
+                  >
+                    {section.label}
+                  </button>
+                );
+              })}
+            </div>
+            <div
+              style={{
+                ...styles.formShell,
+                gridTemplateColumns: "1fr",
+                // O modal tem altura fixa: o miolo da aba rola por dentro, mantendo
+                // cabecalho, botoes de secao e rodape sempre visiveis.
+                flex: 1,
+                minHeight: 0,
+                overflowY: "auto",
+                alignContent: "start"
+              }}
+            >
+              {activeFormSection === "identificacao" ? (
+                <section style={styles.formSection}>
+                  <h4 style={styles.formSectionTitle}>Identificacao</h4>
+                  <TextInput
+                    label="Razao social"
+                    value={form.legalName}
+                    onChange={(legalName) => setForm({ ...form, legalName })}
+                    required
+                    disabled={false}
+                  />
+                  <TextInput
+                    label="Nome fantasia"
+                    value={form.tradeName}
+                    onChange={(tradeName) => setForm({ ...form, tradeName })}
+                    required
+                    disabled={false}
+                  />
+                  <div style={styles.fieldRow}>
+                    <div style={{ display: "flex", alignItems: "flex-end", gap: "8px" }}>
+                      <div style={{ flex: 1 }}>
+                        <DocumentInput
+                          label="CNPJ/CPF"
+                          value={form.document}
+                          onChange={(document) => setForm({ ...form, document })}
+                          disabled={false}
+                        />
+                      </div>
+                      <Tooltip content="Buscar dados pelo CNPJ (Receita) e preencher o cadastro">
+                        <button
+                          type="button"
+                          onClick={() => void handleCnpjLookup()}
+                          disabled={cnpjBusy}
+                          aria-label="Buscar dados pelo CNPJ"
+                          style={{
+                            ...styles.secondaryButton,
+                            height: "38px",
+                            width: "38px",
+                            padding: 0,
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            opacity: cnpjBusy ? 0.6 : 1
+                          }}
+                        >
+                          <Search size={16} />
+                        </button>
+                      </Tooltip>
+                    </div>
+                    <MoneyInput
+                      label="Limite (R$)"
+                      value={form.creditLimitReais}
+                      onChange={(creditLimitReais) => setForm({ ...form, creditLimitReais })}
+                      disabled={false}
+                      allowZero
+                      hint="Use virgula para centavos."
+                    />
+                  </div>
+                </section>
+              ) : null}
+
+              {activeFormSection === "contato" ? (
+                <section style={styles.formSection}>
+                  <h4 style={styles.formSectionTitle}>Contato</h4>
+                  <div style={styles.fieldRow}>
+                    <PhoneInput
+                      label="Telefone"
+                      value={form.phone}
+                      onChange={(phone) => setForm({ ...form, phone })}
+                      disabled={false}
+                    />
+                    <EmailInput
+                      label="E-mail"
+                      value={form.email}
+                      onChange={(email) => setForm({ ...form, email })}
                       disabled={false}
                     />
                   </div>
-                  <Tooltip content="Buscar dados pelo CNPJ (Receita) e preencher o cadastro">
-                    <button
-                      type="button"
-                      onClick={() => void handleCnpjLookup()}
-                      disabled={cnpjBusy}
-                      aria-label="Buscar dados pelo CNPJ"
-                      style={{
-                        ...styles.secondaryButton,
-                        height: "38px",
-                        width: "38px",
-                        padding: 0,
-                        display: "inline-flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        opacity: cnpjBusy ? 0.6 : 1
-                      }}
-                    >
-                      <Search size={16} />
-                    </button>
-                  </Tooltip>
-                </div>
-                <MoneyInput
-                  label="Limite (R$)"
-                  value={form.creditLimitReais}
-                  onChange={(creditLimitReais) => setForm({ ...form, creditLimitReais })}
-                  disabled={false}
-                  allowZero
-                  hint="Use virgula para centavos."
-                />
-              </div>
-            </section>
-          ) : null}
+                </section>
+              ) : null}
 
-          {activeFormSection === "contato" ? (
-            <section style={styles.formSection}>
-              <h4 style={styles.formSectionTitle}>Contato</h4>
-              <div style={styles.fieldRow}>
-                <PhoneInput
-                  label="Telefone"
-                  value={form.phone}
-                  onChange={(phone) => setForm({ ...form, phone })}
-                  disabled={false}
-                />
-                <EmailInput
-                  label="E-mail"
-                  value={form.email}
-                  onChange={(email) => setForm({ ...form, email })}
-                  disabled={false}
-                />
-              </div>
-            </section>
-          ) : null}
-
-          {activeFormSection === "endereco" ? (
-            <section style={styles.formSection}>
-              <h4 style={styles.formSectionTitle}>Endereco</h4>
-              <div style={styles.fieldRow}>
-                <CepInput
-                  label="CEP"
-                  value={form.zipcode}
-                  onChange={(zipcode) => setForm({ ...form, zipcode })}
-                  onLookup={handleCepLookup}
-                  onAddressFound={handleCepAddressFound}
-                  disabled={false}
-                />
-                <TextInput
-                  label="Numero"
-                  value={form.addressNumber}
-                  onChange={(addressNumber) => setForm({ ...form, addressNumber })}
-                  disabled={false}
-                  hint="Opcional"
-                />
-              </div>
-              <TextInput
-                label="Endereco"
-                value={form.addressStreet}
-                onChange={(addressStreet) => setForm({ ...form, addressStreet })}
-                disabled={false}
-                placeholder="Rua / avenida"
-              />
-              <div style={styles.fieldRow}>
-                <TextInput
-                  label="Bairro"
-                  value={form.neighborhood}
-                  onChange={(neighborhood) => setForm({ ...form, neighborhood })}
-                  disabled={false}
-                />
-                <TextInput
-                  label="Complemento"
-                  value={form.addressComplement}
-                  onChange={(addressComplement) => setForm({ ...form, addressComplement })}
-                  disabled={false}
-                />
-              </div>
-              <div style={styles.fieldRow}>
-                <TextInput
-                  label="Cidade"
-                  value={form.city}
-                  onChange={(city) => setForm({ ...form, city })}
-                  disabled={false}
-                />
-                <Field label="UF">
-                  <input
-                    type="text"
-                    inputMode="text"
-                    autoComplete="off"
+              {activeFormSection === "endereco" ? (
+                <section style={styles.formSection}>
+                  <h4 style={styles.formSectionTitle}>Endereco</h4>
+                  <div style={styles.fieldRow}>
+                    <CepInput
+                      label="CEP"
+                      value={form.zipcode}
+                      onChange={(zipcode) => setForm({ ...form, zipcode })}
+                      onLookup={handleCepLookup}
+                      onAddressFound={handleCepAddressFound}
+                      disabled={false}
+                    />
+                    <TextInput
+                      label="Numero"
+                      value={form.addressNumber}
+                      onChange={(addressNumber) => setForm({ ...form, addressNumber })}
+                      disabled={false}
+                      hint="Opcional"
+                    />
+                  </div>
+                  <TextInput
+                    label="Endereco"
+                    value={form.addressStreet}
+                    onChange={(addressStreet) => setForm({ ...form, addressStreet })}
                     disabled={false}
-                    value={form.state}
-                    placeholder="SP"
-                    onChange={(e) =>
-                      setForm({ ...form, state: e.target.value.toUpperCase().slice(0, 2) })
-                    }
-                    style={getInputStyle(false)}
-                    maxLength={2}
+                    placeholder="Rua / avenida"
                   />
-                </Field>
-              </div>
-            </section>
-          ) : null}
+                  <div style={styles.fieldRow}>
+                    <TextInput
+                      label="Bairro"
+                      value={form.neighborhood}
+                      onChange={(neighborhood) => setForm({ ...form, neighborhood })}
+                      disabled={false}
+                    />
+                    <TextInput
+                      label="Complemento"
+                      value={form.addressComplement}
+                      onChange={(addressComplement) => setForm({ ...form, addressComplement })}
+                      disabled={false}
+                    />
+                  </div>
+                  <div style={styles.fieldRow}>
+                    <TextInput
+                      label="Cidade"
+                      value={form.city}
+                      onChange={(city) => setForm({ ...form, city })}
+                      disabled={false}
+                    />
+                    <Field label="UF">
+                      <input
+                        type="text"
+                        inputMode="text"
+                        autoComplete="off"
+                        disabled={false}
+                        value={form.state}
+                        placeholder="SP"
+                        onChange={(e) =>
+                          setForm({ ...form, state: e.target.value.toUpperCase().slice(0, 2) })
+                        }
+                        style={getInputStyle(false)}
+                        maxLength={2}
+                      />
+                    </Field>
+                  </div>
+                </section>
+              ) : null}
 
-          {activeFormSection === "comercial" ? (
-            <section style={styles.formSection}>
-              <h4 style={styles.formSectionTitle}>Comercial</h4>
-              <Field
-                label="Forma de pagamento padrao"
-                hint="Puxada automaticamente na Nova entrada (pode ser trocada)"
-              >
-                <select
-                  value={form.defaultPaymentMethodId}
-                  onChange={(e) => setForm({ ...form, defaultPaymentMethodId: e.target.value })}
-                  style={getInputStyle(false)}
-                >
-                  <option value="">Selecione</option>
-                  {paymentMethods.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Field
-                label="Condicao de pagamento padrao"
-                hint='Digite: "5" (5 parcelas mensais), "7 14 21" ou "7/14/21" (prazos), "A Vista". Vazio = sem padrao. Se nao existir no OMIE, e criada automaticamente no envio.'
-              >
-                <input
-                  type="text"
-                  value={defaultConditionText}
-                  onChange={(e) => setDefaultConditionText(e.target.value)}
-                  placeholder='Ex.: "7/14/21"'
-                  style={getInputStyle(false)}
-                />
-              </Field>
-              <Field
-                label="Transportadora padrao"
-                hint="Puxada automaticamente na Nova entrada. Vincular uma transportadora na aba Transportadoras ja assume o padrao quando ele ainda nao foi definido."
-              >
-                <select
-                  value={form.defaultCarrierId}
-                  onChange={(e) => setForm({ ...form, defaultCarrierId: e.target.value })}
-                  style={getInputStyle(false)}
-                >
-                  <option value="">Sem transportadora padrao</option>
-                  {defaultCarrierOptions.map((carrier) => (
-                    <option key={carrier.id} value={carrier.id}>
-                      {carrier.name}
-                      {linkedCarrierIds.includes(carrier.id) ? " (vinculada)" : ""}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <label style={styles.checkbox}>
-                <input
-                  type="checkbox"
-                  checked={form.creditAccountEnabled}
-                  onChange={(e) => setForm({ ...form, creditAccountEnabled: e.target.checked })}
-                />
-                Habilitar credito do cliente
-              </label>
-              {form.creditAccountEnabled ? (
-                <div style={{ display: "grid", gap: "8px" }}>
-                  <Field label="Periodicidade do fechamento">
+              {activeFormSection === "comercial" ? (
+                <section style={styles.formSection}>
+                  <h4 style={styles.formSectionTitle}>Comercial</h4>
+                  <Field
+                    label="Forma de pagamento padrao"
+                    hint="Puxada automaticamente na Nova entrada (pode ser trocada)"
+                  >
                     <select
-                      value={form.creditPeriodicity}
-                      onChange={(e) =>
-                        setForm({
-                          ...form,
-                          creditPeriodicity: e.target.value as
-                            | "monthly"
-                            | "biweekly"
-                            | "weekly"
-                        })
-                      }
+                      value={form.defaultPaymentMethodId}
+                      onChange={(e) => setForm({ ...form, defaultPaymentMethodId: e.target.value })}
                       style={getInputStyle(false)}
                     >
-                      <option value="monthly">Mensal</option>
-                      <option value="biweekly">Quinzenal</option>
-                      <option value="weekly">Semanal</option>
+                      <option value="">Selecione</option>
+                      {paymentMethods.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name}
+                        </option>
+                      ))}
                     </select>
                   </Field>
-
-                  {form.creditPeriodicity === "weekly" ? (
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-                      <Field label="Dia da semana do fechamento">
+                  <Field
+                    label="Condicao de pagamento padrao"
+                    hint='Digite: "5" (5 parcelas mensais), "7 14 21" ou "7/14/21" (prazos), "A Vista". Vazio = sem padrao. Se nao existir no OMIE, e criada automaticamente no envio.'
+                  >
+                    <input
+                      type="text"
+                      value={defaultConditionText}
+                      onChange={(e) => setDefaultConditionText(e.target.value)}
+                      placeholder='Ex.: "7/14/21"'
+                      style={getInputStyle(false)}
+                    />
+                  </Field>
+                  <Field
+                    label="Transportadora padrao"
+                    hint="Puxada automaticamente na Nova entrada. Vincular uma transportadora na aba Transportadoras ja assume o padrao quando ele ainda nao foi definido."
+                  >
+                    <select
+                      value={form.defaultCarrierId}
+                      onChange={(e) => setForm({ ...form, defaultCarrierId: e.target.value })}
+                      style={getInputStyle(false)}
+                    >
+                      <option value="">Sem transportadora padrao</option>
+                      {defaultCarrierOptions.map((carrier) => (
+                        <option key={carrier.id} value={carrier.id}>
+                          {carrier.name}
+                          {linkedCarrierIds.includes(carrier.id) ? " (vinculada)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <label style={styles.checkbox}>
+                    <input
+                      type="checkbox"
+                      checked={form.creditAccountEnabled}
+                      onChange={(e) => setForm({ ...form, creditAccountEnabled: e.target.checked })}
+                    />
+                    Habilitar credito do cliente
+                  </label>
+                  {form.creditAccountEnabled ? (
+                    <div style={{ display: "grid", gap: "8px" }}>
+                      <Field label="Periodicidade do fechamento">
                         <select
-                          value={form.creditClosingWeekday}
+                          value={form.creditPeriodicity}
                           onChange={(e) =>
-                            setForm({ ...form, creditClosingWeekday: e.target.value })
+                            setForm({
+                              ...form,
+                              creditPeriodicity: e.target.value as "monthly" | "biweekly" | "weekly"
+                            })
                           }
                           style={getInputStyle(false)}
                         >
-                          <option value="">Selecione...</option>
-                          <option value="1">Segunda-feira</option>
-                          <option value="2">Terca-feira</option>
-                          <option value="3">Quarta-feira</option>
-                          <option value="4">Quinta-feira</option>
-                          <option value="5">Sexta-feira</option>
-                          <option value="6">Sabado</option>
-                          <option value="0">Domingo</option>
+                          <option value="monthly">Mensal</option>
+                          <option value="biweekly">Quinzenal</option>
+                          <option value="weekly">Semanal</option>
                         </select>
                       </Field>
-                      <Field label="Dias p/ vencimento do boleto" hint="Apos o fechamento">
-                        <input
-                          type="number"
-                          min={0}
-                          value={form.creditBoletoDays}
-                          onChange={(e) => setForm({ ...form, creditBoletoDays: e.target.value })}
-                          style={getInputStyle(false)}
-                          placeholder="Ex: 3"
-                        />
-                      </Field>
-                    </div>
-                  ) : (
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-                      <Field
-                        label={
-                          form.creditPeriodicity === "biweekly"
-                            ? "1o dia de fechamento"
-                            : "Dia de fechamento"
-                        }
-                        hint="Dia do mes (1 a 31)"
-                      >
-                        <input
-                          type="number"
-                          min={1}
-                          max={31}
-                          value={form.creditClosingDay}
-                          onChange={(e) => setForm({ ...form, creditClosingDay: e.target.value })}
-                          style={getInputStyle(false)}
-                          placeholder={form.creditPeriodicity === "biweekly" ? "Ex: 1" : "Ex: 30"}
-                        />
-                      </Field>
-                      <Field
-                        label={
-                          form.creditPeriodicity === "biweekly"
-                            ? "Dias p/ vencimento (1o)"
-                            : "Dias p/ vencimento do boleto"
-                        }
-                        hint="Apos o fechamento"
-                      >
-                        <input
-                          type="number"
-                          min={0}
-                          value={form.creditBoletoDays}
-                          onChange={(e) => setForm({ ...form, creditBoletoDays: e.target.value })}
-                          style={getInputStyle(false)}
-                          placeholder="Ex: 10"
-                        />
-                      </Field>
 
-                      {form.creditPeriodicity === "biweekly" ? (
-                        <>
-                          <Field label="2o dia de fechamento" hint="Dia do mes (1 a 31)">
+                      {form.creditPeriodicity === "weekly" ? (
+                        <div
+                          style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}
+                        >
+                          <Field label="Dia da semana do fechamento">
+                            <select
+                              value={form.creditClosingWeekday}
+                              onChange={(e) =>
+                                setForm({ ...form, creditClosingWeekday: e.target.value })
+                              }
+                              style={getInputStyle(false)}
+                            >
+                              <option value="">Selecione...</option>
+                              <option value="1">Segunda-feira</option>
+                              <option value="2">Terca-feira</option>
+                              <option value="3">Quarta-feira</option>
+                              <option value="4">Quinta-feira</option>
+                              <option value="5">Sexta-feira</option>
+                              <option value="6">Sabado</option>
+                              <option value="0">Domingo</option>
+                            </select>
+                          </Field>
+                          <Field label="Dias p/ vencimento do boleto" hint="Apos o fechamento">
+                            <input
+                              type="number"
+                              min={0}
+                              value={form.creditBoletoDays}
+                              onChange={(e) =>
+                                setForm({ ...form, creditBoletoDays: e.target.value })
+                              }
+                              style={getInputStyle(false)}
+                              placeholder="Ex: 3"
+                            />
+                          </Field>
+                        </div>
+                      ) : (
+                        <div
+                          style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}
+                        >
+                          <Field
+                            label={
+                              form.creditPeriodicity === "biweekly"
+                                ? "1o dia de fechamento"
+                                : "Dia de fechamento"
+                            }
+                            hint="Dia do mes (1 a 31)"
+                          >
                             <input
                               type="number"
                               min={1}
                               max={31}
-                              value={form.creditSecondClosingDay}
+                              value={form.creditClosingDay}
                               onChange={(e) =>
-                                setForm({ ...form, creditSecondClosingDay: e.target.value })
+                                setForm({ ...form, creditClosingDay: e.target.value })
                               }
                               style={getInputStyle(false)}
-                              placeholder="Ex: 16"
+                              placeholder={
+                                form.creditPeriodicity === "biweekly" ? "Ex: 1" : "Ex: 30"
+                              }
                             />
                           </Field>
-                          <Field label="Dias p/ vencimento (2o)" hint="Apos o segundo fechamento">
+                          <Field
+                            label={
+                              form.creditPeriodicity === "biweekly"
+                                ? "Dias p/ vencimento (1o)"
+                                : "Dias p/ vencimento do boleto"
+                            }
+                            hint="Apos o fechamento"
+                          >
                             <input
                               type="number"
                               min={0}
-                              value={form.creditSecondBoletoDays}
+                              value={form.creditBoletoDays}
                               onChange={(e) =>
-                                setForm({ ...form, creditSecondBoletoDays: e.target.value })
+                                setForm({ ...form, creditBoletoDays: e.target.value })
                               }
                               style={getInputStyle(false)}
                               placeholder="Ex: 10"
                             />
                           </Field>
-                        </>
-                      ) : null}
-                    </div>
-                  )}
-                </div>
-              ) : null}
-              <Field label="Uso de credito OMIE">
-                <select
-                  value={form.creditMode}
-                  onChange={(e) =>
-                    setForm({ ...form, creditMode: e.target.value as "normal" | "prepaid" })
-                  }
-                  style={getInputStyle(false)}
-                >
-                  <option value="normal">Nao debitar credito</option>
-                  <option value="prepaid">Debitar credito pre-pago</option>
-                </select>
-              </Field>
-              <label style={styles.checkbox}>
-                <input
-                  type="checkbox"
-                  checked={form.nfRequired}
-                  onChange={(e) => setForm({ ...form, nfRequired: e.target.checked })}
-                />
-                Exige nota fiscal
-              </label>
-              <Field label="Observacoes internas" hint="Visivel apenas para a operacao">
-                <textarea
-                  value={form.observations}
-                  onChange={(e) => setForm({ ...form, observations: e.target.value })}
-                  rows={3}
-                  style={{ ...getInputStyle(false), resize: "vertical", minHeight: "60px" }}
-                  placeholder="Anotacoes internas"
-                />
-              </Field>
-            </section>
-          ) : null}
 
-          {activeFormSection === "credito" ? (
-            <section style={styles.formSection}>
-              <h4 style={styles.formSectionTitle}>Credito do cliente</h4>
-              {editingId ? (
-                <div style={{ display: "grid", gap: "10px" }}>
-                  <p style={styles.cellMuted}>
-                    O adiantamento e o dinheiro que o cliente ja depositou: ele e registrado no
-                    financeiro do OMIE e espelhado aqui, e cada compra e abatida desse saldo. O
-                    limite de credito (aba Identificacao) banca as vendas no fiado; cada pagamento
-                    recebido devolve o valor, liberando novas compras.
-                  </p>
-                  <div style={styles.fieldRow}>
-                    <CreditTotal
-                      label="Adiantamento (OMIE)"
-                      value={formatMoney(creditSummary?.omieAdvanceCents ?? 0)}
-                    />
-                    <CreditTotal
-                      label="Limite de credito"
-                      value={
-                        creditSummary?.creditLimitCents != null
-                          ? formatMoney(creditSummary.creditLimitCents)
-                          : "Sem limite"
-                      }
-                    />
-                    <CreditTotal
-                      label="Utilizado"
-                      value={formatMoney(creditSummary?.usedCents ?? 0)}
-                    />
-                    <CreditTotal
-                      label="Disponivel"
-                      value={
-                        creditSummary?.availableCents != null
-                          ? formatMoney(creditSummary.availableCents)
-                          : "Sem limite"
-                      }
-                      strong
-                    />
-                  </div>
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "10px",
-                      flexWrap: "wrap"
-                    }}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => void handleSyncAdvances()}
-                      disabled={creditBusy}
-                      style={{ ...styles.secondaryButton, opacity: creditBusy ? 0.6 : 1 }}
-                    >
-                      {creditBusy ? "Sincronizando..." : "Sincronizar adiantamentos (OMIE)"}
-                    </button>
-                    <span style={styles.cellMuted}>
-                      {creditSummary?.omieSyncedAt
-                        ? `Ultimo adiantamento do OMIE: ${formatDbDateTime(creditSummary.omieSyncedAt)}`
-                        : "Nenhum adiantamento vindo do OMIE ate agora."}
-                    </span>
-                  </div>
-                  {creditSummary?.creditMode === "prepaid" ? (
-                    <p style={styles.cellMuted}>
-                      Cliente pre-pago: o deposito e lancado no OMIE (contas a receber na
-                      categoria de adiantamento) e chega aqui pela sincronizacao. Nao lance o
-                      mesmo deposito a mao — use ajuste, com motivo, so para corrigir o saldo.
-                    </p>
-                  ) : null}
-                  <div style={styles.fieldRow}>
-                    <Field label="Tipo do lancamento">
-                      <select
-                        value={creditEntryKind}
-                        onChange={(e) =>
-                          setCreditEntryKind(e.target.value as CreditEntryKind)
-                        }
-                        style={getInputStyle(false)}
-                      >
-                        {/* Pre-pago nao recebe pagamento manual: o adiantamento vem do OMIE. */}
-                        {creditSummary?.creditMode === "prepaid" ? null : (
-                          <option value="payment">Pagamento recebido (libera limite)</option>
-                        )}
-                        <option value="adjustment_credit">Ajuste a favor do cliente</option>
-                        <option value="adjustment_debit">Ajuste contra o cliente</option>
-                      </select>
-                    </Field>
-                    <MoneyInput
-                      label="Valor"
-                      value={creditAmountReais}
-                      onChange={setCreditAmountReais}
-                      allowZero={false}
-                    />
-                    <TextInput
-                      label="Motivo"
-                      value={creditReason}
-                      onChange={setCreditReason}
-                      placeholder="Ex: boleto 12/08 pago"
-                      required={creditEntryKind !== "payment"}
-                    />
-                  </div>
-                  <div>
-                    <button
-                      type="button"
-                      onClick={() => void handleCreditEntry()}
-                      disabled={creditBusy}
-                      style={{ ...styles.primaryButton, opacity: creditBusy ? 0.6 : 1 }}
-                    >
-                      {creditBusy ? "Lancando..." : "Lancar no extrato"}
-                    </button>
-                  </div>
-                  <h4 style={styles.formSectionTitle}>Extrato</h4>
-                  <div style={styles.compactScrollList}>
-                    {creditMovements.length === 0 ? (
-                      <p style={styles.cellMuted}>Nenhum lancamento de credito ate agora.</p>
-                    ) : (
-                      creditMovements.map((movement) => (
-                        <div
-                          key={movement.id}
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            gap: "10px",
-                            padding: "6px 8px",
-                            borderRadius: "8px",
-                            background: "var(--kr-surface)",
-                            border: "1px solid var(--kr-border)",
-                            fontSize: "12px"
-                          }}
-                        >
-                          <span style={{ color: "var(--kr-text-strong)", fontWeight: 700 }}>
-                            {creditMovementLabel(movement)}
-                            {movement.source === "omie" ? (
-                              <span
-                                style={{
-                                  marginLeft: "6px",
-                                  padding: "1px 6px",
-                                  borderRadius: "999px",
-                                  border: "1px solid var(--kr-border)",
-                                  color: "var(--kr-muted)",
-                                  fontSize: "10px",
-                                  fontWeight: 700
-                                }}
+                          {form.creditPeriodicity === "biweekly" ? (
+                            <>
+                              <Field label="2o dia de fechamento" hint="Dia do mes (1 a 31)">
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={31}
+                                  value={form.creditSecondClosingDay}
+                                  onChange={(e) =>
+                                    setForm({ ...form, creditSecondClosingDay: e.target.value })
+                                  }
+                                  style={getInputStyle(false)}
+                                  placeholder="Ex: 16"
+                                />
+                              </Field>
+                              <Field
+                                label="Dias p/ vencimento (2o)"
+                                hint="Apos o segundo fechamento"
                               >
-                                OMIE
-                              </span>
-                            ) : null}
-                            {movement.reason ? (
-                              <span style={{ fontWeight: 400 }}> &mdash; {movement.reason}</span>
-                            ) : null}
-                          </span>
-                          <span style={{ whiteSpace: "nowrap", color: "var(--kr-muted)" }}>
-                            {movement.created_at.slice(0, 10).split("-").reverse().join("/")}{" "}
-                            <strong style={{ color: "var(--kr-text-strong)" }}>
-                              {formatMoney(creditMovementSignedCents(movement))}
-                            </strong>
-                          </span>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  value={form.creditSecondBoletoDays}
+                                  onChange={(e) =>
+                                    setForm({ ...form, creditSecondBoletoDays: e.target.value })
+                                  }
+                                  style={getInputStyle(false)}
+                                  placeholder="Ex: 10"
+                                />
+                              </Field>
+                            </>
+                          ) : null}
                         </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <p style={styles.cellMuted}>Salve o cliente antes de lancar credito.</p>
-              )}
-            </section>
-          ) : null}
-
-          {activeFormSection === "transportadoras" ? (
-            <section style={styles.formSection}>
-              <div style={{ display: "grid", gap: "8px" }}>
-                <h4 style={styles.formSectionTitle}>Transportadoras vinculadas</h4>
-                {editingId ? (
-                  <>
-                    <Field label="Pesquisar transportadora">
-                      <input
-                        type="text"
-                        value={carrierSearch}
-                        onChange={(e) => setCarrierSearch(e.target.value)}
-                        placeholder="Nome da transportadora"
-                        style={getInputStyle(false)}
-                      />
-                    </Field>
-                    <div style={styles.compactScrollList}>
-                      {carriers.length === 0 ? (
-                        <p style={styles.cellMuted}>Nenhuma transportadora cadastrada.</p>
-                      ) : visibleCarriers.length === 0 ? (
-                        <p style={styles.cellMuted}>
-                          Nenhuma transportadora encontrada para &quot;{carrierSearch.trim()}&quot;.
-                        </p>
-                      ) : (
-                        visibleCarriers.map((carrier) => (
-                          <label key={carrier.id} style={styles.checkbox}>
-                            <input
-                              type="checkbox"
-                              checked={linkedCarrierIds.includes(carrier.id)}
-                              onChange={() => void handleToggleCarrier(carrier.id)}
-                            />
-                            {carrier.name}
-                          </label>
-                        ))
                       )}
                     </div>
-                  </>
-                ) : (
-                  <p style={styles.cellMuted}>Salve o cliente antes de vincular transportadoras.</p>
-                )}
-              </div>
-            </section>
-          ) : null}
+                  ) : null}
+                  <Field label="Uso de credito OMIE">
+                    <select
+                      value={form.creditMode}
+                      onChange={(e) =>
+                        setForm({ ...form, creditMode: e.target.value as "normal" | "prepaid" })
+                      }
+                      style={getInputStyle(false)}
+                    >
+                      <option value="normal">Nao debitar credito</option>
+                      <option value="prepaid">Debitar credito pre-pago</option>
+                    </select>
+                  </Field>
+                  <label style={styles.checkbox}>
+                    <input
+                      type="checkbox"
+                      checked={form.nfRequired}
+                      onChange={(e) => setForm({ ...form, nfRequired: e.target.checked })}
+                    />
+                    Exige nota fiscal
+                  </label>
+                  <Field label="Observacoes internas" hint="Visivel apenas para a operacao">
+                    <textarea
+                      value={form.observations}
+                      onChange={(e) => setForm({ ...form, observations: e.target.value })}
+                      rows={3}
+                      style={{ ...getInputStyle(false), resize: "vertical", minHeight: "60px" }}
+                      placeholder="Anotacoes internas"
+                    />
+                  </Field>
+                </section>
+              ) : null}
 
-          {activeFormSection === "frete" ? (
-            <section style={styles.formSection}>
-              <div style={{ display: "grid", gap: "8px" }}>
-                <h4 style={styles.formSectionTitle}>Frete do cliente</h4>
-                {editingId ? (
-                  <>
-                    <div style={{ display: "flex", gap: "8px" }}>
-                      <button
-                        type="button"
-                        onClick={() => setFreightMode("default")}
+              {activeFormSection === "credito" ? (
+                <section style={styles.formSection}>
+                  <h4 style={styles.formSectionTitle}>Credito do cliente</h4>
+                  {editingId ? (
+                    <div style={{ display: "grid", gap: "10px" }}>
+                      <p style={styles.cellMuted}>
+                        O adiantamento e o dinheiro que o cliente ja depositou: ele e registrado no
+                        financeiro do OMIE e espelhado aqui, e cada compra e abatida desse saldo. O
+                        limite de credito (aba Identificacao) banca as vendas no fiado; cada
+                        pagamento recebido devolve o valor, liberando novas compras.
+                      </p>
+                      <div style={styles.fieldRow}>
+                        <CreditTotal
+                          label="Adiantamento (OMIE)"
+                          value={formatMoney(creditSummary?.omieAdvanceCents ?? 0)}
+                        />
+                        <CreditTotal
+                          label="Limite de credito"
+                          value={
+                            creditSummary?.creditLimitCents != null
+                              ? formatMoney(creditSummary.creditLimitCents)
+                              : "Sem limite"
+                          }
+                        />
+                        <CreditTotal
+                          label="Utilizado"
+                          value={formatMoney(creditSummary?.usedCents ?? 0)}
+                        />
+                        <CreditTotal
+                          label="Disponivel"
+                          value={
+                            creditSummary?.availableCents != null
+                              ? formatMoney(creditSummary.availableCents)
+                              : "Sem limite"
+                          }
+                          strong
+                        />
+                      </div>
+                      <div
                         style={{
-                          flex: 1,
-                          padding: "6px 10px",
-                          border: freightMode === "default" ? "2px solid var(--kr-accent)" : "1px solid var(--kr-border)",
-                          borderRadius: "8px",
-                          background: freightMode === "default" ? "var(--kr-accent-soft)" : "var(--kr-surface)",
-                          color: freightMode === "default" ? "var(--kr-info-text)" : "var(--kr-muted)",
-                          fontWeight: freightMode === "default" ? 700 : 500,
-                          fontSize: "12px",
-                          cursor: "pointer"
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "10px",
+                          flexWrap: "wrap"
                         }}
                       >
-                        Frete fixo
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setFreightMode("product")}
-                        style={{
-                          flex: 1,
-                          padding: "6px 10px",
-                          border: freightMode === "product" ? "2px solid var(--kr-accent)" : "1px solid var(--kr-border)",
-                          borderRadius: "8px",
-                          background: freightMode === "product" ? "var(--kr-accent-soft)" : "var(--kr-surface)",
-                          color: freightMode === "product" ? "var(--kr-info-text)" : "var(--kr-muted)",
-                          fontWeight: freightMode === "product" ? 700 : 500,
-                          fontSize: "12px",
-                          cursor: "pointer"
-                        }}
-                      >
-                        Por produto
-                      </button>
-                    </div>
-                    <div style={styles.fieldRow}>
-                      {freightMode === "product" ? (
-                        <Field label="Produto">
+                        <button
+                          type="button"
+                          onClick={() => void handleSyncAdvances()}
+                          disabled={creditBusy}
+                          style={{ ...styles.secondaryButton, opacity: creditBusy ? 0.6 : 1 }}
+                        >
+                          {creditBusy ? "Sincronizando..." : "Sincronizar adiantamentos (OMIE)"}
+                        </button>
+                        <span style={styles.cellMuted}>
+                          {creditSummary?.omieSyncedAt
+                            ? `Ultimo adiantamento do OMIE: ${formatDbDateTime(creditSummary.omieSyncedAt)}`
+                            : "Nenhum adiantamento vindo do OMIE ate agora."}
+                        </span>
+                      </div>
+                      {creditSummary?.creditMode === "prepaid" ? (
+                        <p style={styles.cellMuted}>
+                          Cliente pre-pago: o deposito e lancado no OMIE (contas a receber na
+                          categoria de adiantamento) e chega aqui pela sincronizacao. Nao lance o
+                          mesmo deposito a mao — use ajuste, com motivo, so para corrigir o saldo.
+                        </p>
+                      ) : null}
+                      <div style={styles.fieldRow}>
+                        <Field label="Tipo do lancamento">
                           <select
-                            value={freightProductId}
-                            onChange={(e) => setFreightProductId(e.target.value)}
+                            value={creditEntryKind}
+                            onChange={(e) => setCreditEntryKind(e.target.value as CreditEntryKind)}
                             style={getInputStyle(false)}
                           >
-                            <option value="">Selecione</option>
-                            {products.map((product) => (
-                              <option key={product.id} value={product.id}>
-                                {product.code ? `${product.code} - ` : ""}
-                                {product.description}
-                              </option>
-                            ))}
+                            {/* Pre-pago nao recebe pagamento manual: o adiantamento vem do OMIE. */}
+                            {creditSummary?.creditMode === "prepaid" ? null : (
+                              <option value="payment">Pagamento recebido (libera limite)</option>
+                            )}
+                            <option value="adjustment_credit">Ajuste a favor do cliente</option>
+                            <option value="adjustment_debit">Ajuste contra o cliente</option>
                           </select>
                         </Field>
-                      ) : null}
-                      <MoneyInput
-                        label="Valor/ton (R$)"
-                        value={freightValueReais}
-                        onChange={setFreightValueReais}
-                        allowZero={false}
-                      />
+                        <MoneyInput
+                          label="Valor"
+                          value={creditAmountReais}
+                          onChange={setCreditAmountReais}
+                          allowZero={false}
+                        />
+                        <TextInput
+                          label="Motivo"
+                          value={creditReason}
+                          onChange={setCreditReason}
+                          placeholder="Ex: boleto 12/08 pago"
+                          required={creditEntryKind !== "payment"}
+                        />
+                      </div>
+                      <div>
+                        <button
+                          type="button"
+                          onClick={() => void handleCreditEntry()}
+                          disabled={creditBusy}
+                          style={{ ...styles.primaryButton, opacity: creditBusy ? 0.6 : 1 }}
+                        >
+                          {creditBusy ? "Lancando..." : "Lancar no extrato"}
+                        </button>
+                      </div>
+                      <h4 style={styles.formSectionTitle}>Extrato</h4>
+                      <div style={styles.compactScrollList}>
+                        {creditMovements.length === 0 ? (
+                          <p style={styles.cellMuted}>Nenhum lancamento de credito ate agora.</p>
+                        ) : (
+                          creditMovements.map((movement) => (
+                            <div
+                              key={movement.id}
+                              style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                gap: "10px",
+                                padding: "6px 8px",
+                                borderRadius: "8px",
+                                background: "var(--kr-surface)",
+                                border: "1px solid var(--kr-border)",
+                                fontSize: "12px"
+                              }}
+                            >
+                              <span style={{ color: "var(--kr-text-strong)", fontWeight: 700 }}>
+                                {creditMovementLabel(movement)}
+                                {movement.source === "omie" ? (
+                                  <span
+                                    style={{
+                                      marginLeft: "6px",
+                                      padding: "1px 6px",
+                                      borderRadius: "999px",
+                                      border: "1px solid var(--kr-border)",
+                                      color: "var(--kr-muted)",
+                                      fontSize: "10px",
+                                      fontWeight: 700
+                                    }}
+                                  >
+                                    OMIE
+                                  </span>
+                                ) : null}
+                                {movement.reason ? (
+                                  <span style={{ fontWeight: 400 }}>
+                                    {" "}
+                                    &mdash; {movement.reason}
+                                  </span>
+                                ) : null}
+                              </span>
+                              <span style={{ whiteSpace: "nowrap", color: "var(--kr-muted)" }}>
+                                {movement.created_at.slice(0, 10).split("-").reverse().join("/")}{" "}
+                                <strong style={{ color: "var(--kr-text-strong)" }}>
+                                  {formatMoney(creditMovementSignedCents(movement))}
+                                </strong>
+                              </span>
+                            </div>
+                          ))
+                        )}
+                      </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => void handleSaveFreightRule()}
-                      disabled={savingFreight}
-                      style={{ ...styles.secondaryButton, opacity: savingFreight ? 0.5 : 1 }}
-                    >
-                      {savingFreight ? "Salvando..." : "Salvar frete"}
-                    </button>
-                    {customerFreightRules.length === 0 ? (
-                      <p style={styles.cellMuted}>Nenhum frete cadastrado.</p>
-                    ) : (
-                      customerFreightRules.map((rule) => (
-                        <div
-                          key={rule.id}
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                            gap: "8px",
-                            borderTop: "1px solid var(--kr-border)",
-                            paddingTop: "8px"
-                          }}
-                        >
-                          <span style={styles.cellMuted}>
-                            <strong>
-                              {rule.productId ? rule.productDescription ?? "Produto" : "Frete fixo"}
-                            </strong>
-                            : {formatMoney(rule.rule.baseValueCents)}/ton
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => void handleRemoveFreightRule(rule.id)}
-                            style={styles.dangerButton}
-                          >
-                            Remover
-                          </button>
-                        </div>
-                      ))
-                    )}
-                  </>
-                ) : (
-                  <p style={styles.cellMuted}>Salve o cliente antes de cadastrar frete.</p>
-                )}
-              </div>
-            </section>
-          ) : null}
-
-          {activeFormSection === "precos" ? (
-            <section style={styles.formSection}>
-              <div style={{ display: "grid", gap: "8px" }}>
-                <h4 style={styles.formSectionTitle}>Precos especiais</h4>
-                {editingId ? (
-                  <>
-                    <div style={styles.fieldRow}>
-                      <Field label="Produto">
-                        <select
-                          value={specialProductId}
-                          onChange={(e) => setSpecialProductId(e.target.value)}
-                          style={getInputStyle(false)}
-                        >
-                          <option value="">Selecione</option>
-                          {products.map((product) => (
-                            <option key={product.id} value={product.id}>
-                              {product.code ? `${product.code} - ` : ""}
-                              {product.description}
-                            </option>
-                          ))}
-                        </select>
-                      </Field>
-                      <MoneyInput
-                        label="Preco/ton (R$)"
-                        value={specialPriceReais}
-                        onChange={setSpecialPriceReais}
-                        allowZero={false}
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => void handleSaveSpecialPrice()}
-                      style={styles.secondaryButton}
-                    >
-                      Salvar preco especial
-                    </button>
-                    {specialPrices.length === 0 ? (
-                      <p style={styles.cellMuted}>Nenhum preco especial cadastrado.</p>
-                    ) : (
-                      specialPrices.map((price) => (
-                        <div
-                          key={price.id}
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                            gap: "8px",
-                            borderTop: "1px solid var(--kr-border)",
-                            paddingTop: "8px"
-                          }}
-                        >
-                          <span style={styles.cellMuted}>
-                            <strong>{price.productDescription}</strong>
-                            {price.productCode ? ` (${price.productCode})` : ""}:{" "}
-                            {formatMoney(price.unitPriceCents)}/ton
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => void handleRemoveSpecialPrice(price.productId)}
-                            style={styles.dangerButton}
-                          >
-                            Remover
-                          </button>
-                        </div>
-                      ))
-                    )}
-                  </>
-                ) : (
-                  <p style={styles.cellMuted}>Salve o cliente antes de cadastrar preco especial.</p>
-                )}
-              </div>
-            </section>
-          ) : null}
-          </div>
-          <div style={styles.formFooter}>
-            <button
-              type="button"
-              onClick={() => void requestCloseForm()}
-              style={styles.secondaryButton}
-            >
-              Cancelar
-            </button>
-            <div style={{ display: "flex", gap: "8px" }}>
-              {editingId ? (
-                <button
-                  type="button"
-                  onClick={() => setPendingDeleteId(editingId)}
-                  style={styles.dangerButton}
-                >
-                  Excluir
-                </button>
+                  ) : (
+                    <p style={styles.cellMuted}>Salve o cliente antes de lancar credito.</p>
+                  )}
+                </section>
               ) : null}
+
+              {activeFormSection === "transportadoras" ? (
+                <section style={styles.formSection}>
+                  <div style={{ display: "grid", gap: "8px" }}>
+                    <h4 style={styles.formSectionTitle}>Transportadoras vinculadas</h4>
+                    {editingId ? (
+                      <>
+                        <Field label="Pesquisar transportadora">
+                          <input
+                            type="text"
+                            value={carrierSearch}
+                            onChange={(e) => setCarrierSearch(e.target.value)}
+                            placeholder="Nome da transportadora"
+                            style={getInputStyle(false)}
+                          />
+                        </Field>
+                        <div style={styles.compactScrollList}>
+                          {carriers.length === 0 ? (
+                            <p style={styles.cellMuted}>Nenhuma transportadora cadastrada.</p>
+                          ) : visibleCarriers.length === 0 ? (
+                            <p style={styles.cellMuted}>
+                              Nenhuma transportadora encontrada para &quot;{carrierSearch.trim()}
+                              &quot;.
+                            </p>
+                          ) : (
+                            visibleCarriers.map((carrier) => (
+                              <label key={carrier.id} style={styles.checkbox}>
+                                <input
+                                  type="checkbox"
+                                  checked={linkedCarrierIds.includes(carrier.id)}
+                                  onChange={() => void handleToggleCarrier(carrier.id)}
+                                />
+                                {carrier.name}
+                              </label>
+                            ))
+                          )}
+                        </div>
+                      </>
+                    ) : (
+                      <p style={styles.cellMuted}>
+                        Salve o cliente antes de vincular transportadoras.
+                      </p>
+                    )}
+                  </div>
+                </section>
+              ) : null}
+
+              {activeFormSection === "frete" ? (
+                <section style={styles.formSection}>
+                  <div style={{ display: "grid", gap: "8px" }}>
+                    <h4 style={styles.formSectionTitle}>Frete do cliente</h4>
+                    {editingId ? (
+                      <>
+                        <div style={{ display: "flex", gap: "8px" }}>
+                          <button
+                            type="button"
+                            onClick={() => setFreightMode("default")}
+                            style={{
+                              flex: 1,
+                              padding: "6px 10px",
+                              border:
+                                freightMode === "default"
+                                  ? "2px solid var(--kr-accent)"
+                                  : "1px solid var(--kr-border)",
+                              borderRadius: "8px",
+                              background:
+                                freightMode === "default"
+                                  ? "var(--kr-accent-soft)"
+                                  : "var(--kr-surface)",
+                              color:
+                                freightMode === "default"
+                                  ? "var(--kr-info-text)"
+                                  : "var(--kr-muted)",
+                              fontWeight: freightMode === "default" ? 700 : 500,
+                              fontSize: "12px",
+                              cursor: "pointer"
+                            }}
+                          >
+                            Frete fixo
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setFreightMode("product")}
+                            style={{
+                              flex: 1,
+                              padding: "6px 10px",
+                              border:
+                                freightMode === "product"
+                                  ? "2px solid var(--kr-accent)"
+                                  : "1px solid var(--kr-border)",
+                              borderRadius: "8px",
+                              background:
+                                freightMode === "product"
+                                  ? "var(--kr-accent-soft)"
+                                  : "var(--kr-surface)",
+                              color:
+                                freightMode === "product"
+                                  ? "var(--kr-info-text)"
+                                  : "var(--kr-muted)",
+                              fontWeight: freightMode === "product" ? 700 : 500,
+                              fontSize: "12px",
+                              cursor: "pointer"
+                            }}
+                          >
+                            Por produto
+                          </button>
+                        </div>
+                        <div style={styles.fieldRow}>
+                          {freightMode === "product" ? (
+                            <Field label="Produto">
+                              <select
+                                value={freightProductId}
+                                onChange={(e) => setFreightProductId(e.target.value)}
+                                style={getInputStyle(false)}
+                              >
+                                <option value="">Selecione</option>
+                                {products.map((product) => (
+                                  <option key={product.id} value={product.id}>
+                                    {product.code ? `${product.code} - ` : ""}
+                                    {product.description}
+                                  </option>
+                                ))}
+                              </select>
+                            </Field>
+                          ) : null}
+                          <MoneyInput
+                            label="Valor/ton (R$)"
+                            value={freightValueReais}
+                            onChange={setFreightValueReais}
+                            allowZero={false}
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void handleSaveFreightRule()}
+                          disabled={savingFreight}
+                          style={{ ...styles.secondaryButton, opacity: savingFreight ? 0.5 : 1 }}
+                        >
+                          {savingFreight ? "Salvando..." : "Salvar frete"}
+                        </button>
+                        {customerFreightRules.length === 0 ? (
+                          <p style={styles.cellMuted}>Nenhum frete cadastrado.</p>
+                        ) : (
+                          customerFreightRules.map((rule) => (
+                            <div
+                              key={rule.id}
+                              style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                gap: "8px",
+                                borderTop: "1px solid var(--kr-border)",
+                                paddingTop: "8px"
+                              }}
+                            >
+                              <span style={styles.cellMuted}>
+                                <strong>
+                                  {rule.productId
+                                    ? (rule.productDescription ?? "Produto")
+                                    : "Frete fixo"}
+                                </strong>
+                                : {formatMoney(rule.rule.baseValueCents)}/ton
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => void handleRemoveFreightRule(rule.id)}
+                                style={styles.dangerButton}
+                              >
+                                Remover
+                              </button>
+                            </div>
+                          ))
+                        )}
+                      </>
+                    ) : (
+                      <p style={styles.cellMuted}>Salve o cliente antes de cadastrar frete.</p>
+                    )}
+                  </div>
+                </section>
+              ) : null}
+
+              {activeFormSection === "precos" ? (
+                <section style={styles.formSection}>
+                  <div style={{ display: "grid", gap: "8px" }}>
+                    <h4 style={styles.formSectionTitle}>Precos especiais</h4>
+                    {editingId ? (
+                      <>
+                        <div style={styles.fieldRow}>
+                          <Field label="Produto">
+                            <select
+                              value={specialProductId}
+                              onChange={(e) => setSpecialProductId(e.target.value)}
+                              style={getInputStyle(false)}
+                            >
+                              <option value="">Selecione</option>
+                              {products.map((product) => (
+                                <option key={product.id} value={product.id}>
+                                  {product.code ? `${product.code} - ` : ""}
+                                  {product.description}
+                                </option>
+                              ))}
+                            </select>
+                          </Field>
+                          <MoneyInput
+                            label="Preco/ton (R$)"
+                            value={specialPriceReais}
+                            onChange={setSpecialPriceReais}
+                            allowZero={false}
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void handleSaveSpecialPrice()}
+                          style={styles.secondaryButton}
+                        >
+                          Salvar preco especial
+                        </button>
+                        {specialPrices.length === 0 ? (
+                          <p style={styles.cellMuted}>Nenhum preco especial cadastrado.</p>
+                        ) : (
+                          specialPrices.map((price) => (
+                            <div
+                              key={price.id}
+                              style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                gap: "8px",
+                                borderTop: "1px solid var(--kr-border)",
+                                paddingTop: "8px"
+                              }}
+                            >
+                              <span style={styles.cellMuted}>
+                                <strong>{price.productDescription}</strong>
+                                {price.productCode ? ` (${price.productCode})` : ""}:{" "}
+                                {formatMoney(price.unitPriceCents)}/ton
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => void handleRemoveSpecialPrice(price.productId)}
+                                style={styles.dangerButton}
+                              >
+                                Remover
+                              </button>
+                            </div>
+                          ))
+                        )}
+                      </>
+                    ) : (
+                      <p style={styles.cellMuted}>
+                        Salve o cliente antes de cadastrar preco especial.
+                      </p>
+                    )}
+                  </div>
+                </section>
+              ) : null}
+            </div>
+            <div style={styles.formFooter}>
               <button
                 type="button"
-                onClick={() => void handleSave()}
-                disabled={saving}
-                style={{
-                  ...styles.primaryButton,
-                  opacity: saving ? 0.7 : 1,
-                  cursor: saving ? "wait" : "pointer"
-                }}
+                onClick={() => void requestCloseForm()}
+                style={styles.secondaryButton}
               >
-                {saving ? "Salvando..." : editingId ? "Salvar alteracoes" : "Cadastrar cliente"}
+                Cancelar
               </button>
+              <div style={{ display: "flex", gap: "8px" }}>
+                {editingId ? (
+                  <button
+                    type="button"
+                    onClick={() => setPendingDeleteId(editingId)}
+                    style={styles.dangerButton}
+                  >
+                    Excluir
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => void handleSave()}
+                  disabled={saving}
+                  style={{
+                    ...styles.primaryButton,
+                    opacity: saving ? 0.7 : 1,
+                    cursor: saving ? "wait" : "pointer"
+                  }}
+                >
+                  {saving ? "Salvando..." : editingId ? "Salvar alteracoes" : "Cadastrar cliente"}
+                </button>
+              </div>
             </div>
-          </div>
-        </Fragment>
+          </Fragment>
         </CrudFormModal>
       ) : null}
 

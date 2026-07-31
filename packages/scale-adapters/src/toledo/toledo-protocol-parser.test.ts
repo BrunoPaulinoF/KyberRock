@@ -213,7 +213,10 @@ describe("captura real do indicador Toledo da pedreira (porta 9001)", () => {
   it("interpreta peso real usando os mesmos status words do campo", () => {
     // Mesmos SWA/SWB/SWC capturados, com 15.200 kg no lugar dos zeros.
     const frame = Buffer.from([
-      0x02, 0x29, 0x70, 0x60,
+      0x02,
+      0x29,
+      0x70,
+      0x60,
       ...Buffer.from("015200", "ascii"),
       ...Buffer.from("000000", "ascii")
     ]);

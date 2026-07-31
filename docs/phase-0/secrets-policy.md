@@ -25,16 +25,16 @@ Nenhum segredo real deve ser commitado no repositorio.
 
 ## Nomes Iniciais De Variaveis
 
-| Variavel                | Uso                               |
-| ----------------------- | --------------------------------- |
-| `OMIE_APP_KEY`          | App key OMIE                      |
-| `OMIE_APP_SECRET`       | App secret OMIE                   |
-| `SUPABASE_URL`          | URL do projeto Supabase           |
-| `SUPABASE_PUBLISHABLE_KEY` | Chave publica do projeto Supabase |
-| `KYBERROCK_ADMIN_SESSION_SECRET` | Assinatura das sessoes admin |
-| `SMTP_HOST`             | Servidor de e-mail                |
-| `SMTP_USER`             | Usuario de e-mail                 |
-| `SMTP_PASSWORD`         | Senha de e-mail                   |
+| Variavel                         | Uso                               |
+| -------------------------------- | --------------------------------- |
+| `OMIE_APP_KEY`                   | App key OMIE                      |
+| `OMIE_APP_SECRET`                | App secret OMIE                   |
+| `SUPABASE_URL`                   | URL do projeto Supabase           |
+| `SUPABASE_PUBLISHABLE_KEY`       | Chave publica do projeto Supabase |
+| `KYBERROCK_ADMIN_SESSION_SECRET` | Assinatura das sessoes admin      |
+| `SMTP_HOST`                      | Servidor de e-mail                |
+| `SMTP_USER`                      | Usuario de e-mail                 |
+| `SMTP_PASSWORD`                  | Senha de e-mail                   |
 
 ## Arquivos Ignorados
 

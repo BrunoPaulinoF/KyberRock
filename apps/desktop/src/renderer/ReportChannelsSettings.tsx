@@ -259,11 +259,7 @@ function toUiStatus(
   return "disconnected";
 }
 
-export function ReportChannelsSettings({
-  desktopApi
-}: {
-  desktopApi: KyberRockDesktopApi | null;
-}) {
+export function ReportChannelsSettings({ desktopApi }: { desktopApi: KyberRockDesktopApi | null }) {
   const [expanded, setExpanded] = useState(false);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [settings, setSettings] = useState<ReportChannelSettingsView | null>(null);
@@ -578,7 +574,9 @@ export function ReportChannelsSettings({
           </section>
 
           <section style={styles.section}>
-            <h4 style={{ ...styles.sectionTitle, display: "flex", alignItems: "center", gap: "6px" }}>
+            <h4
+              style={{ ...styles.sectionTitle, display: "flex", alignItems: "center", gap: "6px" }}
+            >
               WhatsApp (UAZAPI)
               <HelpTooltip
                 content="A instancia e criada pela administracao direto na UAZAPI (uma por pedreira). Cole aqui o token da instancia e clique em conectar para gerar o QR code."
@@ -615,7 +613,11 @@ export function ReportChannelsSettings({
             </label>
             {showQr ? (
               <div style={styles.qrBox}>
-                <img src={whatsappState?.qrcode ?? undefined} alt="QR code" style={styles.qrImage} />
+                <img
+                  src={whatsappState?.qrcode ?? undefined}
+                  alt="QR code"
+                  style={styles.qrImage}
+                />
                 <p style={styles.helperText}>
                   WhatsApp &gt; Aparelhos conectados &gt; Conectar aparelho. O QR se renova
                   automaticamente; se expirar, clique em conectar de novo.
@@ -702,9 +704,7 @@ export function ReportChannelsSettings({
         >
           <div style={styles.modalCard} onClick={(event) => event.stopPropagation()}>
             <div style={styles.modalIcon}>{error ? "❌" : "✅"}</div>
-            <h4 style={styles.modalTitle}>
-              {error ? "Nao foi possivel conectar" : "Tudo certo!"}
-            </h4>
+            <h4 style={styles.modalTitle}>{error ? "Nao foi possivel conectar" : "Tudo certo!"}</h4>
             <p style={styles.modalMessage}>{error ?? success}</p>
             <div style={{ display: "flex", justifyContent: "center" }}>
               <button

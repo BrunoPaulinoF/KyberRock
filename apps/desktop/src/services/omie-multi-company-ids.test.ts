@@ -135,9 +135,9 @@ describe("cadastro OMIE espelhado em duas pedreiras da mesma conta", () => {
   });
 });
 
-function referenceData(customerName = "Cliente Compartilhado"): Parameters<
-  typeof applyOmieReferenceData
->[2] {
+function referenceData(
+  customerName = "Cliente Compartilhado"
+): Parameters<typeof applyOmieReferenceData>[2] {
   return {
     customers: [
       {

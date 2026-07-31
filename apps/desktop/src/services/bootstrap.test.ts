@@ -94,7 +94,12 @@ describe("ensureInitialDesktopIdentity", () => {
              id, device_id, adapter_type, connection_config_json, stability_config_json, created_at, updated_at
            ) VALUES (?, ?, 'virtual', '{}', '{}', ?, ?)`
         )
-        .run("scale-config-1", firstIdentity.deviceId, "2026-06-06T12:00:00.000Z", "2026-06-06T12:00:00.000Z");
+        .run(
+          "scale-config-1",
+          firstIdentity.deviceId,
+          "2026-06-06T12:00:00.000Z",
+          "2026-06-06T12:00:00.000Z"
+        );
 
       const reactivatedIdentity = ensureInitialDesktopIdentity(database, {
         companyId: "company-1",
@@ -109,7 +114,10 @@ describe("ensureInitialDesktopIdentity", () => {
       expect(reactivatedIdentity.deviceId).toBe(firstIdentity.deviceId);
       expect(getLocalDesktopIdentity(database)).toEqual(reactivatedIdentity);
       expect(
-        database.prepare("SELECT device_id FROM scale_configs WHERE id = ?").pluck().get("scale-config-1")
+        database
+          .prepare("SELECT device_id FROM scale_configs WHERE id = ?")
+          .pluck()
+          .get("scale-config-1")
       ).toBe(firstIdentity.deviceId);
     } finally {
       database.close();
@@ -166,10 +174,16 @@ describe("ensureInitialDesktopIdentity", () => {
         .get("install-1") as { id: string; color: string | null };
       expect(device).toEqual({ id: "desktop-cloud-1", color: "#2563eb" });
       expect(
-        database.prepare("SELECT device_id FROM weighing_operations WHERE id = 'op-1'").pluck().get()
+        database
+          .prepare("SELECT device_id FROM weighing_operations WHERE id = 'op-1'")
+          .pluck()
+          .get()
       ).toBe("desktop-cloud-1");
       expect(
-        database.prepare("SELECT device_id FROM scale_configs WHERE id = 'scale-config-1'").pluck().get()
+        database
+          .prepare("SELECT device_id FROM scale_configs WHERE id = 'scale-config-1'")
+          .pluck()
+          .get()
       ).toBe("desktop-cloud-1");
     } finally {
       database.close();

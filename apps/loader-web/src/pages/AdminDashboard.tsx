@@ -1350,7 +1350,8 @@ export function AdminDashboard() {
                               <p
                                 style={{ margin: "4px 0 0 0", fontSize: "13px", color: "#64748b" }}
                               >
-                                {companyUnits.length} unidade(s) cadastrada(s). Desktop unico por pedreira.
+                                {companyUnits.length} unidade(s) cadastrada(s). Desktop unico por
+                                pedreira.
                               </p>
                             </div>
 
@@ -1400,7 +1401,9 @@ export function AdminDashboard() {
                                   {company.desktopActivationCode}
                                 </p>
                                 <button
-                                  onClick={() => void copyActivationCode(company.desktopActivationCode!)}
+                                  onClick={() =>
+                                    void copyActivationCode(company.desktopActivationCode!)
+                                  }
                                   style={{
                                     padding: "6px 12px",
                                     borderRadius: "6px",
@@ -1447,7 +1450,11 @@ export function AdminDashboard() {
                                   fontWeight: 700,
                                   fontSize: "12px"
                                 }}
-                                title={hasActiveUnit ? undefined : "Cadastre uma unidade ativa antes de gerar o codigo"}
+                                title={
+                                  hasActiveUnit
+                                    ? undefined
+                                    : "Cadastre uma unidade ativa antes de gerar o codigo"
+                                }
                               >
                                 Gerar novo
                               </button>

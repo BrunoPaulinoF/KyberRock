@@ -74,9 +74,7 @@ export class CreditService {
 
   getBalance(customerId: string): number {
     const row = this.db
-      .prepare(
-        `SELECT balance_cents FROM customer_credit_balances WHERE customer_id = ?`
-      )
+      .prepare(`SELECT balance_cents FROM customer_credit_balances WHERE customer_id = ?`)
       .get(customerId) as { balance_cents: number } | undefined;
     return row?.balance_cents ?? 0;
   }
@@ -196,10 +194,7 @@ export class CreditService {
    * Cliente sem limite cadastrado nao tem teto — exceto no modo pre-pago, em que o
    * teto e o proprio saldo depositado.
    */
-  validateDebit(
-    customerId: string,
-    requiredCents: number
-  ): CreditValidationResult {
+  validateDebit(customerId: string, requiredCents: number): CreditValidationResult {
     const settings = this.getSettings(customerId);
     const balance = this.getBalance(customerId);
     const available = availableCreditCents(settings, balance);
@@ -317,15 +312,7 @@ export class CreditService {
     if (amountCents <= 0) return;
     const companyId = this.getCustomerCompanyId(customerId);
     const timestamp = now.toISOString();
-    this.recordMovement(
-      companyId,
-      customerId,
-      null,
-      "credit",
-      amountCents,
-      reason,
-      timestamp
-    );
+    this.recordMovement(companyId, customerId, null, "credit", amountCents, reason, timestamp);
   }
 
   applyManualAdjustment(
@@ -348,10 +335,7 @@ export class CreditService {
     );
   }
 
-  listMovements(
-    customerId: string,
-    limit: number = 100
-  ): CreditMovementRow[] {
+  listMovements(customerId: string, limit: number = 100): CreditMovementRow[] {
     return this.db
       .prepare(
         `SELECT * FROM customer_credit_movements
@@ -368,10 +352,7 @@ export class CreditService {
    * retry) nao debita nem estorna o credito do cliente de novo. Defesa em profundidade — o
    * fluxo normal ja e barrado pela guarda de status em close/cancelWeighingOperation.
    */
-  private hasMovementForOperation(
-    operationId: string,
-    movementType: CreditMovementType
-  ): boolean {
+  private hasMovementForOperation(operationId: string, movementType: CreditMovementType): boolean {
     const row = this.db
       .prepare(
         `SELECT 1 FROM customer_credit_movements
@@ -425,9 +406,9 @@ export class CreditService {
   }
 
   private getCustomerCompanyId(customerId: string): string {
-    const row = this.db
-      .prepare(`SELECT company_id FROM customers WHERE id = ?`)
-      .get(customerId) as { company_id: string } | undefined;
+    const row = this.db.prepare(`SELECT company_id FROM customers WHERE id = ?`).get(customerId) as
+      | { company_id: string }
+      | undefined;
     if (!row) throw new Error(`Customer ${customerId} not found.`);
     return row.company_id;
   }

@@ -46,10 +46,7 @@ export interface UpdatePaymentMethodInput {
 }
 
 /** Nome exibido da forma de pagamento: o apelido quando definido, senao o nome. */
-export function paymentMethodDisplayName(row: {
-  alias: string | null;
-  name: string;
-}): string {
+export function paymentMethodDisplayName(row: { alias: string | null; name: string }): string {
   const alias = row.alias?.trim();
   return alias && alias.length > 0 ? alias : row.name;
 }
@@ -71,16 +68,65 @@ interface DefaultPaymentMethod {
 
 /** Formas de pagamento padrao que ja vem cadastradas com o sistema. */
 export const DEFAULT_PAYMENT_METHODS: readonly DefaultPaymentMethod[] = [
-  { code: "cash", name: "Dinheiro", isCustomerCredit: false, isWallet: false, sortOrder: 1, omieCode: "01" },
-  { code: "pix", name: "Pix", isCustomerCredit: false, isWallet: false, sortOrder: 2, omieCode: "17" },
-  { code: "credit_card", name: "Cartao de credito", isCustomerCredit: false, isWallet: false, sortOrder: 3, omieCode: "03" },
-  { code: "debit_card", name: "Cartao de debito", isCustomerCredit: false, isWallet: false, sortOrder: 4, omieCode: "04" },
-  { code: "boleto", name: "Boleto", isCustomerCredit: false, isWallet: false, sortOrder: 5, omieCode: "15" },
-  { code: "customer_credit", name: "Credito do cliente", isCustomerCredit: true, isWallet: false, sortOrder: 6, omieCode: null },
+  {
+    code: "cash",
+    name: "Dinheiro",
+    isCustomerCredit: false,
+    isWallet: false,
+    sortOrder: 1,
+    omieCode: "01"
+  },
+  {
+    code: "pix",
+    name: "Pix",
+    isCustomerCredit: false,
+    isWallet: false,
+    sortOrder: 2,
+    omieCode: "17"
+  },
+  {
+    code: "credit_card",
+    name: "Cartao de credito",
+    isCustomerCredit: false,
+    isWallet: false,
+    sortOrder: 3,
+    omieCode: "03"
+  },
+  {
+    code: "debit_card",
+    name: "Cartao de debito",
+    isCustomerCredit: false,
+    isWallet: false,
+    sortOrder: 4,
+    omieCode: "04"
+  },
+  {
+    code: "boleto",
+    name: "Boleto",
+    isCustomerCredit: false,
+    isWallet: false,
+    sortOrder: 5,
+    omieCode: "15"
+  },
+  {
+    code: "customer_credit",
+    name: "Credito do cliente",
+    isCustomerCredit: true,
+    isWallet: false,
+    sortOrder: 6,
+    omieCode: null
+  },
   // Em carteira: a venda sai da balanca sem forma de recebimento definida e fica na
   // carteira ate o fechamento. Vai ao OMIE como "99 - outros" para a NF sair sem o
   // faturamento gerar boleto (o meio real so existe no fechamento).
-  { code: "wallet", name: "Em carteira", isCustomerCredit: false, isWallet: true, sortOrder: 7, omieCode: "99" }
+  {
+    code: "wallet",
+    name: "Em carteira",
+    isCustomerCredit: false,
+    isWallet: true,
+    sortOrder: 7,
+    omieCode: "99"
+  }
 ];
 
 /** Codigo da forma de pagamento "credito do cliente" (fiado). */
@@ -281,18 +327,19 @@ export function deletePaymentMethod(
 }
 
 /** Mapa padrao codigo-da-forma -> codigo-da-conta usado no pre-vinculo. */
-const DEFAULT_METHOD_ACCOUNT_BINDINGS: ReadonlyArray<{ methodCode: string; accountCode: string }> = [
-  { methodCode: "cash", accountCode: "caixinha" },
-  { methodCode: "pix", accountCode: "omie_cash" },
-  { methodCode: "boleto", accountCode: "omie_cash" },
-  { methodCode: "debit_card", accountCode: "getnet" },
-  { methodCode: "credit_card", accountCode: "getnet" },
-  // Credito do cliente (fiado) e lancado uma unica vez no OMIE pela OMIE Cash.
-  { methodCode: "customer_credit", accountCode: "omie_cash" },
-  // Em carteira: o titulo fica na OMIE Cash ate o fechamento definir como o cliente
-  // paga; sem esse vinculo o pedido cairia na primeira conta corrente do tenant.
-  { methodCode: "wallet", accountCode: "omie_cash" }
-];
+const DEFAULT_METHOD_ACCOUNT_BINDINGS: ReadonlyArray<{ methodCode: string; accountCode: string }> =
+  [
+    { methodCode: "cash", accountCode: "caixinha" },
+    { methodCode: "pix", accountCode: "omie_cash" },
+    { methodCode: "boleto", accountCode: "omie_cash" },
+    { methodCode: "debit_card", accountCode: "getnet" },
+    { methodCode: "credit_card", accountCode: "getnet" },
+    // Credito do cliente (fiado) e lancado uma unica vez no OMIE pela OMIE Cash.
+    { methodCode: "customer_credit", accountCode: "omie_cash" },
+    // Em carteira: o titulo fica na OMIE Cash ate o fechamento definir como o cliente
+    // paga; sem esse vinculo o pedido cairia na primeira conta corrente do tenant.
+    { methodCode: "wallet", accountCode: "omie_cash" }
+  ];
 
 /**
  * Aplica os vinculos padrao forma -> conta para uma empresa (idempotente: so

@@ -1,7 +1,6 @@
 import type { DesktopDatabase } from "../database/sqlite.js";
 import type { OmieEntityMapping, OmieSyncMappingConfig } from "./omie-sync-config.js";
 
-
 export interface DriverVehicleSyncResult {
   fetched: number;
   created: number;

@@ -200,11 +200,7 @@ import {
   type CustomerSpecialPriceSummary,
   type ProductDefaultPriceSummary
 } from "./product-prices.js";
-import {
-  CreditService,
-  type CreditMovementRow,
-  type CustomerCreditSummary
-} from "./credit.js";
+import { CreditService, type CreditMovementRow, type CustomerCreditSummary } from "./credit.js";
 import {
   getDefaultOmieCategory,
   listOmieCategories,
@@ -1342,9 +1338,7 @@ export class DesktopRuntime {
         }
       } catch (error) {
         failed++;
-        errors.push(
-          `Fila OMIE: ${error instanceof Error ? error.message : "erro desconhecido"}`
-        );
+        errors.push(`Fila OMIE: ${error instanceof Error ? error.message : "erro desconhecido"}`);
       }
 
       // Reconciliacao: toda operacao cuja versao local esta na frente do que a
@@ -1841,7 +1835,12 @@ export class DesktopRuntime {
     variants: CustomerReportVariant[],
     formats: Array<"pdf" | "excel">,
     periodLabel?: string | null
-  ): Array<{ variant: CustomerReportVariant; format: "pdf" | "excel"; fileName: string; html: string }> {
+  ): Array<{
+    variant: CustomerReportVariant;
+    format: "pdf" | "excel";
+    fileName: string;
+    html: string;
+  }> {
     const report = this.getCustomerReport(customerId, startDate, endDate, periodLabel);
     const documents: Array<{
       variant: CustomerReportVariant;
@@ -2361,12 +2360,7 @@ export class DesktopRuntime {
 
   setProductOmieCategory(productId: string, categoryCode: string | null): void {
     this.assertDesktopAccess();
-    setProductOmieCategory(
-      this.database,
-      this.ensureIdentity().companyId,
-      productId,
-      categoryCode
-    );
+    setProductOmieCategory(this.database, this.ensureIdentity().companyId, productId, categoryCode);
   }
 
   getDefaultOmieCategory(): string | null {
@@ -2454,7 +2448,8 @@ export class DesktopRuntime {
     this.assertDesktopAccess();
     const categoryCodes = Array.isArray(patch.categoryCodes) ? patch.categoryCodes : undefined;
     const manual =
-      (categoryCodes?.length ?? 0) > 0 || (patch.accountCode !== undefined && patch.accountCode !== null);
+      (categoryCodes?.length ?? 0) > 0 ||
+      (patch.accountCode !== undefined && patch.accountCode !== null);
     return writeOmieAdvanceConfig(this.database, {
       ...(categoryCodes ? { categoryCodes } : {}),
       ...(patch.accountCode !== undefined ? { accountCode: patch.accountCode } : {}),
@@ -2951,10 +2946,7 @@ export class DesktopRuntime {
    * (ou trocar) o padrao do cliente, e o formulario aberto precisa saber disso para
    * nao regravar o valor antigo ao salvar.
    */
-  linkCustomerCarrier(
-    customerId: string,
-    carrierId: string
-  ): { defaultCarrierId: string | null } {
+  linkCustomerCarrier(customerId: string, carrierId: string): { defaultCarrierId: string | null } {
     this.assertDesktopAccess();
     linkCustomerCarrier(this.database, customerId, carrierId);
     return { defaultCarrierId: getCustomerDefaultCarrierId(this.database, customerId) };
@@ -3405,7 +3397,10 @@ export class DesktopRuntime {
       options.onProgress?.(progress);
 
       const totalBefore =
-        before.customersPage + before.productsPage + before.paymentTermsPage + before.categoriesPage;
+        before.customersPage +
+        before.productsPage +
+        before.paymentTermsPage +
+        before.categoriesPage;
       const totalAfter =
         after.customersPage + after.productsPage + after.paymentTermsPage + after.categoriesPage;
       const noProgress =

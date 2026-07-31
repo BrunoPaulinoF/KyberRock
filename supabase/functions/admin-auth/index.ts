@@ -15,7 +15,7 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: "Admin auth is not configured" }, 500);
   }
 
-  const body = await req.json().catch(() => ({})) as { username?: string; password?: string };
+  const body = (await req.json().catch(() => ({}))) as { username?: string; password?: string };
   const attemptedUsername = String(body.username ?? "").trim();
   const attemptedPassword = String(body.password ?? "");
   const attemptedHash = await sha256Hex(`${passwordSalt}${attemptedPassword}`);

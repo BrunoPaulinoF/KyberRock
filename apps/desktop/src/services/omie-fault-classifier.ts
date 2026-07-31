@@ -8,10 +8,7 @@
  */
 
 function normalize(message: string): string {
-  return message
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, ""); // remove acentos
+  return message.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, ""); // remove acentos
 }
 
 const FISCAL_CONTEXT = ["nf-e", "nfe", "faturamento", "faturar", "para emitir a nf"];

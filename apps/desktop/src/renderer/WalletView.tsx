@@ -156,7 +156,11 @@ const styles = {
     letterSpacing: "0.04em",
     whiteSpace: "nowrap" as const
   },
-  td: { padding: "9px 12px", borderTop: "1px solid var(--kr-border)", verticalAlign: "top" as const },
+  td: {
+    padding: "9px 12px",
+    borderTop: "1px solid var(--kr-border)",
+    verticalAlign: "top" as const
+  },
   num: { textAlign: "right" as const },
   plate: {
     display: "inline-block",
@@ -250,7 +254,8 @@ export function WalletView({ desktopApi }: { desktopApi: KyberRockDesktopApi | n
   }, [report]);
 
   const selectedOperations = useMemo(
-    () => [...selected].map((id) => operationsById.get(id)).filter((op): op is WalletOperation => !!op),
+    () =>
+      [...selected].map((id) => operationsById.get(id)).filter((op): op is WalletOperation => !!op),
     [selected, operationsById]
   );
   const selectedTotalCents = selectedOperations.reduce((sum, op) => sum + op.totalCents, 0);

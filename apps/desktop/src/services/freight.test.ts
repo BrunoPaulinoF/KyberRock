@@ -77,9 +77,9 @@ describe("FreightCalculator", () => {
       type: "distance_range",
       distanceKm: 120,
       ranges: [
-        { maxKm: 50, valueCents: 8000 },   // até 50km: R$ 80,00
+        { maxKm: 50, valueCents: 8000 }, // até 50km: R$ 80,00
         { maxKm: 100, valueCents: 12000 }, // 51-100km: R$ 120,00
-        { maxKm: 200, valueCents: 18000 }  // 101-200km: R$ 180,00
+        { maxKm: 200, valueCents: 18000 } // 101-200km: R$ 180,00
       ]
     };
 

@@ -69,7 +69,9 @@ export function normalizeCloudSyncConfig(
 ): CloudSyncConfig {
   const intervalRaw = Number(config?.intervalMinutes);
   const interval =
-    Number.isFinite(intervalRaw) && intervalRaw > 0 && intervalRaw !== LEGACY_CLOUD_SYNC_INTERVAL_MINUTES
+    Number.isFinite(intervalRaw) &&
+    intervalRaw > 0 &&
+    intervalRaw !== LEGACY_CLOUD_SYNC_INTERVAL_MINUTES
       ? intervalRaw
       : DEFAULT_CLOUD_SYNC_INTERVAL_MINUTES;
   return {

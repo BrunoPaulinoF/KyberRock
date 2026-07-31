@@ -84,13 +84,7 @@ const desktopApi = {
     endDate: string,
     periodLabel?: string
   ) =>
-    ipcRenderer.invoke(
-      "desktop:get-customer-report",
-      customerId,
-      startDate,
-      endDate,
-      periodLabel
-    ),
+    ipcRenderer.invoke("desktop:get-customer-report", customerId, startDate, endDate, periodLabel),
   exportCustomerReport: (
     customerId: string,
     startDate: string,
@@ -210,8 +204,7 @@ const desktopApi = {
   accountsList: () => ipcRenderer.invoke("desktop:accounts-list"),
   accountsUpdate: (id: string, input: unknown) =>
     ipcRenderer.invoke("desktop:accounts-update", id, input),
-  paymentTermsCreate: (input: unknown) =>
-    ipcRenderer.invoke("desktop:payment-terms-create", input),
+  paymentTermsCreate: (input: unknown) => ipcRenderer.invoke("desktop:payment-terms-create", input),
   paymentTermsUpdate: (id: string, input: unknown) =>
     ipcRenderer.invoke("desktop:payment-terms-update", id, input),
   paymentTermsDelete: (id: string) => ipcRenderer.invoke("desktop:payment-terms-delete", id),

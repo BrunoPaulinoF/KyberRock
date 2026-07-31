@@ -44,10 +44,8 @@ describe("InputValidator", () => {
     const validator = new InputValidator();
 
     expect(validator.sanitizeString("  Teste  ")).toBe("Teste");
-    expect(validator.sanitizeString("Teste<script>alert('xss')</script>")).toBe(
-      "Teste"
-    );
-    expect(validator.sanitizeString("Teste\"drop")).toBe("Testedrop");
+    expect(validator.sanitizeString("Teste<script>alert('xss')</script>")).toBe("Teste");
+    expect(validator.sanitizeString('Teste"drop')).toBe("Testedrop");
   });
 });
 
@@ -100,9 +98,7 @@ describe("SecurityService", () => {
     const result = service.validateOperationData(maliciousData);
 
     expect(result.valid).toBe(false);
-    expect(result.errors.some((e) => e.includes("caracteres invalidos"))).toBe(
-      true
-    );
+    expect(result.errors.some((e) => e.includes("caracteres invalidos"))).toBe(true);
   });
 
   it("masks sensitive data in logs", () => {

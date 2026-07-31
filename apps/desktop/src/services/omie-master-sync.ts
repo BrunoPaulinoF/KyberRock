@@ -98,7 +98,10 @@ function finishSyncRun(
     .run(now, success ? 1 : 0, errors.length > 0 ? JSON.stringify(errors) : null, now, runId);
 }
 
-function insertSyncEntity(database: DesktopDatabase, result: EntitySyncResult & { runId: string }): void {
+function insertSyncEntity(
+  database: DesktopDatabase,
+  result: EntitySyncResult & { runId: string }
+): void {
   const now = new Date().toISOString();
   database
     .prepare(
@@ -158,97 +161,120 @@ export async function syncOmieMasterData(
     let taggedSupplierResult: { customersPulled: number; suppliersSynced: number } | null = null;
 
     // 1. Customers
-    entities.push(await syncEntity("clientes", async () => {
-      if (options.appKey && options.appSecret) {
-        const client = createOmieClient({ appKey: options.appKey, appSecret: options.appSecret });
-        const service = new OmieSyncService(client, database);
-        taggedSupplierResult = await service.rebuildCustomersAndCarriersFromOmie(companyId);
-        return { fetched: taggedSupplierResult.customersPulled, created: taggedSupplierResult.customersPulled, updated: 0, skipped: 0 };
-      }
-      // Cloud sync path is handled by the scheduler; for master data we focus on direct/local when credentials provided
-      return { fetched: 0, created: 0, updated: 0, skipped: 0 };
-    }));
+    entities.push(
+      await syncEntity("clientes", async () => {
+        if (options.appKey && options.appSecret) {
+          const client = createOmieClient({ appKey: options.appKey, appSecret: options.appSecret });
+          const service = new OmieSyncService(client, database);
+          taggedSupplierResult = await service.rebuildCustomersAndCarriersFromOmie(companyId);
+          return {
+            fetched: taggedSupplierResult.customersPulled,
+            created: taggedSupplierResult.customersPulled,
+            updated: 0,
+            skipped: 0
+          };
+        }
+        // Cloud sync path is handled by the scheduler; for master data we focus on direct/local when credentials provided
+        return { fetched: 0, created: 0, updated: 0, skipped: 0 };
+      })
+    );
 
     // 2. Products
-    entities.push(await syncEntity("produtos", async () => {
-      if (options.appKey && options.appSecret) {
-        const client = createOmieClient({ appKey: options.appKey, appSecret: options.appSecret });
-        const service = new OmieSyncService(client, database);
-        const fetched = await service.syncProducts(companyId);
-        return { fetched, created: fetched, updated: 0, skipped: 0 };
-      }
-      return { fetched: 0, created: 0, updated: 0, skipped: 0 };
-    }));
+    entities.push(
+      await syncEntity("produtos", async () => {
+        if (options.appKey && options.appSecret) {
+          const client = createOmieClient({ appKey: options.appKey, appSecret: options.appSecret });
+          const service = new OmieSyncService(client, database);
+          const fetched = await service.syncProducts(companyId);
+          return { fetched, created: fetched, updated: 0, skipped: 0 };
+        }
+        return { fetched: 0, created: 0, updated: 0, skipped: 0 };
+      })
+    );
 
     // 3. Payment terms (parcelas) — espelho omie_payment_terms puxado do cadastro OMIE.
     // As condicoes locais continuam do KyberRock; o espelho fornece os codigos de
     // parcela para vinculo e envio no pedido/OS.
-    entities.push(await syncEntity("condicoes_pagamento", async () => {
-      if (options.appKey && options.appSecret) {
-        const client = createOmieClient({ appKey: options.appKey, appSecret: options.appSecret });
-        const service = new OmieSyncService(client, database);
-        return await service.syncPaymentConditions(companyId);
-      }
-      return { fetched: 0, created: 0, updated: 0, skipped: 0 };
-    }));
+    entities.push(
+      await syncEntity("condicoes_pagamento", async () => {
+        if (options.appKey && options.appSecret) {
+          const client = createOmieClient({ appKey: options.appKey, appSecret: options.appSecret });
+          const service = new OmieSyncService(client, database);
+          return await service.syncPaymentConditions(companyId);
+        }
+        return { fetched: 0, created: 0, updated: 0, skipped: 0 };
+      })
+    );
 
     // 4. Carriers (transportadoras)
-    entities.push(await syncEntity("transportadoras", async () => {
-      if (options.appKey && options.appSecret) {
-        const fetched = taggedSupplierResult?.suppliersSynced ?? 0;
-        return { fetched, created: fetched, updated: 0, skipped: 0 };
-      }
-      return { fetched: 0, created: 0, updated: 0, skipped: 0 };
-    }));
+    entities.push(
+      await syncEntity("transportadoras", async () => {
+        if (options.appKey && options.appSecret) {
+          const fetched = taggedSupplierResult?.suppliersSynced ?? 0;
+          return { fetched, created: fetched, updated: 0, skipped: 0 };
+        }
+        return { fetched: 0, created: 0, updated: 0, skipped: 0 };
+      })
+    );
 
     // 5. Drivers (motoristas) - prepared structure, source must be configured
-    entities.push(await syncEntity("motoristas", async () => {
-      const result = await syncDriversFromSource(database, companyId, mapping.motoristas);
-      return result;
-    }));
+    entities.push(
+      await syncEntity("motoristas", async () => {
+        const result = await syncDriversFromSource(database, companyId, mapping.motoristas);
+        return result;
+      })
+    );
 
     // 6. Vehicles (veiculos) — cadastro de veiculos do OMIE, pela UF da placa: a NF-e
     //    pede placa E UF do veiculo e o bloco frete do pedido leva as duas.
     //    Sem credenciais diretas, cai no adaptador configuravel (mapping).
-    entities.push(await syncEntity("veiculos", async () => {
-      if (options.appKey && options.appSecret) {
-        const client = createOmieClient({ appKey: options.appKey, appSecret: options.appSecret });
-        const service = new OmieSyncService(client, database);
-        return await service.syncVehicles(companyId);
-      }
-      return await syncVehiclesFromSource(database, companyId, mapping.veiculos);
-    }));
+    entities.push(
+      await syncEntity("veiculos", async () => {
+        if (options.appKey && options.appSecret) {
+          const client = createOmieClient({ appKey: options.appKey, appSecret: options.appSecret });
+          const service = new OmieSyncService(client, database);
+          return await service.syncVehicles(companyId);
+        }
+        return await syncVehiclesFromSource(database, companyId, mapping.veiculos);
+      })
+    );
 
     // 7. Payment methods (meios de pagamento) — nome + codigo OMIE, idempotente.
-    entities.push(await syncEntity("meios_pagamento", async () => {
-      if (options.appKey && options.appSecret) {
-        const client = createOmieClient({ appKey: options.appKey, appSecret: options.appSecret });
-        const service = new OmieSyncService(client, database);
-        return await service.syncPaymentMethods(companyId);
-      }
-      return { fetched: 0, created: 0, updated: 0, skipped: 0 };
-    }));
+    entities.push(
+      await syncEntity("meios_pagamento", async () => {
+        if (options.appKey && options.appSecret) {
+          const client = createOmieClient({ appKey: options.appKey, appSecret: options.appSecret });
+          const service = new OmieSyncService(client, database);
+          return await service.syncPaymentMethods(companyId);
+        }
+        return { fetched: 0, created: 0, updated: 0, skipped: 0 };
+      })
+    );
 
     // 8. Checking accounts (contas correntes) — nome + nCodCC, idempotente.
-    entities.push(await syncEntity("contas_correntes", async () => {
-      if (options.appKey && options.appSecret) {
-        const client = createOmieClient({ appKey: options.appKey, appSecret: options.appSecret });
-        const service = new OmieSyncService(client, database);
-        return await service.syncCheckingAccounts(companyId);
-      }
-      return { fetched: 0, created: 0, updated: 0, skipped: 0 };
-    }));
+    entities.push(
+      await syncEntity("contas_correntes", async () => {
+        if (options.appKey && options.appSecret) {
+          const client = createOmieClient({ appKey: options.appKey, appSecret: options.appSecret });
+          const service = new OmieSyncService(client, database);
+          return await service.syncCheckingAccounts(companyId);
+        }
+        return { fetched: 0, created: 0, updated: 0, skipped: 0 };
+      })
+    );
 
     // 9. Categorias (plano gerencial) — para o produto escolher em qual categoria a
     //    venda entra no OMIE, em vez do codigo fixo antigo.
-    entities.push(await syncEntity("categorias", async () => {
-      if (options.appKey && options.appSecret) {
-        const client = createOmieClient({ appKey: options.appKey, appSecret: options.appSecret });
-        const service = new OmieSyncService(client, database);
-        return await service.syncCategories(companyId);
-      }
-      return { fetched: 0, created: 0, updated: 0, skipped: 0 };
-    }));
+    entities.push(
+      await syncEntity("categorias", async () => {
+        if (options.appKey && options.appSecret) {
+          const client = createOmieClient({ appKey: options.appKey, appSecret: options.appSecret });
+          const service = new OmieSyncService(client, database);
+          return await service.syncCategories(companyId);
+        }
+        return { fetched: 0, created: 0, updated: 0, skipped: 0 };
+      })
+    );
 
     const success = entities.every((e) => e.success);
     const finishedAt = new Date();

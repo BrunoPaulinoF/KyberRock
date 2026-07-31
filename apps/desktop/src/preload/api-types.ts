@@ -241,10 +241,7 @@ export interface KyberRockDesktopApi {
     periodLabel?: string
   ) => Promise<{ path: string } | null>;
   getTruckControl: (startDate: string, endDate: string) => Promise<TruckControlReport>;
-  exportTruckControlPdf: (
-    startDate: string,
-    endDate: string
-  ) => Promise<{ path: string } | null>;
+  exportTruckControlPdf: (startDate: string, endDate: string) => Promise<{ path: string } | null>;
   exportReportExcel: (startDate: string, endDate: string) => Promise<{ path: string } | null>;
   listCustomerReportCustomers: () => Promise<CustomerReportOption[]>;
   getCustomerReport: (

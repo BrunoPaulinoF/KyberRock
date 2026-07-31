@@ -9,7 +9,11 @@ import {
 
 describe("buildReceiptLines", () => {
   it("includes freight when it exists", () => {
-    const lines = buildReceiptLines({ ...baseInput(), freightTotalCents: 25_000, totalCents: 175_000 });
+    const lines = buildReceiptLines({
+      ...baseInput(),
+      freightTotalCents: 25_000,
+      totalCents: 175_000
+    });
 
     const freightLine = lines.find((line) => line.startsWith("FRETE"));
 

@@ -54,7 +54,9 @@ export function AdminLogin() {
         </div>
         <div>
           <p className="auth-kicker">Gestao centralizada</p>
-          <h2 className="auth-brand-title">Empresas, usuarios e licencas em uma tela mais segura.</h2>
+          <h2 className="auth-brand-title">
+            Empresas, usuarios e licencas em uma tela mais segura.
+          </h2>
           <p className="auth-brand-copy">
             Interface administrativa com foco em leitura, decisao rapida e menor risco operacional.
           </p>

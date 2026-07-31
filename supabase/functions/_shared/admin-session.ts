@@ -17,7 +17,10 @@ export async function createAdminSession(username: string, secret: string): Prom
   return `${encodedPayload}.${signature}`;
 }
 
-export async function verifyAdminSession(token: string | null, secret: string): Promise<AdminSessionPayload | null> {
+export async function verifyAdminSession(
+  token: string | null,
+  secret: string
+): Promise<AdminSessionPayload | null> {
   if (!token) return null;
   const [encodedPayload, signature] = token.split(".");
   if (!encodedPayload || !signature) return null;

@@ -173,17 +173,12 @@ function parseFreightRule(value: string): FreightRule {
   }
 }
 
-function mapRow(
-  row: CustomerFreightRuleRow,
-  database: DesktopDatabase
-): CustomerFreightRule {
+function mapRow(row: CustomerFreightRuleRow, database: DesktopDatabase): CustomerFreightRule {
   const productDescription = row.product_id
-    ? (
-        database
-          .prepare("SELECT description FROM products WHERE id = ?")
-          .pluck()
-          .get(row.product_id) as string | undefined
-      ) ?? null
+    ? ((database
+        .prepare("SELECT description FROM products WHERE id = ?")
+        .pluck()
+        .get(row.product_id) as string | undefined) ?? null)
     : null;
 
   return {

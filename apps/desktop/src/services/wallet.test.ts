@@ -129,13 +129,43 @@ describe("wallet service", () => {
 
   it("lists only wallet sales, grouped by customer and totalled", () => {
     insertOperations(database, [
-      { id: "op-1", customer: "cust-1", paymentMethodId: walletMethodId, totalCents: 30000, soldAt: "2026-07-10" },
-      { id: "op-2", customer: "cust-1", paymentMethodId: walletMethodId, totalCents: 20000, soldAt: "2026-07-12" },
-      { id: "op-3", customer: "cust-2", paymentMethodId: walletMethodId, totalCents: 15000, soldAt: "2026-07-13" },
+      {
+        id: "op-1",
+        customer: "cust-1",
+        paymentMethodId: walletMethodId,
+        totalCents: 30000,
+        soldAt: "2026-07-10"
+      },
+      {
+        id: "op-2",
+        customer: "cust-1",
+        paymentMethodId: walletMethodId,
+        totalCents: 20000,
+        soldAt: "2026-07-12"
+      },
+      {
+        id: "op-3",
+        customer: "cust-2",
+        paymentMethodId: walletMethodId,
+        totalCents: 15000,
+        soldAt: "2026-07-13"
+      },
       // Venda em PIX: ja recebida, nao entra na carteira.
-      { id: "op-4", customer: "cust-1", paymentMethodId: pixMethodId, totalCents: 90000, soldAt: "2026-07-14" },
+      {
+        id: "op-4",
+        customer: "cust-1",
+        paymentMethodId: pixMethodId,
+        totalCents: 90000,
+        soldAt: "2026-07-14"
+      },
       // Sem forma de pagamento escolhida: idem.
-      { id: "op-5", customer: "cust-1", paymentMethodId: null, totalCents: 80000, soldAt: "2026-07-15" }
+      {
+        id: "op-5",
+        customer: "cust-1",
+        paymentMethodId: null,
+        totalCents: 80000,
+        soldAt: "2026-07-15"
+      }
     ]);
 
     const report = getWalletReport(database);
@@ -167,8 +197,20 @@ describe("wallet service", () => {
 
   it("settles the chosen sales with the receiving method and due date", () => {
     insertOperations(database, [
-      { id: "op-1", customer: "cust-1", paymentMethodId: walletMethodId, totalCents: 30000, soldAt: "2026-07-10" },
-      { id: "op-2", customer: "cust-1", paymentMethodId: walletMethodId, totalCents: 20000, soldAt: "2026-07-12" }
+      {
+        id: "op-1",
+        customer: "cust-1",
+        paymentMethodId: walletMethodId,
+        totalCents: 30000,
+        soldAt: "2026-07-10"
+      },
+      {
+        id: "op-2",
+        customer: "cust-1",
+        paymentMethodId: walletMethodId,
+        totalCents: 20000,
+        soldAt: "2026-07-12"
+      }
     ]);
 
     const settled = settleWalletOperations(
@@ -197,7 +239,13 @@ describe("wallet service", () => {
 
   it("refuses to settle the wallet with another wallet method", () => {
     insertOperations(database, [
-      { id: "op-1", customer: "cust-1", paymentMethodId: walletMethodId, totalCents: 30000, soldAt: "2026-07-10" }
+      {
+        id: "op-1",
+        customer: "cust-1",
+        paymentMethodId: walletMethodId,
+        totalCents: 30000,
+        soldAt: "2026-07-10"
+      }
     ]);
 
     expect(() =>
@@ -211,8 +259,20 @@ describe("wallet service", () => {
 
   it("refuses to settle a sale that was not sold on the wallet", () => {
     insertOperations(database, [
-      { id: "op-1", customer: "cust-1", paymentMethodId: walletMethodId, totalCents: 30000, soldAt: "2026-07-10" },
-      { id: "op-2", customer: "cust-1", paymentMethodId: pixMethodId, totalCents: 20000, soldAt: "2026-07-11" }
+      {
+        id: "op-1",
+        customer: "cust-1",
+        paymentMethodId: walletMethodId,
+        totalCents: 30000,
+        soldAt: "2026-07-10"
+      },
+      {
+        id: "op-2",
+        customer: "cust-1",
+        paymentMethodId: pixMethodId,
+        totalCents: 20000,
+        soldAt: "2026-07-11"
+      }
     ]);
 
     expect(() =>
@@ -227,7 +287,13 @@ describe("wallet service", () => {
 
   it("rejects an invalid due date and an empty selection", () => {
     insertOperations(database, [
-      { id: "op-1", customer: "cust-1", paymentMethodId: walletMethodId, totalCents: 30000, soldAt: "2026-07-10" }
+      {
+        id: "op-1",
+        customer: "cust-1",
+        paymentMethodId: walletMethodId,
+        totalCents: 30000,
+        soldAt: "2026-07-10"
+      }
     ]);
 
     expect(() =>
@@ -244,7 +310,13 @@ describe("wallet service", () => {
 
   it("reopens a settlement and puts the sale back in the wallet", () => {
     insertOperations(database, [
-      { id: "op-1", customer: "cust-1", paymentMethodId: walletMethodId, totalCents: 30000, soldAt: "2026-07-10" }
+      {
+        id: "op-1",
+        customer: "cust-1",
+        paymentMethodId: walletMethodId,
+        totalCents: 30000,
+        soldAt: "2026-07-10"
+      }
     ]);
     settleWalletOperations(database, {
       operationIds: ["op-1"],
@@ -264,13 +336,26 @@ describe("wallet service", () => {
 
   it("filters by customer, period and free search", () => {
     insertOperations(database, [
-      { id: "op-1", customer: "cust-1", paymentMethodId: walletMethodId, totalCents: 30000, soldAt: "2026-07-10" },
-      { id: "op-2", customer: "cust-2", paymentMethodId: walletMethodId, totalCents: 20000, soldAt: "2026-07-20" }
+      {
+        id: "op-1",
+        customer: "cust-1",
+        paymentMethodId: walletMethodId,
+        totalCents: 30000,
+        soldAt: "2026-07-10"
+      },
+      {
+        id: "op-2",
+        customer: "cust-2",
+        paymentMethodId: walletMethodId,
+        totalCents: 20000,
+        soldAt: "2026-07-20"
+      }
     ]);
 
     expect(getWalletReport(database, { customerId: "cust-2" }).summary.openCount).toBe(1);
     expect(
-      getWalletReport(database, { startDate: "2026-07-15", endDate: "2026-07-31" }).summary.openCount
+      getWalletReport(database, { startDate: "2026-07-15", endDate: "2026-07-31" }).summary
+        .openCount
     ).toBe(1);
     expect(getWalletReport(database, { search: "alfa" }).groups[0].customerName).toBe("Alfa");
     expect(getWalletReport(database, { search: "ABC1D23" }).summary.openCount).toBe(2);
@@ -279,8 +364,20 @@ describe("wallet service", () => {
 
   it("shows both open and settled sales when asked for all", () => {
     insertOperations(database, [
-      { id: "op-1", customer: "cust-1", paymentMethodId: walletMethodId, totalCents: 30000, soldAt: "2026-07-10" },
-      { id: "op-2", customer: "cust-1", paymentMethodId: walletMethodId, totalCents: 20000, soldAt: "2026-07-12" }
+      {
+        id: "op-1",
+        customer: "cust-1",
+        paymentMethodId: walletMethodId,
+        totalCents: 30000,
+        soldAt: "2026-07-10"
+      },
+      {
+        id: "op-2",
+        customer: "cust-1",
+        paymentMethodId: walletMethodId,
+        totalCents: 20000,
+        soldAt: "2026-07-12"
+      }
     ]);
     settleWalletOperations(database, { operationIds: ["op-1"], settlementMethodId: pixMethodId });
 

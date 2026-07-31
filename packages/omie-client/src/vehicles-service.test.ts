@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { OmieClient } from "./omie-client";
-import { listVehicles, normalizeOmiePlate, normalizePlateState, OmieVehiclesService } from "./vehicles-service";
+import {
+  listVehicles,
+  normalizeOmiePlate,
+  normalizePlateState,
+  OmieVehiclesService
+} from "./vehicles-service";
 
 function mockClient(response: unknown): OmieClient {
   return { call: vi.fn().mockResolvedValue(response) } as unknown as OmieClient;
@@ -51,7 +56,9 @@ describe("listVehicles", () => {
   });
 
   it("aceita a lista sob qualquer chave conhecida", async () => {
-    const client = mockClient({ veiculo_cadastro: [{ nCodVeic: 3, cPlaca: "AAA1111", cUF: "RJ" }] });
+    const client = mockClient({
+      veiculo_cadastro: [{ nCodVeic: 3, cPlaca: "AAA1111", cUF: "RJ" }]
+    });
 
     const result = await listVehicles(client, { pagina: 1 });
 

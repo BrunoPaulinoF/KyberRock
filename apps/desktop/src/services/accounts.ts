@@ -109,14 +109,13 @@ export function createAccount(
   const nowIso = now.toISOString();
   const sortOrder =
     input.sortOrder ??
-    ((
+    (
       database
         .prepare(
           "SELECT COALESCE(MAX(sort_order), 0) AS max FROM accounts WHERE company_id = ? AND deleted_at IS NULL"
         )
         .get(input.companyId) as { max: number }
-    ).max +
-      1);
+    ).max + 1;
 
   database
     .prepare(
@@ -165,11 +164,7 @@ export function updateAccount(
   return database.prepare("SELECT * FROM accounts WHERE id = ?").get(id) as AccountRow;
 }
 
-export function deleteAccount(
-  database: DesktopDatabase,
-  id: string,
-  now: Date = new Date()
-): void {
+export function deleteAccount(database: DesktopDatabase, id: string, now: Date = new Date()): void {
   const existing = database
     .prepare("SELECT * FROM accounts WHERE id = ? AND deleted_at IS NULL")
     .get(id) as AccountRow | undefined;
@@ -177,7 +172,9 @@ export function deleteAccount(
     throw new Error("Conta nao encontrada.");
   }
   if (existing.is_system) {
-    throw new Error("As contas padrao do sistema nao podem ser excluidas. Desative-a se necessario.");
+    throw new Error(
+      "As contas padrao do sistema nao podem ser excluidas. Desative-a se necessario."
+    );
   }
 
   const nowIso = now.toISOString();

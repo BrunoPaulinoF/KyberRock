@@ -35,7 +35,14 @@ function isTokenExpired(token: string | null): boolean {
   try {
     const [encodedPayload] = token.split(".");
     if (!encodedPayload) return true;
-    const payload = JSON.parse(atob(encodedPayload.replaceAll("-", "+").replaceAll("_", "/").padEnd(Math.ceil(encodedPayload.length / 4) * 4, "="))) as {
+    const payload = JSON.parse(
+      atob(
+        encodedPayload
+          .replaceAll("-", "+")
+          .replaceAll("_", "/")
+          .padEnd(Math.ceil(encodedPayload.length / 4) * 4, "=")
+      )
+    ) as {
       exp?: number;
     };
     return !payload.exp || payload.exp < Math.floor(Date.now() / 1000);

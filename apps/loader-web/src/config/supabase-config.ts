@@ -60,9 +60,9 @@ export const supabaseConfig = resolveSupabaseConfig(import.meta.env, getRuntimeC
 export function isSupabaseConfigured(config: SupabaseConfig = supabaseConfig): boolean {
   return Boolean(
     config.url &&
-      config.publishableKey &&
-      config.publishableKey !== MISSING_PUBLISHABLE_KEY &&
-      config.publishableKey !== "your_publishable_key_here"
+    config.publishableKey &&
+    config.publishableKey !== MISSING_PUBLISHABLE_KEY &&
+    config.publishableKey !== "your_publishable_key_here"
   );
 }
 

@@ -55,7 +55,14 @@ const styles = {
     boxShadow: "var(--kr-shadow)",
     flexShrink: 0
   },
-  field: { display: "flex", flexDirection: "column" as const, gap: "4px", fontSize: "12px", fontWeight: 700, color: "var(--kr-text-strong)" },
+  field: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "4px",
+    fontSize: "12px",
+    fontWeight: 700,
+    color: "var(--kr-text-strong)"
+  },
   input: {
     border: "1px solid var(--kr-input-border)",
     borderRadius: "10px",
@@ -83,7 +90,12 @@ const styles = {
     cursor: "pointer",
     fontWeight: 700
   },
-  summary: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "10px", flexShrink: 0 },
+  summary: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+    gap: "10px",
+    flexShrink: 0
+  },
   card: {
     background: "var(--kr-surface)",
     border: "1px solid var(--kr-border)",
@@ -117,7 +129,11 @@ const styles = {
     letterSpacing: "0.04em",
     whiteSpace: "nowrap" as const
   },
-  td: { padding: "10px 12px", borderTop: "1px solid var(--kr-border)", verticalAlign: "top" as const },
+  td: {
+    padding: "10px 12px",
+    borderTop: "1px solid var(--kr-border)",
+    verticalAlign: "top" as const
+  },
   num: { textAlign: "right" as const },
   plate: {
     display: "inline-block",
@@ -323,11 +339,15 @@ export function TruckControlView({ desktopApi }: { desktopApi: KyberRockDesktopA
                     </td>
                     <td style={styles.td}>{truck.driverName ?? "-"}</td>
                     <td style={{ ...styles.td, ...styles.num }}>{truck.operations}</td>
-                    <td style={{ ...styles.td, ...styles.num, ...(aboveAvg ? styles.aboveAvg : {}) }}>
+                    <td
+                      style={{ ...styles.td, ...styles.num, ...(aboveAvg ? styles.aboveAvg : {}) }}
+                    >
                       {formatMinutes(truck.avgMinutes)}
                       {aboveAvg ? " ▲" : ""}
                     </td>
-                    <td style={{ ...styles.td, ...styles.num }}>{formatMinutes(truck.totalMinutes)}</td>
+                    <td style={{ ...styles.td, ...styles.num }}>
+                      {formatMinutes(truck.totalMinutes)}
+                    </td>
                     <td style={{ ...styles.td, ...styles.num }}>
                       {truck.totalNetWeightKg.toLocaleString("pt-BR")}
                     </td>

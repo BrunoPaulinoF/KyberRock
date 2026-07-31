@@ -18,11 +18,10 @@ describe("listProducts", () => {
 
     await listProducts(client, { pagina: 1, registrosPorPagina: 50 });
 
-    expect(client.call).toHaveBeenCalledWith(
-      "/geral/produtos/",
-      "ListarProdutos",
-      { pagina: 1, registrosPorPagina: 50 }
-    );
+    expect(client.call).toHaveBeenCalledWith("/geral/produtos/", "ListarProdutos", {
+      pagina: 1,
+      registrosPorPagina: 50
+    });
   });
 
   it("returns formatted products with active flag", async () => {

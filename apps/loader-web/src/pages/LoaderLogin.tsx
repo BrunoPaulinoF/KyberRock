@@ -2,10 +2,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { useAuth } from "../contexts/AuthContext";
-import {
-  buildWhatsAppLink,
-  WHATSAPP_DISPLAY_NUMBER
-} from "../config/marketing";
+import { buildWhatsAppLink, WHATSAPP_DISPLAY_NUMBER } from "../config/marketing";
 import { desktopDownloadUrl } from "../lib/desktop-download";
 import { documentationUrl } from "../lib/documentation";
 
@@ -277,7 +274,12 @@ export function LoaderLogin() {
           <a href="#contato">Contato</a>
           <a href="#entrar">Entrar</a>
         </nav>
-        <a className="lp-whatsapp-cta lp-nav-cta" href={whatsAppLink} target="_blank" rel="noreferrer">
+        <a
+          className="lp-whatsapp-cta lp-nav-cta"
+          href={whatsAppLink}
+          target="_blank"
+          rel="noreferrer"
+        >
           <WhatsAppIcon />
           Falar no WhatsApp
         </a>
@@ -321,7 +323,11 @@ export function LoaderLogin() {
             <ProductMockup />
           </div>
 
-          <section id="entrar" className="auth-card lp-login-card" aria-labelledby="loader-login-title">
+          <section
+            id="entrar"
+            className="auth-card lp-login-card"
+            aria-labelledby="loader-login-title"
+          >
             <div className="auth-card-header">
               <img className="auth-card-logo" src="/kyberrocklogo.png" alt="KyberRock" />
               <div>
@@ -460,7 +466,12 @@ export function LoaderLogin() {
             Agende uma demonstracao sem compromisso. Mostramos o sistema pesando, imprimindo ticket
             e gerando pedido no OMIE com os dados da sua operacao.
           </p>
-          <a className="lp-whatsapp-cta lp-whatsapp-cta-lg" href={whatsAppLink} target="_blank" rel="noreferrer">
+          <a
+            className="lp-whatsapp-cta lp-whatsapp-cta-lg"
+            href={whatsAppLink}
+            target="_blank"
+            rel="noreferrer"
+          >
             <WhatsAppIcon />
             Chamar no WhatsApp
           </a>

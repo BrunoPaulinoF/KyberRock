@@ -2493,10 +2493,7 @@ function insertPrintReceipt(database: DesktopDatabase): void {
     .run(now, now, now);
 }
 
-function createFunctionHttpError(
-  message: string,
-  details?: unknown
-): Error & { context: unknown } {
+function createFunctionHttpError(message: string, details?: unknown): Error & { context: unknown } {
   const error = new Error("Edge Function returned a non-2xx status code") as Error & {
     context: unknown;
   };

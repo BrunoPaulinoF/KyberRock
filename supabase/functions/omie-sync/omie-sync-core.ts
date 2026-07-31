@@ -91,7 +91,11 @@ export class OmieQueueManager {
       try {
         return await this.requestOnce<TParam, TResponse>(input);
       } catch (error) {
-        if (!isOmieLimitError(error) || !(error instanceof OmieHttpError) || attempt >= this.maxRetries) {
+        if (
+          !isOmieLimitError(error) ||
+          !(error instanceof OmieHttpError) ||
+          attempt >= this.maxRetries
+        ) {
           throw error;
         }
         const retryDelayMs = getRetryDelayMs(error, attempt, this.baseBackoffMs);

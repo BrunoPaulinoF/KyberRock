@@ -113,7 +113,10 @@ function mapRow(row: ReportRecipientRow): ReportRecipient {
 // schedule_time — minutos eram aceitos na UI mas silenciosamente ignorados no
 // envio ("12:41" nunca disparava as 12:41). Normaliza para a hora cheia para o
 // que fica salvo ser exatamente o que sera executado.
-export function normalizeScheduleTime(value: string | null | undefined, fallback = "20:00"): string {
+export function normalizeScheduleTime(
+  value: string | null | undefined,
+  fallback = "20:00"
+): string {
   const hour = parseInt((value ?? "").split(":")[0] ?? "", 10);
   if (!Number.isInteger(hour) || hour < 0 || hour > 23) return fallback;
   return `${String(hour).padStart(2, "0")}:00`;
@@ -252,9 +255,7 @@ export function ensureReportRecipientsTable(database: DesktopDatabase): void {
       .run();
   }
   if (!existingColumns.has("financial_schedule_time")) {
-    database
-      .prepare("ALTER TABLE report_recipients ADD COLUMN financial_schedule_time TEXT")
-      .run();
+    database.prepare("ALTER TABLE report_recipients ADD COLUMN financial_schedule_time TEXT").run();
   }
   const currentColumns = database.prepare("PRAGMA table_info(report_recipients)").all() as Array<{
     name: string;

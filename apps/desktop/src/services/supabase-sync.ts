@@ -2602,7 +2602,8 @@ export async function syncCustomerAdvancesFromCloud(
     movementsApplied: 0,
     pages: 0,
     finished: false,
-    categoryCodes: configuredCategoryCodes.length > 0 ? configuredCategoryCodes : (state.categoryCodes ?? [])
+    categoryCodes:
+      configuredCategoryCodes.length > 0 ? configuredCategoryCodes : (state.categoryCodes ?? [])
   };
 
   try {

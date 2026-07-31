@@ -194,9 +194,8 @@ export class ReportService {
 
   getMonthlyReport(year: number, month: number, unitId: string): MonthlyReport {
     const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
-    const endDate = month === 12
-      ? `${year + 1}-01-01`
-      : `${year}-${String(month + 1).padStart(2, "0")}-01`;
+    const endDate =
+      month === 12 ? `${year + 1}-01-01` : `${year}-${String(month + 1).padStart(2, "0")}-01`;
 
     const stmt = this.db.prepare(`
       SELECT
@@ -231,11 +230,7 @@ export class ReportService {
     };
   }
 
-  getReportByProduct(
-    startDate: string,
-    endDate: string,
-    unitId: string
-  ): ProductReport[] {
+  getReportByProduct(startDate: string, endDate: string, unitId: string): ProductReport[] {
     const stmt = this.db.prepare(`
       SELECT
         p.code as product_code,
@@ -270,11 +265,7 @@ export class ReportService {
     }));
   }
 
-  getReportByCustomer(
-    startDate: string,
-    endDate: string,
-    unitId: string
-  ): CustomerReport[] {
+  getReportByCustomer(startDate: string, endDate: string, unitId: string): CustomerReport[] {
     const stmt = this.db.prepare(`
       SELECT
         c.legal_name as customer_name,
@@ -330,8 +321,7 @@ export class ReportService {
         group: "c.id, p.id"
       },
       day: {
-        select:
-          "NULL as customer_name, NULL as product_description, date(wo.created_at) as day",
+        select: "NULL as customer_name, NULL as product_description, date(wo.created_at) as day",
         group: "date(wo.created_at)"
       }
     };
@@ -423,11 +413,7 @@ export class ReportService {
     return { rows: pivotRows, totals, customers, products };
   }
 
-  getDailySeries(
-    startDate: string,
-    endDate: string,
-    unitId: string
-  ): DailySeriesPoint[] {
+  getDailySeries(startDate: string, endDate: string, unitId: string): DailySeriesPoint[] {
     const start = new Date(`${startDate}T00:00:00Z`);
     const end = new Date(`${endDate}T00:00:00Z`);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) {
@@ -531,9 +517,7 @@ export class ReportService {
   exportDailyToCSV(date: string, unitId: string): string {
     const report = this.getDailyReport(date, unitId);
 
-    const lines: string[] = [
-      "Data,Cliente,Produto,Peso Liquido (kg),Valor Produto,Frete,Total"
-    ];
+    const lines: string[] = ["Data,Cliente,Produto,Peso Liquido (kg),Valor Produto,Frete,Total"];
 
     for (const op of report.operations) {
       lines.push(
@@ -711,10 +695,11 @@ export class ReportService {
       endDate
     )}</p><section class="summary"><div class="card"><span>Caminhoes</span><strong>${report.trucks.length}</strong></div><div class="card"><span>Operacoes</span><strong>${report.totalOperations}</strong></div><div class="card"><span>Tempo medio na pedreira</span><strong>${formatMinutes(
       report.averageMinutes
-    )}</strong></div><div class="card"><span>Tonelagem</span><strong>${(report.totalNetWeightKg / 1000).toLocaleString(
-      "pt-BR",
-      { maximumFractionDigits: 2 }
-    )} t</strong></div></section><table><thead><tr><th>Placa</th><th>Motorista</th><th>Operacoes</th><th>Tempo medio</th><th>Tempo total</th><th>Peso kg</th><th>Peso por produto</th></tr></thead><tbody>${
+    )}</strong></div><div class="card"><span>Tonelagem</span><strong>${(
+      report.totalNetWeightKg / 1000
+    ).toLocaleString("pt-BR", {
+      maximumFractionDigits: 2
+    })} t</strong></div></section><table><thead><tr><th>Placa</th><th>Motorista</th><th>Operacoes</th><th>Tempo medio</th><th>Tempo total</th><th>Peso kg</th><th>Peso por produto</th></tr></thead><tbody>${
       truckRows || '<tr><td colspan="7">Sem operacoes no periodo.</td></tr>'
     }</tbody></table></body></html>`;
   }
@@ -727,7 +712,8 @@ export class ReportService {
     const total = operations.reduce((sum, op) => sum + op.totalCents, 0);
     const rows = operations
       .map(
-        (op) => `<tr><td>${escapeHtml(op.date)}</td><td>${escapeHtml(op.customerName)}</td><td>${escapeHtml(op.productDescription)}</td><td class="num">${op.netWeightKg.toLocaleString("pt-BR")}</td><td class="num">${this.formatCurrency(op.productTotalCents)}</td><td class="num">${this.formatCurrency(op.freightTotalCents)}</td><td class="num">${this.formatCurrency(op.totalCents)}</td></tr>`
+        (op) =>
+          `<tr><td>${escapeHtml(op.date)}</td><td>${escapeHtml(op.customerName)}</td><td>${escapeHtml(op.productDescription)}</td><td class="num">${op.netWeightKg.toLocaleString("pt-BR")}</td><td class="num">${this.formatCurrency(op.productTotalCents)}</td><td class="num">${this.formatCurrency(op.freightTotalCents)}</td><td class="num">${this.formatCurrency(op.totalCents)}</td></tr>`
       )
       .join("");
 
@@ -770,9 +756,24 @@ export class ReportService {
       .join("");
 
     const mixRows = [
-      { name: "Com nota", count: mix.invoice.count, weightKg: mix.invoice.weightKg, value: formatBRL(mix.invoice.totalCents) },
-      { name: "Interna", count: mix.internal.count, weightKg: mix.internal.weightKg, value: formatBRL(mix.internal.totalCents) },
-      { name: "Cancelada", count: mix.cancelled.count, weightKg: mix.cancelled.weightKg, value: "-" }
+      {
+        name: "Com nota",
+        count: mix.invoice.count,
+        weightKg: mix.invoice.weightKg,
+        value: formatBRL(mix.invoice.totalCents)
+      },
+      {
+        name: "Interna",
+        count: mix.internal.count,
+        weightKg: mix.internal.weightKg,
+        value: formatBRL(mix.internal.totalCents)
+      },
+      {
+        name: "Cancelada",
+        count: mix.cancelled.count,
+        weightKg: mix.cancelled.weightKg,
+        value: "-"
+      }
     ];
     const mixTotalCount = mixRows.reduce((sum, row) => sum + row.count, 0);
     const mixBody = mixRows
@@ -880,8 +881,14 @@ tfoot td{font-weight:bold;background:#eef2ff;border-top:2px solid var(--brand)}
 </body></html>`;
   }
 
-  private getRangeOperations(startDate: string, endDate: string, unitId: string): RangeReportOperation[] {
-    const rows = this.db.prepare(`
+  private getRangeOperations(
+    startDate: string,
+    endDate: string,
+    unitId: string
+  ): RangeReportOperation[] {
+    const rows = this.db
+      .prepare(
+        `
       SELECT
         date(wo.created_at) as operation_date,
         c.legal_name as customer_name,
@@ -898,7 +905,9 @@ tfoot td{font-weight:bold;background:#eef2ff;border-top:2px solid var(--brand)}
         AND date(wo.created_at) >= date(?)
         AND date(wo.created_at) <= date(?)
       ORDER BY wo.created_at ASC
-    `).all(unitId, startDate, endDate) as Array<{
+    `
+      )
+      .all(unitId, startDate, endDate) as Array<{
       operation_date: string;
       customer_name: string | null;
       product_description: string | null;

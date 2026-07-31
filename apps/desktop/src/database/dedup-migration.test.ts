@@ -60,7 +60,9 @@ describe("duplicate cadastro cleanup migration", () => {
       ).toBe(2);
       expect(
         database
-          .prepare("SELECT balance_cents FROM customer_credit_balances WHERE customer_id = 'omie_777'")
+          .prepare(
+            "SELECT balance_cents FROM customer_credit_balances WHERE customer_id = 'omie_777'"
+          )
           .pluck()
           .get()
       ).toBe(-6_000);
@@ -146,10 +148,7 @@ describe("duplicate cadastro cleanup migration", () => {
         database.prepare("SELECT id FROM carriers WHERE deleted_at IS NULL").pluck().all()
       ).toEqual(["carrier-omie"]);
       expect(
-        database
-          .prepare("SELECT carrier_id FROM customer_carriers WHERE id = 'cc-1'")
-          .pluck()
-          .get()
+        database.prepare("SELECT carrier_id FROM customer_carriers WHERE id = 'cc-1'").pluck().get()
       ).toBe("carrier-omie");
       expect(
         database

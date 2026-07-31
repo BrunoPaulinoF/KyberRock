@@ -324,14 +324,7 @@ export function settleWalletOperations(
       if (operation.status === "cancelled") {
         throw new Error(`A operacao ${operationId} foi cancelada e nao pode ser fechada.`);
       }
-      update.run(
-        method.id,
-        dueDate,
-        nowIso,
-        input.note?.trim() || null,
-        nowIso,
-        operationId
-      );
+      update.run(method.id, dueDate, nowIso, input.note?.trim() || null, nowIso, operationId);
       count++;
     }
     return count;

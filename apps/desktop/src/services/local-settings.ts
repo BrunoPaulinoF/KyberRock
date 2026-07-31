@@ -4,7 +4,10 @@ interface LocalSettingRow {
   value_json: string;
 }
 
-export function readLocalSetting<TValue = unknown>(database: DesktopDatabase, key: string): TValue | null {
+export function readLocalSetting<TValue = unknown>(
+  database: DesktopDatabase,
+  key: string
+): TValue | null {
   const row = database.prepare("SELECT value_json FROM local_settings WHERE key = ?").get(key) as
     | LocalSettingRow
     | undefined;

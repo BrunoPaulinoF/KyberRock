@@ -14,10 +14,7 @@ import type { CreateCustomerInput, UpdateCustomerInput } from "../services/custo
 import type { UpdatePaymentMethodInput } from "../services/payment-methods.js";
 import type { SettleWalletInput, WalletQuery } from "../services/wallet.js";
 import type { UpdateAccountInput } from "../services/accounts.js";
-import type {
-  CreatePaymentTermInput,
-  UpdatePaymentTermInput
-} from "../services/payment-terms.js";
+import type { CreatePaymentTermInput, UpdatePaymentTermInput } from "../services/payment-terms.js";
 import type {
   AddPriceTableItemInput,
   CreatePriceTableInput,
@@ -912,13 +909,10 @@ function registerIpcHandlers(): void {
     return runtime.getReportChannelSettings();
   });
 
-  ipcMain.handle(
-    "desktop:report-channels-save",
-    async (_event, input: Record<string, unknown>) => {
-      if (!runtime) throw new Error("Desktop runtime is not ready.");
-      return runtime.saveReportChannelSettings(input);
-    }
-  );
+  ipcMain.handle("desktop:report-channels-save", async (_event, input: Record<string, unknown>) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.saveReportChannelSettings(input);
+  });
 
   ipcMain.handle("desktop:whatsapp-connect", async () => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");

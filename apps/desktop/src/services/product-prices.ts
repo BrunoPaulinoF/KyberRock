@@ -249,7 +249,7 @@ export function listProductDefaultPriceSummaries(
 ): ProductDefaultPriceSummary[] {
   return database
     .prepare(
-       `SELECT
+      `SELECT
           p.id AS product_id, p.code AS product_code, p.description AS product_description,
           p.unit_price_cents AS product_unit_price_cents, p.omie_product_id, p.item_type,
           p.fiscal_recommendations_json, p.is_active AS product_is_active,
@@ -266,7 +266,7 @@ export function listProductDefaultPriceSummaries(
        WHERE p.company_id = ? AND p.deleted_at IS NULL AND p.is_active = 1
        ORDER BY p.description ASC`
     )
-     .all(companyId)
+    .all(companyId)
     .filter((row) => {
       const r = row as {
         omie_product_id: number | null;

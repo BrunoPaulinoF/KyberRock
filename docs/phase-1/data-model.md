@@ -14,24 +14,24 @@ Status: draft inicial.
 
 ## Entidades Centrais
 
-| Entidade            | SQLite                              | Supabase Postgres                         | Observacao                  |
-| ------------------- | ----------------------------------- | ----------------------------------------- | --------------------------- |
-| Empresa             | `companies`                         | `companies`                               | Multiempresa desde o inicio |
-| Unidade             | `units`                             | `units`                                   | Pedreira/local operacional  |
-| Dispositivo         | `devices`                           | `device_registrations`                    | PC da balanca               |
-| Cliente             | `customers`                         | `customers`                               | OMIE ou local pendente      |
-| Produto             | `products`                          | `products`                                | Origem OMIE                 |
-| Transportadora      | `carriers`                          | Opcional                                  | Origem OMIE quando possivel |
-| Veiculo             | `vehicles`                          | Opcional na fase inicial                  | Local operacional           |
-| Motorista           | `drivers`                           | Opcional na fase inicial                  | Local operacional           |
-| Tabela de preco     | `price_tables`, `price_table_items` | Opcional                                  | Fonte KyberRock             |
-| Forma/condicao      | `payment_terms`                     | Opcional                                  | Origem OMIE                 |
-| Operacao            | `weighing_operations`               | `weighing_operations`                     | Registro principal          |
-| Carregamento aberto | derivado de operacao                | `loading_requests`                        | Projecao para carregador    |
-| Cupom               | `print_receipts`                    | Opcional                                                        | Reimpressao auditada        |
-| Fila sync           | `sync_queue`                        | Nao                                                             | Local-only                  |
-| Auditoria           | `audit_logs`                        | Resumo opcional                                                 | Historico imutavel          |
-| Logs tecnicos       | `technical_logs`                    | Agregado opcional                                               | Sem segredos                |
+| Entidade            | SQLite                              | Supabase Postgres        | Observacao                  |
+| ------------------- | ----------------------------------- | ------------------------ | --------------------------- |
+| Empresa             | `companies`                         | `companies`              | Multiempresa desde o inicio |
+| Unidade             | `units`                             | `units`                  | Pedreira/local operacional  |
+| Dispositivo         | `devices`                           | `device_registrations`   | PC da balanca               |
+| Cliente             | `customers`                         | `customers`              | OMIE ou local pendente      |
+| Produto             | `products`                          | `products`               | Origem OMIE                 |
+| Transportadora      | `carriers`                          | Opcional                 | Origem OMIE quando possivel |
+| Veiculo             | `vehicles`                          | Opcional na fase inicial | Local operacional           |
+| Motorista           | `drivers`                           | Opcional na fase inicial | Local operacional           |
+| Tabela de preco     | `price_tables`, `price_table_items` | Opcional                 | Fonte KyberRock             |
+| Forma/condicao      | `payment_terms`                     | Opcional                 | Origem OMIE                 |
+| Operacao            | `weighing_operations`               | `weighing_operations`    | Registro principal          |
+| Carregamento aberto | derivado de operacao                | `loading_requests`       | Projecao para carregador    |
+| Cupom               | `print_receipts`                    | Opcional                 | Reimpressao auditada        |
+| Fila sync           | `sync_queue`                        | Nao                      | Local-only                  |
+| Auditoria           | `audit_logs`                        | Resumo opcional          | Historico imutavel          |
+| Logs tecnicos       | `technical_logs`                    | Agregado opcional        | Sem segredos                |
 
 ## SQLite Draft
 
@@ -239,7 +239,7 @@ Projecao local da fila do carregador: `id`, `operation_id`, `company_id`, `unit_
 | Campo             | Tipo          | Observacao                                            |
 | ----------------- | ------------- | ----------------------------------------------------- |
 | `id`              | text pk       | UUID global                                           |
-| `target`          | text          | `cloud`, `omie`                                    |
+| `target`          | text          | `cloud`, `omie`                                       |
 | `action`          | text          | Ex.: `upsert_operation`, `create_sales_order`         |
 | `entity_type`     | text          | Ex.: `operation`                                      |
 | `entity_id`       | text          | UUID                                                  |

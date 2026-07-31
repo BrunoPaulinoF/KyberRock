@@ -44,9 +44,7 @@ export async function discoverScale(
     batchSize?: number;
   } = {}
 ): Promise<DiscoveredScale | null> {
-  const subnets = options.subnet
-    ? [options.subnet]
-    : (options.subnets ?? localSubnets());
+  const subnets = options.subnet ? [options.subnet] : (options.subnets ?? localSubnets());
   const ports = options.port ? [options.port] : (options.ports ?? DEFAULT_DISCOVERY_PORTS);
   const timeoutMs = options.timeoutMs ?? 1200;
   const batchSize = options.batchSize ?? 20;

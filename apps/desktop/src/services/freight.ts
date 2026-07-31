@@ -115,9 +115,7 @@ export function isFreightModality(value: unknown): value is FreightModality {
 }
 
 /** Codigo "modalidade" do OMIE para a modalidade escolhida (default "9" = sem frete). */
-export function freightModalityOmieCode(
-  key: FreightModality | string | null | undefined
-): string {
+export function freightModalityOmieCode(key: FreightModality | string | null | undefined): string {
   return getFreightModalityInfo(key).omieCode;
 }
 
@@ -163,7 +161,9 @@ export class FreightCalculator {
 
       case "distance_range": {
         if (!rule.distanceKm || !rule.ranges || rule.ranges.length === 0) {
-          throw new Error("Distance and ranges are required for distance_range freight calculation");
+          throw new Error(
+            "Distance and ranges are required for distance_range freight calculation"
+          );
         }
         freightCents = this.findRangeValue(rule.distanceKm, rule.ranges);
         break;
@@ -181,11 +181,7 @@ export class FreightCalculator {
     return freightCents;
   }
 
-  recalculateAfterExit(
-    netWeightKg: number,
-    rule: FreightRule,
-    newBaseValueCents: number
-  ): number {
+  recalculateAfterExit(netWeightKg: number, rule: FreightRule, newBaseValueCents: number): number {
     const updatedRule: FreightRule = {
       ...rule,
       baseValueCents: newBaseValueCents
