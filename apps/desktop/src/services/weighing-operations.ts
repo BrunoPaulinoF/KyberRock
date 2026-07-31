@@ -1126,6 +1126,12 @@ function resolveFreightModalidade(
   freightType: string | null | undefined,
   freightTotalCents: number
 ): string {
+  // FOB (frete por conta do cliente) vai ao OMIE como "9 - sem incidencia de frete":
+  // quando o frete e responsabilidade do cliente a Pedreira nao contrata nem responde
+  // pelo transporte, entao a operacao nao deve nascer no OMIE como "frete por conta do
+  // destinatario". Sai antes da compatibilidade abaixo de proposito: FOB com valor
+  // lancado continua "9", nao vira CIF.
+  if (getFreightModalityInfo(freightType).key === "fob") return "9";
   const code = freightModalityOmieCode(freightType);
   if (code === "9" && freightTotalCents > 0) return "0";
   return code;
