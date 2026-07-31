@@ -808,6 +808,7 @@ Deno.test("create_order envia os dados de transporte no frete e o motorista na N
         freightModalidade: "2",
         transport: {
           plate: "abc-1d23",
+          plateState: "mg",
           driverName: "Joao Motorista",
           carrierOmieId: 987654,
           cargoWeightKg: 15000,
@@ -826,6 +827,8 @@ Deno.test("create_order envia os dados de transporte no frete e o motorista na N
   assertEquals(frete.valor_frete, 200);
   // Placa normalizada (maiuscula, sem separadores) e transportadora pelo codigo OMIE.
   assertEquals(frete.placa, "ABC1D23");
+  // A NF-e pede placa E UF do veiculo: a UF vem do cadastro de veiculos do desktop.
+  assertEquals(frete.uf_placa, "MG");
   assertEquals(frete.codigo_transportadora, 987654);
   // Granel: peso bruto = liquido = peso pesado, em 1 volume.
   assertEquals(frete.peso_bruto, 15000);
@@ -835,7 +838,8 @@ Deno.test("create_order envia os dados de transporte no frete e o motorista na N
   assertEquals("veiculo_proprio" in frete, false);
 
   const infos = body.informacoes_adicionais as Record<string, unknown>;
-  assertEquals(infos.dados_adicionais_nf, "Motorista: Joao Motorista - Placa: ABC-1D23");
+  // A UF acompanha a placa no texto (a OS nao tem bloco frete para o uf_placa).
+  assertEquals(infos.dados_adicionais_nf, "Motorista: Joao Motorista - Placa: ABC-1D23/MG");
 });
 
 Deno.test("create_order com transporte proprio marca veiculo_proprio e omite transportadora", async () => {
@@ -891,6 +895,9 @@ Deno.test("create_order com transporte proprio marca veiculo_proprio e omite tra
   assertEquals(frete.veiculo_proprio, "S");
   assertEquals("codigo_transportadora" in frete, false);
   assertEquals(frete.placa, "XYZ4E56");
+  // Veiculo sem UF no cadastro: o pedido sai so com a placa (campo fiscal nao aceita
+  // valor inventado), como antes.
+  assertEquals("uf_placa" in frete, false);
 });
 
 Deno.test("create_order cadastra o cliente no OMIE na hora quando ele nao tem codigo", async () => {

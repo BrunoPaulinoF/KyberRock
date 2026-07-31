@@ -1133,12 +1133,20 @@ describe("weighing operations", () => {
       expect(built).not.toBeNull();
       expect(built!.payload.transport).toEqual({
         plate: "ABC1D23",
+        // Veiculo ainda sem UF no cadastro: o pedido segue so com a placa.
+        plateState: null,
         driverName: "Motorista Teste",
         carrierOmieId: 987654,
         carrierName: "Transportadora Teste",
         cargoWeightKg: 6_500,
         ownVehicle: false
       });
+
+      // Com a UF do cadastro (sincronizada do OMIE), ela acompanha a placa no frete.
+      database
+        .prepare("UPDATE vehicles SET plate_state = 'mg' WHERE id = 'vehicle-1'")
+        .run();
+      expect(buildOmieBillingJob(database, operation.id)!.payload.transport?.plateState).toBe("MG");
     } finally {
       database.close();
     }

@@ -132,6 +132,20 @@ Financeiro:
 - Compat: operacao antiga sem tipo salvo (default `none` -> `"9"`) que tenha valor de frete
   continua indo como CIF `"0"`, para nao enviar "sem frete" num pedido que tinha frete.
 
+#### Placa e UF do veiculo (implementado)
+
+- A NF-e pede placa **e** UF do veiculo no transporte: o bloco `frete` leva `placa` +
+  `uf_placa`. A UF sai de `vehicles.plate_state`, e so vai quando e uma UF valida de 2 letras
+  (campo fiscal nao aceita texto livre); sem ela o pedido segue so com a placa.
+- A OS nao tem bloco `frete`: na operacao interna a UF acompanha a placa no texto de
+  `cDadosAdicNF` (`Placa: ABC1D23/MG`).
+- `vehicles.plate_state` e alimentada pelo sync do cadastro de veiculos do OMIE
+  (`ListarVeiculos` em `/transportador/veiculo/`, entidade `veiculos` do master sync). O casamento
+  e por placa normalizada (so letras/numeros): veiculo local existente recebe a UF e o
+  `omie_vehicle_id`; o que so existe no OMIE entra como cadastro novo (`source = 'omie'`). Uma UF
+  ja preenchida no KyberRock nunca e apagada por um cadastro do OMIE sem UF.
+- O campo tambem e editavel no cadastro de placas, para corrigir/preencher o que o OMIE nao tem.
+
 #### Condicao de pagamento (implementado)
 
 - A condicao local (`payment_terms`) pode ser vinculada a um codigo de parcela do OMIE via

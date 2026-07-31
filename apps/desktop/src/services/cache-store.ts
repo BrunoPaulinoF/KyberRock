@@ -56,6 +56,8 @@ export interface ProductCacheEntry {
 export interface VehicleCacheEntry {
   id: string;
   plate: string;
+  /** UF de emplacamento (`uf_placa` do frete no OMIE). */
+  plateState: string | null;
   description: string | null;
   carrierId: string | null;
   isActive: boolean;
@@ -235,6 +237,7 @@ interface ProductRow {
 interface VehicleRow {
   id: string;
   plate: string;
+  plate_state: string | null;
   description: string | null;
   carrier_id: string | null;
   is_active: number;
@@ -412,6 +415,7 @@ function mapVehicle(row: VehicleRow): VehicleCacheEntry {
   return {
     id: row.id,
     plate: row.plate,
+    plateState: row.plate_state,
     description: row.description,
     carrierId: row.carrier_id,
     isActive: row.is_active === 1
@@ -787,7 +791,7 @@ export class CacheStore {
   private loadVehicles(companyId: string): void {
     const rows = this.db
       .prepare(
-        `SELECT id, plate, description, carrier_id, is_active
+        `SELECT id, plate, plate_state, description, carrier_id, is_active
          FROM vehicles WHERE company_id = ? AND deleted_at IS NULL`
       )
       .all(companyId) as VehicleRow[];

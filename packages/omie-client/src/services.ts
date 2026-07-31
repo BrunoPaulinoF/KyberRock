@@ -7,6 +7,7 @@ export * from "./payment-methods-service.js";
 export * from "./checking-accounts-service.js";
 export * from "./categories-service.js";
 export * from "./parcelas-service.js";
+export * from "./vehicles-service.js";
 export * from "./omie-tags.js";
 export * from "./omie-dates.js";
 export * from "./accounts-payable-service.js";

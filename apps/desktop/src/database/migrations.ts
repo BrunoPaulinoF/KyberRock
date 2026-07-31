@@ -1486,5 +1486,15 @@ UPDATE carriers
 
 DROP TABLE carrier_dedup;
 `
+  },
+  {
+    version: 40,
+    name: "vehicle_plate_state",
+    sql: `
+-- UF da placa do veiculo: e o \`uf_placa\` do bloco frete do pedido de venda do OMIE
+-- (a NF-e pede placa E UF do veiculo no transporte). Vem do cadastro de veiculos do
+-- OMIE no sync (\`ListarVeiculos\`) e pode ser corrigida a mao no cadastro local.
+ALTER TABLE vehicles ADD COLUMN plate_state TEXT;
+`
   }
 ];

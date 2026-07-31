@@ -216,6 +216,11 @@ type CreateOrderPayload = {
    */
   transport?: {
     plate?: string | null;
+    /**
+     * UF de emplacamento do veiculo (`uf_placa` do bloco frete). A NF-e pede placa E UF
+     * no transporte; vem do cadastro de veiculos do desktop, sincronizado do OMIE.
+     */
+    plateState?: string | null;
     driverName?: string | null;
     /** Codigo OMIE (codigo_cliente_omie) da transportadora vinculada ao veiculo. */
     carrierOmieId?: number | null;
@@ -2427,6 +2432,12 @@ function resolveCategoryCode(code: string | null | undefined): string {
 /** Codigos "modalidade" (modFrete) validos no frete do pedido de venda do OMIE. */
 const OMIE_FREIGHT_MODALIDADES = new Set(["0", "1", "2", "3", "4", "9"]);
 
+/** UF valida (2 letras) ou null — o `uf_placa` da NF-e nao aceita qualquer texto. */
+function normalizePlateState(value: string | null | undefined): string | null {
+  const text = (value ?? "").trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(text) ? text : null;
+}
+
 function normalizeFreightModalidade(value: string | null | undefined): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
@@ -2446,6 +2457,10 @@ function buildOmieFreight(
   // Dados de transporte da pesagem: placa, transportadora (codigo OMIE) e pesos da
   // carga. Granel sem embalagem: peso_bruto = peso_liquido = peso liquido pesado.
   const plate = transport?.plate?.trim().toUpperCase().replace(/[^A-Z0-9]/g, "") || null;
+  // UF da placa: a NF-e pede placa E UF do veiculo no transporte. So vai quando e uma
+  // UF valida (2 letras) — campo fiscal nao aceita lixo, e sem ela o pedido segue como
+  // antes, so com a placa.
+  const plateState = normalizePlateState(transport?.plateState);
   const carrierOmieId =
     typeof transport?.carrierOmieId === "number" && transport.carrierOmieId > 0
       ? transport.carrierOmieId
@@ -2462,6 +2477,7 @@ function buildOmieFreight(
     modalidade,
     valor_frete: hasValue ? Math.round(freightTotalCents as number) / 100 : 0,
     ...(plate !== null ? { placa: plate } : {}),
+    ...(plate !== null && plateState !== null ? { uf_placa: plateState } : {}),
     // Transporte proprio (3/4) nao leva transportadora — o emitente transporta.
     ...(carrierOmieId !== null && !ownVehicle ? { codigo_transportadora: carrierOmieId } : {}),
     ...(ownVehicle ? { veiculo_proprio: "S" } : {}),
@@ -2486,8 +2502,11 @@ function buildTransportAdditionalData(
   const parts: string[] = [];
   const driverName = transport.driverName?.trim();
   const plate = transport.plate?.trim().toUpperCase();
+  // A OS nao tem bloco `frete` para levar `uf_placa`, entao na operacao interna a UF
+  // acompanha a placa no texto.
+  const plateState = normalizePlateState(transport.plateState);
   if (driverName) parts.push(`Motorista: ${driverName}`);
-  if (plate) parts.push(`Placa: ${plate}`);
+  if (plate) parts.push(`Placa: ${plate}${plateState !== null ? `/${plateState}` : ""}`);
   return parts.length > 0 ? parts.join(" - ") : null;
 }
 
