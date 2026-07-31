@@ -19,29 +19,40 @@ export interface WeighingOperation {
 // `truck-drive-off` keyframes duration in loader-ui.css.
 const DEPART_ANIMATION_MS = 1150;
 
-function formatWeight(weightKg: number | null): string {
-  // Distingue "sem peso" (null) de um peso legitimamente zero. Antes, `!weightKg` tratava 0
-  // como "A definir" porque o valor nulo era coagido para 0 no mapRow.
-  if (weightKg === null) {
-    return "A definir";
-  }
-
-  return `${weightKg.toLocaleString("pt-BR")} kg`;
-}
-
 // Fuso da pedreira (unidade), nao o do navegador do carregador. Sem timeZone, o horario de
 // chegada aparecia deslocado para um carregador acessando de outro fuso. Default: America/Sao_Paulo.
 const DEFAULT_UNIT_TIMEZONE = "America/Sao_Paulo";
 
-function formatDateTime(value: string | null | undefined, timeZone?: string | null): string {
+/**
+ * Horario de chegada no formato mais curto possivel para o card compacto:
+ * so `HH:mm` quando o caminhao chegou no mesmo dia da unidade, `dd/MM HH:mm`
+ * quando a fila atravessou a virada do dia.
+ */
+export function formatArrival(
+  value: string | null | undefined,
+  timeZone?: string | null,
+  now: number = Date.now()
+): string {
   if (!value) return "-";
-  return new Date(value).toLocaleString("pt-BR", {
-    timeZone: timeZone || DEFAULT_UNIT_TIMEZONE,
-    day: "2-digit",
-    month: "2-digit",
+  const arrived = new Date(value);
+  if (Number.isNaN(arrived.getTime())) return "-";
+
+  const zone = timeZone || DEFAULT_UNIT_TIMEZONE;
+  const time = arrived.toLocaleString("pt-BR", {
+    timeZone: zone,
     hour: "2-digit",
     minute: "2-digit"
   });
+
+  const dayFormat: Intl.DateTimeFormatOptions = {
+    timeZone: zone,
+    day: "2-digit",
+    month: "2-digit"
+  };
+  const arrivedDay = arrived.toLocaleDateString("pt-BR", dayFormat);
+  const today = new Date(now).toLocaleDateString("pt-BR", dayFormat);
+
+  return arrivedDay === today ? time : `${arrivedDay} ${time}`;
 }
 
 interface LoadingRequestRow {
@@ -357,7 +368,10 @@ export function LoaderDashboard() {
         </div>
 
         {isLoading ? (
-          <EmptyState title="Carregando fila..." description="Buscando cargas em aberto da unidade." />
+          <EmptyState
+            title="Carregando fila..."
+            description="Buscando cargas em aberto da unidade."
+          />
         ) : renderedOperations.length === 0 ? (
           <EmptyState
             title="Nenhuma carga aguardando"
@@ -418,30 +432,37 @@ function LoadingCard({
       }}
     >
       <div className="operation-card__content">
-        <div className="operation-top-row">
-          <span className="queue-position">{position}º</span>
-          <div className="operation-identity">
-            <h3 className="operation-plate">{operation.plate}</h3>
-            <p className="operation-customer">{operation.customerName}</p>
-          </div>
-          <span className={`waiting-pill${isOvertime ? " waiting-pill--overtime" : ""}`}>
-            {isOvertime ? "Acima da media" : "Aguardando"}
-          </span>
-        </div>
+        <span className="queue-position">{position}º</span>
 
-        <dl className="details-grid">
-          <InfoItem label="Motorista" value={operation.driverName} />
-          <InfoItem label="Produto" value={operation.productDescription} />
-          <InfoItem label="Quantidade" value={formatWeight(operation.entryWeightKg)} />
-          <InfoItem label="Chegada" value={formatDateTime(operation.createdAt, unitTimezone)} />
-        </dl>
+        <div className="operation-summary">
+          <div className="operation-headline">
+            <h3 className="operation-plate">{operation.plate || "SEM PLACA"}</h3>
+            <span className="operation-arrival" title="Chegada">
+              {formatArrival(operation.createdAt, unitTimezone)}
+            </span>
+            {isOvertime ? (
+              <span className="waiting-pill waiting-pill--overtime">Acima da media</span>
+            ) : null}
+          </div>
+          <p className="operation-customer" title={operation.customerName}>
+            {operation.customerName}
+          </p>
+          <p className="operation-meta">
+            <span className="operation-meta__product">{operation.productDescription}</span>
+            <span className="operation-meta__sep" aria-hidden="true">
+              ·
+            </span>
+            <span className="operation-meta__driver">{operation.driverName}</span>
+          </p>
+        </div>
 
         <button
           onClick={onComplete}
           disabled={isSubmitting}
           className="primary-action complete-button"
+          aria-label={`Concluir carga da placa ${operation.plate || "sem placa"}`}
         >
-          {isSubmitting ? "Enviando..." : "Concluir carga"}
+          {isSubmitting ? "..." : "Concluir"}
         </button>
       </div>
 
@@ -467,10 +488,7 @@ function TruckIcon() {
       <rect x="4" y="14" width="72" height="38" rx="4" fill="#1d4ed8" />
       <rect x="12" y="22" width="56" height="22" rx="2" fill="#3b82f6" opacity="0.55" />
       {/* cab: hood + cabin */}
-      <path
-        d="M76 24h18l14 16v12H76z"
-        fill="#0f172a"
-      />
+      <path d="M76 24h18l14 16v12H76z" fill="#0f172a" />
       {/* windshield */}
       <path d="M80 28h11l9 10H80z" fill="#93c5fd" />
       {/* headlight */}
@@ -481,15 +499,6 @@ function TruckIcon() {
       <circle cx="92" cy="56" r="10" fill="#0f172a" />
       <circle cx="92" cy="56" r="4" fill="#cbd5e1" />
     </svg>
-  );
-}
-
-function InfoItem({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="detail-card">
-      <dt className="detail-label">{label}</dt>
-      <dd className="detail-value">{value}</dd>
-    </div>
   );
 }
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  formatArrival,
   getInProgressOperations,
   getOvertimeOperations,
   getRenderedOperations,
@@ -79,6 +80,34 @@ describe("LoaderDashboard overtime alert", () => {
   it("computes elapsed minutes since arrival", () => {
     expect(minutesSinceArrival("2026-06-25T10:00:00.000Z", base + 30 * 60_000)).toBe(30);
     expect(minutesSinceArrival("invalid", now)).toBe(0);
+  });
+});
+
+describe("LoaderDashboard compact arrival label", () => {
+  const timeZone = "America/Sao_Paulo";
+
+  it("shows only the time when the truck arrived on the same day in the unit timezone", () => {
+    // 11:12 UTC = 08:12 em Sao Paulo (UTC-3).
+    const arrival = "2026-07-31T11:12:00.000Z";
+    const now = new Date("2026-07-31T17:00:00.000Z").getTime();
+
+    expect(formatArrival(arrival, timeZone, now)).toBe("08:12");
+  });
+
+  it("prefixes the day when the queue crossed midnight", () => {
+    const arrival = "2026-07-30T22:40:00.000Z"; // 30/07 19:40 em Sao Paulo
+    const now = new Date("2026-07-31T12:00:00.000Z").getTime();
+
+    expect(formatArrival(arrival, timeZone, now)).toBe("30/07 19:40");
+  });
+
+  it("falls back to the unit default timezone and handles missing/invalid values", () => {
+    const arrival = "2026-07-31T11:12:00.000Z";
+    const now = new Date("2026-07-31T17:00:00.000Z").getTime();
+
+    expect(formatArrival(arrival, null, now)).toBe("08:12");
+    expect(formatArrival(null, timeZone, now)).toBe("-");
+    expect(formatArrival("invalid", timeZone, now)).toBe("-");
   });
 });
 
