@@ -431,6 +431,14 @@ import {
   type UpdateAccountInput
 } from "./accounts.js";
 import {
+  getWalletReport,
+  reopenWalletOperations,
+  settleWalletOperations,
+  type SettleWalletInput,
+  type WalletQuery,
+  type WalletReport
+} from "./wallet.js";
+import {
   createPaymentTerm,
   deletePaymentTerm,
   listOmiePaymentTerms,
@@ -2685,6 +2693,25 @@ export class DesktopRuntime {
     });
     this.cacheStore.invalidate("payment_method", identity.companyId);
     return result;
+  }
+
+  // Carteira: vendas fechadas na forma "em carteira", aguardando o fechamento que
+  // define como o cliente vai pagar.
+  getWalletReport(query: WalletQuery = {}): WalletReport {
+    this.assertDesktopAccess();
+    return getWalletReport(this.database, query);
+  }
+
+  /** Registra o fechamento e devolve quantas vendas foram fechadas. */
+  settleWalletOperations(input: SettleWalletInput): number {
+    this.assertDesktopAccess();
+    return settleWalletOperations(this.database, input);
+  }
+
+  /** Desfaz o fechamento e devolve quantas vendas voltaram para a carteira. */
+  reopenWalletOperations(operationIds: string[]): number {
+    this.assertDesktopAccess();
+    return reopenWalletOperations(this.database, operationIds);
   }
 
   listAccounts(): unknown {

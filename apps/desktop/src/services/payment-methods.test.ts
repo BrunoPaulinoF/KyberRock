@@ -10,7 +10,8 @@ import {
   ensureDefaultPaymentMethods,
   listPaymentMethods,
   paymentMethodDisplayName,
-  updatePaymentMethod
+  updatePaymentMethod,
+  WALLET_METHOD_CODE
 } from "./payment-methods.js";
 
 const COMPANY_ID = "11111111-1111-1111-1111-111111111111";
@@ -37,7 +38,7 @@ describe("payment-methods service", () => {
     database.close();
   });
 
-  it("seeds the six system defaults idempotently", () => {
+  it("seeds the seven system defaults idempotently", () => {
     ensureDefaultPaymentMethods(database, COMPANY_ID);
     ensureDefaultPaymentMethods(database, COMPANY_ID); // segunda chamada nao duplica
 
@@ -49,7 +50,8 @@ describe("payment-methods service", () => {
       "credit_card",
       "debit_card",
       "boleto",
-      "customer_credit"
+      "customer_credit",
+      "wallet"
     ]);
     expect(methods.every((m) => m.is_system === 1)).toBe(true);
   });
@@ -64,6 +66,8 @@ describe("payment-methods service", () => {
     expect(byCode.get("credit_card")).toBe("03");
     expect(byCode.get("debit_card")).toBe("04");
     expect(byCode.get("boleto")).toBe("15");
+    // Em carteira vai como "99 - outros": a NF sai, mas o faturamento nao gera boleto.
+    expect(byCode.get("wallet")).toBe("99");
     // Credito do cliente (fiado) nao mapeia para um meio direto do OMIE.
     expect(byCode.get("customer_credit")).toBeNull();
   });
@@ -74,6 +78,17 @@ describe("payment-methods service", () => {
       (m) => m.code === CUSTOMER_CREDIT_METHOD_CODE
     );
     expect(credit?.is_customer_credit).toBe(1);
+    expect(credit?.is_wallet).toBe(0);
+  });
+
+  it("flags the wallet method (recebimento definido no fechamento)", () => {
+    ensureDefaultPaymentMethods(database, COMPANY_ID);
+    const wallet = listPaymentMethods(database, COMPANY_ID).find(
+      (m) => m.code === WALLET_METHOD_CODE
+    );
+    expect(wallet?.is_wallet).toBe(1);
+    // Carteira nao e fiado: a venda nao consome o credito do cliente.
+    expect(wallet?.is_customer_credit).toBe(0);
   });
 
   it("creates a custom method with a slugified code", () => {

@@ -179,12 +179,34 @@ Financeiro:
 - Regra aplicada na Edge Function (`boletoGenerationFlag` / `buildBoletoParcelaFields`):
   - **boleto** (`"15"`) -> `nao_gerar_boleto` `"N"` (gerar boleto **ativo**) + `tipo_documento`
     `"BOL"`, para a conta a receber nascer tipada como boleto em vez de "NF-e";
-  - **outro meio conhecido** (dinheiro, PIX, cartoes) -> `nao_gerar_boleto` `"S"`;
+  - **outro meio conhecido** (dinheiro, PIX, cartoes, em carteira) -> `nao_gerar_boleto` `"S"`;
   - **sem meio no payload** (credito do cliente/fiado, desktop antigo) -> nada e enviado e
     vale o padrao do cadastro do cliente no OMIE ("Gerar Boletos ao Emitir NF-e").
 - Como o flag so viaja na parcela da OS, a operacao interna em boleto vai com o bloco
   `Parcelas` mesmo a vista e mesmo com a condicao ja vinculada a um codigo do cadastro
   (`cCodParc` `"999"`). Nos demais meios a OS mantem o caminho historico.
+
+#### Venda em carteira (implementado)
+
+- A forma de pagamento **"Em carteira"** (`payment_methods.code = 'wallet'`,
+  `is_wallet = 1`) e a venda que fecha na balanca **sem forma de recebimento definida**:
+  ela fica na carteira ate um fechamento futuro, onde o operador escolhe COMO o cliente
+  vai pagar (dinheiro, PIX, boleto...) e para quando.
+- Ela vai ao OMIE como **`"99"` (outros)**: a NF sai normalmente, mas o meio cai no ramo
+  generico do `boletoGenerationFlag` (`nao_gerar_boleto` `"S"`), entao o faturamento **nao**
+  emite cobranca — o boleto/recebimento so existe depois do fechamento. A conta corrente e a
+  **OMIE Cash**, pelo vinculo padrao do seed (`payment_methods.account_id`) e pelo fallback
+  `DEFAULT_ACCOUNT_NAME_BY_METHOD_CODE` da Edge Function.
+- O fechamento em si e **local** (tela Carteira do desktop): grava em
+  `weighing_operations` a forma de recebimento escolhida
+  (`wallet_settlement_method_id`), o vencimento combinado (`wallet_settlement_due_date`),
+  quando foi fechado (`wallet_settled_at`) e a observacao. Como
+  `weighing_operations.payment_method_id` nao faz parte da projecao da nuvem, esses campos
+  tambem ficam na maquina — o que viaja entre desktops e a **forma** (`payment_methods`,
+  com `is_wallet`), para as duas balancas classificarem a venda igual.
+- Diferenca para o credito do cliente (fiado): a carteira **nao** consome limite/saldo do
+  cadastro e nao tem periodicidade automatica — o fechamento e manual, quando o comercial
+  e o cliente combinam.
 
 ### Operacao Interna
 

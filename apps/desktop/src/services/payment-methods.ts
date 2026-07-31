@@ -12,6 +12,8 @@ export interface PaymentMethodRow {
   account_id: string | null;
   is_system: number;
   is_customer_credit: number;
+  /** 1 = venda "em carteira": o recebimento e definido depois, no fechamento. */
+  is_wallet: number;
   sort_order: number;
   is_active: number;
   created_at: string;
@@ -28,6 +30,7 @@ export interface CreatePaymentMethodInput {
   omieCode?: string | null;
   accountId?: string | null;
   isCustomerCredit?: boolean;
+  isWallet?: boolean;
   sortOrder?: number;
 }
 
@@ -52,24 +55,40 @@ interface DefaultPaymentMethod {
   code: string;
   name: string;
   isCustomerCredit: boolean;
+  isWallet: boolean;
   sortOrder: number;
   /**
    * Codigo do meio de pagamento no OMIE/NF-e (tPag) ja de fabrica, para o pedido levar
    * o meio mesmo sem sincronizar os meios do OMIE. Sao codigos padronizados: 01 dinheiro,
-   * 17 PIX, 03 credito, 04 debito, 15 boleto. O credito do cliente (fiado) nao mapeia
-   * para um meio direto do OMIE, entao fica sem codigo.
+   * 17 PIX, 03 credito, 04 debito, 15 boleto, 99 outros. O credito do cliente (fiado) nao
+   * mapeia para um meio direto do OMIE, entao fica sem codigo.
    */
   omieCode: string | null;
 }
 
 /** Formas de pagamento padrao que ja vem cadastradas com o sistema. */
 export const DEFAULT_PAYMENT_METHODS: readonly DefaultPaymentMethod[] = [
-  { code: "cash", name: "Dinheiro", isCustomerCredit: false, sortOrder: 1, omieCode: "01" },
-  { code: "pix", name: "Pix", isCustomerCredit: false, sortOrder: 2, omieCode: "17" },
+  {
+    code: "cash",
+    name: "Dinheiro",
+    isCustomerCredit: false,
+    isWallet: false,
+    sortOrder: 1,
+    omieCode: "01"
+  },
+  {
+    code: "pix",
+    name: "Pix",
+    isCustomerCredit: false,
+    isWallet: false,
+    sortOrder: 2,
+    omieCode: "17"
+  },
   {
     code: "credit_card",
     name: "Cartao de credito",
     isCustomerCredit: false,
+    isWallet: false,
     sortOrder: 3,
     omieCode: "03"
   },
@@ -77,21 +96,44 @@ export const DEFAULT_PAYMENT_METHODS: readonly DefaultPaymentMethod[] = [
     code: "debit_card",
     name: "Cartao de debito",
     isCustomerCredit: false,
+    isWallet: false,
     sortOrder: 4,
     omieCode: "04"
   },
-  { code: "boleto", name: "Boleto", isCustomerCredit: false, sortOrder: 5, omieCode: "15" },
+  {
+    code: "boleto",
+    name: "Boleto",
+    isCustomerCredit: false,
+    isWallet: false,
+    sortOrder: 5,
+    omieCode: "15"
+  },
   {
     code: "customer_credit",
     name: "Credito do cliente",
     isCustomerCredit: true,
+    isWallet: false,
     sortOrder: 6,
     omieCode: null
+  },
+  // Em carteira: a venda sai da balanca sem forma de recebimento definida e fica na
+  // carteira ate o fechamento. Vai ao OMIE como "99 - outros" para a NF sair sem o
+  // faturamento gerar boleto (o meio real so existe no fechamento).
+  {
+    code: "wallet",
+    name: "Em carteira",
+    isCustomerCredit: false,
+    isWallet: true,
+    sortOrder: 7,
+    omieCode: "99"
   }
 ];
 
 /** Codigo da forma de pagamento "credito do cliente" (fiado). */
 export const CUSTOMER_CREDIT_METHOD_CODE = "customer_credit";
+
+/** Codigo da forma de pagamento "em carteira" (recebimento definido no fechamento). */
+export const WALLET_METHOD_CODE = "wallet";
 
 /**
  * Garante que as formas de pagamento padrao existam para a empresa.
@@ -105,8 +147,8 @@ export function ensureDefaultPaymentMethods(
   const nowIso = now.toISOString();
   const insert = database.prepare(
     `INSERT INTO payment_methods
-       (id, company_id, code, name, omie_code, is_system, is_customer_credit, sort_order, is_active, created_at, updated_at)
-     SELECT ?, ?, ?, ?, ?, 1, ?, ?, 1, ?, ?
+       (id, company_id, code, name, omie_code, is_system, is_customer_credit, is_wallet, sort_order, is_active, created_at, updated_at)
+     SELECT ?, ?, ?, ?, ?, 1, ?, ?, ?, 1, ?, ?
      WHERE EXISTS (SELECT 1 FROM companies WHERE id = ?)
        AND NOT EXISTS (
          SELECT 1 FROM payment_methods
@@ -123,6 +165,7 @@ export function ensureDefaultPaymentMethods(
         method.name,
         method.omieCode,
         method.isCustomerCredit ? 1 : 0,
+        method.isWallet ? 1 : 0,
         method.sortOrder,
         nowIso,
         nowIso,
@@ -193,8 +236,8 @@ export function createPaymentMethod(
   database
     .prepare(
       `INSERT INTO payment_methods
-         (id, company_id, code, name, alias, omie_code, account_id, is_system, is_customer_credit, sort_order, is_active, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 1, ?, ?)`
+         (id, company_id, code, name, alias, omie_code, account_id, is_system, is_customer_credit, is_wallet, sort_order, is_active, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 1, ?, ?)`
     )
     .run(
       id,
@@ -205,6 +248,7 @@ export function createPaymentMethod(
       input.omieCode?.trim() || null,
       input.accountId || null,
       input.isCustomerCredit ? 1 : 0,
+      input.isWallet ? 1 : 0,
       sortOrder,
       nowIso,
       nowIso
@@ -291,7 +335,10 @@ const DEFAULT_METHOD_ACCOUNT_BINDINGS: ReadonlyArray<{ methodCode: string; accou
     { methodCode: "debit_card", accountCode: "getnet" },
     { methodCode: "credit_card", accountCode: "getnet" },
     // Credito do cliente (fiado) e lancado uma unica vez no OMIE pela OMIE Cash.
-    { methodCode: "customer_credit", accountCode: "omie_cash" }
+    { methodCode: "customer_credit", accountCode: "omie_cash" },
+    // Em carteira: o titulo fica na OMIE Cash ate o fechamento definir como o cliente
+    // paga; sem esse vinculo o pedido cairia na primeira conta corrente do tenant.
+    { methodCode: "wallet", accountCode: "omie_cash" }
   ];
 
 /**

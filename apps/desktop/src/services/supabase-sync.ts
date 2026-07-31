@@ -1120,14 +1120,15 @@ function upsertCloudPaymentMethods(
   );
   const upsert = database.prepare(`
     INSERT INTO payment_methods (
-      id, company_id, code, name, omie_code, is_system, is_customer_credit,
+      id, company_id, code, name, omie_code, is_system, is_customer_credit, is_wallet,
       sort_order, is_active, created_at, updated_at, deleted_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
       name = excluded.name,
       omie_code = excluded.omie_code,
       is_customer_credit = excluded.is_customer_credit,
+      is_wallet = excluded.is_wallet,
       sort_order = excluded.sort_order,
       is_active = excluded.is_active,
       updated_at = excluded.updated_at,
@@ -1154,6 +1155,7 @@ function upsertCloudPaymentMethods(
       nullableStringValue(row.omie_code),
       booleanToSql(row.is_system, false),
       booleanToSql(row.is_customer_credit, false),
+      booleanToSql(row.is_wallet, false),
       integerValue(row.sort_order) ?? 0,
       booleanToSql(row.is_active, true),
       isoStringValue(row.created_at) || updatedAt,
@@ -5624,7 +5626,7 @@ const CADASTRO_PUSH_ENTITIES: readonly CadastroPushEntity[] = [
       table: "payment_methods",
       alias: "pm",
       columns:
-        "pm.id, pm.code, pm.name, pm.omie_code, pm.is_system, pm.is_customer_credit, pm.sort_order, pm.is_active, pm.created_at, pm.updated_at, pm.deleted_at",
+        "pm.id, pm.code, pm.name, pm.omie_code, pm.is_system, pm.is_customer_credit, pm.is_wallet, pm.sort_order, pm.is_active, pm.created_at, pm.updated_at, pm.deleted_at",
       where: "pm.company_id = @companyId"
     }),
     map: (row, companyId) => {
@@ -5637,6 +5639,7 @@ const CADASTRO_PUSH_ENTITIES: readonly CadastroPushEntity[] = [
         omie_code: nullableStringValue(row.omie_code),
         is_system: Number(row.is_system ?? 0) === 1,
         is_customer_credit: Number(row.is_customer_credit ?? 0) === 1,
+        is_wallet: Number(row.is_wallet ?? 0) === 1,
         sort_order: integerValue(row.sort_order) ?? 0,
         is_active: cloudActive(row),
         created_at: cloudTimestamp(row.created_at, updatedAt),

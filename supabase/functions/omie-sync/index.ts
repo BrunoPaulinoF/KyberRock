@@ -2465,7 +2465,9 @@ function isBoletoPaymentMethod(paymentMethodOmieCode: string | undefined): boole
  * garante que o boleto siga a forma escolhida no KyberRock:
  *
  * - boleto ("15") -> "N": gerar boleto ATIVO, o OMIE emite a cobranca no faturamento;
- * - qualquer outro meio conhecido -> "S": venda em dinheiro/PIX/cartao nao emite boleto;
+ * - qualquer outro meio conhecido -> "S": venda em dinheiro/PIX/cartao nao emite boleto.
+ *   A venda em carteira ("99 - outros") entra aqui de proposito: a nota sai, mas a
+ *   cobranca so nasce quando o fechamento da carteira definir a forma de recebimento;
  * - meio desconhecido (credito do cliente, desktop antigo sem o codigo) -> null: nada e
  *   enviado e vale o padrao do OMIE, como antes.
  */
@@ -3029,7 +3031,7 @@ async function resolveOmieAccountCodeByName(
 /**
  * Vinculos padrao do KyberRock entre o meio de pagamento (codigo NFe/OMIE) e a conta
  * padrao que o recebe — os mesmos do seed do desktop (payment_methods -> accounts):
- * dinheiro -> Caixinha; PIX e boleto -> OMIE Cash; cartoes -> GetNet.
+ * dinheiro -> Caixinha; PIX, boleto e em carteira -> OMIE Cash; cartoes -> GetNet.
  *
  * Usado como fallback quando o payload nao trouxe nem o nCodCC nem o nome da conta
  * (desktop antigo, ou meio de pagamento local sem conta vinculada): resolve a conta
@@ -3042,7 +3044,10 @@ const DEFAULT_ACCOUNT_NAME_BY_METHOD_CODE = new Map<string, string>([
   ["03", "getnet"], // cartao de credito
   ["04", "getnet"], // cartao de debito
   ["15", "omiecash"], // boleto
-  ["17", "omiecash"] // pix
+  ["17", "omiecash"], // pix
+  // "99 - outros" e a venda em carteira do KyberRock: o titulo fica na OMIE Cash ate o
+  // fechamento definir como o cliente paga.
+  ["99", "omiecash"]
 ]);
 
 function defaultAccountNameForMethod(methodCode: string | null | undefined): string | null {

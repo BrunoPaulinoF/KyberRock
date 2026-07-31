@@ -50,6 +50,7 @@ import type {
 } from "../services/customer-report";
 import type { CreateCustomerInput, UpdateCustomerInput } from "../services/customers";
 import type { UpdatePaymentMethodInput } from "../services/payment-methods";
+import type { SettleWalletInput, WalletQuery, WalletReport } from "../services/wallet";
 import type { UpdateAccountInput } from "../services/accounts";
 import type {
   CreatePaymentTermInput,
@@ -431,6 +432,12 @@ export interface KyberRockDesktopApi {
   // Meios de pagamento e contas vem do OMIE (sincronizacao); localmente so ha
   // atualizacao restrita (ativar/desativar, apelido, vinculo forma -> conta).
   paymentMethodsUpdate: (id: string, input: UpdatePaymentMethodInput) => Promise<unknown>;
+  /** Vendas em carteira (agrupadas por cliente) e os totais em aberto / fechados. */
+  walletReport: (query: WalletQuery) => Promise<WalletReport>;
+  /** Fecha as vendas escolhidas definindo a forma de recebimento; devolve quantas. */
+  walletSettle: (input: SettleWalletInput) => Promise<number>;
+  /** Desfaz o fechamento das vendas escolhidas; devolve quantas voltaram a carteira. */
+  walletReopen: (operationIds: string[]) => Promise<number>;
   accountsList: () => Promise<unknown[]>;
   accountsUpdate: (id: string, input: UpdateAccountInput) => Promise<unknown>;
   paymentTermsCreate: (input: Omit<CreatePaymentTermInput, "companyId">) => Promise<unknown>;

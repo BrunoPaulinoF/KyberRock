@@ -196,6 +196,11 @@ const desktopApi = {
   // atualizacao restrita (ativar/desativar, apelido, vinculo forma -> conta).
   paymentMethodsUpdate: (id: string, input: unknown) =>
     ipcRenderer.invoke("desktop:payment-methods-update", id, input),
+  // Carteira: vendas "em carteira" e o fechamento que define a forma de recebimento.
+  walletReport: (query: unknown) => ipcRenderer.invoke("desktop:wallet-report", query),
+  walletSettle: (input: unknown) => ipcRenderer.invoke("desktop:wallet-settle", input),
+  walletReopen: (operationIds: string[]) =>
+    ipcRenderer.invoke("desktop:wallet-reopen", operationIds),
   accountsList: () => ipcRenderer.invoke("desktop:accounts-list"),
   accountsUpdate: (id: string, input: unknown) =>
     ipcRenderer.invoke("desktop:accounts-update", id, input),
