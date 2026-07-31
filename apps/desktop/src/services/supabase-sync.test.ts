@@ -1177,6 +1177,110 @@ describe("supabase sync", () => {
     }
   });
 
+  it("records the OMIE service order of an internal operation", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertWeighingOperation(database);
+      database
+        .prepare("UPDATE weighing_operations SET operation_type = 'internal' WHERE id = ?")
+        .run("operation-1");
+      enqueueSyncJob(database, {
+        id: "omie-job-os",
+        target: "omie",
+        action: "create_order",
+        entityType: "weighing_operation",
+        entityId: "operation-1",
+        idempotencyKey: "kyberrock:unit-1:operation-1:create_service_order",
+        payload: {
+          operationId: "operation-1",
+          operationType: "internal",
+          customerOmieId: 123,
+          serviceDescription: "Brita 1",
+          quantity: 10,
+          unitPrice: 25,
+          issueDate: "2026-06-12"
+        }
+      });
+      invokeMock.mockResolvedValueOnce({ error: null, data: { orderId: 777 } });
+
+      const result = await processOmieSyncQueue(database, identity);
+
+      // O id da operacao acompanha o payload para a OS referenciar a pesagem no OMIE.
+      expect(invokeMock).toHaveBeenCalledWith("omie-sync", {
+        body: expect.objectContaining({
+          payload: expect.objectContaining({
+            operationType: "internal",
+            localOperationId: "operation-1"
+          })
+        })
+      });
+      expect(result).toEqual({ processed: 1, failed: 0, errors: [] });
+      expect(
+        database
+          .prepare(
+            "SELECT omie_service_order_id, omie_billing_status FROM weighing_operations WHERE id = 'operation-1'"
+          )
+          .get()
+      ).toMatchObject({
+        omie_service_order_id: 777,
+        omie_billing_status: "service_order_created"
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("records the failure on the internal operation when OMIE refuses the service order", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertWeighingOperation(database);
+      database
+        .prepare("UPDATE weighing_operations SET operation_type = 'internal' WHERE id = ?")
+        .run("operation-1");
+      enqueueSyncJob(database, {
+        id: "omie-job-os-fail",
+        target: "omie",
+        action: "create_order",
+        entityType: "weighing_operation",
+        entityId: "operation-1",
+        idempotencyKey: "kyberrock:unit-1:operation-1:create_service_order",
+        payload: {
+          operationId: "operation-1",
+          operationType: "internal",
+          customerOmieId: 123,
+          serviceDescription: "Brita 1",
+          quantity: 10,
+          unitPrice: 25,
+          issueDate: "2026-06-12"
+        }
+      });
+      invokeMock.mockResolvedValueOnce({
+        error: createFunctionHttpError("ERROR: - tag: [cCodServMun]"),
+        data: null
+      });
+
+      const result = await processOmieSyncQueue(database, identity);
+
+      expect(result.failed).toBe(1);
+      // A operacao interna nao tem tela de faturamento: sem isto a OS recusada sumia.
+      expect(
+        database
+          .prepare(
+            "SELECT omie_billing_status, omie_billing_message FROM weighing_operations WHERE id = 'operation-1'"
+          )
+          .get()
+      ).toMatchObject({ omie_billing_status: "service_order_failed" });
+    } finally {
+      database.close();
+    }
+  });
+
   it("limits OMIE queue batches to avoid long request bursts", async () => {
     const database = createDatabase();
 
@@ -1688,6 +1792,102 @@ describe("supabase sync", () => {
           .pluck()
           .get()
       ).toBe("cadastro_incompleto");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("processFiscalBillingNow resends the service order of an internal operation", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertWeighingOperation(database);
+      // Operacao interna que fechou sem job (cliente sem documento) e depois teve o
+      // CNPJ preenchido: o mesmo botao de "Retentar OMIE" precisa reenviar a OS.
+      database
+        .prepare(
+          `UPDATE weighing_operations
+           SET operation_type = 'internal', omie_billing_status = 'cadastro_incompleto'
+           WHERE id = 'operation-1'`
+        )
+        .run();
+      invokeMock.mockResolvedValueOnce({ error: null, data: { orderId: 4242 } });
+
+      const result = await processFiscalBillingNow(database, identity, "operation-1");
+
+      expect(result.blocked).toBeUndefined();
+      expect(result.orderId).toBe(4242);
+      expect(invokeMock).toHaveBeenCalledWith("omie-sync", {
+        body: expect.objectContaining({
+          action: "create_order",
+          payload: expect.objectContaining({ operationType: "internal" })
+        })
+      });
+      expect(
+        database
+          .prepare(
+            "SELECT omie_service_order_id, omie_billing_status FROM weighing_operations WHERE id = 'operation-1'"
+          )
+          .get()
+      ).toMatchObject({
+        omie_service_order_id: 4242,
+        omie_billing_status: "service_order_created"
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("processFiscalBillingNow does not resurrect the service order of a cancelled operation", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertWeighingOperation(database);
+      database
+        .prepare(
+          "UPDATE weighing_operations SET operation_type = 'internal', status = 'cancelled' WHERE id = 'operation-1'"
+        )
+        .run();
+
+      const result = await processFiscalBillingNow(database, identity, "operation-1");
+
+      expect(result.blocked).toBe(true);
+      expect(invokeMock).not.toHaveBeenCalled();
+    } finally {
+      database.close();
+    }
+  });
+
+  it("processFiscalBillingNow blocks the internal resend while the customer has no document", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertWeighingOperation(database);
+      database
+        .prepare(
+          `INSERT INTO customers (id, company_id, source, legal_name, trade_name, created_at, updated_at)
+           VALUES ('cust-sem-doc', 'company-1', 'local', 'Cliente Sem Doc', 'Cliente Sem Doc', datetime('now'), datetime('now'))`
+        )
+        .run();
+      database
+        .prepare(
+          `UPDATE weighing_operations
+           SET operation_type = 'internal', customer_id = 'cust-sem-doc'
+           WHERE id = 'operation-1'`
+        )
+        .run();
+
+      const result = await processFiscalBillingNow(database, identity, "operation-1");
+
+      expect(result.blocked).toBe(true);
+      expect(result.blockReason).toContain("ordem de servico");
+      expect(invokeMock).not.toHaveBeenCalled();
     } finally {
       database.close();
     }

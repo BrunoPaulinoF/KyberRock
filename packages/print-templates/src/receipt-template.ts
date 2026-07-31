@@ -98,6 +98,13 @@ export function normalizeReceiptTemplateConfig(
   };
 }
 
+/**
+ * Marcacao obrigatoria do cupom da operacao interna (venda sem nota): o cupom sai igual
+ * ao da venda com nota, mas precisa deixar explicito que nao e documento fiscal. Nao e
+ * controlada pela configuracao do template — nenhuma pedreira pode desligar o aviso.
+ */
+export const NON_FISCAL_SALE_LABEL = "VENDA SEM VALOR FISCAL";
+
 export function buildReceiptLines(input: ReceiptTemplateInput): string[] {
   return buildReceiptLinesWithConfig(input, DEFAULT_RECEIPT_TEMPLATE_CONFIG);
 }
@@ -111,10 +118,17 @@ export function buildReceiptLinesWithConfig(
     .filter(Boolean)
     .join("-");
   const quantityTon = input.netWeightKg / 1000;
+  const nonFiscal = input.operationType === "internal";
   const lines: (string | null)[] = [];
 
   if (config.customHeaderText.trim()) {
     lines.push(config.customHeaderText.trim().toUpperCase());
+  }
+
+  // Aviso no topo, antes de qualquer bloco opcional: mesmo com o template todo
+  // desligado, quem recebe o cupom ve de cara que a venda nao tem valor fiscal.
+  if (nonFiscal) {
+    lines.push(divider(), centered(NON_FISCAL_SALE_LABEL), divider());
   }
 
   if (config.showCompanyHeader) {
@@ -243,7 +257,22 @@ export function buildReceiptLinesWithConfig(
     lines.push(config.customFooterText.trim().toUpperCase());
   }
 
+  // Repete o aviso no pe do cupom: o cliente costuma guardar so a parte de baixo,
+  // com a assinatura e o valor.
+  if (nonFiscal) {
+    lines.push(centered(NON_FISCAL_SALE_LABEL), divider());
+  }
+
   return lines.filter((line): line is string => line !== null);
+}
+
+/**
+ * Centraliza o texto na largura do divisor (48 caracteres). Texto maior que a
+ * largura sai sem recuo, em vez de estourar a linha para a direita.
+ */
+function centered(text: string): string {
+  const padding = Math.max(0, Math.floor((RECEIPT_LINE_WIDTH - text.length) / 2));
+  return `${" ".repeat(padding)}${text}`;
 }
 
 /**
@@ -276,6 +305,9 @@ export function formatReceiptNumber(
   const base = receiptNumber.toString().padStart(9, "0");
   return deviceNumber && deviceNumber > 0 ? `${base}-${deviceNumber}` : base;
 }
+
+/** Largura util do papel de 80 mm, em caracteres — a mesma do divisor. */
+const RECEIPT_LINE_WIDTH = 48;
 
 function divider(): string {
   return "------------------------------------------------";

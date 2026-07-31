@@ -219,6 +219,11 @@ type CreateOrderPayload = {
     driverName?: string | null;
     /** Codigo OMIE (codigo_cliente_omie) da transportadora vinculada ao veiculo. */
     carrierOmieId?: number | null;
+    /**
+     * Nome da transportadora. A OS nao tem bloco `frete` para referenciar o cadastro
+     * pelo codigo, entao na operacao interna ela entra pelo nome em cDadosAdicNF.
+     */
+    carrierName?: string | null;
     /** Peso liquido da carga em kg (granel: peso_bruto = peso_liquido). */
     cargoWeightKg?: number | null;
     /** Transporte proprio (modFrete 3/4) -> veiculo_proprio "S", sem transportadora. */
@@ -1953,6 +1958,16 @@ async function createOmieOrder(
     normalizeParcelaCode(payload.paymentTermOmieCode) ??
     (await ensureOmieParcelaCode(credentials, payload)) ??
     "000";
+  // Impostos da OS iguais para todas as linhas: "01" = tributado no municipio,
+  // "N" = ISS nao retido. Ambos sao obrigatorios no IncluirOS.
+  const serviceTaxFields = {
+    cTribServ: "01",
+    cRetemISS: "N",
+    ...(serviceCodes.municipal !== null ? { cCodServMun: serviceCodes.municipal } : {}),
+    ...(serviceCodes.lc116 !== null ? { cCodServLC116: serviceCodes.lc116 } : {})
+  };
+  const freightValue = toOmieFreightValue(payload.freightTotalCents);
+  const serviceItemData = buildServiceItemAdditionalData(payload);
   const response = await callOmie<
     unknown,
     {
@@ -1974,19 +1989,32 @@ async function createOmieOrder(
     ServicosPrestados: [
       {
         cDescServ: payload.serviceDescription || "Servico",
-        // Obrigatorio no IncluirOS: "01" = tributado no municipio (padrao).
-        cTribServ: "01",
-        // Obrigatorio no IncluirOS: "N" = ISS nao retido (padrao para a operacao interna).
-        cRetemISS: "N",
-        ...(serviceCodes.municipal !== null ? { cCodServMun: serviceCodes.municipal } : {}),
-        ...(serviceCodes.lc116 !== null ? { cCodServLC116: serviceCodes.lc116 } : {}),
+        ...serviceTaxFields,
         nQtde: payload.quantity,
-        nValUnit: payload.unitPrice
-      }
+        nValUnit: payload.unitPrice,
+        ...(serviceItemData !== null ? { cDadosAdicItem: serviceItemData } : {})
+      },
+      // A OS nao tem bloco `frete` como o pedido de venda, entao o frete da operacao
+      // interna entra como uma segunda linha de servico — sem isso o valor do frete
+      // simplesmente nao chegava ao OMIE (a OS saia so com o valor do produto).
+      ...(freightValue > 0
+        ? [
+            {
+              cDescServ: buildFreightServiceDescription(payload),
+              ...serviceTaxFields,
+              nQtde: 1,
+              nValUnit: freightValue
+            }
+          ]
+        : [])
     ],
     InformacoesAdicionais: {
-      cCodCateg: "1.01.01",
-      ...(accountCode !== null ? { nCodCC: accountCode } : {})
+      // Mesma categoria do plano gerencial usada no pedido de venda (a do produto,
+      // senao a padrao da unidade). Antes era um codigo fixo: toda operacao interna
+      // caia na mesma categoria, independentemente do material vendido.
+      cCodCateg: resolveCategoryCode(payload.omieCategoryCode),
+      ...(accountCode !== null ? { nCodCC: accountCode } : {}),
+      cDadosAdicNF: buildServiceOrderAdditionalData(payload)
     }
   }).catch(async (error) => {
     // Idempotencia: se a OS ja existe (reenvio apos erro desconhecido), consulta por
@@ -2218,9 +2246,14 @@ async function resolveOmieServiceCodes(credentials: OmieCredentials): Promise<Om
       "ListarCadastroServico",
       { nPagina: 1, nRegPorPagina: 50 }
     );
+    // Os dois codigos precisam sair do MESMO servico cadastrado: varrendo a resposta
+    // inteira, o cCodServMun podia vir de um servico e o cCodServLC116 de outro, e o
+    // OMIE recusa a combinacao (a OS da operacao interna nunca era criada). Por isso
+    // localizamos o cadastro que tem o codigo municipal e lemos o LC116 dele.
+    const service = findFirstObjectWithKey(response, "cCodServMun") ?? response;
     const codes: OmieServiceCodes = {
-      municipal: findStringByKey(response, "cCodServMun"),
-      lc116: findStringByKey(response, "cCodLC116") ?? findStringByKey(response, "cCodServLC116")
+      municipal: findStringByKey(service, "cCodServMun"),
+      lc116: findStringByKey(service, "cCodLC116") ?? findStringByKey(service, "cCodServLC116")
     };
     if (codes.municipal !== null || codes.lc116 !== null) {
       omieServiceCodesCache.set(credentials.appKey, codes);
@@ -2229,6 +2262,29 @@ async function resolveOmieServiceCodes(credentials: OmieCredentials): Promise<Om
   } catch {
     return { municipal: null, lc116: null };
   }
+}
+
+/**
+ * Menor objeto da resposta que contem a chave informada (o cadastro do servico dentro
+ * da lista), para ler os campos irmaos sem misturar registros diferentes.
+ */
+function findFirstObjectWithKey(value: unknown, key: string): Record<string, unknown> | null {
+  if (!value || typeof value !== "object") return null;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findFirstObjectWithKey(item, key);
+      if (found !== null) return found;
+    }
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  // Objeto aninhado tem precedencia: o pai (a resposta inteira) tambem "contem" a chave.
+  for (const nested of Object.values(record)) {
+    const found = findFirstObjectWithKey(nested, key);
+    if (found !== null) return found;
+  }
+  const direct = record[key];
+  return typeof direct === "string" && direct.trim().length > 0 ? record : null;
 }
 
 function findStringByKey(value: unknown, key: string): string | null {
@@ -2328,6 +2384,82 @@ function buildTransportAdditionalData(
   if (driverName) parts.push(`Motorista: ${driverName}`);
   if (plate) parts.push(`Placa: ${plate}`);
   return parts.length > 0 ? parts.join(" - ") : null;
+}
+
+/** Valor do frete em reais (o payload viaja em centavos). 0 quando nao ha frete. */
+function toOmieFreightValue(freightTotalCents: number | null | undefined): number {
+  if (typeof freightTotalCents !== "number" || freightTotalCents <= 0) return 0;
+  return Math.round(freightTotalCents) / 100;
+}
+
+/** Rotulos das modalidades de frete (modFrete da NF-e) para os textos da OS. */
+const OMIE_FREIGHT_MODALIDADE_LABELS: Record<string, string> = {
+  "0": "CIF",
+  "1": "FOB",
+  "2": "terceiros",
+  "3": "transporte proprio",
+  "4": "transporte proprio",
+  "9": "sem frete"
+};
+
+/**
+ * Descricao da linha de frete da OS. A modalidade entra no texto porque a OS nao tem
+ * campo `modalidade` como o bloco `frete` do pedido de venda.
+ */
+function buildFreightServiceDescription(payload: CreateOrderPayload): string {
+  const modalidade = normalizeFreightModalidade(payload.freightModalidade);
+  const label = modalidade !== null ? OMIE_FREIGHT_MODALIDADE_LABELS[modalidade] : undefined;
+  return label && modalidade !== "9" ? `FRETE (${label})` : "FRETE";
+}
+
+/**
+ * Dados da carga na propria linha de servico da OS (peso pesado e placa). A OS de granel
+ * nao tem os campos de peso do bloco `frete` do pedido, entao o peso liquido viaja aqui.
+ */
+function buildServiceItemAdditionalData(payload: CreateOrderPayload): string | null {
+  const parts: string[] = [];
+  const cargoWeightKg = payload.transport?.cargoWeightKg;
+  if (typeof cargoWeightKg === "number" && cargoWeightKg > 0) {
+    parts.push(`Peso liquido: ${cargoWeightKg} kg`);
+  }
+  const plate = payload.transport?.plate?.trim().toUpperCase();
+  if (plate) parts.push(`Placa: ${plate}`);
+  return parts.length > 0 ? truncateOmieText(parts.join(" - "), 200) : null;
+}
+
+/**
+ * Dados adicionais da OS da operacao interna. Concentra tudo o que o pedido de venda
+ * espalha entre `frete`, `informacoes_adicionais` e o cadastro da transportadora — a OS
+ * nao tem esses blocos, e sem este texto a venda sem nota chegava ao OMIE sem placa,
+ * motorista, transportadora, peso nem referencia a pesagem que a originou.
+ */
+function buildServiceOrderAdditionalData(payload: CreateOrderPayload): string {
+  const parts: string[] = ["VENDA SEM VALOR FISCAL - OPERACAO INTERNA KYBERROCK"];
+  if (payload.localOperationId) {
+    parts.push(`Operacao: ${payload.localOperationId}`);
+  }
+  const transportData = buildTransportAdditionalData(payload.transport);
+  if (transportData) parts.push(transportData);
+  const carrierName = payload.transport?.carrierName?.trim() || payload.carrier?.name?.trim();
+  if (payload.transport?.ownVehicle) {
+    parts.push("Transporte proprio");
+  } else if (carrierName) {
+    parts.push(`Transportadora: ${carrierName}`);
+  }
+  const cargoWeightKg = payload.transport?.cargoWeightKg;
+  if (typeof cargoWeightKg === "number" && cargoWeightKg > 0) {
+    parts.push(`Peso liquido: ${cargoWeightKg} kg`);
+  }
+  const freightValue = toOmieFreightValue(payload.freightTotalCents);
+  if (freightValue > 0) {
+    parts.push(`${buildFreightServiceDescription(payload)}: R$ ${freightValue.toFixed(2)}`);
+  }
+  return truncateOmieText(parts.join(" | "), 500);
+}
+
+/** Corta textos livres antes de enviar ao OMIE, que rejeita campos acima do limite. */
+function truncateOmieText(value: string, maxLength: number): string {
+  return value.length > maxLength ? value.slice(0, maxLength) : value;
 }
 
 async function createAndBillOmieOrder(

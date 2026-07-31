@@ -3419,6 +3419,7 @@ export async function processOmieSyncQueue(
         plate?: string | null;
         driverName?: string | null;
         carrierOmieId?: number | null;
+        carrierName?: string | null;
         cargoWeightKg?: number | null;
         ownVehicle?: boolean;
       } | null;
@@ -3443,6 +3444,9 @@ export async function processOmieSyncQueue(
           deviceToken: settings.deviceToken,
           action: bridgeAction,
           payload: {
+            // Id da operacao local: vai nos dados adicionais do pedido/OS para
+            // reconciliar o registro do OMIE com a pesagem que o originou.
+            localOperationId: payload.operationId,
             operationType: payload.operationType,
             customerOmieId: payload.customerOmieId,
             customer: payload.customer ?? undefined,
@@ -3514,7 +3518,16 @@ export async function processOmieSyncQueue(
                omie_synced_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
            WHERE id = ?`
-          : "UPDATE weighing_operations SET omie_service_order_id = ?, status = 'synced', omie_synced_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?";
+          : // Operacao interna: guarda o nCodOS e registra o estado do envio, para a OS
+            // aparecer na tela de concluidas como o pedido aparece na venda com nota.
+            `UPDATE weighing_operations
+             SET omie_service_order_id = ?,
+                 omie_billing_status = 'service_order_created',
+                 omie_billing_message = ?,
+                 status = 'synced',
+                 omie_synced_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE id = ?`;
 
       if (payload.operationType === "invoice") {
         const billed = data.billed === true;
@@ -3530,7 +3543,13 @@ export async function processOmieSyncQueue(
             payload.operationId
           );
       } else {
-        database.prepare(updateSql).run(data.orderId, payload.operationId);
+        database
+          .prepare(updateSql)
+          .run(
+            data.orderId,
+            `Ordem de servico ${data.orderId} criada no OMIE na etapa "Faturar".`,
+            payload.operationId
+          );
       }
       markSyncJobDone(database, job.id);
       // Corrida create x cancel: se a operacao foi cancelada localmente enquanto o pedido
@@ -3567,6 +3586,18 @@ export async function processOmieSyncQueue(
         continue;
       }
       markSyncJobFailed(database, job.id, message);
+      // A operacao interna nao tem tela de faturamento para explicar a falha: sem isto,
+      // uma OS recusada pelo OMIE sumia (a operacao continuava "fechada" e nada indicava
+      // que ela nunca chegou la). Registra o erro na propria operacao.
+      if (payload.operationType !== "invoice") {
+        database
+          .prepare(
+            `UPDATE weighing_operations
+             SET omie_billing_status = 'service_order_failed', omie_billing_message = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE id = ?`
+          )
+          .run(message, payload.operationId);
+      }
       failed++;
       errors.push(`Job ${job.id}: ${message}`);
     }
@@ -3583,6 +3614,95 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isInternalOperation(database: DesktopDatabase, operationId: string): boolean {
+  const row = database
+    .prepare("SELECT operation_type FROM weighing_operations WHERE id = ?")
+    .get(operationId) as { operation_type: string } | undefined;
+  return row?.operation_type === "internal";
+}
+
+/**
+ * (Re)envia a ordem de servico de uma operacao interna: reconstroi o job com a MESMA chave
+ * de idempotencia (o OMIE reaproveita a OS ja criada, nunca duplica), rearma um job que
+ * tenha falhado e processa a fila so dessa operacao. Devolve `blocked` com o motivo quando
+ * ainda nao ha o que enviar (cliente sem codigo OMIE e sem CNPJ/CPF).
+ */
+async function resendInternalServiceOrder(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity,
+  operationId: string
+): Promise<FiscalBillingResult> {
+  const row = database
+    .prepare("SELECT status, omie_service_order_id FROM weighing_operations WHERE id = ?")
+    .get(operationId) as { status: string; omie_service_order_id: number | null } | undefined;
+
+  // Operacao cancelada: os jobs OMIE dela foram neutralizados de proposito
+  // (cancelPendingOmieJobs). Reenviar aqui ressuscitaria a OS de uma venda cancelada.
+  if (row?.status === "cancelled") {
+    const reason = "Operacao cancelada: a ordem de servico nao e reenviada ao OMIE.";
+    return { ...internalServiceOrderResult(null, reason), blocked: true, blockReason: reason };
+  }
+
+  const existingOrderId = row?.omie_service_order_id ?? null;
+  if (existingOrderId) {
+    return internalServiceOrderResult(existingOrderId, `Ordem de servico OMIE ${existingOrderId}.`);
+  }
+
+  const built = buildOmieBillingJob(database, operationId);
+  if (!built) {
+    const reason =
+      "Cliente sem CNPJ/CPF: informe o documento do cliente para cadastra-lo no OMIE e enviar a ordem de servico.";
+    database
+      .prepare(
+        `UPDATE weighing_operations
+         SET omie_billing_status = 'cadastro_incompleto', omie_billing_message = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         WHERE id = ?`
+      )
+      .run(reason, operationId);
+    return { ...internalServiceOrderResult(null, reason), blocked: true, blockReason: reason };
+  }
+
+  enqueueOmieBillingJob(database, operationId, built);
+  // Job ja existente que falhou/morreu: volta para 'pending' com o payload atualizado
+  // (o cadastro do cliente pode ter sido corrigido depois da primeira tentativa).
+  database
+    .prepare(
+      `UPDATE sync_queue
+       SET status = 'pending', attempt_count = 0, payload_json = ?,
+           next_attempt_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+           updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+       WHERE target = 'omie' AND idempotency_key = ? AND status IN ('pending', 'failed', 'dead_letter')`
+    )
+    .run(JSON.stringify(built.payload), built.idempotencyKey);
+
+  const outcome = await processOmieSyncQueue(database, identity, { entityId: operationId });
+  const orderId = database
+    .prepare("SELECT omie_service_order_id FROM weighing_operations WHERE id = ?")
+    .pluck()
+    .get(operationId) as number | null | undefined;
+
+  if (orderId) {
+    return internalServiceOrderResult(orderId, `Ordem de servico OMIE ${orderId} criada.`);
+  }
+
+  const reason =
+    outcome.errors[0] ?? "OMIE nao confirmou a ordem de servico. Tente novamente em instantes.";
+  return { ...internalServiceOrderResult(null, reason), blocked: true, blockReason: reason };
+}
+
+function internalServiceOrderResult(orderId: number | null, message: string): FiscalBillingResult {
+  return {
+    orderId,
+    // A OS nasce na etapa "Faturar" e a NFS-e e emitida no OMIE: o app nunca fatura aqui.
+    billed: false,
+    billingStatusCode: null,
+    billingStatusMessage: message,
+    documentUrl: null,
+    documentPrinted: false,
+    documentPrintError: null
+  };
+}
+
 export async function processFiscalBillingNow(
   database: DesktopDatabase,
   identity: LocalDesktopIdentity,
@@ -3596,6 +3716,13 @@ export async function processFiscalBillingNow(
 ): Promise<FiscalBillingResult> {
   const settings = getCloudSettings(database, identity);
   const supabase = getSupabaseClient();
+
+  // Operacao interna: nao ha NF-e a faturar, mas ha ordem de servico a (re)enviar. Depois
+  // de completar o CNPJ/CPF do cliente, este e o caminho para tirar a operacao do estado
+  // "cadastro incompleto" — sem ele a venda sem nota ficava presa sem nenhuma acao.
+  if (isInternalOperation(database, operationId)) {
+    return resendInternalServiceOrder(database, identity, operationId);
+  }
 
   // Gate autoritativo: cadastro do cliente precisa estar completo para NF-e. Se nao estiver,
   // registra a pendencia e retorna bloqueado (sem chamar o OMIE, sem enfileirar job condenado).

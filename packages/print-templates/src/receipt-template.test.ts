@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { buildReceiptLines } from "./receipt-template";
+import {
+  buildReceiptLines,
+  buildReceiptLinesWithConfig,
+  DEFAULT_RECEIPT_TEMPLATE_CONFIG,
+  NON_FISCAL_SALE_LABEL
+} from "./receipt-template";
 
 describe("buildReceiptLines", () => {
   it("includes freight when it exists", () => {
@@ -92,6 +97,49 @@ describe("buildReceiptLines", () => {
       .slice(receiptLabelIndex + 1, signatureLineIndex)
       .filter((line) => line === "").length;
     expect(blankLinesBefore).toBeGreaterThanOrEqual(3);
+  });
+
+  it("marca a operacao interna como venda sem valor fiscal no topo e no pe", () => {
+    const lines = buildReceiptLines({ ...baseInput(), operationType: "internal" });
+
+    const marked = lines.filter((line) => line.includes(NON_FISCAL_SALE_LABEL));
+    expect(marked).toHaveLength(2);
+    // O aviso do topo vem antes dos dados do cliente e o do pe depois da assinatura.
+    expect(lines.findIndex((line) => line.includes(NON_FISCAL_SALE_LABEL))).toBeLessThan(
+      lines.findIndex((line) => line.startsWith("Cliente:"))
+    );
+    expect(lines.at(-2)).toContain(NON_FISCAL_SALE_LABEL);
+  });
+
+  it("nao marca a venda com nota como sem valor fiscal", () => {
+    const lines = buildReceiptLines(baseInput());
+
+    expect(lines.some((line) => line.includes(NON_FISCAL_SALE_LABEL))).toBe(false);
+  });
+
+  it("mantem o aviso mesmo com o template todo desligado", () => {
+    // A pedreira pode esconder cabecalho, cliente, valores... mas nunca o aviso de
+    // que o cupom nao vale como documento fiscal.
+    const lines = buildReceiptLinesWithConfig(
+      { ...baseInput(), operationType: "internal" },
+      {
+        ...DEFAULT_RECEIPT_TEMPLATE_CONFIG,
+        showCompanyHeader: false,
+        showCopyInfo: false,
+        showCustomerInfo: false,
+        showProductDetail: false,
+        showFreight: false,
+        showWeights: false,
+        showEntryExitTimes: false,
+        showPermanence: false,
+        showFinancial: false,
+        showSignature: false,
+        showVehicleDriver: false,
+        showFooter: false
+      }
+    );
+
+    expect(lines.filter((line) => line.includes(NON_FISCAL_SALE_LABEL))).toHaveLength(2);
   });
 });
 

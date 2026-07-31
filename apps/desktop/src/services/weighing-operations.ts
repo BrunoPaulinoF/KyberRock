@@ -158,6 +158,8 @@ export interface WeighingOperationSummary {
   freightCreditDebitCents: number;
   quotationId: string | null;
   omieSalesOrderId: number | null;
+  /** Numero da ordem de servico criada no OMIE para a operacao interna (sem nota). */
+  omieServiceOrderId: number | null;
   omieBillingStatus: string | null;
   omieBillingMessage: string | null;
   omieBilledAt: string | null;
@@ -204,6 +206,7 @@ interface OperationRow {
   freight_credit_debit_cents: number;
   quotation_id: string | null;
   omie_sales_order_id: number | null;
+  omie_service_order_id: number | null;
   omie_billing_status: string | null;
   omie_billing_message: string | null;
   omie_billed_at: string | null;
@@ -893,11 +896,13 @@ export function closeWeighingOperation(
     const billingJob = buildOmieBillingJob(database, input.operationId);
     if (billingJob) {
       enqueueOmieBillingJob(database, input.operationId, billingJob, now);
-    } else if (nextOperationType === "invoice") {
+    } else {
       // Aqui buildOmieBillingJob so retorna null quando o cliente nao tem codigo OMIE E
       // nao tem CNPJ/CPF (sem documento o OMIE nao permite cadastrar o cliente na hora).
       // Registra o motivo (em vez de pular em silencio) para aparecer na tela Concluidas;
-      // apos informar o documento do cliente, "Refaturar" cria o cliente e envia o pedido.
+      // apos informar o documento do cliente, "Refaturar" cria o cliente e envia o
+      // pedido/OS. Vale para os DOIS tipos: a operacao interna tambem vira ordem de
+      // servico no OMIE, entao ficar sem job precisa ser tao visivel quanto na fiscal.
       database
         .prepare(
           `UPDATE weighing_operations
@@ -905,7 +910,9 @@ export function closeWeighingOperation(
            WHERE id = ?`
         )
         .run(
-          "Cliente sem CNPJ/CPF: informe o documento do cliente para cadastra-lo no OMIE e enviar o pedido (use Refaturar).",
+          nextOperationType === "invoice"
+            ? "Cliente sem CNPJ/CPF: informe o documento do cliente para cadastra-lo no OMIE e enviar o pedido (use Refaturar)."
+            : "Cliente sem CNPJ/CPF: informe o documento do cliente para cadastra-lo no OMIE e enviar a ordem de servico (use Reenviar).",
           timestamp,
           input.operationId
         );
@@ -1041,6 +1048,11 @@ export interface OmieOrderTransport {
   plate: string | null;
   driverName: string | null;
   carrierOmieId: number | null;
+  /**
+   * Nome da transportadora. A OS nao tem bloco `frete` para referenciar o cadastro
+   * (so o pedido de venda tem), entao ela entra pelo nome nos dados adicionais.
+   */
+  carrierName: string | null;
   /** Peso liquido da carga em kg (vai em peso_bruto/peso_liquido do frete — granel, sem embalagem). */
   cargoWeightKg: number | null;
   /** true quando a modalidade e transporte proprio (modFrete 3/4) — veiculo_proprio "S". */
@@ -1290,6 +1302,7 @@ export function buildOmieBillingJob(
     plate: operation.plate?.trim() || null,
     driverName: operation.driverName?.trim() || null,
     carrierOmieId: carrierOmieId && carrierOmieId > 0 ? carrierOmieId : null,
+    carrierName: orderCarrier?.name?.trim() || null,
     cargoWeightKg: operation.netWeightKg,
     ownVehicle: freightModalidade === "3" || freightModalidade === "4"
   };
@@ -1641,7 +1654,7 @@ export function listOpenWeighingOperations(database: DesktopDatabase): WeighingO
         o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
         o.product_total_cents, o.freight_total_cents, o.freight_json, o.freight_type, o.total_cents,
         o.deduct_freight_from_credit, o.product_credit_debit_cents, o.freight_credit_debit_cents, o.quotation_id,
-        o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
+        o.omie_sales_order_id, o.omie_service_order_id, o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
         c.id AS customer_id,
@@ -1683,7 +1696,7 @@ export function listCanceledWeighingOperations(
         o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
         o.product_total_cents, o.freight_total_cents, o.freight_json, o.freight_type, o.total_cents,
         o.deduct_freight_from_credit, o.product_credit_debit_cents, o.freight_credit_debit_cents, o.quotation_id,
-        o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
+        o.omie_sales_order_id, o.omie_service_order_id, o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
         c.id AS customer_id,
@@ -1723,7 +1736,7 @@ export function listClosedWeighingOperations(
         o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
         o.product_total_cents, o.freight_total_cents, o.freight_json, o.freight_type, o.total_cents,
         o.deduct_freight_from_credit, o.product_credit_debit_cents, o.freight_credit_debit_cents, o.quotation_id,
-        o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
+        o.omie_sales_order_id, o.omie_service_order_id, o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
         c.id AS customer_id,
@@ -1814,7 +1827,7 @@ export function getWeighingOperation(
         o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
         o.product_total_cents, o.freight_total_cents, o.freight_json, o.freight_type, o.total_cents,
         o.deduct_freight_from_credit, o.product_credit_debit_cents, o.freight_credit_debit_cents, o.quotation_id,
-        o.omie_sales_order_id, o.omie_billing_status, o.omie_billing_message,
+        o.omie_sales_order_id, o.omie_service_order_id, o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
         c.id AS customer_id,
@@ -2316,6 +2329,7 @@ function mapOperationRow(row: OperationRow): WeighingOperationSummary {
     freightCreditDebitCents: row.freight_credit_debit_cents ?? 0,
     quotationId: row.quotation_id,
     omieSalesOrderId: row.omie_sales_order_id,
+    omieServiceOrderId: row.omie_service_order_id ?? null,
     omieBillingStatus: row.omie_billing_status,
     omieBillingMessage: row.omie_billing_message,
     omieBilledAt: row.omie_billed_at,
