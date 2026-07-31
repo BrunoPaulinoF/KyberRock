@@ -22,17 +22,11 @@ Use `--allow-env` porque o handler le `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KE
 
 ## CI/CD
 
-Inclua um job dedicado antes do deploy das Edge Functions:
+Ja existe: `.github/workflows/ci.yml` roda esta suite no job `deno`, em todo pull request e em todo push na `main`, ao lado do job `node` (`npm run lint`, `npm run build`, `npm test`). Um PR com a suite vermelha nao fica verde.
 
-```yaml
-omie-sync-deno-tests:
-  runs-on: ubuntu-latest
-  steps:
-    - uses: actions/checkout@v4
-    - uses: denoland/setup-deno@v2
-      with:
-        deno-version: v2.x
-    - run: deno test --allow-env --import-map=supabase/functions/omie-sync/deno.test.import_map.json supabase/functions/omie-sync
-```
+O job roda o mesmo comando da secao anterior, sem `--no-check` — o type-check faz parte do que ele protege.
 
-Recomendacao: mantenha este job junto de `npm run lint`, `npm test` e `npm run build`, bloqueando merge/deploy se qualquer um falhar.
+Dois detalhes que valem lembrar ao mexer nisso:
+
+- O escopo e `supabase/functions/omie-sync`, nao `supabase/functions`. Os outros `*_test.ts` da pasta sao testes vitest (ver o `include` do `vitest.config.ts`) e reprovariam no type-check do Deno.
+- Este e o unico teste do repositorio que o `npm test` nao cobre: o vitest coleta `*.test.ts`, e os arquivos Deno usam `*_test.ts`. Foi por isso que a suite ficou vermelha na `main` sem ninguem notar antes da CI existir.
