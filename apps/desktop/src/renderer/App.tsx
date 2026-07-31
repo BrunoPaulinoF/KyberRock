@@ -2746,12 +2746,18 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                             marginBottom: "8px",
                             borderRadius: "10px",
                             border: `1px solid ${
-                              loaderCompletionNotice.kind === "completed" ? "#86efac" : "#fcd34d"
+                              loaderCompletionNotice.kind === "completed"
+                                ? "var(--kr-success-border)"
+                                : "var(--kr-warning-border)"
                             }`,
                             background:
-                              loaderCompletionNotice.kind === "completed" ? "#f0fdf4" : "#fffbeb",
+                              loaderCompletionNotice.kind === "completed"
+                                ? "var(--kr-success-soft)"
+                                : "var(--kr-warning-soft)",
                             color:
-                              loaderCompletionNotice.kind === "completed" ? "#15803d" : "#92400e",
+                              loaderCompletionNotice.kind === "completed"
+                                ? "var(--kr-success)"
+                                : "var(--kr-warning)",
                             fontSize: "13px",
                             fontWeight: 700
                           }}
@@ -2779,7 +2785,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                               border: "none",
                               background: "transparent",
                               color:
-                                loaderCompletionNotice.kind === "completed" ? "#15803d" : "#92400e",
+                                loaderCompletionNotice.kind === "completed"
+                                  ? "var(--kr-success)"
+                                  : "var(--kr-warning)",
                               cursor: "pointer",
                               fontWeight: 900,
                               fontSize: "15px",
@@ -2802,9 +2810,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                             padding: "10px 12px",
                             marginBottom: "8px",
                             borderRadius: "10px",
-                            border: "1px solid #fca5a5",
-                            background: "#fef2f2",
-                            color: "#b91c1c",
+                            border: "1px solid var(--kr-danger-border)",
+                            background: "var(--kr-danger-soft)",
+                            color: "var(--kr-danger)",
                             fontSize: "13px",
                             fontWeight: 700
                           }}
@@ -2816,8 +2824,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                             <span
                               key={op.id}
                               style={{
-                                background: "#fff",
-                                border: "1px solid #fca5a5",
+                                background: "var(--kr-surface)",
+                                border: "1px solid var(--kr-danger-border)",
                                 borderRadius: "8px",
                                 padding: "2px 8px",
                                 letterSpacing: "0.06em"
@@ -2841,7 +2849,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                             key={operation.id}
                             style={{
                               ...styles.operationsTableRow,
-                              ...(isOvertime ? { background: "#fef2f2" } : {}),
+                              ...(isOvertime ? { background: "var(--kr-danger-surface)" } : {}),
                               ...operationOutlineStyle(operation)
                             }}
                           >
@@ -2867,7 +2875,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                               <span>{formatMoney(operation.unitPriceCents)}/ton</span>
                               <small
                                 style={{
-                                  color: isOvertime ? "#b91c1c" : "var(--kr-muted)",
+                                  color: isOvertime ? "var(--kr-danger)" : "var(--kr-muted)",
                                   fontWeight: isOvertime ? 700 : undefined
                                 }}
                                 title={formatDbDateTime(operation.createdAt)}
@@ -4291,9 +4299,9 @@ function LoaderStatusLight({ completedAt }: { completedAt?: string | null }) {
         fontWeight: 800,
         letterSpacing: "0.02em",
         whiteSpace: "nowrap",
-        border: `1px solid ${completed ? "#86efac" : "#fca5a5"}`,
-        background: completed ? "#f0fdf4" : "#fef2f2",
-        color: completed ? "#15803d" : "#b91c1c"
+        border: `1px solid ${completed ? "var(--kr-success-border)" : "var(--kr-danger-border)"}`,
+        background: completed ? "var(--kr-success-soft)" : "var(--kr-danger-soft)",
+        color: completed ? "var(--kr-success)" : "var(--kr-danger)"
       }}
       title={
         completed
@@ -7446,11 +7454,23 @@ function fiscalBillingPillStyle(
 ): React.CSSProperties {
   const colors =
     tone === "success"
-      ? { background: "#dcfce7", color: "#166534", borderColor: "#bbf7d0" }
+      ? {
+          background: "var(--kr-success-soft)",
+          color: "var(--kr-success)",
+          borderColor: "var(--kr-success-border)"
+        }
       : tone === "danger"
-        ? { background: "#fee2e2", color: "#991b1b", borderColor: "#fecaca" }
+        ? {
+            background: "var(--kr-danger-soft)",
+            color: "var(--kr-danger)",
+            borderColor: "var(--kr-danger-border)"
+          }
         : tone === "warning"
-          ? { background: "#fef3c7", color: "#92400e", borderColor: "#fde68a" }
+          ? {
+              background: "var(--kr-warning-soft)",
+              color: "var(--kr-warning)",
+              borderColor: "var(--kr-warning-border)"
+            }
           : {
               background: "var(--kr-surface-soft)",
               color: "var(--kr-muted)",
@@ -7503,12 +7523,16 @@ function getThemeVariables(themeMode: ThemeMode): React.CSSProperties {
       "--kr-card-bg": "#171412",
       "--kr-card-border": "#2e2925",
       "--kr-card-hover": "#221e1b",
+      "--kr-plate-bg": "#292524",
+      "--kr-plate-border": "#57534e",
+      "--kr-plate-text": "#fafaf9",
       "--kr-success": "#4ade80",
       "--kr-success-soft": "#052e16",
       "--kr-success-border": "#166534",
       "--kr-danger": "#f87171",
       "--kr-danger-strong": "#dc2626",
       "--kr-danger-soft": "#450a0a",
+      "--kr-danger-surface": "#2a1210",
       "--kr-danger-border": "#991b1b",
       "--kr-warning": "#fbbf24",
       "--kr-warning-soft": "#451a03",
@@ -7565,12 +7589,16 @@ function getThemeVariables(themeMode: ThemeMode): React.CSSProperties {
     "--kr-card-bg": "#ffffff",
     "--kr-card-border": "#e7e5e4",
     "--kr-card-hover": "#fafaf9",
+    "--kr-plate-bg": "#1c1917",
+    "--kr-plate-border": "#44403c",
+    "--kr-plate-text": "#fafaf9",
     "--kr-success": "#15803d",
     "--kr-success-soft": "#f0fdf4",
     "--kr-success-border": "#bbf7d0",
     "--kr-danger": "#b91c1c",
     "--kr-danger-strong": "#dc2626",
     "--kr-danger-soft": "#fef2f2",
+    "--kr-danger-surface": "#fef2f2",
     "--kr-danger-border": "#fecaca",
     "--kr-warning": "#b45309",
     "--kr-warning-soft": "#fffbeb",
@@ -11406,9 +11434,9 @@ const styles = {
     whiteSpace: "nowrap",
     padding: "5px 9px",
     borderRadius: "8px",
-    background: "#1c1917",
-    border: "1px solid #44403c",
-    color: "#fafaf9",
+    background: "var(--kr-plate-bg)",
+    border: "1px solid var(--kr-plate-border)",
+    color: "var(--kr-plate-text)",
     letterSpacing: "0.08em",
     fontFamily: '"Cascadia Mono", Consolas, monospace',
     fontWeight: 700
