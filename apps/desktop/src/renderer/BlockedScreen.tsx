@@ -9,11 +9,7 @@ interface BlockedScreenProps {
   onRequireActivation: () => void;
 }
 
-export function BlockedScreen({
-  desktopApi,
-  onUnlocked,
-  onRequireActivation
-}: BlockedScreenProps) {
+export function BlockedScreen({ desktopApi, onUnlocked, onRequireActivation }: BlockedScreenProps) {
   const [status, setStatus] = useState<DesktopAccessStatus | null>(null);
   const [checking, setChecking] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -84,7 +80,8 @@ export function BlockedScreen({
   // Bloqueio administrativo (empresa/pagamento/dispositivo desativado) so sai
   // pelo admin: reativar aqui nao adiantaria. Ja o "invalid_device" e problema
   // da credencial desta maquina, que a propria tela consegue resolver.
-  const canReactivate = status?.status === "invalid_device" || status?.status === "validation_error";
+  const canReactivate =
+    status?.status === "invalid_device" || status?.status === "validation_error";
   // Sem contato com a nuvem, o que aparece e o ULTIMO status conhecido, guardado
   // nesta maquina — nao uma decisao do administrador tomada agora. Dizer isso
   // evita a caca ao fantasma de um bloqueio que ja foi liberado no admin.
@@ -112,9 +109,7 @@ export function BlockedScreen({
             Erro da ultima tentativa: {status?.lastError}
           </p>
         )}
-        {checking && (
-          <p style={styles.checking}>Verificando status...</p>
-        )}
+        {checking && <p style={styles.checking}>Verificando status...</p>}
         {feedback && <p style={styles.checking}>{feedback}</p>}
         <div style={styles.actions}>
           <button
@@ -146,7 +141,7 @@ export function BlockedScreen({
 
 const BLOCKED_STATUS_MESSAGES: Partial<Record<DesktopAccessStatus["status"], string>> = {
   payment_blocked:
-    "Acesso bloqueado por falta de pagamento. Regularize a pendência para reativar o acesso.",
+    "Acesso bloqueado por falta de pagamento. Regularize a pendência para reativar o acesso."
 };
 
 function resolveBlockedMessage(status: DesktopAccessStatus | null): string {
@@ -164,35 +159,35 @@ const styles = {
     justifyContent: "center",
     padding: "32px",
     fontFamily: "Segoe UI, Arial, sans-serif",
-    background: "#ffffff",
+    background: "#ffffff"
   },
   content: {
     textAlign: "center" as const,
-    maxWidth: "480px",
+    maxWidth: "480px"
   },
   title: {
     margin: "0 0 16px 0",
     fontSize: "48px",
     fontWeight: 700,
     color: "#dc2626",
-    lineHeight: 1.2,
+    lineHeight: 1.2
   },
   message: {
     margin: "0 0 24px 0",
     fontSize: "18px",
     color: "#991b1b",
-    lineHeight: 1.5,
+    lineHeight: 1.5
   },
   checking: {
     margin: "16px 0 0 0",
     fontSize: "14px",
-    color: "#64748b",
+    color: "#64748b"
   },
   actions: {
     display: "flex",
     flexDirection: "column" as const,
     gap: "12px",
-    marginTop: "24px",
+    marginTop: "24px"
   },
   primaryButton: {
     padding: "14px 20px",
@@ -202,7 +197,7 @@ const styles = {
     color: "#ffffff",
     fontSize: "16px",
     fontWeight: 600,
-    cursor: "pointer",
+    cursor: "pointer"
   },
   secondaryButton: {
     padding: "12px 20px",
@@ -212,6 +207,6 @@ const styles = {
     color: "#0f172a",
     fontSize: "15px",
     fontWeight: 500,
-    cursor: "pointer",
-  },
+    cursor: "pointer"
+  }
 };

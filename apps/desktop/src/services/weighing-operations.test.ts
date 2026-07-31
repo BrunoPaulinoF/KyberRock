@@ -343,7 +343,10 @@ describe("weighing operations", () => {
         .all() as Array<{ payload_json: string }>;
       // Cancel duplo nao duplica o job (INSERT OR IGNORE na chave idempotente).
       expect(jobs).toHaveLength(1);
-      const payload = JSON.parse(jobs[0].payload_json) as { orderType: string; omieOrderId: number };
+      const payload = JSON.parse(jobs[0].payload_json) as {
+        orderType: string;
+        omieOrderId: number;
+      };
       expect(payload).toMatchObject({ orderType: "service", omieOrderId: 555 });
     } finally {
       database.close();
@@ -479,7 +482,9 @@ describe("weighing operations", () => {
     try {
       const identity = createIdentity(database);
       insertCatalog(database);
-      database.prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'").run();
+      database
+        .prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'")
+        .run();
       const creditService = new CreditService(database);
       creditService.applyCredit("customer-1", 100_000, "saldo OMIE");
 
@@ -518,7 +523,9 @@ describe("weighing operations", () => {
     try {
       const identity = createIdentity(database);
       insertCatalog(database);
-      database.prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'").run();
+      database
+        .prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'")
+        .run();
       // Metade do saldo veio do financeiro do OMIE (adiantamento) e metade foi
       // lancada aqui: so a parte do OMIE pode ser baixada la.
       database
@@ -570,7 +577,9 @@ describe("weighing operations", () => {
     try {
       const identity = createIdentity(database);
       insertCatalog(database);
-      database.prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'").run();
+      database
+        .prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'")
+        .run();
       new CreditService(database).applyCredit("customer-1", 100_000, "saldo lancado aqui");
 
       const operation = createWeighingOperation(database, {
@@ -604,7 +613,9 @@ describe("weighing operations", () => {
     try {
       const identity = createIdentity(database);
       insertCatalog(database);
-      database.prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'").run();
+      database
+        .prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'")
+        .run();
       const creditService = new CreditService(database);
       creditService.applyCredit("customer-1", 100_000, "saldo OMIE");
 
@@ -651,7 +662,9 @@ describe("weighing operations", () => {
     try {
       const identity = createIdentity(database);
       insertCatalog(database);
-      database.prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'").run();
+      database
+        .prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'")
+        .run();
       const creditService = new CreditService(database);
       creditService.applyCredit("customer-1", 100_000, "saldo OMIE");
 
@@ -713,9 +726,7 @@ describe("weighing operations", () => {
       deleteClosedWeighingOperation(database, operation.id);
 
       const job = database
-        .prepare(
-          "SELECT status FROM sync_queue WHERE entity_id = ? AND action = 'create_order'"
-        )
+        .prepare("SELECT status FROM sync_queue WHERE entity_id = ? AND action = 'create_order'")
         .get(operation.id) as { status: string } | undefined;
       // Excluir a operacao concluida neutraliza o job pendente (dead_letter): nao cria pedido
       // "fantasma" no OMIE depois que o operador excluiu a operacao localmente.
@@ -731,7 +742,9 @@ describe("weighing operations", () => {
     try {
       const identity = createIdentity(database);
       insertCatalog(database);
-      database.prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'").run();
+      database
+        .prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'")
+        .run();
       const creditService = new CreditService(database);
       creditService.applyCredit("customer-1", 200_000, "saldo OMIE");
 
@@ -777,7 +790,9 @@ describe("weighing operations", () => {
     try {
       const identity = createIdentity(database);
       insertCatalog(database);
-      database.prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'").run();
+      database
+        .prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'")
+        .run();
       const creditService = new CreditService(database);
       creditService.applyCredit("customer-1", 200_000, "saldo OMIE");
 
@@ -984,7 +999,9 @@ describe("weighing operations", () => {
     try {
       const identity = createIdentity(database);
       insertCatalog(database);
-      database.prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'").run();
+      database
+        .prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'")
+        .run();
       new CreditService(database).applyCredit("customer-1", 70_000, "saldo OMIE");
 
       const operation = createWeighingOperation(database, {
@@ -1229,9 +1246,7 @@ describe("weighing operations", () => {
       });
 
       // Com a UF do cadastro (sincronizada do OMIE), ela acompanha a placa no frete.
-      database
-        .prepare("UPDATE vehicles SET plate_state = 'mg' WHERE id = 'vehicle-1'")
-        .run();
+      database.prepare("UPDATE vehicles SET plate_state = 'mg' WHERE id = 'vehicle-1'").run();
       expect(buildOmieBillingJob(database, operation.id)!.payload.transport?.plateState).toBe("MG");
     } finally {
       database.close();
@@ -2010,7 +2025,10 @@ describe("weighing operations", () => {
         .prepare(
           "SELECT default_payment_term_id, default_payment_method_id FROM customers WHERE id = 'customer-1'"
         )
-        .get() as { default_payment_term_id: string | null; default_payment_method_id: string | null };
+        .get() as {
+        default_payment_term_id: string | null;
+        default_payment_method_id: string | null;
+      };
       expect(customer.default_payment_term_id).toBe("term-7-14");
       expect(customer.default_payment_method_id).toBe("method-pix");
     } finally {
@@ -2051,7 +2069,10 @@ describe("weighing operations", () => {
         .prepare(
           "SELECT default_payment_term_id, default_payment_method_id FROM customers WHERE id = 'customer-1'"
         )
-        .get() as { default_payment_term_id: string | null; default_payment_method_id: string | null };
+        .get() as {
+        default_payment_term_id: string | null;
+        default_payment_method_id: string | null;
+      };
       expect(customer.default_payment_term_id).toBe("term-original");
       expect(customer.default_payment_method_id).toBe("method-original");
     } finally {

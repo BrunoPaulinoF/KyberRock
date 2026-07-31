@@ -20,7 +20,7 @@ Deno.serve(async (req) => {
   const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
   const supabase = createClient(supabaseUrl, serviceRoleKey);
-  const body = await req.json().catch(() => ({})) as {
+  const body = (await req.json().catch(() => ({}))) as {
     deviceId?: string;
     deviceToken?: string;
   };
@@ -35,7 +35,11 @@ Deno.serve(async (req) => {
     .single();
 
   if (deviceError || !device) {
-    return jsonResponse({ status: "invalid_device", allowed: false, message: "Desktop nao registrado." });
+    return jsonResponse({
+      status: "invalid_device",
+      allowed: false,
+      message: "Desktop nao registrado."
+    });
   }
 
   const typedDevice = device as DeviceRow;
@@ -52,7 +56,11 @@ Deno.serve(async (req) => {
   }
 
   if (!typedDevice.is_active) {
-    return jsonResponse({ status: "device_blocked", allowed: false, message: "Este desktop foi bloqueado pelo administrador." });
+    return jsonResponse({
+      status: "device_blocked",
+      allowed: false,
+      message: "Este desktop foi bloqueado pelo administrador."
+    });
   }
 
   const { data: unit, error: unitError } = await supabase
@@ -61,7 +69,11 @@ Deno.serve(async (req) => {
     .eq("id", typedDevice.unit_id)
     .single();
   if (unitError || !unit?.is_active) {
-    return jsonResponse({ status: "unit_blocked", allowed: false, message: "Pedreira/unidade bloqueada pelo administrador." });
+    return jsonResponse({
+      status: "unit_blocked",
+      allowed: false,
+      message: "Pedreira/unidade bloqueada pelo administrador."
+    });
   }
 
   const { data: company, error: companyError } = await supabase
@@ -70,11 +82,20 @@ Deno.serve(async (req) => {
     .eq("id", typedDevice.company_id)
     .single();
   if (companyError || !company?.is_active) {
-    return jsonResponse({ status: "company_blocked", allowed: false, message: "Não autorizado. Empresa bloqueada pelo administrador." });
+    return jsonResponse({
+      status: "company_blocked",
+      allowed: false,
+      message: "Não autorizado. Empresa bloqueada pelo administrador."
+    });
   }
 
   if (company.payment_blocked === true) {
-    return jsonResponse({ status: "payment_blocked", allowed: false, message: "Acesso bloqueado por falta de pagamento. Regularize a pendência para reativar o acesso." });
+    return jsonResponse({
+      status: "payment_blocked",
+      allowed: false,
+      message:
+        "Acesso bloqueado por falta de pagamento. Regularize a pendência para reativar o acesso."
+    });
   }
 
   // Numero do computador na unidade (sufixo do cupom): maquinas ativadas antes

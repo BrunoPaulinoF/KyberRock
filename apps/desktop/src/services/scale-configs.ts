@@ -218,8 +218,13 @@ function sanitizeSerialPath(value: unknown): string {
   if (typeof value !== "string") return "";
   // Remove caracteres de controle e limita o tamanho para nao propagar lixo
   // para o driver serial; "COM3" e "/dev/ttyUSB0" passam intactos.
-  // eslint-disable-next-line no-control-regex
-  return value.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 128);
+  return (
+    value
+      // eslint-disable-next-line no-control-regex
+      .replace(/[\u0000-\u001f\u007f]/g, "")
+      .trim()
+      .slice(0, 128)
+  );
 }
 
 function normalizeBaudRate(value: unknown): number {

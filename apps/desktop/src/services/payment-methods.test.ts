@@ -56,7 +56,9 @@ describe("payment-methods service", () => {
 
   it("seeds the default OMIE payment codes (tPag) so the order carries the meio", () => {
     ensureDefaultPaymentMethods(database, COMPANY_ID);
-    const byCode = new Map(listPaymentMethods(database, COMPANY_ID).map((m) => [m.code, m.omie_code]));
+    const byCode = new Map(
+      listPaymentMethods(database, COMPANY_ID).map((m) => [m.code, m.omie_code])
+    );
     expect(byCode.get("cash")).toBe("01");
     expect(byCode.get("pix")).toBe("17");
     expect(byCode.get("credit_card")).toBe("03");

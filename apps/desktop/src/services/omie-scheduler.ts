@@ -69,7 +69,9 @@ export function normalizeOmieSchedulerConfig(
 ): OmieSchedulerConfig {
   const intervalRaw = Number(config?.intervalMinutes);
   const interval =
-    Number.isFinite(intervalRaw) && intervalRaw > 0 && intervalRaw !== LEGACY_OMIE_PULL_INTERVAL_MINUTES
+    Number.isFinite(intervalRaw) &&
+    intervalRaw > 0 &&
+    intervalRaw !== LEGACY_OMIE_PULL_INTERVAL_MINUTES
       ? intervalRaw
       : DEFAULT_OMIE_PULL_INTERVAL_MINUTES;
   return {

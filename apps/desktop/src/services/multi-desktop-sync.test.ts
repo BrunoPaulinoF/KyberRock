@@ -219,9 +219,9 @@ describe("multi-desktop na mesma pedreira", () => {
         deviceName: "Balanca 2",
         deviceColor: "#ea580c"
       });
-      expect(
-        listUnitDevices(database, identity).map((device) => device.id)
-      ).toEqual(expect.arrayContaining(["desktop-a", "desktop-b"]));
+      expect(listUnitDevices(database, identity).map((device) => device.id)).toEqual(
+        expect.arrayContaining(["desktop-a", "desktop-b"])
+      );
     } finally {
       database.close();
     }
@@ -586,7 +586,9 @@ describe("multi-desktop na mesma pedreira", () => {
         updatedAt: "2026-07-22T11:00:00.000Z"
       });
       database
-        .prepare("UPDATE weighing_operations SET carrier_id = 'carr-1' WHERE id = 'op-own-transport'")
+        .prepare(
+          "UPDATE weighing_operations SET carrier_id = 'carr-1' WHERE id = 'op-own-transport'"
+        )
         .run();
 
       invokeMock.mockResolvedValueOnce({
@@ -724,10 +726,7 @@ describe("multi-desktop na mesma pedreira", () => {
       await pullDesktopDataFromCloud(database, identity);
 
       expect(
-        database
-          .prepare("SELECT status FROM loading_requests WHERE id = ?")
-          .pluck()
-          .get(requestId)
+        database.prepare("SELECT status FROM loading_requests WHERE id = ?").pluck().get(requestId)
       ).toBe("closed");
     } finally {
       database.close();

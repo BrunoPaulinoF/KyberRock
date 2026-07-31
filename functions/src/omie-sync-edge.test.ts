@@ -97,7 +97,9 @@ describe("omie-sync Edge Function", () => {
     expect(source).toContain("accountOmieCode?: string | number;");
     // A conta selecionada tem precedencia; sem ela, resolve pelo nome (do desktop ou
     // padrao do meio de pagamento) e, por ultimo, o fallback historico da primeira conta.
-    expect(source).toContain("const selectedAccountCode = toNumber(payload.accountOmieCode ?? null);");
+    expect(source).toContain(
+      "const selectedAccountCode = toNumber(payload.accountOmieCode ?? null);"
+    );
     expect(source).toContain("? selectedAccountCode");
     expect(source).toContain("resolveOmieAccountCodeByName(credentials, payload.accountName)");
     expect(source).toContain("(await resolveOmieAccountCode(credentials))");

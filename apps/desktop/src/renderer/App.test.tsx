@@ -150,9 +150,7 @@ describe("App", () => {
   it("labels OMIE queue items in plain portuguese for the cloud screen", () => {
     expect(omieQueueActionLabel("create_order", "invoice")).toBe("Criar pedido (com nota)");
     expect(omieQueueActionLabel("create_order", "internal")).toBe("Criar OS (interno)");
-    expect(omieQueueActionLabel("create_and_bill_order", "invoice")).toBe(
-      "Criar e faturar pedido"
-    );
+    expect(omieQueueActionLabel("create_and_bill_order", "invoice")).toBe("Criar e faturar pedido");
     expect(omieQueueActionLabel("cancel_order", null)).toBe("Cancelar pedido no OMIE");
     expect(omieQueueStatusLabel("pending")).toBe("aguardando envio");
     expect(omieQueueStatusLabel("failed")).toBe("falhou (re-tenta sozinho)");

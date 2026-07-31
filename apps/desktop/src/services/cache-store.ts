@@ -408,7 +408,11 @@ function normalizeFiscalTypeText(value: string): string {
 
 function isManualInstallmentsPaymentTerm(term: PaymentTermCacheEntry): boolean {
   const normalizedName = normalizeFiscalTypeText(term.name);
-  return normalizedName.includes("informe") && normalizedName.includes("numero") && normalizedName.includes("parcela");
+  return (
+    normalizedName.includes("informe") &&
+    normalizedName.includes("numero") &&
+    normalizedName.includes("parcela")
+  );
 }
 
 function mapVehicle(row: VehicleRow): VehicleCacheEntry {
@@ -644,7 +648,9 @@ export class CacheStore {
     }
 
     if (entityType === "payment_term") {
-      rows = (rows as PaymentTermCacheEntry[]).filter((term) => !isManualInstallmentsPaymentTerm(term));
+      rows = (rows as PaymentTermCacheEntry[]).filter(
+        (term) => !isManualInstallmentsPaymentTerm(term)
+      );
     }
 
     if (entityType === "product" && productFiscalType === "finished_goods") {
@@ -729,7 +735,15 @@ export class CacheStore {
   private getSearchFields(entityType: CacheEntityType): string[] {
     switch (entityType) {
       case "customer":
-        return ["legalName", "tradeName", "document", "zipcode", "addressStreet", "neighborhood", "city"];
+        return [
+          "legalName",
+          "tradeName",
+          "document",
+          "zipcode",
+          "addressStreet",
+          "neighborhood",
+          "city"
+        ];
       case "product":
         return ["code", "description", "ncm", "ean"];
       case "vehicle":

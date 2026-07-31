@@ -78,7 +78,9 @@ export async function listSerialPorts(): Promise<SerialPortInfo[]> {
     .filter((port) => typeof port.path === "string" && port.path.trim().length > 0)
     .map((port) => {
       const isUsb =
-        Boolean(port.vendorId) || /usb/i.test(port.pnpId ?? "") || /usb/i.test(port.manufacturer ?? "");
+        Boolean(port.vendorId) ||
+        /usb/i.test(port.pnpId ?? "") ||
+        /usb/i.test(port.manufacturer ?? "");
       const friendly = port.friendlyName?.trim() || port.manufacturer?.trim() || "";
       return {
         path: port.path,

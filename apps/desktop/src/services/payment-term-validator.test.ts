@@ -12,46 +12,44 @@ describe("PaymentTermValidator", () => {
     it("allows closing on any day for cash payment", () => {
       const validator = new PaymentTermValidator();
 
-      expect(
-        validator.validateClosingDate("a_vista", localDate("2026-06-07"))
-      ).toEqual({ allowed: true });
+      expect(validator.validateClosingDate("a_vista", localDate("2026-06-07"))).toEqual({
+        allowed: true
+      });
     });
 
     it("allows closing on day 1-15 for monthly payment (vence dia 30)", () => {
       const validator = new PaymentTermValidator();
 
-      expect(
-        validator.validateClosingDate("mensal_30", localDate("2026-06-10"))
-      ).toEqual({ allowed: true });
+      expect(validator.validateClosingDate("mensal_30", localDate("2026-06-10"))).toEqual({
+        allowed: true
+      });
     });
 
     it("blocks closing after day 15 for monthly payment (vence dia 30)", () => {
       const validator = new PaymentTermValidator();
 
-      expect(
-        validator.validateClosingDate("mensal_30", localDate("2026-06-16"))
-      ).toEqual({
+      expect(validator.validateClosingDate("mensal_30", localDate("2026-06-16"))).toEqual({
         allowed: false,
-        message: "Fechamento bloqueado: periodo 1-15 vence dia 30. Aguarde proximo periodo (16-fim)."
+        message:
+          "Fechamento bloqueado: periodo 1-15 vence dia 30. Aguarde proximo periodo (16-fim)."
       });
     });
 
     it("allows closing on day 16-fim for monthly payment (vence dia 15)", () => {
       const validator = new PaymentTermValidator();
 
-      expect(
-        validator.validateClosingDate("mensal_15", localDate("2026-06-20"))
-      ).toEqual({ allowed: true });
+      expect(validator.validateClosingDate("mensal_15", localDate("2026-06-20"))).toEqual({
+        allowed: true
+      });
     });
 
     it("blocks closing before day 16 for monthly payment (vence dia 15)", () => {
       const validator = new PaymentTermValidator();
 
-      expect(
-        validator.validateClosingDate("mensal_15", localDate("2026-06-10"))
-      ).toEqual({
+      expect(validator.validateClosingDate("mensal_15", localDate("2026-06-10"))).toEqual({
         allowed: false,
-        message: "Fechamento bloqueado: periodo 16-fim vence dia 15. Aguarde proximo periodo (1-15)."
+        message:
+          "Fechamento bloqueado: periodo 16-fim vence dia 15. Aguarde proximo periodo (1-15)."
       });
     });
   });

@@ -8,17 +8,16 @@ export const TIPS = {
       "Fila de pesagens: abertas, canceladas e concluidas. Feche ou cancele aqui as entradas capturadas.",
     scale:
       "Diagnostico da balanca: porta serial, leitura ao vivo e calibracao. Use para conferir a conexao com o hardware.",
-    registrations:
-      "Cadastros: clientes, produtos, condicoes de pagamento e transporte.",
+    registrations: "Cadastros: clientes, produtos, condicoes de pagamento e transporte.",
     printing:
       "Impressao: selecione a impressora Windows que recebera os cupons de 80 mm apos cada pesagem.",
-    cloud:
-      "Sincronizacao dos dados com a nuvem. Dispare envios manuais se precisar.",
+    cloud: "Sincronizacao dos dados com a nuvem. Dispare envios manuais se precisar.",
     insights:
       "Insights: KPIs, graficos de peso por dia, top produtos e mix de operacoes no periodo.",
     customerReport:
       "Relatorio por cliente: escolha o cliente e o periodo e gere o relatorio simplificado e/ou completo em PDF e/ou Excel.",
-    reports: "Relatorios: cadastre destinatarios que receberao os relatorios automaticos por e-mail.",
+    reports:
+      "Relatorios: cadastre destinatarios que receberao os relatorios automaticos por e-mail.",
     documentation: "Documentacao do produto (em breve)."
   },
   nav: {
@@ -30,8 +29,7 @@ export const TIPS = {
     scale: "Diagnostico e leitura da balanca. Atalho: F6.",
     printing: "Configure a impressora de cupom de 80 mm. Atalho: F7.",
     cloud: "Sincronizacao de dados com a nuvem. Atalho: F8.",
-    customerReport:
-      "Relatorio completo ou simplificado de um cliente no periodo, em PDF ou Excel.",
+    customerReport: "Relatorio completo ou simplificado de um cliente no periodo, em PDF ou Excel.",
     reports: "Destinatarios dos relatorios automaticos por e-mail.",
     documentation: "Documentacao do produto (em breve)."
   },
@@ -64,7 +62,8 @@ export const TIPS = {
   operations: {
     filterPeriod: "Filtra canceladas por periodo: hoje, 7 dias, mes atual ou todas.",
     filterProduct: "Filtra operacoes concluidas por produto.",
-    clearCanceled: "Apaga da lista todas as operacoes canceladas (somente a lista, o historico fica).",
+    clearCanceled:
+      "Apaga da lista todas as operacoes canceladas (somente a lista, o historico fica).",
     changeProduct: "Alterar material: troca o produto desta operacao aberta.",
     changeCustomer: "Alterar cliente: troca o cliente desta operacao aberta e recalcula o preco.",
     changeCarrier: "Alterar transportadora: troca a transportadora desta operacao aberta.",
@@ -95,7 +94,8 @@ export const TIPS = {
     export: "Exporta um backup do banco local antes de tentar novamente."
   },
   update: {
-    available: "Ha uma nova versao do KyberRock Desktop. Recomenda-se atualizar para receber melhorias e correcoes.",
+    available:
+      "Ha uma nova versao do KyberRock Desktop. Recomenda-se atualizar para receber melhorias e correcoes.",
     now: "Baixa e instala a atualizacao agora (o app sera reiniciado).",
     later: "Continua usando esta versao; o app tentara novamente em 30 minutos."
   },
@@ -103,7 +103,8 @@ export const TIPS = {
     clear: "Limpar os logs de erro e aviso capturados nesta sessao."
   },
   form: {
-    start: "Captura o peso atual da balanca usando os criterios configurados e abre a operacao de entrada.",
+    start:
+      "Captura o peso atual da balanca usando os criterios configurados e abre a operacao de entrada.",
     cancel: "Limpa o formulario e volta para a tela inicial.",
     operationType: "Tipo da operacao na saida: com nota fiscal ou interna (sem nota).",
     confirmClose: "Fecha a operacao conforme o tipo selecionado.",

@@ -73,7 +73,9 @@ describe("desktop cadastro CRUD behavior", () => {
 
       deleteCarrier(database, carrier.id);
 
-      expect(database.prepare("SELECT needs_push FROM carriers WHERE id = ?").pluck().get(carrier.id)).toBe(0);
+      expect(
+        database.prepare("SELECT needs_push FROM carriers WHERE id = ?").pluck().get(carrier.id)
+      ).toBe(0);
     } finally {
       database.close();
     }

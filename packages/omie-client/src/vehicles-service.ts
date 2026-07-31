@@ -120,9 +120,7 @@ function mapVehicleRaw(item: OmieVehicleRaw): OmieVehicle | null {
   const plate = normalizeOmiePlate(pickFirst(item.cPlaca, item.placa));
   if (!plate) return null;
 
-  const id = toNumber(
-    pickFirst(item.nCodVeic, item.nCodigo, item.codigo, item.codigo_veiculo)
-  );
+  const id = toNumber(pickFirst(item.nCodVeic, item.nCodigo, item.codigo, item.codigo_veiculo));
   const description =
     pickFirst(item.cDescricao, item.descricao) ??
     joinNonEmpty([pickFirst(item.cMarca, item.marca), pickFirst(item.cModelo, item.modelo)]);

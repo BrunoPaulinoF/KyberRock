@@ -17,18 +17,13 @@ export interface PriceDetails {
 export class PricingService {
   constructor(private readonly db: DesktopDatabase) {}
 
-  getPriceForCustomerProduct(
-    customerId: string,
-    productId: string
-  ): number | null {
-    return this.getPriceDetailsForCustomerProduct(customerId, productId)
-      ?.appliedUnitPriceCents ?? null;
+  getPriceForCustomerProduct(customerId: string, productId: string): number | null {
+    return (
+      this.getPriceDetailsForCustomerProduct(customerId, productId)?.appliedUnitPriceCents ?? null
+    );
   }
 
-  getPriceDetailsForCustomerProduct(
-    customerId: string,
-    productId: string
-  ): PriceDetails | null {
+  getPriceDetailsForCustomerProduct(customerId: string, productId: string): PriceDetails | null {
     const product = this.db
       .prepare(
         `SELECT id, unit_price_cents FROM products
@@ -43,7 +38,10 @@ export class PricingService {
 
     const baseUnitPriceCents = defaultPrice?.unit_price_cents ?? product.unit_price_cents ?? null;
     const appliedUnitPriceCents =
-      specialPrice?.unit_price_cents ?? defaultPrice?.unit_price_cents ?? product.unit_price_cents ?? null;
+      specialPrice?.unit_price_cents ??
+      defaultPrice?.unit_price_cents ??
+      product.unit_price_cents ??
+      null;
     const source: PriceSource = specialPrice
       ? "special"
       : baseUnitPriceCents !== null
@@ -58,10 +56,7 @@ export class PricingService {
       specialPriceId: specialPrice?.id ?? null,
       defaultPriceId: defaultPrice?.id ?? null,
       priceUnit: "ton",
-      savingsPercent: calculateSavingsPercent(
-        baseUnitPriceCents,
-        appliedUnitPriceCents
-      )
+      savingsPercent: calculateSavingsPercent(baseUnitPriceCents, appliedUnitPriceCents)
     };
   }
 
@@ -84,9 +79,7 @@ export class PricingService {
       .get(customerId, productId) as CustomerSpecialPriceRow | undefined;
   }
 
-  private getProductDefaultPrice(
-    productId: string
-  ): ProductDefaultPriceRow | undefined {
+  private getProductDefaultPrice(productId: string): ProductDefaultPriceRow | undefined {
     return this.db
       .prepare(
         `SELECT * FROM product_default_prices
@@ -112,8 +105,6 @@ function calculateSavingsPercent(
   }
 
   return (
-    Math.round(
-      ((baseUnitPriceCents - appliedUnitPriceCents) / baseUnitPriceCents) * 10_000
-    ) / 100
+    Math.round(((baseUnitPriceCents - appliedUnitPriceCents) / baseUnitPriceCents) * 10_000) / 100
   );
 }

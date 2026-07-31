@@ -114,7 +114,10 @@ export function buildReceiptLinesWithConfig(
   config: ReceiptTemplateConfig
 ): string[] {
   const productLabel = [input.productCode, input.productDescription].filter(Boolean).join("-");
-  const customerLocation = [input.customerZipCode, formatCityState(input.customerCity, input.customerState)]
+  const customerLocation = [
+    input.customerZipCode,
+    formatCityState(input.customerCity, input.customerState)
+  ]
     .filter(Boolean)
     .join("-");
   const quantityTon = input.netWeightKg / 1000;
@@ -239,18 +242,11 @@ export function buildReceiptLinesWithConfig(
   }
 
   if (config.showVehicleDriver) {
-    lines.push(
-      `Veiculo: ${input.plate}`,
-      `Motorista: ${input.driverName}`
-    );
+    lines.push(`Veiculo: ${input.plate}`, `Motorista: ${input.driverName}`);
   }
 
   if (config.showFooter) {
-    lines.push(
-      dashed(),
-      "AGRADECEMOS PELA PREFERENCIA! VOLTE SEMPRE",
-      dashed()
-    );
+    lines.push(dashed(), "AGRADECEMOS PELA PREFERENCIA! VOLTE SEMPRE", dashed());
   }
 
   if (config.customFooterText.trim()) {
@@ -298,10 +294,7 @@ function threeColumns(col1: string, col2: string, col3: string): string {
  * Numero do cupom como sai no papel: sequencia da balanca com o numero do
  * computador como sufixo quando a pedreira tem mais de um (000000101-2).
  */
-export function formatReceiptNumber(
-  receiptNumber: number,
-  deviceNumber?: number | null
-): string {
+export function formatReceiptNumber(receiptNumber: number, deviceNumber?: number | null): string {
   const base = receiptNumber.toString().padStart(9, "0");
   return deviceNumber && deviceNumber > 0 ? `${base}-${deviceNumber}` : base;
 }

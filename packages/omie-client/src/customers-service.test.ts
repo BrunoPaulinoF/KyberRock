@@ -1,11 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { OmieClient } from "./omie-client";
-import {
-  OmieCustomersService,
-  listCustomers,
-  getCustomer
-} from "./customers-service";
+import { OmieCustomersService, listCustomers, getCustomer } from "./customers-service";
 
 function mockClient(response: unknown) {
   return {
@@ -22,11 +18,10 @@ describe("listCustomers", () => {
 
     await listCustomers(client, { pagina: 1, registros_por_pagina: 50 });
 
-    expect(client.call).toHaveBeenCalledWith(
-      "/geral/clientes/",
-      "ListarClientes",
-      { pagina: 1, registros_por_pagina: 50 }
-    );
+    expect(client.call).toHaveBeenCalledWith("/geral/clientes/", "ListarClientes", {
+      pagina: 1,
+      registros_por_pagina: 50
+    });
   });
 
   it("returns formatted customers", async () => {
@@ -66,11 +61,9 @@ describe("getCustomer", () => {
 
     const result = await getCustomer(client, 123);
 
-    expect(client.call).toHaveBeenCalledWith(
-      "/geral/clientes/",
-      "ConsultarCliente",
-      { codigoClienteOmie: 123 }
-    );
+    expect(client.call).toHaveBeenCalledWith("/geral/clientes/", "ConsultarCliente", {
+      codigoClienteOmie: 123
+    });
     expect(result?.id).toBe(123);
   });
 });
@@ -78,9 +71,7 @@ describe("getCustomer", () => {
 describe("OmieCustomersService", () => {
   it("lists all customers across pages", async () => {
     const client = mockClient({
-      clientesCadastro: [
-        { codigoClienteOmie: 1, razaoSocial: "A", cnpjCpf: "1" }
-      ],
+      clientesCadastro: [{ codigoClienteOmie: 1, razaoSocial: "A", cnpjCpf: "1" }],
       nRegistros: 1
     });
 

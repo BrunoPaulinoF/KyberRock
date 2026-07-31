@@ -125,7 +125,11 @@ Deno.serve(async (req) => {
       headers: { Accept: "application/json" }
     });
     if (response.status === 404) {
-      return jsonResponse({ found: false, cnpj, message: "CNPJ nao encontrado na base da Receita." });
+      return jsonResponse({
+        found: false,
+        cnpj,
+        message: "CNPJ nao encontrado na base da Receita."
+      });
     }
     if (!response.ok) {
       return jsonResponse(

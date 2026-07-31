@@ -16,10 +16,7 @@ import { cancelPendingOmieJobs, enqueueSyncJob } from "./sync-queue.js";
 import { CreditService } from "./credit.js";
 import { buildOmieIntegrationCode } from "@kyberrock/omie-client";
 import { readStringLocalSetting } from "./local-settings.js";
-import {
-  DEFAULT_OMIE_CATEGORY_SETTING_KEY,
-  resolveOrderCategoryCode
-} from "./omie-categories.js";
+import { DEFAULT_OMIE_CATEGORY_SETTING_KEY, resolveOrderCategoryCode } from "./omie-categories.js";
 import { consumeQuotation } from "./quotations.js";
 
 type OperationStatus =
@@ -522,9 +519,7 @@ export function createWeighingOperation(
 
   if (input.paymentMethodId) {
     const paymentMethod = database
-      .prepare(
-        "SELECT is_active FROM payment_methods WHERE id = ? AND deleted_at IS NULL"
-      )
+      .prepare("SELECT is_active FROM payment_methods WHERE id = ? AND deleted_at IS NULL")
       .get(input.paymentMethodId) as { is_active: number } | undefined;
     if (!paymentMethod) throw new Error("Forma de pagamento selecionada nao foi encontrada.");
     if (paymentMethod.is_active !== 1) {
@@ -770,7 +765,7 @@ export function closeWeighingOperation(
       }
 
       productCreditDebitCents = productTotalCents;
-      freightCreditDebitCents = deductFreight ? freightTotalCents ?? 0 : 0;
+      freightCreditDebitCents = deductFreight ? (freightTotalCents ?? 0) : 0;
     }
   }
 
@@ -1363,7 +1358,11 @@ export function buildOmieBillingJob(
   return {
     unitId: row.unit_id,
     action,
-    idempotencyKey: buildOmieIntegrationCode(row.unit_id ?? "unknown", operationId, idempotencyAction),
+    idempotencyKey: buildOmieIntegrationCode(
+      row.unit_id ?? "unknown",
+      operationId,
+      idempotencyAction
+    ),
     payload: {
       operationId,
       operationType: operation.operationType,
@@ -1405,7 +1404,9 @@ function resolveOrderCarrier(
 ): OrderCarrierRow | null {
   const fromOperation = carrierId
     ? (database
-        .prepare(`SELECT ${ORDER_CARRIER_COLUMNS} FROM carriers WHERE id = ? AND deleted_at IS NULL`)
+        .prepare(
+          `SELECT ${ORDER_CARRIER_COLUMNS} FROM carriers WHERE id = ? AND deleted_at IS NULL`
+        )
         .get(carrierId) as OrderCarrierRow | undefined)
     : undefined;
   // A escolhida na operacao manda mesmo sem codigo OMIE: nesse caso ela sobe ao OMIE
@@ -2220,9 +2221,7 @@ export function updateWeighingOperationCarrier(
   let carrierName: string | null = null;
   if (input.newCarrierId) {
     const carrier = database
-      .prepare(
-        "SELECT name, is_active FROM carriers WHERE id = ? AND deleted_at IS NULL"
-      )
+      .prepare("SELECT name, is_active FROM carriers WHERE id = ? AND deleted_at IS NULL")
       .get(input.newCarrierId) as { name: string; is_active: number } | undefined;
 
     if (!carrier) throw new Error("Transportadora selecionada nao foi encontrada.");
@@ -2292,7 +2291,9 @@ function calculateProductTotalCents(
   return unitPriceCents === null ? null : Math.round((netWeightKg / 1000) * unitPriceCents);
 }
 
-function serializeOperationFreight(freight: OperationFreightInput | null | undefined): string | null {
+function serializeOperationFreight(
+  freight: OperationFreightInput | null | undefined
+): string | null {
   if (!freight) return null;
   if (!freight.payer) throw new Error("Responsavel pelo frete e obrigatorio.");
   if (!freight.rule?.type) throw new Error("Regra de frete invalida.");

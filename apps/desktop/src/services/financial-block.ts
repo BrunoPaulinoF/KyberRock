@@ -64,11 +64,7 @@ export class FinancialBlockService {
 
     const pendingOperations = this.getPendingOperationsTotal(customerId);
 
-    return (
-      customer.credit_limit_cents -
-      customer.open_receivables_cents -
-      pendingOperations
-    );
+    return customer.credit_limit_cents - customer.open_receivables_cents - pendingOperations;
   }
 
   private getCustomerFinancials(customerId: string): {

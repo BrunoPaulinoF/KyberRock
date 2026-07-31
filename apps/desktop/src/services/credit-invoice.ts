@@ -103,10 +103,16 @@ function computeMonthly(config: MonthlyClosingConfig, operationDate: Date): Cred
   }
 
   const closingDayActual = Math.min(config.closingDay, daysInMonth(closingYear, closingMonth));
-  return scheduleFrom(new Date(Date.UTC(closingYear, closingMonth, closingDayActual)), config.boletoDays);
+  return scheduleFrom(
+    new Date(Date.UTC(closingYear, closingMonth, closingDayActual)),
+    config.boletoDays
+  );
 }
 
-function computeBiweekly(config: BiweeklyClosingConfig, operationDate: Date): CreditInvoiceSchedule {
+function computeBiweekly(
+  config: BiweeklyClosingConfig,
+  operationDate: Date
+): CreditInvoiceSchedule {
   assertDay(config.firstClosingDay, "Primeiro dia de fechamento");
   assertDay(config.secondClosingDay, "Segundo dia de fechamento");
   if (config.secondClosingDay <= config.firstClosingDay) {
@@ -138,11 +144,18 @@ function computeBiweekly(config: BiweeklyClosingConfig, operationDate: Date): Cr
     nextYear += 1;
   }
   const firstNextMonth = Math.min(config.firstClosingDay, daysInMonth(nextYear, nextMonth));
-  return scheduleFrom(new Date(Date.UTC(nextYear, nextMonth, firstNextMonth)), config.firstBoletoDays);
+  return scheduleFrom(
+    new Date(Date.UTC(nextYear, nextMonth, firstNextMonth)),
+    config.firstBoletoDays
+  );
 }
 
 function computeWeekly(config: WeeklyClosingConfig, operationDate: Date): CreditInvoiceSchedule {
-  if (!Number.isInteger(config.closingWeekday) || config.closingWeekday < 0 || config.closingWeekday > 6) {
+  if (
+    !Number.isInteger(config.closingWeekday) ||
+    config.closingWeekday < 0 ||
+    config.closingWeekday > 6
+  ) {
     throw new Error("Dia da semana de fechamento invalido. Informe de 0 (domingo) a 6 (sabado).");
   }
   assertBoletoDays(config.boletoDays, "Dias para vencimento");

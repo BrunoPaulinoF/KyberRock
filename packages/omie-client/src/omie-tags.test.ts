@@ -7,9 +7,7 @@ describe("omie-tags", () => {
     expect(hasClienteTag({ tags: [{ tag: "Cliente" }, { tag: "Fornecedor" }] })).toBe(true);
     expect(hasClienteTag({})).toBe(false);
     expect(hasClienteTag({ tags: [{ tag: "Fornecedor" }] })).toBe(false);
-    expect(hasTransportadoraTag({ tags: [{ tag: "Cliente" }, { tag: "Fornecedor" }] })).toBe(
-      false
-    );
+    expect(hasTransportadoraTag({ tags: [{ tag: "Cliente" }, { tag: "Fornecedor" }] })).toBe(false);
     expect(hasTransportadoraTag({ tags: [{ tag: "Transportadora" }, { tag: "Fornecedor" }] })).toBe(
       true
     );

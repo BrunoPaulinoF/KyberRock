@@ -23,13 +23,13 @@ Definir a arquitetura tecnica antes de criar migrations, tabelas Supabase, pacot
 
 ## Superficies
 
-| Superficie         | Responsabilidade                                                | Estado         |
-| ------------------ | --------------------------------------------------------------- | -------------- |
-| Desktop Windows    | Operacao principal, leitura de balanca, SQLite, impressao, sync | Offline-first  |
-| Loader web         | Visualizacao de carregamentos em aberto pelo carregador         | Online         |
+| Superficie              | Responsabilidade                                                | Estado         |
+| ----------------------- | --------------------------------------------------------------- | -------------- |
+| Desktop Windows         | Operacao principal, leitura de balanca, SQLite, impressao, sync | Offline-first  |
+| Loader web              | Visualizacao de carregamentos em aberto pelo carregador         | Online         |
 | Supabase Edge Functions | Integracoes sensiveis, tarefas agendadas, e-mail                | Online         |
-| Supabase Postgres          | Visao cloud multiunidade e dados do site do carregador          | Online         |
-| OMIE               | ERP para cadastros, financeiro, pedidos e OS                    | Online externo |
+| Supabase Postgres       | Visao cloud multiunidade e dados do site do carregador          | Online         |
+| OMIE                    | ERP para cadastros, financeiro, pedidos e OS                    | Online externo |
 
 ## Topologia
 
@@ -85,7 +85,7 @@ Loader web
 | Veiculo/motorista           | KyberRock          | Sim                       | Pode ter vinculos com cliente/transportadora               |
 | Transportadora              | OMIE               | Parcial                   | OMIE usa cadastro de clientes/fornecedores/transportadoras |
 | Adiantamento do cliente     | OMIE               | Nao                       | Espelhado no extrato de credito; abate as compras          |
-| Operacao de pesagem         | KyberRock local    | Sim                       | Sincronizada para cloud/OMIE                            |
+| Operacao de pesagem         | KyberRock local    | Sim                       | Sincronizada para cloud/OMIE                               |
 | Cupom                       | KyberRock local    | Sim                       | Reimpressao gera auditoria                                 |
 | Solicitacao carregamento    | KyberRock/Supabase | Sim local, cloud via sync | Site le somente abertas                                    |
 | Logs/auditoria              | KyberRock          | Sim                       | Nao expor segredos                                         |
@@ -129,7 +129,7 @@ acima continua sendo usada nas filas locais e no Supabase.
 | `loading_requested` | Solicitacao aberta para o carregador          |
 | `awaiting_exit`     | Caminhao deve retornar a balanca              |
 | `closed_local`      | Saida capturada e valores calculados          |
-| `pending_cloud`     | Ainda nao sincronizada ao cloud            |
+| `pending_cloud`     | Ainda nao sincronizada ao cloud               |
 | `pending_omie`      | Ainda nao enviada ao OMIE                     |
 | `synced`            | Sincronizacoes obrigatorias confirmadas       |
 | `sync_error`        | Existe erro de sincronizacao pendente         |

@@ -11,68 +11,115 @@ function createDatabase() {
 }
 
 function setupBaseData(db: ReturnType<typeof createDatabase>) {
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO companies (id, legal_name, trade_name, created_at, updated_at)
     VALUES ('comp-1', 'Empresa', 'Empresa', datetime('now'), datetime('now'))
-  `).run();
+  `
+  ).run();
 
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO units (id, company_id, name, timezone, created_at, updated_at)
     VALUES ('unit-1', 'comp-1', 'Unidade', 'America/Sao_Paulo', datetime('now'), datetime('now'))
-  `).run();
+  `
+  ).run();
 
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO devices (id, company_id, unit_id, name, device_type, installation_id, created_at, updated_at)
     VALUES ('dev-1', 'comp-1', 'unit-1', 'Desktop', 'desktop_scale', 'inst-1', datetime('now'), datetime('now'))
-  `).run();
+  `
+  ).run();
 
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO customers (id, company_id, legal_name, trade_name, source, created_at, updated_at)
     VALUES ('cust-1', 'comp-1', 'Cliente A', 'Cliente A', 'local', datetime('now'), datetime('now'))
-  `).run();
+  `
+  ).run();
 
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO customers (id, company_id, legal_name, trade_name, source, created_at, updated_at)
     VALUES ('cust-2', 'comp-1', 'Cliente B', 'Cliente B', 'local', datetime('now'), datetime('now'))
-  `).run();
+  `
+  ).run();
 
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO products (id, company_id, code, description, unit, created_at, updated_at)
     VALUES ('prod-1', 'comp-1', 'B0', 'Brita 0', 'M3', datetime('now'), datetime('now'))
-  `).run();
+  `
+  ).run();
 
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO products (id, company_id, code, description, unit, created_at, updated_at)
     VALUES ('prod-2', 'comp-1', 'B1', 'Brita 1', 'M3', datetime('now'), datetime('now'))
-  `).run();
+  `
+  ).run();
 }
 
 function insertOperations(db: ReturnType<typeof createDatabase>) {
   const ops = [
     {
-      id: "op-1", customer_id: "cust-1", product_id: "prod-1", entry_weight: 10000, exit_weight: 25000,
-      net_weight: 15000, unit_price_cents: 50000, product_total_cents: 750000, freight_total_cents: 150000, total_cents: 900000,
+      id: "op-1",
+      customer_id: "cust-1",
+      product_id: "prod-1",
+      entry_weight: 10000,
+      exit_weight: 25000,
+      net_weight: 15000,
+      unit_price_cents: 50000,
+      product_total_cents: 750000,
+      freight_total_cents: 150000,
+      total_cents: 900000,
       date: "2026-06-06"
     },
     {
-      id: "op-2", customer_id: "cust-1", product_id: "prod-2", entry_weight: 12000, exit_weight: 22000,
-      net_weight: 10000, unit_price_cents: 60000, product_total_cents: 600000, freight_total_cents: 120000, total_cents: 720000,
+      id: "op-2",
+      customer_id: "cust-1",
+      product_id: "prod-2",
+      entry_weight: 12000,
+      exit_weight: 22000,
+      net_weight: 10000,
+      unit_price_cents: 60000,
+      product_total_cents: 600000,
+      freight_total_cents: 120000,
+      total_cents: 720000,
       date: "2026-06-06"
     },
     {
-      id: "op-3", customer_id: "cust-2", product_id: "prod-1", entry_weight: 8000, exit_weight: 18000,
-      net_weight: 10000, unit_price_cents: 50000, product_total_cents: 500000, freight_total_cents: 100000, total_cents: 600000,
+      id: "op-3",
+      customer_id: "cust-2",
+      product_id: "prod-1",
+      entry_weight: 8000,
+      exit_weight: 18000,
+      net_weight: 10000,
+      unit_price_cents: 50000,
+      product_total_cents: 500000,
+      freight_total_cents: 100000,
+      total_cents: 600000,
       date: "2026-06-07"
     },
     {
-      id: "op-4", customer_id: "cust-1", product_id: "prod-1", entry_weight: 5000, exit_weight: 20000,
-      net_weight: 15000, unit_price_cents: 50000, product_total_cents: 750000, freight_total_cents: 150000, total_cents: 900000,
+      id: "op-4",
+      customer_id: "cust-1",
+      product_id: "prod-1",
+      entry_weight: 5000,
+      exit_weight: 20000,
+      net_weight: 15000,
+      unit_price_cents: 50000,
+      product_total_cents: 750000,
+      freight_total_cents: 150000,
+      total_cents: 900000,
       date: "2026-05-15"
     }
   ];
 
   for (const op of ops) {
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO weighing_operations (
         id, company_id, unit_id, device_id, status, operation_type, customer_id, product_id,
         entry_weight_kg, exit_weight_kg, net_weight_kg, unit_price_cents, product_total_cents,
@@ -81,42 +128,90 @@ function insertOperations(db: ReturnType<typeof createDatabase>) {
         ?, 'comp-1', 'unit-1', 'dev-1', 'closed_local', 'invoice', ?, ?,
         ?, ?, ?, ?, ?, ?, ?, datetime(?), datetime(?)
       )
-    `).run(
-      op.id, op.customer_id, op.product_id,
-      op.entry_weight, op.exit_weight, op.net_weight, op.unit_price_cents,
-      op.product_total_cents, op.freight_total_cents, op.total_cents,
-      op.date, op.date
+    `
+    ).run(
+      op.id,
+      op.customer_id,
+      op.product_id,
+      op.entry_weight,
+      op.exit_weight,
+      op.net_weight,
+      op.unit_price_cents,
+      op.product_total_cents,
+      op.freight_total_cents,
+      op.total_cents,
+      op.date,
+      op.date
     );
   }
 }
 
 function insertTruckOperations(db: ReturnType<typeof createDatabase>) {
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO vehicles (id, company_id, plate, created_at, updated_at)
     VALUES ('veh-abc', 'comp-1', 'ABC1D23', datetime('now'), datetime('now'))
-  `).run();
-  db.prepare(`
+  `
+  ).run();
+  db.prepare(
+    `
     INSERT INTO vehicles (id, company_id, plate, created_at, updated_at)
     VALUES ('veh-xyz', 'comp-1', 'XYZ4E56', datetime('now'), datetime('now'))
-  `).run();
-  db.prepare(`
+  `
+  ).run();
+  db.prepare(
+    `
     INSERT INTO drivers (id, company_id, name, created_at, updated_at)
     VALUES ('drv-1', 'comp-1', 'Joao', datetime('now'), datetime('now'))
-  `).run();
+  `
+  ).run();
 
   const ops = [
     // ABC1D23: 30 min (prod-1, 15000 kg)
-    { id: "t1", veh: "veh-abc", drv: "drv-1", prod: "prod-1", net: 15000, entry: "2026-06-06 08:00:00", exit: "2026-06-06 08:30:00" },
+    {
+      id: "t1",
+      veh: "veh-abc",
+      drv: "drv-1",
+      prod: "prod-1",
+      net: 15000,
+      entry: "2026-06-06 08:00:00",
+      exit: "2026-06-06 08:30:00"
+    },
     // ABC1D23: 60 min (prod-2, 10000 kg)
-    { id: "t2", veh: "veh-abc", drv: "drv-1", prod: "prod-2", net: 10000, entry: "2026-06-06 09:00:00", exit: "2026-06-06 10:00:00" },
+    {
+      id: "t2",
+      veh: "veh-abc",
+      drv: "drv-1",
+      prod: "prod-2",
+      net: 10000,
+      entry: "2026-06-06 09:00:00",
+      exit: "2026-06-06 10:00:00"
+    },
     // XYZ4E56: 90 min (prod-1, 20000 kg)
-    { id: "t3", veh: "veh-xyz", drv: "drv-1", prod: "prod-1", net: 20000, entry: "2026-06-07 08:00:00", exit: "2026-06-07 09:30:00" },
+    {
+      id: "t3",
+      veh: "veh-xyz",
+      drv: "drv-1",
+      prod: "prod-1",
+      net: 20000,
+      entry: "2026-06-07 08:00:00",
+      exit: "2026-06-07 09:30:00"
+    },
     // Fora do periodo (maio) - nao deve contar
-    { id: "t4", veh: "veh-abc", drv: "drv-1", prod: "prod-1", net: 5000, entry: "2026-05-01 08:00:00", exit: "2026-05-01 08:20:00" }
+    {
+      id: "t4",
+      veh: "veh-abc",
+      drv: "drv-1",
+      prod: "prod-1",
+      net: 5000,
+      entry: "2026-05-01 08:00:00",
+      exit: "2026-05-01 08:20:00"
+    }
   ];
 
   for (const op of ops) {
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO weighing_operations (
         id, company_id, unit_id, device_id, status, operation_type, vehicle_id, driver_id, product_id,
         net_weight_kg, entry_weight_captured_at, exit_weight_captured_at, created_at, updated_at
@@ -124,7 +219,8 @@ function insertTruckOperations(db: ReturnType<typeof createDatabase>) {
         ?, 'comp-1', 'unit-1', 'dev-1', 'closed_local', 'invoice', ?, ?, ?,
         ?, datetime(?), datetime(?), datetime(?), datetime(?)
       )
-    `).run(op.id, op.veh, op.drv, op.prod, op.net, op.entry, op.exit, op.entry, op.exit);
+    `
+    ).run(op.id, op.veh, op.drv, op.prod, op.net, op.entry, op.exit, op.entry, op.exit);
   }
 }
 
@@ -306,10 +402,26 @@ describe("ReportService", () => {
       const series = service.getDailySeries("2026-06-05", "2026-06-08", "unit-1");
 
       expect(series).toHaveLength(4);
-      expect(series[0]).toMatchObject({ date: "2026-06-05", totalOperations: 0, totalNetWeightKg: 0 });
-      expect(series[1]).toMatchObject({ date: "2026-06-06", totalOperations: 2, totalNetWeightKg: 25000 });
-      expect(series[2]).toMatchObject({ date: "2026-06-07", totalOperations: 1, totalNetWeightKg: 10000 });
-      expect(series[3]).toMatchObject({ date: "2026-06-08", totalOperations: 0, totalNetWeightKg: 0 });
+      expect(series[0]).toMatchObject({
+        date: "2026-06-05",
+        totalOperations: 0,
+        totalNetWeightKg: 0
+      });
+      expect(series[1]).toMatchObject({
+        date: "2026-06-06",
+        totalOperations: 2,
+        totalNetWeightKg: 25000
+      });
+      expect(series[2]).toMatchObject({
+        date: "2026-06-07",
+        totalOperations: 1,
+        totalNetWeightKg: 10000
+      });
+      expect(series[3]).toMatchObject({
+        date: "2026-06-08",
+        totalOperations: 0,
+        totalNetWeightKg: 0
+      });
     } finally {
       db.close();
     }
@@ -386,7 +498,8 @@ describe("ReportService", () => {
       setupBaseData(db);
       insertOperations(db);
 
-      db.prepare(`
+      db.prepare(
+        `
         INSERT INTO weighing_operations (
           id, company_id, unit_id, device_id, status, operation_type, customer_id, product_id,
           net_weight_kg, total_cents, created_at, updated_at
@@ -394,16 +507,19 @@ describe("ReportService", () => {
           'op-5', 'comp-1', 'unit-1', 'dev-1', 'closed_local', 'internal', 'cust-1', 'prod-1',
           5000, 250000, datetime('2026-06-06'), datetime('2026-06-06')
         )
-      `).run();
+      `
+      ).run();
 
-      db.prepare(`
+      db.prepare(
+        `
         INSERT INTO weighing_operations (
           id, company_id, unit_id, device_id, status, operation_type, cancel_reason, created_at, updated_at
         ) VALUES (
           'op-6', 'comp-1', 'unit-1', 'dev-1', 'cancelled', 'invoice', 'Erro do operador',
           datetime('2026-06-06'), datetime('2026-06-06')
         )
-      `).run();
+      `
+      ).run();
 
       const service = new ReportService(db);
       const mix = service.getOperationMix("2026-06-01", "2026-06-30", "unit-1");

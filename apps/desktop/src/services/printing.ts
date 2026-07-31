@@ -194,12 +194,18 @@ export function configureReceiptPrintProfile(
   const timestamp = now.toISOString();
   const existing = getActiveReceiptPrintProfile(database, input.identity.deviceId);
   const profileId = existing?.id ?? randomUUID();
-  const receiptLogo = normalizeReceiptLogo(input, existing?.receiptLogo ?? defaultReceiptLogoConfig());
+  const receiptLogo = normalizeReceiptLogo(
+    input,
+    existing?.receiptLogo ?? defaultReceiptLogoConfig()
+  );
   const templateConfig = normalizeReceiptTemplateConfig({
     ...(existing?.templateConfig ?? DEFAULT_RECEIPT_TEMPLATE_CONFIG),
     ...(input.templateConfig ?? {})
   });
-  const windowsPrinterName = printerType === "windows" ? input.windowsPrinterName.trim() : (input.windowsPrinterName?.trim() || "NETWORK");
+  const windowsPrinterName =
+    printerType === "windows"
+      ? input.windowsPrinterName.trim()
+      : input.windowsPrinterName?.trim() || "NETWORK";
   const networkHost = printerType === "network" ? (input.networkHost ?? "").trim() : null;
   const networkPort = printerType === "network" ? (input.networkPort ?? 9100) : null;
 
@@ -332,7 +338,11 @@ export async function printTestReceipt(
   const timestamp = now.toISOString();
   const receiptId = randomUUID();
   const printerName = getProfilePrinterName(profile);
-  const testSnapshot = buildTestReceiptSnapshot(timestamp, profile.receiptLogo, profile.templateConfig);
+  const testSnapshot = buildTestReceiptSnapshot(
+    timestamp,
+    profile.receiptLogo,
+    profile.templateConfig
+  );
   const payload: ReceiptPrintPayload = {
     printerName,
     printerType: profile.printerType,
@@ -693,7 +703,10 @@ function buildReceiptSnapshot(
     paymentMethodName: operation.payment_method_name,
     entryCapturedAt: operation.entry_weight_captured_at,
     exitCapturedAt: operation.exit_weight_captured_at,
-    permanenceLabel: formatPermanence(operation.entry_weight_captured_at, operation.exit_weight_captured_at),
+    permanenceLabel: formatPermanence(
+      operation.entry_weight_captured_at,
+      operation.exit_weight_captured_at
+    ),
     entryWeightKg: operation.entry_weight_kg,
     exitWeightKg: operation.exit_weight_kg,
     netWeightKg: operation.net_weight_kg,
@@ -813,7 +826,8 @@ function normalizeReceiptLogo(
   input: ConfigureReceiptPrintProfileInput,
   current: ReceiptLogoConfig
 ): ReceiptLogoConfig {
-  const dataUrl = input.receiptLogoDataUrl === undefined ? current.dataUrl : input.receiptLogoDataUrl;
+  const dataUrl =
+    input.receiptLogoDataUrl === undefined ? current.dataUrl : input.receiptLogoDataUrl;
   return {
     dataUrl: dataUrl && dataUrl.startsWith("data:image/") ? dataUrl : null,
     widthMm: clampNumber(input.receiptLogoWidthMm ?? current.widthMm, 10, 60),
@@ -857,11 +871,7 @@ function formatPermanence(entryAt: string, exitAt: string): string {
   const days = Math.floor(totalMinutes / 1440);
   const hours = Math.floor((totalMinutes % 1440) / 60);
   const minutes = totalMinutes % 60;
-  return [
-    days > 0 ? `${days}d` : null,
-    hours > 0 ? `${hours}h` : null,
-    `${minutes}min`
-  ]
+  return [days > 0 ? `${days}d` : null, hours > 0 ? `${hours}h` : null, `${minutes}min`]
     .filter(Boolean)
     .join(" ");
 }

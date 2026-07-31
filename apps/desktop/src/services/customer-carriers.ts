@@ -29,9 +29,7 @@ export function linkCustomerCarrier(
   if (existing) {
     if (existing.is_active === 0) {
       database
-        .prepare(
-          "UPDATE customer_carriers SET is_active = 1, updated_at = ? WHERE id = ?"
-        )
+        .prepare("UPDATE customer_carriers SET is_active = 1, updated_at = ? WHERE id = ?")
         .run(nowIso, existing.id);
       return database
         .prepare("SELECT * FROM customer_carriers WHERE id = ?")

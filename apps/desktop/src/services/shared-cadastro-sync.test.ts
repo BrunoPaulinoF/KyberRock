@@ -224,7 +224,10 @@ describe("cadastro compartilhado da pedreira", () => {
       expect(count(database, "report_recipients")).toBe(1);
       // Placa normalizada alimenta a busca por placa nas telas de pesagem.
       expect(
-        database.prepare("SELECT plate_normalized FROM vehicles WHERE id = 'vehicle-1'").pluck().get()
+        database
+          .prepare("SELECT plate_normalized FROM vehicles WHERE id = 'vehicle-1'")
+          .pluck()
+          .get()
       ).toBe("ABC1D23");
     } finally {
       database.close();
@@ -284,7 +287,9 @@ describe("cadastro compartilhado da pedreira", () => {
       // Saldo recalculado pelo log inteiro: +100,00 -30,00 -20,00 = 50,00.
       expect(
         database
-          .prepare("SELECT balance_cents FROM customer_credit_balances WHERE customer_id = 'cust-1'")
+          .prepare(
+            "SELECT balance_cents FROM customer_credit_balances WHERE customer_id = 'cust-1'"
+          )
           .pluck()
           .get()
       ).toBe(5_000);
@@ -531,7 +536,9 @@ describe("cadastro compartilhado da pedreira", () => {
       invokeMock.mockClear();
       const third = await pushSharedCadastroToCloud(database, identity);
       expect(third.pushed).toBe(1);
-      expect(payloadFor("carriers")).toMatchObject([{ id: "carrier-1", name: "Transportes Beta LTDA" }]);
+      expect(payloadFor("carriers")).toMatchObject([
+        { id: "carrier-1", name: "Transportes Beta LTDA" }
+      ]);
     } finally {
       database.close();
     }
