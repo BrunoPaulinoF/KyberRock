@@ -115,9 +115,7 @@ function toneColor(tone: StatusIndicatorTone): { bg: string; fg: string; border:
   }
 }
 
-function buildHealthPills(
-  props: DashboardViewProps
-): Array<{
+function buildHealthPills(props: DashboardViewProps): Array<{
   id: string;
   label: string;
   value: string;

@@ -32,7 +32,7 @@ O gatilho e **todo push na `main`** (ou seja, todo merge de PR gera uma versao n
 
 ## Secret Necessario (GitHub Actions)
 
-Configurar em *Settings -> Secrets and variables -> Actions*:
+Configurar em _Settings -> Secrets and variables -> Actions_:
 
 - `GH_UPDATER_TOKEN` - PAT **fine-grained**, com escopo **apenas neste repositorio** e permissao
   **`Contents: read`**. E o token embutido no app instalado para baixar os releases do repo privado.
@@ -51,7 +51,7 @@ Alem do auto-update, existe um link publico fixo que sempre baixa a versao mais 
 
 Passos para ativar:
 
-1. Criar o secret **`GH_RELEASES_TOKEN`** nas *Edge Functions* do projeto Supabase (mesmo tipo de
+1. Criar o secret **`GH_RELEASES_TOKEN`** nas _Edge Functions_ do projeto Supabase (mesmo tipo de
    PAT do `GH_UPDATER_TOKEN`: fine-grained, `Contents: read` neste repo).
 2. Deploy da funcao como **publica**: `supabase functions deploy desktop-download --no-verify-jwt`
    (ou toggle "Verify JWT" desligado no dashboard).

@@ -7,7 +7,13 @@ import { describe, expect, it } from "vitest";
 import { defaultFinancialTime, isSameHourAsKyberRock } from "./financial-report-schedule";
 
 const rendererDir = dirname(fileURLToPath(import.meta.url));
-const read = (file: string) => readFileSync(resolve(rendererDir, file), "utf8");
+// As assercoes abaixo olham o fonte como texto. O Prettier requebra JSX conforme
+// o printWidth, entao uma frase que hoje cabe numa linha pode amanhecer em duas
+// — foi o que aconteceu com "card &quot;Relatorio financeiro (OMIE)&quot;" na
+// formatacao do repositorio. Normalizar os espacos deixa os testes olharem o
+// conteudo, nao a largura da linha.
+const read = (file: string) =>
+  readFileSync(resolve(rendererDir, file), "utf8").replace(/\s+/g, " ");
 
 describe("horario proprio do relatorio financeiro", () => {
   it("sugere a hora seguinte a dos relatorios do KyberRock", () => {
@@ -95,6 +101,6 @@ describe("FinancialReportSettings", () => {
     // O formulario do destinatario nao edita mais o financeiro, para o gate de
     // senha do card ser o unico caminho para ligar o OMIE.
     expect(reportsSource).not.toContain("PriceChangePasswordDialog");
-    expect(reportsSource).toContain('card &quot;Relatorio financeiro (OMIE)&quot;');
+    expect(reportsSource).toContain("card &quot;Relatorio financeiro (OMIE)&quot;");
   });
 });

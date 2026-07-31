@@ -9,7 +9,10 @@ export function base64UrlEncode(input: string): string {
 }
 
 export function base64UrlDecode(input: string): string {
-  const padded = input.replaceAll("-", "+").replaceAll("_", "/").padEnd(Math.ceil(input.length / 4) * 4, "=");
+  const padded = input
+    .replaceAll("-", "+")
+    .replaceAll("_", "/")
+    .padEnd(Math.ceil(input.length / 4) * 4, "=");
   return atob(padded);
 }
 

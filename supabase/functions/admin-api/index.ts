@@ -26,7 +26,7 @@ Deno.serve(async (req) => {
 
   const sessionSecret = Deno.env.get("KYBERROCK_ADMIN_SESSION_SECRET") ?? "";
   const sessionToken = req.headers.get("x-admin-session");
-  
+
   const session = await verifyAdminSession(sessionToken, sessionSecret);
   if (!session) {
     return jsonResponse({ error: "Sessao administrativa invalida" }, 401);
@@ -35,7 +35,10 @@ Deno.serve(async (req) => {
   const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
   const supabase = createClient(supabaseUrl, serviceRoleKey);
-  const body = await req.json().catch(() => ({})) as { action?: AdminAction; payload?: Record<string, unknown> };
+  const body = (await req.json().catch(() => ({}))) as {
+    action?: AdminAction;
+    payload?: Record<string, unknown>;
+  };
   const payload = body.payload ?? {};
 
   try {
@@ -43,7 +46,9 @@ Deno.serve(async (req) => {
       const [companies, units, users, devices] = await Promise.all([
         supabase
           .from("companies")
-          .select("id, name, legal_name, document, is_active, omie_app_key, omie_app_secret, desktop_activation_code, desktop_activation_code_rotated_at, created_at, updated_at")
+          .select(
+            "id, name, legal_name, document, is_active, omie_app_key, omie_app_secret, desktop_activation_code, desktop_activation_code_rotated_at, created_at, updated_at"
+          )
           .order("created_at", { ascending: false }),
         supabase
           .from("units")
@@ -52,7 +57,9 @@ Deno.serve(async (req) => {
         supabase.from("user_profiles").select("*").order("created_at", { ascending: false }),
         supabase
           .from("device_registrations")
-          .select("id, company_id, unit_id, name, color, installation_id, is_active, last_seen_at, created_at, updated_at")
+          .select(
+            "id, company_id, unit_id, name, color, installation_id, is_active, last_seen_at, created_at, updated_at"
+          )
           .order("created_at", { ascending: false })
       ]);
       if (companies.error) throw companies.error;
@@ -64,20 +71,29 @@ Deno.serve(async (req) => {
         omie_app_key: c.omie_app_key ? maskSecret(c.omie_app_key) : null,
         omie_app_secret: c.omie_app_secret ? "********" : null
       }));
-      return jsonResponse({ companies: maskedCompanies, units: units.data, users: users.data, devices: devices.data });
+      return jsonResponse({
+        companies: maskedCompanies,
+        units: units.data,
+        users: users.data,
+        devices: devices.data
+      });
     }
 
     if (body.action === "create_company") {
       const omieAppKey = payload.omieAppKey ? String(payload.omieAppKey).trim() : null;
       const omieAppSecret = payload.omieAppSecret ? String(payload.omieAppSecret).trim() : null;
-      const { data, error } = await supabase.from("companies").insert({
-        name: String(payload.name ?? ""),
-        legal_name: String(payload.legalName ?? payload.legal_name ?? ""),
-        document: payload.document ? String(payload.document) : null,
-        omie_app_key: omieAppKey && omieAppKey.length > 0 ? omieAppKey : null,
-        omie_app_secret: omieAppSecret && omieAppSecret.length > 0 ? omieAppSecret : null,
-        is_active: true
-      }).select("*").single();
+      const { data, error } = await supabase
+        .from("companies")
+        .insert({
+          name: String(payload.name ?? ""),
+          legal_name: String(payload.legalName ?? payload.legal_name ?? ""),
+          document: payload.document ? String(payload.document) : null,
+          omie_app_key: omieAppKey && omieAppKey.length > 0 ? omieAppKey : null,
+          omie_app_secret: omieAppSecret && omieAppSecret.length > 0 ? omieAppSecret : null,
+          is_active: true
+        })
+        .select("*")
+        .single();
       if (error) throw error;
       // Mascara tanto a app key quanto o secret na resposta. O caminho "list" ja mascarava a
       // key (maskSecret), mas o retorno do create devolvia data.omie_app_key cru ao cliente.
@@ -91,30 +107,40 @@ Deno.serve(async (req) => {
     }
 
     if (body.action === "toggle_company") {
-      const { error } = await supabase.from("companies").update({
-        is_active: Boolean(payload.isActive),
-        updated_at: new Date().toISOString()
-      }).eq("id", String(payload.companyId));
+      const { error } = await supabase
+        .from("companies")
+        .update({
+          is_active: Boolean(payload.isActive),
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", String(payload.companyId));
       if (error) throw error;
       return jsonResponse({ ok: true });
     }
 
     if (body.action === "create_unit") {
-      const { data, error } = await supabase.from("units").insert({
-        company_id: String(payload.companyId),
-        name: String(payload.name ?? ""),
-        timezone: "America/Sao_Paulo",
-        is_active: true
-      }).select("*").single();
+      const { data, error } = await supabase
+        .from("units")
+        .insert({
+          company_id: String(payload.companyId),
+          name: String(payload.name ?? ""),
+          timezone: "America/Sao_Paulo",
+          is_active: true
+        })
+        .select("*")
+        .single();
       if (error) throw error;
       return jsonResponse({ unit: data });
     }
 
     if (body.action === "toggle_unit") {
-      const { error } = await supabase.from("units").update({
-        is_active: Boolean(payload.isActive),
-        updated_at: new Date().toISOString()
-      }).eq("id", String(payload.unitId));
+      const { error } = await supabase
+        .from("units")
+        .update({
+          is_active: Boolean(payload.isActive),
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", String(payload.unitId));
       if (error) throw error;
       return jsonResponse({ ok: true });
     }
@@ -124,27 +150,42 @@ Deno.serve(async (req) => {
       const code = generateSixDigitCode();
       const codeHash = await sha256Hex(code);
       const rotatedAt = new Date().toISOString();
-      const { data, error } = await supabase.from("companies").update({
-        desktop_activation_code: code,
-        desktop_activation_code_hash: codeHash,
-        desktop_activation_code_rotated_at: rotatedAt,
-        updated_at: rotatedAt
-      }).eq("id", companyId).select("id, desktop_activation_code, desktop_activation_code_rotated_at").single();
+      const { data, error } = await supabase
+        .from("companies")
+        .update({
+          desktop_activation_code: code,
+          desktop_activation_code_hash: codeHash,
+          desktop_activation_code_rotated_at: rotatedAt,
+          updated_at: rotatedAt
+        })
+        .eq("id", companyId)
+        .select("id, desktop_activation_code, desktop_activation_code_rotated_at")
+        .single();
       if (error) throw error;
       return jsonResponse({ code, unit: data });
     }
 
     if (body.action === "create_loader") {
-      const email = String(payload.email ?? "").trim().toLowerCase();
+      const email = String(payload.email ?? "")
+        .trim()
+        .toLowerCase();
       const password = String(payload.password ?? "");
       const name = String(payload.name ?? "").trim();
       const unitId = String(payload.unitId ?? "");
       // "loader" (carregador, ve fila da unidade) ou "comercial" (extrai
       // relatorios de venda da empresa inteira no loader-web).
       const role = String(payload.role ?? "loader") === "comercial" ? "comercial" : "loader";
-      const { data: unit, error: unitError } = await supabase.from("units").select("company_id").eq("id", unitId).single();
+      const { data: unit, error: unitError } = await supabase
+        .from("units")
+        .select("company_id")
+        .eq("id", unitId)
+        .single();
       if (unitError) throw unitError;
-      const created = await supabase.auth.admin.createUser({ email, password, email_confirm: true });
+      const created = await supabase.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true
+      });
       if (created.error) throw created.error;
       const { error: profileError } = await supabase.from("user_profiles").insert({
         id: created.data.user.id,
@@ -160,19 +201,25 @@ Deno.serve(async (req) => {
     }
 
     if (body.action === "toggle_loader") {
-      const { error } = await supabase.from("user_profiles").update({
-        is_active: Boolean(payload.isActive),
-        updated_at: new Date().toISOString()
-      }).eq("id", String(payload.userId));
+      const { error } = await supabase
+        .from("user_profiles")
+        .update({
+          is_active: Boolean(payload.isActive),
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", String(payload.userId));
       if (error) throw error;
       return jsonResponse({ ok: true });
     }
 
     if (body.action === "toggle_device") {
-      const { error } = await supabase.from("device_registrations").update({
-        is_active: Boolean(payload.isActive),
-        updated_at: new Date().toISOString()
-      }).eq("id", String(payload.deviceId));
+      const { error } = await supabase
+        .from("device_registrations")
+        .update({
+          is_active: Boolean(payload.isActive),
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", String(payload.deviceId));
       if (error) throw error;
       return jsonResponse({ ok: true });
     }
@@ -225,7 +272,10 @@ Deno.serve(async (req) => {
           updatePayload.omie_app_secret = null;
         }
       }
-      const { error } = await supabase.from("companies").update(updatePayload).eq("id", String(payload.companyId));
+      const { error } = await supabase
+        .from("companies")
+        .update(updatePayload)
+        .eq("id", String(payload.companyId));
       if (error) throw error;
       return jsonResponse({ ok: true });
     }
@@ -235,10 +285,13 @@ Deno.serve(async (req) => {
       if (!/^\d{4}$/.test(password)) {
         return jsonResponse({ error: "A senha deve ter exatamente 4 digitos numericos" }, 400);
       }
-      const { error } = await supabase.from("companies").update({
-        price_change_password: password,
-        updated_at: new Date().toISOString()
-      }).eq("id", String(payload.companyId));
+      const { error } = await supabase
+        .from("companies")
+        .update({
+          price_change_password: password,
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", String(payload.companyId));
       if (error) throw error;
       return jsonResponse({ ok: true });
     }
@@ -248,14 +301,17 @@ Deno.serve(async (req) => {
         name: String(payload.name ?? ""),
         updated_at: new Date().toISOString()
       };
-      const { error } = await supabase.from("units").update(updatePayload).eq("id", String(payload.unitId));
+      const { error } = await supabase
+        .from("units")
+        .update(updatePayload)
+        .eq("id", String(payload.unitId));
       if (error) throw error;
       return jsonResponse({ ok: true });
     }
 
     if (body.action === "delete_company" || body.action === "delete_unit") {
       const password = String(payload.adminPassword ?? "");
-      if (!await verifyAdminPassword(password)) {
+      if (!(await verifyAdminPassword(password))) {
         return jsonResponse({ error: "Senha do administrador incorreta" }, 403);
       }
       if (body.action === "delete_company") {

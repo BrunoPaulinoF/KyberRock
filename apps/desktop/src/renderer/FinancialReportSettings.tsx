@@ -273,8 +273,7 @@ export function FinancialReportSettings({
     // relatorios do KyberRock.
     void applyPatch(recipient.id, {
       sendFinancial: true,
-      financialScheduleTime:
-        recipient.financialScheduleTime ?? defaultFinancialTime(kyberRockHour)
+      financialScheduleTime: recipient.financialScheduleTime ?? defaultFinancialTime(kyberRockHour)
     });
   }
 
@@ -451,8 +450,7 @@ export function FinancialReportSettings({
                         {recipient.sendFinancial ? (
                           <select
                             value={
-                              recipient.financialScheduleTime ??
-                              defaultFinancialTime(kyberRockHour)
+                              recipient.financialScheduleTime ?? defaultFinancialTime(kyberRockHour)
                             }
                             disabled={busy}
                             onChange={(event) =>
@@ -481,8 +479,8 @@ export function FinancialReportSettings({
             </div>
           )}
           <p style={styles.hint}>
-            Os relatorios do KyberRock saem as {kyberRockHourLabel(kyberRockHour)} pelo computador; o
-            financeiro do OMIE sai pela nuvem no horario escolhido acima, na hora cheia.
+            Os relatorios do KyberRock saem as {kyberRockHourLabel(kyberRockHour)} pelo computador;
+            o financeiro do OMIE sai pela nuvem no horario escolhido acima, na hora cheia.
             Destinatarios inativos nao recebem, mesmo com o financeiro marcado.
           </p>
 

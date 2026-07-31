@@ -249,7 +249,13 @@ export interface AdvanceSettlementStep {
  * preenchido muda conforme a origem do titulo.
  */
 export function selectOrderReceivables(
-  rows: ReadonlyArray<OmieReceivableRaw & { nCodPedido?: number | string; numero_pedido?: number | string; nCodOS?: number | string }>,
+  rows: ReadonlyArray<
+    OmieReceivableRaw & {
+      nCodPedido?: number | string;
+      numero_pedido?: number | string;
+      nCodOS?: number | string;
+    }
+  >,
   orderId: number
 ): OmieOrderReceivable[] {
   const receivables: OmieOrderReceivable[] = [];

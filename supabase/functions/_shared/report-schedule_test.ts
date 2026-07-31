@@ -41,7 +41,12 @@ describe("shouldSendAt", () => {
 
   it("rejects unknown frequencies", () => {
     expect(
-      shouldSendAt({ frequency: "hourly", scheduleTime: "08:00", nowDate: "2026-07-15", nowHour: 8 })
+      shouldSendAt({
+        frequency: "hourly",
+        scheduleTime: "08:00",
+        nowDate: "2026-07-15",
+        nowHour: 8
+      })
     ).toBe(false);
   });
 });

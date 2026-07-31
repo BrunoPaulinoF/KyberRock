@@ -337,7 +337,10 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
     return null;
   }
 
-  async function persistRecipient(payload: RecipientPayload, targetId: string | null): Promise<void> {
+  async function persistRecipient(
+    payload: RecipientPayload,
+    targetId: string | null
+  ): Promise<void> {
     if (!desktopApi) return;
     if (targetId) {
       await desktopApi.updateReportRecipient(targetId, payload);
@@ -550,8 +553,8 @@ export function ReportsView({ desktopApi }: { desktopApi: KyberRockDesktopApi | 
                   </select>
                 </label>
                 <p style={styles.helperText}>
-                  O resumo executivo de financas do OMIE tem horario proprio e e configurado no
-                  card &quot;Relatorio financeiro (OMIE)&quot;, no topo desta tela.
+                  O resumo executivo de financas do OMIE tem horario proprio e e configurado no card
+                  &quot;Relatorio financeiro (OMIE)&quot;, no topo desta tela.
                   {form.sendFinancial
                     ? ` Hoje este destinatario recebe o financeiro${
                         form.financialScheduleTime ? ` as ${form.financialScheduleTime}` : ""

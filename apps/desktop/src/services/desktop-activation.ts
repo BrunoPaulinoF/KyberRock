@@ -1,10 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type { DesktopDatabase } from "../database/sqlite.js";
-import {
-  ensureInitialDesktopIdentity,
-  getLocalDesktopIdentity
-} from "./bootstrap.js";
+import { ensureInitialDesktopIdentity, getLocalDesktopIdentity } from "./bootstrap.js";
 import {
   getSupabaseActivationClient,
   getSupabaseClient,
@@ -156,8 +153,7 @@ export async function activateDesktop(
         status: "unit_selection_required",
         canOperate: false,
         requiresActivation: true,
-        message:
-          data.message ?? "Escolha em qual pedreira este computador esta instalado.",
+        message: data.message ?? "Escolha em qual pedreira este computador esta instalado.",
         checkedAt: data.checkedAt ?? now.toISOString()
       }),
       unitOptions: data.units ?? []
@@ -169,45 +165,49 @@ export async function activateDesktop(
   }
 
   const checkedAt = data.checkedAt ?? now.toISOString();
-  ensureInitialDesktopIdentity(database, {
-    companyId: data.companyId,
-    companyLegalName: data.companyLegalName ?? data.companyTradeName ?? "KyberRock",
-    companyTradeName: data.companyTradeName ?? data.companyLegalName ?? "KyberRock",
-    companyDocument: data.companyDocument ?? undefined,
-    unitId: data.unitId,
-    unitName: data.unitName ?? "Unidade ativada",
-    unitTimezone: data.unitTimezone,
-    deviceId: data.deviceId,
-    deviceName: input.deviceName.trim() || "Desktop balanca",
-    deviceColor: data.deviceColor ?? null,
-    installationId,
-    adoptDeviceId: true
-  }, new Date(checkedAt));
+  ensureInitialDesktopIdentity(
+    database,
+    {
+      companyId: data.companyId,
+      companyLegalName: data.companyLegalName ?? data.companyTradeName ?? "KyberRock",
+      companyTradeName: data.companyTradeName ?? data.companyLegalName ?? "KyberRock",
+      companyDocument: data.companyDocument ?? undefined,
+      unitId: data.unitId,
+      unitName: data.unitName ?? "Unidade ativada",
+      unitTimezone: data.unitTimezone,
+      deviceId: data.deviceId,
+      deviceName: input.deviceName.trim() || "Desktop balanca",
+      deviceColor: data.deviceColor ?? null,
+      installationId,
+      adoptDeviceId: true
+    },
+    new Date(checkedAt)
+  );
 
   // Numero deste computador na pedreira (sufixo do cupom), disponivel ja na
   // primeira impressao apos a ativacao.
   if (typeof data.deviceNumber === "number" && data.deviceNumber > 0) {
-    upsertUnitDevices(
-      database,
-      { companyId: data.companyId, unitId: data.unitId },
-      [
-        {
-          id: data.deviceId,
-          name: data.deviceName ?? (input.deviceName.trim() || "Desktop balanca"),
-          color: data.deviceColor ?? null,
-          device_number: data.deviceNumber,
-          is_active: true
-        }
-      ]
-    );
+    upsertUnitDevices(database, { companyId: data.companyId, unitId: data.unitId }, [
+      {
+        id: data.deviceId,
+        name: data.deviceName ?? (input.deviceName.trim() || "Desktop balanca"),
+        color: data.deviceColor ?? null,
+        device_number: data.deviceNumber,
+        is_active: true
+      }
+    ]);
   }
 
-  saveCloudCredentials(database, {
-    companyId: data.companyId,
-    unitId: data.unitId,
-    deviceId: data.deviceId,
-    deviceToken: data.deviceToken
-  }, checkedAt);
+  saveCloudCredentials(
+    database,
+    {
+      companyId: data.companyId,
+      unitId: data.unitId,
+      deviceId: data.deviceId,
+      deviceToken: data.deviceToken
+    },
+    checkedAt
+  );
   writeStoredSupabaseConfig(
     database,
     {
@@ -216,7 +216,12 @@ export async function activateDesktop(
     },
     checkedAt
   );
-  saveAccessStatus(database, "approved", data.message ?? "Acesso aprovado. Sistema liberado.", checkedAt);
+  saveAccessStatus(
+    database,
+    "approved",
+    data.message ?? "Acesso aprovado. Sistema liberado.",
+    checkedAt
+  );
 
   return buildAccessStatus(database, {
     status: "approved",
@@ -251,18 +256,27 @@ export async function validateDesktopAccess(
 
   // Se estiver online, SEMPRE valida na nuvem (nunca usa cache) para detectar bloqueio em tempo real
   // Se estiver offline, usa o cache + grace period
-  if (!options.force && lastSuccessfulCheckAt && now.getTime() - Date.parse(lastSuccessfulCheckAt) < DESKTOP_ACCESS_CHECK_INTERVAL_MS && stored.canOperate && options.internetOnline !== true) {
+  if (
+    !options.force &&
+    lastSuccessfulCheckAt &&
+    now.getTime() - Date.parse(lastSuccessfulCheckAt) < DESKTOP_ACCESS_CHECK_INTERVAL_MS &&
+    stored.canOperate &&
+    options.internetOnline !== true
+  ) {
     return stored;
   }
 
   try {
     const supabase = getSupabaseClient();
-    const { data, error } = await supabase.functions.invoke<DesktopStatusResponse>("desktop-status", {
-      body: {
-        deviceId: credentials.deviceId,
-        deviceToken: credentials.deviceToken
+    const { data, error } = await supabase.functions.invoke<DesktopStatusResponse>(
+      "desktop-status",
+      {
+        body: {
+          deviceId: credentials.deviceId,
+          deviceToken: credentials.deviceToken
+        }
       }
-    });
+    );
 
     if (error) {
       throw new Error(error.message || "Falha ao validar acesso.");
@@ -333,7 +347,10 @@ export function getStoredDesktopAccessStatus(
     });
   }
 
-  const blockedStatus = readStringLocalSetting(database, "desktop_access_status") as DesktopAccessStatusCode | null;
+  const blockedStatus = readStringLocalSetting(
+    database,
+    "desktop_access_status"
+  ) as DesktopAccessStatusCode | null;
   const blockedMessage = readStringLocalSetting(database, "desktop_access_message");
   if (blockedStatus && isBlockingStatus(blockedStatus)) {
     return buildAccessStatus(database, {
@@ -356,7 +373,9 @@ export function getStoredDesktopAccessStatus(
     });
   }
 
-  const graceExpiresAt = new Date(Date.parse(lastSuccessfulCheckAt) + DESKTOP_ACCESS_GRACE_PERIOD_MS);
+  const graceExpiresAt = new Date(
+    Date.parse(lastSuccessfulCheckAt) + DESKTOP_ACCESS_GRACE_PERIOD_MS
+  );
   if (Number.isNaN(graceExpiresAt.getTime()) || graceExpiresAt.getTime() < now.getTime()) {
     return buildAccessStatus(database, {
       status: "validation_expired",
@@ -420,7 +439,11 @@ function readPreviousCloudDeviceId(database: DesktopDatabase): string | null {
   return deviceId;
 }
 
-function saveCloudCredentials(database: DesktopDatabase, credentials: CloudCredentials, updatedAt: string): void {
+function saveCloudCredentials(
+  database: DesktopDatabase,
+  credentials: CloudCredentials,
+  updatedAt: string
+): void {
   writeLocalSetting(database, "cloud_company_id", credentials.companyId, updatedAt);
   writeLocalSetting(database, "cloud_unit_id", credentials.unitId, updatedAt);
   writeLocalSetting(database, "cloud_device_id", credentials.deviceId, updatedAt);
@@ -454,7 +477,10 @@ function getCloudCredentials(database: DesktopDatabase): CloudCredentials | null
 
 function buildAccessStatus(
   database: DesktopDatabase,
-  input: Pick<DesktopAccessStatus, "status" | "canOperate" | "requiresActivation" | "message" | "checkedAt">
+  input: Pick<
+    DesktopAccessStatus,
+    "status" | "canOperate" | "requiresActivation" | "message" | "checkedAt"
+  >
 ): DesktopAccessStatus {
   const lastSuccessfulCheckAt = readStringLocalSetting(database, "last_license_check_at");
   const credentials = getCloudCredentials(database);
@@ -547,5 +573,11 @@ export function logoutDesktop(database: DesktopDatabase, now: Date = new Date())
 }
 
 function isBlockingStatus(status: DesktopAccessStatusCode): boolean {
-  return ["company_blocked", "payment_blocked", "unit_blocked", "device_blocked", "invalid_device"].includes(status);
+  return [
+    "company_blocked",
+    "payment_blocked",
+    "unit_blocked",
+    "device_blocked",
+    "invalid_device"
+  ].includes(status);
 }

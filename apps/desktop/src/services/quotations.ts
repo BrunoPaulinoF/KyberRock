@@ -70,9 +70,7 @@ export function createQuotation(
       nowIso,
       nowIso
     );
-  return database
-    .prepare("SELECT * FROM quotations WHERE id = ?")
-    .get(id) as QuotationRow;
+  return database.prepare("SELECT * FROM quotations WHERE id = ?").get(id) as QuotationRow;
 }
 
 export function cancelQuotation(
@@ -82,9 +80,7 @@ export function cancelQuotation(
 ): void {
   const nowIso = now.toISOString();
   database
-    .prepare(
-      `UPDATE quotations SET status = 'cancelled', updated_at = ? WHERE id = ?`
-    )
+    .prepare(`UPDATE quotations SET status = 'cancelled', updated_at = ? WHERE id = ?`)
     .run(nowIso, id);
 }
 

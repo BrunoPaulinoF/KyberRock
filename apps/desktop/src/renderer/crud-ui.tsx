@@ -582,7 +582,13 @@ const rowIconButtonBase: CSSProperties = {
   lineHeight: 0
 };
 
-export function EditRowButton({ onClick, label = "Editar" }: { onClick: () => void; label?: string }) {
+export function EditRowButton({
+  onClick,
+  label = "Editar"
+}: {
+  onClick: () => void;
+  label?: string;
+}) {
   return (
     <Tooltip content={label} placement="left">
       <button type="button" onClick={onClick} aria-label={label} style={rowIconButtonBase}>
@@ -720,7 +726,8 @@ export function ConfirmDialog({
               border: "none",
               borderRadius: "10px",
               padding: "8px 14px",
-              background: tone === "danger" ? "var(--kr-danger-strong)" : "var(--kr-primary-strong)",
+              background:
+                tone === "danger" ? "var(--kr-danger-strong)" : "var(--kr-primary-strong)",
               color: tone === "danger" ? "#ffffff" : "var(--kr-primary-text)",
               cursor: busy ? "wait" : "pointer",
               fontWeight: 700,
@@ -853,7 +860,9 @@ export function RecordDetailModal({
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-          <h3 style={{ margin: 0, color: "var(--kr-text-strong)", fontSize: "16px", fontWeight: 700 }}>
+          <h3
+            style={{ margin: 0, color: "var(--kr-text-strong)", fontSize: "16px", fontWeight: 700 }}
+          >
             {title}
           </h3>
           {badge}
@@ -1038,7 +1047,9 @@ export function CrudFormShell({
             borderTopRightRadius: "16px"
           }}
         >
-          <h3 style={{ margin: 0, color: "var(--kr-text-strong)", fontSize: "16px", fontWeight: 700 }}>
+          <h3
+            style={{ margin: 0, color: "var(--kr-text-strong)", fontSize: "16px", fontWeight: 700 }}
+          >
             {title}
           </h3>
           {subtitle ? (

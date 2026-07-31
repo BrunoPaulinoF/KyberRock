@@ -121,11 +121,7 @@ export async function listCustomers(
   client: OmieClient,
   param: ListCustomersParam
 ): Promise<Customer[]> {
-  const response = (await client.call(
-    "/geral/clientes/",
-    "ListarClientes",
-    param
-  )) as {
+  const response = (await client.call("/geral/clientes/", "ListarClientes", param)) as {
     clientes_cadastro?: OmieCustomerRaw[];
     clientesCadastro?: OmieCustomerRaw[];
   };
@@ -143,11 +139,9 @@ export async function getCustomer(
   client: OmieClient,
   codigoClienteOmie: number
 ): Promise<Customer | null> {
-  const response = (await client.call(
-    "/geral/clientes/",
-    "ConsultarCliente",
-    { codigoClienteOmie }
-  )) as OmieCustomerRaw;
+  const response = (await client.call("/geral/clientes/", "ConsultarCliente", {
+    codigoClienteOmie
+  })) as OmieCustomerRaw;
 
   return mapOmieCustomerRaw(response);
 }
@@ -156,11 +150,7 @@ export async function createCustomer(
   client: OmieClient,
   input: CreateCustomerInput
 ): Promise<number> {
-  const response = (await client.call(
-    "/geral/clientes/",
-    "IncluirCliente",
-    input
-  )) as {
+  const response = (await client.call("/geral/clientes/", "IncluirCliente", input)) as {
     codigoClienteOmie?: number;
     codigo_cliente_omie?: number;
   };
@@ -174,11 +164,7 @@ export async function updateCustomer(
   client: OmieClient,
   input: UpdateCustomerInput
 ): Promise<void> {
-  await client.call(
-    "/geral/clientes/",
-    "AlterarCliente",
-    input
-  );
+  await client.call("/geral/clientes/", "AlterarCliente", input);
 }
 
 export class OmieCustomersService {
@@ -253,11 +239,19 @@ function mapOmieCustomerRaw(item: OmieCustomerRaw | null | undefined): Customer 
     isActive: !isYesFlag(item.inativo)
   };
 
-  assign(customer, "integrationCode", pickFirst(item.codigo_cliente_integracao, item.codigoClienteIntegracao));
+  assign(
+    customer,
+    "integrationCode",
+    pickFirst(item.codigo_cliente_integracao, item.codigoClienteIntegracao)
+  );
   assign(customer, "tradeName", pickFirst(item.nome_fantasia, item.nomeFantasia));
   assign(customer, "document", pickFirst(item.cnpj_cpf, item.cnpjCpf));
   assign(customer, "stateRegistration", pickFirst(item.inscricao_estadual, item.inscricaoEstadual));
-  assign(customer, "municipalRegistration", pickFirst(item.inscricao_municipal, item.inscricaoMunicipal));
+  assign(
+    customer,
+    "municipalRegistration",
+    pickFirst(item.inscricao_municipal, item.inscricaoMunicipal)
+  );
   assign(customer, "email", pickFirst(item.email));
   assign(customer, "homepage", pickFirst(item.homepage));
   assign(customer, "contactName", pickFirst(item.contato));
@@ -280,7 +274,9 @@ function mapOmieCustomerRaw(item: OmieCustomerRaw | null | undefined): Customer 
   if (address) customer.address = address;
   customer.isIndividual = isYesFlag(pickFirst(item.pessoa_fisica, item.pessoaFisica));
   customer.isForeign = isYesFlag(item.exterior);
-  customer.billingBlocked = isYesFlag(pickFirst(item.bloquear_faturamento, item.bloquearFaturamento));
+  customer.billingBlocked = isYesFlag(
+    pickFirst(item.bloquear_faturamento, item.bloquearFaturamento)
+  );
   if (item.tags) customer.tags = item.tags;
   const salespersonId = toNumber(pickFirst(item.codigo_vendedor, item.codigoVendedor));
   if (salespersonId !== null) customer.salespersonId = salespersonId;

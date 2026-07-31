@@ -1,7 +1,11 @@
 import { assertEquals, assertObjectMatch } from "jsr:@std/assert";
 
 import { handleOmieSyncRequest, type OmieSyncHandlerDependencies } from "./index.ts";
-import { toOmieIntegrationCode, type OmieRequestInput, type OmieRequester } from "./omie-sync-core.ts";
+import {
+  toOmieIntegrationCode,
+  type OmieRequestInput,
+  type OmieRequester
+} from "./omie-sync-core.ts";
 
 type DeviceFixture = {
   id: string;
@@ -100,7 +104,10 @@ class SupabaseQueryStub {
   /** A query e "thenable": `await from(...).select(...).in(...)` resolve a lista. */
   then<TResult1 = { data: unknown; error: { message: string } | null }, TResult2 = never>(
     onfulfilled?:
-      | ((value: { data: unknown; error: { message: string } | null }) => TResult1 | PromiseLike<TResult1>)
+      | ((value: {
+          data: unknown;
+          error: { message: string } | null;
+        }) => TResult1 | PromiseLike<TResult1>)
       | null,
     onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
   ): PromiseLike<TResult1 | TResult2> {
@@ -241,300 +248,314 @@ function defaultOmieListResponse(input: OmieRequestInput<unknown>): unknown {
   return null;
 }
 
-Deno.test("handleOmieSyncRequest busca credenciais OMIE por companyId e isola contextos multi-tenant", async () => {
-  const tokenA = "token-a";
-  const tokenB = "token-b";
-  const supabase = createSupabaseDependencies({
-    devices: {
-      "device-a": {
-        id: "device-a",
-        company_id: "company-a",
-        unit_id: "unit-a",
-        token_hash: await sha256Hex(tokenA),
-        is_active: true
+Deno.test(
+  "handleOmieSyncRequest busca credenciais OMIE por companyId e isola contextos multi-tenant",
+  async () => {
+    const tokenA = "token-a";
+    const tokenB = "token-b";
+    const supabase = createSupabaseDependencies({
+      devices: {
+        "device-a": {
+          id: "device-a",
+          company_id: "company-a",
+          unit_id: "unit-a",
+          token_hash: await sha256Hex(tokenA),
+          is_active: true
+        },
+        "device-b": {
+          id: "device-b",
+          company_id: "company-b",
+          unit_id: "unit-b",
+          token_hash: await sha256Hex(tokenB),
+          is_active: true
+        }
       },
-      "device-b": {
-        id: "device-b",
-        company_id: "company-b",
-        unit_id: "unit-b",
-        token_hash: await sha256Hex(tokenB),
-        is_active: true
+      companies: {
+        "company-a": {
+          id: "company-a",
+          is_active: true,
+          omie_app_key: "key-company-a",
+          omie_app_secret: "secret-company-a"
+        },
+        "company-b": {
+          id: "company-b",
+          is_active: true,
+          omie_app_key: "key-company-b",
+          omie_app_secret: "secret-company-b"
+        }
       }
-    },
-    companies: {
-      "company-a": {
-        id: "company-a",
-        is_active: true,
-        omie_app_key: "key-company-a",
-        omie_app_secret: "secret-company-a"
+    });
+    const omieQueue = createOmieQueueStub((input) => {
+      if (input.call === "IncluirCliente") return { codigo_cliente_omie: 9001 };
+      return defaultOmieListResponse(input);
+    });
+
+    const bodyA = await postOmieSync(
+      {
+        deviceId: "device-a",
+        deviceToken: tokenA,
+        action: "sync",
+        resume: { customersFinished: true, productsFinished: true, paymentTermsFinished: true },
+        payload: { customers: [{ localCustomerId: "cliente-a", razaoSocial: "Cliente A" }] }
       },
-      "company-b": {
-        id: "company-b",
-        is_active: true,
-        omie_app_key: "key-company-b",
-        omie_app_secret: "secret-company-b"
-      }
-    }
-  });
-  const omieQueue = createOmieQueueStub((input) => {
-    if (input.call === "IncluirCliente") return { codigo_cliente_omie: 9001 };
-    return defaultOmieListResponse(input);
-  });
-
-  const bodyA = await postOmieSync(
-    {
-      deviceId: "device-a",
-      deviceToken: tokenA,
-      action: "sync",
-      resume: { customersFinished: true, productsFinished: true, paymentTermsFinished: true },
-      payload: { customers: [{ localCustomerId: "cliente-a", razaoSocial: "Cliente A" }] }
-    },
-    { createClient: supabase.createClient, omieQueue }
-  );
-  const bodyB = await postOmieSync(
-    {
-      deviceId: "device-b",
-      deviceToken: tokenB,
-      action: "sync",
-      resume: { customersFinished: true, productsFinished: true, paymentTermsFinished: true },
-      payload: { customers: [{ localCustomerId: "cliente-b", razaoSocial: "Cliente B" }] }
-    },
-    { createClient: supabase.createClient, omieQueue }
-  );
-
-  const pushRequests = omieQueue.requests.filter((request) => request.call === "IncluirCliente");
-  assertObjectMatch(bodyA, { ok: true, companyId: "company-a", unitId: "unit-a" });
-  assertObjectMatch(bodyB, { ok: true, companyId: "company-b", unitId: "unit-b" });
-  assertEquals(pushRequests.map((request) => request.credentials), [
-    { appKey: "key-company-a", appSecret: "secret-company-a" },
-    { appKey: "key-company-b", appSecret: "secret-company-b" }
-  ]);
-  assertEquals(pushRequests.map((request) => getParam(request).codigo_cliente_integracao), [
-    toOmieIntegrationCode("cliente-a"),
-    toOmieIntegrationCode("cliente-b")
-  ]);
-});
-
-Deno.test("fluxo push envia clientes e transportadoras formatados e permite limpar needs_push apos sucesso", async () => {
-  const deviceToken = "token-push";
-  const supabase = createSupabaseDependencies({
-    devices: {
-      "device-push": {
-        id: "device-push",
-        company_id: "company-push",
-        unit_id: "unit-push",
-        token_hash: await sha256Hex(deviceToken),
-        is_active: true
-      }
-    },
-    companies: {
-      "company-push": {
-        id: "company-push",
-        is_active: true,
-        omie_app_key: "key-push",
-        omie_app_secret: "secret-push"
-      }
-    }
-  });
-  const localQueue = {
-    customers: [
+      { createClient: supabase.createClient, omieQueue }
+    );
+    const bodyB = await postOmieSync(
       {
-        localCustomerId: "customer-local-1",
-        razaoSocial: "Cliente Local Ltda",
-        nomeFantasia: "Cliente Local",
-        cnpjCpf: "11111111000191",
-        needs_push: 1
+        deviceId: "device-b",
+        deviceToken: tokenB,
+        action: "sync",
+        resume: { customersFinished: true, productsFinished: true, paymentTermsFinished: true },
+        payload: { customers: [{ localCustomerId: "cliente-b", razaoSocial: "Cliente B" }] }
+      },
+      { createClient: supabase.createClient, omieQueue }
+    );
+
+    const pushRequests = omieQueue.requests.filter((request) => request.call === "IncluirCliente");
+    assertObjectMatch(bodyA, { ok: true, companyId: "company-a", unitId: "unit-a" });
+    assertObjectMatch(bodyB, { ok: true, companyId: "company-b", unitId: "unit-b" });
+    assertEquals(
+      pushRequests.map((request) => request.credentials),
+      [
+        { appKey: "key-company-a", appSecret: "secret-company-a" },
+        { appKey: "key-company-b", appSecret: "secret-company-b" }
+      ]
+    );
+    assertEquals(
+      pushRequests.map((request) => getParam(request).codigo_cliente_integracao),
+      [toOmieIntegrationCode("cliente-a"), toOmieIntegrationCode("cliente-b")]
+    );
+  }
+);
+
+Deno.test(
+  "fluxo push envia clientes e transportadoras formatados e permite limpar needs_push apos sucesso",
+  async () => {
+    const deviceToken = "token-push";
+    const supabase = createSupabaseDependencies({
+      devices: {
+        "device-push": {
+          id: "device-push",
+          company_id: "company-push",
+          unit_id: "unit-push",
+          token_hash: await sha256Hex(deviceToken),
+          is_active: true
+        }
+      },
+      companies: {
+        "company-push": {
+          id: "company-push",
+          is_active: true,
+          omie_app_key: "key-push",
+          omie_app_secret: "secret-push"
+        }
       }
-    ],
-    carriers: [
+    });
+    const localQueue = {
+      customers: [
+        {
+          localCustomerId: "customer-local-1",
+          razaoSocial: "Cliente Local Ltda",
+          nomeFantasia: "Cliente Local",
+          cnpjCpf: "11111111000191",
+          needs_push: 1
+        }
+      ],
+      carriers: [
+        {
+          localCustomerId: "carrier-local-1",
+          name: "Transportadora Local",
+          cnpjCpf: "22222222000182",
+          tags: ["cliente"],
+          needs_push: 1
+        }
+      ],
+      clearSynced(push: JsonBody): void {
+        const pushResult = push.push as {
+          customers: Array<{ localId: string }>;
+          carriers: Array<{ localId: string }>;
+        };
+        for (const customer of pushResult.customers) {
+          const row = this.customers.find((item) => item.localCustomerId === customer.localId);
+          if (row) row.needs_push = 0;
+        }
+        for (const carrier of pushResult.carriers) {
+          const row = this.carriers.find((item) => item.localCustomerId === carrier.localId);
+          if (row) row.needs_push = 0;
+        }
+      }
+    };
+    let nextOmieId = 100;
+    const omieQueue = createOmieQueueStub((input) => {
+      if (input.call === "ListarClientesResumido") return { clientes: [] };
+      if (input.call === "IncluirCliente") return { codigo_cliente_omie: nextOmieId++ };
+      return defaultOmieListResponse(input);
+    });
+
+    const response = await postOmieSync(
       {
-        localCustomerId: "carrier-local-1",
-        name: "Transportadora Local",
-        cnpjCpf: "22222222000182",
-        tags: ["cliente"],
-        needs_push: 1
-      }
-    ],
-    clearSynced(push: JsonBody): void {
-      const pushResult = push.push as {
-        customers: Array<{ localId: string }>;
-        carriers: Array<{ localId: string }>;
-      };
-      for (const customer of pushResult.customers) {
-        const row = this.customers.find((item) => item.localCustomerId === customer.localId);
-        if (row) row.needs_push = 0;
-      }
-      for (const carrier of pushResult.carriers) {
-        const row = this.carriers.find((item) => item.localCustomerId === carrier.localId);
-        if (row) row.needs_push = 0;
-      }
-    }
-  };
-  let nextOmieId = 100;
-  const omieQueue = createOmieQueueStub((input) => {
-    if (input.call === "ListarClientesResumido") return { clientes: [] };
-    if (input.call === "IncluirCliente") return { codigo_cliente_omie: nextOmieId++ };
-    return defaultOmieListResponse(input);
-  });
+        deviceId: "device-push",
+        deviceToken,
+        action: "sync",
+        resume: { customersFinished: true, productsFinished: true, paymentTermsFinished: true },
+        payload: {
+          customers: localQueue.customers.filter((row) => row.needs_push === 1),
+          carriers: localQueue.carriers.filter((row) => row.needs_push === 1)
+        }
+      },
+      { createClient: supabase.createClient, omieQueue }
+    );
+    localQueue.clearSynced(response);
 
-  const response = await postOmieSync(
-    {
-      deviceId: "device-push",
-      deviceToken,
-      action: "sync",
-      resume: { customersFinished: true, productsFinished: true, paymentTermsFinished: true },
-      payload: {
-        customers: localQueue.customers.filter((row) => row.needs_push === 1),
-        carriers: localQueue.carriers.filter((row) => row.needs_push === 1)
-      }
-    },
-    { createClient: supabase.createClient, omieQueue }
-  );
-  localQueue.clearSynced(response);
+    const includedCustomers = omieQueue.requests.filter(
+      (request) => request.call === "IncluirCliente"
+    );
+    const customerPayload = getParam(includedCustomers[0]);
+    const carrierPayload = getParam(includedCustomers[1]);
+    assertObjectMatch(customerPayload, {
+      codigo_cliente_integracao: toOmieIntegrationCode("customer-local-1"),
+      razao_social: "Cliente Local Ltda",
+      nome_fantasia: "Cliente Local",
+      cnpj_cpf: "11111111000191"
+    });
+    assertObjectMatch(carrierPayload, {
+      codigo_cliente_integracao: toOmieIntegrationCode("carrier-local-1"),
+      razao_social: "Transportadora Local",
+      nome_fantasia: "Transportadora Local",
+      cnpj_cpf: "22222222000182"
+    });
+    assertEquals(carrierPayload.tags, [{ tag: "cliente" }, { tag: "transportadora" }]);
+    assertEquals(localQueue.customers[0].needs_push, 0);
+    assertEquals(localQueue.carriers[0].needs_push, 0);
+  }
+);
 
-  const includedCustomers = omieQueue.requests.filter((request) => request.call === "IncluirCliente");
-  const customerPayload = getParam(includedCustomers[0]);
-  const carrierPayload = getParam(includedCustomers[1]);
-  assertObjectMatch(customerPayload, {
-    codigo_cliente_integracao: toOmieIntegrationCode("customer-local-1"),
-    razao_social: "Cliente Local Ltda",
-    nome_fantasia: "Cliente Local",
-    cnpj_cpf: "11111111000191"
-  });
-  assertObjectMatch(carrierPayload, {
-    codigo_cliente_integracao: toOmieIntegrationCode("carrier-local-1"),
-    razao_social: "Transportadora Local",
-    nome_fantasia: "Transportadora Local",
-    cnpj_cpf: "22222222000182"
-  });
-  assertEquals(carrierPayload.tags, [{ tag: "cliente" }, { tag: "transportadora" }]);
-  assertEquals(localQueue.customers[0].needs_push, 0);
-  assertEquals(localQueue.carriers[0].needs_push, 0);
-});
-
-Deno.test("fluxo pull processa paginas e mapeia clientes OMIE com tag transportadora para carriers locais", async () => {
-  const deviceToken = "token-pull";
-  const supabase = createSupabaseDependencies({
-    devices: {
-      "device-pull": {
-        id: "device-pull",
-        company_id: "company-pull",
-        unit_id: "unit-pull",
-        token_hash: await sha256Hex(deviceToken),
-        is_active: true
+Deno.test(
+  "fluxo pull processa paginas e mapeia clientes OMIE com tag transportadora para carriers locais",
+  async () => {
+    const deviceToken = "token-pull";
+    const supabase = createSupabaseDependencies({
+      devices: {
+        "device-pull": {
+          id: "device-pull",
+          company_id: "company-pull",
+          unit_id: "unit-pull",
+          token_hash: await sha256Hex(deviceToken),
+          is_active: true
+        }
+      },
+      companies: {
+        "company-pull": {
+          id: "company-pull",
+          is_active: true,
+          omie_app_key: "key-pull",
+          omie_app_secret: "secret-pull"
+        }
       }
-    },
-    companies: {
-      "company-pull": {
-        id: "company-pull",
-        is_active: true,
-        omie_app_key: "key-pull",
-        omie_app_secret: "secret-pull"
-      }
-    }
-  });
-  const omieQueue = createOmieQueueStub((input) => {
-    if (input.call !== "ListarClientes") return defaultOmieListResponse(input);
+    });
+    const omieQueue = createOmieQueueStub((input) => {
+      if (input.call !== "ListarClientes") return defaultOmieListResponse(input);
 
-    const page = Number(getParam(input).pagina);
-    if (page === 1) {
+      const page = Number(getParam(input).pagina);
+      if (page === 1) {
+        return {
+          pagina: 1,
+          total_de_paginas: 2,
+          total_de_registros: 3,
+          clientes_cadastro: [
+            {
+              codigo_cliente_omie: 11,
+              codigo_cliente_integracao: "omie-cliente-11",
+              razao_social: "Cliente Pagina 1",
+              tags: [{ tag: "cliente" }]
+            },
+            {
+              codigo_cliente_omie: 22,
+              codigo_cliente_integracao: "omie-carrier-22",
+              razao_social: "Transportadora Pagina 1",
+              cnpj_cpf: "33333333000173",
+              cidade: "Campinas",
+              estado: "SP",
+              tags: [{ tag: "transportadora" }]
+            }
+          ]
+        };
+      }
+
       return {
-        pagina: 1,
+        pagina: 2,
         total_de_paginas: 2,
         total_de_registros: 3,
         clientes_cadastro: [
           {
-            codigo_cliente_omie: 11,
-            codigo_cliente_integracao: "omie-cliente-11",
-            razao_social: "Cliente Pagina 1",
-            tags: [{ tag: "cliente" }]
-          },
-          {
-            codigo_cliente_omie: 22,
-            codigo_cliente_integracao: "omie-carrier-22",
-            razao_social: "Transportadora Pagina 1",
-            cnpj_cpf: "33333333000173",
-            cidade: "Campinas",
-            estado: "SP",
-            tags: [{ tag: "transportadora" }]
+            codigo_cliente_omie: 33,
+            codigo_cliente_integracao: "omie-cliente-carrier-33",
+            razao_social: "Cliente e Transportadora Pagina 2",
+            tags: [{ tag: "cliente" }, { tag: "transportadora" }]
           }
         ]
       };
-    }
-
-    return {
-      pagina: 2,
-      total_de_paginas: 2,
-      total_de_registros: 3,
-      clientes_cadastro: [
-        {
-          codigo_cliente_omie: 33,
-          codigo_cliente_integracao: "omie-cliente-carrier-33",
-          razao_social: "Cliente e Transportadora Pagina 2",
-          tags: [{ tag: "cliente" }, { tag: "transportadora" }]
-        }
-      ]
+    });
+    const localTables = {
+      customers: [] as unknown[],
+      carriers: [] as unknown[],
+      applyPull(body: JsonBody): void {
+        this.customers.push(...((body.customers as unknown[]) ?? []));
+        this.carriers.push(...((body.suppliers as unknown[]) ?? []));
+      }
     };
-  });
-  const localTables = {
-    customers: [] as unknown[],
-    carriers: [] as unknown[],
-    applyPull(body: JsonBody): void {
-      this.customers.push(...((body.customers as unknown[]) ?? []));
-      this.carriers.push(...((body.suppliers as unknown[]) ?? []));
-    }
-  };
 
-  const page1 = await postOmieSync(
-    {
-      deviceId: "device-pull",
-      deviceToken,
-      action: "pull_reference_data",
-      resume: { productsFinished: true, paymentTermsFinished: true }
-    },
-    { createClient: supabase.createClient, omieQueue }
-  );
-  const page2 = await postOmieSync(
-    {
-      deviceId: "device-pull",
-      deviceToken,
-      action: "pull_reference_data",
-      resume: { customersPage: 2, productsFinished: true, paymentTermsFinished: true }
-    },
-    { createClient: supabase.createClient, omieQueue }
-  );
-  localTables.applyPull(page1);
-  localTables.applyPull(page2);
+    const page1 = await postOmieSync(
+      {
+        deviceId: "device-pull",
+        deviceToken,
+        action: "pull_reference_data",
+        resume: { productsFinished: true, paymentTermsFinished: true }
+      },
+      { createClient: supabase.createClient, omieQueue }
+    );
+    const page2 = await postOmieSync(
+      {
+        deviceId: "device-pull",
+        deviceToken,
+        action: "pull_reference_data",
+        resume: { customersPage: 2, productsFinished: true, paymentTermsFinished: true }
+      },
+      { createClient: supabase.createClient, omieQueue }
+    );
+    localTables.applyPull(page1);
+    localTables.applyPull(page2);
 
-  assertObjectMatch(page1.pagination as Record<string, unknown>, {
-    customersPage: 1,
-    customersFinished: false,
-    customersTotalPages: 2
-  });
-  assertObjectMatch(page2.pagination as Record<string, unknown>, {
-    customersPage: 2,
-    customersFinished: true,
-    customersTotalPages: 2
-  });
-  // Filtra por ListarClientes: o pull da mesma chamada percorre outros cadastros
-  // (categorias, por exemplo) que tambem paginam, e a paginacao de clientes e o
-  // que este teste cobre.
-  assertEquals(
-    omieQueue.requests
-      .filter((request) => request.call === "ListarClientes")
-      .map((request) => getParam(request).pagina),
-    [1, 2]
-  );
-  assertEquals(localTables.customers.length, 2);
-  assertEquals(localTables.carriers.length, 2);
-  assertObjectMatch(localTables.carriers[0] as Record<string, unknown>, {
-    id: 22,
-    integrationCode: "omie-carrier-22",
-    name: "Transportadora Pagina 1",
-    city: "Campinas",
-    state: "SP"
-  });
-});
+    assertObjectMatch(page1.pagination as Record<string, unknown>, {
+      customersPage: 1,
+      customersFinished: false,
+      customersTotalPages: 2
+    });
+    assertObjectMatch(page2.pagination as Record<string, unknown>, {
+      customersPage: 2,
+      customersFinished: true,
+      customersTotalPages: 2
+    });
+    // Filtra por ListarClientes: o pull da mesma chamada percorre outros cadastros
+    // (categorias, por exemplo) que tambem paginam, e a paginacao de clientes e o
+    // que este teste cobre.
+    assertEquals(
+      omieQueue.requests
+        .filter((request) => request.call === "ListarClientes")
+        .map((request) => getParam(request).pagina),
+      [1, 2]
+    );
+    assertEquals(localTables.customers.length, 2);
+    assertEquals(localTables.carriers.length, 2);
+    assertObjectMatch(localTables.carriers[0] as Record<string, unknown>, {
+      id: 22,
+      integrationCode: "omie-carrier-22",
+      name: "Transportadora Pagina 1",
+      city: "Campinas",
+      state: "SP"
+    });
+  }
+);
 
 // O desktop so alcanca o OMIE por aqui: sem as categorias no pull, o espelho
 // local fica vazio e todo pedido de venda cai na categoria fixa "1.01.01".
@@ -918,63 +939,69 @@ Deno.test("create_order envia os dados de transporte no frete e o motorista na N
   assertEquals(infos.dados_adicionais_nf, "Motorista: Joao Motorista - Placa: ABC-1D23/MG");
 });
 
-Deno.test("create_order com transporte proprio marca veiculo_proprio e omite transportadora", async () => {
-  const deviceToken = "token-order-ownvehicle";
-  const token_hash = await sha256Hex(deviceToken);
-  const fixtures = createSupabaseDependencies({
-    devices: {
-      "device-order-ownvehicle": {
-        id: "device-order-ownvehicle",
-        company_id: "company-order-ownvehicle",
-        unit_id: "unit-order-ownvehicle",
-        token_hash,
-        is_active: true
+Deno.test(
+  "create_order com transporte proprio marca veiculo_proprio e omite transportadora",
+  async () => {
+    const deviceToken = "token-order-ownvehicle";
+    const token_hash = await sha256Hex(deviceToken);
+    const fixtures = createSupabaseDependencies({
+      devices: {
+        "device-order-ownvehicle": {
+          id: "device-order-ownvehicle",
+          company_id: "company-order-ownvehicle",
+          unit_id: "unit-order-ownvehicle",
+          token_hash,
+          is_active: true
+        }
+      },
+      companies: {
+        "company-order-ownvehicle": {
+          id: "company-order-ownvehicle",
+          is_active: true,
+          omie_app_key: "order-ownvehicle",
+          omie_app_secret: "secret-order-ownvehicle"
+        }
       }
-    },
-    companies: {
-      "company-order-ownvehicle": {
-        id: "company-order-ownvehicle",
-        is_active: true,
-        omie_app_key: "order-ownvehicle",
-        omie_app_secret: "secret-order-ownvehicle"
-      }
-    }
-  });
-  const omieQueue = orderQueueStub();
+    });
+    const omieQueue = orderQueueStub();
 
-  await postOmieSync(
-    {
-      deviceId: "device-order-ownvehicle",
-      deviceToken,
-      action: "create_order",
-      payload: {
-        operationType: "invoice",
-        customerOmieId: 100,
-        productOmieId: 200,
-        quantity: 15,
-        unitPrice: 50,
-        freightModalidade: "3",
-        transport: {
-          plate: "XYZ4E56",
-          carrierOmieId: 987654,
-          cargoWeightKg: 12000,
-          ownVehicle: true
-        },
-        issueDate: "2026-07-16",
-        idempotencyKey: "kyberrock:unit:op-ownvehicle:create_sales_order"
-      }
-    },
-    { createClient: fixtures.createClient, omieQueue }
-  );
+    await postOmieSync(
+      {
+        deviceId: "device-order-ownvehicle",
+        deviceToken,
+        action: "create_order",
+        payload: {
+          operationType: "invoice",
+          customerOmieId: 100,
+          productOmieId: 200,
+          quantity: 15,
+          unitPrice: 50,
+          freightModalidade: "3",
+          transport: {
+            plate: "XYZ4E56",
+            carrierOmieId: 987654,
+            cargoWeightKg: 12000,
+            ownVehicle: true
+          },
+          issueDate: "2026-07-16",
+          idempotencyKey: "kyberrock:unit:op-ownvehicle:create_sales_order"
+        }
+      },
+      { createClient: fixtures.createClient, omieQueue }
+    );
 
-  const frete = getParam(findRequest(omieQueue, "IncluirPedido")).frete as Record<string, unknown>;
-  assertEquals(frete.veiculo_proprio, "S");
-  assertEquals("codigo_transportadora" in frete, false);
-  assertEquals(frete.placa, "XYZ4E56");
-  // Veiculo sem UF no cadastro: o pedido sai so com a placa (campo fiscal nao aceita
-  // valor inventado), como antes.
-  assertEquals("uf_placa" in frete, false);
-});
+    const frete = getParam(findRequest(omieQueue, "IncluirPedido")).frete as Record<
+      string,
+      unknown
+    >;
+    assertEquals(frete.veiculo_proprio, "S");
+    assertEquals("codigo_transportadora" in frete, false);
+    assertEquals(frete.placa, "XYZ4E56");
+    // Veiculo sem UF no cadastro: o pedido sai so com a placa (campo fiscal nao aceita
+    // valor inventado), como antes.
+    assertEquals("uf_placa" in frete, false);
+  }
+);
 
 Deno.test("create_order cadastra o cliente no OMIE na hora quando ele nao tem codigo", async () => {
   const deviceToken = "token-order-newcustomer";
@@ -1143,113 +1170,117 @@ Deno.test("create_order envia cCodParc e nQtdeParc na ordem de servico", async (
   assertEquals(cabecalho.cEtapa, "50");
 });
 
-Deno.test("create_order usa a conta corrente selecionada no desktop no pedido de venda", async () => {
-  const deviceToken = "token-order-account";
-  const token_hash = await sha256Hex(deviceToken);
-  const fixtures = createSupabaseDependencies({
-    devices: {
-      "device-order-account": {
-        id: "device-order-account",
-        company_id: "company-order-account",
-        unit_id: "unit-order-account",
-        token_hash,
-        is_active: true
+Deno.test(
+  "create_order usa a conta corrente selecionada no desktop no pedido de venda",
+  async () => {
+    const deviceToken = "token-order-account";
+    const token_hash = await sha256Hex(deviceToken);
+    const fixtures = createSupabaseDependencies({
+      devices: {
+        "device-order-account": {
+          id: "device-order-account",
+          company_id: "company-order-account",
+          unit_id: "unit-order-account",
+          token_hash,
+          is_active: true
+        }
+      },
+      companies: {
+        "company-order-account": {
+          id: "company-order-account",
+          is_active: true,
+          omie_app_key: "order-account",
+          omie_app_secret: "secret-order-account"
+        }
       }
-    },
-    companies: {
-      "company-order-account": {
-        id: "company-order-account",
-        is_active: true,
-        omie_app_key: "order-account",
-        omie_app_secret: "secret-order-account"
-      }
-    }
-  });
-  const omieQueue = orderQueueStub();
+    });
+    const omieQueue = orderQueueStub();
 
-  const response = await postOmieSync(
-    {
-      deviceId: "device-order-account",
-      deviceToken,
-      action: "create_order",
-      payload: {
-        operationType: "invoice",
-        customerOmieId: 100,
-        productOmieId: 200,
-        quantity: 30.5,
-        unitPrice: 85,
-        issueDate: "2026-07-07",
-        idempotencyKey: "kyberrock:unit:op4:create_sales_order",
-        paymentMethodOmieCode: "17",
-        accountOmieCode: "4321"
-      }
-    },
-    { createClient: fixtures.createClient, omieQueue }
-  );
+    const response = await postOmieSync(
+      {
+        deviceId: "device-order-account",
+        deviceToken,
+        action: "create_order",
+        payload: {
+          operationType: "invoice",
+          customerOmieId: 100,
+          productOmieId: 200,
+          quantity: 30.5,
+          unitPrice: 85,
+          issueDate: "2026-07-07",
+          idempotencyKey: "kyberrock:unit:op4:create_sales_order",
+          paymentMethodOmieCode: "17",
+          accountOmieCode: "4321"
+        }
+      },
+      { createClient: fixtures.createClient, omieQueue }
+    );
 
-  assertObjectMatch(response, { ok: true, orderId: 12345 });
-  const infos = getParam(findRequest(omieQueue, "IncluirPedido")).informacoes_adicionais as Record<
-    string,
-    unknown
-  >;
-  assertEquals(infos.codigo_conta_corrente, 4321);
-  // A conta veio do desktop; nao ha resolucao automatica da primeira conta do tenant.
-  assertEquals(
-    omieQueue.requests.some((request) => request.call === "ListarContasCorrentes"),
-    false
-  );
-});
+    assertObjectMatch(response, { ok: true, orderId: 12345 });
+    const infos = getParam(findRequest(omieQueue, "IncluirPedido"))
+      .informacoes_adicionais as Record<string, unknown>;
+    assertEquals(infos.codigo_conta_corrente, 4321);
+    // A conta veio do desktop; nao ha resolucao automatica da primeira conta do tenant.
+    assertEquals(
+      omieQueue.requests.some((request) => request.call === "ListarContasCorrentes"),
+      false
+    );
+  }
+);
 
-Deno.test("create_order usa a conta corrente selecionada no desktop na ordem de servico", async () => {
-  const deviceToken = "token-order-os-account";
-  const token_hash = await sha256Hex(deviceToken);
-  const fixtures = createSupabaseDependencies({
-    devices: {
-      "device-order-os-account": {
-        id: "device-order-os-account",
-        company_id: "company-order-os-account",
-        unit_id: "unit-order-os-account",
-        token_hash,
-        is_active: true
+Deno.test(
+  "create_order usa a conta corrente selecionada no desktop na ordem de servico",
+  async () => {
+    const deviceToken = "token-order-os-account";
+    const token_hash = await sha256Hex(deviceToken);
+    const fixtures = createSupabaseDependencies({
+      devices: {
+        "device-order-os-account": {
+          id: "device-order-os-account",
+          company_id: "company-order-os-account",
+          unit_id: "unit-order-os-account",
+          token_hash,
+          is_active: true
+        }
+      },
+      companies: {
+        "company-order-os-account": {
+          id: "company-order-os-account",
+          is_active: true,
+          omie_app_key: "order-os-account",
+          omie_app_secret: "secret-order-os-account"
+        }
       }
-    },
-    companies: {
-      "company-order-os-account": {
-        id: "company-order-os-account",
-        is_active: true,
-        omie_app_key: "order-os-account",
-        omie_app_secret: "secret-order-os-account"
-      }
-    }
-  });
-  const omieQueue = orderQueueStub();
+    });
+    const omieQueue = orderQueueStub();
 
-  const response = await postOmieSync(
-    {
-      deviceId: "device-order-os-account",
-      deviceToken,
-      action: "create_order",
-      payload: {
-        operationType: "internal",
-        customerOmieId: 100,
-        serviceDescription: "Pesagem interna",
-        quantity: 12,
-        unitPrice: 40,
-        issueDate: "2026-07-07",
-        idempotencyKey: "kyberrock:unit:op5:create_service_order",
-        accountOmieCode: 4321
-      }
-    },
-    { createClient: fixtures.createClient, omieQueue }
-  );
+    const response = await postOmieSync(
+      {
+        deviceId: "device-order-os-account",
+        deviceToken,
+        action: "create_order",
+        payload: {
+          operationType: "internal",
+          customerOmieId: 100,
+          serviceDescription: "Pesagem interna",
+          quantity: 12,
+          unitPrice: 40,
+          issueDate: "2026-07-07",
+          idempotencyKey: "kyberrock:unit:op5:create_service_order",
+          accountOmieCode: 4321
+        }
+      },
+      { createClient: fixtures.createClient, omieQueue }
+    );
 
-  assertObjectMatch(response, { ok: true, orderId: 555 });
-  const infos = getParam(findRequest(omieQueue, "IncluirOS")).InformacoesAdicionais as Record<
-    string,
-    unknown
-  >;
-  assertEquals(infos.nCodCC, 4321);
-});
+    assertObjectMatch(response, { ok: true, orderId: 555 });
+    const infos = getParam(findRequest(omieQueue, "IncluirOS")).InformacoesAdicionais as Record<
+      string,
+      unknown
+    >;
+    assertEquals(infos.nCodCC, 4321);
+  }
+);
 
 Deno.test("create_order leva os dados da operacao interna para a ordem de servico", async () => {
   const deviceToken = "token-order-os-data";
@@ -1331,54 +1362,57 @@ Deno.test("create_order leva os dados da operacao interna para a ordem de servic
   assertEquals(servicos[1].cRetemISS, "N");
 });
 
-Deno.test("create_order nao cria linha de frete na OS quando a operacao nao tem frete", async () => {
-  const deviceToken = "token-order-os-nofreight";
-  const token_hash = await sha256Hex(deviceToken);
-  const fixtures = createSupabaseDependencies({
-    devices: {
-      "device-order-os-nofreight": {
-        id: "device-order-os-nofreight",
-        company_id: "company-order-os-nofreight",
-        unit_id: "unit-order-os-nofreight",
-        token_hash,
-        is_active: true
+Deno.test(
+  "create_order nao cria linha de frete na OS quando a operacao nao tem frete",
+  async () => {
+    const deviceToken = "token-order-os-nofreight";
+    const token_hash = await sha256Hex(deviceToken);
+    const fixtures = createSupabaseDependencies({
+      devices: {
+        "device-order-os-nofreight": {
+          id: "device-order-os-nofreight",
+          company_id: "company-order-os-nofreight",
+          unit_id: "unit-order-os-nofreight",
+          token_hash,
+          is_active: true
+        }
+      },
+      companies: {
+        "company-order-os-nofreight": {
+          id: "company-order-os-nofreight",
+          is_active: true,
+          omie_app_key: "order-os-nofreight",
+          omie_app_secret: "secret-order-os-nofreight"
+        }
       }
-    },
-    companies: {
-      "company-order-os-nofreight": {
-        id: "company-order-os-nofreight",
-        is_active: true,
-        omie_app_key: "order-os-nofreight",
-        omie_app_secret: "secret-order-os-nofreight"
-      }
-    }
-  });
-  const omieQueue = orderQueueStub();
+    });
+    const omieQueue = orderQueueStub();
 
-  await postOmieSync(
-    {
-      deviceId: "device-order-os-nofreight",
-      deviceToken,
-      action: "create_order",
-      payload: {
-        operationType: "internal",
-        customerOmieId: 100,
-        serviceDescription: "Brita 1",
-        quantity: 12,
-        unitPrice: 40,
-        issueDate: "2026-07-07",
-        idempotencyKey: "kyberrock:unit:op7:create_service_order"
-      }
-    },
-    { createClient: fixtures.createClient, omieQueue }
-  );
+    await postOmieSync(
+      {
+        deviceId: "device-order-os-nofreight",
+        deviceToken,
+        action: "create_order",
+        payload: {
+          operationType: "internal",
+          customerOmieId: 100,
+          serviceDescription: "Brita 1",
+          quantity: 12,
+          unitPrice: 40,
+          issueDate: "2026-07-07",
+          idempotencyKey: "kyberrock:unit:op7:create_service_order"
+        }
+      },
+      { createClient: fixtures.createClient, omieQueue }
+    );
 
-  const servicos = getParam(findRequest(omieQueue, "IncluirOS")).ServicosPrestados as Record<
-    string,
-    unknown
-  >[];
-  assertEquals(servicos.length, 1);
-});
+    const servicos = getParam(findRequest(omieQueue, "IncluirOS")).ServicosPrestados as Record<
+      string,
+      unknown
+    >[];
+    assertEquals(servicos.length, 1);
+  }
+);
 
 Deno.test("create_order tira os dois codigos de servico do mesmo cadastro do OMIE", async () => {
   const deviceToken = "token-order-os-codes";
@@ -1444,146 +1478,148 @@ Deno.test("create_order tira os dois codigos de servico do mesmo cadastro do OMI
   assertEquals(servicos[0].cCodServLC116, "01.07");
 });
 
-Deno.test("create_order resolve a conta corrente pelo nome vinculado quando falta o nCodCC", async () => {
-  const deviceToken = "token-order-account-name";
-  const token_hash = await sha256Hex(deviceToken);
-  const fixtures = createSupabaseDependencies({
-    devices: {
-      "device-order-account-name": {
-        id: "device-order-account-name",
-        company_id: "company-order-account-name",
-        unit_id: "unit-order-account-name",
-        token_hash,
-        is_active: true
+Deno.test(
+  "create_order resolve a conta corrente pelo nome vinculado quando falta o nCodCC",
+  async () => {
+    const deviceToken = "token-order-account-name";
+    const token_hash = await sha256Hex(deviceToken);
+    const fixtures = createSupabaseDependencies({
+      devices: {
+        "device-order-account-name": {
+          id: "device-order-account-name",
+          company_id: "company-order-account-name",
+          unit_id: "unit-order-account-name",
+          token_hash,
+          is_active: true
+        }
+      },
+      companies: {
+        "company-order-account-name": {
+          id: "company-order-account-name",
+          is_active: true,
+          omie_app_key: "order-account-name",
+          omie_app_secret: "secret-order-account-name"
+        }
       }
-    },
-    companies: {
-      "company-order-account-name": {
-        id: "company-order-account-name",
-        is_active: true,
-        omie_app_key: "order-account-name",
-        omie_app_secret: "secret-order-account-name"
+    });
+    // Caixinha e a PRIMEIRA conta corrente (o fallback historico cairia nela); a OMIE Cash
+    // aparece com a grafia "OMIECASH". Sem accountOmieCode, o nome "OMIE Cash" precisa resolver
+    // o nCodCC 222 (OMIECASH) pelo nome canonico — e nao o 7 (Caixinha).
+    const omieQueue = createOmieQueueStub((input) => {
+      if (input.call === "ListarContasCorrentes") {
+        return {
+          conta_corrente_lista: [
+            { nCodCC: 7, descricao: "Caixinha" },
+            { nCodCC: 222, descricao: "OMIECASH" }
+          ]
+        };
       }
-    }
-  });
-  // Caixinha e a PRIMEIRA conta corrente (o fallback historico cairia nela); a OMIE Cash
-  // aparece com a grafia "OMIECASH". Sem accountOmieCode, o nome "OMIE Cash" precisa resolver
-  // o nCodCC 222 (OMIECASH) pelo nome canonico — e nao o 7 (Caixinha).
-  const omieQueue = createOmieQueueStub((input) => {
-    if (input.call === "ListarContasCorrentes") {
-      return {
-        conta_corrente_lista: [
-          { nCodCC: 7, descricao: "Caixinha" },
-          { nCodCC: 222, descricao: "OMIECASH" }
-        ]
-      };
-    }
-    if (input.call === "ListarCadastroServico") {
-      return { cadastros: [{ cCodServMun: "1.07" }] };
-    }
-    if (input.call === "IncluirPedido") {
-      return { codigo_pedido: 12345 };
-    }
-    return defaultOmieListResponse(input);
-  });
+      if (input.call === "ListarCadastroServico") {
+        return { cadastros: [{ cCodServMun: "1.07" }] };
+      }
+      if (input.call === "IncluirPedido") {
+        return { codigo_pedido: 12345 };
+      }
+      return defaultOmieListResponse(input);
+    });
 
-  const response = await postOmieSync(
-    {
-      deviceId: "device-order-account-name",
-      deviceToken,
-      action: "create_order",
-      payload: {
-        operationType: "invoice",
-        customerOmieId: 100,
-        productOmieId: 200,
-        quantity: 30.5,
-        unitPrice: 85,
-        issueDate: "2026-07-07",
-        idempotencyKey: "kyberrock:unit:op6:create_sales_order",
-        paymentMethodOmieCode: "15",
-        accountName: "OMIE Cash"
-      }
-    },
-    { createClient: fixtures.createClient, omieQueue }
-  );
+    const response = await postOmieSync(
+      {
+        deviceId: "device-order-account-name",
+        deviceToken,
+        action: "create_order",
+        payload: {
+          operationType: "invoice",
+          customerOmieId: 100,
+          productOmieId: 200,
+          quantity: 30.5,
+          unitPrice: 85,
+          issueDate: "2026-07-07",
+          idempotencyKey: "kyberrock:unit:op6:create_sales_order",
+          paymentMethodOmieCode: "15",
+          accountName: "OMIE Cash"
+        }
+      },
+      { createClient: fixtures.createClient, omieQueue }
+    );
 
-  assertObjectMatch(response, { ok: true, orderId: 12345 });
-  const infos = getParam(findRequest(omieQueue, "IncluirPedido")).informacoes_adicionais as Record<
-    string,
-    unknown
-  >;
-  assertEquals(infos.codigo_conta_corrente, 222);
-});
+    assertObjectMatch(response, { ok: true, orderId: 12345 });
+    const infos = getParam(findRequest(omieQueue, "IncluirPedido"))
+      .informacoes_adicionais as Record<string, unknown>;
+    assertEquals(infos.codigo_conta_corrente, 222);
+  }
+);
 
-Deno.test("create_order usa a conta padrao do meio de pagamento quando o payload nao traz a conta", async () => {
-  const deviceToken = "token-order-method-default";
-  const token_hash = await sha256Hex(deviceToken);
-  const fixtures = createSupabaseDependencies({
-    devices: {
-      "device-order-method-default": {
-        id: "device-order-method-default",
-        company_id: "company-order-method-default",
-        unit_id: "unit-order-method-default",
-        token_hash,
-        is_active: true
+Deno.test(
+  "create_order usa a conta padrao do meio de pagamento quando o payload nao traz a conta",
+  async () => {
+    const deviceToken = "token-order-method-default";
+    const token_hash = await sha256Hex(deviceToken);
+    const fixtures = createSupabaseDependencies({
+      devices: {
+        "device-order-method-default": {
+          id: "device-order-method-default",
+          company_id: "company-order-method-default",
+          unit_id: "unit-order-method-default",
+          token_hash,
+          is_active: true
+        }
+      },
+      companies: {
+        "company-order-method-default": {
+          id: "company-order-method-default",
+          is_active: true,
+          omie_app_key: "order-method-default",
+          omie_app_secret: "secret-order-method-default"
+        }
       }
-    },
-    companies: {
-      "company-order-method-default": {
-        id: "company-order-method-default",
-        is_active: true,
-        omie_app_key: "order-method-default",
-        omie_app_secret: "secret-order-method-default"
+    });
+    // Desktop antigo: manda so o codigo do meio ("15" = boleto), sem accountOmieCode nem
+    // accountName. O vinculo padrao boleto -> OMIE Cash resolve o nCodCC 222 pelo nome no
+    // OMIE em vez de cair na primeira conta (7, Caixinha).
+    const omieQueue = createOmieQueueStub((input) => {
+      if (input.call === "ListarContasCorrentes") {
+        return {
+          conta_corrente_lista: [
+            { nCodCC: 7, descricao: "Caixinha" },
+            { nCodCC: 222, descricao: "OMIECASH" }
+          ]
+        };
       }
-    }
-  });
-  // Desktop antigo: manda so o codigo do meio ("15" = boleto), sem accountOmieCode nem
-  // accountName. O vinculo padrao boleto -> OMIE Cash resolve o nCodCC 222 pelo nome no
-  // OMIE em vez de cair na primeira conta (7, Caixinha).
-  const omieQueue = createOmieQueueStub((input) => {
-    if (input.call === "ListarContasCorrentes") {
-      return {
-        conta_corrente_lista: [
-          { nCodCC: 7, descricao: "Caixinha" },
-          { nCodCC: 222, descricao: "OMIECASH" }
-        ]
-      };
-    }
-    if (input.call === "ListarCadastroServico") {
-      return { cadastros: [{ cCodServMun: "1.07" }] };
-    }
-    if (input.call === "IncluirPedido") {
-      return { codigo_pedido: 12345 };
-    }
-    return defaultOmieListResponse(input);
-  });
+      if (input.call === "ListarCadastroServico") {
+        return { cadastros: [{ cCodServMun: "1.07" }] };
+      }
+      if (input.call === "IncluirPedido") {
+        return { codigo_pedido: 12345 };
+      }
+      return defaultOmieListResponse(input);
+    });
 
-  const response = await postOmieSync(
-    {
-      deviceId: "device-order-method-default",
-      deviceToken,
-      action: "create_order",
-      payload: {
-        operationType: "invoice",
-        customerOmieId: 100,
-        productOmieId: 200,
-        quantity: 30.5,
-        unitPrice: 85,
-        issueDate: "2026-07-07",
-        idempotencyKey: "kyberrock:unit:op7:create_sales_order",
-        paymentMethodOmieCode: "15"
-      }
-    },
-    { createClient: fixtures.createClient, omieQueue }
-  );
+    const response = await postOmieSync(
+      {
+        deviceId: "device-order-method-default",
+        deviceToken,
+        action: "create_order",
+        payload: {
+          operationType: "invoice",
+          customerOmieId: 100,
+          productOmieId: 200,
+          quantity: 30.5,
+          unitPrice: 85,
+          issueDate: "2026-07-07",
+          idempotencyKey: "kyberrock:unit:op7:create_sales_order",
+          paymentMethodOmieCode: "15"
+        }
+      },
+      { createClient: fixtures.createClient, omieQueue }
+    );
 
-  assertObjectMatch(response, { ok: true, orderId: 12345 });
-  const infos = getParam(findRequest(omieQueue, "IncluirPedido")).informacoes_adicionais as Record<
-    string,
-    unknown
-  >;
-  assertEquals(infos.codigo_conta_corrente, 222);
-});
+    assertObjectMatch(response, { ok: true, orderId: 12345 });
+    const infos = getParam(findRequest(omieQueue, "IncluirPedido"))
+      .informacoes_adicionais as Record<string, unknown>;
+    assertEquals(infos.codigo_conta_corrente, 222);
+  }
+);
 
 function parcelaAwareOrderStub(options: {
   existingParcelas?: Array<Record<string, unknown>>;
@@ -1616,76 +1652,79 @@ function parcelaAwareOrderStub(options: {
   });
 }
 
-Deno.test("create_order envia parcelamento informado (999 + lista_parcelas) pelos dias", async () => {
-  const deviceToken = "token-order-new-parcela";
-  const token_hash = await sha256Hex(deviceToken);
-  const fixtures = createSupabaseDependencies({
-    devices: {
-      "device-order-new-parcela": {
-        id: "device-order-new-parcela",
-        company_id: "company-order-new-parcela",
-        unit_id: "unit-order-new-parcela",
-        token_hash,
-        is_active: true
+Deno.test(
+  "create_order envia parcelamento informado (999 + lista_parcelas) pelos dias",
+  async () => {
+    const deviceToken = "token-order-new-parcela";
+    const token_hash = await sha256Hex(deviceToken);
+    const fixtures = createSupabaseDependencies({
+      devices: {
+        "device-order-new-parcela": {
+          id: "device-order-new-parcela",
+          company_id: "company-order-new-parcela",
+          unit_id: "unit-order-new-parcela",
+          token_hash,
+          is_active: true
+        }
+      },
+      companies: {
+        "company-order-new-parcela": {
+          id: "company-order-new-parcela",
+          is_active: true,
+          omie_app_key: "order-new-parcela",
+          omie_app_secret: "secret-order-new-parcela"
+        }
       }
-    },
-    companies: {
-      "company-order-new-parcela": {
-        id: "company-order-new-parcela",
-        is_active: true,
-        omie_app_key: "order-new-parcela",
-        omie_app_secret: "secret-order-new-parcela"
-      }
-    }
-  });
-  const omieQueue = parcelaAwareOrderStub({});
+    });
+    const omieQueue = parcelaAwareOrderStub({});
 
-  const response = await postOmieSync(
-    {
-      deviceId: "device-order-new-parcela",
-      deviceToken,
-      action: "create_order",
-      payload: {
-        operationType: "invoice",
-        customerOmieId: 100,
-        productOmieId: 200,
-        quantity: 30.5,
-        unitPrice: 85,
-        issueDate: "2026-07-07",
-        idempotencyKey: "kyberrock:unit:op6:create_sales_order",
-        installmentDays: [7, 14, 21]
-      }
-    },
-    { createClient: fixtures.createClient, omieQueue }
-  );
+    const response = await postOmieSync(
+      {
+        deviceId: "device-order-new-parcela",
+        deviceToken,
+        action: "create_order",
+        payload: {
+          operationType: "invoice",
+          customerOmieId: 100,
+          productOmieId: 200,
+          quantity: 30.5,
+          unitPrice: 85,
+          issueDate: "2026-07-07",
+          idempotencyKey: "kyberrock:unit:op6:create_sales_order",
+          installmentDays: [7, 14, 21]
+        }
+      },
+      { createClient: fixtures.createClient, omieQueue }
+    );
 
-  assertObjectMatch(response, { ok: true, orderId: 12345 });
-  // Nao cria parcela no cadastro: o parcelamento vai INFORMADO no pedido.
-  assertEquals(
-    omieQueue.requests.some((request) => request.call === "IncluirParcela"),
-    false
-  );
-  const body = getParam(findRequest(omieQueue, "IncluirPedido"));
-  const cabecalho = body.cabecalho as Record<string, unknown>;
-  assertEquals(cabecalho.codigo_parcela, "999");
-  assertEquals(cabecalho.qtde_parcelas, 3);
-  const parcela = (body.lista_parcelas as { parcela: Array<Record<string, unknown>> }).parcela;
-  assertEquals(parcela.length, 3);
-  assertEquals(parcela[0].numero_parcela, 1);
-  assertEquals(parcela[0].data_vencimento, "14/07/2026");
-  assertEquals(parcela[2].data_vencimento, "28/07/2026");
-  // Percentuais fecham 100 (a ultima absorve o arredondamento).
-  assertEquals(parcela[0].percentual, 33.33);
-  assertEquals(parcela[2].percentual, 33.34);
-  // O OMIE exige `valor` em cada parcela; somam exatamente o total (30,5 * 85 = 2592,50).
-  assertEquals(parcela[0].valor, 864.08);
-  assertEquals(parcela[1].valor, 864.08);
-  assertEquals(parcela[2].valor, 864.34);
-  assertEquals(
-    (parcela[0].valor as number) + (parcela[1].valor as number) + (parcela[2].valor as number),
-    2592.5
-  );
-});
+    assertObjectMatch(response, { ok: true, orderId: 12345 });
+    // Nao cria parcela no cadastro: o parcelamento vai INFORMADO no pedido.
+    assertEquals(
+      omieQueue.requests.some((request) => request.call === "IncluirParcela"),
+      false
+    );
+    const body = getParam(findRequest(omieQueue, "IncluirPedido"));
+    const cabecalho = body.cabecalho as Record<string, unknown>;
+    assertEquals(cabecalho.codigo_parcela, "999");
+    assertEquals(cabecalho.qtde_parcelas, 3);
+    const parcela = (body.lista_parcelas as { parcela: Array<Record<string, unknown>> }).parcela;
+    assertEquals(parcela.length, 3);
+    assertEquals(parcela[0].numero_parcela, 1);
+    assertEquals(parcela[0].data_vencimento, "14/07/2026");
+    assertEquals(parcela[2].data_vencimento, "28/07/2026");
+    // Percentuais fecham 100 (a ultima absorve o arredondamento).
+    assertEquals(parcela[0].percentual, 33.33);
+    assertEquals(parcela[2].percentual, 33.34);
+    // O OMIE exige `valor` em cada parcela; somam exatamente o total (30,5 * 85 = 2592,50).
+    assertEquals(parcela[0].valor, 864.08);
+    assertEquals(parcela[1].valor, 864.08);
+    assertEquals(parcela[2].valor, 864.34);
+    assertEquals(
+      (parcela[0].valor as number) + (parcela[1].valor as number) + (parcela[2].valor as number),
+      2592.5
+    );
+  }
+);
 
 Deno.test("create_order leva o meio de pagamento em cada parcela (tPag da NF-e)", async () => {
   const deviceToken = "token-order-meio";
@@ -2125,122 +2164,128 @@ Deno.test("create_order manda os vencimentos digitados na ordem de servico", asy
   assertEquals(parcelas[1].nValor, 240);
 });
 
-Deno.test("create_order mantem a OS a vista no codigo do cadastro (sem bloco Parcelas)", async () => {
-  const deviceToken = "token-order-os-avista";
-  const token_hash = await sha256Hex(deviceToken);
-  const fixtures = createSupabaseDependencies({
-    devices: {
-      "device-order-os-avista": {
-        id: "device-order-os-avista",
-        company_id: "company-order-os-avista",
-        unit_id: "unit-order-os-avista",
-        token_hash,
-        is_active: true
+Deno.test(
+  "create_order mantem a OS a vista no codigo do cadastro (sem bloco Parcelas)",
+  async () => {
+    const deviceToken = "token-order-os-avista";
+    const token_hash = await sha256Hex(deviceToken);
+    const fixtures = createSupabaseDependencies({
+      devices: {
+        "device-order-os-avista": {
+          id: "device-order-os-avista",
+          company_id: "company-order-os-avista",
+          unit_id: "unit-order-os-avista",
+          token_hash,
+          is_active: true
+        }
+      },
+      companies: {
+        "company-order-os-avista": {
+          id: "company-order-os-avista",
+          is_active: true,
+          omie_app_key: "order-os-avista",
+          omie_app_secret: "secret-order-os-avista"
+        }
       }
-    },
-    companies: {
-      "company-order-os-avista": {
-        id: "company-order-os-avista",
-        is_active: true,
-        omie_app_key: "order-os-avista",
-        omie_app_secret: "secret-order-os-avista"
-      }
-    }
-  });
-  const omieQueue = parcelaAwareOrderStub({});
+    });
+    const omieQueue = parcelaAwareOrderStub({});
 
-  await postOmieSync(
-    {
-      deviceId: "device-order-os-avista",
-      deviceToken,
-      action: "create_order",
-      payload: {
-        operationType: "internal",
-        customerOmieId: 100,
-        serviceDescription: "Pesagem interna",
-        quantity: 5,
-        unitPrice: 20,
-        issueDate: "2026-07-07",
-        idempotencyKey: "kyberrock:unit:op9:create_service_order"
-      }
-    },
-    { createClient: fixtures.createClient, omieQueue }
-  );
+    await postOmieSync(
+      {
+        deviceId: "device-order-os-avista",
+        deviceToken,
+        action: "create_order",
+        payload: {
+          operationType: "internal",
+          customerOmieId: 100,
+          serviceDescription: "Pesagem interna",
+          quantity: 5,
+          unitPrice: 20,
+          issueDate: "2026-07-07",
+          idempotencyKey: "kyberrock:unit:op9:create_service_order"
+        }
+      },
+      { createClient: fixtures.createClient, omieQueue }
+    );
 
-  const body = getParam(findRequest(omieQueue, "IncluirOS"));
-  assertEquals((body.Cabecalho as Record<string, unknown>).cCodParc, "000");
-  assertEquals(body.Parcelas, undefined);
-});
+    const body = getParam(findRequest(omieQueue, "IncluirOS"));
+    assertEquals((body.Cabecalho as Record<string, unknown>).cCodParc, "000");
+    assertEquals(body.Parcelas, undefined);
+  }
+);
 
-Deno.test("create_order reenvia a OS pelo cadastro quando o OMIE recusa o bloco Parcelas", async () => {
-  const deviceToken = "token-order-os-fallback";
-  const token_hash = await sha256Hex(deviceToken);
-  const fixtures = createSupabaseDependencies({
-    devices: {
-      "device-order-os-fallback": {
-        id: "device-order-os-fallback",
-        company_id: "company-order-os-fallback",
-        unit_id: "unit-order-os-fallback",
-        token_hash,
-        is_active: true
+Deno.test(
+  "create_order reenvia a OS pelo cadastro quando o OMIE recusa o bloco Parcelas",
+  async () => {
+    const deviceToken = "token-order-os-fallback";
+    const token_hash = await sha256Hex(deviceToken);
+    const fixtures = createSupabaseDependencies({
+      devices: {
+        "device-order-os-fallback": {
+          id: "device-order-os-fallback",
+          company_id: "company-order-os-fallback",
+          unit_id: "unit-order-os-fallback",
+          token_hash,
+          is_active: true
+        }
+      },
+      companies: {
+        "company-order-os-fallback": {
+          id: "company-order-os-fallback",
+          is_active: true,
+          omie_app_key: "order-os-fallback",
+          omie_app_secret: "secret-order-os-fallback"
+        }
       }
-    },
-    companies: {
-      "company-order-os-fallback": {
-        id: "company-order-os-fallback",
-        is_active: true,
-        omie_app_key: "order-os-fallback",
-        omie_app_secret: "secret-order-os-fallback"
+    });
+    // O OMIE recusa a tag Parcelas na primeira tentativa; a segunda (sem o bloco) passa.
+    const omieQueue = createOmieQueueStub((input) => {
+      if (input.call === "IncluirOS") {
+        const body = getParam(input);
+        if (body.Parcelas !== undefined) {
+          throw new Error(
+            "OMIE faultstring em IncluirOS (/servicos/os/) - ERROR: Tag [PARCELAS] nao faz parte da estrutura do tipo complexo [os_cadastro]!"
+          );
+        }
+        return { nCodOS: 777 };
       }
-    }
-  });
-  // O OMIE recusa a tag Parcelas na primeira tentativa; a segunda (sem o bloco) passa.
-  const omieQueue = createOmieQueueStub((input) => {
-    if (input.call === "IncluirOS") {
-      const body = getParam(input);
-      if (body.Parcelas !== undefined) {
-        throw new Error(
-          "OMIE faultstring em IncluirOS (/servicos/os/) - ERROR: Tag [PARCELAS] nao faz parte da estrutura do tipo complexo [os_cadastro]!"
-        );
+      if (input.call === "ConsultarOS") return {};
+      if (input.call === "ListarParcelas") {
+        return { pagina: 1, total_de_paginas: 1, cadastros: [] };
       }
-      return { nCodOS: 777 };
-    }
-    if (input.call === "ConsultarOS") return {};
-    if (input.call === "ListarParcelas") {
-      return { pagina: 1, total_de_paginas: 1, cadastros: [] };
-    }
-    if (input.call === "IncluirParcela") return { cCodParcela: "311" };
-    if (input.call === "ListarContasCorrentes") return { conta_corrente_lista: [{ nCodCC: 7 }] };
-    if (input.call === "ListarCadastroServico") return { cadastros: [{ cCodServMun: "1.07" }] };
-    return defaultOmieListResponse(input);
-  });
+      if (input.call === "IncluirParcela") return { cCodParcela: "311" };
+      if (input.call === "ListarContasCorrentes") return { conta_corrente_lista: [{ nCodCC: 7 }] };
+      if (input.call === "ListarCadastroServico") return { cadastros: [{ cCodServMun: "1.07" }] };
+      return defaultOmieListResponse(input);
+    });
 
-  const response = await postOmieSync(
-    {
-      deviceId: "device-order-os-fallback",
-      deviceToken,
-      action: "create_order",
-      payload: {
-        operationType: "internal",
-        customerOmieId: 100,
-        serviceDescription: "Pesagem interna",
-        quantity: 12,
-        unitPrice: 40,
-        issueDate: "2026-07-07",
-        idempotencyKey: "kyberrock:unit:op10:create_service_order",
-        installmentDays: [9, 18, 27]
-      }
-    },
-    { createClient: fixtures.createClient, omieQueue }
-  );
+    const response = await postOmieSync(
+      {
+        deviceId: "device-order-os-fallback",
+        deviceToken,
+        action: "create_order",
+        payload: {
+          operationType: "internal",
+          customerOmieId: 100,
+          serviceDescription: "Pesagem interna",
+          quantity: 12,
+          unitPrice: 40,
+          issueDate: "2026-07-07",
+          idempotencyKey: "kyberrock:unit:op10:create_service_order",
+          installmentDays: [9, 18, 27]
+        }
+      },
+      { createClient: fixtures.createClient, omieQueue }
+    );
 
-  // A OS nasce mesmo assim, pelo caminho historico (codigo criado no cadastro).
-  assertObjectMatch(response, { ok: true, orderId: 777 });
-  const attempts = omieQueue.requests.filter((request) => request.call === "IncluirOS");
-  assertEquals(attempts.length, 2);
-  assertEquals((getParam(attempts[1]).Cabecalho as Record<string, unknown>).cCodParc, "311");
-  assertEquals(getParam(attempts[1]).Parcelas, undefined);
-});
+    // A OS nasce mesmo assim, pelo caminho historico (codigo criado no cadastro).
+    assertObjectMatch(response, { ok: true, orderId: 777 });
+    const attempts = omieQueue.requests.filter((request) => request.call === "IncluirOS");
+    assertEquals(attempts.length, 2);
+    assertEquals((getParam(attempts[1]).Cabecalho as Record<string, unknown>).cCodParc, "311");
+    assertEquals(getParam(attempts[1]).Parcelas, undefined);
+  }
+);
 
 Deno.test("cancel_order consulta e exclui um pedido de venda nao faturado", async () => {
   const deviceToken = "token-cancel-ok";
@@ -2376,129 +2421,132 @@ Deno.test("cancel_order trata pedido inexistente como ja cancelado (idempotente)
   assertObjectMatch(response, { ok: true, cancelled: false, alreadyCancelled: true });
 });
 
-Deno.test("pull_customer_advances espelha o adiantamento recebido no extrato de credito", async () => {
-  const deviceToken = "token-adiantamento";
-  const fixtures = createSupabaseDependencies({
-    devices: {
-      "device-adv": {
-        id: "device-adv",
-        company_id: "company-adv",
-        unit_id: "unit-adv",
-        token_hash: await sha256Hex(deviceToken),
-        is_active: true
+Deno.test(
+  "pull_customer_advances espelha o adiantamento recebido no extrato de credito",
+  async () => {
+    const deviceToken = "token-adiantamento";
+    const fixtures = createSupabaseDependencies({
+      devices: {
+        "device-adv": {
+          id: "device-adv",
+          company_id: "company-adv",
+          unit_id: "unit-adv",
+          token_hash: await sha256Hex(deviceToken),
+          is_active: true
+        }
+      },
+      companies: {
+        "company-adv": {
+          id: "company-adv",
+          is_active: true,
+          omie_app_key: "key",
+          omie_app_secret: "secret"
+        }
+      },
+      customers: [{ id: "cliente-1", company_id: "company-adv", omie_customer_id: 42 }],
+      // O titulo 7001 ja foi espelhado por R$ 100,00 num ciclo anterior.
+      creditMovements: [
+        {
+          company_id: "company-adv",
+          customer_id: "cliente-1",
+          movement_type: "credit",
+          amount_cents: 10_000,
+          omie_title_id: 7001
+        }
+      ]
+    });
+    const omieQueue = createOmieQueueStub((input) => {
+      if (input.call === "ListarCategorias") {
+        return {
+          pagina: 1,
+          total_de_paginas: 1,
+          total_de_registros: 2,
+          categoria_cadastro: [
+            { codigo: "1.01.01", descricao: "Venda de Produtos" },
+            { codigo: "1.01.05", descricao: "Adiantamento de Clientes" }
+          ]
+        };
       }
-    },
-    companies: {
-      "company-adv": {
-        id: "company-adv",
-        is_active: true,
-        omie_app_key: "key",
-        omie_app_secret: "secret"
+
+      if (input.call === "ListarContasReceber") {
+        return {
+          pagina: 1,
+          total_de_paginas: 1,
+          total_de_registros: 3,
+          conta_receber_cadastro: [
+            // Ja espelhado: nao pode somar de novo.
+            {
+              codigo_lancamento_omie: 7001,
+              codigo_cliente_fornecedor: 42,
+              codigo_categoria: "1.01.05",
+              valor_documento: 100,
+              valor_pago: 100,
+              data_pagamento: "10/07/2026"
+            },
+            // Adiantamento novo.
+            {
+              codigo_lancamento_omie: 7002,
+              codigo_cliente_fornecedor: 42,
+              codigo_categoria: "1.01.05",
+              valor_documento: 250,
+              valor_pago: 250,
+              data_pagamento: "20/07/2026"
+            },
+            // Venda comum: fica fora do saldo de adiantamento.
+            {
+              codigo_lancamento_omie: 7003,
+              codigo_cliente_fornecedor: 42,
+              codigo_categoria: "1.01.01",
+              valor_documento: 900,
+              valor_pago: 900
+            }
+          ]
+        };
       }
-    },
-    customers: [{ id: "cliente-1", company_id: "company-adv", omie_customer_id: 42 }],
-    // O titulo 7001 ja foi espelhado por R$ 100,00 num ciclo anterior.
-    creditMovements: [
-      {
-        company_id: "company-adv",
-        customer_id: "cliente-1",
-        movement_type: "credit",
-        amount_cents: 10_000,
-        omie_title_id: 7001
-      }
-    ]
-  });
-  const omieQueue = createOmieQueueStub((input) => {
-    if (input.call === "ListarCategorias") {
-      return {
-        pagina: 1,
-        total_de_paginas: 1,
-        total_de_registros: 2,
-        categoria_cadastro: [
-          { codigo: "1.01.01", descricao: "Venda de Produtos" },
-          { codigo: "1.01.05", descricao: "Adiantamento de Clientes" }
-        ]
-      };
-    }
 
-    if (input.call === "ListarContasReceber") {
-      return {
-        pagina: 1,
-        total_de_paginas: 1,
-        total_de_registros: 3,
-        conta_receber_cadastro: [
-          // Ja espelhado: nao pode somar de novo.
-          {
-            codigo_lancamento_omie: 7001,
-            codigo_cliente_fornecedor: 42,
-            codigo_categoria: "1.01.05",
-            valor_documento: 100,
-            valor_pago: 100,
-            data_pagamento: "10/07/2026"
-          },
-          // Adiantamento novo.
-          {
-            codigo_lancamento_omie: 7002,
-            codigo_cliente_fornecedor: 42,
-            codigo_categoria: "1.01.05",
-            valor_documento: 250,
-            valor_pago: 250,
-            data_pagamento: "20/07/2026"
-          },
-          // Venda comum: fica fora do saldo de adiantamento.
-          {
-            codigo_lancamento_omie: 7003,
-            codigo_cliente_fornecedor: 42,
-            codigo_categoria: "1.01.01",
-            valor_documento: 900,
-            valor_pago: 900
-          }
-        ]
-      };
-    }
+      return null;
+    });
 
-    return null;
-  });
+    const response = await postOmieSync(
+      { deviceId: "device-adv", deviceToken, action: "pull_customer_advances" },
+      { createClient: fixtures.createClient, omieQueue }
+    );
 
-  const response = await postOmieSync(
-    { deviceId: "device-adv", deviceToken, action: "pull_customer_advances" },
-    { createClient: fixtures.createClient, omieQueue }
-  );
+    assertObjectMatch(response, {
+      ok: true,
+      advances: 2,
+      imported: 1,
+      unchanged: 1,
+      unknownCustomers: 0,
+      finished: true
+    });
+    assertEquals(response.categoryCodes, ["1.01.05"]);
 
-  assertObjectMatch(response, {
-    ok: true,
-    advances: 2,
-    imported: 1,
-    unchanged: 1,
-    unknownCustomers: 0,
-    finished: true
-  });
-  assertEquals(response.categoryCodes, ["1.01.05"]);
+    const movements = (response.movements ?? []) as Array<Record<string, unknown>>;
+    assertEquals(movements.length, 1);
+    assertObjectMatch(movements[0], {
+      customer_id: "cliente-1",
+      movement_type: "credit",
+      amount_cents: 25_000,
+      balance_after_cents: 35_000,
+      source: "omie",
+      omie_title_id: 7002
+    });
 
-  const movements = (response.movements ?? []) as Array<Record<string, unknown>>;
-  assertEquals(movements.length, 1);
-  assertObjectMatch(movements[0], {
-    customer_id: "cliente-1",
-    movement_type: "credit",
-    amount_cents: 25_000,
-    balance_after_cents: 35_000,
-    source: "omie",
-    omie_title_id: 7002
-  });
-
-  const movementUpsert = fixtures.upserts.find(
-    (upsert) => upsert.table === "customer_credit_movements"
-  );
-  assertEquals(movementUpsert?.rows.length, 1);
-  const balanceUpsert = fixtures.upserts.find(
-    (upsert) => upsert.table === "customer_credit_balances"
-  );
-  assertObjectMatch(balanceUpsert?.rows[0] ?? {}, {
-    customer_id: "cliente-1",
-    company_id: "company-adv",
-    balance_cents: 35_000
-  });
-});
+    const movementUpsert = fixtures.upserts.find(
+      (upsert) => upsert.table === "customer_credit_movements"
+    );
+    assertEquals(movementUpsert?.rows.length, 1);
+    const balanceUpsert = fixtures.upserts.find(
+      (upsert) => upsert.table === "customer_credit_balances"
+    );
+    assertObjectMatch(balanceUpsert?.rows[0] ?? {}, {
+      customer_id: "cliente-1",
+      company_id: "company-adv",
+      balance_cents: 35_000
+    });
+  }
+);
 
 Deno.test("pull_customer_advances estorna adiantamento cancelado no OMIE", async () => {
   const deviceToken = "token-estorno";

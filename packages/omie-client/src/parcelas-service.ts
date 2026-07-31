@@ -127,9 +127,13 @@ function mapParcelaRaw(item: OmieParcelaRaw): OmieParcela | null {
     id,
     code,
     description,
-    firstInstallmentDays: toNumber(pickFirst(item.nDiasPrimeiraParcela, item.dias_primeira_parcela)),
+    firstInstallmentDays: toNumber(
+      pickFirst(item.nDiasPrimeiraParcela, item.dias_primeira_parcela)
+    ),
     installmentIntervalDays: toNumber(pickFirst(item.nIntervaloParcelas, item.intervalo_parcelas)),
-    installmentCount: toNumber(pickFirst(item.nParcelas, item.nNumeroParcelas, item.numero_parcelas)),
+    installmentCount: toNumber(
+      pickFirst(item.nParcelas, item.nNumeroParcelas, item.numero_parcelas)
+    ),
     installmentType: pickFirst(item.cTipoParcelas, item.tipo_parcelas),
     installmentDays: days && days.length > 0 ? days : null,
     isActive: !isYesFlag(pickFirst(item.cInativo, item.inativo)),

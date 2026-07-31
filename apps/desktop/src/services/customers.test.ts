@@ -69,7 +69,9 @@ describe("customers", () => {
       expect(getDefaultNfeEmail(database)).toBe("nf@empresa.com");
 
       const rows = database
-        .prepare("SELECT id, email, source, needs_push FROM customers WHERE company_id = 'company-1' ORDER BY id")
+        .prepare(
+          "SELECT id, email, source, needs_push FROM customers WHERE company_id = 'company-1' ORDER BY id"
+        )
         .all() as Array<{ id: string; email: string; source: string; needs_push: number }>;
       expect(rows.every((r) => r.email === "nf@empresa.com")).toBe(true);
       expect(rows.every((r) => r.needs_push === 1)).toBe(true);
@@ -164,7 +166,11 @@ describe("customers", () => {
 
       expect(cacheStore.query({ entityType: "product", activeOnly: true }).total).toBe(2);
       expect(
-        cacheStore.query({ entityType: "product", activeOnly: true, productFiscalType: "finished_goods" }).total
+        cacheStore.query({
+          entityType: "product",
+          activeOnly: true,
+          productFiscalType: "finished_goods"
+        }).total
       ).toBe(1);
     } finally {
       database.close();

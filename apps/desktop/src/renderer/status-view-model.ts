@@ -41,9 +41,7 @@ export function buildStatusIndicatorViewModels(
     },
     {
       label: "Ultimo sync cloud",
-      value: snapshot.cloudLastRunAt
-        ? formatDateTime(snapshot.cloudLastRunAt)
-        : "Nunca executado",
+      value: snapshot.cloudLastRunAt ? formatDateTime(snapshot.cloudLastRunAt) : "Nunca executado",
       tone: snapshot.cloudLastRunAt ? "success" : "warning",
       detail: snapshot.cloudLastRunAt
         ? "Sincronizacao automatica em execucao a cada 30 min"

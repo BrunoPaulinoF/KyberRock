@@ -1055,7 +1055,9 @@ export class OmieSyncService {
     // tem edicao local pendente (needs_push=0). Clientes locais/hibridos ou com push
     // pendente sao preservados. Os que continuarem no OMIE sao "ressuscitados" pelo upsert
     // (deleted_at = NULL); os removidos no OMIE permanecem soft-deletados.
-    this.db.prepare(`
+    this.db
+      .prepare(
+        `
       UPDATE customer_carriers
       SET deleted_at = datetime('now'),
           is_active = 0,
@@ -1065,9 +1067,13 @@ export class OmieSyncService {
           SELECT id FROM customers
           WHERE company_id = ? AND source = 'omie' AND needs_push = 0
         )
-    `).run(companyId);
+    `
+      )
+      .run(companyId);
 
-    this.db.prepare(`
+    this.db
+      .prepare(
+        `
       UPDATE customers
       SET default_carrier_id = NULL,
           deleted_at = datetime('now'),
@@ -1077,7 +1083,9 @@ export class OmieSyncService {
         AND deleted_at IS NULL
         AND source = 'omie'
         AND needs_push = 0
-    `).run(companyId);
+    `
+      )
+      .run(companyId);
   }
 
   private clearCarriers(companyId: string): void {
@@ -1086,42 +1094,60 @@ export class OmieSyncService {
     const omieCarrierFilter =
       "carrier_id IN (SELECT id FROM carriers WHERE company_id = ? AND source = 'omie' AND needs_push = 0)";
 
-    this.db.prepare(`
+    this.db
+      .prepare(
+        `
       UPDATE customer_carriers
       SET deleted_at = datetime('now'),
           is_active = 0,
           updated_at = datetime('now')
       WHERE deleted_at IS NULL
         AND ${omieCarrierFilter}
-    `).run(companyId);
+    `
+      )
+      .run(companyId);
 
-    this.db.prepare(`
+    this.db
+      .prepare(
+        `
       UPDATE driver_carriers
       SET deleted_at = datetime('now'),
           is_active = 0,
           updated_at = datetime('now')
       WHERE deleted_at IS NULL
         AND ${omieCarrierFilter}
-    `).run(companyId);
+    `
+      )
+      .run(companyId);
 
-    this.db.prepare(`
+    this.db
+      .prepare(
+        `
       UPDATE vehicle_carriers
       SET deleted_at = datetime('now'),
           is_active = 0,
           updated_at = datetime('now')
       WHERE deleted_at IS NULL
         AND ${omieCarrierFilter}
-    `).run(companyId);
+    `
+      )
+      .run(companyId);
 
-    this.db.prepare(`
+    this.db
+      .prepare(
+        `
       UPDATE vehicles
       SET carrier_id = NULL,
           updated_at = datetime('now')
       WHERE company_id = ?
         AND ${omieCarrierFilter}
-    `).run(companyId, companyId);
+    `
+      )
+      .run(companyId, companyId);
 
-    this.db.prepare(`
+    this.db
+      .prepare(
+        `
       UPDATE customers
       SET default_carrier_id = NULL,
           updated_at = datetime('now')
@@ -1129,9 +1155,13 @@ export class OmieSyncService {
         AND default_carrier_id IN (
           SELECT id FROM carriers WHERE company_id = ? AND source = 'omie' AND needs_push = 0
         )
-    `).run(companyId, companyId);
+    `
+      )
+      .run(companyId, companyId);
 
-    this.db.prepare(`
+    this.db
+      .prepare(
+        `
       UPDATE carriers
       SET deleted_at = datetime('now'),
           is_active = 0,
@@ -1140,7 +1170,9 @@ export class OmieSyncService {
         AND deleted_at IS NULL
         AND source = 'omie'
         AND needs_push = 0
-    `).run(companyId);
+    `
+      )
+      .run(companyId);
   }
 
   private runInTransaction<T>(action: () => T): T {
@@ -1174,12 +1206,7 @@ const SEED_METHOD_CODES_BY_OMIE_CODE = new Map<string, string>([
 ]);
 
 function normalizeAccountName(name: string): string {
-  return name
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, " ");
+  return name.normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 /**

@@ -48,8 +48,14 @@ jobs:
           ELECTRON_SKIP_BINARY_DOWNLOAD: 1
         run: npm ci
 
-      - name: Lint
+      - name: Formatacao (prettier)
         # Primeiro por ser o mais barato: reprova em segundos, antes do build.
+        # Passou a existir junto com a formatacao do repositorio inteiro — sem
+        # este passo os arquivos voltam a divergir do Prettier em poucas semanas.
+        # Reprovou? `npm run format` resolve.
+        run: npm run format:check
+
+      - name: Lint
         run: npm run lint
 
       - name: Build

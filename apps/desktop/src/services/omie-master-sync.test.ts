@@ -1,11 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import Database from "better-sqlite3";
 import { runDesktopMigrations } from "../database/migrate.js";
-import {
-  syncOmieMasterData,
-  getLastSyncRun,
-  getSyncEntitiesByRun
-} from "./omie-master-sync.js";
+import { syncOmieMasterData, getLastSyncRun, getSyncEntitiesByRun } from "./omie-master-sync.js";
 import { saveOmieRawRecord } from "./omie-sync-raw-records.js";
 import { writeLocalSetting } from "./local-settings.js";
 import type { DesktopDatabase } from "../database/sqlite.js";
@@ -50,9 +46,9 @@ describe("omie-master-sync", () => {
     });
 
     expect(result.runId).toBeDefined();
-    const lock = db.prepare("SELECT value_json FROM local_settings WHERE key = 'omie_sync_lock'").get() as
-      | { value_json: string }
-      | undefined;
+    const lock = db
+      .prepare("SELECT value_json FROM local_settings WHERE key = 'omie_sync_lock'")
+      .get() as { value_json: string } | undefined;
     expect(lock).toBeUndefined();
   });
 

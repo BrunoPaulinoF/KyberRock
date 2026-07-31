@@ -1,5 +1,9 @@
 import type { ParsedToledoReading } from "./toledo/toledo-types.js";
-import type { ToledoTcpAdapter, ToledoConnectionState, ToledoTcpAdapterStatus } from "./toledo/toledo-tcp-adapter.js";
+import type {
+  ToledoTcpAdapter,
+  ToledoConnectionState,
+  ToledoTcpAdapterStatus
+} from "./toledo/toledo-tcp-adapter.js";
 import type { ScaleReading, ScaleSamplingOptions, ScaleStatus } from "./scale-adapter.js";
 
 export type VirtualScaleMode = "tcp" | "virtual";

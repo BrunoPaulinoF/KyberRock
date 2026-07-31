@@ -67,7 +67,8 @@ npm run dist:win -w @kyberrock/desktop      # NSIS installer -> apps/desktop/rel
 `.github/workflows/ci.yml` runs on **every pull request** and on **every push to `main`**. Two jobs,
 one per runtime:
 
-- **`node`** — `npm ci`, then `npm run lint` → `npm run build` → `npm test`, in that order.
+- **`node`** — `npm ci`, then `npm run format:check` → `npm run lint` → `npm run build` → `npm test`,
+  in that order.
   - **Build before test is mandatory**: `@kyberrock/*` packages publish `main: dist/index.js`, so on
     a clean checkout (no `dist/`) vitest cannot resolve them and ~20 test files fail on import.
   - Keep them **sequential**. Running `npm run build` and `npm test` at once in the same working
@@ -80,8 +81,13 @@ one per runtime:
   `supabase/functions/omie-sync` and run **with** type-check. `npm test` does not cover it (vitest
   collects `*.test.ts`; the Deno files use `*_test.ts`). See `supabase/functions/omie-sync/TESTING.md`.
 
-`npm run format:check` is **not** in CI: ~127 files across the repo do not match Prettier today, so
-the job would be red from day one. Fixing that needs a repo-wide `npm run format` in its own PR.
+The whole repo was formatted with `npm run format` in one pass, so `format:check` is enforced in CI
+from there on. If it fails, run `npm run format` — do not hand-fix.
+
+One Prettier/ESLint interaction to know about, in `apps/desktop/src/services/scale-configs.ts`:
+Prettier breaks long method chains across lines, which can push an `eslint-disable-next-line` off
+the line it was meant to cover (there, `no-control-regex`). Put the directive immediately above the
+offending link of the chain, not above the `return`.
 
 ## Secrets & security
 

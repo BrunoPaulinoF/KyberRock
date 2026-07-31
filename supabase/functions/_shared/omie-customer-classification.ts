@@ -42,7 +42,9 @@ export function classifyOmieCustomer(
   tagsJson: Record<string, unknown> | unknown[] | null | undefined,
   customerType?: string | null
 ): OmieCustomerClassification {
-  const tags = getOmieTagValues(tagsJson ?? null).map(normalizeTag).filter(Boolean);
+  const tags = getOmieTagValues(tagsJson ?? null)
+    .map(normalizeTag)
+    .filter(Boolean);
   const type = normalizeTag(customerType ?? "");
 
   const typedCustomer = CUSTOMER_TYPES.includes(type) || type.includes("cliente");
@@ -57,9 +59,7 @@ export function classifyOmieCustomer(
   return { isCustomer, isCarrier };
 }
 
-export function getOmieTagValues(
-  tagsJson: Record<string, unknown> | unknown[] | null
-): string[] {
+export function getOmieTagValues(tagsJson: Record<string, unknown> | unknown[] | null): string[] {
   if (!tagsJson) return [];
   const tagValues: string[] = [];
   if (Array.isArray(tagsJson)) {

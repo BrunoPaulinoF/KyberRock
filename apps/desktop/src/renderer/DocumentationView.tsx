@@ -47,12 +47,7 @@ interface DocumentationSection {
   keywords: string[];
 }
 
-export type DocumentationFaqCategory =
-  | "operacao"
-  | "balanca"
-  | "impressao"
-  | "cloud"
-  | "seguranca";
+export type DocumentationFaqCategory = "operacao" | "balanca" | "impressao" | "cloud" | "seguranca";
 
 interface DocumentationFaq {
   question: string;
@@ -141,9 +136,9 @@ export const documentationSections: DocumentationSection[] = [
     steps: [
       "Clique na engrenagem do topo e escolha Balanca.",
       "Escolha o tipo de conexao: Rede (IP), USB, Serial (COM) ou Virtual (teste).",
-      "Rede (IP): informe o IP e a porta do indicador, ou use \"Procurar balanca na rede\".",
+      'Rede (IP): informe o IP e a porta do indicador, ou use "Procurar balanca na rede".',
       "USB ou Serial (COM): selecione a porta na lista e a velocidade (baud rate, padrao 9600).",
-      "Clique em Conectar e use \"Testar captura de peso\" para validar antes de operar.",
+      'Clique em Conectar e use "Testar captura de peso" para validar antes de operar.',
       "Se precisar simular, use a balanca Virtual somente em ambiente de teste."
     ],
     details: [
@@ -308,7 +303,7 @@ export const documentationFaqs: DocumentationFaq[] = [
   {
     question: "A balanca nao conecta. O que verificar?",
     answer:
-      "Na conexao por rede, confira o IP e a porta do indicador. Na conexao USB ou Serial (COM), confira se o cabo esta conectado, use \"Atualizar portas\" para reencontrar a porta e verifique se outro programa nao esta usando a mesma porta. Depois volte em Configuracoes > Balanca e teste novamente.",
+      'Na conexao por rede, confira o IP e a porta do indicador. Na conexao USB ou Serial (COM), confira se o cabo esta conectado, use "Atualizar portas" para reencontrar a porta e verifique se outro programa nao esta usando a mesma porta. Depois volte em Configuracoes > Balanca e teste novamente.',
     category: "balanca",
     keywords: ["balanca", "tcp", "usb", "serial", "com", "ip", "porta", "conexao", "host"]
   },
@@ -458,7 +453,8 @@ export const operationFlowStages: OperationFlowStage[] = [
   {
     id: "entry",
     title: "Entrada",
-    description: "Caminhao vazio sobe na balanca. Registre placa, cliente e produto em Nova entrada.",
+    description:
+      "Caminhao vazio sobe na balanca. Registre placa, cliente e produto em Nova entrada.",
     icon: Truck,
     sectionId: "weighing"
   },
@@ -723,7 +719,9 @@ function loadStoredJson(key: string): unknown {
 
 function loadStoredStringArray(key: string): string[] {
   const stored = loadStoredJson(key);
-  return Array.isArray(stored) ? stored.filter((item): item is string => typeof item === "string") : [];
+  return Array.isArray(stored)
+    ? stored.filter((item): item is string => typeof item === "string")
+    : [];
 }
 
 function loadStoredNumberArrayRecord(key: string): Record<string, number[]> {
@@ -1318,9 +1316,7 @@ function TroubleshootTab({
   const toggleCheck = (index: number) => {
     setDoneChecks((current) => {
       const done = current[activeFlow.id] ?? [];
-      const next = done.includes(index)
-        ? done.filter((item) => item !== index)
-        : [...done, index];
+      const next = done.includes(index) ? done.filter((item) => item !== index) : [...done, index];
       return { ...current, [activeFlow.id]: next };
     });
   };
@@ -1456,8 +1452,8 @@ function SupportTab() {
           ))}
         </div>
         <p style={styles.supportFootnote}>
-          O botao Copiar modelo gera um texto pronto para preencher e enviar ao suporte por
-          e-mail ou mensagem.
+          O botao Copiar modelo gera um texto pronto para preencher e enviar ao suporte por e-mail
+          ou mensagem.
         </p>
       </section>
 

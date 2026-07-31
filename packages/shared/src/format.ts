@@ -113,8 +113,7 @@ export function normalizeMoneyInput(value: string): string {
     // continuar digitando depois de um valor formatado nao pode deslocar a casa decimal.
     const groups = cleaned.split(".");
     const fractional = groups[groups.length - 1] ?? "";
-    const isDecimal =
-      groups.length === 2 && fractional.length >= 1 && fractional.length <= 2;
+    const isDecimal = groups.length === 2 && fractional.length >= 1 && fractional.length <= 2;
     result = isDecimal ? cleaned : cleaned.replace(/\./g, "");
   } else {
     result = cleaned;

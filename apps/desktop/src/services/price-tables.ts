@@ -93,9 +93,7 @@ export function createPriceTable(
     )
     .run(id, input.companyId, input.name, nowIso, nowIso, nowIso);
 
-  return database
-    .prepare("SELECT * FROM price_tables WHERE id = ?")
-    .get(id) as PriceTableRow;
+  return database.prepare("SELECT * FROM price_tables WHERE id = ?").get(id) as PriceTableRow;
 }
 
 export function updatePriceTableName(
@@ -112,9 +110,7 @@ export function updatePriceTableName(
     )
     .run(name, nowIso, nowIso, id);
 
-  return database
-    .prepare("SELECT * FROM price_tables WHERE id = ?")
-    .get(id) as PriceTableRow;
+  return database.prepare("SELECT * FROM price_tables WHERE id = ?").get(id) as PriceTableRow;
 }
 
 export function deletePriceTable(
@@ -137,9 +133,7 @@ export function deletePriceTable(
     .run(nowIso, nowIso, id);
 
   database
-    .prepare(
-      `UPDATE price_tables SET deleted_at = ?, updated_at = ? WHERE id = ?`
-    )
+    .prepare(`UPDATE price_tables SET deleted_at = ?, updated_at = ? WHERE id = ?`)
     .run(nowIso, nowIso, id);
 }
 
@@ -193,9 +187,7 @@ export function updatePriceTableItem(
   values.push(nowIso);
   values.push(id);
 
-  database
-    .prepare(`UPDATE price_table_items SET ${sets.join(", ")} WHERE id = ?`)
-    .run(...values);
+  database.prepare(`UPDATE price_table_items SET ${sets.join(", ")} WHERE id = ?`).run(...values);
 
   return database
     .prepare("SELECT * FROM price_table_items WHERE id = ?")
@@ -210,9 +202,7 @@ export function removePriceTableItem(
   const nowIso = now.toISOString();
 
   database
-    .prepare(
-      `UPDATE price_table_items SET deleted_at = ?, updated_at = ? WHERE id = ?`
-    )
+    .prepare(`UPDATE price_table_items SET deleted_at = ?, updated_at = ? WHERE id = ?`)
     .run(nowIso, nowIso, id);
 }
 
@@ -251,16 +241,11 @@ export function unlinkCustomerFromPriceTable(
   const nowIso = now.toISOString();
 
   database
-    .prepare(
-      `UPDATE customer_price_tables SET is_active = 0, updated_at = ? WHERE id = ?`
-    )
+    .prepare(`UPDATE customer_price_tables SET is_active = 0, updated_at = ? WHERE id = ?`)
     .run(nowIso, linkId);
 }
 
-export function listPriceTables(
-  database: DesktopDatabase,
-  companyId: string
-): PriceTableRow[] {
+export function listPriceTables(database: DesktopDatabase, companyId: string): PriceTableRow[] {
   return database
     .prepare(
       `SELECT * FROM price_tables WHERE company_id = ? AND deleted_at IS NULL ORDER BY name ASC`

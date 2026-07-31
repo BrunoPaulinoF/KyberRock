@@ -50,7 +50,7 @@ apps/loader-web (React)  --read-only-->  Supabase Postgres   (loader sees open l
   workspace-copy gotchas.
 - **`apps/loader-web`** — read-only React site where the loader (carregador) sees open loading
   requests projected into Supabase Postgres. Served via nginx in Docker.
-- **`supabase/functions/*`** — Deno Edge Functions, the *only* place sensitive integrations run:
+- **`supabase/functions/*`** — Deno Edge Functions, the _only_ place sensitive integrations run:
   admin surface (`admin-api`, `admin-auth`), OMIE bridge (`omie-sync`), desktop sync/lifecycle
   (`desktop-sync`, `desktop-pull`, `desktop-status`, `desktop-activate`, `desktop-download`) and
   scheduled reporting (`daily-report-scheduler`, `daily-report-email`). `_shared/` holds code

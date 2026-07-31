@@ -180,9 +180,7 @@ export function createCustomer(
     if (input.tradeName) {
       const carrierName = `${input.tradeName} (padrão)`;
       const existing = database
-        .prepare(
-          "SELECT id FROM carriers WHERE company_id = ? AND name = ? AND deleted_at IS NULL"
-        )
+        .prepare("SELECT id FROM carriers WHERE company_id = ? AND name = ? AND deleted_at IS NULL")
         .get(input.companyId, carrierName) as { id: string } | undefined;
 
       if (existing) {
@@ -248,9 +246,7 @@ export function createCustomer(
       nowIso
     );
 
-  return database
-    .prepare("SELECT * FROM customers WHERE id = ?")
-    .get(id) as CustomerRow;
+  return database.prepare("SELECT * FROM customers WHERE id = ?").get(id) as CustomerRow;
 }
 
 export interface UpdateCustomerOptions {
@@ -447,13 +443,9 @@ export function updateCustomer(
 
   values.push(id);
 
-  database
-    .prepare(`UPDATE customers SET ${sets.join(", ")} WHERE id = ?`)
-    .run(...values);
+  database.prepare(`UPDATE customers SET ${sets.join(", ")} WHERE id = ?`).run(...values);
 
-  return database
-    .prepare("SELECT * FROM customers WHERE id = ?")
-    .get(id) as CustomerRow;
+  return database.prepare("SELECT * FROM customers WHERE id = ?").get(id) as CustomerRow;
 }
 
 export function deleteCustomer(
@@ -530,10 +522,7 @@ export function applyDefaultNfeEmailToAllCustomers(
   return result.changes;
 }
 
-export function listCustomers(
-  database: DesktopDatabase,
-  companyId: string
-): CustomerRow[] {
+export function listCustomers(database: DesktopDatabase, companyId: string): CustomerRow[] {
   return database
     .prepare(
       `SELECT * FROM customers
@@ -543,10 +532,7 @@ export function listCustomers(
     .all(companyId) as CustomerRow[];
 }
 
-export function getCustomersByCarrier(
-  database: DesktopDatabase,
-  carrierId: string
-): CustomerRow[] {
+export function getCustomersByCarrier(database: DesktopDatabase, carrierId: string): CustomerRow[] {
   return database
     .prepare(
       `SELECT * FROM customers

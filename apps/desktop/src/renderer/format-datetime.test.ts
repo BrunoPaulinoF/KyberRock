@@ -14,9 +14,7 @@ describe("parseDbTimestamp", () => {
   });
 
   it("mantem strings ISO com fuso explicito", () => {
-    expect(parseDbTimestamp("2026-07-07T17:00:48Z").toISOString()).toBe(
-      "2026-07-07T17:00:48.000Z"
-    );
+    expect(parseDbTimestamp("2026-07-07T17:00:48Z").toISOString()).toBe("2026-07-07T17:00:48.000Z");
     expect(parseDbTimestamp("2026-07-07T17:00:48-03:00").toISOString()).toBe(
       "2026-07-07T20:00:48.000Z"
     );

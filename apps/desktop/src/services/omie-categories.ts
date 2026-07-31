@@ -72,9 +72,7 @@ export function setProductOmieCategory(
   const code = categoryCode?.trim() || null;
   if (code) {
     const known = database
-      .prepare(
-        "SELECT 1 FROM omie_categories WHERE company_id = ? AND code = ? AND is_active = 1"
-      )
+      .prepare("SELECT 1 FROM omie_categories WHERE company_id = ? AND code = ? AND is_active = 1")
       .get(companyId, code);
     if (!known) {
       throw new Error(
@@ -101,11 +99,7 @@ export function resolveOrderCategoryCode(
   productCategoryCode: string | null | undefined,
   defaultCategoryCode: string | null | undefined
 ): string {
-  return (
-    productCategoryCode?.trim() ||
-    defaultCategoryCode?.trim() ||
-    FALLBACK_OMIE_CATEGORY_CODE
-  );
+  return productCategoryCode?.trim() || defaultCategoryCode?.trim() || FALLBACK_OMIE_CATEGORY_CODE;
 }
 
 /** Categoria padrao da unidade, usada pelos produtos sem categoria propria. */
@@ -121,9 +115,7 @@ export function setDefaultOmieCategory(
   const code = categoryCode?.trim() || null;
   if (code) {
     const known = database
-      .prepare(
-        "SELECT 1 FROM omie_categories WHERE company_id = ? AND code = ? AND is_active = 1"
-      )
+      .prepare("SELECT 1 FROM omie_categories WHERE company_id = ? AND code = ? AND is_active = 1")
       .get(companyId, code);
     if (!known) {
       throw new Error(
