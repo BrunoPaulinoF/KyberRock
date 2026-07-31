@@ -18,9 +18,25 @@ type CompanyFixture = {
   omie_app_secret: string | null;
 };
 
+type CustomerFixture = {
+  id: string;
+  company_id: string;
+  omie_customer_id: number | null;
+};
+
+type CreditMovementFixture = {
+  company_id: string;
+  customer_id: string;
+  movement_type: string;
+  amount_cents: number;
+  omie_title_id: number | null;
+};
+
 type SupabaseFixtures = {
   devices: Record<string, DeviceFixture>;
   companies: Record<string, CompanyFixture>;
+  customers?: CustomerFixture[];
+  creditMovements?: CreditMovementFixture[];
 };
 
 type SupabaseUpdate = {
@@ -29,16 +45,23 @@ type SupabaseUpdate = {
   filters: Record<string, string>;
 };
 
+type SupabaseUpsert = {
+  table: string;
+  rows: Array<Record<string, unknown>>;
+};
+
 type JsonBody = Record<string, unknown>;
 
 class SupabaseQueryStub {
   private readonly filters: Record<string, string> = {};
+  private readonly inFilters: Record<string, Array<string | number>> = {};
   private updateValues: Record<string, unknown> | null = null;
 
   constructor(
     private readonly table: string,
     private readonly fixtures: SupabaseFixtures,
-    private readonly updates: SupabaseUpdate[]
+    private readonly updates: SupabaseUpdate[],
+    private readonly upserts: SupabaseUpsert[]
   ) {}
 
   select(): SupabaseQueryStub {
@@ -47,6 +70,11 @@ class SupabaseQueryStub {
 
   update(values: Record<string, unknown>): SupabaseQueryStub {
     this.updateValues = values;
+    return this;
+  }
+
+  upsert(rows: Array<Record<string, unknown>>): SupabaseQueryStub {
+    this.upserts.push({ table: this.table, rows });
     return this;
   }
 
@@ -64,6 +92,21 @@ class SupabaseQueryStub {
     return this;
   }
 
+  in(column: string, values: Array<string | number>): SupabaseQueryStub {
+    this.inFilters[column] = values;
+    return this;
+  }
+
+  /** A query e "thenable": `await from(...).select(...).in(...)` resolve a lista. */
+  then<TResult1 = { data: unknown; error: { message: string } | null }, TResult2 = never>(
+    onfulfilled?:
+      | ((value: { data: unknown; error: { message: string } | null }) => TResult1 | PromiseLike<TResult1>)
+      | null,
+    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
+  ): PromiseLike<TResult1 | TResult2> {
+    return Promise.resolve({ data: this.rows(), error: null }).then(onfulfilled, onrejected);
+  }
+
   async single(): Promise<{ data: unknown; error: unknown }> {
     if (this.table === "device_registrations") {
       const device = this.fixtures.devices[this.filters.id ?? ""];
@@ -77,17 +120,42 @@ class SupabaseQueryStub {
 
     return { data: null, error: new Error(`Tabela nao mockada: ${this.table}`) };
   }
+
+  private rows(): unknown[] {
+    if (this.table === "customers") {
+      const codes = this.inFilters.omie_customer_id ?? [];
+      return (this.fixtures.customers ?? []).filter(
+        (customer) =>
+          customer.company_id === this.filters.company_id &&
+          (codes.length === 0 || codes.includes(customer.omie_customer_id ?? -1))
+      );
+    }
+
+    if (this.table === "customer_credit_movements") {
+      const ids = this.inFilters.customer_id ?? [];
+      return (this.fixtures.creditMovements ?? []).filter(
+        (movement) =>
+          movement.company_id === this.filters.company_id &&
+          (ids.length === 0 || ids.includes(movement.customer_id))
+      );
+    }
+
+    return [];
+  }
 }
 
 function createSupabaseDependencies(fixtures: SupabaseFixtures): {
   createClient: NonNullable<OmieSyncHandlerDependencies["createClient"]>;
   updates: SupabaseUpdate[];
+  upserts: SupabaseUpsert[];
 } {
   const updates: SupabaseUpdate[] = [];
+  const upserts: SupabaseUpsert[] = [];
   return {
     updates,
+    upserts,
     createClient: () => ({
-      from: (table: string) => new SupabaseQueryStub(table, fixtures, updates)
+      from: (table: string) => new SupabaseQueryStub(table, fixtures, updates, upserts)
     })
   };
 }
@@ -1844,4 +1912,200 @@ Deno.test("cancel_order trata pedido inexistente como ja cancelado (idempotente)
   );
 
   assertObjectMatch(response, { ok: true, cancelled: false, alreadyCancelled: true });
+});
+
+Deno.test("pull_customer_advances espelha o adiantamento recebido no extrato de credito", async () => {
+  const deviceToken = "token-adiantamento";
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-adv": {
+        id: "device-adv",
+        company_id: "company-adv",
+        unit_id: "unit-adv",
+        token_hash: await sha256Hex(deviceToken),
+        is_active: true
+      }
+    },
+    companies: {
+      "company-adv": {
+        id: "company-adv",
+        is_active: true,
+        omie_app_key: "key",
+        omie_app_secret: "secret"
+      }
+    },
+    customers: [{ id: "cliente-1", company_id: "company-adv", omie_customer_id: 42 }],
+    // O titulo 7001 ja foi espelhado por R$ 100,00 num ciclo anterior.
+    creditMovements: [
+      {
+        company_id: "company-adv",
+        customer_id: "cliente-1",
+        movement_type: "credit",
+        amount_cents: 10_000,
+        omie_title_id: 7001
+      }
+    ]
+  });
+  const omieQueue = createOmieQueueStub((input) => {
+    if (input.call === "ListarCategorias") {
+      return {
+        pagina: 1,
+        total_de_paginas: 1,
+        total_de_registros: 2,
+        categoria_cadastro: [
+          { codigo: "1.01.01", descricao: "Venda de Produtos" },
+          { codigo: "1.01.05", descricao: "Adiantamento de Clientes" }
+        ]
+      };
+    }
+
+    if (input.call === "ListarContasReceber") {
+      return {
+        pagina: 1,
+        total_de_paginas: 1,
+        total_de_registros: 3,
+        conta_receber_cadastro: [
+          // Ja espelhado: nao pode somar de novo.
+          {
+            codigo_lancamento_omie: 7001,
+            codigo_cliente_fornecedor: 42,
+            codigo_categoria: "1.01.05",
+            valor_documento: 100,
+            valor_pago: 100,
+            data_pagamento: "10/07/2026"
+          },
+          // Adiantamento novo.
+          {
+            codigo_lancamento_omie: 7002,
+            codigo_cliente_fornecedor: 42,
+            codigo_categoria: "1.01.05",
+            valor_documento: 250,
+            valor_pago: 250,
+            data_pagamento: "20/07/2026"
+          },
+          // Venda comum: fica fora do saldo de adiantamento.
+          {
+            codigo_lancamento_omie: 7003,
+            codigo_cliente_fornecedor: 42,
+            codigo_categoria: "1.01.01",
+            valor_documento: 900,
+            valor_pago: 900
+          }
+        ]
+      };
+    }
+
+    return null;
+  });
+
+  const response = await postOmieSync(
+    { deviceId: "device-adv", deviceToken, action: "pull_customer_advances" },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  assertObjectMatch(response, {
+    ok: true,
+    advances: 2,
+    imported: 1,
+    unchanged: 1,
+    unknownCustomers: 0,
+    finished: true
+  });
+  assertEquals(response.categoryCodes, ["1.01.05"]);
+
+  const movements = (response.movements ?? []) as Array<Record<string, unknown>>;
+  assertEquals(movements.length, 1);
+  assertObjectMatch(movements[0], {
+    customer_id: "cliente-1",
+    movement_type: "credit",
+    amount_cents: 25_000,
+    balance_after_cents: 35_000,
+    source: "omie",
+    omie_title_id: 7002
+  });
+
+  const movementUpsert = fixtures.upserts.find(
+    (upsert) => upsert.table === "customer_credit_movements"
+  );
+  assertEquals(movementUpsert?.rows.length, 1);
+  const balanceUpsert = fixtures.upserts.find(
+    (upsert) => upsert.table === "customer_credit_balances"
+  );
+  assertObjectMatch(balanceUpsert?.rows[0] ?? {}, {
+    customer_id: "cliente-1",
+    company_id: "company-adv",
+    balance_cents: 35_000
+  });
+});
+
+Deno.test("pull_customer_advances estorna adiantamento cancelado no OMIE", async () => {
+  const deviceToken = "token-estorno";
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-adv-2": {
+        id: "device-adv-2",
+        company_id: "company-adv",
+        unit_id: "unit-adv",
+        token_hash: await sha256Hex(deviceToken),
+        is_active: true
+      }
+    },
+    companies: {
+      "company-adv": {
+        id: "company-adv",
+        is_active: true,
+        omie_app_key: "key",
+        omie_app_secret: "secret"
+      }
+    },
+    customers: [{ id: "cliente-1", company_id: "company-adv", omie_customer_id: 42 }],
+    creditMovements: [
+      {
+        company_id: "company-adv",
+        customer_id: "cliente-1",
+        movement_type: "credit",
+        amount_cents: 30_000,
+        omie_title_id: 7010
+      }
+    ]
+  });
+  const omieQueue = createOmieQueueStub((input) => {
+    if (input.call === "ListarContasReceber") {
+      return {
+        pagina: 1,
+        total_de_paginas: 1,
+        conta_receber_cadastro: [
+          {
+            codigo_lancamento_omie: 7010,
+            codigo_cliente_fornecedor: 42,
+            codigo_categoria: "1.01.05",
+            valor_documento: 300,
+            valor_pago: 300,
+            status_titulo: "CANCELADO"
+          }
+        ]
+      };
+    }
+    return null;
+  });
+
+  const response = await postOmieSync(
+    {
+      deviceId: "device-adv-2",
+      deviceToken,
+      action: "pull_customer_advances",
+      // Categorias ja conhecidas: nao revarre o plano de contas.
+      payload: { categoryCodes: ["1.01.05"] }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  assertObjectMatch(response, { ok: true, adjusted: 1, imported: 0 });
+  const movements = (response.movements ?? []) as Array<Record<string, unknown>>;
+  assertObjectMatch(movements[0], {
+    movement_type: "manual_adjustment",
+    amount_cents: -30_000,
+    balance_after_cents: 0,
+    omie_title_id: 7010
+  });
 });

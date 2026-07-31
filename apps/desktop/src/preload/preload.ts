@@ -176,6 +176,8 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:customer-credit-adjust", customerId, amountCents, reason),
   customerCreditMovements: (customerId: string, limit?: number) =>
     ipcRenderer.invoke("desktop:customer-credit-movements", customerId, limit),
+  customerCreditSyncAdvances: (options?: { fullRescan?: boolean }) =>
+    ipcRenderer.invoke("desktop:customer-credit-sync-advances", options),
   quotationsCreate: (input: unknown) => ipcRenderer.invoke("desktop:quotations-create", input),
   quotationsCancel: (id: string) => ipcRenderer.invoke("desktop:quotations-cancel", id),
   quotationsListOpenForCustomer: (customerId: string) =>

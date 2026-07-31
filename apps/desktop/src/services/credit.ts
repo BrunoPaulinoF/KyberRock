@@ -27,6 +27,10 @@ export interface CreditMovementRow {
   amount_cents: number;
   balance_after_cents: number;
   reason: string | null;
+  /** "omie" = adiantamento espelhado do financeiro; "local" = lancado aqui. */
+  source: string;
+  /** codigo_lancamento_omie do titulo a receber que originou o adiantamento. */
+  omie_title_id: number | null;
   created_at: string;
 }
 
@@ -55,6 +59,14 @@ export interface CustomerCreditSummary extends CustomerCreditSettings {
   usedCents: number;
   /** Credito disponivel para novas vendas; `null` = sem teto cadastrado. */
   availableCents: number | null;
+  /**
+   * Quanto do extrato veio do financeiro do OMIE (adiantamentos depositados
+   * pelo cliente, ja liquido dos que foram cancelados la). As compras da balanca
+   * sao abatidas desse dinheiro; o valor nao e editavel aqui.
+   */
+  omieAdvanceCents: number;
+  /** Quando os adiantamentos foram conferidos com o OMIE pela ultima vez. */
+  omieSyncedAt: string | null;
 }
 
 export class CreditService {
@@ -105,12 +117,37 @@ export class CreditService {
       creditAccountEnabled: false
     };
     const balanceCents = this.getBalance(customerId);
+    const advance = this.getOmieAdvance(customerId);
     return {
       ...settings,
       balanceCents,
       usedCents: balanceCents < 0 ? -balanceCents : 0,
-      availableCents: availableCreditCents(settings, balanceCents)
+      availableCents: availableCreditCents(settings, balanceCents),
+      omieAdvanceCents: advance.cents,
+      omieSyncedAt: advance.syncedAt
     };
+  }
+
+  /**
+   * Total espelhado do financeiro do OMIE e a data do ultimo espelhamento. Soma
+   * so os lancamentos de origem "omie" (adiantamentos e seus acertos), entao um
+   * cancelamento la reduz o valor aqui sem mexer no que foi lancado localmente.
+   */
+  getOmieAdvance(customerId: string): { cents: number; syncedAt: string | null } {
+    const row = this.db
+      .prepare(
+        `SELECT COALESCE(SUM(
+           CASE
+             WHEN movement_type IN ('debit_product', 'debit_freight') THEN -amount_cents
+             ELSE amount_cents
+           END
+         ), 0) AS cents,
+         MAX(created_at) AS synced_at
+         FROM customer_credit_movements
+         WHERE customer_id = ? AND source = 'omie'`
+      )
+      .get(customerId) as { cents: number; synced_at: string | null } | undefined;
+    return { cents: row?.cents ?? 0, syncedAt: row?.synced_at ?? null };
   }
 
   /**

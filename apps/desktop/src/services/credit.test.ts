@@ -132,6 +132,98 @@ describe("credit service", () => {
   });
 });
 
+describe("adiantamentos espelhados do OMIE", () => {
+  it("soma no resumo apenas o que veio do financeiro e abate as compras", () => {
+    const database = createDatabase();
+
+    try {
+      // Pre-pago sem limite cadastrado: quem banca a compra e o adiantamento.
+      insertCustomer(database, { creditLimitCents: 0, creditMode: "prepaid" });
+      insertOmieAdvance(database, {
+        id: "omie-adv-1",
+        titleId: 7001,
+        amountCents: 150_000,
+        createdAt: "2026-07-20T10:00:00.000Z"
+      });
+      const service = new CreditService(database);
+
+      expect(service.getSummary("customer-1")).toMatchObject({
+        balanceCents: 150_000,
+        availableCents: 150_000,
+        omieAdvanceCents: 150_000,
+        omieSyncedAt: "2026-07-20T10:00:00.000Z"
+      });
+
+      insertOperation(database, "operation-1");
+      service.applyDebit("customer-1", "operation-1", 40_000, 10_000);
+
+      // A compra sai do saldo do adiantamento; o total vindo do OMIE nao muda —
+      // ele so muda quando o financeiro mudar la.
+      expect(service.getSummary("customer-1")).toMatchObject({
+        balanceCents: 100_000,
+        availableCents: 100_000,
+        omieAdvanceCents: 150_000
+      });
+      expect(service.validateDebit("customer-1", 100_001).allowed).toBe(false);
+      expect(service.validateDebit("customer-1", 100_000).allowed).toBe(true);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("nao confunde lancamento manual com adiantamento do OMIE", () => {
+    const database = createDatabase();
+
+    try {
+      insertCustomer(database, { creditLimitCents: 0, creditMode: "prepaid" });
+      insertOmieAdvance(database, {
+        id: "omie-adv-1",
+        titleId: 7001,
+        amountCents: 50_000,
+        createdAt: "2026-07-20T10:00:00.000Z"
+      });
+      const service = new CreditService(database);
+      service.applyCredit("customer-1", 20_000, "acerto em dinheiro");
+
+      const summary = service.getSummary("customer-1");
+      expect(summary.balanceCents).toBe(70_000);
+      expect(summary.omieAdvanceCents).toBe(50_000);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("reduz o total do OMIE quando o adiantamento e cancelado la", () => {
+    const database = createDatabase();
+
+    try {
+      insertCustomer(database, { creditLimitCents: 0, creditMode: "prepaid" });
+      insertOmieAdvance(database, {
+        id: "omie-adv-1",
+        titleId: 7001,
+        amountCents: 80_000,
+        createdAt: "2026-07-20T10:00:00.000Z"
+      });
+      // Estorno espelhado do OMIE: acerto assinado sobre o mesmo titulo.
+      insertOmieAdvance(database, {
+        id: "omie-adv-2",
+        titleId: 7001,
+        amountCents: -80_000,
+        movementType: "manual_adjustment",
+        createdAt: "2026-07-25T10:00:00.000Z"
+      });
+
+      expect(new CreditService(database).getSummary("customer-1")).toMatchObject({
+        balanceCents: 0,
+        omieAdvanceCents: 0,
+        omieSyncedAt: "2026-07-25T10:00:00.000Z"
+      });
+    } finally {
+      database.close();
+    }
+  });
+});
+
 function createDatabase(): DesktopDatabase {
   const database = openDesktopDatabase({ databasePath: ":memory:" });
   runDesktopMigrations(database);
@@ -172,4 +264,47 @@ function insertOperation(database: DesktopDatabase, id: string): void {
       ) VALUES (?, 'company-1', 'unit-1', 'device-1', 'closed_local', 'internal', 'customer-1', ?, ?)`
     )
     .run(id, now, now);
+}
+
+/** Lancamento espelhado do financeiro do OMIE (o desktop nunca cria isso a mao). */
+function insertOmieAdvance(
+  database: DesktopDatabase,
+  options: {
+    id: string;
+    titleId: number;
+    amountCents: number;
+    movementType?: "credit" | "manual_adjustment";
+    createdAt: string;
+  }
+): void {
+  database
+    .prepare(
+      `INSERT INTO customer_credit_movements (
+        id, company_id, customer_id, operation_id, movement_type, amount_cents,
+        balance_after_cents, reason, source, omie_title_id, created_at
+      ) VALUES (?, 'company-1', 'customer-1', NULL, ?, ?, ?, ?, 'omie', ?, ?)`
+    )
+    .run(
+      options.id,
+      options.movementType ?? "credit",
+      options.amountCents,
+      options.amountCents,
+      `Adiantamento OMIE #${options.titleId}`,
+      options.titleId,
+      options.createdAt
+    );
+  database
+    .prepare(
+      `INSERT INTO customer_credit_balances (customer_id, balance_cents, updated_at)
+       VALUES ('customer-1', (
+         SELECT COALESCE(SUM(
+           CASE WHEN movement_type IN ('debit_product', 'debit_freight')
+             THEN -amount_cents ELSE amount_cents END
+         ), 0) FROM customer_credit_movements WHERE customer_id = 'customer-1'
+       ), ?)
+       ON CONFLICT(customer_id) DO UPDATE SET
+         balance_cents = excluded.balance_cents,
+         updated_at = excluded.updated_at`
+    )
+    .run(options.createdAt);
 }

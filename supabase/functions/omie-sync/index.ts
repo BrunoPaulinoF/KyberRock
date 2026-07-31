@@ -10,6 +10,13 @@ import {
   type OmieRequester
 } from "./omie-sync-core.ts";
 import { classifyOmieCustomer } from "../_shared/omie-customer-classification.ts";
+import {
+  formatOmieDate,
+  mapAdvancesFromReceivables,
+  selectAdvanceCategoryCodes,
+  type OmieCustomerAdvance,
+  type OmieReceivableRaw
+} from "../_shared/omie-customer-advances.ts";
 
 const PAGE_SIZE = 100;
 const PUSH_PAGE_SIZE = 25;
@@ -48,6 +55,7 @@ async function sha256Hex(value: string): Promise<string> {
 type OmieAction =
   | "sync"
   | "pull_reference_data"
+  | "pull_customer_advances"
   | "list_document_types"
   | "create_order"
   | "create_and_bill_order"
@@ -334,10 +342,22 @@ type SyncPayload = {
   orders?: CreateOrderPayload[];
 };
 
-type SupabaseQueryLike = {
+type SupabaseQueryResult = { data: unknown; error: { message: string } | null };
+
+/**
+ * Subconjunto do client Supabase usado aqui. A query e "thenable" (como o
+ * postgrest-js): `await supabase.from(...).select(...).in(...)` resolve para
+ * `{ data, error }` sem precisar de `.single()`.
+ */
+type SupabaseQueryLike = PromiseLike<SupabaseQueryResult> & {
   select(columns: string): SupabaseQueryLike;
   update(values: Record<string, unknown>): SupabaseQueryLike;
+  upsert(
+    values: Array<Record<string, unknown>>,
+    options?: { onConflict?: string; ignoreDuplicates?: boolean }
+  ): SupabaseQueryLike;
   eq(column: string, value: string): SupabaseQueryLike;
+  in(column: string, values: Array<string | number>): SupabaseQueryLike;
   single(): Promise<{ data: unknown; error: unknown }>;
 };
 
@@ -488,6 +508,31 @@ export async function handleOmieSyncRequest(
         checkedAt,
         pageSize: pull.pageSize,
         pagination: pull.pagination
+      });
+    }
+
+    if (action === "pull_customer_advances") {
+      const page = await pullCustomerAdvancesPage(
+        credentials,
+        body.payload as PullCustomerAdvancesPayload | undefined
+      );
+      const projection = await projectCustomerAdvances(
+        supabase,
+        typedDevice.company_id,
+        page.advances
+      );
+      return jsonResponse({
+        ok: true,
+        companyId: typedDevice.company_id,
+        unitId: typedDevice.unit_id,
+        categoryCodes: page.categoryCodes,
+        page: page.page,
+        finished: page.finished,
+        totalPages: page.totalPages,
+        totalRecords: page.totalRecords,
+        returned: page.returned,
+        advances: page.advances.length,
+        ...projection
       });
     }
 
@@ -1471,6 +1516,338 @@ interface OmieDocumentTypeRaw {
 interface OmieDocumentType {
   code: string;
   description: string;
+}
+
+type PullCustomerAdvancesPayload = {
+  /** Pagina de ListarContasReceber (1-based). */
+  page?: number;
+  /** Inicio da janela de inclusao/alteracao (ISO yyyy-mm-dd). */
+  startDate?: string;
+  /** Fim da janela de inclusao/alteracao (ISO yyyy-mm-dd). */
+  endDate?: string;
+  /** Categorias de adiantamento ja resolvidas num ciclo anterior do desktop. */
+  categoryCodes?: string[];
+  /** Restringe a um cliente (codigo OMIE), para conferencia pontual. */
+  customerOmieCode?: number;
+};
+
+type CustomerAdvancesPageResult = {
+  advances: OmieCustomerAdvance[];
+  categoryCodes: string[];
+  page: number;
+  finished: boolean;
+  totalPages: number | null;
+  totalRecords: number | null;
+  /** Titulos que o OMIE devolveu na pagina (adiantamentos ou nao). */
+  returned: number;
+};
+
+/** Teto de paginas do plano de contas ao procurar as categorias de adiantamento. */
+const ADVANCE_CATEGORY_SCAN_MAX_PAGES = 20;
+
+/**
+ * Adiantamentos de clientes: os titulos a receber classificados numa categoria
+ * de adiantamento e ja recebidos. O financeiro e feito no OMIE, entao o desktop
+ * so espelha esses valores no extrato de credito para abater as compras.
+ *
+ * A janela filtra por inclusao/alteracao (nao por vencimento) porque o que muda
+ * o saldo e a baixa ou o cancelamento do titulo, feitos depois da criacao.
+ */
+async function pullCustomerAdvancesPage(
+  credentials: OmieCredentials,
+  payload: PullCustomerAdvancesPayload = {}
+): Promise<CustomerAdvancesPageResult> {
+  const page = Math.max(1, Math.trunc(payload?.page ?? 1));
+  const categoryCodes = payload?.categoryCodes?.length
+    ? [...new Set(payload.categoryCodes)]
+    : await resolveAdvanceCategoryCodes(credentials);
+
+  // Sem categoria de adiantamento no plano de contas nao ha o que espelhar —
+  // e nao adianta varrer o contas a receber inteiro atras de nada.
+  if (categoryCodes.length === 0) {
+    return {
+      advances: [],
+      categoryCodes,
+      page,
+      finished: true,
+      totalPages: null,
+      totalRecords: null,
+      returned: 0
+    };
+  }
+
+  let response: {
+    total_de_paginas?: number;
+    total_de_registros?: number;
+    conta_receber_cadastro?: OmieReceivableRaw[];
+    contaReceberCadastro?: OmieReceivableRaw[];
+  } | null;
+  try {
+    response = await callOmie<
+      Record<string, unknown>,
+      {
+        total_de_paginas?: number;
+        total_de_registros?: number;
+        conta_receber_cadastro?: OmieReceivableRaw[];
+        contaReceberCadastro?: OmieReceivableRaw[];
+      } | null
+    >(credentials, "/financas/contareceber/", "ListarContasReceber", {
+      pagina: page,
+      registros_por_pagina: PAGE_SIZE,
+      apenas_importado_api: "N",
+      filtrar_apenas_titulos_em_aberto: "N",
+      ...(payload?.startDate ? { filtrar_por_data_de: formatOmieDate(payload.startDate) } : {}),
+      ...(payload?.endDate ? { filtrar_por_data_ate: formatOmieDate(payload.endDate) } : {}),
+      ...(payload?.customerOmieCode ? { filtrar_cliente: payload.customerOmieCode } : {})
+    });
+  } catch (error) {
+    // Tenant sem contas a receber no periodo: o OMIE responde com faultstring em
+    // vez de lista vazia. Isso encerra a pagina, nao o ciclo de sincronizacao.
+    if (!isEmptyReceivablesError(error)) throw error;
+    response = null;
+  }
+
+  const rawItems = response?.conta_receber_cadastro ?? response?.contaReceberCadastro ?? [];
+  const advances = mapAdvancesFromReceivables(rawItems, new Set(categoryCodes));
+  const totalPages = toIntOrNull(response?.total_de_paginas);
+  const totalRecords = toIntOrNull(response?.total_de_registros);
+
+  return {
+    advances,
+    categoryCodes,
+    page,
+    finished: computeFinished(page, rawItems.length, totalPages),
+    totalPages,
+    totalRecords,
+    returned: rawItems.length
+  };
+}
+
+/** Linha do extrato de credito espelhada do OMIE, no formato do desktop-pull. */
+type CreditMovementRow = {
+  id: string;
+  company_id: string;
+  customer_id: string;
+  operation_id: string | null;
+  movement_type: "credit" | "manual_adjustment";
+  amount_cents: number;
+  balance_after_cents: number;
+  reason: string | null;
+  source: string;
+  omie_title_id: number;
+  created_at: string;
+  updated_at: string;
+};
+
+type ProjectAdvancesResult = {
+  /** Lancamentos criados neste ciclo, para o desktop aplicar sem esperar o pull. */
+  movements: CreditMovementRow[];
+  /** Adiantamentos novos espelhados. */
+  imported: number;
+  /** Adiantamentos que mudaram no OMIE (baixa parcial, cancelamento) e foram acertados. */
+  adjusted: number;
+  /** Adiantamentos ja espelhados e sem diferenca. */
+  unchanged: number;
+  /** Titulos de clientes que ainda nao existem na nuvem desta pedreira. */
+  unknownCustomers: number;
+};
+
+/**
+ * Espelha os adiantamentos do OMIE no extrato de credito da nuvem.
+ *
+ * Quem escreve e a Edge Function, nunca o desktop: o titulo do OMIE e a chave de
+ * idempotencia e um unico escritor impede que duas balancas sincronizando ao
+ * mesmo tempo somem o mesmo adiantamento duas vezes. O desktop recebe as linhas
+ * criadas na resposta (e, nos ciclos seguintes, pelo desktop-pull) e recalcula o
+ * saldo pelo log, como faz com qualquer movimento vindo de outra maquina.
+ *
+ * A diferenca e sempre lancada como delta contra o que ja foi espelhado daquele
+ * titulo, entao reprocessar a mesma pagina nao muda o saldo, e uma baixa parcial
+ * ou um cancelamento no OMIE viram um acerto no extrato.
+ */
+async function projectCustomerAdvances(
+  supabase: SupabaseClientLike,
+  companyId: string,
+  advances: OmieCustomerAdvance[]
+): Promise<ProjectAdvancesResult> {
+  const empty: ProjectAdvancesResult = {
+    movements: [],
+    imported: 0,
+    adjusted: 0,
+    unchanged: 0,
+    unknownCustomers: 0
+  };
+  if (advances.length === 0) return empty;
+
+  const omieCodes = [...new Set(advances.map((advance) => advance.customerOmieCode))];
+  const customerResult = await supabase
+    .from("customers")
+    .select("id, omie_customer_id")
+    .eq("company_id", companyId)
+    .in("omie_customer_id", omieCodes);
+  if (customerResult.error) {
+    throw new Error(`Falha ao localizar clientes do adiantamento: ${customerResult.error.message}`);
+  }
+
+  const customerRows =
+    (customerResult.data as Array<{ id: string; omie_customer_id: number | null }> | null) ?? [];
+  const customerIdByOmieCode = new Map<number, string>();
+  for (const row of customerRows) {
+    if (row.omie_customer_id !== null) customerIdByOmieCode.set(row.omie_customer_id, row.id);
+  }
+
+  const customerIds = [...new Set([...customerIdByOmieCode.values()])];
+  if (customerIds.length === 0) {
+    return { ...empty, unknownCustomers: advances.length };
+  }
+
+  const movementResult = await supabase
+    .from("customer_credit_movements")
+    .select("customer_id, movement_type, amount_cents, omie_title_id")
+    .eq("company_id", companyId)
+    .in("customer_id", customerIds);
+  if (movementResult.error) {
+    throw new Error(`Falha ao ler o extrato de credito: ${movementResult.error.message}`);
+  }
+
+  const balanceByCustomer = new Map<string, number>();
+  const mirroredByTitle = new Map<number, number>();
+  const movementsByTitle = new Map<number, number>();
+  const movementRows =
+    (movementResult.data as Array<{
+      customer_id: string;
+      movement_type: string;
+      amount_cents: number | null;
+      omie_title_id: number | null;
+    }> | null) ?? [];
+  for (const row of movementRows) {
+    const signed = signedMovementCents(row.movement_type, row.amount_cents ?? 0);
+    balanceByCustomer.set(row.customer_id, (balanceByCustomer.get(row.customer_id) ?? 0) + signed);
+    if (row.omie_title_id !== null) {
+      mirroredByTitle.set(row.omie_title_id, (mirroredByTitle.get(row.omie_title_id) ?? 0) + signed);
+      movementsByTitle.set(row.omie_title_id, (movementsByTitle.get(row.omie_title_id) ?? 0) + 1);
+    }
+  }
+
+  const now = new Date().toISOString();
+  const result: ProjectAdvancesResult = { ...empty, movements: [] };
+  const advanceCentsByCustomer = new Map<string, number>();
+  const titlesByCustomer = new Map<string, number[]>();
+
+  for (const advance of advances) {
+    const customerId = customerIdByOmieCode.get(advance.customerOmieCode);
+    if (!customerId) {
+      result.unknownCustomers++;
+      continue;
+    }
+
+    const mirrored = mirroredByTitle.get(advance.titleId) ?? 0;
+    advanceCentsByCustomer.set(
+      customerId,
+      (advanceCentsByCustomer.get(customerId) ?? 0) + advance.amountCents
+    );
+    titlesByCustomer.set(customerId, [
+      ...(titlesByCustomer.get(customerId) ?? []),
+      advance.titleId
+    ]);
+
+    const delta = advance.amountCents - mirrored;
+    if (delta === 0) {
+      result.unchanged++;
+      continue;
+    }
+
+    const sequence = movementsByTitle.get(advance.titleId) ?? 0;
+    const balanceAfter = (balanceByCustomer.get(customerId) ?? 0) + delta;
+    balanceByCustomer.set(customerId, balanceAfter);
+    mirroredByTitle.set(advance.titleId, mirrored + delta);
+    movementsByTitle.set(advance.titleId, sequence + 1);
+    if (mirrored === 0 && delta > 0) result.imported++;
+    else result.adjusted++;
+
+    result.movements.push({
+      id: `omie-adv-${companyId}-${advance.titleId}-${sequence}`,
+      company_id: companyId,
+      customer_id: customerId,
+      operation_id: null,
+      // Delta positivo entra como credito; negativo (estorno/baixa parcial
+      // desfeita no OMIE) entra como acerto assinado, que o saldo soma igual.
+      movement_type: delta > 0 ? "credit" : "manual_adjustment",
+      amount_cents: delta,
+      balance_after_cents: balanceAfter,
+      reason: advanceReason(advance, delta),
+      source: "omie",
+      omie_title_id: advance.titleId,
+      created_at: now,
+      updated_at: now
+    });
+  }
+
+  if (result.movements.length > 0) {
+    const { error } = await supabase
+      .from("customer_credit_movements")
+      .upsert(result.movements, { onConflict: "id", ignoreDuplicates: true });
+    // Conflito de id significa que outra balanca ja espelhou o mesmo titulo: o
+    // ciclo seguinte recalcula o delta e converge. Erro real interrompe o pull.
+    if (error) throw new Error(`Falha ao espelhar adiantamentos: ${error.message}`);
+  }
+
+  const balanceRows = [...advanceCentsByCustomer.keys()].map((customerId) => ({
+    customer_id: customerId,
+    company_id: companyId,
+    balance_cents: balanceByCustomer.get(customerId) ?? 0,
+    omie_source_json: {
+      advanceCents: advanceCentsByCustomer.get(customerId) ?? 0,
+      titleIds: titlesByCustomer.get(customerId) ?? [],
+      syncedAt: now
+    },
+    last_synced_at: now,
+    updated_at: now
+  }));
+  if (balanceRows.length > 0) {
+    await supabase
+      .from("customer_credit_balances")
+      .upsert(balanceRows, { onConflict: "customer_id" });
+  }
+
+  return result;
+}
+
+function signedMovementCents(movementType: string, amountCents: number): number {
+  return movementType === "debit_product" || movementType === "debit_freight"
+    ? -amountCents
+    : amountCents;
+}
+
+function advanceReason(advance: OmieCustomerAdvance, delta: number): string {
+  const document = advance.documentNumber ? ` doc ${advance.documentNumber}` : "";
+  if (advance.cancelled) return `Adiantamento OMIE #${advance.titleId} cancelado${document}`;
+  if (delta < 0) return `Acerto do adiantamento OMIE #${advance.titleId}${document}`;
+  const received = advance.receivedDate ? ` em ${advance.receivedDate}` : "";
+  return `Adiantamento OMIE #${advance.titleId}${document}${received}`;
+}
+
+/**
+ * Codigos das categorias de adiantamento de cliente no plano de contas do
+ * tenant. Descoberto pela descricao ("Adiantamento de Clientes", o padrao do
+ * OMIE) e devolvido ao desktop, que reenvia nos proximos ciclos para nao
+ * revarrer o plano de contas a cada pagina.
+ */
+async function resolveAdvanceCategoryCodes(credentials: OmieCredentials): Promise<string[]> {
+  const codes = new Set<string>();
+  for (let page = 1; page <= ADVANCE_CATEGORY_SCAN_MAX_PAGES; page++) {
+    const result = await listOptionalCategoriesPage(credentials, page);
+    for (const code of selectAdvanceCategoryCodes(result.items)) codes.add(code);
+    if (result.finished || result.items.length === 0) break;
+  }
+  return [...codes];
+}
+
+function isEmptyReceivablesError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return /nao (foram encontrados|existem) registros|nenhum registro|SOAP-ENV.*ListarContasReceber/i.test(
+    error.message
+  );
 }
 
 // Formas de pagamento no OMIE = "tipos de documento" (ListarTiposDocumento).

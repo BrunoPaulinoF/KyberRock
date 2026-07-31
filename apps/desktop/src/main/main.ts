@@ -1050,6 +1050,14 @@ function registerIpcHandlers(): void {
   );
 
   ipcMain.handle(
+    "desktop:customer-credit-sync-advances",
+    (_event, options?: { fullRescan?: boolean }) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.syncCustomerAdvancesFromOmie(options ?? {});
+    }
+  );
+
+  ipcMain.handle(
     "desktop:quotations-create",
     (_event, input: Omit<CreateQuotationInput, "companyId">) => {
       if (!runtime) throw new Error("Desktop runtime is not ready.");
