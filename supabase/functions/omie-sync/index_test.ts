@@ -1693,8 +1693,19 @@ Deno.test(
 function parcelaAwareOrderStub(options: {
   existingParcelas?: Array<Record<string, unknown>>;
   createdParcelaCode?: string;
+  /** Bloco `recomendacoes` devolvido pelo ConsultarCliente. */
+  customerRecommendations?: Record<string, unknown>;
+  /** Faz o ConsultarCliente falhar, para checar que o pedido segue mesmo assim. */
+  failCustomerLookup?: boolean;
 }) {
   return createOmieQueueStub((input) => {
+    if (input.call === "ConsultarCliente") {
+      if (options.failCustomerLookup) throw new Error("OMIE HTTP 500 em ConsultarCliente");
+      return { recomendacoes: options.customerRecommendations ?? {} };
+    }
+    if (input.call === "AlterarCliente") {
+      return { codigo_cliente_omie: getParam(input).codigo_cliente_omie };
+    }
     if (input.call === "ListarParcelas") {
       return {
         pagina: 1,
@@ -1906,6 +1917,134 @@ Deno.test("create_order ativa o gerar boleto do pedido quando o meio e boleto", 
     assertEquals(item.tipo_documento, "BOL");
   }
 });
+
+// O `nao_gerar_boleto` do pedido so SUPRIME o boleto; nao existe campo no pedido que o
+// LIGUE. Quem liga e a recomendacao do cadastro do cliente ("Por padrao: Gerar Boletos ao
+// Emitir NF-e"). Sem este passo a parcela nascia "Gerar Boleto: Nao" mesmo com o pedido
+// mandando "N" — que era o padrao do OMIE de qualquer jeito.
+async function postBoletoOrder(
+  deviceToken: string,
+  slug: string,
+  omieQueue: ReturnType<typeof parcelaAwareOrderStub>,
+  paymentMethodOmieCode = "15"
+): Promise<void> {
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      [`device-${slug}`]: {
+        id: `device-${slug}`,
+        company_id: `company-${slug}`,
+        unit_id: `unit-${slug}`,
+        token_hash: await sha256Hex(deviceToken),
+        is_active: true
+      }
+    },
+    companies: {
+      [`company-${slug}`]: {
+        id: `company-${slug}`,
+        is_active: true,
+        omie_app_key: `key-${slug}`,
+        omie_app_secret: `secret-${slug}`
+      }
+    }
+  });
+
+  await postOmieSync(
+    {
+      deviceId: `device-${slug}`,
+      deviceToken,
+      action: "create_order",
+      payload: {
+        operationType: "invoice",
+        customerOmieId: 100,
+        productOmieId: 200,
+        quantity: 10,
+        unitPrice: 50,
+        issueDate: "2026-07-07",
+        idempotencyKey: `kyberrock:unit:${slug}:create_sales_order`,
+        paymentMethodOmieCode,
+        installmentDays: [7]
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+}
+
+Deno.test(
+  "create_order liga o gerar boletos no cadastro do cliente quando a operacao e em boleto",
+  async () => {
+    const omieQueue = parcelaAwareOrderStub({
+      // Recomendacoes ja configuradas a mao no OMIE: precisam sobreviver a alteracao.
+      customerRecommendations: {
+        numero_parcelas: "3",
+        codigo_vendedor: 77,
+        codigo_transportadora: 88,
+        gerar_boletos: "N"
+      }
+    });
+
+    await postBoletoOrder("token-boleto-cadastro", "boleto-cadastro", omieQueue);
+
+    const alter = getParam(findRequest(omieQueue, "AlterarCliente"));
+    assertEquals(alter.codigo_cliente_omie, 100);
+    const recomendacoes = alter.recomendacoes as Record<string, unknown>;
+    assertEquals(recomendacoes.gerar_boletos, "S");
+    // O bloco volta INTEIRO: mandar so o gerar_boletos poderia zerar o resto no OMIE.
+    assertEquals(recomendacoes.numero_parcelas, "3");
+    assertEquals(recomendacoes.codigo_vendedor, 77);
+    assertEquals(recomendacoes.codigo_transportadora, 88);
+    // O cadastro entra ANTES do pedido, senao o pedido nasce com a recomendacao antiga.
+    const calls = omieQueue.requests.map((request) => request.call);
+    assertEquals(calls.indexOf("AlterarCliente") < calls.indexOf("IncluirPedido"), true);
+  }
+);
+
+Deno.test("create_order nao gasta um AlterarCliente quando o cliente ja gera boleto", async () => {
+  const omieQueue = parcelaAwareOrderStub({
+    customerRecommendations: { gerar_boletos: "S", numero_parcelas: "1" }
+  });
+
+  await postBoletoOrder("token-boleto-ja-ligado", "boleto-ja-ligado", omieQueue);
+
+  assertEquals(
+    omieQueue.requests.some((request) => request.call === "AlterarCliente"),
+    false
+  );
+  assertEquals(
+    omieQueue.requests.some((request) => request.call === "IncluirPedido"),
+    true
+  );
+});
+
+Deno.test("create_order nao mexe no cadastro do cliente quando o meio nao e boleto", async () => {
+  const omieQueue = parcelaAwareOrderStub({});
+
+  // "01" = dinheiro: a recomendacao do cliente nao e assunto desta venda.
+  await postBoletoOrder("token-boleto-outro-meio", "boleto-outro-meio", omieQueue, "01");
+
+  assertEquals(
+    omieQueue.requests.some((request) => request.call === "ConsultarCliente"),
+    false
+  );
+  assertEquals(
+    omieQueue.requests.some((request) => request.call === "AlterarCliente"),
+    false
+  );
+});
+
+Deno.test(
+  "create_order cria o pedido mesmo quando o OMIE recusa a consulta do cadastro",
+  async () => {
+    const omieQueue = parcelaAwareOrderStub({ failCustomerLookup: true });
+
+    await postBoletoOrder("token-boleto-cadastro-falha", "boleto-cadastro-falha", omieQueue);
+
+    // O boleto e um detalhe da cobranca: uma falha aqui nunca pode custar o pedido.
+    assertEquals(
+      omieQueue.requests.some((request) => request.call === "IncluirPedido"),
+      true
+    );
+  }
+);
 
 Deno.test("create_order nao gera boleto no pedido quando o meio nao e boleto", async () => {
   const deviceToken = "token-order-sem-boleto";

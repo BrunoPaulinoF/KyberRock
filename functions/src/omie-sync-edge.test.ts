@@ -156,9 +156,10 @@ describe("omie-sync Edge Function", () => {
   it("liga o gerar boleto do OMIE quando a forma de pagamento e boleto", () => {
     const source = getOmieSyncSource();
 
-    // O campo do OMIE e NEGATIVO ("nao_gerar_boleto"): "N" gera o boleto no faturamento
-    // e "S" nao gera. Boleto ("15") -> "N" + tipo de documento "BOL"; qualquer outro meio
-    // conhecido -> "S"; sem meio (fiado/desktop antigo) -> nada, vale o padrao do OMIE.
+    // O campo do OMIE e NEGATIVO e ASSIMETRICO: "S" NAO gera o boleto, e o padrao ja e
+    // "N" — ou seja, o "N" nao LIGA nada, so deixa de suprimir. Boleto ("15") -> "N";
+    // qualquer outro meio conhecido -> "S" (e este "S" que faz o boleto seguir a forma
+    // escolhida); sem meio (fiado/desktop antigo) -> nada, vale o padrao do OMIE.
     expect(source).toContain('const OMIE_BOLETO_PAYMENT_METHOD_CODE = "15";');
     expect(source).toContain('const OMIE_BOLETO_DOCUMENT_TYPE = "BOL";');
     expect(source).toContain("function boletoGenerationFlag");
@@ -173,6 +174,24 @@ describe("omie-sync Edge Function", () => {
     );
     expect(source).toContain("...cabecalhoBoleto");
     expect(source).toContain("...boletoFields");
+  });
+
+  it("liga o gerar boletos no cadastro do cliente antes do pedido em boleto", () => {
+    const source = getOmieSyncSource();
+
+    // Quem LIGA o boleto e a recomendacao do cadastro do cliente ("Por padrao: Gerar
+    // Boletos ao Emitir NF-e" -> recomendacoes.gerar_boletos). O pedido so consegue
+    // suprimir, entao sem este passo a parcela nascia "Gerar Boleto: Nao".
+    expect(source).toContain("async function ensureCustomerGeneratesBoleto");
+    expect(source).toContain('"/geral/clientes/", "ConsultarCliente"');
+    expect(source).toContain('recomendacoes: { ...recomendacoes, gerar_boletos: "S" }');
+    // So em boleto: ligar a recomendacao em todo cliente mudaria a cobranca de quem
+    // nunca usa boleto.
+    expect(source).toContain(
+      "if (isBoletoPaymentMethod(payload.paymentMethodOmieCode)) {\n    await ensureCustomerGeneratesBoleto(credentials, customerOmieId);"
+    );
+    // Ja ligado -> nao gasta uma chamada de alteracao no caminho quente do fechamento.
+    expect(source).toContain("if (isYesFlag(recomendacoes.gerar_boletos)) return;");
   });
 
   it("manda a venda em carteira como '99 - outros', sem boleto e pela OMIE Cash", () => {

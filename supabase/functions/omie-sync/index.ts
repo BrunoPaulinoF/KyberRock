@@ -2463,15 +2463,24 @@ function isBoletoPaymentMethod(paymentMethodOmieCode: string | undefined): boole
 
 /**
  * Valor do `nao_gerar_boleto` do OMIE para o meio de pagamento escolhido na operacao.
- * O OMIE expoe a opcao pela NEGATIVA: "S" NAO gera o boleto no faturamento, "N" gera
- * (padrao). Como o valor informado no pedido/OS tem prioridade sobre a recomendacao do
- * cadastro do cliente ("Gerar Boletos ao Emitir NF-e"), mandar o flag explicito e o que
- * garante que o boleto siga a forma escolhida no KyberRock:
  *
- * - boleto ("15") -> "N": gerar boleto ATIVO, o OMIE emite a cobranca no faturamento;
- * - qualquer outro meio conhecido -> "S": venda em dinheiro/PIX/cartao nao emite boleto.
- *   A venda em carteira ("99 - outros") entra aqui de proposito: a nota sai, mas a
- *   cobranca so nasce quando o fechamento da carteira definir a forma de recebimento;
+ * ATENCAO ao que este campo faz e ao que ele NAO faz. Ele e ASSIMETRICO: so sabe
+ * SUPRIMIR. A documentacao do OMIE e literal — "Informe 'S' para nao gerar o boleto. O
+ * padrao e 'N'." O "N" nao significa "gera boleto": significa "sem supressao explicita",
+ * e ai o OMIE cai na recomendacao do CADASTRO DO CLIENTE (aba "Recomendacoes" ->
+ * `recomendacoes.gerar_boletos`). Com ela desmarcada a parcela nasce "Gerar Boleto: Nao"
+ * por mais que o pedido mande "N".
+ *
+ * Quem liga o boleto e o cadastro do cliente — ver `ensureCustomerGeneratesBoleto`, que
+ * roda antes do pedido quando a operacao e em boleto. O papel deste campo e o inverso:
+ * desligar por operacao nos demais meios, e isso ele faz:
+ *
+ * - boleto ("15") -> "N": nao suprime; quem emite a cobranca e a recomendacao do cliente;
+ * - qualquer outro meio conhecido -> "S": venda em dinheiro/PIX/cartao nao emite boleto,
+ *   mesmo com a recomendacao ligada no cadastro. E este "S" que faz o boleto seguir a
+ *   forma escolhida operacao a operacao. A venda em carteira ("99 - outros") entra aqui
+ *   de proposito: a nota sai, mas a cobranca so nasce quando o fechamento da carteira
+ *   definir a forma de recebimento;
  * - meio desconhecido (credito do cliente, desktop antigo sem o codigo) -> null: nada e
  *   enviado e vale o padrao do OMIE, como antes.
  */
@@ -2596,6 +2605,76 @@ function isOmieStructureRejection(error: unknown): boolean {
  * desktop usa esse prefixo para bloquear o job e mostrar o que falta preencher, em vez
  * de exibir a mensagem crua do OMIE ("O preenchimento da tag [email] e obrigatorio!").
  */
+/**
+ * Bloco `recomendacoes` do cadastro de cliente do OMIE (aba "Recomendacoes"). Reenviado
+ * inteiro no AlterarCliente, ver `ensureCustomerGeneratesBoleto`.
+ */
+type OmieCustomerRecommendations = {
+  numero_parcelas?: unknown;
+  codigo_vendedor?: unknown;
+  email_fatura?: unknown;
+  gerar_boletos?: string | null;
+  codigo_transportadora?: unknown;
+  tipo_assinante?: unknown;
+};
+
+/**
+ * Liga o "Por padrao: Gerar Boletos ao Emitir NF-e" no cadastro do cliente antes de subir
+ * uma operacao em boleto.
+ *
+ * Por que no cliente e nao no pedido: o `nao_gerar_boleto` do pedido/OS so SUPRIME (ver
+ * `boletoGenerationFlag`). Nao existe campo no pedido que LIGUE o boleto — quem decide e
+ * a recomendacao do cadastro. Com ela desmarcada, a parcela nascia "Gerar Boleto: Nao"
+ * mesmo com o pedido mandando "N", que era o padrao de qualquer jeito.
+ *
+ * So roda quando a operacao e em boleto: ligar a recomendacao em todo cliente mudaria a
+ * cobranca de quem nunca usa boleto. Combinado com o "S" que os demais meios ja mandam no
+ * pedido, o boleto passa a seguir a forma escolhida operacao a operacao.
+ *
+ * O bloco `recomendacoes` volta INTEIRO no AlterarCliente (numero de parcelas, vendedor e
+ * transportadora padrao): nao esta documentado se o OMIE faz merge parcial do complexo, e
+ * reenviar o que o ConsultarCliente devolveu garante que nada configurado a mao se perca.
+ *
+ * Nunca lanca. O boleto e um detalhe da cobranca, nao um requisito do pedido: se a
+ * consulta ou a alteracao falhar, o fechamento segue e o pior caso e o comportamento
+ * anterior (boleto conforme o cadastro), nunca uma operacao sem pedido.
+ */
+async function ensureCustomerGeneratesBoleto(
+  credentials: OmieCredentials,
+  omieCustomerId: number
+): Promise<void> {
+  try {
+    const customer = await callOmie<
+      { codigo_cliente_omie: number },
+      { recomendacoes?: OmieCustomerRecommendations } | null
+    >(credentials, "/geral/clientes/", "ConsultarCliente", {
+      codigo_cliente_omie: omieCustomerId
+    });
+
+    const recomendacoes: OmieCustomerRecommendations = customer?.recomendacoes ?? {};
+    // Ja ligado (na mao no OMIE ou por um fechamento anterior): nao gasta um
+    // AlterarCliente — o OMIE cobra rate limit por chamada, e o fechamento e o
+    // caminho quente.
+    if (isYesFlag(recomendacoes.gerar_boletos)) return;
+
+    await callOmie<Record<string, unknown>, unknown>(
+      credentials,
+      "/geral/clientes/",
+      "AlterarCliente",
+      {
+        codigo_cliente_omie: omieCustomerId,
+        recomendacoes: { ...recomendacoes, gerar_boletos: "S" }
+      }
+    );
+  } catch (error) {
+    console.error(
+      "[omie] falha ao ligar o 'Gerar Boletos' no cadastro do cliente; " +
+        "o pedido segue e o boleto fica conforme o cadastro atual",
+      error
+    );
+  }
+}
+
 async function resolveOrderCustomerOmieId(
   credentials: OmieCredentials,
   payload: CreateOrderPayload
@@ -2656,6 +2735,11 @@ async function createOmieOrder(
   const integrationCode = toOmieIntegrationCode(payload.idempotencyKey);
   // Garante o cliente no OMIE (cadastra na hora quando ainda nao existe) antes do pedido.
   const customerOmieId = await resolveOrderCustomerOmieId(credentials, payload);
+  // Boleto: quem LIGA a cobranca e a recomendacao do cadastro do cliente, nao o pedido.
+  // Vale para os dois caminhos daqui pra frente (pedido de venda e OS).
+  if (isBoletoPaymentMethod(payload.paymentMethodOmieCode)) {
+    await ensureCustomerGeneratesBoleto(credentials, customerOmieId);
+  }
   // Mesma ideia para a transportadora: sobe o cadastro antes de montar o pedido para o
   // primeiro fechamento com uma transportadora nova ja sair com ela preenchida.
   const carrierOmieId = await resolveOrderCarrierOmieId(credentials, payload);
