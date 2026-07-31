@@ -204,27 +204,132 @@ function fnv1a64(input: string): bigint {
 }
 
 export function buildCustomerPayload(payload: PushCustomerPayload): Record<string, unknown> {
-  return {
+  const document = onlyDigits(payload.cnpjCpf);
+  const razaoSocial = trimOrUndefined(payload.razaoSocial);
+  const state = normalizeOmieState(payload.state);
+  const tags = (payload.tags ?? []).map((tag) => tag.trim()).filter((tag) => tag.length > 0);
+
+  return dropEmptyFields({
     codigo_cliente_omie: payload.omieCustomerId,
     codigo_cliente_integracao: toOmieIntegrationCode(payload.localCustomerId),
-    razao_social: payload.razaoSocial,
-    nome_fantasia: payload.nomeFantasia,
-    cnpj_cpf: payload.cnpjCpf,
-    email: payload.email,
-    telefone1_ddd: payload.telefone1Ddd,
-    telefone1_numero: payload.telefone1Numero,
-    endereco: payload.addressStreet,
-    endereco_numero: payload.addressNumber,
-    bairro: payload.neighborhood,
-    cidade: payload.city,
-    estado: payload.state,
-    cep: payload.zipcode,
+    razao_social: razaoSocial,
+    // O OMIE exige razao social E nome fantasia no IncluirCliente; sem o fantasia o
+    // cadastro volta com "O preenchimento da tag [nome_fantasia] e obrigatorio!" e o
+    // fechamento inteiro morre junto. Repetir a razao social e o padrao do cadastro.
+    nome_fantasia: trimOrUndefined(payload.nomeFantasia) ?? razaoSocial,
+    cnpj_cpf: document,
+    // 11 digitos = CPF. Sem `pessoa_fisica: "S"` o OMIE valida o documento como CNPJ
+    // e recusa o cadastro de qualquer cliente pessoa fisica.
+    pessoa_fisica: document ? (document.length === 11 ? "S" : "N") : undefined,
+    email: trimOrUndefined(payload.email),
+    telefone1_ddd: trimOrUndefined(payload.telefone1Ddd),
+    telefone1_numero: trimOrUndefined(payload.telefone1Numero),
+    endereco: trimOrUndefined(payload.addressStreet),
+    endereco_numero: trimOrUndefined(payload.addressNumber),
+    bairro: trimOrUndefined(payload.neighborhood),
+    // O OMIE identifica a cidade no formato "Cidade (UF)" (e devolve assim nas
+    // consultas); mandar so o nome faz o cadastro cair em "Cidade nao encontrada".
+    cidade: buildOmieCity(payload.city, state),
+    estado: state,
+    cep: trimOrUndefined(payload.zipcode),
     // Campo omitido quando o chamador nao informa (ex.: transportadoras), para
     // nao mexer no bloqueio configurado direto no OMIE.
     bloquear_faturamento:
       payload.billingBlocked === undefined ? undefined : payload.billingBlocked ? "S" : "N",
-    tags: payload.tags?.map((tag) => ({ tag }))
-  };
+    tags: tags.length > 0 ? tags.map((tag) => ({ tag })) : undefined
+  });
+}
+
+/**
+ * Remove campos vazios do corpo enviado ao OMIE. Alem de encurtar o payload, evita que
+ * um `AlterarCliente` apague no OMIE um dado que o KyberRock nao tem (string vazia
+ * sobrescreve; ausencia preserva).
+ */
+function dropEmptyFields(body: Record<string, unknown>): Record<string, unknown> {
+  const clean: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(body)) {
+    if (value === undefined || value === null) continue;
+    if (typeof value === "string" && value.trim().length === 0) continue;
+    clean[key] = value;
+  }
+  return clean;
+}
+
+function trimOrUndefined(value: string | undefined): string | undefined {
+  const text = (value ?? "").trim();
+  return text.length > 0 ? text : undefined;
+}
+
+function onlyDigits(value: string | undefined): string | undefined {
+  const digits = (value ?? "").replace(/\D/g, "");
+  return digits.length > 0 ? digits : undefined;
+}
+
+/** UF em duas letras maiusculas; qualquer outra coisa nao e UF e fica de fora. */
+function normalizeOmieState(value: string | undefined): string | undefined {
+  const uf = (value ?? "").trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(uf) ? uf : undefined;
+}
+
+/** Cidade no formato do OMIE: "Cidade (UF)". Ja formatada ou sem UF, segue como veio. */
+function buildOmieCity(city: string | undefined, state: string | undefined): string | undefined {
+  const name = trimOrUndefined(city);
+  if (!name || !state) return name;
+  return /\([A-Za-z]{2}\)\s*$/.test(name) ? name : `${name} (${state})`;
+}
+
+/**
+ * Campos que o OMIE cobrou como obrigatorios na recusa ("O preenchimento da tag
+ * [email] e obrigatorio!"), traduzidos para o nome que o operador ve no cadastro.
+ * Vazio quando a recusa nao e de campo faltante.
+ */
+export function extractOmieRequiredFields(message: string): string[] {
+  const text = message ?? "";
+  const labels: string[] = [];
+  const pattern = /tag\s*\[([a-z0-9_]+)\]/gi;
+  for (const match of text.matchAll(pattern)) {
+    const field = match[1].toLowerCase();
+    const label = OMIE_CUSTOMER_FIELD_LABELS[field] ?? field;
+    if (!labels.includes(label)) labels.push(label);
+  }
+  return labels;
+}
+
+const OMIE_CUSTOMER_FIELD_LABELS: Record<string, string> = {
+  cnpj_cpf: "CNPJ/CPF",
+  email: "E-mail",
+  razao_social: "Razao Social",
+  nome_fantasia: "Nome Fantasia",
+  endereco: "Endereco",
+  endereco_numero: "Numero do Endereco",
+  bairro: "Bairro",
+  cidade: "Cidade",
+  estado: "Estado (UF)",
+  cep: "CEP",
+  telefone1_ddd: "DDD do Telefone",
+  telefone1_numero: "Telefone"
+};
+
+/**
+ * Marca das falhas de CADASTRO do cliente no envio do fechamento. O desktop reconhece
+ * este prefixo para tratar a recusa como pendencia de cadastro (bloqueia o job em vez de
+ * re-tentar em loop) e para mostrar ao operador o que falta preencher.
+ */
+export const CUSTOMER_REGISTRATION_FAULT_PREFIX = "Cadastro do cliente recusado pelo OMIE";
+
+/** Mensagem determinista da recusa do cadastro do cliente, com o que falta preencher. */
+export function customerRegistrationFaultMessage(error: unknown, customerName?: string): string {
+  const detail = error instanceof Error ? error.message : String(error ?? "");
+  const fields = extractOmieRequiredFields(detail);
+  const who = trimOrUndefined(customerName);
+  return [
+    `${CUSTOMER_REGISTRATION_FAULT_PREFIX}${who ? ` (${who})` : ""}.`,
+    fields.length > 0 ? `Falta preencher: ${fields.join(", ")}.` : null,
+    "Complete o cadastro do cliente e reenvie.",
+    `Detalhe OMIE: ${detail}`
+  ]
+    .filter((part): part is string => part !== null)
+    .join(" ");
 }
 
 export function buildCarrierPayload(payload: PushCarrierPayload): Record<string, unknown> {

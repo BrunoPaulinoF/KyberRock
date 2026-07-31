@@ -15,6 +15,7 @@ import { PricingService, type PriceDetails } from "./pricing.js";
 import { cancelPendingOmieJobs, enqueueSyncJob } from "./sync-queue.js";
 import { CreditService } from "./credit.js";
 import { buildOmieIntegrationCode } from "@kyberrock/omie-client";
+import { DEFAULT_NFE_EMAIL_KEY } from "./customers.js";
 import { readStringLocalSetting } from "./local-settings.js";
 import { DEFAULT_OMIE_CATEGORY_SETTING_KEY, resolveOrderCategoryCode } from "./omie-categories.js";
 import { consumeQuotation } from "./quotations.js";
@@ -1193,10 +1194,15 @@ function splitPhoneForOmie(phone: string | null): { ddd?: string; numero?: strin
   return { ddd: digits.slice(0, 2), numero: digits.slice(2) };
 }
 
-/** Monta o cadastro do cliente para o edge criar/localizar no OMIE junto com o pedido. */
+/**
+ * Monta o cadastro do cliente para o edge criar/localizar no OMIE junto com o pedido.
+ * Sem e-mail proprio o cliente sai com o e-mail padrao de NF-e configurado: o OMIE cobra
+ * o campo no IncluirCliente e, sem ele, o cadastro (e o fechamento junto) e recusado.
+ */
 function buildOrderCustomerCadastro(
   localCustomerId: string,
-  row: OrderCustomerRow
+  row: OrderCustomerRow,
+  fallbackEmail: string | null
 ): OmieOrderCustomerCadastro {
   const phone = splitPhoneForOmie(row.phone);
   return {
@@ -1204,7 +1210,7 @@ function buildOrderCustomerCadastro(
     razaoSocial: row.legal_name ?? row.trade_name ?? "",
     nomeFantasia: row.trade_name ?? row.legal_name ?? undefined,
     cnpjCpf: row.document?.trim() || undefined,
-    email: row.email ?? undefined,
+    email: row.email?.trim() || fallbackEmail || undefined,
     telefone1Ddd: phone.ddd,
     telefone1Numero: phone.numero,
     zipcode: row.zipcode ?? undefined,
@@ -1259,7 +1265,11 @@ export function buildOmieBillingJob(
   // criar/localizar o cliente no OMIE na hora, antes de criar o pedido.
   const customerCadastro: OmieOrderCustomerCadastro | null =
     !omieCustomerId && customerRow && row.customer_id
-      ? buildOrderCustomerCadastro(row.customer_id, customerRow)
+      ? buildOrderCustomerCadastro(
+          row.customer_id,
+          customerRow,
+          readStringLocalSetting(database, DEFAULT_NFE_EMAIL_KEY)
+        )
       : null;
 
   const productRow = row.product_id

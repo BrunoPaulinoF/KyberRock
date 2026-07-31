@@ -1066,6 +1066,75 @@ Deno.test("create_order cadastra o cliente no OMIE na hora quando ele nao tem co
   assertEquals(cabecalho.codigo_cliente, 7777);
 });
 
+Deno.test(
+  "create_order devolve a recusa do CADASTRO do cliente dizendo o campo que falta",
+  async () => {
+    const deviceToken = "token-order-cadastro";
+    const fixtures = createSupabaseDependencies({
+      devices: {
+        "device-order-cadastro": {
+          id: "device-order-cadastro",
+          company_id: "company-order-cadastro",
+          unit_id: "unit-order-cadastro",
+          token_hash: await sha256Hex(deviceToken),
+          is_active: true
+        }
+      },
+      companies: {
+        "company-order-cadastro": {
+          id: "company-order-cadastro",
+          is_active: true,
+          omie_app_key: "order-cadastro",
+          omie_app_secret: "secret-order-cadastro"
+        }
+      }
+    });
+    // O OMIE recusa o IncluirCliente por campo obrigatorio faltando.
+    const omieQueue = createOmieQueueStub((input) => {
+      if (input.call === "ListarClientesResumido") return { clientes: [] };
+      if (input.call === "IncluirCliente") {
+        throw new Error("ERROR: O preenchimento da tag [email] e obrigatorio!");
+      }
+      return defaultOmieListResponse(input);
+    });
+
+    const response = await postOmieSync(
+      {
+        deviceId: "device-order-cadastro",
+        deviceToken,
+        action: "create_order",
+        payload: {
+          operationType: "invoice",
+          customerOmieId: 0,
+          customer: {
+            localCustomerId: "cust-sem-email",
+            razaoSocial: "Cliente Sem Email LTDA",
+            cnpjCpf: "11444777000161"
+          },
+          productOmieId: 200,
+          quantity: 10,
+          unitPrice: 50,
+          issueDate: "2026-07-07",
+          idempotencyKey: "kyberrock:unit:op-cadastro:create_sales_order"
+        }
+      },
+      { createClient: fixtures.createClient, omieQueue }
+    );
+
+    // Mensagem propria (e nao a tag crua do OMIE): o desktop reconhece o prefixo para
+    // pausar o job e mostrar ao operador o campo do cadastro que precisa ser preenchido.
+    const error = String((response as { error?: unknown }).error ?? "");
+    assertEquals(error.startsWith("Cadastro do cliente recusado pelo OMIE"), true);
+    assertEquals(error.includes("Falta preencher: E-mail."), true);
+    assertEquals(error.includes("Cliente Sem Email LTDA"), true);
+    // Sem cliente no OMIE nao existe pedido: o IncluirPedido nem chega a ser chamado.
+    assertEquals(
+      omieQueue.requests.some((request) => request.call === "IncluirPedido"),
+      false
+    );
+  }
+);
+
 Deno.test("create_order usa 000 quando nao ha codigo de parcela vinculado", async () => {
   const deviceToken = "token-order-default";
   const token_hash = await sha256Hex(deviceToken);

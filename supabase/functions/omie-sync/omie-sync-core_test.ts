@@ -1,9 +1,12 @@
 import { assert, assertEquals } from "jsr:@std/assert";
 
 import {
+  CUSTOMER_REGISTRATION_FAULT_PREFIX,
   OmieQueueManager,
   buildCarrierPayload,
   buildCustomerPayload,
+  customerRegistrationFaultMessage,
+  extractOmieRequiredFields,
   pushCustomerToOmieCore,
   toOmieIntegrationCode
 } from "./omie-sync-core.ts";
@@ -138,6 +141,58 @@ Deno.test(
     assertEquals(omitted.bloquear_faturamento, undefined);
   }
 );
+
+Deno.test("buildCustomerPayload completa o cadastro que o OMIE exige no IncluirCliente", () => {
+  const pessoaFisica = buildCustomerPayload({
+    localCustomerId: "cliente-cpf",
+    razaoSocial: "  Joao da Silva  ",
+    cnpjCpf: "123.456.789-09",
+    city: "Sao Paulo",
+    state: "sp"
+  });
+
+  // CPF sem pessoa_fisica "S" e recusado pelo OMIE como CNPJ invalido.
+  assertEquals(pessoaFisica.pessoa_fisica, "S");
+  assertEquals(pessoaFisica.cnpj_cpf, "12345678909");
+  assertEquals(pessoaFisica.razao_social, "Joao da Silva");
+  // O OMIE exige nome fantasia; sem valor proprio ele repete a razao social.
+  assertEquals(pessoaFisica.nome_fantasia, "Joao da Silva");
+  // A cidade vai no formato do OMIE ("Cidade (UF)").
+  assertEquals(pessoaFisica.cidade, "Sao Paulo (SP)");
+  assertEquals(pessoaFisica.estado, "SP");
+
+  const pessoaJuridica = buildCustomerPayload({
+    localCustomerId: "cliente-cnpj",
+    razaoSocial: "Pedreira LTDA",
+    nomeFantasia: "Pedreira",
+    cnpjCpf: "12.345.678/0001-90",
+    city: "Campinas (SP)",
+    state: "SP",
+    email: "   "
+  });
+
+  assertEquals(pessoaJuridica.pessoa_fisica, "N");
+  assertEquals(pessoaJuridica.cnpj_cpf, "12345678000190");
+  // Cidade ja formatada nao ganha a UF duas vezes.
+  assertEquals(pessoaJuridica.cidade, "Campinas (SP)");
+  // Campo em branco fica de fora: string vazia apagaria o dado no AlterarCliente.
+  assert(!("email" in pessoaJuridica));
+  assert(!("tags" in pessoaJuridica));
+});
+
+Deno.test("customerRegistrationFaultMessage diz qual campo do cliente falta preencher", () => {
+  const fault = new Error(
+    "OMIE HTTP 500 em IncluirCliente (/geral/clientes/) - ERROR: O preenchimento da tag [email] e obrigatorio!"
+  );
+
+  assertEquals(extractOmieRequiredFields(fault.message), ["E-mail"]);
+
+  const message = customerRegistrationFaultMessage(fault, "Pedreira LTDA");
+  assert(message.startsWith(CUSTOMER_REGISTRATION_FAULT_PREFIX));
+  assert(message.includes("Pedreira LTDA"));
+  assert(message.includes("Falta preencher: E-mail."));
+  assert(message.includes("Detalhe OMIE:"));
+});
 
 // Golden test: mudar este algoritmo altera o codigo_pedido_integracao de jobs antigos
 // re-enviados e DUPLICA pedidos no OMIE. Se este teste quebrar, foi mudanca proposital e
