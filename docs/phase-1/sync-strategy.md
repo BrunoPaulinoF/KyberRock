@@ -165,8 +165,26 @@ Financeiro:
   Antes esse caso dependia de localizar/criar a condicao no cadastro de parcelas e, quando nao
   dava, caia em `"000"`: a OS nascia **a vista** mesmo com "9/18/27" digitado na operacao.
 - Se o OMIE recusar a estrutura do bloco `Parcelas`, a OS e reenviada pelo caminho antigo
-  (codigo do cadastro via `ensureOmieParcelaCode`, senao `"000"`), com o motivo no log: uma
-  recusa de formato nunca deixa a operacao sem OS.
+  (codigo vinculado, senao o do cadastro via `ensureOmieParcelaCode`, senao `"000"`), com o
+  motivo no log: uma recusa de formato nunca deixa a operacao sem OS.
+
+#### Gerar boleto (implementado)
+
+- O KyberRock nao gera boleto (PRD 10.7): quem emite a cobranca e o OMIE, no faturamento. O
+  que o app controla e **se** o boleto deve sair, e isso acompanha a forma de pagamento
+  escolhida na operacao (`paymentMethodOmieCode`, o tPag da NF-e).
+- O campo do OMIE e **negativo**: `nao_gerar_boleto` `"S"` NAO gera o boleto ao emitir a nota
+  e `"N"` gera (padrao). Ele existe no `cabecalho` e em cada parcela do pedido de venda, e na
+  parcela da OS — o valor da parcela tem prioridade sobre o do cabecalho.
+- Regra aplicada na Edge Function (`boletoGenerationFlag` / `buildBoletoParcelaFields`):
+  - **boleto** (`"15"`) -> `nao_gerar_boleto` `"N"` (gerar boleto **ativo**) + `tipo_documento`
+    `"BOL"`, para a conta a receber nascer tipada como boleto em vez de "NF-e";
+  - **outro meio conhecido** (dinheiro, PIX, cartoes) -> `nao_gerar_boleto` `"S"`;
+  - **sem meio no payload** (credito do cliente/fiado, desktop antigo) -> nada e enviado e
+    vale o padrao do cadastro do cliente no OMIE ("Gerar Boletos ao Emitir NF-e").
+- Como o flag so viaja na parcela da OS, a operacao interna em boleto vai com o bloco
+  `Parcelas` mesmo a vista e mesmo com a condicao ja vinculada a um codigo do cadastro
+  (`cCodParc` `"999"`). Nos demais meios a OS mantem o caminho historico.
 
 ### Operacao Interna
 
