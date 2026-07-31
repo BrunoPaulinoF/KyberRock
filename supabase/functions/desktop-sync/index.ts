@@ -228,6 +228,13 @@ Deno.serve(async (req) => {
       .eq("id", deviceId);
 
     if (stepErrors.length > 0) {
+      // Tambem no log do projeto: o desktop mostra o `details` ao operador, mas
+      // sem isto nao havia como investigar depois pelo painel do Supabase — os
+      // logs so registravam "POST | 500" sem a causa.
+      console.error("desktop-sync: falha ao persistir payloads", {
+        deviceId,
+        stepErrors
+      });
       return jsonResponse(
         {
           error: "Falha ao persistir alguns payloads",

@@ -605,6 +605,43 @@ describe("supabase sync", () => {
     }
   });
 
+  // Sem o `details`, um 500 do desktop-sync chegava ao operador como a mesma
+  // frase generica qualquer que fosse a causa — e a fila reenviava a operacao
+  // para sempre sem ninguem saber qual upsert estava quebrando.
+  it("mostra a causa por tabela que o desktop-sync devolve em details", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertWeighingOperation(database);
+      enqueueSyncJob(database, {
+        id: "cloud-operation-job",
+        target: "cloud",
+        action: "upsert_operation",
+        entityType: "operation",
+        entityId: "operation-1",
+        idempotencyKey: "cloud:operation:operation-1",
+        payload: { operationId: "operation-1" }
+      });
+      invokeMock.mockResolvedValueOnce({
+        error: createFunctionHttpError("Falha ao persistir alguns payloads", [
+          'weighing_operations: value "11488908941" is out of range for type integer (code=22003)'
+        ]),
+        data: null
+      });
+
+      const result = await processCloudSyncQueue(database, identity);
+
+      expect(result.failed).toBe(1);
+      expect(result.errors[0]).toContain("Falha ao persistir alguns payloads");
+      expect(result.errors[0]).toContain("weighing_operations");
+      expect(result.errors[0]).toContain("out of range for type integer");
+    } finally {
+      database.close();
+    }
+  });
+
   it("retries on OMIE redundant error from the cloud bridge before throwing", async () => {
     vi.useFakeTimers();
     const database = createDatabase();
@@ -2178,7 +2215,10 @@ function insertPrintReceipt(database: DesktopDatabase): void {
     .run(now, now, now);
 }
 
-function createFunctionHttpError(message: string): Error & { context: unknown } {
+function createFunctionHttpError(
+  message: string,
+  details?: unknown
+): Error & { context: unknown } {
   const error = new Error("Edge Function returned a non-2xx status code") as Error & {
     context: unknown;
   };
@@ -2186,7 +2226,7 @@ function createFunctionHttpError(message: string): Error & { context: unknown } 
   error.context = {
     statusText: "Bad Request",
     clone: () => ({
-      json: async () => ({ error: message })
+      json: async () => ({ error: message, ...(details === undefined ? {} : { details }) })
     })
   };
   return error;
