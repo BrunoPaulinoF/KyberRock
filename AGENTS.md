@@ -62,6 +62,27 @@ npm run dist:win -w @kyberrock/desktop      # NSIS installer -> apps/desktop/rel
 - Prettier: `semi: true`, `singleQuote: false`, `trailingComma: "none"`, `printWidth: 100`. Ignores `package-lock.json` and build artifacts.
 - `tsconfig.base.json` sets `forceConsistentCasingInFileNames` — respect path casing in imports.
 
+## CI
+
+`.github/workflows/ci.yml` runs on **every pull request** and on **every push to `main`**. Two jobs,
+one per runtime:
+
+- **`node`** — `npm ci`, then `npm run lint` → `npm run build` → `npm test`, in that order.
+  - **Build before test is mandatory**: `@kyberrock/*` packages publish `main: dist/index.js`, so on
+    a clean checkout (no `dist/`) vitest cannot resolve them and ~20 test files fail on import.
+  - Keep them **sequential**. Running `npm run build` and `npm test` at once in the same working
+    tree makes the build rewrite files vitest is importing, producing phantom failures like
+    `X is not a constructor`. To parallelize, use separate jobs/checkouts.
+  - `npm ci` runs **with** install scripts (unlike `desktop-release.yml`): `omie-master-sync.test.ts`
+    opens a real `better-sqlite3` database and needs the native binary for the Node runtime.
+    `ELECTRON_SKIP_BINARY_DOWNLOAD=1` is set — nothing here launches Electron.
+- **`deno`** — the Deno suite of the `omie-sync` Edge Function, scoped to
+  `supabase/functions/omie-sync` and run **with** type-check. `npm test` does not cover it (vitest
+  collects `*.test.ts`; the Deno files use `*_test.ts`). See `supabase/functions/omie-sync/TESTING.md`.
+
+`npm run format:check` is **not** in CI: ~127 files across the repo do not match Prettier today, so
+the job would be red from day one. Fixing that needs a repo-wide `npm run format` in its own PR.
+
 ## Secrets & security
 
 - `.env`, `*.pem`, `*.key`, `service-account*.json`, `*.sqlite*`, `logs/`, `ui-debug.log` are gitignored. **Never** commit credentials, real customer data, or production dumps.
@@ -151,3 +172,5 @@ already in `.env.example`). Omit `--no-verify-jwt`: `config.toml` now carries th
 All subagents (`explore`, `qa-build`, `qa-lint`, `qa-test`) **must** use the model `minimax-m3`. Other models require explicit user approval.
 
 After any code change, run `qa-build` (`npm run build`), `qa-lint` (`npm run lint`) and `qa-test` (`npm test`) **in parallel**. Treat the task as done only when all three report OK.
+
+**Caveat**: `qa-build` and `qa-test` must not run at the same time _in the same working tree_ — the build rewrites files vitest is importing and you get phantom failures (`X is not a constructor` in `apps/desktop/src/services/*.test.ts`). Either give them separate worktrees, or run `npm run build` then `npm test` in sequence, as `.github/workflows/ci.yml` does. `qa-lint` is safe to run alongside either.
