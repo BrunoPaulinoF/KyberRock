@@ -118,6 +118,7 @@ import {
   pushOmieCustomersToCloud,
   processOmieSyncQueue,
   processFiscalBillingNow,
+  rearmOmieBillingForCustomer,
   getSupabaseSyncStatus,
   isSupabaseInitialized,
   pullCompanyPricePasswordFromCloud,
@@ -886,6 +887,11 @@ export class DesktopRuntime {
 
     if (Object.keys(patch).length === 0) return;
     updateCustomer(this.database, op.customer_id, patch, new Date(), { overrideOmieFields: true });
+    // O job do fechamento ja foi montado (no close) com o cadastro ANTIGO: sem isto o
+    // cliente sobe ao OMIE sem o e-mail/endereco que acabamos de completar e o
+    // IncluirCliente e recusado ("O preenchimento da tag [email] e obrigatorio!"),
+    // derrubando o pedido junto. Reconstroi o payload antes do envio imediato.
+    rearmOmieBillingForCustomer(this.database, op.customer_id);
     this.cacheStore.invalidate("customer", this.ensureIdentity().companyId);
   }
 

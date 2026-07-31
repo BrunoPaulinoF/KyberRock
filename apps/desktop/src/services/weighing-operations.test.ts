@@ -5,6 +5,7 @@ import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite";
 import { ensureInitialDesktopIdentity } from "./bootstrap";
 import { CreditService } from "./credit";
 import { CustomerReportService } from "./customer-report";
+import { setDefaultNfeEmail } from "./customers";
 import { enqueueSyncJob } from "./sync-queue";
 import { buildOmieIntegrationCode } from "@kyberrock/omie-client";
 import {
@@ -1192,6 +1193,50 @@ describe("weighing operations", () => {
       expect(built).not.toBeNull();
       expect(built!.idempotencyKey).toBe(enqueued.idempotency_key);
       expect(built!.payload).toEqual(JSON.parse(enqueued.payload_json));
+    } finally {
+      database.close();
+    }
+  });
+
+  it("sends the customer cadastro with the default NF-e email when the customer has none", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      // Cliente que ainda nao existe no OMIE: sem codigo, com CNPJ e sem e-mail proprio.
+      database
+        .prepare(
+          "UPDATE customers SET omie_customer_id = NULL, document = '12345678000195', email = NULL WHERE id = 'customer-1'"
+        )
+        .run();
+      setDefaultNfeEmail(database, "nfe@pedreira.com.br");
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      const built = buildOmieBillingJob(database, operation.id);
+
+      // customerOmieId 0 + cadastro embutido: o edge cria o cliente no OMIE e so entao
+      // monta o pedido — o fechamento vai inteiro numa chamada so.
+      expect(built!.payload.customerOmieId).toBe(0);
+      expect(built!.payload.customer).toMatchObject({
+        localCustomerId: "customer-1",
+        cnpjCpf: "12345678000195",
+        // Sem e-mail o OMIE recusa o IncluirCliente e o fechamento morria junto.
+        email: "nfe@pedreira.com.br"
+      });
     } finally {
       database.close();
     }

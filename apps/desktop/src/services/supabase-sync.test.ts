@@ -25,6 +25,7 @@ import {
   pushOmieCustomersToCloud,
   readOmiePullState,
   readStoredSupabaseConfig,
+  rearmOmieBillingForCustomer,
   syncCustomerAdvancesFromCloud,
   syncOmieReferenceDataFromCloud,
   writeStoredSupabaseConfig
@@ -1427,6 +1428,129 @@ describe("supabase sync", () => {
     }
   });
 
+  it("refreshes the queued closing with the customer cadastro completed after the close", () => {
+    const database = createDatabase();
+
+    try {
+      createIdentity(database);
+      insertClosedOperationForNewCustomer(database);
+      enqueueBillingJobForNewCustomer(database);
+      // O app completa o cadastro do cliente depois do fechamento (e-mail padrao de
+      // NF-e / busca por CNPJ); o job ja tinha sido montado sem esses dados.
+      database
+        .prepare("UPDATE customers SET email = 'nfe@pedreira.com.br' WHERE id = 'customer-novo'")
+        .run();
+
+      expect(rearmOmieBillingForCustomer(database, "customer-novo")).toBe(1);
+
+      const payload = JSON.parse(
+        database
+          .prepare("SELECT payload_json FROM sync_queue WHERE id = 'omie-job-novo-cliente'")
+          .pluck()
+          .get() as string
+      );
+      // Sem isto o cliente subia ao OMIE sem e-mail e o IncluirCliente era recusado,
+      // derrubando o pedido do fechamento junto.
+      expect(payload.customer).toMatchObject({ email: "nfe@pedreira.com.br" });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("blocks the closing and points to the customer field OMIE refused", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertClosedOperationForNewCustomer(database);
+      enqueueBillingJobForNewCustomer(database);
+      invokeMock.mockResolvedValueOnce({
+        error: createFunctionHttpError(
+          "Cadastro do cliente recusado pelo OMIE (Cliente Local LTDA). Falta preencher: E-mail. " +
+            "Complete o cadastro do cliente e reenvie. Detalhe OMIE: ERROR: O preenchimento da tag [email] e obrigatorio!"
+        ),
+        data: null
+      });
+
+      const result = await processOmieSyncQueue(database, identity);
+
+      expect(result.failed).toBe(1);
+      // Recusa de cadastro e deterministica: o job para de re-tentar (sem retry storm)
+      // e continua re-executavel (attempt_count intacto).
+      expect(
+        database
+          .prepare("SELECT next_attempt_at, attempt_count FROM sync_queue WHERE id = ?")
+          .get("omie-job-novo-cliente")
+      ).toMatchObject({ next_attempt_at: BLOCKED_NEXT_ATTEMPT_AT, attempt_count: 0 });
+      const operation = database
+        .prepare(
+          "SELECT omie_billing_status, omie_billing_message FROM weighing_operations WHERE id = 'operation-1'"
+        )
+        .get() as { omie_billing_status: string; omie_billing_message: string };
+      expect(operation.omie_billing_status).toBe("cadastro_incompleto");
+      expect(operation.omie_billing_message).toContain("Falta preencher: E-mail");
+      // Cadastro re-armado: a proxima sincronizacao tenta criar o cliente no OMIE.
+      expect(
+        database
+          .prepare("SELECT needs_push FROM customers WHERE id = 'customer-novo'")
+          .pluck()
+          .get()
+      ).toBe(1);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("resends the closing by itself once the customer lands in OMIE", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertClosedOperationForNewCustomer(database);
+      enqueueBillingJobForNewCustomer(database);
+      // Fechamento parado por causa do cliente (estado deixado pela recusa anterior).
+      database
+        .prepare(
+          `UPDATE sync_queue SET status = 'failed', next_attempt_at = ?, last_error = 'Cadastro do cliente recusado pelo OMIE' WHERE id = ?`
+        )
+        .run(BLOCKED_NEXT_ATTEMPT_AT, "omie-job-novo-cliente");
+      database
+        .prepare(
+          "UPDATE weighing_operations SET omie_billing_status = 'cadastro_incompleto' WHERE id = 'operation-1'"
+        )
+        .run();
+      invokeMock.mockResolvedValueOnce({ error: null, data: { omieCustomerId: 4242 } });
+
+      const result = await pushOmieCustomersToCloud(database, identity);
+
+      expect(result).toMatchObject({ pushed: 1, failed: 0 });
+      expect(
+        database
+          .prepare("SELECT omie_customer_id FROM customers WHERE id = 'customer-novo'")
+          .pluck()
+          .get()
+      ).toBe(4242);
+      // Job de volta na fila, com o codigo OMIE do cliente ja no payload: o fechamento
+      // sai na mesma passada (a fila roda logo depois do push de cadastros).
+      const job = database
+        .prepare("SELECT status, payload_json FROM sync_queue WHERE id = 'omie-job-novo-cliente'")
+        .get() as { status: string; payload_json: string };
+      expect(job.status).toBe("pending");
+      expect(JSON.parse(job.payload_json)).toMatchObject({ customerOmieId: 4242 });
+      // Operacao sai da pendencia de cadastro.
+      expect(
+        database
+          .prepare("SELECT omie_billing_status FROM weighing_operations WHERE id = 'operation-1'")
+          .pluck()
+          .get()
+      ).toBeNull();
+    } finally {
+      database.close();
+    }
+  });
+
   it("limits OMIE queue batches to avoid long request bursts", async () => {
     const database = createDatabase();
 
@@ -2476,6 +2600,47 @@ function insertWeighingOperation(database: DesktopDatabase): void {
       )`
     )
     .run(now, now);
+}
+
+/** Operacao ja fechada de um cliente que ainda nao existe no OMIE (sem codigo, com CNPJ). */
+function insertClosedOperationForNewCustomer(database: DesktopDatabase): void {
+  const now = "2026-06-12T12:00:00.000Z";
+  insertLocalCustomer(database, "customer-novo");
+  insertWeighingOperation(database);
+  database
+    .prepare(
+      `UPDATE weighing_operations
+       SET customer_id = 'customer-novo', status = 'closed_local', exit_weight_captured_at = ?
+       WHERE id = 'operation-1'`
+    )
+    .run(now);
+}
+
+/** Job do fechamento que leva o cadastro do cliente para o edge criar no OMIE. */
+function enqueueBillingJobForNewCustomer(database: DesktopDatabase): void {
+  enqueueSyncJob(database, {
+    id: "omie-job-novo-cliente",
+    target: "omie",
+    action: "create_order",
+    entityType: "weighing_operation",
+    entityId: "operation-1",
+    idempotencyKey: "kyberrock:unit-1:operation-1:create_sales_order",
+    payload: {
+      operationId: "operation-1",
+      operationType: "invoice",
+      customerOmieId: 0,
+      localCustomerId: "customer-novo",
+      customer: {
+        localCustomerId: "customer-novo",
+        razaoSocial: "Cliente Local LTDA",
+        cnpjCpf: "12345678000195"
+      },
+      productOmieId: 55,
+      quantity: 10,
+      unitPrice: 25,
+      issueDate: "2026-06-12"
+    }
+  });
 }
 
 function insertPrintReceipt(database: DesktopDatabase): void {

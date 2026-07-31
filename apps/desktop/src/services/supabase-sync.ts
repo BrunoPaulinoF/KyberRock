@@ -38,6 +38,7 @@ import {
 } from "./weighing-operations.js";
 import {
   isCadastroIncompleteFault,
+  isOmieCustomerRegistrationFault,
   isOmieMissingDocumentFault,
   isOmieProtectedRecordFault
 } from "./omie-fault-classifier.js";
@@ -3205,6 +3206,9 @@ export async function pushOmieCustomersToCloud(
       } else {
         setOmieId.run(data.omieCustomerId, customer.id);
       }
+      // Cliente agora existe no OMIE: os fechamentos que estavam parados por causa dele
+      // voltam para a fila e saem nesta mesma passada (a fila roda depois deste push).
+      rearmOmieBillingForCustomer(database, customer.id);
       pushed++;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Erro OMIE";
@@ -3231,6 +3235,85 @@ export async function pushOmieCustomersToCloud(
   }
 
   return { pushed, failed, errors };
+}
+
+/**
+ * Devolve para a fila OMIE os fechamentos de um cliente que ficaram parados porque ele
+ * ainda nao existia no OMIE (ou o cadastro dele foi recusado la). Roda logo depois do
+ * cliente entrar no OMIE — pelo cadastro ou pelo proprio envio de outro fechamento — e:
+ *
+ * - reconstroi o payload do job com `buildOmieBillingJob` (agora com o codigo OMIE do
+ *   cliente, e nao mais so o cadastro embutido);
+ * - devolve o job para 'pending' com o backoff zerado, mantendo a MESMA chave de
+ *   idempotencia (o OMIE reaproveita o pedido/OS, nunca duplica);
+ * - enfileira o job de operacoes que fecharam sem job nenhum (cliente sem CNPJ/CPF no
+ *   fechamento: naquele momento nao havia o que enviar);
+ * - limpa o 'cadastro_incompleto' da operacao para ela sair do estado de pendencia.
+ *
+ * Como `pushOmieCustomersToCloud` roda ANTES de `processOmieSyncQueue` no ciclo do OMIE,
+ * o fechamento sai sozinho na mesma passada — sem o operador ter que clicar em
+ * "Refaturar"/"Reenviar". Retorna quantas operacoes foram rearmadas.
+ */
+export function rearmOmieBillingForCustomer(
+  database: DesktopDatabase,
+  customerId: string,
+  now: Date = new Date()
+): number {
+  if (!customerId) return 0;
+
+  const operations = database
+    .prepare(
+      `SELECT o.id
+         FROM weighing_operations o
+        WHERE o.customer_id = ?
+          AND o.status NOT IN ('cancelled', 'synced')
+          AND o.exit_weight_captured_at IS NOT NULL
+          AND o.omie_sales_order_id IS NULL
+          AND o.omie_service_order_id IS NULL`
+    )
+    .all(customerId) as Array<{ id: string }>;
+
+  const nowIso = now.toISOString();
+  let rearmed = 0;
+
+  for (const operation of operations) {
+    const built = buildOmieBillingJob(database, operation.id);
+    // Ainda sem o que enviar (cliente sem codigo OMIE e sem documento): segue pendente.
+    if (!built) continue;
+
+    enqueueOmieBillingJob(database, operation.id, built, now);
+    const updated = database
+      .prepare(
+        `UPDATE sync_queue
+            SET status = 'pending',
+                attempt_count = 0,
+                payload_json = ?,
+                next_attempt_at = ?,
+                updated_at = ?
+          WHERE target = 'omie'
+            AND idempotency_key = ?
+            AND status IN ('pending', 'failed', 'dead_letter')`
+      )
+      .run(JSON.stringify(built.payload), nowIso, nowIso, built.idempotencyKey);
+    if (updated.changes === 0) continue;
+
+    database
+      .prepare(
+        `UPDATE weighing_operations
+            SET omie_billing_status = NULL,
+                omie_billing_message = ?,
+                updated_at = ?
+          WHERE id = ? AND omie_billing_status = 'cadastro_incompleto'`
+      )
+      .run(
+        "Cliente cadastrado no OMIE. O fechamento sera reenviado na sincronizacao.",
+        nowIso,
+        operation.id
+      );
+    rearmed++;
+  }
+
+  return rearmed;
 }
 
 // Codigo de integracao do consumidor final padrao do OMIE (registro protegido).
@@ -4007,6 +4090,12 @@ export async function processOmieSyncQueue(
           );
       }
       markSyncJobDone(database, job.id);
+      // Cliente criado no OMIE agora (customerOmieId devolvido pelo envio): os OUTROS
+      // fechamentos dele que pararam por isso voltam para a fila. Depois do markSyncJobDone
+      // de proposito, para nunca reabrir o job que acabou de ser concluido.
+      if (data.omieCustomerId && payload.localCustomerId) {
+        rearmOmieBillingForCustomer(database, payload.localCustomerId);
+      }
       // Compra paga com adiantamento: agora que o pedido existe (e, na venda com
       // nota, ja foi faturado), o titulo gerado no OMIE pode ser baixado contra a
       // conta de adiantamentos — e o saldo cai la como caiu aqui.
@@ -4028,6 +4117,38 @@ export async function processOmieSyncQueue(
       processed++;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Erro OMIE";
+      // O OMIE recusou o CADASTRO do cliente (ele ainda nao existe la e o IncluirCliente
+      // foi rejeitado — campo obrigatorio faltando, documento invalido...). Deterministico:
+      // bloqueia o job (sem retry storm) e mostra na operacao o que falta preencher. Vale
+      // para os dois tipos de operacao. Quando o cliente entrar no OMIE, o job volta
+      // sozinho para a fila (rearmOmieBillingForCustomer) e o fechamento sai automatico.
+      if (isOmieCustomerRegistrationFault(message)) {
+        markSyncJobBlocked(database, job.id, message);
+        database
+          .prepare(
+            `UPDATE weighing_operations
+             SET omie_billing_status = 'cadastro_incompleto', omie_billing_message = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE id = ?`
+          )
+          .run(message, payload.operationId);
+        // Re-arma o envio do cadastro: assim que o cliente for aceito pelo OMIE (aqui ou
+        // depois de o operador completar o cadastro), o fechamento e reenviado sozinho.
+        if (payload.localCustomerId) {
+          database
+            .prepare(
+              `UPDATE customers
+               SET needs_push = 1, sync_status = 'error', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+               WHERE id = ? AND (omie_customer_id IS NULL OR omie_customer_id = 0)`
+            )
+            .run(payload.localCustomerId);
+        }
+        failed++;
+        errors.push(`Job ${job.id}: ${message}`);
+        if (index < jobs.length - 1) {
+          await sleep(delayMs);
+        }
+        continue;
+      }
       // Falha deterministica de cadastro/NF-e no faturamento: bloqueia (para o retry storm de
       // ~10x/min) e marca a pendencia na operacao. Continua re-executavel via processFiscalBillingNow.
       if (job.action === "create_and_bill_order" && isCadastroIncompleteFault(message)) {
@@ -4400,6 +4521,11 @@ export async function processFiscalBillingNow(
         operationId
       );
     markSyncJobDone(database, job.id);
+    // Cliente criado no OMIE neste faturamento: libera os outros fechamentos dele que
+    // estavam parados por isso (depois do markSyncJobDone, para nao reabrir este job).
+    if (data.omieCustomerId && payload.localCustomerId) {
+      rearmOmieBillingForCustomer(database, payload.localCustomerId);
+    }
 
     return {
       orderId: data.orderId,
@@ -4415,7 +4541,9 @@ export async function processFiscalBillingNow(
 
     // Falha deterministica de cadastro/NF-e: nao adianta re-tentar automaticamente. Bloqueia o
     // job (re-executavel manualmente apos corrigir) e retorna pendencia clara — sem throw/storm.
-    if (isCadastroIncompleteFault(message)) {
+    // A recusa do cadastro do cliente no OMIE entra aqui pelo mesmo motivo, mas com a
+    // mensagem que diz qual campo do cliente falta preencher.
+    if (isCadastroIncompleteFault(message) || isOmieCustomerRegistrationFault(message)) {
       markSyncJobBlocked(database, job.id, message);
       database
         .prepare(

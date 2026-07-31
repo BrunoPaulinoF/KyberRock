@@ -1,7 +1,9 @@
 import { createClient as createSupabaseClient } from "jsr:@supabase/supabase-js@2";
 import {
+  CUSTOMER_REGISTRATION_FAULT_PREFIX,
   OmieQueueManager,
   buildCustomerPayload,
+  customerRegistrationFaultMessage,
   extractExistingCustomerId,
   pushCarrierToOmie as pushCarrierToOmieCore,
   toCustomerUpdateBody,
@@ -2224,7 +2226,9 @@ async function findCustomerByDocument(
       {
         pagina: 1,
         registros_por_pagina: 200,
-        filtro: { cnpj_cpf: document }
+        // A tag do filtro e `clientesFiltro`; com `filtro` o OMIE recusa a estrutura e
+        // a busca nunca achava ninguem (todo cliente ja existente caia no IncluirCliente).
+        clientesFiltro: { cnpj_cpf: document.replace(/\D/g, "") }
       }
     );
     const customers = (response.clientes ?? []) as Array<Record<string, unknown>>;
@@ -2584,6 +2588,11 @@ function isOmieStructureRejection(error: unknown): boolean {
  * Codigo OMIE do cliente do pedido. Ja vinculado -> usa direto. Sem codigo mas com
  * cadastro no payload -> cria/localiza o cliente no OMIE na hora (find-or-create por
  * CNPJ/CPF) e devolve o codigo. Sem codigo e sem cadastro -> erro claro.
+ *
+ * A recusa do CADASTRO sai com mensagem propria (CUSTOMER_REGISTRATION_FAULT_PREFIX):
+ * ela e deterministica — re-tentar sem corrigir o cadastro so repete o erro — e o
+ * desktop usa esse prefixo para bloquear o job e mostrar o que falta preencher, em vez
+ * de exibir a mensagem crua do OMIE ("O preenchimento da tag [email] e obrigatorio!").
  */
 async function resolveOrderCustomerOmieId(
   credentials: OmieCredentials,
@@ -2593,9 +2602,16 @@ async function resolveOrderCustomerOmieId(
     return payload.customerOmieId;
   }
   if (payload.customer) {
-    return await pushCustomerToOmie(credentials, payload.customer);
+    try {
+      return await pushCustomerToOmie(credentials, payload.customer);
+    } catch (error) {
+      throw new Error(customerRegistrationFaultMessage(error, payload.customer.razaoSocial));
+    }
   }
-  throw new Error("Cliente sem codigo OMIE e sem dados de cadastro para criar no OMIE.");
+  throw new Error(
+    `${CUSTOMER_REGISTRATION_FAULT_PREFIX}. Cliente sem codigo OMIE e sem dados de cadastro ` +
+      "para criar no OMIE: informe o CNPJ/CPF do cliente e reenvie."
+  );
 }
 
 /**
