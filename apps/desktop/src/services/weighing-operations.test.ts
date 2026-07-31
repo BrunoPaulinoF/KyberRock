@@ -512,6 +512,92 @@ describe("weighing operations", () => {
     }
   });
 
+  it("reserva a baixa do adiantamento no OMIE ate o limite do que veio de la", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'").run();
+      // Metade do saldo veio do financeiro do OMIE (adiantamento) e metade foi
+      // lancada aqui: so a parte do OMIE pode ser baixada la.
+      database
+        .prepare(
+          `INSERT INTO customer_credit_movements (
+             id, company_id, customer_id, operation_id, movement_type, amount_cents,
+             balance_after_cents, reason, source, omie_title_id, created_at
+           ) VALUES ('adv-1', ?, 'customer-1', NULL, 'credit', 40000, 40000,
+                     'Adiantamento OMIE #7001', 'omie', 7001, '2026-07-20T10:00:00.000Z')`
+        )
+        .run(identity.companyId);
+      database
+        .prepare(
+          `INSERT INTO customer_credit_balances (customer_id, balance_cents, updated_at)
+           VALUES ('customer-1', 40000, '2026-07-20T10:00:00.000Z')
+           ON CONFLICT(customer_id) DO UPDATE SET balance_cents = excluded.balance_cents`
+        )
+        .run();
+      const creditService = new CreditService(database);
+      creditService.applyManualAdjustment("customer-1", 60_000, "acerto");
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, { operationId: operation.id, exitWeightKg: 18_500 });
+
+      const row = database
+        .prepare(
+          `SELECT omie_advance_settle_cents, omie_advance_status
+           FROM weighing_operations WHERE id = ?`
+        )
+        .get(operation.id) as { omie_advance_settle_cents: number; omie_advance_status: string };
+      // Debito de 780,00, adiantamento do OMIE de 400,00: o resto e fiado/ajuste
+      // local e nao vira baixa no OMIE.
+      expect(row).toEqual({ omie_advance_settle_cents: 40_000, omie_advance_status: "pending" });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("nao reserva baixa no OMIE quando o credito nao veio de adiantamento", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'").run();
+      new CreditService(database).applyCredit("customer-1", 100_000, "saldo lancado aqui");
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, { operationId: operation.id, exitWeightKg: 18_500 });
+
+      const row = database
+        .prepare(
+          `SELECT omie_advance_settle_cents, omie_advance_status
+           FROM weighing_operations WHERE id = ?`
+        )
+        .get(operation.id) as {
+        omie_advance_settle_cents: number;
+        omie_advance_status: string | null;
+      };
+      expect(row).toEqual({ omie_advance_settle_cents: 0, omie_advance_status: null });
+    } finally {
+      database.close();
+    }
+  });
+
   it("does not debit prepaid credit twice on a double close (idempotent)", () => {
     const database = createDatabase();
 

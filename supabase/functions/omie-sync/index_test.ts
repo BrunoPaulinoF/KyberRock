@@ -2571,3 +2571,161 @@ Deno.test("pull_customer_advances estorna adiantamento cancelado no OMIE", async
     omie_title_id: 7010
   });
 });
+
+Deno.test("settle_advance baixa o titulo do pedido contra a conta de adiantamento", async () => {
+  const deviceToken = "token-baixa";
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-baixa": {
+        id: "device-baixa",
+        company_id: "company-adv",
+        unit_id: "unit-adv",
+        token_hash: await sha256Hex(deviceToken),
+        is_active: true
+      }
+    },
+    companies: {
+      "company-adv": {
+        id: "company-adv",
+        is_active: true,
+        omie_app_key: "key",
+        omie_app_secret: "secret"
+      }
+    }
+  });
+  const omieQueue = createOmieQueueStub((input) => {
+    if (input.call === "ListarContasCorrentes") {
+      return {
+        pagina: 1,
+        total_de_paginas: 1,
+        conta_corrente_cadastro: [
+          { nCodCC: 11, descricao: "Banco do Brasil" },
+          { nCodCC: 22, descricao: "Adiantamento de Clientes" }
+        ]
+      };
+    }
+
+    if (input.call === "ListarContasReceber") {
+      return {
+        pagina: 1,
+        total_de_paginas: 1,
+        conta_receber_cadastro: [
+          // Duas parcelas do pedido faturado: a baixa vai na primeira e sobra
+          // um pedaco para a segunda.
+          {
+            codigo_lancamento_omie: 3001,
+            nCodPedido: 888,
+            codigo_cliente_fornecedor: 42,
+            valor_documento: 100
+          },
+          {
+            codigo_lancamento_omie: 3002,
+            nCodPedido: 888,
+            codigo_cliente_fornecedor: 42,
+            valor_documento: 100
+          },
+          // Titulo de outro pedido: nao pode ser tocado.
+          {
+            codigo_lancamento_omie: 3003,
+            nCodPedido: 999,
+            codigo_cliente_fornecedor: 42,
+            valor_documento: 500
+          }
+        ]
+      };
+    }
+
+    if (input.call === "LancarRecebimento") return { codigo_baixa: 1 };
+    return null;
+  });
+
+  const response = await postOmieSync(
+    {
+      deviceId: "device-baixa",
+      deviceToken,
+      action: "settle_advance",
+      payload: {
+        localOperationId: "op-1",
+        customerOmieId: 42,
+        omieOrderId: 888,
+        amountCents: 15_000,
+        issueDate: "2026-07-20",
+        idempotencyKey: "kyberrock:unit:op-1:settle_advance"
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  assertObjectMatch(response, {
+    ok: true,
+    settledCents: 15_000,
+    advanceAccountCode: 22,
+    pendingReceivable: false
+  });
+
+  const baixas = omieQueue.requests.filter((request) => request.call === "LancarRecebimento");
+  assertEquals(baixas.length, 2);
+  assertObjectMatch(getParam(baixas[0]), {
+    codigo_lancamento: 3001,
+    codigo_conta_corrente: 22,
+    valor: 100
+  });
+  assertObjectMatch(getParam(baixas[1]), {
+    codigo_lancamento: 3002,
+    codigo_conta_corrente: 22,
+    valor: 50
+  });
+});
+
+Deno.test("settle_advance devolve pendencia quando o pedido ainda nao gerou titulo", async () => {
+  const deviceToken = "token-baixa-2";
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-baixa-2": {
+        id: "device-baixa-2",
+        company_id: "company-adv",
+        unit_id: "unit-adv",
+        token_hash: await sha256Hex(deviceToken),
+        is_active: true
+      }
+    },
+    companies: {
+      "company-adv": {
+        id: "company-adv",
+        is_active: true,
+        omie_app_key: "key",
+        omie_app_secret: "secret"
+      }
+    }
+  });
+  const omieQueue = createOmieQueueStub((input) => {
+    if (input.call === "ListarContasReceber") {
+      return { pagina: 1, total_de_paginas: 1, conta_receber_cadastro: [] };
+    }
+    return null;
+  });
+
+  const response = await postOmieSync(
+    {
+      deviceId: "device-baixa-2",
+      deviceToken,
+      action: "settle_advance",
+      payload: {
+        localOperationId: "op-2",
+        customerOmieId: 42,
+        omieOrderId: 4242,
+        amountCents: 5_000,
+        // Conta ja configurada: nao varre as contas correntes.
+        advanceAccountCode: 22,
+        idempotencyKey: "kyberrock:unit:op-2:settle_advance"
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  assertObjectMatch(response, { ok: true, settledCents: 0, pendingReceivable: true });
+  assertEquals(
+    omieQueue.requests.filter((request) => request.call === "LancarRecebimento").length,
+    0
+  );
+});

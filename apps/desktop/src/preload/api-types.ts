@@ -26,6 +26,7 @@ import type {
 } from "../services/product-prices";
 import type { CreditMovementRow, CustomerCreditSummary } from "../services/credit";
 import type { OmieCategoryOption } from "../services/omie-categories";
+import type { OmieAdvanceConfig } from "../services/omie-advance-config";
 import type { CreateQuotationInput, QuotationRow, QuotationSummary } from "../services/quotations";
 import type { ActivateDesktopInput, DesktopAccessStatus } from "../services/desktop-activation";
 import type { UnitDeviceInfo } from "../services/unit-devices";
@@ -391,6 +392,13 @@ export interface KyberRockDesktopApi {
   customerCreditSyncAdvances: (options?: {
     fullRescan?: boolean;
   }) => Promise<CustomerAdvancesSyncResult>;
+  /** Categorias/conta corrente que identificam o adiantamento no OMIE. */
+  omieAdvanceConfigGet: () => Promise<OmieAdvanceConfig>;
+  omieAdvanceConfigSet: (patch: {
+    categoryCodes?: string[];
+    accountCode?: number | null;
+    accountName?: string | null;
+  }) => Promise<OmieAdvanceConfig>;
   quotationsCreate: (input: Omit<CreateQuotationInput, "companyId">) => Promise<QuotationRow>;
   quotationsCancel: (id: string) => Promise<void>;
   quotationsListOpenForCustomer: (customerId: string) => Promise<QuotationSummary[]>;

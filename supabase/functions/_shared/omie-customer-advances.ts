@@ -211,6 +211,89 @@ function resolveReceivedAmountCents(input: {
   return settled ? input.amountCents : 0;
 }
 
+/**
+ * True quando a conta corrente do OMIE e a de adiantamento de clientes. O OMIE
+ * pede uma conta corrente propria para adiantamentos ("Adiantamento de
+ * Clientes"): e nela que o dinheiro do cliente fica ate a compra amortiza-lo.
+ */
+export function isAdvanceAccountName(name: string | null | undefined): boolean {
+  if (!name) return false;
+  const normalized = name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  if (!normalized.includes("adiantament")) return false;
+  return !normalized.includes("fornecedor");
+}
+
+/** Titulo a receber gerado por um pedido/OS, ja normalizado para a baixa. */
+export interface OmieOrderReceivable {
+  titleId: number;
+  /** Saldo ainda em aberto do titulo, em centavos. */
+  openAmountCents: number;
+  documentNumber: string | null;
+  orderNumber: string | null;
+}
+
+/** Uma baixa a lancar: qual titulo e quanto do adiantamento vai nele. */
+export interface AdvanceSettlementStep {
+  titleId: number;
+  amountCents: number;
+}
+
+/**
+ * Titulos do cliente que pertencem ao pedido/OS informado e ainda tem saldo.
+ *
+ * O OMIE devolve o vinculo em `nCodPedido` (id do pedido) ou em `numero_pedido`
+ * (numero exibido, tambem usado pela OS) — os dois sao aceitos porque o campo
+ * preenchido muda conforme a origem do titulo.
+ */
+export function selectOrderReceivables(
+  rows: ReadonlyArray<OmieReceivableRaw & { nCodPedido?: number | string; numero_pedido?: number | string; nCodOS?: number | string }>,
+  orderId: number
+): OmieOrderReceivable[] {
+  const receivables: OmieOrderReceivable[] = [];
+  for (const raw of rows) {
+    const title = mapOmieReceivableRaw(raw);
+    if (!title || title.cancelled) continue;
+
+    const linkedOrderId = toNumber(pickFirst(raw.nCodPedido, raw.numero_pedido, raw.nCodOS));
+    if (linkedOrderId !== orderId) continue;
+
+    const openAmountCents = title.amountCents - title.receivedAmountCents;
+    if (openAmountCents <= 0) continue;
+
+    receivables.push({
+      titleId: title.id,
+      openAmountCents,
+      documentNumber: title.documentNumber,
+      orderNumber: pickFirst(raw.numero_pedido)
+    });
+  }
+  return receivables;
+}
+
+/**
+ * Distribui o valor do adiantamento entre os titulos do pedido, do mais antigo
+ * para o mais novo, sem passar do saldo de cada um nem do total a amortizar.
+ * Uma venda parcelada vira varias baixas; sobra vira baixa parcial no ultimo.
+ */
+export function planAdvanceSettlement(
+  receivables: ReadonlyArray<OmieOrderReceivable>,
+  amountCents: number
+): AdvanceSettlementStep[] {
+  const steps: AdvanceSettlementStep[] = [];
+  let remaining = Math.max(0, amountCents);
+  for (const receivable of [...receivables].sort((a, b) => a.titleId - b.titleId)) {
+    if (remaining <= 0) break;
+    const amount = Math.min(remaining, receivable.openAmountCents);
+    if (amount <= 0) continue;
+    steps.push({ titleId: receivable.titleId, amountCents: amount });
+    remaining -= amount;
+  }
+  return steps;
+}
+
 /** "dd/mm/aaaa" (OMIE) para "yyyy-mm-dd" (ISO). */
 export function parseOmieDate(value: unknown): string | null {
   if (typeof value !== "string") return null;

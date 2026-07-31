@@ -10125,6 +10125,9 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   // produto entra la (antes o pedido ia com um codigo fixo para todos os produtos).
   const [categories, setCategories] = useState<OmieCategoryOption[]>([]);
   const [defaultCategoryCode, setDefaultCategoryCode] = useState("");
+  // Categoria que identifica o adiantamento do cliente no OMIE. Em branco, o
+  // sistema descobre pela descricao — fixar aqui atende quem renomeou a categoria.
+  const [advanceCategoryCode, setAdvanceCategoryCode] = useState("");
 
   useEffect(() => {
     void loadPrices();
@@ -10138,14 +10141,33 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
 
   async function loadCategories(): Promise<void> {
     try {
-      const [list, current] = await Promise.all([
+      const [list, current, advanceConfig] = await Promise.all([
         desktopApi.omieCategoriesList(),
-        desktopApi.omieDefaultCategoryGet()
+        desktopApi.omieDefaultCategoryGet(),
+        desktopApi.omieAdvanceConfigGet()
       ]);
       setCategories(list);
       setDefaultCategoryCode(current ?? "");
+      setAdvanceCategoryCode(advanceConfig.categoryCodes[0] ?? "");
     } catch {
       setCategories([]);
+    }
+  }
+
+  async function handleChangeAdvanceCategory(categoryCode: string): Promise<void> {
+    try {
+      await desktopApi.omieAdvanceConfigSet({
+        categoryCodes: categoryCode ? [categoryCode] : []
+      });
+      setAdvanceCategoryCode(categoryCode);
+      showFlash(
+        "success",
+        categoryCode
+          ? "Categoria de adiantamento definida."
+          : "Categoria de adiantamento voltara a ser detectada pela descricao."
+      );
+    } catch (err) {
+      showFlash("error", getErrorMessage(err));
     }
   }
 
@@ -10357,6 +10379,26 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
             style={getInputStyle(false)}
           >
             <option value="">Padrao do sistema (1.01.01)</option>
+            {categories.map((category) => (
+              <option key={category.code} value={category.code}>
+                {category.code} - {category.description}
+              </option>
+            ))}
+          </select>
+        </Field>
+
+        <Field
+          label="Categoria de adiantamento do cliente"
+          hint="Titulos do OMIE nesta categoria viram saldo de adiantamento na aba Credito. Em branco, o sistema procura pela descricao (Adiantamento de Clientes)."
+          style={{ flex: 1, minWidth: "320px", marginBottom: 0 }}
+        >
+          <select
+            value={advanceCategoryCode}
+            onChange={(e) => void handleChangeAdvanceCategory(e.target.value)}
+            disabled={categories.length === 0}
+            style={getInputStyle(false)}
+          >
+            <option value="">Detectar pela descricao</option>
             {categories.map((category) => (
               <option key={category.code} value={category.code}>
                 {category.code} - {category.description}

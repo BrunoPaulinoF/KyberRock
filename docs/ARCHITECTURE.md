@@ -209,6 +209,33 @@ lancamento financeiro e feito no OMIE — o KyberRock nao cria nem baixa titulo 
 - O desktop apenas aplica as linhas recebidas (mesmo caminho de qualquer movimento
   vindo de outra maquina) e continua recalculando o saldo pelo log. As compras
   seguem debitando localmente no fechamento — e o que abate o adiantamento.
+- Categoria e conta corrente do adiantamento sao descobertas pela descricao, mas
+  podem ser fixadas na tela de precos/categorias (`omie.advanceConfig`): o que o
+  operador escolhe vence a deteccao automatica.
+- **Pagamento manual do pre-pago e bloqueado**: o deposito do cliente pre-pago
+  nasce no OMIE, entao repetir o lancamento a mao contaria o dinheiro duas vezes.
+  Correcao de saldo continua possivel pelo ajuste, que exige motivo.
+
+#### Baixa do adiantamento no OMIE
+
+Debitar o saldo aqui nao basta: o dinheiro esta na conta corrente de
+adiantamentos do OMIE e precisa ser amortizado la, senao os dois lados divergem.
+
+- No fechamento, a operacao reserva em `omie_advance_settle_cents` a parte da
+  compra que sai do adiantamento — limitada ao adiantamento espelhado que ainda
+  nao foi amortizado (o excedente e fiado e nao gera baixa).
+- Depois que o pedido/OS existe no OMIE (e, na venda com nota, foi faturado), a
+  fila OMIE despacha o job `settle_advance`: a Edge Function acha os titulos do
+  pedido (`nCodPedido`/`numero_pedido`), distribui o valor entre as parcelas em
+  aberto e lanca `LancarRecebimento` contra a conta de adiantamentos.
+- Idempotencia pelo `codigo_baixa_integracao` (chave da operacao + titulo): um
+  retry nunca baixa o mesmo titulo duas vezes.
+- Enquanto o faturamento nao gerar titulo, o job volta para a fila em vez de dar
+  a operacao como amortizada. O estado fica em `omie_advance_status`
+  (`pending`/`settled`/`partial`/`error`) na propria operacao.
+- Cancelamento: pedido ja faturado nao e cancelavel no OMIE, e antes do
+  faturamento nao existe titulo — entao nao ha baixa a desfazer. Um estorno
+  excepcional continua sendo trabalho do financeiro no OMIE.
 
 ## Supabase
 

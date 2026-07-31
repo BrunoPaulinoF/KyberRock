@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  isAdvanceAccountName,
   isAdvanceCategoryDescription,
   mapAdvancesFromReceivables,
   mapOmieReceivableRaw,
-  selectAdvanceCategoryCodes
+  planAdvanceSettlement,
+  selectAdvanceCategoryCodes,
+  selectOrderReceivables
 } from "./omie-customer-advances";
 
 describe("isAdvanceCategoryDescription", () => {
@@ -140,5 +143,88 @@ describe("mapAdvancesFromReceivables", () => {
     );
 
     expect(advances[0]).toMatchObject({ titleId: 10, amountCents: 25_000 });
+  });
+});
+
+describe("isAdvanceAccountName", () => {
+  it("reconhece a conta corrente de adiantamento de clientes", () => {
+    expect(isAdvanceAccountName("Adiantamento de Clientes")).toBe(true);
+    expect(isAdvanceAccountName("ADIANTAMENTOS")).toBe(true);
+  });
+
+  it("descarta a conta de adiantamento a fornecedores e as demais", () => {
+    expect(isAdvanceAccountName("Adiantamento a Fornecedores")).toBe(false);
+    expect(isAdvanceAccountName("Caixinha")).toBe(false);
+    expect(isAdvanceAccountName(null)).toBe(false);
+  });
+});
+
+describe("selectOrderReceivables", () => {
+  it("pega os titulos do pedido que ainda tem saldo em aberto", () => {
+    const receivables = selectOrderReceivables(
+      [
+        // Titulo do pedido, em aberto: e o que sera baixado com o adiantamento.
+        {
+          codigo_lancamento_omie: 100,
+          nCodPedido: 555,
+          valor_documento: 400,
+          numero_documento: "NF-9"
+        },
+        // Mesmo pedido, ja recebido: nao pode ser baixado de novo.
+        {
+          codigo_lancamento_omie: 101,
+          nCodPedido: 555,
+          valor_documento: 200,
+          valor_pago: 200,
+          status_titulo: "RECEBIDO"
+        },
+        // Outro pedido do mesmo cliente.
+        { codigo_lancamento_omie: 102, nCodPedido: 999, valor_documento: 300 },
+        // Cancelado no OMIE.
+        {
+          codigo_lancamento_omie: 103,
+          nCodPedido: 555,
+          valor_documento: 300,
+          status_titulo: "CANCELADO"
+        }
+      ],
+      555
+    );
+
+    expect(receivables).toEqual([
+      { titleId: 100, openAmountCents: 40_000, documentNumber: "NF-9", orderNumber: null }
+    ]);
+  });
+
+  it("aceita o vinculo por numero_pedido (ordem de servico)", () => {
+    const receivables = selectOrderReceivables(
+      [{ codigo_lancamento_omie: 200, numero_pedido: 777, valor_documento: 150 }],
+      777
+    );
+
+    expect(receivables[0]).toMatchObject({ titleId: 200, openAmountCents: 15_000 });
+  });
+});
+
+describe("planAdvanceSettlement", () => {
+  const receivables = [
+    { titleId: 20, openAmountCents: 30_000, documentNumber: null, orderNumber: null },
+    { titleId: 10, openAmountCents: 50_000, documentNumber: null, orderNumber: null }
+  ];
+
+  it("distribui o adiantamento entre as parcelas, do titulo mais antigo ao mais novo", () => {
+    expect(planAdvanceSettlement(receivables, 60_000)).toEqual([
+      { titleId: 10, amountCents: 50_000 },
+      { titleId: 20, amountCents: 10_000 }
+    ]);
+  });
+
+  it("nunca baixa mais do que o saldo dos titulos", () => {
+    const steps = planAdvanceSettlement(receivables, 500_000);
+    expect(steps.reduce((total, step) => total + step.amountCents, 0)).toBe(80_000);
+  });
+
+  it("nao gera baixa quando nao ha adiantamento a amortizar", () => {
+    expect(planAdvanceSettlement(receivables, 0)).toEqual([]);
   });
 });

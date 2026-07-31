@@ -308,3 +308,107 @@ function insertOmieAdvance(
     )
     .run(options.createdAt);
 }
+
+describe("reserva da baixa do adiantamento no OMIE", () => {
+  it("limita a baixa ao adiantamento ainda nao amortizado la", () => {
+    const database = createDatabase();
+
+    try {
+      insertCustomer(database, { creditLimitCents: 0, creditMode: "prepaid" });
+      insertOmieAdvance(database, {
+        id: "omie-adv-1",
+        titleId: 7001,
+        amountCents: 100_000,
+        createdAt: "2026-07-20T10:00:00.000Z"
+      });
+      const service = new CreditService(database);
+      expect(service.getAdvanceAvailableToSettleCents("customer-1")).toBe(100_000);
+
+      // Venda anterior ja reservou (e baixou) 60,00 do adiantamento no OMIE.
+      insertOperation(database, "operation-1");
+      database
+        .prepare(
+          `UPDATE weighing_operations
+             SET omie_advance_settle_cents = 60000, omie_advance_settled_cents = 60000,
+                 omie_advance_status = 'settled'
+           WHERE id = 'operation-1'`
+        )
+        .run();
+
+      expect(service.getAdvanceAvailableToSettleCents("customer-1")).toBe(40_000);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("conta tambem a reserva que ainda esta na fila", () => {
+    const database = createDatabase();
+
+    try {
+      insertCustomer(database, { creditLimitCents: 0, creditMode: "prepaid" });
+      insertOmieAdvance(database, {
+        id: "omie-adv-1",
+        titleId: 7001,
+        amountCents: 100_000,
+        createdAt: "2026-07-20T10:00:00.000Z"
+      });
+      insertOperation(database, "operation-1");
+      // Reservada, ainda sem baixa confirmada no OMIE.
+      database
+        .prepare(
+          `UPDATE weighing_operations
+             SET omie_advance_settle_cents = 30000, omie_advance_status = 'pending'
+           WHERE id = 'operation-1'`
+        )
+        .run();
+
+      expect(new CreditService(database).getAdvanceAvailableToSettleCents("customer-1")).toBe(
+        70_000
+      );
+    } finally {
+      database.close();
+    }
+  });
+
+  it("nao reserva nada quando o cliente nao tem adiantamento espelhado", () => {
+    const database = createDatabase();
+
+    try {
+      insertCustomer(database, { creditLimitCents: 100_000, creditMode: "normal" });
+      expect(new CreditService(database).getAdvanceAvailableToSettleCents("customer-1")).toBe(0);
+    } finally {
+      database.close();
+    }
+  });
+});
+
+describe("pagamento manual x adiantamento do OMIE", () => {
+  it("barra o pagamento manual do cliente pre-pago", () => {
+    const database = createDatabase();
+
+    try {
+      insertCustomer(database, { creditLimitCents: 0, creditMode: "prepaid" });
+      const service = new CreditService(database);
+
+      expect(() => service.assertManualPaymentAllowed("customer-1")).toThrow(/pre-pago/i);
+      // O ajuste continua liberado: e o caminho de correcao, com motivo.
+      service.applyManualAdjustment("customer-1", 5_000, "acerto de caixa");
+      expect(service.getBalance("customer-1")).toBe(5_000);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("mantem o pagamento manual no fiado (baixa da fatura)", () => {
+    const database = createDatabase();
+
+    try {
+      insertCustomer(database, { creditLimitCents: 100_000, creditMode: "normal" });
+      const service = new CreditService(database);
+
+      expect(() => service.assertManualPaymentAllowed("customer-1")).not.toThrow();
+    } finally {
+      database.close();
+    }
+  });
+});

@@ -1057,6 +1057,22 @@ function registerIpcHandlers(): void {
     }
   );
 
+  ipcMain.handle("desktop:omie-advance-config-get", () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.getOmieAdvanceConfig();
+  });
+
+  ipcMain.handle(
+    "desktop:omie-advance-config-set",
+    (
+      _event,
+      patch: { categoryCodes?: string[]; accountCode?: number | null; accountName?: string | null }
+    ) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.setOmieAdvanceConfig(patch ?? {});
+    }
+  );
+
   ipcMain.handle(
     "desktop:quotations-create",
     (_event, input: Omit<CreateQuotationInput, "companyId">) => {

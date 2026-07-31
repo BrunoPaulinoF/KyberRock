@@ -213,6 +213,11 @@ import {
   type OmieCategoryOption
 } from "./omie-categories.js";
 import {
+  readOmieAdvanceConfig,
+  writeOmieAdvanceConfig,
+  type OmieAdvanceConfig
+} from "./omie-advance-config.js";
+import {
   cancelQuotation,
   createQuotation,
   listOpenQuotationsForCustomer,
@@ -2390,6 +2395,9 @@ export class DesktopRuntime {
       throw new Error("Informe um valor de pagamento maior que zero.");
     }
     const service = new CreditService(this.database);
+    // Pre-pago recebe adiantamento pelo OMIE: lancar o mesmo deposito a mao
+    // contaria o dinheiro duas vezes.
+    service.assertManualPaymentAllowed(customerId);
     service.applyCredit(customerId, amountCents, reason?.trim() || "Pagamento do cliente");
     return service.getSummary(customerId);
   }
@@ -2415,6 +2423,36 @@ export class DesktopRuntime {
   listCustomerCreditMovements(customerId: string, limit?: number): CreditMovementRow[] {
     this.assertDesktopAccess();
     return new CreditService(this.database).listMovements(customerId, limit ?? 100);
+  }
+
+  /**
+   * Categorias e conta corrente que identificam o adiantamento no OMIE. Vazio =
+   * o KyberRock descobre pela descricao ("Adiantamento de Clientes").
+   */
+  getOmieAdvanceConfig(): OmieAdvanceConfig {
+    this.assertDesktopAccess();
+    return readOmieAdvanceConfig(this.database);
+  }
+
+  /**
+   * Fixa a configuracao do adiantamento. Uma vez definida na tela, ela vence a
+   * deteccao automatica — e o caminho para pedreiras que renomearam a categoria.
+   */
+  setOmieAdvanceConfig(patch: {
+    categoryCodes?: string[];
+    accountCode?: number | null;
+    accountName?: string | null;
+  }): OmieAdvanceConfig {
+    this.assertDesktopAccess();
+    const categoryCodes = Array.isArray(patch.categoryCodes) ? patch.categoryCodes : undefined;
+    const manual =
+      (categoryCodes?.length ?? 0) > 0 || (patch.accountCode !== undefined && patch.accountCode !== null);
+    return writeOmieAdvanceConfig(this.database, {
+      ...(categoryCodes ? { categoryCodes } : {}),
+      ...(patch.accountCode !== undefined ? { accountCode: patch.accountCode } : {}),
+      ...(patch.accountName !== undefined ? { accountName: patch.accountName } : {}),
+      manual
+    });
   }
 
   /**

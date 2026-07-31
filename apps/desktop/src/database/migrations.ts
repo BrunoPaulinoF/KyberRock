@@ -1523,5 +1523,32 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_credit_movements_omie_title
 CREATE INDEX IF NOT EXISTS idx_customer_credit_movements_source
   ON customer_credit_movements(customer_id, source);
 `
+  },
+  {
+    version: 42,
+    name: "operation_omie_advance_settlement",
+    sql: `
+-- Baixa do adiantamento no OMIE. O debito do adiantamento acontece aqui no
+-- fechamento, mas o dinheiro esta na conta corrente de adiantamentos do OMIE:
+-- sem dar a baixa la, o saldo do KyberRock caia e o do OMIE nao, e os dois
+-- lados so batiam com conferencia manual do financeiro.
+--
+-- Quanto desta operacao deve ser amortizado do adiantamento no OMIE (limitado
+-- ao adiantamento disponivel no momento do fechamento).
+ALTER TABLE weighing_operations ADD COLUMN omie_advance_settle_cents INTEGER NOT NULL DEFAULT 0;
+
+-- Quanto ja foi efetivamente baixado la (permite baixa parcial e retomada).
+ALTER TABLE weighing_operations ADD COLUMN omie_advance_settled_cents INTEGER NOT NULL DEFAULT 0;
+
+-- pending | settled | partial | error — o que mostrar ao operador.
+ALTER TABLE weighing_operations ADD COLUMN omie_advance_status TEXT;
+ALTER TABLE weighing_operations ADD COLUMN omie_advance_message TEXT;
+ALTER TABLE weighing_operations ADD COLUMN omie_advance_settled_at TEXT;
+
+-- Fila de baixas pendentes por cliente (quanto do adiantamento ja foi consumido
+-- la), consultada a cada fechamento para nao amortizar mais do que existe.
+CREATE INDEX IF NOT EXISTS idx_weighing_operations_advance_settlement
+  ON weighing_operations(customer_id, omie_advance_status);
+`
   }
 ];

@@ -12,8 +12,11 @@ import {
 import { classifyOmieCustomer } from "../_shared/omie-customer-classification.ts";
 import {
   formatOmieDate,
+  isAdvanceAccountName,
   mapAdvancesFromReceivables,
+  planAdvanceSettlement,
   selectAdvanceCategoryCodes,
+  selectOrderReceivables,
   type OmieCustomerAdvance,
   type OmieReceivableRaw
 } from "../_shared/omie-customer-advances.ts";
@@ -56,6 +59,7 @@ type OmieAction =
   | "sync"
   | "pull_reference_data"
   | "pull_customer_advances"
+  | "settle_advance"
   | "list_document_types"
   | "create_order"
   | "create_and_bill_order"
@@ -554,6 +558,14 @@ export async function handleOmieSyncRequest(
         advances: page.advances.length,
         ...projection
       });
+    }
+
+    if (action === "settle_advance") {
+      const result = await settleOrderWithAdvance(
+        credentials,
+        body.payload as SettleAdvancePayload
+      );
+      return jsonResponse({ ok: true, ...result });
     }
 
     if (action === "list_document_types") {
@@ -1845,6 +1857,233 @@ function advanceReason(advance: OmieCustomerAdvance, delta: number): string {
   if (delta < 0) return `Acerto do adiantamento OMIE #${advance.titleId}${document}`;
   const received = advance.receivedDate ? ` em ${advance.receivedDate}` : "";
   return `Adiantamento OMIE #${advance.titleId}${document}${received}`;
+}
+
+type SettleAdvancePayload = {
+  /** Operacao local que consumiu o adiantamento (rastreio nos dois lados). */
+  localOperationId: string;
+  /** Codigo OMIE do cliente dono do adiantamento. */
+  customerOmieId: number;
+  /** nCodPed do pedido de venda (ou nCodOS da ordem de servico). */
+  omieOrderId: number;
+  /** Valor a amortizar do adiantamento, em centavos. */
+  amountCents: number;
+  /** Data de emissao do pedido (ISO), usada para achar os titulos gerados. */
+  issueDate?: string;
+  /** Conta corrente de adiantamentos (nCodCC), quando ja configurada. */
+  advanceAccountCode?: number;
+  /** Base da chave idempotente da baixa. */
+  idempotencyKey: string;
+};
+
+type SettleAdvanceResult = {
+  /** Valor efetivamente baixado nesta chamada, em centavos. */
+  settledCents: number;
+  /** Titulos baixados (id + valor). */
+  titles: Array<{ titleId: number; amountCents: number }>;
+  /** Conta corrente de adiantamento usada (devolvida para o desktop guardar). */
+  advanceAccountCode: number | null;
+  /** True quando o pedido ainda nao gerou titulo a receber (tentar de novo). */
+  pendingReceivable: boolean;
+  message: string | null;
+};
+
+/** Dias antes da emissao do pedido na busca dos titulos gerados por ele. */
+const SETTLE_LOOKBACK_DAYS = 3;
+/** Paginas de contas a receber varridas atras dos titulos do pedido. */
+const SETTLE_RECEIVABLE_MAX_PAGES = 5;
+/** Teto de paginas de contas correntes ao procurar a conta de adiantamento. */
+const ADVANCE_ACCOUNT_SCAN_MAX_PAGES = 10;
+
+/**
+ * Amortiza no OMIE o adiantamento que a compra consumiu no KyberRock.
+ *
+ * O dinheiro do cliente esta na conta corrente de adiantamentos do OMIE; quando
+ * a venda e faturada, o titulo a receber correspondente e baixado contra essa
+ * conta — e assim o saldo de adiantamento cai la como caiu aqui. Sem isso, o
+ * KyberRock debitava o saldo e o OMIE continuava mostrando o adiantamento
+ * inteiro, exigindo conferencia manual do financeiro.
+ *
+ * Idempotente pelo `codigo_baixa_integracao` (derivado da chave da operacao +
+ * titulo): reexecutar o job nao baixa o mesmo titulo duas vezes.
+ */
+async function settleOrderWithAdvance(
+  credentials: OmieCredentials,
+  payload: SettleAdvancePayload
+): Promise<SettleAdvanceResult> {
+  const amountCents = Math.trunc(payload?.amountCents ?? 0);
+  if (!payload?.omieOrderId || amountCents <= 0) {
+    return {
+      settledCents: 0,
+      titles: [],
+      advanceAccountCode: payload?.advanceAccountCode ?? null,
+      pendingReceivable: false,
+      message: "Nada a amortizar."
+    };
+  }
+
+  const advanceAccountCode =
+    payload.advanceAccountCode ?? (await resolveAdvanceAccountCode(credentials));
+  if (!advanceAccountCode) {
+    throw new Error(
+      "Conta corrente de adiantamento nao encontrada no OMIE. " +
+        "Cadastre a conta 'Adiantamento de Clientes' ou informe a conta nas configuracoes."
+    );
+  }
+
+  const receivables = await findOrderReceivables(credentials, payload);
+  if (receivables.length === 0) {
+    // Titulo ainda nao gerado (faturamento recem-enviado): o job volta para a
+    // fila e tenta de novo, em vez de dar a operacao como amortizada.
+    return {
+      settledCents: 0,
+      titles: [],
+      advanceAccountCode,
+      pendingReceivable: true,
+      message: "Pedido ainda sem titulo a receber no OMIE."
+    };
+  }
+
+  const steps = planAdvanceSettlement(receivables, amountCents);
+  const settled: Array<{ titleId: number; amountCents: number }> = [];
+  for (const step of steps) {
+    await settleReceivableWithAdvance(credentials, {
+      titleId: step.titleId,
+      amountCents: step.amountCents,
+      advanceAccountCode,
+      integrationCode: toOmieIntegrationCode(`${payload.idempotencyKey}:adv:${step.titleId}`),
+      observation: `Adiantamento do cliente - operacao ${payload.localOperationId}`
+    });
+    settled.push(step);
+  }
+
+  const settledCents = settled.reduce((total, step) => total + step.amountCents, 0);
+  return {
+    settledCents,
+    titles: settled,
+    advanceAccountCode,
+    pendingReceivable: false,
+    message:
+      settledCents < amountCents
+        ? `Titulos do pedido cobriram apenas R$ ${(settledCents / 100).toFixed(2)} do adiantamento.`
+        : null
+  };
+}
+
+/** Titulos a receber gerados pelo pedido/OS, com saldo em aberto. */
+async function findOrderReceivables(
+  credentials: OmieCredentials,
+  payload: SettleAdvancePayload
+): Promise<ReturnType<typeof selectOrderReceivables>> {
+  const endIso = new Date().toISOString().slice(0, 10);
+  const startIso = payload.issueDate
+    ? addDaysToIsoDate(payload.issueDate, -SETTLE_LOOKBACK_DAYS)
+    : addDaysToIsoDate(endIso, -SETTLE_LOOKBACK_DAYS);
+
+  const found: ReturnType<typeof selectOrderReceivables> = [];
+  for (let page = 1; page <= SETTLE_RECEIVABLE_MAX_PAGES; page++) {
+    let response: {
+      total_de_paginas?: number;
+      conta_receber_cadastro?: OmieReceivableRaw[];
+      contaReceberCadastro?: OmieReceivableRaw[];
+    } | null;
+    try {
+      response = await callOmie<
+        Record<string, unknown>,
+        {
+          total_de_paginas?: number;
+          conta_receber_cadastro?: OmieReceivableRaw[];
+          contaReceberCadastro?: OmieReceivableRaw[];
+        } | null
+      >(credentials, "/financas/contareceber/", "ListarContasReceber", {
+        pagina: page,
+        registros_por_pagina: PAGE_SIZE,
+        apenas_importado_api: "N",
+        filtrar_cliente: payload.customerOmieId,
+        filtrar_por_data_de: formatOmieDate(startIso),
+        filtrar_por_data_ate: formatOmieDate(endIso)
+      });
+    } catch (error) {
+      if (!isEmptyReceivablesError(error)) throw error;
+      break;
+    }
+
+    const rawItems = response?.conta_receber_cadastro ?? response?.contaReceberCadastro ?? [];
+    found.push(...selectOrderReceivables(rawItems, payload.omieOrderId));
+    if (computeFinished(page, rawItems.length, toIntOrNull(response?.total_de_paginas))) break;
+  }
+  return found;
+}
+
+/** Lanca a baixa de um titulo contra a conta corrente de adiantamentos. */
+async function settleReceivableWithAdvance(
+  credentials: OmieCredentials,
+  input: {
+    titleId: number;
+    amountCents: number;
+    advanceAccountCode: number;
+    integrationCode: string;
+    observation: string;
+  }
+): Promise<void> {
+  try {
+    await callOmie<Record<string, unknown>, unknown>(
+      credentials,
+      "/financas/contareceber/",
+      "LancarRecebimento",
+      {
+        codigo_lancamento: input.titleId,
+        codigo_baixa_integracao: input.integrationCode,
+        codigo_conta_corrente: input.advanceAccountCode,
+        valor: input.amountCents / 100,
+        data: formatOmieDate(new Date().toISOString().slice(0, 10)),
+        observacao: input.observation
+      }
+    );
+  } catch (error) {
+    // Baixa ja lancada num retry anterior: o OMIE recusa a repeticao da chave,
+    // e isso e exatamente o resultado esperado (idempotencia).
+    if (isAlreadySettledFault(error)) return;
+    throw error;
+  }
+}
+
+function isAlreadySettledFault(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return /ja (foi|esta) (baixad|recebid)|baixa ja|duplicad|ja cadastrad|ja existe/i.test(
+    error.message
+  );
+}
+
+/**
+ * Conta corrente de adiantamentos do tenant (nCodCC), descoberta pelo nome
+ * ("Adiantamento de Clientes"). Devolvida ao desktop para os proximos jobs
+ * irem direto, sem revarrer as contas.
+ */
+async function resolveAdvanceAccountCode(credentials: OmieCredentials): Promise<number | null> {
+  for (let page = 1; page <= ADVANCE_ACCOUNT_SCAN_MAX_PAGES; page++) {
+    const response = await callOmie<
+      { pagina: number; registros_por_pagina: number },
+      Record<string, unknown> | null
+    >(credentials, "/geral/contacorrente/", "ListarContasCorrentes", {
+      pagina: page,
+      registros_por_pagina: PAGE_SIZE
+    });
+
+    const rows = extractAccountRows(response);
+    for (const row of rows) {
+      const name = pickFirst(
+        row.descricao as string | undefined,
+        row.cDescricao as string | undefined
+      );
+      if (!isAdvanceAccountName(name)) continue;
+      const code = accountRowCode(row);
+      if (code !== null) return code;
+    }
+
+    if (rows.length < PAGE_SIZE) break;
+  }
+  return null;
 }
 
 /**

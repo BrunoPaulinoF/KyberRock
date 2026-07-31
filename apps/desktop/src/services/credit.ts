@@ -85,6 +85,20 @@ export class CreditService {
     return this.getSettings(customerId)?.creditMode === "prepaid";
   }
 
+  /**
+   * Barra o pagamento manual do cliente pre-pago. O adiantamento dele nasce no
+   * financeiro do OMIE e chega aqui espelhado: repetir o mesmo deposito a mao
+   * contaria o dinheiro duas vezes no saldo que autoriza a compra. Correcao de
+   * saldo continua possivel pelo ajuste, que exige motivo.
+   */
+  assertManualPaymentAllowed(customerId: string): void {
+    if (!this.isCustomerPrepaid(customerId)) return;
+    throw new Error(
+      "Cliente pre-pago: o adiantamento e lancado no OMIE (contas a receber na categoria de " +
+        "adiantamento) e espelhado aqui na sincronizacao. Para corrigir o saldo, use um ajuste com motivo."
+    );
+  }
+
   getSettings(customerId: string): CustomerCreditSettings | null {
     const row = this.db
       .prepare(
@@ -126,6 +140,26 @@ export class CreditService {
       omieAdvanceCents: advance.cents,
       omieSyncedAt: advance.syncedAt
     };
+  }
+
+  /**
+   * Quanto do adiantamento ainda pode ser amortizado no OMIE.
+   *
+   * E o total espelhado menos o que as operacoes anteriores ja consumiram (ou
+   * ja reservaram e ainda estao na fila). Sem esse desconto, duas vendas no
+   * mesmo dia mandariam baixar no OMIE mais adiantamento do que existe la.
+   */
+  getAdvanceAvailableToSettleCents(customerId: string): number {
+    const mirrored = this.getOmieAdvance(customerId).cents;
+    if (mirrored <= 0) return 0;
+    const row = this.db
+      .prepare(
+        `SELECT COALESCE(SUM(MAX(omie_advance_settle_cents, omie_advance_settled_cents)), 0) AS cents
+         FROM weighing_operations
+         WHERE customer_id = ? AND status != 'cancelled'`
+      )
+      .get(customerId) as { cents: number } | undefined;
+    return Math.max(0, mirrored - (row?.cents ?? 0));
   }
 
   /**

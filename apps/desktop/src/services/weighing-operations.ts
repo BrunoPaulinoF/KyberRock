@@ -820,12 +820,29 @@ export function closeWeighingOperation(
 
     if (productCreditDebitCents > 0 || freightCreditDebitCents > 0) {
       if (opRow?.customer_id) {
-        new CreditService(database).applyDebit(
+        const creditService = new CreditService(database);
+        creditService.applyDebit(
           opRow.customer_id,
           input.operationId,
           productCreditDebitCents,
           freightCreditDebitCents
         );
+        // Parte que sai do adiantamento (dinheiro que o cliente ja depositou no
+        // OMIE) precisa ser baixada la tambem, senao o saldo cai so aqui. O que
+        // exceder o adiantamento disponivel e fiado e nao gera baixa.
+        const settleCents = Math.min(
+          productCreditDebitCents + freightCreditDebitCents,
+          creditService.getAdvanceAvailableToSettleCents(opRow.customer_id)
+        );
+        if (settleCents > 0) {
+          database
+            .prepare(
+              `UPDATE weighing_operations
+                 SET omie_advance_settle_cents = ?, omie_advance_status = 'pending', updated_at = ?
+               WHERE id = ?`
+            )
+            .run(settleCents, timestamp, input.operationId);
+        }
       }
     }
 
