@@ -184,8 +184,9 @@ Campos OMIE observados na documentacao publica que afetam o modelo:
 - clientes: `codigo_cliente_omie`, `codigo_cliente_integracao`, `valor_limite_credito`, `bloquear_faturamento`;
 - produtos: `codigo_produto`, `codigo_produto_integracao`, `codigo`, `descricao`, `unidade`;
 - pedido: `codigo_pedido_integracao`, `codigo_cliente`, `codigo_parcela`, `det`, `frete`;
-- frete pedido: `codigo_transportadora`, `modalidade`, `peso_liquido`, `peso_bruto`, `valor_frete`;
-- OS: `cCodIntOS`, `nCodOS`, `nCodCli`, `cCodParc`, `ServicosPrestados`;
+- frete pedido: `codigo_transportadora`, `modalidade`, `placa`, `uf_placa`, `peso_liquido`, `peso_bruto`, `valor_frete`;
+- veiculo: `nCodVeic`, `cPlaca`, `cUF` (cadastro de `/transportador/veiculo/`, origem da UF do frete);
+- OS: `cCodIntOS`, `nCodOS`, `nCodCli`, `cCodParc`, `nQtdeParc`, `ServicosPrestados`, `Parcelas`;
 - contas a receber: `codigo_cliente_fornecedor`, `valor_documento`, `data_vencimento`, `status_titulo`.
 
 ### Adiantamento do cliente (credito pre-pago)

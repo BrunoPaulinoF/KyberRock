@@ -1489,6 +1489,16 @@ DROP TABLE carrier_dedup;
   },
   {
     version: 40,
+    name: "vehicle_plate_state",
+    sql: `
+-- UF da placa do veiculo: e o \`uf_placa\` do bloco frete do pedido de venda do OMIE
+-- (a NF-e pede placa E UF do veiculo no transporte). Vem do cadastro de veiculos do
+-- OMIE no sync (\`ListarVeiculos\`) e pode ser corrigida a mao no cadastro local.
+ALTER TABLE vehicles ADD COLUMN plate_state TEXT;
+`
+  },
+  {
+    version: 41,
     name: "credit_movement_omie_origin",
     sql: `
 -- Origem do lancamento no extrato de credito. Os adiantamentos do cliente sao
@@ -1508,8 +1518,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_credit_movements_omie_title
   ON customer_credit_movements(company_id, omie_title_id, movement_type)
   WHERE omie_title_id IS NOT NULL;
 
--- Quando o extrato do cliente foi conferido com o OMIE pela ultima vez (mostrado
--- na aba Credito para o operador saber se o saldo esta atualizado).
+-- Leitura da aba Credito: separa no extrato o que veio do OMIE do que foi
+-- lancado na balanca.
 CREATE INDEX IF NOT EXISTS idx_customer_credit_movements_source
   ON customer_credit_movements(customer_id, source);
 `

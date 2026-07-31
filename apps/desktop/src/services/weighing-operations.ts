@@ -1046,6 +1046,11 @@ export interface OmieOrderCarrierCadastro {
  */
 export interface OmieOrderTransport {
   plate: string | null;
+  /**
+   * UF de emplacamento do veiculo (`uf_placa` do bloco frete). A NF-e pede placa E UF
+   * do veiculo no transporte; vem do cadastro de veiculos (sincronizado do OMIE).
+   */
+  plateState: string | null;
   driverName: string | null;
   carrierOmieId: number | null;
   /**
@@ -1126,9 +1131,32 @@ function resolveFreightModalidade(
   freightType: string | null | undefined,
   freightTotalCents: number
 ): string {
+  // FOB (frete por conta do cliente) vai ao OMIE como "9 - sem incidencia de frete":
+  // quando o frete e responsabilidade do cliente a Pedreira nao contrata nem responde
+  // pelo transporte, entao a operacao nao deve nascer no OMIE como "frete por conta do
+  // destinatario". Sai antes da compatibilidade abaixo de proposito: FOB com valor
+  // lancado continua "9", nao vira CIF.
+  if (getFreightModalityInfo(freightType).key === "fob") return "9";
   const code = freightModalityOmieCode(freightType);
   if (code === "9" && freightTotalCents > 0) return "0";
   return code;
+}
+
+/**
+ * UF de emplacamento do veiculo da operacao (`uf_placa` do bloco frete do pedido).
+ * Vem do cadastro de veiculos, alimentado pelo sync do OMIE. Null quando o veiculo
+ * ainda nao tem UF — o pedido segue so com a placa, como antes.
+ */
+function resolveVehiclePlateState(
+  database: DesktopDatabase,
+  vehicleId: string | null
+): string | null {
+  if (!vehicleId) return null;
+  const row = database.prepare("SELECT plate_state FROM vehicles WHERE id = ?").get(vehicleId) as
+    | { plate_state: string | null }
+    | undefined;
+  const state = (row?.plate_state ?? "").trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(state) ? state : null;
 }
 
 interface OrderCustomerRow {
@@ -1300,6 +1328,7 @@ export function buildOmieBillingJob(
   const freightModalidade = resolveFreightModalidade(row.freight_type, operation.freightTotalCents);
   const transport: OmieOrderTransport = {
     plate: operation.plate?.trim() || null,
+    plateState: resolveVehiclePlateState(database, row.vehicle_id),
     driverName: operation.driverName?.trim() || null,
     carrierOmieId: carrierOmieId && carrierOmieId > 0 ? carrierOmieId : null,
     carrierName: orderCarrier?.name?.trim() || null,

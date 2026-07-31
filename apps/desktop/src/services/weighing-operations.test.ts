@@ -1133,12 +1133,20 @@ describe("weighing operations", () => {
       expect(built).not.toBeNull();
       expect(built!.payload.transport).toEqual({
         plate: "ABC1D23",
+        // Veiculo ainda sem UF no cadastro: o pedido segue so com a placa.
+        plateState: null,
         driverName: "Motorista Teste",
         carrierOmieId: 987654,
         carrierName: "Transportadora Teste",
         cargoWeightKg: 6_500,
         ownVehicle: false
       });
+
+      // Com a UF do cadastro (sincronizada do OMIE), ela acompanha a placa no frete.
+      database
+        .prepare("UPDATE vehicles SET plate_state = 'mg' WHERE id = 'vehicle-1'")
+        .run();
+      expect(buildOmieBillingJob(database, operation.id)!.payload.transport?.plateState).toBe("MG");
     } finally {
       database.close();
     }
@@ -1441,7 +1449,49 @@ describe("weighing operations", () => {
       const built = buildOmieBillingJob(database, operation.id);
       // 6,5 t x R$ 100,00 = R$ 650,00 -> vai como valor_frete no bloco frete do pedido.
       expect(built!.payload.freightTotalCents).toBe(65_000);
-      expect(built!.payload.freightModalidade).toBe("1");
+      // FOB = frete por conta do cliente -> "9" (sem incidencia de frete) no OMIE, mesmo
+      // com valor lancado: a Pedreira nao responde pelo transporte.
+      expect(built!.payload.freightModalidade).toBe("9");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("sends FOB freight as 'sem incidencia' (9) to OMIE", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET omie_customer_id = 456 WHERE id = 'customer-1'").run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      database
+        .prepare("UPDATE weighing_operations SET freight_type = 'fob' WHERE id = ?")
+        .run(operation.id);
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      expect(buildOmieBillingJob(database, operation.id)!.payload.freightModalidade).toBe("9");
+      // As demais modalidades seguem o mapeamento modFrete da NF-e.
+      database
+        .prepare("UPDATE weighing_operations SET freight_type = 'cif' WHERE id = ?")
+        .run(operation.id);
+      expect(buildOmieBillingJob(database, operation.id)!.payload.freightModalidade).toBe("0");
+      database
+        .prepare("UPDATE weighing_operations SET freight_type = 'own_recipient' WHERE id = ?")
+        .run(operation.id);
+      expect(buildOmieBillingJob(database, operation.id)!.payload.freightModalidade).toBe("4");
     } finally {
       database.close();
     }

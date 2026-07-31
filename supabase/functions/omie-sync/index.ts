@@ -224,6 +224,11 @@ type CreateOrderPayload = {
    */
   transport?: {
     plate?: string | null;
+    /**
+     * UF de emplacamento do veiculo (`uf_placa` do bloco frete). A NF-e pede placa E UF
+     * no transporte; vem do cadastro de veiculos do desktop, sincronizado do OMIE.
+     */
+    plateState?: string | null;
     driverName?: string | null;
     /** Codigo OMIE (codigo_cliente_omie) da transportadora vinculada ao veiculo. */
     carrierOmieId?: number | null;
@@ -342,23 +347,35 @@ type SyncPayload = {
   orders?: CreateOrderPayload[];
 };
 
+type SupabaseQueryLike = {
+  select(columns: string): SupabaseQueryLike;
+  update(values: Record<string, unknown>): SupabaseQueryLike;
+  eq(column: string, value: string): SupabaseQueryLike;
+  single(): Promise<{ data: unknown; error: unknown }>;
+};
+
 type SupabaseQueryResult = { data: unknown; error: { message: string } | null };
 
 /**
- * Subconjunto do client Supabase usado aqui. A query e "thenable" (como o
- * postgrest-js): `await supabase.from(...).select(...).in(...)` resolve para
- * `{ data, error }` sem precisar de `.single()`.
+ * Client aceito pelo espelho de adiantamentos: apenas o encadeamento realmente
+ * usado (`select().eq().in()` e `upsert()`), sem `single()`. Declarar so isso
+ * mantem o client real do supabase-js compativel — o builder do postgrest-js e
+ * "thenable", mas nao e um `Promise` completo, entao exigir mais do que o
+ * necessario quebraria a tipagem.
  */
-type SupabaseQueryLike = PromiseLike<SupabaseQueryResult> & {
-  select(columns: string): SupabaseQueryLike;
-  update(values: Record<string, unknown>): SupabaseQueryLike;
-  upsert(
-    values: Array<Record<string, unknown>>,
-    options?: { onConflict?: string; ignoreDuplicates?: boolean }
-  ): SupabaseQueryLike;
-  eq(column: string, value: string): SupabaseQueryLike;
-  in(column: string, values: Array<string | number>): SupabaseQueryLike;
-  single(): Promise<{ data: unknown; error: unknown }>;
+type AdvanceProjectionClient = {
+  from(table: string): {
+    select(columns: string): {
+      eq(
+        column: string,
+        value: string
+      ): { in(column: string, values: Array<string | number>): PromiseLike<SupabaseQueryResult> };
+    };
+    upsert(
+      values: Array<Record<string, unknown>>,
+      options?: { onConflict?: string; ignoreDuplicates?: boolean }
+    ): PromiseLike<SupabaseQueryResult>;
+  };
 };
 
 type SupabaseClientLike = {
@@ -517,7 +534,11 @@ export async function handleOmieSyncRequest(
         body.payload as PullCustomerAdvancesPayload | undefined
       );
       const projection = await projectCustomerAdvances(
-        supabase,
+        // O tipo minimo do client no handler (`select().eq().single()`) nao cobre
+        // o encadeamento do espelho; alargar aquele tipo faz o supabase-js real
+        // estourar a profundidade de instanciacao do TS. Os dois clients (real e
+        // stub dos testes) atendem AdvanceProjectionClient em tempo de execucao.
+        supabase as unknown as AdvanceProjectionClient,
         typedDevice.company_id,
         page.advances
       );
@@ -1666,7 +1687,7 @@ type ProjectAdvancesResult = {
  * ou um cancelamento no OMIE viram um acerto no extrato.
  */
 async function projectCustomerAdvances(
-  supabase: SupabaseClientLike,
+  supabase: AdvanceProjectionClient,
   companyId: string,
   advances: OmieCustomerAdvance[]
 ): Promise<ProjectAdvancesResult> {
@@ -2120,6 +2141,58 @@ function addDaysToIsoDate(isoDate: string, days: number): string {
   return base.toISOString().slice(0, 10);
 }
 
+type InstallmentPlanItem = {
+  /** Numero da parcela (1-based). */
+  number: number;
+  /** Dias entre a emissao e o vencimento (0 = a vista). */
+  dueInDays: number;
+  /** Vencimento em ISO (yyyy-mm-dd). */
+  dueDate: string;
+  /** Percentual do total nesta parcela (a ultima absorve o arredondamento). */
+  percent: number;
+  /** Valor da parcela em centavos (as parcelas somam exatamente o total). */
+  valueCents: number;
+};
+
+/**
+ * Parcelas da operacao: os dias de vencimento digitados no desktop mais o rateio do
+ * total (itens + frete) entre elas. Fonte unica do pedido de venda e da OS, para as
+ * duas saidas cairem no OMIE com exatamente o mesmo parcelamento.
+ */
+function buildInstallmentPlan(payload: CreateOrderPayload): InstallmentPlanItem[] {
+  const dueDays = orderDueDays(payload);
+  const count = dueDays.length;
+  const basePercent = Math.floor(10000 / count) / 100;
+  // Total da operacao (itens + frete) em centavos. O OMIE exige o valor em CADA parcela
+  // do parcelamento informado; sem ele rejeita o pedido com "O preenchimento da tag
+  // [valor] e obrigatorio!". A ultima parcela absorve o arredondamento para as parcelas
+  // somarem exatamente o total.
+  const itemsTotalCents = Math.round(payload.quantity * payload.unitPrice * 100);
+  const freightCents =
+    typeof payload.freightTotalCents === "number" && payload.freightTotalCents > 0
+      ? Math.round(payload.freightTotalCents)
+      : 0;
+  const totalCents = itemsTotalCents + freightCents;
+  let allocatedCents = 0;
+  return dueDays.map((dueInDays, index) => {
+    const isLast = index === count - 1;
+    const percent = isLast
+      ? Math.round((100 - basePercent * (count - 1)) * 100) / 100
+      : basePercent;
+    const valueCents = isLast
+      ? totalCents - allocatedCents
+      : Math.round((totalCents * percent) / 100);
+    allocatedCents += valueCents;
+    return {
+      number: index + 1,
+      dueInDays,
+      dueDate: addDaysToIsoDate(payload.issueDate, dueInDays),
+      percent,
+      valueCents
+    };
+  });
+}
+
 type OrderParcelamento = {
   /** Campos do cabecalho (codigo_parcela + qtde_parcelas quando "999"). */
   cabecalho: Record<string, unknown>;
@@ -2136,44 +2209,22 @@ type OrderParcelamento = {
  */
 function buildOrderParcelamento(payload: CreateOrderPayload): OrderParcelamento {
   const meio = (payload.paymentMethodOmieCode ?? "").trim();
-  const dueDays = orderDueDays(payload);
-  const useLista = meio.length > 0 || dueDays.length > 1 || dueDays[0] > 0;
+  const plan = buildInstallmentPlan(payload);
+  const useLista = meio.length > 0 || plan.length > 1 || plan[0].dueInDays > 0;
 
   if (!useLista) {
     const code = normalizeParcelaCode(payload.paymentTermOmieCode) ?? "000";
     return { cabecalho: { codigo_parcela: code }, listaParcelas: null };
   }
 
-  const count = dueDays.length;
-  const basePercent = Math.floor(10000 / count) / 100;
-  // Total do pedido (itens + frete) em centavos. O OMIE exige a tag `valor` em CADA
-  // parcela do parcelamento informado (codigo_parcela "999"); sem ela rejeita o pedido
-  // com "O preenchimento da tag [valor] e obrigatorio!". O ultimo parcela absorve o
-  // arredondamento para as parcelas somarem exatamente o total.
-  const itemsTotalCents = Math.round(payload.quantity * payload.unitPrice * 100);
-  const freightCents =
-    typeof payload.freightTotalCents === "number" && payload.freightTotalCents > 0
-      ? Math.round(payload.freightTotalCents)
-      : 0;
-  const orderTotalCents = itemsTotalCents + freightCents;
-  let allocatedCents = 0;
-  const parcela = dueDays.map((dueInDays, index) => {
-    const isLast = index === count - 1;
-    const percentual = isLast
-      ? Math.round((100 - basePercent * (count - 1)) * 100) / 100
-      : basePercent;
-    const valorCents = isLast
-      ? orderTotalCents - allocatedCents
-      : Math.round((orderTotalCents * percentual) / 100);
-    allocatedCents += valorCents;
-    return {
-      numero_parcela: index + 1,
-      data_vencimento: toOmieDate(addDaysToIsoDate(payload.issueDate, dueInDays)),
-      percentual,
-      valor: valorCents / 100,
-      ...(meio ? { meio_pagamento: meio } : {})
-    };
-  });
+  const count = plan.length;
+  const parcela = plan.map((item) => ({
+    numero_parcela: item.number,
+    data_vencimento: toOmieDate(item.dueDate),
+    percentual: item.percent,
+    valor: item.valueCents / 100,
+    ...(meio ? { meio_pagamento: meio } : {})
+  }));
 
   return {
     // OMIE: o campo do cabecalho e "qtde_parcelas" — "quantidade_parcelas" e rejeitado
@@ -2181,6 +2232,39 @@ function buildOrderParcelamento(payload: CreateOrderPayload): OrderParcelamento 
     cabecalho: { codigo_parcela: "999", qtde_parcelas: count },
     listaParcelas: { parcela }
   };
+}
+
+/**
+ * Parcelas informadas da OS (bloco `Parcelas` do IncluirOS). Espelha o parcelamento
+ * informado do pedido de venda: a OS sai com EXATAMENTE os vencimentos digitados na
+ * operacao, em vez de depender de a condicao existir no cadastro de parcelas do OMIE.
+ *
+ * Retorna null so quando a operacao e mesmo a vista (uma parcela no dia da emissao) —
+ * ai o codigo "000"/vinculado do cabecalho ja representa a condicao.
+ */
+function buildServiceOrderParcelas(
+  payload: CreateOrderPayload
+): Array<Record<string, unknown>> | null {
+  const plan = buildInstallmentPlan(payload);
+  if (plan.length === 1 && plan[0].dueInDays === 0) return null;
+  return plan.map((item) => ({
+    nParcela: item.number,
+    nDias: item.dueInDays,
+    dDtVenc: toOmieDate(item.dueDate),
+    nPercentual: item.percent,
+    nValor: item.valueCents / 100
+  }));
+}
+
+/**
+ * Recusa do OMIE ao FORMATO do corpo enviado — tag desconhecida ("Tag [PARCELAS] nao
+ * faz parte da estrutura do tipo complexo [...]") ou campo obrigatorio faltando dentro
+ * dela. Usado para reenviar a OS pelo caminho historico (codigo do cadastro de
+ * parcelas) em vez de deixar a operacao sem OS nenhuma.
+ */
+function isOmieStructureRejection(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /n[aã]o faz parte da estrutura|tipo complexo|tag\s*\[[^\]]+\]/i.test(message);
 }
 
 /**
@@ -2225,6 +2309,14 @@ async function resolveOrderCarrierOmieId(
     return null;
   }
 }
+
+/** Resposta do IncluirOS/ConsultarOS (o OMIE varia entre nCodOS e codigoOS). */
+type OmieServiceOrderResponse = {
+  nCodOS?: number;
+  codigoOS?: number;
+  cCodIntOS?: string;
+  codigoOSIntegracao?: string;
+};
 
 async function createOmieOrder(
   credentials: OmieCredentials,
@@ -2329,12 +2421,6 @@ async function createOmieOrder(
   }
 
   const serviceCodes = await resolveOmieServiceCodes(credentials);
-  // OS (operacao interna): usa o codigo de parcela vinculado, senao localiza/cria
-  // no cadastro; em ultimo caso "000" (a vista).
-  const osParcelaCode =
-    normalizeParcelaCode(payload.paymentTermOmieCode) ??
-    (await ensureOmieParcelaCode(credentials, payload)) ??
-    "000";
   // Impostos da OS iguais para todas as linhas: "01" = tributado no municipio,
   // "N" = ISS nao retido. Ambos sao obrigatorios no IncluirOS.
   const serviceTaxFields = {
@@ -2345,23 +2431,26 @@ async function createOmieOrder(
   };
   const freightValue = toOmieFreightValue(payload.freightTotalCents);
   const serviceItemData = buildServiceItemAdditionalData(payload);
-  const response = await callOmie<
-    unknown,
-    {
-      nCodOS?: number;
-      codigoOS?: number;
-      cCodIntOS?: string;
-      codigoOSIntegracao?: string;
-    }
-  >(credentials, "/servicos/os/", "IncluirOS", {
+  // Condicao ja vinculada a um codigo do cadastro do OMIE: usa o codigo, porque a
+  // condicao existe la com esses mesmos vencimentos. Sem vinculo, a OS leva o
+  // parcelamento INFORMADO (bloco `Parcelas`) com os vencimentos digitados na operacao,
+  // como o pedido de venda ja faz com lista_parcelas. Antes esse caso dependia de achar
+  // ou criar a condicao no cadastro do OMIE e, quando nao dava, caia em "000" — a OS
+  // nascia A VISTA mesmo com "9/18/27" digitado na operacao.
+  const linkedParcelaCode = normalizeParcelaCode(payload.paymentTermOmieCode);
+  const osParcelas = linkedParcelaCode === null ? buildServiceOrderParcelas(payload) : null;
+  const buildServiceOrderBody = (
+    parcelaCode: string,
+    parcelas: Array<Record<string, unknown>> | null
+  ) => ({
     Cabecalho: {
       cCodIntOS: integrationCode,
       nCodCli: customerOmieId,
       dDtPrevisao: toOmieDate(payload.issueDate),
       // Etapa "50" = "Faturar": a OS tambem e faturada dentro do OMIE.
       cEtapa: "50",
-      cCodParc: osParcelaCode,
-      nQtdeParc: installmentCount
+      cCodParc: parcelaCode,
+      nQtdeParc: parcelas !== null ? parcelas.length : installmentCount
     },
     ServicosPrestados: [
       {
@@ -2385,6 +2474,8 @@ async function createOmieOrder(
           ]
         : [])
     ],
+    // "999" no cabecalho = parcelamento informado; os vencimentos vao aqui.
+    ...(parcelas !== null ? { Parcelas: parcelas } : {}),
     InformacoesAdicionais: {
       // Mesma categoria do plano gerencial usada no pedido de venda (a do produto,
       // senao a padrao da unidade). Antes era um codigo fixo: toda operacao interna
@@ -2393,14 +2484,49 @@ async function createOmieOrder(
       ...(accountCode !== null ? { nCodCC: accountCode } : {}),
       cDadosAdicNF: buildServiceOrderAdditionalData(payload)
     }
-  }).catch(async (error) => {
-    // Idempotencia: se a OS ja existe (reenvio apos erro desconhecido), consulta por
-    // cCodIntOS e reaproveita o nCodOS; caso contrario propaga o erro original.
+  });
+
+  const consultExistingServiceOrder = async (): Promise<OmieServiceOrderResponse | null> => {
     const existing = await consultServiceOrderByIntegrationCode(credentials, integrationCode).catch(
       () => null
     );
     const existingId = extractServiceOrderId(existing);
-    if (existingId !== null) return { nCodOS: existingId } as { nCodOS?: number; codigoOS?: number };
+    return existingId !== null ? { nCodOS: existingId } : null;
+  };
+
+  const response = await callOmie<unknown, OmieServiceOrderResponse>(
+    credentials,
+    "/servicos/os/",
+    "IncluirOS",
+    // "999" = parcelamento informado; sem ele vale o codigo vinculado (ou "000", a vista).
+    buildServiceOrderBody(osParcelas !== null ? "999" : (linkedParcelaCode ?? "000"), osParcelas)
+  ).catch(async (error) => {
+    // Idempotencia: se a OS ja existe (reenvio apos erro desconhecido), consulta por
+    // cCodIntOS e reaproveita o nCodOS.
+    const existing = await consultExistingServiceOrder();
+    if (existing) return existing;
+
+    // O OMIE recusou o FORMATO do parcelamento informado: reenvia pelo cadastro de
+    // parcelas (caminho historico) para a operacao nao ficar sem OS. O pior caso volta
+    // a ser o comportamento anterior, nunca uma OS a menos.
+    if (osParcelas !== null && isOmieStructureRejection(error)) {
+      console.error(
+        "[omie] IncluirOS recusou o parcelamento informado; reenviando pelo cadastro de parcelas",
+        error
+      );
+      const fallbackCode = (await ensureOmieParcelaCode(credentials, payload)) ?? "000";
+      return await callOmie<unknown, OmieServiceOrderResponse>(
+        credentials,
+        "/servicos/os/",
+        "IncluirOS",
+        buildServiceOrderBody(fallbackCode, null)
+      ).catch(async (retryError) => {
+        const retryExisting = await consultExistingServiceOrder();
+        if (retryExisting) return retryExisting;
+        throw retryError;
+      });
+    }
+
     throw error;
   });
   const orderId = response.nCodOS ?? response.codigoOS;
@@ -2699,6 +2825,12 @@ function resolveCategoryCode(code: string | null | undefined): string {
 /** Codigos "modalidade" (modFrete) validos no frete do pedido de venda do OMIE. */
 const OMIE_FREIGHT_MODALIDADES = new Set(["0", "1", "2", "3", "4", "9"]);
 
+/** UF valida (2 letras) ou null — o `uf_placa` da NF-e nao aceita qualquer texto. */
+function normalizePlateState(value: string | null | undefined): string | null {
+  const text = (value ?? "").trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(text) ? text : null;
+}
+
 function normalizeFreightModalidade(value: string | null | undefined): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
@@ -2718,6 +2850,10 @@ function buildOmieFreight(
   // Dados de transporte da pesagem: placa, transportadora (codigo OMIE) e pesos da
   // carga. Granel sem embalagem: peso_bruto = peso_liquido = peso liquido pesado.
   const plate = transport?.plate?.trim().toUpperCase().replace(/[^A-Z0-9]/g, "") || null;
+  // UF da placa: a NF-e pede placa E UF do veiculo no transporte. So vai quando e uma
+  // UF valida (2 letras) — campo fiscal nao aceita lixo, e sem ela o pedido segue como
+  // antes, so com a placa.
+  const plateState = normalizePlateState(transport?.plateState);
   const carrierOmieId =
     typeof transport?.carrierOmieId === "number" && transport.carrierOmieId > 0
       ? transport.carrierOmieId
@@ -2734,6 +2870,7 @@ function buildOmieFreight(
     modalidade,
     valor_frete: hasValue ? Math.round(freightTotalCents as number) / 100 : 0,
     ...(plate !== null ? { placa: plate } : {}),
+    ...(plate !== null && plateState !== null ? { uf_placa: plateState } : {}),
     // Transporte proprio (3/4) nao leva transportadora — o emitente transporta.
     ...(carrierOmieId !== null && !ownVehicle ? { codigo_transportadora: carrierOmieId } : {}),
     ...(ownVehicle ? { veiculo_proprio: "S" } : {}),
@@ -2758,8 +2895,11 @@ function buildTransportAdditionalData(
   const parts: string[] = [];
   const driverName = transport.driverName?.trim();
   const plate = transport.plate?.trim().toUpperCase();
+  // A OS nao tem bloco `frete` para levar `uf_placa`, entao na operacao interna a UF
+  // acompanha a placa no texto.
+  const plateState = normalizePlateState(transport.plateState);
   if (driverName) parts.push(`Motorista: ${driverName}`);
-  if (plate) parts.push(`Placa: ${plate}`);
+  if (plate) parts.push(`Placa: ${plate}${plateState !== null ? `/${plateState}` : ""}`);
   return parts.length > 0 ? parts.join(" - ") : null;
 }
 

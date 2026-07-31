@@ -8653,6 +8653,13 @@ function VehicleCrud({
 }) {
   const fields: CrudField[] = [
     { key: "plate", label: "Placa", type: "plate", required: true, section: "Identificacao" },
+    {
+      key: "plateState",
+      label: "UF da placa",
+      uppercaseMax: 2,
+      section: "Identificacao",
+      helper: "UF de emplacamento, usada no frete da nota. Vem do cadastro de veiculos do OMIE."
+    },
     { key: "description", label: "Descricao", section: "Identificacao" },
     {
       key: "carrierId",
@@ -8673,6 +8680,12 @@ function VehicleCrud({
       render: (item) => <span style={styles.plateBadge}>{String(item.plate ?? "") || "-"}</span>
     },
     {
+      key: "plateState",
+      header: "UF",
+      width: "70px",
+      render: (item) => <CellText>{String(item.plateState ?? "") || "-"}</CellText>
+    },
+    {
       key: "description",
       header: "Descricao",
       width: "minmax(180px, 1.2fr)",
@@ -8682,8 +8695,10 @@ function VehicleCrud({
       key: "carrier",
       header: "Transportadora",
       width: "minmax(200px, 1.3fr)",
+      // O cache entrega o veiculo em camelCase (carrierId); lendo carrier_id a coluna
+      // ficava sempre "-" e o vinculo sumia do formulario de edicao.
       render: (item) => (
-        <CellText>{carrierNameById.get(String(item.carrier_id ?? "")) ?? "-"}</CellText>
+        <CellText>{carrierNameById.get(String(item.carrierId ?? "")) ?? "-"}</CellText>
       )
     }
   ];
@@ -8702,8 +8717,9 @@ function VehicleCrud({
       columns={columns}
       rowToForm={(item) => ({
         plate: String(item.plate ?? ""),
+        plateState: String(item.plateState ?? ""),
         description: String(item.description ?? ""),
-        carrierId: String(item.carrier_id ?? "")
+        carrierId: String(item.carrierId ?? "")
       })}
       buildPayload={(form) => {
         const normalizedPlate = normalizePlate(form.plate);
@@ -8711,9 +8727,14 @@ function VehicleCrud({
         if (!isValidPlate(normalizedPlate)) {
           return { error: "Placa invalida. Use o formato ABC1234 ou ABC1D23." };
         }
+        const plateState = form.plateState.trim().toUpperCase();
+        if (plateState && !/^[A-Z]{2}$/.test(plateState)) {
+          return { error: "UF invalida. Use as 2 letras do estado (ex.: MG)." };
+        }
         return {
           value: {
             plate: normalizedPlate,
+            plateState,
             description: form.description.trim(),
             carrierId: form.carrierId
           }
@@ -8723,6 +8744,7 @@ function VehicleCrud({
         desktopApi
           .vehiclesCreate({
             plate: payload.plate as string,
+            plateState: (payload.plateState as string) || undefined,
             description: (payload.description as string) || undefined,
             carrierId: (payload.carrierId as string) || undefined
           })
@@ -8732,6 +8754,7 @@ function VehicleCrud({
         desktopApi
           .vehiclesUpdate(id, {
             plate: payload.plate as string,
+            plateState: (payload.plateState as string) || null,
             description: (payload.description as string) || undefined,
             carrierId: (payload.carrierId as string) || null
           })

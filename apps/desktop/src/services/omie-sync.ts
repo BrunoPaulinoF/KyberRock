@@ -8,6 +8,7 @@ import {
   OmieParcelasService,
   OmiePaymentMethodsService,
   OmieProductsService,
+  OmieVehiclesService,
   hasClienteTag,
   hasTransportadoraTag,
   type CreateCustomerInput,
@@ -67,6 +68,7 @@ export class OmieSyncService {
   private readonly checkingAccountsService: OmieCheckingAccountsService;
   private readonly categoriesService: OmieCategoriesService;
   private readonly parcelasService: OmieParcelasService;
+  private readonly vehiclesService: OmieVehiclesService;
 
   constructor(
     private readonly client: OmieClient,
@@ -78,6 +80,7 @@ export class OmieSyncService {
     this.checkingAccountsService = new OmieCheckingAccountsService(client);
     this.categoriesService = new OmieCategoriesService(client);
     this.parcelasService = new OmieParcelasService(client);
+    this.vehiclesService = new OmieVehiclesService(client);
   }
 
   async syncAll(companyId: string): Promise<OmieSyncResult> {
@@ -688,6 +691,95 @@ export class OmieSyncService {
           category.categoryType,
           category.parentCode,
           category.isActive ? 1 : 0
+        );
+        counters.created++;
+      }
+    });
+
+    return counters;
+  }
+
+  /**
+   * Puxa o cadastro de veiculos do OMIE (/transportador/veiculo/) para `vehicles`.
+   * O que interessa e a **UF da placa**: a NF-e pede placa E UF do veiculo, e o bloco
+   * `frete` do pedido de venda leva os dois (`placa` + `uf_placa`). Sem esse sync a UF
+   * simplesmente nao existia no KyberRock e o pedido saia so com a placa.
+   *
+   * Idempotente e casado por placa normalizada (so letras/numeros): veiculo local que
+   * ja existe recebe a UF e o `omie_vehicle_id`; o que so existe no OMIE entra como
+   * cadastro novo com `source = 'omie'`. Nunca sobrescreve uma UF ja preenchida a mao
+   * com vazio — o cadastro do OMIE pode nao ter a UF de todos os veiculos.
+   *
+   * O endpoint de veiculos nao esta liberado em todo tenant; indisponibilidade e
+   * tratada por quem chama (o sync da entidade registra o erro sem derrubar o resto).
+   */
+  async syncVehicles(companyId: string): Promise<MasterEntitySyncCounters> {
+    const omieVehicles = await this.vehiclesService.listAll();
+    const counters: MasterEntitySyncCounters = {
+      fetched: omieVehicles.length,
+      created: 0,
+      updated: 0,
+      skipped: 0
+    };
+
+    const findLocal = this.db.prepare(
+      `SELECT id, plate_state, omie_vehicle_id
+         FROM vehicles
+        WHERE company_id = ?
+          AND UPPER(REPLACE(REPLACE(COALESCE(plate_normalized, plate), ' ', ''), '-', '')) = ?
+          AND deleted_at IS NULL
+        ORDER BY created_at ASC
+        LIMIT 1`
+    );
+    const update = this.db.prepare(
+      `UPDATE vehicles
+          SET plate_state = COALESCE(?, plate_state),
+              omie_vehicle_id = COALESCE(?, omie_vehicle_id),
+              last_synced_at = datetime('now'),
+              updated_at = datetime('now')
+        WHERE id = ?`
+    );
+    const insert = this.db.prepare(
+      `INSERT INTO vehicles
+         (id, company_id, plate, plate_normalized, plate_state, description, omie_vehicle_id,
+          source, is_active, last_synced_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'omie', ?, datetime('now'), datetime('now'), datetime('now'))`
+    );
+
+    this.runInTransaction(() => {
+      for (const vehicle of omieVehicles) {
+        if (!vehicle.plate) {
+          counters.skipped++;
+          continue;
+        }
+        const omieId = vehicle.id > 0 ? vehicle.id : null;
+        const existing = findLocal.get(companyId, vehicle.plate) as
+          | { id: string; plate_state: string | null; omie_vehicle_id: number | null }
+          | undefined;
+
+        if (existing) {
+          // Nada de novo (UF igual e vinculo ja feito): nao conta como atualizado.
+          const sameState =
+            vehicle.plateState === null || existing.plate_state === vehicle.plateState;
+          const sameOmieId = omieId === null || existing.omie_vehicle_id === omieId;
+          if (sameState && sameOmieId) {
+            counters.skipped++;
+            continue;
+          }
+          update.run(vehicle.plateState, omieId, existing.id);
+          counters.updated++;
+          continue;
+        }
+
+        insert.run(
+          randomUUID(),
+          companyId,
+          vehicle.plate,
+          vehicle.plate,
+          vehicle.plateState,
+          vehicle.description,
+          omieId,
+          vehicle.isActive ? 1 : 0
         );
         counters.created++;
       }

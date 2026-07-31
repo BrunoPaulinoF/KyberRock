@@ -125,19 +125,44 @@ describe("omie-sync Edge Function", () => {
     expect(source).not.toContain("quantidade_parcelas: count");
     expect(source).toContain("lista_parcelas: parcelamento.listaParcelas");
     expect(source).toContain("meio_pagamento: meio");
-    expect(source).toContain("data_vencimento: toOmieDate(addDaysToIsoDate(payload.issueDate");
+    // Os vencimentos saem do plano de parcelas compartilhado com a OS.
+    expect(source).toContain("function buildInstallmentPlan");
+    expect(source).toContain("dueDate: addDaysToIsoDate(payload.issueDate, dueInDays)");
+    expect(source).toContain("data_vencimento: toOmieDate(item.dueDate)");
   });
 
-  it("ensures the OS payment condition exists in the OMIE parcelas cadastro", () => {
+  it("sends the typed installments inline in the service order (Parcelas block)", () => {
     const source = getOmieSyncSource();
 
-    // A OS (operacao interna) ainda usa o codigo de parcela vinculado/criado no cadastro.
-    expect(source).toContain("async function ensureOmieParcelaCode");
+    // A OS leva o parcelamento INFORMADO: cCodParc "999" + bloco Parcelas com os
+    // vencimentos digitados, o mesmo plano usado no pedido de venda. Sem isso a OS
+    // dependia do cadastro de parcelas do OMIE e caia em "000" (a vista).
     expect(source).toContain("installmentDays?: number[];");
+    expect(source).toContain("function buildServiceOrderParcelas");
+    expect(source).toContain(
+      "const osParcelas = linkedParcelaCode === null ? buildServiceOrderParcelas(payload) : null;"
+    );
+    expect(source).toContain("dDtVenc: toOmieDate(item.dueDate)");
+    expect(source).toContain("nParcela: item.number");
+    expect(source).toContain("nDias: item.dueInDays");
+    expect(source).toContain("{ Parcelas: parcelas }");
+    expect(source).toContain('osParcelas !== null ? "999"');
+    expect(source).toContain("nQtdeParc: parcelas !== null ? parcelas.length : installmentCount");
+  });
+
+  it("falls back to the OMIE parcelas cadastro when the OS structure is rejected", () => {
+    const source = getOmieSyncSource();
+
+    // Se o OMIE recusar o formato do parcelamento informado, a OS ainda nasce pelo
+    // caminho historico (codigo vinculado -> cadastro -> "000") em vez de falhar.
+    expect(source).toContain("function isOmieStructureRejection");
+    expect(source).toContain("osParcelas !== null && isOmieStructureRejection(error)");
+    expect(source).toContain("async function ensureOmieParcelaCode");
     expect(source).toContain('"IncluirParcela"');
     expect(source).toContain("await ensureOmieParcelaCode(credentials, payload)");
-    // A vista continua caindo no padrao "000" (comportamento historico).
-    expect(source).toContain("normalizeParcelaCode(payload.paymentTermOmieCode) ??");
+    expect(source).toContain(
+      "const linkedParcelaCode = normalizeParcelaCode(payload.paymentTermOmieCode);"
+    );
     expect(source).toContain('"000";');
   });
 });

@@ -876,6 +876,7 @@ Deno.test("create_order envia os dados de transporte no frete e o motorista na N
         freightModalidade: "2",
         transport: {
           plate: "abc-1d23",
+          plateState: "mg",
           driverName: "Joao Motorista",
           carrierOmieId: 987654,
           cargoWeightKg: 15000,
@@ -894,6 +895,8 @@ Deno.test("create_order envia os dados de transporte no frete e o motorista na N
   assertEquals(frete.valor_frete, 200);
   // Placa normalizada (maiuscula, sem separadores) e transportadora pelo codigo OMIE.
   assertEquals(frete.placa, "ABC1D23");
+  // A NF-e pede placa E UF do veiculo: a UF vem do cadastro de veiculos do desktop.
+  assertEquals(frete.uf_placa, "MG");
   assertEquals(frete.codigo_transportadora, 987654);
   // Granel: peso bruto = liquido = peso pesado, em 1 volume.
   assertEquals(frete.peso_bruto, 15000);
@@ -903,7 +906,8 @@ Deno.test("create_order envia os dados de transporte no frete e o motorista na N
   assertEquals("veiculo_proprio" in frete, false);
 
   const infos = body.informacoes_adicionais as Record<string, unknown>;
-  assertEquals(infos.dados_adicionais_nf, "Motorista: Joao Motorista - Placa: ABC-1D23");
+  // A UF acompanha a placa no texto (a OS nao tem bloco frete para o uf_placa).
+  assertEquals(infos.dados_adicionais_nf, "Motorista: Joao Motorista - Placa: ABC-1D23/MG");
 });
 
 Deno.test("create_order com transporte proprio marca veiculo_proprio e omite transportadora", async () => {
@@ -959,6 +963,9 @@ Deno.test("create_order com transporte proprio marca veiculo_proprio e omite tra
   assertEquals(frete.veiculo_proprio, "S");
   assertEquals("codigo_transportadora" in frete, false);
   assertEquals(frete.placa, "XYZ4E56");
+  // Veiculo sem UF no cadastro: o pedido sai so com a placa (campo fiscal nao aceita
+  // valor inventado), como antes.
+  assertEquals("uf_placa" in frete, false);
 });
 
 Deno.test("create_order cadastra o cliente no OMIE na hora quando ele nao tem codigo", async () => {
@@ -1727,7 +1734,7 @@ Deno.test("create_order leva o meio de pagamento em cada parcela (tPag da NF-e)"
   assertEquals(parcela[0].data_vencimento, "07/07/2026");
 });
 
-Deno.test("create_order aplica a condicao criada tambem na ordem de servico", async () => {
+Deno.test("create_order manda os vencimentos digitados na ordem de servico", async () => {
   const deviceToken = "token-order-os-parcela";
   const token_hash = await sha256Hex(deviceToken);
   const fixtures = createSupabaseDependencies({
@@ -1772,12 +1779,143 @@ Deno.test("create_order aplica a condicao criada tambem na ordem de servico", as
   );
 
   assertObjectMatch(response, { ok: true, orderId: 555 });
-  const cabecalho = getParam(findRequest(omieQueue, "IncluirOS")).Cabecalho as Record<
-    string,
-    unknown
-  >;
-  assertEquals(cabecalho.cCodParc, "310");
+  // Nao mexe no cadastro de parcelas do OMIE: o parcelamento vai INFORMADO na OS.
+  assertEquals(
+    omieQueue.requests.some((request) => request.call === "IncluirParcela"),
+    false
+  );
+  const body = getParam(findRequest(omieQueue, "IncluirOS"));
+  const cabecalho = body.Cabecalho as Record<string, unknown>;
+  assertEquals(cabecalho.cCodParc, "999");
   assertEquals(cabecalho.nQtdeParc, 2);
+  const parcelas = body.Parcelas as Array<Record<string, unknown>>;
+  assertEquals(parcelas.length, 2);
+  assertEquals(parcelas[0].nParcela, 1);
+  assertEquals(parcelas[0].nDias, 30);
+  assertEquals(parcelas[0].dDtVenc, "06/08/2026");
+  assertEquals(parcelas[1].nDias, 60);
+  assertEquals(parcelas[1].dDtVenc, "05/09/2026");
+  // 12 t x R$ 40,00 = R$ 480,00, divididos igualmente entre as duas parcelas.
+  assertEquals(parcelas[0].nPercentual, 50);
+  assertEquals(parcelas[0].nValor, 240);
+  assertEquals(parcelas[1].nValor, 240);
+});
+
+Deno.test("create_order mantem a OS a vista no codigo do cadastro (sem bloco Parcelas)", async () => {
+  const deviceToken = "token-order-os-avista";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-order-os-avista": {
+        id: "device-order-os-avista",
+        company_id: "company-order-os-avista",
+        unit_id: "unit-order-os-avista",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-order-os-avista": {
+        id: "company-order-os-avista",
+        is_active: true,
+        omie_app_key: "order-os-avista",
+        omie_app_secret: "secret-order-os-avista"
+      }
+    }
+  });
+  const omieQueue = parcelaAwareOrderStub({});
+
+  await postOmieSync(
+    {
+      deviceId: "device-order-os-avista",
+      deviceToken,
+      action: "create_order",
+      payload: {
+        operationType: "internal",
+        customerOmieId: 100,
+        serviceDescription: "Pesagem interna",
+        quantity: 5,
+        unitPrice: 20,
+        issueDate: "2026-07-07",
+        idempotencyKey: "kyberrock:unit:op9:create_service_order"
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  const body = getParam(findRequest(omieQueue, "IncluirOS"));
+  assertEquals((body.Cabecalho as Record<string, unknown>).cCodParc, "000");
+  assertEquals(body.Parcelas, undefined);
+});
+
+Deno.test("create_order reenvia a OS pelo cadastro quando o OMIE recusa o bloco Parcelas", async () => {
+  const deviceToken = "token-order-os-fallback";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-order-os-fallback": {
+        id: "device-order-os-fallback",
+        company_id: "company-order-os-fallback",
+        unit_id: "unit-order-os-fallback",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-order-os-fallback": {
+        id: "company-order-os-fallback",
+        is_active: true,
+        omie_app_key: "order-os-fallback",
+        omie_app_secret: "secret-order-os-fallback"
+      }
+    }
+  });
+  // O OMIE recusa a tag Parcelas na primeira tentativa; a segunda (sem o bloco) passa.
+  const omieQueue = createOmieQueueStub((input) => {
+    if (input.call === "IncluirOS") {
+      const body = getParam(input);
+      if (body.Parcelas !== undefined) {
+        throw new Error(
+          "OMIE faultstring em IncluirOS (/servicos/os/) - ERROR: Tag [PARCELAS] nao faz parte da estrutura do tipo complexo [os_cadastro]!"
+        );
+      }
+      return { nCodOS: 777 };
+    }
+    if (input.call === "ConsultarOS") return {};
+    if (input.call === "ListarParcelas") {
+      return { pagina: 1, total_de_paginas: 1, cadastros: [] };
+    }
+    if (input.call === "IncluirParcela") return { cCodParcela: "311" };
+    if (input.call === "ListarContasCorrentes") return { conta_corrente_lista: [{ nCodCC: 7 }] };
+    if (input.call === "ListarCadastroServico") return { cadastros: [{ cCodServMun: "1.07" }] };
+    return defaultOmieListResponse(input);
+  });
+
+  const response = await postOmieSync(
+    {
+      deviceId: "device-order-os-fallback",
+      deviceToken,
+      action: "create_order",
+      payload: {
+        operationType: "internal",
+        customerOmieId: 100,
+        serviceDescription: "Pesagem interna",
+        quantity: 12,
+        unitPrice: 40,
+        issueDate: "2026-07-07",
+        idempotencyKey: "kyberrock:unit:op10:create_service_order",
+        installmentDays: [9, 18, 27]
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  // A OS nasce mesmo assim, pelo caminho historico (codigo criado no cadastro).
+  assertObjectMatch(response, { ok: true, orderId: 777 });
+  const attempts = omieQueue.requests.filter((request) => request.call === "IncluirOS");
+  assertEquals(attempts.length, 2);
+  assertEquals((getParam(attempts[1]).Cabecalho as Record<string, unknown>).cCodParc, "311");
+  assertEquals(getParam(attempts[1]).Parcelas, undefined);
 });
 
 Deno.test("cancel_order consulta e exclui um pedido de venda nao faturado", async () => {
