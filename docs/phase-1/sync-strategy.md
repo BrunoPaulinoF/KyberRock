@@ -121,15 +121,38 @@ Financeiro:
 - Enviar frete no bloco `frete` quando aplicavel, incluindo modalidade, transportadora, peso e valor.
 - Salvar `codigo_pedido` retornado.
 
+#### Modalidade do frete (implementado)
+
+- A modalidade do KyberRock mapeia para o `modalidade` (modFrete da NF-e) do bloco `frete`:
+  CIF `"0"`, terceiros `"2"`, transporte proprio `"3"`/`"4"`, sem frete `"9"`.
+- **FOB (frete por conta do cliente) vai como `"9"` — sem incidencia de frete.** Quando o frete
+  e responsabilidade do cliente a Pedreira nao contrata nem responde pelo transporte, entao a
+  operacao nao nasce no OMIE como "frete por conta do destinatario". Vale inclusive com valor
+  de frete lancado na operacao (o valor continua indo em `valor_frete`).
+- Compat: operacao antiga sem tipo salvo (default `none` -> `"9"`) que tenha valor de frete
+  continua indo como CIF `"0"`, para nao enviar "sem frete" num pedido que tinha frete.
+
 #### Condicao de pagamento (implementado)
 
 - A condicao local (`payment_terms`) pode ser vinculada a um codigo de parcela do OMIE via
   `payment_terms.omie_parcela_code` (ex: "000", "030"). Os codigos disponiveis sao espelhados
   do OMIE (`ListarParcelas`) em `omie_payment_terms` no pull.
-- No fechamento, o desktop resolve o codigo vinculado e o envia no payload do job
-  (`paymentTermOmieCode`, `paymentTermInstallmentCount`).
-- A Edge Function usa esse codigo em `codigo_parcela` (pedido) / `cCodParc` + `nQtdeParc` (OS).
-  Sem vinculo, cai no padrao `"000"` (a vista). O codigo e string e preserva zeros a esquerda.
+- No fechamento, o desktop resolve o codigo vinculado e os vencimentos da condicao e envia
+  tudo no payload do job (`paymentTermOmieCode`, `paymentTermInstallmentCount`,
+  `paymentTermInstallmentDays`). O codigo e string e preserva zeros a esquerda.
+- **Pedido de venda**: com meio de pagamento OU parcelas com vencimento, a Edge Function usa o
+  parcelamento informado do OMIE — `codigo_parcela` `"999"` + `qtde_parcelas` no cabecalho e
+  `lista_parcelas` com `data_vencimento`, `percentual`, `valor` e `meio_pagamento` por parcela.
+  A vista sem meio, usa o codigo vinculado (ou `"000"`).
+- **OS**: mesmo parcelamento (`buildInstallmentPlan` e compartilhado). Condicao vinculada a um
+  codigo do cadastro usa o codigo em `cCodParc` + `nQtdeParc`; **sem vinculo**, a OS vai com
+  `cCodParc` `"999"` e o bloco `Parcelas` (`nParcela`, `nDias`, `dDtVenc`, `nPercentual`,
+  `nValor`) — a condicao digitada na operacao cai no OMIE exatamente como foi digitada.
+  Antes esse caso dependia de localizar/criar a condicao no cadastro de parcelas e, quando nao
+  dava, caia em `"000"`: a OS nascia **a vista** mesmo com "9/18/27" digitado na operacao.
+- Se o OMIE recusar a estrutura do bloco `Parcelas`, a OS e reenviada pelo caminho antigo
+  (codigo do cadastro via `ensureOmieParcelaCode`, senao `"000"`), com o motivo no log: uma
+  recusa de formato nunca deixa a operacao sem OS.
 
 ### Operacao Interna
 
