@@ -1,0 +1,59 @@
+# Configuracao da CLI do Supabase para o projeto KyberRock.
+#
+# O que importa aqui e o `verify_jwt` de cada Edge Function. Ele vivia so no
+# dashboard, entao um `supabase functions deploy` sem `--no-verify-jwt` ligava a
+# verificacao e derrubava as chamadas do desktop (401) ate alguem reparar. Com os
+# blocos abaixo o valor passa a vir do repositorio: o deploy (manual ou pelo
+# workflow `.github/workflows/edge-functions-deploy.yml`) sempre reaplica o mesmo
+# ajuste, e mudar isso vira um diff revisavel.
+#
+# ATENCAO: funcao sem bloco aqui e implantada com `verify_jwt = true` (padrao da
+# CLI). Ao criar uma Edge Function nova, adicione-a nesta lista.
+
+project_id = "vksihzfrgqoemcqpquit"
+
+# --- Publicas / com autenticacao propria no corpo da requisicao ---------------
+# Estas funcoes nao usam o JWT do Supabase: elas validam deviceId + deviceToken
+# contra `device_registrations`, sessao de admin ou token do proprio provedor.
+
+[functions.omie-sync]
+verify_jwt = false
+
+[functions.desktop-sync]
+verify_jwt = false
+
+[functions.desktop-pull]
+verify_jwt = false
+
+[functions.desktop-activate]
+verify_jwt = false
+
+[functions.desktop-status]
+verify_jwt = false
+
+# Link publico fixo de download do instalador (ver docs/phase-3.1/README.md).
+[functions.desktop-download]
+verify_jwt = false
+
+[functions.admin-auth]
+verify_jwt = false
+
+[functions.admin-api]
+verify_jwt = false
+
+[functions.daily-report-scheduler]
+verify_jwt = false
+
+[functions.daily-report-email]
+verify_jwt = false
+
+[functions.financial-report-scheduler]
+verify_jwt = false
+
+[functions.financial-report-email]
+verify_jwt = false
+
+# --- Protegidas pelo JWT do Supabase -----------------------------------------
+
+[functions.cnpj-lookup]
+verify_jwt = true
