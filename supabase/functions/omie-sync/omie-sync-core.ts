@@ -320,7 +320,7 @@ export function toCustomerUpdateBody(
   body: Record<string, unknown>,
   omieCustomerId: number
 ): Record<string, unknown> {
-  const updateBody = { ...body, codigo_cliente_omie: omieCustomerId };
+  const updateBody: Record<string, unknown> = { ...body, codigo_cliente_omie: omieCustomerId };
   delete updateBody.codigo_cliente_integracao;
   return updateBody;
 }
