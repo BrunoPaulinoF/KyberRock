@@ -64,6 +64,8 @@ export const TIPS = {
     filterProduct: "Filtra operacoes concluidas por produto.",
     clearCanceled:
       "Apaga da lista todas as operacoes canceladas (somente a lista, o historico fica).",
+    clearClosed:
+      "Apaga da lista e dos relatorios as operacoes concluidas ate ontem. As de hoje ficam.",
     details:
       "Abre a ficha completa da operacao (duplo clique na linha faz o mesmo). Em andamento, permite editar cliente, produto, preco, frete, transporte e pagamento.",
     changeProduct: "Alterar material: troca o produto desta operacao aberta.",

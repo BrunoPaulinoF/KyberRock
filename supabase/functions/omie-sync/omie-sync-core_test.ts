@@ -2,11 +2,13 @@ import { assert, assertEquals } from "jsr:@std/assert";
 
 import {
   CUSTOMER_REGISTRATION_FAULT_PREFIX,
+  OMIE_EMAIL_FIELD_MAX_LENGTH,
   OmieQueueManager,
   buildCarrierPayload,
   buildCustomerPayload,
   customerRegistrationFaultMessage,
   extractOmieRequiredFields,
+  formatOmieEmailList,
   pushCustomerToOmieCore,
   toOmieIntegrationCode
 } from "./omie-sync-core.ts";
@@ -141,6 +143,29 @@ Deno.test(
     assertEquals(omitted.bloquear_faturamento, undefined);
   }
 );
+
+Deno.test("buildCustomerPayload envia todos os e-mails do cliente no campo do OMIE", () => {
+  const payload = buildCustomerPayload({
+    localCustomerId: "cliente-emails",
+    razaoSocial: "Cliente Multi E-mail",
+    email: "Fiscal@Cliente.com; financeiro@cliente.com , fiscal@cliente.com"
+  });
+
+  // Virgula simples e o separador que o OMIE usa para mandar NF-e/boleto a todos.
+  assertEquals(payload.email, "fiscal@cliente.com, financeiro@cliente.com");
+});
+
+Deno.test("formatOmieEmailList respeita o limite do campo sem cortar um e-mail ao meio", () => {
+  const emails = Array.from(
+    { length: 40 },
+    (_unused, index) => `destinatario${index}@empresa.com.br`
+  ).join(",");
+  const sent = formatOmieEmailList(emails) ?? "";
+
+  assert(sent.length <= OMIE_EMAIL_FIELD_MAX_LENGTH);
+  assert(sent.split(", ").every((email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)));
+  assertEquals(formatOmieEmailList("   "), undefined);
+});
 
 Deno.test("buildCustomerPayload completa o cadastro que o OMIE exige no IncluirCliente", () => {
   const pessoaFisica = buildCustomerPayload({

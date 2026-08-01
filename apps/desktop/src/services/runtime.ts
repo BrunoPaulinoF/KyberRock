@@ -61,6 +61,7 @@ import {
 import {
   cancelWeighingOperation,
   clearCanceledWeighingOperations,
+  clearClosedWeighingOperations,
   closeWeighingOperation,
   createWeighingOperation,
   deleteClosedWeighingOperation,
@@ -1133,6 +1134,15 @@ export class DesktopRuntime {
   clearCanceledWeighingOperations(): number {
     this.assertDesktopAccess();
     return clearCanceledWeighingOperations(this.database);
+  }
+
+  /**
+   * Limpa a lista de concluidas em lote. `untilDate` preserva o movimento do dia
+   * corrente: limpar historico nao pode levar junto o que a balanca fez hoje.
+   */
+  clearClosedWeighingOperations(options: { untilDate?: string } = {}): number {
+    this.assertDesktopAccess();
+    return clearClosedWeighingOperations(this.database, options);
   }
 
   deleteClosedWeighingOperation(operationId: string): void {

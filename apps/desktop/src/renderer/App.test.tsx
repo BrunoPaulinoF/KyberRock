@@ -12,6 +12,7 @@ import {
   isTransportReady,
   omieQueueActionLabel,
   omieQueueStatusLabel,
+  previousDayIso,
   readStoredThemeMode,
   resolveCarrierPrefill,
   shouldLinkCreatedDriverToCarrier
@@ -97,6 +98,13 @@ describe("App", () => {
     expect(readStoredThemeMode({ getItem: () => "light" })).toBe("light");
     expect(readStoredThemeMode({ getItem: () => "invalid" })).toBe("light");
     expect(readStoredThemeMode(null)).toBe("light");
+  });
+
+  it("limita a limpeza em lote a ontem, preservando o movimento do dia", () => {
+    expect(previousDayIso(new Date(2026, 7, 1, 7, 30))).toBe("2026-07-31");
+    // Virada de mes e de ano continuam corretas (data local, sem UTC no meio).
+    expect(previousDayIso(new Date(2026, 0, 1, 0, 5))).toBe("2025-12-31");
+    expect(previousDayIso(new Date(2026, 2, 1, 23, 59))).toBe("2026-02-28");
   });
 
   it("formats how long ago the truck entered", () => {

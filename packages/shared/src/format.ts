@@ -82,6 +82,76 @@ export function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 }
 
+/**
+ * Separador de e-mails no cadastro do cliente do OMIE: virgula simples. Com a lista assim,
+ * o OMIE manda NF-e e boleto para todos os enderecos informados.
+ */
+export const EMAIL_LIST_SEPARATOR = ", ";
+
+/** Tamanho maximo do campo `email` do cadastro de cliente/fornecedor do OMIE. */
+export const OMIE_EMAIL_FIELD_MAX_LENGTH = 500;
+
+/**
+ * Quebra a lista de e-mails digitada (ou vinda do OMIE) em enderecos. Aceita virgula, ponto
+ * e virgula, quebra de linha e espaco como separadores — e o que aparece quando o operador
+ * cola uma lista de outro sistema — e remove repetidos preservando a ordem.
+ */
+export function parseEmailList(value: string | null | undefined): string[] {
+  const emails: string[] = [];
+  for (const part of (value ?? "").split(/[,;\s]+/)) {
+    const email = normalizeEmail(part);
+    if (email.length > 0 && !emails.includes(email)) {
+      emails.push(email);
+    }
+  }
+  return emails;
+}
+
+/** Lista de e-mails no formato guardado e enviado ao OMIE ("a@x.com, b@y.com"). */
+export function formatEmailList(emails: string[]): string {
+  return emails.join(EMAIL_LIST_SEPARATOR);
+}
+
+/** Normaliza a lista digitada para o formato canonico (minusculas, sem repetidos). */
+export function normalizeEmailList(value: string | null | undefined): string {
+  return formatEmailList(parseEmailList(value));
+}
+
+/** Todos os enderecos da lista sao validos (lista vazia conta como valida). */
+export function isValidEmailList(value: string | null | undefined): boolean {
+  const parts = (value ?? "").split(/[,;\s]+/).filter((part) => part.trim().length > 0);
+  return parts.every((part) => isValidEmail(part));
+}
+
+/** Enderecos invalidos da lista, para dizer ao operador qual deles esta errado. */
+export function invalidEmailsInList(value: string | null | undefined): string[] {
+  return (value ?? "")
+    .split(/[,;\s]+/)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0 && !isValidEmail(part));
+}
+
+/**
+ * Lista pronta para o campo `email` do OMIE: virgula simples e, no maximo, 500 caracteres.
+ * O corte e feito por endereco inteiro — truncar no meio de um e-mail criaria um destinatario
+ * invalido e o OMIE recusaria o cadastro inteiro.
+ */
+export function formatEmailListForOmie(
+  value: string | null | undefined,
+  maxLength: number = OMIE_EMAIL_FIELD_MAX_LENGTH
+): string {
+  const emails = parseEmailList(value);
+  const accepted: string[] = [];
+
+  for (const email of emails) {
+    const candidate = formatEmailList([...accepted, email]);
+    if (candidate.length > maxLength) break;
+    accepted.push(email);
+  }
+
+  return formatEmailList(accepted);
+}
+
 export function normalizeCep(value: string): string {
   return value.replace(/\D/g, "").slice(0, 8);
 }

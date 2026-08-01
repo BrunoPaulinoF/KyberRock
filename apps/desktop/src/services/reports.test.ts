@@ -609,3 +609,70 @@ describe("getSalesPivot", () => {
     }
   });
 });
+
+describe("ReportService com operacoes excluidas", () => {
+  it("tira a operacao excluida de todos os relatorios", () => {
+    const db = createDatabase();
+
+    try {
+      setupBaseData(db);
+      insertOperations(db);
+      // Operador excluiu a operacao da lista de concluidas: ela nao pode continuar
+      // somando no diario, no mensal, no mix nem nos rankings.
+      db.prepare(
+        "UPDATE weighing_operations SET deleted_at = datetime('now') WHERE id = 'op-1'"
+      ).run();
+
+      const service = new ReportService(db);
+
+      const diario = service.getDailyReport("2026-06-06", "unit-1");
+      expect(diario.totalOperations).toBe(1);
+      expect(diario.totalNetWeightKg).toBe(10000);
+      expect(diario.totalCents).toBe(720_000);
+      expect(diario.operations.map((operation) => operation.id)).toEqual(["op-2"]);
+
+      const mensal = service.getMonthlyReport(2026, 6, "unit-1");
+      expect(mensal.totalOperations).toBe(2);
+
+      const produtos = service.getReportByProduct("2026-06-01", "2026-06-30", "unit-1");
+      expect(
+        produtos.find((linha) => linha.productDescription === "Brita 0")?.totalOperations
+      ).toBe(1);
+
+      const clientes = service.getReportByCustomer("2026-06-01", "2026-06-30", "unit-1");
+      expect(clientes.find((linha) => linha.customerName === "Cliente A")?.totalOperations).toBe(1);
+
+      const pivo = service.getSalesPivot("2026-06-01", "2026-06-30", "unit-1", "customer");
+      expect(pivo.totals.totalOperations).toBe(2);
+
+      const serie = service.getDailySeries("2026-06-01", "2026-06-30", "unit-1");
+      expect(serie.find((ponto) => ponto.date === "2026-06-06")?.totalOperations).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("tira a operacao excluida tambem das opcoes de filtro do pivo", () => {
+    const db = createDatabase();
+
+    try {
+      setupBaseData(db);
+      insertOperations(db);
+      // op-3 e a unica do Cliente B: excluida, o cliente sai da lista de opcoes.
+      db.prepare(
+        "UPDATE weighing_operations SET deleted_at = datetime('now') WHERE id = 'op-3'"
+      ).run();
+
+      const pivo = new ReportService(db).getSalesPivot(
+        "2026-06-01",
+        "2026-06-30",
+        "unit-1",
+        "customer"
+      );
+
+      expect(pivo.customers.map((cliente) => cliente.name)).toEqual(["Cliente A"]);
+    } finally {
+      db.close();
+    }
+  });
+});
