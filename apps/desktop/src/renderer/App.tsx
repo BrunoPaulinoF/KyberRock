@@ -229,6 +229,17 @@ export function isCustomerOwnTransport(form: Pick<WeighingFormState, "freightMod
  * remetente) e a forma de pagamento e "credito do cliente" (fiado), o valor do frete
  * obrigatoriamente entra na fatura do cliente (abate do credito).
  */
+/**
+ * Ontem, em ISO (yyyy-mm-dd) e horario local. Limite da limpeza em lote das
+ * concluidas: o movimento do dia corrente nunca entra.
+ */
+export function previousDayIso(now: Date = new Date()): string {
+  const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
 function freightGoesToCustomerInvoice(form: WeighingFormState): boolean {
   const info = getFreightModalityInfo(form.freightModality);
   return form.chargeFreight && info.defaultPayer === "quarry" && form.paymentMethodIsCredit;
@@ -422,6 +433,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [reprintingOperationId, setReprintingOperationId] = useState<string | null>(null);
   const [customersInitialSearch, setCustomersInitialSearch] = useState("");
   const [deleteClosedOperationId, setDeleteClosedOperationId] = useState<string | null>(null);
+  // Limpeza em lote apaga historico da tela e dos relatorios: pede a senha da
+  // unidade (a mesma do preco) antes de rodar, como as demais acoes sensiveis.
+  const [clearOperationsRequest, setClearOperationsRequest] = useState<
+    "closed" | "canceled" | null
+  >(null);
+  const [clearOperationsError, setClearOperationsError] = useState<string | null>(null);
+  const [clearOperationsBusy, setClearOperationsBusy] = useState(false);
   const [omieSyncing, setOmieSyncing] = useState(false);
   const [omieQueue, setOmieQueue] = useState<OmieQueueItem[]>([]);
   const [omieQueueLoading, setOmieQueueLoading] = useState(false);
@@ -1939,27 +1957,44 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
   }
 
-  async function handleClearCanceledOperations(): Promise<void> {
-    if (!desktopApi) {
-      return;
-    }
-    const confirmed = await requestAppConfirm({
-      title: "Limpar operacoes canceladas",
-      description: "Limpar todas as operacoes canceladas da lista?",
-      confirmLabel: "Limpar lista",
-      tone: "danger"
-    });
-    if (!confirmed) {
-      return;
-    }
+  /**
+   * Limpeza em lote (concluidas/canceladas) apaga historico da tela e dos
+   * relatorios, entao passa pela senha da unidade — a mesma usada para alterar
+   * preco. O clique so abre o pedido; quem executa e handleConfirmClearPassword.
+   */
+  function requestClearOperations(kind: "closed" | "canceled"): void {
+    setClearOperationsError(null);
+    setClearOperationsRequest(kind);
+  }
 
+  async function handleConfirmClearPassword(password: string): Promise<void> {
+    if (!desktopApi || !clearOperationsRequest || clearOperationsBusy) return;
+    const kind = clearOperationsRequest;
+    setClearOperationsBusy(true);
     try {
-      const count = await desktopApi.clearCanceledWeighingOperations();
-      setMessage(`${count} operacao(oes) cancelada(s) removida(s) da lista.`);
+      const valid = await desktopApi.verifyPriceChangePassword(password);
+      if (!valid) {
+        setClearOperationsError("Senha incorreta.");
+        return;
+      }
+
+      // Concluidas: o movimento do dia corrente nunca entra na limpeza.
+      const count =
+        kind === "closed"
+          ? await desktopApi.clearClosedWeighingOperations({ untilDate: previousDayIso() })
+          : await desktopApi.clearCanceledWeighingOperations();
+      setClearOperationsRequest(null);
+      setClearOperationsError(null);
+      setMessage(
+        kind === "closed"
+          ? `${count} operacao(oes) concluida(s) removida(s) da lista.`
+          : `${count} operacao(oes) cancelada(s) removida(s) da lista.`
+      );
       await refreshOpenOperations();
     } catch (error) {
-      setMessage(getErrorMessage(error));
-      await refreshOpenOperations();
+      setClearOperationsError(getErrorMessage(error));
+    } finally {
+      setClearOperationsBusy(false);
     }
   }
 
@@ -2697,7 +2732,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                         tone="danger"
                         placement="bottom"
                         disabled={canceledOperations.length === 0}
-                        onClick={() => void handleClearCanceledOperations()}
+                        onClick={() => requestClearOperations("canceled")}
                       />
                     </div>
                   ) : operationsTab === "closed" ? (
@@ -2729,6 +2764,15 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                             ))}
                         </select>
                       </label>
+                      <IconActionButton
+                        icon="trash"
+                        label="Limpar concluidas"
+                        tip={TIPS.operations.clearClosed}
+                        tone="danger"
+                        placement="bottom"
+                        disabled={closedOperations.length === 0}
+                        onClick={() => requestClearOperations("closed")}
+                      />
                     </div>
                   ) : null}
                 </div>
@@ -3100,6 +3144,28 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 description="A operacao sera removida da lista de concluidas. O pedido/OS ja enviado ao OMIE nao e afetado — trate-o no proprio OMIE se necessario."
                 onCancel={() => setDeleteClosedOperationId(null)}
                 onConfirm={() => void handleDeleteClosedOperation(deleteClosedOperationId)}
+              />
+            ) : null}
+
+            {clearOperationsRequest ? (
+              <PriceChangePasswordDialog
+                title={
+                  clearOperationsRequest === "closed"
+                    ? "Limpar operacoes concluidas"
+                    : "Limpar operacoes canceladas"
+                }
+                description={
+                  clearOperationsRequest === "closed"
+                    ? "Isto remove da lista e dos relatorios as operacoes concluidas ate ontem (as de hoje ficam). O pedido/NF ja enviado ao OMIE nao e afetado. Digite a senha da unidade para confirmar."
+                    : "Isto remove da lista todas as operacoes canceladas. Digite a senha da unidade para confirmar."
+                }
+                error={clearOperationsError}
+                submitting={clearOperationsBusy}
+                onCancel={() => {
+                  setClearOperationsRequest(null);
+                  setClearOperationsError(null);
+                }}
+                onSubmit={(password) => void handleConfirmClearPassword(password)}
               />
             ) : null}
 

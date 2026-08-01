@@ -11,6 +11,7 @@ import { buildOmieIntegrationCode } from "@kyberrock/omie-client";
 import {
   buildOmieBillingJob,
   cancelWeighingOperation,
+  clearClosedWeighingOperations,
   closeWeighingOperation,
   createWeighingOperation,
   createSimulatedWeighingOperation,
@@ -2508,6 +2509,99 @@ function insertCatalog(
     )
     .run(now, now);
 }
+
+describe("limpeza em lote das concluidas", () => {
+  it("limpa as concluidas ate a data informada e preserva o dia corrente", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+
+      const antiga = createSimulatedWeighingOperation(database, {
+        identity,
+        customerName: "Cliente Teste",
+        plate: "ABC1D23",
+        driverName: "Motorista Teste",
+        productDescription: "Brita 1",
+        entryWeightKg: 12_000
+      });
+      const hoje = createSimulatedWeighingOperation(database, {
+        identity,
+        customerName: "Cliente Teste",
+        plate: "ABC1D23",
+        driverName: "Motorista Teste",
+        productDescription: "Brita 1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, { operationId: antiga.id, exitWeightKg: 18_500 });
+      closeWeighingOperation(database, { operationId: hoje.id, exitWeightKg: 18_500 });
+      database
+        .prepare(
+          "UPDATE weighing_operations SET created_at = '2026-07-20T10:00:00.000Z' WHERE id = ?"
+        )
+        .run(antiga.id);
+
+      const removidas = clearClosedWeighingOperations(database, { untilDate: "2026-07-31" });
+
+      expect(removidas).toBe(1);
+      const restantes = listClosedWeighingOperations(database).map((operation) => operation.id);
+      expect(restantes).toEqual([hoje.id]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("limpa todas as concluidas quando nao ha data limite", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      const operation = createSimulatedWeighingOperation(database, {
+        identity,
+        customerName: "Cliente Teste",
+        plate: "ABC1D23",
+        driverName: "Motorista Teste",
+        productDescription: "Brita 1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, { operationId: operation.id, exitWeightKg: 18_500 });
+
+      expect(clearClosedWeighingOperations(database)).toBe(1);
+      expect(listClosedWeighingOperations(database)).toHaveLength(0);
+      // Segunda passada nao encontra mais nada (a exclusao e logica e idempotente).
+      expect(clearClosedWeighingOperations(database)).toBe(0);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("nao toca nas operacoes abertas", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      const aberta = createSimulatedWeighingOperation(database, {
+        identity,
+        customerName: "Cliente Teste",
+        plate: "ABC1D23",
+        driverName: "Motorista Teste",
+        productDescription: "Brita 1",
+        entryWeightKg: 12_000
+      });
+
+      expect(clearClosedWeighingOperations(database)).toBe(0);
+      const row = database
+        .prepare("SELECT deleted_at FROM weighing_operations WHERE id = ?")
+        .get(aberta.id) as { deleted_at: string | null };
+      expect(row.deleted_at).toBeNull();
+    } finally {
+      database.close();
+    }
+  });
+});
 
 /**
  * Saldo vindo do financeiro do OMIE (adiantamento espelhado). E a unica forma de

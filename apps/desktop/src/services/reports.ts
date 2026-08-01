@@ -156,6 +156,7 @@ export class ReportService {
       LEFT JOIN customers c ON c.id = wo.customer_id
       LEFT JOIN products p ON p.id = wo.product_id
       WHERE wo.unit_id = ?
+        AND wo.deleted_at IS NULL
         AND wo.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
         AND date(wo.created_at) = date(?)
       ORDER BY wo.created_at ASC
@@ -206,6 +207,7 @@ export class ReportService {
         COALESCE(SUM(total_cents), 0) as total
       FROM weighing_operations
       WHERE unit_id = ?
+        AND deleted_at IS NULL
         AND status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
         AND date(created_at) >= date(?)
         AND date(created_at) < date(?)
@@ -241,6 +243,7 @@ export class ReportService {
       FROM weighing_operations wo
       LEFT JOIN products p ON p.id = wo.product_id
       WHERE wo.unit_id = ?
+        AND wo.deleted_at IS NULL
         AND wo.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
         AND date(wo.created_at) >= date(?)
         AND date(wo.created_at) <= date(?)
@@ -275,6 +278,7 @@ export class ReportService {
       FROM weighing_operations wo
       LEFT JOIN customers c ON c.id = wo.customer_id
       WHERE wo.unit_id = ?
+        AND wo.deleted_at IS NULL
         AND wo.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
         AND date(wo.created_at) >= date(?)
         AND date(wo.created_at) <= date(?)
@@ -327,12 +331,16 @@ export class ReportService {
     };
     const clause = groupClauses[groupBy] ?? groupClauses.customer;
 
+    // Filtros comuns ao pivo e as listas de opcao (cliente/produto). Operacao
+    // excluida pelo operador nao entra em nenhum dos dois.
     const conditions = [
       "wo.unit_id = ?",
+      "wo.deleted_at IS NULL",
       `wo.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})`,
       "date(wo.created_at) >= date(?)",
       "date(wo.created_at) <= date(?)"
     ];
+    const baseConditionCount = conditions.length;
     const params: unknown[] = [unitId, startDate, endDate];
     if (filters.customerId) {
       conditions.push("wo.customer_id = ?");
@@ -390,7 +398,7 @@ export class ReportService {
     );
     totals.avgPriceCentsPerTon = avgPricePerTon(totals.totalValueCents, totals.totalWeightKg);
 
-    const optionConditions = conditions.slice(0, 4).join(" AND ");
+    const optionConditions = conditions.slice(0, baseConditionCount).join(" AND ");
     const customers = this.db
       .prepare(
         `SELECT DISTINCT c.id as id, c.legal_name as name
@@ -428,6 +436,7 @@ export class ReportService {
         COALESCE(SUM(total_cents), 0) as total
       FROM weighing_operations
       WHERE unit_id = ?
+        AND deleted_at IS NULL
         AND status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
         AND date(created_at) >= date(?)
         AND date(created_at) <= date(?)
@@ -479,6 +488,7 @@ export class ReportService {
         COALESCE(SUM(total_cents), 0) as total
       FROM weighing_operations
       WHERE unit_id = ?
+        AND deleted_at IS NULL
         AND date(created_at) >= date(?)
         AND date(created_at) <= date(?)
       GROUP BY operation_type, status
@@ -550,6 +560,7 @@ export class ReportService {
       LEFT JOIN drivers d ON d.id = wo.driver_id
       LEFT JOIN products p ON p.id = wo.product_id
       WHERE wo.unit_id = ?
+        AND wo.deleted_at IS NULL
         AND wo.status != 'cancelled'
         AND wo.entry_weight_captured_at IS NOT NULL
         AND wo.exit_weight_captured_at IS NOT NULL
@@ -654,6 +665,7 @@ export class ReportService {
       SELECT AVG((julianday(exit_weight_captured_at) - julianday(entry_weight_captured_at)) * 1440) AS avg_min
       FROM weighing_operations
       WHERE unit_id = ?
+        AND deleted_at IS NULL
         AND status != 'cancelled'
         AND entry_weight_captured_at IS NOT NULL
         AND exit_weight_captured_at IS NOT NULL
@@ -901,6 +913,7 @@ tfoot td{font-weight:bold;background:#eef2ff;border-top:2px solid var(--brand)}
       LEFT JOIN customers c ON c.id = wo.customer_id
       LEFT JOIN products p ON p.id = wo.product_id
       WHERE wo.unit_id = ?
+        AND wo.deleted_at IS NULL
         AND wo.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
         AND date(wo.created_at) >= date(?)
         AND date(wo.created_at) <= date(?)
