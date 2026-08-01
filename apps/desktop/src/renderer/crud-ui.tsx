@@ -257,7 +257,11 @@ export interface DataTableColumn<T> {
 
 // Cliques em botoes/inputs dentro da linha nao devem disparar a abertura do
 // registro (duplo clique): o alvo interativo ja tem acao propria.
-function isInteractiveTarget(target: EventTarget | null): boolean {
+/**
+ * O clique caiu num controle da linha (botao de acao, campo)? Usado para o duplo clique
+ * de "abrir detalhes" nao disparar quando o operador clica duas vezes num botao da linha.
+ */
+export function isInteractiveTarget(target: EventTarget | null): boolean {
   return (
     target instanceof Element &&
     target.closest("button, a, input, select, textarea, label") !== null

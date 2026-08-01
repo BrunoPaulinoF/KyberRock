@@ -149,6 +149,16 @@ acima continua sendo usada nas filas locais e no Supabase.
 10. Desktop enfileira sync Supabase e OMIE.
 11. Sync envia quando houver conectividade.
 
+Entre os passos 4 e 9 (operacao **em andamento**: `draft`, `entry_registered`,
+`loading_requested`, `awaiting_exit`) a operacao e **editavel por inteiro** na tela de
+Operacoes — duplo clique na linha abre a ficha completa e, em andamento, a edicao de
+cliente, produto, preco por tonelada, valor e regra de frete, placa, motorista,
+transportadora, forma e condicao de pagamento e tipo de fechamento
+(`updateWeighingOperationDetails`). Alterar o preco exige a senha de alteracao de precos da
+empresa. A edicao reflete na `loading_requests` (o que o carregador ve) e reenfileira o
+upsert cloud. Depois do fechamento a ficha continua abrindo, mas so para consulta: o
+pedido/OS ja foi montado para o OMIE e a correcao passa a ser cancelar e refazer.
+
 ## Hardware
 
 Balanca:

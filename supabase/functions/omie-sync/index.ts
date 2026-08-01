@@ -2566,11 +2566,17 @@ function buildOrderParcelamento(payload: CreateOrderPayload): OrderParcelamento 
  * ai o codigo "000"/vinculado do cabecalho ja representa a condicao. Em boleto o bloco
  * vai mesmo a vista: o cabecalho da OS nao tem o campo de boleto, entao a parcela e o
  * unico lugar que carrega o "gerar boleto" ate o OMIE.
+ *
+ * A parcela da OS leva o `meio_pagamento` junto (mesma tag do `lista_parcelas` do
+ * pedido). Sem ele a parcela chegava ao OMIE sem meio nenhum: a venda sem nota em boleto
+ * nascia com a aba "Parcelas" da OS sem o meio "15 - Boleto Bancario", e o faturamento
+ * nao tinha do que tirar a cobranca — mesmo com o `nao_gerar_boleto` "N".
  */
 function buildServiceOrderParcelas(
   payload: CreateOrderPayload
 ): Array<Record<string, unknown>> | null {
   const plan = buildInstallmentPlan(payload);
+  const meio = (payload.paymentMethodOmieCode ?? "").trim();
   const isBoleto = isBoletoPaymentMethod(payload.paymentMethodOmieCode);
   if (plan.length === 1 && plan[0].dueInDays === 0 && !isBoleto) return null;
   const boletoFields = buildBoletoParcelaFields(payload.paymentMethodOmieCode);
@@ -2580,6 +2586,7 @@ function buildServiceOrderParcelas(
     dDtVenc: toOmieDate(item.dueDate),
     nPercentual: item.percent,
     nValor: item.valueCents / 100,
+    ...(meio ? { meio_pagamento: meio } : {}),
     ...boletoFields
   }));
 }
@@ -2932,7 +2939,11 @@ async function createOmieOrder(
     // a ser o comportamento anterior, nunca uma OS a menos.
     if (osParcelas !== null && isOmieStructureRejection(error)) {
       console.error(
-        "[omie] IncluirOS recusou o parcelamento informado; reenviando pelo cadastro de parcelas",
+        isBoletoPaymentMethod(payload.paymentMethodOmieCode)
+          ? "[omie] IncluirOS recusou o parcelamento informado de uma operacao EM BOLETO; " +
+              "reenviando pelo cadastro de parcelas — a OS nasce SEM o 'gerar boleto' da " +
+              "parcela e a cobranca vai depender so da recomendacao do cadastro do cliente"
+          : "[omie] IncluirOS recusou o parcelamento informado; reenviando pelo cadastro de parcelas",
         error
       );
       // O codigo ja vinculado a condicao manda no reenvio (o boleto pode ter escolhido o

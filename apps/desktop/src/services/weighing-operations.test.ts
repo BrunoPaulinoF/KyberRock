@@ -21,6 +21,7 @@ import {
   listOpenWeighingOperations,
   updateWeighingOperationCustomer,
   updateWeighingOperationCarrier,
+  updateWeighingOperationDetails,
   validateCustomerFiscalReadiness
 } from "./weighing-operations";
 
@@ -2451,6 +2452,311 @@ describe("weighing operations", () => {
       database.close();
     }
   });
+
+  it("exposes the linked ids so the full edit can pre-fill the form", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      insertEditCatalog(database);
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        carrierId: "carrier-1",
+        paymentMethodId: "method-boleto",
+        paymentTermId: "term-7-14-21",
+        entryWeightKg: 12_000
+      });
+
+      expect(operation).toMatchObject({
+        productId: "product-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        carrierId: "carrier-1",
+        carrierName: "Transportadora Teste",
+        paymentTermId: "term-7-14-21",
+        paymentMethodId: "method-boleto",
+        paymentMethodName: "Boleto"
+      });
+      expect(listOpenWeighingOperations(database)[0].paymentMethodName).toBe("Boleto");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("edits every commercial field of an operation in progress", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      insertEditCatalog(database);
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      expect(operation.unitPriceCents).toBe(12_000);
+
+      const updated = updateWeighingOperationDetails(database, {
+        operationId: operation.id,
+        productId: "product-2",
+        vehicleId: "vehicle-2",
+        driverId: "driver-2",
+        carrierId: "carrier-1",
+        paymentMethodId: "method-boleto",
+        paymentTermId: "term-7-14-21",
+        operationType: "internal",
+        unitPriceCents: 18_500,
+        freightModality: "cif",
+        deductFreightFromCredit: true,
+        freight: {
+          payer: "quarry",
+          destination: "Obra do centro",
+          rule: {
+            id: "operation-freight",
+            name: "Frete da operacao",
+            type: "per_ton",
+            baseValueCents: 4_500,
+            unit: "ton"
+          }
+        }
+      });
+
+      expect(updated).toMatchObject({
+        productId: "product-2",
+        productDescription: "Brita 2",
+        vehicleId: "vehicle-2",
+        plate: "XYZ4E56",
+        driverId: "driver-2",
+        driverName: "Segundo Motorista",
+        carrierId: "carrier-1",
+        paymentTermId: "term-7-14-21",
+        paymentMethodId: "method-boleto",
+        operationType: "internal",
+        // Preco digitado vence a tabela; o desconto e recalculado contra o preco base.
+        unitPriceCents: 18_500,
+        freightModality: "cif",
+        deductFreightFromCredit: true
+      });
+      expect(JSON.parse(updated.freightJson ?? "{}")).toMatchObject({
+        payer: "quarry",
+        destination: "Obra do centro"
+      });
+
+      // A solicitacao de carga do carregador acompanha a edicao.
+      expect(
+        database
+          .prepare(
+            "SELECT plate, product_description, driver_name FROM loading_requests WHERE operation_id = ?"
+          )
+          .get(operation.id)
+      ).toMatchObject({
+        plate: "XYZ4E56",
+        product_description: "Brita 2",
+        driver_name: "Segundo Motorista"
+      });
+
+      // O frete so vira valor no fechamento (depende do peso liquido): 6,5 t x R$ 45,00.
+      const closed = closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500
+      });
+      expect(closed.freightTotalCents).toBe(29_250);
+      expect(closed.productTotalCents).toBe(120_250);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("keeps untouched fields and re-prices when only the product changes", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      insertEditCatalog(database);
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        carrierId: "carrier-1",
+        entryWeightKg: 12_000
+      });
+
+      const updated = updateWeighingOperationDetails(database, {
+        operationId: operation.id,
+        productId: "product-2"
+      });
+
+      // Sem preco digitado, trocar o produto re-precifica pela tabela (R$ 200,00/ton).
+      expect(updated.unitPriceCents).toBe(20_000);
+      expect(updated.carrierId).toBe("carrier-1");
+      expect(updated.vehicleId).toBe("vehicle-1");
+      expect(updated.operationType).toBe("invoice");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("replaces the manual installments when a payment term is chosen in the edit", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      insertEditCatalog(database);
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        manualInstallments: 4,
+        entryWeightKg: 12_000
+      });
+      expect(operation.paymentTermName).toBe("4 parcelas");
+
+      const updated = updateWeighingOperationDetails(database, {
+        operationId: operation.id,
+        paymentTermId: "term-7-14-21"
+      });
+
+      // O parcelamento manual vence a condicao na exibicao: sem limpa-lo, a condicao
+      // escolhida na edicao nao apareceria no cupom nem na lista.
+      expect(updated.paymentTermName).toBe("3 parcelas");
+      expect(
+        database
+          .prepare("SELECT manual_installments FROM weighing_operations WHERE id = ?")
+          .pluck()
+          .get(operation.id)
+      ).toBeNull();
+    } finally {
+      database.close();
+    }
+  });
+
+  it("clears the freight of an operation in progress", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000,
+        freightModality: "cif",
+        freight: {
+          payer: "quarry",
+          rule: {
+            id: "operation-freight",
+            name: "Frete da operacao",
+            type: "per_ton",
+            baseValueCents: 4_500,
+            unit: "ton"
+          }
+        }
+      });
+      expect(operation.freightJson).not.toBeNull();
+
+      const updated = updateWeighingOperationDetails(database, {
+        operationId: operation.id,
+        freight: null,
+        freightModality: "none"
+      });
+
+      expect(updated.freightJson).toBeNull();
+      expect(updated.freightModality).toBe("none");
+      expect(
+        closeWeighingOperation(database, { operationId: operation.id, exitWeightKg: 18_500 })
+          .freightTotalCents
+      ).toBe(0);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("refuses to edit an operation that is no longer in progress", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, { operationId: operation.id, exitWeightKg: 18_500 });
+
+      expect(() =>
+        updateWeighingOperationDetails(database, {
+          operationId: operation.id,
+          unitPriceCents: 9_900
+        })
+      ).toThrow("Somente operacoes em andamento");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("refuses a plate that already has another operation in progress", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      insertEditCatalog(database);
+
+      const first = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-2",
+        driverId: "driver-2",
+        productId: "product-1",
+        entryWeightKg: 11_000
+      });
+
+      expect(() =>
+        updateWeighingOperationDetails(database, {
+          operationId: first.id,
+          vehicleId: "vehicle-2"
+        })
+      ).toThrow("Ja existe uma operacao aberta para a placa XYZ4E56");
+    } finally {
+      database.close();
+    }
+  });
 });
 
 function createDatabase(): DesktopDatabase {
@@ -2505,6 +2811,59 @@ function insertCatalog(
       `INSERT INTO product_default_prices (
         id, company_id, product_id, unit_price_cents, unit, created_at, updated_at
       ) VALUES ('default-price-1', 'company-1', 'product-1', 12000, 'ton', ?, ?)`
+    )
+    .run(now, now);
+}
+
+/**
+ * Segundo conjunto de cadastros (produto, placa, motorista, transportadora, forma e
+ * condicao de pagamento) para exercitar a edicao completa da operacao: todo campo
+ * editavel precisa de uma alternativa valida para onde apontar.
+ */
+function insertEditCatalog(database: DesktopDatabase): void {
+  const now = "2026-06-06T12:00:00.000Z";
+  database
+    .prepare(
+      `INSERT INTO products (
+        id, company_id, omie_product_id, code, description, unit, unit_price_cents, item_type, created_at, updated_at
+      ) VALUES ('product-2', 'company-1', 456, 'BRITA2', 'Brita 2', 'ton', 22000, '04 - Produtos Acabados', ?, ?)`
+    )
+    .run(now, now);
+  database
+    .prepare(
+      `INSERT INTO product_default_prices (
+        id, company_id, product_id, unit_price_cents, unit, created_at, updated_at
+      ) VALUES ('default-price-2', 'company-1', 'product-2', 20000, 'ton', ?, ?)`
+    )
+    .run(now, now);
+  database
+    .prepare(
+      "INSERT INTO vehicles (id, company_id, plate, created_at, updated_at) VALUES ('vehicle-2', 'company-1', 'XYZ4E56', ?, ?)"
+    )
+    .run(now, now);
+  database
+    .prepare(
+      "INSERT INTO drivers (id, company_id, name, created_at, updated_at) VALUES ('driver-2', 'company-1', 'Segundo Motorista', ?, ?)"
+    )
+    .run(now, now);
+  database
+    .prepare(
+      `INSERT INTO carriers (id, company_id, omie_customer_id, name, source, created_at, updated_at)
+       VALUES ('carrier-1', 'company-1', 987654, 'Transportadora Teste', 'omie', ?, ?)`
+    )
+    .run(now, now);
+  database
+    .prepare(
+      `INSERT INTO payment_methods (id, company_id, code, name, omie_code, is_system, is_customer_credit, sort_order, is_active, created_at, updated_at)
+       VALUES ('method-boleto', 'company-1', 'boleto', 'Boleto', '15', 1, 0, 5, 1, ?, ?)`
+    )
+    .run(now, now);
+  database
+    .prepare(
+      `INSERT INTO payment_terms (
+         id, company_id, name, rules_json, first_installment_days, installment_interval_days,
+         installment_count, installment_days_json, created_at, updated_at
+       ) VALUES ('term-7-14-21', 'company-1', '3 parcelas', '{"raw":"7/14/21"}', 7, 7, 3, '[7,14,21]', ?, ?)`
     )
     .run(now, now);
 }

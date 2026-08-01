@@ -426,6 +426,16 @@ function registerIpcHandlers(): void {
     }
   );
 
+  ipcMain.handle("desktop:update-weighing-operation", (_event, input: unknown) => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.updateWeighingOperation(
+      input as Parameters<DesktopRuntime["updateWeighingOperation"]>[0]
+    );
+  });
+
   ipcMain.handle("desktop:get-customer-freight-rules", (_event, customerId: string) => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");

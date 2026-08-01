@@ -70,13 +70,15 @@ import {
   updateWeighingOperationProduct,
   updateWeighingOperationCustomer,
   updateWeighingOperationCarrier,
+  updateWeighingOperationDetails,
   type OperationType,
   type OperationFreightInput,
   type ScaleCaptureAudit,
   type WeighingOperationSummary,
   type UpdateWeighingOperationProductInput,
   type UpdateWeighingOperationCustomerInput,
-  type UpdateWeighingOperationCarrierInput
+  type UpdateWeighingOperationCarrierInput,
+  type UpdateWeighingOperationDetailsInput
 } from "./weighing-operations.js";
 import {
   getCustomerFreightRules,
@@ -1026,6 +1028,14 @@ export class DesktopRuntime {
     this.assertDesktopAccess();
     const operation = updateWeighingOperationCarrier(this.database, input);
     this.triggerOperationCloudPush("operation_carrier_changed", input.operationId);
+    return operation;
+  }
+
+  /** Edicao completa de uma operacao em andamento (dados comerciais, preco e frete). */
+  updateWeighingOperation(input: UpdateWeighingOperationDetailsInput): WeighingOperationSummary {
+    this.assertDesktopAccess();
+    const operation = updateWeighingOperationDetails(this.database, input);
+    this.triggerOperationCloudPush("operation_updated", input.operationId);
     return operation;
   }
 
