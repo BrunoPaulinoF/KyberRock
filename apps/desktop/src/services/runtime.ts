@@ -83,7 +83,9 @@ import {
   getCustomerFreightRules,
   getCustomerFreightRuleForProduct,
   setCustomerFreightRule,
+  rememberCustomerFreightValue,
   removeCustomerFreightRule,
+  removeCustomerFreightModality,
   type SetCustomerFreightRuleInput
 } from "./customer-freight-rules.js";
 import type { FreightModality } from "./freight.js";
@@ -746,6 +748,21 @@ export class DesktopRuntime {
       entryWeightKg: entryReading.weightKg,
       entryScaleCapture: buildScaleCaptureAudit(entryReading)
     });
+    // O valor de frete desta venda vira o "ultimo valor" do cliente para esse tipo de
+    // frete, para a proxima entrada ja vir preenchida. Best-effort: memoria de
+    // conveniencia nao pode derrubar o registro de uma entrada.
+    if (input.freight && input.freightModality) {
+      try {
+        rememberCustomerFreightValue(this.database, {
+          customerId: input.customerId,
+          productId: input.productId,
+          modality: input.freightModality,
+          rule: input.freight.rule
+        });
+      } catch {
+        /* ignore */
+      }
+    }
     // A entrada pode ter gravado condicao/forma como padrao do cliente (primeira escolha).
     this.cacheStore.invalidate("customer", this.ensureIdentity().companyId);
     this.triggerOperationCloudPush("entry_registered", operation.id);
@@ -1145,9 +1162,13 @@ export class DesktopRuntime {
     return getCustomerFreightRules(this.database, customerId);
   }
 
-  getCustomerFreightForProduct(customerId: string, productId: string) {
+  getCustomerFreightForProduct(
+    customerId: string,
+    productId: string,
+    modality?: FreightModality | null
+  ) {
     this.assertDesktopAccess();
-    return getCustomerFreightRuleForProduct(this.database, customerId, productId);
+    return getCustomerFreightRuleForProduct(this.database, customerId, productId, modality);
   }
 
   setCustomerFreightRule(input: SetCustomerFreightRuleInput) {
@@ -1158,6 +1179,11 @@ export class DesktopRuntime {
   removeCustomerFreightRule(ruleId: string) {
     this.assertDesktopAccess();
     return removeCustomerFreightRule(this.database, ruleId);
+  }
+
+  removeCustomerFreightModality(ruleId: string, modality: FreightModality) {
+    this.assertDesktopAccess();
+    return removeCustomerFreightModality(this.database, ruleId, modality);
   }
 
   configureReceiptPrintProfile(

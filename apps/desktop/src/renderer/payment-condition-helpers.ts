@@ -12,10 +12,44 @@ export function extractConditionRaw(rulesJson: string): string {
   }
 }
 
+/** Prazos (em dias) gravados em rules_json de um payment_term local. */
+export function extractConditionDueDays(rulesJson: string): number[] | null {
+  try {
+    const rules = JSON.parse(rulesJson || "{}") as {
+      installments?: Array<{ dueDays?: unknown }>;
+    };
+    if (!Array.isArray(rules.installments)) return null;
+    const days = rules.installments.map((installment) => Number(installment?.dueDays));
+    return days.every((value) => Number.isFinite(value)) ? days : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Resolve a condicao digitada livre ("5", "7 14 21", "7/14/21") para um
+ * Indica se um payment_term ja gravado representa exatamente a condicao recem
+ * interpretada. Comparar so o texto cru nao basta: o significado de um numero
+ * isolado mudou ("5" era 5 parcelas mensais e hoje e uma parcela em 5 dias), entao
+ * um termo antigo com o mesmo raw seria reusado aplicando a regra errada.
+ */
+export function conditionTermMatches(
+  rulesJson: string,
+  parsed: { raw: string; installments: Array<{ dueDays: number }> }
+): boolean {
+  if (extractConditionRaw(rulesJson) !== parsed.raw) return false;
+  const storedDays = extractConditionDueDays(rulesJson);
+  if (storedDays === null) return false;
+  const parsedDays = parsed.installments.map((installment) => installment.dueDays);
+  return (
+    storedDays.length === parsedDays.length &&
+    storedDays.every((value, index) => value === parsedDays[index])
+  );
+}
+
+/**
+ * Resolve a condicao digitada livre ("30", "7 14 21", "3 parcelas") para um
  * payment_term local: reusa uma condicao existente com a mesma regra (raw
- * normalizado igual) ou cria uma nova na hora. O termo resultante segue no
+ * normalizado e prazos iguais) ou cria uma nova na hora. O termo resultante segue no
  * fechamento e, sem codigo OMIE vinculado, a parcela e criada no cadastro do
  * OMIE pelo proprio envio do pedido/OS.
  */
@@ -26,13 +60,13 @@ export async function resolveConditionTermId(
   const parsed = tryParsePaymentCondition(conditionText);
   if (!parsed) {
     throw new Error(
-      'Condicao de pagamento invalida. Use formatos como "5", "7 14 21" ou "7/14/21".'
+      'Condicao de pagamento invalida. Use formatos como "30" (dias), "7 14 21" ou "3 parcelas".'
     );
   }
 
   const termResult = await desktopApi.queryCache({ entityType: "payment_term", limit: 200 });
-  const existing = (termResult.rows as PaymentTermCacheEntry[]).find(
-    (term) => extractConditionRaw(term.rulesJson) === parsed.raw
+  const existing = (termResult.rows as PaymentTermCacheEntry[]).find((term) =>
+    conditionTermMatches(term.rulesJson, parsed)
   );
   if (existing) return existing.id;
 

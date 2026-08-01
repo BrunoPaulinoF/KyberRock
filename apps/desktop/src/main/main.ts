@@ -24,6 +24,7 @@ import type {
 import type { CreateVehicleInput, UpdateVehicleInput } from "../services/vehicles.js";
 import type { CreateDriverInput, UpdateDriverInput } from "../services/drivers.js";
 import type { CreateCarrierInput, UpdateCarrierInput } from "../services/carriers.js";
+import { isFreightModality } from "../services/freight.js";
 import type { ScaleConfigurationInput } from "../services/scale-configs.js";
 import type { CreateQuotationInput } from "../services/quotations.js";
 import type {
@@ -454,11 +455,15 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "desktop:get-customer-freight-for-product",
-    (_event, customerId: string, productId: string) => {
+    (_event, customerId: string, productId: string, modality?: string | null) => {
       if (!runtime) {
         throw new Error("Desktop runtime is not ready.");
       }
-      return runtime.getCustomerFreightForProduct(customerId, productId);
+      return runtime.getCustomerFreightForProduct(
+        customerId,
+        productId,
+        isFreightModality(modality) ? modality : null
+      );
     }
   );
 
@@ -477,6 +482,19 @@ function registerIpcHandlers(): void {
     }
     return runtime.removeCustomerFreightRule(ruleId);
   });
+
+  ipcMain.handle(
+    "desktop:remove-customer-freight-modality",
+    (_event, ruleId: string, modality: string) => {
+      if (!runtime) {
+        throw new Error("Desktop runtime is not ready.");
+      }
+      if (!isFreightModality(modality)) {
+        throw new Error("Tipo de frete invalido.");
+      }
+      return runtime.removeCustomerFreightModality(ruleId, modality);
+    }
+  );
 
   ipcMain.handle("desktop:list-windows-printers", async () => {
     if (!mainWindow) {
