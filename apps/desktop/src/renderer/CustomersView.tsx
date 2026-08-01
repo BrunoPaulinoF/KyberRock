@@ -12,6 +12,9 @@ import {
 } from "@kyberrock/shared";
 
 import type { KyberRockDesktopApi } from "../preload/api-types";
+import { FREIGHT_MODALITIES, getFreightModalityInfo } from "../services/freight";
+import type { FreightModality } from "../services/freight";
+import type { CustomerFreightRule as CustomerFreightRuleView } from "../services/customer-freight-rules";
 import {
   CepInput,
   DocumentInput,
@@ -276,6 +279,49 @@ function normalizeSearchTerm(value: string): string {
     .toLowerCase();
 }
 
+export interface CustomerFreightEntry {
+  ruleId: string;
+  /** Ausente na regra unica antiga, que vale para qualquer tipo de frete. */
+  modality?: FreightModality;
+  modalityLabel: string;
+  /** "Frete fixo" ou o produto da regra. */
+  scopeLabel: string;
+  baseValueCents: number;
+  source: "manual" | "last_used";
+}
+
+/**
+ * Achata as regras do cliente numa linha por valor: a regra unica antiga (quando tem
+ * valor) e cada tipo de frete configurado ou memorizado da ultima venda.
+ */
+export function toCustomerFreightEntries(rules: CustomerFreightRuleView[]): CustomerFreightEntry[] {
+  const entries: CustomerFreightEntry[] = [];
+  for (const rule of rules) {
+    const scopeLabel = rule.productId ? (rule.productDescription ?? "Produto") : "Frete fixo";
+    if (rule.rule.baseValueCents > 0) {
+      entries.push({
+        ruleId: rule.id,
+        modalityLabel: "Qualquer tipo",
+        scopeLabel,
+        baseValueCents: rule.rule.baseValueCents,
+        source: "manual"
+      });
+    }
+    for (const [key, value] of Object.entries(rule.modalities ?? {})) {
+      if (!value) continue;
+      entries.push({
+        ruleId: rule.id,
+        modality: key as FreightModality,
+        modalityLabel: getFreightModalityInfo(key).label,
+        scopeLabel,
+        baseValueCents: value.baseValueCents,
+        source: value.source
+      });
+    }
+  }
+  return entries;
+}
+
 function CreditTotal({
   label,
   value,
@@ -358,20 +404,32 @@ type PendingSpecialPriceAction =
       productId: string;
     };
 
+export interface StandaloneCustomerFormOptions {
+  onCreated: (id: string) => void;
+  onCancel: () => void;
+}
+
 export function CustomersView({
   desktopApi,
-  initialSearch
+  initialSearch,
+  standaloneForm
 }: {
   desktopApi: KyberRockDesktopApi | null;
   /** Busca inicial (ex.: nome do cliente vindo da tela de operacoes concluidas). */
   initialSearch?: string;
+  /**
+   * Modo "somente formulario": renderiza apenas o modal de cadastro (ja aberto em
+   * criacao), sem lista nem busca. E como a Nova entrada reaproveita este mesmo
+   * formulario completo em vez de um modal reduzido proprio.
+   */
+  standaloneForm?: StandaloneCustomerFormOptions;
 }) {
   const [customers, setCustomers] = useState<CustomerCacheEntry[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
+  const [showForm, setShowForm] = useState(Boolean(standaloneForm));
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingSource, setEditingSource] = useState<string | null>(null);
   const [form, setForm] = useState<CustomerFormData>(initialForm);
@@ -385,13 +443,15 @@ export function CustomersView({
   const [viewingCustomer, setViewingCustomer] = useState<CustomerCacheEntry | null>(null);
   const [viewingCredit, setViewingCredit] = useState<CustomerCreditSummary | null>(null);
   // Snapshot do formulario ao abrir, para avisar antes de descartar alteracoes.
-  const formBaselineRef = useRef<string>("");
+  const formBaselineRef = useRef<string>(
+    JSON.stringify({ form: initialForm, defaultConditionText: "" })
+  );
   const { confirmElement, requestConfirm } = useConfirm();
 
   const [carriers, setCarriers] = useState<CarrierOption[]>([]);
   const [paymentTerms, setPaymentTerms] = useState<PaymentTermOption[]>([]);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodOption[]>([]);
-  // Condicao de pagamento padrao digitada ("5", "7 14 21", "7/14/21"); resolvida
+  // Condicao de pagamento padrao digitada ("30", "7 14 21", "3 parcelas"); resolvida
   // para um payment_term local no salvar.
   const [defaultConditionText, setDefaultConditionText] = useState("");
   const [activeFormSection, setActiveFormSection] =
@@ -415,20 +475,18 @@ export function CustomersView({
   const [creditSummary, setCreditSummary] = useState<CustomerCreditSummary | null>(null);
   const [creditMovements, setCreditMovements] = useState<CreditMovementRow[]>([]);
   const [creditBusy, setCreditBusy] = useState(false);
-  const [customerFreightRules, setCustomerFreightRules] = useState<
-    Array<{
-      id: string;
-      customerId: string;
-      productId: string | null;
-      productDescription: string | null;
-      rule: { id: string; name: string; type: string; baseValueCents: number; unit: string };
-      isActive: boolean;
-    }>
-  >([]);
+  const [customerFreightRules, setCustomerFreightRules] = useState<CustomerFreightRuleView[]>([]);
   const [freightProductId, setFreightProductId] = useState("");
   const [freightValueReais, setFreightValueReais] = useState("");
   const [freightMode, setFreightMode] = useState<"default" | "product">("default");
+  // Tipo de frete (modalidade OMIE) do valor sendo cadastrado; "" = valor unico,
+  // usado quando o tipo da venda nao tem valor proprio.
+  const [freightModality, setFreightModality] = useState<FreightModality | "">("");
   const [savingFreight, setSavingFreight] = useState(false);
+  const customerFreightEntries = useMemo(
+    () => toCustomerFreightEntries(customerFreightRules),
+    [customerFreightRules]
+  );
 
   const pageSize = 50;
 
@@ -450,8 +508,13 @@ export function CustomersView({
     }
   }, [desktopApi]);
 
+  // Boolean em vez do objeto: quem abre o formulario o recria a cada render, e a
+  // identidade nova refaria a leitura do cache sem necessidade.
+  const isStandalone = Boolean(standaloneForm);
+
   const loadCustomers = useCallback(async () => {
-    if (!desktopApi) return;
+    // Modo somente-formulario nao tem lista: nao vale pagar a leitura do cache.
+    if (!desktopApi || isStandalone) return;
     setLoading(true);
     try {
       const result = await desktopApi.queryCache({
@@ -465,7 +528,7 @@ export function CustomersView({
     } finally {
       setLoading(false);
     }
-  }, [desktopApi, page, search]);
+  }, [desktopApi, page, search, isStandalone]);
 
   useEffect(() => {
     void loadOptions();
@@ -569,6 +632,7 @@ export function CustomersView({
     setFreightProductId("");
     setFreightValueReais("");
     setFreightMode("default");
+    setFreightModality("");
     setDefaultConditionText("");
     setActiveFormSection("identificacao");
   }
@@ -592,6 +656,7 @@ export function CustomersView({
       if (!discard) return;
     }
     setShowForm(false);
+    standaloneForm?.onCancel();
   }
 
   function openEditForm(customer: CustomerCacheEntry): void {
@@ -741,7 +806,7 @@ export function CustomersView({
     if (!desktopApi) return;
     try {
       const rows = await desktopApi.getCustomerFreightRules(customerId);
-      setCustomerFreightRules(rows as typeof customerFreightRules);
+      setCustomerFreightRules(rows);
     } catch {
       setCustomerFreightRules([]);
     }
@@ -759,6 +824,7 @@ export function CustomersView({
       await desktopApi.setCustomerFreightRule({
         customerId: editingId,
         productId: freightMode === "product" ? freightProductId || null : null,
+        modality: freightModality || null,
         rule: {
           id: crypto.randomUUID(),
           name:
@@ -782,10 +848,17 @@ export function CustomersView({
     }
   }
 
-  async function handleRemoveFreightRule(ruleId: string): Promise<void> {
+  async function handleRemoveFreightRule(
+    ruleId: string,
+    modality?: FreightModality
+  ): Promise<void> {
     if (!desktopApi || !editingId) return;
     try {
-      await desktopApi.removeCustomerFreightRule(ruleId);
+      if (modality) {
+        await desktopApi.removeCustomerFreightModality(ruleId, modality);
+      } else {
+        await desktopApi.removeCustomerFreightRule(ruleId);
+      }
       await loadCustomerFreightRules(editingId);
       showFlash("success", "Frete removido.");
     } catch (err) {
@@ -884,11 +957,14 @@ export function CustomersView({
 
     const conditionText = defaultConditionText.trim();
     if (conditionText && !tryParsePaymentCondition(conditionText)) {
-      setFormError('Condicao de pagamento padrao invalida. Use "5", "7 14 21" ou "7/14/21".');
+      setFormError(
+        'Condicao de pagamento padrao invalida. Use "30" (dias), "7 14 21", "7/14/21" ou "3 parcelas".'
+      );
       return;
     }
 
     setSaving(true);
+    let createdId: string | null = null;
     try {
       // Texto da condicao vira (ou reusa) um payment_term local vinculado ao cliente.
       const resolvedDefaultTermId = conditionText
@@ -938,7 +1014,7 @@ export function CustomersView({
         }
         showFlash("success", "Cliente atualizado.");
       } else {
-        await desktopApi.customersCreate({
+        const created = await desktopApi.customersCreate({
           tradeName: form.tradeName.trim(),
           legalName: form.legalName.trim(),
           document: normalizedDocument || undefined,
@@ -967,11 +1043,17 @@ export function CustomersView({
           city: form.city.trim() || undefined,
           state: form.state.trim().toUpperCase() || undefined
         });
+        createdId = (created as { id?: string } | null)?.id ?? null;
         showFlash("success", "Cliente criado.");
       }
       setShowForm(false);
       resetForm();
       await loadCustomers();
+      if (standaloneForm) {
+        // Quem abriu o formulario (ex.: Nova entrada) seleciona o cliente recem-criado.
+        if (createdId) standaloneForm.onCreated(createdId);
+        else standaloneForm.onCancel();
+      }
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Erro ao salvar cliente.");
     } finally {
@@ -1290,8 +1372,10 @@ export function CustomersView({
     ];
   }
 
-  return (
-    <div>
+  // Lista, busca e acoes em lote so existem na tela de Cadastros: no modo
+  // somente-formulario (Nova entrada) o modal de cadastro e a tela inteira.
+  const listChrome = standaloneForm ? null : (
+    <>
       <CrudSectionHeader
         title="Clientes"
         description="Clientes sincronizados do OMIE ou criados localmente. Clientes locais sao enviados ao OMIE no proximo sync."
@@ -1360,6 +1444,12 @@ export function CustomersView({
         onRefresh={() => void loadCustomers()}
       />
       <FlashBanner flash={flash} />
+    </>
+  );
+
+  return (
+    <div>
+      {listChrome}
 
       {showForm ? (
         <CrudFormModal onClose={() => void requestCloseForm()} maxWidth={1040} fixedHeight>
@@ -1577,7 +1667,7 @@ export function CustomersView({
                   </Field>
                   <Field
                     label="Condicao de pagamento padrao"
-                    hint='Digite: "5" (5 parcelas mensais), "7 14 21" ou "7/14/21" (prazos), "A Vista". Vazio = sem padrao. Se nao existir no OMIE, e criada automaticamente no envio.'
+                    hint='Digite: "30" (uma parcela 30 dias apos a venda), "7 14 21" ou "7/14/21" (3 parcelas nesses prazos), "3 parcelas" (3 parcelas mensais), "A Vista". Vazio = sem padrao. Se nao existir no OMIE, e criada automaticamente no envio.'
                   >
                     <input
                       type="text"
@@ -2026,6 +2116,27 @@ export function CustomersView({
                               </select>
                             </Field>
                           ) : null}
+                          <Field
+                            label="Tipo de frete"
+                            hint="O valor vale para esse tipo de frete na Nova entrada. 'Qualquer tipo' cobre os tipos que nao tem valor proprio."
+                          >
+                            <select
+                              value={freightModality}
+                              onChange={(e) =>
+                                setFreightModality(e.target.value as FreightModality | "")
+                              }
+                              style={getInputStyle(false)}
+                            >
+                              <option value="">Qualquer tipo</option>
+                              {FREIGHT_MODALITIES.filter((modality) => modality.supportsCharge).map(
+                                (modality) => (
+                                  <option key={modality.key} value={modality.key}>
+                                    {modality.label}
+                                  </option>
+                                )
+                              )}
+                            </select>
+                          </Field>
                           <MoneyInput
                             label="Valor/ton (R$)"
                             value={freightValueReais}
@@ -2041,12 +2152,12 @@ export function CustomersView({
                         >
                           {savingFreight ? "Salvando..." : "Salvar frete"}
                         </button>
-                        {customerFreightRules.length === 0 ? (
+                        {customerFreightEntries.length === 0 ? (
                           <p style={styles.cellMuted}>Nenhum frete cadastrado.</p>
                         ) : (
-                          customerFreightRules.map((rule) => (
+                          customerFreightEntries.map((entry) => (
                             <div
-                              key={rule.id}
+                              key={`${entry.ruleId}:${entry.modality ?? "any"}`}
                               style={{
                                 display: "flex",
                                 justifyContent: "space-between",
@@ -2057,16 +2168,18 @@ export function CustomersView({
                               }}
                             >
                               <span style={styles.cellMuted}>
-                                <strong>
-                                  {rule.productId
-                                    ? (rule.productDescription ?? "Produto")
-                                    : "Frete fixo"}
-                                </strong>
-                                : {formatMoney(rule.rule.baseValueCents)}/ton
+                                <strong>{entry.scopeLabel}</strong>
+                                {" - "}
+                                {entry.modalityLabel}: {formatMoney(entry.baseValueCents)}/ton
+                                {entry.source === "last_used" ? (
+                                  <em style={{ marginLeft: "6px" }}>(ultima venda)</em>
+                                ) : null}
                               </span>
                               <button
                                 type="button"
-                                onClick={() => void handleRemoveFreightRule(rule.id)}
+                                onClick={() =>
+                                  void handleRemoveFreightRule(entry.ruleId, entry.modality)
+                                }
                                 style={styles.dangerButton}
                               >
                                 Remover
@@ -2244,154 +2357,156 @@ export function CustomersView({
         />
       ) : null}
 
-      <DataTable
-        columns={[
-          {
-            key: "customer",
-            header: "Cliente",
-            width: "minmax(200px, 1.4fr)",
-            render: (customer: CustomerCacheEntry) => (
-              <>
-                <CellPrimary>{customer.tradeName || customer.legalName}</CellPrimary>
-                <CellMuted>{customer.legalName}</CellMuted>
-              </>
-            )
-          },
-          {
-            key: "document",
-            header: "Documento",
-            width: "minmax(140px, 1fr)",
-            render: (customer) => (
-              <CellMuted>{formatDocument(customer.document ?? "") || "-"}</CellMuted>
-            )
-          },
-          {
-            key: "contact",
-            header: "Contato",
-            width: "minmax(180px, 1.4fr)",
-            render: (customer) => (
-              <>
-                <CellPrimary>{formatPhone(customer.phone ?? "") || "-"}</CellPrimary>
-                <CellMuted>{customer.email || "-"}</CellMuted>
-              </>
-            )
-          },
-          {
-            key: "source",
-            header: "Origem / status",
-            width: "minmax(130px, 1fr)",
-            render: (customer) => (
-              <>
-                <SourceBadge source={customer.source} />
-                {customer.omieBillingBlocked ? (
-                  <span
-                    style={{
-                      ...styles.pill("#b91c1c", "#fee2e2"),
-                      width: "fit-content",
-                      alignSelf: "start"
-                    }}
-                  >
-                    Bloqueado
-                  </span>
-                ) : null}
-              </>
-            )
-          },
-          {
-            key: "actions",
-            header: "Acoes",
-            width: "150px",
-            align: "right",
-            render: (customer) => (
-              <>
-                <EditRowButton onClick={() => openEditForm(customer)} />
-                <Tooltip
-                  content={
-                    customer.omieBillingBlocked
-                      ? "Liberar o faturamento deste cliente (enviado ao OMIE no proximo sync)"
-                      : "Bloquear o faturamento deste cliente (enviado ao OMIE no proximo sync)"
-                  }
-                  placement="left"
-                >
-                  <button
-                    type="button"
-                    onClick={() => void handleToggleBillingBlocked(customer)}
-                    disabled={togglingBlockId !== null}
-                    aria-label={
-                      customer.omieBillingBlocked ? "Liberar faturamento" : "Bloquear faturamento"
+      {standaloneForm ? null : (
+        <DataTable
+          columns={[
+            {
+              key: "customer",
+              header: "Cliente",
+              width: "minmax(200px, 1.4fr)",
+              render: (customer: CustomerCacheEntry) => (
+                <>
+                  <CellPrimary>{customer.tradeName || customer.legalName}</CellPrimary>
+                  <CellMuted>{customer.legalName}</CellMuted>
+                </>
+              )
+            },
+            {
+              key: "document",
+              header: "Documento",
+              width: "minmax(140px, 1fr)",
+              render: (customer) => (
+                <CellMuted>{formatDocument(customer.document ?? "") || "-"}</CellMuted>
+              )
+            },
+            {
+              key: "contact",
+              header: "Contato",
+              width: "minmax(180px, 1.4fr)",
+              render: (customer) => (
+                <>
+                  <CellPrimary>{formatPhone(customer.phone ?? "") || "-"}</CellPrimary>
+                  <CellMuted>{customer.email || "-"}</CellMuted>
+                </>
+              )
+            },
+            {
+              key: "source",
+              header: "Origem / status",
+              width: "minmax(130px, 1fr)",
+              render: (customer) => (
+                <>
+                  <SourceBadge source={customer.source} />
+                  {customer.omieBillingBlocked ? (
+                    <span
+                      style={{
+                        ...styles.pill("#b91c1c", "#fee2e2"),
+                        width: "fit-content",
+                        alignSelf: "start"
+                      }}
+                    >
+                      Bloqueado
+                    </span>
+                  ) : null}
+                </>
+              )
+            },
+            {
+              key: "actions",
+              header: "Acoes",
+              width: "150px",
+              align: "right",
+              render: (customer) => (
+                <>
+                  <EditRowButton onClick={() => openEditForm(customer)} />
+                  <Tooltip
+                    content={
+                      customer.omieBillingBlocked
+                        ? "Liberar o faturamento deste cliente (enviado ao OMIE no proximo sync)"
+                        : "Bloquear o faturamento deste cliente (enviado ao OMIE no proximo sync)"
                     }
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      width: "30px",
-                      height: "30px",
-                      padding: 0,
-                      border: customer.omieBillingBlocked
-                        ? "1px solid var(--kr-danger-border)"
-                        : "1px solid var(--kr-border)",
-                      background: customer.omieBillingBlocked
-                        ? "var(--kr-danger-soft)"
-                        : "var(--kr-surface)",
-                      color: customer.omieBillingBlocked ? "var(--kr-danger)" : "var(--kr-muted)",
-                      borderRadius: "8px",
-                      cursor: togglingBlockId ? "wait" : "pointer",
-                      flexShrink: 0,
-                      lineHeight: 0,
-                      opacity: togglingBlockId === customer.id ? 0.6 : 1
-                    }}
+                    placement="left"
                   >
-                    {customer.omieBillingBlocked ? <Lock size={15} /> : <Unlock size={15} />}
-                  </button>
-                </Tooltip>
-                <DeleteRowButton onClick={() => setPendingDeleteId(customer.id)} />
-              </>
-            )
+                    <button
+                      type="button"
+                      onClick={() => void handleToggleBillingBlocked(customer)}
+                      disabled={togglingBlockId !== null}
+                      aria-label={
+                        customer.omieBillingBlocked ? "Liberar faturamento" : "Bloquear faturamento"
+                      }
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: "30px",
+                        height: "30px",
+                        padding: 0,
+                        border: customer.omieBillingBlocked
+                          ? "1px solid var(--kr-danger-border)"
+                          : "1px solid var(--kr-border)",
+                        background: customer.omieBillingBlocked
+                          ? "var(--kr-danger-soft)"
+                          : "var(--kr-surface)",
+                        color: customer.omieBillingBlocked ? "var(--kr-danger)" : "var(--kr-muted)",
+                        borderRadius: "8px",
+                        cursor: togglingBlockId ? "wait" : "pointer",
+                        flexShrink: 0,
+                        lineHeight: 0,
+                        opacity: togglingBlockId === customer.id ? 0.6 : 1
+                      }}
+                    >
+                      {customer.omieBillingBlocked ? <Lock size={15} /> : <Unlock size={15} />}
+                    </button>
+                  </Tooltip>
+                  <DeleteRowButton onClick={() => setPendingDeleteId(customer.id)} />
+                </>
+              )
+            }
+          ]}
+          rows={customers}
+          rowKey={(customer) => customer.id}
+          loading={loading}
+          onRowOpen={(customer) => setViewingCustomer(customer)}
+          emptyTitle={search ? "Nenhum cliente encontrado." : "Nenhum cliente cadastrado."}
+          emptyHint={
+            search
+              ? "Ajuste o termo de busca."
+              : "Sincronize com o OMIE ou cadastre o primeiro cliente pelo botao 'Novo cliente'."
           }
-        ]}
-        rows={customers}
-        rowKey={(customer) => customer.id}
-        loading={loading}
-        onRowOpen={(customer) => setViewingCustomer(customer)}
-        emptyTitle={search ? "Nenhum cliente encontrado." : "Nenhum cliente cadastrado."}
-        emptyHint={
-          search
-            ? "Ajuste o termo de busca."
-            : "Sincronize com o OMIE ou cadastre o primeiro cliente pelo botao 'Novo cliente'."
-        }
-        minWidth="980px"
-        maxHeight="calc(100vh - 380px)"
-        footer={
-          <div style={styles.pagination}>
-            <span>
-              {total === 0
-                ? "0 clientes"
-                : `${page * pageSize + 1}-${Math.min(total, (page + 1) * pageSize)} de ${total}`}
-            </span>
-            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-              <button
-                type="button"
-                onClick={() => setPage((p) => Math.max(0, p - 1))}
-                disabled={page === 0}
-                style={styles.secondaryButton}
-              >
-                Anterior
-              </button>
+          minWidth="980px"
+          maxHeight="calc(100vh - 380px)"
+          footer={
+            <div style={styles.pagination}>
               <span>
-                {page + 1}/{totalPages}
+                {total === 0
+                  ? "0 clientes"
+                  : `${page * pageSize + 1}-${Math.min(total, (page + 1) * pageSize)} de ${total}`}
               </span>
-              <button
-                type="button"
-                onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-                disabled={page >= totalPages - 1}
-                style={styles.secondaryButton}
-              >
-                Proxima
-              </button>
+              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                  disabled={page === 0}
+                  style={styles.secondaryButton}
+                >
+                  Anterior
+                </button>
+                <span>
+                  {page + 1}/{totalPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                  disabled={page >= totalPages - 1}
+                  style={styles.secondaryButton}
+                >
+                  Proxima
+                </button>
+              </div>
             </div>
-          </div>
-        }
-      />
+          }
+        />
+      )}
     </div>
   );
 }

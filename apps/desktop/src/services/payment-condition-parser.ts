@@ -6,8 +6,9 @@
  *  1. "10/20/30/40"  -> 4 parcelas com vencimentos fixos (10, 20, 30 e 40 dias).
  *  2. "A Vista/40/60" -> 3 parcelas: a primeira a vista (0 dias), depois 40 e 60 dias.
  *  3. "Para 93 dias"  -> 1 unica parcela para 93 dias apos o faturamento.
- *  4. "50"            -> um numero inteiro isolado = quantidade total de parcelas mensais.
- *  5. "50 Parcelas"   -> mesma interpretacao do item 4 (parcelas mensais).
+ *  4. "50"            -> um numero inteiro isolado = prazo em dias de uma unica
+ *                       parcela (mesmo significado de "Para 50 dias").
+ *  5. "50 Parcelas"   -> 50 parcelas mensais.
  */
 
 export type PaymentConditionKind = "fixed_days" | "single" | "monthly_count";
@@ -35,6 +36,8 @@ export interface ParsedPaymentCondition {
 const MONTHLY_INTERVAL_DAYS = 30;
 /** Limite defensivo para a quantidade de parcelas geradas. */
 const MAX_INSTALLMENTS = 360;
+/** Limite defensivo para o prazo (em dias) de uma parcela. */
+const MAX_DUE_DAYS = 3650;
 
 const A_VISTA_PATTERN = /^(a|à)\s*vista$/i;
 const PARA_DIAS_PATTERN = /^para\s+(\d+)\s*dias?$/i;
@@ -64,7 +67,16 @@ function parseDaysToken(token: string, context: string): number {
       `Parcela invalida em "${context}": "${trimmed}". Use numeros de dias ou "A Vista".`
     );
   }
-  return Number(trimmed);
+  return assertDueDays(Number(trimmed), context);
+}
+
+function assertDueDays(days: number, context: string): number {
+  if (days > MAX_DUE_DAYS) {
+    throw new PaymentConditionParseError(
+      `Prazo acima do limite (${MAX_DUE_DAYS} dias) em "${context}".`
+    );
+  }
+  return days;
 }
 
 function buildSummary(kind: PaymentConditionKind, installments: ParsedInstallment[]): string {
@@ -128,10 +140,13 @@ export function parsePaymentCondition(raw: string): ParsedPaymentCondition {
     };
   }
 
-  // Formato 3: "Para X dias" -> uma unica parcela.
+  // Formato 3: "Para X dias" e Formato 4: "X" isolado -> uma unica parcela X dias
+  // apos a venda. Um numero solto e o jeito mais curto de dizer o prazo; quando o
+  // operador quer parcelar, ele escreve "X parcelas" ou a lista de prazos.
   const paraMatch = value.match(PARA_DIAS_PATTERN);
-  if (paraMatch) {
-    const days = Number(paraMatch[1]);
+  const singleDaysText = paraMatch ? paraMatch[1] : INTEGER_PATTERN.test(value) ? value : null;
+  if (singleDaysText !== null) {
+    const days = assertDueDays(Number(singleDaysText), value);
     const installments = [{ number: 1, dueDays: days }];
     return {
       raw: value,
@@ -143,11 +158,10 @@ export function parsePaymentCondition(raw: string): ParsedPaymentCondition {
     };
   }
 
-  // Formato 5: "N Parcelas" e Formato 4: "N" isolado -> N parcelas mensais.
+  // Formato 5: "N Parcelas" -> N parcelas mensais.
   const parcelasMatch = value.match(PARCELAS_PATTERN);
-  const countText = parcelasMatch ? parcelasMatch[1] : INTEGER_PATTERN.test(value) ? value : null;
-  if (countText !== null) {
-    const count = Number(countText);
+  if (parcelasMatch !== null) {
+    const count = Number(parcelasMatch[1]);
     if (count < 1) {
       throw new PaymentConditionParseError(`Quantidade de parcelas invalida: "${value}".`);
     }
@@ -172,7 +186,7 @@ export function parsePaymentCondition(raw: string): ParsedPaymentCondition {
 
   throw new PaymentConditionParseError(
     `Formato de condicao nao reconhecido: "${value}". ` +
-      `Use por exemplo "10/20/30/40", "A Vista/40/60", "Para 93 dias" ou "50".`
+      `Use por exemplo "30" (30 dias), "10/20/30/40", "A Vista/40/60", "Para 93 dias" ou "3 parcelas".`
   );
 }
 

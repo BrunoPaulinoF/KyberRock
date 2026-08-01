@@ -13,6 +13,7 @@ import type {
   WeighingOperationSummary
 } from "../services/weighing-operations";
 import type { FreightModality } from "../services/freight";
+import type { CustomerFreightRule as CustomerFreightRuleView } from "../services/customer-freight-rules";
 import type {
   CloudBootstrapResult,
   CustomerAdvancesSyncResult,
@@ -156,67 +157,22 @@ export interface KyberRockDesktopApi {
     operationId: string,
     newCarrierId: string | null
   ) => Promise<WeighingOperationSummary>;
-  getCustomerFreightRules: (customerId: string) => Promise<
-    Array<{
-      id: string;
-      customerId: string;
-      productId: string | null;
-      productDescription: string | null;
-      rule: {
-        id: string;
-        name: string;
-        type: "per_ton" | "per_ton_km" | "fixed_plus_ton" | "distance_range";
-        baseValueCents: number;
-        minValueCents?: number;
-        fixedValueCents?: number;
-        distanceKm?: number;
-        ranges?: Array<{ maxKm: number; valueCents: number }>;
-        unit: string;
-      };
-      isActive: boolean;
-      createdAt: string;
-      updatedAt: string;
-    }>
-  >;
+  getCustomerFreightRules: (customerId: string) => Promise<CustomerFreightRuleView[]>;
   getCustomerFreightForProduct: (
     customerId: string,
-    productId: string
-  ) => Promise<{
-    id: string;
-    customerId: string;
-    productId: string | null;
-    productDescription: string | null;
-    rule: {
-      id: string;
-      name: string;
-      type: "per_ton" | "per_ton_km" | "fixed_plus_ton" | "distance_range";
-      baseValueCents: number;
-      minValueCents?: number;
-      fixedValueCents?: number;
-      distanceKm?: number;
-      ranges?: Array<{ maxKm: number; valueCents: number }>;
-      unit: string;
-    };
-    isActive: boolean;
-    createdAt: string;
-    updatedAt: string;
-  } | null>;
+    productId: string,
+    /** Tipo de frete da operacao; resolve o valor configurado para ele. */
+    modality?: FreightModality | null
+  ) => Promise<CustomerFreightRuleView | null>;
   setCustomerFreightRule: (input: {
     customerId: string;
     productId?: string | null;
-    rule: {
-      id: string;
-      name: string;
-      type: "per_ton" | "per_ton_km" | "fixed_plus_ton" | "distance_range";
-      baseValueCents: number;
-      minValueCents?: number;
-      fixedValueCents?: number;
-      distanceKm?: number;
-      ranges?: Array<{ maxKm: number; valueCents: number }>;
-      unit: string;
-    };
+    /** Quando informado, grava o valor apenas para esse tipo de frete. */
+    modality?: FreightModality | null;
+    rule: CustomerFreightRuleView["rule"];
   }) => Promise<unknown>;
   removeCustomerFreightRule: (ruleId: string) => Promise<void>;
+  removeCustomerFreightModality: (ruleId: string, modality: FreightModality) => Promise<void>;
   listWindowsPrinters: () => Promise<WindowsPrinterSummary[]>;
   configureReceiptPrintProfile: (
     input: Omit<ConfigureReceiptPrintProfileInput, "identity">
