@@ -150,7 +150,7 @@ export class CreditService {
       .prepare(
         `SELECT COALESCE(SUM(MAX(omie_advance_settle_cents, omie_advance_settled_cents)), 0) AS cents
          FROM weighing_operations
-         WHERE customer_id = ? AND status != 'cancelled'`
+         WHERE customer_id = ? AND status != 'cancelled' AND deleted_at IS NULL`
       )
       .get(customerId) as { cents: number } | undefined;
     return Math.max(0, mirrored - (row?.cents ?? 0));

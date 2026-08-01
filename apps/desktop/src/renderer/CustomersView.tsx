@@ -3,10 +3,10 @@ import { Lock, Search, Unlock } from "lucide-react";
 
 import {
   formatMoneyInput,
+  invalidEmailsInList,
   isValidDocument,
-  isValidEmail,
   normalizeDocument,
-  normalizeEmail,
+  normalizeEmailList,
   normalizePhone,
   parseMoneyInputToCents
 } from "@kyberrock/shared";
@@ -18,7 +18,7 @@ import type { CustomerFreightRule as CustomerFreightRuleView } from "../services
 import {
   CepInput,
   DocumentInput,
-  EmailInput,
+  EmailListInput,
   Field,
   MoneyInput,
   PhoneInput,
@@ -889,11 +889,12 @@ export function CustomersView({
       setFormError("Telefone invalido. Informe com DDD (11 digitos).");
       return;
     }
-    const normalizedEmail = normalizeEmail(form.email);
-    if (form.email.trim() && !isValidEmail(normalizedEmail)) {
-      setFormError("Email invalido.");
+    const invalidEmails = invalidEmailsInList(form.email);
+    if (invalidEmails.length > 0) {
+      setFormError(`Email invalido: ${invalidEmails.join(", ")}.`);
       return;
     }
+    const normalizedEmail = normalizeEmailList(form.email);
     const creditLimitText = form.creditLimitReais.trim();
     const creditLimitCents = creditLimitText
       ? (parseMoneyInputToCents(creditLimitText) ?? undefined)
@@ -1399,13 +1400,13 @@ export function CustomersView({
       >
         <Field
           label="E-mail padrao de NF-e"
-          hint="Usado para emitir NF-e sem depender do e-mail de cada cliente."
+          hint="Usado para emitir NF-e sem depender do e-mail de cada cliente. Aceita varios, separados por virgula."
         >
           <input
-            type="email"
+            type="text"
             value={nfeEmail}
             onChange={(e) => setNfeEmail(e.target.value)}
-            placeholder="nfe@suaempresa.com.br"
+            placeholder="nfe@suaempresa.com.br, financeiro@suaempresa.com.br"
             style={{ ...getInputStyle(false), minWidth: "260px" }}
           />
         </Field>
@@ -1568,11 +1569,12 @@ export function CustomersView({
                       onChange={(phone) => setForm({ ...form, phone })}
                       disabled={false}
                     />
-                    <EmailInput
+                    <EmailListInput
                       label="E-mail"
                       value={form.email}
                       onChange={(email) => setForm({ ...form, email })}
                       disabled={false}
+                      hint="Quantos e-mails quiser: a NF-e e o boleto do OMIE vao para todos."
                     />
                   </div>
                 </section>
