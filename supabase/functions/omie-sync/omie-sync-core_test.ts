@@ -5,6 +5,7 @@ import {
   OmieQueueManager,
   buildCarrierPayload,
   buildCustomerPayload,
+  clampOmieText,
   customerRegistrationFaultMessage,
   extractOmieRequiredFields,
   pushCustomerToOmieCore,
@@ -205,4 +206,64 @@ Deno.test("toOmieIntegrationCode e estavel para os formatos de chave do desktop"
   assertEquals(hashed, toOmieIntegrationCode("kyberrock:unit-1:op-1:create_sales_order"));
   assert(hashed.startsWith("KR"));
   assert(hashed.length <= 20);
+});
+
+Deno.test("buildCustomerPayload encurta a razao social para o limite do OMIE", () => {
+  // Razao social acima de 60: o OMIE recusa a chamada INTEIRA e o fechamento morria
+  // junto ("a razao social ultrapassa 60 caracteres").
+  const longa = "LOGI TRANSPORTES E LOGISTICA INTEGRADA DO BRASIL LTDA - FILIAL SAO PAULO";
+  assertEquals(longa.length, 72);
+
+  const payload = buildCustomerPayload({
+    localCustomerId: "cliente-logi",
+    razaoSocial: longa,
+    cnpjCpf: "12.345.678/0001-90"
+  });
+
+  const razaoSocial = payload.razao_social as string;
+  assert(razaoSocial.length <= 60);
+  // Corta na palavra inteira e limpa a pontuacao que sobra na ponta.
+  assertEquals(razaoSocial, "LOGI TRANSPORTES E LOGISTICA INTEGRADA DO BRASIL LTDA");
+  // Sem fantasia proprio, o fallback herda a razao social ja encurtada.
+  assertEquals(payload.nome_fantasia, razaoSocial);
+  // O documento nunca e cortado: um CNPJ encurtado seria um documento errado no OMIE.
+  assertEquals(payload.cnpj_cpf, "12345678000190");
+});
+
+Deno.test("clampOmieText e deterministico e preserva o que ja cabe", () => {
+  assertEquals(clampOmieText("Pedreira LTDA", 60), "Pedreira LTDA");
+  assertEquals(clampOmieText("  Pedreira   LTDA  ", 60), "Pedreira LTDA");
+  assertEquals(clampOmieText("   ", 60), undefined);
+  assertEquals(clampOmieText(undefined, 60), undefined);
+
+  // Palavra unica maior que o limite: corte seco, sem sobrar quase nada.
+  assertEquals(clampOmieText("A".repeat(80), 60), "A".repeat(60));
+
+  // Reenvio do mesmo cadastro gera o mesmo valor (idempotencia no OMIE).
+  const nome = "TRANSPORTADORA UNIAO DO NORTE E NORDESTE DISTRIBUIDORA LTDA ME";
+  assertEquals(clampOmieText(nome, 60), clampOmieText(nome, 60));
+  assert((clampOmieText(nome, 60) ?? "").length <= 60);
+});
+
+Deno.test("buildCustomerPayload mantem a UF da cidade dentro do limite do campo", () => {
+  const payload = buildCustomerPayload({
+    localCustomerId: "cliente-cidade",
+    razaoSocial: "Cliente Teste",
+    city: "Sao Miguel do Oeste",
+    state: "sc"
+  });
+
+  // Sem o "(UF)" o OMIE responde "Cidade nao encontrada": o corte cai no nome, nunca
+  // no sufixo.
+  assertEquals(payload.cidade, "Sao Miguel do Oeste (SC)");
+
+  const longa = buildCustomerPayload({
+    localCustomerId: "cliente-cidade-longa",
+    razaoSocial: "Cliente Teste",
+    city: "A".repeat(60),
+    state: "SP"
+  });
+  const cidade = longa.cidade as string;
+  assert(cidade.length <= 40);
+  assert(cidade.endsWith(" (SP)"));
 });

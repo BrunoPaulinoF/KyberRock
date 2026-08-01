@@ -48,6 +48,13 @@ import type { DetailSectionData } from "./crud-ui";
 import { PriceChangePasswordDialog } from "./PriceChangePasswordDialog";
 import { formatDbDateTime } from "./format-datetime";
 
+/**
+ * Limite da razao social no OMIE. Só para o aviso do formulario: quem encurta de fato o
+ * valor enviado e OMIE_CUSTOMER_FIELD_MAX_LENGTHS (packages/omie-client e o edge
+ * `omie-sync`). O renderer nao importa o cliente OMIE — ele nunca fala com o OMIE.
+ */
+const OMIE_RAZAO_SOCIAL_MAX_LENGTH = 60;
+
 const initialForm: CustomerFormData = {
   tradeName: "",
   legalName: "",
@@ -1417,6 +1424,14 @@ export function CustomersView({
                     onChange={(legalName) => setForm({ ...form, legalName })}
                     required
                     disabled={false}
+                    // O cadastro aceita qualquer tamanho; quem tem limite e o OMIE. O aviso
+                    // existe para o operador nao achar que precisa reescrever a razao social
+                    // (era o que a recusa "ultrapassa 60 caracteres" fazia parecer).
+                    hint={
+                      form.legalName.trim().length > OMIE_RAZAO_SOCIAL_MAX_LENGTH
+                        ? `Acima de ${OMIE_RAZAO_SOCIAL_MAX_LENGTH} caracteres: o OMIE recebe a razao social encurtada. O cadastro completo continua aqui, no cupom e nos relatorios.`
+                        : undefined
+                    }
                   />
                   <TextInput
                     label="Nome fantasia"
