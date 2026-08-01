@@ -32,6 +32,8 @@ const desktopApi = {
   listClosedWeighingOperations: () => ipcRenderer.invoke("desktop:list-closed-weighing-operations"),
   clearCanceledWeighingOperations: () =>
     ipcRenderer.invoke("desktop:clear-canceled-weighing-operations"),
+  clearClosedWeighingOperations: (options?: { untilDate?: string }) =>
+    ipcRenderer.invoke("desktop:clear-closed-weighing-operations", options),
   deleteClosedWeighingOperation: (operationId: string) =>
     ipcRenderer.invoke("desktop:delete-closed-weighing-operation", operationId),
   startWeighing: (input: unknown) => ipcRenderer.invoke("desktop:start-weighing", input),

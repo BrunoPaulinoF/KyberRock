@@ -162,9 +162,8 @@ function clampCustomerFields<T extends CreateCustomerInput | UpdateCustomerInput
   if (input.nomeFantasia !== undefined) {
     clamped.nomeFantasia = clampOmieText(input.nomeFantasia, limits.nomeFantasia);
   }
-  if (input.email !== undefined) {
-    clamped.email = clampOmieText(input.email, limits.email);
-  }
+  // O e-mail nao entra aqui: e uma lista de destinatarios e um corte no meio de um
+  // endereco geraria um e-mail invalido, fazendo o OMIE recusar o cadastro inteiro.
   if (input.telefone1Ddd !== undefined) {
     clamped.telefone1Ddd = clampOmieText(input.telefone1Ddd, limits.telefone1Ddd);
   }

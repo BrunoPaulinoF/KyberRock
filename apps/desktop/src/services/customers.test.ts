@@ -85,6 +85,59 @@ describe("customers", () => {
     }
   });
 
+  it("keeps every email the operator informed, in the format OMIE expects", () => {
+    const database = createDatabase();
+
+    try {
+      const customer = createCustomer(database, {
+        companyId: "company-1",
+        tradeName: "Cliente Multi",
+        legalName: "Cliente Multi LTDA",
+        email: " Fiscal@Cliente.com ; financeiro@cliente.com , fiscal@cliente.com "
+      });
+
+      // Virgula simples e o separador do cadastro do OMIE; repetidos saem da lista.
+      expect(customer.email).toBe("fiscal@cliente.com, financeiro@cliente.com");
+
+      const updated = updateCustomer(database, customer.id, {
+        email: "compras@cliente.com\nnota@cliente.com"
+      });
+      expect(updated.email).toBe("compras@cliente.com, nota@cliente.com");
+
+      const cleared = updateCustomer(database, customer.id, { email: "  " });
+      expect(cleared.email).toBeNull();
+    } finally {
+      database.close();
+    }
+  });
+
+  it("accepts more than one default NF-e email", () => {
+    const database = createDatabase();
+
+    try {
+      database
+        .prepare(
+          `INSERT INTO customers (id, company_id, source, legal_name, trade_name, email, is_active, needs_push, created_at, updated_at)
+           VALUES ('local-1', 'company-1', 'local', 'Local 1', 'Local 1', NULL, 1, 0, datetime('now'), datetime('now'))`
+        )
+        .run();
+
+      const count = applyDefaultNfeEmailToAllCustomers(
+        database,
+        "company-1",
+        "NF@Empresa.com; boletos@empresa.com"
+      );
+
+      expect(count).toBe(1);
+      expect(getDefaultNfeEmail(database)).toBe("nf@empresa.com, boletos@empresa.com");
+      expect(() =>
+        applyDefaultNfeEmailToAllCustomers(database, "company-1", "nf@empresa.com, invalido")
+      ).toThrow(/invalido/i);
+    } finally {
+      database.close();
+    }
+  });
+
   it("clears the credit limit when creditLimitCents is null and keeps it when undefined", () => {
     const database = createDatabase();
 

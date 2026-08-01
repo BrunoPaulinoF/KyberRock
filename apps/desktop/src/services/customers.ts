@@ -1,12 +1,25 @@
 import { randomUUID } from "node:crypto";
 
-import { isValidEmail, normalizeEmail } from "@kyberrock/shared";
+import { invalidEmailsInList, normalizeEmailList } from "@kyberrock/shared";
 
 import type { DesktopDatabase } from "../database/sqlite.js";
 import { readStringLocalSetting, writeLocalSetting } from "./local-settings.js";
 
 /** Key do e-mail padrao de NF-e (usado quando o cliente nao tem e-mail proprio). */
 export const DEFAULT_NFE_EMAIL_KEY = "default_nfe_email";
+
+/**
+ * O cadastro do cliente aceita quantos e-mails o operador quiser (NF-e, boleto, financeiro,
+ * comprador...). Todos ficam no mesmo campo, separados por virgula — o formato que o OMIE
+ * usa para mandar a nota e o boleto para todos os destinatarios.
+ *
+ * A normalizacao nao descarta endereco invalido: o formulario e quem avisa o operador, e
+ * apagar o que ele digitou aqui esconderia o erro (e o OMIE recusaria o cadastro depois).
+ */
+export function normalizeCustomerEmails(value: string | null | undefined): string | null {
+  const normalized = normalizeEmailList(value);
+  return normalized.length > 0 ? normalized : null;
+}
 
 export interface CreateCustomerInput {
   companyId: string;
@@ -218,7 +231,7 @@ export function createCustomer(
       input.tradeName,
       input.document ?? null,
       input.phone ?? null,
-      input.email ?? null,
+      normalizeCustomerEmails(input.email),
       input.creditLimitCents ?? null,
       input.creditMode ?? "normal",
       input.omieBillingBlocked ? 1 : 0,
@@ -336,7 +349,7 @@ export function updateCustomer(
   }
   if (input.email !== undefined) {
     sets.push("email = ?");
-    values.push(input.email);
+    values.push(normalizeCustomerEmails(input.email));
   }
   if (input.creditLimitCents !== undefined) {
     sets.push("credit_limit_cents = ?");
@@ -475,24 +488,29 @@ export function getDefaultNfeEmail(database: DesktopDatabase): string | null {
   return readStringLocalSetting(database, DEFAULT_NFE_EMAIL_KEY);
 }
 
-/** Grava (ou limpa, com string vazia) o e-mail padrao de NF-e. Valida o formato. */
+/**
+ * Grava (ou limpa, com string vazia) o e-mail padrao de NF-e. Aceita quantos enderecos o
+ * operador quiser, separados por virgula, e valida cada um.
+ */
 export function setDefaultNfeEmail(database: DesktopDatabase, email: string): string | null {
   const trimmed = email.trim();
   if (!trimmed) {
     writeLocalSetting(database, DEFAULT_NFE_EMAIL_KEY, null);
     return null;
   }
-  const normalized = normalizeEmail(trimmed);
-  if (!isValidEmail(normalized)) {
-    throw new Error("E-mail padrao invalido.");
+  const invalid = invalidEmailsInList(trimmed);
+  if (invalid.length > 0) {
+    throw new Error(`E-mail padrao invalido: ${invalid.join(", ")}.`);
   }
+  const normalized = normalizeEmailList(trimmed);
   writeLocalSetting(database, DEFAULT_NFE_EMAIL_KEY, normalized);
   return normalized;
 }
 
 /**
  * Define o e-mail de TODOS os clientes da empresa para o e-mail padrao (NF-e sempre
- * sai com um e-mail, sem depender do cadastro de cada cliente). Tambem grava o valor
+ * sai com um e-mail, sem depender do cadastro de cada cliente). O padrao pode ter varios
+ * enderecos separados por virgula — todos vao para o OMIE. Tambem grava o valor
  * como e-mail padrao. Clientes origem OMIE viram 'hybrid' + needs_push=1 para o e-mail
  * ser empurrado ao OMIE. Retorna quantos clientes foram atualizados.
  */

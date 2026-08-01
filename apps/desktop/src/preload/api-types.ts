@@ -120,6 +120,8 @@ export interface KyberRockDesktopApi {
   listCanceledWeighingOperations: () => Promise<WeighingOperationSummary[]>;
   listClosedWeighingOperations: () => Promise<WeighingOperationSummary[]>;
   clearCanceledWeighingOperations: () => Promise<number>;
+  /** Limpa as concluidas em lote; `untilDate` preserva o movimento do dia. */
+  clearClosedWeighingOperations: (options?: { untilDate?: string }) => Promise<number>;
   deleteClosedWeighingOperation: (operationId: string) => Promise<void>;
   startWeighing: (input: {
     operationType?: OperationType;

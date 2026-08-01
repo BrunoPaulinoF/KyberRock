@@ -15,6 +15,7 @@ import { PricingService, type PriceDetails } from "./pricing.js";
 import { cancelPendingOmieJobs, enqueueSyncJob } from "./sync-queue.js";
 import { CreditService } from "./credit.js";
 import { buildOmieIntegrationCode } from "@kyberrock/omie-client";
+import { formatEmailListForOmie } from "@kyberrock/shared";
 import { DEFAULT_NFE_EMAIL_KEY } from "./customers.js";
 import { readStringLocalSetting } from "./local-settings.js";
 import { DEFAULT_OMIE_CATEGORY_SETTING_KEY, resolveOrderCategoryCode } from "./omie-categories.js";
@@ -1198,6 +1199,8 @@ function splitPhoneForOmie(phone: string | null): { ddd?: string; numero?: strin
  * Monta o cadastro do cliente para o edge criar/localizar no OMIE junto com o pedido.
  * Sem e-mail proprio o cliente sai com o e-mail padrao de NF-e configurado: o OMIE cobra
  * o campo no IncluirCliente e, sem ele, o cadastro (e o fechamento junto) e recusado.
+ * O cliente pode ter varios e-mails: todos vao no campo do OMIE (virgula), respeitando
+ * o limite de 500 caracteres do cadastro.
  */
 function buildOrderCustomerCadastro(
   localCustomerId: string,
@@ -1210,7 +1213,7 @@ function buildOrderCustomerCadastro(
     razaoSocial: row.legal_name ?? row.trade_name ?? "",
     nomeFantasia: row.trade_name ?? row.legal_name ?? undefined,
     cnpjCpf: row.document?.trim() || undefined,
-    email: row.email?.trim() || fallbackEmail || undefined,
+    email: formatEmailListForOmie(row.email) || formatEmailListForOmie(fallbackEmail) || undefined,
     telefone1Ddd: phone.ddd,
     telefone1Numero: phone.numero,
     zipcode: row.zipcode ?? undefined,
@@ -1477,7 +1480,7 @@ function buildOrderCarrierCadastro(
     localCarrierId: carrier.id,
     name: carrier.name,
     cnpjCpf: document,
-    email: carrier.email ?? undefined,
+    email: formatEmailListForOmie(carrier.email) || undefined,
     telefone1Ddd: phone.ddd,
     telefone1Numero: phone.numero,
     zipcode: carrier.zipcode ?? undefined,
@@ -1836,6 +1839,50 @@ export function clearCanceledWeighingOperations(
     .run(timestamp, timestamp);
 
   return result.changes;
+}
+
+/**
+ * Limpa a lista de concluidas de uma vez (soft-delete), como ja existia para as
+ * canceladas. Antes so dava para excluir uma a uma — limpar o historico de teste
+ * de uma balanca significava dezenas de cliques.
+ *
+ * `untilDate` (ISO yyyy-mm-dd, inclusive) limita a limpeza ao que foi criado ate
+ * aquele dia: e o que permite preservar o movimento do dia corrente. Sem ela,
+ * limpa todas as concluidas.
+ *
+ * Nao mexe no OMIE: pedido/OS ja enviado continua la e deve ser tratado no
+ * proprio OMIE. Jobs OMIE ainda nao enviados sao neutralizados, como na exclusao
+ * individual, para nao criar pedido de uma operacao que o operador excluiu.
+ */
+export function clearClosedWeighingOperations(
+  database: DesktopDatabase,
+  options: { untilDate?: string } = {},
+  now: Date = new Date()
+): number {
+  const timestamp = now.toISOString();
+  const untilDate = options.untilDate?.trim() || null;
+
+  const selectSql = `SELECT id FROM weighing_operations
+     WHERE status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
+       AND deleted_at IS NULL
+       ${untilDate ? "AND date(created_at) <= date(?)" : ""}`;
+  const rows = (
+    untilDate ? database.prepare(selectSql).all(untilDate) : database.prepare(selectSql).all()
+  ) as Array<{ id: string }>;
+  if (rows.length === 0) return 0;
+
+  const markDeleted = database.prepare(
+    "UPDATE weighing_operations SET deleted_at = ?, updated_at = ? WHERE id = ?"
+  );
+  const clear = database.transaction(() => {
+    for (const row of rows) {
+      markDeleted.run(timestamp, timestamp, row.id);
+      cancelPendingOmieJobs(database, row.id, now);
+    }
+  });
+  clear();
+
+  return rows.length;
 }
 
 /**

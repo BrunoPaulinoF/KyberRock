@@ -7,9 +7,13 @@
  *
  * `nomeFantasia` usa o mesmo limite da razao social de proposito: quando o cadastro nao
  * tem fantasia proprio ele recebe a razao social como fallback, entao um limite maior aqui
- * deixaria passar exatamente o valor que a razao social ja provou ser grande demais. O
- * documento (cnpjCpf) fica de fora: encurtar um CNPJ/CPF mandaria um documento ERRADO
- * para o OMIE, o que e pior do que a recusa.
+ * deixaria passar exatamente o valor que a razao social ja provou ser grande demais.
+ *
+ * Dois campos ficam de fora de proposito: o documento (`cnpjCpf`), porque encurtar um
+ * CNPJ/CPF mandaria um documento ERRADO para o OMIE — pior do que a recusa; e o `email`,
+ * que e uma LISTA de destinatarios (o cliente pode ter varios) e precisa ser cortada por
+ * endereco inteiro, nunca no meio de um e-mail — ver `formatOmieEmailList` no edge
+ * `omie-sync`.
  *
  * Precisa acompanhar OMIE_CUSTOMER_FIELD_MAX_LENGTHS em
  * `supabase/functions/omie-sync/omie-sync-core.ts` (o edge nao consegue importar deste
@@ -18,7 +22,6 @@
 export const OMIE_CUSTOMER_FIELD_MAX_LENGTHS = {
   razaoSocial: 60,
   nomeFantasia: 60,
-  email: 250,
   telefone1Ddd: 5,
   telefone1Numero: 15
 } as const;

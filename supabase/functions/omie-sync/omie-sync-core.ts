@@ -214,12 +214,13 @@ function fnv1a64(input: string): bigint {
  * tem fantasia proprio ele recebe a razao social como fallback (ver buildCustomerPayload),
  * entao um limite maior aqui deixaria passar exatamente o valor que a razao social ja
  * provou ser grande demais. O documento (cnpj_cpf) fica de fora: encurtar um CNPJ/CPF
- * mandaria um documento errado para o OMIE, o que e pior do que a recusa.
+ * mandaria um documento errado para o OMIE, o que e pior do que a recusa. O `email` tambem
+ * fica de fora — e uma LISTA de destinatarios, que precisa ser cortada por endereco
+ * inteiro (ver OMIE_EMAIL_FIELD_MAX_LENGTH / formatOmieEmailList).
  */
 export const OMIE_CUSTOMER_FIELD_MAX_LENGTHS = {
   razao_social: 60,
   nome_fantasia: 60,
-  email: 250,
   telefone1_ddd: 5,
   telefone1_numero: 15,
   endereco: 60,
@@ -271,7 +272,9 @@ export function buildCustomerPayload(payload: PushCustomerPayload): Record<strin
     // 11 digitos = CPF. Sem `pessoa_fisica: "S"` o OMIE valida o documento como CNPJ
     // e recusa o cadastro de qualquer cliente pessoa fisica.
     pessoa_fisica: document ? (document.length === 11 ? "S" : "N") : undefined,
-    email: clampOmieText(payload.email, OMIE_CUSTOMER_FIELD_MAX_LENGTHS.email),
+    // O e-mail tem regra propria (lista de destinatarios cortada por endereco inteiro):
+    // ver formatOmieEmailList / OMIE_EMAIL_FIELD_MAX_LENGTH.
+    email: formatOmieEmailList(payload.email),
     telefone1_ddd: clampOmieText(
       payload.telefone1Ddd,
       OMIE_CUSTOMER_FIELD_MAX_LENGTHS.telefone1_ddd
@@ -317,6 +320,33 @@ function dropEmptyFields(body: Record<string, unknown>): Record<string, unknown>
 function trimOrUndefined(value: string | undefined): string | undefined {
   const text = (value ?? "").trim();
   return text.length > 0 ? text : undefined;
+}
+
+/** Tamanho maximo do campo `email` do cadastro de cliente/fornecedor do OMIE. */
+export const OMIE_EMAIL_FIELD_MAX_LENGTH = 500;
+
+/**
+ * O cliente pode ter varios e-mails no KyberRock. O OMIE aceita todos no mesmo campo,
+ * separados por virgula simples, e manda NF-e e boleto para cada um.
+ *
+ * O corte do limite de 500 caracteres e feito por endereco inteiro: truncar no meio de um
+ * e-mail geraria um destinatario invalido e o OMIE recusaria o cadastro inteiro.
+ */
+export function formatOmieEmailList(value: string | undefined): string | undefined {
+  const emails: string[] = [];
+  for (const part of (value ?? "").split(/[,;\s]+/)) {
+    const email = part.trim().toLowerCase();
+    if (email.length > 0 && !emails.includes(email)) emails.push(email);
+  }
+
+  const accepted: string[] = [];
+  for (const email of emails) {
+    const candidate = [...accepted, email].join(", ");
+    if (candidate.length > OMIE_EMAIL_FIELD_MAX_LENGTH) break;
+    accepted.push(email);
+  }
+
+  return accepted.length > 0 ? accepted.join(", ") : undefined;
 }
 
 function onlyDigits(value: string | undefined): string | undefined {

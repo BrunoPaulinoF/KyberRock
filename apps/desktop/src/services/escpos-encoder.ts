@@ -1,3 +1,9 @@
+import {
+  isBlankDotRatio,
+  isThermalBlackPixel,
+  RECEIPT_LOGO_LUMINANCE_THRESHOLD
+} from "./receipt-logo-raster.js";
+
 export interface EscPosLine {
   text: string;
   bold?: boolean;
@@ -99,26 +105,71 @@ export function packRasterImage(
 
   const redOffset = options.order === "rgba" ? 0 : 2;
   const blueOffset = options.order === "rgba" ? 2 : 0;
-  const threshold = options.threshold ?? 0.5;
+  const threshold = options.threshold ?? RECEIPT_LOGO_LUMINANCE_THRESHOLD;
   const bytesPerRow = Math.ceil(widthPx / 8);
   const bits = Buffer.alloc(bytesPerRow * heightPx);
 
   for (let y = 0; y < heightPx; y += 1) {
     for (let x = 0; x < widthPx; x += 1) {
       const pixel = (y * widthPx + x) * 4;
-      const alpha = pixels[pixel + 3] / 255;
-      const red = pixels[pixel + redOffset] * alpha + 255 * (1 - alpha);
-      const green = pixels[pixel + 1] * alpha + 255 * (1 - alpha);
-      const blue = pixels[pixel + blueOffset] * alpha + 255 * (1 - alpha);
-      const luminance = (0.299 * red + 0.587 * green + 0.114 * blue) / 255;
+      const isBlack = isThermalBlackPixel(
+        pixels[pixel + redOffset],
+        pixels[pixel + 1],
+        pixels[pixel + blueOffset],
+        pixels[pixel + 3],
+        threshold
+      );
 
-      if (luminance <= threshold) {
+      if (isBlack) {
         bits[y * bytesPerRow + (x >> 3)] |= 0x80 >> (x & 7);
       }
     }
   }
 
   return { widthPx, heightPx, bits };
+}
+
+/**
+ * Reconstroi a imagem preto-e-branco a partir dos bits 1 bpp, em BGRA opaco — o formato que
+ * `nativeImage.createFromBitmap` aceita. E assim que o cupom da impressora do Windows recebe
+ * exatamente a mesma imagem que vai para a impressora de rede: o HTML nao leva mais a imagem
+ * original (colorida, em qualquer formato), e sim o mesmo raster de 1 bit ja no tamanho final.
+ */
+export function rasterToBgraBitmap(raster: EscPosRasterImage): Buffer {
+  const bytesPerRow = Math.ceil(raster.widthPx / 8);
+  const bitmap = Buffer.alloc(raster.widthPx * raster.heightPx * 4);
+
+  for (let y = 0; y < raster.heightPx; y += 1) {
+    for (let x = 0; x < raster.widthPx; x += 1) {
+      const isBlack = (raster.bits[y * bytesPerRow + (x >> 3)] >> (7 - (x & 7))) & 1;
+      const channel = isBlack ? 0 : 255;
+      const offset = (y * raster.widthPx + x) * 4;
+      bitmap[offset] = channel;
+      bitmap[offset + 1] = channel;
+      bitmap[offset + 2] = channel;
+      bitmap[offset + 3] = 255;
+    }
+  }
+
+  return bitmap;
+}
+
+/** Quantidade de pontos que a impressora vai marcar (bits em 1). */
+export function countRasterBlackDots(raster: EscPosRasterImage): number {
+  let total = 0;
+  for (const byte of raster.bits) {
+    let value = byte;
+    while (value !== 0) {
+      total += value & 1;
+      value >>= 1;
+    }
+  }
+  return total;
+}
+
+/** Logo que sairia praticamente em branco na impressora termica (1 bit, sem tons). */
+export function isRasterBlank(raster: EscPosRasterImage): boolean {
+  return isBlankDotRatio(countRasterBlackDots(raster), raster.widthPx * raster.heightPx);
 }
 
 function encodeRasterImage(image: EscPosRasterImage): Buffer | null {
