@@ -185,6 +185,14 @@ Financeiro:
 - Como o flag so viaja na parcela da OS, a operacao interna em boleto vai com o bloco
   `Parcelas` mesmo a vista e mesmo com a condicao ja vinculada a um codigo do cadastro
   (`cCodParc` `"999"`). Nos demais meios a OS mantem o caminho historico.
+- A parcela da OS tambem leva o **`meio_pagamento`** (mesma tag do `lista_parcelas` do pedido).
+  Sem ele a aba "Parcelas" da OS chegava ao OMIE sem o meio "15 - Boleto Bancario" na venda
+  **sem nota** em boleto, e o faturamento nao tinha do que tirar a cobranca — mesmo com o
+  `nao_gerar_boleto` `"N"` e o `tipo_documento` `"BOL"`.
+- Se o OMIE recusar o formato do bloco `Parcelas` numa operacao em boleto, o log do reenvio
+  diz explicitamente que a OS vai nascer **sem** o "gerar boleto" da parcela (a cobranca passa
+  a depender so da recomendacao do cadastro do cliente): uma recusa de formato nunca deixa a
+  operacao sem OS, mas tambem nao pode sumir em silencio.
 
 #### Venda em carteira (implementado)
 

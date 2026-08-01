@@ -159,6 +159,25 @@ export interface KyberRockDesktopApi {
     operationId: string,
     newCarrierId: string | null
   ) => Promise<WeighingOperationSummary>;
+  /**
+   * Edicao completa de uma operacao em andamento. Cada campo e opcional: o que nao vier
+   * fica como esta; `null` limpa transportadora, forma e condicao de pagamento.
+   */
+  updateWeighingOperation: (input: {
+    operationId: string;
+    customerId?: string;
+    productId?: string;
+    vehicleId?: string;
+    driverId?: string;
+    carrierId?: string | null;
+    paymentMethodId?: string | null;
+    paymentTermId?: string | null;
+    operationType?: OperationType;
+    unitPriceCents?: number;
+    freight?: OperationFreightInput | null;
+    freightModality?: FreightModality;
+    deductFreightFromCredit?: boolean;
+  }) => Promise<WeighingOperationSummary>;
   getCustomerFreightRules: (customerId: string) => Promise<CustomerFreightRuleView[]>;
   getCustomerFreightForProduct: (
     customerId: string,

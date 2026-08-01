@@ -92,7 +92,12 @@ export class PricingService {
   }
 }
 
-function calculateSavingsPercent(
+/**
+ * Desconto (%) do preco aplicado em relacao ao preco base (tabela/produto). Null quando
+ * nao ha base ou quando o preco aplicado nao e menor que ela. Exportada porque a edicao
+ * da operacao tambem recalcula o desconto ao gravar um preco digitado a mao.
+ */
+export function calculateSavingsPercent(
   baseUnitPriceCents: number | null,
   appliedUnitPriceCents: number | null
 ): number | null {

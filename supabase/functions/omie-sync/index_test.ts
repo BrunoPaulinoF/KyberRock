@@ -2201,6 +2201,77 @@ Deno.test("create_order leva o gerar boleto para a ordem de servico", async () =
   assertEquals(parcelas.length, 1);
   assertEquals(parcelas[0].nao_gerar_boleto, "N");
   assertEquals(parcelas[0].tipo_documento, "BOL");
+  // Sem o meio na parcela, a aba "Parcelas" da OS chegava sem "15 - Boleto Bancario" e o
+  // faturamento nao tinha do que tirar a cobranca.
+  assertEquals(parcelas[0].meio_pagamento, "15");
+});
+
+// Venda EM BOLETO e SEM NOTA (operacao interna -> ordem de servico). O "gerar boleto" so
+// existe na parcela da OS e depende da recomendacao do cadastro do cliente: os dois
+// precisam sair juntos, e o cadastro precisa ser alterado ANTES do IncluirOS.
+Deno.test("create_order marca o gerar boleto da OS na venda sem nota em boleto", async () => {
+  const deviceToken = "token-os-boleto-sem-nota";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-os-boleto-sem-nota": {
+        id: "device-os-boleto-sem-nota",
+        company_id: "company-os-boleto-sem-nota",
+        unit_id: "unit-os-boleto-sem-nota",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-os-boleto-sem-nota": {
+        id: "company-os-boleto-sem-nota",
+        is_active: true,
+        omie_app_key: "os-boleto-sem-nota",
+        omie_app_secret: "secret-os-boleto-sem-nota"
+      }
+    }
+  });
+  const omieQueue = parcelaAwareOrderStub({
+    customerRecommendations: { numero_parcelas: "1", gerar_boletos: "N" }
+  });
+
+  await postOmieSync(
+    {
+      deviceId: "device-os-boleto-sem-nota",
+      deviceToken,
+      action: "create_order",
+      payload: {
+        operationType: "internal",
+        customerOmieId: 100,
+        serviceDescription: "Brita 1",
+        quantity: 8,
+        unitPrice: 30,
+        issueDate: "2026-07-07",
+        idempotencyKey: "kyberrock:unit:op-sem-nota:create_service_order",
+        paymentMethodOmieCode: "15",
+        installmentDays: [15, 30]
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  const parcelas = getParam(findRequest(omieQueue, "IncluirOS")).Parcelas as Array<
+    Record<string, unknown>
+  >;
+  assertEquals(parcelas.length, 2);
+  for (const parcela of parcelas) {
+    assertEquals(parcela.nao_gerar_boleto, "N");
+    assertEquals(parcela.tipo_documento, "BOL");
+    assertEquals(parcela.meio_pagamento, "15");
+  }
+
+  const recomendacoes = getParam(findRequest(omieQueue, "AlterarCliente")).recomendacoes as Record<
+    string,
+    unknown
+  >;
+  assertEquals(recomendacoes.gerar_boletos, "S");
+  const calls = omieQueue.requests.map((request) => request.call);
+  assertEquals(calls.indexOf("AlterarCliente") < calls.indexOf("IncluirOS"), true);
 });
 
 Deno.test("create_order mantem a OS sem boleto no caminho historico", async () => {
@@ -2303,6 +2374,7 @@ Deno.test("create_order marca as parcelas da OS sem boleto nos demais meios", as
   assertEquals(parcelas.length, 2);
   assertEquals(parcelas[0].nao_gerar_boleto, "S");
   assertEquals(parcelas[0].tipo_documento, undefined);
+  assertEquals(parcelas[0].meio_pagamento, "17");
 });
 
 Deno.test("create_order manda os vencimentos digitados na ordem de servico", async () => {

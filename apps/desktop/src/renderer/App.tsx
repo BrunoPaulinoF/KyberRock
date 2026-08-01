@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
   BarChart3,
@@ -55,6 +56,16 @@ import {
 import { validatePaymentMethodCondition } from "../services/payment-method-condition-guard";
 import { tryParsePaymentCondition } from "../services/payment-condition-parser";
 import { extractConditionRaw, resolveConditionTermId } from "./payment-condition-helpers";
+import {
+  buildOperationDetailSections,
+  buildOperationEditForm,
+  buildOperationUpdateInput,
+  isOperationFreightCharged,
+  isOperationInProgress,
+  operationStatusLabel,
+  validateOperationEditForm
+} from "./operation-details";
+import type { OperationEditFormState } from "./operation-details";
 import type {
   OperationFreightInput,
   OperationType,
@@ -95,6 +106,7 @@ import {
   EditRowButton,
   FlashBanner,
   FormSection,
+  isInteractiveTarget,
   RecordDetailModal,
   SourceBadge,
   useConfirm,
@@ -438,6 +450,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [reprintingOperationId, setReprintingOperationId] = useState<string | null>(null);
   const [customersInitialSearch, setCustomersInitialSearch] = useState("");
   const [deleteClosedOperationId, setDeleteClosedOperationId] = useState<string | null>(null);
+  // Ficha completa da operacao (duplo clique na linha); em andamento, abre a edicao total.
+  const [detailOperation, setDetailOperation] = useState<WeighingOperationSummary | null>(null);
   // Limpeza em lote apaga historico da tela e dos relatorios: pede a senha da
   // unidade (a mesma do preco) antes de rodar, como as demais acoes sensiveis.
   const [clearOperationsRequest, setClearOperationsRequest] = useState<
@@ -503,6 +517,31 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     },
     [showDeviceColors, unitDeviceById]
   );
+
+  /**
+   * Props que transformam a linha da operacao num alvo de "abrir ficha completa":
+   * duplo clique com o mouse, Enter com a linha focada. Cliques em botoes de acao
+   * da propria linha sao ignorados (`isInteractiveTarget`).
+   */
+  const operationRowOpenProps = useCallback((operation: WeighingOperationSummary) => {
+    return {
+      role: "button",
+      tabIndex: 0,
+      title: "Duplo clique para ver todos os dados da operacao",
+      onDoubleClick: (event: ReactMouseEvent<HTMLDivElement>) => {
+        if (isInteractiveTarget(event.target)) return;
+        // O duplo clique seleciona o texto da celula; limpa antes de abrir.
+        window.getSelection()?.removeAllRanges();
+        setDetailOperation(operation);
+      },
+      onKeyDown: (event: ReactKeyboardEvent<HTMLDivElement>) => {
+        if (event.key === "Enter" && event.target === event.currentTarget) {
+          event.preventDefault();
+          setDetailOperation(operation);
+        }
+      }
+    } as const;
+  }, []);
 
   // Detecta as transicoes aguardando <-> concluida (o carregador clicou em
   // "Concluir carga" ou em "Cancelar carga" no loader-web) e dispara um aviso
@@ -2934,8 +2973,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                         return (
                           <div
                             key={operation.id}
+                            {...operationRowOpenProps(operation)}
                             style={{
                               ...styles.operationsTableRow,
+                              cursor: "pointer",
                               ...(isOvertime ? { background: "var(--kr-danger-surface)" } : {}),
                               ...operationOutlineStyle(operation)
                             }}
@@ -2972,6 +3013,14 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                               </small>
                             </span>
                             <span style={styles.rowActions}>
+                              <IconActionButton
+                                icon="file-text"
+                                label="Ver / editar operacao"
+                                tip={TIPS.operations.details}
+                                tone="neutral"
+                                placement="left"
+                                onClick={() => setDetailOperation(operation)}
+                              />
                               <IconActionButton
                                 icon="swap"
                                 label="Alterar material"
@@ -3040,8 +3089,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       {filteredCanceledOperations.map((operation) => (
                         <div
                           key={operation.id}
+                          {...operationRowOpenProps(operation)}
                           style={{
                             ...styles.canceledOperationsTableRow,
+                            cursor: "pointer",
                             ...operationOutlineStyle(operation)
                           }}
                         >
@@ -3076,8 +3127,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     {filteredClosedOperations.map((operation) => (
                       <div
                         key={operation.id}
+                        {...operationRowOpenProps(operation)}
                         style={{
                           ...styles.closedOperationsTableRow,
+                          cursor: "pointer",
                           ...operationOutlineStyle(operation)
                         }}
                       >
@@ -3143,6 +3196,19 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   </div>
                 )}
               </section>
+            ) : null}
+
+            {detailOperation ? (
+              <OperationDetailsDialog
+                operation={detailOperation}
+                desktopApi={desktopApi}
+                onClose={() => setDetailOperation(null)}
+                onSaved={(savedMessage) => {
+                  setDetailOperation(null);
+                  setMessage(savedMessage);
+                  void refreshOpenOperations();
+                }}
+              />
             ) : null}
 
             {closingOperation ? (
@@ -6247,6 +6313,447 @@ function FreightTypeModal({
         </button>
       </div>
     </div>
+  );
+}
+
+/**
+ * Ficha completa da operacao (duplo clique na linha da tela de Operacoes). Abre em modo
+ * leitura com TODOS os dados gravados e, quando a operacao ainda esta em andamento,
+ * permite editar tudo o que a balanca ainda pode corrigir: cliente, produto, preco,
+ * frete, transporte, pagamento e tipo de fechamento.
+ */
+function OperationDetailsDialog({
+  operation,
+  desktopApi,
+  onClose,
+  onSaved
+}: {
+  operation: WeighingOperationSummary;
+  desktopApi: KyberRockDesktopApi | null;
+  onClose: () => void;
+  onSaved: (message: string) => void;
+}) {
+  const canEdit = isOperationInProgress(operation.status);
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState<OperationEditFormState>(() => buildOperationEditForm(operation));
+  const [initialCondition, setInitialCondition] = useState("");
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethodCacheEntry[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [showFreightModal, setShowFreightModal] = useState(false);
+  const [askPricePassword, setAskPricePassword] = useState(false);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+
+  // Texto da condicao gravada: a operacao guarda so o id do payment_term, e o campo de
+  // edicao e o mesmo texto livre da entrada ("7/14/21").
+  useEffect(() => {
+    if (!desktopApi || !operation.paymentTermId) return;
+    let active = true;
+    void desktopApi
+      .queryCache({ entityType: "payment_term", limit: 200 })
+      .then((result) => {
+        if (!active) return;
+        const term = (result.rows as PaymentTermCacheEntry[]).find(
+          (item) => item.id === operation.paymentTermId
+        );
+        if (!term) return;
+        const raw = extractConditionRaw(term.rulesJson) || term.name;
+        setInitialCondition(raw);
+        setForm((prev) => (prev.conditionText ? prev : { ...prev, conditionText: raw }));
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [desktopApi, operation.paymentTermId]);
+
+  useEffect(() => {
+    if (!desktopApi) return;
+    let active = true;
+    void desktopApi
+      .queryCache({ entityType: "payment_method", limit: 200 })
+      .then((result) => {
+        if (active) setPaymentMethods(result.rows as PaymentMethodCacheEntry[]);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [desktopApi]);
+
+  const priceChanged = form.unitPriceCents !== operation.unitPriceCents;
+  const freightModalityInfo = getFreightModalityInfo(form.freightModality);
+
+  async function handleSave(pricePassword?: string): Promise<void> {
+    if (!desktopApi) return;
+
+    const validation = validateOperationEditForm(form);
+    if (validation) {
+      setError(validation);
+      setAskPricePassword(false);
+      return;
+    }
+
+    const condition = form.conditionText.trim();
+    if (condition && !tryParsePaymentCondition(condition)) {
+      setError('Condicao de pagamento invalida. Use "5" (parcelas), "7 14 21" ou "7/14/21".');
+      setAskPricePassword(false);
+      return;
+    }
+
+    const method = paymentMethods.find((item) => item.id === form.paymentMethodId);
+    const guard = validatePaymentMethodCondition(
+      method ? { code: method.code, isCustomerCredit: method.isCustomerCredit } : null,
+      { raw: condition }
+    );
+    if (!guard.allowed) {
+      setError(guard.message ?? "Combinacao de forma e condicao de pagamento invalida.");
+      setAskPricePassword(false);
+      return;
+    }
+
+    // Alterar preco pede a senha de 4 digitos, como nas telas de produto e cliente.
+    if (priceChanged && pricePassword === undefined) {
+      setError(null);
+      setPasswordError(null);
+      setAskPricePassword(true);
+      return;
+    }
+
+    setSaving(true);
+    try {
+      if (priceChanged && pricePassword !== undefined) {
+        const valid = await desktopApi.verifyPriceChangePassword(pricePassword);
+        if (!valid) {
+          setPasswordError("Senha incorreta.");
+          return;
+        }
+      }
+
+      let paymentTermId: string | null | undefined;
+      if (condition !== initialCondition.trim()) {
+        paymentTermId = condition ? await resolveConditionTermId(desktopApi, condition) : null;
+      }
+
+      await desktopApi.updateWeighingOperation(
+        buildOperationUpdateInput(operation.id, form, paymentTermId)
+      );
+      setAskPricePassword(false);
+      onSaved("Operacao atualizada.");
+    } catch (err) {
+      setAskPricePassword(false);
+      setError(getErrorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!editing) {
+    return (
+      <RecordDetailModal
+        title={`Operacao ${operation.plate || "sem placa"}`}
+        subtitle={`${operation.customerName || "Cliente nao informado"} · ${operation.productDescription || "Produto nao informado"} · ${operationStatusLabel(operation.status)}`}
+        sections={buildOperationDetailSections(operation)}
+        onClose={onClose}
+        onEdit={canEdit ? () => setEditing(true) : undefined}
+        editLabel="Editar operacao"
+        maxWidth={920}
+      />
+    );
+  }
+
+  return (
+    <>
+      <CrudFormModal onClose={onClose} maxWidth={860}>
+        <div style={{ padding: "18px" }}>
+          <h3 style={{ margin: "0 0 4px 0", fontSize: "16px", fontWeight: 700 }}>
+            Editar operacao {operation.plate}
+          </h3>
+          <p style={{ ...styles.helperText, marginTop: 0 }}>
+            A operacao ainda esta em andamento: tudo aqui vale para o fechamento e para o pedido/OS
+            enviado ao OMIE. Os totais sao recalculados na saida, com o peso liquido.
+          </p>
+
+          {error ? <p style={styles.errorMessage}>{error}</p> : null}
+
+          <div style={{ display: "grid", gap: "14px", marginTop: "12px" }}>
+            <FormSection title="Dados comerciais">
+              <CacheSelect
+                label="Cliente"
+                entityType="customer"
+                value={form.customerId}
+                onChange={(id) => setForm((prev) => ({ ...prev, customerId: id }))}
+                desktopApi={desktopApi}
+              />
+              <CacheSelect
+                label="Produto"
+                entityType="product"
+                value={form.productId}
+                onChange={(id) => setForm((prev) => ({ ...prev, productId: id }))}
+                desktopApi={desktopApi}
+                productFiscalType="finished_goods"
+              />
+              <PriceInput
+                label="Preco do produto por tonelada"
+                valueCents={form.unitPriceCents}
+                onChange={(cents) => setForm((prev) => ({ ...prev, unitPriceCents: cents }))}
+              />
+              <label style={styles.fieldLabel}>
+                Tipo de fechamento
+                <select
+                  value={form.operationType}
+                  onChange={(event) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      operationType: event.target.value as OperationType
+                    }))
+                  }
+                  style={styles.input}
+                >
+                  <option value="invoice">Com nota fiscal</option>
+                  <option value="internal">Interna (sem nota fiscal)</option>
+                </select>
+              </label>
+            </FormSection>
+
+            <FormSection title="Pagamento">
+              <CacheSelect
+                label="Forma de pagamento"
+                entityType="payment_method"
+                value={form.paymentMethodId}
+                onChange={(id) => setForm((prev) => ({ ...prev, paymentMethodId: id }))}
+                desktopApi={desktopApi}
+              />
+              <Field
+                label="Condicao de pagamento"
+                hint='Digite: "5" (5 parcelas mensais), "7 14 21" ou "7/14/21" (prazos). Vazio = a vista.'
+              >
+                <input
+                  type="text"
+                  value={form.conditionText}
+                  onChange={(event) =>
+                    setForm((prev) => ({ ...prev, conditionText: event.target.value }))
+                  }
+                  placeholder='Ex.: "7/14/21"'
+                  style={getInputStyle(false)}
+                />
+              </Field>
+            </FormSection>
+
+            <FormSection title="Transporte e frete">
+              <div style={styles.freightBox}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: "8px",
+                    flexWrap: "wrap"
+                  }}
+                >
+                  <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                    <span style={{ fontWeight: 600, fontSize: "13px" }}>Tipo de frete</span>
+                    <span style={styles.helperText}>
+                      {freightModalityInfo.label} — {freightModalityInfo.description}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowFreightModal(true)}
+                    style={{ ...styles.secondaryButton, whiteSpace: "nowrap" }}
+                  >
+                    Selecionar tipo de frete
+                  </button>
+                </div>
+                {freightModalityInfo.supportsCharge ? (
+                  <>
+                    <label style={styles.checkboxLabel}>
+                      <input
+                        type="checkbox"
+                        checked={form.chargeFreight}
+                        onChange={(event) =>
+                          setForm((prev) => ({ ...prev, chargeFreight: event.target.checked }))
+                        }
+                      />
+                      Lancar valor de frete nesta operacao
+                    </label>
+                    {isOperationFreightCharged(form) ? (
+                      <div style={styles.freightCompactGrid}>
+                        <label style={styles.fieldLabel}>
+                          Calculo
+                          <select
+                            value={form.freightCalculationType}
+                            onChange={(event) =>
+                              setForm((prev) => ({
+                                ...prev,
+                                freightCalculationType: event.target
+                                  .value as OperationEditFormState["freightCalculationType"]
+                              }))
+                            }
+                            style={styles.input}
+                          >
+                            <option value="per_ton">Por tonelada</option>
+                            <option value="per_ton_km">Tonelada-km</option>
+                            <option value="fixed_plus_ton">Fixo + tonelada</option>
+                          </select>
+                        </label>
+                        <PriceInput
+                          label={
+                            form.freightCalculationType === "per_ton_km"
+                              ? "Frete por ton-km"
+                              : "Frete por tonelada"
+                          }
+                          suffix={form.freightCalculationType === "per_ton_km" ? "/ton-km" : "/ton"}
+                          valueCents={form.freightBaseValueCents}
+                          onChange={(cents) =>
+                            setForm((prev) => ({ ...prev, freightBaseValueCents: cents }))
+                          }
+                          compact
+                        />
+                        {form.freightCalculationType === "fixed_plus_ton" ? (
+                          <PriceInput
+                            label="Valor fixo do frete"
+                            suffix=""
+                            valueCents={form.freightFixedValueCents}
+                            onChange={(cents) =>
+                              setForm((prev) => ({ ...prev, freightFixedValueCents: cents }))
+                            }
+                            compact
+                          />
+                        ) : null}
+                        {form.freightCalculationType === "per_ton_km" ? (
+                          <NumberInput
+                            label="Distancia km"
+                            value={form.freightDistanceKm}
+                            onChange={(freightDistanceKm) =>
+                              setForm((prev) => ({ ...prev, freightDistanceKm }))
+                            }
+                            placeholder="Ex: 35"
+                          />
+                        ) : null}
+                        <PriceInput
+                          label="Frete minimo"
+                          suffix=""
+                          valueCents={form.freightMinValueCents}
+                          onChange={(cents) =>
+                            setForm((prev) => ({ ...prev, freightMinValueCents: cents }))
+                          }
+                          compact
+                        />
+                        <TextInput
+                          label="Destino/obs."
+                          value={form.freightDestination}
+                          onChange={(freightDestination) =>
+                            setForm((prev) => ({ ...prev, freightDestination }))
+                          }
+                          placeholder="Destino ou regra comercial"
+                        />
+                        <label style={styles.checkboxLabel}>
+                          <input
+                            type="checkbox"
+                            checked={form.deductFreightFromCredit}
+                            onChange={(event) =>
+                              setForm((prev) => ({
+                                ...prev,
+                                deductFreightFromCredit: event.target.checked
+                              }))
+                            }
+                          />
+                          Abater frete do credito do cliente
+                        </label>
+                      </div>
+                    ) : null}
+                  </>
+                ) : null}
+              </div>
+              <CacheSelect
+                label="Transportadora"
+                entityType="carrier"
+                value={form.carrierId}
+                onChange={(id) => setForm((prev) => ({ ...prev, carrierId: id }))}
+                desktopApi={desktopApi}
+              />
+              <div style={styles.compactInlineGrid}>
+                <CacheSelect
+                  label="Placa"
+                  entityType="vehicle"
+                  value={form.vehicleId}
+                  onChange={(id) => setForm((prev) => ({ ...prev, vehicleId: id }))}
+                  desktopApi={desktopApi}
+                />
+                <CacheSelect
+                  label="Motorista"
+                  entityType="driver"
+                  value={form.driverId}
+                  onChange={(id) => setForm((prev) => ({ ...prev, driverId: id }))}
+                  desktopApi={desktopApi}
+                />
+              </div>
+            </FormSection>
+          </div>
+
+          <div
+            style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "16px" }}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                setForm(buildOperationEditForm(operation, initialCondition));
+                setError(null);
+                setEditing(false);
+              }}
+              style={styles.secondaryButton}
+            >
+              Voltar
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleSave()}
+              disabled={saving}
+              style={{ ...styles.primaryButton, opacity: saving ? 0.6 : 1 }}
+            >
+              {saving ? "Salvando..." : "Salvar alteracoes"}
+            </button>
+          </div>
+        </div>
+      </CrudFormModal>
+
+      {showFreightModal ? (
+        <FreightTypeModal
+          selected={form.freightModality}
+          onClose={() => setShowFreightModal(false)}
+          onSelect={(modality) => {
+            setForm((prev) => {
+              const info = getFreightModalityInfo(modality);
+              const ownRecipient = modality === "own_recipient";
+              return {
+                ...prev,
+                freightModality: modality,
+                chargeFreight: info.supportsCharge ? prev.chargeFreight : false,
+                deductFreightFromCredit: info.supportsCharge ? prev.deductFreightFromCredit : false,
+                // Transporte proprio do cliente: a transportadora da Pedreira nao se aplica.
+                carrierId: ownRecipient ? "" : prev.carrierId
+              };
+            });
+            setShowFreightModal(false);
+          }}
+        />
+      ) : null}
+
+      {askPricePassword ? (
+        <PriceChangePasswordDialog
+          title="Confirmar alteracao de preco"
+          description="Digite a senha de 4 digitos para alterar o preco desta operacao."
+          error={passwordError}
+          submitting={saving}
+          onCancel={() => {
+            setAskPricePassword(false);
+            setPasswordError(null);
+          }}
+          onSubmit={(password) => void handleSave(password)}
+        />
+      ) : null}
+    </>
   );
 }
 

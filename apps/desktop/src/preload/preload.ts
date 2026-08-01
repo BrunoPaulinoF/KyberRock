@@ -47,6 +47,8 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:update-weighing-customer", operationId, newCustomerId),
   updateWeighingCarrier: (operationId: string, newCarrierId: string | null) =>
     ipcRenderer.invoke("desktop:update-weighing-carrier", operationId, newCarrierId),
+  updateWeighingOperation: (input: unknown) =>
+    ipcRenderer.invoke("desktop:update-weighing-operation", input),
   getCustomerFreightRules: (customerId: string) =>
     ipcRenderer.invoke("desktop:get-customer-freight-rules", customerId),
   getCustomerFreightForProduct: (customerId: string, productId: string, modality?: string | null) =>

@@ -372,6 +372,22 @@ export const documentationFaqs: DocumentationFaq[] = [
     keywords: ["manual", "peso", "digitar", "balanca"]
   },
   {
+    question: "Como ver ou corrigir todos os dados de uma operacao?",
+    answer:
+      "Em Operacoes, de duplo clique na linha (ou use o botao de ficha) para abrir todas as informacoes da operacao: pesos, precos, frete, pagamento, transporte e situacao no OMIE. Enquanto a operacao estiver em andamento, o botao Editar operacao libera a correcao completa — cliente, produto, preco por tonelada, valor e regra de frete, placa, motorista, transportadora, forma e condicao de pagamento e o tipo de fechamento. Alterar o preco pede a senha de 4 digitos. Depois de fechada, a ficha continua abrindo, mas so para consulta.",
+    category: "operacao",
+    keywords: [
+      "editar",
+      "alterar",
+      "corrigir",
+      "preco",
+      "frete",
+      "detalhes",
+      "duplo clique",
+      "operacao"
+    ]
+  },
+  {
     question: "Como cancelar uma pesagem?",
     answer:
       "Abra Operacoes, localize a operacao e use a acao de cancelamento. Informe um motivo claro. O cancelamento e auditado e pode estornar credito quando aplicavel.",
