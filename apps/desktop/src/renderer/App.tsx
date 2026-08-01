@@ -68,11 +68,11 @@ import {
 import type { PriceDetails } from "../services/pricing";
 import type { CacheEntityType } from "../services/cache-store";
 import {
+  invalidEmailsInList,
   isValidDocument,
-  isValidEmail,
   isValidPlate,
   normalizeDocument,
-  normalizeEmail,
+  normalizeEmailList,
   normalizePhone,
   normalizePlate,
   parseMoneyInputToCents,
@@ -118,7 +118,7 @@ import { PriceChangePasswordDialog } from "./PriceChangePasswordDialog";
 import { TIPS } from "./tooltip-messages";
 import {
   DocumentInput,
-  EmailInput,
+  EmailListInput,
   Field,
   MoneyCentsInput,
   MoneyInput,
@@ -135,6 +135,11 @@ import type {
   PaymentTermCacheEntry
 } from "./customers.types";
 import type { KyberRockDesktopApi } from "./desktop-api";
+import {
+  readReceiptLogoAsPngDataUrl,
+  renderThermalLogoPreview,
+  type ThermalLogoPreview
+} from "./receipt-logo-file";
 import type { ScaleConfiguration, ScaleConfigurationInput } from "../services/scale-configs";
 import type { SerialPortInfo } from "../services/scale-serial";
 import type { OmieQueueItem } from "../services/sync-queue";
@@ -347,6 +352,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [receiptLogoHeightMm, setReceiptLogoHeightMm] = useState("16");
   const [receiptLogoFit, setReceiptLogoFit] =
     useState<PrintProfileSummary["receiptLogo"]["fit"]>("contain");
+  // Como a logo sai na impressora termica (preto e branco, sem tons): a previa colorida
+  // nao denuncia a logo clara demais, que imprime em branco.
+  const [receiptLogoPreview, setReceiptLogoPreview] = useState<ThermalLogoPreview | null>(null);
   const [receiptTemplateConfig, setReceiptTemplateConfig] = useState<ReceiptTemplateConfig>({
     ...DEFAULT_RECEIPT_TEMPLATE_CONFIG
   });
@@ -688,6 +696,32 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       window.removeEventListener("unhandledrejection", onUnhandledRejection);
     };
   }, []);
+
+  // Previa termica da logo: recalculada a cada mudanca de imagem, tamanho ou enquadramento.
+  useEffect(() => {
+    if (!receiptLogoDataUrl) {
+      setReceiptLogoPreview(null);
+      return;
+    }
+
+    let active = true;
+    void renderThermalLogoPreview(
+      receiptLogoDataUrl,
+      Number(receiptLogoWidthMm) || 24,
+      Number(receiptLogoHeightMm) || 16,
+      receiptLogoFit
+    )
+      .then((preview) => {
+        if (active) setReceiptLogoPreview(preview);
+      })
+      .catch(() => {
+        if (active) setReceiptLogoPreview(null);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [receiptLogoDataUrl, receiptLogoWidthMm, receiptLogoHeightMm, receiptLogoFit]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -1853,8 +1887,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
 
     try {
-      setReceiptLogoDataUrl(await readFileAsDataUrl(file));
-      setMessage("Logo carregada. Ajuste tamanho/formato e salve o perfil.");
+      // Guarda sempre PNG: a impressao rasteriza a logo com o `nativeImage` do Electron, que
+      // so le PNG e JPEG. Logo em WebP/SVG/GIF aparecia na previa e nao saia no papel.
+      setReceiptLogoDataUrl(await readReceiptLogoAsPngDataUrl(file));
+      setMessage("Logo carregada. Confira a previa da impressao e salve o perfil.");
     } catch (error) {
       setMessage(`Falha ao carregar logo: ${getErrorMessage(error)}.`);
     }
@@ -3520,6 +3556,42 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                             style={{ width: "100%", height: "100%", objectFit: receiptLogoFit }}
                           />
                         </div>
+                        {receiptLogoPreview ? (
+                          <div
+                            style={{
+                              width: "96px",
+                              height: "64px",
+                              border: "1px dashed var(--kr-border)",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              overflow: "hidden",
+                              background: "#fff"
+                            }}
+                          >
+                            <img
+                              src={receiptLogoPreview.dataUrl}
+                              alt="Previa de como a logo sai no cupom impresso"
+                              style={{
+                                maxWidth: "100%",
+                                maxHeight: "100%",
+                                imageRendering: "pixelated"
+                              }}
+                            />
+                          </div>
+                        ) : null}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <p style={{ ...styles.muted, margin: 0 }}>
+                            A segunda previa mostra a logo como a impressora imprime: preto e
+                            branco, sem tons de cinza.
+                          </p>
+                          {receiptLogoPreview?.blank ? (
+                            <p style={{ ...styles.errorMessage, margin: "6px 0 0" }}>
+                              Esta logo sai em branco no cupom. Use uma imagem de traco escuro sobre
+                              fundo claro (ou transparente).
+                            </p>
+                          ) : null}
+                        </div>
                         <IconActionButton
                           icon="trash"
                           label="Remover logo"
@@ -4334,22 +4406,6 @@ function LoaderStatusLight({ completedAt }: { completedAt?: string | null }) {
       {completed ? "Concluida" : "Aguardando"}
     </span>
   );
-}
-
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.addEventListener("load", () => {
-      if (typeof reader.result === "string") {
-        resolve(reader.result);
-        return;
-      }
-
-      reject(new Error("Arquivo de imagem invalido."));
-    });
-    reader.addEventListener("error", () => reject(reader.error ?? new Error("Falha na leitura.")));
-    reader.readAsDataURL(file);
-  });
 }
 
 interface SidebarItemProps {
@@ -6269,11 +6325,12 @@ function QuickCustomerModal({ desktopApi, onClose, onCreated }: QuickModalProps)
       setError("Telefone invalido. Informe com DDD (11 digitos).");
       return;
     }
-    const normalizedEmail = normalizeEmail(emailInput);
-    if (emailInput.trim() && !isValidEmail(normalizedEmail)) {
-      setError("Email invalido.");
+    const invalidEmails = invalidEmailsInList(emailInput);
+    if (invalidEmails.length > 0) {
+      setError(`Email invalido: ${invalidEmails.join(", ")}.`);
       return;
     }
+    const normalizedEmail = normalizeEmailList(emailInput);
     setSaving(true);
     try {
       const result = await desktopApi.customersCreate({
@@ -6302,7 +6359,7 @@ function QuickCustomerModal({ desktopApi, onClose, onCreated }: QuickModalProps)
         <TextInput label="Razao social" value={legalName} onChange={setLegalName} required />
         <DocumentInput label="CPF/CNPJ" value={documentInput} onChange={setDocumentInput} />
         <PhoneInput label="Telefone" value={phone} onChange={setPhone} />
-        <EmailInput label="Email" value={emailInput} onChange={setEmailInput} />
+        <EmailListInput label="Email" value={emailInput} onChange={setEmailInput} />
         <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
           <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
             {saving ? "Salvando..." : "Salvar"}

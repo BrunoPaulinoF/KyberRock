@@ -6,6 +6,8 @@ export { PhoneInput } from "./PhoneInput";
 export type { PhoneInputProps } from "./PhoneInput";
 export { EmailInput } from "./EmailInput";
 export type { EmailInputProps } from "./EmailInput";
+export { EmailListInput } from "./EmailListInput";
+export type { EmailListInputProps } from "./EmailListInput";
 export { CepInput } from "./CepInput";
 export type { CepInputProps, CepLookupResult } from "./CepInput";
 export { MoneyInput, MoneyCentsInput } from "./MoneyInput";
