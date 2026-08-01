@@ -1839,6 +1839,50 @@ export function clearCanceledWeighingOperations(
 }
 
 /**
+ * Limpa a lista de concluidas de uma vez (soft-delete), como ja existia para as
+ * canceladas. Antes so dava para excluir uma a uma — limpar o historico de teste
+ * de uma balanca significava dezenas de cliques.
+ *
+ * `untilDate` (ISO yyyy-mm-dd, inclusive) limita a limpeza ao que foi criado ate
+ * aquele dia: e o que permite preservar o movimento do dia corrente. Sem ela,
+ * limpa todas as concluidas.
+ *
+ * Nao mexe no OMIE: pedido/OS ja enviado continua la e deve ser tratado no
+ * proprio OMIE. Jobs OMIE ainda nao enviados sao neutralizados, como na exclusao
+ * individual, para nao criar pedido de uma operacao que o operador excluiu.
+ */
+export function clearClosedWeighingOperations(
+  database: DesktopDatabase,
+  options: { untilDate?: string } = {},
+  now: Date = new Date()
+): number {
+  const timestamp = now.toISOString();
+  const untilDate = options.untilDate?.trim() || null;
+
+  const selectSql = `SELECT id FROM weighing_operations
+     WHERE status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
+       AND deleted_at IS NULL
+       ${untilDate ? "AND date(created_at) <= date(?)" : ""}`;
+  const rows = (
+    untilDate ? database.prepare(selectSql).all(untilDate) : database.prepare(selectSql).all()
+  ) as Array<{ id: string }>;
+  if (rows.length === 0) return 0;
+
+  const markDeleted = database.prepare(
+    "UPDATE weighing_operations SET deleted_at = ?, updated_at = ? WHERE id = ?"
+  );
+  const clear = database.transaction(() => {
+    for (const row of rows) {
+      markDeleted.run(timestamp, timestamp, row.id);
+      cancelPendingOmieJobs(database, row.id, now);
+    }
+  });
+  clear();
+
+  return rows.length;
+}
+
+/**
  * Exclui (soft-delete) uma operacao ja concluida (qualquer status concluido: closed_local,
  * pending_cloud, pending_omie, synced ou sync_error). Nao remove nada no OMIE — o pedido/OS
  * de la, se ja enviado, deve ser tratado no proprio OMIE. Serve para limpar a lista local de

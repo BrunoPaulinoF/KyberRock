@@ -229,6 +229,17 @@ export function isCustomerOwnTransport(form: Pick<WeighingFormState, "freightMod
  * remetente) e a forma de pagamento e "credito do cliente" (fiado), o valor do frete
  * obrigatoriamente entra na fatura do cliente (abate do credito).
  */
+/**
+ * Ontem, em ISO (yyyy-mm-dd) e horario local. Limite da limpeza em lote das
+ * concluidas: o movimento do dia corrente nunca entra.
+ */
+function previousDayIso(now: Date = new Date()): string {
+  const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
 function freightGoesToCustomerInvoice(form: WeighingFormState): boolean {
   const info = getFreightModalityInfo(form.freightModality);
   return form.chargeFreight && info.defaultPayer === "quarry" && form.paymentMethodIsCredit;
@@ -1939,6 +1950,37 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
   }
 
+  /**
+   * Limpa a lista de concluidas de uma vez. O movimento do dia fica de fora: a
+   * limpeza serve para tirar historico antigo da tela e dos relatorios, nunca
+   * para apagar o que a balanca fez hoje.
+   */
+  async function handleClearClosedOperations(): Promise<void> {
+    if (!desktopApi) return;
+    const confirmed = await requestAppConfirm({
+      title: "Limpar concluidas",
+      description:
+        "Excluir da lista e dos relatorios todas as operacoes concluidas ate ontem? " +
+        "As de hoje sao mantidas. O pedido/NF ja enviado ao OMIE nao e afetado.",
+      confirmLabel: "Limpar lista",
+      tone: "danger"
+    });
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      const count = await desktopApi.clearClosedWeighingOperations({
+        untilDate: previousDayIso()
+      });
+      setMessage(`${count} operacao(oes) concluida(s) removida(s) da lista.`);
+      await refreshOpenOperations();
+    } catch (error) {
+      setMessage(getErrorMessage(error));
+      await refreshOpenOperations();
+    }
+  }
+
   async function handleClearCanceledOperations(): Promise<void> {
     if (!desktopApi) {
       return;
@@ -2729,6 +2771,15 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                             ))}
                         </select>
                       </label>
+                      <IconActionButton
+                        icon="trash"
+                        label="Limpar concluidas"
+                        tip={TIPS.operations.clearClosed}
+                        tone="danger"
+                        placement="bottom"
+                        disabled={closedOperations.length === 0}
+                        onClick={() => void handleClearClosedOperations()}
+                      />
                     </div>
                   ) : null}
                 </div>

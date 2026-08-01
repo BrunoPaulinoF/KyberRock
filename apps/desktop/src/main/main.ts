@@ -354,6 +354,17 @@ function registerIpcHandlers(): void {
     return runtime.clearCanceledWeighingOperations();
   });
 
+  ipcMain.handle(
+    "desktop:clear-closed-weighing-operations",
+    (_event, options?: { untilDate?: string }) => {
+      if (!runtime) {
+        throw new Error("Desktop runtime is not ready.");
+      }
+
+      return runtime.clearClosedWeighingOperations(options ?? {});
+    }
+  );
+
   ipcMain.handle("desktop:delete-closed-weighing-operation", (_event, operationId: string) => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");
