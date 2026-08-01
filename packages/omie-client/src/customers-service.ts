@@ -1,4 +1,5 @@
 import type { OmieClient } from "./omie-client.js";
+import { clampOmieText, OMIE_CUSTOMER_FIELD_MAX_LENGTHS } from "./omie-field-limits.js";
 
 export interface Customer {
   id: number;
@@ -146,11 +147,42 @@ export async function getCustomer(
   return mapOmieCustomerRaw(response);
 }
 
+/**
+ * Encurta os campos de texto para os limites do OMIE (ver OMIE_CUSTOMER_FIELD_MAX_LENGTHS).
+ * Um so ponto para Incluir e Alterar: qualquer tamanho de razao social entra aqui e sai
+ * no tamanho que o OMIE aceita, em vez de derrubar a chamada inteira.
+ */
+function clampCustomerFields<T extends CreateCustomerInput | UpdateCustomerInput>(input: T): T {
+  const clamped = { ...input } as Record<string, unknown>;
+  const limits = OMIE_CUSTOMER_FIELD_MAX_LENGTHS;
+
+  if (input.razaoSocial !== undefined) {
+    clamped.razaoSocial = clampOmieText(input.razaoSocial, limits.razaoSocial);
+  }
+  if (input.nomeFantasia !== undefined) {
+    clamped.nomeFantasia = clampOmieText(input.nomeFantasia, limits.nomeFantasia);
+  }
+  // O e-mail nao entra aqui: e uma lista de destinatarios e um corte no meio de um
+  // endereco geraria um e-mail invalido, fazendo o OMIE recusar o cadastro inteiro.
+  if (input.telefone1Ddd !== undefined) {
+    clamped.telefone1Ddd = clampOmieText(input.telefone1Ddd, limits.telefone1Ddd);
+  }
+  if (input.telefone1Numero !== undefined) {
+    clamped.telefone1Numero = clampOmieText(input.telefone1Numero, limits.telefone1Numero);
+  }
+
+  return clamped as T;
+}
+
 export async function createCustomer(
   client: OmieClient,
   input: CreateCustomerInput
 ): Promise<number> {
-  const response = (await client.call("/geral/clientes/", "IncluirCliente", input)) as {
+  const response = (await client.call(
+    "/geral/clientes/",
+    "IncluirCliente",
+    clampCustomerFields(input)
+  )) as {
     codigoClienteOmie?: number;
     codigo_cliente_omie?: number;
   };
@@ -164,7 +196,7 @@ export async function updateCustomer(
   client: OmieClient,
   input: UpdateCustomerInput
 ): Promise<void> {
-  await client.call("/geral/clientes/", "AlterarCliente", input);
+  await client.call("/geral/clientes/", "AlterarCliente", clampCustomerFields(input));
 }
 
 export class OmieCustomersService {

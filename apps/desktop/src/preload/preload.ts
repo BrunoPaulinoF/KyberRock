@@ -51,12 +51,19 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:update-weighing-operation", input),
   getCustomerFreightRules: (customerId: string) =>
     ipcRenderer.invoke("desktop:get-customer-freight-rules", customerId),
-  getCustomerFreightForProduct: (customerId: string, productId: string) =>
-    ipcRenderer.invoke("desktop:get-customer-freight-for-product", customerId, productId),
+  getCustomerFreightForProduct: (customerId: string, productId: string, modality?: string | null) =>
+    ipcRenderer.invoke(
+      "desktop:get-customer-freight-for-product",
+      customerId,
+      productId,
+      modality ?? null
+    ),
   setCustomerFreightRule: (input: unknown) =>
     ipcRenderer.invoke("desktop:set-customer-freight-rule", input),
   removeCustomerFreightRule: (ruleId: string) =>
     ipcRenderer.invoke("desktop:remove-customer-freight-rule", ruleId),
+  removeCustomerFreightModality: (ruleId: string, modality: string) =>
+    ipcRenderer.invoke("desktop:remove-customer-freight-modality", ruleId, modality),
   listWindowsPrinters: () => ipcRenderer.invoke("desktop:list-windows-printers"),
   configureReceiptPrintProfile: (input: unknown) =>
     ipcRenderer.invoke("desktop:configure-receipt-print-profile", input),

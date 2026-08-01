@@ -203,9 +203,58 @@ function fnv1a64(input: string): bigint {
   return hash;
 }
 
+/**
+ * Tamanho maximo de cada campo do cadastro de cliente/fornecedor no OMIE. Estourar o
+ * limite faz o OMIE recusar a chamada INTEIRA ("a razao social ultrapassa 60 caracteres")
+ * — e, no fechamento, o pedido morre junto com o cadastro. O KyberRock aceita qualquer
+ * tamanho localmente (o cadastro completo continua no SQLite e nos relatorios/cupom) e
+ * encurta apenas o que sobe para o OMIE.
+ *
+ * `nome_fantasia` usa o mesmo limite da razao social de proposito: quando o cadastro nao
+ * tem fantasia proprio ele recebe a razao social como fallback (ver buildCustomerPayload),
+ * entao um limite maior aqui deixaria passar exatamente o valor que a razao social ja
+ * provou ser grande demais. O documento (cnpj_cpf) fica de fora: encurtar um CNPJ/CPF
+ * mandaria um documento errado para o OMIE, o que e pior do que a recusa. O `email` tambem
+ * fica de fora — e uma LISTA de destinatarios, que precisa ser cortada por endereco
+ * inteiro (ver OMIE_EMAIL_FIELD_MAX_LENGTH / formatOmieEmailList).
+ */
+export const OMIE_CUSTOMER_FIELD_MAX_LENGTHS = {
+  razao_social: 60,
+  nome_fantasia: 60,
+  telefone1_ddd: 5,
+  telefone1_numero: 15,
+  endereco: 60,
+  endereco_numero: 20,
+  bairro: 60,
+  cidade: 40,
+  cep: 10
+} as const;
+
+/**
+ * Encurta um texto para caber no campo do OMIE. Normaliza espacos, corta na ultima
+ * palavra inteira quando isso nao joga fora um pedaco grande demais do limite (assim
+ * "... LOGISTICA INTEGRADA LTDA - FILIAL" vira "... LOGISTICA INTEGRADA LTDA", e nao
+ * "... LOGISTICA INTEGRADA LTDA - FIL") e limpa a pontuacao que sobra na ponta.
+ * Deterministico: a mesma entrada gera sempre a mesma saida, entao reenvios continuam
+ * idempotentes no OMIE.
+ */
+export function clampOmieText(value: string | undefined, maxLength: number): string | undefined {
+  const text = (value ?? "").trim().replace(/\s+/g, " ");
+  if (text.length === 0) return undefined;
+  if (text.length <= maxLength) return text;
+
+  const hardCut = text.slice(0, maxLength);
+  const lastSpace = hardCut.lastIndexOf(" ");
+  const cut = lastSpace >= Math.floor(maxLength * 0.75) ? hardCut.slice(0, lastSpace) : hardCut;
+  return cut.replace(/[\s,;:./-]+$/, "").trim() || hardCut.trim();
+}
+
 export function buildCustomerPayload(payload: PushCustomerPayload): Record<string, unknown> {
   const document = onlyDigits(payload.cnpjCpf);
-  const razaoSocial = trimOrUndefined(payload.razaoSocial);
+  const razaoSocial = clampOmieText(
+    payload.razaoSocial,
+    OMIE_CUSTOMER_FIELD_MAX_LENGTHS.razao_social
+  );
   const state = normalizeOmieState(payload.state);
   const tags = (payload.tags ?? []).map((tag) => tag.trim()).filter((tag) => tag.length > 0);
 
@@ -216,22 +265,35 @@ export function buildCustomerPayload(payload: PushCustomerPayload): Record<strin
     // O OMIE exige razao social E nome fantasia no IncluirCliente; sem o fantasia o
     // cadastro volta com "O preenchimento da tag [nome_fantasia] e obrigatorio!" e o
     // fechamento inteiro morre junto. Repetir a razao social e o padrao do cadastro.
-    nome_fantasia: trimOrUndefined(payload.nomeFantasia) ?? razaoSocial,
+    nome_fantasia:
+      clampOmieText(payload.nomeFantasia, OMIE_CUSTOMER_FIELD_MAX_LENGTHS.nome_fantasia) ??
+      razaoSocial,
     cnpj_cpf: document,
     // 11 digitos = CPF. Sem `pessoa_fisica: "S"` o OMIE valida o documento como CNPJ
     // e recusa o cadastro de qualquer cliente pessoa fisica.
     pessoa_fisica: document ? (document.length === 11 ? "S" : "N") : undefined,
+    // O e-mail tem regra propria (lista de destinatarios cortada por endereco inteiro):
+    // ver formatOmieEmailList / OMIE_EMAIL_FIELD_MAX_LENGTH.
     email: formatOmieEmailList(payload.email),
-    telefone1_ddd: trimOrUndefined(payload.telefone1Ddd),
-    telefone1_numero: trimOrUndefined(payload.telefone1Numero),
-    endereco: trimOrUndefined(payload.addressStreet),
-    endereco_numero: trimOrUndefined(payload.addressNumber),
-    bairro: trimOrUndefined(payload.neighborhood),
+    telefone1_ddd: clampOmieText(
+      payload.telefone1Ddd,
+      OMIE_CUSTOMER_FIELD_MAX_LENGTHS.telefone1_ddd
+    ),
+    telefone1_numero: clampOmieText(
+      payload.telefone1Numero,
+      OMIE_CUSTOMER_FIELD_MAX_LENGTHS.telefone1_numero
+    ),
+    endereco: clampOmieText(payload.addressStreet, OMIE_CUSTOMER_FIELD_MAX_LENGTHS.endereco),
+    endereco_numero: clampOmieText(
+      payload.addressNumber,
+      OMIE_CUSTOMER_FIELD_MAX_LENGTHS.endereco_numero
+    ),
+    bairro: clampOmieText(payload.neighborhood, OMIE_CUSTOMER_FIELD_MAX_LENGTHS.bairro),
     // O OMIE identifica a cidade no formato "Cidade (UF)" (e devolve assim nas
     // consultas); mandar so o nome faz o cadastro cair em "Cidade nao encontrada".
     cidade: buildOmieCity(payload.city, state),
     estado: state,
-    cep: trimOrUndefined(payload.zipcode),
+    cep: clampOmieText(payload.zipcode, OMIE_CUSTOMER_FIELD_MAX_LENGTHS.cep),
     // Campo omitido quando o chamador nao informa (ex.: transportadoras), para
     // nao mexer no bloqueio configurado direto no OMIE.
     bloquear_faturamento:
@@ -298,11 +360,25 @@ function normalizeOmieState(value: string | undefined): string | undefined {
   return /^[A-Z]{2}$/.test(uf) ? uf : undefined;
 }
 
-/** Cidade no formato do OMIE: "Cidade (UF)". Ja formatada ou sem UF, segue como veio. */
+/**
+ * Cidade no formato do OMIE: "Cidade (UF)". Ja formatada ou sem UF, segue como veio.
+ * O nome e encurtado ANTES do sufixo para o "(UF)" nunca ser o pedaco que estoura o
+ * limite do campo — sem a UF o OMIE responde "Cidade nao encontrada".
+ */
 function buildOmieCity(city: string | undefined, state: string | undefined): string | undefined {
+  const maxLength = OMIE_CUSTOMER_FIELD_MAX_LENGTHS.cidade;
   const name = trimOrUndefined(city);
-  if (!name || !state) return name;
-  return /\([A-Za-z]{2}\)\s*$/.test(name) ? name : `${name} (${state})`;
+  if (!name) return undefined;
+
+  // Separa o "(UF)" que ja tenha vindo junto, para o corte cair sempre no nome.
+  const suffixPattern = /\s*\(([A-Za-z]{2})\)\s*$/;
+  const suffixMatch = suffixPattern.exec(name);
+  const baseName = suffixMatch ? name.replace(suffixPattern, "").trim() : name;
+  const uf = suffixMatch ? suffixMatch[1].toUpperCase() : state;
+  if (!uf) return clampOmieText(baseName, maxLength);
+
+  const suffix = ` (${uf})`;
+  return `${clampOmieText(baseName, maxLength - suffix.length)}${suffix}`;
 }
 
 /**

@@ -79,11 +79,9 @@ import {
 import type { PriceDetails } from "../services/pricing";
 import type { CacheEntityType } from "../services/cache-store";
 import {
-  invalidEmailsInList,
   isValidDocument,
   isValidPlate,
   normalizeDocument,
-  normalizeEmailList,
   normalizePhone,
   normalizePlate,
   parseMoneyInputToCents,
@@ -130,7 +128,6 @@ import { PriceChangePasswordDialog } from "./PriceChangePasswordDialog";
 import { TIPS } from "./tooltip-messages";
 import {
   DocumentInput,
-  EmailListInput,
   Field,
   MoneyCentsInput,
   MoneyInput,
@@ -170,7 +167,7 @@ export interface WeighingFormState {
   paymentMethodId: string;
   paymentMethodIsCredit: boolean;
   paymentTermId: string;
-  /** Condicao digitada livre ("5", "7 14 21", "7/14/21"); quando preenchida, vence o select. */
+  /** Condicao digitada livre ("30", "7 14 21", "3 parcelas"); quando preenchida, vence o select. */
   customConditionText: string;
   paymentMode: "registered" | "manual";
   manualInstallments: string;
@@ -4754,7 +4751,7 @@ function validateWeighingForm(form: WeighingFormState): string | null {
     }
   }
   if (form.customConditionText.trim() && !tryParsePaymentCondition(form.customConditionText)) {
-    return 'Condicao personalizada invalida. Use "5" (parcelas), "7 14 21" ou "7/14/21".';
+    return 'Condicao personalizada invalida. Use "30" (dias), "7 14 21", "7/14/21" ou "3 parcelas".';
   }
   if (isFreightCharged(form)) {
     if (form.freightBaseValueCents === null && form.freightFixedValueCents === null) {
@@ -5271,6 +5268,29 @@ function WeighingForm({
   const [availableVehicleIds, setAvailableVehicleIds] = useState<string[] | undefined>(undefined);
   const [availableDriverIds, setAvailableDriverIds] = useState<string[] | undefined>(undefined);
   const [isWalletMethod, setIsWalletMethod] = useState(false);
+  // Opcoes do seletor de transportadora dos formularios completos de cadastro
+  // (placa e motorista) abertos por esta tela.
+  const [carrierOptions, setCarrierOptions] = useState<CrudSelectOption[]>([]);
+
+  useEffect(() => {
+    if (!desktopApi) return;
+    let cancelled = false;
+    void desktopApi
+      .queryCache({ entityType: "carrier", limit: 200 })
+      .then((result) => {
+        if (cancelled) return;
+        setCarrierOptions(
+          (result.rows as CarrierCacheEntry[]).map((carrier) => ({
+            value: carrier.id,
+            label: carrier.name
+          }))
+        );
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [desktopApi, carrierRefreshKey]);
 
   // A forma "em carteira" fecha a venda sem definir o recebimento: avisa o operador
   // de que a cobranca so nasce no fechamento da carteira.
@@ -5455,8 +5475,18 @@ function WeighingForm({
     };
   }, [desktopApi]);
 
+  // Com um modal aberto por cima (cadastro na hora, tipo de frete) os atalhos da
+  // entrada ficam suspensos: Esc precisa fechar so o modal, e nao a entrada inteira.
+  const hasModalOpen =
+    showVehicleModal ||
+    showDriverModal ||
+    showCustomerModal ||
+    showCarrierModal ||
+    showFreightModal;
+
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
+      if (hasModalOpen) return;
       if (event.key === "Escape") {
         event.preventDefault();
         onCancel();
@@ -5468,7 +5498,7 @@ function WeighingForm({
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onStart, onCancel]);
+  }, [onStart, onCancel, hasModalOpen]);
 
   async function handleCalculateWeight(): Promise<void> {
     if (!desktopApi) return;
@@ -5510,25 +5540,39 @@ function WeighingForm({
     fetchPrice();
   }, [desktopApi, form.customerId, form.productId]);
 
+  // Puxa o valor de frete do cliente para o tipo de frete selecionado: primeiro o que
+  // esta configurado no cadastro dele, senao o ultimo valor usado numa venda igual.
+  // Roda tambem ao trocar o tipo de frete, porque cada tipo tem o seu valor.
   useEffect(() => {
     if (!desktopApi || !form.customerId || !form.productId) return;
 
     const api = desktopApi;
+    const modality = form.freightModality;
     let canceled = false;
 
     async function fetchCustomerFreight(): Promise<void> {
       try {
-        const rule = await api.getCustomerFreightForProduct(form.customerId, form.productId);
+        const rule = await api.getCustomerFreightForProduct(
+          form.customerId,
+          form.productId,
+          modality
+        );
         if (canceled || !rule) return;
         setForm((prev) => ({
           ...prev,
-          // Regra de frete do cliente: frete por conta do cliente (FOB) com valor lancado.
-          // Nao sobrescreve o transporte proprio do cliente, que nao comporta valor.
-          freightModality: isCustomerOwnTransport(prev) ? prev.freightModality : "fob",
+          // Sem tipo de frete escolhido, um valor cadastrado assume FOB (frete por conta
+          // do cliente). Nao sobrescreve o transporte proprio do cliente, que nao
+          // comporta valor, nem um tipo que o operador ja escolheu.
+          freightModality: getFreightModalityInfo(prev.freightModality).supportsCharge
+            ? prev.freightModality
+            : isCustomerOwnTransport(prev)
+              ? prev.freightModality
+              : "fob",
           chargeFreight: !isCustomerOwnTransport(prev),
           freightCalculationType: rule.rule.type as WeighingFormState["freightCalculationType"],
           freightBaseValueCents: rule.rule.baseValueCents,
-          freightFixedValueCents: rule.rule.fixedValueCents ?? null
+          freightFixedValueCents: rule.rule.fixedValueCents ?? null,
+          freightMinValueCents: rule.rule.minValueCents ?? prev.freightMinValueCents
         }));
       } catch {
         // ignore
@@ -5539,7 +5583,7 @@ function WeighingForm({
     return () => {
       canceled = true;
     };
-  }, [desktopApi, form.customerId, form.productId]);
+  }, [desktopApi, form.customerId, form.productId, form.freightModality]);
 
   const transportReady = isTransportReady(form);
 
@@ -5823,7 +5867,7 @@ function WeighingForm({
           ) : null}
           <Field
             label="Condicao de pagamento"
-            hint='Digite: "5" (5 parcelas mensais), "7 14 21" ou "7/14/21" (prazos), "A Vista". Vazio = a vista. Se a condicao nao existir no OMIE, ela e criada automaticamente no envio.'
+            hint='Digite: "30" (uma parcela 30 dias apos a venda), "7 14 21" ou "7/14/21" (3 parcelas nesses prazos), "3 parcelas" (3 parcelas mensais), "A Vista". Vazio = a vista. Se a condicao nao existir no OMIE, ela e criada automaticamente no envio.'
           >
             <input
               type="text"
@@ -6089,86 +6133,90 @@ function WeighingForm({
         </aside>
       </div>
 
-      {showVehicleModal ? (
-        <QuickVehicleModal
+      {showVehicleModal && desktopApi ? (
+        <VehicleCrud
           desktopApi={desktopApi}
-          onClose={() => setShowVehicleModal(false)}
-          onCreated={(id) => {
-            setForm((prev) => ({ ...prev, vehicleId: id }));
-            setShowVehicleModal(false);
-            if (desktopApi && form.carrierId) {
-              void desktopApi.vehiclesLinkCarrier(id, form.carrierId).catch(() => undefined);
+          carrierOptions={carrierOptions}
+          standaloneForm={{
+            // A transportadora da entrada ja vem escolhida: quem cadastra a placa na
+            // balanca quase sempre quer o vinculo que esta na tela.
+            initialValues: { carrierId: form.carrierId },
+            onCancel: () => setShowVehicleModal(false),
+            onCreated: (id) => {
+              setForm((prev) => ({ ...prev, vehicleId: id }));
+              setShowVehicleModal(false);
+              setVehicleRefreshKey((k) => k + 1);
             }
-            setVehicleRefreshKey((k) => k + 1);
           }}
         />
       ) : null}
 
-      {showDriverModal ? (
-        <QuickDriverModal
+      {showDriverModal && desktopApi ? (
+        <DriverCrud
           desktopApi={desktopApi}
-          onClose={() => setShowDriverModal(false)}
-          onCreated={async (id) => {
-            const carrierId = shouldLinkCreatedDriverToCarrier(form);
-            setForm((prev) => ({ ...prev, driverId: id }));
-            setShowDriverModal(false);
-            if (desktopApi && carrierId) {
-              try {
-                await desktopApi.linkDriverCarrier(id, carrierId);
-              } catch {
-                /* ignore */
-              }
+          carrierOptions={carrierOptions}
+          standaloneForm={{
+            initialValues: { carrierId: shouldLinkCreatedDriverToCarrier(form) ?? "" },
+            onCancel: () => setShowDriverModal(false),
+            onCreated: (id) => {
+              setForm((prev) => ({ ...prev, driverId: id }));
+              setShowDriverModal(false);
+              setDriverRefreshKey((k) => k + 1);
             }
-            setDriverRefreshKey((k) => k + 1);
           }}
         />
       ) : null}
 
       {showCustomerModal ? (
-        <QuickCustomerModal
+        <CustomersView
           desktopApi={desktopApi}
-          onClose={() => setShowCustomerModal(false)}
-          onCreated={(id) => {
-            setForm((prev) => ({ ...prev, customerId: id }));
-            setShowCustomerModal(false);
-            setCustomerRefreshKey((k) => k + 1);
+          standaloneForm={{
+            onCancel: () => setShowCustomerModal(false),
+            onCreated: (id) => {
+              setForm((prev) => ({ ...prev, customerId: id }));
+              setShowCustomerModal(false);
+              setCustomerRefreshKey((k) => k + 1);
+            }
           }}
         />
       ) : null}
 
-      {showCarrierModal ? (
-        <QuickCarrierModal
+      {showCarrierModal && desktopApi ? (
+        <CarrierCrud
           desktopApi={desktopApi}
-          onClose={() => setShowCarrierModal(false)}
-          onCreated={async (id) => {
-            setForm((prev) => ({
-              ...prev,
-              carrierId: id,
-              // Vincular uma transportadora da Pedreira sai do transporte proprio do cliente.
-              freightModality:
-                prev.freightModality === "own_recipient" ? "none" : prev.freightModality
-            }));
-            setShowCarrierModal(false);
-            // O seletor filtra por "transportadoras vinculadas ao cliente": sem vincular
-            // a recem-criada ao cliente selecionado, ela nao apareceria na lista.
-            if (desktopApi && form.customerId) {
-              try {
-                await desktopApi.linkCustomerCarrier(form.customerId, id);
-              } catch {
-                /* ignore */
+          onChanged={() => setCarrierRefreshKey((k) => k + 1)}
+          standaloneForm={{
+            onCancel: () => setShowCarrierModal(false),
+            onCreated: async (id) => {
+              setForm((prev) => ({
+                ...prev,
+                carrierId: id,
+                // Vincular uma transportadora da Pedreira sai do transporte proprio do cliente.
+                freightModality:
+                  prev.freightModality === "own_recipient" ? "none" : prev.freightModality
+              }));
+              setShowCarrierModal(false);
+              // O seletor filtra por "transportadoras vinculadas ao cliente": sem vincular
+              // a recem-criada ao cliente selecionado, ela nao apareceria na lista.
+              if (form.customerId) {
+                try {
+                  await desktopApi.linkCustomerCarrier(form.customerId, id);
+                } catch {
+                  /* ignore */
+                }
               }
-            }
-            // Mostra a nova transportadora de imediato, mesmo se a releitura falhar.
-            setAvailableCarrierIds((prev) => appendAvailableId(prev, id));
-            if (desktopApi && form.vehicleId) {
-              try {
-                await desktopApi.vehiclesLinkCarrier(form.vehicleId, id);
-              } catch {
-                /* ignore */
+              // Mostra a nova transportadora de imediato, mesmo se a releitura falhar.
+              setAvailableCarrierIds((prev) => appendAvailableId(prev, id));
+              if (form.vehicleId) {
+                try {
+                  await desktopApi.vehiclesLinkCarrier(form.vehicleId, id);
+                } catch {
+                  /* ignore */
+                }
               }
+              setCarrierRefreshKey((k) => k + 1);
+              setVehicleRefreshKey((k) => k + 1);
             }
-            setCarrierRefreshKey((k) => k + 1);
-            setVehicleRefreshKey((k) => k + 1);
           }}
         />
       ) : null}
@@ -6210,6 +6258,16 @@ function FreightTypeModal({
   onSelect: (modality: FreightModality) => void;
   onClose: () => void;
 }) {
+  // A entrada suspende os proprios atalhos enquanto este modal esta aberto, entao
+  // o Esc precisa ser tratado aqui para continuar fechando a selecao.
+  useEffect(() => {
+    function onKey(event: KeyboardEvent): void {
+      if (event.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   return (
     <div style={modalOverlayStyle} onClick={onClose}>
       <div
@@ -6730,270 +6788,6 @@ function SectionHeader({
       <div>
         <h3 style={styles.sectionTitle}>{title}</h3>
         <p style={styles.sectionDescription}>{description}</p>
-      </div>
-    </div>
-  );
-}
-
-interface QuickModalProps {
-  desktopApi: KyberRockDesktopApi | null;
-  onClose: () => void;
-  onCreated: (id: string) => void;
-}
-
-type QuickDriverModalProps = QuickModalProps;
-
-function QuickVehicleModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
-  const [plateInput, setPlateInput] = useState("");
-  const [description, setDescription] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-
-  async function handleSave() {
-    if (!desktopApi) return;
-    const normalizedPlate = normalizePlate(plateInput);
-    if (!normalizedPlate) {
-      setError("Informe a placa.");
-      return;
-    }
-    if (!isValidPlate(normalizedPlate)) {
-      setError("Placa invalida. Use o formato ABC1234 ou ABC1D23.");
-      return;
-    }
-    setSaving(true);
-    try {
-      const result = await desktopApi.vehiclesCreate({
-        plate: normalizedPlate,
-        description: description.trim() || undefined
-      });
-      onCreated((result as { id: string }).id);
-    } catch (err) {
-      setError(getErrorMessage(err));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div style={modalOverlayStyle}>
-      <div style={modalContentStyle}>
-        <h3 style={{ margin: "0 0 8px 0", color: "var(--kr-text-strong)", fontSize: "15px" }}>
-          Cadastrar veiculo
-        </h3>
-        {error ? <p style={styles.errorMessage}>{error}</p> : null}
-        <PlateInput label="Placa" value={plateInput} onChange={setPlateInput} required />
-        <TextInput
-          label="Descricao"
-          value={description}
-          onChange={setDescription}
-          placeholder="Ex: Caminhao basculante"
-        />
-        <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
-          <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
-            {saving ? "Salvando..." : "Salvar"}
-          </button>
-          <button type="button" onClick={onClose} style={styles.secondaryButton}>
-            Cancelar
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function QuickDriverModal({ desktopApi, onClose, onCreated }: QuickDriverModalProps) {
-  const [name, setName] = useState("");
-  const [documentInput, setDocumentInput] = useState("");
-  const [phone, setPhone] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-
-  async function handleSave() {
-    if (!desktopApi) return;
-    if (!name.trim()) {
-      setError("Informe o nome.");
-      return;
-    }
-    const normalizedDocument = normalizeDocument(documentInput);
-    if (normalizedDocument && !isValidDocument(normalizedDocument)) {
-      setError("CPF invalido.");
-      return;
-    }
-    const normalizedPhone = normalizePhone(phone);
-    if (phone.trim() && normalizedPhone.length !== 10 && normalizedPhone.length !== 11) {
-      setError("Telefone invalido. Informe com DDD (11 digitos).");
-      return;
-    }
-    setSaving(true);
-    try {
-      const result = await desktopApi.driversCreate({
-        name: name.trim(),
-        document: normalizedDocument || undefined,
-        phone: normalizedPhone || undefined
-      });
-      onCreated((result as { id: string }).id);
-    } catch (err) {
-      setError(getErrorMessage(err));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div style={modalOverlayStyle}>
-      <div style={modalContentStyle}>
-        <h3 style={{ margin: "0 0 8px 0", color: "var(--kr-text-strong)", fontSize: "15px" }}>
-          Cadastrar motorista
-        </h3>
-        {error ? <p style={styles.errorMessage}>{error}</p> : null}
-        <TextInput
-          label="Nome completo"
-          value={name}
-          onChange={setName}
-          required
-          autoComplete="name"
-        />
-        <DocumentInput
-          label="CPF"
-          value={documentInput}
-          onChange={setDocumentInput}
-          placeholder="000.000.000-00"
-        />
-        <PhoneInput label="Telefone" value={phone} onChange={setPhone} />
-        <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
-          <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
-            {saving ? "Salvando..." : "Salvar"}
-          </button>
-          <button type="button" onClick={onClose} style={styles.secondaryButton}>
-            Cancelar
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function QuickCustomerModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
-  const [tradeName, setTradeName] = useState("");
-  const [legalName, setLegalName] = useState("");
-  const [documentInput, setDocumentInput] = useState("");
-  const [phone, setPhone] = useState("");
-  const [emailInput, setEmailInput] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-
-  async function handleSave() {
-    if (!desktopApi) return;
-    if (!tradeName.trim() || !legalName.trim()) {
-      setError("Informe nome fantasia e razao social.");
-      return;
-    }
-    const normalizedDocument = normalizeDocument(documentInput);
-    if (normalizedDocument && !isValidDocument(normalizedDocument)) {
-      setError("CPF/CNPJ invalido.");
-      return;
-    }
-    const normalizedPhone = normalizePhone(phone);
-    if (phone.trim() && normalizedPhone.length !== 10 && normalizedPhone.length !== 11) {
-      setError("Telefone invalido. Informe com DDD (11 digitos).");
-      return;
-    }
-    const invalidEmails = invalidEmailsInList(emailInput);
-    if (invalidEmails.length > 0) {
-      setError(`Email invalido: ${invalidEmails.join(", ")}.`);
-      return;
-    }
-    const normalizedEmail = normalizeEmailList(emailInput);
-    setSaving(true);
-    try {
-      const result = await desktopApi.customersCreate({
-        tradeName: tradeName.trim(),
-        legalName: legalName.trim(),
-        document: normalizedDocument || undefined,
-        phone: normalizedPhone || undefined,
-        email: normalizedEmail || undefined
-      });
-      onCreated((result as { id: string }).id);
-    } catch (err) {
-      setError(getErrorMessage(err));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div style={modalOverlayStyle}>
-      <div style={modalContentStyle}>
-        <h3 style={{ margin: "0 0 8px 0", color: "var(--kr-text-strong)", fontSize: "15px" }}>
-          Cadastrar cliente
-        </h3>
-        {error ? <p style={styles.errorMessage}>{error}</p> : null}
-        <TextInput label="Nome fantasia" value={tradeName} onChange={setTradeName} required />
-        <TextInput label="Razao social" value={legalName} onChange={setLegalName} required />
-        <DocumentInput label="CPF/CNPJ" value={documentInput} onChange={setDocumentInput} />
-        <PhoneInput label="Telefone" value={phone} onChange={setPhone} />
-        <EmailListInput label="Email" value={emailInput} onChange={setEmailInput} />
-        <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
-          <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
-            {saving ? "Salvando..." : "Salvar"}
-          </button>
-          <button type="button" onClick={onClose} style={styles.secondaryButton}>
-            Cancelar
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function QuickCarrierModal({ desktopApi, onClose, onCreated }: QuickModalProps) {
-  const [name, setName] = useState("");
-  const [documentInput, setDocumentInput] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-
-  async function handleSave() {
-    if (!desktopApi) return;
-    if (!name.trim()) {
-      setError("Informe o nome.");
-      return;
-    }
-    const normalizedDocument = normalizeDocument(documentInput);
-    if (normalizedDocument && !isValidDocument(normalizedDocument)) {
-      setError("CPF/CNPJ invalido.");
-      return;
-    }
-    setSaving(true);
-    try {
-      const result = await desktopApi.carriersCreate({
-        name: name.trim(),
-        document: normalizedDocument || undefined
-      });
-      onCreated((result as { id: string }).id);
-    } catch (err) {
-      setError(getErrorMessage(err));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div style={modalOverlayStyle}>
-      <div style={modalContentStyle}>
-        <h3 style={{ margin: "0 0 8px 0", color: "var(--kr-text-strong)", fontSize: "15px" }}>
-          Cadastrar transportadora
-        </h3>
-        {error ? <p style={styles.errorMessage}>{error}</p> : null}
-        <TextInput label="Nome" value={name} onChange={setName} required />
-        <DocumentInput label="CPF/CNPJ" value={documentInput} onChange={setDocumentInput} />
-        <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
-          <button type="button" onClick={handleSave} disabled={saving} style={styles.primaryButton}>
-            {saving ? "Salvando..." : "Salvar"}
-          </button>
-          <button type="button" onClick={onClose} style={styles.secondaryButton}>
-            Cancelar
-          </button>
-        </div>
       </div>
     </div>
   );
@@ -8352,7 +8146,8 @@ interface ResourceCrudProps {
   rowToForm: (item: Record<string, unknown>) => Record<string, string>;
   enrichForm?: (item: Record<string, unknown>) => Promise<Record<string, string>>;
   buildPayload: (form: Record<string, string>, editing: boolean) => CrudPayloadResult;
-  create: (payload: Record<string, unknown>) => Promise<void>;
+  /** Cria o registro e devolve o id gerado (usado pelo modo somente-formulario). */
+  create: (payload: Record<string, unknown>) => Promise<string | void>;
   update: (id: string, payload: Record<string, unknown>) => Promise<void>;
   remove: (id: string) => Promise<void>;
   deleteDescription: string;
@@ -8363,9 +8158,32 @@ interface ResourceCrudProps {
     reload: () => Promise<void>;
     showFlash: (kind: FlashKind, text: string) => void;
   }) => React.ReactNode;
+  /**
+   * Modo "somente formulario": renderiza apenas o modal de cadastro (sem lista, busca
+   * ou tabela), ja aberto em criacao. E o que a Nova entrada usa para abrir o MESMO
+   * formulario completo da tela de Cadastros em vez de um modal reduzido proprio.
+   */
+  standaloneForm?: StandaloneCrudFormOptions;
+}
+
+interface StandaloneCrudFormOptions {
+  onCreated: (id: string) => void;
+  onCancel: () => void;
+  /** Valores iniciais do formulario (ex.: transportadora ja selecionada na entrada). */
+  initialValues?: Record<string, string>;
 }
 
 const CRUD_DEFAULT_SECTION = "Dados principais";
+
+/** Estado inicial do formulario generico: todo campo presente, checkbox como "false". */
+function buildEmptyCrudForm(
+  fields: CrudField[],
+  initialValues?: Record<string, string>
+): Record<string, string> {
+  const init: Record<string, string> = {};
+  for (const field of fields) init[field.key] = field.type === "checkbox" ? "false" : "";
+  return initialValues ? { ...init, ...initialValues } : init;
+}
 
 async function reconcileDriverCarrier(
   desktopApi: KyberRockDesktopApi,
@@ -8412,14 +8230,17 @@ function ResourceCrud({
   deleteDescription,
   expandedRow,
   onChanged,
-  toolbar
+  toolbar,
+  standaloneForm
 }: ResourceCrudProps) {
   const [items, setItems] = useState<Array<Record<string, unknown>>>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
+  const [showForm, setShowForm] = useState(Boolean(standaloneForm));
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [formData, setFormData] = useState<Record<string, string>>({});
+  const [formData, setFormData] = useState<Record<string, string>>(() =>
+    standaloneForm ? buildEmptyCrudForm(fields, standaloneForm.initialValues) : {}
+  );
   const [flash, showFlash] = useFlash();
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -8429,14 +8250,19 @@ function ResourceCrud({
   const [viewingItem, setViewingItem] = useState<Record<string, unknown> | null>(null);
   const [viewData, setViewData] = useState<Record<string, string>>({});
   // Snapshot do formulario ao abrir, para avisar antes de descartar alteracoes.
-  const formBaselineRef = useRef<string>("");
+  const formBaselineRef = useRef<string>(JSON.stringify(formData));
   const { confirmElement, requestConfirm } = useConfirm();
 
   const article = gender === "f" ? "a" : "o";
   const newLabel = gender === "f" ? "Nova" : "Novo";
   const lower = singular.toLowerCase();
+  // Boolean em vez do objeto: quem abre o formulario o recria a cada render, e a
+  // identidade nova refaria a leitura do cache sem necessidade.
+  const isStandalone = Boolean(standaloneForm);
 
   const loadItems = useCallback(async (): Promise<void> => {
+    // Modo somente-formulario nao tem tabela: nao vale pagar a leitura do cache.
+    if (isStandalone) return;
     setLoading(true);
     try {
       const result = await desktopApi.queryCache({
@@ -8448,17 +8274,13 @@ function ResourceCrud({
     } finally {
       setLoading(false);
     }
-  }, [desktopApi, entityType, search]);
+  }, [desktopApi, entityType, search, isStandalone]);
 
   useEffect(() => {
     void loadItems();
   }, [loadItems]);
 
-  const emptyForm = useCallback((): Record<string, string> => {
-    const init: Record<string, string> = {};
-    for (const field of fields) init[field.key] = field.type === "checkbox" ? "false" : "";
-    return init;
-  }, [fields]);
+  const emptyForm = useCallback((): Record<string, string> => buildEmptyCrudForm(fields), [fields]);
 
   function openCreate(): void {
     const initial = emptyForm();
@@ -8518,6 +8340,7 @@ function ResourceCrud({
       if (!discard) return;
     }
     setShowForm(false);
+    standaloneForm?.onCancel();
   }
 
   async function handleSave(): Promise<void> {
@@ -8529,15 +8352,22 @@ function ResourceCrud({
     setSaving(true);
     setFormError(null);
     try {
+      let createdId: string | void = undefined;
       if (editingId) {
         await update(editingId, result.value);
       } else {
-        await create(result.value);
+        createdId = await create(result.value);
       }
       setShowForm(false);
       setEditingId(null);
       await loadItems();
       onChanged?.();
+      if (standaloneForm) {
+        // Quem abriu o formulario (ex.: Nova entrada) seleciona o registro recem-criado.
+        if (createdId) standaloneForm.onCreated(createdId);
+        else standaloneForm.onCancel();
+        return;
+      }
       showFlash(
         "success",
         editingId ? `${singular} atualizad${article}.` : `${singular} criad${article}.`
@@ -8700,6 +8530,33 @@ function ResourceCrud({
     }))
   }));
 
+  const formShell = (
+    <CrudFormShell
+      title={editingId ? `Editar ${lower}` : `${newLabel} ${lower}`}
+      error={formError}
+      saving={saving}
+      maxWidth={modalMaxWidth}
+      onClose={() => void requestCloseForm()}
+      onSubmit={() => void handleSave()}
+    >
+      {sections.map((section) => (
+        <FormSection key={section.name} title={section.name}>
+          {section.fields.map((field) => renderField(field))}
+        </FormSection>
+      ))}
+    </CrudFormShell>
+  );
+
+  // Somente-formulario: o modal e a tela inteira, sem cabecalho, busca ou tabela.
+  if (standaloneForm) {
+    return (
+      <>
+        {showForm ? formShell : null}
+        {confirmElement}
+      </>
+    );
+  }
+
   return (
     <div>
       <CrudSectionHeader
@@ -8718,22 +8575,7 @@ function ResourceCrud({
       />
       <FlashBanner flash={flash} />
 
-      {showForm ? (
-        <CrudFormShell
-          title={editingId ? `Editar ${lower}` : `${newLabel} ${lower}`}
-          error={formError}
-          saving={saving}
-          maxWidth={modalMaxWidth}
-          onClose={() => void requestCloseForm()}
-          onSubmit={() => void handleSave()}
-        >
-          {sections.map((section) => (
-            <FormSection key={section.name} title={section.name}>
-              {section.fields.map((field) => renderField(field))}
-            </FormSection>
-          ))}
-        </CrudFormShell>
-      ) : null}
+      {showForm ? formShell : null}
 
       {viewingItem && !showForm ? (
         <RecordDetailModal
@@ -8802,10 +8644,12 @@ function ResourceCrud({
 
 function DriverCrud({
   desktopApi,
-  carrierOptions
+  carrierOptions,
+  standaloneForm
 }: {
   desktopApi: KyberRockDesktopApi;
   carrierOptions: CrudSelectOption[];
+  standaloneForm?: StandaloneCrudFormOptions;
 }) {
   const fields: CrudField[] = [
     { key: "name", label: "Nome", required: true },
@@ -8895,6 +8739,7 @@ function DriverCrud({
         if (id) {
           await reconcileDriverCarrier(desktopApi, id, payload.carrierId as string);
         }
+        return id;
       }}
       update={async (id, payload) => {
         await desktopApi.driversUpdate(id, {
@@ -8906,6 +8751,7 @@ function DriverCrud({
       }}
       remove={(id) => desktopApi.driversDelete(id)}
       deleteDescription="O registro sera removido dos cadastros. Operacoes ja registradas nao sao afetadas."
+      standaloneForm={standaloneForm}
     />
   );
 }
@@ -9069,10 +8915,12 @@ function CarrierBulkCnpjToolbar({
 
 function CarrierCrud({
   desktopApi,
-  onChanged
+  onChanged,
+  standaloneForm
 }: {
   desktopApi: KyberRockDesktopApi;
   onChanged: () => void;
+  standaloneForm?: StandaloneCrudFormOptions;
 }) {
   const [selectedCarrier, setSelectedCarrier] = useState<string | null>(null);
   const [carrierVehicles, setCarrierVehicles] = useState<
@@ -9256,7 +9104,7 @@ function CarrierCrud({
             city: (payload.city as string) || undefined,
             state: (payload.state as string) || undefined
           })
-          .then(() => undefined)
+          .then((created) => (created as { id?: string } | null)?.id)
       }
       update={(id, payload) =>
         desktopApi
@@ -9278,6 +9126,7 @@ function CarrierCrud({
       remove={(id) => desktopApi.carriersDelete(id)}
       deleteDescription="A transportadora sera removida dos cadastros locais. Veiculos vinculados ficam sem transportadora."
       onChanged={onChanged}
+      standaloneForm={standaloneForm}
       expandedRow={(item) =>
         selectedCarrier === String(item.id) ? (
           <div style={{ display: "grid", gap: "6px" }}>
@@ -9315,14 +9164,20 @@ function CarrierCrud({
   );
 }
 
+const EMPTY_CARRIER_NAMES: ReadonlyMap<string, string> = new Map();
+
 function VehicleCrud({
   desktopApi,
   carrierOptions,
-  carrierNameById
+  // So a coluna "Transportadora" da tabela usa os nomes; o modo somente-formulario
+  // (Nova entrada) nao renderiza tabela e nao precisa passar o mapa.
+  carrierNameById = EMPTY_CARRIER_NAMES,
+  standaloneForm
 }: {
   desktopApi: KyberRockDesktopApi;
   carrierOptions: CrudSelectOption[];
-  carrierNameById: Map<string, string>;
+  carrierNameById?: ReadonlyMap<string, string>;
+  standaloneForm?: StandaloneCrudFormOptions;
 }) {
   const fields: CrudField[] = [
     { key: "plate", label: "Placa", type: "plate", required: true, section: "Identificacao" },
@@ -9421,7 +9276,7 @@ function VehicleCrud({
             description: (payload.description as string) || undefined,
             carrierId: (payload.carrierId as string) || undefined
           })
-          .then(() => undefined)
+          .then((created) => (created as { id?: string } | null)?.id)
       }
       update={(id, payload) =>
         desktopApi
@@ -9435,6 +9290,7 @@ function VehicleCrud({
       }
       remove={(id) => desktopApi.vehiclesDelete(id)}
       deleteDescription="O veiculo sera removido dos cadastros. Operacoes ja registradas nao sao afetadas."
+      standaloneForm={standaloneForm}
     />
   );
 }
@@ -9855,7 +9711,7 @@ function PaymentConditionsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi
       {showForm ? (
         <CrudFormShell
           title={editingId ? "Editar condicao" : "Nova condicao"}
-          subtitle="Parcelas: 10/20/30/40 (dias fixos), A Vista/40/60, Para 93 dias (1 parcela), 50 ou 50 Parcelas (parcelas mensais)."
+          subtitle="Parcelas: 10/20/30/40 (dias fixos), A Vista/40/60, 50 ou Para 50 dias (1 parcela em 50 dias), 3 Parcelas (parcelas mensais)."
           error={formError}
           saving={saving}
           maxWidth={560}

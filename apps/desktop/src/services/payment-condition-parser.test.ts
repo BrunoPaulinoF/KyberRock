@@ -23,9 +23,11 @@ describe("parsePaymentCondition", () => {
     expect(result.raw).toBe("7/14/21");
   });
 
-  it("numero isolado continua sendo quantidade de parcelas (nao dias)", () => {
-    expect(parsePaymentCondition("5").kind).toBe("monthly_count");
-    expect(parsePaymentCondition("5").installmentCount).toBe(5);
+  it("numero isolado e o prazo em dias de uma parcela unica", () => {
+    const result = parsePaymentCondition("5");
+    expect(result.kind).toBe("single");
+    expect(result.installmentCount).toBe(1);
+    expect(result.installments).toEqual([{ number: 1, dueDays: 5 }]);
   });
 
   it("formato 2: primeira a vista e demais em dias", () => {
@@ -51,13 +53,14 @@ describe("parsePaymentCondition", () => {
     expect(parsePaymentCondition("Para 1 dia").installments[0].dueDays).toBe(1);
   });
 
-  it("formato 4: numero inteiro isolado = parcelas mensais", () => {
+  it("formato 4: numero inteiro isolado = prazo em dias apos a venda", () => {
     const result = parsePaymentCondition("50");
-    expect(result.kind).toBe("monthly_count");
-    expect(result.installmentCount).toBe(50);
-    expect(result.intervalDays).toBe(30);
-    expect(result.installments[0].dueDays).toBe(30);
-    expect(result.installments[49].dueDays).toBe(1500);
+    expect(result.kind).toBe("single");
+    expect(result.installmentCount).toBe(1);
+    expect(result.intervalDays).toBeNull();
+    expect(result.installments).toEqual([{ number: 1, dueDays: 50 }]);
+    // "50" e "Para 50 dias" descrevem a mesma condicao.
+    expect(result.installments).toEqual(parsePaymentCondition("Para 50 dias").installments);
   });
 
   it("formato 5: 'N Parcelas' = parcelas mensais", () => {
@@ -76,7 +79,8 @@ describe("parsePaymentCondition", () => {
 
   it("gera um summary legivel", () => {
     expect(parsePaymentCondition("Para 93 dias").summary).toBe("1 parcela em 93 dias");
-    expect(parsePaymentCondition("50").summary).toBe("50 parcelas mensais");
+    expect(parsePaymentCondition("50").summary).toBe("1 parcela em 50 dias");
+    expect(parsePaymentCondition("50 parcelas").summary).toBe("50 parcelas mensais");
     expect(parsePaymentCondition("10/20/30").summary).toBe("3 parcelas (10/20/30 dias)");
   });
 
@@ -100,7 +104,13 @@ describe("parsePaymentCondition", () => {
   });
 
   it("rejeita quantidade de parcelas acima do limite", () => {
-    expect(() => parsePaymentCondition("400")).toThrow(PaymentConditionParseError);
+    expect(() => parsePaymentCondition("400 parcelas")).toThrow(PaymentConditionParseError);
+  });
+
+  it("rejeita prazo em dias acima do limite", () => {
+    expect(() => parsePaymentCondition("4000")).toThrow(PaymentConditionParseError);
+    expect(() => parsePaymentCondition("Para 4000 dias")).toThrow(PaymentConditionParseError);
+    expect(() => parsePaymentCondition("10/4000")).toThrow(PaymentConditionParseError);
   });
 
   it("tryParsePaymentCondition retorna null em erro", () => {

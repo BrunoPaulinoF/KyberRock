@@ -85,7 +85,9 @@ import {
   getCustomerFreightRules,
   getCustomerFreightRuleForProduct,
   setCustomerFreightRule,
+  rememberCustomerFreightValue,
   removeCustomerFreightRule,
+  removeCustomerFreightModality,
   type SetCustomerFreightRuleInput
 } from "./customer-freight-rules.js";
 import type { FreightModality } from "./freight.js";
@@ -748,6 +750,21 @@ export class DesktopRuntime {
       entryWeightKg: entryReading.weightKg,
       entryScaleCapture: buildScaleCaptureAudit(entryReading)
     });
+    // O valor de frete desta venda vira o "ultimo valor" do cliente para esse tipo de
+    // frete, para a proxima entrada ja vir preenchida. Best-effort: memoria de
+    // conveniencia nao pode derrubar o registro de uma entrada.
+    if (input.freight && input.freightModality) {
+      try {
+        rememberCustomerFreightValue(this.database, {
+          customerId: input.customerId,
+          productId: input.productId,
+          modality: input.freightModality,
+          rule: input.freight.rule
+        });
+      } catch {
+        /* ignore */
+      }
+    }
     // A entrada pode ter gravado condicao/forma como padrao do cliente (primeira escolha).
     this.cacheStore.invalidate("customer", this.ensureIdentity().companyId);
     this.triggerOperationCloudPush("entry_registered", operation.id);
@@ -1155,9 +1172,13 @@ export class DesktopRuntime {
     return getCustomerFreightRules(this.database, customerId);
   }
 
-  getCustomerFreightForProduct(customerId: string, productId: string) {
+  getCustomerFreightForProduct(
+    customerId: string,
+    productId: string,
+    modality?: FreightModality | null
+  ) {
     this.assertDesktopAccess();
-    return getCustomerFreightRuleForProduct(this.database, customerId, productId);
+    return getCustomerFreightRuleForProduct(this.database, customerId, productId, modality);
   }
 
   setCustomerFreightRule(input: SetCustomerFreightRuleInput) {
@@ -1168,6 +1189,11 @@ export class DesktopRuntime {
   removeCustomerFreightRule(ruleId: string) {
     this.assertDesktopAccess();
     return removeCustomerFreightRule(this.database, ruleId);
+  }
+
+  removeCustomerFreightModality(ruleId: string, modality: FreightModality) {
+    this.assertDesktopAccess();
+    return removeCustomerFreightModality(this.database, ruleId, modality);
   }
 
   configureReceiptPrintProfile(
@@ -2517,6 +2543,12 @@ export class DesktopRuntime {
     const result = updateCustomer(this.database, id, input, new Date(), {
       overrideOmieFields: options?.overrideOmieFields
     });
+    // O job do fechamento carrega um SNAPSHOT do cadastro montado no close. Sem
+    // reconstruir o payload aqui, corrigir o cliente (razao social, e-mail, endereco...)
+    // nao muda nada no que sobe ao OMIE: o job segue parado com o dado antigo e repete a
+    // mesma recusa, dando a impressao de que a edicao "nao salvou". Rearma os fechamentos
+    // que estao presos por causa deste cliente para eles sairem com o cadastro corrigido.
+    rearmOmieBillingForCustomer(this.database, id);
     this.cacheStore.invalidate("customer", identity.companyId);
     this.cacheStore.invalidate("carrier", identity.companyId);
     return result;
@@ -2594,6 +2626,9 @@ export class DesktopRuntime {
 
       try {
         updateCustomer(this.database, customer.id, patch, now, { overrideOmieFields: true });
+        // Mesmo motivo do updateCustomer manual: o fechamento parado precisa do payload
+        // reconstruido para aproveitar o cadastro que a Receita acabou de completar.
+        rearmOmieBillingForCustomer(this.database, customer.id, now);
         summary.updated += 1;
       } catch {
         summary.failed += 1;

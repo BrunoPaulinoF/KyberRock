@@ -193,3 +193,115 @@ describe("DesktopRuntime OMIE status", () => {
     }
   });
 });
+
+describe("DesktopRuntime customer edits", () => {
+  const tempDirectories: string[] = [];
+
+  afterEach(() => {
+    for (const directory of tempDirectories.splice(0)) {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("re-arms the blocked closing with the cadastro the operator just corrected", () => {
+    const baseDirectory = mkdtempSync(path.join(tmpdir(), "kyberrock-runtime-"));
+    tempDirectories.push(baseDirectory);
+    const runtime = DesktopRuntime.initialize(baseDirectory);
+
+    try {
+      const database = (runtime as unknown as { database: DesktopDatabase }).database;
+      const now = "2026-06-12T12:00:00.000Z";
+      // Razao social que o OMIE recusa (acima de 60 caracteres), como veio do cadastro.
+      const razaoLonga = "LOGI TRANSPORTES E LOGISTICA INTEGRADA DO BRASIL LTDA - FILIAL SAO PAULO";
+
+      ensureInitialDesktopIdentity(database, {
+        companyId: "company-1",
+        companyLegalName: "KyberRock Mineracao LTDA",
+        unitId: "unit-1",
+        unitName: "Pedreira Principal",
+        deviceId: "device-1",
+        deviceName: "PC Balanca"
+      });
+      // Desktop ativado: sem isto assertDesktopAccess barra qualquer edicao de cadastro.
+      writeLocalSetting(database, "cloud_company_id", "company-1");
+      writeLocalSetting(database, "cloud_unit_id", "unit-1");
+      writeLocalSetting(database, "cloud_device_id", "device-1");
+      writeLocalSetting(database, "cloud_device_token", "device-token-1");
+      writeLocalSetting(database, "last_license_check_at", new Date().toISOString());
+
+      database
+        .prepare(
+          `INSERT INTO customers (
+            id, company_id, source, legal_name, trade_name, document, email, address_number,
+            sync_status, needs_push, created_at, updated_at
+          ) VALUES (
+            'customer-logi', 'company-1', 'local', ?, 'Logi', '12345678000190',
+            'nfe@logi.com.br', '100', 'error', 1, ?, ?
+          )`
+        )
+        .run(razaoLonga, now, now);
+
+      database
+        .prepare(
+          `INSERT INTO weighing_operations (
+            id, company_id, unit_id, device_id, status, operation_type, customer_id,
+            entry_weight_kg, exit_weight_kg, net_weight_kg, unit_price_cents,
+            product_total_cents, total_cents, exit_weight_captured_at, created_at, updated_at
+          ) VALUES (
+            'operation-1', 'company-1', 'unit-1', 'device-1', 'closed_local', 'invoice', 'customer-logi',
+            20, 10, 10, 2500, 25000, 25000, ?, ?, ?
+          )`
+        )
+        .run(now, now, now);
+
+      // Job montado no fechamento: carrega o SNAPSHOT do cadastro recusado pelo OMIE e
+      // fica parado (next_attempt_at no futuro distante) ate alguem corrigir o cliente.
+      database
+        .prepare(
+          `INSERT INTO sync_queue (
+            id, target, action, entity_type, entity_id, idempotency_key, payload_json,
+            status, attempt_count, next_attempt_at, created_at, updated_at
+          ) VALUES (
+            'omie-job-logi', 'omie', 'create_order', 'weighing_operation', 'operation-1',
+            'kyberrock:unit-1:operation-1:create_sales_order', ?, 'failed', 0,
+            '9999-12-31T23:59:59.999Z', ?, ?
+          )`
+        )
+        .run(
+          JSON.stringify({
+            operationId: "operation-1",
+            operationType: "invoice",
+            customerOmieId: 0,
+            localCustomerId: "customer-logi",
+            customer: { localCustomerId: "customer-logi", razaoSocial: razaoLonga }
+          }),
+          now,
+          now
+        );
+
+      runtime.updateCustomer(
+        "customer-logi",
+        { legalName: "LOGI TRANSPORTES LTDA" },
+        { overrideOmieFields: true }
+      );
+
+      const job = database
+        .prepare("SELECT status, next_attempt_at, payload_json FROM sync_queue WHERE id = ?")
+        .get("omie-job-logi") as {
+        status: string;
+        next_attempt_at: string;
+        payload_json: string;
+      };
+
+      // Sem o re-arm o job seguia parado com o cadastro antigo: a correcao do operador
+      // nao mudava nada no que sobe ao OMIE e a recusa se repetia igual.
+      expect(job.status).toBe("pending");
+      expect(job.next_attempt_at).not.toBe("9999-12-31T23:59:59.999Z");
+      expect(JSON.parse(job.payload_json).customer).toMatchObject({
+        razaoSocial: "LOGI TRANSPORTES LTDA"
+      });
+    } finally {
+      runtime.close();
+    }
+  });
+});
