@@ -225,6 +225,8 @@ export interface KyberRockDesktopApi {
     input: Omit<ConfigureReceiptPrintProfileInput, "identity">
   ) => Promise<PrintProfileSummary>;
   listPrintProfiles: () => Promise<PrintProfileSummary[]>;
+  /** Perfil de cupom 80 mm ativo deste computador (o que a impressao usa). */
+  getActiveReceiptProfile: () => Promise<PrintProfileSummary | null>;
   listPrintReceipts: () => Promise<PrintReceiptSummary[]>;
   printReceipt: (operationId: string) => Promise<PrintReceiptSummary>;
   reprintReceipt: (receiptId: string) => Promise<PrintReceiptSummary>;

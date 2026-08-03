@@ -59,6 +59,7 @@ const desktopApi = {
   configureReceiptPrintProfile: (input: unknown) =>
     ipcRenderer.invoke("desktop:configure-receipt-print-profile", input),
   listPrintProfiles: () => ipcRenderer.invoke("desktop:list-print-profiles"),
+  getActiveReceiptProfile: () => ipcRenderer.invoke("desktop:get-active-receipt-profile"),
   listPrintReceipts: () => ipcRenderer.invoke("desktop:list-print-receipts"),
   printReceipt: (operationId: string) => ipcRenderer.invoke("desktop:print-receipt", operationId),
   reprintReceipt: (receiptId: string) => ipcRenderer.invoke("desktop:reprint-receipt", receiptId),

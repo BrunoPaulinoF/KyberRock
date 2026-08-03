@@ -90,6 +90,7 @@ import {
 import type { FreightModality } from "./freight.js";
 import {
   configureReceiptPrintProfile,
+  getActiveReceiptPrintProfile,
   listPrintProfiles,
   listPrintReceipts,
   printTestReceipt,
@@ -1146,6 +1147,12 @@ export class DesktopRuntime {
   listPrintProfiles(): PrintProfileSummary[] {
     this.assertDesktopAccess();
     return listPrintProfiles(this.database);
+  }
+
+  /** Perfil de cupom 80 mm ativo deste computador — o que a impressao realmente usa. */
+  getActiveReceiptProfile(): PrintProfileSummary | null {
+    this.assertDesktopAccess();
+    return getActiveReceiptPrintProfile(this.database, this.ensureIdentity().deviceId);
   }
 
   listPrintReceipts(): PrintReceiptSummary[] {

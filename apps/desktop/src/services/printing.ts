@@ -1,9 +1,12 @@
 import { randomUUID } from "node:crypto";
 
 import {
-  buildReceiptLinesWithConfig,
+  buildReceiptDocument,
+  buildSampleReceiptInput,
   normalizeReceiptTemplateConfig,
   DEFAULT_RECEIPT_TEMPLATE_CONFIG,
+  type ReceiptHeaderBlock,
+  type ReceiptStyle,
   type ReceiptTemplateInput,
   type ReceiptTemplateConfig
 } from "@kyberrock/print-templates";
@@ -109,9 +112,18 @@ export interface PrintReceiptSummary {
   updatedAt: string;
 }
 
-interface ReceiptContentSnapshot extends ReceiptTemplateInput {
+/**
+ * Cupom congelado no momento da impressao. Alem das linhas em texto (usadas pelo
+ * ESC/POS), carrega o cabecalho e o estilo ja resolvidos: o renderizador HTML desenha o
+ * topo do cupom a partir deles em vez de adivinhar quantas linhas pular.
+ */
+export interface ReceiptContentSnapshot extends ReceiptTemplateInput {
   lines: string[];
   receiptLogo: ReceiptLogoConfig;
+  templateConfig: ReceiptTemplateConfig;
+  header: ReceiptHeaderBlock;
+  bodyLines: string[];
+  style: ReceiptStyle;
 }
 
 interface PrintProfileRow {
@@ -522,7 +534,13 @@ async function writeReceiptAttempt(
   return getRequiredPrintReceipt(database, receiptId);
 }
 
-function getActiveReceiptPrintProfile(
+/**
+ * Perfil de cupom 80 mm que este computador usa de fato para imprimir. A tela de
+ * impressao precisa carregar o formulario dele (e nao do primeiro perfil da lista, que
+ * pode ser de outro computador ou do relatorio A4): senao o formulario abre sem a logo
+ * salva e o proximo "Salvar perfil" apaga a logo do perfil que imprime.
+ */
+export function getActiveReceiptPrintProfile(
   database: DesktopDatabase,
   deviceId: string
 ): PrintProfileSummary | null {
@@ -702,9 +720,17 @@ function buildReceiptSnapshot(
     freightTotalCents: operation.freight_total_cents,
     totalCents: operation.total_cents ?? 0
   };
-  const lines = buildReceiptLinesWithConfig(templateInput, templateConfig);
+  const document = buildReceiptDocument(templateInput, templateConfig);
 
-  return { ...templateInput, lines, receiptLogo };
+  return {
+    ...templateInput,
+    lines: document.lines,
+    receiptLogo,
+    templateConfig,
+    header: document.header,
+    bodyLines: document.bodyLines,
+    style: document.style
+  };
 }
 
 function buildTestReceiptSnapshot(
@@ -712,44 +738,29 @@ function buildTestReceiptSnapshot(
   receiptLogo: ReceiptLogoConfig = defaultReceiptLogoConfig(),
   templateConfig: ReceiptTemplateConfig = DEFAULT_RECEIPT_TEMPLATE_CONFIG
 ): ReceiptContentSnapshot {
-  const templateInput: ReceiptTemplateInput = {
-    companyName: "Pedreira Teste LTDA",
-    companyDocument: "00.000.000/0001-00",
-    companyStateRegistration: "000.000.000.000",
-    unitName: "Pedreira Teste",
-    receiptNumber: 0,
-    copyNumber: 0,
-    printedAt,
-    operationId: "test",
-    operationType: "invoice",
-    customerName: "Cliente Exemplo",
-    customerDocument: "11.111.111/0001-11",
-    customerPhone: "(11) 99999-0000",
-    customerZipCode: "00000-000",
-    customerCity: "Cidade",
-    customerState: "SP",
-    productCode: "0001",
-    productDescription: "Brita 1 (Teste)",
-    plate: "ABC1D23",
-    driverName: "Motorista Teste",
-    paymentTermName: "A vista",
-    paymentMethodName: "Dinheiro",
-    entryCapturedAt: printedAt,
-    exitCapturedAt: printedAt,
-    permanenceLabel: "0min",
-    entryWeightKg: 12_000,
-    exitWeightKg: 18_500,
-    netWeightKg: 6_500,
-    unitPriceCents: 12_000,
-    productTotalCents: 78_000,
-    freightTotalCents: 0,
-    totalCents: 78_000
-  };
-  const lines = buildReceiptLinesWithConfig(templateInput, templateConfig);
-  lines.unshift("=== CUPOM DE TESTE ===");
-  lines.push("", "Esta e uma impressao de teste.");
+  const templateInput = buildSampleReceiptInput(printedAt);
+  const document = buildReceiptDocument(templateInput, templateConfig);
+  // O marcador entra no corpo (nao nas linhas cruas) para nao desalinhar o cabecalho
+  // grafico do cupom impresso pela impressora do Windows.
+  const bodyLines = [
+    "=== CUPOM DE TESTE ===",
+    ...document.bodyLines,
+    "",
+    "Esta e uma impressao de teste."
+  ];
 
-  return { ...templateInput, lines, receiptLogo };
+  return {
+    ...templateInput,
+    lines: [
+      ...document.lines.slice(0, document.lines.length - document.bodyLines.length),
+      ...bodyLines
+    ],
+    receiptLogo,
+    templateConfig,
+    header: document.header,
+    bodyLines,
+    style: document.style
+  };
 }
 
 function getProfilePrinterName(profile: PrintProfileSummary): string {

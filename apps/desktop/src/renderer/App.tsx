@@ -40,10 +40,13 @@ import type {
   WindowsPrinterSummary
 } from "../services/printing";
 import {
+  DEFAULT_RECEIPT_STYLE,
   DEFAULT_RECEIPT_TEMPLATE_CONFIG,
   formatReceiptNumber,
+  type ReceiptFontFamily,
   type ReceiptTemplateConfig
 } from "@kyberrock/print-templates";
+import { ReceiptPreviewCard } from "./ReceiptPreviewCard";
 import type { DesktopAccessStatus } from "../services/desktop-activation";
 import type { DesktopStatusSnapshot } from "../services/status";
 import {
@@ -273,6 +276,48 @@ const receiptTemplateToggleOptions: Array<{ key: ReceiptTemplateBooleanKey; labe
   { key: "showSignature", label: "Assinatura" },
   { key: "showVehicleDriver", label: "Veiculo e motorista" },
   { key: "showFooter", label: "Mensagem padrao de rodape" }
+];
+
+const receiptFontFamilyOptions: Array<{ value: ReceiptFontFamily; label: string }> = [
+  { value: "monospace", label: "Monoespacada (padrao do cupom)" },
+  { value: "sans", label: "Sem serifa" },
+  { value: "serif", label: "Com serifa" },
+  { value: "condensed", label: "Condensada (cabe mais texto)" }
+];
+
+/**
+ * Controles numericos da aparencia do cupom. Cada um tem faixa propria: o corpo precisa
+ * caber nos 48 caracteres do papel de 80 mm, enquanto os numeros podem crescer bem mais
+ * (sao poucos por linha e e o que o cliente confere).
+ */
+const receiptStyleSliders: Array<{
+  key: "fontSizePx" | "numberFontSizePx" | "headerFontSizePx";
+  label: string;
+  hint: string;
+  min: number;
+  max: number;
+}> = [
+  {
+    key: "fontSizePx",
+    label: "Tamanho da fonte (corpo)",
+    hint: "Texto geral do cupom.",
+    min: 7,
+    max: 20
+  },
+  {
+    key: "numberFontSizePx",
+    label: "Tamanho dos numeros",
+    hint: "Pesos, quantidades e valores.",
+    min: 7,
+    max: 28
+  },
+  {
+    key: "headerFontSizePx",
+    label: "Tamanho do cabecalho",
+    hint: "Data, hora e numero do cupom.",
+    min: 8,
+    max: 30
+  }
 ];
 
 const THEME_MODE_STORAGE_KEY = "kyberrock.themeMode";
@@ -1328,13 +1373,18 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       return;
     }
 
-    const [nextProfiles, nextReceipts] = await Promise.all([
+    // O formulario carrega o perfil de cupom ATIVO deste computador, nao o primeiro da
+    // lista: `listPrintProfiles` devolve todos os perfis (outros computadores, relatorio
+    // A4) ordenados por data, entao o formulario abria sem a logo salva e o proximo
+    // "Salvar perfil" gravava logo nula no perfil que realmente imprime.
+    const [nextProfiles, nextReceipts, activeProfile] = await Promise.all([
       desktopApi.listPrintProfiles(),
-      desktopApi.listPrintReceipts()
+      desktopApi.listPrintReceipts(),
+      desktopApi.getActiveReceiptProfile()
     ]);
     setPrintProfiles(nextProfiles);
     setPrintReceipts(nextReceipts);
-    applyReceiptProfileForm(nextProfiles[0]);
+    applyReceiptProfileForm(activeProfile ?? undefined);
   }
 
   function applyReceiptProfileForm(profile: PrintProfileSummary | undefined): void {
@@ -3615,7 +3665,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       <div>
                         <h3 style={styles.sectionTitle}>Editor visual do cupom</h3>
                         <p style={styles.sectionDescription}>
-                          Mantenha o modelo padrao ou personalize os blocos impressos.
+                          Mantenha o modelo padrao ou personalize fonte, tamanhos e blocos
+                          impressos. A previa ao lado acompanha em tempo real.
                         </p>
                       </div>
                     </div>
@@ -3636,6 +3687,97 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     </label>
                     {receiptTemplateConfig.mode === "custom" ? (
                       <>
+                        <label style={styles.fieldLabel}>
+                          Fonte do cupom
+                          <select
+                            value={receiptTemplateConfig.fontFamily}
+                            onChange={(event) =>
+                              updateReceiptTemplateConfig({
+                                fontFamily: event.target.value as ReceiptFontFamily
+                              })
+                            }
+                            style={styles.input}
+                          >
+                            {receiptFontFamilyOptions.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        {receiptStyleSliders.map((slider) => (
+                          <label key={slider.key} style={styles.fieldLabel}>
+                            {slider.label}: {receiptTemplateConfig[slider.key]} px
+                            <input
+                              type="range"
+                              min={slider.min}
+                              max={slider.max}
+                              step={1}
+                              value={receiptTemplateConfig[slider.key]}
+                              onChange={(event) =>
+                                updateReceiptTemplateConfig({
+                                  [slider.key]: Number(event.target.value)
+                                })
+                              }
+                            />
+                            <span style={{ ...styles.muted, fontSize: "11px" }}>{slider.hint}</span>
+                          </label>
+                        ))}
+                        <label style={styles.fieldLabel}>
+                          Espacamento entre linhas: {receiptTemplateConfig.lineHeight.toFixed(2)}
+                          <input
+                            type="range"
+                            min={1}
+                            max={2.4}
+                            step={0.02}
+                            value={receiptTemplateConfig.lineHeight}
+                            onChange={(event) =>
+                              updateReceiptTemplateConfig({
+                                lineHeight: Number(event.target.value)
+                              })
+                            }
+                          />
+                        </label>
+                        <div style={styles.compactInlineGrid}>
+                          <label style={styles.compactCheckboxCard}>
+                            <input
+                              type="checkbox"
+                              checked={receiptTemplateConfig.boldBody}
+                              onChange={(event) =>
+                                updateReceiptTemplateConfig({ boldBody: event.target.checked })
+                              }
+                            />
+                            Corpo em negrito
+                          </label>
+                          <label style={styles.compactCheckboxCard}>
+                            <input
+                              type="checkbox"
+                              checked={receiptTemplateConfig.showLogo}
+                              onChange={(event) =>
+                                updateReceiptTemplateConfig({ showLogo: event.target.checked })
+                              }
+                            />
+                            Imprimir a logo
+                          </label>
+                        </div>
+                        <label style={styles.fieldLabel}>
+                          Posicao da logo
+                          <select
+                            value={receiptTemplateConfig.logoAlignment}
+                            onChange={(event) =>
+                              updateReceiptTemplateConfig({
+                                logoAlignment: event.target
+                                  .value as ReceiptTemplateConfig["logoAlignment"]
+                              })
+                            }
+                            disabled={!receiptTemplateConfig.showLogo}
+                            style={styles.input}
+                          >
+                            <option value="center">Centralizada</option>
+                            <option value="left">A esquerda</option>
+                            <option value="right">A direita</option>
+                          </select>
+                        </label>
                         <label style={styles.fieldLabel}>
                           Texto extra no cabecalho
                           <textarea
@@ -3676,11 +3818,19 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                             placeholder="Ex.: Obrigado pela preferencia"
                           />
                         </label>
+                        <button
+                          type="button"
+                          onClick={() => updateReceiptTemplateConfig({ ...DEFAULT_RECEIPT_STYLE })}
+                          style={{ ...styles.secondaryButton, justifySelf: "start" }}
+                        >
+                          Restaurar aparencia padrao
+                        </button>
                       </>
                     ) : (
                       <p style={styles.muted}>
-                        O modelo padrao preserva o layout atual do cupom, incluindo pesos, horarios
-                        e valores.
+                        O modelo padrao preserva o layout atual do cupom, incluindo a logo, os
+                        pesos, os horarios e os valores. Toda personalizacao fica guardada e volta
+                        ao selecionar "Personalizado".
                       </p>
                     )}
                   </div>
@@ -3708,15 +3858,28 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     ...styles.panel,
                     display: "flex",
                     flexDirection: "column",
+                    gap: "12px",
                     minHeight: 0
                   }}
                 >
+                  <ReceiptPreviewCard
+                    config={receiptTemplateConfig}
+                    logo={{
+                      dataUrl: receiptLogoDataUrl,
+                      widthMm: Number(receiptLogoWidthMm) || 24,
+                      heightMm: Number(receiptLogoHeightMm) || 16,
+                      fit: receiptLogoFit
+                    }}
+                  />
+
                   <h2 style={styles.panelTitle}>Cupons emitidos</h2>
                   <div
                     style={{
                       flex: "1 1 auto",
-                      minHeight: 0,
-                      maxHeight: "calc(100vh - 320px)",
+                      minHeight: "120px",
+                      // A previa do cupom divide a coluna com a lista: o teto e menor do
+                      // que quando a lista ocupava o painel inteiro.
+                      maxHeight: "calc(100vh - 720px)",
                       overflowY: "auto",
                       marginTop: "4px"
                     }}
