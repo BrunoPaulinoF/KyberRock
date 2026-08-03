@@ -44,6 +44,27 @@ npm run dist:win -w @kyberrock/desktop      # NSIS installer -> apps/desktop/rel
 - **Icon**: `apps/desktop/midia/icon.ico` (source PNG: `apps/desktop/midia/kyberrocklogo.png`); consumed by `electron-builder` for the executable and the NSIS installer.
 - **Logo do cupom**: o upload (`renderer/receipt-logo-file.ts`) **converte a imagem para PNG** antes de salvar — `nativeImage.createFromDataURL` só decodifica PNG/JPEG, enquanto o Chromium (prévia e HTML do cupom) abre também WebP/GIF/BMP/SVG; sem a conversão a logo aparecia na tela e sumia no papel. Na impressão, `prepareReceiptLogo` (em `src/main/main.ts`) gera **um único raster de 1 bit** a 203 dpi que alimenta os dois caminhos: bit image ESC/POS (impressora de rede) e `<img>` PNG monocromático no HTML (impressora do Windows). Logo que sairia em branco é detectada (`isRasterBlank`) e avisada na tela.
 
+## Importação de clientes por planilha
+
+CLI em `apps/desktop/src/scripts/import-customers.ts` (compilado para
+`dist/scripts/import-customers.js`), com dois comandos: `conciliar` (junta a planilha comercial
+com a de CNPJ/CPF pelo nome) e `importar` (grava no SQLite local). Guia completo em
+`docs/importacao-clientes.md`.
+
+```bash
+npm run build -w @kyberrock/desktop
+npm run clientes -w @kyberrock/desktop -- conciliar --precos A.xlsx --documentos B.xlsx
+npm run clientes -w @kyberrock/desktop -- importar --arquivo clientes-conciliados.csv --dry-run
+```
+
+- Lê `.xlsx` sem dependência nova (`spreadsheet-read.ts` = ZIP via `node:zlib` + XML) e CSV/TSV.
+- **Nunca chama o OMIE**: grava com `needs_push = 1` (e `source: omie → hybrid`) e deixa o
+  `omie-sync` empurrar, mantendo a idempotência existente.
+- `--dry-run` roda tudo dentro de uma transação e força rollback no fim — o relatório é o mesmo
+  da execução real. Sem `--dry-run`, o banco é copiado para a pasta de backups antes de gravar.
+- `better-sqlite3` precisa estar compilado para **Node**, não para Electron (após `dist:win` já
+  está: o script termina com `npm rebuild better-sqlite3`).
+
 ## Loader-web quirks
 
 - `npm run dev -w @kyberrock/loader-web` → port 5173.
