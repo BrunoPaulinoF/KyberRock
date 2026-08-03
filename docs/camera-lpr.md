@@ -10,9 +10,12 @@ Status: proposta tecnica. Nenhum codigo de camera existe hoje no repositorio.
 
 ## Resumo Da Recomendacao
 
-- **Camera**: Intelbras **VIP 5460 LPR IA** (4 MP, LPR embarcado, IP67/IK10, PoE, IR 30 m,
-  baixa velocidade ate 60 km/h, placas Mercosul e antigas). Faixa de preco de varejo observada:
-  R$ 5.300 a R$ 6.800 por unidade.
+- **Camera, opcao segura**: Intelbras **VIP 5460 LPR IA** (4 MP, LPR embarcado, IP67/IK10, PoE,
+  IR 30 m, baixa velocidade ate 60 km/h, placas Mercosul e antigas). Faixa de preco de varejo
+  observada: R$ 5.300 a R$ 6.800 por unidade; cotar em revenda costuma sair bem abaixo disso.
+- **Camera, opcao economica**: camera IP varifocal comum (ex.: **Intelbras VIP 3240 Z**,
+  ~R$ 1.200) com o reconhecimento feito no PC da balanca. Viavel porque o caminhao para na
+  balanca — basta uma foto por pesagem, nao video continuo. Ver "Opcoes De Custo".
 - **Quantidade no piloto**: 1 camera, apenas na entrada da balanca. Expandir para a saida
   somente depois de medir a taxa de acerto real com poeira, chuva e noite.
 - **Ligacao**: camera na mesma LAN do PC da balanca (a pedreira usa `192.168.0.x`, ver
@@ -50,19 +53,74 @@ Criterios que pesaram na escolha: LPR **embarcado** (a camera devolve o texto da
 video), suporte a placa Mercosul e modelo antigo, IP67, PoE, IR proprio para placa (obturador
 curto), entrada/saida de alarme, assistencia no Brasil e disponibilidade em distribuidor.
 
-### Alternativa: Camera Comum + ALPR Em Software
+## Opcoes De Custo
 
-Camera IP comum (R$ 400-900) + reconhecimento em software rodando no PC da pedreira
-(Plate Recognizer Snapshot on-premise em Docker, ou modelo aberto de OCR de placas).
+Existem tres caminhos, e a escolha nao e obvia. O que torna o caminho barato viavel aqui e o
+gatilho: como a balanca avisa quando o caminhao parou, basta **uma foto por pesagem**. Nao e
+preciso rodar reconhecimento continuo em video, que e o que normalmente exige GPU e encarece
+a solucao em software.
 
-- **A favor**: hardware barato; o mesmo software atende varias cameras.
-- **Contra**: exige CPU/GPU sobrando no PC da balanca, assinatura recorrente por camera ou por
-  consulta, mais uma peca para manter, e uma camera sem IR otimizado para placa erra muito a
-  noite (a placa refletiva "estoura" no IR comum).
+| Caminho                                | Hardware por ponto | Recorrente     | Desenvolvimento          |
+| -------------------------------------- | ------------------ | -------------- | ------------------------ |
+| A. Camera com LPR embarcado (VIP 5460) | R$ 5,3-6,8 mil     | zero           | so o adapter de eventos  |
+| B. Camera comum + OCR aberto no PC     | R$ 900-1,3 mil     | zero           | pipeline de OCR + tuning |
+| C. Camera comum + Plate Recognizer     | R$ 900-1,3 mil     | ate US$ 50/mes | integracao HTTP simples  |
 
-Nao vale no primeiro ciclo. A camera com LPR embarcado resolve tudo dentro do proprio
-equipamento e nao gera custo recorrente. Reavaliar apenas se a pedreira quiser 4+ pontos de
-leitura.
+### A. LPR Embarcado
+
+A camera devolve o texto da placa pronta. Nada roda no PC da balanca, nao existe custo por
+leitura e a manutencao e do fabricante. E o caminho de menor risco e maior custo inicial.
+
+**Dica de compra**: cotar em distribuidor/revenda autorizada, nao em marketplace. A diferenca
+entre o preco de revenda e o de varejo online costuma ser grande na linha VIP.
+
+### B. Camera Comum + OCR Aberto No PC
+
+Camera IP varifocal comum (ex.: Intelbras VIP 3240 Z, ~R$ 1,2 mil no varejo, com lente
+motorizada 2,8-12 mm, PoE, IP67) + reconhecimento rodando localmente com modelos abertos
+(`fast-alpr` / `fast-plate-ocr`, ONNX, roda em CPU).
+
+- Existe dataset publico brasileiro adequado — o **RodoSol-ALPR**, 20 mil imagens de placas
+  Mercosul e antigas capturadas por camera estatica em praca de pedagio. E praticamente a mesma
+  condicao da balanca: camera fixa, veiculo lento, distancia constante.
+- Custo recorrente zero e sem limite de leituras.
+- **Custo real esta na engenharia**: o runtime ONNX e binario nativo e precisa de rebuild para
+  Electron (mesma classe de problema ja documentada em `AGENTS.md` para `better-sqlite3`), ou
+  entao roda como processo/servico separado no PC da balanca. Some-se o ajuste de exposicao
+  noturna.
+- **Risco principal e a noite**: placa refletiva "estoura" no IR de camera comum. Mitigacao:
+  iluminador de luz branca no ponto de parada + exposicao travada, ou camera da linha
+  "full color" com luz propria. Isso precisa ser validado em campo, nao no papel.
+
+### C. Camera Comum + Plate Recognizer
+
+Mesma camera barata, com o reconhecimento feito pelo Plate Recognizer Snapshot, que pode rodar
+**on-premise em Docker** (importante: mantem a operacao local, conforme a regra offline-first).
+
+- Preco por numero de leituras/mes, igual para nuvem e on-premise: **2.500 leituras/mes no plano
+  gratuito**, US$ 50/mes ate 50 mil.
+- Com o gatilho da balanca, e 1 leitura por pesagem. Uma pedreira com ate ~80 pesagens/dia cabe
+  no plano gratuito; acima disso entra o plano de US$ 50/mes (~R$ 270).
+- Acuracia comercial ja pronta para placas brasileiras, sem treinar nada e sem GPU.
+- **Contra**: depender de plano gratuito em producao e fragil — a politica pode mudar. Se o
+  volume subir, o custo recorrente aparece.
+
+### Como Decidir
+
+- **Uma pedreira so, quer funcionando rapido, sem apetite para risco tecnico**: caminho A. Os
+  R$ 4,3 mil a mais compram previsibilidade e economizam semanas de desenvolvimento.
+- **KyberRock instalado em varias pedreiras** (que e o rumo do produto, ver `docs/phase-7.1/`):
+  caminho B se paga rapido, porque cada nova unidade passa a custar ~R$ 1 mil em vez de
+  ~R$ 5,5 mil no ponto de leitura.
+- **Meio-termo pratico**: comecar pelo caminho B/C. O prejuizo maximo e pequeno — uma camera
+  varifocal de R$ 1,2 mil na balanca **nao e desperdicio mesmo que o OCR va mal**, porque vira
+  registro visual da pesagem (prova de qual caminhao pesou), que a pedreira tende a querer de
+  qualquer forma. Se a leitura nao atingir a taxa de acerto necessaria, compra-se a camera LPR
+  depois e a comum continua como camera de documentacao.
+
+O contrato de adapter descrito adiante torna essa decisao **reversivel**: `LprAdapter` e o mesmo
+para os tres caminhos. Trocar camera com LPR embarcado por camera comum + OCR (ou o contrario)
+troca uma implementacao de adapter e nao encosta em servico, IPC ou tela.
 
 ## Instalacao Fisica
 
@@ -147,14 +205,21 @@ Implementacoes previstas:
   devolve um multipart continuo com os dados do evento (placa, faixa, timestamp) e o JPEG.
   Alternativa de fallback no mesmo adapter: consulta do ultimo registro por CGI.
 - `HikvisionLprAdapter` — apenas se a pedreira ja tiver Hikvision instalada (ISAPI).
+- `SnapshotOcrAdapter` — caminho economico (opcoes B e C): puxa um JPEG da camera comum
+  (`/cgi-bin/snapshot.cgi` ou frame de RTSP) quando a balanca acusa peso, e manda para o
+  reconhecimento — modelo ONNX local ou Plate Recognizer on-premise. Diferente dos demais, este
+  adapter nao recebe evento: ele **e** disparado pelo peso, entao expoe `readNow()` e mantem
+  `onPlate` apenas para compatibilidade do contrato.
 
-O adapter e o unico lugar que conhece o fabricante. Trocar de camera nao pode tocar em servico,
-IPC ou tela — mesma regra que vale para a balanca.
+O adapter e o unico lugar que conhece o fabricante e a origem do reconhecimento. Trocar de camera
+— inclusive trocar camera com LPR embarcado por camera comum + OCR — nao pode tocar em servico,
+IPC ou tela. Mesma regra que vale para a balanca.
 
 ### 2. Servicos no processo main
 
 - `apps/desktop/src/services/lpr-configs.ts` — espelha `scale-configs.ts`: `adapterType`
-  (`intelbras` | `hikvision` | `virtual`), `host`, `port`, `username`, `password`, `autoConnect`,
+  (`intelbras` | `hikvision` | `snapshot_ocr` | `virtual`), `host`, `port`, `username`,
+  `password`, `autoConnect`,
   `position` (`entry` | `exit`), guardado em `local_settings`/tabela propria via
   `readLocalSetting`/`writeLocalSetting`.
 - `apps/desktop/src/services/lpr-capture.ts` — espelha `scale-capture.ts`, com politica fixa:
@@ -261,13 +326,15 @@ O `ScaleCaptureService` ja tem esse conceito de leitura "atual" (`maxReadingAgeM
 | ---- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | 1    | Comprar 1 camera, instalar na entrada, configurar rede/IP fixo/PoE e conferir leitura pela propria interface da camera durante 1 semana |
 | 2    | `packages/lpr-adapters` com `VirtualLprAdapter` + testes; nada de hardware ainda                                                        |
-| 3    | `IntelbrasLprAdapter` validado contra a camera real da pedreira                                                                         |
+| 3    | Adapter real validado contra a camera da pedreira (`IntelbrasLprAdapter` no caminho A, `SnapshotOcrAdapter` nos caminhos B/C)           |
 | 4    | Servicos `lpr-configs` / `lpr-capture`, IPC e tela de configuracao (ao lado da configuracao da balanca)                                 |
 | 5    | Sugestao de placa na entrada + registro em `lpr_readings`                                                                               |
 | 6    | Medir taxa de acerto por 2 semanas; so entao decidir a segunda camera (saida)                                                           |
 
 A fase 1 e a mais importante e nao depende de codigo nenhum: se a camera nao ler bem no local
-com poeira e a noite, nada do resto importa.
+com poeira e a noite, nada do resto importa. No caminho economico, a fase 1 vira testar OCR sobre
+fotos reais tiradas pela camera comum no ponto de parada — de dia, a noite e com placa suja —
+antes de escrever qualquer linha de adapter.
 
 ## Dados A Coletar No Piloto
 
@@ -286,14 +353,17 @@ com poeira e a noite, nada do resto importa.
 
 ## Riscos
 
-| Risco                                           | Mitigacao                                                            |
-| ----------------------------------------------- | -------------------------------------------------------------------- |
-| Poeira na lente derruba a leitura               | Viseira, posicionamento fora da pluma, rotina de limpeza             |
-| Placa de caminhao suja/amassada                 | Confirmacao do operador; fluxo manual sempre disponivel              |
-| Placa errada gerando nota fiscal errada no OMIE | Nunca preencher e submeter automaticamente; sempre confirmar         |
-| Firmware da camera muda o formato do evento     | Formato isolado no adapter; teste de contrato no package             |
-| Camera indisponivel trava o operador            | Timeout curto no adapter; leitura da camera e sempre opcional        |
-| Credencial da camera vazando                    | Usuario somente-leitura, guardado apenas no banco local, fora do Git |
+| Risco                                                    | Mitigacao                                                                               |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Poeira na lente derruba a leitura                        | Viseira, posicionamento fora da pluma, rotina de limpeza                                |
+| Placa de caminhao suja/amassada                          | Confirmacao do operador; fluxo manual sempre disponivel                                 |
+| Placa errada gerando nota fiscal errada no OMIE          | Nunca preencher e submeter automaticamente; sempre confirmar                            |
+| Firmware da camera muda o formato do evento              | Formato isolado no adapter; teste de contrato no package                                |
+| Camera indisponivel trava o operador                     | Timeout curto no adapter; leitura da camera e sempre opcional                           |
+| Credencial da camera vazando                             | Usuario somente-leitura, guardado apenas no banco local, fora do Git                    |
+| Caminho economico: placa refletiva estoura no IR a noite | Iluminador de luz branca no ponto de parada + exposicao travada; validar antes de codar |
+| Caminho economico: runtime ONNX nativo no Electron       | Rebuild como ja e feito para `better-sqlite3`, ou rodar como processo separado no PC    |
+| Caminho economico: plano gratuito do servico de OCR muda | Preferir modelo aberto local, ou orcar o plano pago desde o inicio                      |
 
 ## Referencias
 
@@ -302,6 +372,10 @@ com poeira e a noite, nada do resto importa.
 - [Intelbras VIP 74120 LPR IA FT](https://www.intelbras.com/pt-br/camera-ip-com-leitura-automatica-de-placas-vip-74120-lpr-ia-ft)
 - [Dahua HTTP API — evento TrafficJunction / snapManager.cgi](https://ipcamtalk.com/threads/get-trafficjunction-event-information-from-offline-dahua-camera.68075/)
 - [Hikvision — guia rapido de ANPR via ISAPI](https://www.hikvisioneurope.com/eu/portal/portal/Technology%20Partner%20Program/02-Solutioins%20of%20Hikvision%20product%20integration/Fast%20guide%20for%20ANPR%20of%20TCG%20camera%20via%20ISAPI.pdf)
-- [Plate Recognizer Snapshot on-premise (alternativa em software)](https://platerecognizer.com/snapshot/)
+- [Intelbras VIP 3240 Z G3 — camera varifocal comum do caminho economico](https://www.intelbras.com/pt-br/camera-bullet-com-zoom-motorizado-vip-3240-z-g3)
+- [Plate Recognizer Snapshot on-premise](https://platerecognizer.com/snapshot/) e
+  [tabela de precos por leituras/mes](https://platerecognizer.com/pricing/)
+- [fast-alpr — reconhecimento aberto em ONNX, roda em CPU](https://github.com/ankandrew/fast-alpr)
+- [RodoSol-ALPR — dataset publico com 20 mil placas Mercosul e antigas](https://github.com/raysonlaroca/rodosol-alpr-dataset)
 - `docs/phase-0/scale-spike.md` — o mesmo exercicio, feito para a balanca
 - `docs/ARCHITECTURE.md` — identificadores, offline-first e propriedade de dados
