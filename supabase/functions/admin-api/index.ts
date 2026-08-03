@@ -2,6 +2,46 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { verifyAdminSession } from "../_shared/admin-session.ts";
 import { sha256Hex } from "../_shared/crypto.ts";
+import {
+  deleteAuthUser,
+  findAuthUserIdByEmail,
+  isEmailAlreadyRegisteredError
+} from "../_shared/admin-users.ts";
+import type { AuthUserGateway } from "../_shared/admin-users.ts";
+
+type SupabaseAdminClient = ReturnType<typeof createClient>;
+
+/** Adapta o cliente Supabase ao gateway minimo usado pelos helpers de `_shared/admin-users.ts`. */
+function authUsers(supabase: SupabaseAdminClient): AuthUserGateway {
+  return {
+    async deleteUser(userId) {
+      const { error } = await supabase.auth.admin.deleteUser(userId);
+      return { error };
+    },
+    async getUserById(userId) {
+      const { data, error } = await supabase.auth.admin.getUserById(userId);
+      return { user: data?.user ? { id: data.user.id, email: data.user.email } : null, error };
+    }
+  };
+}
+
+/**
+ * Apaga as contas do Auth dos perfis atingidos por uma exclusao em cascata (pedreira/unidade).
+ * As RPCs `delete_company`/`delete_unit` removem `user_profiles`, mas nao alcancam `auth.users`:
+ * sem esta limpeza a conta ficava orfa e o e-mail seguia bloqueado para novos cadastros.
+ */
+async function deleteAuthUsersForScope(
+  supabase: SupabaseAdminClient,
+  column: "company_id" | "unit_id",
+  value: string
+): Promise<void> {
+  const { data, error } = await supabase.from("user_profiles").select("id").eq(column, value);
+  if (error) throw error;
+  const gateway = authUsers(supabase);
+  for (const profile of (data ?? []) as Array<{ id: string }>) {
+    await deleteAuthUser(gateway, profile.id);
+  }
+}
 
 type AdminAction =
   | "list"
@@ -17,6 +57,8 @@ type AdminAction =
   | "generate_desktop_activation_code"
   | "create_loader"
   | "toggle_loader"
+  | "update_loader_unit"
+  | "update_loader_password"
   | "delete_loader"
   | "toggle_device"
   | "update_device_unit";
@@ -187,9 +229,36 @@ Deno.serve(async (req) => {
         password,
         email_confirm: true
       });
-      if (created.error) throw created.error;
+      let userId = created.data?.user?.id ?? "";
+      if (created.error) {
+        if (!isEmailAlreadyRegisteredError(created.error)) throw created.error;
+        // O e-mail ja existe no Auth. Se ainda houver perfil, e um usuario de verdade e o
+        // cadastro deve falhar. Sem perfil, e uma conta orfa deixada por exclusoes antigas de
+        // unidade/pedreira: reaproveitamos definindo a senha nova em vez de travar o admin.
+        const orphanId = await findAuthUserIdByEmail(async (page) => {
+          const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: 200 });
+          if (error) throw error;
+          return { users: data?.users ?? [] };
+        }, email);
+        if (!orphanId) throw created.error;
+        const { data: existingProfile, error: existingError } = await supabase
+          .from("user_profiles")
+          .select("id")
+          .eq("id", orphanId)
+          .maybeSingle();
+        if (existingError) throw existingError;
+        if (existingProfile) {
+          return jsonResponse({ error: "Ja existe um usuario com este e-mail." }, 400);
+        }
+        const recovered = await supabase.auth.admin.updateUserById(orphanId, {
+          password,
+          email_confirm: true
+        });
+        if (recovered.error) throw recovered.error;
+        userId = orphanId;
+      }
       const { error: profileError } = await supabase.from("user_profiles").insert({
-        id: created.data.user.id,
+        id: userId,
         email,
         name,
         role,
@@ -198,7 +267,7 @@ Deno.serve(async (req) => {
         is_active: true
       });
       if (profileError) throw profileError;
-      return jsonResponse({ userId: created.data.user.id });
+      return jsonResponse({ userId });
     }
 
     if (body.action === "toggle_loader") {
@@ -213,14 +282,56 @@ Deno.serve(async (req) => {
       return jsonResponse({ ok: true });
     }
 
+    /**
+     * Move um carregador/comercial para outra unidade. `company_id` acompanha a unidade
+     * escolhida: o carregador enxerga a fila pela unidade e o comercial extrai relatorio pela
+     * pedreira, entao deixar os dois campos fora de sincronia esvazia as duas telas.
+     */
+    if (body.action === "update_loader_unit") {
+      const userId = String(payload.userId ?? "");
+      const unitId = String(payload.unitId ?? "");
+      if (!userId || !unitId)
+        return jsonResponse({ error: "Usuario ou unidade nao informado" }, 400);
+      const { data: unit, error: unitError } = await supabase
+        .from("units")
+        .select("id, company_id")
+        .eq("id", unitId)
+        .single();
+      if (unitError) throw unitError;
+      const { error } = await supabase
+        .from("user_profiles")
+        .update({
+          unit_id: unit.id,
+          company_id: unit.company_id,
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", userId);
+      if (error) throw error;
+      return jsonResponse({ ok: true });
+    }
+
+    // Define uma nova senha para um usuario ja cadastrado. O Auth guarda apenas o hash, entao
+    // nao ha como exibir a senha atual: quando o admin precisa saber a senha de alguem, o
+    // caminho e definir uma nova aqui.
+    if (body.action === "update_loader_password") {
+      const userId = String(payload.userId ?? "");
+      const password = String(payload.password ?? "");
+      if (!userId) return jsonResponse({ error: "Usuario nao informado" }, 400);
+      if (password.length < 6) {
+        return jsonResponse({ error: "A senha deve ter ao menos 6 caracteres" }, 400);
+      }
+      const updated = await supabase.auth.admin.updateUserById(userId, { password });
+      if (updated.error) throw updated.error;
+      return jsonResponse({ ok: true });
+    }
+
     // Exclui um carregador/comercial de vez. user_profiles.id referencia auth.users com
     // "on delete cascade", entao apagar o usuario do Auth ja remove o perfil; o delete
     // explicito abaixo cobre o caso do perfil orfao (usuario do Auth removido antes).
     if (body.action === "delete_loader") {
       const userId = String(payload.userId ?? "");
       if (!userId) return jsonResponse({ error: "Usuario nao informado" }, 400);
-      const deleted = await supabase.auth.admin.deleteUser(userId);
-      if (deleted.error && !isNotFoundError(deleted.error)) throw deleted.error;
+      await deleteAuthUser(authUsers(supabase), userId);
       const { error } = await supabase.from("user_profiles").delete().eq("id", userId);
       if (error) throw error;
       return jsonResponse({ ok: true });
@@ -329,12 +440,16 @@ Deno.serve(async (req) => {
     if (body.action === "delete_company" || body.action === "delete_unit") {
       if (body.action === "delete_company") {
         const companyId = String(payload.companyId ?? "");
+        if (!companyId) return jsonResponse({ error: "Pedreira nao informada" }, 400);
+        await deleteAuthUsersForScope(supabase, "company_id", companyId);
         const { error } = await supabase.rpc("delete_company", { target_company_id: companyId });
         if (error) throw error;
         return jsonResponse({ ok: true });
       }
       if (body.action === "delete_unit") {
         const unitId = String(payload.unitId ?? "");
+        if (!unitId) return jsonResponse({ error: "Unidade nao informada" }, 400);
+        await deleteAuthUsersForScope(supabase, "unit_id", unitId);
         const { error } = await supabase.rpc("delete_unit", { target_unit_id: unitId });
         if (error) throw error;
         return jsonResponse({ ok: true });
@@ -353,17 +468,6 @@ function getErrorMessage(error: unknown): string {
     return String((error as { message?: unknown }).message ?? "Erro inesperado");
   }
   return "Erro inesperado";
-}
-
-/**
- * O Auth devolve 404/"User not found" quando o usuario ja foi removido. Nesse caso a exclusao
- * segue adiante para limpar o perfil restante em vez de falhar para o admin.
- */
-function isNotFoundError(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) return false;
-  const status = (error as { status?: unknown }).status;
-  if (status === 404) return true;
-  return /not\s*found/i.test(getErrorMessage(error));
 }
 
 function generateSixDigitCode(): string {

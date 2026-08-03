@@ -88,6 +88,68 @@ const COMPACT_GRID = "repeat(auto-fit, minmax(min(100%, 240px), 1fr))";
 const MODAL_Z_INDEX = 1200;
 
 /**
+ * Campo de senha exibido em texto claro por padrao. O admin cadastra a senha do carregador e
+ * precisa conferir/anotar o que digitou antes de repassar — mascarar so gerava senha errada e
+ * usuario sem acesso. O botao esconde o valor quando houver alguem olhando a tela.
+ *
+ * Vale para senha nova: o Auth guarda apenas o hash, entao a senha de um usuario ja cadastrado
+ * nao pode ser exibida por lugar nenhum. Para saber a senha de alguem, redefina-a.
+ */
+function PasswordField({
+  name,
+  placeholder,
+  required = false,
+  minLength,
+  maxLength,
+  autoFocus = false
+}: {
+  name: string;
+  placeholder: string;
+  required?: boolean;
+  minLength?: number;
+  maxLength?: number;
+  autoFocus?: boolean;
+}) {
+  const [isVisible, setIsVisible] = useState(true);
+  return (
+    <div style={{ display: "flex", gap: "8px", alignItems: "stretch" }}>
+      <input
+        name={name}
+        type={isVisible ? "text" : "password"}
+        placeholder={placeholder}
+        required={required}
+        minLength={minLength}
+        maxLength={maxLength}
+        autoFocus={autoFocus}
+        autoComplete="off"
+        style={{
+          flex: 1,
+          minWidth: 0,
+          padding: "10px",
+          borderRadius: "8px",
+          border: "1px solid #cbd5e1"
+        }}
+      />
+      <button
+        type="button"
+        onClick={() => setIsVisible((visible) => !visible)}
+        style={{
+          padding: "0 12px",
+          borderRadius: "8px",
+          border: "1px solid #cbd5e1",
+          background: "#f8fafc",
+          cursor: "pointer",
+          fontSize: "12px",
+          whiteSpace: "nowrap"
+        }}
+      >
+        {isVisible ? "Ocultar" : "Mostrar"}
+      </button>
+    </div>
+  );
+}
+
+/**
  * Copia o codigo de ativacao com feedback fiel. navigator.clipboard e undefined em contexto nao
  * seguro (HTTP puro, plausivel atras de proxy interno) e a escrita e assincrona: a versao antiga
  * podia lancar TypeError e sempre mostrava "Codigo copiado!" mesmo quando a copia falhava. Aqui
@@ -121,6 +183,7 @@ export function AdminDashboard() {
   const [generatedCode, setGeneratedCode] = useState<string | null>(null);
   const [editingCompany, setEditingCompany] = useState<Company | null>(null);
   const [editingUnit, setEditingUnit] = useState<Unit | null>(null);
+  const [resettingPasswordUser, setResettingPasswordUser] = useState<LoaderUser | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<DeleteTarget | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -341,6 +404,49 @@ export function AdminDashboard() {
     }
   }
 
+  /**
+   * Move o usuario para outra unidade. A pedreira do perfil acompanha a unidade escolhida no
+   * servidor, entao trocar para uma unidade de outra pedreira tambem funciona.
+   */
+  async function handleChangeUserUnit(userId: string, unitId: string): Promise<void> {
+    if (!unitId) return;
+    try {
+      await callAdminFunction("admin-api", {
+        action: "update_loader_unit",
+        payload: { userId, unitId }
+      });
+      await loadData();
+    } catch (error) {
+      if (!handleAdminError(error)) {
+        console.error("Error changing user unit:", error);
+        alert(error instanceof Error ? error.message : "Erro ao mudar a unidade do usuario");
+      }
+    }
+  }
+
+  async function handleResetPassword(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!resettingPasswordUser) return;
+    const formData = new FormData(event.currentTarget);
+    const password = String(formData.get("password") ?? "");
+    try {
+      await callAdminFunction("admin-api", {
+        action: "update_loader_password",
+        payload: { userId: resettingPasswordUser.id, password }
+      });
+      setResettingPasswordUser(null);
+      alert("Senha atualizada.");
+    } catch (error) {
+      if (!handleAdminError(error)) {
+        console.error("Error resetting password:", error);
+        alert(
+          "Erro ao redefinir a senha: " +
+            (error instanceof Error ? error.message : "Erro desconhecido")
+        );
+      }
+    }
+  }
+
   async function handleGenerateActivationCode(companyId: string): Promise<void> {
     try {
       const result = await callAdminFunction<{ code: string }>("admin-api", {
@@ -534,6 +640,19 @@ export function AdminDashboard() {
                     {user.isActive ? "Bloquear" : "Liberar"}
                   </button>
                   <button
+                    onClick={() => setResettingPasswordUser(user)}
+                    style={{
+                      padding: "6px 12px",
+                      borderRadius: "6px",
+                      border: "1px solid #e2e8f0",
+                      background: "#f8fafc",
+                      cursor: "pointer",
+                      fontSize: "12px"
+                    }}
+                  >
+                    Senha
+                  </button>
+                  <button
                     onClick={() =>
                       setConfirmDelete({
                         type: "user",
@@ -556,10 +675,39 @@ export function AdminDashboard() {
                   </button>
                 </div>
               </div>
-              <p style={{ margin: "8px 0 0 0", fontSize: "12px", color: "#64748b" }}>
-                Pedreira: {companies.find((c) => c.id === user.companyId)?.name || "N/A"} | Unidade:{" "}
-                {units.find((u) => u.id === user.unitId)?.name || "N/A"}
-              </p>
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  flexWrap: "wrap",
+                  margin: "8px 0 0 0",
+                  fontSize: "12px",
+                  color: "#475569"
+                }}
+              >
+                Unidade:
+                <select
+                  value={user.unitId}
+                  onChange={(event) => void handleChangeUserUnit(user.id, event.target.value)}
+                  style={{
+                    padding: "4px 8px",
+                    borderRadius: "6px",
+                    border: "1px solid #cbd5e1",
+                    fontSize: "12px"
+                  }}
+                >
+                  {!units.some((u) => u.id === user.unitId) && (
+                    <option value={user.unitId}>Unidade removida</option>
+                  )}
+                  {units.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.name}
+                      {` — ${companies.find((c) => c.id === u.companyId)?.name ?? ""}`}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
           ))}
         </article>
@@ -590,14 +738,7 @@ export function AdminDashboard() {
               required
               style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
             />
-            <input
-              name="password"
-              type="password"
-              placeholder="Senha"
-              required
-              minLength={6}
-              style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
-            />
+            <PasswordField name="password" placeholder="Senha" required minLength={6} />
             <select
               name="unitId"
               required
@@ -794,6 +935,83 @@ export function AdminDashboard() {
                 Cancelar
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reset Password Modal */}
+      {resettingPasswordUser && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: "rgba(0,0,0,0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: MODAL_Z_INDEX
+          }}
+        >
+          <div
+            style={{
+              background: "#fff",
+              padding: "24px",
+              borderRadius: "16px",
+              width: "100%",
+              maxWidth: "420px"
+            }}
+          >
+            <h3 style={{ margin: "0 0 8px 0" }}>Senha de {resettingPasswordUser.name}</h3>
+            <p style={{ margin: "0 0 16px 0", fontSize: "13px", color: "#64748b" }}>
+              {resettingPasswordUser.email}. A senha atual nao pode ser exibida — o Supabase Auth
+              guarda apenas o hash dela. Defina uma nova aqui e repasse ao usuario.
+            </p>
+            <form
+              onSubmit={handleResetPassword}
+              style={{ display: "flex", flexDirection: "column", gap: "12px" }}
+            >
+              <PasswordField
+                name="password"
+                placeholder="Nova senha"
+                required
+                minLength={6}
+                autoFocus
+              />
+              <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
+                <button
+                  type="submit"
+                  style={{
+                    flex: 1,
+                    padding: "10px",
+                    borderRadius: "8px",
+                    border: "none",
+                    background: "#0f172a",
+                    color: "#fff",
+                    cursor: "pointer",
+                    fontWeight: 700
+                  }}
+                >
+                  Salvar senha
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setResettingPasswordUser(null)}
+                  style={{
+                    flex: 1,
+                    padding: "10px",
+                    borderRadius: "8px",
+                    border: "1px solid #cbd5e1",
+                    background: "#fff",
+                    cursor: "pointer"
+                  }}
+                >
+                  Cancelar
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
@@ -1098,19 +1316,13 @@ export function AdminDashboard() {
                               Senha de 4 digitos que o operador deve informar no desktop para
                               alterar precos padrao.
                             </p>
-                            <input
-                              name="priceChangePassword"
-                              type="password"
-                              maxLength={4}
-                              placeholder="0000 (deixe vazio para manter)"
-                              style={{
-                                padding: "10px",
-                                borderRadius: "8px",
-                                border: "1px solid #cbd5e1",
-                                marginTop: "8px",
-                                width: "100%"
-                              }}
-                            />
+                            <div style={{ marginTop: "8px" }}>
+                              <PasswordField
+                                name="priceChangePassword"
+                                maxLength={4}
+                                placeholder="0000 (deixe vazio para manter)"
+                              />
+                            </div>
                           </div>
                           <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
                             <button
