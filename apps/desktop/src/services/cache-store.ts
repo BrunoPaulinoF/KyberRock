@@ -544,13 +544,22 @@ function searchDigits(search: string): string {
   return /[a-z]/i.test(search) ? "" : search.replace(/\D/g, "");
 }
 
+/** Texto comparavel na busca: sem acento e em minusculas ("JOSÉ" acha "jose"). */
+function normalizeSearchText(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
 function searchFilter<T extends { [key: string]: unknown }>(
   rows: T[],
   searchFields: (keyof T)[],
   search?: string
 ): T[] {
   if (!search) return rows;
-  const lower = search.toLowerCase();
+  const term = normalizeSearchText(search.trim());
+  if (!term) return rows;
   // O mesmo documento aparece ora com mascara ("144.939.658-51", como vem do OMIE), ora
   // so com digitos (como o cadastro local grava). Comparar so o texto cru fazia a busca
   // por CPF/CNPJ nao achar o cliente que estava bem ali — o operador concluia que ele nao
@@ -560,7 +569,7 @@ function searchFilter<T extends { [key: string]: unknown }>(
     searchFields.some((field) => {
       const value = row[field];
       if (typeof value !== "string") return false;
-      if (value.toLowerCase().includes(lower)) return true;
+      if (normalizeSearchText(value).includes(term)) return true;
       return digits.length > 0 && value.replace(/\D/g, "").includes(digits);
     })
   );
