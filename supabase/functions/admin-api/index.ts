@@ -57,6 +57,8 @@ type AdminAction =
   | "generate_desktop_activation_code"
   | "create_loader"
   | "toggle_loader"
+  | "update_loader_unit"
+  | "update_loader_password"
   | "delete_loader"
   | "toggle_device"
   | "update_device_unit";
@@ -277,6 +279,49 @@ Deno.serve(async (req) => {
         })
         .eq("id", String(payload.userId));
       if (error) throw error;
+      return jsonResponse({ ok: true });
+    }
+
+    /**
+     * Move um carregador/comercial para outra unidade. `company_id` acompanha a unidade
+     * escolhida: o carregador enxerga a fila pela unidade e o comercial extrai relatorio pela
+     * pedreira, entao deixar os dois campos fora de sincronia esvazia as duas telas.
+     */
+    if (body.action === "update_loader_unit") {
+      const userId = String(payload.userId ?? "");
+      const unitId = String(payload.unitId ?? "");
+      if (!userId || !unitId)
+        return jsonResponse({ error: "Usuario ou unidade nao informado" }, 400);
+      const { data: unit, error: unitError } = await supabase
+        .from("units")
+        .select("id, company_id")
+        .eq("id", unitId)
+        .single();
+      if (unitError) throw unitError;
+      const { error } = await supabase
+        .from("user_profiles")
+        .update({
+          unit_id: unit.id,
+          company_id: unit.company_id,
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", userId);
+      if (error) throw error;
+      return jsonResponse({ ok: true });
+    }
+
+    // Define uma nova senha para um usuario ja cadastrado. O Auth guarda apenas o hash, entao
+    // nao ha como exibir a senha atual: quando o admin precisa saber a senha de alguem, o
+    // caminho e definir uma nova aqui.
+    if (body.action === "update_loader_password") {
+      const userId = String(payload.userId ?? "");
+      const password = String(payload.password ?? "");
+      if (!userId) return jsonResponse({ error: "Usuario nao informado" }, 400);
+      if (password.length < 6) {
+        return jsonResponse({ error: "A senha deve ter ao menos 6 caracteres" }, 400);
+      }
+      const updated = await supabase.auth.admin.updateUserById(userId, { password });
+      if (updated.error) throw updated.error;
       return jsonResponse({ ok: true });
     }
 
