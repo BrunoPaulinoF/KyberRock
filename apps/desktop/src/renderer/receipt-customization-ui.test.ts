@@ -38,7 +38,23 @@ describe("tela de impressao", () => {
     // carregar o primeiro da lista abria o formulario sem a logo salva e o proximo
     // "Salvar perfil" gravava logo nula no perfil que imprime.
     expect(appSource).toContain("desktopApi.getActiveReceiptProfile()");
-    expect(appSource).toContain("applyReceiptProfileForm(activeProfile ?? undefined)");
+    expect(appSource).toContain("applyReceiptProfileForm(activeProfile ?? undefined");
+    // O ciclo automatico nao pode mais ler o primeiro perfil da lista.
+    expect(appSource).not.toContain("applyReceiptProfileForm(nextProfiles[0])");
+  });
+
+  // O ciclo automatico de 15 s reaplicava o perfil salvo por cima do formulario: quem
+  // trocava para "Personalizado" e demorava a salvar via a escolha voltar para "Padrao"
+  // sozinha, junto com os tamanhos e a logo em edicao.
+  it("hidrata o formulario uma unica vez e so reescreve depois de salvar", () => {
+    expect(appSource).toContain("receiptFormHydratedRef");
+    expect(appSource).toContain("if (receiptFormHydratedRef.current && !options.force)");
+    expect(appSource).toContain("refreshPrintData({ syncForm: true })");
+
+    // Reimpressao, impressao de teste e fechamento de operacao recarregam as listas,
+    // mas nao podem tocar no formulario em edicao.
+    expect(appSource.match(/await refreshPrintData\(\);/g)?.length).toBeGreaterThan(0);
+    expect(appSource.match(/refreshPrintData\(\{ syncForm: true \}\)/g)).toHaveLength(1);
   });
 
   it("mostra a previa do cupom ao lado do editor", () => {
@@ -65,5 +81,31 @@ describe("previa do cupom", () => {
   it("permite comparar o modelo selecionado com o padrao", () => {
     expect(previewSource).toContain("Comparar com o padrao");
     expect(previewSource).toContain("DEFAULT_RECEIPT_TEMPLATE_CONFIG");
+  });
+
+  // Num container flex que rola, o papel ficava com a altura da caixa (align-items:
+  // stretch) e o texto vazava para fora do branco — o cupom aparecia cortado no meio.
+  it("deixa o papel crescer com o conteudo em vez de esticar num flex", () => {
+    const paper = previewSource.slice(previewSource.indexOf("function ReceiptPaper("));
+
+    expect(paper).toContain('margin: "0 auto"');
+    expect(previewSource).not.toContain('overflowY: "auto",\n          display: "flex"');
+  });
+
+  it("acompanha a rolagem da tela para configurar e visualizar ao mesmo tempo", () => {
+    expect(previewSource).toContain('position: "sticky"');
+  });
+});
+
+describe("tela de nova entrada", () => {
+  it("tem botao de editar no seletor de cliente e no de transportadora", () => {
+    expect(appSource).toContain("onEditSelected?: () => void;");
+    expect(appSource).toContain("setEditingCustomerId(form.customerId)");
+    expect(appSource).toContain("setEditingCarrierId(form.carrierId)");
+  });
+
+  it("abre o cadastro ja na ficha do item selecionado", () => {
+    expect(appSource).toContain("editId: editingCustomerId ?? undefined");
+    expect(appSource).toContain("editId: editingCarrierId ?? undefined");
   });
 });

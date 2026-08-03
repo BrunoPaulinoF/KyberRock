@@ -415,6 +415,12 @@ type PendingSpecialPriceAction =
 export interface StandaloneCustomerFormOptions {
   onCreated: (id: string) => void;
   onCancel: () => void;
+  /**
+   * Abre direto na edicao deste cliente em vez do cadastro em branco. Usado pelo botao
+   * "Editar" ao lado do seletor de cliente da Nova entrada: o operador corrige o cadastro
+   * (documento, endereco, e-mail) sem perder a pesagem que ja comecou a montar.
+   */
+  editId?: string;
 }
 
 export function CustomersView({
@@ -559,6 +565,34 @@ export function CustomersView({
   useEffect(() => {
     void loadCustomers();
   }, [loadCustomers]);
+
+  // Modo "so formulario" pedindo edicao: busca o cliente e abre a ficha dele. A lista
+  // paginada pode nao conter o alvo, entao a busca varre o cache pelo id.
+  const standaloneEditId = standaloneForm?.editId;
+  useEffect(() => {
+    if (!standaloneEditId || !desktopApi) return;
+    let cancelled = false;
+    void (async () => {
+      const pageSize = 500;
+      for (let offset = 0; offset < 10_000; offset += pageSize) {
+        const result = await desktopApi
+          .queryCache({ entityType: "customer", activeOnly: false, limit: pageSize, offset })
+          .catch(() => null);
+        if (cancelled || !result) return;
+        const rows = (result.rows as CustomerCacheEntry[]) ?? [];
+        const found = rows.find((row) => row.id === standaloneEditId);
+        if (found) {
+          openEditForm(found);
+          return;
+        }
+        if (rows.length < pageSize || offset + rows.length >= result.total) return;
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // openEditForm e recriada a cada render; o efeito depende so do alvo da edicao.
+  }, [desktopApi, standaloneEditId]);
 
   // Executa "buscar CNPJ" (Receita) para TODOS os clientes com CNPJ valido e grava os
   // dados retornados. Pode demorar quando ha muitos clientes: a consulta e serial para
@@ -1033,8 +1067,10 @@ export function CustomersView({
       resetForm();
       await loadCustomers();
       if (standaloneForm) {
-        // Quem abriu o formulario (ex.: Nova entrada) seleciona o cliente recem-criado.
-        if (createdId) standaloneForm.onCreated(createdId);
+        // Quem abriu o formulario (ex.: Nova entrada) fica com o cliente salvo
+        // selecionado — tanto o recem-criado quanto o que acabou de ser editado.
+        const savedId = createdId || standaloneForm.editId;
+        if (savedId) standaloneForm.onCreated(savedId);
         else standaloneForm.onCancel();
       }
     } catch (err) {

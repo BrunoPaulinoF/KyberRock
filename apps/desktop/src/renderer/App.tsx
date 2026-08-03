@@ -436,6 +436,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [receiptLogoDataUrl, setReceiptLogoDataUrl] = useState<string | null>(null);
   const [receiptLogoWidthMm, setReceiptLogoWidthMm] = useState("24");
   const [receiptLogoHeightMm, setReceiptLogoHeightMm] = useState("16");
+  // O formulario da tela de impressao e hidratado do perfil salvo uma unica vez; depois
+  // so o "Salvar perfil" reescreve. Ver applyReceiptProfileForm.
+  const receiptFormHydratedRef = useRef(false);
   const [receiptLogoFit, setReceiptLogoFit] =
     useState<PrintProfileSummary["receiptLogo"]["fit"]>("contain");
   // Como a logo sai na impressora termica (preto e branco, sem tons): a previa colorida
@@ -1230,7 +1233,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         nextUnitDevices,
         nextPrinters,
         nextProfiles,
-        nextReceipts
+        nextReceipts,
+        nextActiveProfile
       ] = await Promise.all([
         desktopApi.getStatus(navigator.onLine),
         desktopApi.getUpdateState(),
@@ -1240,7 +1244,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         desktopApi.listUnitDevices(),
         desktopApi.listWindowsPrinters(),
         desktopApi.listPrintProfiles(),
-        desktopApi.listPrintReceipts()
+        desktopApi.listPrintReceipts(),
+        desktopApi.getActiveReceiptProfile()
       ]);
 
       if (!active) return;
@@ -1254,7 +1259,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       setPrinters(nextPrinters);
       setPrintProfiles(nextProfiles);
       setPrintReceipts(nextReceipts);
-      applyReceiptProfileForm(nextProfiles[0]);
+      // Ciclo automatico: hidrata o formulario so na primeira carga (ver
+      // applyReceiptProfileForm) e a partir do perfil ativo deste computador.
+      applyReceiptProfileForm(nextActiveProfile ?? undefined);
       setSelectedPrinterName(
         (current) =>
           current ||
@@ -1460,7 +1467,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     setStatus(nextStatus);
   }
 
-  async function refreshPrintData(): Promise<void> {
+  /**
+   * Recarrega as listas da tela de impressao. `syncForm` so e usado logo apos gravar o
+   * perfil — fora disso o formulario nao pode ser tocado: ele era reescrito a cada
+   * atualizacao (inclusive pelo ciclo automatico de 15 s), e a personalizacao em
+   * andamento voltava sozinha para o que estava salvo antes do operador conseguir salvar.
+   */
+  async function refreshPrintData(options: { syncForm?: boolean } = {}): Promise<void> {
     if (!desktopApi) {
       return;
     }
@@ -1476,13 +1489,25 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     ]);
     setPrintProfiles(nextProfiles);
     setPrintReceipts(nextReceipts);
-    applyReceiptProfileForm(activeProfile ?? undefined);
+    applyReceiptProfileForm(activeProfile ?? undefined, { force: options.syncForm });
   }
 
-  function applyReceiptProfileForm(profile: PrintProfileSummary | undefined): void {
+  /**
+   * Hidrata o formulario da tela de impressao com o perfil salvo. Roda uma unica vez por
+   * sessao (a primeira carga) e depois so quando o operador grava o perfil: qualquer
+   * outra reaplicacao apagaria a edicao em andamento.
+   */
+  function applyReceiptProfileForm(
+    profile: PrintProfileSummary | undefined,
+    options: { force?: boolean } = {}
+  ): void {
     if (!profile) {
       return;
     }
+    if (receiptFormHydratedRef.current && !options.force) {
+      return;
+    }
+    receiptFormHydratedRef.current = true;
 
     setPrinterType(profile.printerType);
     setSelectedPrinterName(profile.windowsPrinterName);
@@ -1945,7 +1970,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
           ? `Impressora de rede configurada: ${profile.networkHost}:${profile.networkPort}.`
           : `Impressora de cupom configurada: ${profile.windowsPrinterName}.`
       );
-      await refreshPrintData();
+      await refreshPrintData({ syncForm: true });
     } catch (error) {
       setMessage(getErrorMessage(error));
     }
@@ -4088,10 +4113,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   <div
                     style={{
                       flex: "1 1 auto",
+                      // A previa fica fixa no topo da coluna (sticky) e a lista rola
+                      // abaixo dela; um teto em vh mantem as duas visiveis juntas.
                       minHeight: "120px",
-                      // A previa do cupom divide a coluna com a lista: o teto e menor do
-                      // que quando a lista ocupava o painel inteiro.
-                      maxHeight: "calc(100vh - 720px)",
+                      maxHeight: "40vh",
                       overflowY: "auto",
                       marginTop: "4px"
                     }}
@@ -5414,6 +5439,38 @@ export interface CacheSelectOption {
   raw?: Record<string, unknown>;
 }
 
+/**
+ * Acha uma linha do cache pelo id. O `queryCache` so filtra por texto, entao a busca
+ * varre o cache em paginas — e um clique pontual ("Editar" ao lado do seletor), nao um
+ * caminho quente, e evita abrir um IPC novo so para isso.
+ */
+export async function findCachedRowById(
+  desktopApi: KyberRockDesktopApi | null,
+  entityType: CacheEntityType,
+  id: string
+): Promise<Record<string, unknown> | null> {
+  if (!desktopApi || !id) return null;
+  const pageSize = 500;
+  for (let offset = 0; offset < 10_000; offset += pageSize) {
+    let result;
+    try {
+      result = await desktopApi.queryCache({
+        entityType,
+        activeOnly: false,
+        limit: pageSize,
+        offset
+      });
+    } catch {
+      return null;
+    }
+    const rows = (result.rows as Array<Record<string, unknown>>) ?? [];
+    const found = rows.find((row) => row.id === id);
+    if (found) return found;
+    if (rows.length < pageSize || offset + rows.length >= result.total) return null;
+  }
+  return null;
+}
+
 export function createCacheSelectOptions(
   rows: Array<Record<string, unknown>>
 ): CacheSelectOption[] {
@@ -5488,6 +5545,7 @@ function CacheSelect({
   value,
   onChange,
   onCreateNew,
+  onEditSelected,
   desktopApi,
   disabled = false,
   refreshKey = 0,
@@ -5499,6 +5557,8 @@ function CacheSelect({
   value: string;
   onChange: (id: string, item?: Record<string, unknown>) => void;
   onCreateNew?: () => void;
+  /** Abre o cadastro do item ja selecionado para correcao (botao "Editar"). */
+  onEditSelected?: () => void;
   desktopApi: KyberRockDesktopApi | null;
   disabled?: boolean;
   refreshKey?: number;
@@ -5578,26 +5638,68 @@ function CacheSelect({
     <div style={{ position: "relative", marginBottom: "6px" }}>
       <label style={styles.fieldLabel}>
         {label}
-        <input
-          type="text"
-          value={selectedLabel}
-          onChange={() => undefined}
-          onClick={() => {
-            setOpen(true);
-            setSearch("");
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
+        {/*
+          O botao "Editar" fica dentro do campo, a direita: o operador corrige o cadastro
+          do item selecionado (documento que falta, endereco, e-mail) sem sair da entrada
+          que ja comecou a montar.
+        */}
+        <span style={{ position: "relative", display: "block" }}>
+          <input
+            type="text"
+            value={selectedLabel}
+            onChange={() => undefined}
+            onClick={() => {
               setOpen(true);
               setSearch("");
-            }
-          }}
-          disabled={disabled}
-          placeholder={`Selecionar ${label.toLowerCase()}...`}
-          readOnly
-          style={{ ...styles.input, cursor: disabled ? "not-allowed" : "pointer" }}
-        />
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                setOpen(true);
+                setSearch("");
+              }
+            }}
+            disabled={disabled}
+            placeholder={`Selecionar ${label.toLowerCase()}...`}
+            readOnly
+            style={{
+              ...styles.input,
+              cursor: disabled ? "not-allowed" : "pointer",
+              paddingRight: onEditSelected && value ? "76px" : undefined
+            }}
+          />
+          {onEditSelected && value && !disabled ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onEditSelected();
+              }}
+              title={`Editar o cadastro de ${label.toLowerCase()}`}
+              style={{
+                position: "absolute",
+                right: "6px",
+                top: "50%",
+                transform: "translateY(-50%)",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "4px",
+                border: "1px solid var(--kr-border)",
+                borderRadius: "8px",
+                background: "var(--kr-surface-soft)",
+                color: "var(--kr-text)",
+                cursor: "pointer",
+                fontSize: "11px",
+                fontWeight: 800,
+                padding: "4px 8px"
+              }}
+            >
+              <OpIcon name="edit" />
+              Editar
+            </button>
+          ) : null}
+        </span>
       </label>
       {open ? (
         <div
@@ -5847,6 +5949,9 @@ function WeighingForm({
   const [showDriverModal, setShowDriverModal] = useState(false);
   const [showCustomerModal, setShowCustomerModal] = useState(false);
   const [showCarrierModal, setShowCarrierModal] = useState(false);
+  // Ids em edicao pelo botao "Editar" ao lado dos seletores (null = cadastro novo).
+  const [editingCustomerId, setEditingCustomerId] = useState<string | null>(null);
+  const [editingCarrierId, setEditingCarrierId] = useState<string | null>(null);
   const [showFreightModal, setShowFreightModal] = useState(false);
   const [vehicleRefreshKey, setVehicleRefreshKey] = useState(0);
   const [driverRefreshKey, setDriverRefreshKey] = useState(0);
@@ -6451,7 +6556,14 @@ function WeighingForm({
                 })();
               }
             }}
-            onCreateNew={() => setShowCustomerModal(true)}
+            onCreateNew={() => {
+              setEditingCustomerId(null);
+              setShowCustomerModal(true);
+            }}
+            onEditSelected={() => {
+              setEditingCustomerId(form.customerId);
+              setShowCustomerModal(true);
+            }}
             desktopApi={desktopApi}
             refreshKey={customerRefreshKey}
           />
@@ -6654,7 +6766,14 @@ function WeighingForm({
                 driverId: ""
               }))
             }
-            onCreateNew={() => setShowCarrierModal(true)}
+            onCreateNew={() => {
+              setEditingCarrierId(null);
+              setShowCarrierModal(true);
+            }}
+            onEditSelected={() => {
+              setEditingCarrierId(form.carrierId);
+              setShowCarrierModal(true);
+            }}
             desktopApi={desktopApi}
             refreshKey={carrierRefreshKey}
             filterIds={carrierSelectorFilterIds(availableCarrierIds)}
@@ -6668,7 +6787,10 @@ function WeighingForm({
               </p>
               <button
                 type="button"
-                onClick={() => setShowCarrierModal(true)}
+                onClick={() => {
+                  setEditingCarrierId(null);
+                  setShowCarrierModal(true);
+                }}
                 style={{ ...styles.secondaryButton, fontSize: "11px", padding: "4px 8px" }}
               >
                 + Vincular transportadora
@@ -6792,10 +6914,15 @@ function WeighingForm({
         <CustomersView
           desktopApi={desktopApi}
           standaloneForm={{
-            onCancel: () => setShowCustomerModal(false),
+            editId: editingCustomerId ?? undefined,
+            onCancel: () => {
+              setShowCustomerModal(false);
+              setEditingCustomerId(null);
+            },
             onCreated: (id) => {
               setForm((prev) => ({ ...prev, customerId: id }));
               setShowCustomerModal(false);
+              setEditingCustomerId(null);
               setCustomerRefreshKey((k) => k + 1);
             }
           }}
@@ -6807,7 +6934,11 @@ function WeighingForm({
           desktopApi={desktopApi}
           onChanged={() => setCarrierRefreshKey((k) => k + 1)}
           standaloneForm={{
-            onCancel: () => setShowCarrierModal(false),
+            editId: editingCarrierId ?? undefined,
+            onCancel: () => {
+              setShowCarrierModal(false);
+              setEditingCarrierId(null);
+            },
             onCreated: async (id) => {
               setForm((prev) => ({
                 ...prev,
@@ -6817,6 +6948,7 @@ function WeighingForm({
                   prev.freightModality === "own_recipient" ? "none" : prev.freightModality
               }));
               setShowCarrierModal(false);
+              setEditingCarrierId(null);
               // O seletor filtra por "transportadoras vinculadas ao cliente": sem vincular
               // a recem-criada ao cliente selecionado, ela nao apareceria na lista.
               if (form.customerId) {
@@ -8793,6 +8925,12 @@ interface StandaloneCrudFormOptions {
   onCancel: () => void;
   /** Valores iniciais do formulario (ex.: transportadora ja selecionada na entrada). */
   initialValues?: Record<string, string>;
+  /**
+   * Abre direto na edicao deste registro em vez do cadastro em branco. Usado pelo botao
+   * "Editar" ao lado dos seletores da Nova entrada: o operador corrige o cadastro sem
+   * perder a pesagem que ja comecou a montar.
+   */
+  editId?: string;
 }
 
 const CRUD_DEFAULT_SECTION = "Dados principais";
@@ -8904,6 +9042,23 @@ function ResourceCrud({
 
   const emptyForm = useCallback((): Record<string, string> => buildEmptyCrudForm(fields), [fields]);
 
+  // Modo "so formulario" pedindo edicao: busca o registro no cache e abre a ficha dele.
+  // A lista nao e carregada nesse modo, entao a leitura acontece aqui.
+  const standaloneEditId = standaloneForm?.editId;
+  useEffect(() => {
+    if (!standaloneEditId) return;
+    let cancelled = false;
+    void (async () => {
+      const item = await findCachedRowById(desktopApi, entityType, standaloneEditId);
+      if (cancelled || !item) return;
+      await openEdit(item);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // openEdit e recriada a cada render; o efeito depende so do alvo da edicao.
+  }, [desktopApi, entityType, standaloneEditId]);
+
   function openCreate(): void {
     const initial = emptyForm();
     setFormData(initial);
@@ -8985,8 +9140,10 @@ function ResourceCrud({
       await loadItems();
       onChanged?.();
       if (standaloneForm) {
-        // Quem abriu o formulario (ex.: Nova entrada) seleciona o registro recem-criado.
-        if (createdId) standaloneForm.onCreated(createdId);
+        // Quem abriu o formulario (ex.: Nova entrada) fica com o registro salvo
+        // selecionado — tanto o recem-criado quanto o que acabou de ser editado.
+        const savedId = createdId || standaloneForm.editId;
+        if (savedId) standaloneForm.onCreated(savedId);
         else standaloneForm.onCancel();
         return;
       }
