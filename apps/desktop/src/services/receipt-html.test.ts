@@ -66,9 +66,7 @@ describe("buildReceiptHtml", () => {
   // bloco do topo ou fechar uma operacao interna (que insere 3 linhas de aviso) para o
   // corte cair no lugar errado e picar o cupom.
   it("monta o corpo a partir do bloco estruturado, nao de um deslocamento fixo", () => {
-    const html = buildReceiptHtml(
-      payload({ dataUrl: null }, { operationType: "internal" })
-    );
+    const html = buildReceiptHtml(payload({ dataUrl: null }, { operationType: "internal" }));
 
     expect(html).toContain("VENDA SEM VALOR FISCAL");
     expect(html).toContain("Cliente: Cliente Exemplo");
