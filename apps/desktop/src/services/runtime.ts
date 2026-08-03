@@ -65,6 +65,7 @@ import {
   closeWeighingOperation,
   createWeighingOperation,
   deleteClosedWeighingOperation,
+  getCustomerLastEntryPreferences,
   listCanceledWeighingOperations,
   listClosedWeighingOperations,
   listOpenWeighingOperations,
@@ -72,6 +73,7 @@ import {
   updateWeighingOperationCustomer,
   updateWeighingOperationCarrier,
   updateWeighingOperationDetails,
+  type CustomerLastEntryPreferences,
   type OperationType,
   type OperationFreightInput,
   type ScaleCaptureAudit,
@@ -1060,6 +1062,12 @@ export class DesktopRuntime {
   listOpenWeighingOperations(): WeighingOperationSummary[] {
     this.assertDesktopAccess();
     return listOpenWeighingOperations(this.database);
+  }
+
+  /** Transportadora/condicao/forma de pagamento da ultima entrada daquele cliente. */
+  getCustomerLastEntryPreferences(customerId: string): CustomerLastEntryPreferences | null {
+    this.assertDesktopAccess();
+    return getCustomerLastEntryPreferences(this.database, customerId);
   }
 
   /**
@@ -2859,6 +2867,14 @@ export class DesktopRuntime {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
     const result = createVehicle(this.database, { ...input, companyId: identity.companyId });
+    // O seletor de placa da entrada lista os veiculos VINCULADOS a transportadora
+    // (vehicle_carriers), nao os que tem carrier_id. Sem criar o vinculo aqui, a placa
+    // cadastrada pelo modal da Nova entrada — que ja vem com a transportadora da tela —
+    // nao aparecia na lista de jeito nenhum enquanto aquela transportadora estivesse
+    // selecionada.
+    if (input.carrierId) {
+      linkVehicleToCarrier(this.database, (result as { id: string }).id, input.carrierId);
+    }
     this.cacheStore.invalidate("vehicle", identity.companyId);
     return result;
   }

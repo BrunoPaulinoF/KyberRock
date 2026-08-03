@@ -5818,27 +5818,50 @@ function WeighingForm({
                 paymentTermId: "",
                 customConditionText: ""
               }));
-              // Pre-carrega a condicao padrao do cliente como texto editavel no campo.
+              // O que vale e o que foi feito da ULTIMA vez para este cliente: a pedreira
+              // repete o mesmo arranjo (mesma transportadora, mesma condicao, mesma forma
+              // de pagamento) quase sempre. O padrao do cadastro so entra quando o cliente
+              // ainda nao tem entrada nenhuma.
               const defaultTermId =
                 typeof item?.defaultPaymentTermId === "string" ? item.defaultPaymentTermId : "";
-              if (defaultTermId && desktopApi) {
-                void desktopApi
-                  .queryCache({ entityType: "payment_term", limit: 200 })
-                  .then((result) => {
-                    const term = (result.rows as PaymentTermCacheEntry[]).find(
-                      (t) => t.id === defaultTermId
-                    );
-                    if (!term) return;
-                    setForm((prev) =>
-                      prev.customerId === id
-                        ? {
-                            ...prev,
-                            customConditionText: extractConditionRaw(term.rulesJson) || term.name
-                          }
-                        : prev
-                    );
-                  })
-                  .catch(() => undefined);
+              if (desktopApi) {
+                void (async () => {
+                  const last = await desktopApi
+                    .getCustomerLastEntryPreferences(id)
+                    .catch(() => null);
+                  if (last) {
+                    setForm((prev) => {
+                      if (prev.customerId !== id) return prev;
+                      return {
+                        ...prev,
+                        carrierId: last.carrierId ?? prev.carrierId,
+                        paymentMethodId: last.paymentMethodId ?? prev.paymentMethodId
+                      };
+                    });
+                    // Reconcilia a transportadora recem-preenchida com os vinculos do
+                    // cliente (o seletor so lista as vinculadas). Sem isto, a ordem entre
+                    // este preenchimento e a reconciliacao ficaria a sorte do relogio.
+                    if (last.carrierId) setCarrierRefreshKey((k) => k + 1);
+                  }
+                  const termId = last?.paymentTermId ?? defaultTermId;
+                  if (!termId) return;
+                  const result = await desktopApi
+                    .queryCache({ entityType: "payment_term", limit: 200 })
+                    .catch(() => null);
+                  if (!result) return;
+                  const term = (result.rows as PaymentTermCacheEntry[]).find(
+                    (t) => t.id === termId
+                  );
+                  if (!term) return;
+                  setForm((prev) =>
+                    prev.customerId === id
+                      ? {
+                          ...prev,
+                          customConditionText: extractConditionRaw(term.rulesJson) || term.name
+                        }
+                      : prev
+                  );
+                })();
               }
             }}
             onCreateNew={() => setShowCustomerModal(true)}
@@ -6146,6 +6169,12 @@ function WeighingForm({
             onCreated: (id) => {
               setForm((prev) => ({ ...prev, vehicleId: id }));
               setShowVehicleModal(false);
+              // A placa entra na lista filtrada NA HORA. Sem isto ela so aparecia (e so
+              // ficava selecionada) depois do ida-e-volta que recarrega os vinculos da
+              // transportadora — o operador via o campo vazio e cadastrava de novo.
+              setAvailableVehicleIds((prev) =>
+                prev === undefined || prev.includes(id) ? prev : [...prev, id]
+              );
               setVehicleRefreshKey((k) => k + 1);
             }
           }}

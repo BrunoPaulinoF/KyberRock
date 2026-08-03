@@ -315,6 +315,14 @@ function registerIpcHandlers(): void {
     return runtime.listOpenWeighingOperations();
   });
 
+  ipcMain.handle("desktop:customer-last-entry-preferences", (_event, customerId: string) => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.getCustomerLastEntryPreferences(customerId);
+  });
+
   ipcMain.handle("desktop:pull-loader-completions", () => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");

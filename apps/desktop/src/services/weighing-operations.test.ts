@@ -10,6 +10,7 @@ import { enqueueSyncJob } from "./sync-queue";
 import { buildOmieIntegrationCode } from "@kyberrock/omie-client";
 import {
   buildOmieBillingJob,
+  getCustomerLastEntryPreferences,
   cancelWeighingOperation,
   clearClosedWeighingOperations,
   closeWeighingOperation,
@@ -1920,6 +1921,121 @@ describe("weighing operations", () => {
       expect(payload.paymentTermOmieCode).toBe("030");
       expect(payload.paymentTermInstallmentCount).toBe(2);
       expect(payload.paymentTermInstallmentDays).toEqual([15, 30]);
+    } finally {
+      database.close();
+    }
+  });
+
+  // A pedreira repete o mesmo arranjo para o mesmo cliente. A entrada seguinte tem de
+  // nascer com a transportadora, a condicao e a forma de pagamento da ultima entrada.
+  it("devolve transportadora, condicao e forma de pagamento da ultima entrada do cliente", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      const now = "2026-06-06T12:00:00.000Z";
+      database
+        .prepare(
+          `INSERT INTO payment_terms (id, company_id, name, rules_json, is_active, created_at, updated_at)
+           VALUES ('term-1', 'company-1', 'A prazo', '{}', 1, ?, ?)`
+        )
+        .run(now, now);
+      database
+        .prepare(
+          `INSERT INTO payment_methods (id, company_id, code, name, sort_order, is_active, created_at, updated_at)
+           VALUES ('method-1', 'company-1', 'boleto', 'Boleto', 1, 1, ?, ?)`
+        )
+        .run(now, now);
+      database
+        .prepare(
+          `INSERT INTO carriers (id, company_id, name, source, created_at, updated_at)
+           VALUES ('carrier-1', 'company-1', 'Transportadora Teste', 'local', ?, ?)`
+        )
+        .run(now, now);
+
+      expect(getCustomerLastEntryPreferences(database, "customer-1")).toBeNull();
+
+      const first = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        carrierId: "carrier-1",
+        paymentTermId: "term-1",
+        paymentMethodId: "method-1",
+        entryWeightKg: 12_000
+      });
+      expect(first.id).toBeTruthy();
+
+      expect(getCustomerLastEntryPreferences(database, "customer-1")).toEqual({
+        carrierId: "carrier-1",
+        paymentTermId: "term-1",
+        paymentMethodId: "method-1"
+      });
+      // Outro cliente nao herda nada.
+      expect(getCustomerLastEntryPreferences(database, "customer-2")).toBeNull();
+    } finally {
+      database.close();
+    }
+  });
+
+  // A condicao que chega pela nuvem traz so o rules_json: as colunas de prazo ficam
+  // vazias no desktop que a recebeu. Sem ler o rules_json, o fechamento saia sem prazo
+  // nenhum e o OMIE colocava o vencimento na propria data de emissao.
+  it("le os prazos do rules_json quando a condicao veio da nuvem sem as colunas", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET omie_customer_id = 456 WHERE id = 'customer-1'").run();
+      const now = "2026-06-06T12:00:00.000Z";
+      database
+        .prepare(
+          `INSERT INTO payment_terms (id, company_id, name, rules_json, is_active, created_at, updated_at)
+           VALUES ('term-nuvem', 'company-1', '1 parcela em 45 dias', ?, 1, ?, ?)`
+        )
+        .run(
+          JSON.stringify({
+            raw: "PARA 45 DIAS",
+            kind: "single",
+            summary: "1 parcela em 45 dias",
+            installments: [{ number: 1, dueDays: 45 }],
+            intervalDays: null,
+            installmentCount: 1
+          }),
+          now,
+          now
+        );
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        paymentTermId: "term-nuvem",
+        entryWeightKg: 12_000
+      });
+
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      const payloadJson = database
+        .prepare("SELECT payload_json FROM sync_queue WHERE target = 'omie'")
+        .pluck()
+        .get() as string;
+      const payload = JSON.parse(payloadJson) as {
+        paymentTermInstallmentCount: number | null;
+        paymentTermInstallmentDays: number[] | null;
+      };
+      expect(payload.paymentTermInstallmentDays).toEqual([45]);
+      expect(payload.paymentTermInstallmentCount).toBe(1);
     } finally {
       database.close();
     }

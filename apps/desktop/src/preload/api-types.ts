@@ -113,6 +113,15 @@ export interface KyberRockDesktopApi {
   checkForUpdates: () => Promise<UpdateState>;
   downloadAndInstallUpdate: () => Promise<UpdateState>;
   listOpenWeighingOperations: () => Promise<WeighingOperationSummary[]>;
+  /**
+   * Transportadora/condicao/forma de pagamento da ultima entrada daquele cliente, para a
+   * proxima entrada dele ja nascer preenchida. `null` quando ele ainda nao tem entrada.
+   */
+  getCustomerLastEntryPreferences: (customerId: string) => Promise<{
+    carrierId: string | null;
+    paymentTermId: string | null;
+    paymentMethodId: string | null;
+  } | null>;
   pullLoaderCompletions: () => Promise<{ pulled: number; errors: string[] }>;
   /** Computadores da unidade (nome + cor) para a legenda multi-desktop. */
   listUnitDevices: () => Promise<UnitDeviceInfo[]>;
