@@ -99,6 +99,9 @@ import { ActivationGate } from "./ActivationGate";
 import { formatDbDateTime, parseDbTimestamp } from "./format-datetime";
 import { MountainOutline } from "./MountainOutline";
 import { CrudFormModal } from "./CrudFormModal";
+import { EntityPickerDialog } from "./EntityPickerDialog";
+import { buildEntityPickerItems, loadAllCacheRows } from "./entity-picker";
+import type { EntityPickerItem } from "./entity-picker";
 import {
   CellMuted,
   CellPrimary,
@@ -508,11 +511,11 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [changeProductLoading, setChangeProductLoading] = useState(false);
   const [changeCustomerOperation, setChangeCustomerOperation] =
     useState<WeighingOperationSummary | null>(null);
-  const [changeCustomerOptions, setChangeCustomerOptions] = useState<CacheSelectOption[]>([]);
+  const [changeCustomerOptions, setChangeCustomerOptions] = useState<EntityPickerItem[]>([]);
   const [changeCustomerLoading, setChangeCustomerLoading] = useState(false);
   const [changeCarrierOperation, setChangeCarrierOperation] =
     useState<WeighingOperationSummary | null>(null);
-  const [changeCarrierOptions, setChangeCarrierOptions] = useState<CacheSelectOption[]>([]);
+  const [changeCarrierOptions, setChangeCarrierOptions] = useState<EntityPickerItem[]>([]);
   const [changeCarrierLoading, setChangeCarrierLoading] = useState(false);
   const [fiscalCloseProgress, setFiscalCloseProgress] = useState<FiscalCloseProgress | null>(null);
   const [retryingFiscalOperationId, setRetryingFiscalOperationId] = useState<string | null>(null);
@@ -2154,21 +2157,20 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
   }
 
+  /**
+   * Carrega a lista COMPLETA de clientes (inclusive os inativos, marcados na lista)
+   * para o modal de troca. O cadastro em "Clientes" tambem lista os inativos — antes
+   * o modal so lia uma pagina de ativos e o operador via um cliente existente sumir
+   * exatamente na hora de corrigir a operacao.
+   */
   async function handleOpenChangeCustomer(operation: WeighingOperationSummary): Promise<void> {
     if (!desktopApi) return;
     setChangeCustomerOperation(operation);
     setChangeCustomerLoading(true);
+    setChangeCustomerOptions([]);
     try {
-      const result = await desktopApi.queryCache({
-        entityType: "customer",
-        activeOnly: true,
-        limit: 500
-      });
-      setChangeCustomerOptions(
-        createCacheSelectOptions(result.rows as Array<Record<string, unknown>>).sort((a, b) =>
-          a.label.localeCompare(b.label)
-        )
-      );
+      const rows = await loadAllCacheRows(desktopApi, "customer", { activeOnly: false });
+      setChangeCustomerOptions(buildEntityPickerItems("customer", rows));
     } catch {
       setChangeCustomerOptions([]);
     } finally {
@@ -2188,21 +2190,15 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
   }
 
+  /** Mesma leitura completa do cadastro, para o modal de troca de transportadora. */
   async function handleOpenChangeCarrier(operation: WeighingOperationSummary): Promise<void> {
     if (!desktopApi) return;
     setChangeCarrierOperation(operation);
     setChangeCarrierLoading(true);
+    setChangeCarrierOptions([]);
     try {
-      const result = await desktopApi.queryCache({
-        entityType: "carrier",
-        activeOnly: true,
-        limit: 500
-      });
-      setChangeCarrierOptions(
-        createCacheSelectOptions(result.rows as Array<Record<string, unknown>>).sort((a, b) =>
-          a.label.localeCompare(b.label)
-        )
-      );
+      const rows = await loadAllCacheRows(desktopApi, "carrier", { activeOnly: false });
+      setChangeCarrierOptions(buildEntityPickerItems("carrier", rows));
     } catch {
       setChangeCarrierOptions([]);
     } finally {
@@ -3442,145 +3438,48 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
             ) : null}
 
             {changeCustomerOperation ? (
-              <CrudFormModal onClose={() => setChangeCustomerOperation(null)} maxWidth={480}>
-                <div style={{ padding: "18px" }}>
-                  <h3 style={{ margin: "0 0 12px 0", fontSize: "16px", fontWeight: 700 }}>
-                    Alterar cliente
-                  </h3>
-                  <p style={{ margin: "0 0 12px 0", fontSize: "13px", color: "var(--kr-muted)" }}>
-                    Operacao: {changeCustomerOperation.plate} —{" "}
-                    {changeCustomerOperation.productDescription}
-                    <br />
-                    Cliente atual: {changeCustomerOperation.customerName}
-                  </p>
-                  <label
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: "6px",
-                      fontWeight: 700,
-                      fontSize: "13px"
-                    }}
-                  >
-                    Novo cliente
-                    <select
-                      value={changeCustomerOperation.customerId ?? ""}
-                      onChange={(e) => {
-                        if (!e.target.value) return;
-                        setChangeCustomerOperation(null);
-                        void handleConfirmChangeCustomer(e.target.value);
-                      }}
-                      disabled={changeCustomerLoading}
-                      style={{
-                        border: "1px solid var(--kr-input-border)",
-                        borderRadius: "10px",
-                        padding: "8px 10px",
-                        fontSize: "13px",
-                        background: "var(--kr-input-bg)",
-                        color: "var(--kr-text-strong)"
-                      }}
-                    >
-                      <option value="">
-                        {changeCustomerLoading
-                          ? "Carregando clientes..."
-                          : "Selecione o novo cliente"}
-                      </option>
-                      {changeCustomerOptions.map((customer) => (
-                        <option key={customer.id} value={customer.id}>
-                          {customer.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "16px" }}>
-                    <button
-                      type="button"
-                      onClick={() => setChangeCustomerOperation(null)}
-                      style={{
-                        border: "1px solid var(--kr-border)",
-                        background: "var(--kr-surface)",
-                        color: "var(--kr-text-strong)",
-                        borderRadius: "10px",
-                        padding: "8px 12px",
-                        cursor: "pointer",
-                        fontWeight: 700,
-                        fontSize: "12px"
-                      }}
-                    >
-                      Cancelar
-                    </button>
-                  </div>
-                </div>
-              </CrudFormModal>
+              <EntityPickerDialog
+                title="Alterar cliente"
+                contextLines={[
+                  `Operacao: ${changeCustomerOperation.plate} — ${changeCustomerOperation.productDescription}`,
+                  `Cliente atual: ${changeCustomerOperation.customerName}`
+                ]}
+                searchPlaceholder="Pesquisar cliente pelo nome..."
+                items={changeCustomerOptions}
+                loading={changeCustomerLoading}
+                selectedId={changeCustomerOperation.customerId ?? null}
+                onSelect={(id) => {
+                  setChangeCustomerOperation(null);
+                  void handleConfirmChangeCustomer(id);
+                }}
+                onClose={() => setChangeCustomerOperation(null)}
+              />
             ) : null}
 
             {changeCarrierOperation ? (
-              <CrudFormModal onClose={() => setChangeCarrierOperation(null)} maxWidth={480}>
-                <div style={{ padding: "18px" }}>
-                  <h3 style={{ margin: "0 0 12px 0", fontSize: "16px", fontWeight: 700 }}>
-                    Alterar transportadora
-                  </h3>
-                  <p style={{ margin: "0 0 12px 0", fontSize: "13px", color: "var(--kr-muted)" }}>
-                    Operacao: {changeCarrierOperation.plate} — {changeCarrierOperation.customerName}
-                  </p>
-                  <label
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: "6px",
-                      fontWeight: 700,
-                      fontSize: "13px"
-                    }}
-                  >
-                    Nova transportadora
-                    <select
-                      defaultValue=""
-                      onChange={(e) => {
-                        setChangeCarrierOperation(null);
-                        void handleConfirmChangeCarrier(e.target.value || null);
-                      }}
-                      disabled={changeCarrierLoading}
-                      style={{
-                        border: "1px solid var(--kr-input-border)",
-                        borderRadius: "10px",
-                        padding: "8px 10px",
-                        fontSize: "13px",
-                        background: "var(--kr-input-bg)",
-                        color: "var(--kr-text-strong)"
-                      }}
-                    >
-                      <option value="">
-                        {changeCarrierLoading
-                          ? "Carregando transportadoras..."
-                          : "Selecione a nova transportadora"}
-                      </option>
-                      {changeCarrierOptions.map((carrier) => (
-                        <option key={carrier.id} value={carrier.id}>
-                          {carrier.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "16px" }}>
-                    <button
-                      type="button"
-                      onClick={() => setChangeCarrierOperation(null)}
-                      style={{
-                        border: "1px solid var(--kr-border)",
-                        background: "var(--kr-surface)",
-                        color: "var(--kr-text-strong)",
-                        borderRadius: "10px",
-                        padding: "8px 12px",
-                        cursor: "pointer",
-                        fontWeight: 700,
-                        fontSize: "12px"
-                      }}
-                    >
-                      Cancelar
-                    </button>
-                  </div>
-                </div>
-              </CrudFormModal>
+              <EntityPickerDialog
+                title="Alterar transportadora"
+                contextLines={[
+                  `Operacao: ${changeCarrierOperation.plate} — ${changeCarrierOperation.customerName}`
+                ]}
+                searchPlaceholder="Pesquisar transportadora pelo nome..."
+                items={changeCarrierOptions}
+                loading={changeCarrierLoading}
+                selectedId={changeCarrierOperation.carrierId ?? null}
+                clearOption={{
+                  label: "Sem transportadora",
+                  description: "Desvincula a transportadora da operacao (frete proprio do cliente)."
+                }}
+                onSelect={(id) => {
+                  setChangeCarrierOperation(null);
+                  void handleConfirmChangeCarrier(id);
+                }}
+                onClear={() => {
+                  setChangeCarrierOperation(null);
+                  void handleConfirmChangeCarrier(null);
+                }}
+                onClose={() => setChangeCarrierOperation(null)}
+              />
             ) : null}
 
             {omieIssueOperationId ? (
@@ -5471,14 +5370,33 @@ export async function findCachedRowById(
   return null;
 }
 
+/**
+ * Primeiro campo com texto de verdade. O `??` de antes so pulava null/undefined, entao
+ * um cliente com `trade_name` em branco (comum no cadastro vindo do OMIE) virava uma
+ * opcao de rotulo vazio — presente na lista, mas invisivel para quem procurava por ela.
+ */
+function firstNonEmptyLabel(item: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = item[key];
+    if (typeof value === "string" && value.trim()) return value;
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  }
+  return "";
+}
+
 export function createCacheSelectOptions(
   rows: Array<Record<string, unknown>>
 ): CacheSelectOption[] {
   return rows.map((item) => ({
     id: String(item.id ?? item.omieCode ?? ""),
-    label: String(
-      item.tradeName ?? item.plate ?? item.name ?? item.description ?? item.fullName ?? ""
-    ),
+    label: firstNonEmptyLabel(item, [
+      "tradeName",
+      "plate",
+      "name",
+      "description",
+      "fullName",
+      "legalName"
+    ]),
     raw: item
   }));
 }
