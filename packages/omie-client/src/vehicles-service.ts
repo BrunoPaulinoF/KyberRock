@@ -3,7 +3,7 @@ import type { OmieClient } from "./omie-client.js";
 /**
  * Veiculo do cadastro de transporte do OMIE (/transportador/veiculo/).
  * A UF e o dado que faltava no pedido: a NF-e pede placa E UF do veiculo, e o bloco
- * `frete` do pedido de venda leva os dois (`placa` + `uf_placa`).
+ * `frete` do pedido de venda leva os dois (`placa` + `placa_estado`).
  */
 export interface OmieVehicle {
   /** Codigo OMIE do veiculo (nCodVeic). */

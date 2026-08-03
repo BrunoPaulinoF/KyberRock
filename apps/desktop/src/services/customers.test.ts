@@ -200,6 +200,72 @@ describe("customers", () => {
     }
   });
 
+  // O documento vem do OMIE com mascara ("144.939.658-51") e do cadastro local so com
+  // digitos. Buscando so pelo texto cru, procurar pelo CPF nao achava o cliente que estava
+  // ali — e o operador concluia que ele nao existia.
+  it("acha o cliente pelo CNPJ/CPF com ou sem mascara", () => {
+    const database = createDatabase();
+
+    try {
+      database
+        .prepare(
+          `INSERT INTO customers (id, company_id, source, legal_name, trade_name, document, is_active, created_at, updated_at)
+           VALUES ('com-mascara', 'company-1', 'omie', 'Jose da Silva', 'Jose', '144.939.658-51', 1, datetime('now'), datetime('now')),
+                  ('sem-mascara', 'company-1', 'local', 'Maria Souza', 'Maria', '27912844864', 1, datetime('now'), datetime('now'))`
+        )
+        .run();
+      const cacheStore = new CacheStore(database);
+      cacheStore.loadAll("company-1");
+
+      const byDigits = cacheStore.query({ entityType: "customer", search: "14493965851" });
+      expect(byDigits.rows.map((row) => row.id)).toEqual(["com-mascara"]);
+
+      const byMask = cacheStore.query({ entityType: "customer", search: "279.128.448-64" });
+      expect(byMask.rows.map((row) => row.id)).toEqual(["sem-mascara"]);
+
+      // Busca por nome continua funcionando como antes.
+      expect(
+        cacheStore.query({ entityType: "customer", search: "maria" }).rows.map((row) => row.id)
+      ).toEqual(["sem-mascara"]);
+    } finally {
+      database.close();
+    }
+  });
+
+  // Cliente inativo continua dono do documento, mas a lista o escondia: o operador via
+  // "Ja existe um cliente com este CNPJ/CPF" e nao achava ninguem ao procurar.
+  it("diz que o cliente que ocupa o documento esta inativo", () => {
+    const database = createDatabase();
+
+    try {
+      database
+        .prepare(
+          `INSERT INTO customers (id, company_id, source, legal_name, trade_name, document, is_active, created_at, updated_at)
+           VALUES ('inativo', 'company-1', 'local', 'Roque de Oliveira Cintra', 'Roque', '27912844864', 0, datetime('now'), datetime('now'))`
+        )
+        .run();
+
+      expect(() =>
+        createCustomer(database, {
+          companyId: "company-1",
+          tradeName: "Roque",
+          legalName: "Roque de Oliveira Cintra",
+          document: "27912844864"
+        })
+      ).toThrow(/inativo/i);
+
+      // O inativo aparece na consulta que a tela de cadastro faz (activeOnly: false).
+      const cacheStore = new CacheStore(database);
+      cacheStore.loadAll("company-1");
+      expect(
+        cacheStore.query({ entityType: "customer", activeOnly: false, search: "27912844864" }).total
+      ).toBe(1);
+      expect(cacheStore.query({ entityType: "customer", search: "27912844864" }).total).toBe(0);
+    } finally {
+      database.close();
+    }
+  });
+
   it("filters sellable products when requested by product selectors", () => {
     const database = createDatabase();
 

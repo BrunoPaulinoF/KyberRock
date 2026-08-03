@@ -527,6 +527,11 @@ export function CustomersView({
       const result = await desktopApi.queryCache({
         entityType: "customer",
         search: search || undefined,
+        // A tela de cadastro mostra TODOS os clientes, inclusive os inativos. Escondendo
+        // os inativos, o CNPJ/CPF deles continuava ocupado ("Ja existe um cliente com
+        // este CNPJ/CPF") sem que o operador tivesse como achar — ou reativar — o
+        // cadastro que estava segurando o documento.
+        activeOnly: false,
         limit: pageSize,
         offset: page * pageSize
       });
@@ -1156,6 +1161,25 @@ export function CustomersView({
         "error",
         err instanceof Error ? err.message : "Erro ao alterar o bloqueio de faturamento."
       );
+    } finally {
+      setTogglingBlockId(null);
+    }
+  }
+
+  /**
+   * Reativa um cliente inativo. O documento dele continua ocupado enquanto o cadastro
+   * existir, entao reativar e o caminho certo — cadastrar de novo com o mesmo CNPJ/CPF o
+   * KyberRock recusa (e o OMIE tambem).
+   */
+  async function handleReactivate(customer: CustomerCacheEntry): Promise<void> {
+    if (!desktopApi || togglingBlockId) return;
+    setTogglingBlockId(customer.id);
+    try {
+      await desktopApi.customersUpdate(customer.id, { isActive: true });
+      await loadCustomers();
+      showFlash("success", "Cliente reativado.");
+    } catch (err) {
+      showFlash("error", err instanceof Error ? err.message : "Erro ao reativar o cliente.");
     } finally {
       setTogglingBlockId(null);
     }
@@ -2414,6 +2438,17 @@ export function CustomersView({
               render: (customer) => (
                 <>
                   <SourceBadge source={customer.source} />
+                  {customer.isActive ? null : (
+                    <span
+                      style={{
+                        ...styles.pill("#78350f", "#fef3c7"),
+                        width: "fit-content",
+                        alignSelf: "start"
+                      }}
+                    >
+                      Inativo
+                    </span>
+                  )}
                   {customer.omieBillingBlocked ? (
                     <span
                       style={{
@@ -2436,6 +2471,33 @@ export function CustomersView({
               render: (customer) => (
                 <>
                   <EditRowButton onClick={() => openEditForm(customer)} />
+                  {customer.isActive ? null : (
+                    <Tooltip
+                      content="Reativar este cliente (o CNPJ/CPF dele ja esta ocupado por este cadastro)"
+                      placement="left"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => void handleReactivate(customer)}
+                        disabled={togglingBlockId !== null}
+                        aria-label="Reativar cliente"
+                        style={{
+                          border: "1px solid var(--kr-border)",
+                          background: "var(--kr-surface)",
+                          color: "var(--kr-text-strong)",
+                          borderRadius: "8px",
+                          padding: "0 8px",
+                          height: "30px",
+                          fontSize: "12px",
+                          fontWeight: 700,
+                          cursor: togglingBlockId ? "wait" : "pointer",
+                          flexShrink: 0
+                        }}
+                      >
+                        Reativar
+                      </button>
+                    </Tooltip>
+                  )}
                   <Tooltip
                     content={
                       customer.omieBillingBlocked

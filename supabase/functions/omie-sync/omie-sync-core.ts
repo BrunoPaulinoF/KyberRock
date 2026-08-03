@@ -513,15 +513,33 @@ function getRetryDelayMs(error: OmieHttpError, attempt: number, baseBackoffMs: n
   return Math.min(error.retryAfterMs ?? baseBackoffMs * Math.pow(2, attempt), OMIE_MAX_BACKOFF_MS);
 }
 
-// Quando o CPF/CNPJ ja existe no OMIE, o IncluirCliente falha com
-// "Cliente ja cadastrado para o CPF/CNPJ [...] com o Id [123] ...".
-// Extraimos o Id existente para converter o insert em update.
+// Quando o cadastro ja existe no OMIE, o IncluirCliente falha com o codigo do registro
+// existente na propria mensagem, em duas grafias:
+//   - por documento: "Cliente ja cadastrado para o CPF/CNPJ [...] com o Id [123] ...";
+//   - por codigo de integracao (reenvio nosso que ja tinha entrado la):
+//     "Cliente ja cadastrado para o Codigo de Integracao [KR...] com o nCod [123]!".
+// Extraimos o codigo existente para converter o insert em update — sem isso o reenvio
+// vira falha de cadastro e o fechamento trava esperando uma correcao que nao existe.
+const EXISTING_CUSTOMER_ID_PATTERNS = [
+  /\bnCod\w*\s*\[(\d+)\]/i,
+  /\bId\s*\[(\d+)\]/i,
+  /\bcodigo_cliente_omie\s*\[(\d+)\]/i
+];
+
 export function extractExistingCustomerId(error: unknown): number | null {
   if (!(error instanceof OmieHttpError)) return null;
   const text = error.detail ?? error.message;
-  if (!/j[aá] cadastrad/i.test(text)) return null;
-  const match = /\bId\s*\[(\d+)\]/i.exec(text);
-  return match ? Number(match[1]) : null;
+  if (!isDuplicateCustomerFault(text)) return null;
+  for (const pattern of EXISTING_CUSTOMER_ID_PATTERNS) {
+    const match = pattern.exec(text);
+    if (match) return Number(match[1]);
+  }
+  return null;
+}
+
+/** Recusa do IncluirCliente por o cadastro ja existir no OMIE (nao e dado faltando). */
+export function isDuplicateCustomerFault(message: string | null | undefined): boolean {
+  return /j[aá] cadastrad/i.test(message ?? "");
 }
 
 // O AlterarCliente localiza o registro pelo codigo_cliente_integracao quando presente.
@@ -535,6 +553,53 @@ export function toCustomerUpdateBody(
   const updateBody: Record<string, unknown> = { ...body, codigo_cliente_omie: omieCustomerId };
   delete updateBody.codigo_cliente_integracao;
   return updateBody;
+}
+
+/**
+ * Codigo do cliente que ja existe no OMIE depois de o IncluirCliente ser recusado por
+ * duplicidade. Primeiro le o codigo da propria mensagem; se a grafia do OMIE mudar de
+ * novo, consulta o cadastro pelo codigo de integracao (e depois pelo CPF/CNPJ) antes de
+ * desistir — assim uma variacao de texto nao volta a travar o fechamento.
+ */
+export async function resolveDuplicateCustomerId(
+  queue: OmieRequester,
+  credentials: OmieCredentials,
+  body: Record<string, unknown>,
+  error: unknown
+): Promise<number | null> {
+  const fromMessage = extractExistingCustomerId(error);
+  if (fromMessage !== null) return fromMessage;
+  if (!(error instanceof OmieHttpError)) return null;
+  if (!isDuplicateCustomerFault(error.detail ?? error.message)) return null;
+
+  const integrationCode =
+    typeof body.codigo_cliente_integracao === "string" && body.codigo_cliente_integracao.trim()
+      ? body.codigo_cliente_integracao.trim()
+      : null;
+  const document =
+    typeof body.cnpj_cpf === "string" ? body.cnpj_cpf.replace(/\D/g, "") : ("" as string);
+  const lookups: Array<Record<string, unknown>> = [];
+  if (integrationCode) lookups.push({ codigo_cliente_integracao: integrationCode });
+  if (document) lookups.push({ cnpj_cpf: document });
+
+  for (const param of lookups) {
+    try {
+      const found = await queue.request<
+        unknown,
+        { codigo_cliente_omie?: number; codigoClienteOmie?: number }
+      >({
+        credentials,
+        endpoint: "/geral/clientes/",
+        call: "ConsultarCliente",
+        param
+      });
+      const id = found.codigo_cliente_omie ?? found.codigoClienteOmie;
+      if (typeof id === "number" && id > 0) return id;
+    } catch {
+      // Criterio nao achou (ou o OMIE recusou o filtro): tenta o proximo.
+    }
+  }
+  return null;
 }
 
 async function pushCustomerBodyToOmie(
@@ -565,7 +630,7 @@ async function pushCustomerBodyToOmie(
       param: body
     });
   } catch (error) {
-    const existingId = extractExistingCustomerId(error);
+    const existingId = await resolveDuplicateCustomerId(queue, credentials, body, error);
     if (existingId === null) throw error;
     await queue.request<unknown, unknown>({
       credentials,

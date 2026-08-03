@@ -1324,26 +1324,52 @@ function recalculateCreditBalances(database: DesktopDatabase, customerIds: strin
  * que ja existe aqui. Quando o documento ja esta em uso localmente, a linha da
  * nuvem e ignorada: o cadastro local e o dono do documento.
  */
-function hasLocalCadastroWithDocument(
+function findLocalCadastroWithDocument(
   database: DesktopDatabase,
   table: "customers" | "carriers",
   companyId: string,
   document: string | null,
   cloudId: string
-): boolean {
+): { id: string; omie_customer_id: number | null } | null {
   const digits = (document ?? "").replace(/\D/g, "");
-  if (!digits) return false;
+  if (!digits) return null;
   const row = database
     .prepare(
-      `SELECT 1 FROM ${table}
+      `SELECT id, omie_customer_id FROM ${table}
        WHERE company_id = ?
          AND id <> ?
          AND deleted_at IS NULL
          AND replace(replace(replace(replace(COALESCE(document, ''), '.', ''), '-', ''), '/', ''), ' ', '') = ?
        LIMIT 1`
     )
-    .get(companyId, cloudId, digits);
-  return row !== undefined;
+    .get(companyId, cloudId, digits) as { id: string; omie_customer_id: number | null } | undefined;
+  return row ?? null;
+}
+
+/**
+ * O gemeo do OMIE trouxe o codigo que o cadastro local ainda nao tem: adota o codigo
+ * aqui antes de descartar a linha da nuvem.
+ *
+ * Sem isso, um cliente cadastrado no KyberRock ficava para sempre sem `omie_customer_id`
+ * mesmo depois de existir no OMIE — e todo fechamento dele repetia um `IncluirCliente` de
+ * um cadastro que ja estava la, que o OMIE recusa com "Cliente ja cadastrado". Era assim
+ * que a operacao ficava parada sem subir.
+ */
+function adoptOmieCodeFromCloudTwin(
+  database: DesktopDatabase,
+  table: "customers" | "carriers",
+  local: { id: string; omie_customer_id: number | null },
+  cloudOmieCustomerId: number | null
+): void {
+  if (!cloudOmieCustomerId || cloudOmieCustomerId <= 0) return;
+  if (local.omie_customer_id && local.omie_customer_id > 0) return;
+  database
+    .prepare(
+      `UPDATE ${table}
+       SET omie_customer_id = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+       WHERE id = ? AND (omie_customer_id IS NULL OR omie_customer_id = 0)`
+    )
+    .run(cloudOmieCustomerId, local.id);
 }
 
 function upsertCloudCarriers(
@@ -1372,7 +1398,16 @@ function upsertCloudCarriers(
     const name = stringValue(row.name);
     if (!id || !name) continue;
     const document = nullableStringValue(row.document);
-    if (hasLocalCadastroWithDocument(database, "carriers", companyId, document, id)) continue;
+    const localTwin = findLocalCadastroWithDocument(database, "carriers", companyId, document, id);
+    if (localTwin) {
+      adoptOmieCodeFromCloudTwin(
+        database,
+        "carriers",
+        localTwin,
+        integerValue(row.omie_customer_id)
+      );
+      continue;
+    }
     const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
     upsert.run(
       id,
@@ -1778,21 +1813,30 @@ function upsertCloudCustomers(
     ) VALUES (?, ?, ?, 'hybrid', ?, ?, ?, ?, ?, ?, ?, 'synced', ?, ?, ?, NULL, ?, 0)
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
-      omie_customer_id = excluded.omie_customer_id,
+      -- Nunca apagar o codigo do OMIE que ja temos: sem ele o proximo push tenta um
+      -- IncluirCliente de um cadastro que ja existe la e cai em "Cliente ja cadastrado".
+      omie_customer_id = COALESCE(excluded.omie_customer_id, customers.omie_customer_id),
       source = CASE WHEN customers.source = 'local' THEN 'hybrid' ELSE customers.source END,
-      legal_name = excluded.legal_name,
-      trade_name = excluded.trade_name,
-      document = excluded.document,
-      phone = excluded.phone,
-      email = excluded.email,
-      credit_limit_cents = excluded.credit_limit_cents,
+      -- needs_push = 1 significa cadastro editado aqui e ainda NAO enviado ao OMIE. A
+      -- versao da nuvem e mais velha que essa edicao: sobrescrever apagava da tela o
+      -- CPF/CNPJ (e telefone, e-mail, razao social...) que o operador acabou de digitar
+      -- e ainda zerava o needs_push, cancelando de vez o envio ao OMIE. Mesma protecao
+      -- que carriers/report_recipients ja tinham.
+      legal_name = CASE WHEN customers.needs_push = 0 THEN excluded.legal_name ELSE customers.legal_name END,
+      trade_name = CASE WHEN customers.needs_push = 0 THEN excluded.trade_name ELSE customers.trade_name END,
+      document = CASE WHEN customers.needs_push = 0 THEN excluded.document ELSE customers.document END,
+      phone = CASE WHEN customers.needs_push = 0 THEN excluded.phone ELSE customers.phone END,
+      email = CASE WHEN customers.needs_push = 0 THEN excluded.email ELSE customers.email END,
+      credit_limit_cents = CASE WHEN customers.needs_push = 0 THEN excluded.credit_limit_cents ELSE customers.credit_limit_cents END,
+      -- Saldo em aberto e projecao da nuvem (nunca editado aqui): sempre o valor de la.
       open_receivables_cents = excluded.open_receivables_cents,
-      sync_status = 'synced',
-      is_active = excluded.is_active,
-      updated_at = excluded.updated_at,
-      deleted_at = NULL,
+      sync_status = CASE WHEN customers.needs_push = 0 THEN 'synced' ELSE customers.sync_status END,
+      is_active = CASE WHEN customers.needs_push = 0 THEN excluded.is_active ELSE customers.is_active END,
+      updated_at = CASE WHEN customers.needs_push = 0 THEN excluded.updated_at ELSE customers.updated_at END,
+      -- Exclusao local pendente nao pode ser ressuscitada pelo espelho da nuvem.
+      deleted_at = CASE WHEN customers.needs_push = 0 THEN NULL ELSE customers.deleted_at END,
       last_synced_at = excluded.last_synced_at,
-      needs_push = 0
+      needs_push = customers.needs_push
   `);
 
   let count = 0;
@@ -1800,7 +1844,16 @@ function upsertCloudCustomers(
     const id = stringValue(row.id);
     if (!id) continue;
     const document = nullableStringValue(row.document);
-    if (hasLocalCadastroWithDocument(database, "customers", companyId, document, id)) continue;
+    const localTwin = findLocalCadastroWithDocument(database, "customers", companyId, document, id);
+    if (localTwin) {
+      adoptOmieCodeFromCloudTwin(
+        database,
+        "customers",
+        localTwin,
+        integerValue(row.omie_customer_id)
+      );
+      continue;
+    }
     const legalName = stringValue(row.legal_name) || stringValue(row.trade_name) || "Cliente";
     const tradeName = stringValue(row.trade_name) || legalName;
     const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
@@ -3955,7 +4008,7 @@ export async function processOmieSyncQueue(
       omieCategoryCode?: string | null;
       transport?: {
         plate?: string | null;
-        /** UF de emplacamento (`uf_placa` do bloco frete da NF-e). */
+        /** UF de emplacamento (`placa_estado` do bloco frete da NF-e). */
         plateState?: string | null;
         driverName?: string | null;
         carrierOmieId?: number | null;
@@ -4427,7 +4480,7 @@ export async function processFiscalBillingNow(
     accountName?: string | null;
     transport?: {
       plate?: string | null;
-      /** UF de emplacamento (`uf_placa` do bloco frete da NF-e). */
+      /** UF de emplacamento (`placa_estado` do bloco frete da NF-e). */
       plateState?: string | null;
       driverName?: string | null;
       carrierOmieId?: number | null;

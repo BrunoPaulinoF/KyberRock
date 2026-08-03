@@ -925,7 +925,10 @@ Deno.test("create_order envia os dados de transporte no frete e o motorista na N
   // Placa normalizada (maiuscula, sem separadores) e transportadora pelo codigo OMIE.
   assertEquals(frete.placa, "ABC1D23");
   // A NF-e pede placa E UF do veiculo: a UF vem do cadastro de veiculos do desktop.
-  assertEquals(frete.uf_placa, "MG");
+  // A tag do bloco frete e `placa_estado`; `uf_placa` faz o OMIE recusar o pedido inteiro
+  // ("Tag [UF_PLACA] nao faz parte da estrutura do tipo complexo [frete]").
+  assertEquals(frete.placa_estado, "MG");
+  assertEquals("uf_placa" in frete, false);
   assertEquals(frete.codigo_transportadora, 987654);
   // Granel: peso bruto = liquido = peso pesado, em 1 volume.
   assertEquals(frete.peso_bruto, 15000);
@@ -935,7 +938,7 @@ Deno.test("create_order envia os dados de transporte no frete e o motorista na N
   assertEquals("veiculo_proprio" in frete, false);
 
   const infos = body.informacoes_adicionais as Record<string, unknown>;
-  // A UF acompanha a placa no texto (a OS nao tem bloco frete para o uf_placa).
+  // A UF acompanha a placa no texto (a OS nao tem bloco frete para a UF da placa).
   assertEquals(infos.dados_adicionais_nf, "Motorista: Joao Motorista - Placa: ABC-1D23/MG");
 });
 
@@ -999,7 +1002,7 @@ Deno.test(
     assertEquals(frete.placa, "XYZ4E56");
     // Veiculo sem UF no cadastro: o pedido sai so com a placa (campo fiscal nao aceita
     // valor inventado), como antes.
-    assertEquals("uf_placa" in frete, false);
+    assertEquals("placa_estado" in frete, false);
   }
 );
 
