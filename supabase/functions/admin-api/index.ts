@@ -1,7 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { verifyAdminSession } from "../_shared/admin-session.ts";
-import { safeEqual, sha256Hex } from "../_shared/crypto.ts";
+import { sha256Hex } from "../_shared/crypto.ts";
 
 type AdminAction =
   | "list"
@@ -17,6 +17,7 @@ type AdminAction =
   | "generate_desktop_activation_code"
   | "create_loader"
   | "toggle_loader"
+  | "delete_loader"
   | "toggle_device"
   | "update_device_unit";
 
@@ -212,6 +213,19 @@ Deno.serve(async (req) => {
       return jsonResponse({ ok: true });
     }
 
+    // Exclui um carregador/comercial de vez. user_profiles.id referencia auth.users com
+    // "on delete cascade", entao apagar o usuario do Auth ja remove o perfil; o delete
+    // explicito abaixo cobre o caso do perfil orfao (usuario do Auth removido antes).
+    if (body.action === "delete_loader") {
+      const userId = String(payload.userId ?? "");
+      if (!userId) return jsonResponse({ error: "Usuario nao informado" }, 400);
+      const deleted = await supabase.auth.admin.deleteUser(userId);
+      if (deleted.error && !isNotFoundError(deleted.error)) throw deleted.error;
+      const { error } = await supabase.from("user_profiles").delete().eq("id", userId);
+      if (error) throw error;
+      return jsonResponse({ ok: true });
+    }
+
     if (body.action === "toggle_device") {
       const { error } = await supabase
         .from("device_registrations")
@@ -309,11 +323,10 @@ Deno.serve(async (req) => {
       return jsonResponse({ ok: true });
     }
 
+    // Exclusao de empresa/unidade exige apenas a sessao administrativa ja validada no topo
+    // (verifyAdminSession) mais a confirmacao na UI. A senha do administrador foi removida a
+    // pedido do produto: quem chega aqui ja passou pelo login do admin.
     if (body.action === "delete_company" || body.action === "delete_unit") {
-      const password = String(payload.adminPassword ?? "");
-      if (!(await verifyAdminPassword(password))) {
-        return jsonResponse({ error: "Senha do administrador incorreta" }, 403);
-      }
       if (body.action === "delete_company") {
         const companyId = String(payload.companyId ?? "");
         const { error } = await supabase.rpc("delete_company", { target_company_id: companyId });
@@ -342,12 +355,15 @@ function getErrorMessage(error: unknown): string {
   return "Erro inesperado";
 }
 
-async function verifyAdminPassword(password: string): Promise<boolean> {
-  const passwordHash = Deno.env.get("KYBERROCK_ADMIN_PASSWORD_HASH") ?? "";
-  const passwordSalt = Deno.env.get("KYBERROCK_ADMIN_PASSWORD_SALT") ?? "";
-  if (!passwordHash || !passwordSalt) return false;
-  const attemptedHash = await sha256Hex(`${passwordSalt}${password}`);
-  return safeEqual(attemptedHash, passwordHash);
+/**
+ * O Auth devolve 404/"User not found" quando o usuario ja foi removido. Nesse caso a exclusao
+ * segue adiante para limpar o perfil restante em vez de falhar para o admin.
+ */
+function isNotFoundError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const status = (error as { status?: unknown }).status;
+  if (status === 404) return true;
+  return /not\s*found/i.test(getErrorMessage(error));
 }
 
 function generateSixDigitCode(): string {
