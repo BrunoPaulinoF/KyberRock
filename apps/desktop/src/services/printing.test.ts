@@ -149,9 +149,7 @@ describe("printing", () => {
     try {
       const identity = createIdentity(database);
       // Numero atribuido pela nuvem a esta balanca (a segunda da pedreira).
-      database
-        .prepare("UPDATE devices SET device_number = 2 WHERE id = ?")
-        .run(identity.deviceId);
+      database.prepare("UPDATE devices SET device_number = 2 WHERE id = ?").run(identity.deviceId);
       configureReceiptPrintProfile(database, { identity, windowsPrinterName: "TERMICA-80" });
       const operation = createClosedOperation(database, identity);
 
@@ -286,7 +284,9 @@ describe("printing", () => {
       expect(printer.calls[0].lines).toContain("ENTRADA <TARA>: 12,000 <TON>");
       expect(printer.calls[0].lines).toContain("SAIDA <CARREGADO>: 18,500 <TON>");
       expect(printer.calls[0].lines).toContain("LIQUIDO: 6,500 <TON>");
-      expect(printer.calls[0].lines.some((line) => line.includes("R$") && line.includes("780,00"))).toBe(true);
+      expect(
+        printer.calls[0].lines.some((line) => line.includes("R$") && line.includes("780,00"))
+      ).toBe(true);
 
       // Nao deve criar operacao real
       expect(listPrintReceipts(database)).toHaveLength(1);

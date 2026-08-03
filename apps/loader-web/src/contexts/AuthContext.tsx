@@ -1,7 +1,13 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { assertSupabaseConfig } from "../config/supabase-config";
-import { callAdminFunction, clearAdminSessionToken, getAdminSessionToken, setAdminSessionToken, getAdminSessionStatus } from "../lib/admin-api";
+import {
+  callAdminFunction,
+  clearAdminSessionToken,
+  getAdminSessionToken,
+  setAdminSessionToken,
+  getAdminSessionStatus
+} from "../lib/admin-api";
 import { supabase, auth } from "../lib/supabase";
 
 interface AuthUser {
@@ -137,7 +143,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function loginAdmin(username: string, password: string): Promise<void> {
     setError(null);
     try {
-      const response = await callAdminFunction<AdminAuthResponse>("admin-auth", { username, password }, null);
+      const response = await callAdminFunction<AdminAuthResponse>(
+        "admin-auth",
+        { username, password },
+        null
+      );
       setAdminSessionToken(response.token);
       await auth.signOut();
       setUser({
@@ -188,7 +198,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, isAdmin, isLoader, isComercial, loginAdmin, loginLoader, logout, error, clearError }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        isLoading,
+        isAdmin,
+        isLoader,
+        isComercial,
+        loginAdmin,
+        loginLoader,
+        logout,
+        error,
+        clearError
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

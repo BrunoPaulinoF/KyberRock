@@ -23,13 +23,13 @@ Definir a arquitetura tecnica antes de criar migrations, tabelas Supabase, pacot
 
 ## Superficies
 
-| Superficie         | Responsabilidade                                                | Estado         |
-| ------------------ | --------------------------------------------------------------- | -------------- |
-| Desktop Windows    | Operacao principal, leitura de balanca, SQLite, impressao, sync | Offline-first  |
-| Loader web         | Visualizacao de carregamentos em aberto pelo carregador         | Online         |
+| Superficie              | Responsabilidade                                                | Estado         |
+| ----------------------- | --------------------------------------------------------------- | -------------- |
+| Desktop Windows         | Operacao principal, leitura de balanca, SQLite, impressao, sync | Offline-first  |
+| Loader web              | Visualizacao de carregamentos em aberto pelo carregador         | Online         |
 | Supabase Edge Functions | Integracoes sensiveis, tarefas agendadas, e-mail                | Online         |
-| Supabase Postgres          | Visao cloud multiunidade e dados do site do carregador          | Online         |
-| OMIE               | ERP para cadastros, financeiro, pedidos e OS                    | Online externo |
+| Supabase Postgres       | Visao cloud multiunidade e dados do site do carregador          | Online         |
+| OMIE                    | ERP para cadastros, financeiro, pedidos e OS                    | Online externo |
 
 ## Topologia
 
@@ -84,7 +84,8 @@ Loader web
 | Tabela de preco             | KyberRock          | Sim                       | Vinculada ao cliente/produto                               |
 | Veiculo/motorista           | KyberRock          | Sim                       | Pode ter vinculos com cliente/transportadora               |
 | Transportadora              | OMIE               | Parcial                   | OMIE usa cadastro de clientes/fornecedores/transportadoras |
-| Operacao de pesagem         | KyberRock local    | Sim                       | Sincronizada para cloud/OMIE                            |
+| Adiantamento do cliente     | OMIE               | Nao                       | Espelhado no extrato de credito; abate as compras          |
+| Operacao de pesagem         | KyberRock local    | Sim                       | Sincronizada para cloud/OMIE                               |
 | Cupom                       | KyberRock local    | Sim                       | Reimpressao gera auditoria                                 |
 | Solicitacao carregamento    | KyberRock/Supabase | Sim local, cloud via sync | Site le somente abertas                                    |
 | Logs/auditoria              | KyberRock          | Sim                       | Nao expor segredos                                         |
@@ -128,7 +129,7 @@ acima continua sendo usada nas filas locais e no Supabase.
 | `loading_requested` | Solicitacao aberta para o carregador          |
 | `awaiting_exit`     | Caminhao deve retornar a balanca              |
 | `closed_local`      | Saida capturada e valores calculados          |
-| `pending_cloud`     | Ainda nao sincronizada ao cloud            |
+| `pending_cloud`     | Ainda nao sincronizada ao cloud               |
 | `pending_omie`      | Ainda nao enviada ao OMIE                     |
 | `synced`            | Sincronizacoes obrigatorias confirmadas       |
 | `sync_error`        | Existe erro de sincronizacao pendente         |
@@ -147,6 +148,16 @@ acima continua sendo usada nas filas locais e no Supabase.
 9. Desktop fecha operacao localmente e gera cupom.
 10. Desktop enfileira sync Supabase e OMIE.
 11. Sync envia quando houver conectividade.
+
+Entre os passos 4 e 9 (operacao **em andamento**: `draft`, `entry_registered`,
+`loading_requested`, `awaiting_exit`) a operacao e **editavel por inteiro** na tela de
+Operacoes — duplo clique na linha abre a ficha completa e, em andamento, a edicao de
+cliente, produto, preco por tonelada, valor e regra de frete, placa, motorista,
+transportadora, forma e condicao de pagamento e tipo de fechamento
+(`updateWeighingOperationDetails`). Alterar o preco exige a senha de alteracao de precos da
+empresa. A edicao reflete na `loading_requests` (o que o carregador ve) e reenfileira o
+upsert cloud. Depois do fechamento a ficha continua abrindo, mas so para consulta: o
+pedido/OS ja foi montado para o OMIE e a correcao passa a ser cancelar e refazer.
 
 ## Hardware
 
@@ -183,9 +194,64 @@ Campos OMIE observados na documentacao publica que afetam o modelo:
 - clientes: `codigo_cliente_omie`, `codigo_cliente_integracao`, `valor_limite_credito`, `bloquear_faturamento`;
 - produtos: `codigo_produto`, `codigo_produto_integracao`, `codigo`, `descricao`, `unidade`;
 - pedido: `codigo_pedido_integracao`, `codigo_cliente`, `codigo_parcela`, `det`, `frete`;
-- frete pedido: `codigo_transportadora`, `modalidade`, `peso_liquido`, `peso_bruto`, `valor_frete`;
-- OS: `cCodIntOS`, `nCodOS`, `nCodCli`, `cCodParc`, `ServicosPrestados`;
+- frete pedido: `codigo_transportadora`, `modalidade`, `placa`, `uf_placa`, `peso_liquido`, `peso_bruto`, `valor_frete`;
+- veiculo: `nCodVeic`, `cPlaca`, `cUF` (cadastro de `/transportador/veiculo/`, origem da UF do frete);
+- OS: `cCodIntOS`, `nCodOS`, `nCodCli`, `cCodParc`, `nQtdeParc`, `ServicosPrestados`, `Parcelas`;
 - contas a receber: `codigo_cliente_fornecedor`, `valor_documento`, `data_vencimento`, `status_titulo`.
+
+### Adiantamento do cliente (credito pre-pago)
+
+O saldo que banca as compras pre-pagas e dinheiro que o cliente ja depositou, e o
+lancamento financeiro e feito no OMIE — o KyberRock nao cria nem baixa titulo la.
+
+- No OMIE, o adiantamento e um titulo de **contas a receber** classificado numa
+  **categoria de adiantamento de clientes** (o padrao `Adiantamento de Clientes`, do
+  plano de contas) e **baixado** quando o dinheiro entra. Enquanto nao ha baixa, nao
+  ha saldo.
+- A Edge Function `omie-sync` (acao `pull_customer_advances`) descobre as categorias
+  de adiantamento pela descricao, lista `ListarContasReceber` filtrando por
+  inclusao/alteracao e espelha cada titulo no extrato de credito
+  (`customer_credit_movements`, `source = 'omie'`, `omie_title_id`).
+- A Edge Function e o **unico escritor** desse espelho: o titulo do OMIE e a chave de
+  idempotencia e o lancamento sempre entra como **delta** sobre o que ja foi
+  espelhado, entao reprocessar a mesma pagina nao altera o saldo, e baixa parcial ou
+  cancelamento no OMIE viram acerto no extrato.
+- O desktop apenas aplica as linhas recebidas (mesmo caminho de qualquer movimento
+  vindo de outra maquina) e continua recalculando o saldo pelo log. As compras
+  seguem debitando localmente no fechamento — e o que abate o adiantamento.
+- Categoria e conta corrente do adiantamento sao descobertas pela descricao, mas
+  podem ser fixadas na tela de precos/categorias (`omie.advanceConfig`): o que o
+  operador escolhe vence a deteccao automatica.
+- **Nao existe lancamento de credito pelo KyberRock**: o desktop nao tem tela nem
+  IPC para inserir valor de credito. O extrato so recebe credito pelo espelho do
+  OMIE (`source = 'omie'`); o que nasce aqui e o consumo — debito no fechamento e
+  estorno no cancelamento. A aba Credito e somente leitura (totais, extrato e o
+  botao de sincronizar).
+- Consequencia no fiado: como o pagamento do boleto nao e mais lancado aqui, o
+  limite consumido so volta quando o pagamento chegar do OMIE. Enquanto o espelho
+  cobrir apenas titulos de adiantamento, o recebimento de uma fatura de fiado
+  precisa ser lancado no OMIE como adiantamento para devolver o saldo.
+
+#### Baixa do adiantamento no OMIE
+
+Debitar o saldo aqui nao basta: o dinheiro esta na conta corrente de
+adiantamentos do OMIE e precisa ser amortizado la, senao os dois lados divergem.
+
+- No fechamento, a operacao reserva em `omie_advance_settle_cents` a parte da
+  compra que sai do adiantamento — limitada ao adiantamento espelhado que ainda
+  nao foi amortizado (o excedente e fiado e nao gera baixa).
+- Depois que o pedido/OS existe no OMIE (e, na venda com nota, foi faturado), a
+  fila OMIE despacha o job `settle_advance`: a Edge Function acha os titulos do
+  pedido (`nCodPedido`/`numero_pedido`), distribui o valor entre as parcelas em
+  aberto e lanca `LancarRecebimento` contra a conta de adiantamentos.
+- Idempotencia pelo `codigo_baixa_integracao` (chave da operacao + titulo): um
+  retry nunca baixa o mesmo titulo duas vezes.
+- Enquanto o faturamento nao gerar titulo, o job volta para a fila em vez de dar
+  a operacao como amortizada. O estado fica em `omie_advance_status`
+  (`pending`/`settled`/`partial`/`error`) na propria operacao.
+- Cancelamento: pedido ja faturado nao e cancelavel no OMIE, e antes do
+  faturamento nao existe titulo — entao nao ha baixa a desfazer. Um estorno
+  excepcional continua sendo trabalho do financeiro no OMIE.
 
 ## Supabase
 

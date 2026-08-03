@@ -1,4 +1,5 @@
 import type { OmieClient } from "./omie-client.js";
+import { clampOmieText, OMIE_CUSTOMER_FIELD_MAX_LENGTHS } from "./omie-field-limits.js";
 
 export interface Customer {
   id: number;
@@ -121,11 +122,7 @@ export async function listCustomers(
   client: OmieClient,
   param: ListCustomersParam
 ): Promise<Customer[]> {
-  const response = (await client.call(
-    "/geral/clientes/",
-    "ListarClientes",
-    param
-  )) as {
+  const response = (await client.call("/geral/clientes/", "ListarClientes", param)) as {
     clientes_cadastro?: OmieCustomerRaw[];
     clientesCadastro?: OmieCustomerRaw[];
   };
@@ -143,13 +140,38 @@ export async function getCustomer(
   client: OmieClient,
   codigoClienteOmie: number
 ): Promise<Customer | null> {
-  const response = (await client.call(
-    "/geral/clientes/",
-    "ConsultarCliente",
-    { codigoClienteOmie }
-  )) as OmieCustomerRaw;
+  const response = (await client.call("/geral/clientes/", "ConsultarCliente", {
+    codigoClienteOmie
+  })) as OmieCustomerRaw;
 
   return mapOmieCustomerRaw(response);
+}
+
+/**
+ * Encurta os campos de texto para os limites do OMIE (ver OMIE_CUSTOMER_FIELD_MAX_LENGTHS).
+ * Um so ponto para Incluir e Alterar: qualquer tamanho de razao social entra aqui e sai
+ * no tamanho que o OMIE aceita, em vez de derrubar a chamada inteira.
+ */
+function clampCustomerFields<T extends CreateCustomerInput | UpdateCustomerInput>(input: T): T {
+  const clamped = { ...input } as Record<string, unknown>;
+  const limits = OMIE_CUSTOMER_FIELD_MAX_LENGTHS;
+
+  if (input.razaoSocial !== undefined) {
+    clamped.razaoSocial = clampOmieText(input.razaoSocial, limits.razaoSocial);
+  }
+  if (input.nomeFantasia !== undefined) {
+    clamped.nomeFantasia = clampOmieText(input.nomeFantasia, limits.nomeFantasia);
+  }
+  // O e-mail nao entra aqui: e uma lista de destinatarios e um corte no meio de um
+  // endereco geraria um e-mail invalido, fazendo o OMIE recusar o cadastro inteiro.
+  if (input.telefone1Ddd !== undefined) {
+    clamped.telefone1Ddd = clampOmieText(input.telefone1Ddd, limits.telefone1Ddd);
+  }
+  if (input.telefone1Numero !== undefined) {
+    clamped.telefone1Numero = clampOmieText(input.telefone1Numero, limits.telefone1Numero);
+  }
+
+  return clamped as T;
 }
 
 export async function createCustomer(
@@ -159,7 +181,7 @@ export async function createCustomer(
   const response = (await client.call(
     "/geral/clientes/",
     "IncluirCliente",
-    input
+    clampCustomerFields(input)
   )) as {
     codigoClienteOmie?: number;
     codigo_cliente_omie?: number;
@@ -174,11 +196,7 @@ export async function updateCustomer(
   client: OmieClient,
   input: UpdateCustomerInput
 ): Promise<void> {
-  await client.call(
-    "/geral/clientes/",
-    "AlterarCliente",
-    input
-  );
+  await client.call("/geral/clientes/", "AlterarCliente", clampCustomerFields(input));
 }
 
 export class OmieCustomersService {
@@ -253,11 +271,19 @@ function mapOmieCustomerRaw(item: OmieCustomerRaw | null | undefined): Customer 
     isActive: !isYesFlag(item.inativo)
   };
 
-  assign(customer, "integrationCode", pickFirst(item.codigo_cliente_integracao, item.codigoClienteIntegracao));
+  assign(
+    customer,
+    "integrationCode",
+    pickFirst(item.codigo_cliente_integracao, item.codigoClienteIntegracao)
+  );
   assign(customer, "tradeName", pickFirst(item.nome_fantasia, item.nomeFantasia));
   assign(customer, "document", pickFirst(item.cnpj_cpf, item.cnpjCpf));
   assign(customer, "stateRegistration", pickFirst(item.inscricao_estadual, item.inscricaoEstadual));
-  assign(customer, "municipalRegistration", pickFirst(item.inscricao_municipal, item.inscricaoMunicipal));
+  assign(
+    customer,
+    "municipalRegistration",
+    pickFirst(item.inscricao_municipal, item.inscricaoMunicipal)
+  );
   assign(customer, "email", pickFirst(item.email));
   assign(customer, "homepage", pickFirst(item.homepage));
   assign(customer, "contactName", pickFirst(item.contato));
@@ -280,7 +306,9 @@ function mapOmieCustomerRaw(item: OmieCustomerRaw | null | undefined): Customer 
   if (address) customer.address = address;
   customer.isIndividual = isYesFlag(pickFirst(item.pessoa_fisica, item.pessoaFisica));
   customer.isForeign = isYesFlag(item.exterior);
-  customer.billingBlocked = isYesFlag(pickFirst(item.bloquear_faturamento, item.bloquearFaturamento));
+  customer.billingBlocked = isYesFlag(
+    pickFirst(item.bloquear_faturamento, item.bloquearFaturamento)
+  );
   if (item.tags) customer.tags = item.tags;
   const salespersonId = toNumber(pickFirst(item.codigo_vendedor, item.codigoVendedor));
   if (salespersonId !== null) customer.salespersonId = salespersonId;

@@ -29,9 +29,7 @@ export function linkDriverCarrier(
   if (existing) {
     if (existing.is_active === 0) {
       database
-        .prepare(
-          "UPDATE driver_carriers SET is_active = 1, updated_at = ? WHERE id = ?"
-        )
+        .prepare("UPDATE driver_carriers SET is_active = 1, updated_at = ? WHERE id = ?")
         .run(nowIso, existing.id);
       return database
         .prepare("SELECT * FROM driver_carriers WHERE id = ?")
@@ -48,9 +46,7 @@ export function linkDriverCarrier(
     )
     .run(id, driverId, carrierId, nowIso, nowIso);
 
-  return database
-    .prepare("SELECT * FROM driver_carriers WHERE id = ?")
-    .get(id) as DriverCarrierRow;
+  return database.prepare("SELECT * FROM driver_carriers WHERE id = ?").get(id) as DriverCarrierRow;
 }
 
 export function unlinkDriverCarrier(
@@ -95,7 +91,12 @@ export function listDriversByCarrier(
        WHERE dc.carrier_id = ? AND dc.is_active = 1 AND dc.deleted_at IS NULL AND d.deleted_at IS NULL AND d.is_active = 1
        ORDER BY d.name ASC`
     )
-    .all(carrierId) as Array<{ id: string; name: string; document: string | null; is_independent: number }>;
+    .all(carrierId) as Array<{
+    id: string;
+    name: string;
+    document: string | null;
+    is_independent: number;
+  }>;
 }
 
 export function listIndependentDrivers(

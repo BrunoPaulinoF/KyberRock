@@ -13,7 +13,10 @@ const GITHUB_OWNER = Deno.env.get("GH_RELEASES_OWNER") ?? "BrunoPaulinoF";
 const GITHUB_REPO = Deno.env.get("GH_RELEASES_REPO") ?? "KyberRock";
 
 function textResponse(body: string, status: number): Response {
-  return new Response(body, { status, headers: { ...corsHeaders, "Content-Type": "text/plain; charset=utf-8" } });
+  return new Response(body, {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "text/plain; charset=utf-8" }
+  });
 }
 
 Deno.serve(async (req) => {

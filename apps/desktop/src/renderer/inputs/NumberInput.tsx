@@ -26,7 +26,8 @@ export function NumberInput({
   hint
 }: NumberInputProps) {
   const showError =
-    value.trim().length > 0 && (() => {
+    value.trim().length > 0 &&
+    (() => {
       if (minLength && value.length < minLength) return true;
       return false;
     })();

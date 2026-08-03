@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { computeLogoRasterLayout, maxLogoWidthDots } from "./receipt-logo-raster";
+import {
+  computeLogoRasterLayout,
+  dotsToMm,
+  isBlankDotRatio,
+  isThermalBlackPixel,
+  maxLogoWidthDots
+} from "./receipt-logo-raster";
 
 describe("computeLogoRasterLayout", () => {
   it("fits the whole logo inside the box without cropping (contain)", () => {
@@ -53,5 +59,44 @@ describe("maxLogoWidthDots", () => {
   it("uses the printable width of each paper size", () => {
     expect(maxLogoWidthDots(58)).toBe(384);
     expect(maxLogoWidthDots(80)).toBe(576);
+  });
+});
+
+describe("dotsToMm", () => {
+  it("converts printer dots back to the millimetres printed on paper", () => {
+    expect(dotsToMm(192)).toBe(24);
+    expect(dotsToMm(128)).toBe(16);
+  });
+});
+
+describe("isThermalBlackPixel", () => {
+  it("marks a dot for dark ink and leaves light ink unprinted", () => {
+    expect(isThermalBlackPixel(0, 0, 0, 255)).toBe(true);
+    expect(isThermalBlackPixel(255, 255, 255, 255)).toBe(false);
+  });
+
+  it("treats transparency as paper, so a transparent background never prints black", () => {
+    expect(isThermalBlackPixel(0, 0, 0, 0)).toBe(false);
+  });
+
+  it("does not print a white logo made for dark backgrounds", () => {
+    // Traco branco sobre fundo transparente: a previa colorida mostra a logo, o papel nao.
+    expect(isThermalBlackPixel(255, 255, 255, 255)).toBe(false);
+    expect(isThermalBlackPixel(200, 200, 200, 255)).toBe(false);
+  });
+});
+
+describe("isBlankDotRatio", () => {
+  it("flags a logo that would come out as an empty area", () => {
+    expect(isBlankDotRatio(0, 24_576)).toBe(true);
+    expect(isBlankDotRatio(50, 24_576)).toBe(true);
+  });
+
+  it("accepts a logo with real ink coverage", () => {
+    expect(isBlankDotRatio(3_072, 24_576)).toBe(false);
+  });
+
+  it("treats an empty box as blank", () => {
+    expect(isBlankDotRatio(0, 0)).toBe(true);
   });
 });

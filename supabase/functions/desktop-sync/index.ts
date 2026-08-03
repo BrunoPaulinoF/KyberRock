@@ -291,7 +291,10 @@ async function dropStaleOperationWrites(
     if (!current) return true;
     const incomingStatus = String(row.status ?? "");
     const currentStatus = String(current.status ?? "");
-    if (TERMINAL_OPERATION_STATUSES.has(currentStatus) && !TERMINAL_OPERATION_STATUSES.has(incomingStatus)) {
+    if (
+      TERMINAL_OPERATION_STATUSES.has(currentStatus) &&
+      !TERMINAL_OPERATION_STATUSES.has(incomingStatus)
+    ) {
       return false;
     }
     const incomingTs = Date.parse(String(row.updated_at ?? ""));

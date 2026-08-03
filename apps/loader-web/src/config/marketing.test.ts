@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  buildWhatsAppLink,
-  WHATSAPP_DEFAULT_MESSAGE,
-  WHATSAPP_EXAMPLE_NUMBER
-} from "./marketing";
+import { buildWhatsAppLink, WHATSAPP_DEFAULT_MESSAGE, WHATSAPP_EXAMPLE_NUMBER } from "./marketing";
 
 describe("buildWhatsAppLink", () => {
   it("builds a wa.me link with the encoded default message", () => {

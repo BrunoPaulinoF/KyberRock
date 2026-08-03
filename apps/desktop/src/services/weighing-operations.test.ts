@@ -5,11 +5,15 @@ import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite";
 import { ensureInitialDesktopIdentity } from "./bootstrap";
 import { CreditService } from "./credit";
 import { CustomerReportService } from "./customer-report";
+import { setDefaultNfeEmail } from "./customers";
+import { createPaymentTerm } from "./payment-terms";
 import { enqueueSyncJob } from "./sync-queue";
 import { buildOmieIntegrationCode } from "@kyberrock/omie-client";
 import {
   buildOmieBillingJob,
+  getCustomerLastEntryPreferences,
   cancelWeighingOperation,
+  clearClosedWeighingOperations,
   closeWeighingOperation,
   createWeighingOperation,
   createSimulatedWeighingOperation,
@@ -21,6 +25,7 @@ import {
   listOpenWeighingOperations,
   updateWeighingOperationCustomer,
   updateWeighingOperationCarrier,
+  updateWeighingOperationDetails,
   validateCustomerFiscalReadiness
 } from "./weighing-operations";
 
@@ -344,7 +349,10 @@ describe("weighing operations", () => {
         .all() as Array<{ payload_json: string }>;
       // Cancel duplo nao duplica o job (INSERT OR IGNORE na chave idempotente).
       expect(jobs).toHaveLength(1);
-      const payload = JSON.parse(jobs[0].payload_json) as { orderType: string; omieOrderId: number };
+      const payload = JSON.parse(jobs[0].payload_json) as {
+        orderType: string;
+        omieOrderId: number;
+      };
       expect(payload).toMatchObject({ orderType: "service", omieOrderId: 555 });
     } finally {
       database.close();
@@ -480,9 +488,11 @@ describe("weighing operations", () => {
     try {
       const identity = createIdentity(database);
       insertCatalog(database);
-      database.prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'").run();
+      database
+        .prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'")
+        .run();
       const creditService = new CreditService(database);
-      creditService.applyCredit("customer-1", 100_000, "saldo OMIE");
+      seedOmieAdvance(database, identity.companyId, 100_000);
 
       const operation = createWeighingOperation(database, {
         identity,
@@ -513,15 +523,106 @@ describe("weighing operations", () => {
     }
   });
 
+  it("reserva a baixa do adiantamento no OMIE ate o limite do que veio de la", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database
+        .prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'")
+        .run();
+      // Metade do saldo veio do financeiro do OMIE (adiantamento) e metade foi
+      // lancada aqui: so a parte do OMIE pode ser baixada la.
+      database
+        .prepare(
+          `INSERT INTO customer_credit_movements (
+             id, company_id, customer_id, operation_id, movement_type, amount_cents,
+             balance_after_cents, reason, source, omie_title_id, created_at
+           ) VALUES ('adv-1', ?, 'customer-1', NULL, 'credit', 40000, 40000,
+                     'Adiantamento OMIE #7001', 'omie', 7001, '2026-07-20T10:00:00.000Z')`
+        )
+        .run(identity.companyId);
+      database
+        .prepare(
+          `INSERT INTO customer_credit_balances (customer_id, balance_cents, updated_at)
+           VALUES ('customer-1', 40000, '2026-07-20T10:00:00.000Z')
+           ON CONFLICT(customer_id) DO UPDATE SET balance_cents = excluded.balance_cents`
+        )
+        .run();
+      seedLocalCredit(database, identity.companyId, 60_000, "local-ajuste");
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, { operationId: operation.id, exitWeightKg: 18_500 });
+
+      const row = database
+        .prepare(
+          `SELECT omie_advance_settle_cents, omie_advance_status
+           FROM weighing_operations WHERE id = ?`
+        )
+        .get(operation.id) as { omie_advance_settle_cents: number; omie_advance_status: string };
+      // Debito de 780,00, adiantamento do OMIE de 400,00: o resto e fiado/ajuste
+      // local e nao vira baixa no OMIE.
+      expect(row).toEqual({ omie_advance_settle_cents: 40_000, omie_advance_status: "pending" });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("nao reserva baixa no OMIE quando o credito nao veio de adiantamento", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database
+        .prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'")
+        .run();
+      seedLocalCredit(database, identity.companyId, 100_000);
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, { operationId: operation.id, exitWeightKg: 18_500 });
+
+      const row = database
+        .prepare(
+          `SELECT omie_advance_settle_cents, omie_advance_status
+           FROM weighing_operations WHERE id = ?`
+        )
+        .get(operation.id) as {
+        omie_advance_settle_cents: number;
+        omie_advance_status: string | null;
+      };
+      expect(row).toEqual({ omie_advance_settle_cents: 0, omie_advance_status: null });
+    } finally {
+      database.close();
+    }
+  });
+
   it("does not debit prepaid credit twice on a double close (idempotent)", () => {
     const database = createDatabase();
 
     try {
       const identity = createIdentity(database);
       insertCatalog(database);
-      database.prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'").run();
+      database
+        .prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'")
+        .run();
       const creditService = new CreditService(database);
-      creditService.applyCredit("customer-1", 100_000, "saldo OMIE");
+      seedOmieAdvance(database, identity.companyId, 100_000);
 
       const operation = createWeighingOperation(database, {
         identity,
@@ -566,9 +667,11 @@ describe("weighing operations", () => {
     try {
       const identity = createIdentity(database);
       insertCatalog(database);
-      database.prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'").run();
+      database
+        .prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'")
+        .run();
       const creditService = new CreditService(database);
-      creditService.applyCredit("customer-1", 100_000, "saldo OMIE");
+      seedOmieAdvance(database, identity.companyId, 100_000);
 
       const operation = createWeighingOperation(database, {
         identity,
@@ -628,9 +731,7 @@ describe("weighing operations", () => {
       deleteClosedWeighingOperation(database, operation.id);
 
       const job = database
-        .prepare(
-          "SELECT status FROM sync_queue WHERE entity_id = ? AND action = 'create_order'"
-        )
+        .prepare("SELECT status FROM sync_queue WHERE entity_id = ? AND action = 'create_order'")
         .get(operation.id) as { status: string } | undefined;
       // Excluir a operacao concluida neutraliza o job pendente (dead_letter): nao cria pedido
       // "fantasma" no OMIE depois que o operador excluiu a operacao localmente.
@@ -646,9 +747,11 @@ describe("weighing operations", () => {
     try {
       const identity = createIdentity(database);
       insertCatalog(database);
-      database.prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'").run();
+      database
+        .prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'")
+        .run();
       const creditService = new CreditService(database);
-      creditService.applyCredit("customer-1", 200_000, "saldo OMIE");
+      seedOmieAdvance(database, identity.companyId, 200_000);
 
       const operation = createWeighingOperation(database, {
         identity,
@@ -692,9 +795,11 @@ describe("weighing operations", () => {
     try {
       const identity = createIdentity(database);
       insertCatalog(database);
-      database.prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'").run();
+      database
+        .prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'")
+        .run();
       const creditService = new CreditService(database);
-      creditService.applyCredit("customer-1", 200_000, "saldo OMIE");
+      seedOmieAdvance(database, identity.companyId, 200_000);
 
       const operation = createWeighingOperation(database, {
         identity,
@@ -899,8 +1004,10 @@ describe("weighing operations", () => {
     try {
       const identity = createIdentity(database);
       insertCatalog(database);
-      database.prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'").run();
-      new CreditService(database).applyCredit("customer-1", 70_000, "saldo OMIE");
+      database
+        .prepare("UPDATE customers SET credit_mode = 'prepaid' WHERE id = 'customer-1'")
+        .run();
+      seedOmieAdvance(database, identity.companyId, 70_000);
 
       const operation = createWeighingOperation(database, {
         identity,
@@ -1095,6 +1202,50 @@ describe("weighing operations", () => {
     }
   });
 
+  it("sends the customer cadastro with the default NF-e email when the customer has none", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      // Cliente que ainda nao existe no OMIE: sem codigo, com CNPJ e sem e-mail proprio.
+      database
+        .prepare(
+          "UPDATE customers SET omie_customer_id = NULL, document = '12345678000195', email = NULL WHERE id = 'customer-1'"
+        )
+        .run();
+      setDefaultNfeEmail(database, "nfe@pedreira.com.br");
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      const built = buildOmieBillingJob(database, operation.id);
+
+      // customerOmieId 0 + cadastro embutido: o edge cria o cliente no OMIE e so entao
+      // monta o pedido — o fechamento vai inteiro numa chamada so.
+      expect(built!.payload.customerOmieId).toBe(0);
+      expect(built!.payload.customer).toMatchObject({
+        localCustomerId: "customer-1",
+        cnpjCpf: "12345678000195",
+        // Sem e-mail o OMIE recusa o IncluirCliente e o fechamento morria junto.
+        email: "nfe@pedreira.com.br"
+      });
+    } finally {
+      database.close();
+    }
+  });
+
   it("includes the transport data (plate, driver, carrier, cargo weight) in the OMIE job", () => {
     const database = createDatabase();
 
@@ -1134,12 +1285,18 @@ describe("weighing operations", () => {
       expect(built).not.toBeNull();
       expect(built!.payload.transport).toEqual({
         plate: "ABC1D23",
+        // Veiculo ainda sem UF no cadastro: o pedido segue so com a placa.
+        plateState: null,
         driverName: "Motorista Teste",
         carrierOmieId: 987654,
         carrierName: "Transportadora Teste",
         cargoWeightKg: 6_500,
         ownVehicle: false
       });
+
+      // Com a UF do cadastro (sincronizada do OMIE), ela acompanha a placa no frete.
+      database.prepare("UPDATE vehicles SET plate_state = 'mg' WHERE id = 'vehicle-1'").run();
+      expect(buildOmieBillingJob(database, operation.id)!.payload.transport?.plateState).toBe("MG");
     } finally {
       database.close();
     }
@@ -1442,7 +1599,49 @@ describe("weighing operations", () => {
       const built = buildOmieBillingJob(database, operation.id);
       // 6,5 t x R$ 100,00 = R$ 650,00 -> vai como valor_frete no bloco frete do pedido.
       expect(built!.payload.freightTotalCents).toBe(65_000);
-      expect(built!.payload.freightModalidade).toBe("1");
+      // FOB = frete por conta do cliente -> "9" (sem incidencia de frete) no OMIE, mesmo
+      // com valor lancado: a Pedreira nao responde pelo transporte.
+      expect(built!.payload.freightModalidade).toBe("9");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("sends FOB freight as 'sem incidencia' (9) to OMIE", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET omie_customer_id = 456 WHERE id = 'customer-1'").run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      database
+        .prepare("UPDATE weighing_operations SET freight_type = 'fob' WHERE id = ?")
+        .run(operation.id);
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      expect(buildOmieBillingJob(database, operation.id)!.payload.freightModalidade).toBe("9");
+      // As demais modalidades seguem o mapeamento modFrete da NF-e.
+      database
+        .prepare("UPDATE weighing_operations SET freight_type = 'cif' WHERE id = ?")
+        .run(operation.id);
+      expect(buildOmieBillingJob(database, operation.id)!.payload.freightModalidade).toBe("0");
+      database
+        .prepare("UPDATE weighing_operations SET freight_type = 'own_recipient' WHERE id = ?")
+        .run(operation.id);
+      expect(buildOmieBillingJob(database, operation.id)!.payload.freightModalidade).toBe("4");
     } finally {
       database.close();
     }
@@ -1729,6 +1928,214 @@ describe("weighing operations", () => {
     }
   });
 
+  // A pedreira repete o mesmo arranjo para o mesmo cliente. A entrada seguinte tem de
+  // nascer com a transportadora, a condicao e a forma de pagamento da ultima entrada.
+  it("devolve transportadora, condicao e forma de pagamento da ultima entrada do cliente", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      const now = "2026-06-06T12:00:00.000Z";
+      database
+        .prepare(
+          `INSERT INTO payment_terms (id, company_id, name, rules_json, is_active, created_at, updated_at)
+           VALUES ('term-1', 'company-1', 'A prazo', '{}', 1, ?, ?)`
+        )
+        .run(now, now);
+      database
+        .prepare(
+          `INSERT INTO payment_methods (id, company_id, code, name, sort_order, is_active, created_at, updated_at)
+           VALUES ('method-1', 'company-1', 'boleto', 'Boleto', 1, 1, ?, ?)`
+        )
+        .run(now, now);
+      database
+        .prepare(
+          `INSERT INTO carriers (id, company_id, name, source, created_at, updated_at)
+           VALUES ('carrier-1', 'company-1', 'Transportadora Teste', 'local', ?, ?)`
+        )
+        .run(now, now);
+
+      expect(getCustomerLastEntryPreferences(database, "customer-1")).toBeNull();
+
+      const first = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        carrierId: "carrier-1",
+        paymentTermId: "term-1",
+        paymentMethodId: "method-1",
+        entryWeightKg: 12_000
+      });
+      expect(first.id).toBeTruthy();
+
+      expect(getCustomerLastEntryPreferences(database, "customer-1")).toEqual({
+        carrierId: "carrier-1",
+        paymentTermId: "term-1",
+        paymentMethodId: "method-1"
+      });
+      // Outro cliente nao herda nada.
+      expect(getCustomerLastEntryPreferences(database, "customer-2")).toBeNull();
+    } finally {
+      database.close();
+    }
+  });
+
+  // A condicao que chega pela nuvem traz so o rules_json: as colunas de prazo ficam
+  // vazias no desktop que a recebeu. Sem ler o rules_json, o fechamento saia sem prazo
+  // nenhum e o OMIE colocava o vencimento na propria data de emissao.
+  it("le os prazos do rules_json quando a condicao veio da nuvem sem as colunas", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET omie_customer_id = 456 WHERE id = 'customer-1'").run();
+      const now = "2026-06-06T12:00:00.000Z";
+      database
+        .prepare(
+          `INSERT INTO payment_terms (id, company_id, name, rules_json, is_active, created_at, updated_at)
+           VALUES ('term-nuvem', 'company-1', '1 parcela em 45 dias', ?, 1, ?, ?)`
+        )
+        .run(
+          JSON.stringify({
+            raw: "PARA 45 DIAS",
+            kind: "single",
+            summary: "1 parcela em 45 dias",
+            installments: [{ number: 1, dueDays: 45 }],
+            intervalDays: null,
+            installmentCount: 1
+          }),
+          now,
+          now
+        );
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        paymentTermId: "term-nuvem",
+        entryWeightKg: 12_000
+      });
+
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      const payloadJson = database
+        .prepare("SELECT payload_json FROM sync_queue WHERE target = 'omie'")
+        .pluck()
+        .get() as string;
+      const payload = JSON.parse(payloadJson) as {
+        paymentTermInstallmentCount: number | null;
+        paymentTermInstallmentDays: number[] | null;
+      };
+      expect(payload.paymentTermInstallmentDays).toEqual([45]);
+      expect(payload.paymentTermInstallmentCount).toBe(1);
+    } finally {
+      database.close();
+    }
+  });
+
+  // Periodo ("s+20" = semana + 20 dias) e so uma forma curta de escrever o prazo: o
+  // que segue para o OMIE sao os mesmos dias de vencimento do prazo equivalente.
+  it("envia ao OMIE os dias das parcelas de uma condicao digitada em periodos", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET omie_customer_id = 456 WHERE id = 'customer-1'").run();
+
+      const term = createPaymentTerm(database, {
+        companyId: identity.companyId,
+        name: "Semana + 20 dias",
+        condition: "s + 20"
+      });
+      expect(term.installment_days_json).toBe("[27]");
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        paymentTermId: term.id,
+        entryWeightKg: 12_000
+      });
+
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      const payloadJson = database
+        .prepare("SELECT payload_json FROM sync_queue WHERE target = 'omie'")
+        .pluck()
+        .get() as string;
+      const payload = JSON.parse(payloadJson) as {
+        paymentTermInstallmentCount: number | null;
+        paymentTermInstallmentDays: number[] | null;
+      };
+      expect(payload.paymentTermInstallmentDays).toEqual([27]);
+      expect(payload.paymentTermInstallmentCount).toBe(1);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("envia ao OMIE as parcelas de uma lista com periodos", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET omie_customer_id = 456 WHERE id = 'customer-1'").run();
+
+      const term = createPaymentTerm(database, {
+        companyId: identity.companyId,
+        name: "Periodos",
+        condition: "s+20/q+20/m+20"
+      });
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        paymentTermId: term.id,
+        entryWeightKg: 12_000
+      });
+
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      const payloadJson = database
+        .prepare("SELECT payload_json FROM sync_queue WHERE target = 'omie'")
+        .pluck()
+        .get() as string;
+      const payload = JSON.parse(payloadJson) as {
+        paymentTermInstallmentCount: number | null;
+        paymentTermInstallmentDays: number[] | null;
+      };
+      expect(payload.paymentTermInstallmentDays).toEqual([27, 35, 50]);
+      expect(payload.paymentTermInstallmentCount).toBe(3);
+    } finally {
+      database.close();
+    }
+  });
+
   it("sends the OMIE codes of the selected payment method and its linked account", () => {
     const database = createDatabase();
 
@@ -1875,7 +2282,10 @@ describe("weighing operations", () => {
         .prepare(
           "SELECT default_payment_term_id, default_payment_method_id FROM customers WHERE id = 'customer-1'"
         )
-        .get() as { default_payment_term_id: string | null; default_payment_method_id: string | null };
+        .get() as {
+        default_payment_term_id: string | null;
+        default_payment_method_id: string | null;
+      };
       expect(customer.default_payment_term_id).toBe("term-7-14");
       expect(customer.default_payment_method_id).toBe("method-pix");
     } finally {
@@ -1916,7 +2326,10 @@ describe("weighing operations", () => {
         .prepare(
           "SELECT default_payment_term_id, default_payment_method_id FROM customers WHERE id = 'customer-1'"
         )
-        .get() as { default_payment_term_id: string | null; default_payment_method_id: string | null };
+        .get() as {
+        default_payment_term_id: string | null;
+        default_payment_method_id: string | null;
+      };
       expect(customer.default_payment_term_id).toBe("term-original");
       expect(customer.default_payment_method_id).toBe("method-original");
     } finally {
@@ -2252,6 +2665,311 @@ describe("weighing operations", () => {
     }
   });
 
+  it("exposes the linked ids so the full edit can pre-fill the form", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      insertEditCatalog(database);
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        carrierId: "carrier-1",
+        paymentMethodId: "method-boleto",
+        paymentTermId: "term-7-14-21",
+        entryWeightKg: 12_000
+      });
+
+      expect(operation).toMatchObject({
+        productId: "product-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        carrierId: "carrier-1",
+        carrierName: "Transportadora Teste",
+        paymentTermId: "term-7-14-21",
+        paymentMethodId: "method-boleto",
+        paymentMethodName: "Boleto"
+      });
+      expect(listOpenWeighingOperations(database)[0].paymentMethodName).toBe("Boleto");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("edits every commercial field of an operation in progress", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      insertEditCatalog(database);
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      expect(operation.unitPriceCents).toBe(12_000);
+
+      const updated = updateWeighingOperationDetails(database, {
+        operationId: operation.id,
+        productId: "product-2",
+        vehicleId: "vehicle-2",
+        driverId: "driver-2",
+        carrierId: "carrier-1",
+        paymentMethodId: "method-boleto",
+        paymentTermId: "term-7-14-21",
+        operationType: "internal",
+        unitPriceCents: 18_500,
+        freightModality: "cif",
+        deductFreightFromCredit: true,
+        freight: {
+          payer: "quarry",
+          destination: "Obra do centro",
+          rule: {
+            id: "operation-freight",
+            name: "Frete da operacao",
+            type: "per_ton",
+            baseValueCents: 4_500,
+            unit: "ton"
+          }
+        }
+      });
+
+      expect(updated).toMatchObject({
+        productId: "product-2",
+        productDescription: "Brita 2",
+        vehicleId: "vehicle-2",
+        plate: "XYZ4E56",
+        driverId: "driver-2",
+        driverName: "Segundo Motorista",
+        carrierId: "carrier-1",
+        paymentTermId: "term-7-14-21",
+        paymentMethodId: "method-boleto",
+        operationType: "internal",
+        // Preco digitado vence a tabela; o desconto e recalculado contra o preco base.
+        unitPriceCents: 18_500,
+        freightModality: "cif",
+        deductFreightFromCredit: true
+      });
+      expect(JSON.parse(updated.freightJson ?? "{}")).toMatchObject({
+        payer: "quarry",
+        destination: "Obra do centro"
+      });
+
+      // A solicitacao de carga do carregador acompanha a edicao.
+      expect(
+        database
+          .prepare(
+            "SELECT plate, product_description, driver_name FROM loading_requests WHERE operation_id = ?"
+          )
+          .get(operation.id)
+      ).toMatchObject({
+        plate: "XYZ4E56",
+        product_description: "Brita 2",
+        driver_name: "Segundo Motorista"
+      });
+
+      // O frete so vira valor no fechamento (depende do peso liquido): 6,5 t x R$ 45,00.
+      const closed = closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500
+      });
+      expect(closed.freightTotalCents).toBe(29_250);
+      expect(closed.productTotalCents).toBe(120_250);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("keeps untouched fields and re-prices when only the product changes", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      insertEditCatalog(database);
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        carrierId: "carrier-1",
+        entryWeightKg: 12_000
+      });
+
+      const updated = updateWeighingOperationDetails(database, {
+        operationId: operation.id,
+        productId: "product-2"
+      });
+
+      // Sem preco digitado, trocar o produto re-precifica pela tabela (R$ 200,00/ton).
+      expect(updated.unitPriceCents).toBe(20_000);
+      expect(updated.carrierId).toBe("carrier-1");
+      expect(updated.vehicleId).toBe("vehicle-1");
+      expect(updated.operationType).toBe("invoice");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("replaces the manual installments when a payment term is chosen in the edit", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      insertEditCatalog(database);
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        manualInstallments: 4,
+        entryWeightKg: 12_000
+      });
+      expect(operation.paymentTermName).toBe("4 parcelas");
+
+      const updated = updateWeighingOperationDetails(database, {
+        operationId: operation.id,
+        paymentTermId: "term-7-14-21"
+      });
+
+      // O parcelamento manual vence a condicao na exibicao: sem limpa-lo, a condicao
+      // escolhida na edicao nao apareceria no cupom nem na lista.
+      expect(updated.paymentTermName).toBe("3 parcelas");
+      expect(
+        database
+          .prepare("SELECT manual_installments FROM weighing_operations WHERE id = ?")
+          .pluck()
+          .get(operation.id)
+      ).toBeNull();
+    } finally {
+      database.close();
+    }
+  });
+
+  it("clears the freight of an operation in progress", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000,
+        freightModality: "cif",
+        freight: {
+          payer: "quarry",
+          rule: {
+            id: "operation-freight",
+            name: "Frete da operacao",
+            type: "per_ton",
+            baseValueCents: 4_500,
+            unit: "ton"
+          }
+        }
+      });
+      expect(operation.freightJson).not.toBeNull();
+
+      const updated = updateWeighingOperationDetails(database, {
+        operationId: operation.id,
+        freight: null,
+        freightModality: "none"
+      });
+
+      expect(updated.freightJson).toBeNull();
+      expect(updated.freightModality).toBe("none");
+      expect(
+        closeWeighingOperation(database, { operationId: operation.id, exitWeightKg: 18_500 })
+          .freightTotalCents
+      ).toBe(0);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("refuses to edit an operation that is no longer in progress", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, { operationId: operation.id, exitWeightKg: 18_500 });
+
+      expect(() =>
+        updateWeighingOperationDetails(database, {
+          operationId: operation.id,
+          unitPriceCents: 9_900
+        })
+      ).toThrow("Somente operacoes em andamento");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("refuses a plate that already has another operation in progress", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      insertEditCatalog(database);
+
+      const first = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-2",
+        driverId: "driver-2",
+        productId: "product-1",
+        entryWeightKg: 11_000
+      });
+
+      expect(() =>
+        updateWeighingOperationDetails(database, {
+          operationId: first.id,
+          vehicleId: "vehicle-2"
+        })
+      ).toThrow("Ja existe uma operacao aberta para a placa XYZ4E56");
+    } finally {
+      database.close();
+    }
+  });
+
   // A tela de Concluidas precisa dizer POR QUE a operacao nao foi ao OMIE e quais campos
   // do cadastro corrigir — antes so aparecia "Cadastro incompleto" sem apontar o campo.
   it("getOperationOmieIssue aponta o CNPJ/CPF que falta quando o cliente nao existe no OMIE", () => {
@@ -2482,4 +3200,206 @@ function insertCatalog(
       ) VALUES ('default-price-1', 'company-1', 'product-1', 12000, 'ton', ?, ?)`
     )
     .run(now, now);
+}
+
+describe("limpeza em lote das concluidas", () => {
+  it("limpa as concluidas ate a data informada e preserva o dia corrente", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+
+      const antiga = createSimulatedWeighingOperation(database, {
+        identity,
+        customerName: "Cliente Teste",
+        plate: "ABC1D23",
+        driverName: "Motorista Teste",
+        productDescription: "Brita 1",
+        entryWeightKg: 12_000
+      });
+      const hoje = createSimulatedWeighingOperation(database, {
+        identity,
+        customerName: "Cliente Teste",
+        plate: "ABC1D23",
+        driverName: "Motorista Teste",
+        productDescription: "Brita 1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, { operationId: antiga.id, exitWeightKg: 18_500 });
+      closeWeighingOperation(database, { operationId: hoje.id, exitWeightKg: 18_500 });
+      database
+        .prepare(
+          "UPDATE weighing_operations SET created_at = '2026-07-20T10:00:00.000Z' WHERE id = ?"
+        )
+        .run(antiga.id);
+
+      const removidas = clearClosedWeighingOperations(database, { untilDate: "2026-07-31" });
+
+      expect(removidas).toBe(1);
+      const restantes = listClosedWeighingOperations(database).map((operation) => operation.id);
+      expect(restantes).toEqual([hoje.id]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("limpa todas as concluidas quando nao ha data limite", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      const operation = createSimulatedWeighingOperation(database, {
+        identity,
+        customerName: "Cliente Teste",
+        plate: "ABC1D23",
+        driverName: "Motorista Teste",
+        productDescription: "Brita 1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, { operationId: operation.id, exitWeightKg: 18_500 });
+
+      expect(clearClosedWeighingOperations(database)).toBe(1);
+      expect(listClosedWeighingOperations(database)).toHaveLength(0);
+      // Segunda passada nao encontra mais nada (a exclusao e logica e idempotente).
+      expect(clearClosedWeighingOperations(database)).toBe(0);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("nao toca nas operacoes abertas", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      const aberta = createSimulatedWeighingOperation(database, {
+        identity,
+        customerName: "Cliente Teste",
+        plate: "ABC1D23",
+        driverName: "Motorista Teste",
+        productDescription: "Brita 1",
+        entryWeightKg: 12_000
+      });
+
+      expect(clearClosedWeighingOperations(database)).toBe(0);
+      const row = database
+        .prepare("SELECT deleted_at FROM weighing_operations WHERE id = ?")
+        .get(aberta.id) as { deleted_at: string | null };
+      expect(row.deleted_at).toBeNull();
+    } finally {
+      database.close();
+    }
+  });
+});
+
+/**
+ * Segundo conjunto de cadastros (produto, placa, motorista, transportadora, forma e
+ * condicao de pagamento) para exercitar a edicao completa da operacao: todo campo
+ * editavel precisa de uma alternativa valida para onde apontar.
+ */
+function insertEditCatalog(database: DesktopDatabase): void {
+  const now = "2026-06-06T12:00:00.000Z";
+  database
+    .prepare(
+      `INSERT INTO products (
+        id, company_id, omie_product_id, code, description, unit, unit_price_cents, item_type, created_at, updated_at
+      ) VALUES ('product-2', 'company-1', 456, 'BRITA2', 'Brita 2', 'ton', 22000, '04 - Produtos Acabados', ?, ?)`
+    )
+    .run(now, now);
+  database
+    .prepare(
+      `INSERT INTO product_default_prices (
+        id, company_id, product_id, unit_price_cents, unit, created_at, updated_at
+      ) VALUES ('default-price-2', 'company-1', 'product-2', 20000, 'ton', ?, ?)`
+    )
+    .run(now, now);
+  database
+    .prepare(
+      "INSERT INTO vehicles (id, company_id, plate, created_at, updated_at) VALUES ('vehicle-2', 'company-1', 'XYZ4E56', ?, ?)"
+    )
+    .run(now, now);
+  database
+    .prepare(
+      "INSERT INTO drivers (id, company_id, name, created_at, updated_at) VALUES ('driver-2', 'company-1', 'Segundo Motorista', ?, ?)"
+    )
+    .run(now, now);
+  database
+    .prepare(
+      `INSERT INTO carriers (id, company_id, omie_customer_id, name, source, created_at, updated_at)
+       VALUES ('carrier-1', 'company-1', 987654, 'Transportadora Teste', 'omie', ?, ?)`
+    )
+    .run(now, now);
+  database
+    .prepare(
+      `INSERT INTO payment_methods (id, company_id, code, name, omie_code, is_system, is_customer_credit, sort_order, is_active, created_at, updated_at)
+       VALUES ('method-boleto', 'company-1', 'boleto', 'Boleto', '15', 1, 0, 5, 1, ?, ?)`
+    )
+    .run(now, now);
+  database
+    .prepare(
+      `INSERT INTO payment_terms (
+         id, company_id, name, rules_json, first_installment_days, installment_interval_days,
+         installment_count, installment_days_json, created_at, updated_at
+       ) VALUES ('term-7-14-21', 'company-1', '3 parcelas', '{"raw":"7/14/21"}', 7, 7, 3, '[7,14,21]', ?, ?)`
+    )
+    .run(now, now);
+}
+
+/**
+ * Saldo vindo do financeiro do OMIE (adiantamento espelhado). E a unica forma de
+ * o cliente ter credito: o KyberRock nao lanca credito.
+ */
+function seedOmieAdvance(
+  database: DesktopDatabase,
+  companyId: string,
+  amountCents: number,
+  id = "omie-adv-seed"
+): void {
+  database
+    .prepare(
+      `INSERT INTO customer_credit_movements (
+        id, company_id, customer_id, operation_id, movement_type, amount_cents,
+        balance_after_cents, reason, source, omie_title_id, created_at
+      ) VALUES (?, ?, 'customer-1', NULL, 'credit', ?, ?, 'Adiantamento OMIE', 'omie', 7001, ?)`
+    )
+    .run(id, companyId, amountCents, amountCents, "2026-07-20T10:00:00.000Z");
+  recalculateCreditBalance(database);
+}
+
+/** Movimento local herdado (de quando o desktop ainda lancava credito). */
+function seedLocalCredit(
+  database: DesktopDatabase,
+  companyId: string,
+  amountCents: number,
+  id = "local-credit-seed"
+): void {
+  database
+    .prepare(
+      `INSERT INTO customer_credit_movements (
+        id, company_id, customer_id, operation_id, movement_type, amount_cents,
+        balance_after_cents, reason, source, omie_title_id, created_at
+      ) VALUES (?, ?, 'customer-1', NULL, 'manual_adjustment', ?, ?, 'lancamento antigo', 'local', NULL, ?)`
+    )
+    .run(id, companyId, amountCents, amountCents, "2026-07-21T10:00:00.000Z");
+  recalculateCreditBalance(database);
+}
+
+function recalculateCreditBalance(database: DesktopDatabase): void {
+  database
+    .prepare(
+      `INSERT INTO customer_credit_balances (customer_id, balance_cents, updated_at)
+       VALUES ('customer-1', (
+         SELECT COALESCE(SUM(
+           CASE WHEN movement_type IN ('debit_product', 'debit_freight')
+             THEN -amount_cents ELSE amount_cents END
+         ), 0) FROM customer_credit_movements WHERE customer_id = 'customer-1'
+       ), '2026-07-21T10:00:00.000Z')
+       ON CONFLICT(customer_id) DO UPDATE SET
+         balance_cents = excluded.balance_cents,
+         updated_at = excluded.updated_at`
+    )
+    .run();
 }

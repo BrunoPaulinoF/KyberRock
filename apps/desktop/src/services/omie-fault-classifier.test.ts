@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   isCadastroIncompleteFault,
+  isOmieCustomerRegistrationFault,
   isOmieMissingDocumentFault,
   isOmieProtectedRecordFault
 } from "./omie-fault-classifier.js";
@@ -78,5 +79,39 @@ describe("isOmieMissingDocumentFault", () => {
     expect(isOmieMissingDocumentFault("Request timeout")).toBe(false);
     expect(isOmieMissingDocumentFault("cnpj_cpf invalido")).toBe(false);
     expect(isOmieMissingDocumentFault("")).toBe(false);
+  });
+});
+
+describe("isOmieCustomerRegistrationFault", () => {
+  it("matches the customer registration refusals raised by the omie-sync edge", () => {
+    expect(
+      isOmieCustomerRegistrationFault(
+        "Cadastro do cliente recusado pelo OMIE (Pedreira LTDA). Falta preencher: E-mail. " +
+          "Complete o cadastro do cliente e reenvie. Detalhe OMIE: ERROR: O preenchimento da tag [email] é obrigatório!"
+      )
+    ).toBe(true);
+    expect(
+      isOmieCustomerRegistrationFault(
+        "Cadastro do cliente recusado pelo OMIE. Cliente sem codigo OMIE e sem dados de cadastro para criar no OMIE: informe o CNPJ/CPF do cliente e reenvie."
+      )
+    ).toBe(true);
+    // Fluxo antigo (desktop novo com edge ainda nao implantado).
+    expect(
+      isOmieCustomerRegistrationFault(
+        "Cliente sem codigo OMIE e sem dados de cadastro para criar no OMIE."
+      )
+    ).toBe(true);
+    expect(
+      isOmieCustomerRegistrationFault("ERROR: O preenchimento da tag [cnpj_cpf] e obrigatorio!")
+    ).toBe(true);
+  });
+
+  it("does not match transient errors nor failures of the order itself", () => {
+    expect(isOmieCustomerRegistrationFault("OMIE offline, tente novamente")).toBe(false);
+    expect(isOmieCustomerRegistrationFault("HTTP 503 Service Unavailable")).toBe(false);
+    // Recusa da OS (campo do servico, nao do cliente): segue no retry normal.
+    expect(isOmieCustomerRegistrationFault("ERROR: - tag: [cCodServMun]")).toBe(false);
+    expect(isOmieCustomerRegistrationFault("OMIE nao retornou orderId")).toBe(false);
+    expect(isOmieCustomerRegistrationFault("")).toBe(false);
   });
 });

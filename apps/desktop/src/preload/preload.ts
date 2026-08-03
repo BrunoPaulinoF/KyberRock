@@ -24,6 +24,8 @@ const desktopApi = {
   checkForUpdates: () => ipcRenderer.invoke("desktop:check-for-updates"),
   downloadAndInstallUpdate: () => ipcRenderer.invoke("desktop:download-and-install-update"),
   listOpenWeighingOperations: () => ipcRenderer.invoke("desktop:list-open-weighing-operations"),
+  getCustomerLastEntryPreferences: (customerId: string) =>
+    ipcRenderer.invoke("desktop:customer-last-entry-preferences", customerId),
   pullLoaderCompletions: () => ipcRenderer.invoke("desktop:pull-loader-completions"),
   listUnitDevices: () => ipcRenderer.invoke("desktop:list-unit-devices"),
   pullCloudNow: () => ipcRenderer.invoke("desktop:pull-cloud-now"),
@@ -34,6 +36,8 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:operation-omie-issue", operationId),
   clearCanceledWeighingOperations: () =>
     ipcRenderer.invoke("desktop:clear-canceled-weighing-operations"),
+  clearClosedWeighingOperations: (options?: { untilDate?: string }) =>
+    ipcRenderer.invoke("desktop:clear-closed-weighing-operations", options),
   deleteClosedWeighingOperation: (operationId: string) =>
     ipcRenderer.invoke("desktop:delete-closed-weighing-operation", operationId),
   startWeighing: (input: unknown) => ipcRenderer.invoke("desktop:start-weighing", input),
@@ -47,14 +51,23 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:update-weighing-customer", operationId, newCustomerId),
   updateWeighingCarrier: (operationId: string, newCarrierId: string | null) =>
     ipcRenderer.invoke("desktop:update-weighing-carrier", operationId, newCarrierId),
+  updateWeighingOperation: (input: unknown) =>
+    ipcRenderer.invoke("desktop:update-weighing-operation", input),
   getCustomerFreightRules: (customerId: string) =>
     ipcRenderer.invoke("desktop:get-customer-freight-rules", customerId),
-  getCustomerFreightForProduct: (customerId: string, productId: string) =>
-    ipcRenderer.invoke("desktop:get-customer-freight-for-product", customerId, productId),
+  getCustomerFreightForProduct: (customerId: string, productId: string, modality?: string | null) =>
+    ipcRenderer.invoke(
+      "desktop:get-customer-freight-for-product",
+      customerId,
+      productId,
+      modality ?? null
+    ),
   setCustomerFreightRule: (input: unknown) =>
     ipcRenderer.invoke("desktop:set-customer-freight-rule", input),
   removeCustomerFreightRule: (ruleId: string) =>
     ipcRenderer.invoke("desktop:remove-customer-freight-rule", ruleId),
+  removeCustomerFreightModality: (ruleId: string, modality: string) =>
+    ipcRenderer.invoke("desktop:remove-customer-freight-modality", ruleId, modality),
   listWindowsPrinters: () => ipcRenderer.invoke("desktop:list-windows-printers"),
   configureReceiptPrintProfile: (input: unknown) =>
     ipcRenderer.invoke("desktop:configure-receipt-print-profile", input),
@@ -87,13 +100,7 @@ const desktopApi = {
     endDate: string,
     periodLabel?: string
   ) =>
-    ipcRenderer.invoke(
-      "desktop:get-customer-report",
-      customerId,
-      startDate,
-      endDate,
-      periodLabel
-    ),
+    ipcRenderer.invoke("desktop:get-customer-report", customerId, startDate, endDate, periodLabel),
   exportCustomerReport: (
     customerId: string,
     startDate: string,
@@ -173,12 +180,16 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:customer-credit-balance", customerId),
   customerCreditSummary: (customerId: string) =>
     ipcRenderer.invoke("desktop:customer-credit-summary", customerId),
-  customerCreditPayment: (customerId: string, amountCents: number, reason?: string) =>
-    ipcRenderer.invoke("desktop:customer-credit-payment", customerId, amountCents, reason),
-  customerCreditAdjust: (customerId: string, amountCents: number, reason: string) =>
-    ipcRenderer.invoke("desktop:customer-credit-adjust", customerId, amountCents, reason),
   customerCreditMovements: (customerId: string, limit?: number) =>
     ipcRenderer.invoke("desktop:customer-credit-movements", customerId, limit),
+  customerCreditSyncAdvances: (options?: { fullRescan?: boolean }) =>
+    ipcRenderer.invoke("desktop:customer-credit-sync-advances", options),
+  omieAdvanceConfigGet: () => ipcRenderer.invoke("desktop:omie-advance-config-get"),
+  omieAdvanceConfigSet: (patch: {
+    categoryCodes?: string[];
+    accountCode?: number | null;
+    accountName?: string | null;
+  }) => ipcRenderer.invoke("desktop:omie-advance-config-set", patch),
   quotationsCreate: (input: unknown) => ipcRenderer.invoke("desktop:quotations-create", input),
   quotationsCancel: (id: string) => ipcRenderer.invoke("desktop:quotations-cancel", id),
   quotationsListOpenForCustomer: (customerId: string) =>
@@ -197,11 +208,15 @@ const desktopApi = {
   // atualizacao restrita (ativar/desativar, apelido, vinculo forma -> conta).
   paymentMethodsUpdate: (id: string, input: unknown) =>
     ipcRenderer.invoke("desktop:payment-methods-update", id, input),
+  // Carteira: vendas "em carteira" e o fechamento que define a forma de recebimento.
+  walletReport: (query: unknown) => ipcRenderer.invoke("desktop:wallet-report", query),
+  walletSettle: (input: unknown) => ipcRenderer.invoke("desktop:wallet-settle", input),
+  walletReopen: (operationIds: string[]) =>
+    ipcRenderer.invoke("desktop:wallet-reopen", operationIds),
   accountsList: () => ipcRenderer.invoke("desktop:accounts-list"),
   accountsUpdate: (id: string, input: unknown) =>
     ipcRenderer.invoke("desktop:accounts-update", id, input),
-  paymentTermsCreate: (input: unknown) =>
-    ipcRenderer.invoke("desktop:payment-terms-create", input),
+  paymentTermsCreate: (input: unknown) => ipcRenderer.invoke("desktop:payment-terms-create", input),
   paymentTermsUpdate: (id: string, input: unknown) =>
     ipcRenderer.invoke("desktop:payment-terms-update", id, input),
   paymentTermsDelete: (id: string) => ipcRenderer.invoke("desktop:payment-terms-delete", id),

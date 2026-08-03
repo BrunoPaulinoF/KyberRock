@@ -136,9 +136,9 @@ function mapOmieProductRaw(item: OmieProductRaw): Product | null {
   if (!Number.isFinite(productId)) return null;
 
   const unitPrice = toNumber(pickFirst(item.valor_unitario, item.valorUnitario));
-  const recommendations = (item.recomendacoes_fiscais ?? item.recomendacoesFiscais ?? null) as
-    | Record<string, unknown>
-    | null;
+  const recommendations = (item.recomendacoes_fiscais ??
+    item.recomendacoesFiscais ??
+    null) as Record<string, unknown> | null;
   const icmsOriginFromRecommendations = recommendations
     ? typeof recommendations.origem_mercadoria === "string"
       ? recommendations.origem_mercadoria
@@ -156,7 +156,11 @@ function mapOmieProductRaw(item: OmieProductRaw): Product | null {
   };
 
   assign(product, "code", pickFirst(item.codigo));
-  assign(product, "integrationCode", pickFirst(item.codigo_produto_integracao, item.codigoProdutoIntegracao));
+  assign(
+    product,
+    "integrationCode",
+    pickFirst(item.codigo_produto_integracao, item.codigoProdutoIntegracao)
+  );
   assign(product, "detailedDescription", pickFirst(item.descr_detalhada, item.descrDetalhada));
   assign(product, "unit", pickFirst(item.unidade));
   assign(product, "ncm", pickFirst(item.ncm));

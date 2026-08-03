@@ -56,8 +56,7 @@ function extractRows(response: Record<string, unknown>): OmiePaymentMethodRaw[] 
 
 function mapPaymentMethodRaw(item: OmiePaymentMethodRaw): OmiePaymentMethod | null {
   if (!item || typeof item !== "object") return null;
-  const code =
-    typeof item.codigo === "number" ? String(item.codigo) : (item.codigo ?? "").trim();
+  const code = typeof item.codigo === "number" ? String(item.codigo) : (item.codigo ?? "").trim();
   const description = (item.descricao ?? "").trim();
   if (!code || !description) return null;
   return {

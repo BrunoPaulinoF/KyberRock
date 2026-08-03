@@ -44,9 +44,110 @@ interface Device {
   updatedAt: string;
 }
 
+/** Alvo da exclusao mostrado no modal de confirmacao. */
+export interface DeleteTarget {
+  type: "company" | "unit" | "user";
+  id: string;
+  name: string;
+  /** Preenchido quando type === "user": "Carregador" ou "Comercial". */
+  roleLabel?: string;
+}
+
+/**
+ * Texto do modal de confirmacao. A exclusao nao pede mais a senha do administrador (quem esta
+ * no dashboard ja passou pelo login), entao a mensagem precisa deixar explicito o efeito em
+ * cascata antes do clique final.
+ */
+export function buildDeleteConfirmationMessage(target: DeleteTarget): string {
+  if (target.type === "company") {
+    return `Tem certeza que deseja excluir a pedreira "${target.name}"? Todas as unidades, usuarios e dispositivos vinculados serao excluidos tambem.`;
+  }
+  if (target.type === "unit") {
+    return `Tem certeza que deseja excluir a unidade "${target.name}"? Os usuarios e dispositivos vinculados a ela serao excluidos tambem.`;
+  }
+  const role = target.roleLabel ? `${target.roleLabel.toLowerCase()} ` : "";
+  return `Tem certeza que deseja excluir o usuario ${role}"${target.name}"? O acesso dele ao sistema sera removido.`;
+}
+
+/** Acao/payload do admin-api correspondente ao alvo. */
+export function buildDeleteRequest(target: DeleteTarget): {
+  action: string;
+  payload: Record<string, string>;
+} {
+  if (target.type === "company") {
+    return { action: "delete_company", payload: { companyId: target.id } };
+  }
+  if (target.type === "unit") {
+    return { action: "delete_unit", payload: { unitId: target.id } };
+  }
+  return { action: "delete_loader", payload: { userId: target.id } };
+}
+
 const TWO_COLUMN_GRID = "repeat(auto-fit, minmax(min(100%, 320px), 1fr))";
 const COMPACT_GRID = "repeat(auto-fit, minmax(min(100%, 240px), 1fr))";
 const MODAL_Z_INDEX = 1200;
+
+/**
+ * Campo de senha exibido em texto claro por padrao. O admin cadastra a senha do carregador e
+ * precisa conferir/anotar o que digitou antes de repassar — mascarar so gerava senha errada e
+ * usuario sem acesso. O botao esconde o valor quando houver alguem olhando a tela.
+ *
+ * Vale para senha nova: o Auth guarda apenas o hash, entao a senha de um usuario ja cadastrado
+ * nao pode ser exibida por lugar nenhum. Para saber a senha de alguem, redefina-a.
+ */
+function PasswordField({
+  name,
+  placeholder,
+  required = false,
+  minLength,
+  maxLength,
+  autoFocus = false
+}: {
+  name: string;
+  placeholder: string;
+  required?: boolean;
+  minLength?: number;
+  maxLength?: number;
+  autoFocus?: boolean;
+}) {
+  const [isVisible, setIsVisible] = useState(true);
+  return (
+    <div style={{ display: "flex", gap: "8px", alignItems: "stretch" }}>
+      <input
+        name={name}
+        type={isVisible ? "text" : "password"}
+        placeholder={placeholder}
+        required={required}
+        minLength={minLength}
+        maxLength={maxLength}
+        autoFocus={autoFocus}
+        autoComplete="off"
+        style={{
+          flex: 1,
+          minWidth: 0,
+          padding: "10px",
+          borderRadius: "8px",
+          border: "1px solid #cbd5e1"
+        }}
+      />
+      <button
+        type="button"
+        onClick={() => setIsVisible((visible) => !visible)}
+        style={{
+          padding: "0 12px",
+          borderRadius: "8px",
+          border: "1px solid #cbd5e1",
+          background: "#f8fafc",
+          cursor: "pointer",
+          fontSize: "12px",
+          whiteSpace: "nowrap"
+        }}
+      >
+        {isVisible ? "Ocultar" : "Mostrar"}
+      </button>
+    </div>
+  );
+}
 
 /**
  * Copia o codigo de ativacao com feedback fiel. navigator.clipboard e undefined em contexto nao
@@ -82,12 +183,9 @@ export function AdminDashboard() {
   const [generatedCode, setGeneratedCode] = useState<string | null>(null);
   const [editingCompany, setEditingCompany] = useState<Company | null>(null);
   const [editingUnit, setEditingUnit] = useState<Unit | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<{
-    type: "company" | "unit";
-    id: string;
-    name: string;
-  } | null>(null);
-  const [confirmPassword, setConfirmPassword] = useState("");
+  const [resettingPasswordUser, setResettingPasswordUser] = useState<LoaderUser | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<DeleteTarget | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -306,6 +404,49 @@ export function AdminDashboard() {
     }
   }
 
+  /**
+   * Move o usuario para outra unidade. A pedreira do perfil acompanha a unidade escolhida no
+   * servidor, entao trocar para uma unidade de outra pedreira tambem funciona.
+   */
+  async function handleChangeUserUnit(userId: string, unitId: string): Promise<void> {
+    if (!unitId) return;
+    try {
+      await callAdminFunction("admin-api", {
+        action: "update_loader_unit",
+        payload: { userId, unitId }
+      });
+      await loadData();
+    } catch (error) {
+      if (!handleAdminError(error)) {
+        console.error("Error changing user unit:", error);
+        alert(error instanceof Error ? error.message : "Erro ao mudar a unidade do usuario");
+      }
+    }
+  }
+
+  async function handleResetPassword(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!resettingPasswordUser) return;
+    const formData = new FormData(event.currentTarget);
+    const password = String(formData.get("password") ?? "");
+    try {
+      await callAdminFunction("admin-api", {
+        action: "update_loader_password",
+        payload: { userId: resettingPasswordUser.id, password }
+      });
+      setResettingPasswordUser(null);
+      alert("Senha atualizada.");
+    } catch (error) {
+      if (!handleAdminError(error)) {
+        console.error("Error resetting password:", error);
+        alert(
+          "Erro ao redefinir a senha: " +
+            (error instanceof Error ? error.message : "Erro desconhecido")
+        );
+      }
+    }
+  }
+
   async function handleGenerateActivationCode(companyId: string): Promise<void> {
     try {
       const result = await callAdminFunction<{ code: string }>("admin-api", {
@@ -351,32 +492,21 @@ export function AdminDashboard() {
     }
   }
 
-  async function handleDeleteCompany(company: Company) {
-    setConfirmDelete({ type: "company", id: company.id, name: company.name });
-    setConfirmPassword("");
-  }
-
-  async function handleConfirmDelete(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!confirmDelete) return;
+  async function handleConfirmDelete() {
+    if (!confirmDelete || isDeleting) return;
+    setIsDeleting(true);
     try {
-      if (confirmDelete.type === "company") {
-        await callAdminFunction("admin-api", {
-          action: "delete_company",
-          payload: { companyId: confirmDelete.id, adminPassword: confirmPassword }
-        });
-      } else {
-        await callAdminFunction("admin-api", {
-          action: "delete_unit",
-          payload: { unitId: confirmDelete.id, adminPassword: confirmPassword }
-        });
-      }
+      const { action, payload } = buildDeleteRequest(confirmDelete);
+      await callAdminFunction("admin-api", { action, payload });
       setConfirmDelete(null);
-      setConfirmPassword("");
       await loadData();
     } catch (error) {
-      console.error("Error deleting:", error);
-      alert("Erro ao excluir: " + (error instanceof Error ? error.message : "Erro desconhecido"));
+      if (!handleAdminError(error)) {
+        console.error("Error deleting:", error);
+        alert("Erro ao excluir: " + (error instanceof Error ? error.message : "Erro desconhecido"));
+      }
+    } finally {
+      setIsDeleting(false);
     }
   }
 
@@ -509,12 +639,75 @@ export function AdminDashboard() {
                   >
                     {user.isActive ? "Bloquear" : "Liberar"}
                   </button>
+                  <button
+                    onClick={() => setResettingPasswordUser(user)}
+                    style={{
+                      padding: "6px 12px",
+                      borderRadius: "6px",
+                      border: "1px solid #e2e8f0",
+                      background: "#f8fafc",
+                      cursor: "pointer",
+                      fontSize: "12px"
+                    }}
+                  >
+                    Senha
+                  </button>
+                  <button
+                    onClick={() =>
+                      setConfirmDelete({
+                        type: "user",
+                        id: user.id,
+                        name: user.name,
+                        roleLabel
+                      })
+                    }
+                    style={{
+                      padding: "6px 12px",
+                      borderRadius: "6px",
+                      border: "1px solid #fecaca",
+                      background: "#fef2f2",
+                      cursor: "pointer",
+                      fontSize: "12px",
+                      color: "#dc2626"
+                    }}
+                  >
+                    Excluir
+                  </button>
                 </div>
               </div>
-              <p style={{ margin: "8px 0 0 0", fontSize: "12px", color: "#64748b" }}>
-                Pedreira: {companies.find((c) => c.id === user.companyId)?.name || "N/A"} | Unidade:{" "}
-                {units.find((u) => u.id === user.unitId)?.name || "N/A"}
-              </p>
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  flexWrap: "wrap",
+                  margin: "8px 0 0 0",
+                  fontSize: "12px",
+                  color: "#475569"
+                }}
+              >
+                Unidade:
+                <select
+                  value={user.unitId}
+                  onChange={(event) => void handleChangeUserUnit(user.id, event.target.value)}
+                  style={{
+                    padding: "4px 8px",
+                    borderRadius: "6px",
+                    border: "1px solid #cbd5e1",
+                    fontSize: "12px"
+                  }}
+                >
+                  {!units.some((u) => u.id === user.unitId) && (
+                    <option value={user.unitId}>Unidade removida</option>
+                  )}
+                  {units.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.name}
+                      {` — ${companies.find((c) => c.id === u.companyId)?.name ?? ""}`}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
           ))}
         </article>
@@ -545,14 +738,7 @@ export function AdminDashboard() {
               required
               style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
             />
-            <input
-              name="password"
-              type="password"
-              placeholder="Senha"
-              required
-              minLength={6}
-              style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
-            />
+            <PasswordField name="password" placeholder="Senha" required minLength={6} />
             <select
               name="unitId"
               required
@@ -710,21 +896,89 @@ export function AdminDashboard() {
           >
             <h3 style={{ margin: "0 0 12px 0", color: "#dc2626" }}>Confirmar exclusao</h3>
             <p style={{ margin: "0 0 16px 0", fontSize: "14px", color: "#64748b" }}>
-              {confirmDelete.type === "company"
-                ? `Tem certeza que deseja excluir a empresa "${confirmDelete.name}"? Todas as unidades vinculadas serao excluidas tambem.`
-                : `Tem certeza que deseja excluir a unidade "${confirmDelete.name}"?`}
+              {buildDeleteConfirmationMessage(confirmDelete)}
+            </p>
+            <p style={{ margin: "0 0 16px 0", fontSize: "13px", color: "#b91c1c" }}>
+              Esta acao nao pode ser desfeita.
+            </p>
+            <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
+              <button
+                type="button"
+                onClick={() => void handleConfirmDelete()}
+                disabled={isDeleting}
+                style={{
+                  flex: 1,
+                  padding: "10px",
+                  borderRadius: "8px",
+                  border: "none",
+                  background: isDeleting ? "#f87171" : "#dc2626",
+                  color: "#fff",
+                  cursor: isDeleting ? "not-allowed" : "pointer",
+                  fontWeight: 700
+                }}
+              >
+                {isDeleting ? "Excluindo..." : "Confirmar exclusao"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(null)}
+                disabled={isDeleting}
+                style={{
+                  flex: 1,
+                  padding: "10px",
+                  borderRadius: "8px",
+                  border: "1px solid #cbd5e1",
+                  background: "#fff",
+                  cursor: isDeleting ? "not-allowed" : "pointer"
+                }}
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reset Password Modal */}
+      {resettingPasswordUser && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: "rgba(0,0,0,0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: MODAL_Z_INDEX
+          }}
+        >
+          <div
+            style={{
+              background: "#fff",
+              padding: "24px",
+              borderRadius: "16px",
+              width: "100%",
+              maxWidth: "420px"
+            }}
+          >
+            <h3 style={{ margin: "0 0 8px 0" }}>Senha de {resettingPasswordUser.name}</h3>
+            <p style={{ margin: "0 0 16px 0", fontSize: "13px", color: "#64748b" }}>
+              {resettingPasswordUser.email}. A senha atual nao pode ser exibida — o Supabase Auth
+              guarda apenas o hash dela. Defina uma nova aqui e repasse ao usuario.
             </p>
             <form
-              onSubmit={handleConfirmDelete}
+              onSubmit={handleResetPassword}
               style={{ display: "flex", flexDirection: "column", gap: "12px" }}
             >
-              <input
-                type="password"
-                placeholder="Senha do administrador"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
+              <PasswordField
+                name="password"
+                placeholder="Nova senha"
                 required
-                style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
+                minLength={6}
+                autoFocus
               />
               <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
                 <button
@@ -734,20 +988,94 @@ export function AdminDashboard() {
                     padding: "10px",
                     borderRadius: "8px",
                     border: "none",
-                    background: "#dc2626",
+                    background: "#0f172a",
                     color: "#fff",
                     cursor: "pointer",
                     fontWeight: 700
                   }}
                 >
-                  Confirmar exclusao
+                  Salvar senha
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    setConfirmDelete(null);
-                    setConfirmPassword("");
+                  onClick={() => setResettingPasswordUser(null)}
+                  style={{
+                    flex: 1,
+                    padding: "10px",
+                    borderRadius: "8px",
+                    border: "1px solid #cbd5e1",
+                    background: "#fff",
+                    cursor: "pointer"
                   }}
+                >
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Unit Modal */}
+      {editingUnit && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: "rgba(0,0,0,0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: MODAL_Z_INDEX
+          }}
+        >
+          <div
+            style={{
+              background: "#fff",
+              padding: "24px",
+              borderRadius: "16px",
+              width: "100%",
+              maxWidth: "400px"
+            }}
+          >
+            <h3 style={{ margin: "0 0 16px 0" }}>Editar Unidade</h3>
+            <form
+              onSubmit={handleUpdateUnit}
+              style={{ display: "flex", flexDirection: "column", gap: "12px" }}
+            >
+              <input
+                name="name"
+                defaultValue={editingUnit.name}
+                placeholder="Nome da unidade"
+                required
+                style={{
+                  padding: "10px",
+                  borderRadius: "8px",
+                  border: "1px solid #cbd5e1"
+                }}
+              />
+              <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
+                <button
+                  type="submit"
+                  style={{
+                    flex: 1,
+                    padding: "10px",
+                    borderRadius: "8px",
+                    border: "none",
+                    background: "#0f172a",
+                    color: "#fff",
+                    cursor: "pointer",
+                    fontWeight: 700
+                  }}
+                >
+                  Salvar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditingUnit(null)}
                   style={{
                     flex: 1,
                     padding: "10px",
@@ -772,263 +1100,344 @@ export function AdminDashboard() {
           {activeTab === "companies" && (
             <section style={{ display: "grid", gridTemplateColumns: TWO_COLUMN_GRID, gap: "24px" }}>
               {/* Companies List */}
-              <article style={{ background: "#fff", padding: "24px", borderRadius: "16px" }}>
-                <h2 style={{ margin: "0 0 16px 0" }}>Empresas</h2>
-                {filteredCompanies.length === 0 && (
-                  <p style={{ color: "#64748b" }}>Nenhuma empresa cadastrada.</p>
-                )}
-                {filteredCompanies.map((company) => (
-                  <div
-                    key={company.id}
-                    style={{ padding: "12px 0", borderBottom: "1px solid #e2e8f0" }}
-                  >
+              <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+                <article style={{ background: "#fff", padding: "24px", borderRadius: "16px" }}>
+                  <h2 style={{ margin: "0 0 16px 0" }}>Empresas</h2>
+                  {filteredCompanies.length === 0 && (
+                    <p style={{ color: "#64748b" }}>Nenhuma empresa cadastrada.</p>
+                  )}
+                  {filteredCompanies.map((company) => (
                     <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center"
-                      }}
+                      key={company.id}
+                      style={{ padding: "12px 0", borderBottom: "1px solid #e2e8f0" }}
                     >
-                      <div>
-                        <strong>{company.name}</strong>
-                        <p style={{ margin: "2px 0 0 0", fontSize: "14px", color: "#64748b" }}>
-                          {company.legalName}
-                        </p>
-                        <p style={{ margin: "2px 0 0 0", fontSize: "12px", color: "#b91c1c" }}>
-                          {company.isActive
-                            ? "Desativar a empresa bloqueia o acesso de todos os desktops."
-                            : "Ativar a empresa libera o acesso de todos os desktops."}
-                        </p>
-                      </div>
-                      <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                        <span
-                          style={{
-                            padding: "4px 8px",
-                            borderRadius: "6px",
-                            fontSize: "12px",
-                            background: company.isActive ? "#dcfce7" : "#fee2e2",
-                            color: company.isActive ? "#166534" : "#991b1b"
-                          }}
-                        >
-                          {company.isActive ? "Ativa" : "Inativa"}
-                        </span>
-                        <button
-                          onClick={() => handleToggleCompany(company.id, company.isActive)}
-                          style={{
-                            padding: "6px 12px",
-                            borderRadius: "6px",
-                            border: "1px solid #cbd5e1",
-                            background: "#fff",
-                            cursor: "pointer",
-                            fontSize: "12px"
-                          }}
-                        >
-                          {company.isActive ? "Desativar" : "Ativar"}
-                        </button>
-                        <button
-                          onClick={() => setEditingCompany(company)}
-                          style={{
-                            padding: "6px 12px",
-                            borderRadius: "6px",
-                            border: "1px solid #e2e8f0",
-                            background: "#f8fafc",
-                            cursor: "pointer",
-                            fontSize: "12px"
-                          }}
-                        >
-                          Editar
-                        </button>
-                        <button
-                          onClick={() => handleDeleteCompany(company)}
-                          style={{
-                            padding: "6px 12px",
-                            borderRadius: "6px",
-                            border: "1px solid #fecaca",
-                            background: "#fef2f2",
-                            cursor: "pointer",
-                            fontSize: "12px",
-                            color: "#dc2626"
-                          }}
-                        >
-                          Excluir
-                        </button>
-                      </div>
-                    </div>
-                    <p style={{ margin: "8px 0 0 0", fontSize: "12px", color: "#64748b" }}>
-                      Unidades: {units.filter((u) => u.companyId === company.id).length}
-                    </p>
-                  </div>
-                ))}
-
-                {/* Edit Company Modal */}
-                {editingCompany && (
-                  <div
-                    style={{
-                      position: "fixed",
-                      top: 0,
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      background: "rgba(0,0,0,0.5)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      zIndex: MODAL_Z_INDEX
-                    }}
-                  >
-                    <div
-                      style={{
-                        background: "#fff",
-                        padding: "24px",
-                        borderRadius: "16px",
-                        width: "100%",
-                        maxWidth: "500px"
-                      }}
-                    >
-                      <h3 style={{ margin: "0 0 16px 0" }}>Editar Empresa</h3>
-                      <form
-                        onSubmit={handleUpdateCompany}
-                        style={{ display: "flex", flexDirection: "column", gap: "12px" }}
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center"
+                        }}
                       >
-                        <input
-                          name="name"
-                          defaultValue={editingCompany.name}
-                          placeholder="Nome fantasia"
-                          required
-                          style={{
-                            padding: "10px",
-                            borderRadius: "8px",
-                            border: "1px solid #cbd5e1"
-                          }}
-                        />
-                        <input
-                          name="legalName"
-                          defaultValue={editingCompany.legalName}
-                          placeholder="Razao social"
-                          required
-                          style={{
-                            padding: "10px",
-                            borderRadius: "8px",
-                            border: "1px solid #cbd5e1"
-                          }}
-                        />
-                        <input
-                          name="document"
-                          defaultValue={editingCompany.document}
-                          placeholder="CNPJ"
-                          style={{
-                            padding: "10px",
-                            borderRadius: "8px",
-                            border: "1px solid #cbd5e1"
-                          }}
-                        />
-                        <div
-                          style={{
-                            borderTop: "1px solid #e2e8f0",
-                            paddingTop: "12px",
-                            marginTop: "4px"
-                          }}
-                        >
-                          <strong style={{ fontSize: "13px", color: "#475569" }}>Token OMIE</strong>
-                          {editingCompany.omieAppKeyMasked ? (
-                            <p style={{ margin: "4px 0", fontSize: "12px", color: "#16a34a" }}>
-                              Configurado (App Key: {editingCompany.omieAppKeyMasked})
-                            </p>
-                          ) : (
-                            <p style={{ margin: "4px 0", fontSize: "12px", color: "#d97706" }}>
-                              Nao configurado. Os desktops nao conectam ao OMIE.
-                            </p>
-                          )}
-                          <input
-                            name="omieAppKey"
-                            placeholder="Novo App Key (deixe vazio para manter)"
-                            style={{
-                              padding: "10px",
-                              borderRadius: "8px",
-                              border: "1px solid #cbd5e1",
-                              marginTop: "8px"
-                            }}
-                          />
-                          <input
-                            name="omieAppSecret"
-                            type="password"
-                            placeholder="Novo App Secret (deixe vazio para manter)"
-                            style={{
-                              padding: "10px",
-                              borderRadius: "8px",
-                              border: "1px solid #cbd5e1",
-                              marginTop: "8px"
-                            }}
-                          />
-                          <small style={{ color: "#64748b" }}>
-                            Ao preencher, o app key/secret e atualizado. Para limpar, salve com
-                            campos vazios.
-                          </small>
-                        </div>
-                        <div
-                          style={{
-                            borderTop: "1px solid #e2e8f0",
-                            paddingTop: "12px",
-                            marginTop: "4px"
-                          }}
-                        >
-                          <strong style={{ fontSize: "13px", color: "#475569" }}>
-                            Senha para alterar precos
-                          </strong>
-                          <p style={{ margin: "4px 0", fontSize: "12px", color: "#64748b" }}>
-                            Senha de 4 digitos que o operador deve informar no desktop para alterar
-                            precos padrao.
+                        <div>
+                          <strong>{company.name}</strong>
+                          <p style={{ margin: "2px 0 0 0", fontSize: "14px", color: "#64748b" }}>
+                            {company.legalName}
                           </p>
-                          <input
-                            name="priceChangePassword"
-                            type="password"
-                            maxLength={4}
-                            placeholder="0000 (deixe vazio para manter)"
-                            style={{
-                              padding: "10px",
-                              borderRadius: "8px",
-                              border: "1px solid #cbd5e1",
-                              marginTop: "8px",
-                              width: "100%"
-                            }}
-                          />
+                          <p style={{ margin: "2px 0 0 0", fontSize: "12px", color: "#b91c1c" }}>
+                            {company.isActive
+                              ? "Desativar a empresa bloqueia o acesso de todos os desktops."
+                              : "Ativar a empresa libera o acesso de todos os desktops."}
+                          </p>
                         </div>
-                        <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
-                          <button
-                            type="submit"
+                        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                          <span
                             style={{
-                              flex: 1,
-                              padding: "10px",
-                              borderRadius: "8px",
-                              border: "none",
-                              background: "#0f172a",
-                              color: "#fff",
-                              cursor: "pointer",
-                              fontWeight: 700
+                              padding: "4px 8px",
+                              borderRadius: "6px",
+                              fontSize: "12px",
+                              background: company.isActive ? "#dcfce7" : "#fee2e2",
+                              color: company.isActive ? "#166534" : "#991b1b"
                             }}
                           >
-                            Salvar
-                          </button>
+                            {company.isActive ? "Ativa" : "Inativa"}
+                          </span>
                           <button
-                            type="button"
-                            onClick={() => setEditingCompany(null)}
+                            onClick={() => handleToggleCompany(company.id, company.isActive)}
                             style={{
-                              flex: 1,
-                              padding: "10px",
-                              borderRadius: "8px",
+                              padding: "6px 12px",
+                              borderRadius: "6px",
                               border: "1px solid #cbd5e1",
                               background: "#fff",
-                              cursor: "pointer"
+                              cursor: "pointer",
+                              fontSize: "12px"
                             }}
                           >
-                            Cancelar
+                            {company.isActive ? "Desativar" : "Ativar"}
+                          </button>
+                          <button
+                            onClick={() => setEditingCompany(company)}
+                            style={{
+                              padding: "6px 12px",
+                              borderRadius: "6px",
+                              border: "1px solid #e2e8f0",
+                              background: "#f8fafc",
+                              cursor: "pointer",
+                              fontSize: "12px"
+                            }}
+                          >
+                            Editar
+                          </button>
+                          <button
+                            onClick={() =>
+                              setConfirmDelete({
+                                type: "company",
+                                id: company.id,
+                                name: company.name
+                              })
+                            }
+                            style={{
+                              padding: "6px 12px",
+                              borderRadius: "6px",
+                              border: "1px solid #fecaca",
+                              background: "#fef2f2",
+                              cursor: "pointer",
+                              fontSize: "12px",
+                              color: "#dc2626"
+                            }}
+                          >
+                            Excluir
                           </button>
                         </div>
-                      </form>
+                      </div>
+                      <p style={{ margin: "8px 0 0 0", fontSize: "12px", color: "#64748b" }}>
+                        Unidades: {units.filter((u) => u.companyId === company.id).length}
+                      </p>
                     </div>
-                  </div>
-                )}
-              </article>
+                  ))}
+
+                  {/* Edit Company Modal */}
+                  {editingCompany && (
+                    <div
+                      style={{
+                        position: "fixed",
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        background: "rgba(0,0,0,0.5)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        zIndex: MODAL_Z_INDEX
+                      }}
+                    >
+                      <div
+                        style={{
+                          background: "#fff",
+                          padding: "24px",
+                          borderRadius: "16px",
+                          width: "100%",
+                          maxWidth: "500px"
+                        }}
+                      >
+                        <h3 style={{ margin: "0 0 16px 0" }}>Editar Empresa</h3>
+                        <form
+                          onSubmit={handleUpdateCompany}
+                          style={{ display: "flex", flexDirection: "column", gap: "12px" }}
+                        >
+                          <input
+                            name="name"
+                            defaultValue={editingCompany.name}
+                            placeholder="Nome fantasia"
+                            required
+                            style={{
+                              padding: "10px",
+                              borderRadius: "8px",
+                              border: "1px solid #cbd5e1"
+                            }}
+                          />
+                          <input
+                            name="legalName"
+                            defaultValue={editingCompany.legalName}
+                            placeholder="Razao social"
+                            required
+                            style={{
+                              padding: "10px",
+                              borderRadius: "8px",
+                              border: "1px solid #cbd5e1"
+                            }}
+                          />
+                          <input
+                            name="document"
+                            defaultValue={editingCompany.document}
+                            placeholder="CNPJ"
+                            style={{
+                              padding: "10px",
+                              borderRadius: "8px",
+                              border: "1px solid #cbd5e1"
+                            }}
+                          />
+                          <div
+                            style={{
+                              borderTop: "1px solid #e2e8f0",
+                              paddingTop: "12px",
+                              marginTop: "4px"
+                            }}
+                          >
+                            <strong style={{ fontSize: "13px", color: "#475569" }}>
+                              Token OMIE
+                            </strong>
+                            {editingCompany.omieAppKeyMasked ? (
+                              <p style={{ margin: "4px 0", fontSize: "12px", color: "#16a34a" }}>
+                                Configurado (App Key: {editingCompany.omieAppKeyMasked})
+                              </p>
+                            ) : (
+                              <p style={{ margin: "4px 0", fontSize: "12px", color: "#d97706" }}>
+                                Nao configurado. Os desktops nao conectam ao OMIE.
+                              </p>
+                            )}
+                            <input
+                              name="omieAppKey"
+                              placeholder="Novo App Key (deixe vazio para manter)"
+                              style={{
+                                padding: "10px",
+                                borderRadius: "8px",
+                                border: "1px solid #cbd5e1",
+                                marginTop: "8px"
+                              }}
+                            />
+                            <input
+                              name="omieAppSecret"
+                              type="password"
+                              placeholder="Novo App Secret (deixe vazio para manter)"
+                              style={{
+                                padding: "10px",
+                                borderRadius: "8px",
+                                border: "1px solid #cbd5e1",
+                                marginTop: "8px"
+                              }}
+                            />
+                            <small style={{ color: "#64748b" }}>
+                              Ao preencher, o app key/secret e atualizado. Para limpar, salve com
+                              campos vazios.
+                            </small>
+                          </div>
+                          <div
+                            style={{
+                              borderTop: "1px solid #e2e8f0",
+                              paddingTop: "12px",
+                              marginTop: "4px"
+                            }}
+                          >
+                            <strong style={{ fontSize: "13px", color: "#475569" }}>
+                              Senha para alterar precos
+                            </strong>
+                            <p style={{ margin: "4px 0", fontSize: "12px", color: "#64748b" }}>
+                              Senha de 4 digitos que o operador deve informar no desktop para
+                              alterar precos padrao.
+                            </p>
+                            <div style={{ marginTop: "8px" }}>
+                              <PasswordField
+                                name="priceChangePassword"
+                                maxLength={4}
+                                placeholder="0000 (deixe vazio para manter)"
+                              />
+                            </div>
+                          </div>
+                          <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
+                            <button
+                              type="submit"
+                              style={{
+                                flex: 1,
+                                padding: "10px",
+                                borderRadius: "8px",
+                                border: "none",
+                                background: "#0f172a",
+                                color: "#fff",
+                                cursor: "pointer",
+                                fontWeight: 700
+                              }}
+                            >
+                              Salvar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingCompany(null)}
+                              style={{
+                                flex: 1,
+                                padding: "10px",
+                                borderRadius: "8px",
+                                border: "1px solid #cbd5e1",
+                                background: "#fff",
+                                cursor: "pointer"
+                              }}
+                            >
+                              Cancelar
+                            </button>
+                          </div>
+                        </form>
+                      </div>
+                    </div>
+                  )}
+                </article>
+
+                {/* Units List */}
+                <article style={{ background: "#fff", padding: "24px", borderRadius: "16px" }}>
+                  <h2 style={{ margin: "0 0 16px 0" }}>Unidades</h2>
+                  {filteredUnits.length === 0 && (
+                    <p style={{ color: "#64748b" }}>
+                      {filterCompanyId
+                        ? "Nenhuma unidade nesta pedreira."
+                        : "Nenhuma unidade cadastrada."}
+                    </p>
+                  )}
+                  {filteredUnits.map((unit) => (
+                    <div
+                      key={unit.id}
+                      style={{ padding: "12px 0", borderBottom: "1px solid #e2e8f0" }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          gap: "8px",
+                          flexWrap: "wrap"
+                        }}
+                      >
+                        <div>
+                          <strong>{unit.name}</strong>
+                          <p style={{ margin: "2px 0 0 0", fontSize: "13px", color: "#64748b" }}>
+                            {companies.find((c) => c.id === unit.companyId)?.name || "N/A"}
+                          </p>
+                        </div>
+                        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                          <span
+                            style={{
+                              padding: "4px 8px",
+                              borderRadius: "6px",
+                              fontSize: "12px",
+                              background: unit.isActive ? "#dcfce7" : "#fee2e2",
+                              color: unit.isActive ? "#166534" : "#991b1b"
+                            }}
+                          >
+                            {unit.isActive ? "Ativa" : "Inativa"}
+                          </span>
+                          <button
+                            onClick={() => setEditingUnit(unit)}
+                            style={{
+                              padding: "6px 12px",
+                              borderRadius: "6px",
+                              border: "1px solid #e2e8f0",
+                              background: "#f8fafc",
+                              cursor: "pointer",
+                              fontSize: "12px"
+                            }}
+                          >
+                            Editar
+                          </button>
+                          <button
+                            onClick={() =>
+                              setConfirmDelete({ type: "unit", id: unit.id, name: unit.name })
+                            }
+                            style={{
+                              padding: "6px 12px",
+                              borderRadius: "6px",
+                              border: "1px solid #fecaca",
+                              background: "#fef2f2",
+                              cursor: "pointer",
+                              fontSize: "12px",
+                              color: "#dc2626"
+                            }}
+                          >
+                            Excluir
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </article>
+              </div>
 
               {/* Create Forms */}
               <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
@@ -1350,7 +1759,8 @@ export function AdminDashboard() {
                               <p
                                 style={{ margin: "4px 0 0 0", fontSize: "13px", color: "#64748b" }}
                               >
-                                {companyUnits.length} unidade(s) cadastrada(s). Desktop unico por pedreira.
+                                {companyUnits.length} unidade(s) cadastrada(s). Desktop unico por
+                                pedreira.
                               </p>
                             </div>
 
@@ -1400,7 +1810,9 @@ export function AdminDashboard() {
                                   {company.desktopActivationCode}
                                 </p>
                                 <button
-                                  onClick={() => void copyActivationCode(company.desktopActivationCode!)}
+                                  onClick={() =>
+                                    void copyActivationCode(company.desktopActivationCode!)
+                                  }
                                   style={{
                                     padding: "6px 12px",
                                     borderRadius: "6px",
@@ -1447,7 +1859,11 @@ export function AdminDashboard() {
                                   fontWeight: 700,
                                   fontSize: "12px"
                                 }}
-                                title={hasActiveUnit ? undefined : "Cadastre uma unidade ativa antes de gerar o codigo"}
+                                title={
+                                  hasActiveUnit
+                                    ? undefined
+                                    : "Cadastre uma unidade ativa antes de gerar o codigo"
+                                }
                               >
                                 Gerar novo
                               </button>
@@ -1455,83 +1871,6 @@ export function AdminDashboard() {
                           </div>
                         );
                       })}
-
-                      {/* Edit Unit Modal */}
-                      {editingUnit && (
-                        <div
-                          style={{
-                            position: "fixed",
-                            top: 0,
-                            left: 0,
-                            right: 0,
-                            bottom: 0,
-                            background: "rgba(0,0,0,0.5)",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            zIndex: MODAL_Z_INDEX
-                          }}
-                        >
-                          <div
-                            style={{
-                              background: "#fff",
-                              padding: "24px",
-                              borderRadius: "16px",
-                              width: "100%",
-                              maxWidth: "400px"
-                            }}
-                          >
-                            <h3 style={{ margin: "0 0 16px 0" }}>Editar Unidade</h3>
-                            <form
-                              onSubmit={handleUpdateUnit}
-                              style={{ display: "flex", flexDirection: "column", gap: "12px" }}
-                            >
-                              <input
-                                name="name"
-                                defaultValue={editingUnit.name}
-                                placeholder="Nome da unidade"
-                                required
-                                style={{
-                                  padding: "10px",
-                                  borderRadius: "8px",
-                                  border: "1px solid #cbd5e1"
-                                }}
-                              />
-                              <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
-                                <button
-                                  type="submit"
-                                  style={{
-                                    flex: 1,
-                                    padding: "10px",
-                                    borderRadius: "8px",
-                                    border: "none",
-                                    background: "#0f172a",
-                                    color: "#fff",
-                                    cursor: "pointer",
-                                    fontWeight: 700
-                                  }}
-                                >
-                                  Salvar
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setEditingUnit(null)}
-                                  style={{
-                                    flex: 1,
-                                    padding: "10px",
-                                    borderRadius: "8px",
-                                    border: "1px solid #cbd5e1",
-                                    background: "#fff",
-                                    cursor: "pointer"
-                                  }}
-                                >
-                                  Cancelar
-                                </button>
-                              </div>
-                            </form>
-                          </div>
-                        </div>
-                      )}
                     </div>
                   )}
                 </article>

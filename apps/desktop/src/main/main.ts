@@ -12,11 +12,9 @@ import type { ActivateDesktopInput } from "../services/desktop-activation.js";
 import type { CacheQueryOptions } from "../services/cache-store.js";
 import type { CreateCustomerInput, UpdateCustomerInput } from "../services/customers.js";
 import type { UpdatePaymentMethodInput } from "../services/payment-methods.js";
+import type { SettleWalletInput, WalletQuery } from "../services/wallet.js";
 import type { UpdateAccountInput } from "../services/accounts.js";
-import type {
-  CreatePaymentTermInput,
-  UpdatePaymentTermInput
-} from "../services/payment-terms.js";
+import type { CreatePaymentTermInput, UpdatePaymentTermInput } from "../services/payment-terms.js";
 import type {
   AddPriceTableItemInput,
   CreatePriceTableInput,
@@ -26,21 +24,29 @@ import type {
 import type { CreateVehicleInput, UpdateVehicleInput } from "../services/vehicles.js";
 import type { CreateDriverInput, UpdateDriverInput } from "../services/drivers.js";
 import type { CreateCarrierInput, UpdateCarrierInput } from "../services/carriers.js";
+import { isFreightModality } from "../services/freight.js";
 import type { ScaleConfigurationInput } from "../services/scale-configs.js";
 import type { CreateQuotationInput } from "../services/quotations.js";
 import type {
   ConfigureReceiptPrintProfileInput,
-  ReceiptPrintPayload,
+  ReceiptLogoConfig,
   ReceiptPrinter,
   WindowsPrinterSummary
 } from "../services/printing.js";
 import { NetworkEscPosPrinter, type ReceiptLogoRasterizer } from "../services/network-printer.js";
-import { RECEIPT_FONT_STACKS } from "@kyberrock/print-templates";
-import { packRasterImage } from "../services/escpos-encoder.js";
+import {
+  isRasterBlank,
+  packRasterImage,
+  rasterToBgraBitmap,
+  type EscPosRasterImage
+} from "../services/escpos-encoder.js";
 import {
   computeLogoRasterLayout,
+  dotsToMm,
+  maxLogoWidthDots,
   RECEIPT_PRINTER_DOTS_PER_MM
 } from "../services/receipt-logo-raster.js";
+import { buildReceiptHtml, type PrintReadyReceiptLogo } from "../services/receipt-html.js";
 import {
   AUTO_DOWNLOAD_UPDATES,
   AUTO_INSTALL_ON_QUIT,
@@ -309,6 +315,14 @@ function registerIpcHandlers(): void {
     return runtime.listOpenWeighingOperations();
   });
 
+  ipcMain.handle("desktop:customer-last-entry-preferences", (_event, customerId: string) => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.getCustomerLastEntryPreferences(customerId);
+  });
+
   ipcMain.handle("desktop:pull-loader-completions", () => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");
@@ -364,6 +378,17 @@ function registerIpcHandlers(): void {
 
     return runtime.clearCanceledWeighingOperations();
   });
+
+  ipcMain.handle(
+    "desktop:clear-closed-weighing-operations",
+    (_event, options?: { untilDate?: string }) => {
+      if (!runtime) {
+        throw new Error("Desktop runtime is not ready.");
+      }
+
+      return runtime.clearClosedWeighingOperations(options ?? {});
+    }
+  );
 
   ipcMain.handle("desktop:delete-closed-weighing-operation", (_event, operationId: string) => {
     if (!runtime) {
@@ -437,6 +462,16 @@ function registerIpcHandlers(): void {
     }
   );
 
+  ipcMain.handle("desktop:update-weighing-operation", (_event, input: unknown) => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.updateWeighingOperation(
+      input as Parameters<DesktopRuntime["updateWeighingOperation"]>[0]
+    );
+  });
+
   ipcMain.handle("desktop:get-customer-freight-rules", (_event, customerId: string) => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");
@@ -446,11 +481,15 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "desktop:get-customer-freight-for-product",
-    (_event, customerId: string, productId: string) => {
+    (_event, customerId: string, productId: string, modality?: string | null) => {
       if (!runtime) {
         throw new Error("Desktop runtime is not ready.");
       }
-      return runtime.getCustomerFreightForProduct(customerId, productId);
+      return runtime.getCustomerFreightForProduct(
+        customerId,
+        productId,
+        isFreightModality(modality) ? modality : null
+      );
     }
   );
 
@@ -469,6 +508,19 @@ function registerIpcHandlers(): void {
     }
     return runtime.removeCustomerFreightRule(ruleId);
   });
+
+  ipcMain.handle(
+    "desktop:remove-customer-freight-modality",
+    (_event, ruleId: string, modality: string) => {
+      if (!runtime) {
+        throw new Error("Desktop runtime is not ready.");
+      }
+      if (!isFreightModality(modality)) {
+        throw new Error("Tipo de frete invalido.");
+      }
+      return runtime.removeCustomerFreightModality(ruleId, modality);
+    }
+  );
 
   ipcMain.handle("desktop:list-windows-printers", async () => {
     if (!mainWindow) {
@@ -928,13 +980,10 @@ function registerIpcHandlers(): void {
     return runtime.getReportChannelSettings();
   });
 
-  ipcMain.handle(
-    "desktop:report-channels-save",
-    async (_event, input: Record<string, unknown>) => {
-      if (!runtime) throw new Error("Desktop runtime is not ready.");
-      return runtime.saveReportChannelSettings(input);
-    }
-  );
+  ipcMain.handle("desktop:report-channels-save", async (_event, input: Record<string, unknown>) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.saveReportChannelSettings(input);
+  });
 
   ipcMain.handle("desktop:whatsapp-connect", async () => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
@@ -1043,26 +1092,34 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle(
-    "desktop:customer-credit-payment",
-    (_event, customerId: string, amountCents: number, reason?: string) => {
-      if (!runtime) throw new Error("Desktop runtime is not ready.");
-      return runtime.registerCustomerCreditPayment(customerId, amountCents, reason);
-    }
-  );
-
-  ipcMain.handle(
-    "desktop:customer-credit-adjust",
-    (_event, customerId: string, amountCents: number, reason: string) => {
-      if (!runtime) throw new Error("Desktop runtime is not ready.");
-      return runtime.adjustCustomerCredit(customerId, amountCents, reason);
-    }
-  );
-
-  ipcMain.handle(
     "desktop:customer-credit-movements",
     (_event, customerId: string, limit?: number) => {
       if (!runtime) throw new Error("Desktop runtime is not ready.");
       return runtime.listCustomerCreditMovements(customerId, limit);
+    }
+  );
+
+  ipcMain.handle(
+    "desktop:customer-credit-sync-advances",
+    (_event, options?: { fullRescan?: boolean }) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.syncCustomerAdvancesFromOmie(options ?? {});
+    }
+  );
+
+  ipcMain.handle("desktop:omie-advance-config-get", () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.getOmieAdvanceConfig();
+  });
+
+  ipcMain.handle(
+    "desktop:omie-advance-config-set",
+    (
+      _event,
+      patch: { categoryCodes?: string[]; accountCode?: number | null; accountName?: string | null }
+    ) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.setOmieAdvanceConfig(patch ?? {});
     }
   );
 
@@ -1153,6 +1210,22 @@ function registerIpcHandlers(): void {
       return runtime.updatePaymentMethod(id, input);
     }
   );
+
+  // Carteira: vendas em carteira e o fechamento que define a forma de recebimento.
+  ipcMain.handle("desktop:wallet-report", (_event, query: WalletQuery) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.getWalletReport(query ?? {});
+  });
+
+  ipcMain.handle("desktop:wallet-settle", (_event, input: SettleWalletInput) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.settleWalletOperations(input);
+  });
+
+  ipcMain.handle("desktop:wallet-reopen", (_event, operationIds: string[]) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.reopenWalletOperations(operationIds);
+  });
 
   ipcMain.handle("desktop:accounts-list", () => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
@@ -1669,8 +1742,17 @@ function createElectronReceiptPrinter(parentWindow: BrowserWindow): ReceiptPrint
       // estourava o limite de tamanho de URL do Chromium e derrubava a pagina inteira.
       const htmlPath = path.join(app.getPath("temp"), `kyberrock-cupom-${randomUUID()}.html`);
 
+      // A logo vai para o HTML ja rasterizada em preto e branco, no tamanho exato do papel:
+      // e a mesma imagem enviada a impressora de rede. Assim o driver do Windows nao precisa
+      // converter tons de cinza em pontos (conversao que apagava logos claras) nem lidar com
+      // o formato original do arquivo.
+      const preparedLogo = prepareReceiptLogo(
+        payload.snapshot.receiptLogo,
+        maxLogoWidthDots(payload.paperWidthMm)
+      );
+
       try {
-        writeFileSync(htmlPath, buildReceiptHtml(payload), "utf8");
+        writeFileSync(htmlPath, buildReceiptHtml(payload, preparedLogo?.html), "utf8");
         await printWindow.loadFile(htmlPath);
         await waitForReceiptImages(printWindow);
         await new Promise<void>((resolve, reject) => {
@@ -1698,32 +1780,78 @@ function createElectronReceiptPrinter(parentWindow: BrowserWindow): ReceiptPrint
   };
 }
 
+/** Teto de espera pela decodificacao da logo: passou disso, imprime do jeito que estiver. */
+const RECEIPT_IMAGE_WAIT_TIMEOUT_MS = 3000;
+
 /**
  * A janela de impressao fica oculta e o `webContents.print` dispara assim que a pagina termina
  * de carregar. Sem esperar a decodificacao das imagens, a logo entrava no PDF de impressao ainda
- * vazia e o cupom saia sem ela. Se a imagem for invalida, ela e removida para nao imprimir o
- * icone de imagem quebrada.
+ * vazia e o cupom saia sem ela.
+ *
+ * So sai do documento a imagem que realmente falhou (`naturalWidth === 0`), para nao imprimir o
+ * icone de imagem quebrada. A versao anterior removia a imagem sempre que `decode()` rejeitava —
+ * inclusive quando a logo ja estava carregada — e o cupom saia sem logo por causa da propria
+ * protecao. A espera tem teto: impressao nunca fica pendurada esperando uma imagem.
  */
 async function waitForReceiptImages(printWindow: BrowserWindow): Promise<void> {
   try {
-    await printWindow.webContents.executeJavaScript(
-      `Promise.all(
-         Array.from(document.images).map((image) =>
-           image.decode().catch(() => { image.remove(); })
-         )
-       ).then(() => true)`
-    );
+    const report = (await printWindow.webContents.executeJavaScript(
+      `(() => {
+         const settle = (image) =>
+           image.complete
+             ? Promise.resolve()
+             : new Promise((resolve) => {
+                 image.addEventListener("load", resolve, { once: true });
+                 image.addEventListener("error", resolve, { once: true });
+               });
+         const images = Array.from(document.images);
+         const done = Promise.all(
+           images.map((image) => settle(image).then(() => image.decode().catch(() => undefined)))
+         );
+         const timeout = new Promise((resolve) =>
+           setTimeout(resolve, ${RECEIPT_IMAGE_WAIT_TIMEOUT_MS})
+         );
+         return Promise.race([done, timeout]).then(() => {
+           const broken = images.filter((image) => image.complete && image.naturalWidth === 0);
+           broken.forEach((image) => image.remove());
+           return { total: images.length, broken: broken.length };
+         });
+       })()`
+    )) as { total: number; broken: number };
+
+    if (report.broken > 0) {
+      writeStartupLog("receipt-print:image-broken", report);
+    }
   } catch (error) {
     writeStartupLog("receipt-print:image-wait-failed", error);
   }
 }
 
 /**
- * Impressora de rede nao interpreta HTML: a logo precisa ir como bit image ESC/POS. Aqui o
- * data URL configurado e decodificado pelo Electron, enquadrado igual a previa da tela e
- * convertido em preto e branco.
+ * Logo pronta para impressao: o mesmo raster de 1 bit alimenta a impressora de rede
+ * (bit image ESC/POS) e o HTML da impressora do Windows.
  */
-const rasterizeReceiptLogo: ReceiptLogoRasterizer = (logo, maxWidthPx) => {
+interface PreparedReceiptLogo {
+  raster: EscPosRasterImage;
+  html: PrintReadyReceiptLogo;
+  /** Sairia praticamente em branco no papel (logo clara / traco branco). */
+  blank: boolean;
+}
+
+/**
+ * Converte o data URL configurado no preto-e-branco que a impressora termica imprime:
+ * decodifica com o Electron, enquadra igual a previa da tela (contain/cover/fill) e aplica
+ * o limiar de 1 bit no tamanho exato em pontos (203 dpi).
+ *
+ * Retorna null quando o Electron nao consegue decodificar a imagem. Isso acontece de verdade:
+ * `nativeImage` so le PNG e JPEG, enquanto a previa da tela (Chromium) mostra tambem WebP,
+ * GIF, BMP, SVG e AVIF — logo nesses formatos aparecia perfeita na tela e sumia no papel.
+ * O upload agora converte tudo para PNG, e este log cobre os perfis salvos antes disso.
+ */
+function prepareReceiptLogo(
+  logo: ReceiptLogoConfig,
+  maxWidthDots: number
+): PreparedReceiptLogo | null {
   if (!logo.dataUrl) {
     return null;
   }
@@ -1731,7 +1859,9 @@ const rasterizeReceiptLogo: ReceiptLogoRasterizer = (logo, maxWidthPx) => {
   const source = nativeImage.createFromDataURL(logo.dataUrl);
 
   if (source.isEmpty()) {
-    writeStartupLog("receipt-print:logo-decode-failed");
+    writeStartupLog("receipt-print:logo-decode-failed", {
+      prefix: logo.dataUrl.slice(0, 32)
+    });
     return null;
   }
 
@@ -1739,7 +1869,7 @@ const rasterizeReceiptLogo: ReceiptLogoRasterizer = (logo, maxWidthPx) => {
   const layout = computeLogoRasterLayout(
     sourceSize.width,
     sourceSize.height,
-    Math.min(Math.round(logo.widthMm * RECEIPT_PRINTER_DOTS_PER_MM), maxWidthPx),
+    Math.min(Math.round(logo.widthMm * RECEIPT_PRINTER_DOTS_PER_MM), maxWidthDots),
     Math.round(logo.heightMm * RECEIPT_PRINTER_DOTS_PER_MM),
     logo.fit
   );
@@ -1764,9 +1894,40 @@ const rasterizeReceiptLogo: ReceiptLogoRasterizer = (logo, maxWidthPx) => {
   }
 
   const renderedSize = rendered.getSize();
+  const raster = packRasterImage(rendered.toBitmap(), renderedSize.width, renderedSize.height);
 
-  return packRasterImage(rendered.toBitmap(), renderedSize.width, renderedSize.height);
-};
+  if (!raster) {
+    return null;
+  }
+
+  const blank = isRasterBlank(raster);
+
+  if (blank) {
+    writeStartupLog("receipt-print:logo-blank", {
+      widthPx: raster.widthPx,
+      heightPx: raster.heightPx
+    });
+  }
+
+  const monochrome = nativeImage.createFromBitmap(rasterToBgraBitmap(raster), {
+    width: raster.widthPx,
+    height: raster.heightPx
+  });
+
+  return {
+    raster,
+    html: {
+      dataUrl: monochrome.toDataURL(),
+      widthMm: dotsToMm(raster.widthPx),
+      heightMm: dotsToMm(raster.heightPx)
+    },
+    blank
+  };
+}
+
+/** Impressora de rede: so o bit image ESC/POS interessa. */
+const rasterizeReceiptLogo: ReceiptLogoRasterizer = (logo, maxWidthPx) =>
+  prepareReceiptLogo(logo, maxWidthPx)?.raster ?? null;
 
 function createElectronFiscalDocumentPrinter(parentWindow: BrowserWindow): FiscalDocumentPrinter {
   return {
@@ -1810,99 +1971,6 @@ function createElectronFiscalDocumentPrinter(parentWindow: BrowserWindow): Fisca
       }
     }
   };
-}
-
-/**
- * HTML do cupom impresso pela impressora do Windows. O cabecalho (logo, empresa, data e
- * numero do cupom) e desenhado a partir do bloco estruturado do snapshot — antes ele
- * descartava as 6 primeiras linhas por posicao fixa, entao qualquer bloco desligado ou o
- * aviso "sem valor fiscal" da operacao interna deslocava tudo e picava o topo do cupom.
- */
-function buildReceiptHtml(payload: ReceiptPrintPayload): string {
-  const snapshot = payload.snapshot;
-  const style = snapshot.style;
-  const header = snapshot.header;
-  const logo = snapshot.receiptLogo;
-  const showLogo = style.showLogo;
-  const logoMarkup = logo.dataUrl
-    ? `<img src="${escapeHtml(logo.dataUrl)}" alt="Logo" />`
-    : `<div class="logo-fallback">${escapeHtml(snapshot.unitName)}</div>`;
-  const logoJustify =
-    style.logoAlignment === "left"
-      ? "flex-start"
-      : style.logoAlignment === "right"
-        ? "flex-end"
-        : "center";
-  const bodyLines = snapshot.bodyLines.join("\n");
-
-  return `<!doctype html>
-<html lang="pt-BR">
-  <head>
-    <meta charset="utf-8" />
-    <style>
-      @page { size: ${payload.paperWidthMm}mm auto; margin: 4mm; }
-      body { margin: 0; font-family: ${RECEIPT_FONT_STACKS[style.fontFamily]}; font-size: ${style.fontSizePx}px; color: #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-      .receipt { width: 100%; }
-      .custom-header { text-align: center; font-weight: 800; margin-bottom: 4px; }
-      .non-fiscal { text-align: center; font-weight: 900; letter-spacing: 0.06em; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 2px 0; margin-bottom: 4px; }
-      .top-company { font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
-      .rule { border-top: 1px solid #000; margin: 4px 0 8px; }
-      .header { text-align: center; }
-      .logo-row { display: flex; justify-content: ${logoJustify}; }
-      .logo-slot { width: ${logo.widthMm}mm; height: ${logo.heightMm}mm; margin-bottom: 4px; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-      .logo-slot img { width: 100%; height: 100%; object-fit: ${logo.fit}; }
-      .logo-fallback { font-size: ${Math.round(style.headerFontSizePx * 1.3)}px; font-weight: 800; text-align: center; line-height: 1.05; }
-      .datetime { text-align: center; font-size: ${style.headerFontSizePx}px; font-weight: 700; line-height: 1.35; }
-      .copy { margin: 8px 0 2px; text-align: center; font-size: ${Math.round(style.headerFontSizePx * 1.2)}px; font-weight: 900; letter-spacing: 0.04em; }
-      .via { text-align: center; font-weight: 800; }
-      pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; font: inherit; line-height: ${style.lineHeight}; ${style.boldBody ? "font-weight: 700;" : ""} }
-      .num { font-size: ${style.numberFontSizePx}px; ${style.numberFontSizePx > style.fontSizePx ? "font-weight: 700;" : ""} }
-    </style>
-  </head>
-  <body>
-    <div class="receipt">
-      ${header.customHeaderText ? `<div class="custom-header">${escapeHtml(header.customHeaderText)}</div>` : ""}
-      ${header.nonFiscalLabel ? `<div class="non-fiscal">${escapeHtml(header.nonFiscalLabel)}</div>` : ""}
-      ${header.companyName ? `<div class="top-company">${escapeHtml(header.companyName)}</div><div class="rule"></div>` : ""}
-      <div class="header">
-        ${showLogo ? `<div class="logo-row"><div class="logo-slot">${logoMarkup}</div></div>` : ""}
-        ${
-          header.dateLabel
-            ? `<div class="datetime">
-          <div>DATA: ${escapeHtml(header.dateLabel)}</div>
-          <div>HORA: ${escapeHtml(header.timeLabel ?? "")}</div>
-        </div>`
-            : ""
-        }
-      </div>
-      ${header.receiptNumberLabel ? `<div class="copy">COPIA NRO ${escapeHtml(header.receiptNumberLabel)}</div>` : ""}
-      ${header.copyLabel ? `<div class="via">${escapeHtml(header.copyLabel)}</div>` : ""}
-      <pre>${highlightReceiptNumbers(bodyLines, style.numberFontSizePx !== style.fontSizePx)}</pre>
-    </div>
-  </body>
-</html>`;
-}
-
-/**
- * Envolve os numeros do corpo em `<span class="num">` para que o tamanho configurado
- * para numeros valha so neles. Quando numero e corpo tem o mesmo tamanho o texto sai
- * apenas escapado, sem marcacao extra.
- */
-function highlightReceiptNumbers(text: string, enabled: boolean): string {
-  const escaped = escapeHtml(text);
-  if (!enabled) return escaped;
-  // Sequencias de digitos com separadores de milhar/decimal; a regex roda depois do
-  // escape, entao nunca casa dentro de uma entidade HTML (&amp; nao tem digitos).
-  return escaped.replace(/\d[\d.,]*/g, (match) => `<span class="num">${match}</span>`);
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
 }
 
 function configureAutoUpdater(): void {

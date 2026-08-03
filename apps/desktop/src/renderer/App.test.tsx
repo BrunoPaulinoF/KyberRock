@@ -12,6 +12,7 @@ import {
   isTransportReady,
   omieQueueActionLabel,
   omieQueueStatusLabel,
+  previousDayIso,
   readStoredThemeMode,
   resolveCarrierPrefill,
   shouldLinkCreatedDriverToCarrier
@@ -99,6 +100,13 @@ describe("App", () => {
     expect(readStoredThemeMode(null)).toBe("light");
   });
 
+  it("limita a limpeza em lote a ontem, preservando o movimento do dia", () => {
+    expect(previousDayIso(new Date(2026, 7, 1, 7, 30))).toBe("2026-07-31");
+    // Virada de mes e de ano continuam corretas (data local, sem UTC no meio).
+    expect(previousDayIso(new Date(2026, 0, 1, 0, 5))).toBe("2025-12-31");
+    expect(previousDayIso(new Date(2026, 2, 1, 23, 59))).toBe("2026-02-28");
+  });
+
   it("formats how long ago the truck entered", () => {
     const now = new Date("2026-07-06T12:00:00Z");
     expect(formatElapsedSince("2026-07-06T11:59:30Z", now)).toBe("agora mesmo");
@@ -150,9 +158,7 @@ describe("App", () => {
   it("labels OMIE queue items in plain portuguese for the cloud screen", () => {
     expect(omieQueueActionLabel("create_order", "invoice")).toBe("Criar pedido (com nota)");
     expect(omieQueueActionLabel("create_order", "internal")).toBe("Criar OS (interno)");
-    expect(omieQueueActionLabel("create_and_bill_order", "invoice")).toBe(
-      "Criar e faturar pedido"
-    );
+    expect(omieQueueActionLabel("create_and_bill_order", "invoice")).toBe("Criar e faturar pedido");
     expect(omieQueueActionLabel("cancel_order", null)).toBe("Cancelar pedido no OMIE");
     expect(omieQueueStatusLabel("pending")).toBe("aguardando envio");
     expect(omieQueueStatusLabel("failed")).toBe("falhou (re-tenta sozinho)");

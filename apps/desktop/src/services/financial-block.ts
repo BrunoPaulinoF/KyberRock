@@ -64,11 +64,7 @@ export class FinancialBlockService {
 
     const pendingOperations = this.getPendingOperationsTotal(customerId);
 
-    return (
-      customer.credit_limit_cents -
-      customer.open_receivables_cents -
-      pendingOperations
-    );
+    return customer.credit_limit_cents - customer.open_receivables_cents - pendingOperations;
   }
 
   private getCustomerFinancials(customerId: string): {
@@ -96,6 +92,7 @@ export class FinancialBlockService {
       SELECT COALESCE(SUM(product_total_cents), 0) as total
       FROM weighing_operations
       WHERE customer_id = ?
+        AND deleted_at IS NULL
         AND status IN ('draft', 'entry_registered', 'loading_requested', 'awaiting_exit', 'closed_local')
     `);
 

@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  computeCreditInvoiceSchedule,
-  creditClosingConfigFromCustomer
-} from "./credit-invoice.js";
+import { computeCreditInvoiceSchedule, creditClosingConfigFromCustomer } from "./credit-invoice.js";
 
 describe("computeCreditInvoiceSchedule - monthly", () => {
   const monthly = (closingDay: number, boletoDays: number) =>

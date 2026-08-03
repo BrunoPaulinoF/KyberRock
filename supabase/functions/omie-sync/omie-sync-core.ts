@@ -91,7 +91,11 @@ export class OmieQueueManager {
       try {
         return await this.requestOnce<TParam, TResponse>(input);
       } catch (error) {
-        if (!isOmieLimitError(error) || !(error instanceof OmieHttpError) || attempt >= this.maxRetries) {
+        if (
+          !isOmieLimitError(error) ||
+          !(error instanceof OmieHttpError) ||
+          attempt >= this.maxRetries
+        ) {
           throw error;
         }
         const retryDelayMs = getRetryDelayMs(error, attempt, this.baseBackoffMs);
@@ -199,28 +203,236 @@ function fnv1a64(input: string): bigint {
   return hash;
 }
 
+/**
+ * Tamanho maximo de cada campo do cadastro de cliente/fornecedor no OMIE. Estourar o
+ * limite faz o OMIE recusar a chamada INTEIRA ("a razao social ultrapassa 60 caracteres")
+ * — e, no fechamento, o pedido morre junto com o cadastro. O KyberRock aceita qualquer
+ * tamanho localmente (o cadastro completo continua no SQLite e nos relatorios/cupom) e
+ * encurta apenas o que sobe para o OMIE.
+ *
+ * `nome_fantasia` usa o mesmo limite da razao social de proposito: quando o cadastro nao
+ * tem fantasia proprio ele recebe a razao social como fallback (ver buildCustomerPayload),
+ * entao um limite maior aqui deixaria passar exatamente o valor que a razao social ja
+ * provou ser grande demais. O documento (cnpj_cpf) fica de fora: encurtar um CNPJ/CPF
+ * mandaria um documento errado para o OMIE, o que e pior do que a recusa. O `email` tambem
+ * fica de fora — e uma LISTA de destinatarios, que precisa ser cortada por endereco
+ * inteiro (ver OMIE_EMAIL_FIELD_MAX_LENGTH / formatOmieEmailList).
+ */
+export const OMIE_CUSTOMER_FIELD_MAX_LENGTHS = {
+  razao_social: 60,
+  nome_fantasia: 60,
+  telefone1_ddd: 5,
+  telefone1_numero: 15,
+  endereco: 60,
+  endereco_numero: 20,
+  bairro: 60,
+  cidade: 40,
+  cep: 10
+} as const;
+
+/**
+ * Encurta um texto para caber no campo do OMIE. Normaliza espacos, corta na ultima
+ * palavra inteira quando isso nao joga fora um pedaco grande demais do limite (assim
+ * "... LOGISTICA INTEGRADA LTDA - FILIAL" vira "... LOGISTICA INTEGRADA LTDA", e nao
+ * "... LOGISTICA INTEGRADA LTDA - FIL") e limpa a pontuacao que sobra na ponta.
+ * Deterministico: a mesma entrada gera sempre a mesma saida, entao reenvios continuam
+ * idempotentes no OMIE.
+ */
+export function clampOmieText(value: string | undefined, maxLength: number): string | undefined {
+  const text = (value ?? "").trim().replace(/\s+/g, " ");
+  if (text.length === 0) return undefined;
+  if (text.length <= maxLength) return text;
+
+  const hardCut = text.slice(0, maxLength);
+  const lastSpace = hardCut.lastIndexOf(" ");
+  const cut = lastSpace >= Math.floor(maxLength * 0.75) ? hardCut.slice(0, lastSpace) : hardCut;
+  return cut.replace(/[\s,;:./-]+$/, "").trim() || hardCut.trim();
+}
+
 export function buildCustomerPayload(payload: PushCustomerPayload): Record<string, unknown> {
-  return {
+  const document = onlyDigits(payload.cnpjCpf);
+  const razaoSocial = clampOmieText(
+    payload.razaoSocial,
+    OMIE_CUSTOMER_FIELD_MAX_LENGTHS.razao_social
+  );
+  const state = normalizeOmieState(payload.state);
+  const tags = (payload.tags ?? []).map((tag) => tag.trim()).filter((tag) => tag.length > 0);
+
+  return dropEmptyFields({
     codigo_cliente_omie: payload.omieCustomerId,
     codigo_cliente_integracao: toOmieIntegrationCode(payload.localCustomerId),
-    razao_social: payload.razaoSocial,
-    nome_fantasia: payload.nomeFantasia,
-    cnpj_cpf: payload.cnpjCpf,
-    email: payload.email,
-    telefone1_ddd: payload.telefone1Ddd,
-    telefone1_numero: payload.telefone1Numero,
-    endereco: payload.addressStreet,
-    endereco_numero: payload.addressNumber,
-    bairro: payload.neighborhood,
-    cidade: payload.city,
-    estado: payload.state,
-    cep: payload.zipcode,
+    razao_social: razaoSocial,
+    // O OMIE exige razao social E nome fantasia no IncluirCliente; sem o fantasia o
+    // cadastro volta com "O preenchimento da tag [nome_fantasia] e obrigatorio!" e o
+    // fechamento inteiro morre junto. Repetir a razao social e o padrao do cadastro.
+    nome_fantasia:
+      clampOmieText(payload.nomeFantasia, OMIE_CUSTOMER_FIELD_MAX_LENGTHS.nome_fantasia) ??
+      razaoSocial,
+    cnpj_cpf: document,
+    // 11 digitos = CPF. Sem `pessoa_fisica: "S"` o OMIE valida o documento como CNPJ
+    // e recusa o cadastro de qualquer cliente pessoa fisica.
+    pessoa_fisica: document ? (document.length === 11 ? "S" : "N") : undefined,
+    // O e-mail tem regra propria (lista de destinatarios cortada por endereco inteiro):
+    // ver formatOmieEmailList / OMIE_EMAIL_FIELD_MAX_LENGTH.
+    email: formatOmieEmailList(payload.email),
+    telefone1_ddd: clampOmieText(
+      payload.telefone1Ddd,
+      OMIE_CUSTOMER_FIELD_MAX_LENGTHS.telefone1_ddd
+    ),
+    telefone1_numero: clampOmieText(
+      payload.telefone1Numero,
+      OMIE_CUSTOMER_FIELD_MAX_LENGTHS.telefone1_numero
+    ),
+    endereco: clampOmieText(payload.addressStreet, OMIE_CUSTOMER_FIELD_MAX_LENGTHS.endereco),
+    endereco_numero: clampOmieText(
+      payload.addressNumber,
+      OMIE_CUSTOMER_FIELD_MAX_LENGTHS.endereco_numero
+    ),
+    bairro: clampOmieText(payload.neighborhood, OMIE_CUSTOMER_FIELD_MAX_LENGTHS.bairro),
+    // O OMIE identifica a cidade no formato "Cidade (UF)" (e devolve assim nas
+    // consultas); mandar so o nome faz o cadastro cair em "Cidade nao encontrada".
+    cidade: buildOmieCity(payload.city, state),
+    estado: state,
+    cep: clampOmieText(payload.zipcode, OMIE_CUSTOMER_FIELD_MAX_LENGTHS.cep),
     // Campo omitido quando o chamador nao informa (ex.: transportadoras), para
     // nao mexer no bloqueio configurado direto no OMIE.
     bloquear_faturamento:
       payload.billingBlocked === undefined ? undefined : payload.billingBlocked ? "S" : "N",
-    tags: payload.tags?.map((tag) => ({ tag }))
-  };
+    tags: tags.length > 0 ? tags.map((tag) => ({ tag })) : undefined
+  });
+}
+
+/**
+ * Remove campos vazios do corpo enviado ao OMIE. Alem de encurtar o payload, evita que
+ * um `AlterarCliente` apague no OMIE um dado que o KyberRock nao tem (string vazia
+ * sobrescreve; ausencia preserva).
+ */
+function dropEmptyFields(body: Record<string, unknown>): Record<string, unknown> {
+  const clean: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(body)) {
+    if (value === undefined || value === null) continue;
+    if (typeof value === "string" && value.trim().length === 0) continue;
+    clean[key] = value;
+  }
+  return clean;
+}
+
+function trimOrUndefined(value: string | undefined): string | undefined {
+  const text = (value ?? "").trim();
+  return text.length > 0 ? text : undefined;
+}
+
+/** Tamanho maximo do campo `email` do cadastro de cliente/fornecedor do OMIE. */
+export const OMIE_EMAIL_FIELD_MAX_LENGTH = 500;
+
+/**
+ * O cliente pode ter varios e-mails no KyberRock. O OMIE aceita todos no mesmo campo,
+ * separados por virgula simples, e manda NF-e e boleto para cada um.
+ *
+ * O corte do limite de 500 caracteres e feito por endereco inteiro: truncar no meio de um
+ * e-mail geraria um destinatario invalido e o OMIE recusaria o cadastro inteiro.
+ */
+export function formatOmieEmailList(value: string | undefined): string | undefined {
+  const emails: string[] = [];
+  for (const part of (value ?? "").split(/[,;\s]+/)) {
+    const email = part.trim().toLowerCase();
+    if (email.length > 0 && !emails.includes(email)) emails.push(email);
+  }
+
+  const accepted: string[] = [];
+  for (const email of emails) {
+    const candidate = [...accepted, email].join(", ");
+    if (candidate.length > OMIE_EMAIL_FIELD_MAX_LENGTH) break;
+    accepted.push(email);
+  }
+
+  return accepted.length > 0 ? accepted.join(", ") : undefined;
+}
+
+function onlyDigits(value: string | undefined): string | undefined {
+  const digits = (value ?? "").replace(/\D/g, "");
+  return digits.length > 0 ? digits : undefined;
+}
+
+/** UF em duas letras maiusculas; qualquer outra coisa nao e UF e fica de fora. */
+function normalizeOmieState(value: string | undefined): string | undefined {
+  const uf = (value ?? "").trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(uf) ? uf : undefined;
+}
+
+/**
+ * Cidade no formato do OMIE: "Cidade (UF)". Ja formatada ou sem UF, segue como veio.
+ * O nome e encurtado ANTES do sufixo para o "(UF)" nunca ser o pedaco que estoura o
+ * limite do campo — sem a UF o OMIE responde "Cidade nao encontrada".
+ */
+function buildOmieCity(city: string | undefined, state: string | undefined): string | undefined {
+  const maxLength = OMIE_CUSTOMER_FIELD_MAX_LENGTHS.cidade;
+  const name = trimOrUndefined(city);
+  if (!name) return undefined;
+
+  // Separa o "(UF)" que ja tenha vindo junto, para o corte cair sempre no nome.
+  const suffixPattern = /\s*\(([A-Za-z]{2})\)\s*$/;
+  const suffixMatch = suffixPattern.exec(name);
+  const baseName = suffixMatch ? name.replace(suffixPattern, "").trim() : name;
+  const uf = suffixMatch ? suffixMatch[1].toUpperCase() : state;
+  if (!uf) return clampOmieText(baseName, maxLength);
+
+  const suffix = ` (${uf})`;
+  return `${clampOmieText(baseName, maxLength - suffix.length)}${suffix}`;
+}
+
+/**
+ * Campos que o OMIE cobrou como obrigatorios na recusa ("O preenchimento da tag
+ * [email] e obrigatorio!"), traduzidos para o nome que o operador ve no cadastro.
+ * Vazio quando a recusa nao e de campo faltante.
+ */
+export function extractOmieRequiredFields(message: string): string[] {
+  const text = message ?? "";
+  const labels: string[] = [];
+  const pattern = /tag\s*\[([a-z0-9_]+)\]/gi;
+  for (const match of text.matchAll(pattern)) {
+    const field = match[1].toLowerCase();
+    const label = OMIE_CUSTOMER_FIELD_LABELS[field] ?? field;
+    if (!labels.includes(label)) labels.push(label);
+  }
+  return labels;
+}
+
+const OMIE_CUSTOMER_FIELD_LABELS: Record<string, string> = {
+  cnpj_cpf: "CNPJ/CPF",
+  email: "E-mail",
+  razao_social: "Razao Social",
+  nome_fantasia: "Nome Fantasia",
+  endereco: "Endereco",
+  endereco_numero: "Numero do Endereco",
+  bairro: "Bairro",
+  cidade: "Cidade",
+  estado: "Estado (UF)",
+  cep: "CEP",
+  telefone1_ddd: "DDD do Telefone",
+  telefone1_numero: "Telefone"
+};
+
+/**
+ * Marca das falhas de CADASTRO do cliente no envio do fechamento. O desktop reconhece
+ * este prefixo para tratar a recusa como pendencia de cadastro (bloqueia o job em vez de
+ * re-tentar em loop) e para mostrar ao operador o que falta preencher.
+ */
+export const CUSTOMER_REGISTRATION_FAULT_PREFIX = "Cadastro do cliente recusado pelo OMIE";
+
+/** Mensagem determinista da recusa do cadastro do cliente, com o que falta preencher. */
+export function customerRegistrationFaultMessage(error: unknown, customerName?: string): string {
+  const detail = error instanceof Error ? error.message : String(error ?? "");
+  const fields = extractOmieRequiredFields(detail);
+  const who = trimOrUndefined(customerName);
+  return [
+    `${CUSTOMER_REGISTRATION_FAULT_PREFIX}${who ? ` (${who})` : ""}.`,
+    fields.length > 0 ? `Falta preencher: ${fields.join(", ")}.` : null,
+    "Complete o cadastro do cliente e reenvie.",
+    `Detalhe OMIE: ${detail}`
+  ]
+    .filter((part): part is string => part !== null)
+    .join(" ");
 }
 
 export function buildCarrierPayload(payload: PushCarrierPayload): Record<string, unknown> {
@@ -301,15 +513,33 @@ function getRetryDelayMs(error: OmieHttpError, attempt: number, baseBackoffMs: n
   return Math.min(error.retryAfterMs ?? baseBackoffMs * Math.pow(2, attempt), OMIE_MAX_BACKOFF_MS);
 }
 
-// Quando o CPF/CNPJ ja existe no OMIE, o IncluirCliente falha com
-// "Cliente ja cadastrado para o CPF/CNPJ [...] com o Id [123] ...".
-// Extraimos o Id existente para converter o insert em update.
+// Quando o cadastro ja existe no OMIE, o IncluirCliente falha com o codigo do registro
+// existente na propria mensagem, em duas grafias:
+//   - por documento: "Cliente ja cadastrado para o CPF/CNPJ [...] com o Id [123] ...";
+//   - por codigo de integracao (reenvio nosso que ja tinha entrado la):
+//     "Cliente ja cadastrado para o Codigo de Integracao [KR...] com o nCod [123]!".
+// Extraimos o codigo existente para converter o insert em update — sem isso o reenvio
+// vira falha de cadastro e o fechamento trava esperando uma correcao que nao existe.
+const EXISTING_CUSTOMER_ID_PATTERNS = [
+  /\bnCod\w*\s*\[(\d+)\]/i,
+  /\bId\s*\[(\d+)\]/i,
+  /\bcodigo_cliente_omie\s*\[(\d+)\]/i
+];
+
 export function extractExistingCustomerId(error: unknown): number | null {
   if (!(error instanceof OmieHttpError)) return null;
   const text = error.detail ?? error.message;
-  if (!/j[aá] cadastrad/i.test(text)) return null;
-  const match = /\bId\s*\[(\d+)\]/i.exec(text);
-  return match ? Number(match[1]) : null;
+  if (!isDuplicateCustomerFault(text)) return null;
+  for (const pattern of EXISTING_CUSTOMER_ID_PATTERNS) {
+    const match = pattern.exec(text);
+    if (match) return Number(match[1]);
+  }
+  return null;
+}
+
+/** Recusa do IncluirCliente por o cadastro ja existir no OMIE (nao e dado faltando). */
+export function isDuplicateCustomerFault(message: string | null | undefined): boolean {
+  return /j[aá] cadastrad/i.test(message ?? "");
 }
 
 // O AlterarCliente localiza o registro pelo codigo_cliente_integracao quando presente.
@@ -320,9 +550,56 @@ export function toCustomerUpdateBody(
   body: Record<string, unknown>,
   omieCustomerId: number
 ): Record<string, unknown> {
-  const updateBody = { ...body, codigo_cliente_omie: omieCustomerId };
+  const updateBody: Record<string, unknown> = { ...body, codigo_cliente_omie: omieCustomerId };
   delete updateBody.codigo_cliente_integracao;
   return updateBody;
+}
+
+/**
+ * Codigo do cliente que ja existe no OMIE depois de o IncluirCliente ser recusado por
+ * duplicidade. Primeiro le o codigo da propria mensagem; se a grafia do OMIE mudar de
+ * novo, consulta o cadastro pelo codigo de integracao (e depois pelo CPF/CNPJ) antes de
+ * desistir — assim uma variacao de texto nao volta a travar o fechamento.
+ */
+export async function resolveDuplicateCustomerId(
+  queue: OmieRequester,
+  credentials: OmieCredentials,
+  body: Record<string, unknown>,
+  error: unknown
+): Promise<number | null> {
+  const fromMessage = extractExistingCustomerId(error);
+  if (fromMessage !== null) return fromMessage;
+  if (!(error instanceof OmieHttpError)) return null;
+  if (!isDuplicateCustomerFault(error.detail ?? error.message)) return null;
+
+  const integrationCode =
+    typeof body.codigo_cliente_integracao === "string" && body.codigo_cliente_integracao.trim()
+      ? body.codigo_cliente_integracao.trim()
+      : null;
+  const document =
+    typeof body.cnpj_cpf === "string" ? body.cnpj_cpf.replace(/\D/g, "") : ("" as string);
+  const lookups: Array<Record<string, unknown>> = [];
+  if (integrationCode) lookups.push({ codigo_cliente_integracao: integrationCode });
+  if (document) lookups.push({ cnpj_cpf: document });
+
+  for (const param of lookups) {
+    try {
+      const found = await queue.request<
+        unknown,
+        { codigo_cliente_omie?: number; codigoClienteOmie?: number }
+      >({
+        credentials,
+        endpoint: "/geral/clientes/",
+        call: "ConsultarCliente",
+        param
+      });
+      const id = found.codigo_cliente_omie ?? found.codigoClienteOmie;
+      if (typeof id === "number" && id > 0) return id;
+    } catch {
+      // Criterio nao achou (ou o OMIE recusou o filtro): tenta o proximo.
+    }
+  }
+  return null;
 }
 
 async function pushCustomerBodyToOmie(
@@ -353,7 +630,7 @@ async function pushCustomerBodyToOmie(
       param: body
     });
   } catch (error) {
-    const existingId = extractExistingCustomerId(error);
+    const existingId = await resolveDuplicateCustomerId(queue, credentials, body, error);
     if (existingId === null) throw error;
     await queue.request<unknown, unknown>({
       credentials,

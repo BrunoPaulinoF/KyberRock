@@ -147,11 +147,7 @@ interface ModalContent {
   message: string;
 }
 
-export function ReportDispatchSettings({
-  desktopApi
-}: {
-  desktopApi: KyberRockDesktopApi | null;
-}) {
+export function ReportDispatchSettings({ desktopApi }: { desktopApi: KyberRockDesktopApi | null }) {
   const [expanded, setExpanded] = useState(false);
   const [config, setConfig] = useState<ReportDispatchConfigView | null>(null);
   const [busy, setBusy] = useState(false);
@@ -171,9 +167,7 @@ export function ReportDispatchSettings({
     };
   }, [desktopApi]);
 
-  async function saveSettings(
-    patch: Partial<ReportDispatchConfigView["settings"]>
-  ): Promise<void> {
+  async function saveSettings(patch: Partial<ReportDispatchConfigView["settings"]>): Promise<void> {
     if (!desktopApi || !config) return;
     setBusy(true);
     try {

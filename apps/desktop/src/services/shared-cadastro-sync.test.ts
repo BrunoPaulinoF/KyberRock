@@ -91,6 +91,199 @@ describe("cadastro compartilhado da pedreira", () => {
     }
   });
 
+  // O cliente cadastrado aqui e o gemeo que veio do OMIE sao o mesmo CNPJ/CPF. Descartar
+  // a linha da nuvem sem aproveitar o codigo deixava o cadastro local para sempre sem
+  // omie_customer_id: todo fechamento dele repetia um IncluirCliente de um cadastro que ja
+  // existe no OMIE ("Cliente ja cadastrado") e a operacao nunca subia.
+  it("adota no cadastro local o codigo OMIE do gemeo que veio da nuvem", async () => {
+    const database = createMachine("desktop-b");
+
+    try {
+      const identity = readIdentity(database);
+      database
+        .prepare(
+          `INSERT INTO customers (id, company_id, source, legal_name, trade_name, document,
+                                  omie_customer_id, needs_push, is_active, created_at, updated_at)
+           VALUES ('local-uuid', ?, 'local', 'Multicom LTDA', 'Multicom', '19345178000100',
+                   NULL, 1, 1, ?, ?)`
+        )
+        .run(identity.companyId, "2026-08-03T09:00:00.000Z", "2026-08-03T09:00:00.000Z");
+      database
+        .prepare(
+          `INSERT INTO carriers (id, company_id, name, document, source, omie_customer_id,
+                                 is_active, created_at, updated_at)
+           VALUES ('carrier-uuid', ?, 'Transportes Alfa', '11222333000144', 'local', NULL, 1, ?, ?)`
+        )
+        .run(identity.companyId, "2026-08-03T09:00:00.000Z", "2026-08-03T09:00:00.000Z");
+
+      // O mesmo documento chega da nuvem sob o id do OMIE, ja com o codigo de la.
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          customers: [
+            {
+              id: "omie_11489512176",
+              omie_customer_id: 11489512176,
+              legal_name: "MULTICOM COMERCIO DE MATERAIS DE CONSTRUCAO LTDA",
+              trade_name: "MULTICOM",
+              document: "19.345.178/0001-00",
+              is_active: true,
+              updated_at: "2026-08-03T09:44:34.000Z"
+            }
+          ],
+          carriers: [
+            {
+              id: "omie_555",
+              omie_customer_id: 555,
+              name: "Transportes Alfa",
+              document: "11.222.333/0001-44",
+              source: "omie",
+              is_active: true,
+              updated_at: "2026-08-03T09:44:34.000Z"
+            }
+          ]
+        },
+        error: null
+      });
+
+      await pullDesktopDataFromCloud(database, identity);
+
+      // A linha da nuvem continua descartada (nada de cadastro duplicado na lista)...
+      expect(
+        database.prepare("SELECT id FROM customers WHERE deleted_at IS NULL").pluck().all()
+      ).toEqual(["local-uuid"]);
+      // ...mas o codigo do OMIE foi aproveitado: o proximo envio vira AlterarCliente.
+      expect(
+        database
+          .prepare("SELECT omie_customer_id FROM customers WHERE id = 'local-uuid'")
+          .pluck()
+          .get()
+      ).toBe(11489512176);
+      // O envio ao OMIE segue armado: agora ele tem como se vincular ao cadastro de la.
+      expect(
+        database.prepare("SELECT needs_push FROM customers WHERE id = 'local-uuid'").pluck().get()
+      ).toBe(1);
+      expect(
+        database
+          .prepare("SELECT omie_customer_id FROM carriers WHERE id = 'carrier-uuid'")
+          .pluck()
+          .get()
+      ).toBe(555);
+    } finally {
+      database.close();
+    }
+  });
+
+  // O CPF/CNPJ que o operador digita fica com needs_push = 1 esperando o envio ao OMIE.
+  // O pull do cadastro sobrescrevia a linha inteira com a versao (mais velha) da nuvem e
+  // ainda zerava o needs_push: o documento sumia da tela e o cadastro nunca chegava ao
+  // OMIE — "o KyberRock nao esta cadastrando o CPF do cliente".
+  it("nao sobrescreve o cadastro do cliente editado aqui e ainda nao enviado ao OMIE", async () => {
+    const database = createMachine("desktop-b");
+
+    try {
+      const identity = readIdentity(database);
+      database
+        .prepare(
+          `INSERT INTO customers (
+             id, company_id, omie_customer_id, source, legal_name, trade_name, document, phone, email,
+             sync_status, needs_push, is_active, created_at, updated_at
+           ) VALUES ('cust-1', ?, 4242, 'hybrid', 'Jose da Silva', 'Jose', '45648723890',
+                     '31988887777', 'jose@exemplo.com', 'pending', 1, 1, ?, ?)`
+        )
+        .run(identity.companyId, "2026-07-27T10:00:00.000Z", "2026-08-03T09:00:00.000Z");
+
+      // A nuvem ainda tem a versao velha (sem CPF, sem telefone) e sem o codigo OMIE.
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          customers: [
+            {
+              id: "cust-1",
+              omie_customer_id: null,
+              legal_name: "Jose da Silva",
+              trade_name: "Jose",
+              document: null,
+              phone: null,
+              email: null,
+              open_receivables_cents: 15000,
+              is_active: true,
+              updated_at: "2026-07-27T10:00:00.000Z"
+            }
+          ]
+        },
+        error: null
+      });
+
+      await pullDesktopDataFromCloud(database, identity);
+
+      const row = database
+        .prepare(
+          "SELECT document, phone, email, omie_customer_id, needs_push, open_receivables_cents FROM customers WHERE id = 'cust-1'"
+        )
+        .get() as {
+        document: string | null;
+        phone: string | null;
+        email: string | null;
+        omie_customer_id: number | null;
+        needs_push: number;
+        open_receivables_cents: number;
+      };
+      expect(row.document).toBe("45648723890");
+      expect(row.phone).toBe("31988887777");
+      expect(row.email).toBe("jose@exemplo.com");
+      // O codigo do OMIE que ja temos nunca e apagado: sem ele o proximo push tentaria
+      // um IncluirCliente de um cadastro que ja existe la.
+      expect(row.omie_customer_id).toBe(4242);
+      // O envio ao OMIE continua armado.
+      expect(row.needs_push).toBe(1);
+      // Saldo em aberto e projecao da nuvem: esse sim vem de la.
+      expect(row.open_receivables_cents).toBe(15000);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("aplica o cadastro da nuvem quando nao ha edicao local pendente", async () => {
+    const database = createMachine("desktop-b");
+
+    try {
+      const identity = readIdentity(database);
+      database
+        .prepare(
+          `INSERT INTO customers (
+             id, company_id, source, legal_name, trade_name, document, sync_status, needs_push,
+             is_active, created_at, updated_at
+           ) VALUES ('cust-2', ?, 'hybrid', 'Construtora Beta', 'Beta', NULL, 'synced', 0, 1, ?, ?)`
+        )
+        .run(identity.companyId, "2026-07-27T10:00:00.000Z", "2026-07-27T10:00:00.000Z");
+
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          customers: [
+            {
+              id: "cust-2",
+              legal_name: "Construtora Beta LTDA",
+              trade_name: "Beta",
+              document: "26463463000183",
+              is_active: true,
+              updated_at: "2026-08-03T09:00:00.000Z"
+            }
+          ]
+        },
+        error: null
+      });
+
+      await pullDesktopDataFromCloud(database, identity);
+
+      const row = database
+        .prepare("SELECT legal_name, document FROM customers WHERE id = 'cust-2'")
+        .get() as { legal_name: string; document: string | null };
+      expect(row.legal_name).toBe("Construtora Beta LTDA");
+      expect(row.document).toBe("26463463000183");
+    } finally {
+      database.close();
+    }
+  });
+
   it("projeta no SQLite o cadastro que veio do desktop-pull", async () => {
     const database = createMachine("desktop-b");
 
@@ -224,7 +417,10 @@ describe("cadastro compartilhado da pedreira", () => {
       expect(count(database, "report_recipients")).toBe(1);
       // Placa normalizada alimenta a busca por placa nas telas de pesagem.
       expect(
-        database.prepare("SELECT plate_normalized FROM vehicles WHERE id = 'vehicle-1'").pluck().get()
+        database
+          .prepare("SELECT plate_normalized FROM vehicles WHERE id = 'vehicle-1'")
+          .pluck()
+          .get()
       ).toBe("ABC1D23");
     } finally {
       database.close();
@@ -284,7 +480,9 @@ describe("cadastro compartilhado da pedreira", () => {
       // Saldo recalculado pelo log inteiro: +100,00 -30,00 -20,00 = 50,00.
       expect(
         database
-          .prepare("SELECT balance_cents FROM customer_credit_balances WHERE customer_id = 'cust-1'")
+          .prepare(
+            "SELECT balance_cents FROM customer_credit_balances WHERE customer_id = 'cust-1'"
+          )
           .pluck()
           .get()
       ).toBe(5_000);
@@ -531,7 +729,9 @@ describe("cadastro compartilhado da pedreira", () => {
       invokeMock.mockClear();
       const third = await pushSharedCadastroToCloud(database, identity);
       expect(third.pushed).toBe(1);
-      expect(payloadFor("carriers")).toMatchObject([{ id: "carrier-1", name: "Transportes Beta LTDA" }]);
+      expect(payloadFor("carriers")).toMatchObject([
+        { id: "carrier-1", name: "Transportes Beta LTDA" }
+      ]);
     } finally {
       database.close();
     }

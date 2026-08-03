@@ -8,10 +8,7 @@
  */
 
 function normalize(message: string): string {
-  return message
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, ""); // remove acentos
+  return message.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, ""); // remove acentos
 }
 
 const FISCAL_CONTEXT = ["nf-e", "nfe", "faturamento", "faturar", "para emitir a nf"];
@@ -48,4 +45,28 @@ export function isOmieMissingDocumentFault(message: string): boolean {
   if (!message) return false;
   const text = normalize(message);
   return text.includes("[cnpj_cpf]") && text.includes("obrigat");
+}
+
+/**
+ * Prefixo que o edge (`omie-sync`) usa quando o OMIE recusa o CADASTRO do cliente no
+ * envio do fechamento — o cliente ainda nao existe la e o IncluirCliente foi rejeitado
+ * (campo obrigatorio faltando, documento invalido...). Precisa acompanhar
+ * CUSTOMER_REGISTRATION_FAULT_PREFIX em supabase/functions/omie-sync/omie-sync-core.ts.
+ */
+const CUSTOMER_REGISTRATION_FAULT_PREFIX = "cadastro do cliente recusado pelo omie";
+
+/**
+ * Fechamento que nao foi ao OMIE porque o CLIENTE nao pode ser cadastrado la.
+ * Deterministico: re-tentar sem corrigir o cadastro so repete a recusa (e gera retry
+ * storm). O envio volta sozinho quando o cliente entra no OMIE — ver
+ * rearmOmieBillingForCustomer em supabase-sync.
+ */
+export function isOmieCustomerRegistrationFault(message: string): boolean {
+  if (!message) return false;
+  const text = normalize(message);
+  return (
+    text.includes(CUSTOMER_REGISTRATION_FAULT_PREFIX) ||
+    text.includes("sem dados de cadastro para criar no omie") ||
+    isOmieMissingDocumentFault(message)
+  );
 }

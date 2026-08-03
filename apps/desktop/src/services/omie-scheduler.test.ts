@@ -53,9 +53,9 @@ describe("normalizeOmieSchedulerConfig", () => {
   });
 
   it("trata intervalo invalido como default", () => {
-    expect(
-      normalizeOmieSchedulerConfig({ intervalMinutes: Number.NaN })
-    ).toMatchObject({ intervalMinutes: DEFAULT_OMIE_PULL_INTERVAL_MINUTES });
+    expect(normalizeOmieSchedulerConfig({ intervalMinutes: Number.NaN })).toMatchObject({
+      intervalMinutes: DEFAULT_OMIE_PULL_INTERVAL_MINUTES
+    });
   });
 });
 

@@ -18,7 +18,9 @@ export function createOmieRequestBody<TParam>(
 }
 
 export function buildOmieIntegrationCode(unitId: string, entityId: string, action: string): string {
-  const raw = ["kyberrock", unitId, entityId, action].map((part) => part.replaceAll(":", "_")).join(":");
+  const raw = ["kyberrock", unitId, entityId, action]
+    .map((part) => part.replaceAll(":", "_"))
+    .join(":");
   if (raw.length <= 60) {
     return raw;
   }

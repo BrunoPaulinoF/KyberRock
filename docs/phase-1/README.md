@@ -20,7 +20,7 @@ Definir contratos, entidades, status, sincronizacao, multiunidade e regras de co
 | --------------------------------------------- | ------------ |
 | Documento tecnico em `docs/ARCHITECTURE.md`   | Criado       |
 | Modelo de dados SQLite                        | Draft criado |
-| Modelo de dados Supabase Postgres                     | Draft criado |
+| Modelo de dados Supabase Postgres             | Draft criado |
 | Contratos TypeScript compartilhados           | Draft criado |
 | Identificadores globais e locais              | Definido     |
 | Empresa, unidade e dispositivo desde o inicio | Definido     |

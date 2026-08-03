@@ -7,28 +7,28 @@ import { describe, expect, it } from "vitest";
 const rendererDir = dirname(fileURLToPath(import.meta.url));
 const appSource = readFileSync(resolve(rendererDir, "App.tsx"), "utf8");
 const previewSource = readFileSync(resolve(rendererDir, "ReceiptPreviewCard.tsx"), "utf8");
-const mainSource = readFileSync(resolve(rendererDir, "../main/main.ts"), "utf8");
+const receiptHtmlSource = readFileSync(resolve(rendererDir, "../services/receipt-html.ts"), "utf8");
 
 describe("cupom impresso pela impressora do Windows", () => {
   // O bug: o HTML montava o corpo com `snapshot.lines.slice(6)`, um deslocamento fixo.
   // Bastava desligar um bloco do cabecalho ou fechar uma operacao interna (que insere o
   // aviso "sem valor fiscal" no topo) para o cupom sair picado.
   it("nao corta as linhas do topo por posicao fixa", () => {
-    expect(mainSource).not.toContain("snapshot.lines.slice(6)");
-    expect(mainSource).toContain("snapshot.bodyLines.join");
-    expect(mainSource).toContain("const header = snapshot.header;");
+    expect(receiptHtmlSource).not.toContain("snapshot.lines.slice(6)");
+    expect(receiptHtmlSource).toContain("snapshot.bodyLines.join");
+    expect(receiptHtmlSource).toContain("const header = snapshot.header;");
   });
 
   it("imprime a logo respeitando o interruptor e o alinhamento configurados", () => {
-    expect(mainSource).toContain("const showLogo = style.showLogo;");
-    expect(mainSource).toContain("logo-row");
-    expect(mainSource).toContain("style.logoAlignment");
+    expect(receiptHtmlSource).toContain("style.showLogo");
+    expect(receiptHtmlSource).toContain("logo-row");
+    expect(receiptHtmlSource).toContain("style.logoAlignment");
   });
 
   it("aplica fonte, tamanhos e destaque dos numeros escolhidos", () => {
-    expect(mainSource).toContain("RECEIPT_FONT_STACKS[style.fontFamily]");
-    expect(mainSource).toContain("font-size: ${style.fontSizePx}px");
-    expect(mainSource).toContain("highlightReceiptNumbers(");
+    expect(receiptHtmlSource).toContain("RECEIPT_FONT_STACKS[style.fontFamily]");
+    expect(receiptHtmlSource).toContain("font-size: ${style.fontSizePx}px");
+    expect(receiptHtmlSource).toContain("highlightReceiptNumbers(");
   });
 });
 

@@ -4,10 +4,7 @@ export interface ValidationResult {
 }
 
 export class PaymentTermValidator {
-  validateClosingDate(
-    paymentTermCode: string,
-    closingDate: Date
-  ): ValidationResult {
+  validateClosingDate(paymentTermCode: string, closingDate: Date): ValidationResult {
     const day = closingDate.getDate();
 
     if (paymentTermCode === "a_vista") {

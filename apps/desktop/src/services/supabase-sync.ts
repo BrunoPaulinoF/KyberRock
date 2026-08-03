@@ -13,6 +13,7 @@ import {
 import type { DesktopDatabase } from "../database/sqlite.js";
 import type { LocalDesktopIdentity } from "./bootstrap.js";
 import { readLocalSetting, readStringLocalSetting, writeLocalSetting } from "./local-settings.js";
+import { readOmieAdvanceConfig, rememberDetectedAdvanceConfig } from "./omie-advance-config.js";
 import { ReportService } from "./reports.js";
 import {
   ensureReportRecipientsTable,
@@ -37,6 +38,7 @@ import {
 } from "./weighing-operations.js";
 import {
   isCadastroIncompleteFault,
+  isOmieCustomerRegistrationFault,
   isOmieMissingDocumentFault,
   isOmieProtectedRecordFault
 } from "./omie-fault-classifier.js";
@@ -1065,15 +1067,32 @@ function upsertCloudCustomerFreightRules(
   return count;
 }
 
+/** Prazos ("installments[].dueDays") gravados no rules_json da condicao. */
+function dueDaysFromRulesJson(rulesJson: string): number[] | null {
+  try {
+    const rules = JSON.parse(rulesJson) as { installments?: Array<{ dueDays?: unknown }> };
+    if (!Array.isArray(rules.installments) || rules.installments.length === 0) return null;
+    const days = rules.installments.map((installment) => Number(installment?.dueDays));
+    return days.every((value) => Number.isInteger(value) && value >= 0) ? days : null;
+  } catch {
+    return null;
+  }
+}
+
 function upsertCloudPaymentTerms(
   database: DesktopDatabase,
   companyId: string,
   rows: Array<Record<string, unknown>>
 ): number {
+  // A nuvem so guarda o rules_json da condicao. As colunas de prazo ficavam vazias no
+  // desktop que recebia a condicao pela nuvem, e o fechamento saia sem prazo nenhum — o
+  // OMIE entao colocava o vencimento na propria data de emissao. Derivamos as colunas do
+  // rules_json aqui, na entrada.
   const upsert = database.prepare(`
     INSERT INTO payment_terms (
-      id, company_id, omie_code, name, rules_json, is_active, created_at, updated_at, deleted_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      id, company_id, omie_code, name, rules_json, is_active, created_at, updated_at, deleted_at,
+      installment_days_json, first_installment_days, installment_interval_days, installment_count
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
       omie_code = excluded.omie_code,
@@ -1081,7 +1100,11 @@ function upsertCloudPaymentTerms(
       rules_json = excluded.rules_json,
       is_active = excluded.is_active,
       updated_at = excluded.updated_at,
-      deleted_at = excluded.deleted_at
+      deleted_at = excluded.deleted_at,
+      installment_days_json = COALESCE(excluded.installment_days_json, payment_terms.installment_days_json),
+      first_installment_days = COALESCE(excluded.first_installment_days, payment_terms.first_installment_days),
+      installment_interval_days = COALESCE(excluded.installment_interval_days, payment_terms.installment_interval_days),
+      installment_count = COALESCE(excluded.installment_count, payment_terms.installment_count)
   `);
 
   let count = 0;
@@ -1090,16 +1113,22 @@ function upsertCloudPaymentTerms(
     const name = stringValue(row.name);
     if (!id || !name) continue;
     const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
+    const rulesJson = jsonStringValue(row.rules_json) ?? "{}";
+    const dueDays = dueDaysFromRulesJson(rulesJson);
     upsert.run(
       id,
       companyId,
       nullableStringValue(row.omie_code),
       name,
-      jsonStringValue(row.rules_json) ?? "{}",
+      rulesJson,
       booleanToSql(row.is_active, true),
       isoStringValue(row.created_at) || updatedAt,
       updatedAt,
-      isoStringValue(row.deleted_at)
+      isoStringValue(row.deleted_at),
+      dueDays ? JSON.stringify(dueDays) : null,
+      dueDays ? dueDays[0] : null,
+      dueDays && dueDays.length > 1 ? dueDays[1] - dueDays[0] : null,
+      dueDays ? dueDays.length : null
     );
     count++;
   }
@@ -1119,14 +1148,15 @@ function upsertCloudPaymentMethods(
   );
   const upsert = database.prepare(`
     INSERT INTO payment_methods (
-      id, company_id, code, name, omie_code, is_system, is_customer_credit,
+      id, company_id, code, name, omie_code, is_system, is_customer_credit, is_wallet,
       sort_order, is_active, created_at, updated_at, deleted_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
       name = excluded.name,
       omie_code = excluded.omie_code,
       is_customer_credit = excluded.is_customer_credit,
+      is_wallet = excluded.is_wallet,
       sort_order = excluded.sort_order,
       is_active = excluded.is_active,
       updated_at = excluded.updated_at,
@@ -1153,6 +1183,7 @@ function upsertCloudPaymentMethods(
       nullableStringValue(row.omie_code),
       booleanToSql(row.is_system, false),
       booleanToSql(row.is_customer_credit, false),
+      booleanToSql(row.is_wallet, false),
       integerValue(row.sort_order) ?? 0,
       booleanToSql(row.is_active, true),
       isoStringValue(row.created_at) || updatedAt,
@@ -1225,7 +1256,7 @@ function upsertCloudAccounts(
  * nuvem: soma-se o que as duas maquinas lancaram, entao um debito feito na outra
  * balanca nunca some por sobrescrita.
  */
-function upsertCloudCreditMovements(
+export function upsertCloudCreditMovements(
   database: DesktopDatabase,
   companyId: string,
   rows: Array<Record<string, unknown>>
@@ -1234,8 +1265,8 @@ function upsertCloudCreditMovements(
   const insert = database.prepare(`
     INSERT INTO customer_credit_movements (
       id, company_id, customer_id, operation_id, movement_type, amount_cents,
-      balance_after_cents, reason, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      balance_after_cents, reason, source, omie_title_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO NOTHING
   `);
 
@@ -1258,6 +1289,10 @@ function upsertCloudCreditMovements(
       integerValue(row.amount_cents) ?? 0,
       integerValue(row.balance_after_cents) ?? 0,
       nullableStringValue(row.reason),
+      // Adiantamento espelhado do OMIE chega marcado: o extrato distingue o que
+      // veio do financeiro do que foi lancado na balanca.
+      nullableStringValue(row.source) ?? "local",
+      integerValue(row.omie_title_id),
       isoStringValue(row.created_at) || new Date().toISOString()
     );
     if (result.changes > 0) {
@@ -1316,26 +1351,52 @@ function recalculateCreditBalances(database: DesktopDatabase, customerIds: strin
  * que ja existe aqui. Quando o documento ja esta em uso localmente, a linha da
  * nuvem e ignorada: o cadastro local e o dono do documento.
  */
-function hasLocalCadastroWithDocument(
+function findLocalCadastroWithDocument(
   database: DesktopDatabase,
   table: "customers" | "carriers",
   companyId: string,
   document: string | null,
   cloudId: string
-): boolean {
+): { id: string; omie_customer_id: number | null } | null {
   const digits = (document ?? "").replace(/\D/g, "");
-  if (!digits) return false;
+  if (!digits) return null;
   const row = database
     .prepare(
-      `SELECT 1 FROM ${table}
+      `SELECT id, omie_customer_id FROM ${table}
        WHERE company_id = ?
          AND id <> ?
          AND deleted_at IS NULL
          AND replace(replace(replace(replace(COALESCE(document, ''), '.', ''), '-', ''), '/', ''), ' ', '') = ?
        LIMIT 1`
     )
-    .get(companyId, cloudId, digits);
-  return row !== undefined;
+    .get(companyId, cloudId, digits) as { id: string; omie_customer_id: number | null } | undefined;
+  return row ?? null;
+}
+
+/**
+ * O gemeo do OMIE trouxe o codigo que o cadastro local ainda nao tem: adota o codigo
+ * aqui antes de descartar a linha da nuvem.
+ *
+ * Sem isso, um cliente cadastrado no KyberRock ficava para sempre sem `omie_customer_id`
+ * mesmo depois de existir no OMIE — e todo fechamento dele repetia um `IncluirCliente` de
+ * um cadastro que ja estava la, que o OMIE recusa com "Cliente ja cadastrado". Era assim
+ * que a operacao ficava parada sem subir.
+ */
+function adoptOmieCodeFromCloudTwin(
+  database: DesktopDatabase,
+  table: "customers" | "carriers",
+  local: { id: string; omie_customer_id: number | null },
+  cloudOmieCustomerId: number | null
+): void {
+  if (!cloudOmieCustomerId || cloudOmieCustomerId <= 0) return;
+  if (local.omie_customer_id && local.omie_customer_id > 0) return;
+  database
+    .prepare(
+      `UPDATE ${table}
+       SET omie_customer_id = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+       WHERE id = ? AND (omie_customer_id IS NULL OR omie_customer_id = 0)`
+    )
+    .run(cloudOmieCustomerId, local.id);
 }
 
 function upsertCloudCarriers(
@@ -1364,7 +1425,16 @@ function upsertCloudCarriers(
     const name = stringValue(row.name);
     if (!id || !name) continue;
     const document = nullableStringValue(row.document);
-    if (hasLocalCadastroWithDocument(database, "carriers", companyId, document, id)) continue;
+    const localTwin = findLocalCadastroWithDocument(database, "carriers", companyId, document, id);
+    if (localTwin) {
+      adoptOmieCodeFromCloudTwin(
+        database,
+        "carriers",
+        localTwin,
+        integerValue(row.omie_customer_id)
+      );
+      continue;
+    }
     const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
     upsert.run(
       id,
@@ -1770,21 +1840,30 @@ function upsertCloudCustomers(
     ) VALUES (?, ?, ?, 'hybrid', ?, ?, ?, ?, ?, ?, ?, 'synced', ?, ?, ?, NULL, ?, 0)
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
-      omie_customer_id = excluded.omie_customer_id,
+      -- Nunca apagar o codigo do OMIE que ja temos: sem ele o proximo push tenta um
+      -- IncluirCliente de um cadastro que ja existe la e cai em "Cliente ja cadastrado".
+      omie_customer_id = COALESCE(excluded.omie_customer_id, customers.omie_customer_id),
       source = CASE WHEN customers.source = 'local' THEN 'hybrid' ELSE customers.source END,
-      legal_name = excluded.legal_name,
-      trade_name = excluded.trade_name,
-      document = excluded.document,
-      phone = excluded.phone,
-      email = excluded.email,
-      credit_limit_cents = excluded.credit_limit_cents,
+      -- needs_push = 1 significa cadastro editado aqui e ainda NAO enviado ao OMIE. A
+      -- versao da nuvem e mais velha que essa edicao: sobrescrever apagava da tela o
+      -- CPF/CNPJ (e telefone, e-mail, razao social...) que o operador acabou de digitar
+      -- e ainda zerava o needs_push, cancelando de vez o envio ao OMIE. Mesma protecao
+      -- que carriers/report_recipients ja tinham.
+      legal_name = CASE WHEN customers.needs_push = 0 THEN excluded.legal_name ELSE customers.legal_name END,
+      trade_name = CASE WHEN customers.needs_push = 0 THEN excluded.trade_name ELSE customers.trade_name END,
+      document = CASE WHEN customers.needs_push = 0 THEN excluded.document ELSE customers.document END,
+      phone = CASE WHEN customers.needs_push = 0 THEN excluded.phone ELSE customers.phone END,
+      email = CASE WHEN customers.needs_push = 0 THEN excluded.email ELSE customers.email END,
+      credit_limit_cents = CASE WHEN customers.needs_push = 0 THEN excluded.credit_limit_cents ELSE customers.credit_limit_cents END,
+      -- Saldo em aberto e projecao da nuvem (nunca editado aqui): sempre o valor de la.
       open_receivables_cents = excluded.open_receivables_cents,
-      sync_status = 'synced',
-      is_active = excluded.is_active,
-      updated_at = excluded.updated_at,
-      deleted_at = NULL,
+      sync_status = CASE WHEN customers.needs_push = 0 THEN 'synced' ELSE customers.sync_status END,
+      is_active = CASE WHEN customers.needs_push = 0 THEN excluded.is_active ELSE customers.is_active END,
+      updated_at = CASE WHEN customers.needs_push = 0 THEN excluded.updated_at ELSE customers.updated_at END,
+      -- Exclusao local pendente nao pode ser ressuscitada pelo espelho da nuvem.
+      deleted_at = CASE WHEN customers.needs_push = 0 THEN NULL ELSE customers.deleted_at END,
       last_synced_at = excluded.last_synced_at,
-      needs_push = 0
+      needs_push = customers.needs_push
   `);
 
   let count = 0;
@@ -1792,7 +1871,16 @@ function upsertCloudCustomers(
     const id = stringValue(row.id);
     if (!id) continue;
     const document = nullableStringValue(row.document);
-    if (hasLocalCadastroWithDocument(database, "customers", companyId, document, id)) continue;
+    const localTwin = findLocalCadastroWithDocument(database, "customers", companyId, document, id);
+    if (localTwin) {
+      adoptOmieCodeFromCloudTwin(
+        database,
+        "customers",
+        localTwin,
+        integerValue(row.omie_customer_id)
+      );
+      continue;
+    }
     const legalName = stringValue(row.legal_name) || stringValue(row.trade_name) || "Cliente";
     const tradeName = stringValue(row.trade_name) || legalName;
     const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
@@ -2506,6 +2594,208 @@ export async function syncOmieReferenceDataFromCloud(
   throw new Error("OMIE sync redundant retry exhausted.");
 }
 
+/** Estado do espelhamento dos adiantamentos, guardado entre ciclos. */
+interface OmieAdvancesState {
+  /** Categorias de adiantamento ja descobertas (evita revarrer o plano de contas). */
+  categoryCodes?: string[];
+  /** Fim da ultima janela sincronizada com sucesso (ISO yyyy-mm-dd). */
+  lastSyncedDate?: string;
+  lastSyncedAt?: string;
+  /** Pagina em que o ciclo anterior parou (varredura ainda incompleta). */
+  pendingPage?: number;
+  /** Janela do ciclo interrompido, para retomar exatamente onde parou. */
+  pendingStartDate?: string | null;
+  pendingEndDate?: string | null;
+}
+
+const OMIE_ADVANCES_STATE_KEY = "omie_advances_state";
+/** Paginas de contas a receber por ciclo: teto para nao prender a sincronizacao. */
+const OMIE_ADVANCES_MAX_PAGES = 20;
+/**
+ * Reprocessa alguns dias ja sincronizados a cada ciclo. A janela filtra por
+ * inclusao/alteracao no OMIE, e uma baixa lancada com data retroativa (ou um
+ * ciclo que caiu no meio) apareceria fora da janela seguinte.
+ */
+const OMIE_ADVANCES_OVERLAP_DAYS = 7;
+
+export interface CustomerAdvancesSyncResult {
+  /** Adiantamentos vistos no OMIE (todas as paginas do ciclo). */
+  advances: number;
+  /** Adiantamentos novos espelhados no extrato. */
+  imported: number;
+  /** Adiantamentos que mudaram no OMIE e foram acertados. */
+  adjusted: number;
+  unchanged: number;
+  /** Titulos de clientes que nao existem nesta pedreira. */
+  unknownCustomers: number;
+  /** Lancamentos aplicados no extrato local. */
+  movementsApplied: number;
+  pages: number;
+  finished: boolean;
+  categoryCodes: string[];
+}
+
+/**
+ * Espelha os adiantamentos do cliente (dinheiro depositado, registrado no
+ * financeiro do OMIE) no extrato de credito local, para que as compras da
+ * balanca sejam abatidas desse saldo.
+ *
+ * Quem le o OMIE e grava o lancamento e a Edge Function (credencial e escritor
+ * unico ficam na nuvem); aqui so aplicamos as linhas que voltam, pelo mesmo
+ * caminho de qualquer movimento vindo de outra maquina — entao o saldo continua
+ * sendo recalculado pelo log e o que foi lancado offline nao se perde.
+ */
+export async function syncCustomerAdvancesFromCloud(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity,
+  options: { fullRescan?: boolean; customerOmieCode?: number } = {}
+): Promise<CustomerAdvancesSyncResult> {
+  const settings = getCloudSettings(database, identity);
+  const supabase = getSupabaseClient();
+  const state = options.fullRescan
+    ? {}
+    : (readLocalSetting<OmieAdvancesState>(database, OMIE_ADVANCES_STATE_KEY) ?? {});
+  // Categoria fixada na configuracao vence a deteccao por nome: pedreira que
+  // renomeou a categoria de adiantamento continua sincronizando.
+  const configuredCategoryCodes = readOmieAdvanceConfig(database).categoryCodes;
+  const today = toIsoDate(new Date());
+  // Ciclo anterior parou no meio (tenant grande, queda de rede): retoma a mesma
+  // janela na pagina seguinte, senao a varredura recomecaria do zero e nunca
+  // passaria do teto de paginas.
+  const resuming = typeof state.pendingPage === "number" && state.pendingPage > 1;
+  // Sem sincronizacao anterior (ou varredura completa pedida): sem janela, para
+  // trazer todo o historico de adiantamentos que ainda tem saldo.
+  const startDate = resuming
+    ? (state.pendingStartDate ?? undefined)
+    : state.lastSyncedDate
+      ? addDaysToIsoDateString(state.lastSyncedDate, -OMIE_ADVANCES_OVERLAP_DAYS)
+      : undefined;
+  const endDate = resuming ? (state.pendingEndDate ?? undefined) : startDate ? today : undefined;
+  const firstPage = resuming ? (state.pendingPage as number) : 1;
+  let lastCompletedPage = firstPage - 1;
+
+  const result: CustomerAdvancesSyncResult = {
+    advances: 0,
+    imported: 0,
+    adjusted: 0,
+    unchanged: 0,
+    unknownCustomers: 0,
+    movementsApplied: 0,
+    pages: 0,
+    finished: false,
+    categoryCodes:
+      configuredCategoryCodes.length > 0 ? configuredCategoryCodes : (state.categoryCodes ?? [])
+  };
+
+  try {
+    for (let index = 0; index < OMIE_ADVANCES_MAX_PAGES; index++) {
+      const page = firstPage + index;
+      const body = {
+        deviceId: settings.deviceId,
+        deviceToken: settings.deviceToken,
+        action: "pull_customer_advances",
+        payload: {
+          page,
+          startDate,
+          endDate,
+          categoryCodes: result.categoryCodes.length > 0 ? result.categoryCodes : undefined,
+          customerOmieCode: options.customerOmieCode
+        }
+      };
+
+      const data = await invokeCustomerAdvancesPage(supabase, body);
+      lastCompletedPage = page;
+      result.pages++;
+      result.advances += data.advances ?? 0;
+      result.imported += data.imported ?? 0;
+      result.adjusted += data.adjusted ?? 0;
+      result.unchanged += data.unchanged ?? 0;
+      result.unknownCustomers += data.unknownCustomers ?? 0;
+      if (data.categoryCodes?.length && configuredCategoryCodes.length === 0) {
+        result.categoryCodes = data.categoryCodes;
+        rememberDetectedAdvanceConfig(database, { categoryCodes: data.categoryCodes });
+      }
+
+      const movements = data.movements ?? [];
+      if (movements.length > 0) {
+        result.movementsApplied += upsertCloudCreditMovements(
+          database,
+          identity.companyId,
+          movements
+        );
+      }
+
+      if (data.finished !== false) {
+        result.finished = true;
+        break;
+      }
+    }
+  } finally {
+    // Guarda o progresso ate no erro: uma queda na pagina 15 nao pode obrigar o
+    // proximo ciclo a varrer as 14 anteriores de novo. As paginas ja aplicadas
+    // sao idempotentes (movimento com id conhecido nao entra duas vezes).
+    writeLocalSetting(database, OMIE_ADVANCES_STATE_KEY, {
+      categoryCodes: result.categoryCodes,
+      // A janela so avanca quando o ciclo varreu ate a ultima pagina; senao o
+      // proximo ciclo retoma na pagina seguinte e nada fica para tras.
+      lastSyncedDate: result.finished ? (endDate ?? today) : state.lastSyncedDate,
+      lastSyncedAt: new Date().toISOString(),
+      pendingPage: result.finished ? undefined : lastCompletedPage + 1,
+      pendingStartDate: result.finished ? undefined : (startDate ?? null),
+      pendingEndDate: result.finished ? undefined : (endDate ?? null)
+    } satisfies OmieAdvancesState);
+  }
+
+  return result;
+}
+
+interface CustomerAdvancesPageResponse {
+  advances?: number;
+  imported?: number;
+  adjusted?: number;
+  unchanged?: number;
+  unknownCustomers?: number;
+  categoryCodes?: string[];
+  finished?: boolean;
+  movements?: Array<Record<string, unknown>>;
+}
+
+async function invokeCustomerAdvancesPage(
+  supabase: ReturnType<typeof getSupabaseClient>,
+  body: Record<string, unknown>
+): Promise<CustomerAdvancesPageResponse> {
+  for (let attempt = 0; attempt <= OMIE_SYNC_REDUNDANT_MAX_RETRIES; attempt++) {
+    const { data, error } = await supabase.functions.invoke<CustomerAdvancesPageResponse>(
+      "omie-sync",
+      { body }
+    );
+
+    if (error) {
+      const message = await getFunctionErrorMessage(error);
+      if (isOmieSyncRedundantError(message) && attempt < OMIE_SYNC_REDUNDANT_MAX_RETRIES) {
+        await new Promise((resolve) => setTimeout(resolve, parseOmieSyncRedundantWaitMs(message)));
+        continue;
+      }
+      throw new Error(message);
+    }
+
+    if (!data) throw new Error("Resposta OMIE vazia.");
+    return data;
+  }
+
+  throw new Error("OMIE sync redundant retry exhausted.");
+}
+
+function toIsoDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function addDaysToIsoDateString(isoDate: string, days: number): string {
+  const date = new Date(`${isoDate}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return toIsoDate(date);
+}
+
 export interface OmieDocumentTypeOption {
   code: string;
   description: string;
@@ -2998,6 +3288,9 @@ export async function pushOmieCustomersToCloud(
       } else {
         setOmieId.run(data.omieCustomerId, customer.id);
       }
+      // Cliente agora existe no OMIE: os fechamentos que estavam parados por causa dele
+      // voltam para a fila e saem nesta mesma passada (a fila roda depois deste push).
+      rearmOmieBillingForCustomer(database, customer.id);
       pushed++;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Erro OMIE";
@@ -3024,6 +3317,85 @@ export async function pushOmieCustomersToCloud(
   }
 
   return { pushed, failed, errors };
+}
+
+/**
+ * Devolve para a fila OMIE os fechamentos de um cliente que ficaram parados porque ele
+ * ainda nao existia no OMIE (ou o cadastro dele foi recusado la). Roda logo depois do
+ * cliente entrar no OMIE — pelo cadastro ou pelo proprio envio de outro fechamento — e:
+ *
+ * - reconstroi o payload do job com `buildOmieBillingJob` (agora com o codigo OMIE do
+ *   cliente, e nao mais so o cadastro embutido);
+ * - devolve o job para 'pending' com o backoff zerado, mantendo a MESMA chave de
+ *   idempotencia (o OMIE reaproveita o pedido/OS, nunca duplica);
+ * - enfileira o job de operacoes que fecharam sem job nenhum (cliente sem CNPJ/CPF no
+ *   fechamento: naquele momento nao havia o que enviar);
+ * - limpa o 'cadastro_incompleto' da operacao para ela sair do estado de pendencia.
+ *
+ * Como `pushOmieCustomersToCloud` roda ANTES de `processOmieSyncQueue` no ciclo do OMIE,
+ * o fechamento sai sozinho na mesma passada — sem o operador ter que clicar em
+ * "Refaturar"/"Reenviar". Retorna quantas operacoes foram rearmadas.
+ */
+export function rearmOmieBillingForCustomer(
+  database: DesktopDatabase,
+  customerId: string,
+  now: Date = new Date()
+): number {
+  if (!customerId) return 0;
+
+  const operations = database
+    .prepare(
+      `SELECT o.id
+         FROM weighing_operations o
+        WHERE o.customer_id = ?
+          AND o.status NOT IN ('cancelled', 'synced')
+          AND o.exit_weight_captured_at IS NOT NULL
+          AND o.omie_sales_order_id IS NULL
+          AND o.omie_service_order_id IS NULL`
+    )
+    .all(customerId) as Array<{ id: string }>;
+
+  const nowIso = now.toISOString();
+  let rearmed = 0;
+
+  for (const operation of operations) {
+    const built = buildOmieBillingJob(database, operation.id);
+    // Ainda sem o que enviar (cliente sem codigo OMIE e sem documento): segue pendente.
+    if (!built) continue;
+
+    enqueueOmieBillingJob(database, operation.id, built, now);
+    const updated = database
+      .prepare(
+        `UPDATE sync_queue
+            SET status = 'pending',
+                attempt_count = 0,
+                payload_json = ?,
+                next_attempt_at = ?,
+                updated_at = ?
+          WHERE target = 'omie'
+            AND idempotency_key = ?
+            AND status IN ('pending', 'failed', 'dead_letter')`
+      )
+      .run(JSON.stringify(built.payload), nowIso, nowIso, built.idempotencyKey);
+    if (updated.changes === 0) continue;
+
+    database
+      .prepare(
+        `UPDATE weighing_operations
+            SET omie_billing_status = NULL,
+                omie_billing_message = ?,
+                updated_at = ?
+          WHERE id = ? AND omie_billing_status = 'cadastro_incompleto'`
+      )
+      .run(
+        "Cliente cadastrado no OMIE. O fechamento sera reenviado na sincronizacao.",
+        nowIso,
+        operation.id
+      );
+    rearmed++;
+  }
+
+  return rearmed;
 }
 
 // Codigo de integracao do consumidor final padrao do OMIE (registro protegido).
@@ -3341,6 +3713,184 @@ function reconcileCancelledAfterCreate(
   });
 }
 
+/**
+ * Enfileira a baixa do adiantamento no OMIE para a operacao, quando ela consumiu
+ * dinheiro que o cliente ja tinha depositado la. Idempotente: a chave e a propria
+ * operacao, entao um segundo envio do pedido nao cria uma segunda baixa.
+ */
+function enqueueAdvanceSettlementJob(
+  database: DesktopDatabase,
+  input: {
+    operationId: string;
+    customerOmieId?: number | null;
+    omieOrderId: number;
+    issueDate?: string;
+  }
+): void {
+  const row = database
+    .prepare(
+      `SELECT omie_advance_settle_cents, omie_advance_settled_cents, status
+       FROM weighing_operations WHERE id = ?`
+    )
+    .get(input.operationId) as
+    | {
+        omie_advance_settle_cents: number | null;
+        omie_advance_settled_cents: number | null;
+        status: string;
+      }
+    | undefined;
+  if (!row || row.status === "cancelled") return;
+
+  const pendingCents = (row.omie_advance_settle_cents ?? 0) - (row.omie_advance_settled_cents ?? 0);
+  if (pendingCents <= 0) return;
+  if (!input.customerOmieId || input.customerOmieId <= 0) return;
+
+  const advanceConfig = readOmieAdvanceConfig(database);
+  enqueueSyncJob(database, {
+    target: "omie",
+    action: "settle_advance",
+    entityType: "weighing_operation",
+    entityId: input.operationId,
+    idempotencyKey: `omie:settle_advance:${input.operationId}`,
+    payload: {
+      operationId: input.operationId,
+      customerOmieId: input.customerOmieId,
+      omieOrderId: input.omieOrderId,
+      amountCents: pendingCents,
+      issueDate: input.issueDate,
+      advanceAccountCode: advanceConfig.accountCode ?? undefined
+    }
+  });
+}
+
+/**
+ * Baixa no OMIE o adiantamento consumido pela operacao. O titulo do pedido pode
+ * demorar a existir (faturamento recem-enviado): nesse caso o job volta para a
+ * fila em vez de dar a operacao como amortizada.
+ */
+async function processOmieAdvanceSettlementJob(
+  database: DesktopDatabase,
+  supabase: SupabaseClient,
+  settings: CloudSettings,
+  job: { id: string; idempotencyKey: string; payload: unknown }
+): Promise<{ status: "processed" | "failed"; error?: string }> {
+  const payload = job.payload as {
+    operationId: string;
+    customerOmieId: number;
+    omieOrderId: number;
+    amountCents: number;
+    issueDate?: string;
+    advanceAccountCode?: number;
+  };
+
+  try {
+    const { data, error } = await supabase.functions.invoke<{
+      settledCents?: number;
+      titles?: Array<{ titleId: number; amountCents: number }>;
+      advanceAccountCode?: number | null;
+      pendingReceivable?: boolean;
+      message?: string | null;
+    }>("omie-sync", {
+      body: {
+        deviceId: settings.deviceId,
+        deviceToken: settings.deviceToken,
+        action: "settle_advance",
+        payload: {
+          localOperationId: payload.operationId,
+          customerOmieId: payload.customerOmieId,
+          omieOrderId: payload.omieOrderId,
+          amountCents: payload.amountCents,
+          issueDate: payload.issueDate,
+          advanceAccountCode: payload.advanceAccountCode,
+          idempotencyKey: job.idempotencyKey
+        }
+      }
+    });
+
+    if (error) throw new Error(await getFunctionErrorMessage(error));
+    if (!data) throw new Error("Resposta OMIE vazia.");
+
+    if (data.advanceAccountCode) {
+      rememberDetectedAdvanceConfig(database, { accountCode: data.advanceAccountCode });
+    }
+
+    if (data.pendingReceivable) {
+      const message = data.message ?? "Pedido ainda sem titulo a receber no OMIE.";
+      updateOperationAdvanceSettlement(database, payload.operationId, {
+        settledCents: 0,
+        status: "pending",
+        message
+      });
+      markSyncJobFailed(database, job.id, message);
+      return { status: "failed", error: message };
+    }
+
+    const settledCents = data.settledCents ?? 0;
+    const totalSettled = updateOperationAdvanceSettlement(database, payload.operationId, {
+      settledCents,
+      status: "settled",
+      message: data.message ?? null
+    });
+    markSyncJobDone(database, job.id);
+    // Baixa parcial (os titulos do pedido nao cobriram tudo): o restante fica
+    // registrado na operacao para o financeiro ver, sem novo job em loop.
+    if (totalSettled.pendingCents > 0) {
+      updateOperationAdvanceSettlement(database, payload.operationId, {
+        settledCents: 0,
+        status: "partial",
+        message:
+          data.message ??
+          `Faltou baixar R$ ${(totalSettled.pendingCents / 100).toFixed(2)} do adiantamento no OMIE.`
+      });
+    }
+    return { status: "processed" };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Erro OMIE";
+    updateOperationAdvanceSettlement(database, payload.operationId, {
+      settledCents: 0,
+      status: "error",
+      message
+    });
+    markSyncJobFailed(database, job.id, message);
+    return { status: "failed", error: message };
+  }
+}
+
+/** Soma o baixado na operacao e devolve o que ainda falta amortizar. */
+function updateOperationAdvanceSettlement(
+  database: DesktopDatabase,
+  operationId: string,
+  input: { settledCents: number; status: string; message: string | null }
+): { pendingCents: number } {
+  database
+    .prepare(
+      `UPDATE weighing_operations
+         SET omie_advance_settled_cents = omie_advance_settled_cents + ?,
+             omie_advance_status = ?,
+             omie_advance_message = ?,
+             omie_advance_settled_at = CASE WHEN ? > 0
+               THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now') ELSE omie_advance_settled_at END,
+             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+       WHERE id = ?`
+    )
+    .run(input.settledCents, input.status, input.message, input.settledCents, operationId);
+
+  const row = database
+    .prepare(
+      `SELECT omie_advance_settle_cents, omie_advance_settled_cents
+       FROM weighing_operations WHERE id = ?`
+    )
+    .get(operationId) as
+    | { omie_advance_settle_cents: number | null; omie_advance_settled_cents: number | null }
+    | undefined;
+  return {
+    pendingCents: Math.max(
+      0,
+      (row?.omie_advance_settle_cents ?? 0) - (row?.omie_advance_settled_cents ?? 0)
+    )
+  };
+}
+
 async function processOmieCancelJob(
   database: DesktopDatabase,
   supabase: SupabaseClient,
@@ -3450,6 +4000,19 @@ export async function processOmieSyncQueue(
       continue;
     }
 
+    if (job.action === "settle_advance") {
+      const outcome = await processOmieAdvanceSettlementJob(database, supabase, settings, job);
+      if (outcome.status === "processed") processed++;
+      else {
+        failed++;
+        errors.push(`Job ${job.id}: ${outcome.error}`);
+      }
+      if (index < jobs.length - 1) {
+        await sleep(delayMs);
+      }
+      continue;
+    }
+
     const payload = job.payload as {
       operationId: string;
       operationType: "invoice" | "internal";
@@ -3472,6 +4035,8 @@ export async function processOmieSyncQueue(
       omieCategoryCode?: string | null;
       transport?: {
         plate?: string | null;
+        /** UF de emplacamento (`placa_estado` do bloco frete da NF-e). */
+        plateState?: string | null;
         driverName?: string | null;
         carrierOmieId?: number | null;
         carrierName?: string | null;
@@ -3607,6 +4172,21 @@ export async function processOmieSyncQueue(
           );
       }
       markSyncJobDone(database, job.id);
+      // Cliente criado no OMIE agora (customerOmieId devolvido pelo envio): os OUTROS
+      // fechamentos dele que pararam por isso voltam para a fila. Depois do markSyncJobDone
+      // de proposito, para nunca reabrir o job que acabou de ser concluido.
+      if (data.omieCustomerId && payload.localCustomerId) {
+        rearmOmieBillingForCustomer(database, payload.localCustomerId);
+      }
+      // Compra paga com adiantamento: agora que o pedido existe (e, na venda com
+      // nota, ja foi faturado), o titulo gerado no OMIE pode ser baixado contra a
+      // conta de adiantamentos — e o saldo cai la como caiu aqui.
+      enqueueAdvanceSettlementJob(database, {
+        operationId: payload.operationId,
+        customerOmieId: data.omieCustomerId ?? payload.customerOmieId,
+        omieOrderId: data.orderId,
+        issueDate: payload.issueDate
+      });
       // Corrida create x cancel: se a operacao foi cancelada localmente enquanto o pedido
       // era criado, o update acima marcou 'synced' por engano. Restaura o cancelamento e
       // solicita o cancelamento do pedido recem-criado no OMIE.
@@ -3619,6 +4199,38 @@ export async function processOmieSyncQueue(
       processed++;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Erro OMIE";
+      // O OMIE recusou o CADASTRO do cliente (ele ainda nao existe la e o IncluirCliente
+      // foi rejeitado — campo obrigatorio faltando, documento invalido...). Deterministico:
+      // bloqueia o job (sem retry storm) e mostra na operacao o que falta preencher. Vale
+      // para os dois tipos de operacao. Quando o cliente entrar no OMIE, o job volta
+      // sozinho para a fila (rearmOmieBillingForCustomer) e o fechamento sai automatico.
+      if (isOmieCustomerRegistrationFault(message)) {
+        markSyncJobBlocked(database, job.id, message);
+        database
+          .prepare(
+            `UPDATE weighing_operations
+             SET omie_billing_status = 'cadastro_incompleto', omie_billing_message = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE id = ?`
+          )
+          .run(message, payload.operationId);
+        // Re-arma o envio do cadastro: assim que o cliente for aceito pelo OMIE (aqui ou
+        // depois de o operador completar o cadastro), o fechamento e reenviado sozinho.
+        if (payload.localCustomerId) {
+          database
+            .prepare(
+              `UPDATE customers
+               SET needs_push = 1, sync_status = 'error', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+               WHERE id = ? AND (omie_customer_id IS NULL OR omie_customer_id = 0)`
+            )
+            .run(payload.localCustomerId);
+        }
+        failed++;
+        errors.push(`Job ${job.id}: ${message}`);
+        if (index < jobs.length - 1) {
+          await sleep(delayMs);
+        }
+        continue;
+      }
       // Falha deterministica de cadastro/NF-e no faturamento: bloqueia (para o retry storm de
       // ~10x/min) e marca a pendencia na operacao. Continua re-executavel via processFiscalBillingNow.
       if (job.action === "create_and_bill_order" && isCadastroIncompleteFault(message)) {
@@ -3895,6 +4507,8 @@ export async function processFiscalBillingNow(
     accountName?: string | null;
     transport?: {
       plate?: string | null;
+      /** UF de emplacamento (`placa_estado` do bloco frete da NF-e). */
+      plateState?: string | null;
       driverName?: string | null;
       carrierOmieId?: number | null;
       cargoWeightKg?: number | null;
@@ -3989,6 +4603,11 @@ export async function processFiscalBillingNow(
         operationId
       );
     markSyncJobDone(database, job.id);
+    // Cliente criado no OMIE neste faturamento: libera os outros fechamentos dele que
+    // estavam parados por isso (depois do markSyncJobDone, para nao reabrir este job).
+    if (data.omieCustomerId && payload.localCustomerId) {
+      rearmOmieBillingForCustomer(database, payload.localCustomerId);
+    }
 
     return {
       orderId: data.orderId,
@@ -4004,7 +4623,9 @@ export async function processFiscalBillingNow(
 
     // Falha deterministica de cadastro/NF-e: nao adianta re-tentar automaticamente. Bloqueia o
     // job (re-executavel manualmente apos corrigir) e retorna pendencia clara — sem throw/storm.
-    if (isCadastroIncompleteFault(message)) {
+    // A recusa do cadastro do cliente no OMIE entra aqui pelo mesmo motivo, mas com a
+    // mensagem que diz qual campo do cliente falta preencher.
+    if (isCadastroIncompleteFault(message) || isOmieCustomerRegistrationFault(message)) {
       markSyncJobBlocked(database, job.id, message);
       database
         .prepare(
@@ -5213,7 +5834,7 @@ const CADASTRO_PUSH_ENTITIES: readonly CadastroPushEntity[] = [
       table: "payment_methods",
       alias: "pm",
       columns:
-        "pm.id, pm.code, pm.name, pm.omie_code, pm.is_system, pm.is_customer_credit, pm.sort_order, pm.is_active, pm.created_at, pm.updated_at, pm.deleted_at",
+        "pm.id, pm.code, pm.name, pm.omie_code, pm.is_system, pm.is_customer_credit, pm.is_wallet, pm.sort_order, pm.is_active, pm.created_at, pm.updated_at, pm.deleted_at",
       where: "pm.company_id = @companyId"
     }),
     map: (row, companyId) => {
@@ -5226,6 +5847,7 @@ const CADASTRO_PUSH_ENTITIES: readonly CadastroPushEntity[] = [
         omie_code: nullableStringValue(row.omie_code),
         is_system: Number(row.is_system ?? 0) === 1,
         is_customer_credit: Number(row.is_customer_credit ?? 0) === 1,
+        is_wallet: Number(row.is_wallet ?? 0) === 1,
         sort_order: integerValue(row.sort_order) ?? 0,
         is_active: cloudActive(row),
         created_at: cloudTimestamp(row.created_at, updatedAt),
@@ -5270,7 +5892,7 @@ const CADASTRO_PUSH_ENTITIES: readonly CadastroPushEntity[] = [
       table: "customer_credit_movements",
       alias: "cm",
       columns:
-        "cm.id, cm.customer_id, cm.operation_id, cm.movement_type, cm.amount_cents, cm.balance_after_cents, cm.reason, cm.created_at",
+        "cm.id, cm.customer_id, cm.operation_id, cm.movement_type, cm.amount_cents, cm.balance_after_cents, cm.reason, cm.source, cm.omie_title_id, cm.created_at",
       where: "cm.company_id = @companyId",
       cursorColumn: "created_at"
     }),
@@ -5285,6 +5907,8 @@ const CADASTRO_PUSH_ENTITIES: readonly CadastroPushEntity[] = [
         amount_cents: integerValue(row.amount_cents) ?? 0,
         balance_after_cents: integerValue(row.balance_after_cents) ?? 0,
         reason: nullableStringValue(row.reason),
+        source: nullableStringValue(row.source) ?? "local",
+        omie_title_id: integerValue(row.omie_title_id),
         created_at: createdAt,
         updated_at: createdAt
       };

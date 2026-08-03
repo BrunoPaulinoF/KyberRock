@@ -666,7 +666,7 @@ Status recomendados:
 | Aguardando carregamento | Solicitação aberta para o carregador visualizar |
 | Aguardando saída        | Caminhão carregado deve retornar à balança      |
 | Fechada localmente      | Peso de saída capturado e venda calculada       |
-| Pendente Cloud       | Ainda não sincronizada com cloud             |
+| Pendente Cloud          | Ainda não sincronizada com cloud                |
 | Pendente OMIE           | Ainda não enviada ao OMIE                       |
 | Sincronizada            | Enviada e confirmada nos sistemas necessários   |
 | Erro de sincronização   | Falha no envio ao Supabase ou OMIE              |
@@ -780,12 +780,12 @@ Justificativa:
 
 Stack recomendada:
 
-| Camada        | Tecnologia Recomendada  | Motivo                                                     |
-| ------------- | ----------------------- | ---------------------------------------------------------- |
-| Front-end web | React + TypeScript      | Interface simples e consistente com desktop                |
-| Build web     | Vite ou Next.js         | Vite se for SPA simples, Next.js se precisar SSR no futuro |
-| Autenticação  | Supabase Auth | Login próprio do carregador                                |
-| Banco cloud   | Supabase Postgres         | Atualização quase em tempo real                            |
+| Camada        | Tecnologia Recomendada | Motivo                                                     |
+| ------------- | ---------------------- | ---------------------------------------------------------- |
+| Front-end web | React + TypeScript     | Interface simples e consistente com desktop                |
+| Build web     | Vite ou Next.js        | Vite se for SPA simples, Next.js se precisar SSR no futuro |
+| Autenticação  | Supabase Auth          | Login próprio do carregador                                |
+| Banco cloud   | Supabase Postgres      | Atualização quase em tempo real                            |
 | Hospedagem    | EasyPanel/nginx        | Integração direta com Supabase                             |
 
 Recomendação prática:
@@ -799,11 +799,11 @@ Stack recomendada:
 
 | Camada             | Tecnologia Recomendada                         | Motivo                                          |
 | ------------------ | ---------------------------------------------- | ----------------------------------------------- |
-| Backend serverless | Supabase Edge Functions em TypeScript         | Integração nativa com Supabase e jobs agendados |
+| Backend serverless | Supabase Edge Functions em TypeScript          | Integração nativa com Supabase e jobs agendados |
 | Agendamentos       | Cloud Scheduler ou funções agendadas           | Envio do fechamento diário e rotinas de sync    |
 | Segredos           | Supabase secrets / variaveis de ambiente       | Proteger credenciais OMIE                       |
 | E-mail             | SendGrid, Resend ou provedor SMTP transacional | Envio confiável do fechamento diário            |
-| Logs cloud         | Supabase Logs/EasyPanel logs                  | Diagnóstico de sync e integrações               |
+| Logs cloud         | Supabase Logs/EasyPanel logs                   | Diagnóstico de sync e integrações               |
 
 Recomendação de segurança:
 

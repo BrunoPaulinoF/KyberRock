@@ -1,12 +1,25 @@
 import { randomUUID } from "node:crypto";
 
-import { isValidEmail, normalizeEmail } from "@kyberrock/shared";
+import { invalidEmailsInList, normalizeEmailList } from "@kyberrock/shared";
 
 import type { DesktopDatabase } from "../database/sqlite.js";
 import { readStringLocalSetting, writeLocalSetting } from "./local-settings.js";
 
 /** Key do e-mail padrao de NF-e (usado quando o cliente nao tem e-mail proprio). */
 export const DEFAULT_NFE_EMAIL_KEY = "default_nfe_email";
+
+/**
+ * O cadastro do cliente aceita quantos e-mails o operador quiser (NF-e, boleto, financeiro,
+ * comprador...). Todos ficam no mesmo campo, separados por virgula — o formato que o OMIE
+ * usa para mandar a nota e o boleto para todos os destinatarios.
+ *
+ * A normalizacao nao descarta endereco invalido: o formulario e quem avisa o operador, e
+ * apagar o que ele digitou aqui esconderia o erro (e o OMIE recusaria o cadastro depois).
+ */
+export function normalizeCustomerEmails(value: string | null | undefined): string | null {
+  const normalized = normalizeEmailList(value);
+  return normalized.length > 0 ? normalized : null;
+}
 
 export interface CreateCustomerInput {
   companyId: string;
@@ -131,12 +144,12 @@ export function findCustomerByDocument(
   companyId: string,
   document: string,
   excludeId?: string
-): { id: string; trade_name: string; legal_name: string } | null {
+): { id: string; trade_name: string; legal_name: string; is_active: number } | null {
   const digits = onlyDigits(document);
   if (!digits) return null;
   const row = database
     .prepare(
-      `SELECT id, trade_name, legal_name FROM customers
+      `SELECT id, trade_name, legal_name, is_active FROM customers
        WHERE company_id = ?
          AND deleted_at IS NULL
          AND replace(replace(replace(replace(COALESCE(document, ''), '.', ''), '-', ''), '/', ''), ' ', '') = ?
@@ -144,7 +157,7 @@ export function findCustomerByDocument(
        LIMIT 1`
     )
     .get(companyId, digits, excludeId ?? null, excludeId ?? null) as
-    | { id: string; trade_name: string; legal_name: string }
+    | { id: string; trade_name: string; legal_name: string; is_active: number }
     | undefined;
   return row ?? null;
 }
@@ -159,7 +172,14 @@ function assertDocumentIsFree(
   const existing = findCustomerByDocument(database, companyId, document, excludeId);
   if (!existing) return;
   const name = existing.trade_name?.trim() || existing.legal_name?.trim() || "sem nome";
-  throw new Error(`Ja existe um cliente com este CNPJ/CPF: ${name}.`);
+  // Cliente inativo tambem e dono do documento. Sem dizer que ele esta inativo, o
+  // operador procurava na lista, nao achava (a lista escondia os inativos) e ficava sem
+  // entender por que o CNPJ/CPF estava ocupado.
+  const inactiveHint =
+    existing.is_active === 0
+      ? " Ele esta inativo — procure por ele na lista de clientes e reative em vez de cadastrar de novo."
+      : "";
+  throw new Error(`Ja existe um cliente com este CNPJ/CPF: ${name}.${inactiveHint}`);
 }
 
 export function createCustomer(
@@ -180,9 +200,7 @@ export function createCustomer(
     if (input.tradeName) {
       const carrierName = `${input.tradeName} (padrão)`;
       const existing = database
-        .prepare(
-          "SELECT id FROM carriers WHERE company_id = ? AND name = ? AND deleted_at IS NULL"
-        )
+        .prepare("SELECT id FROM carriers WHERE company_id = ? AND name = ? AND deleted_at IS NULL")
         .get(input.companyId, carrierName) as { id: string } | undefined;
 
       if (existing) {
@@ -220,7 +238,7 @@ export function createCustomer(
       input.tradeName,
       input.document ?? null,
       input.phone ?? null,
-      input.email ?? null,
+      normalizeCustomerEmails(input.email),
       input.creditLimitCents ?? null,
       input.creditMode ?? "normal",
       input.omieBillingBlocked ? 1 : 0,
@@ -248,9 +266,7 @@ export function createCustomer(
       nowIso
     );
 
-  return database
-    .prepare("SELECT * FROM customers WHERE id = ?")
-    .get(id) as CustomerRow;
+  return database.prepare("SELECT * FROM customers WHERE id = ?").get(id) as CustomerRow;
 }
 
 export interface UpdateCustomerOptions {
@@ -340,7 +356,7 @@ export function updateCustomer(
   }
   if (input.email !== undefined) {
     sets.push("email = ?");
-    values.push(input.email);
+    values.push(normalizeCustomerEmails(input.email));
   }
   if (input.creditLimitCents !== undefined) {
     sets.push("credit_limit_cents = ?");
@@ -447,13 +463,9 @@ export function updateCustomer(
 
   values.push(id);
 
-  database
-    .prepare(`UPDATE customers SET ${sets.join(", ")} WHERE id = ?`)
-    .run(...values);
+  database.prepare(`UPDATE customers SET ${sets.join(", ")} WHERE id = ?`).run(...values);
 
-  return database
-    .prepare("SELECT * FROM customers WHERE id = ?")
-    .get(id) as CustomerRow;
+  return database.prepare("SELECT * FROM customers WHERE id = ?").get(id) as CustomerRow;
 }
 
 export function deleteCustomer(
@@ -483,24 +495,29 @@ export function getDefaultNfeEmail(database: DesktopDatabase): string | null {
   return readStringLocalSetting(database, DEFAULT_NFE_EMAIL_KEY);
 }
 
-/** Grava (ou limpa, com string vazia) o e-mail padrao de NF-e. Valida o formato. */
+/**
+ * Grava (ou limpa, com string vazia) o e-mail padrao de NF-e. Aceita quantos enderecos o
+ * operador quiser, separados por virgula, e valida cada um.
+ */
 export function setDefaultNfeEmail(database: DesktopDatabase, email: string): string | null {
   const trimmed = email.trim();
   if (!trimmed) {
     writeLocalSetting(database, DEFAULT_NFE_EMAIL_KEY, null);
     return null;
   }
-  const normalized = normalizeEmail(trimmed);
-  if (!isValidEmail(normalized)) {
-    throw new Error("E-mail padrao invalido.");
+  const invalid = invalidEmailsInList(trimmed);
+  if (invalid.length > 0) {
+    throw new Error(`E-mail padrao invalido: ${invalid.join(", ")}.`);
   }
+  const normalized = normalizeEmailList(trimmed);
   writeLocalSetting(database, DEFAULT_NFE_EMAIL_KEY, normalized);
   return normalized;
 }
 
 /**
  * Define o e-mail de TODOS os clientes da empresa para o e-mail padrao (NF-e sempre
- * sai com um e-mail, sem depender do cadastro de cada cliente). Tambem grava o valor
+ * sai com um e-mail, sem depender do cadastro de cada cliente). O padrao pode ter varios
+ * enderecos separados por virgula — todos vao para o OMIE. Tambem grava o valor
  * como e-mail padrao. Clientes origem OMIE viram 'hybrid' + needs_push=1 para o e-mail
  * ser empurrado ao OMIE. Retorna quantos clientes foram atualizados.
  */
@@ -530,10 +547,7 @@ export function applyDefaultNfeEmailToAllCustomers(
   return result.changes;
 }
 
-export function listCustomers(
-  database: DesktopDatabase,
-  companyId: string
-): CustomerRow[] {
+export function listCustomers(database: DesktopDatabase, companyId: string): CustomerRow[] {
   return database
     .prepare(
       `SELECT * FROM customers
@@ -543,10 +557,7 @@ export function listCustomers(
     .all(companyId) as CustomerRow[];
 }
 
-export function getCustomersByCarrier(
-  database: DesktopDatabase,
-  carrierId: string
-): CustomerRow[] {
+export function getCustomersByCarrier(database: DesktopDatabase, carrierId: string): CustomerRow[] {
   return database
     .prepare(
       `SELECT * FROM customers

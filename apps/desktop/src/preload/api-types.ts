@@ -14,8 +14,10 @@ import type {
   WeighingOperationSummary
 } from "../services/weighing-operations";
 import type { FreightModality } from "../services/freight";
+import type { CustomerFreightRule as CustomerFreightRuleView } from "../services/customer-freight-rules";
 import type {
   CloudBootstrapResult,
+  CustomerAdvancesSyncResult,
   FiscalBillingResult,
   SyncResult
 } from "../services/supabase-sync";
@@ -26,6 +28,7 @@ import type {
 } from "../services/product-prices";
 import type { CreditMovementRow, CustomerCreditSummary } from "../services/credit";
 import type { OmieCategoryOption } from "../services/omie-categories";
+import type { OmieAdvanceConfig } from "../services/omie-advance-config";
 import type { CreateQuotationInput, QuotationRow, QuotationSummary } from "../services/quotations";
 import type { ActivateDesktopInput, DesktopAccessStatus } from "../services/desktop-activation";
 import type { UnitDeviceInfo } from "../services/unit-devices";
@@ -49,6 +52,7 @@ import type {
 } from "../services/customer-report";
 import type { CreateCustomerInput, UpdateCustomerInput } from "../services/customers";
 import type { UpdatePaymentMethodInput } from "../services/payment-methods";
+import type { SettleWalletInput, WalletQuery, WalletReport } from "../services/wallet";
 import type { UpdateAccountInput } from "../services/accounts";
 import type {
   CreatePaymentTermInput,
@@ -110,6 +114,15 @@ export interface KyberRockDesktopApi {
   checkForUpdates: () => Promise<UpdateState>;
   downloadAndInstallUpdate: () => Promise<UpdateState>;
   listOpenWeighingOperations: () => Promise<WeighingOperationSummary[]>;
+  /**
+   * Transportadora/condicao/forma de pagamento da ultima entrada daquele cliente, para a
+   * proxima entrada dele ja nascer preenchida. `null` quando ele ainda nao tem entrada.
+   */
+  getCustomerLastEntryPreferences: (customerId: string) => Promise<{
+    carrierId: string | null;
+    paymentTermId: string | null;
+    paymentMethodId: string | null;
+  } | null>;
   pullLoaderCompletions: () => Promise<{ pulled: number; errors: string[] }>;
   /** Computadores da unidade (nome + cor) para a legenda multi-desktop. */
   listUnitDevices: () => Promise<UnitDeviceInfo[]>;
@@ -123,6 +136,8 @@ export interface KyberRockDesktopApi {
    */
   operationOmieIssue: (operationId: string) => Promise<OperationOmieIssue>;
   clearCanceledWeighingOperations: () => Promise<number>;
+  /** Limpa as concluidas em lote; `untilDate` preserva o movimento do dia. */
+  clearClosedWeighingOperations: (options?: { untilDate?: string }) => Promise<number>;
   deleteClosedWeighingOperation: (operationId: string) => Promise<void>;
   startWeighing: (input: {
     operationType?: OperationType;
@@ -159,67 +174,41 @@ export interface KyberRockDesktopApi {
     operationId: string,
     newCarrierId: string | null
   ) => Promise<WeighingOperationSummary>;
-  getCustomerFreightRules: (customerId: string) => Promise<
-    Array<{
-      id: string;
-      customerId: string;
-      productId: string | null;
-      productDescription: string | null;
-      rule: {
-        id: string;
-        name: string;
-        type: "per_ton" | "per_ton_km" | "fixed_plus_ton" | "distance_range";
-        baseValueCents: number;
-        minValueCents?: number;
-        fixedValueCents?: number;
-        distanceKm?: number;
-        ranges?: Array<{ maxKm: number; valueCents: number }>;
-        unit: string;
-      };
-      isActive: boolean;
-      createdAt: string;
-      updatedAt: string;
-    }>
-  >;
+  /**
+   * Edicao completa de uma operacao em andamento. Cada campo e opcional: o que nao vier
+   * fica como esta; `null` limpa transportadora, forma e condicao de pagamento.
+   */
+  updateWeighingOperation: (input: {
+    operationId: string;
+    customerId?: string;
+    productId?: string;
+    vehicleId?: string;
+    driverId?: string;
+    carrierId?: string | null;
+    paymentMethodId?: string | null;
+    paymentTermId?: string | null;
+    operationType?: OperationType;
+    unitPriceCents?: number;
+    freight?: OperationFreightInput | null;
+    freightModality?: FreightModality;
+    deductFreightFromCredit?: boolean;
+  }) => Promise<WeighingOperationSummary>;
+  getCustomerFreightRules: (customerId: string) => Promise<CustomerFreightRuleView[]>;
   getCustomerFreightForProduct: (
     customerId: string,
-    productId: string
-  ) => Promise<{
-    id: string;
-    customerId: string;
-    productId: string | null;
-    productDescription: string | null;
-    rule: {
-      id: string;
-      name: string;
-      type: "per_ton" | "per_ton_km" | "fixed_plus_ton" | "distance_range";
-      baseValueCents: number;
-      minValueCents?: number;
-      fixedValueCents?: number;
-      distanceKm?: number;
-      ranges?: Array<{ maxKm: number; valueCents: number }>;
-      unit: string;
-    };
-    isActive: boolean;
-    createdAt: string;
-    updatedAt: string;
-  } | null>;
+    productId: string,
+    /** Tipo de frete da operacao; resolve o valor configurado para ele. */
+    modality?: FreightModality | null
+  ) => Promise<CustomerFreightRuleView | null>;
   setCustomerFreightRule: (input: {
     customerId: string;
     productId?: string | null;
-    rule: {
-      id: string;
-      name: string;
-      type: "per_ton" | "per_ton_km" | "fixed_plus_ton" | "distance_range";
-      baseValueCents: number;
-      minValueCents?: number;
-      fixedValueCents?: number;
-      distanceKm?: number;
-      ranges?: Array<{ maxKm: number; valueCents: number }>;
-      unit: string;
-    };
+    /** Quando informado, grava o valor apenas para esse tipo de frete. */
+    modality?: FreightModality | null;
+    rule: CustomerFreightRuleView["rule"];
   }) => Promise<unknown>;
   removeCustomerFreightRule: (ruleId: string) => Promise<void>;
+  removeCustomerFreightModality: (ruleId: string, modality: FreightModality) => Promise<void>;
   listWindowsPrinters: () => Promise<WindowsPrinterSummary[]>;
   configureReceiptPrintProfile: (
     input: Omit<ConfigureReceiptPrintProfileInput, "identity">
@@ -246,10 +235,7 @@ export interface KyberRockDesktopApi {
     periodLabel?: string
   ) => Promise<{ path: string } | null>;
   getTruckControl: (startDate: string, endDate: string) => Promise<TruckControlReport>;
-  exportTruckControlPdf: (
-    startDate: string,
-    endDate: string
-  ) => Promise<{ path: string } | null>;
+  exportTruckControlPdf: (startDate: string, endDate: string) => Promise<{ path: string } | null>;
   exportReportExcel: (startDate: string, endDate: string) => Promise<{ path: string } | null>;
   listCustomerReportCustomers: () => Promise<CustomerReportOption[]>;
   getCustomerReport: (
@@ -383,17 +369,18 @@ export interface KyberRockDesktopApi {
   omieDefaultCategorySet: (categoryCode: string | null) => Promise<string | null>;
   customerCreditBalance: (customerId: string) => Promise<number>;
   customerCreditSummary: (customerId: string) => Promise<CustomerCreditSummary>;
-  customerCreditPayment: (
-    customerId: string,
-    amountCents: number,
-    reason?: string
-  ) => Promise<CustomerCreditSummary>;
-  customerCreditAdjust: (
-    customerId: string,
-    amountCents: number,
-    reason: string
-  ) => Promise<CustomerCreditSummary>;
   customerCreditMovements: (customerId: string, limit?: number) => Promise<CreditMovementRow[]>;
+  /** Espelha os adiantamentos do OMIE no extrato de credito dos clientes. */
+  customerCreditSyncAdvances: (options?: {
+    fullRescan?: boolean;
+  }) => Promise<CustomerAdvancesSyncResult>;
+  /** Categorias/conta corrente que identificam o adiantamento no OMIE. */
+  omieAdvanceConfigGet: () => Promise<OmieAdvanceConfig>;
+  omieAdvanceConfigSet: (patch: {
+    categoryCodes?: string[];
+    accountCode?: number | null;
+    accountName?: string | null;
+  }) => Promise<OmieAdvanceConfig>;
   quotationsCreate: (input: Omit<CreateQuotationInput, "companyId">) => Promise<QuotationRow>;
   quotationsCancel: (id: string) => Promise<void>;
   quotationsListOpenForCustomer: (customerId: string) => Promise<QuotationSummary[]>;
@@ -429,6 +416,12 @@ export interface KyberRockDesktopApi {
   // Meios de pagamento e contas vem do OMIE (sincronizacao); localmente so ha
   // atualizacao restrita (ativar/desativar, apelido, vinculo forma -> conta).
   paymentMethodsUpdate: (id: string, input: UpdatePaymentMethodInput) => Promise<unknown>;
+  /** Vendas em carteira (agrupadas por cliente) e os totais em aberto / fechados. */
+  walletReport: (query: WalletQuery) => Promise<WalletReport>;
+  /** Fecha as vendas escolhidas definindo a forma de recebimento; devolve quantas. */
+  walletSettle: (input: SettleWalletInput) => Promise<number>;
+  /** Desfaz o fechamento das vendas escolhidas; devolve quantas voltaram a carteira. */
+  walletReopen: (operationIds: string[]) => Promise<number>;
   accountsList: () => Promise<unknown[]>;
   accountsUpdate: (id: string, input: UpdateAccountInput) => Promise<unknown>;
   paymentTermsCreate: (input: Omit<CreatePaymentTermInput, "companyId">) => Promise<unknown>;

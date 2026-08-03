@@ -10,6 +10,7 @@ import { runDesktopMigrations } from "../database/migrate";
 import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite";
 import { ensureInitialDesktopIdentity, type LocalDesktopIdentity } from "./bootstrap";
 import { listOmieCategories } from "./omie-categories";
+import { readOmieAdvanceConfig } from "./omie-advance-config";
 import { BLOCKED_NEXT_ATTEMPT_AT, enqueueSyncJob } from "./sync-queue";
 import { createSimulatedWeighingOperation } from "./weighing-operations";
 import {
@@ -24,6 +25,8 @@ import {
   pushOmieCustomersToCloud,
   readOmiePullState,
   readStoredSupabaseConfig,
+  rearmOmieBillingForCustomer,
+  syncCustomerAdvancesFromCloud,
   syncOmieReferenceDataFromCloud,
   writeStoredSupabaseConfig
 } from "./supabase-sync";
@@ -1425,6 +1428,129 @@ describe("supabase sync", () => {
     }
   });
 
+  it("refreshes the queued closing with the customer cadastro completed after the close", () => {
+    const database = createDatabase();
+
+    try {
+      createIdentity(database);
+      insertClosedOperationForNewCustomer(database);
+      enqueueBillingJobForNewCustomer(database);
+      // O app completa o cadastro do cliente depois do fechamento (e-mail padrao de
+      // NF-e / busca por CNPJ); o job ja tinha sido montado sem esses dados.
+      database
+        .prepare("UPDATE customers SET email = 'nfe@pedreira.com.br' WHERE id = 'customer-novo'")
+        .run();
+
+      expect(rearmOmieBillingForCustomer(database, "customer-novo")).toBe(1);
+
+      const payload = JSON.parse(
+        database
+          .prepare("SELECT payload_json FROM sync_queue WHERE id = 'omie-job-novo-cliente'")
+          .pluck()
+          .get() as string
+      );
+      // Sem isto o cliente subia ao OMIE sem e-mail e o IncluirCliente era recusado,
+      // derrubando o pedido do fechamento junto.
+      expect(payload.customer).toMatchObject({ email: "nfe@pedreira.com.br" });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("blocks the closing and points to the customer field OMIE refused", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertClosedOperationForNewCustomer(database);
+      enqueueBillingJobForNewCustomer(database);
+      invokeMock.mockResolvedValueOnce({
+        error: createFunctionHttpError(
+          "Cadastro do cliente recusado pelo OMIE (Cliente Local LTDA). Falta preencher: E-mail. " +
+            "Complete o cadastro do cliente e reenvie. Detalhe OMIE: ERROR: O preenchimento da tag [email] e obrigatorio!"
+        ),
+        data: null
+      });
+
+      const result = await processOmieSyncQueue(database, identity);
+
+      expect(result.failed).toBe(1);
+      // Recusa de cadastro e deterministica: o job para de re-tentar (sem retry storm)
+      // e continua re-executavel (attempt_count intacto).
+      expect(
+        database
+          .prepare("SELECT next_attempt_at, attempt_count FROM sync_queue WHERE id = ?")
+          .get("omie-job-novo-cliente")
+      ).toMatchObject({ next_attempt_at: BLOCKED_NEXT_ATTEMPT_AT, attempt_count: 0 });
+      const operation = database
+        .prepare(
+          "SELECT omie_billing_status, omie_billing_message FROM weighing_operations WHERE id = 'operation-1'"
+        )
+        .get() as { omie_billing_status: string; omie_billing_message: string };
+      expect(operation.omie_billing_status).toBe("cadastro_incompleto");
+      expect(operation.omie_billing_message).toContain("Falta preencher: E-mail");
+      // Cadastro re-armado: a proxima sincronizacao tenta criar o cliente no OMIE.
+      expect(
+        database
+          .prepare("SELECT needs_push FROM customers WHERE id = 'customer-novo'")
+          .pluck()
+          .get()
+      ).toBe(1);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("resends the closing by itself once the customer lands in OMIE", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertClosedOperationForNewCustomer(database);
+      enqueueBillingJobForNewCustomer(database);
+      // Fechamento parado por causa do cliente (estado deixado pela recusa anterior).
+      database
+        .prepare(
+          `UPDATE sync_queue SET status = 'failed', next_attempt_at = ?, last_error = 'Cadastro do cliente recusado pelo OMIE' WHERE id = ?`
+        )
+        .run(BLOCKED_NEXT_ATTEMPT_AT, "omie-job-novo-cliente");
+      database
+        .prepare(
+          "UPDATE weighing_operations SET omie_billing_status = 'cadastro_incompleto' WHERE id = 'operation-1'"
+        )
+        .run();
+      invokeMock.mockResolvedValueOnce({ error: null, data: { omieCustomerId: 4242 } });
+
+      const result = await pushOmieCustomersToCloud(database, identity);
+
+      expect(result).toMatchObject({ pushed: 1, failed: 0 });
+      expect(
+        database
+          .prepare("SELECT omie_customer_id FROM customers WHERE id = 'customer-novo'")
+          .pluck()
+          .get()
+      ).toBe(4242);
+      // Job de volta na fila, com o codigo OMIE do cliente ja no payload: o fechamento
+      // sai na mesma passada (a fila roda logo depois do push de cadastros).
+      const job = database
+        .prepare("SELECT status, payload_json FROM sync_queue WHERE id = 'omie-job-novo-cliente'")
+        .get() as { status: string; payload_json: string };
+      expect(job.status).toBe("pending");
+      expect(JSON.parse(job.payload_json)).toMatchObject({ customerOmieId: 4242 });
+      // Operacao sai da pendencia de cadastro.
+      expect(
+        database
+          .prepare("SELECT omie_billing_status FROM weighing_operations WHERE id = 'operation-1'")
+          .pluck()
+          .get()
+      ).toBeNull();
+    } finally {
+      database.close();
+    }
+  });
+
   it("limits OMIE queue batches to avoid long request bursts", async () => {
     const database = createDatabase();
 
@@ -2087,6 +2213,282 @@ describe("supabase sync", () => {
       database.close();
     }
   });
+
+  it("espelha os adiantamentos do OMIE no extrato e recalcula o saldo", async () => {
+    const database = createDatabase();
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      initializeSupabase();
+      insertLocalCustomer(database, "customer-1", { omieCustomerId: 42 });
+
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          ok: true,
+          advances: 1,
+          imported: 1,
+          adjusted: 0,
+          unchanged: 0,
+          unknownCustomers: 0,
+          categoryCodes: ["1.01.05"],
+          finished: true,
+          movements: [
+            {
+              id: "omie-adv-company-1-7001-0",
+              customer_id: "customer-1",
+              operation_id: null,
+              movement_type: "credit",
+              amount_cents: 150_000,
+              balance_after_cents: 150_000,
+              reason: "Adiantamento OMIE #7001",
+              source: "omie",
+              omie_title_id: 7001,
+              created_at: "2026-07-20T10:00:00.000Z"
+            }
+          ]
+        },
+        error: null
+      });
+
+      const result = await syncCustomerAdvancesFromCloud(database, identity);
+
+      expect(result).toMatchObject({
+        imported: 1,
+        movementsApplied: 1,
+        finished: true,
+        categoryCodes: ["1.01.05"]
+      });
+      const [, options] = invokeMock.mock.calls[0] as [string, { body: Record<string, unknown> }];
+      expect(options.body).toMatchObject({ action: "pull_customer_advances" });
+
+      const movement = database
+        .prepare("SELECT source, omie_title_id FROM customer_credit_movements WHERE id = ?")
+        .get("omie-adv-company-1-7001-0") as { source: string; omie_title_id: number };
+      expect(movement).toEqual({ source: "omie", omie_title_id: 7001 });
+
+      const balance = database
+        .prepare("SELECT balance_cents FROM customer_credit_balances WHERE customer_id = ?")
+        .get("customer-1") as { balance_cents: number };
+      expect(balance.balance_cents).toBe(150_000);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("nao soma o mesmo adiantamento duas vezes ao repetir o ciclo", async () => {
+    const database = createDatabase();
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      initializeSupabase();
+      insertLocalCustomer(database, "customer-1", { omieCustomerId: 42 });
+
+      const page = {
+        data: {
+          ok: true,
+          advances: 1,
+          imported: 1,
+          categoryCodes: ["1.01.05"],
+          finished: true,
+          movements: [
+            {
+              id: "omie-adv-company-1-7001-0",
+              customer_id: "customer-1",
+              movement_type: "credit",
+              amount_cents: 150_000,
+              balance_after_cents: 150_000,
+              source: "omie",
+              omie_title_id: 7001,
+              created_at: "2026-07-20T10:00:00.000Z"
+            }
+          ]
+        },
+        error: null
+      };
+      invokeMock.mockResolvedValueOnce(page).mockResolvedValueOnce(page);
+
+      await syncCustomerAdvancesFromCloud(database, identity);
+      const second = await syncCustomerAdvancesFromCloud(database, identity);
+
+      // Movimento ja conhecido: nada e reaplicado e o saldo continua o mesmo.
+      expect(second.movementsApplied).toBe(0);
+      const total = database
+        .prepare(
+          "SELECT COUNT(*) AS rows, COALESCE(SUM(amount_cents), 0) AS cents FROM customer_credit_movements"
+        )
+        .get() as { rows: number; cents: number };
+      expect(total).toEqual({ rows: 1, cents: 150_000 });
+
+      // A segunda chamada ja vai com a janela incremental e as categorias conhecidas.
+      const [, options] = invokeMock.mock.calls[1] as [string, { body: Record<string, unknown> }];
+      expect(options.body).toMatchObject({
+        payload: expect.objectContaining({ categoryCodes: ["1.01.05"] })
+      });
+      const payload = (options.body as { payload: Record<string, unknown> }).payload;
+      expect(typeof payload.startDate).toBe("string");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("baixa no OMIE o adiantamento reservado pela operacao", async () => {
+    const database = createDatabase();
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      initializeSupabase();
+      insertLocalCustomer(database, "customer-1", { omieCustomerId: 42 });
+      const operation = createSimulatedWeighingOperation(database, {
+        identity,
+        customerName: "Cliente Teste",
+        plate: "ABC1D23",
+        driverName: "Motorista Teste",
+        productDescription: "Brita 1",
+        entryWeightKg: 12_000
+      });
+      database
+        .prepare(
+          `UPDATE weighing_operations
+             SET omie_advance_settle_cents = 78000, omie_advance_status = 'pending'
+           WHERE id = ?`
+        )
+        .run(operation.id);
+      enqueueSyncJob(database, {
+        target: "omie",
+        action: "settle_advance",
+        entityType: "weighing_operation",
+        entityId: operation.id,
+        idempotencyKey: `omie:settle_advance:${operation.id}`,
+        payload: {
+          operationId: operation.id,
+          customerOmieId: 42,
+          omieOrderId: 888,
+          amountCents: 78_000,
+          issueDate: "2026-07-20"
+        }
+      });
+
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          ok: true,
+          settledCents: 78_000,
+          titles: [{ titleId: 3001, amountCents: 78_000 }],
+          advanceAccountCode: 22,
+          pendingReceivable: false
+        },
+        error: null
+      });
+
+      const result = await processOmieSyncQueue(database, identity);
+
+      expect(result).toMatchObject({ processed: 1, failed: 0 });
+      const row = database
+        .prepare(
+          `SELECT omie_advance_settled_cents, omie_advance_status
+           FROM weighing_operations WHERE id = ?`
+        )
+        .get(operation.id) as { omie_advance_settled_cents: number; omie_advance_status: string };
+      expect(row).toEqual({ omie_advance_settled_cents: 78_000, omie_advance_status: "settled" });
+      // Conta corrente descoberta pelo OMIE fica guardada para os proximos jobs.
+      expect(readOmieAdvanceConfig(database).accountCode).toBe(22);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("mantem a baixa na fila enquanto o pedido nao tem titulo no OMIE", async () => {
+    const database = createDatabase();
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      initializeSupabase();
+      insertLocalCustomer(database, "customer-1", { omieCustomerId: 42 });
+      const operation = createSimulatedWeighingOperation(database, {
+        identity,
+        customerName: "Cliente Teste",
+        plate: "ABC1D23",
+        driverName: "Motorista Teste",
+        productDescription: "Brita 1",
+        entryWeightKg: 12_000
+      });
+      database
+        .prepare(
+          `UPDATE weighing_operations
+             SET omie_advance_settle_cents = 50000, omie_advance_status = 'pending'
+           WHERE id = ?`
+        )
+        .run(operation.id);
+      enqueueSyncJob(database, {
+        target: "omie",
+        action: "settle_advance",
+        entityType: "weighing_operation",
+        entityId: operation.id,
+        idempotencyKey: `omie:settle_advance:${operation.id}`,
+        payload: {
+          operationId: operation.id,
+          customerOmieId: 42,
+          omieOrderId: 999,
+          amountCents: 50_000
+        }
+      });
+
+      invokeMock.mockResolvedValueOnce({
+        data: { ok: true, settledCents: 0, pendingReceivable: true, advanceAccountCode: 22 },
+        error: null
+      });
+
+      const result = await processOmieSyncQueue(database, identity);
+
+      // Nao amortizado: o job volta para a fila em vez de dar a operacao como
+      // acertada no OMIE.
+      expect(result.failed).toBe(1);
+      const row = database
+        .prepare(
+          `SELECT omie_advance_settled_cents, omie_advance_status
+           FROM weighing_operations WHERE id = ?`
+        )
+        .get(operation.id) as { omie_advance_settled_cents: number; omie_advance_status: string };
+      expect(row).toEqual({ omie_advance_settled_cents: 0, omie_advance_status: "pending" });
+      const job = database
+        .prepare("SELECT status FROM sync_queue WHERE entity_id = ? AND action = 'settle_advance'")
+        .get(operation.id) as { status: string };
+      expect(job.status).toBe("failed");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("retoma a varredura de adiantamentos na pagina onde o ciclo anterior parou", async () => {
+    const database = createDatabase();
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      initializeSupabase();
+
+      // Tenant grande: o ciclo bate no teto de paginas sem terminar a varredura.
+      invokeMock.mockResolvedValue({
+        data: { ok: true, finished: false, categoryCodes: ["1.01.05"], movements: [] },
+        error: null
+      });
+      const first = await syncCustomerAdvancesFromCloud(database, identity);
+      expect(first.finished).toBe(false);
+      const pagesScanned = first.pages;
+
+      invokeMock.mockResolvedValue({
+        data: { ok: true, finished: true, categoryCodes: ["1.01.05"], movements: [] },
+        error: null
+      });
+      await syncCustomerAdvancesFromCloud(database, identity);
+
+      const [, options] = invokeMock.mock.calls[pagesScanned] as [
+        string,
+        { body: { payload: Record<string, unknown> } }
+      ];
+      expect(options.body.payload.page).toBe(pagesScanned + 1);
+    } finally {
+      database.close();
+    }
+  });
 });
 
 function createDatabase(): DesktopDatabase {
@@ -2200,6 +2602,47 @@ function insertWeighingOperation(database: DesktopDatabase): void {
     .run(now, now);
 }
 
+/** Operacao ja fechada de um cliente que ainda nao existe no OMIE (sem codigo, com CNPJ). */
+function insertClosedOperationForNewCustomer(database: DesktopDatabase): void {
+  const now = "2026-06-12T12:00:00.000Z";
+  insertLocalCustomer(database, "customer-novo");
+  insertWeighingOperation(database);
+  database
+    .prepare(
+      `UPDATE weighing_operations
+       SET customer_id = 'customer-novo', status = 'closed_local', exit_weight_captured_at = ?
+       WHERE id = 'operation-1'`
+    )
+    .run(now);
+}
+
+/** Job do fechamento que leva o cadastro do cliente para o edge criar no OMIE. */
+function enqueueBillingJobForNewCustomer(database: DesktopDatabase): void {
+  enqueueSyncJob(database, {
+    id: "omie-job-novo-cliente",
+    target: "omie",
+    action: "create_order",
+    entityType: "weighing_operation",
+    entityId: "operation-1",
+    idempotencyKey: "kyberrock:unit-1:operation-1:create_sales_order",
+    payload: {
+      operationId: "operation-1",
+      operationType: "invoice",
+      customerOmieId: 0,
+      localCustomerId: "customer-novo",
+      customer: {
+        localCustomerId: "customer-novo",
+        razaoSocial: "Cliente Local LTDA",
+        cnpjCpf: "12345678000195"
+      },
+      productOmieId: 55,
+      quantity: 10,
+      unitPrice: 25,
+      issueDate: "2026-06-12"
+    }
+  });
+}
+
 function insertPrintReceipt(database: DesktopDatabase): void {
   const now = "2026-06-12T12:00:00.000Z";
   database
@@ -2215,10 +2658,7 @@ function insertPrintReceipt(database: DesktopDatabase): void {
     .run(now, now, now);
 }
 
-function createFunctionHttpError(
-  message: string,
-  details?: unknown
-): Error & { context: unknown } {
+function createFunctionHttpError(message: string, details?: unknown): Error & { context: unknown } {
   const error = new Error("Edge Function returned a non-2xx status code") as Error & {
     context: unknown;
   };

@@ -1,0 +1,101 @@
+name: CI
+
+# Portao de qualidade do repositorio: roda em todo pull request e em todo push
+# na `main`. Ate aqui nada executava lint/build/testes automaticamente — os dois
+# workflows existentes (`desktop-release` e `edge-functions-deploy`) so publicam,
+# em push na main, e nao reprovam nada. Na pratica o gate era local, e o que nao
+# fosse rodado na mao apodrecia calado: a suite Deno da `omie-sync` ficou
+# vermelha na main sem ninguem notar (erro de type-check + um teste do pull
+# paginado desatualizado).
+#
+# Dois jobs, porque sao dois runtimes distintos:
+#   - `node`: eslint + build + vitest do monorepo npm;
+#   - `deno`: a suite Deno da Edge Function `omie-sync`, que o vitest nao pega.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Push novo no mesmo PR cancela o run anterior (economiza minutos do Actions).
+# Na `main` nao cancelamos: cada merge merece seu proprio resultado.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  node:
+    name: Lint, build e testes (Node)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        # Sem `--ignore-scripts` (diferente do desktop-release): o
+        # omie-master-sync.test.ts abre um banco de verdade com better-sqlite3,
+        # entao o binario nativo precisa existir para o runtime de Node.
+        env:
+          # Nada aqui abre uma janela Electron — build do desktop e tsc + vite, e
+          # nenhum teste importa o modulo `electron`. Pular o download do binario
+          # (~100 MB, fora do cache do setup-node) corta tempo de todo run.
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+        run: npm ci
+
+      - name: Formatacao (prettier)
+        # Primeiro por ser o mais barato: reprova em segundos, antes do build.
+        # Passou a existir junto com a formatacao do repositorio inteiro — sem
+        # este passo os arquivos voltam a divergir do Prettier em poucas semanas.
+        # Reprovou? `npm run format` resolve.
+        run: npm run format:check
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        # Precisa vir ANTES dos testes. Os pacotes `@kyberrock/*` publicam
+        # `main: dist/index.js`, entao num checkout limpo (sem dist/) o vitest
+        # nao resolve os imports e ~20 arquivos de teste quebram na importacao.
+        run: npm run build
+
+      - name: Testes (vitest)
+        # Em serie com o build de proposito: rodar `npm run build` junto com
+        # `npm test` na mesma arvore faz o build reescrever os arquivos que o
+        # vitest esta importando, e aparecem falhas fantasma do tipo
+        # "X is not a constructor". Se um dia estes passos forem paralelizados,
+        # que seja em jobs (checkouts) separados.
+        run: npm test
+
+  deno:
+    name: Testes Deno (omie-sync)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Testes (deno test)
+        # Escopo em `omie-sync` de proposito: os outros `*_test.ts` de
+        # supabase/functions sao testes vitest (ver o `include` do
+        # vitest.config.ts) e reprovariam no type-check do Deno.
+        #
+        # Sem `--no-check`: o type-check faz parte do que este job protege — foi
+        # exatamente ele que pegou o TS2551 em omie-sync-core.ts.
+        #
+        # `--allow-env` porque o handler le SUPABASE_URL e
+        # SUPABASE_SERVICE_ROLE_KEY. Os testes injetam stubs de Supabase e OMIE:
+        # nao ha chamada real para banco nem para a OMIE.
+        run: |
+          deno test --allow-env \
+            --import-map=supabase/functions/omie-sync/deno.test.import_map.json \
+            supabase/functions/omie-sync

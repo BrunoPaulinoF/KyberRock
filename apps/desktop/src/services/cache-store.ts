@@ -56,6 +56,8 @@ export interface ProductCacheEntry {
 export interface VehicleCacheEntry {
   id: string;
   plate: string;
+  /** UF de emplacamento (`placa_estado` do frete no OMIE). */
+  plateState: string | null;
   description: string | null;
   carrierId: string | null;
   isActive: boolean;
@@ -115,6 +117,8 @@ export interface PaymentMethodCacheEntry {
   accountName: string | null;
   isSystem: boolean;
   isCustomerCredit: boolean;
+  /** Venda "em carteira": o recebimento e definido depois, no fechamento. */
+  isWallet: boolean;
   sortOrder: number;
   isActive: boolean;
 }
@@ -235,6 +239,7 @@ interface ProductRow {
 interface VehicleRow {
   id: string;
   plate: string;
+  plate_state: string | null;
   description: string | null;
   carrier_id: string | null;
   is_active: number;
@@ -291,6 +296,7 @@ interface PaymentMethodRow {
   account_name: string | null;
   is_system: number;
   is_customer_credit: number;
+  is_wallet: number;
   sort_order: number;
   is_active: number;
 }
@@ -405,13 +411,18 @@ function normalizeFiscalTypeText(value: string): string {
 
 function isManualInstallmentsPaymentTerm(term: PaymentTermCacheEntry): boolean {
   const normalizedName = normalizeFiscalTypeText(term.name);
-  return normalizedName.includes("informe") && normalizedName.includes("numero") && normalizedName.includes("parcela");
+  return (
+    normalizedName.includes("informe") &&
+    normalizedName.includes("numero") &&
+    normalizedName.includes("parcela")
+  );
 }
 
 function mapVehicle(row: VehicleRow): VehicleCacheEntry {
   return {
     id: row.id,
     plate: row.plate,
+    plateState: row.plate_state,
     description: row.description,
     carrierId: row.carrier_id,
     isActive: row.is_active === 1
@@ -478,6 +489,7 @@ function mapPaymentMethod(row: PaymentMethodRow): PaymentMethodCacheEntry {
     accountName: row.account_name,
     isSystem: row.is_system === 1,
     isCustomerCredit: row.is_customer_credit === 1,
+    isWallet: row.is_wallet === 1,
     sortOrder: row.sort_order,
     isActive: row.is_active === 1
   };
@@ -524,17 +536,41 @@ function mapCustomerPriceTable(row: CustomerPriceTableRow): CustomerPriceTableEn
   };
 }
 
+/** Texto comparavel na busca: sem acento e em minusculas ("JOSE" acha "jose"). */
+function normalizeSearchText(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+/**
+ * Versao sem pontuacao nem espaco, para casar o mesmo dado escrito de formas diferentes:
+ * "144.939.658-51" com "14493965851" (o documento vem mascarado do OMIE e so com digitos
+ * do cadastro local) e "HJI-0517" com "HJI0517" (a placa e guardada sem o traco, mas o
+ * operador a digita como esta escrita no caminhao).
+ */
+function compactSearchText(value: string): string {
+  return normalizeSearchText(value).replace(/[^a-z0-9]/g, "");
+}
+
 function searchFilter<T extends { [key: string]: unknown }>(
   rows: T[],
   searchFields: (keyof T)[],
   search?: string
 ): T[] {
   if (!search) return rows;
-  const lower = search.toLowerCase();
+  const term = normalizeSearchText(search.trim());
+  if (!term) return rows;
+  // Sem essa segunda comparacao, procurar pelo CPF ou pela placa nao achava o cadastro que
+  // estava bem ali — e o operador concluia que ele nao existia e cadastrava de novo.
+  const compactTerm = compactSearchText(search);
   return rows.filter((row) =>
     searchFields.some((field) => {
       const value = row[field];
-      return typeof value === "string" && value.toLowerCase().includes(lower);
+      if (typeof value !== "string") return false;
+      if (normalizeSearchText(value).includes(term)) return true;
+      return compactTerm.length > 0 && compactSearchText(value).includes(compactTerm);
     })
   );
 }
@@ -640,7 +676,9 @@ export class CacheStore {
     }
 
     if (entityType === "payment_term") {
-      rows = (rows as PaymentTermCacheEntry[]).filter((term) => !isManualInstallmentsPaymentTerm(term));
+      rows = (rows as PaymentTermCacheEntry[]).filter(
+        (term) => !isManualInstallmentsPaymentTerm(term)
+      );
     }
 
     if (entityType === "product" && productFiscalType === "finished_goods") {
@@ -725,7 +763,15 @@ export class CacheStore {
   private getSearchFields(entityType: CacheEntityType): string[] {
     switch (entityType) {
       case "customer":
-        return ["legalName", "tradeName", "document", "zipcode", "addressStreet", "neighborhood", "city"];
+        return [
+          "legalName",
+          "tradeName",
+          "document",
+          "zipcode",
+          "addressStreet",
+          "neighborhood",
+          "city"
+        ];
       case "product":
         return ["code", "description", "ncm", "ean"];
       case "vehicle":
@@ -787,7 +833,7 @@ export class CacheStore {
   private loadVehicles(companyId: string): void {
     const rows = this.db
       .prepare(
-        `SELECT id, plate, description, carrier_id, is_active
+        `SELECT id, plate, plate_state, description, carrier_id, is_active
          FROM vehicles WHERE company_id = ? AND deleted_at IS NULL`
       )
       .all(companyId) as VehicleRow[];
@@ -847,7 +893,7 @@ export class CacheStore {
       .prepare(
         `SELECT pm.id, pm.code, pm.name, pm.alias, pm.omie_code, pm.account_id,
                 ac.name AS account_name,
-                pm.is_system, pm.is_customer_credit, pm.sort_order, pm.is_active
+                pm.is_system, pm.is_customer_credit, pm.is_wallet, pm.sort_order, pm.is_active
          FROM payment_methods pm
          LEFT JOIN accounts ac ON ac.id = pm.account_id AND ac.deleted_at IS NULL
          WHERE pm.company_id = ? AND pm.deleted_at IS NULL`

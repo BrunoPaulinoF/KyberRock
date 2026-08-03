@@ -121,15 +121,100 @@ Financeiro:
 - Enviar frete no bloco `frete` quando aplicavel, incluindo modalidade, transportadora, peso e valor.
 - Salvar `codigo_pedido` retornado.
 
+#### Modalidade do frete (implementado)
+
+- A modalidade do KyberRock mapeia para o `modalidade` (modFrete da NF-e) do bloco `frete`:
+  CIF `"0"`, terceiros `"2"`, transporte proprio `"3"`/`"4"`, sem frete `"9"`.
+- **FOB (frete por conta do cliente) vai como `"9"` — sem incidencia de frete.** Quando o frete
+  e responsabilidade do cliente a Pedreira nao contrata nem responde pelo transporte, entao a
+  operacao nao nasce no OMIE como "frete por conta do destinatario". Vale inclusive com valor
+  de frete lancado na operacao (o valor continua indo em `valor_frete`).
+- Compat: operacao antiga sem tipo salvo (default `none` -> `"9"`) que tenha valor de frete
+  continua indo como CIF `"0"`, para nao enviar "sem frete" num pedido que tinha frete.
+
+#### Placa e UF do veiculo (implementado)
+
+- A NF-e pede placa **e** UF do veiculo no transporte: o bloco `frete` leva `placa` +
+  `uf_placa`. A UF sai de `vehicles.plate_state`, e so vai quando e uma UF valida de 2 letras
+  (campo fiscal nao aceita texto livre); sem ela o pedido segue so com a placa.
+- A OS nao tem bloco `frete`: na operacao interna a UF acompanha a placa no texto de
+  `cDadosAdicNF` (`Placa: ABC1D23/MG`).
+- `vehicles.plate_state` e alimentada pelo sync do cadastro de veiculos do OMIE
+  (`ListarVeiculos` em `/transportador/veiculo/`, entidade `veiculos` do master sync). O casamento
+  e por placa normalizada (so letras/numeros): veiculo local existente recebe a UF e o
+  `omie_vehicle_id`; o que so existe no OMIE entra como cadastro novo (`source = 'omie'`). Uma UF
+  ja preenchida no KyberRock nunca e apagada por um cadastro do OMIE sem UF.
+- O campo tambem e editavel no cadastro de placas, para corrigir/preencher o que o OMIE nao tem.
+
 #### Condicao de pagamento (implementado)
 
 - A condicao local (`payment_terms`) pode ser vinculada a um codigo de parcela do OMIE via
   `payment_terms.omie_parcela_code` (ex: "000", "030"). Os codigos disponiveis sao espelhados
   do OMIE (`ListarParcelas`) em `omie_payment_terms` no pull.
-- No fechamento, o desktop resolve o codigo vinculado e o envia no payload do job
-  (`paymentTermOmieCode`, `paymentTermInstallmentCount`).
-- A Edge Function usa esse codigo em `codigo_parcela` (pedido) / `cCodParc` + `nQtdeParc` (OS).
-  Sem vinculo, cai no padrao `"000"` (a vista). O codigo e string e preserva zeros a esquerda.
+- No fechamento, o desktop resolve o codigo vinculado e os vencimentos da condicao e envia
+  tudo no payload do job (`paymentTermOmieCode`, `paymentTermInstallmentCount`,
+  `paymentTermInstallmentDays`). O codigo e string e preserva zeros a esquerda.
+- **Pedido de venda**: com meio de pagamento OU parcelas com vencimento, a Edge Function usa o
+  parcelamento informado do OMIE — `codigo_parcela` `"999"` + `qtde_parcelas` no cabecalho e
+  `lista_parcelas` com `data_vencimento`, `percentual`, `valor` e `meio_pagamento` por parcela.
+  A vista sem meio, usa o codigo vinculado (ou `"000"`).
+- **OS**: mesmo parcelamento (`buildInstallmentPlan` e compartilhado). Condicao vinculada a um
+  codigo do cadastro usa o codigo em `cCodParc` + `nQtdeParc`; **sem vinculo**, a OS vai com
+  `cCodParc` `"999"` e o bloco `Parcelas` (`nParcela`, `nDias`, `dDtVenc`, `nPercentual`,
+  `nValor`) — a condicao digitada na operacao cai no OMIE exatamente como foi digitada.
+  Antes esse caso dependia de localizar/criar a condicao no cadastro de parcelas e, quando nao
+  dava, caia em `"000"`: a OS nascia **a vista** mesmo com "9/18/27" digitado na operacao.
+- Se o OMIE recusar a estrutura do bloco `Parcelas`, a OS e reenviada pelo caminho antigo
+  (codigo vinculado, senao o do cadastro via `ensureOmieParcelaCode`, senao `"000"`), com o
+  motivo no log: uma recusa de formato nunca deixa a operacao sem OS.
+
+#### Gerar boleto (implementado)
+
+- O KyberRock nao gera boleto (PRD 10.7): quem emite a cobranca e o OMIE, no faturamento. O
+  que o app controla e **se** o boleto deve sair, e isso acompanha a forma de pagamento
+  escolhida na operacao (`paymentMethodOmieCode`, o tPag da NF-e).
+- O campo do OMIE e **negativo**: `nao_gerar_boleto` `"S"` NAO gera o boleto ao emitir a nota
+  e `"N"` gera (padrao). Ele existe no `cabecalho` e em cada parcela do pedido de venda, e na
+  parcela da OS — o valor da parcela tem prioridade sobre o do cabecalho.
+- Regra aplicada na Edge Function (`boletoGenerationFlag` / `buildBoletoParcelaFields`):
+  - **boleto** (`"15"`) -> `nao_gerar_boleto` `"N"` (gerar boleto **ativo**) + `tipo_documento`
+    `"BOL"`, para a conta a receber nascer tipada como boleto em vez de "NF-e";
+  - **outro meio conhecido** (dinheiro, PIX, cartoes, em carteira) -> `nao_gerar_boleto` `"S"`;
+  - **sem meio no payload** (credito do cliente/fiado, desktop antigo) -> nada e enviado e
+    vale o padrao do cadastro do cliente no OMIE ("Gerar Boletos ao Emitir NF-e").
+- Como o flag so viaja na parcela da OS, a operacao interna em boleto vai com o bloco
+  `Parcelas` mesmo a vista e mesmo com a condicao ja vinculada a um codigo do cadastro
+  (`cCodParc` `"999"`). Nos demais meios a OS mantem o caminho historico.
+- A parcela da OS tambem leva o **`meio_pagamento`** (mesma tag do `lista_parcelas` do pedido).
+  Sem ele a aba "Parcelas" da OS chegava ao OMIE sem o meio "15 - Boleto Bancario" na venda
+  **sem nota** em boleto, e o faturamento nao tinha do que tirar a cobranca — mesmo com o
+  `nao_gerar_boleto` `"N"` e o `tipo_documento` `"BOL"`.
+- Se o OMIE recusar o formato do bloco `Parcelas` numa operacao em boleto, o log do reenvio
+  diz explicitamente que a OS vai nascer **sem** o "gerar boleto" da parcela (a cobranca passa
+  a depender so da recomendacao do cadastro do cliente): uma recusa de formato nunca deixa a
+  operacao sem OS, mas tambem nao pode sumir em silencio.
+
+#### Venda em carteira (implementado)
+
+- A forma de pagamento **"Em carteira"** (`payment_methods.code = 'wallet'`,
+  `is_wallet = 1`) e a venda que fecha na balanca **sem forma de recebimento definida**:
+  ela fica na carteira ate um fechamento futuro, onde o operador escolhe COMO o cliente
+  vai pagar (dinheiro, PIX, boleto...) e para quando.
+- Ela vai ao OMIE como **`"99"` (outros)**: a NF sai normalmente, mas o meio cai no ramo
+  generico do `boletoGenerationFlag` (`nao_gerar_boleto` `"S"`), entao o faturamento **nao**
+  emite cobranca — o boleto/recebimento so existe depois do fechamento. A conta corrente e a
+  **OMIE Cash**, pelo vinculo padrao do seed (`payment_methods.account_id`) e pelo fallback
+  `DEFAULT_ACCOUNT_NAME_BY_METHOD_CODE` da Edge Function.
+- O fechamento em si e **local** (tela Carteira do desktop): grava em
+  `weighing_operations` a forma de recebimento escolhida
+  (`wallet_settlement_method_id`), o vencimento combinado (`wallet_settlement_due_date`),
+  quando foi fechado (`wallet_settled_at`) e a observacao. Como
+  `weighing_operations.payment_method_id` nao faz parte da projecao da nuvem, esses campos
+  tambem ficam na maquina — o que viaja entre desktops e a **forma** (`payment_methods`,
+  com `is_wallet`), para as duas balancas classificarem a venda igual.
+- Diferenca para o credito do cliente (fiado): a carteira **nao** consome limite/saldo do
+  cadastro e nao tem periodicidade automatica — o fechamento e manual, quando o comercial
+  e o cliente combinam.
 
 ### Operacao Interna
 

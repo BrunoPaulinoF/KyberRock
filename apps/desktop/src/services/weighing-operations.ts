@@ -11,15 +11,14 @@ import {
   type FreightModality,
   type FreightRule
 } from "./freight.js";
-import { PricingService, type PriceDetails } from "./pricing.js";
+import { calculateSavingsPercent, PricingService, type PriceDetails } from "./pricing.js";
 import { cancelPendingOmieJobs, enqueueSyncJob } from "./sync-queue.js";
 import { CreditService } from "./credit.js";
 import { buildOmieIntegrationCode } from "@kyberrock/omie-client";
+import { formatEmailListForOmie } from "@kyberrock/shared";
+import { DEFAULT_NFE_EMAIL_KEY } from "./customers.js";
 import { readStringLocalSetting } from "./local-settings.js";
-import {
-  DEFAULT_OMIE_CATEGORY_SETTING_KEY,
-  resolveOrderCategoryCode
-} from "./omie-categories.js";
+import { DEFAULT_OMIE_CATEGORY_SETTING_KEY, resolveOrderCategoryCode } from "./omie-categories.js";
 import { consumeQuotation } from "./quotations.js";
 
 type OperationStatus =
@@ -61,6 +60,23 @@ export const CLOSED_OPERATION_STATUS_SQL_LIST = CLOSED_OPERATION_STATUSES.map(
 /** True quando o status representa uma operacao concluida (fechada, em qualquer estagio de sync). */
 export function isClosedOperationStatus(status: string): boolean {
   return (CLOSED_OPERATION_STATUSES as readonly string[]).includes(status);
+}
+
+/**
+ * Status em que a operacao ainda esta EM ANDAMENTO (nasceu, mas nao fechou). Sao os
+ * unicos em que os dados comerciais podem ser alterados — depois do fechamento o pedido
+ * / OS ja foi montado para o OMIE e a correcao passa a ser cancelar e refazer.
+ */
+export const OPEN_OPERATION_STATUSES = [
+  "draft",
+  "entry_registered",
+  "loading_requested",
+  "awaiting_exit"
+] as const satisfies readonly OperationStatus[];
+
+/** True quando a operacao ainda esta aberta (em andamento). */
+export function isOpenOperationStatus(status: string): boolean {
+  return (OPEN_OPERATION_STATUSES as readonly string[]).includes(status);
 }
 
 export type OperationType = "invoice" | "internal";
@@ -143,6 +159,19 @@ export interface WeighingOperationSummary {
   plate: string;
   driverName: string;
   productDescription: string;
+  /**
+   * Ids locais dos vinculos da operacao. Alimentam a edicao completa (a tela precisa
+   * pre-selecionar o que ja esta gravado) e ficam nulos em operacoes projetadas da
+   * nuvem que ainda nao tem o cadastro correspondente nesta maquina.
+   */
+  productId: string | null;
+  vehicleId: string | null;
+  driverId: string | null;
+  carrierId: string | null;
+  carrierName: string | null;
+  paymentTermId: string | null;
+  paymentMethodId: string | null;
+  paymentMethodName: string | null;
   paymentTermName: string | null;
   entryWeightKg: number | null;
   exitWeightKg: number | null;
@@ -226,6 +255,14 @@ interface OperationRow {
   plate: string | null;
   driver_name: string | null;
   product_description: string | null;
+  product_id?: string | null;
+  vehicle_id?: string | null;
+  driver_id?: string | null;
+  carrier_id?: string | null;
+  carrier_name?: string | null;
+  payment_term_id?: string | null;
+  payment_method_id?: string | null;
+  payment_method_name?: string | null;
   payment_term_name: string | null;
   device_id?: string | null;
   device_name?: string | null;
@@ -529,9 +566,7 @@ export function createWeighingOperation(
 
   if (input.paymentMethodId) {
     const paymentMethod = database
-      .prepare(
-        "SELECT is_active FROM payment_methods WHERE id = ? AND deleted_at IS NULL"
-      )
+      .prepare("SELECT is_active FROM payment_methods WHERE id = ? AND deleted_at IS NULL")
       .get(input.paymentMethodId) as { is_active: number } | undefined;
     if (!paymentMethod) throw new Error("Forma de pagamento selecionada nao foi encontrada.");
     if (paymentMethod.is_active !== 1) {
@@ -777,7 +812,7 @@ export function closeWeighingOperation(
       }
 
       productCreditDebitCents = productTotalCents;
-      freightCreditDebitCents = deductFreight ? freightTotalCents ?? 0 : 0;
+      freightCreditDebitCents = deductFreight ? (freightTotalCents ?? 0) : 0;
     }
   }
 
@@ -827,12 +862,29 @@ export function closeWeighingOperation(
 
     if (productCreditDebitCents > 0 || freightCreditDebitCents > 0) {
       if (opRow?.customer_id) {
-        new CreditService(database).applyDebit(
+        const creditService = new CreditService(database);
+        creditService.applyDebit(
           opRow.customer_id,
           input.operationId,
           productCreditDebitCents,
           freightCreditDebitCents
         );
+        // Parte que sai do adiantamento (dinheiro que o cliente ja depositou no
+        // OMIE) precisa ser baixada la tambem, senao o saldo cai so aqui. O que
+        // exceder o adiantamento disponivel e fiado e nao gera baixa.
+        const settleCents = Math.min(
+          productCreditDebitCents + freightCreditDebitCents,
+          creditService.getAdvanceAvailableToSettleCents(opRow.customer_id)
+        );
+        if (settleCents > 0) {
+          database
+            .prepare(
+              `UPDATE weighing_operations
+                 SET omie_advance_settle_cents = ?, omie_advance_status = 'pending', updated_at = ?
+               WHERE id = ?`
+            )
+            .run(settleCents, timestamp, input.operationId);
+        }
       }
     }
 
@@ -929,6 +981,53 @@ export function closeWeighingOperation(
   closeOperation();
 
   return getWeighingOperation(database, input.operationId);
+}
+
+/**
+ * O que a ultima entrada daquele cliente usou de transporte e pagamento. A pedreira
+ * repete o mesmo arranjo quase sempre (mesma transportadora, mesma condicao, mesma forma
+ * de pagamento), entao a entrada seguinte ja nasce preenchida com isso.
+ *
+ * Vem da ULTIMA operacao, nao do cadastro: o cadastro guarda um padrao que quase ninguem
+ * mantem atualizado, e o que vale na balanca e o que foi feito da ultima vez.
+ */
+export interface CustomerLastEntryPreferences {
+  carrierId: string | null;
+  paymentTermId: string | null;
+  paymentMethodId: string | null;
+}
+
+export function getCustomerLastEntryPreferences(
+  database: DesktopDatabase,
+  customerId: string
+): CustomerLastEntryPreferences | null {
+  if (!customerId.trim()) return null;
+  const row = database
+    .prepare(
+      `SELECT carrier_id, payment_term_id, payment_method_id
+         FROM weighing_operations
+        WHERE customer_id = ?
+          AND deleted_at IS NULL
+          AND status <> 'cancelled'
+          -- Uma entrada aberta ja conta: o operador acabou de escolher esses dados para
+          -- este cliente, e e isso que ele vai repetir no proximo caminhao.
+          AND (carrier_id IS NOT NULL OR payment_term_id IS NOT NULL OR payment_method_id IS NOT NULL)
+        ORDER BY created_at DESC
+        LIMIT 1`
+    )
+    .get(customerId) as
+    | {
+        carrier_id: string | null;
+        payment_term_id: string | null;
+        payment_method_id: string | null;
+      }
+    | undefined;
+  if (!row) return null;
+  return {
+    carrierId: row.carrier_id,
+    paymentTermId: row.payment_term_id,
+    paymentMethodId: row.payment_method_id
+  };
 }
 
 export type FiscalMissingField = "address_number" | "email";
@@ -1272,6 +1371,11 @@ export interface OmieOrderCarrierCadastro {
  */
 export interface OmieOrderTransport {
   plate: string | null;
+  /**
+   * UF de emplacamento do veiculo (`placa_estado` do bloco frete). A NF-e pede placa E UF
+   * do veiculo no transporte; vem do cadastro de veiculos (sincronizado do OMIE).
+   */
+  plateState: string | null;
   driverName: string | null;
   carrierOmieId: number | null;
   /**
@@ -1352,9 +1456,32 @@ function resolveFreightModalidade(
   freightType: string | null | undefined,
   freightTotalCents: number
 ): string {
+  // FOB (frete por conta do cliente) vai ao OMIE como "9 - sem incidencia de frete":
+  // quando o frete e responsabilidade do cliente a Pedreira nao contrata nem responde
+  // pelo transporte, entao a operacao nao deve nascer no OMIE como "frete por conta do
+  // destinatario". Sai antes da compatibilidade abaixo de proposito: FOB com valor
+  // lancado continua "9", nao vira CIF.
+  if (getFreightModalityInfo(freightType).key === "fob") return "9";
   const code = freightModalityOmieCode(freightType);
   if (code === "9" && freightTotalCents > 0) return "0";
   return code;
+}
+
+/**
+ * UF de emplacamento do veiculo da operacao (`placa_estado` do bloco frete do pedido).
+ * Vem do cadastro de veiculos, alimentado pelo sync do OMIE. Null quando o veiculo
+ * ainda nao tem UF — o pedido segue so com a placa, como antes.
+ */
+function resolveVehiclePlateState(
+  database: DesktopDatabase,
+  vehicleId: string | null
+): string | null {
+  if (!vehicleId) return null;
+  const row = database.prepare("SELECT plate_state FROM vehicles WHERE id = ?").get(vehicleId) as
+    | { plate_state: string | null }
+    | undefined;
+  const state = (row?.plate_state ?? "").trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(state) ? state : null;
 }
 
 interface OrderCustomerRow {
@@ -1379,10 +1506,17 @@ function splitPhoneForOmie(phone: string | null): { ddd?: string; numero?: strin
   return { ddd: digits.slice(0, 2), numero: digits.slice(2) };
 }
 
-/** Monta o cadastro do cliente para o edge criar/localizar no OMIE junto com o pedido. */
+/**
+ * Monta o cadastro do cliente para o edge criar/localizar no OMIE junto com o pedido.
+ * Sem e-mail proprio o cliente sai com o e-mail padrao de NF-e configurado: o OMIE cobra
+ * o campo no IncluirCliente e, sem ele, o cadastro (e o fechamento junto) e recusado.
+ * O cliente pode ter varios e-mails: todos vao no campo do OMIE (virgula), respeitando
+ * o limite de 500 caracteres do cadastro.
+ */
 function buildOrderCustomerCadastro(
   localCustomerId: string,
-  row: OrderCustomerRow
+  row: OrderCustomerRow,
+  fallbackEmail: string | null
 ): OmieOrderCustomerCadastro {
   const phone = splitPhoneForOmie(row.phone);
   return {
@@ -1390,7 +1524,7 @@ function buildOrderCustomerCadastro(
     razaoSocial: row.legal_name ?? row.trade_name ?? "",
     nomeFantasia: row.trade_name ?? row.legal_name ?? undefined,
     cnpjCpf: row.document?.trim() || undefined,
-    email: row.email ?? undefined,
+    email: formatEmailListForOmie(row.email) || formatEmailListForOmie(fallbackEmail) || undefined,
     telefone1Ddd: phone.ddd,
     telefone1Numero: phone.numero,
     zipcode: row.zipcode ?? undefined,
@@ -1445,7 +1579,11 @@ export function buildOmieBillingJob(
   // criar/localizar o cliente no OMIE na hora, antes de criar o pedido.
   const customerCadastro: OmieOrderCustomerCadastro | null =
     !omieCustomerId && customerRow && row.customer_id
-      ? buildOrderCustomerCadastro(row.customer_id, customerRow)
+      ? buildOrderCustomerCadastro(
+          row.customer_id,
+          customerRow,
+          readStringLocalSetting(database, DEFAULT_NFE_EMAIL_KEY)
+        )
       : null;
 
   const productRow = row.product_id
@@ -1475,7 +1613,11 @@ export function buildOmieBillingJob(
                   COALESCE(opt.installment_count, pt.installment_count) AS installment_count,
                   COALESCE(opt.installment_days_json, pt.installment_days_json) AS installment_days_json,
                   COALESCE(opt.first_installment_days, pt.first_installment_days) AS first_installment_days,
-                  COALESCE(opt.installment_interval_days, pt.installment_interval_days) AS installment_interval_days
+                  COALESCE(opt.installment_interval_days, pt.installment_interval_days) AS installment_interval_days,
+                  -- Ultimo recurso quando as colunas acima estao vazias: a condicao que
+                  -- chegou pela nuvem traz so o rules_json (ver upsertCloudPaymentTerms),
+                  -- e sem os dias o pedido saia com vencimento = emissao.
+                  pt.rules_json AS rules_json
            FROM payment_terms pt
            LEFT JOIN omie_payment_terms opt
              ON opt.company_id = pt.company_id AND opt.code = pt.omie_parcela_code AND opt.is_active = 1
@@ -1488,6 +1630,7 @@ export function buildOmieBillingJob(
             installment_days_json: string | null;
             first_installment_days: number | null;
             installment_interval_days: number | null;
+            rules_json: string | null;
           }
         | undefined)
     : undefined;
@@ -1526,6 +1669,7 @@ export function buildOmieBillingJob(
   const freightModalidade = resolveFreightModalidade(row.freight_type, operation.freightTotalCents);
   const transport: OmieOrderTransport = {
     plate: operation.plate?.trim() || null,
+    plateState: resolveVehiclePlateState(database, row.vehicle_id),
     driverName: operation.driverName?.trim() || null,
     carrierOmieId: carrierOmieId && carrierOmieId > 0 ? carrierOmieId : null,
     carrierName: orderCarrier?.name?.trim() || null,
@@ -1543,7 +1687,11 @@ export function buildOmieBillingJob(
   return {
     unitId: row.unit_id,
     action,
-    idempotencyKey: buildOmieIntegrationCode(row.unit_id ?? "unknown", operationId, idempotencyAction),
+    idempotencyKey: buildOmieIntegrationCode(
+      row.unit_id ?? "unknown",
+      operationId,
+      idempotencyAction
+    ),
     payload: {
       operationId,
       operationType: operation.operationType,
@@ -1558,7 +1706,8 @@ export function buildOmieBillingJob(
       freightModalidade,
       issueDate: (row.exit_weight_captured_at ?? "").slice(0, 10),
       paymentTermOmieCode: omieParcela?.code ?? null,
-      paymentTermInstallmentCount: omieParcela?.installment_count ?? null,
+      paymentTermInstallmentCount:
+        omieParcela?.installment_count ?? resolveInstallmentDays(omieParcela)?.length ?? null,
       paymentTermInstallmentDays: resolveInstallmentDays(omieParcela),
       paymentMethodOmieCode: omiePayment?.method_code ?? null,
       accountOmieCode: omiePayment?.account_code ?? null,
@@ -1585,7 +1734,9 @@ function resolveOrderCarrier(
 ): OrderCarrierRow | null {
   const fromOperation = carrierId
     ? (database
-        .prepare(`SELECT ${ORDER_CARRIER_COLUMNS} FROM carriers WHERE id = ? AND deleted_at IS NULL`)
+        .prepare(
+          `SELECT ${ORDER_CARRIER_COLUMNS} FROM carriers WHERE id = ? AND deleted_at IS NULL`
+        )
         .get(carrierId) as OrderCarrierRow | undefined)
     : undefined;
   // A escolhida na operacao manda mesmo sem codigo OMIE: nesse caso ela sobe ao OMIE
@@ -1646,7 +1797,7 @@ function buildOrderCarrierCadastro(
     localCarrierId: carrier.id,
     name: carrier.name,
     cnpjCpf: document,
-    email: carrier.email ?? undefined,
+    email: formatEmailListForOmie(carrier.email) || undefined,
     telefone1Ddd: phone.ddd,
     telefone1Numero: phone.numero,
     zipcode: carrier.zipcode ?? undefined,
@@ -1663,6 +1814,26 @@ function buildOrderCarrierCadastro(
  * (ex: [7,14,21]) quando presente, senao deriva de primeiro dia + intervalo + quantidade.
  * Retorna null quando a condicao nao informa dias (edge trata como a vista).
  */
+/**
+ * Prazos gravados no `rules_json` da condicao ("installments[].dueDays").
+ *
+ * A condicao que chega pela nuvem traz SO o rules_json — as colunas
+ * installment_days_json/first_installment_days/installment_count ficam vazias no desktop
+ * que a recebeu (ver upsertCloudPaymentTerms). Sem esta leitura, o pedido saia sem
+ * prazo nenhum e o OMIE colocava o vencimento na propria data de emissao.
+ */
+function dueDaysFromRulesJson(rulesJson: string | null | undefined): number[] | null {
+  if (!rulesJson) return null;
+  try {
+    const rules = JSON.parse(rulesJson) as { installments?: Array<{ dueDays?: unknown }> };
+    if (!Array.isArray(rules.installments) || rules.installments.length === 0) return null;
+    const days = rules.installments.map((installment) => Number(installment?.dueDays));
+    return days.every((value) => Number.isInteger(value) && value >= 0) ? days : null;
+  } catch {
+    return null;
+  }
+}
+
 function resolveInstallmentDays(
   omieParcela:
     | {
@@ -1670,6 +1841,7 @@ function resolveInstallmentDays(
         first_installment_days: number | null;
         installment_interval_days: number | null;
         installment_count: number | null;
+        rules_json?: string | null;
       }
     | undefined
 ): number[] | null {
@@ -1691,9 +1863,12 @@ function resolveInstallmentDays(
 
   const count = omieParcela.installment_count;
   const first = omieParcela.first_installment_days;
-  if (!count || count < 1 || first === null || first < 0) return null;
-  const interval = omieParcela.installment_interval_days ?? 0;
-  return Array.from({ length: count }, (_, index) => first + index * interval);
+  if (count && count >= 1 && first !== null && first >= 0) {
+    const interval = omieParcela.installment_interval_days ?? 0;
+    return Array.from({ length: count }, (_, index) => first + index * interval);
+  }
+
+  return dueDaysFromRulesJson(omieParcela.rules_json);
 }
 
 /** Enfileira o job de faturamento/pedido OMIE reconstruido por buildOmieBillingJob. */
@@ -1889,6 +2064,9 @@ export function listOpenWeighingOperations(database: DesktopDatabase): WeighingO
         COALESCE(v.plate, o.remote_plate) AS plate,
         COALESCE(d.name, o.remote_driver_name) AS driver_name,
         COALESCE(p.description, o.remote_product_description) AS product_description,
+        o.product_id, o.vehicle_id, o.driver_id, o.carrier_id,
+        o.payment_term_id, o.payment_method_id,
+        crr.name AS carrier_name, pmd.name AS payment_method_name,
         o.device_id, dv.name AS device_name, dv.color AS device_color,
         lr.loader_completed_at AS loader_completed_at,
         CASE
@@ -1902,6 +2080,8 @@ export function listOpenWeighingOperations(database: DesktopDatabase): WeighingO
        LEFT JOIN drivers d ON d.id = o.driver_id
        LEFT JOIN products p ON p.id = o.product_id
        LEFT JOIN payment_terms pt ON pt.id = o.payment_term_id
+       LEFT JOIN carriers crr ON crr.id = o.carrier_id
+       LEFT JOIN payment_methods pmd ON pmd.id = o.payment_method_id
        LEFT JOIN devices dv ON dv.id = o.device_id
        LEFT JOIN loading_requests lr ON lr.operation_id = o.id
         WHERE o.status IN ('loading_requested', 'awaiting_exit', 'entry_registered')
@@ -1932,6 +2112,9 @@ export function listCanceledWeighingOperations(
         COALESCE(v.plate, o.remote_plate) AS plate,
         COALESCE(d.name, o.remote_driver_name) AS driver_name,
         COALESCE(p.description, o.remote_product_description) AS product_description,
+        o.product_id, o.vehicle_id, o.driver_id, o.carrier_id,
+        o.payment_term_id, o.payment_method_id,
+        crr.name AS carrier_name, pmd.name AS payment_method_name,
         o.device_id, dv.name AS device_name, dv.color AS device_color,
         CASE
           WHEN o.manual_installments = 1 THEN '1 parcela'
@@ -1944,6 +2127,8 @@ export function listCanceledWeighingOperations(
        LEFT JOIN drivers d ON d.id = o.driver_id
        LEFT JOIN products p ON p.id = o.product_id
        LEFT JOIN payment_terms pt ON pt.id = o.payment_term_id
+       LEFT JOIN carriers crr ON crr.id = o.carrier_id
+       LEFT JOIN payment_methods pmd ON pmd.id = o.payment_method_id
        LEFT JOIN devices dv ON dv.id = o.device_id
        WHERE o.status = 'cancelled'
          AND o.deleted_at IS NULL
@@ -1973,6 +2158,9 @@ export function listClosedWeighingOperations(
         COALESCE(v.plate, o.remote_plate) AS plate,
         COALESCE(d.name, o.remote_driver_name) AS driver_name,
         COALESCE(p.description, o.remote_product_description) AS product_description,
+        o.product_id, o.vehicle_id, o.driver_id, o.carrier_id,
+        o.payment_term_id, o.payment_method_id,
+        crr.name AS carrier_name, pmd.name AS payment_method_name,
         o.device_id, dv.name AS device_name, dv.color AS device_color,
         CASE
           WHEN o.manual_installments = 1 THEN '1 parcela'
@@ -1985,6 +2173,8 @@ export function listClosedWeighingOperations(
        LEFT JOIN drivers d ON d.id = o.driver_id
        LEFT JOIN products p ON p.id = o.product_id
        LEFT JOIN payment_terms pt ON pt.id = o.payment_term_id
+       LEFT JOIN carriers crr ON crr.id = o.carrier_id
+       LEFT JOIN payment_methods pmd ON pmd.id = o.payment_method_id
        LEFT JOIN devices dv ON dv.id = o.device_id
        WHERE o.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
          AND o.deleted_at IS NULL
@@ -2008,6 +2198,50 @@ export function clearCanceledWeighingOperations(
     .run(timestamp, timestamp);
 
   return result.changes;
+}
+
+/**
+ * Limpa a lista de concluidas de uma vez (soft-delete), como ja existia para as
+ * canceladas. Antes so dava para excluir uma a uma — limpar o historico de teste
+ * de uma balanca significava dezenas de cliques.
+ *
+ * `untilDate` (ISO yyyy-mm-dd, inclusive) limita a limpeza ao que foi criado ate
+ * aquele dia: e o que permite preservar o movimento do dia corrente. Sem ela,
+ * limpa todas as concluidas.
+ *
+ * Nao mexe no OMIE: pedido/OS ja enviado continua la e deve ser tratado no
+ * proprio OMIE. Jobs OMIE ainda nao enviados sao neutralizados, como na exclusao
+ * individual, para nao criar pedido de uma operacao que o operador excluiu.
+ */
+export function clearClosedWeighingOperations(
+  database: DesktopDatabase,
+  options: { untilDate?: string } = {},
+  now: Date = new Date()
+): number {
+  const timestamp = now.toISOString();
+  const untilDate = options.untilDate?.trim() || null;
+
+  const selectSql = `SELECT id FROM weighing_operations
+     WHERE status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
+       AND deleted_at IS NULL
+       ${untilDate ? "AND date(created_at) <= date(?)" : ""}`;
+  const rows = (
+    untilDate ? database.prepare(selectSql).all(untilDate) : database.prepare(selectSql).all()
+  ) as Array<{ id: string }>;
+  if (rows.length === 0) return 0;
+
+  const markDeleted = database.prepare(
+    "UPDATE weighing_operations SET deleted_at = ?, updated_at = ? WHERE id = ?"
+  );
+  const clear = database.transaction(() => {
+    for (const row of rows) {
+      markDeleted.run(timestamp, timestamp, row.id);
+      cancelPendingOmieJobs(database, row.id, now);
+    }
+  });
+  clear();
+
+  return rows.length;
 }
 
 /**
@@ -2065,6 +2299,9 @@ export function getWeighingOperation(
         COALESCE(v.plate, o.remote_plate) AS plate,
         COALESCE(d.name, o.remote_driver_name) AS driver_name,
         COALESCE(p.description, o.remote_product_description) AS product_description,
+        o.product_id, o.vehicle_id, o.driver_id, o.carrier_id,
+        o.payment_term_id, o.payment_method_id,
+        crr.name AS carrier_name, pmd.name AS payment_method_name,
         o.device_id, dv.name AS device_name, dv.color AS device_color,
         CASE
           WHEN o.manual_installments = 1 THEN '1 parcela'
@@ -2077,6 +2314,8 @@ export function getWeighingOperation(
        LEFT JOIN drivers d ON d.id = o.driver_id
        LEFT JOIN products p ON p.id = o.product_id
        LEFT JOIN payment_terms pt ON pt.id = o.payment_term_id
+       LEFT JOIN carriers crr ON crr.id = o.carrier_id
+       LEFT JOIN payment_methods pmd ON pmd.id = o.payment_method_id
        LEFT JOIN devices dv ON dv.id = o.device_id
        WHERE o.id = ?`
     )
@@ -2101,13 +2340,7 @@ export function updateWeighingOperationProduct(
 ): WeighingOperationSummary {
   const operation = getWeighingOperation(database, input.operationId);
 
-  const openStatuses: OperationStatus[] = [
-    "draft",
-    "entry_registered",
-    "loading_requested",
-    "awaiting_exit"
-  ];
-  if (!openStatuses.includes(operation.status)) {
+  if (!isOpenOperationStatus(operation.status)) {
     throw new Error("Somente operacoes abertas podem ter o produto alterado.");
   }
 
@@ -2249,13 +2482,7 @@ export function updateWeighingOperationCustomer(
 ): WeighingOperationSummary {
   const operation = getWeighingOperation(database, input.operationId);
 
-  const openStatuses: OperationStatus[] = [
-    "draft",
-    "entry_registered",
-    "loading_requested",
-    "awaiting_exit"
-  ];
-  if (!openStatuses.includes(operation.status)) {
+  if (!isOpenOperationStatus(operation.status)) {
     throw new Error("Somente operacoes abertas podem ter o cliente alterado.");
   }
 
@@ -2391,22 +2618,14 @@ export function updateWeighingOperationCarrier(
 ): WeighingOperationSummary {
   const operation = getWeighingOperation(database, input.operationId);
 
-  const openStatuses: OperationStatus[] = [
-    "draft",
-    "entry_registered",
-    "loading_requested",
-    "awaiting_exit"
-  ];
-  if (!openStatuses.includes(operation.status)) {
+  if (!isOpenOperationStatus(operation.status)) {
     throw new Error("Somente operacoes abertas podem ter a transportadora alterada.");
   }
 
   let carrierName: string | null = null;
   if (input.newCarrierId) {
     const carrier = database
-      .prepare(
-        "SELECT name, is_active FROM carriers WHERE id = ? AND deleted_at IS NULL"
-      )
+      .prepare("SELECT name, is_active FROM carriers WHERE id = ? AND deleted_at IS NULL")
       .get(input.newCarrierId) as { name: string; is_active: number } | undefined;
 
     if (!carrier) throw new Error("Transportadora selecionada nao foi encontrada.");
@@ -2461,6 +2680,382 @@ export function updateWeighingOperationCarrier(
   return getWeighingOperation(database, input.operationId);
 }
 
+/**
+ * Edicao completa de uma operacao EM ANDAMENTO. Todo campo e opcional: o que nao vier no
+ * input fica como esta (`undefined` = nao mexer). Campos que aceitam vazio — transportadora,
+ * forma e condicao de pagamento — usam `null` explicito para limpar.
+ *
+ * Existe porque as alteracoes pontuais (produto/cliente/transportadora) nao cobriam o que a
+ * balanca precisa corrigir depois que o caminhao ja entrou: preco do produto, valor e regra
+ * de frete, placa, motorista, pagamento e ate o tipo de fechamento. Sem isso, um preco
+ * digitado errado na entrada so tinha conserto cancelando a operacao e refazendo a pesagem.
+ */
+export interface UpdateWeighingOperationDetailsInput {
+  operationId: string;
+  customerId?: string;
+  productId?: string;
+  vehicleId?: string;
+  driverId?: string;
+  /** `null` remove a transportadora da operacao. */
+  carrierId?: string | null;
+  /** `null` remove a forma de pagamento. */
+  paymentMethodId?: string | null;
+  /** `null` remove a condicao (volta a "a vista"). */
+  paymentTermId?: string | null;
+  operationType?: OperationType;
+  /** Preco do produto por tonelada, em centavos. Grava o valor digitado como preco aplicado. */
+  unitPriceCents?: number;
+  /** Frete da operacao; `null` remove o valor lancado (a operacao fica sem frete). */
+  freight?: OperationFreightInput | null;
+  freightModality?: FreightModality;
+  deductFreightFromCredit?: boolean;
+}
+
+interface EditableOperationRow {
+  unit_id: string;
+  customer_id: string | null;
+  product_id: string | null;
+  vehicle_id: string | null;
+  driver_id: string | null;
+  carrier_id: string | null;
+  payment_term_id: string | null;
+  payment_method_id: string | null;
+  operation_type: OperationType;
+  unit_price_cents: number | null;
+  base_unit_price_cents: number | null;
+  deduct_freight_from_credit: number;
+}
+
+export function updateWeighingOperationDetails(
+  database: DesktopDatabase,
+  input: UpdateWeighingOperationDetailsInput,
+  now: Date = new Date()
+): WeighingOperationSummary {
+  const before = getWeighingOperation(database, input.operationId);
+
+  if (!isOpenOperationStatus(before.status)) {
+    throw new Error("Somente operacoes em andamento podem ser editadas.");
+  }
+
+  const current = database
+    .prepare(
+      `SELECT unit_id, customer_id, product_id, vehicle_id, driver_id, carrier_id,
+              payment_term_id, payment_method_id, operation_type, unit_price_cents,
+              base_unit_price_cents, deduct_freight_from_credit
+       FROM weighing_operations
+       WHERE id = ?`
+    )
+    .get(input.operationId) as EditableOperationRow | undefined;
+  if (!current) throw new Error("Operacao nao encontrada.");
+
+  const customerId = input.customerId ?? current.customer_id;
+  const productId = input.productId ?? current.product_id;
+  const vehicleId = input.vehicleId ?? current.vehicle_id;
+  const driverId = input.driverId ?? current.driver_id;
+  const carrierId = input.carrierId !== undefined ? input.carrierId : current.carrier_id;
+  const paymentMethodId =
+    input.paymentMethodId !== undefined ? input.paymentMethodId : current.payment_method_id;
+  const paymentTermId =
+    input.paymentTermId !== undefined ? input.paymentTermId : current.payment_term_id;
+  const operationType = input.operationType ?? current.operation_type;
+  validateOperationType(operationType);
+
+  if (!customerId) throw new Error("Operacao sem cliente vinculado.");
+  if (!productId) throw new Error("Operacao sem produto vinculado.");
+  if (!vehicleId) throw new Error("Operacao sem placa vinculada.");
+  if (!driverId) throw new Error("Operacao sem motorista vinculado.");
+
+  const customer = database
+    .prepare(
+      "SELECT trade_name, is_active, omie_billing_blocked FROM customers WHERE id = ? AND deleted_at IS NULL"
+    )
+    .get(customerId) as
+    | { trade_name: string; is_active: number; omie_billing_blocked: number }
+    | undefined;
+  if (!customer) throw new Error("Cliente selecionado nao foi encontrado.");
+  if (customer.is_active !== 1) throw new Error("Cliente inativo nao pode ser selecionado.");
+  if (customer.omie_billing_blocked === 1) {
+    throw new Error("Cliente bloqueado no OMIE nao pode ser selecionado.");
+  }
+  // O limite financeiro so e reavaliado quando o cliente muda: a operacao ja esta em curso e
+  // travar uma correcao de preco por causa do limite de quem ja entrou nao ajudaria ninguem.
+  if (customerId !== current.customer_id) {
+    const financialBlock = new FinancialBlockService(database).canStartLoading(customerId);
+    if (!financialBlock.allowed) {
+      throw new Error(financialBlock.message ?? "Cliente bloqueado por limite financeiro.");
+    }
+  }
+
+  const product = database
+    .prepare(
+      `SELECT description, omie_product_id, item_type, fiscal_recommendations_json, is_active, blocked
+       FROM products
+       WHERE id = ? AND deleted_at IS NULL`
+    )
+    .get(productId) as
+    | {
+        description: string;
+        omie_product_id: number | null;
+        item_type: string | null;
+        fiscal_recommendations_json: string | null;
+        is_active: number;
+        blocked: number;
+      }
+    | undefined;
+  if (!product) throw new Error("Produto selecionado nao foi encontrado.");
+  if (product.is_active !== 1 || product.blocked === 1) {
+    throw new Error("Produto inativo ou bloqueado nao pode ser selecionado.");
+  }
+  if (!isFinishedGoodsProduct(product)) {
+    throw new Error("Somente produtos OMIE tipo 04 - produtos acabados podem ser selecionados.");
+  }
+
+  const vehicle = database
+    .prepare("SELECT plate FROM vehicles WHERE id = ? AND deleted_at IS NULL")
+    .get(vehicleId) as { plate: string } | undefined;
+  if (!vehicle) throw new Error("Placa selecionada nao foi encontrada.");
+  if (vehicleId !== current.vehicle_id) {
+    // Mesma trava da entrada: duas operacoes abertas para a mesma placa se confundem no
+    // patio e no fechamento.
+    const duplicate = database
+      .prepare(
+        `SELECT id FROM weighing_operations
+         WHERE unit_id = ? AND vehicle_id = ? AND id <> ?
+           AND status IN ('draft', 'entry_registered', 'loading_requested', 'awaiting_exit')
+           AND deleted_at IS NULL
+         LIMIT 1`
+      )
+      .get(current.unit_id, vehicleId, input.operationId) as { id: string } | undefined;
+    if (duplicate) {
+      throw new Error(`Ja existe uma operacao aberta para a placa ${vehicle.plate}.`);
+    }
+  }
+
+  const driver = database
+    .prepare("SELECT name FROM drivers WHERE id = ? AND deleted_at IS NULL")
+    .get(driverId) as { name: string } | undefined;
+  if (!driver) throw new Error("Motorista selecionado nao foi encontrado.");
+
+  if (carrierId) {
+    const carrier = database
+      .prepare("SELECT is_active FROM carriers WHERE id = ? AND deleted_at IS NULL")
+      .get(carrierId) as { is_active: number } | undefined;
+    if (!carrier) throw new Error("Transportadora selecionada nao foi encontrada.");
+    if (carrier.is_active !== 1) {
+      throw new Error("Transportadora inativa nao pode ser selecionada.");
+    }
+  }
+
+  if (paymentMethodId) {
+    const paymentMethod = database
+      .prepare("SELECT is_active FROM payment_methods WHERE id = ? AND deleted_at IS NULL")
+      .get(paymentMethodId) as { is_active: number } | undefined;
+    if (!paymentMethod) throw new Error("Forma de pagamento selecionada nao foi encontrada.");
+    if (paymentMethod.is_active !== 1) {
+      throw new Error("Forma de pagamento inativa nao pode ser usada na operacao.");
+    }
+  }
+
+  if (paymentTermId) {
+    const paymentTerm = database
+      .prepare("SELECT id FROM payment_terms WHERE id = ? AND deleted_at IS NULL")
+      .get(paymentTermId) as { id: string } | undefined;
+    if (!paymentTerm) throw new Error("Condicao de pagamento selecionada nao foi encontrada.");
+  }
+
+  // Condicao informada na edicao apaga o parcelamento manual da entrada: ele tem
+  // precedencia sobre a condicao na exibicao (cupom, lista, relatorio do cliente), entao
+  // deixa-lo gravado faria a nova condicao "nao pegar" na tela.
+  const clearManualInstallments = input.paymentTermId !== undefined;
+
+  // Preco: o digitado manda; sem preco digitado, trocar cliente/produto re-precifica pela
+  // tabela (mesma regra das alteracoes pontuais); sem nenhum dos dois, o preco fica intacto.
+  const catalogChanged = customerId !== current.customer_id || productId !== current.product_id;
+  let unitPriceCents = current.unit_price_cents;
+  let baseUnitPriceCents = current.base_unit_price_cents;
+  let savingsPercent = before.priceSavingsPercent;
+  let repriced = false;
+
+  if (input.unitPriceCents !== undefined) {
+    if (!Number.isInteger(input.unitPriceCents) || input.unitPriceCents < 0) {
+      throw new Error("Preco do produto invalido.");
+    }
+    const priceDetails = new PricingService(database).getPriceDetailsForCustomerProduct(
+      customerId,
+      productId
+    );
+    unitPriceCents = input.unitPriceCents;
+    baseUnitPriceCents =
+      priceDetails?.baseUnitPriceCents ?? (catalogChanged ? null : baseUnitPriceCents);
+    savingsPercent = calculateSavingsPercent(baseUnitPriceCents, unitPriceCents);
+    repriced = true;
+  } else if (catalogChanged) {
+    const priceDetails = new PricingService(database).getPriceDetailsForCustomerProduct(
+      customerId,
+      productId
+    );
+    if (!priceDetails || priceDetails.appliedUnitPriceCents === null) {
+      throw new Error(
+        "Sem preco cadastrado para este cliente/produto. Cadastre um preco padrao no produto ou um preco especial no cliente."
+      );
+    }
+    unitPriceCents = priceDetails.appliedUnitPriceCents;
+    baseUnitPriceCents = priceDetails.baseUnitPriceCents ?? null;
+    savingsPercent = priceDetails.savingsPercent ?? null;
+    repriced = true;
+  }
+
+  // Frete: `undefined` mantem o que esta gravado; `null` limpa. O valor total continua sendo
+  // calculado no fechamento (depende do peso liquido), entao aqui so a regra e persistida.
+  const freightProvided = input.freight !== undefined;
+  const freightJson = freightProvided
+    ? serializeOperationFreight(input.freight)
+    : before.freightJson;
+  const freightModality = getFreightModalityInfo(
+    input.freightModality ?? before.freightModality
+  ).key;
+  const deductFreightFromCredit =
+    input.deductFreightFromCredit !== undefined
+      ? input.deductFreightFromCredit
+      : current.deduct_freight_from_credit === 1;
+
+  const timestamp = now.toISOString();
+
+  const updateOperation = database.transaction(() => {
+    database
+      .prepare(
+        `UPDATE weighing_operations
+         SET customer_id = ?, product_id = ?, vehicle_id = ?, driver_id = ?, carrier_id = ?,
+             payment_term_id = ?, payment_method_id = ?, operation_type = ?,
+             unit_price_cents = ?, base_unit_price_cents = ?, price_savings_percent = ?,
+             applied_price_table_id = CASE WHEN ? = 1 THEN NULL ELSE applied_price_table_id END,
+             applied_price_table_name = CASE WHEN ? = 1 THEN NULL ELSE applied_price_table_name END,
+             applied_price_table_item_id = CASE WHEN ? = 1 THEN NULL ELSE applied_price_table_item_id END,
+             manual_installments = CASE WHEN ? = 1 THEN NULL ELSE manual_installments END,
+             manual_down_payment_cents = CASE WHEN ? = 1 THEN NULL ELSE manual_down_payment_cents END,
+             freight_json = ?, freight_type = ?, deduct_freight_from_credit = ?,
+             updated_at = ?
+         WHERE id = ?`
+      )
+      .run(
+        customerId,
+        productId,
+        vehicleId,
+        driverId,
+        carrierId ?? null,
+        paymentTermId ?? null,
+        paymentMethodId ?? null,
+        operationType,
+        unitPriceCents,
+        baseUnitPriceCents,
+        savingsPercent,
+        repriced ? 1 : 0,
+        repriced ? 1 : 0,
+        repriced ? 1 : 0,
+        clearManualInstallments ? 1 : 0,
+        clearManualInstallments ? 1 : 0,
+        freightJson,
+        freightModality,
+        deductFreightFromCredit ? 1 : 0,
+        timestamp,
+        input.operationId
+      );
+
+    // A solicitacao de carga e o que o carregador ve no loader-web: sem espelhar os novos
+    // dados, ele continuaria carregando o material/placa antigos.
+    database
+      .prepare(
+        `UPDATE loading_requests
+         SET plate = ?, customer_name = ?, driver_name = ?, product_description = ?, updated_at = ?
+         WHERE operation_id = ?`
+      )
+      .run(
+        vehicle.plate,
+        customer.trade_name,
+        driver.name,
+        product.description,
+        timestamp,
+        input.operationId
+      );
+
+    insertAuditLog(
+      database,
+      null,
+      input.operationId,
+      "operation_updated",
+      {
+        customerId: current.customer_id,
+        productId: current.product_id,
+        vehicleId: current.vehicle_id,
+        driverId: current.driver_id,
+        carrierId: current.carrier_id,
+        paymentTermId: current.payment_term_id,
+        paymentMethodId: current.payment_method_id,
+        operationType: current.operation_type,
+        unitPriceCents: current.unit_price_cents,
+        freightJson: before.freightJson,
+        freightModality: before.freightModality,
+        deductFreightFromCredit: current.deduct_freight_from_credit === 1
+      },
+      {
+        customerId,
+        customerName: customer.trade_name,
+        productId,
+        productDescription: product.description,
+        vehicleId,
+        plate: vehicle.plate,
+        driverId,
+        driverName: driver.name,
+        carrierId: carrierId ?? null,
+        paymentTermId: paymentTermId ?? null,
+        paymentMethodId: paymentMethodId ?? null,
+        operationType,
+        unitPriceCents,
+        freightJson,
+        freightModality,
+        deductFreightFromCredit
+      },
+      timestamp
+    );
+
+    enqueueSyncJob(
+      database,
+      {
+        target: "cloud",
+        action: "upsert_operation",
+        entityType: "operation",
+        entityId: input.operationId,
+        idempotencyKey: `cloud:operation:${input.operationId}:updated:${timestamp}`,
+        payload: { operationId: input.operationId }
+      },
+      now
+    );
+
+    const loadingRequest = database
+      .prepare("SELECT id FROM loading_requests WHERE operation_id = ?")
+      .get(input.operationId) as { id: string } | undefined;
+
+    if (loadingRequest) {
+      enqueueSyncJob(
+        database,
+        {
+          target: "cloud",
+          action: "upsert_loading_request",
+          entityType: "loading_request",
+          entityId: loadingRequest.id,
+          idempotencyKey: `cloud:loading_request:${loadingRequest.id}:updated:${timestamp}`,
+          payload: { operationId: input.operationId }
+        },
+        now
+      );
+    }
+  });
+
+  updateOperation();
+
+  return getWeighingOperation(database, input.operationId);
+}
+
 function calculateNetWeightKg(entryWeightKg: number, exitWeightKg: number): number {
   if (exitWeightKg <= entryWeightKg) {
     throw new Error("Exit weight must be greater than entry weight.");
@@ -2476,7 +3071,9 @@ function calculateProductTotalCents(
   return unitPriceCents === null ? null : Math.round((netWeightKg / 1000) * unitPriceCents);
 }
 
-function serializeOperationFreight(freight: OperationFreightInput | null | undefined): string | null {
+function serializeOperationFreight(
+  freight: OperationFreightInput | null | undefined
+): string | null {
   if (!freight) return null;
   if (!freight.payer) throw new Error("Responsavel pelo frete e obrigatorio.");
   if (!freight.rule?.type) throw new Error("Regra de frete invalida.");
@@ -2539,6 +3136,14 @@ function mapOperationRow(row: OperationRow): WeighingOperationSummary {
     plate: row.plate ?? "",
     driverName: row.driver_name ?? "",
     productDescription: row.product_description ?? "",
+    productId: row.product_id ?? null,
+    vehicleId: row.vehicle_id ?? null,
+    driverId: row.driver_id ?? null,
+    carrierId: row.carrier_id ?? null,
+    carrierName: row.carrier_name ?? null,
+    paymentTermId: row.payment_term_id ?? null,
+    paymentMethodId: row.payment_method_id ?? null,
+    paymentMethodName: row.payment_method_name ?? null,
     paymentTermName: row.payment_term_name,
     entryWeightKg: row.entry_weight_kg,
     exitWeightKg: row.exit_weight_kg,

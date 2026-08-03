@@ -178,7 +178,8 @@ async function runPool(tasks, concurrency) {
 }
 
 function describeBanner(banner) {
-  if (!banner) return "conectou, mas nao transmitiu nada (indicador pode estar em modo sob demanda)";
+  if (!banner)
+    return "conectou, mas nao transmitiu nada (indicador pode estar em modo sob demanda)";
   const printable = banner.replace(/[^\x20-\x7e]/g, ".").slice(0, 80);
   const looksLikeToledo = /[0-9]{2,}[.,]?[0-9]*\s*(kg|KG)?/.test(banner);
   return `${printable}${looksLikeToledo ? "  <-- parece leitura de peso" : ""}`;
@@ -204,7 +205,11 @@ async function probeTarget(target) {
 
     const dump = (chunk) => {
       const ascii = chunk.toString("binary").replace(/[^\x20-\x7e]/g, ".");
-      const hex = chunk.toString("hex").match(/.{1,2}/g)?.join(" ") ?? "";
+      const hex =
+        chunk
+          .toString("hex")
+          .match(/.{1,2}/g)
+          ?.join(" ") ?? "";
       console.log(`  RECEBIDO (${chunk.length} bytes)`);
       console.log(`    ascii: ${ascii}`);
       console.log(`    hex  : ${hex.slice(0, 200)}`);
@@ -217,7 +222,9 @@ async function probeTarget(target) {
         console.log("O indicador nao esta transmitindo nem respondendo nesta porta.");
         console.log("Provaveis causas:");
         console.log("  - a porta TCP do conversor nao corresponde ao canal serial do indicador");
-        console.log("  - o cabo serial entre indicador e conversor esta solto ou invertido (RX/TX)");
+        console.log(
+          "  - o cabo serial entre indicador e conversor esta solto ou invertido (RX/TX)"
+        );
         console.log("  - o indicador esta desligado ou com a saida serial desabilitada");
         socket.end();
         socket.destroy();
@@ -278,7 +285,9 @@ async function main() {
 
   const interfaces = localSubnets();
   if (interfaces.length === 0) {
-    console.error("Nenhuma interface IPv4 ativa encontrada. Conecte o notebook na rede da balanca.");
+    console.error(
+      "Nenhuma interface IPv4 ativa encontrada. Conecte o notebook na rede da balanca."
+    );
     process.exitCode = 1;
     return;
   }
@@ -302,9 +311,12 @@ async function main() {
     console.log();
   }
 
-  const subnets = args.subnets.length > 0 ? args.subnets : [...new Set(interfaces.map((i) => i.subnet))];
+  const subnets =
+    args.subnets.length > 0 ? args.subnets : [...new Set(interfaces.map((i) => i.subnet))];
   console.log(`Varrendo ${subnets.join(", ")} nas portas ${args.ports.join(", ")}`);
-  console.log(`(${subnets.length * 254 * args.ports.length} sondas, timeout ${args.timeoutMs}ms)\n`);
+  console.log(
+    `(${subnets.length * 254 * args.ports.length} sondas, timeout ${args.timeoutMs}ms)\n`
+  );
 
   const tasks = [];
   for (const subnet of subnets) {
@@ -325,7 +337,9 @@ async function main() {
     console.log("Nenhuma porta aberta encontrada.");
     console.log("Proximos passos:");
     console.log("  1. Confira na tabela ARP acima se ha algum dispositivo desconhecido.");
-    console.log("  2. Desligue e religue o indicador/conversor (sessao TCP presa nao aceita novo cliente).");
+    console.log(
+      "  2. Desligue e religue o indicador/conversor (sessao TCP presa nao aceita novo cliente)."
+    );
     console.log("  3. Se a balanca estiver noutra faixa, rode com --subnet 192.168.0");
     return;
   }

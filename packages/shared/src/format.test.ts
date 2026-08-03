@@ -3,22 +3,28 @@ import { describe, expect, it } from "vitest";
 import {
   formatCep,
   formatDocument,
+  formatEmailListForOmie,
   formatMoneyInput,
   formatPhone,
   formatPlate,
+  invalidEmailsInList,
   isValidCep,
   isValidCnpj,
   isValidCpf,
   isValidDocument,
   isValidEmail,
+  isValidEmailList,
   isValidMoneyInput,
   isValidPlate,
   normalizeCep,
   normalizeDocument,
   normalizeEmail,
+  normalizeEmailList,
   normalizeMoneyInput,
   normalizePhone,
   normalizePlate,
+  OMIE_EMAIL_FIELD_MAX_LENGTH,
+  parseEmailList,
   parseMoneyInputToCents
 } from "./format";
 
@@ -151,6 +157,52 @@ describe("normalizeEmail / isValidEmail", () => {
     expect(isValidEmail("user@")).toBe(false);
     expect(isValidEmail("user@.com")).toBe(false);
     expect(isValidEmail("user example.com")).toBe(false);
+  });
+});
+
+describe("lista de e-mails do cliente", () => {
+  it("aceita virgula, ponto e virgula, espaco e quebra de linha como separadores", () => {
+    expect(parseEmailList("a@x.com, b@y.com; c@z.com\nd@w.com e@v.com")).toEqual([
+      "a@x.com",
+      "b@y.com",
+      "c@z.com",
+      "d@w.com",
+      "e@v.com"
+    ]);
+  });
+
+  it("normaliza para minusculas e remove repetidos preservando a ordem", () => {
+    expect(normalizeEmailList(" Fiscal@X.com , nota@x.com, FISCAL@x.com ")).toBe(
+      "fiscal@x.com, nota@x.com"
+    );
+  });
+
+  it("trata lista vazia como vazia e valida", () => {
+    expect(parseEmailList("")).toEqual([]);
+    expect(parseEmailList(null)).toEqual([]);
+    expect(normalizeEmailList("  ")).toBe("");
+    expect(isValidEmailList("")).toBe(true);
+  });
+
+  it("valida cada endereco da lista", () => {
+    expect(isValidEmailList("a@x.com, b@y.com")).toBe(true);
+    expect(isValidEmailList("a@x.com, invalido")).toBe(false);
+    expect(invalidEmailsInList("a@x.com, invalido, b@")).toEqual(["invalido", "b@"]);
+  });
+
+  it("envia ao OMIE no formato do cadastro (virgula simples)", () => {
+    expect(formatEmailListForOmie("a@x.com;b@y.com")).toBe("a@x.com, b@y.com");
+  });
+
+  it("respeita o limite de 500 caracteres do campo do OMIE cortando por endereco inteiro", () => {
+    const emails = Array.from({ length: 40 }, (_, index) => `destinatario${index}@empresa.com.br`);
+    const sent = formatEmailListForOmie(emails.join(","));
+
+    expect(sent.length).toBeLessThanOrEqual(OMIE_EMAIL_FIELD_MAX_LENGTH);
+    // Nenhum e-mail sai pela metade: todo item da lista enviada continua valido.
+    expect(isValidEmailList(sent)).toBe(true);
+    expect(parseEmailList(sent).length).toBeGreaterThan(0);
+    expect(parseEmailList(sent).length).toBeLessThan(emails.length);
   });
 });
 

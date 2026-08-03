@@ -17,7 +17,14 @@ if (!fs.existsSync(betterSqlitePath)) {
 // nativo do fonte contra o Electron alvo usando @electron/rebuild, que funciona
 // com ou sem prebuild disponivel. Requer toolchain de C++ (no Windows, Visual
 // Studio com "Desktop development with C++" — os runners windows-2022 tem).
-const electronRebuildCli = path.join(repoRoot, "node_modules", "@electron", "rebuild", "lib", "cli.js");
+const electronRebuildCli = path.join(
+  repoRoot,
+  "node_modules",
+  "@electron",
+  "rebuild",
+  "lib",
+  "cli.js"
+);
 
 const result = spawnSync(
   process.execPath,

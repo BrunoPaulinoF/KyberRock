@@ -3,19 +3,22 @@ import { Lock, Search, Unlock } from "lucide-react";
 
 import {
   formatMoneyInput,
+  invalidEmailsInList,
   isValidDocument,
-  isValidEmail,
   normalizeDocument,
-  normalizeEmail,
+  normalizeEmailList,
   normalizePhone,
   parseMoneyInputToCents
 } from "@kyberrock/shared";
 
 import type { KyberRockDesktopApi } from "../preload/api-types";
+import { FREIGHT_MODALITIES, getFreightModalityInfo } from "../services/freight";
+import type { FreightModality } from "../services/freight";
+import type { CustomerFreightRule as CustomerFreightRuleView } from "../services/customer-freight-rules";
 import {
   CepInput,
   DocumentInput,
-  EmailInput,
+  EmailListInput,
   Field,
   MoneyInput,
   PhoneInput,
@@ -28,6 +31,7 @@ import type { CreditMovementRow, CustomerCreditSummary } from "../services/credi
 import { CrudFormModal } from "./CrudFormModal";
 import { Tooltip } from "./Tooltip";
 import { extractConditionRaw, resolveConditionTermId } from "./payment-condition-helpers";
+import { PaymentConditionLegend } from "./PaymentConditionLegend";
 import { tryParsePaymentCondition } from "../services/payment-condition-parser";
 import {
   CellMuted,
@@ -46,6 +50,14 @@ import {
 } from "./crud-ui";
 import type { DetailSectionData } from "./crud-ui";
 import { PriceChangePasswordDialog } from "./PriceChangePasswordDialog";
+import { formatDbDateTime } from "./format-datetime";
+
+/**
+ * Limite da razao social no OMIE. Só para o aviso do formulario: quem encurta de fato o
+ * valor enviado e OMIE_CUSTOMER_FIELD_MAX_LENGTHS (packages/omie-client e o edge
+ * `omie-sync`). O renderer nao importa o cliente OMIE — ele nunca fala com o OMIE.
+ */
+const OMIE_RAZAO_SOCIAL_MAX_LENGTH = 60;
 
 const initialForm: CustomerFormData = {
   tradeName: "",
@@ -221,7 +233,7 @@ interface CarrierOption {
 
 /** Rotulos dos lancamentos do extrato de credito. */
 const CREDIT_MOVEMENT_LABELS: Record<string, string> = {
-  credit: "Pagamento/credito",
+  credit: "Credito",
   debit_product: "Venda (produto)",
   debit_freight: "Venda (frete)",
   refund_product: "Estorno (produto)",
@@ -229,8 +241,17 @@ const CREDIT_MOVEMENT_LABELS: Record<string, string> = {
   manual_adjustment: "Ajuste manual"
 };
 
-/** Tipos de lancamento manual oferecidos na aba Credito. */
-type CreditEntryKind = "payment" | "adjustment_credit" | "adjustment_debit";
+/**
+ * Rotulo do lancamento no extrato. O que vem do OMIE e adiantamento (deposito do
+ * cliente) ou acerto desse adiantamento — chamar de "pagamento" confundiria com a
+ * baixa do fiado, que continua sendo lancada aqui.
+ */
+export function creditMovementLabel(movement: { movement_type: string; source?: string }): string {
+  if (movement.source === "omie") {
+    return movement.movement_type === "credit" ? "Adiantamento (OMIE)" : "Acerto do adiantamento";
+  }
+  return CREDIT_MOVEMENT_LABELS[movement.movement_type] ?? movement.movement_type;
+}
 
 /**
  * Valor com sinal para o extrato: as vendas gravam `amount_cents` positivo e o
@@ -264,6 +285,49 @@ function normalizeSearchTerm(value: string): string {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase();
+}
+
+export interface CustomerFreightEntry {
+  ruleId: string;
+  /** Ausente na regra unica antiga, que vale para qualquer tipo de frete. */
+  modality?: FreightModality;
+  modalityLabel: string;
+  /** "Frete fixo" ou o produto da regra. */
+  scopeLabel: string;
+  baseValueCents: number;
+  source: "manual" | "last_used";
+}
+
+/**
+ * Achata as regras do cliente numa linha por valor: a regra unica antiga (quando tem
+ * valor) e cada tipo de frete configurado ou memorizado da ultima venda.
+ */
+export function toCustomerFreightEntries(rules: CustomerFreightRuleView[]): CustomerFreightEntry[] {
+  const entries: CustomerFreightEntry[] = [];
+  for (const rule of rules) {
+    const scopeLabel = rule.productId ? (rule.productDescription ?? "Produto") : "Frete fixo";
+    if (rule.rule.baseValueCents > 0) {
+      entries.push({
+        ruleId: rule.id,
+        modalityLabel: "Qualquer tipo",
+        scopeLabel,
+        baseValueCents: rule.rule.baseValueCents,
+        source: "manual"
+      });
+    }
+    for (const [key, value] of Object.entries(rule.modalities ?? {})) {
+      if (!value) continue;
+      entries.push({
+        ruleId: rule.id,
+        modality: key as FreightModality,
+        modalityLabel: getFreightModalityInfo(key).label,
+        scopeLabel,
+        baseValueCents: value.baseValueCents,
+        source: value.source
+      });
+    }
+  }
+  return entries;
 }
 
 function CreditTotal({
@@ -348,20 +412,32 @@ type PendingSpecialPriceAction =
       productId: string;
     };
 
+export interface StandaloneCustomerFormOptions {
+  onCreated: (id: string) => void;
+  onCancel: () => void;
+}
+
 export function CustomersView({
   desktopApi,
-  initialSearch
+  initialSearch,
+  standaloneForm
 }: {
   desktopApi: KyberRockDesktopApi | null;
   /** Busca inicial (ex.: nome do cliente vindo da tela de operacoes concluidas). */
   initialSearch?: string;
+  /**
+   * Modo "somente formulario": renderiza apenas o modal de cadastro (ja aberto em
+   * criacao), sem lista nem busca. E como a Nova entrada reaproveita este mesmo
+   * formulario completo em vez de um modal reduzido proprio.
+   */
+  standaloneForm?: StandaloneCustomerFormOptions;
 }) {
   const [customers, setCustomers] = useState<CustomerCacheEntry[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
+  const [showForm, setShowForm] = useState(Boolean(standaloneForm));
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingSource, setEditingSource] = useState<string | null>(null);
   const [form, setForm] = useState<CustomerFormData>(initialForm);
@@ -375,13 +451,15 @@ export function CustomersView({
   const [viewingCustomer, setViewingCustomer] = useState<CustomerCacheEntry | null>(null);
   const [viewingCredit, setViewingCredit] = useState<CustomerCreditSummary | null>(null);
   // Snapshot do formulario ao abrir, para avisar antes de descartar alteracoes.
-  const formBaselineRef = useRef<string>("");
+  const formBaselineRef = useRef<string>(
+    JSON.stringify({ form: initialForm, defaultConditionText: "" })
+  );
   const { confirmElement, requestConfirm } = useConfirm();
 
   const [carriers, setCarriers] = useState<CarrierOption[]>([]);
   const [paymentTerms, setPaymentTerms] = useState<PaymentTermOption[]>([]);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodOption[]>([]);
-  // Condicao de pagamento padrao digitada ("5", "7 14 21", "7/14/21"); resolvida
+  // Condicao de pagamento padrao digitada ("30", "7 14 21", "3 parcelas"); resolvida
   // para um payment_term local no salvar.
   const [defaultConditionText, setDefaultConditionText] = useState("");
   const [activeFormSection, setActiveFormSection] =
@@ -402,22 +480,19 @@ export function CustomersView({
   const [carrierSearch, setCarrierSearch] = useState("");
   const [creditSummary, setCreditSummary] = useState<CustomerCreditSummary | null>(null);
   const [creditMovements, setCreditMovements] = useState<CreditMovementRow[]>([]);
-  const [creditAmountReais, setCreditAmountReais] = useState("");
-  const [creditEntryKind, setCreditEntryKind] = useState<CreditEntryKind>("payment");
-  const [creditReason, setCreditReason] = useState("");
   const [creditBusy, setCreditBusy] = useState(false);
-  const [customerFreightRules, setCustomerFreightRules] = useState<Array<{
-    id: string;
-    customerId: string;
-    productId: string | null;
-    productDescription: string | null;
-    rule: { id: string; name: string; type: string; baseValueCents: number; unit: string };
-    isActive: boolean;
-  }>>([]);
+  const [customerFreightRules, setCustomerFreightRules] = useState<CustomerFreightRuleView[]>([]);
   const [freightProductId, setFreightProductId] = useState("");
   const [freightValueReais, setFreightValueReais] = useState("");
   const [freightMode, setFreightMode] = useState<"default" | "product">("default");
+  // Tipo de frete (modalidade OMIE) do valor sendo cadastrado; "" = valor unico,
+  // usado quando o tipo da venda nao tem valor proprio.
+  const [freightModality, setFreightModality] = useState<FreightModality | "">("");
   const [savingFreight, setSavingFreight] = useState(false);
+  const customerFreightEntries = useMemo(
+    () => toCustomerFreightEntries(customerFreightRules),
+    [customerFreightRules]
+  );
 
   const pageSize = 50;
 
@@ -439,13 +514,23 @@ export function CustomersView({
     }
   }, [desktopApi]);
 
+  // Boolean em vez do objeto: quem abre o formulario o recria a cada render, e a
+  // identidade nova refaria a leitura do cache sem necessidade.
+  const isStandalone = Boolean(standaloneForm);
+
   const loadCustomers = useCallback(async () => {
-    if (!desktopApi) return;
+    // Modo somente-formulario nao tem lista: nao vale pagar a leitura do cache.
+    if (!desktopApi || isStandalone) return;
     setLoading(true);
     try {
       const result = await desktopApi.queryCache({
         entityType: "customer",
         search: search || undefined,
+        // A tela de cadastro mostra TODOS os clientes, inclusive os inativos. Escondendo
+        // os inativos, o CNPJ/CPF deles continuava ocupado ("Ja existe um cliente com
+        // este CNPJ/CPF") sem que o operador tivesse como achar — ou reativar — o
+        // cadastro que estava segurando o documento.
+        activeOnly: false,
         limit: pageSize,
         offset: page * pageSize
       });
@@ -454,7 +539,7 @@ export function CustomersView({
     } finally {
       setLoading(false);
     }
-  }, [desktopApi, page, search]);
+  }, [desktopApi, page, search, isStandalone]);
 
   useEffect(() => {
     void loadOptions();
@@ -524,13 +609,11 @@ export function CustomersView({
     setCarrierSearch("");
     setCreditSummary(null);
     setCreditMovements([]);
-    setCreditAmountReais("");
-    setCreditReason("");
-    setCreditEntryKind("payment");
     setCustomerFreightRules([]);
     setFreightProductId("");
     setFreightValueReais("");
     setFreightMode("default");
+    setFreightModality("");
     setDefaultConditionText("");
     setActiveFormSection("identificacao");
   }
@@ -542,8 +625,7 @@ export function CustomersView({
   }
 
   async function requestCloseForm(): Promise<void> {
-    const dirty =
-      JSON.stringify({ form, defaultConditionText }) !== formBaselineRef.current;
+    const dirty = JSON.stringify({ form, defaultConditionText }) !== formBaselineRef.current;
     if (dirty) {
       const discard = await requestConfirm({
         title: "Descartar alteracoes?",
@@ -555,6 +637,7 @@ export function CustomersView({
       if (!discard) return;
     }
     setShowForm(false);
+    standaloneForm?.onCancel();
   }
 
   function openEditForm(customer: CustomerCacheEntry): void {
@@ -574,10 +657,8 @@ export function CustomersView({
       defaultPaymentTermId: customer.defaultPaymentTermId ?? "",
       defaultPaymentMethodId: customer.defaultPaymentMethodId ?? "",
       creditAccountEnabled: customer.creditAccountEnabled,
-      creditClosingDay:
-        customer.creditClosingDay != null ? String(customer.creditClosingDay) : "",
-      creditBoletoDays:
-        customer.creditBoletoDays != null ? String(customer.creditBoletoDays) : "",
+      creditClosingDay: customer.creditClosingDay != null ? String(customer.creditClosingDay) : "",
+      creditBoletoDays: customer.creditBoletoDays != null ? String(customer.creditBoletoDays) : "",
       nfRequired: customer.nfRequired,
       creditPeriodicity: customer.creditPeriodicity ?? "monthly",
       creditSecondClosingDay:
@@ -612,9 +693,6 @@ export function CustomersView({
     setViewingCustomer(null);
     setActiveFormSection("identificacao");
     setCarrierSearch("");
-    setCreditAmountReais("");
-    setCreditReason("");
-    setCreditEntryKind("payment");
     setEditingId(customer.id);
     setEditingSource(customer.source);
     setFormError(null);
@@ -661,43 +739,27 @@ export function CustomersView({
   }
 
   /**
-   * Lanca no extrato o pagamento recebido (libera o limite consumido) ou um ajuste
-   * manual a favor/contra o cliente para corrigir o saldo.
+   * Confere os adiantamentos do cliente com o financeiro do OMIE. O saldo
+   * depositado nasce la (titulo a receber baixado); aqui ele so e espelhado para
+   * abater as compras da balanca.
    */
-  async function handleCreditEntry(): Promise<void> {
+  async function handleSyncAdvances(): Promise<void> {
     if (!desktopApi || !editingId) return;
-    const cents = parseMoneyInputToCents(creditAmountReais);
-    if (cents === null || cents === 0) {
-      setFormError("Informe um valor valido para o lancamento de credito.");
-      return;
-    }
-    if (creditEntryKind !== "payment" && !creditReason.trim()) {
-      setFormError("Informe o motivo do ajuste manual.");
-      return;
-    }
     setCreditBusy(true);
     setFormError(null);
     try {
-      const summary =
-        creditEntryKind === "payment"
-          ? await desktopApi.customerCreditPayment(editingId, cents, creditReason.trim())
-          : await desktopApi.customerCreditAdjust(
-              editingId,
-              creditEntryKind === "adjustment_debit" ? -cents : cents,
-              creditReason.trim()
-            );
-      setCreditSummary(summary);
-      setCreditMovements(await desktopApi.customerCreditMovements(editingId, 50));
-      setCreditAmountReais("");
-      setCreditReason("");
+      const result = await desktopApi.customerCreditSyncAdvances();
+      await loadCustomerCredit(editingId);
       showFlash(
         "success",
-        creditEntryKind === "payment"
-          ? "Pagamento lancado no credito do cliente."
-          : "Ajuste lancado no credito do cliente."
+        result.imported + result.adjusted > 0
+          ? `Adiantamentos do OMIE atualizados (${result.imported} novo(s), ${result.adjusted} acerto(s)).`
+          : "Adiantamentos do OMIE conferidos: nenhuma diferenca."
       );
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : "Falha ao lancar o credito.");
+      setFormError(
+        err instanceof Error ? err.message : "Falha ao sincronizar os adiantamentos do OMIE."
+      );
     } finally {
       setCreditBusy(false);
     }
@@ -725,7 +787,7 @@ export function CustomersView({
     if (!desktopApi) return;
     try {
       const rows = await desktopApi.getCustomerFreightRules(customerId);
-      setCustomerFreightRules(rows as typeof customerFreightRules);
+      setCustomerFreightRules(rows);
     } catch {
       setCustomerFreightRules([]);
     }
@@ -743,11 +805,14 @@ export function CustomersView({
       await desktopApi.setCustomerFreightRule({
         customerId: editingId,
         productId: freightMode === "product" ? freightProductId || null : null,
-          rule: {
+        modality: freightModality || null,
+        rule: {
           id: crypto.randomUUID(),
-          name: freightMode === "product" && freightProductId
-            ? products.find((p) => p.id === freightProductId)?.description ?? "Frete por produto"
-            : "Frete fixo",
+          name:
+            freightMode === "product" && freightProductId
+              ? (products.find((p) => p.id === freightProductId)?.description ??
+                "Frete por produto")
+              : "Frete fixo",
           type: "per_ton",
           baseValueCents: unitPriceCents,
           unit: "ton"
@@ -764,10 +829,17 @@ export function CustomersView({
     }
   }
 
-  async function handleRemoveFreightRule(ruleId: string): Promise<void> {
+  async function handleRemoveFreightRule(
+    ruleId: string,
+    modality?: FreightModality
+  ): Promise<void> {
     if (!desktopApi || !editingId) return;
     try {
-      await desktopApi.removeCustomerFreightRule(ruleId);
+      if (modality) {
+        await desktopApi.removeCustomerFreightModality(ruleId, modality);
+      } else {
+        await desktopApi.removeCustomerFreightRule(ruleId);
+      }
       await loadCustomerFreightRules(editingId);
       showFlash("success", "Frete removido.");
     } catch (err) {
@@ -798,11 +870,12 @@ export function CustomersView({
       setFormError("Telefone invalido. Informe com DDD (11 digitos).");
       return;
     }
-    const normalizedEmail = normalizeEmail(form.email);
-    if (form.email.trim() && !isValidEmail(normalizedEmail)) {
-      setFormError("Email invalido.");
+    const invalidEmails = invalidEmailsInList(form.email);
+    if (invalidEmails.length > 0) {
+      setFormError(`Email invalido: ${invalidEmails.join(", ")}.`);
       return;
     }
+    const normalizedEmail = normalizeEmailList(form.email);
     const creditLimitText = form.creditLimitReais.trim();
     const creditLimitCents = creditLimitText
       ? (parseMoneyInputToCents(creditLimitText) ?? undefined)
@@ -866,11 +939,15 @@ export function CustomersView({
 
     const conditionText = defaultConditionText.trim();
     if (conditionText && !tryParsePaymentCondition(conditionText)) {
-      setFormError('Condicao de pagamento padrao invalida. Use "5", "7 14 21" ou "7/14/21".');
+      setFormError(
+        'Condicao de pagamento padrao invalida. Use "30" (dias), "7 14 21", "7/14/21", ' +
+          '"3 parcelas" ou periodo ("s+20" semana, "q+20" quinzena, "m+20" mes).'
+      );
       return;
     }
 
     setSaving(true);
+    let createdId: string | null = null;
     try {
       // Texto da condicao vira (ou reusa) um payment_term local vinculado ao cliente.
       const resolvedDefaultTermId = conditionText
@@ -920,7 +997,7 @@ export function CustomersView({
         }
         showFlash("success", "Cliente atualizado.");
       } else {
-        await desktopApi.customersCreate({
+        const created = await desktopApi.customersCreate({
           tradeName: form.tradeName.trim(),
           legalName: form.legalName.trim(),
           document: normalizedDocument || undefined,
@@ -949,11 +1026,17 @@ export function CustomersView({
           city: form.city.trim() || undefined,
           state: form.state.trim().toUpperCase() || undefined
         });
+        createdId = (created as { id?: string } | null)?.id ?? null;
         showFlash("success", "Cliente criado.");
       }
       setShowForm(false);
       resetForm();
       await loadCustomers();
+      if (standaloneForm) {
+        // Quem abriu o formulario (ex.: Nova entrada) seleciona o cliente recem-criado.
+        if (createdId) standaloneForm.onCreated(createdId);
+        else standaloneForm.onCancel();
+      }
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Erro ao salvar cliente.");
     } finally {
@@ -1048,6 +1131,25 @@ export function CustomersView({
         "error",
         err instanceof Error ? err.message : "Erro ao alterar o bloqueio de faturamento."
       );
+    } finally {
+      setTogglingBlockId(null);
+    }
+  }
+
+  /**
+   * Reativa um cliente inativo. O documento dele continua ocupado enquanto o cadastro
+   * existir, entao reativar e o caminho certo — cadastrar de novo com o mesmo CNPJ/CPF o
+   * KyberRock recusa (e o OMIE tambem).
+   */
+  async function handleReactivate(customer: CustomerCacheEntry): Promise<void> {
+    if (!desktopApi || togglingBlockId) return;
+    setTogglingBlockId(customer.id);
+    try {
+      await desktopApi.customersUpdate(customer.id, { isActive: true });
+      await loadCustomers();
+      showFlash("success", "Cliente reativado.");
+    } catch (err) {
+      showFlash("error", err instanceof Error ? err.message : "Erro ao reativar o cliente.");
     } finally {
       setTogglingBlockId(null);
     }
@@ -1185,13 +1287,13 @@ export function CustomersView({
   // espelhando as abas do formulario de edicao.
   function buildCustomerDetailSections(customer: CustomerCacheEntry): DetailSectionData[] {
     const carrierName = customer.defaultCarrierId
-      ? carriers.find((carrier) => carrier.id === customer.defaultCarrierId)?.name ?? ""
+      ? (carriers.find((carrier) => carrier.id === customer.defaultCarrierId)?.name ?? "")
       : "";
     const termName = customer.defaultPaymentTermId
-      ? paymentTerms.find((term) => term.id === customer.defaultPaymentTermId)?.name ?? ""
+      ? (paymentTerms.find((term) => term.id === customer.defaultPaymentTermId)?.name ?? "")
       : "";
     const methodName = customer.defaultPaymentMethodId
-      ? paymentMethods.find((method) => method.id === customer.defaultPaymentMethodId)?.name ?? ""
+      ? (paymentMethods.find((method) => method.id === customer.defaultPaymentMethodId)?.name ?? "")
       : "";
     return [
       {
@@ -1272,8 +1374,10 @@ export function CustomersView({
     ];
   }
 
-  return (
-    <div>
+  // Lista, busca e acoes em lote so existem na tela de Cadastros: no modo
+  // somente-formulario (Nova entrada) o modal de cadastro e a tela inteira.
+  const listChrome = standaloneForm ? null : (
+    <>
       <CrudSectionHeader
         title="Clientes"
         description="Clientes sincronizados do OMIE ou criados localmente. Clientes locais sao enviados ao OMIE no proximo sync."
@@ -1321,793 +1425,879 @@ export function CustomersView({
         onRefresh={() => void loadCustomers()}
       />
       <FlashBanner flash={flash} />
+    </>
+  );
+
+  return (
+    <div>
+      {listChrome}
 
       {showForm ? (
         <CrudFormModal onClose={() => void requestCloseForm()} maxWidth={1040} fixedHeight>
-        <Fragment>
-          <div style={styles.formHeader}>
-            <h3 style={styles.formTitle}>
-              {editingId
-                ? `Editar cliente ${isOmie ? "(alteracoes serao enviadas ao OMIE)" : ""}`
-                : "Novo cliente"}
-            </h3>
-            {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
-          </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", padding: "14px 18px 0" }}>
-            {CUSTOMER_FORM_SECTIONS.map((section) => {
-              const active = activeFormSection === section.key;
-              return (
-                <button
-                  key={section.key}
-                  type="button"
-                  onClick={() => setActiveFormSection(section.key)}
-                  style={{
-                    padding: "8px 14px",
-                    borderRadius: "999px",
-                    border: active ? "2px solid var(--kr-accent)" : "1px solid var(--kr-border)",
-                    background: active ? "var(--kr-accent-soft)" : "var(--kr-surface)",
-                    color: active ? "var(--kr-info-text)" : "var(--kr-muted)",
-                    fontWeight: active ? 800 : 600,
-                    fontSize: "12px",
-                    cursor: "pointer"
-                  }}
-                >
-                  {section.label}
-                </button>
-              );
-            })}
-          </div>
-          <div
-            style={{
-              ...styles.formShell,
-              gridTemplateColumns: "1fr",
-              // O modal tem altura fixa: o miolo da aba rola por dentro, mantendo
-              // cabecalho, botoes de secao e rodape sempre visiveis.
-              flex: 1,
-              minHeight: 0,
-              overflowY: "auto",
-              alignContent: "start"
-            }}
-          >
-          {activeFormSection === "identificacao" ? (
-            <section style={styles.formSection}>
-              <h4 style={styles.formSectionTitle}>Identificacao</h4>
-              <TextInput
-                label="Razao social"
-                value={form.legalName}
-                onChange={(legalName) => setForm({ ...form, legalName })}
-                required
-                disabled={false}
-              />
-              <TextInput
-                label="Nome fantasia"
-                value={form.tradeName}
-                onChange={(tradeName) => setForm({ ...form, tradeName })}
-                required
-                disabled={false}
-              />
-              <div style={styles.fieldRow}>
-                <div style={{ display: "flex", alignItems: "flex-end", gap: "8px" }}>
-                  <div style={{ flex: 1 }}>
-                    <DocumentInput
-                      label="CNPJ/CPF"
-                      value={form.document}
-                      onChange={(document) => setForm({ ...form, document })}
+          <Fragment>
+            <div style={styles.formHeader}>
+              <h3 style={styles.formTitle}>
+                {editingId
+                  ? `Editar cliente ${isOmie ? "(alteracoes serao enviadas ao OMIE)" : ""}`
+                  : "Novo cliente"}
+              </h3>
+              {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", padding: "14px 18px 0" }}>
+              {CUSTOMER_FORM_SECTIONS.map((section) => {
+                const active = activeFormSection === section.key;
+                return (
+                  <button
+                    key={section.key}
+                    type="button"
+                    onClick={() => setActiveFormSection(section.key)}
+                    style={{
+                      padding: "8px 14px",
+                      borderRadius: "999px",
+                      border: active ? "2px solid var(--kr-accent)" : "1px solid var(--kr-border)",
+                      background: active ? "var(--kr-accent-soft)" : "var(--kr-surface)",
+                      color: active ? "var(--kr-info-text)" : "var(--kr-muted)",
+                      fontWeight: active ? 800 : 600,
+                      fontSize: "12px",
+                      cursor: "pointer"
+                    }}
+                  >
+                    {section.label}
+                  </button>
+                );
+              })}
+            </div>
+            <div
+              style={{
+                ...styles.formShell,
+                gridTemplateColumns: "1fr",
+                // O modal tem altura fixa: o miolo da aba rola por dentro, mantendo
+                // cabecalho, botoes de secao e rodape sempre visiveis.
+                flex: 1,
+                minHeight: 0,
+                overflowY: "auto",
+                alignContent: "start"
+              }}
+            >
+              {activeFormSection === "identificacao" ? (
+                <section style={styles.formSection}>
+                  <h4 style={styles.formSectionTitle}>Identificacao</h4>
+                  <TextInput
+                    label="Razao social"
+                    value={form.legalName}
+                    onChange={(legalName) => setForm({ ...form, legalName })}
+                    required
+                    disabled={false}
+                    // O cadastro aceita qualquer tamanho; quem tem limite e o OMIE. O aviso
+                    // existe para o operador nao achar que precisa reescrever a razao social
+                    // (era o que a recusa "ultrapassa 60 caracteres" fazia parecer).
+                    hint={
+                      form.legalName.trim().length > OMIE_RAZAO_SOCIAL_MAX_LENGTH
+                        ? `Acima de ${OMIE_RAZAO_SOCIAL_MAX_LENGTH} caracteres: o OMIE recebe a razao social encurtada. O cadastro completo continua aqui, no cupom e nos relatorios.`
+                        : undefined
+                    }
+                  />
+                  <TextInput
+                    label="Nome fantasia"
+                    value={form.tradeName}
+                    onChange={(tradeName) => setForm({ ...form, tradeName })}
+                    required
+                    disabled={false}
+                  />
+                  <div style={styles.fieldRow}>
+                    <div style={{ display: "flex", alignItems: "flex-end", gap: "8px" }}>
+                      <div style={{ flex: 1 }}>
+                        <DocumentInput
+                          label="CNPJ/CPF"
+                          value={form.document}
+                          onChange={(document) => setForm({ ...form, document })}
+                          disabled={false}
+                        />
+                      </div>
+                      <Tooltip content="Buscar dados pelo CNPJ (Receita) e preencher o cadastro">
+                        <button
+                          type="button"
+                          onClick={() => void handleCnpjLookup()}
+                          disabled={cnpjBusy}
+                          aria-label="Buscar dados pelo CNPJ"
+                          style={{
+                            ...styles.secondaryButton,
+                            height: "38px",
+                            width: "38px",
+                            padding: 0,
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            opacity: cnpjBusy ? 0.6 : 1
+                          }}
+                        >
+                          <Search size={16} />
+                        </button>
+                      </Tooltip>
+                    </div>
+                    <MoneyInput
+                      label="Limite (R$)"
+                      value={form.creditLimitReais}
+                      onChange={(creditLimitReais) => setForm({ ...form, creditLimitReais })}
+                      disabled={false}
+                      allowZero
+                      hint="Use virgula para centavos."
+                    />
+                  </div>
+                </section>
+              ) : null}
+
+              {activeFormSection === "contato" ? (
+                <section style={styles.formSection}>
+                  <h4 style={styles.formSectionTitle}>Contato</h4>
+                  <div style={styles.fieldRow}>
+                    <PhoneInput
+                      label="Telefone"
+                      value={form.phone}
+                      onChange={(phone) => setForm({ ...form, phone })}
+                      disabled={false}
+                    />
+                    <EmailListInput
+                      label="E-mail"
+                      value={form.email}
+                      onChange={(email) => setForm({ ...form, email })}
+                      disabled={false}
+                      hint="Quantos e-mails quiser: a NF-e e o boleto do OMIE vao para todos."
+                    />
+                  </div>
+                </section>
+              ) : null}
+
+              {activeFormSection === "endereco" ? (
+                <section style={styles.formSection}>
+                  <h4 style={styles.formSectionTitle}>Endereco</h4>
+                  <div style={styles.fieldRow}>
+                    <CepInput
+                      label="CEP"
+                      value={form.zipcode}
+                      onChange={(zipcode) => setForm({ ...form, zipcode })}
+                      onLookup={handleCepLookup}
+                      onAddressFound={handleCepAddressFound}
+                      disabled={false}
+                    />
+                    <TextInput
+                      label="Numero"
+                      value={form.addressNumber}
+                      onChange={(addressNumber) => setForm({ ...form, addressNumber })}
+                      disabled={false}
+                      hint="Opcional"
+                    />
+                  </div>
+                  <TextInput
+                    label="Endereco"
+                    value={form.addressStreet}
+                    onChange={(addressStreet) => setForm({ ...form, addressStreet })}
+                    disabled={false}
+                    placeholder="Rua / avenida"
+                  />
+                  <div style={styles.fieldRow}>
+                    <TextInput
+                      label="Bairro"
+                      value={form.neighborhood}
+                      onChange={(neighborhood) => setForm({ ...form, neighborhood })}
+                      disabled={false}
+                    />
+                    <TextInput
+                      label="Complemento"
+                      value={form.addressComplement}
+                      onChange={(addressComplement) => setForm({ ...form, addressComplement })}
                       disabled={false}
                     />
                   </div>
-                  <Tooltip content="Buscar dados pelo CNPJ (Receita) e preencher o cadastro">
-                    <button
-                      type="button"
-                      onClick={() => void handleCnpjLookup()}
-                      disabled={cnpjBusy}
-                      aria-label="Buscar dados pelo CNPJ"
-                      style={{
-                        ...styles.secondaryButton,
-                        height: "38px",
-                        width: "38px",
-                        padding: 0,
-                        display: "inline-flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        opacity: cnpjBusy ? 0.6 : 1
-                      }}
-                    >
-                      <Search size={16} />
-                    </button>
-                  </Tooltip>
-                </div>
-                <MoneyInput
-                  label="Limite (R$)"
-                  value={form.creditLimitReais}
-                  onChange={(creditLimitReais) => setForm({ ...form, creditLimitReais })}
-                  disabled={false}
-                  allowZero
-                  hint="Use virgula para centavos."
-                />
-              </div>
-            </section>
-          ) : null}
+                  <div style={styles.fieldRow}>
+                    <TextInput
+                      label="Cidade"
+                      value={form.city}
+                      onChange={(city) => setForm({ ...form, city })}
+                      disabled={false}
+                    />
+                    <Field label="UF">
+                      <input
+                        type="text"
+                        inputMode="text"
+                        autoComplete="off"
+                        disabled={false}
+                        value={form.state}
+                        placeholder="SP"
+                        onChange={(e) =>
+                          setForm({ ...form, state: e.target.value.toUpperCase().slice(0, 2) })
+                        }
+                        style={getInputStyle(false)}
+                        maxLength={2}
+                      />
+                    </Field>
+                  </div>
+                </section>
+              ) : null}
 
-          {activeFormSection === "contato" ? (
-            <section style={styles.formSection}>
-              <h4 style={styles.formSectionTitle}>Contato</h4>
-              <div style={styles.fieldRow}>
-                <PhoneInput
-                  label="Telefone"
-                  value={form.phone}
-                  onChange={(phone) => setForm({ ...form, phone })}
-                  disabled={false}
-                />
-                <EmailInput
-                  label="E-mail"
-                  value={form.email}
-                  onChange={(email) => setForm({ ...form, email })}
-                  disabled={false}
-                />
-              </div>
-            </section>
-          ) : null}
-
-          {activeFormSection === "endereco" ? (
-            <section style={styles.formSection}>
-              <h4 style={styles.formSectionTitle}>Endereco</h4>
-              <div style={styles.fieldRow}>
-                <CepInput
-                  label="CEP"
-                  value={form.zipcode}
-                  onChange={(zipcode) => setForm({ ...form, zipcode })}
-                  onLookup={handleCepLookup}
-                  onAddressFound={handleCepAddressFound}
-                  disabled={false}
-                />
-                <TextInput
-                  label="Numero"
-                  value={form.addressNumber}
-                  onChange={(addressNumber) => setForm({ ...form, addressNumber })}
-                  disabled={false}
-                  hint="Opcional"
-                />
-              </div>
-              <TextInput
-                label="Endereco"
-                value={form.addressStreet}
-                onChange={(addressStreet) => setForm({ ...form, addressStreet })}
-                disabled={false}
-                placeholder="Rua / avenida"
-              />
-              <div style={styles.fieldRow}>
-                <TextInput
-                  label="Bairro"
-                  value={form.neighborhood}
-                  onChange={(neighborhood) => setForm({ ...form, neighborhood })}
-                  disabled={false}
-                />
-                <TextInput
-                  label="Complemento"
-                  value={form.addressComplement}
-                  onChange={(addressComplement) => setForm({ ...form, addressComplement })}
-                  disabled={false}
-                />
-              </div>
-              <div style={styles.fieldRow}>
-                <TextInput
-                  label="Cidade"
-                  value={form.city}
-                  onChange={(city) => setForm({ ...form, city })}
-                  disabled={false}
-                />
-                <Field label="UF">
-                  <input
-                    type="text"
-                    inputMode="text"
-                    autoComplete="off"
-                    disabled={false}
-                    value={form.state}
-                    placeholder="SP"
-                    onChange={(e) =>
-                      setForm({ ...form, state: e.target.value.toUpperCase().slice(0, 2) })
-                    }
-                    style={getInputStyle(false)}
-                    maxLength={2}
-                  />
-                </Field>
-              </div>
-            </section>
-          ) : null}
-
-          {activeFormSection === "comercial" ? (
-            <section style={styles.formSection}>
-              <h4 style={styles.formSectionTitle}>Comercial</h4>
-              <Field
-                label="Forma de pagamento padrao"
-                hint="Puxada automaticamente na Nova entrada (pode ser trocada)"
-              >
-                <select
-                  value={form.defaultPaymentMethodId}
-                  onChange={(e) => setForm({ ...form, defaultPaymentMethodId: e.target.value })}
-                  style={getInputStyle(false)}
-                >
-                  <option value="">Selecione</option>
-                  {paymentMethods.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Field
-                label="Condicao de pagamento padrao"
-                hint='Digite: "5" (5 parcelas mensais), "7 14 21" ou "7/14/21" (prazos), "A Vista". Vazio = sem padrao. Se nao existir no OMIE, e criada automaticamente no envio.'
-              >
-                <input
-                  type="text"
-                  value={defaultConditionText}
-                  onChange={(e) => setDefaultConditionText(e.target.value)}
-                  placeholder='Ex.: "7/14/21"'
-                  style={getInputStyle(false)}
-                />
-              </Field>
-              <Field
-                label="Transportadora padrao"
-                hint="Puxada automaticamente na Nova entrada. Vincular uma transportadora na aba Transportadoras ja assume o padrao quando ele ainda nao foi definido."
-              >
-                <select
-                  value={form.defaultCarrierId}
-                  onChange={(e) => setForm({ ...form, defaultCarrierId: e.target.value })}
-                  style={getInputStyle(false)}
-                >
-                  <option value="">Sem transportadora padrao</option>
-                  {defaultCarrierOptions.map((carrier) => (
-                    <option key={carrier.id} value={carrier.id}>
-                      {carrier.name}
-                      {linkedCarrierIds.includes(carrier.id) ? " (vinculada)" : ""}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <label style={styles.checkbox}>
-                <input
-                  type="checkbox"
-                  checked={form.creditAccountEnabled}
-                  onChange={(e) => setForm({ ...form, creditAccountEnabled: e.target.checked })}
-                />
-                Habilitar credito do cliente
-              </label>
-              {form.creditAccountEnabled ? (
-                <div style={{ display: "grid", gap: "8px" }}>
-                  <Field label="Periodicidade do fechamento">
+              {activeFormSection === "comercial" ? (
+                <section style={styles.formSection}>
+                  <h4 style={styles.formSectionTitle}>Comercial</h4>
+                  <Field
+                    label="Forma de pagamento padrao"
+                    hint="Puxada automaticamente na Nova entrada (pode ser trocada)"
+                  >
                     <select
-                      value={form.creditPeriodicity}
-                      onChange={(e) =>
-                        setForm({
-                          ...form,
-                          creditPeriodicity: e.target.value as
-                            | "monthly"
-                            | "biweekly"
-                            | "weekly"
-                        })
-                      }
+                      value={form.defaultPaymentMethodId}
+                      onChange={(e) => setForm({ ...form, defaultPaymentMethodId: e.target.value })}
                       style={getInputStyle(false)}
                     >
-                      <option value="monthly">Mensal</option>
-                      <option value="biweekly">Quinzenal</option>
-                      <option value="weekly">Semanal</option>
+                      <option value="">Selecione</option>
+                      {paymentMethods.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name}
+                        </option>
+                      ))}
                     </select>
                   </Field>
-
-                  {form.creditPeriodicity === "weekly" ? (
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-                      <Field label="Dia da semana do fechamento">
+                  <Field
+                    label="Condicao de pagamento padrao"
+                    hint="Vazio = sem padrao. Se nao existir no OMIE, e criada automaticamente no envio."
+                  >
+                    <input
+                      type="text"
+                      value={defaultConditionText}
+                      onChange={(e) => setDefaultConditionText(e.target.value)}
+                      placeholder='Ex.: "30", "7 14 21", "3 parcelas" ou "s+20"'
+                      style={getInputStyle(false)}
+                    />
+                  </Field>
+                  <PaymentConditionLegend
+                    value={defaultConditionText}
+                    style={{ marginBottom: "6px" }}
+                  />
+                  <Field
+                    label="Transportadora padrao"
+                    hint="Puxada automaticamente na Nova entrada. Vincular uma transportadora na aba Transportadoras ja assume o padrao quando ele ainda nao foi definido."
+                  >
+                    <select
+                      value={form.defaultCarrierId}
+                      onChange={(e) => setForm({ ...form, defaultCarrierId: e.target.value })}
+                      style={getInputStyle(false)}
+                    >
+                      <option value="">Sem transportadora padrao</option>
+                      {defaultCarrierOptions.map((carrier) => (
+                        <option key={carrier.id} value={carrier.id}>
+                          {carrier.name}
+                          {linkedCarrierIds.includes(carrier.id) ? " (vinculada)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <label style={styles.checkbox}>
+                    <input
+                      type="checkbox"
+                      checked={form.creditAccountEnabled}
+                      onChange={(e) => setForm({ ...form, creditAccountEnabled: e.target.checked })}
+                    />
+                    Habilitar credito do cliente
+                  </label>
+                  {form.creditAccountEnabled ? (
+                    <div style={{ display: "grid", gap: "8px" }}>
+                      <Field label="Periodicidade do fechamento">
                         <select
-                          value={form.creditClosingWeekday}
+                          value={form.creditPeriodicity}
                           onChange={(e) =>
-                            setForm({ ...form, creditClosingWeekday: e.target.value })
+                            setForm({
+                              ...form,
+                              creditPeriodicity: e.target.value as "monthly" | "biweekly" | "weekly"
+                            })
                           }
                           style={getInputStyle(false)}
                         >
-                          <option value="">Selecione...</option>
-                          <option value="1">Segunda-feira</option>
-                          <option value="2">Terca-feira</option>
-                          <option value="3">Quarta-feira</option>
-                          <option value="4">Quinta-feira</option>
-                          <option value="5">Sexta-feira</option>
-                          <option value="6">Sabado</option>
-                          <option value="0">Domingo</option>
+                          <option value="monthly">Mensal</option>
+                          <option value="biweekly">Quinzenal</option>
+                          <option value="weekly">Semanal</option>
                         </select>
                       </Field>
-                      <Field label="Dias p/ vencimento do boleto" hint="Apos o fechamento">
-                        <input
-                          type="number"
-                          min={0}
-                          value={form.creditBoletoDays}
-                          onChange={(e) => setForm({ ...form, creditBoletoDays: e.target.value })}
-                          style={getInputStyle(false)}
-                          placeholder="Ex: 3"
-                        />
-                      </Field>
-                    </div>
-                  ) : (
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-                      <Field
-                        label={
-                          form.creditPeriodicity === "biweekly"
-                            ? "1o dia de fechamento"
-                            : "Dia de fechamento"
-                        }
-                        hint="Dia do mes (1 a 31)"
-                      >
-                        <input
-                          type="number"
-                          min={1}
-                          max={31}
-                          value={form.creditClosingDay}
-                          onChange={(e) => setForm({ ...form, creditClosingDay: e.target.value })}
-                          style={getInputStyle(false)}
-                          placeholder={form.creditPeriodicity === "biweekly" ? "Ex: 1" : "Ex: 30"}
-                        />
-                      </Field>
-                      <Field
-                        label={
-                          form.creditPeriodicity === "biweekly"
-                            ? "Dias p/ vencimento (1o)"
-                            : "Dias p/ vencimento do boleto"
-                        }
-                        hint="Apos o fechamento"
-                      >
-                        <input
-                          type="number"
-                          min={0}
-                          value={form.creditBoletoDays}
-                          onChange={(e) => setForm({ ...form, creditBoletoDays: e.target.value })}
-                          style={getInputStyle(false)}
-                          placeholder="Ex: 10"
-                        />
-                      </Field>
 
-                      {form.creditPeriodicity === "biweekly" ? (
-                        <>
-                          <Field label="2o dia de fechamento" hint="Dia do mes (1 a 31)">
+                      {form.creditPeriodicity === "weekly" ? (
+                        <div
+                          style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}
+                        >
+                          <Field label="Dia da semana do fechamento">
+                            <select
+                              value={form.creditClosingWeekday}
+                              onChange={(e) =>
+                                setForm({ ...form, creditClosingWeekday: e.target.value })
+                              }
+                              style={getInputStyle(false)}
+                            >
+                              <option value="">Selecione...</option>
+                              <option value="1">Segunda-feira</option>
+                              <option value="2">Terca-feira</option>
+                              <option value="3">Quarta-feira</option>
+                              <option value="4">Quinta-feira</option>
+                              <option value="5">Sexta-feira</option>
+                              <option value="6">Sabado</option>
+                              <option value="0">Domingo</option>
+                            </select>
+                          </Field>
+                          <Field label="Dias p/ vencimento do boleto" hint="Apos o fechamento">
+                            <input
+                              type="number"
+                              min={0}
+                              value={form.creditBoletoDays}
+                              onChange={(e) =>
+                                setForm({ ...form, creditBoletoDays: e.target.value })
+                              }
+                              style={getInputStyle(false)}
+                              placeholder="Ex: 3"
+                            />
+                          </Field>
+                        </div>
+                      ) : (
+                        <div
+                          style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}
+                        >
+                          <Field
+                            label={
+                              form.creditPeriodicity === "biweekly"
+                                ? "1o dia de fechamento"
+                                : "Dia de fechamento"
+                            }
+                            hint="Dia do mes (1 a 31)"
+                          >
                             <input
                               type="number"
                               min={1}
                               max={31}
-                              value={form.creditSecondClosingDay}
+                              value={form.creditClosingDay}
                               onChange={(e) =>
-                                setForm({ ...form, creditSecondClosingDay: e.target.value })
+                                setForm({ ...form, creditClosingDay: e.target.value })
                               }
                               style={getInputStyle(false)}
-                              placeholder="Ex: 16"
+                              placeholder={
+                                form.creditPeriodicity === "biweekly" ? "Ex: 1" : "Ex: 30"
+                              }
                             />
                           </Field>
-                          <Field label="Dias p/ vencimento (2o)" hint="Apos o segundo fechamento">
+                          <Field
+                            label={
+                              form.creditPeriodicity === "biweekly"
+                                ? "Dias p/ vencimento (1o)"
+                                : "Dias p/ vencimento do boleto"
+                            }
+                            hint="Apos o fechamento"
+                          >
                             <input
                               type="number"
                               min={0}
-                              value={form.creditSecondBoletoDays}
+                              value={form.creditBoletoDays}
                               onChange={(e) =>
-                                setForm({ ...form, creditSecondBoletoDays: e.target.value })
+                                setForm({ ...form, creditBoletoDays: e.target.value })
                               }
                               style={getInputStyle(false)}
                               placeholder="Ex: 10"
                             />
                           </Field>
-                        </>
-                      ) : null}
-                    </div>
-                  )}
-                </div>
-              ) : null}
-              <Field label="Uso de credito OMIE">
-                <select
-                  value={form.creditMode}
-                  onChange={(e) =>
-                    setForm({ ...form, creditMode: e.target.value as "normal" | "prepaid" })
-                  }
-                  style={getInputStyle(false)}
-                >
-                  <option value="normal">Nao debitar credito</option>
-                  <option value="prepaid">Debitar credito pre-pago</option>
-                </select>
-              </Field>
-              <label style={styles.checkbox}>
-                <input
-                  type="checkbox"
-                  checked={form.nfRequired}
-                  onChange={(e) => setForm({ ...form, nfRequired: e.target.checked })}
-                />
-                Exige nota fiscal
-              </label>
-              <Field label="Observacoes internas" hint="Visivel apenas para a operacao">
-                <textarea
-                  value={form.observations}
-                  onChange={(e) => setForm({ ...form, observations: e.target.value })}
-                  rows={3}
-                  style={{ ...getInputStyle(false), resize: "vertical", minHeight: "60px" }}
-                  placeholder="Anotacoes internas"
-                />
-              </Field>
-            </section>
-          ) : null}
 
-          {activeFormSection === "credito" ? (
-            <section style={styles.formSection}>
-              <h4 style={styles.formSectionTitle}>Credito do cliente</h4>
-              {editingId ? (
-                <div style={{ display: "grid", gap: "10px" }}>
-                  <p style={styles.cellMuted}>
-                    O limite de credito (aba Identificacao) e o que banca as vendas na forma
-                    &quot;Credito do cliente&quot;. Cada venda consome o limite e cada pagamento
-                    recebido devolve o valor, liberando novas compras.
-                  </p>
-                  <div style={styles.fieldRow}>
-                    <CreditTotal
-                      label="Limite de credito"
-                      value={
-                        creditSummary?.creditLimitCents != null
-                          ? formatMoney(creditSummary.creditLimitCents)
-                          : "Sem limite"
-                      }
-                    />
-                    <CreditTotal
-                      label="Utilizado"
-                      value={formatMoney(creditSummary?.usedCents ?? 0)}
-                    />
-                    <CreditTotal
-                      label="Disponivel"
-                      value={
-                        creditSummary?.availableCents != null
-                          ? formatMoney(creditSummary.availableCents)
-                          : "Sem limite"
-                      }
-                      strong
-                    />
-                  </div>
-                  <div style={styles.fieldRow}>
-                    <Field label="Tipo do lancamento">
-                      <select
-                        value={creditEntryKind}
-                        onChange={(e) =>
-                          setCreditEntryKind(e.target.value as CreditEntryKind)
-                        }
-                        style={getInputStyle(false)}
-                      >
-                        <option value="payment">Pagamento recebido (libera limite)</option>
-                        <option value="adjustment_credit">Ajuste a favor do cliente</option>
-                        <option value="adjustment_debit">Ajuste contra o cliente</option>
-                      </select>
-                    </Field>
-                    <MoneyInput
-                      label="Valor"
-                      value={creditAmountReais}
-                      onChange={setCreditAmountReais}
-                      allowZero={false}
-                    />
-                    <TextInput
-                      label="Motivo"
-                      value={creditReason}
-                      onChange={setCreditReason}
-                      placeholder="Ex: boleto 12/08 pago"
-                      required={creditEntryKind !== "payment"}
-                    />
-                  </div>
-                  <div>
-                    <button
-                      type="button"
-                      onClick={() => void handleCreditEntry()}
-                      disabled={creditBusy}
-                      style={{ ...styles.primaryButton, opacity: creditBusy ? 0.6 : 1 }}
-                    >
-                      {creditBusy ? "Lancando..." : "Lancar no extrato"}
-                    </button>
-                  </div>
-                  <h4 style={styles.formSectionTitle}>Extrato</h4>
-                  <div style={styles.compactScrollList}>
-                    {creditMovements.length === 0 ? (
-                      <p style={styles.cellMuted}>Nenhum lancamento de credito ate agora.</p>
-                    ) : (
-                      creditMovements.map((movement) => (
-                        <div
-                          key={movement.id}
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            gap: "10px",
-                            padding: "6px 8px",
-                            borderRadius: "8px",
-                            background: "var(--kr-surface)",
-                            border: "1px solid var(--kr-border)",
-                            fontSize: "12px"
-                          }}
-                        >
-                          <span style={{ color: "var(--kr-text-strong)", fontWeight: 700 }}>
-                            {CREDIT_MOVEMENT_LABELS[movement.movement_type] ??
-                              movement.movement_type}
-                            {movement.reason ? (
-                              <span style={{ fontWeight: 400 }}> &mdash; {movement.reason}</span>
-                            ) : null}
-                          </span>
-                          <span style={{ whiteSpace: "nowrap", color: "var(--kr-muted)" }}>
-                            {movement.created_at.slice(0, 10).split("-").reverse().join("/")}{" "}
-                            <strong style={{ color: "var(--kr-text-strong)" }}>
-                              {formatMoney(creditMovementSignedCents(movement))}
-                            </strong>
-                          </span>
+                          {form.creditPeriodicity === "biweekly" ? (
+                            <>
+                              <Field label="2o dia de fechamento" hint="Dia do mes (1 a 31)">
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={31}
+                                  value={form.creditSecondClosingDay}
+                                  onChange={(e) =>
+                                    setForm({ ...form, creditSecondClosingDay: e.target.value })
+                                  }
+                                  style={getInputStyle(false)}
+                                  placeholder="Ex: 16"
+                                />
+                              </Field>
+                              <Field
+                                label="Dias p/ vencimento (2o)"
+                                hint="Apos o segundo fechamento"
+                              >
+                                <input
+                                  type="number"
+                                  min={0}
+                                  value={form.creditSecondBoletoDays}
+                                  onChange={(e) =>
+                                    setForm({ ...form, creditSecondBoletoDays: e.target.value })
+                                  }
+                                  style={getInputStyle(false)}
+                                  placeholder="Ex: 10"
+                                />
+                              </Field>
+                            </>
+                          ) : null}
                         </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <p style={styles.cellMuted}>Salve o cliente antes de lancar credito.</p>
-              )}
-            </section>
-          ) : null}
-
-          {activeFormSection === "transportadoras" ? (
-            <section style={styles.formSection}>
-              <div style={{ display: "grid", gap: "8px" }}>
-                <h4 style={styles.formSectionTitle}>Transportadoras vinculadas</h4>
-                {editingId ? (
-                  <>
-                    <Field label="Pesquisar transportadora">
-                      <input
-                        type="text"
-                        value={carrierSearch}
-                        onChange={(e) => setCarrierSearch(e.target.value)}
-                        placeholder="Nome da transportadora"
-                        style={getInputStyle(false)}
-                      />
-                    </Field>
-                    <div style={styles.compactScrollList}>
-                      {carriers.length === 0 ? (
-                        <p style={styles.cellMuted}>Nenhuma transportadora cadastrada.</p>
-                      ) : visibleCarriers.length === 0 ? (
-                        <p style={styles.cellMuted}>
-                          Nenhuma transportadora encontrada para &quot;{carrierSearch.trim()}&quot;.
-                        </p>
-                      ) : (
-                        visibleCarriers.map((carrier) => (
-                          <label key={carrier.id} style={styles.checkbox}>
-                            <input
-                              type="checkbox"
-                              checked={linkedCarrierIds.includes(carrier.id)}
-                              onChange={() => void handleToggleCarrier(carrier.id)}
-                            />
-                            {carrier.name}
-                          </label>
-                        ))
                       )}
                     </div>
-                  </>
-                ) : (
-                  <p style={styles.cellMuted}>Salve o cliente antes de vincular transportadoras.</p>
-                )}
-              </div>
-            </section>
-          ) : null}
-
-          {activeFormSection === "frete" ? (
-            <section style={styles.formSection}>
-              <div style={{ display: "grid", gap: "8px" }}>
-                <h4 style={styles.formSectionTitle}>Frete do cliente</h4>
-                {editingId ? (
-                  <>
-                    <div style={{ display: "flex", gap: "8px" }}>
-                      <button
-                        type="button"
-                        onClick={() => setFreightMode("default")}
-                        style={{
-                          flex: 1,
-                          padding: "6px 10px",
-                          border: freightMode === "default" ? "2px solid var(--kr-accent)" : "1px solid var(--kr-border)",
-                          borderRadius: "8px",
-                          background: freightMode === "default" ? "var(--kr-accent-soft)" : "var(--kr-surface)",
-                          color: freightMode === "default" ? "var(--kr-info-text)" : "var(--kr-muted)",
-                          fontWeight: freightMode === "default" ? 700 : 500,
-                          fontSize: "12px",
-                          cursor: "pointer"
-                        }}
-                      >
-                        Frete fixo
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setFreightMode("product")}
-                        style={{
-                          flex: 1,
-                          padding: "6px 10px",
-                          border: freightMode === "product" ? "2px solid var(--kr-accent)" : "1px solid var(--kr-border)",
-                          borderRadius: "8px",
-                          background: freightMode === "product" ? "var(--kr-accent-soft)" : "var(--kr-surface)",
-                          color: freightMode === "product" ? "var(--kr-info-text)" : "var(--kr-muted)",
-                          fontWeight: freightMode === "product" ? 700 : 500,
-                          fontSize: "12px",
-                          cursor: "pointer"
-                        }}
-                      >
-                        Por produto
-                      </button>
-                    </div>
-                    <div style={styles.fieldRow}>
-                      {freightMode === "product" ? (
-                        <Field label="Produto">
-                          <select
-                            value={freightProductId}
-                            onChange={(e) => setFreightProductId(e.target.value)}
-                            style={getInputStyle(false)}
-                          >
-                            <option value="">Selecione</option>
-                            {products.map((product) => (
-                              <option key={product.id} value={product.id}>
-                                {product.code ? `${product.code} - ` : ""}
-                                {product.description}
-                              </option>
-                            ))}
-                          </select>
-                        </Field>
-                      ) : null}
-                      <MoneyInput
-                        label="Valor/ton (R$)"
-                        value={freightValueReais}
-                        onChange={setFreightValueReais}
-                        allowZero={false}
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => void handleSaveFreightRule()}
-                      disabled={savingFreight}
-                      style={{ ...styles.secondaryButton, opacity: savingFreight ? 0.5 : 1 }}
+                  ) : null}
+                  <Field label="Uso de credito OMIE">
+                    <select
+                      value={form.creditMode}
+                      onChange={(e) =>
+                        setForm({ ...form, creditMode: e.target.value as "normal" | "prepaid" })
+                      }
+                      style={getInputStyle(false)}
                     >
-                      {savingFreight ? "Salvando..." : "Salvar frete"}
-                    </button>
-                    {customerFreightRules.length === 0 ? (
-                      <p style={styles.cellMuted}>Nenhum frete cadastrado.</p>
-                    ) : (
-                      customerFreightRules.map((rule) => (
-                        <div
-                          key={rule.id}
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                            gap: "8px",
-                            borderTop: "1px solid var(--kr-border)",
-                            paddingTop: "8px"
-                          }}
-                        >
-                          <span style={styles.cellMuted}>
-                            <strong>
-                              {rule.productId ? rule.productDescription ?? "Produto" : "Frete fixo"}
-                            </strong>
-                            : {formatMoney(rule.rule.baseValueCents)}/ton
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => void handleRemoveFreightRule(rule.id)}
-                            style={styles.dangerButton}
-                          >
-                            Remover
-                          </button>
-                        </div>
-                      ))
-                    )}
-                  </>
-                ) : (
-                  <p style={styles.cellMuted}>Salve o cliente antes de cadastrar frete.</p>
-                )}
-              </div>
-            </section>
-          ) : null}
-
-          {activeFormSection === "precos" ? (
-            <section style={styles.formSection}>
-              <div style={{ display: "grid", gap: "8px" }}>
-                <h4 style={styles.formSectionTitle}>Precos especiais</h4>
-                {editingId ? (
-                  <>
-                    <div style={styles.fieldRow}>
-                      <Field label="Produto">
-                        <select
-                          value={specialProductId}
-                          onChange={(e) => setSpecialProductId(e.target.value)}
-                          style={getInputStyle(false)}
-                        >
-                          <option value="">Selecione</option>
-                          {products.map((product) => (
-                            <option key={product.id} value={product.id}>
-                              {product.code ? `${product.code} - ` : ""}
-                              {product.description}
-                            </option>
-                          ))}
-                        </select>
-                      </Field>
-                      <MoneyInput
-                        label="Preco/ton (R$)"
-                        value={specialPriceReais}
-                        onChange={setSpecialPriceReais}
-                        allowZero={false}
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => void handleSaveSpecialPrice()}
-                      style={styles.secondaryButton}
-                    >
-                      Salvar preco especial
-                    </button>
-                    {specialPrices.length === 0 ? (
-                      <p style={styles.cellMuted}>Nenhum preco especial cadastrado.</p>
-                    ) : (
-                      specialPrices.map((price) => (
-                        <div
-                          key={price.id}
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                            gap: "8px",
-                            borderTop: "1px solid var(--kr-border)",
-                            paddingTop: "8px"
-                          }}
-                        >
-                          <span style={styles.cellMuted}>
-                            <strong>{price.productDescription}</strong>
-                            {price.productCode ? ` (${price.productCode})` : ""}:{" "}
-                            {formatMoney(price.unitPriceCents)}/ton
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => void handleRemoveSpecialPrice(price.productId)}
-                            style={styles.dangerButton}
-                          >
-                            Remover
-                          </button>
-                        </div>
-                      ))
-                    )}
-                  </>
-                ) : (
-                  <p style={styles.cellMuted}>Salve o cliente antes de cadastrar preco especial.</p>
-                )}
-              </div>
-            </section>
-          ) : null}
-          </div>
-          <div style={styles.formFooter}>
-            <button
-              type="button"
-              onClick={() => void requestCloseForm()}
-              style={styles.secondaryButton}
-            >
-              Cancelar
-            </button>
-            <div style={{ display: "flex", gap: "8px" }}>
-              {editingId ? (
-                <button
-                  type="button"
-                  onClick={() => setPendingDeleteId(editingId)}
-                  style={styles.dangerButton}
-                >
-                  Excluir
-                </button>
+                      <option value="normal">Nao debitar credito</option>
+                      <option value="prepaid">Debitar credito pre-pago</option>
+                    </select>
+                  </Field>
+                  <label style={styles.checkbox}>
+                    <input
+                      type="checkbox"
+                      checked={form.nfRequired}
+                      onChange={(e) => setForm({ ...form, nfRequired: e.target.checked })}
+                    />
+                    Exige nota fiscal
+                  </label>
+                  <Field label="Observacoes internas" hint="Visivel apenas para a operacao">
+                    <textarea
+                      value={form.observations}
+                      onChange={(e) => setForm({ ...form, observations: e.target.value })}
+                      rows={3}
+                      style={{ ...getInputStyle(false), resize: "vertical", minHeight: "60px" }}
+                      placeholder="Anotacoes internas"
+                    />
+                  </Field>
+                </section>
               ) : null}
+
+              {activeFormSection === "credito" ? (
+                <section style={styles.formSection}>
+                  <h4 style={styles.formSectionTitle}>Credito do cliente</h4>
+                  {editingId ? (
+                    <div style={{ display: "grid", gap: "10px" }}>
+                      <p style={styles.cellMuted}>
+                        O adiantamento e o dinheiro que o cliente ja depositou. Ele e lancado no
+                        financeiro do OMIE (contas a receber na categoria de adiantamento) e chega
+                        aqui pela sincronizacao — nao ha lancamento de credito pelo KyberRock. Cada
+                        compra e abatida desse saldo e baixada no OMIE; o limite de credito (aba
+                        Identificacao) banca o que passar do adiantamento, no fiado.
+                      </p>
+                      <div style={styles.fieldRow}>
+                        <CreditTotal
+                          label="Adiantamento (OMIE)"
+                          value={formatMoney(creditSummary?.omieAdvanceCents ?? 0)}
+                        />
+                        <CreditTotal
+                          label="Limite de credito"
+                          value={
+                            creditSummary?.creditLimitCents != null
+                              ? formatMoney(creditSummary.creditLimitCents)
+                              : "Sem limite"
+                          }
+                        />
+                        <CreditTotal
+                          label="Utilizado"
+                          value={formatMoney(creditSummary?.usedCents ?? 0)}
+                        />
+                        <CreditTotal
+                          label="Disponivel"
+                          value={
+                            creditSummary?.availableCents != null
+                              ? formatMoney(creditSummary.availableCents)
+                              : "Sem limite"
+                          }
+                          strong
+                        />
+                      </div>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "10px",
+                          flexWrap: "wrap"
+                        }}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => void handleSyncAdvances()}
+                          disabled={creditBusy}
+                          style={{ ...styles.secondaryButton, opacity: creditBusy ? 0.6 : 1 }}
+                        >
+                          {creditBusy ? "Sincronizando..." : "Sincronizar adiantamentos (OMIE)"}
+                        </button>
+                        <span style={styles.cellMuted}>
+                          {creditSummary?.omieSyncedAt
+                            ? `Ultimo adiantamento do OMIE: ${formatDbDateTime(creditSummary.omieSyncedAt)}`
+                            : "Nenhum adiantamento vindo do OMIE ate agora."}
+                        </span>
+                      </div>
+                      <h4 style={styles.formSectionTitle}>Extrato</h4>
+                      <div style={styles.compactScrollList}>
+                        {creditMovements.length === 0 ? (
+                          <p style={styles.cellMuted}>Nenhum lancamento de credito ate agora.</p>
+                        ) : (
+                          creditMovements.map((movement) => (
+                            <div
+                              key={movement.id}
+                              style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                gap: "10px",
+                                padding: "6px 8px",
+                                borderRadius: "8px",
+                                background: "var(--kr-surface)",
+                                border: "1px solid var(--kr-border)",
+                                fontSize: "12px"
+                              }}
+                            >
+                              <span style={{ color: "var(--kr-text-strong)", fontWeight: 700 }}>
+                                {creditMovementLabel(movement)}
+                                {movement.source === "omie" ? (
+                                  <span
+                                    style={{
+                                      marginLeft: "6px",
+                                      padding: "1px 6px",
+                                      borderRadius: "999px",
+                                      border: "1px solid var(--kr-border)",
+                                      color: "var(--kr-muted)",
+                                      fontSize: "10px",
+                                      fontWeight: 700
+                                    }}
+                                  >
+                                    OMIE
+                                  </span>
+                                ) : null}
+                                {movement.reason ? (
+                                  <span style={{ fontWeight: 400 }}>
+                                    {" "}
+                                    &mdash; {movement.reason}
+                                  </span>
+                                ) : null}
+                              </span>
+                              <span style={{ whiteSpace: "nowrap", color: "var(--kr-muted)" }}>
+                                {movement.created_at.slice(0, 10).split("-").reverse().join("/")}{" "}
+                                <strong style={{ color: "var(--kr-text-strong)" }}>
+                                  {formatMoney(creditMovementSignedCents(movement))}
+                                </strong>
+                              </span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <p style={styles.cellMuted}>Salve o cliente antes de lancar credito.</p>
+                  )}
+                </section>
+              ) : null}
+
+              {activeFormSection === "transportadoras" ? (
+                <section style={styles.formSection}>
+                  <div style={{ display: "grid", gap: "8px" }}>
+                    <h4 style={styles.formSectionTitle}>Transportadoras vinculadas</h4>
+                    {editingId ? (
+                      <>
+                        <Field label="Pesquisar transportadora">
+                          <input
+                            type="text"
+                            value={carrierSearch}
+                            onChange={(e) => setCarrierSearch(e.target.value)}
+                            placeholder="Nome da transportadora"
+                            style={getInputStyle(false)}
+                          />
+                        </Field>
+                        <div style={styles.compactScrollList}>
+                          {carriers.length === 0 ? (
+                            <p style={styles.cellMuted}>Nenhuma transportadora cadastrada.</p>
+                          ) : visibleCarriers.length === 0 ? (
+                            <p style={styles.cellMuted}>
+                              Nenhuma transportadora encontrada para &quot;{carrierSearch.trim()}
+                              &quot;.
+                            </p>
+                          ) : (
+                            visibleCarriers.map((carrier) => (
+                              <label key={carrier.id} style={styles.checkbox}>
+                                <input
+                                  type="checkbox"
+                                  checked={linkedCarrierIds.includes(carrier.id)}
+                                  onChange={() => void handleToggleCarrier(carrier.id)}
+                                />
+                                {carrier.name}
+                              </label>
+                            ))
+                          )}
+                        </div>
+                      </>
+                    ) : (
+                      <p style={styles.cellMuted}>
+                        Salve o cliente antes de vincular transportadoras.
+                      </p>
+                    )}
+                  </div>
+                </section>
+              ) : null}
+
+              {activeFormSection === "frete" ? (
+                <section style={styles.formSection}>
+                  <div style={{ display: "grid", gap: "8px" }}>
+                    <h4 style={styles.formSectionTitle}>Frete do cliente</h4>
+                    {editingId ? (
+                      <>
+                        <div style={{ display: "flex", gap: "8px" }}>
+                          <button
+                            type="button"
+                            onClick={() => setFreightMode("default")}
+                            style={{
+                              flex: 1,
+                              padding: "6px 10px",
+                              border:
+                                freightMode === "default"
+                                  ? "2px solid var(--kr-accent)"
+                                  : "1px solid var(--kr-border)",
+                              borderRadius: "8px",
+                              background:
+                                freightMode === "default"
+                                  ? "var(--kr-accent-soft)"
+                                  : "var(--kr-surface)",
+                              color:
+                                freightMode === "default"
+                                  ? "var(--kr-info-text)"
+                                  : "var(--kr-muted)",
+                              fontWeight: freightMode === "default" ? 700 : 500,
+                              fontSize: "12px",
+                              cursor: "pointer"
+                            }}
+                          >
+                            Frete fixo
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setFreightMode("product")}
+                            style={{
+                              flex: 1,
+                              padding: "6px 10px",
+                              border:
+                                freightMode === "product"
+                                  ? "2px solid var(--kr-accent)"
+                                  : "1px solid var(--kr-border)",
+                              borderRadius: "8px",
+                              background:
+                                freightMode === "product"
+                                  ? "var(--kr-accent-soft)"
+                                  : "var(--kr-surface)",
+                              color:
+                                freightMode === "product"
+                                  ? "var(--kr-info-text)"
+                                  : "var(--kr-muted)",
+                              fontWeight: freightMode === "product" ? 700 : 500,
+                              fontSize: "12px",
+                              cursor: "pointer"
+                            }}
+                          >
+                            Por produto
+                          </button>
+                        </div>
+                        <div style={styles.fieldRow}>
+                          {freightMode === "product" ? (
+                            <Field label="Produto">
+                              <select
+                                value={freightProductId}
+                                onChange={(e) => setFreightProductId(e.target.value)}
+                                style={getInputStyle(false)}
+                              >
+                                <option value="">Selecione</option>
+                                {products.map((product) => (
+                                  <option key={product.id} value={product.id}>
+                                    {product.code ? `${product.code} - ` : ""}
+                                    {product.description}
+                                  </option>
+                                ))}
+                              </select>
+                            </Field>
+                          ) : null}
+                          <Field
+                            label="Tipo de frete"
+                            hint="O valor vale para esse tipo de frete na Nova entrada. 'Qualquer tipo' cobre os tipos que nao tem valor proprio."
+                          >
+                            <select
+                              value={freightModality}
+                              onChange={(e) =>
+                                setFreightModality(e.target.value as FreightModality | "")
+                              }
+                              style={getInputStyle(false)}
+                            >
+                              <option value="">Qualquer tipo</option>
+                              {FREIGHT_MODALITIES.filter((modality) => modality.supportsCharge).map(
+                                (modality) => (
+                                  <option key={modality.key} value={modality.key}>
+                                    {modality.label}
+                                  </option>
+                                )
+                              )}
+                            </select>
+                          </Field>
+                          <MoneyInput
+                            label="Valor/ton (R$)"
+                            value={freightValueReais}
+                            onChange={setFreightValueReais}
+                            allowZero={false}
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void handleSaveFreightRule()}
+                          disabled={savingFreight}
+                          style={{ ...styles.secondaryButton, opacity: savingFreight ? 0.5 : 1 }}
+                        >
+                          {savingFreight ? "Salvando..." : "Salvar frete"}
+                        </button>
+                        {customerFreightEntries.length === 0 ? (
+                          <p style={styles.cellMuted}>Nenhum frete cadastrado.</p>
+                        ) : (
+                          customerFreightEntries.map((entry) => (
+                            <div
+                              key={`${entry.ruleId}:${entry.modality ?? "any"}`}
+                              style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                gap: "8px",
+                                borderTop: "1px solid var(--kr-border)",
+                                paddingTop: "8px"
+                              }}
+                            >
+                              <span style={styles.cellMuted}>
+                                <strong>{entry.scopeLabel}</strong>
+                                {" - "}
+                                {entry.modalityLabel}: {formatMoney(entry.baseValueCents)}/ton
+                                {entry.source === "last_used" ? (
+                                  <em style={{ marginLeft: "6px" }}>(ultima venda)</em>
+                                ) : null}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void handleRemoveFreightRule(entry.ruleId, entry.modality)
+                                }
+                                style={styles.dangerButton}
+                              >
+                                Remover
+                              </button>
+                            </div>
+                          ))
+                        )}
+                      </>
+                    ) : (
+                      <p style={styles.cellMuted}>Salve o cliente antes de cadastrar frete.</p>
+                    )}
+                  </div>
+                </section>
+              ) : null}
+
+              {activeFormSection === "precos" ? (
+                <section style={styles.formSection}>
+                  <div style={{ display: "grid", gap: "8px" }}>
+                    <h4 style={styles.formSectionTitle}>Precos especiais</h4>
+                    {editingId ? (
+                      <>
+                        <div style={styles.fieldRow}>
+                          <Field label="Produto">
+                            <select
+                              value={specialProductId}
+                              onChange={(e) => setSpecialProductId(e.target.value)}
+                              style={getInputStyle(false)}
+                            >
+                              <option value="">Selecione</option>
+                              {products.map((product) => (
+                                <option key={product.id} value={product.id}>
+                                  {product.code ? `${product.code} - ` : ""}
+                                  {product.description}
+                                </option>
+                              ))}
+                            </select>
+                          </Field>
+                          <MoneyInput
+                            label="Preco/ton (R$)"
+                            value={specialPriceReais}
+                            onChange={setSpecialPriceReais}
+                            allowZero={false}
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void handleSaveSpecialPrice()}
+                          style={styles.secondaryButton}
+                        >
+                          Salvar preco especial
+                        </button>
+                        {specialPrices.length === 0 ? (
+                          <p style={styles.cellMuted}>Nenhum preco especial cadastrado.</p>
+                        ) : (
+                          specialPrices.map((price) => (
+                            <div
+                              key={price.id}
+                              style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                gap: "8px",
+                                borderTop: "1px solid var(--kr-border)",
+                                paddingTop: "8px"
+                              }}
+                            >
+                              <span style={styles.cellMuted}>
+                                <strong>{price.productDescription}</strong>
+                                {price.productCode ? ` (${price.productCode})` : ""}:{" "}
+                                {formatMoney(price.unitPriceCents)}/ton
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => void handleRemoveSpecialPrice(price.productId)}
+                                style={styles.dangerButton}
+                              >
+                                Remover
+                              </button>
+                            </div>
+                          ))
+                        )}
+                      </>
+                    ) : (
+                      <p style={styles.cellMuted}>
+                        Salve o cliente antes de cadastrar preco especial.
+                      </p>
+                    )}
+                  </div>
+                </section>
+              ) : null}
+            </div>
+            <div style={styles.formFooter}>
               <button
                 type="button"
-                onClick={() => void handleSave()}
-                disabled={saving}
-                style={{
-                  ...styles.primaryButton,
-                  opacity: saving ? 0.7 : 1,
-                  cursor: saving ? "wait" : "pointer"
-                }}
+                onClick={() => void requestCloseForm()}
+                style={styles.secondaryButton}
               >
-                {saving ? "Salvando..." : editingId ? "Salvar alteracoes" : "Cadastrar cliente"}
+                Cancelar
               </button>
+              <div style={{ display: "flex", gap: "8px" }}>
+                {editingId ? (
+                  <button
+                    type="button"
+                    onClick={() => setPendingDeleteId(editingId)}
+                    style={styles.dangerButton}
+                  >
+                    Excluir
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => void handleSave()}
+                  disabled={saving}
+                  style={{
+                    ...styles.primaryButton,
+                    opacity: saving ? 0.7 : 1,
+                    cursor: saving ? "wait" : "pointer"
+                  }}
+                >
+                  {saving ? "Salvando..." : editingId ? "Salvar alteracoes" : "Cadastrar cliente"}
+                </button>
+              </div>
             </div>
-          </div>
-        </Fragment>
+          </Fragment>
         </CrudFormModal>
       ) : null}
 
@@ -2161,154 +2351,194 @@ export function CustomersView({
         />
       ) : null}
 
-      <DataTable
-        columns={[
-          {
-            key: "customer",
-            header: "Cliente",
-            width: "minmax(200px, 1.4fr)",
-            render: (customer: CustomerCacheEntry) => (
-              <>
-                <CellPrimary>{customer.tradeName || customer.legalName}</CellPrimary>
-                <CellMuted>{customer.legalName}</CellMuted>
-              </>
-            )
-          },
-          {
-            key: "document",
-            header: "Documento",
-            width: "minmax(140px, 1fr)",
-            render: (customer) => (
-              <CellMuted>{formatDocument(customer.document ?? "") || "-"}</CellMuted>
-            )
-          },
-          {
-            key: "contact",
-            header: "Contato",
-            width: "minmax(180px, 1.4fr)",
-            render: (customer) => (
-              <>
-                <CellPrimary>{formatPhone(customer.phone ?? "") || "-"}</CellPrimary>
-                <CellMuted>{customer.email || "-"}</CellMuted>
-              </>
-            )
-          },
-          {
-            key: "source",
-            header: "Origem / status",
-            width: "minmax(130px, 1fr)",
-            render: (customer) => (
-              <>
-                <SourceBadge source={customer.source} />
-                {customer.omieBillingBlocked ? (
-                  <span
-                    style={{
-                      ...styles.pill("#b91c1c", "#fee2e2"),
-                      width: "fit-content",
-                      alignSelf: "start"
-                    }}
-                  >
-                    Bloqueado
-                  </span>
-                ) : null}
-              </>
-            )
-          },
-          {
-            key: "actions",
-            header: "Acoes",
-            width: "150px",
-            align: "right",
-            render: (customer) => (
-              <>
-                <EditRowButton onClick={() => openEditForm(customer)} />
-                <Tooltip
-                  content={
-                    customer.omieBillingBlocked
-                      ? "Liberar o faturamento deste cliente (enviado ao OMIE no proximo sync)"
-                      : "Bloquear o faturamento deste cliente (enviado ao OMIE no proximo sync)"
-                  }
-                  placement="left"
-                >
-                  <button
-                    type="button"
-                    onClick={() => void handleToggleBillingBlocked(customer)}
-                    disabled={togglingBlockId !== null}
-                    aria-label={
-                      customer.omieBillingBlocked ? "Liberar faturamento" : "Bloquear faturamento"
+      {standaloneForm ? null : (
+        <DataTable
+          columns={[
+            {
+              key: "customer",
+              header: "Cliente",
+              width: "minmax(200px, 1.4fr)",
+              render: (customer: CustomerCacheEntry) => (
+                <>
+                  <CellPrimary>{customer.tradeName || customer.legalName}</CellPrimary>
+                  <CellMuted>{customer.legalName}</CellMuted>
+                </>
+              )
+            },
+            {
+              key: "document",
+              header: "Documento",
+              width: "minmax(140px, 1fr)",
+              render: (customer) => (
+                <CellMuted>{formatDocument(customer.document ?? "") || "-"}</CellMuted>
+              )
+            },
+            {
+              key: "contact",
+              header: "Contato",
+              width: "minmax(180px, 1.4fr)",
+              render: (customer) => (
+                <>
+                  <CellPrimary>{formatPhone(customer.phone ?? "") || "-"}</CellPrimary>
+                  <CellMuted>{customer.email || "-"}</CellMuted>
+                </>
+              )
+            },
+            {
+              key: "source",
+              header: "Origem / status",
+              width: "minmax(130px, 1fr)",
+              render: (customer) => (
+                <>
+                  <SourceBadge source={customer.source} />
+                  {customer.isActive ? null : (
+                    <span
+                      style={{
+                        ...styles.pill("#78350f", "#fef3c7"),
+                        width: "fit-content",
+                        alignSelf: "start"
+                      }}
+                    >
+                      Inativo
+                    </span>
+                  )}
+                  {customer.omieBillingBlocked ? (
+                    <span
+                      style={{
+                        ...styles.pill("#b91c1c", "#fee2e2"),
+                        width: "fit-content",
+                        alignSelf: "start"
+                      }}
+                    >
+                      Bloqueado
+                    </span>
+                  ) : null}
+                </>
+              )
+            },
+            {
+              key: "actions",
+              header: "Acoes",
+              width: "150px",
+              align: "right",
+              render: (customer) => (
+                <>
+                  <EditRowButton onClick={() => openEditForm(customer)} />
+                  {customer.isActive ? null : (
+                    <Tooltip
+                      content="Reativar este cliente (o CNPJ/CPF dele ja esta ocupado por este cadastro)"
+                      placement="left"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => void handleReactivate(customer)}
+                        disabled={togglingBlockId !== null}
+                        aria-label="Reativar cliente"
+                        style={{
+                          border: "1px solid var(--kr-border)",
+                          background: "var(--kr-surface)",
+                          color: "var(--kr-text-strong)",
+                          borderRadius: "8px",
+                          padding: "0 8px",
+                          height: "30px",
+                          fontSize: "12px",
+                          fontWeight: 700,
+                          cursor: togglingBlockId ? "wait" : "pointer",
+                          flexShrink: 0
+                        }}
+                      >
+                        Reativar
+                      </button>
+                    </Tooltip>
+                  )}
+                  <Tooltip
+                    content={
+                      customer.omieBillingBlocked
+                        ? "Liberar o faturamento deste cliente (enviado ao OMIE no proximo sync)"
+                        : "Bloquear o faturamento deste cliente (enviado ao OMIE no proximo sync)"
                     }
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      width: "30px",
-                      height: "30px",
-                      padding: 0,
-                      border: customer.omieBillingBlocked
-                        ? "1px solid var(--kr-danger-border)"
-                        : "1px solid var(--kr-border)",
-                      background: customer.omieBillingBlocked
-                        ? "var(--kr-danger-soft)"
-                        : "var(--kr-surface)",
-                      color: customer.omieBillingBlocked ? "var(--kr-danger)" : "var(--kr-muted)",
-                      borderRadius: "8px",
-                      cursor: togglingBlockId ? "wait" : "pointer",
-                      flexShrink: 0,
-                      lineHeight: 0,
-                      opacity: togglingBlockId === customer.id ? 0.6 : 1
-                    }}
+                    placement="left"
                   >
-                    {customer.omieBillingBlocked ? <Lock size={15} /> : <Unlock size={15} />}
-                  </button>
-                </Tooltip>
-                <DeleteRowButton onClick={() => setPendingDeleteId(customer.id)} />
-              </>
-            )
+                    <button
+                      type="button"
+                      onClick={() => void handleToggleBillingBlocked(customer)}
+                      disabled={togglingBlockId !== null}
+                      aria-label={
+                        customer.omieBillingBlocked ? "Liberar faturamento" : "Bloquear faturamento"
+                      }
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: "30px",
+                        height: "30px",
+                        padding: 0,
+                        border: customer.omieBillingBlocked
+                          ? "1px solid var(--kr-danger-border)"
+                          : "1px solid var(--kr-border)",
+                        background: customer.omieBillingBlocked
+                          ? "var(--kr-danger-soft)"
+                          : "var(--kr-surface)",
+                        color: customer.omieBillingBlocked ? "var(--kr-danger)" : "var(--kr-muted)",
+                        borderRadius: "8px",
+                        cursor: togglingBlockId ? "wait" : "pointer",
+                        flexShrink: 0,
+                        lineHeight: 0,
+                        opacity: togglingBlockId === customer.id ? 0.6 : 1
+                      }}
+                    >
+                      {customer.omieBillingBlocked ? <Lock size={15} /> : <Unlock size={15} />}
+                    </button>
+                  </Tooltip>
+                  <DeleteRowButton onClick={() => setPendingDeleteId(customer.id)} />
+                </>
+              )
+            }
+          ]}
+          rows={customers}
+          rowKey={(customer) => customer.id}
+          loading={loading}
+          onRowOpen={(customer) => setViewingCustomer(customer)}
+          emptyTitle={search ? "Nenhum cliente encontrado." : "Nenhum cliente cadastrado."}
+          emptyHint={
+            search
+              ? "Ajuste o termo de busca."
+              : "Sincronize com o OMIE ou cadastre o primeiro cliente pelo botao 'Novo cliente'."
           }
-        ]}
-        rows={customers}
-        rowKey={(customer) => customer.id}
-        loading={loading}
-        onRowOpen={(customer) => setViewingCustomer(customer)}
-        emptyTitle={search ? "Nenhum cliente encontrado." : "Nenhum cliente cadastrado."}
-        emptyHint={
-          search
-            ? "Ajuste o termo de busca."
-            : "Sincronize com o OMIE ou cadastre o primeiro cliente pelo botao 'Novo cliente'."
-        }
-        minWidth="980px"
-        maxHeight="calc(100vh - 380px)"
-        footer={
-          <div style={styles.pagination}>
-            <span>
-              {total === 0
-                ? "0 clientes"
-                : `${page * pageSize + 1}-${Math.min(total, (page + 1) * pageSize)} de ${total}`}
-            </span>
-            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-              <button
-                type="button"
-                onClick={() => setPage((p) => Math.max(0, p - 1))}
-                disabled={page === 0}
-                style={styles.secondaryButton}
-              >
-                Anterior
-              </button>
+          minWidth="980px"
+          maxHeight="calc(100vh - 380px)"
+          footer={
+            <div style={styles.pagination}>
               <span>
-                {page + 1}/{totalPages}
+                {total === 0
+                  ? "0 clientes"
+                  : `${page * pageSize + 1}-${Math.min(total, (page + 1) * pageSize)} de ${total}`}
               </span>
-              <button
-                type="button"
-                onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-                disabled={page >= totalPages - 1}
-                style={styles.secondaryButton}
-              >
-                Proxima
-              </button>
+              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                  disabled={page === 0}
+                  style={styles.secondaryButton}
+                >
+                  Anterior
+                </button>
+                <span>
+                  {page + 1}/{totalPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                  disabled={page >= totalPages - 1}
+                  style={styles.secondaryButton}
+                >
+                  Proxima
+                </button>
+              </div>
             </div>
-          </div>
-        }
-      />
+          }
+        />
+      )}
     </div>
   );
 }

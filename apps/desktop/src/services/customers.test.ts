@@ -69,7 +69,9 @@ describe("customers", () => {
       expect(getDefaultNfeEmail(database)).toBe("nf@empresa.com");
 
       const rows = database
-        .prepare("SELECT id, email, source, needs_push FROM customers WHERE company_id = 'company-1' ORDER BY id")
+        .prepare(
+          "SELECT id, email, source, needs_push FROM customers WHERE company_id = 'company-1' ORDER BY id"
+        )
         .all() as Array<{ id: string; email: string; source: string; needs_push: number }>;
       expect(rows.every((r) => r.email === "nf@empresa.com")).toBe(true);
       expect(rows.every((r) => r.needs_push === 1)).toBe(true);
@@ -78,6 +80,59 @@ describe("customers", () => {
 
       // Idempotente: reaplicar nao conta ninguem (todos ja com o e-mail).
       expect(applyDefaultNfeEmailToAllCustomers(database, "company-1", "nf@empresa.com")).toBe(0);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("keeps every email the operator informed, in the format OMIE expects", () => {
+    const database = createDatabase();
+
+    try {
+      const customer = createCustomer(database, {
+        companyId: "company-1",
+        tradeName: "Cliente Multi",
+        legalName: "Cliente Multi LTDA",
+        email: " Fiscal@Cliente.com ; financeiro@cliente.com , fiscal@cliente.com "
+      });
+
+      // Virgula simples e o separador do cadastro do OMIE; repetidos saem da lista.
+      expect(customer.email).toBe("fiscal@cliente.com, financeiro@cliente.com");
+
+      const updated = updateCustomer(database, customer.id, {
+        email: "compras@cliente.com\nnota@cliente.com"
+      });
+      expect(updated.email).toBe("compras@cliente.com, nota@cliente.com");
+
+      const cleared = updateCustomer(database, customer.id, { email: "  " });
+      expect(cleared.email).toBeNull();
+    } finally {
+      database.close();
+    }
+  });
+
+  it("accepts more than one default NF-e email", () => {
+    const database = createDatabase();
+
+    try {
+      database
+        .prepare(
+          `INSERT INTO customers (id, company_id, source, legal_name, trade_name, email, is_active, needs_push, created_at, updated_at)
+           VALUES ('local-1', 'company-1', 'local', 'Local 1', 'Local 1', NULL, 1, 0, datetime('now'), datetime('now'))`
+        )
+        .run();
+
+      const count = applyDefaultNfeEmailToAllCustomers(
+        database,
+        "company-1",
+        "NF@Empresa.com; boletos@empresa.com"
+      );
+
+      expect(count).toBe(1);
+      expect(getDefaultNfeEmail(database)).toBe("nf@empresa.com, boletos@empresa.com");
+      expect(() =>
+        applyDefaultNfeEmailToAllCustomers(database, "company-1", "nf@empresa.com, invalido")
+      ).toThrow(/invalido/i);
     } finally {
       database.close();
     }
@@ -145,6 +200,72 @@ describe("customers", () => {
     }
   });
 
+  // O documento vem do OMIE com mascara ("144.939.658-51") e do cadastro local so com
+  // digitos. Buscando so pelo texto cru, procurar pelo CPF nao achava o cliente que estava
+  // ali — e o operador concluia que ele nao existia.
+  it("acha o cliente pelo CNPJ/CPF com ou sem mascara", () => {
+    const database = createDatabase();
+
+    try {
+      database
+        .prepare(
+          `INSERT INTO customers (id, company_id, source, legal_name, trade_name, document, is_active, created_at, updated_at)
+           VALUES ('com-mascara', 'company-1', 'omie', 'Jose da Silva', 'Jose', '144.939.658-51', 1, datetime('now'), datetime('now')),
+                  ('sem-mascara', 'company-1', 'local', 'Maria Souza', 'Maria', '27912844864', 1, datetime('now'), datetime('now'))`
+        )
+        .run();
+      const cacheStore = new CacheStore(database);
+      cacheStore.loadAll("company-1");
+
+      const byDigits = cacheStore.query({ entityType: "customer", search: "14493965851" });
+      expect(byDigits.rows.map((row) => row.id)).toEqual(["com-mascara"]);
+
+      const byMask = cacheStore.query({ entityType: "customer", search: "279.128.448-64" });
+      expect(byMask.rows.map((row) => row.id)).toEqual(["sem-mascara"]);
+
+      // Busca por nome continua funcionando como antes.
+      expect(
+        cacheStore.query({ entityType: "customer", search: "maria" }).rows.map((row) => row.id)
+      ).toEqual(["sem-mascara"]);
+    } finally {
+      database.close();
+    }
+  });
+
+  // Cliente inativo continua dono do documento, mas a lista o escondia: o operador via
+  // "Ja existe um cliente com este CNPJ/CPF" e nao achava ninguem ao procurar.
+  it("diz que o cliente que ocupa o documento esta inativo", () => {
+    const database = createDatabase();
+
+    try {
+      database
+        .prepare(
+          `INSERT INTO customers (id, company_id, source, legal_name, trade_name, document, is_active, created_at, updated_at)
+           VALUES ('inativo', 'company-1', 'local', 'Roque de Oliveira Cintra', 'Roque', '27912844864', 0, datetime('now'), datetime('now'))`
+        )
+        .run();
+
+      expect(() =>
+        createCustomer(database, {
+          companyId: "company-1",
+          tradeName: "Roque",
+          legalName: "Roque de Oliveira Cintra",
+          document: "27912844864"
+        })
+      ).toThrow(/inativo/i);
+
+      // O inativo aparece na consulta que a tela de cadastro faz (activeOnly: false).
+      const cacheStore = new CacheStore(database);
+      cacheStore.loadAll("company-1");
+      expect(
+        cacheStore.query({ entityType: "customer", activeOnly: false, search: "27912844864" }).total
+      ).toBe(1);
+      expect(cacheStore.query({ entityType: "customer", search: "27912844864" }).total).toBe(0);
+    } finally {
+      database.close();
+    }
+  });
+
   it("filters sellable products when requested by product selectors", () => {
     const database = createDatabase();
 
@@ -164,7 +285,11 @@ describe("customers", () => {
 
       expect(cacheStore.query({ entityType: "product", activeOnly: true }).total).toBe(2);
       expect(
-        cacheStore.query({ entityType: "product", activeOnly: true, productFiscalType: "finished_goods" }).total
+        cacheStore.query({
+          entityType: "product",
+          activeOnly: true,
+          productFiscalType: "finished_goods"
+        }).total
       ).toBe(1);
     } finally {
       database.close();

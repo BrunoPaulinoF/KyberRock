@@ -61,9 +61,11 @@ import {
 import {
   cancelWeighingOperation,
   clearCanceledWeighingOperations,
+  clearClosedWeighingOperations,
   closeWeighingOperation,
   createWeighingOperation,
   deleteClosedWeighingOperation,
+  getCustomerLastEntryPreferences,
   getOperationOmieIssue,
   listCanceledWeighingOperations,
   listClosedWeighingOperations,
@@ -71,6 +73,8 @@ import {
   updateWeighingOperationProduct,
   updateWeighingOperationCustomer,
   updateWeighingOperationCarrier,
+  updateWeighingOperationDetails,
+  type CustomerLastEntryPreferences,
   type OperationOmieIssue,
   type OperationType,
   type OperationFreightInput,
@@ -78,13 +82,16 @@ import {
   type WeighingOperationSummary,
   type UpdateWeighingOperationProductInput,
   type UpdateWeighingOperationCustomerInput,
-  type UpdateWeighingOperationCarrierInput
+  type UpdateWeighingOperationCarrierInput,
+  type UpdateWeighingOperationDetailsInput
 } from "./weighing-operations.js";
 import {
   getCustomerFreightRules,
   getCustomerFreightRuleForProduct,
   setCustomerFreightRule,
+  rememberCustomerFreightValue,
   removeCustomerFreightRule,
+  removeCustomerFreightModality,
   type SetCustomerFreightRuleInput
 } from "./customer-freight-rules.js";
 import type { FreightModality } from "./freight.js";
@@ -113,12 +120,15 @@ import {
   syncLoadingRequestToSupabase,
   listOperationsPendingCloudPush,
   syncOmieReferenceDataFromCloud,
+  syncCustomerAdvancesFromCloud,
+  type CustomerAdvancesSyncResult,
   listOmieDocumentTypesFromCloud,
   type OmieDocumentTypeOption,
   pushOmieCarriersToCloud,
   pushOmieCustomersToCloud,
   processOmieSyncQueue,
   processFiscalBillingNow,
+  rearmOmieBillingForCustomer,
   getSupabaseSyncStatus,
   isSupabaseInitialized,
   pullCompanyPricePasswordFromCloud,
@@ -201,11 +211,7 @@ import {
   type CustomerSpecialPriceSummary,
   type ProductDefaultPriceSummary
 } from "./product-prices.js";
-import {
-  CreditService,
-  type CreditMovementRow,
-  type CustomerCreditSummary
-} from "./credit.js";
+import { CreditService, type CreditMovementRow, type CustomerCreditSummary } from "./credit.js";
 import {
   getDefaultOmieCategory,
   listOmieCategories,
@@ -213,6 +219,11 @@ import {
   setProductOmieCategory,
   type OmieCategoryOption
 } from "./omie-categories.js";
+import {
+  readOmieAdvanceConfig,
+  writeOmieAdvanceConfig,
+  type OmieAdvanceConfig
+} from "./omie-advance-config.js";
 import {
   cancelQuotation,
   createQuotation,
@@ -431,6 +442,14 @@ import {
   type UpdateAccountInput
 } from "./accounts.js";
 import {
+  getWalletReport,
+  reopenWalletOperations,
+  settleWalletOperations,
+  type SettleWalletInput,
+  type WalletQuery,
+  type WalletReport
+} from "./wallet.js";
+import {
   createPaymentTerm,
   deletePaymentTerm,
   listOmiePaymentTerms,
@@ -603,6 +622,18 @@ export class DesktopRuntime {
         this.omieSyncInProgress = true;
         try {
           await this.runOmieDataEntryLoop({ maxIterations: OMIE_AUTOMATIC_PULL_MAX_ITERATIONS });
+          // Adiantamentos entram no mesmo ciclo: o saldo que banca as compras
+          // envelhece rapido. Falha aqui nao derruba o pull de cadastros.
+          try {
+            await this.syncCustomerAdvancesFromOmie();
+          } catch (error) {
+            this.recordTechnicalLog(
+              "warning",
+              "omie-sync",
+              "Falha ao sincronizar adiantamentos do OMIE.",
+              { error: error instanceof Error ? error.message : String(error) }
+            );
+          }
         } finally {
           this.omieSyncInProgress = false;
         }
@@ -724,6 +755,21 @@ export class DesktopRuntime {
       entryWeightKg: entryReading.weightKg,
       entryScaleCapture: buildScaleCaptureAudit(entryReading)
     });
+    // O valor de frete desta venda vira o "ultimo valor" do cliente para esse tipo de
+    // frete, para a proxima entrada ja vir preenchida. Best-effort: memoria de
+    // conveniencia nao pode derrubar o registro de uma entrada.
+    if (input.freight && input.freightModality) {
+      try {
+        rememberCustomerFreightValue(this.database, {
+          customerId: input.customerId,
+          productId: input.productId,
+          modality: input.freightModality,
+          rule: input.freight.rule
+        });
+      } catch {
+        /* ignore */
+      }
+    }
     // A entrada pode ter gravado condicao/forma como padrao do cliente (primeira escolha).
     this.cacheStore.invalidate("customer", this.ensureIdentity().companyId);
     this.triggerOperationCloudPush("entry_registered", operation.id);
@@ -874,6 +920,11 @@ export class DesktopRuntime {
 
     if (Object.keys(patch).length === 0) return;
     updateCustomer(this.database, op.customer_id, patch, new Date(), { overrideOmieFields: true });
+    // O job do fechamento ja foi montado (no close) com o cadastro ANTIGO: sem isto o
+    // cliente sobe ao OMIE sem o e-mail/endereco que acabamos de completar e o
+    // IncluirCliente e recusado ("O preenchimento da tag [email] e obrigatorio!"),
+    // derrubando o pedido junto. Reconstroi o payload antes do envio imediato.
+    rearmOmieBillingForCustomer(this.database, op.customer_id);
     this.cacheStore.invalidate("customer", this.ensureIdentity().companyId);
   }
 
@@ -1003,9 +1054,23 @@ export class DesktopRuntime {
     return operation;
   }
 
+  /** Edicao completa de uma operacao em andamento (dados comerciais, preco e frete). */
+  updateWeighingOperation(input: UpdateWeighingOperationDetailsInput): WeighingOperationSummary {
+    this.assertDesktopAccess();
+    const operation = updateWeighingOperationDetails(this.database, input);
+    this.triggerOperationCloudPush("operation_updated", input.operationId);
+    return operation;
+  }
+
   listOpenWeighingOperations(): WeighingOperationSummary[] {
     this.assertDesktopAccess();
     return listOpenWeighingOperations(this.database);
+  }
+
+  /** Transportadora/condicao/forma de pagamento da ultima entrada daquele cliente. */
+  getCustomerLastEntryPreferences(customerId: string): CustomerLastEntryPreferences | null {
+    this.assertDesktopAccess();
+    return getCustomerLastEntryPreferences(this.database, customerId);
   }
 
   /**
@@ -1109,6 +1174,15 @@ export class DesktopRuntime {
     return clearCanceledWeighingOperations(this.database);
   }
 
+  /**
+   * Limpa a lista de concluidas em lote. `untilDate` preserva o movimento do dia
+   * corrente: limpar historico nao pode levar junto o que a balanca fez hoje.
+   */
+  clearClosedWeighingOperations(options: { untilDate?: string } = {}): number {
+    this.assertDesktopAccess();
+    return clearClosedWeighingOperations(this.database, options);
+  }
+
   deleteClosedWeighingOperation(operationId: string): void {
     this.assertDesktopAccess();
     deleteClosedWeighingOperation(this.database, operationId);
@@ -1119,9 +1193,13 @@ export class DesktopRuntime {
     return getCustomerFreightRules(this.database, customerId);
   }
 
-  getCustomerFreightForProduct(customerId: string, productId: string) {
+  getCustomerFreightForProduct(
+    customerId: string,
+    productId: string,
+    modality?: FreightModality | null
+  ) {
     this.assertDesktopAccess();
-    return getCustomerFreightRuleForProduct(this.database, customerId, productId);
+    return getCustomerFreightRuleForProduct(this.database, customerId, productId, modality);
   }
 
   setCustomerFreightRule(input: SetCustomerFreightRuleInput) {
@@ -1132,6 +1210,11 @@ export class DesktopRuntime {
   removeCustomerFreightRule(ruleId: string) {
     this.assertDesktopAccess();
     return removeCustomerFreightRule(this.database, ruleId);
+  }
+
+  removeCustomerFreightModality(ruleId: string, modality: FreightModality) {
+    this.assertDesktopAccess();
+    return removeCustomerFreightModality(this.database, ruleId, modality);
   }
 
   configureReceiptPrintProfile(
@@ -1334,9 +1417,7 @@ export class DesktopRuntime {
         }
       } catch (error) {
         failed++;
-        errors.push(
-          `Fila OMIE: ${error instanceof Error ? error.message : "erro desconhecido"}`
-        );
+        errors.push(`Fila OMIE: ${error instanceof Error ? error.message : "erro desconhecido"}`);
       }
 
       // Reconciliacao: toda operacao cuja versao local esta na frente do que a
@@ -1833,7 +1914,12 @@ export class DesktopRuntime {
     variants: CustomerReportVariant[],
     formats: Array<"pdf" | "excel">,
     periodLabel?: string | null
-  ): Array<{ variant: CustomerReportVariant; format: "pdf" | "excel"; fileName: string; html: string }> {
+  ): Array<{
+    variant: CustomerReportVariant;
+    format: "pdf" | "excel";
+    fileName: string;
+    html: string;
+  }> {
     const report = this.getCustomerReport(customerId, startDate, endDate, periodLabel);
     const documents: Array<{
       variant: CustomerReportVariant;
@@ -2353,12 +2439,7 @@ export class DesktopRuntime {
 
   setProductOmieCategory(productId: string, categoryCode: string | null): void {
     this.assertDesktopAccess();
-    setProductOmieCategory(
-      this.database,
-      this.ensureIdentity().companyId,
-      productId,
-      categoryCode
-    );
+    setProductOmieCategory(this.database, this.ensureIdentity().companyId, productId, categoryCode);
   }
 
   getDefaultOmieCategory(): string | null {
@@ -2381,45 +2462,67 @@ export class DesktopRuntime {
     return new CreditService(this.database).getSummary(customerId);
   }
 
-  /**
-   * Baixa do fiado: o pagamento recebido do cliente volta como credito no extrato
-   * e libera o limite consumido pelas vendas anteriores.
-   */
-  registerCustomerCreditPayment(
-    customerId: string,
-    amountCents: number,
-    reason?: string
-  ): CustomerCreditSummary {
-    this.assertDesktopAccess();
-    if (!Number.isInteger(amountCents) || amountCents <= 0) {
-      throw new Error("Informe um valor de pagamento maior que zero.");
-    }
-    const service = new CreditService(this.database);
-    service.applyCredit(customerId, amountCents, reason?.trim() || "Pagamento do cliente");
-    return service.getSummary(customerId);
-  }
-
-  /** Correcao manual do extrato (positiva ou negativa), sempre com justificativa. */
-  adjustCustomerCredit(
-    customerId: string,
-    amountCents: number,
-    reason: string
-  ): CustomerCreditSummary {
-    this.assertDesktopAccess();
-    if (!Number.isInteger(amountCents) || amountCents === 0) {
-      throw new Error("Informe um valor de ajuste diferente de zero.");
-    }
-    if (!reason?.trim()) {
-      throw new Error("Informe o motivo do ajuste.");
-    }
-    const service = new CreditService(this.database);
-    service.applyManualAdjustment(customerId, amountCents, reason.trim());
-    return service.getSummary(customerId);
-  }
+  // Nao existe lancamento de credito pelo KyberRock: o adiantamento e feito no
+  // financeiro do OMIE e chega pelo espelho da sincronizacao
+  // (`syncCustomerAdvancesFromOmie`). O que o desktop escreve no extrato e o
+  // consumo da compra (debito no fechamento) e o estorno do cancelamento.
 
   listCustomerCreditMovements(customerId: string, limit?: number): CreditMovementRow[] {
     this.assertDesktopAccess();
     return new CreditService(this.database).listMovements(customerId, limit ?? 100);
+  }
+
+  /**
+   * Categorias e conta corrente que identificam o adiantamento no OMIE. Vazio =
+   * o KyberRock descobre pela descricao ("Adiantamento de Clientes").
+   */
+  getOmieAdvanceConfig(): OmieAdvanceConfig {
+    this.assertDesktopAccess();
+    return readOmieAdvanceConfig(this.database);
+  }
+
+  /**
+   * Fixa a configuracao do adiantamento. Uma vez definida na tela, ela vence a
+   * deteccao automatica — e o caminho para pedreiras que renomearam a categoria.
+   */
+  setOmieAdvanceConfig(patch: {
+    categoryCodes?: string[];
+    accountCode?: number | null;
+    accountName?: string | null;
+  }): OmieAdvanceConfig {
+    this.assertDesktopAccess();
+    const categoryCodes = Array.isArray(patch.categoryCodes) ? patch.categoryCodes : undefined;
+    const manual =
+      (categoryCodes?.length ?? 0) > 0 ||
+      (patch.accountCode !== undefined && patch.accountCode !== null);
+    return writeOmieAdvanceConfig(this.database, {
+      ...(categoryCodes ? { categoryCodes } : {}),
+      ...(patch.accountCode !== undefined ? { accountCode: patch.accountCode } : {}),
+      ...(patch.accountName !== undefined ? { accountName: patch.accountName } : {}),
+      manual
+    });
+  }
+
+  /**
+   * Traz do OMIE os adiantamentos dos clientes (dinheiro ja depositado) e os
+   * espelha no extrato de credito, de onde as compras da balanca sao abatidas.
+   * O financeiro continua sendo feito no OMIE: aqui nada e criado la.
+   */
+  async syncCustomerAdvancesFromOmie(
+    options: { fullRescan?: boolean } = {}
+  ): Promise<CustomerAdvancesSyncResult> {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    const result = await syncCustomerAdvancesFromCloud(this.database, identity, options);
+    this.recordTechnicalLog("info", "omie-sync", "Adiantamentos do OMIE sincronizados.", {
+      advances: result.advances,
+      imported: result.imported,
+      adjusted: result.adjusted,
+      unknownCustomers: result.unknownCustomers,
+      pages: result.pages,
+      finished: result.finished
+    });
+    return result;
   }
 
   createQuotation(input: Omit<CreateQuotationInput, "companyId">): QuotationRow {
@@ -2467,6 +2570,12 @@ export class DesktopRuntime {
     const result = updateCustomer(this.database, id, input, new Date(), {
       overrideOmieFields: options?.overrideOmieFields
     });
+    // O job do fechamento carrega um SNAPSHOT do cadastro montado no close. Sem
+    // reconstruir o payload aqui, corrigir o cliente (razao social, e-mail, endereco...)
+    // nao muda nada no que sobe ao OMIE: o job segue parado com o dado antigo e repete a
+    // mesma recusa, dando a impressao de que a edicao "nao salvou". Rearma os fechamentos
+    // que estao presos por causa deste cliente para eles sairem com o cadastro corrigido.
+    rearmOmieBillingForCustomer(this.database, id);
     this.cacheStore.invalidate("customer", identity.companyId);
     this.cacheStore.invalidate("carrier", identity.companyId);
     return result;
@@ -2544,6 +2653,9 @@ export class DesktopRuntime {
 
       try {
         updateCustomer(this.database, customer.id, patch, now, { overrideOmieFields: true });
+        // Mesmo motivo do updateCustomer manual: o fechamento parado precisa do payload
+        // reconstruido para aproveitar o cadastro que a Receita acabou de completar.
+        rearmOmieBillingForCustomer(this.database, customer.id, now);
         summary.updated += 1;
       } catch {
         summary.failed += 1;
@@ -2635,6 +2747,25 @@ export class DesktopRuntime {
     });
     this.cacheStore.invalidate("payment_method", identity.companyId);
     return result;
+  }
+
+  // Carteira: vendas fechadas na forma "em carteira", aguardando o fechamento que
+  // define como o cliente vai pagar.
+  getWalletReport(query: WalletQuery = {}): WalletReport {
+    this.assertDesktopAccess();
+    return getWalletReport(this.database, query);
+  }
+
+  /** Registra o fechamento e devolve quantas vendas foram fechadas. */
+  settleWalletOperations(input: SettleWalletInput): number {
+    this.assertDesktopAccess();
+    return settleWalletOperations(this.database, input);
+  }
+
+  /** Desfaz o fechamento e devolve quantas vendas voltaram para a carteira. */
+  reopenWalletOperations(operationIds: string[]): number {
+    this.assertDesktopAccess();
+    return reopenWalletOperations(this.database, operationIds);
   }
 
   listAccounts(): unknown {
@@ -2755,6 +2886,14 @@ export class DesktopRuntime {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
     const result = createVehicle(this.database, { ...input, companyId: identity.companyId });
+    // O seletor de placa da entrada lista os veiculos VINCULADOS a transportadora
+    // (vehicle_carriers), nao os que tem carrier_id. Sem criar o vinculo aqui, a placa
+    // cadastrada pelo modal da Nova entrada — que ja vem com a transportadora da tela —
+    // nao aparecia na lista de jeito nenhum enquanto aquela transportadora estivesse
+    // selecionada.
+    if (input.carrierId) {
+      linkVehicleToCarrier(this.database, (result as { id: string }).id, input.carrierId);
+    }
     this.cacheStore.invalidate("vehicle", identity.companyId);
     return result;
   }
@@ -2869,10 +3008,7 @@ export class DesktopRuntime {
    * (ou trocar) o padrao do cliente, e o formulario aberto precisa saber disso para
    * nao regravar o valor antigo ao salvar.
    */
-  linkCustomerCarrier(
-    customerId: string,
-    carrierId: string
-  ): { defaultCarrierId: string | null } {
+  linkCustomerCarrier(customerId: string, carrierId: string): { defaultCarrierId: string | null } {
     this.assertDesktopAccess();
     linkCustomerCarrier(this.database, customerId, carrierId);
     return { defaultCarrierId: getCustomerDefaultCarrierId(this.database, customerId) };
@@ -3323,7 +3459,10 @@ export class DesktopRuntime {
       options.onProgress?.(progress);
 
       const totalBefore =
-        before.customersPage + before.productsPage + before.paymentTermsPage + before.categoriesPage;
+        before.customersPage +
+        before.productsPage +
+        before.paymentTermsPage +
+        before.categoriesPage;
       const totalAfter =
         after.customersPage + after.productsPage + after.paymentTermsPage + after.categoriesPage;
       const noProgress =

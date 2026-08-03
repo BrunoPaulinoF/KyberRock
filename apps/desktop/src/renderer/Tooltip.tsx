@@ -38,14 +38,42 @@ const arrowStyle = (placement: TooltipPlacement): CSSProperties => {
   };
   switch (placement) {
     case "bottom":
-      return { ...base, top: -6, left: "50%", transform: "translateX(-50%)", borderWidth: "0 6px 6px 6px", borderColor: "transparent transparent var(--kr-tooltip-border) transparent" };
+      return {
+        ...base,
+        top: -6,
+        left: "50%",
+        transform: "translateX(-50%)",
+        borderWidth: "0 6px 6px 6px",
+        borderColor: "transparent transparent var(--kr-tooltip-border) transparent"
+      };
     case "left":
-      return { ...base, right: -6, top: "50%", transform: "translateY(-50%)", borderWidth: "6px 0 6px 6px", borderColor: "transparent transparent transparent var(--kr-tooltip-border)" };
+      return {
+        ...base,
+        right: -6,
+        top: "50%",
+        transform: "translateY(-50%)",
+        borderWidth: "6px 0 6px 6px",
+        borderColor: "transparent transparent transparent var(--kr-tooltip-border)"
+      };
     case "right":
-      return { ...base, left: -6, top: "50%", transform: "translateY(-50%)", borderWidth: "6px 6px 6px 0", borderColor: "transparent var(--kr-tooltip-border) transparent transparent" };
+      return {
+        ...base,
+        left: -6,
+        top: "50%",
+        transform: "translateY(-50%)",
+        borderWidth: "6px 6px 6px 0",
+        borderColor: "transparent var(--kr-tooltip-border) transparent transparent"
+      };
     case "top":
     default:
-      return { ...base, bottom: -6, left: "50%", transform: "translateX(-50%)", borderWidth: "6px 6px 0 6px", borderColor: "var(--kr-tooltip-border) transparent transparent transparent" };
+      return {
+        ...base,
+        bottom: -6,
+        left: "50%",
+        transform: "translateX(-50%)",
+        borderWidth: "6px 6px 0 6px",
+        borderColor: "var(--kr-tooltip-border) transparent transparent transparent"
+      };
   }
 };
 
@@ -60,7 +88,8 @@ function resolvePosition(
   let y = 0;
 
   const fitsTop = rect.top - tooltipSize.height - TOOLTIP_GAP >= VIEWPORT_PADDING;
-  const fitsBottom = rect.bottom + tooltipSize.height + TOOLTIP_GAP <= innerHeight - VIEWPORT_PADDING;
+  const fitsBottom =
+    rect.bottom + tooltipSize.height + TOOLTIP_GAP <= innerHeight - VIEWPORT_PADDING;
   const fitsLeft = rect.left - tooltipSize.width - TOOLTIP_GAP >= VIEWPORT_PADDING;
   const fitsRight = rect.right + tooltipSize.width + TOOLTIP_GAP <= innerWidth - VIEWPORT_PADDING;
 
@@ -106,7 +135,11 @@ export function Tooltip({
   children
 }: TooltipProps) {
   const [open, setOpen] = useState(false);
-  const [coords, setCoords] = useState<{ x: number; y: number; placement: TooltipPlacement } | null>(null);
+  const [coords, setCoords] = useState<{
+    x: number;
+    y: number;
+    placement: TooltipPlacement;
+  } | null>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const showTimerRef = useRef<number | null>(null);
@@ -223,7 +256,9 @@ export function Tooltip({
             fontWeight: 500,
             boxShadow: "0 8px 24px rgba(30, 58, 138, 0.45)",
             pointerEvents: "none",
-            ...(coords ? placementStyle(coords.placement, coords.x, coords.y) : { top: -9999, left: -9999 })
+            ...(coords
+              ? placementStyle(coords.placement, coords.x, coords.y)
+              : { top: -9999, left: -9999 })
           }}
         >
           <div>{content}</div>
@@ -299,7 +334,8 @@ export function HelpTooltip({
         onMouseEnter={(event) => {
           event.currentTarget.style.opacity = "0.9";
           event.currentTarget.style.transform = "translateY(-1px) scale(1.08)";
-          event.currentTarget.style.background = "color-mix(in srgb, var(--kr-chart-1) 12%, transparent)";
+          event.currentTarget.style.background =
+            "color-mix(in srgb, var(--kr-chart-1) 12%, transparent)";
         }}
         onMouseLeave={(event) => {
           event.currentTarget.style.opacity = "0.42";

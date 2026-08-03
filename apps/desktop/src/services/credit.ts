@@ -1,3 +1,13 @@
+/**
+ * Extrato de credito do cliente.
+ *
+ * O credito (adiantamento) e dinheiro que o cliente depositou e que o
+ * financeiro registra no OMIE: ele entra aqui apenas pelo espelho da
+ * sincronizacao (`source = 'omie'`), nunca por digitacao no KyberRock. O que
+ * nasce aqui e o consumo: a compra debita no fechamento e o cancelamento
+ * estorna. Assim o saldo que autoriza a venda e sempre o mesmo dos dois lados.
+ */
+
 import { randomUUID } from "node:crypto";
 
 import type { DesktopDatabase } from "../database/sqlite.js";
@@ -27,6 +37,10 @@ export interface CreditMovementRow {
   amount_cents: number;
   balance_after_cents: number;
   reason: string | null;
+  /** "omie" = adiantamento espelhado do financeiro; "local" = lancado aqui. */
+  source: string;
+  /** codigo_lancamento_omie do titulo a receber que originou o adiantamento. */
+  omie_title_id: number | null;
   created_at: string;
 }
 
@@ -55,6 +69,14 @@ export interface CustomerCreditSummary extends CustomerCreditSettings {
   usedCents: number;
   /** Credito disponivel para novas vendas; `null` = sem teto cadastrado. */
   availableCents: number | null;
+  /**
+   * Quanto do extrato veio do financeiro do OMIE (adiantamentos depositados
+   * pelo cliente, ja liquido dos que foram cancelados la). As compras da balanca
+   * sao abatidas desse dinheiro; o valor nao e editavel aqui.
+   */
+  omieAdvanceCents: number;
+  /** Quando os adiantamentos foram conferidos com o OMIE pela ultima vez. */
+  omieSyncedAt: string | null;
 }
 
 export class CreditService {
@@ -62,9 +84,7 @@ export class CreditService {
 
   getBalance(customerId: string): number {
     const row = this.db
-      .prepare(
-        `SELECT balance_cents FROM customer_credit_balances WHERE customer_id = ?`
-      )
+      .prepare(`SELECT balance_cents FROM customer_credit_balances WHERE customer_id = ?`)
       .get(customerId) as { balance_cents: number } | undefined;
     return row?.balance_cents ?? 0;
   }
@@ -105,12 +125,57 @@ export class CreditService {
       creditAccountEnabled: false
     };
     const balanceCents = this.getBalance(customerId);
+    const advance = this.getOmieAdvance(customerId);
     return {
       ...settings,
       balanceCents,
       usedCents: balanceCents < 0 ? -balanceCents : 0,
-      availableCents: availableCreditCents(settings, balanceCents)
+      availableCents: availableCreditCents(settings, balanceCents),
+      omieAdvanceCents: advance.cents,
+      omieSyncedAt: advance.syncedAt
     };
+  }
+
+  /**
+   * Quanto do adiantamento ainda pode ser amortizado no OMIE.
+   *
+   * E o total espelhado menos o que as operacoes anteriores ja consumiram (ou
+   * ja reservaram e ainda estao na fila). Sem esse desconto, duas vendas no
+   * mesmo dia mandariam baixar no OMIE mais adiantamento do que existe la.
+   */
+  getAdvanceAvailableToSettleCents(customerId: string): number {
+    const mirrored = this.getOmieAdvance(customerId).cents;
+    if (mirrored <= 0) return 0;
+    const row = this.db
+      .prepare(
+        `SELECT COALESCE(SUM(MAX(omie_advance_settle_cents, omie_advance_settled_cents)), 0) AS cents
+         FROM weighing_operations
+         WHERE customer_id = ? AND status != 'cancelled' AND deleted_at IS NULL`
+      )
+      .get(customerId) as { cents: number } | undefined;
+    return Math.max(0, mirrored - (row?.cents ?? 0));
+  }
+
+  /**
+   * Total espelhado do financeiro do OMIE e a data do ultimo espelhamento. Soma
+   * so os lancamentos de origem "omie" (adiantamentos e seus acertos), entao um
+   * cancelamento la reduz o valor aqui sem mexer no que foi lancado localmente.
+   */
+  getOmieAdvance(customerId: string): { cents: number; syncedAt: string | null } {
+    const row = this.db
+      .prepare(
+        `SELECT COALESCE(SUM(
+           CASE
+             WHEN movement_type IN ('debit_product', 'debit_freight') THEN -amount_cents
+             ELSE amount_cents
+           END
+         ), 0) AS cents,
+         MAX(created_at) AS synced_at
+         FROM customer_credit_movements
+         WHERE customer_id = ? AND source = 'omie'`
+      )
+      .get(customerId) as { cents: number; synced_at: string | null } | undefined;
+    return { cents: row?.cents ?? 0, syncedAt: row?.synced_at ?? null };
   }
 
   /**
@@ -119,16 +184,13 @@ export class CreditService {
    * O disponivel e `saldo do extrato + limite de credito`: o limite cadastrado no
    * cliente e o que efetivamente banca a venda no fiado, e o saldo (que fica
    * NEGATIVO conforme as vendas consomem o limite) registra quanto ja foi usado.
-   * Quando o cliente paga a fatura, um lancamento de credito devolve o saldo e
-   * libera o limite de novo.
+   * O saldo so volta a subir quando o financeiro registra um adiantamento no
+   * OMIE e a sincronizacao espelha o credito aqui.
    *
    * Cliente sem limite cadastrado nao tem teto — exceto no modo pre-pago, em que o
    * teto e o proprio saldo depositado.
    */
-  validateDebit(
-    customerId: string,
-    requiredCents: number
-  ): CreditValidationResult {
+  validateDebit(customerId: string, requiredCents: number): CreditValidationResult {
     const settings = this.getSettings(customerId);
     const balance = this.getBalance(customerId);
     const available = availableCreditCents(settings, balance);
@@ -237,50 +299,7 @@ export class CreditService {
     apply();
   }
 
-  applyCredit(
-    customerId: string,
-    amountCents: number,
-    reason: string | null = null,
-    now: Date = new Date()
-  ): void {
-    if (amountCents <= 0) return;
-    const companyId = this.getCustomerCompanyId(customerId);
-    const timestamp = now.toISOString();
-    this.recordMovement(
-      companyId,
-      customerId,
-      null,
-      "credit",
-      amountCents,
-      reason,
-      timestamp
-    );
-  }
-
-  applyManualAdjustment(
-    customerId: string,
-    amountCents: number,
-    reason: string,
-    now: Date = new Date()
-  ): void {
-    if (amountCents === 0) return;
-    const companyId = this.getCustomerCompanyId(customerId);
-    const timestamp = now.toISOString();
-    this.recordMovement(
-      companyId,
-      customerId,
-      null,
-      "manual_adjustment",
-      amountCents,
-      reason,
-      timestamp
-    );
-  }
-
-  listMovements(
-    customerId: string,
-    limit: number = 100
-  ): CreditMovementRow[] {
+  listMovements(customerId: string, limit: number = 100): CreditMovementRow[] {
     return this.db
       .prepare(
         `SELECT * FROM customer_credit_movements
@@ -297,10 +316,7 @@ export class CreditService {
    * retry) nao debita nem estorna o credito do cliente de novo. Defesa em profundidade — o
    * fluxo normal ja e barrado pela guarda de status em close/cancelWeighingOperation.
    */
-  private hasMovementForOperation(
-    operationId: string,
-    movementType: CreditMovementType
-  ): boolean {
+  private hasMovementForOperation(operationId: string, movementType: CreditMovementType): boolean {
     const row = this.db
       .prepare(
         `SELECT 1 FROM customer_credit_movements
@@ -354,9 +370,9 @@ export class CreditService {
   }
 
   private getCustomerCompanyId(customerId: string): string {
-    const row = this.db
-      .prepare(`SELECT company_id FROM customers WHERE id = ?`)
-      .get(customerId) as { company_id: string } | undefined;
+    const row = this.db.prepare(`SELECT company_id FROM customers WHERE id = ?`).get(customerId) as
+      | { company_id: string }
+      | undefined;
     if (!row) throw new Error(`Customer ${customerId} not found.`);
     return row.company_id;
   }

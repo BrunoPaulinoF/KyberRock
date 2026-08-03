@@ -4,10 +4,7 @@ import { runDesktopMigrations } from "../database/migrate.js";
 import { openDesktopDatabase } from "../database/sqlite.js";
 import type { DesktopDatabase } from "../database/sqlite.js";
 import type { OmieClient } from "@kyberrock/omie-client";
-import {
-  createOmieClient,
-  OmieSyncService
-} from "./omie-sync";
+import { createOmieClient, OmieSyncService } from "./omie-sync";
 import { ensureDefaultPaymentMethods } from "./payment-methods.js";
 import { ensureDefaultAccounts } from "./accounts.js";
 
@@ -22,9 +19,7 @@ describe("createOmieClient", () => {
   });
 
   it("throws when credentials are empty", () => {
-    expect(() =>
-      createOmieClient({ appKey: "", appSecret: "secret" })
-    ).toThrow();
+    expect(() => createOmieClient({ appKey: "", appSecret: "secret" })).toThrow();
   });
 });
 
@@ -52,7 +47,12 @@ describe("OmieSyncService", () => {
 
     const service = new OmieSyncService(client, db);
 
-    vi.spyOn((service as unknown as Record<string, unknown>).customersService as unknown as { listAll: () => Promise<unknown[]> }, "listAll").mockResolvedValue([
+    vi.spyOn(
+      (service as unknown as Record<string, unknown>).customersService as unknown as {
+        listAll: () => Promise<unknown[]>;
+      },
+      "listAll"
+    ).mockResolvedValue([
       {
         id: 123,
         name: "ACME Ltda",
@@ -88,8 +88,12 @@ describe("OmieSyncService", () => {
 
     const service = new OmieSyncService(client, db);
 
-     
-    vi.spyOn((service as unknown as Record<string, unknown>).productsService as unknown as { listAll: () => Promise<unknown[]> }, "listAll").mockResolvedValue([
+    vi.spyOn(
+      (service as unknown as Record<string, unknown>).productsService as unknown as {
+        listAll: () => Promise<unknown[]>;
+      },
+      "listAll"
+    ).mockResolvedValue([
       {
         id: 456,
         description: "Brita 0",
@@ -156,9 +160,9 @@ describe("OmieSyncService", () => {
       expect(
         db.prepare("SELECT COUNT(*) FROM customers WHERE deleted_at IS NULL").pluck().get()
       ).toBe(1);
-      expect(
-        db.prepare("SELECT id FROM customers WHERE deleted_at IS NULL").pluck().get()
-      ).toBe("local-uuid");
+      expect(db.prepare("SELECT id FROM customers WHERE deleted_at IS NULL").pluck().get()).toBe(
+        "local-uuid"
+      );
       expect(
         db.prepare("SELECT COUNT(*) FROM carriers WHERE deleted_at IS NULL").pluck().get()
       ).toBe(1);
@@ -203,7 +207,9 @@ describe("OmieSyncService", () => {
 
       const service = new OmieSyncService(createMockClient(), db);
       vi.spyOn(
-        (service as unknown as Record<string, unknown>).customersService as { listAll: () => Promise<unknown[]> },
+        (service as unknown as Record<string, unknown>).customersService as {
+          listAll: () => Promise<unknown[]>;
+        },
         "listAll"
       ).mockResolvedValue([
         {
@@ -247,39 +253,94 @@ describe("OmieSyncService", () => {
           name: "Fornecedor Sem Tag Ltda",
           isActive: true,
           tags: { tags: ["Fornecedor"] }
-        },
+        }
       ]);
       const result = await service.rebuildCustomersAndCarriersFromOmie("company-1");
 
       expect(result).toEqual({ customersPulled: 2, suppliersSynced: 2 });
       // 2 clientes OMIE (101, 303) + 1 cliente local preservado.
       expect(
-        db.prepare("SELECT COUNT(*) FROM customers WHERE company_id = ? AND deleted_at IS NULL").pluck().get("company-1")
+        db
+          .prepare("SELECT COUNT(*) FROM customers WHERE company_id = ? AND deleted_at IS NULL")
+          .pluck()
+          .get("company-1")
       ).toBe(3);
       // 2 transportadoras OMIE (202, 303) + 1 transportadora local preservada.
       expect(
-        db.prepare("SELECT COUNT(*) FROM carriers WHERE company_id = ? AND deleted_at IS NULL").pluck().get("company-1")
+        db
+          .prepare("SELECT COUNT(*) FROM carriers WHERE company_id = ? AND deleted_at IS NULL")
+          .pluck()
+          .get("company-1")
       ).toBe(3);
       // Registros locais NAO sao apagados na reconciliacao.
-      expect(db.prepare("SELECT deleted_at IS NOT NULL FROM customers WHERE id = 'local-customer'").pluck().get()).toBe(0);
-      expect(db.prepare("SELECT deleted_at IS NOT NULL FROM carriers WHERE id = 'local-carrier'").pluck().get()).toBe(0);
-      // Relacoes de uma transportadora local sao preservadas (nao apontam para transportadora OMIE removida).
-      expect(db.prepare("SELECT carrier_id FROM vehicles WHERE id = 'vehicle-1'").pluck().get()).toBe("local-carrier");
-      expect(db.prepare("SELECT deleted_at IS NOT NULL FROM customer_carriers WHERE id = 'cc-1'").pluck().get()).toBe(0);
-      expect(db.prepare("SELECT deleted_at IS NOT NULL FROM vehicle_carriers WHERE id = 'vc-1'").pluck().get()).toBe(0);
-      expect(db.prepare("SELECT deleted_at IS NOT NULL FROM driver_carriers WHERE id = 'dc-1'").pluck().get()).toBe(0);
       expect(
-        db.prepare("SELECT email FROM customers WHERE id = 'omie_101' AND deleted_at IS NULL").pluck().get()
+        db
+          .prepare("SELECT deleted_at IS NOT NULL FROM customers WHERE id = 'local-customer'")
+          .pluck()
+          .get()
+      ).toBe(0);
+      expect(
+        db
+          .prepare("SELECT deleted_at IS NOT NULL FROM carriers WHERE id = 'local-carrier'")
+          .pluck()
+          .get()
+      ).toBe(0);
+      // Relacoes de uma transportadora local sao preservadas (nao apontam para transportadora OMIE removida).
+      expect(
+        db.prepare("SELECT carrier_id FROM vehicles WHERE id = 'vehicle-1'").pluck().get()
+      ).toBe("local-carrier");
+      expect(
+        db
+          .prepare("SELECT deleted_at IS NOT NULL FROM customer_carriers WHERE id = 'cc-1'")
+          .pluck()
+          .get()
+      ).toBe(0);
+      expect(
+        db
+          .prepare("SELECT deleted_at IS NOT NULL FROM vehicle_carriers WHERE id = 'vc-1'")
+          .pluck()
+          .get()
+      ).toBe(0);
+      expect(
+        db
+          .prepare("SELECT deleted_at IS NOT NULL FROM driver_carriers WHERE id = 'dc-1'")
+          .pluck()
+          .get()
+      ).toBe(0);
+      expect(
+        db
+          .prepare("SELECT email FROM customers WHERE id = 'omie_101' AND deleted_at IS NULL")
+          .pluck()
+          .get()
       ).toBe("cliente@example.com");
       expect(
-        db.prepare("SELECT city FROM carriers WHERE id = 'omie_supplier_202' AND deleted_at IS NULL").pluck().get()
+        db
+          .prepare(
+            "SELECT city FROM carriers WHERE id = 'omie_supplier_202' AND deleted_at IS NULL"
+          )
+          .pluck()
+          .get()
       ).toBe("Campinas");
-      expect(db.prepare("SELECT id FROM customers WHERE id = 'omie_303' AND deleted_at IS NULL").pluck().get()).toBe("omie_303");
       expect(
-        db.prepare("SELECT id FROM carriers WHERE id = 'omie_supplier_303' AND deleted_at IS NULL").pluck().get()
+        db
+          .prepare("SELECT id FROM customers WHERE id = 'omie_303' AND deleted_at IS NULL")
+          .pluck()
+          .get()
+      ).toBe("omie_303");
+      expect(
+        db
+          .prepare("SELECT id FROM carriers WHERE id = 'omie_supplier_303' AND deleted_at IS NULL")
+          .pluck()
+          .get()
       ).toBe("omie_supplier_303");
-      expect(db.prepare("SELECT id FROM customers WHERE id = 'omie_404' AND deleted_at IS NULL").get()).toBeUndefined();
-      expect(db.prepare("SELECT id FROM carriers WHERE id = 'omie_supplier_404' AND deleted_at IS NULL").get()).toBeUndefined();
+      expect(
+        db.prepare("SELECT id FROM customers WHERE id = 'omie_404' AND deleted_at IS NULL").get()
+      ).toBeUndefined();
+      expect(
+        db
+          .prepare("SELECT id FROM carriers WHERE id = 'omie_supplier_404' AND deleted_at IS NULL")
+          .get()
+      ).toBeUndefined();
     } finally {
       db.close();
     }
@@ -328,8 +389,12 @@ describe("OmieSyncService", () => {
           tags: [{ tag: "transportadora" }]
         })
       );
-      expect(db.prepare("SELECT omie_customer_id FROM carriers WHERE id = 'carrier-1'").pluck().get()).toBe(654);
-      expect(db.prepare("SELECT needs_push FROM carriers WHERE id = 'carrier-1'").pluck().get()).toBe(0);
+      expect(
+        db.prepare("SELECT omie_customer_id FROM carriers WHERE id = 'carrier-1'").pluck().get()
+      ).toBe(654);
+      expect(
+        db.prepare("SELECT needs_push FROM carriers WHERE id = 'carrier-1'").pluck().get()
+      ).toBe(0);
     } finally {
       db.close();
     }
@@ -341,7 +406,12 @@ describe("OmieSyncService", () => {
 
     const service = new OmieSyncService(client, db);
 
-    vi.spyOn((service as unknown as Record<string, unknown>).productsService as unknown as { listAll: () => Promise<unknown[]> }, "listAll").mockResolvedValue([
+    vi.spyOn(
+      (service as unknown as Record<string, unknown>).productsService as unknown as {
+        listAll: () => Promise<unknown[]>;
+      },
+      "listAll"
+    ).mockResolvedValue([
       {
         id: 457,
         description: "Produto nao acabado",
@@ -391,8 +461,9 @@ describe("OmieSyncService", () => {
       const service = new OmieSyncService(createMockClient(), db);
       const listAll = vi
         .spyOn(
-          (service as unknown as Record<string, unknown>)
-            .paymentMethodsService as { listAll: () => Promise<unknown[]> },
+          (service as unknown as Record<string, unknown>).paymentMethodsService as {
+            listAll: () => Promise<unknown[]>;
+          },
           "listAll"
         )
         .mockResolvedValue([
@@ -407,19 +478,28 @@ describe("OmieSyncService", () => {
       // "90" entra como forma nova do OMIE.
       expect(first).toEqual({ fetched: 3, created: 1, updated: 0, skipped: 2 });
       expect(
-        db.prepare(
-          "SELECT omie_code FROM payment_methods WHERE company_id = 'company-1' AND code = 'cash'"
-        ).pluck().get()
+        db
+          .prepare(
+            "SELECT omie_code FROM payment_methods WHERE company_id = 'company-1' AND code = 'cash'"
+          )
+          .pluck()
+          .get()
       ).toBe("01");
       expect(
-        db.prepare(
-          "SELECT alias FROM payment_methods WHERE company_id = 'company-1' AND code = 'pix'"
-        ).pluck().get()
+        db
+          .prepare(
+            "SELECT alias FROM payment_methods WHERE company_id = 'company-1' AND code = 'pix'"
+          )
+          .pluck()
+          .get()
       ).toBe("PIX rapidinho");
       expect(
-        db.prepare(
-          "SELECT name FROM payment_methods WHERE company_id = 'company-1' AND omie_code = '90'"
-        ).pluck().get()
+        db
+          .prepare(
+            "SELECT name FROM payment_methods WHERE company_id = 'company-1' AND omie_code = '90'"
+          )
+          .pluck()
+          .get()
       ).toBe("Sem pagamento");
 
       const countAfterFirst = db
@@ -431,7 +511,10 @@ describe("OmieSyncService", () => {
       const second = await service.syncPaymentMethods("company-1");
       expect(second).toEqual({ fetched: 3, created: 0, updated: 0, skipped: 3 });
       expect(
-        db.prepare("SELECT COUNT(*) FROM payment_methods WHERE company_id = 'company-1'").pluck().get()
+        db
+          .prepare("SELECT COUNT(*) FROM payment_methods WHERE company_id = 'company-1'")
+          .pluck()
+          .get()
       ).toBe(countAfterFirst);
       expect(listAll).toHaveBeenCalledTimes(2);
     } finally {
@@ -451,8 +534,9 @@ describe("OmieSyncService", () => {
 
       const service = new OmieSyncService(createMockClient(), db);
       vi.spyOn(
-        (service as unknown as Record<string, unknown>)
-          .parcelasService as { listAll: () => Promise<unknown[]> },
+        (service as unknown as Record<string, unknown>).parcelasService as {
+          listAll: () => Promise<unknown[]>;
+        },
         "listAll"
       ).mockResolvedValue([
         {
@@ -484,7 +568,10 @@ describe("OmieSyncService", () => {
       const first = await service.syncPaymentConditions("company-1");
       expect(first.fetched).toBe(2);
       expect(
-        db.prepare("SELECT COUNT(*) FROM omie_payment_terms WHERE company_id = 'company-1'").pluck().get()
+        db
+          .prepare("SELECT COUNT(*) FROM omie_payment_terms WHERE company_id = 'company-1'")
+          .pluck()
+          .get()
       ).toBe(2);
       expect(
         db
@@ -496,7 +583,10 @@ describe("OmieSyncService", () => {
       // Re-sincronizar nao duplica (upsert por company_id + code).
       await service.syncPaymentConditions("company-1");
       expect(
-        db.prepare("SELECT COUNT(*) FROM omie_payment_terms WHERE company_id = 'company-1'").pluck().get()
+        db
+          .prepare("SELECT COUNT(*) FROM omie_payment_terms WHERE company_id = 'company-1'")
+          .pluck()
+          .get()
       ).toBe(2);
     } finally {
       db.close();
@@ -516,8 +606,9 @@ describe("OmieSyncService", () => {
 
       const service = new OmieSyncService(createMockClient(), db);
       vi.spyOn(
-        (service as unknown as Record<string, unknown>)
-          .checkingAccountsService as { listAll: () => Promise<unknown[]> },
+        (service as unknown as Record<string, unknown>).checkingAccountsService as {
+          listAll: () => Promise<unknown[]>;
+        },
         "listAll"
       ).mockResolvedValue([
         { code: 111, integrationCode: null, name: "caixinha", type: null, isActive: true },
@@ -529,22 +620,29 @@ describe("OmieSyncService", () => {
       // "Caixinha" (seed) adota o codigo por nome; "Home Cash" entra como conta nova.
       expect(first).toEqual({ fetched: 2, created: 1, updated: 1, skipped: 0 });
       expect(
-        db.prepare(
-          "SELECT omie_code FROM accounts WHERE company_id = 'company-1' AND code = 'caixinha'"
-        ).pluck().get()
+        db
+          .prepare(
+            "SELECT omie_code FROM accounts WHERE company_id = 'company-1' AND code = 'caixinha'"
+          )
+          .pluck()
+          .get()
       ).toBe("111");
       expect(
-        db.prepare(
-          "SELECT name FROM accounts WHERE company_id = 'company-1' AND omie_code = '222'"
-        ).pluck().get()
+        db
+          .prepare("SELECT name FROM accounts WHERE company_id = 'company-1' AND omie_code = '222'")
+          .pluck()
+          .get()
       ).toBe("Home Cash");
 
       const second = await service.syncCheckingAccounts("company-1");
       expect(second).toEqual({ fetched: 2, created: 0, updated: 0, skipped: 2 });
       expect(
-        db.prepare(
-          "SELECT COUNT(*) FROM accounts WHERE company_id = 'company-1' AND deleted_at IS NULL"
-        ).pluck().get()
+        db
+          .prepare(
+            "SELECT COUNT(*) FROM accounts WHERE company_id = 'company-1' AND deleted_at IS NULL"
+          )
+          .pluck()
+          .get()
       ).toBe(4); // caixinha, omie_cash, getnet + Home Cash
     } finally {
       db.close();
@@ -564,8 +662,9 @@ describe("OmieSyncService", () => {
 
       const service = new OmieSyncService(createMockClient(), db);
       vi.spyOn(
-        (service as unknown as Record<string, unknown>)
-          .checkingAccountsService as { listAll: () => Promise<unknown[]> },
+        (service as unknown as Record<string, unknown>).checkingAccountsService as {
+          listAll: () => Promise<unknown[]>;
+        },
         "listAll"
       ).mockResolvedValue([
         { code: 111, integrationCode: null, name: "Caixinha", type: null, isActive: true },
@@ -588,7 +687,9 @@ describe("OmieSyncService", () => {
       expect(codeFor("getnet")).toBe("333");
       expect(
         db
-          .prepare("SELECT COUNT(*) FROM accounts WHERE company_id = 'company-1' AND deleted_at IS NULL")
+          .prepare(
+            "SELECT COUNT(*) FROM accounts WHERE company_id = 'company-1' AND deleted_at IS NULL"
+          )
           .pluck()
           .get()
       ).toBe(3);
@@ -625,8 +726,9 @@ describe("OmieSyncService", () => {
 
       const service = new OmieSyncService(createMockClient(), db);
       vi.spyOn(
-        (service as unknown as Record<string, unknown>)
-          .checkingAccountsService as { listAll: () => Promise<unknown[]> },
+        (service as unknown as Record<string, unknown>).checkingAccountsService as {
+          listAll: () => Promise<unknown[]>;
+        },
         "listAll"
       ).mockResolvedValue([
         { code: 222, integrationCode: null, name: "OMIECASH", type: null, isActive: true }
@@ -654,6 +756,107 @@ describe("OmieSyncService", () => {
       expect(
         db.prepare("SELECT account_id FROM payment_methods WHERE id = 'pm-boleto'").pluck().get()
       ).toBe(seedId);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("syncVehicles brings the plate UF from the OMIE vehicle registry", async () => {
+    const db = openDesktopDatabase({ databasePath: ":memory:" });
+
+    try {
+      runDesktopMigrations(db);
+      db.exec(`
+        INSERT INTO companies (id, legal_name, trade_name, created_at, updated_at)
+        VALUES ('company-1', 'Empresa Teste', 'Empresa', datetime('now'), datetime('now'));
+      `);
+      // Placa ja cadastrada localmente (com tracinho, como o operador digitou) e ainda
+      // sem UF: e ela que o sync precisa completar, sem criar uma linha nova.
+      db.prepare(
+        `INSERT INTO vehicles (id, company_id, plate, plate_normalized, is_active, created_at, updated_at)
+         VALUES ('veh-local', 'company-1', 'ABC-1D23', 'ABC-1D23', 1, datetime('now'), datetime('now'))`
+      ).run();
+
+      const service = new OmieSyncService(createMockClient(), db);
+      const listAll = vi
+        .spyOn(
+          (service as unknown as Record<string, unknown>).vehiclesService as {
+            listAll: () => Promise<unknown[]>;
+          },
+          "listAll"
+        )
+        .mockResolvedValue([
+          { id: 11, plate: "ABC1D23", plateState: "MG", description: "Volvo FH", isActive: true },
+          { id: 22, plate: "XYZ4A56", plateState: "SP", description: null, isActive: true }
+        ]);
+
+      const first = await service.syncVehicles("company-1");
+      // A placa local ganhou a UF; a que so existia no OMIE entrou no cadastro.
+      expect(first).toEqual({ fetched: 2, created: 1, updated: 1, skipped: 0 });
+      expect(
+        db.prepare("SELECT plate_state FROM vehicles WHERE id = 'veh-local'").pluck().get()
+      ).toBe("MG");
+      expect(
+        db.prepare("SELECT omie_vehicle_id FROM vehicles WHERE id = 'veh-local'").pluck().get()
+      ).toBe(11);
+      expect(
+        db
+          .prepare(
+            "SELECT plate_state FROM vehicles WHERE company_id = 'company-1' AND plate = 'XYZ4A56'"
+          )
+          .pluck()
+          .get()
+      ).toBe("SP");
+      expect(
+        db
+          .prepare(
+            "SELECT source FROM vehicles WHERE company_id = 'company-1' AND plate = 'XYZ4A56'"
+          )
+          .pluck()
+          .get()
+      ).toBe("omie");
+
+      // Segunda passada nao mexe em nada (idempotente).
+      const second = await service.syncVehicles("company-1");
+      expect(second).toEqual({ fetched: 2, created: 0, updated: 0, skipped: 2 });
+      expect(
+        db.prepare("SELECT COUNT(*) FROM vehicles WHERE company_id = 'company-1'").pluck().get()
+      ).toBe(2);
+      expect(listAll).toHaveBeenCalledTimes(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("syncVehicles keeps a UF typed locally when OMIE has none", async () => {
+    const db = openDesktopDatabase({ databasePath: ":memory:" });
+
+    try {
+      runDesktopMigrations(db);
+      db.exec(`
+        INSERT INTO companies (id, legal_name, trade_name, created_at, updated_at)
+        VALUES ('company-1', 'Empresa Teste', 'Empresa', datetime('now'), datetime('now'));
+      `);
+      db.prepare(
+        `INSERT INTO vehicles (id, company_id, plate, plate_normalized, plate_state, is_active, created_at, updated_at)
+         VALUES ('veh-local', 'company-1', 'ABC1D23', 'ABC1D23', 'MG', 1, datetime('now'), datetime('now'))`
+      ).run();
+
+      const service = new OmieSyncService(createMockClient(), db);
+      vi.spyOn(
+        (service as unknown as Record<string, unknown>).vehiclesService as {
+          listAll: () => Promise<unknown[]>;
+        },
+        "listAll"
+      ).mockResolvedValue([
+        { id: 0, plate: "ABC1D23", plateState: null, description: null, isActive: true }
+      ]);
+
+      const result = await service.syncVehicles("company-1");
+      expect(result).toEqual({ fetched: 1, created: 0, updated: 0, skipped: 1 });
+      expect(
+        db.prepare("SELECT plate_state FROM vehicles WHERE id = 'veh-local'").pluck().get()
+      ).toBe("MG");
     } finally {
       db.close();
     }

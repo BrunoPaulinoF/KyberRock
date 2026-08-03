@@ -192,9 +192,7 @@ export function ActivationGate({ desktopApi, onUnlocked }: ActivationGateProps) 
           <p style={styles.subtitle}>
             Informe o codigo de 6 digitos fornecido pelo administrador da pedreira.
           </p>
-          <p style={styles.muted}>
-            O primeiro acesso exige conexao com a internet.
-          </p>
+          <p style={styles.muted}>O primeiro acesso exige conexao com a internet.</p>
 
           <label style={styles.fieldLabel} title={TIPS.activation.code}>
             Codigo de ativacao
@@ -251,17 +249,17 @@ export function ActivationGate({ desktopApi, onUnlocked }: ActivationGateProps) 
           {message ? <p style={styles.message}>{message}</p> : null}
 
           <button
-              type="button"
-              onClick={handleActivate}
-              disabled={activating || !canSubmitActivation}
-              style={{
-                ...styles.primaryButton,
-                opacity: activating || !canSubmitActivation ? 0.5 : 1,
-                cursor: activating || !canSubmitActivation ? "not-allowed" : "pointer"
-              }}
-            >
-              {activating ? "Ativando..." : "Ativar"}
-            </button>
+            type="button"
+            onClick={handleActivate}
+            disabled={activating || !canSubmitActivation}
+            style={{
+              ...styles.primaryButton,
+              opacity: activating || !canSubmitActivation ? 0.5 : 1,
+              cursor: activating || !canSubmitActivation ? "not-allowed" : "pointer"
+            }}
+          >
+            {activating ? "Ativando..." : "Ativar"}
+          </button>
           <HelpTooltip content={TIPS.activation.code} placement="top" />
         </div>
       </main>
@@ -317,21 +315,21 @@ export function ActivationGate({ desktopApi, onUnlocked }: ActivationGateProps) 
             onClick={handleRetryValidation}
             style={needsReactivation ? styles.secondaryButton : styles.primaryButton}
           >
-              Tentar validar novamente
-            </button>
-          <button type="button" onClick={() => setScreen("activate")} style={styles.secondaryButton}>
-              Ver diagnostico
-            </button>
+            Tentar validar novamente
+          </button>
           <button
             type="button"
-            onClick={handleClearActivation}
+            onClick={() => setScreen("activate")}
             style={styles.secondaryButton}
           >
-              Limpar ativacao e ativar de novo
-            </button>
+            Ver diagnostico
+          </button>
+          <button type="button" onClick={handleClearActivation} style={styles.secondaryButton}>
+            Limpar ativacao e ativar de novo
+          </button>
           <button type="button" onClick={handleExportBackup} style={styles.secondaryButton}>
-              Exportar backup
-            </button>
+            Exportar backup
+          </button>
           <HelpTooltip content={TIPS.activation.export} placement="top" />
         </div>
       </div>

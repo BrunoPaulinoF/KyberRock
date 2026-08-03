@@ -16,11 +16,11 @@ financeiro · **P1** essencial para o piloto · **P2** melhoria/escalabilidade.
       e ocultar o campo de condição de pagamento padrão — sem botão manual de "habilitar crédito".
       Ao desmarcar, voltar a exibir as demais formas de pagamento.
 - [ ] **P0** Campo **dia de fechamento** + **dias para vencimento do boleto**: no dia de fechamento
-      o sistema gera uma fatura que entra no OMIE como *contas a receber* com vencimento em
+      o sistema gera uma fatura que entra no OMIE como _contas a receber_ com vencimento em
       `data_fechamento + X dias`.
 - [x] **P1** Suportar periodicidades de fechamento configuráveis: **semanal** (por semana),
       **quinzenal** (dois dias de fechamento + dias de boleto por fechamento) e **mensal**.
-      *(Implementado: config no cliente + `computeCreditInvoiceSchedule` testado.)*
+      _(Implementado: config no cliente + `computeCreditInvoiceSchedule` testado.)_
 - [ ] **P1** Disponibilizar a fatura gerada para **download/envio** (para o cliente poder receber).
 - [ ] **P1** Testar de ponta a ponta a geração da fatura e sua entrada no OMIE como contas a receber.
 - [ ] **P2** Decidir/avaliar o uso do **limite de crédito do OMIE** ("uso do crédito"): pré-pago vs. não.
@@ -31,32 +31,34 @@ financeiro · **P1** essencial para o piloto · **P2** melhoria/escalabilidade.
 
 - [x] **P0** Sincronizar do OMIE os **meios/formas de pagamento** (cada um com seu código OMIE) e as
       **condições de pagamento** (nº de parcelas, à vista, prazos: 7/14/21 etc.).
-      *(Implementado: entidades `meios_pagamento`, `contas_correntes` e `condicoes_pagamento`
+      _(Implementado: entidades `meios_pagamento`, `contas_correntes` e `condicoes_pagamento`
       (ListarParcelas → espelho `omie_payment_terms`) no sync OMIE — idempotente, seeds adotam o
       código OMIE; criação/exclusão local de meios/contas travada, só ativar/desativar + vínculo.
-      Condição sem código OMIE é criada no cadastro de parcelas pelo próprio envio (IncluirParcela).)*
+      Condição sem código OMIE é criada no cadastro de parcelas pelo próprio envio (IncluirParcela).)_
 - [ ] **P0** Entender e documentar **o que o OMIE exige de forma de pagamento** ao criar o pedido de
       venda, antes de amarrar a lógica de envio.
 - [x] **P1** Botão **ativar/desativar** por forma de pagamento (algumas do OMIE são só para
-      transferência interna e não devem aparecer). *(Implementado, incl. ativar/desativar contas.)*
+      transferência interna e não devem aparecer). _(Implementado, incl. ativar/desativar contas.)_
 - [x] **P1** Permitir **apelido (alias)** por forma de pagamento — o apelido é o que aparece na UI
-      (os nomes vindos do OMIE ficam "bugados"). *(Implementado, incl. campo de código OMIE por forma.)*
+      (os nomes vindos do OMIE ficam "bugados"). _(Implementado, incl. campo de código OMIE por forma.)_
 - [x] **P0** **Vincular forma de pagamento → conta** no cadastro (dinheiro→caixinha; boleto/PIX→OMIE
       Cash; débito→GetNet), para o pedido de venda já sair com a conta correta.
-      *(Implementado: cadastro de contas, apelido e código OMIE por forma, vínculos pré-configurados.)*
+      _(Implementado: cadastro de contas, apelido e código OMIE por forma, vínculos pré-configurados.)_
 - [ ] **P0** **Boleto bancário deve usar obrigatoriamente a conta Home Cash** (banco digital) — o boleto
       é faturado lá para ter conciliação automática no retorno.
 - [x] **P1** Deixar a **condição de pagamento pré-cadastrada no cliente**, mas **editável na hora** da
       operação (ex.: padrão 7/14/21, mas hoje o patrão liberou 7/14/21/28).
-      *(Implementado: prefill do cliente na Nova Entrada + campo "Condição personalizada" que aceita
-      "5", "7 14 21" ou "7/14/21", cria/reusa a condição local e a registra no OMIE no envio.)*
+      _(Implementado: prefill do cliente na Nova Entrada + campo "Condição personalizada" que aceita
+      "30" (dias), "7 14 21"/"7/14/21" (prazos), "3 parcelas" (mensais) e períodos "s+20" (semana),
+      "q+20" (quinzena) e "m+20" (mês); cria/reusa a condição local e a registra no OMIE no envio.
+      O período é convertido para os mesmos dias de vencimento que seguem ao OMIE.)_
 - [ ] **P1** Definir a conta padrão por forma de pagamento (dinheiro→caixinha, débito→GetNet,
       boleto/PIX→Home Cash) e permitir alteração posterior **apenas no OMIE**.
 
 ### Travas / validações de pagamento
 
 - [x] **P0** Impedir combinações inválidas: **dinheiro (à vista) não pode ter parcelamento** 7/14/21/28.
-      *(Implementado: validador puro `payment-method-condition-guard` + trava no submit da Nova Entrada.)*
+      _(Implementado: validador puro `payment-method-condition-guard` + trava no submit da Nova Entrada.)_
 - [ ] **P0** Dinheiro/crédito precisam assumir a condição específica correspondente (regra de crédito/fiado pendente).
 - [ ] **P0** Fiado sem forma definida sobe o pedido de venda ao OMIE com **conta caixinha** (ainda não se
       sabe como o cliente vai pagar); se sair já com boleto, usa Home Cash.
@@ -122,7 +124,7 @@ financeiro · **P1** essencial para o piloto · **P2** melhoria/escalabilidade.
 ## 8. Troca de produto durante a operação (carregador)
 
 - [ ] **P1** Permitir **alterar o produto/material durante a operação** (fila/qualidade da pedra muda) —
-      ao trocar, **recalcular o preço** automaticamente. *(parcialmente implementado)*
+      ao trocar, **recalcular o preço** automaticamente. _(parcialmente implementado)_
 - [ ] **P0** O **carregador NÃO pode alterar o produto** (risco de fraude) — só a operadora altera; o
       carregador apenas confirma ("carregado/OK"), afirmando o produto efetivamente carregado.
 
@@ -187,7 +189,7 @@ financeiro · **P1** essencial para o piloto · **P2** melhoria/escalabilidade.
 ## 16. Relatório diário automático
 
 - [ ] **P1** Relatório diário automático no fim do dia (resumo do que foi feito) enviado por e-mail
-      ao responsável. *(mencionado como já em andamento — validar/consolidar)*
+      ao responsável. _(mencionado como já em andamento — validar/consolidar)_
 
 ---
 
