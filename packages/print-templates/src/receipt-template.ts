@@ -39,7 +39,36 @@ export interface ReceiptTemplateInput {
   totalCents: number;
 }
 
-export interface ReceiptTemplateConfig {
+/**
+ * Familia tipografica do cupom. O nome e generico (nao uma fonte especifica) porque
+ * quem resolve a pilha real e o renderizador — a impressora do Windows recebe HTML e a
+ * previa da tela usa a mesma pilha, entao o que o operador ve e o que sai no papel.
+ */
+export type ReceiptFontFamily = "monospace" | "sans" | "serif" | "condensed";
+
+export type ReceiptLogoAlignment = "left" | "center" | "right";
+
+/** Aparencia do cupom: fonte, corpo, numeros e posicao da logo. */
+export interface ReceiptStyle {
+  fontFamily: ReceiptFontFamily;
+  /** Corpo do cupom, em px (o cupom e renderizado em 80 mm de largura). */
+  fontSizePx: number;
+  /**
+   * Numeros (pesos, valores, quantidades), em px. Sai separado do corpo porque o que o
+   * operador e o cliente conferem no papel sao os numeros — aumentar so eles deixa o
+   * cupom legivel sem gastar papel com o texto todo maior.
+   */
+  numberFontSizePx: number;
+  /** Cabecalho grafico: empresa, data/hora e numero do cupom. */
+  headerFontSizePx: number;
+  lineHeight: number;
+  boldBody: boolean;
+  /** Imprime a logo configurada no topo do cupom. */
+  showLogo: boolean;
+  logoAlignment: ReceiptLogoAlignment;
+}
+
+export interface ReceiptTemplateConfig extends ReceiptStyle {
   mode: "default" | "custom";
   showCompanyHeader: boolean;
   showCopyInfo: boolean;
@@ -57,7 +86,24 @@ export interface ReceiptTemplateConfig {
   customFooterText: string;
 }
 
+/**
+ * Aparencia do modelo padrao — os mesmos tamanhos que o cupom ja usava antes da
+ * personalizacao existir. Selecionar "Padrao" precisa devolver exatamente o cupom
+ * atual, entao esses valores sao a referencia dos dois lados (impressao e previa).
+ */
+export const DEFAULT_RECEIPT_STYLE: ReceiptStyle = {
+  fontFamily: "monospace",
+  fontSizePx: 11,
+  numberFontSizePx: 11,
+  headerFontSizePx: 14,
+  lineHeight: 1.28,
+  boldBody: false,
+  showLogo: true,
+  logoAlignment: "center"
+};
+
 export const DEFAULT_RECEIPT_TEMPLATE_CONFIG: ReceiptTemplateConfig = {
+  ...DEFAULT_RECEIPT_STYLE,
   mode: "default",
   showCompanyHeader: true,
   showCopyInfo: true,
@@ -74,6 +120,27 @@ export const DEFAULT_RECEIPT_TEMPLATE_CONFIG: ReceiptTemplateConfig = {
   customHeaderText: "",
   customFooterText: ""
 };
+
+/** Limites de cada tamanho: fora deles o cupom de 80 mm quebra ou fica ilegivel. */
+const STYLE_LIMITS = {
+  fontSizePx: [7, 20],
+  numberFontSizePx: [7, 28],
+  headerFontSizePx: [8, 30],
+  lineHeight: [1, 2.4]
+} as const;
+
+function clamp(value: number, min: number, max: number, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, value));
+}
+
+function normalizeFontFamily(value: unknown): ReceiptFontFamily {
+  return value === "sans" || value === "serif" || value === "condensed" ? value : "monospace";
+}
+
+function normalizeLogoAlignment(value: unknown): ReceiptLogoAlignment {
+  return value === "left" || value === "right" ? value : "center";
+}
 
 export function normalizeReceiptTemplateConfig(
   config: Partial<ReceiptTemplateConfig> | null | undefined
@@ -94,8 +161,48 @@ export function normalizeReceiptTemplateConfig(
     showVehicleDriver: config.showVehicleDriver ?? true,
     showFooter: config.showFooter ?? true,
     customHeaderText: config.customHeaderText ?? "",
-    customFooterText: config.customFooterText ?? ""
+    customFooterText: config.customFooterText ?? "",
+    fontFamily: normalizeFontFamily(config.fontFamily),
+    fontSizePx: clamp(
+      Number(config.fontSizePx ?? DEFAULT_RECEIPT_STYLE.fontSizePx),
+      ...STYLE_LIMITS.fontSizePx,
+      DEFAULT_RECEIPT_STYLE.fontSizePx
+    ),
+    numberFontSizePx: clamp(
+      Number(config.numberFontSizePx ?? DEFAULT_RECEIPT_STYLE.numberFontSizePx),
+      ...STYLE_LIMITS.numberFontSizePx,
+      DEFAULT_RECEIPT_STYLE.numberFontSizePx
+    ),
+    headerFontSizePx: clamp(
+      Number(config.headerFontSizePx ?? DEFAULT_RECEIPT_STYLE.headerFontSizePx),
+      ...STYLE_LIMITS.headerFontSizePx,
+      DEFAULT_RECEIPT_STYLE.headerFontSizePx
+    ),
+    lineHeight: clamp(
+      Number(config.lineHeight ?? DEFAULT_RECEIPT_STYLE.lineHeight),
+      ...STYLE_LIMITS.lineHeight,
+      DEFAULT_RECEIPT_STYLE.lineHeight
+    ),
+    boldBody: config.boldBody ?? DEFAULT_RECEIPT_STYLE.boldBody,
+    showLogo: config.showLogo ?? DEFAULT_RECEIPT_STYLE.showLogo,
+    logoAlignment: normalizeLogoAlignment(config.logoAlignment)
   };
+}
+
+/**
+ * Configuracao que vale de fato na hora de imprimir. No modo "Padrao" toda a
+ * personalizacao e ignorada — o cupom sai exatamente no modelo atual, mesmo que o
+ * operador tenha mexido nos campos antes de voltar para o padrao. So a logo escapa
+ * disso: ela e do cadastro da pedreira, nao um enfeite do modelo, e sempre imprime.
+ */
+export function resolveReceiptTemplateConfig(
+  config: Partial<ReceiptTemplateConfig> | null | undefined
+): ReceiptTemplateConfig {
+  const normalized = normalizeReceiptTemplateConfig(config);
+  if (normalized.mode !== "custom") {
+    return { ...DEFAULT_RECEIPT_TEMPLATE_CONFIG };
+  }
+  return normalized;
 }
 
 /**
@@ -105,6 +212,36 @@ export function normalizeReceiptTemplateConfig(
  */
 export const NON_FISCAL_SALE_LABEL = "VENDA SEM VALOR FISCAL";
 
+/**
+ * Cabecalho do cupom em pedacos nomeados. O renderizador HTML (impressora do Windows) e
+ * a previa da tela desenham esse bloco graficamente — com a logo, a empresa em destaque e
+ * o numero do cupom grande —, enquanto o ESC/POS imprime as mesmas informacoes como texto.
+ * Antes o HTML descartava as 6 primeiras linhas por posicao fixa: bastava desligar um bloco
+ * ou fechar uma operacao interna (que insere o aviso "sem valor fiscal" no topo) para o
+ * cupom sair com o cabecalho picado.
+ */
+export interface ReceiptHeaderBlock {
+  customHeaderText: string | null;
+  nonFiscalLabel: string | null;
+  companyName: string | null;
+  unitName: string | null;
+  dateLabel: string | null;
+  timeLabel: string | null;
+  receiptNumberLabel: string | null;
+  copyLabel: string | null;
+}
+
+export interface ReceiptDocument {
+  /** Cupom inteiro em texto puro — o que a impressora ESC/POS recebe. */
+  lines: string[];
+  /** Cabecalho para o renderizador grafico. */
+  header: ReceiptHeaderBlock;
+  /** Linhas depois do cabecalho: o que vai no `<pre>` do HTML e da previa. */
+  bodyLines: string[];
+  /** Aparencia ja resolvida (padrao ou personalizada). */
+  style: ReceiptStyle;
+}
+
 export function buildReceiptLines(input: ReceiptTemplateInput): string[] {
   return buildReceiptLinesWithConfig(input, DEFAULT_RECEIPT_TEMPLATE_CONFIG);
 }
@@ -113,6 +250,99 @@ export function buildReceiptLinesWithConfig(
   input: ReceiptTemplateInput,
   config: ReceiptTemplateConfig
 ): string[] {
+  return buildReceiptDocument(input, config).lines;
+}
+
+/**
+ * Monta o cupom uma unica vez para os tres consumidores (ESC/POS, HTML de impressao e
+ * previa da tela), de forma que a previa nunca minta sobre o que vai sair no papel.
+ */
+export function buildReceiptDocument(
+  input: ReceiptTemplateInput,
+  config: Partial<ReceiptTemplateConfig> | null | undefined
+): ReceiptDocument {
+  const resolved = resolveReceiptTemplateConfig(config);
+  const header = buildHeaderBlock(input, resolved);
+  const headerLines = buildHeaderLines(header);
+  const bodyLines = buildBodyLines(input, resolved);
+
+  return {
+    lines: [...headerLines, ...bodyLines],
+    header,
+    bodyLines,
+    style: {
+      fontFamily: resolved.fontFamily,
+      fontSizePx: resolved.fontSizePx,
+      numberFontSizePx: resolved.numberFontSizePx,
+      headerFontSizePx: resolved.headerFontSizePx,
+      lineHeight: resolved.lineHeight,
+      boldBody: resolved.boldBody,
+      showLogo: resolved.showLogo,
+      logoAlignment: resolved.logoAlignment
+    }
+  };
+}
+
+function buildHeaderBlock(
+  input: ReceiptTemplateInput,
+  config: ReceiptTemplateConfig
+): ReceiptHeaderBlock {
+  const nonFiscal = input.operationType === "internal";
+
+  return {
+    customHeaderText: config.customHeaderText.trim()
+      ? config.customHeaderText.trim().toUpperCase()
+      : null,
+    // Aviso antes de qualquer bloco opcional: mesmo com o template todo desligado, quem
+    // recebe o cupom ve de cara que a venda nao tem valor fiscal.
+    nonFiscalLabel: nonFiscal ? NON_FISCAL_SALE_LABEL : null,
+    companyName: config.showCompanyHeader ? input.companyName.toUpperCase() : null,
+    unitName: config.showCompanyHeader ? input.unitName.toUpperCase() : null,
+    dateLabel: config.showCompanyHeader ? formatDate(input.printedAt) : null,
+    timeLabel: config.showCompanyHeader ? formatTime(input.printedAt) : null,
+    receiptNumberLabel: config.showCopyInfo
+      ? formatReceiptNumber(input.receiptNumber, input.deviceNumber)
+      : null,
+    copyLabel: config.showCopyInfo
+      ? input.copyNumber > 1
+        ? `${input.copyNumber}a VIA`
+        : "1a VIA"
+      : null
+  };
+}
+
+function buildHeaderLines(header: ReceiptHeaderBlock): string[] {
+  const lines: string[] = [];
+
+  if (header.customHeaderText) {
+    lines.push(header.customHeaderText);
+  }
+
+  if (header.nonFiscalLabel) {
+    lines.push(divider(), centered(header.nonFiscalLabel), divider());
+  }
+
+  if (header.companyName && header.unitName) {
+    lines.push(
+      header.companyName,
+      divider(),
+      header.unitName,
+      `DATA: ${header.dateLabel}  HORA: ${header.timeLabel}`
+    );
+  }
+
+  if (header.receiptNumberLabel && header.copyLabel) {
+    lines.push(`COPIA NRO ${header.receiptNumberLabel}`, header.copyLabel);
+  }
+
+  if (lines.length > 0 && (header.companyName || header.receiptNumberLabel)) {
+    lines.push(divider());
+  }
+
+  return lines;
+}
+
+function buildBodyLines(input: ReceiptTemplateInput, config: ReceiptTemplateConfig): string[] {
   const productLabel = [input.productCode, input.productDescription].filter(Boolean).join("-");
   const customerLocation = [
     input.customerZipCode,
@@ -123,36 +353,6 @@ export function buildReceiptLinesWithConfig(
   const quantityTon = input.netWeightKg / 1000;
   const nonFiscal = input.operationType === "internal";
   const lines: (string | null)[] = [];
-
-  if (config.customHeaderText.trim()) {
-    lines.push(config.customHeaderText.trim().toUpperCase());
-  }
-
-  // Aviso no topo, antes de qualquer bloco opcional: mesmo com o template todo
-  // desligado, quem recebe o cupom ve de cara que a venda nao tem valor fiscal.
-  if (nonFiscal) {
-    lines.push(divider(), centered(NON_FISCAL_SALE_LABEL), divider());
-  }
-
-  if (config.showCompanyHeader) {
-    lines.push(
-      input.companyName.toUpperCase(),
-      divider(),
-      input.unitName.toUpperCase(),
-      `DATA: ${formatDate(input.printedAt)}  HORA: ${formatTime(input.printedAt)}`
-    );
-  }
-
-  if (config.showCopyInfo) {
-    lines.push(
-      `COPIA NRO ${formatReceiptNumber(input.receiptNumber, input.deviceNumber)}`,
-      input.copyNumber > 1 ? `${input.copyNumber}a VIA` : "1a VIA"
-    );
-  }
-
-  if (config.showCompanyHeader || config.showCopyInfo) {
-    lines.push(divider());
-  }
 
   if (config.showCompanyHeader) {
     lines.push(
@@ -261,6 +461,55 @@ export function buildReceiptLinesWithConfig(
 
   return lines.filter((line): line is string => line !== null);
 }
+
+/**
+ * Cupom de exemplo usado pela previa da tela de impressao e pela impressao de teste.
+ * Vem daqui (e nao de cada tela) para que a previa mostre exatamente o mesmo conteudo
+ * que sai no papel quando o operador clica em "Testar impressora".
+ */
+export function buildSampleReceiptInput(printedAt: string): ReceiptTemplateInput {
+  return {
+    companyName: "Pedreira Teste LTDA",
+    companyDocument: "00.000.000/0001-00",
+    companyStateRegistration: "000.000.000.000",
+    unitName: "Pedreira Teste",
+    receiptNumber: 0,
+    copyNumber: 0,
+    printedAt,
+    operationId: "test",
+    operationType: "invoice",
+    customerName: "Cliente Exemplo",
+    customerDocument: "11.111.111/0001-11",
+    customerPhone: "(11) 99999-0000",
+    customerZipCode: "00000-000",
+    customerCity: "Cidade",
+    customerState: "SP",
+    productCode: "0001",
+    productDescription: "Brita 1 (Teste)",
+    plate: "ABC1D23",
+    driverName: "Motorista Teste",
+    paymentTermName: "A vista",
+    paymentMethodName: "Dinheiro",
+    entryCapturedAt: printedAt,
+    exitCapturedAt: printedAt,
+    permanenceLabel: "0min",
+    entryWeightKg: 12_000,
+    exitWeightKg: 18_500,
+    netWeightKg: 6_500,
+    unitPriceCents: 12_000,
+    productTotalCents: 78_000,
+    freightTotalCents: 0,
+    totalCents: 78_000
+  };
+}
+
+/** Pilha de fontes de cada familia, compartilhada entre a previa e o HTML de impressao. */
+export const RECEIPT_FONT_STACKS: Record<ReceiptFontFamily, string> = {
+  monospace: 'Consolas, "Courier New", monospace',
+  sans: '"Segoe UI", Arial, Helvetica, sans-serif',
+  serif: '"Times New Roman", Georgia, serif',
+  condensed: '"Arial Narrow", "Liberation Sans Narrow", "Segoe UI", sans-serif'
+};
 
 /**
  * Centraliza o texto na largura do divisor (48 caracteres). Texto maior que a

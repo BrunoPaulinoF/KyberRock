@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
 
+import {
+  buildReceiptDocument,
+  buildSampleReceiptInput,
+  DEFAULT_RECEIPT_TEMPLATE_CONFIG,
+  type ReceiptTemplateConfig
+} from "@kyberrock/print-templates";
+
 import { buildReceiptHtml } from "./receipt-html";
 import type { ReceiptLogoConfig, ReceiptPrintPayload } from "./printing";
 
@@ -51,7 +58,63 @@ describe("buildReceiptHtml", () => {
       payload({ dataUrl: null }, { companyName: 'Pedreira "A" & Cia <LTDA>' })
     );
 
-    expect(html).toContain("Pedreira &quot;A&quot; &amp; Cia &lt;LTDA&gt;");
+    // O cabecalho ja sai em caixa alta do construtor do cupom (o mesmo texto do ESC/POS).
+    expect(html).toContain("PEDREIRA &quot;A&quot; &amp; CIA &lt;LTDA&gt;");
+  });
+
+  // O corpo era recortado com `lines.slice(6)`, um deslocamento fixo: bastava desligar um
+  // bloco do topo ou fechar uma operacao interna (que insere 3 linhas de aviso) para o
+  // corte cair no lugar errado e picar o cupom.
+  it("monta o corpo a partir do bloco estruturado, nao de um deslocamento fixo", () => {
+    const html = buildReceiptHtml(payload({ dataUrl: null }, { operationType: "internal" }));
+
+    expect(html).toContain("VENDA SEM VALOR FISCAL");
+    expect(html).toContain("Cliente: Cliente Exemplo");
+    // O cabecalho grafico nao pode aparecer duplicado dentro do corpo.
+    expect(html.match(/COPIA NRO/g)).toHaveLength(1);
+  });
+
+  it("respeita o interruptor e o alinhamento da logo", () => {
+    const semLogo = buildReceiptHtml(
+      payload({ dataUrl: LOGO_DATA_URL }, { config: { mode: "custom", showLogo: false } })
+    );
+    expect(semLogo).not.toContain('<div class="logo-row">');
+    expect(semLogo).not.toContain("<img");
+
+    const aEsquerda = buildReceiptHtml(
+      payload(
+        { dataUrl: LOGO_DATA_URL },
+        { config: { mode: "custom", showLogo: true, logoAlignment: "left" } }
+      )
+    );
+    expect(aEsquerda).toContain("justify-content: flex-start;");
+  });
+
+  it("aplica a fonte, os tamanhos e o destaque dos numeros configurados", () => {
+    const html = buildReceiptHtml(
+      payload(
+        { dataUrl: null },
+        {
+          config: {
+            mode: "custom",
+            fontFamily: "condensed",
+            fontSizePx: 13,
+            numberFontSizePx: 19,
+            boldBody: true
+          }
+        }
+      )
+    );
+
+    expect(html).toContain("font-size: 13px");
+    expect(html).toContain(".num { font-size: 19px;");
+    expect(html).toContain("font-weight: 700;");
+    expect(html).toContain('<span class="num">');
+    expect(html).toContain("Arial Narrow");
+  });
+
+  it("nao marca os numeros quando o tamanho e o mesmo do corpo", () => {
+    expect(buildReceiptHtml(payload({ dataUrl: null }))).not.toContain('<span class="num">');
   });
 
   it("keeps the paper width of the profile in the page size", () => {
@@ -63,7 +126,12 @@ describe("buildReceiptHtml", () => {
 
 function payload(
   logo: Partial<ReceiptLogoConfig>,
-  overrides: { companyName?: string; paperWidthMm?: number } = {}
+  overrides: {
+    companyName?: string;
+    paperWidthMm?: number;
+    operationType?: "invoice" | "internal";
+    config?: Partial<ReceiptTemplateConfig>;
+  } = {}
 ): ReceiptPrintPayload {
   const receiptLogo: ReceiptLogoConfig = {
     dataUrl: null,
@@ -72,16 +140,21 @@ function payload(
     fit: "contain",
     ...logo
   };
-  const lines = [
-    "PEDREIRA TESTE LTDA",
-    "---",
-    "PEDREIRA TESTE",
-    "DATA: 01/01/2026  HORA: 10:00:00",
-    "COPIA NRO 000000001",
-    "1a VIA",
-    "CODIGO.: ABC",
-    "Cliente: Cliente Exemplo"
-  ];
+  const templateConfig: ReceiptTemplateConfig = {
+    ...DEFAULT_RECEIPT_TEMPLATE_CONFIG,
+    ...overrides.config
+  };
+  const templateInput = {
+    ...buildSampleReceiptInput("2026-01-01T13:00:00.000Z"),
+    companyName: overrides.companyName ?? "Pedreira Teste LTDA",
+    unitName: "Pedreira Teste",
+    receiptNumber: 1,
+    copyNumber: 1,
+    operationType: overrides.operationType ?? ("invoice" as const)
+  };
+  // O snapshot vem do mesmo construtor usado na impressao real: assim o teste nunca
+  // valida um cabecalho que a producao nao produziria.
+  const document = buildReceiptDocument(templateInput, templateConfig);
 
   return {
     printerName: "Impressora",
@@ -89,43 +162,16 @@ function payload(
     networkHost: null,
     networkPort: null,
     paperWidthMm: overrides.paperWidthMm ?? 80,
-    lines,
-    contentText: lines.join("\n"),
+    lines: document.lines,
+    contentText: document.lines.join("\n"),
     snapshot: {
-      companyName: overrides.companyName ?? "Pedreira Teste LTDA",
-      companyDocument: "00.000.000/0001-00",
-      companyStateRegistration: null,
-      unitName: "Pedreira Teste",
-      receiptNumber: 1,
-      deviceNumber: null,
-      copyNumber: 1,
-      printedAt: "2026-01-01T13:00:00.000Z",
-      operationId: "op_1",
-      operationType: "invoice",
-      customerName: "Cliente Exemplo",
-      customerDocument: null,
-      customerPhone: null,
-      customerZipCode: null,
-      customerCity: null,
-      customerState: null,
-      productCode: "0001",
-      productDescription: "Brita 1",
-      plate: "ABC1D23",
-      driverName: "Motorista",
-      paymentTermName: null,
-      paymentMethodName: null,
-      entryCapturedAt: "2026-01-01T12:00:00.000Z",
-      exitCapturedAt: "2026-01-01T13:00:00.000Z",
-      permanenceLabel: "60min",
-      entryWeightKg: 12_000,
-      exitWeightKg: 18_500,
-      netWeightKg: 6_500,
-      unitPriceCents: 12_000,
-      productTotalCents: 78_000,
-      freightTotalCents: 0,
-      totalCents: 78_000,
-      lines,
-      receiptLogo
+      ...templateInput,
+      lines: document.lines,
+      receiptLogo,
+      templateConfig,
+      header: document.header,
+      bodyLines: document.bodyLines,
+      style: document.style
     }
   };
 }

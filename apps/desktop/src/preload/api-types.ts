@@ -9,6 +9,7 @@ import type { DesktopStatusSnapshot } from "../services/status";
 import type { UpdateState } from "../services/update-flow";
 import type {
   OperationFreightInput,
+  OperationOmieIssue,
   OperationType,
   WeighingOperationSummary
 } from "../services/weighing-operations";
@@ -129,6 +130,11 @@ export interface KyberRockDesktopApi {
   pullCloudNow: () => Promise<{ pulled: number; errors: string[] }>;
   listCanceledWeighingOperations: () => Promise<WeighingOperationSummary[]>;
   listClosedWeighingOperations: () => Promise<WeighingOperationSummary[]>;
+  /**
+   * Por que uma operacao concluida ainda nao chegou ao OMIE, com os campos do cadastro
+   * do cliente que precisam ser corrigidos antes do reenvio.
+   */
+  operationOmieIssue: (operationId: string) => Promise<OperationOmieIssue>;
   clearCanceledWeighingOperations: () => Promise<number>;
   /** Limpa as concluidas em lote; `untilDate` preserva o movimento do dia. */
   clearClosedWeighingOperations: (options?: { untilDate?: string }) => Promise<number>;
@@ -208,6 +214,8 @@ export interface KyberRockDesktopApi {
     input: Omit<ConfigureReceiptPrintProfileInput, "identity">
   ) => Promise<PrintProfileSummary>;
   listPrintProfiles: () => Promise<PrintProfileSummary[]>;
+  /** Perfil de cupom 80 mm ativo deste computador (o que a impressao usa). */
+  getActiveReceiptProfile: () => Promise<PrintProfileSummary | null>;
   listPrintReceipts: () => Promise<PrintReceiptSummary[]>;
   printReceipt: (operationId: string) => Promise<PrintReceiptSummary>;
   reprintReceipt: (receiptId: string) => Promise<PrintReceiptSummary>;

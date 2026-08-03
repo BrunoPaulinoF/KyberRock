@@ -465,8 +465,6 @@ export function CustomersView({
   const [activeFormSection, setActiveFormSection] =
     useState<CustomerFormSectionKey>("identificacao");
   const [cnpjBusy, setCnpjBusy] = useState(false);
-  const [nfeEmail, setNfeEmail] = useState("");
-  const [nfeEmailBusy, setNfeEmailBusy] = useState(false);
   const [cnpjBulkBusy, setCnpjBulkBusy] = useState(false);
   const [products, setProducts] = useState<ProductOption[]>([]);
   const [specialPrices, setSpecialPrices] = useState<CustomerSpecialPriceEntry[]>([]);
@@ -561,36 +559,6 @@ export function CustomersView({
   useEffect(() => {
     void loadCustomers();
   }, [loadCustomers]);
-
-  useEffect(() => {
-    if (!desktopApi) return;
-    void desktopApi
-      .getDefaultNfeEmail()
-      .then((email) => setNfeEmail(email ?? ""))
-      .catch(() => undefined);
-  }, [desktopApi]);
-
-  async function handleApplyDefaultNfeEmail(): Promise<void> {
-    if (!desktopApi) return;
-    const email = nfeEmail.trim();
-    if (!email) {
-      showFlash("error", "Informe um e-mail padrao antes de aplicar.");
-      return;
-    }
-    setNfeEmailBusy(true);
-    try {
-      const count = await desktopApi.applyDefaultNfeEmailToAll(email);
-      await loadCustomers();
-      showFlash(
-        "success",
-        `E-mail padrao aplicado a ${count} cliente(s). Sera enviado ao OMIE no proximo sync.`
-      );
-    } catch (err) {
-      showFlash("error", err instanceof Error ? err.message : "Falha ao aplicar o e-mail padrao.");
-    } finally {
-      setNfeEmailBusy(false);
-    }
-  }
 
   // Executa "buscar CNPJ" (Receita) para TODOS os clientes com CNPJ valido e grava os
   // dados retornados. Pode demorar quando ha muitos clientes: a consulta e serial para
@@ -1431,27 +1399,6 @@ export function CustomersView({
           background: "var(--kr-surface-soft)"
         }}
       >
-        <Field
-          label="E-mail padrao de NF-e"
-          hint="Usado para emitir NF-e sem depender do e-mail de cada cliente. Aceita varios, separados por virgula."
-        >
-          <input
-            type="text"
-            value={nfeEmail}
-            onChange={(e) => setNfeEmail(e.target.value)}
-            placeholder="nfe@suaempresa.com.br, financeiro@suaempresa.com.br"
-            style={{ ...getInputStyle(false), minWidth: "260px" }}
-          />
-        </Field>
-        <button
-          type="button"
-          onClick={() => void handleApplyDefaultNfeEmail()}
-          disabled={nfeEmailBusy}
-          title="Define esse e-mail em TODOS os clientes (e envia ao OMIE no proximo sync)"
-          style={{ ...styles.primaryButton, height: "38px", opacity: nfeEmailBusy ? 0.6 : 1 }}
-        >
-          {nfeEmailBusy ? "Aplicando..." : "Aplicar a todos os clientes"}
-        </button>
         <button
           type="button"
           onClick={() => void handleEnrichAllCnpj()}

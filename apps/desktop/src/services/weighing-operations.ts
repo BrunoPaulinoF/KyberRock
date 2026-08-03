@@ -150,6 +150,12 @@ export interface WeighingOperationSummary {
   operationType: OperationType;
   customerId: string | null;
   customerName: string;
+  /**
+   * CNPJ/CPF do cliente como esta no cadastro. Alimenta a busca da tela de
+   * Concluidas (cliente, documento ou produto) — sem ele o operador so conseguia
+   * procurar pelo nome.
+   */
+  customerDocument: string | null;
   plate: string;
   driverName: string;
   productDescription: string;
@@ -245,6 +251,7 @@ interface OperationRow {
   updated_at: string;
   customer_id: string | null;
   customer_name: string | null;
+  customer_document?: string | null;
   plate: string | null;
   driver_name: string | null;
   product_description: string | null;
@@ -1092,6 +1099,225 @@ export function validateOperationFiscalReadiness(
   return validateCustomerFiscalReadiness(database, row?.customer_id ?? null);
 }
 
+/** Campo do cadastro do cliente que o dialogo "Corrigir cadastro" deixa editar. */
+export type OmieCadastroFieldKey =
+  | "document"
+  | "email"
+  | "phone"
+  | "zipcode"
+  | "addressStreet"
+  | "addressNumber"
+  | "neighborhood"
+  | "city"
+  | "state";
+
+export interface OmieCadastroField {
+  key: OmieCadastroFieldKey;
+  label: string;
+  value: string;
+  /** O OMIE recusa o envio desta operacao enquanto o campo estiver vazio. */
+  required: boolean;
+  /** Obrigatorio e ainda em branco: e o que precisa ser preenchido agora. */
+  missing: boolean;
+}
+
+/**
+ * Diagnostico de uma operacao ja concluida que ainda nao chegou ao OMIE: junta o motivo
+ * (mensagem gravada no fechamento, erro do ultimo job da fila ou pre-validacao do
+ * cadastro) com os campos do cliente que precisam ser corrigidos. Alimenta o alerta da
+ * tela de Concluidas e o botao "Editar item" da tela cloud.
+ */
+export interface OperationOmieIssue {
+  operationId: string;
+  operationType: OperationType;
+  /** Concluida e sem pedido/OS no OMIE: ainda ha algo a enviar. */
+  pending: boolean;
+  /** Envio travado (cadastro incompleto ou recusa do OMIE), nao so aguardando a fila. */
+  blocked: boolean;
+  /** Rotulo curto do problema, para o alerta ("Cadastro incompleto", "Recusada pelo OMIE"...). */
+  reasonLabel: string;
+  /** Explicacao completa do porque a operacao nao foi ao OMIE. */
+  reason: string;
+  customerId: string | null;
+  customerName: string;
+  /** `omie` bloqueia edicao local sem override; o dialogo avisa e usa override. */
+  customerSource: string | null;
+  plate: string;
+  fields: OmieCadastroField[];
+  queueStatus: string | null;
+  queueError: string | null;
+}
+
+const OMIE_CADASTRO_FIELD_LABELS: Record<OmieCadastroFieldKey, string> = {
+  document: "CNPJ/CPF",
+  email: "E-mail",
+  phone: "Telefone",
+  zipcode: "CEP",
+  addressStreet: "Endereco",
+  addressNumber: "Numero",
+  neighborhood: "Bairro",
+  city: "Cidade",
+  state: "UF"
+};
+
+interface OmieIssueOperationRow {
+  id: string;
+  status: string;
+  operation_type: OperationType;
+  customer_id: string | null;
+  omie_sales_order_id: number | null;
+  omie_service_order_id: number | null;
+  omie_billing_status: string | null;
+  omie_billing_message: string | null;
+  customer_name: string | null;
+  plate: string | null;
+}
+
+interface OmieIssueCustomerRow {
+  omie_customer_id: number | null;
+  source: string | null;
+  document: string | null;
+  email: string | null;
+  phone: string | null;
+  zipcode: string | null;
+  address_street: string | null;
+  address_number: string | null;
+  neighborhood: string | null;
+  city: string | null;
+  state: string | null;
+}
+
+export function getOperationOmieIssue(
+  database: DesktopDatabase,
+  operationId: string
+): OperationOmieIssue {
+  const operation = database
+    .prepare(
+      `SELECT o.id, o.status, o.operation_type, o.customer_id,
+              o.omie_sales_order_id, o.omie_service_order_id,
+              o.omie_billing_status, o.omie_billing_message,
+              COALESCE(c.trade_name, o.remote_customer_name) AS customer_name,
+              COALESCE(v.plate, o.remote_plate) AS plate
+         FROM weighing_operations o
+         LEFT JOIN customers c ON c.id = o.customer_id
+         LEFT JOIN vehicles v ON v.id = o.vehicle_id
+        WHERE o.id = ?`
+    )
+    .get(operationId) as OmieIssueOperationRow | undefined;
+
+  if (!operation) {
+    throw new Error(`Weighing operation ${operationId} was not found.`);
+  }
+
+  const customer = operation.customer_id
+    ? (database
+        .prepare(
+          `SELECT omie_customer_id, source, document, email, phone, zipcode,
+                  address_street, address_number, neighborhood, city, state
+             FROM customers WHERE id = ?`
+        )
+        .get(operation.customer_id) as OmieIssueCustomerRow | undefined)
+    : undefined;
+
+  const queueJob = database
+    .prepare(
+      `SELECT status, last_error
+         FROM sync_queue
+        WHERE target = 'omie' AND entity_id = ?
+        ORDER BY created_at DESC
+        LIMIT 1`
+    )
+    .get(operationId) as { status: string; last_error: string | null } | undefined;
+
+  const isInvoice = operation.operation_type === "invoice";
+  const sentToOmie =
+    operation.omie_sales_order_id != null ||
+    operation.omie_service_order_id != null ||
+    operation.omie_billing_status === "billed";
+  const pending = isClosedOperationStatus(operation.status) && !sentToOmie;
+
+  // Sem codigo OMIE o cliente precisa ser criado na hora, e o OMIE exige o CNPJ/CPF.
+  const needsDocument = !customer?.omie_customer_id;
+  // NF-e: o OMIE recusa o faturamento sem Numero do Endereco e E-mail (validateCustomerFiscalReadiness).
+  const fields: OmieCadastroField[] = (
+    [
+      ["document", customer?.document, needsDocument],
+      ["email", customer?.email, isInvoice],
+      ["addressNumber", customer?.address_number, isInvoice],
+      ["zipcode", customer?.zipcode, false],
+      ["addressStreet", customer?.address_street, false],
+      ["neighborhood", customer?.neighborhood, false],
+      ["city", customer?.city, false],
+      ["state", customer?.state, false],
+      ["phone", customer?.phone, false]
+    ] as Array<[OmieCadastroFieldKey, string | null | undefined, boolean]>
+  ).map(([key, value, required]) => {
+    const text = (value ?? "").trim();
+    return {
+      key,
+      label: OMIE_CADASTRO_FIELD_LABELS[key],
+      value: text,
+      required,
+      missing: required && text.length === 0
+    };
+  });
+
+  const missingLabels = fields.filter((field) => field.missing).map((field) => field.label);
+  const failedJob = queueJob?.status === "failed" || queueJob?.status === "dead_letter";
+
+  let reasonLabel: string;
+  let reason: string;
+  if (!pending) {
+    reasonLabel = "Enviada ao OMIE";
+    reason =
+      operation.omie_sales_order_id != null
+        ? `Pedido OMIE ${operation.omie_sales_order_id} ja criado.`
+        : operation.omie_service_order_id != null
+          ? `Ordem de servico OMIE ${operation.omie_service_order_id} ja criada.`
+          : "Operacao ja faturada no OMIE.";
+  } else if (!operation.customer_id) {
+    reasonLabel = "Sem cliente";
+    reason = "A operacao nao tem cliente vinculado, entao nao ha cadastro para enviar ao OMIE.";
+  } else if (missingLabels.length > 0) {
+    reasonLabel = "Cadastro incompleto";
+    reason =
+      operation.omie_billing_message ??
+      `Falta ${missingLabels.join(", ")} no cadastro do cliente para ${
+        isInvoice ? "enviar o pedido" : "enviar a ordem de servico"
+      } ao OMIE.`;
+  } else if (failedJob && queueJob?.last_error) {
+    reasonLabel = "Recusada pelo OMIE";
+    reason = queueJob.last_error;
+  } else if (operation.omie_billing_message) {
+    reasonLabel =
+      operation.omie_billing_status === "cadastro_incompleto"
+        ? "Cadastro incompleto"
+        : "Recusada pelo OMIE";
+    reason = operation.omie_billing_message;
+  } else {
+    reasonLabel = "Aguardando envio";
+    reason = isInvoice
+      ? "Pedido ainda na fila: sera enviado ao OMIE na proxima sincronizacao."
+      : "Ordem de servico ainda na fila: sera enviada ao OMIE na proxima sincronizacao.";
+  }
+
+  return {
+    operationId: operation.id,
+    operationType: operation.operation_type,
+    pending,
+    blocked: pending && (missingLabels.length > 0 || failedJob || !operation.customer_id),
+    reasonLabel,
+    reason,
+    customerId: operation.customer_id,
+    customerName: operation.customer_name ?? "",
+    customerSource: customer?.source ?? null,
+    plate: operation.plate ?? "",
+    fields,
+    queueStatus: queueJob?.status ?? null,
+    queueError: queueJob?.last_error ?? null
+  };
+}
+
 /**
  * Cadastro do cliente enviado junto ao pedido para o edge criar/localizar o cliente no
  * OMIE na hora, quando ele ainda nao tem codigo OMIE (customerOmieId = 0). Espelha os
@@ -1834,6 +2060,7 @@ export function listOpenWeighingOperations(database: DesktopDatabase): WeighingO
         o.cancel_reason, o.created_at, o.updated_at,
         c.id AS customer_id,
         COALESCE(c.trade_name, o.remote_customer_name) AS customer_name,
+        c.document AS customer_document,
         COALESCE(v.plate, o.remote_plate) AS plate,
         COALESCE(d.name, o.remote_driver_name) AS driver_name,
         COALESCE(p.description, o.remote_product_description) AS product_description,
@@ -1881,6 +2108,7 @@ export function listCanceledWeighingOperations(
         o.cancel_reason, o.created_at, o.updated_at,
         c.id AS customer_id,
         COALESCE(c.trade_name, o.remote_customer_name) AS customer_name,
+        c.document AS customer_document,
         COALESCE(v.plate, o.remote_plate) AS plate,
         COALESCE(d.name, o.remote_driver_name) AS driver_name,
         COALESCE(p.description, o.remote_product_description) AS product_description,
@@ -1926,6 +2154,7 @@ export function listClosedWeighingOperations(
         o.cancel_reason, o.created_at, o.updated_at,
         c.id AS customer_id,
         COALESCE(c.trade_name, o.remote_customer_name) AS customer_name,
+        c.document AS customer_document,
         COALESCE(v.plate, o.remote_plate) AS plate,
         COALESCE(d.name, o.remote_driver_name) AS driver_name,
         COALESCE(p.description, o.remote_product_description) AS product_description,
@@ -2066,6 +2295,7 @@ export function getWeighingOperation(
         o.cancel_reason, o.created_at, o.updated_at,
         c.id AS customer_id,
         COALESCE(c.trade_name, o.remote_customer_name) AS customer_name,
+        c.document AS customer_document,
         COALESCE(v.plate, o.remote_plate) AS plate,
         COALESCE(d.name, o.remote_driver_name) AS driver_name,
         COALESCE(p.description, o.remote_product_description) AS product_description,
@@ -2902,6 +3132,7 @@ function mapOperationRow(row: OperationRow): WeighingOperationSummary {
     operationType: row.operation_type,
     customerId: row.customer_id ?? null,
     customerName: row.customer_name ?? "",
+    customerDocument: row.customer_document ?? null,
     plate: row.plate ?? "",
     driverName: row.driver_name ?? "",
     productDescription: row.product_description ?? "",

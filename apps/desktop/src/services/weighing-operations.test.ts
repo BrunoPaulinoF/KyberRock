@@ -18,6 +18,7 @@ import {
   createWeighingOperation,
   createSimulatedWeighingOperation,
   deleteClosedWeighingOperation,
+  getOperationOmieIssue,
   getWeighingOperation,
   listCanceledWeighingOperations,
   listClosedWeighingOperations,
@@ -2964,6 +2965,181 @@ describe("weighing operations", () => {
           vehicleId: "vehicle-2"
         })
       ).toThrow("Ja existe uma operacao aberta para a placa XYZ4E56");
+    } finally {
+      database.close();
+    }
+  });
+
+  // A tela de Concluidas precisa dizer POR QUE a operacao nao foi ao OMIE e quais campos
+  // do cadastro corrigir — antes so aparecia "Cadastro incompleto" sem apontar o campo.
+  it("getOperationOmieIssue aponta o CNPJ/CPF que falta quando o cliente nao existe no OMIE", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      // Sem codigo OMIE e sem documento: o fechamento nem chega a enfileirar o pedido.
+      database
+        .prepare(
+          "UPDATE customers SET omie_customer_id = NULL, document = NULL WHERE id = 'customer-1'"
+        )
+        .run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      const issue = getOperationOmieIssue(database, operation.id);
+
+      expect(issue).toMatchObject({
+        operationId: operation.id,
+        operationType: "invoice",
+        pending: true,
+        blocked: true,
+        reasonLabel: "Cadastro incompleto",
+        customerId: "customer-1",
+        customerSource: "omie",
+        plate: "ABC1D23"
+      });
+      expect(issue.fields.filter((field) => field.missing).map((field) => field.key)).toEqual([
+        "document"
+      ]);
+      // Numero e e-mail ja estao preenchidos pelo insertCatalog, mas seguem editaveis.
+      expect(issue.fields.find((field) => field.key === "addressNumber")).toMatchObject({
+        required: true,
+        missing: false,
+        value: "123"
+      });
+      expect(issue.reason).toContain("CNPJ/CPF");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("getOperationOmieIssue devolve o erro do ultimo job quando o OMIE recusou o pedido", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database
+        .prepare(
+          "UPDATE customers SET omie_customer_id = 456, document = '26463463000183' WHERE id = 'customer-1'"
+        )
+        .run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+      database
+        .prepare(
+          "UPDATE sync_queue SET status = 'failed', last_error = ? WHERE target = 'omie' AND entity_id = ?"
+        )
+        .run("OMIE recusou: categoria nao encontrada.", operation.id);
+
+      const issue = getOperationOmieIssue(database, operation.id);
+
+      expect(issue).toMatchObject({
+        pending: true,
+        blocked: true,
+        reasonLabel: "Recusada pelo OMIE",
+        reason: "OMIE recusou: categoria nao encontrada.",
+        queueStatus: "failed"
+      });
+      expect(issue.fields.some((field) => field.missing)).toBe(false);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("getOperationOmieIssue para de acusar pendencia depois que o pedido e criado", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database
+        .prepare(
+          "UPDATE customers SET omie_customer_id = 456, document = '26463463000183' WHERE id = 'customer-1'"
+        )
+        .run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+      database
+        .prepare("UPDATE weighing_operations SET omie_sales_order_id = 4321 WHERE id = ?")
+        .run(operation.id);
+
+      expect(getOperationOmieIssue(database, operation.id)).toMatchObject({
+        pending: false,
+        blocked: false,
+        reasonLabel: "Enviada ao OMIE",
+        reason: "Pedido OMIE 4321 ja criado."
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("expoe o CNPJ/CPF do cliente nas listas de operacoes, para a busca das concluidas", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database
+        .prepare("UPDATE customers SET document = '26463463000183' WHERE id = 'customer-1'")
+        .run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+
+      expect(listOpenWeighingOperations(database)[0].customerDocument).toBe("26463463000183");
+
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      expect(listClosedWeighingOperations(database)[0].customerDocument).toBe("26463463000183");
     } finally {
       database.close();
     }

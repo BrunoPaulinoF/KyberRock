@@ -6,6 +6,7 @@ import { ensureInitialDesktopIdentity, type LocalDesktopIdentity } from "./boots
 import { closeWeighingOperation, createSimulatedWeighingOperation } from "./weighing-operations";
 import {
   configureReceiptPrintProfile,
+  getActiveReceiptPrintProfile,
   listPrintReceipts,
   printTestReceipt,
   printWeighingReceipt,
@@ -308,6 +309,106 @@ describe("printing", () => {
 
       expect(receipt.status).toBe("failed");
       expect(receipt.errorMessage).toBe("Printer offline");
+    } finally {
+      database.close();
+    }
+  });
+
+  // A logo e o cabecalho do cupom passaram a viajar no snapshot como bloco estruturado:
+  // sem isso o renderizador HTML tinha de adivinhar quantas linhas do topo pular.
+  it("leva a logo e o cabecalho estruturado ate a impressora", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+    const logoDataUrl = "data:image/png;base64,iVBORw0KGgo=";
+
+    try {
+      const identity = createIdentity(database);
+      configureReceiptPrintProfile(database, {
+        identity,
+        windowsPrinterName: "TERMICA-80",
+        receiptLogoDataUrl: logoDataUrl,
+        receiptLogoWidthMm: 30,
+        receiptLogoHeightMm: 20
+      });
+      const operation = createClosedOperation(database, identity);
+
+      await printWeighingReceipt(database, { operationId: operation.id, identity }, printer);
+
+      const snapshot = printer.calls[0].snapshot;
+      expect(snapshot.receiptLogo).toMatchObject({ dataUrl: logoDataUrl, widthMm: 30 });
+      expect(snapshot.header.companyName).toBe("KYBERROCK MINERACAO LTDA");
+      expect(snapshot.header.receiptNumberLabel).toBe("000000001");
+      expect(snapshot.style.showLogo).toBe(true);
+      expect(snapshot.lines.slice(-snapshot.bodyLines.length)).toEqual(snapshot.bodyLines);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("mantem a logo salva quando o perfil e regravado sem informar a logo", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      configureReceiptPrintProfile(database, {
+        identity,
+        windowsPrinterName: "TERMICA-80",
+        receiptLogoDataUrl: "data:image/png;base64,iVBORw0KGgo="
+      });
+
+      configureReceiptPrintProfile(database, { identity, windowsPrinterName: "TERMICA-90" });
+
+      expect(getActiveReceiptPrintProfile(database, identity.deviceId)?.receiptLogo.dataUrl).toBe(
+        "data:image/png;base64,iVBORw0KGgo="
+      );
+    } finally {
+      database.close();
+    }
+  });
+
+  // A tela de impressao carregava o formulario com listPrintProfiles()[0], que devolve
+  // perfis de qualquer computador/tipo de documento. Este lookup e a fonte correta.
+  it("resolve o perfil ativo do proprio computador", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      configureReceiptPrintProfile(database, { identity, windowsPrinterName: "TERMICA-80" });
+
+      expect(getActiveReceiptPrintProfile(database, identity.deviceId)).toMatchObject({
+        deviceId: identity.deviceId,
+        documentType: "receipt_80mm",
+        windowsPrinterName: "TERMICA-80"
+      });
+      expect(getActiveReceiptPrintProfile(database, "outro-computador")).toBeNull();
+    } finally {
+      database.close();
+    }
+  });
+
+  it("aplica a personalizacao de fonte e tamanhos no cupom impresso", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createIdentity(database);
+      configureReceiptPrintProfile(database, {
+        identity,
+        windowsPrinterName: "TERMICA-80",
+        templateConfig: {
+          mode: "custom",
+          fontFamily: "condensed",
+          numberFontSizePx: 18,
+          showFinancial: false
+        }
+      });
+      const operation = createClosedOperation(database, identity);
+
+      await printWeighingReceipt(database, { operationId: operation.id, identity }, printer);
+
+      const snapshot = printer.calls[0].snapshot;
+      expect(snapshot.style).toMatchObject({ fontFamily: "condensed", numberFontSizePx: 18 });
+      expect(snapshot.lines).not.toContain("FINANCEIRO");
     } finally {
       database.close();
     }

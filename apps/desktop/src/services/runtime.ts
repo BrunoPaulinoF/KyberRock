@@ -66,6 +66,7 @@ import {
   createWeighingOperation,
   deleteClosedWeighingOperation,
   getCustomerLastEntryPreferences,
+  getOperationOmieIssue,
   listCanceledWeighingOperations,
   listClosedWeighingOperations,
   listOpenWeighingOperations,
@@ -74,6 +75,7 @@ import {
   updateWeighingOperationCarrier,
   updateWeighingOperationDetails,
   type CustomerLastEntryPreferences,
+  type OperationOmieIssue,
   type OperationType,
   type OperationFreightInput,
   type ScaleCaptureAudit,
@@ -95,6 +97,7 @@ import {
 import type { FreightModality } from "./freight.js";
 import {
   configureReceiptPrintProfile,
+  getActiveReceiptPrintProfile,
   listPrintProfiles,
   listPrintReceipts,
   printTestReceipt,
@@ -1156,6 +1159,16 @@ export class DesktopRuntime {
     return listClosedWeighingOperations(this.database);
   }
 
+  /**
+   * Diagnostico "por que essa operacao concluida nao foi ao OMIE", com os campos do
+   * cadastro do cliente a corrigir. Usado pelo alerta da tela de Concluidas e pelo
+   * botao "Editar item" da fila OMIE (tela cloud).
+   */
+  getOperationOmieIssue(operationId: string): OperationOmieIssue {
+    this.assertDesktopAccess();
+    return getOperationOmieIssue(this.database, operationId);
+  }
+
   clearCanceledWeighingOperations(): number {
     this.assertDesktopAccess();
     return clearCanceledWeighingOperations(this.database);
@@ -1217,6 +1230,12 @@ export class DesktopRuntime {
   listPrintProfiles(): PrintProfileSummary[] {
     this.assertDesktopAccess();
     return listPrintProfiles(this.database);
+  }
+
+  /** Perfil de cupom 80 mm ativo deste computador — o que a impressao realmente usa. */
+  getActiveReceiptProfile(): PrintProfileSummary | null {
+    this.assertDesktopAccess();
+    return getActiveReceiptPrintProfile(this.database, this.ensureIdentity().deviceId);
   }
 
   listPrintReceipts(): PrintReceiptSummary[] {

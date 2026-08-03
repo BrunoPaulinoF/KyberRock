@@ -62,6 +62,10 @@ export const TIPS = {
   operations: {
     filterPeriod: "Filtra canceladas por periodo: hoje, 7 dias, mes atual ou todas.",
     filterProduct: "Filtra operacoes concluidas por produto.",
+    searchClosed:
+      "Busca nas concluidas por cliente, CNPJ/CPF (com ou sem pontuacao), produto, placa ou motorista.",
+    fixOmieCadastro:
+      "Corrige o cadastro que faltou/falhou e reenvia esta operacao concluida ao OMIE.",
     clearCanceled:
       "Apaga da lista todas as operacoes canceladas (somente a lista, o historico fica).",
     clearClosed:

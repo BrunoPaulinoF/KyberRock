@@ -363,6 +363,14 @@ function registerIpcHandlers(): void {
     return runtime.listClosedWeighingOperations();
   });
 
+  ipcMain.handle("desktop:operation-omie-issue", (_event, operationId: string) => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.getOperationOmieIssue(operationId);
+  });
+
   ipcMain.handle("desktop:clear-canceled-weighing-operations", () => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");
@@ -545,6 +553,14 @@ function registerIpcHandlers(): void {
     }
 
     return runtime.listPrintProfiles();
+  });
+
+  ipcMain.handle("desktop:get-active-receipt-profile", () => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.getActiveReceiptProfile();
   });
 
   ipcMain.handle("desktop:list-print-receipts", () => {

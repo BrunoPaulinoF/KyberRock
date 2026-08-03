@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildReceiptDocument,
   buildReceiptLines,
   buildReceiptLinesWithConfig,
+  buildSampleReceiptInput,
+  DEFAULT_RECEIPT_STYLE,
   DEFAULT_RECEIPT_TEMPLATE_CONFIG,
-  NON_FISCAL_SALE_LABEL
+  NON_FISCAL_SALE_LABEL,
+  normalizeReceiptTemplateConfig,
+  resolveReceiptTemplateConfig
 } from "./receipt-template";
 
 describe("buildReceiptLines", () => {
@@ -128,6 +133,7 @@ describe("buildReceiptLines", () => {
       { ...baseInput(), operationType: "internal" },
       {
         ...DEFAULT_RECEIPT_TEMPLATE_CONFIG,
+        mode: "custom",
         showCompanyHeader: false,
         showCopyInfo: false,
         showCustomerInfo: false,
@@ -144,6 +150,109 @@ describe("buildReceiptLines", () => {
     );
 
     expect(lines.filter((line) => line.includes(NON_FISCAL_SALE_LABEL))).toHaveLength(2);
+  });
+});
+
+describe("modelo padrao x personalizado", () => {
+  // "Padrao" precisa ser um estado, nao um ponto de partida: o operador que
+  // experimentou a personalizacao e voltou ao padrao espera o cupom de sempre.
+  it("ignora a personalizacao guardada quando o modelo e o padrao", () => {
+    const resolved = resolveReceiptTemplateConfig({
+      ...DEFAULT_RECEIPT_TEMPLATE_CONFIG,
+      mode: "default",
+      showFinancial: false,
+      fontSizePx: 18,
+      customFooterText: "Texto que nao deve sair"
+    });
+
+    expect(resolved).toEqual(DEFAULT_RECEIPT_TEMPLATE_CONFIG);
+  });
+
+  it("aplica a personalizacao quando o modelo e personalizado", () => {
+    const resolved = resolveReceiptTemplateConfig({
+      ...DEFAULT_RECEIPT_TEMPLATE_CONFIG,
+      mode: "custom",
+      showFinancial: false,
+      numberFontSizePx: 20
+    });
+
+    expect(resolved.showFinancial).toBe(false);
+    expect(resolved.numberFontSizePx).toBe(20);
+  });
+
+  it("mantem a aparencia padrao em configuracoes gravadas antes da personalizacao", () => {
+    // Perfis salvos antes desta versao nao tem os campos de estilo no JSON.
+    const normalized = normalizeReceiptTemplateConfig({ mode: "custom", showFooter: false });
+
+    expect(normalized.fontFamily).toBe(DEFAULT_RECEIPT_STYLE.fontFamily);
+    expect(normalized.fontSizePx).toBe(DEFAULT_RECEIPT_STYLE.fontSizePx);
+    expect(normalized.showLogo).toBe(true);
+  });
+
+  it("prende os tamanhos na faixa que cabe no papel de 80 mm", () => {
+    const normalized = normalizeReceiptTemplateConfig({
+      mode: "custom",
+      fontSizePx: 200,
+      numberFontSizePx: 0,
+      lineHeight: Number.NaN
+    });
+
+    expect(normalized.fontSizePx).toBe(20);
+    expect(normalized.numberFontSizePx).toBe(7);
+    expect(normalized.lineHeight).toBe(DEFAULT_RECEIPT_STYLE.lineHeight);
+  });
+});
+
+describe("buildReceiptDocument", () => {
+  it("separa o cabecalho do corpo sem perder nenhuma linha", () => {
+    const input = buildSampleReceiptInput("2026-06-07T12:00:00.000Z");
+    const document = buildReceiptDocument(input, DEFAULT_RECEIPT_TEMPLATE_CONFIG);
+
+    expect(document.lines).toEqual(buildReceiptLines(input));
+    expect(document.lines.slice(-document.bodyLines.length)).toEqual(document.bodyLines);
+  });
+
+  // O renderizador HTML descartava as 6 primeiras linhas por posicao fixa. Na operacao
+  // interna o aviso "sem valor fiscal" ocupa 3 linhas no topo, entao o corte comia o
+  // aviso e metade do cabecalho. Agora o aviso sai no bloco estruturado.
+  it("leva o aviso da venda interna no cabecalho, nao no corpo", () => {
+    const document = buildReceiptDocument(
+      { ...buildSampleReceiptInput("2026-06-07T12:00:00.000Z"), operationType: "internal" },
+      DEFAULT_RECEIPT_TEMPLATE_CONFIG
+    );
+
+    expect(document.header.nonFiscalLabel).toBe(NON_FISCAL_SALE_LABEL);
+    expect(document.bodyLines.some((line) => line.includes(NON_FISCAL_SALE_LABEL))).toBe(true);
+    expect(document.header.companyName).toBe("PEDREIRA TESTE LTDA");
+  });
+
+  it("zera o cabecalho grafico quando os blocos do topo estao desligados", () => {
+    const document = buildReceiptDocument(buildSampleReceiptInput("2026-06-07T12:00:00.000Z"), {
+      ...DEFAULT_RECEIPT_TEMPLATE_CONFIG,
+      mode: "custom",
+      showCompanyHeader: false,
+      showCopyInfo: false
+    });
+
+    expect(document.header.companyName).toBeNull();
+    expect(document.header.receiptNumberLabel).toBeNull();
+    expect(document.lines).toEqual(document.bodyLines);
+  });
+
+  it("devolve o estilo ja resolvido para a previa e para a impressao", () => {
+    const document = buildReceiptDocument(buildSampleReceiptInput("2026-06-07T12:00:00.000Z"), {
+      ...DEFAULT_RECEIPT_TEMPLATE_CONFIG,
+      mode: "custom",
+      fontFamily: "condensed",
+      numberFontSizePx: 16,
+      showLogo: false
+    });
+
+    expect(document.style).toMatchObject({
+      fontFamily: "condensed",
+      numberFontSizePx: 16,
+      showLogo: false
+    });
   });
 });
 

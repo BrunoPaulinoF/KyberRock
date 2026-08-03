@@ -1,0 +1,89 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { describe, expect, it } from "vitest";
+
+const rendererDir = dirname(fileURLToPath(import.meta.url));
+const appSource = readFileSync(resolve(rendererDir, "App.tsx"), "utf8");
+const customersSource = readFileSync(resolve(rendererDir, "CustomersView.tsx"), "utf8");
+
+function sliceBetween(source: string, start: string, end: string): string {
+  const from = source.indexOf(start);
+  const to = source.indexOf(end, from);
+  expect(from).toBeGreaterThan(-1);
+  expect(to).toBeGreaterThan(from);
+  return source.slice(from, to);
+}
+
+describe("tela de operacoes concluidas", () => {
+  it("tem a busca por cliente, CNPJ/CPF ou produto", () => {
+    const toolbar = sliceBetween(appSource, "value={closedProductFilter}", "showDeviceColors ?");
+
+    expect(toolbar).toContain("Cliente, CNPJ/CPF ou produto");
+    expect(appSource).toContain("filterClosedOperationsBySearch(byProduct, closedSearch)");
+  });
+
+  it("alerta as concluidas que nao chegaram ao OMIE e oferece a edicao dos itens", () => {
+    expect(appSource).toContain("<PendingOmieAlert");
+
+    const alert = sliceBetween(appSource, "function PendingOmieAlert(", "\nfunction ");
+    expect(alert).toContain("nao foi enviada ao OMIE");
+    expect(alert).toContain("Editar itens");
+    // O motivo vem do mesmo view model da coluna Fiscal OMIE, entao alerta e tabela
+    // nunca divergem.
+    expect(alert).toContain("getFiscalBillingStatus(operation)");
+  });
+
+  it("abre o dialogo de correcao pela operacao com pendencia", () => {
+    const dialog = sliceBetween(appSource, "function FixOmieCadastroDialog(", "\nfunction ");
+
+    expect(dialog).toContain(".operationOmieIssue(operationId)");
+    expect(dialog).toContain("Salvar e reenviar ao OMIE");
+    // Cadastro vindo do OMIE tambem precisa ser corrigivel aqui, senao a operacao
+    // trava sem saida dentro do app.
+    expect(dialog).toContain("overrideOmieFields: true");
+  });
+});
+
+describe("avisos do envio ao OMIE", () => {
+  it("mostra os avisos no canto superior direito", () => {
+    const toasts = sliceBetween(appSource, "function OmieDeliveryToasts(", "\nfunction ");
+
+    expect(toasts).toContain('position: "fixed"');
+    expect(toasts).toContain('top: "16px"');
+    expect(toasts).toContain('right: "16px"');
+  });
+
+  it("toca um som diferente para sucesso e para falha", () => {
+    expect(appSource).toContain('playOmieAlertSound("success")');
+    expect(appSource).toContain('playOmieAlertSound("error")');
+  });
+});
+
+describe("tela cloud", () => {
+  it("nao tem mais o botao de limpar e re-sincronizar o OMIE", () => {
+    expect(appSource).not.toContain("Limpar tudo e Re-sincronizar OMIE");
+    expect(appSource).not.toContain("handleResetOmieMaster");
+    expect(appSource).not.toContain("omieResetting");
+  });
+
+  it("tem o botao de editar item em cada item da fila OMIE", () => {
+    const queue = sliceBetween(
+      appSource,
+      "Fila OMIE (fechamentos a enviar)",
+      'activeView === "insights"'
+    );
+
+    expect(queue).toContain('label="Editar item"');
+    expect(queue).toContain("setOmieIssueOperationId(item.operationId)");
+  });
+});
+
+describe("tela de clientes", () => {
+  it("nao tem mais o e-mail padrao aplicado a todos os clientes", () => {
+    expect(customersSource).not.toContain("Aplicar a todos os clientes");
+    expect(customersSource).not.toContain("E-mail padrao de NF-e");
+    expect(customersSource).not.toContain("applyDefaultNfeEmailToAll");
+  });
+});
