@@ -1502,6 +1502,86 @@ describe("supabase sync", () => {
     }
   });
 
+  it("clears the stale OMIE customer code the bridge could not fix and re-arms the cadastro", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertClosedOperationForNewCustomer(database);
+      // Cliente ja "vinculado" a um codigo que nao existe mais na conta do OMIE.
+      database
+        .prepare("UPDATE customers SET omie_customer_id = 11455924790 WHERE id = 'customer-novo'")
+        .run();
+      enqueueBillingJobForNewCustomer(database, { customerOmieId: 11455924790 });
+      invokeMock.mockResolvedValueOnce({
+        error: createFunctionHttpError(
+          "OMIE HTTP 500 em IncluirPedido (/produtos/pedido/) - ERROR: Cliente não cadastrado " +
+            "para o Código [11455924790] ! - tag: [codigo_cliente]"
+        ),
+        data: null
+      });
+
+      const result = await processOmieSyncQueue(database, identity);
+
+      expect(result.failed).toBe(1);
+      // Re-tentar mandaria o MESMO codigo invalido: o job para (sem retry storm ate morrer).
+      expect(
+        database
+          .prepare("SELECT next_attempt_at FROM sync_queue WHERE id = ?")
+          .pluck()
+          .get("omie-job-novo-cliente")
+      ).toBe(BLOCKED_NEXT_ATTEMPT_AT);
+      // Vinculo podre limpo e cliente de volta na fila de cadastro: o proximo ciclo cria
+      // ele no OMIE com um codigo valido e rearma o fechamento sozinho.
+      expect(
+        database
+          .prepare("SELECT omie_customer_id, needs_push FROM customers WHERE id = 'customer-novo'")
+          .get()
+      ).toMatchObject({ omie_customer_id: null, needs_push: 1 });
+      expect(
+        database
+          .prepare("SELECT omie_billing_status FROM weighing_operations WHERE id = 'operation-1'")
+          .pluck()
+          .get()
+      ).toBe("cadastro_incompleto");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("stores the customer code the bridge corrected while sending the closing", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertClosedOperationForNewCustomer(database);
+      database
+        .prepare("UPDATE customers SET omie_customer_id = 11455924790 WHERE id = 'customer-novo'")
+        .run();
+      enqueueBillingJobForNewCustomer(database, { customerOmieId: 11455924790 });
+      // O edge recusou o codigo obsoleto, relocalizou o cliente e mandou o pedido com 8888.
+      invokeMock.mockResolvedValueOnce({
+        error: null,
+        data: { orderId: 4242, omieCustomerId: 8888 }
+      });
+
+      const result = await processOmieSyncQueue(database, identity);
+
+      expect(result).toMatchObject({ processed: 1, failed: 0 });
+      // Sem regravar, o proximo fechamento do mesmo cliente repetiria a recusa.
+      expect(
+        database
+          .prepare("SELECT omie_customer_id FROM customers WHERE id = 'customer-novo'")
+          .pluck()
+          .get()
+      ).toBe(8888);
+    } finally {
+      database.close();
+    }
+  });
+
   it("resends the closing by itself once the customer lands in OMIE", async () => {
     const database = createDatabase();
 
@@ -2617,7 +2697,10 @@ function insertClosedOperationForNewCustomer(database: DesktopDatabase): void {
 }
 
 /** Job do fechamento que leva o cadastro do cliente para o edge criar no OMIE. */
-function enqueueBillingJobForNewCustomer(database: DesktopDatabase): void {
+function enqueueBillingJobForNewCustomer(
+  database: DesktopDatabase,
+  options: { customerOmieId?: number } = {}
+): void {
   enqueueSyncJob(database, {
     id: "omie-job-novo-cliente",
     target: "omie",
@@ -2628,7 +2711,7 @@ function enqueueBillingJobForNewCustomer(database: DesktopDatabase): void {
     payload: {
       operationId: "operation-1",
       operationType: "invoice",
-      customerOmieId: 0,
+      customerOmieId: options.customerOmieId ?? 0,
       localCustomerId: "customer-novo",
       customer: {
         localCustomerId: "customer-novo",

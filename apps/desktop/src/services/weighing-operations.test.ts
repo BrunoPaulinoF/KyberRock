@@ -1246,6 +1246,63 @@ describe("weighing operations", () => {
     }
   });
 
+  it("sends the customer and carrier cadastro even when both already have an OMIE code", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database
+        .prepare(
+          "UPDATE customers SET omie_customer_id = 456, document = '12345678000195' WHERE id = 'customer-1'"
+        )
+        .run();
+      database
+        .prepare(
+          `INSERT INTO carriers (id, company_id, omie_customer_id, name, document, source, created_at, updated_at)
+           VALUES ('carrier-1', 'company-1', 987654, 'Transportadora Teste', '22222222000182', 'omie', datetime('now'), datetime('now'))`
+        )
+        .run();
+      database
+        .prepare(
+          `INSERT INTO vehicle_carriers (id, vehicle_id, carrier_id, is_active, created_at, updated_at)
+           VALUES ('vc-1', 'vehicle-1', 'carrier-1', 1, datetime('now'), datetime('now'))`
+        )
+        .run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      const built = buildOmieBillingJob(database, operation.id);
+
+      // O edge ignora o cadastro quando o codigo vale; ele viaja junto para o edge poder
+      // refazer o vinculo quando o OMIE recusa o codigo local ("Cliente nao cadastrado
+      // para o Codigo [...]") — sem ele o fechamento fica preso na fila.
+      expect(built!.payload.customerOmieId).toBe(456);
+      expect(built!.payload.customer).toMatchObject({
+        localCustomerId: "customer-1",
+        cnpjCpf: "12345678000195"
+      });
+      expect(built!.payload.carrier).toMatchObject({
+        localCarrierId: "carrier-1",
+        cnpjCpf: "22222222000182"
+      });
+    } finally {
+      database.close();
+    }
+  });
+
   it("includes the transport data (plate, driver, carrier, cargo weight) in the OMIE job", () => {
     const database = createDatabase();
 

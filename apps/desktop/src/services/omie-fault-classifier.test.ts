@@ -4,7 +4,8 @@ import {
   isCadastroIncompleteFault,
   isOmieCustomerRegistrationFault,
   isOmieMissingDocumentFault,
-  isOmieProtectedRecordFault
+  isOmieProtectedRecordFault,
+  isOmieStaleCustomerCodeFault
 } from "./omie-fault-classifier.js";
 
 describe("isCadastroIncompleteFault", () => {
@@ -113,5 +114,37 @@ describe("isOmieCustomerRegistrationFault", () => {
     expect(isOmieCustomerRegistrationFault("ERROR: - tag: [cCodServMun]")).toBe(false);
     expect(isOmieCustomerRegistrationFault("OMIE nao retornou orderId")).toBe(false);
     expect(isOmieCustomerRegistrationFault("")).toBe(false);
+  });
+});
+
+describe("isOmieStaleCustomerCodeFault", () => {
+  it("matches the raw OMIE refusal of a customer code that no longer exists", () => {
+    expect(
+      isOmieStaleCustomerCodeFault(
+        "OMIE HTTP 500 em IncluirPedido (/produtos/pedido/) - ERROR: Cliente não cadastrado " +
+          "para o Código [11455924790] ! - tag: [codigo_cliente]"
+      )
+    ).toBe(true);
+  });
+
+  it("matches the deterministic message the omie-sync edge returns", () => {
+    expect(
+      isOmieStaleCustomerCodeFault(
+        "Codigo do cliente no OMIE nao existe mais (L. A. do Nascimento). O codigo 11455924790 " +
+          "gravado no cadastro local nao existe nesta conta do OMIE."
+      )
+    ).toBe(true);
+  });
+
+  it("does not match the same refusal about the carrier, nor other faults", () => {
+    // Mesma frase, outra tag: a transportadora tem outro conserto (o pedido segue sem ela).
+    expect(
+      isOmieStaleCustomerCodeFault(
+        "ERROR: Cliente não cadastrado para o Código [777] ! - tag: [codigo_transportadora]"
+      )
+    ).toBe(false);
+    expect(isOmieStaleCustomerCodeFault("OMIE offline, tente novamente")).toBe(false);
+    expect(isOmieStaleCustomerCodeFault("OMIE nao retornou orderId")).toBe(false);
+    expect(isOmieStaleCustomerCodeFault("")).toBe(false);
   });
 });

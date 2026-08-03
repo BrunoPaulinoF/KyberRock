@@ -1396,7 +1396,11 @@ export interface OmieBillingJobPayload {
   customerOmieId: number;
   /** Id local do cliente, para gravar o codigo OMIE de volta apos o envio. */
   localCustomerId: string | null;
-  /** Cadastro para criar o cliente no OMIE na hora quando customerOmieId = 0. */
+  /**
+   * Cadastro do cliente para o edge criar/relocalizar no OMIE: usado quando
+   * customerOmieId = 0 e quando o codigo enviado nao existe (mais) no OMIE.
+   * `null` so quando o cliente nao tem CNPJ/CPF.
+   */
   customer: OmieOrderCustomerCadastro | null;
   productOmieId: number | null;
   serviceDescription: string | null;
@@ -1429,7 +1433,10 @@ export interface OmieBillingJobPayload {
   transport: OmieOrderTransport | null;
   /** Id local da transportadora, para gravar o codigo OMIE devolvido pelo envio. */
   localCarrierId: string | null;
-  /** Cadastro da transportadora a criar no OMIE antes do pedido (null = ja existe la). */
+  /**
+   * Cadastro da transportadora para o edge criar/relocalizar no OMIE antes do pedido
+   * (null = transportadora ausente ou sem CNPJ/CPF).
+   */
   carrier: OmieOrderCarrierCadastro | null;
 }
 
@@ -1575,10 +1582,12 @@ export function buildOmieBillingJob(
   // pedido a enviar. O fechamento marca cadastro_incompleto pedindo o CNPJ/CPF do cliente.
   if (!omieCustomerId && !customerDocument) return null;
 
-  // Cliente ainda nao vinculado (mas com documento): envia o cadastro para o edge
-  // criar/localizar o cliente no OMIE na hora, antes de criar o pedido.
+  // Cadastro do cliente junto do pedido SEMPRE que ha documento — nao so quando ele ainda
+  // nao tem codigo OMIE. Com codigo o edge nem olha para ele; sem esse cadastro, porem, o
+  // edge nao tem como consertar um codigo local obsoleto (cliente excluido no OMIE, codigo
+  // de outra conta) e o fechamento morre em "Cliente nao cadastrado para o Codigo [...]".
   const customerCadastro: OmieOrderCustomerCadastro | null =
-    !omieCustomerId && customerRow && row.customer_id
+    customerDocument && customerRow && row.customer_id
       ? buildOrderCustomerCadastro(
           row.customer_id,
           customerRow,
@@ -1663,8 +1672,8 @@ export function buildOmieBillingJob(
     orderCarrier?.omie_customer_id && orderCarrier.omie_customer_id > 0
       ? orderCarrier.omie_customer_id
       : null;
-  // Ainda sem codigo OMIE: o cadastro sobe junto e o edge cria a transportadora
-  // antes de montar o pedido, para o primeiro fechamento ja sair com ela.
+  // O cadastro sobe junto: o edge cria a transportadora antes de montar o pedido quando
+  // ela ainda nao existe no OMIE e refaz o vinculo quando o codigo local esta obsoleto.
   const carrierCadastro = buildOrderCarrierCadastro(orderCarrier);
   const freightModalidade = resolveFreightModalidade(row.freight_type, operation.freightTotalCents);
   const transport: OmieOrderTransport = {
@@ -1779,16 +1788,17 @@ interface OrderCarrierRow {
 }
 
 /**
- * Cadastro a enviar para o edge criar a transportadora no OMIE antes do pedido.
- * `null` quando ela ja tem codigo OMIE (nada a criar) ou quando nao tem CNPJ/CPF —
- * o OMIE exige o documento, e falhar aqui derrubaria o pedido inteiro; sem ele o
- * pedido segue sem transportadora, como antes.
+ * Cadastro a enviar para o edge criar/relocalizar a transportadora no OMIE antes do
+ * pedido. Vai SEMPRE que ela tem CNPJ/CPF: com codigo OMIE valido o edge nem olha para
+ * ele, mas quando o codigo local esta obsoleto (transportadora excluida no OMIE, codigo
+ * de outra conta) e so com este cadastro que o edge consegue refazer o vinculo em vez de
+ * mandar o pedido sem transportadora. `null` sem documento — o OMIE o exige, e falhar
+ * aqui derrubaria o pedido inteiro.
  */
 function buildOrderCarrierCadastro(
   carrier: OrderCarrierRow | null
 ): OmieOrderCarrierCadastro | null {
   if (!carrier) return null;
-  if (carrier.omie_customer_id && carrier.omie_customer_id > 0) return null;
   const document = carrier.document?.trim();
   if (!document) return null;
 

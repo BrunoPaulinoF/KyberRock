@@ -1,6 +1,7 @@
 import { createClient as createSupabaseClient } from "jsr:@supabase/supabase-js@2";
 import {
   CUSTOMER_REGISTRATION_FAULT_PREFIX,
+  OmieHttpError,
   OmieQueueManager,
   buildCustomerPayload,
   customerRegistrationFaultMessage,
@@ -2721,10 +2722,148 @@ async function resolveOrderCarrierOmieId(
   if (typeof linked === "number" && linked > 0) return linked;
   if (!payload.carrier) return null;
   try {
-    const carrierOmieId = await pushCarrierToOmie(credentials, payload.carrier);
+    const carrierOmieId = await pushCarrierToOmie(
+      credentials,
+      toOrderCarrierPushPayload(payload.carrier)
+    );
     return carrierOmieId > 0 ? carrierOmieId : null;
   } catch (error) {
     console.error("Falha ao cadastrar a transportadora no OMIE; pedido segue sem ela", error);
+    return null;
+  }
+}
+
+/**
+ * O cadastro da transportadora que viaja no pedido identifica o registro local em
+ * `localCarrierId` (e a transportadora do desktop, nao um cliente), enquanto o push de
+ * cadastros usa `localCustomerId`. Sem esta traducao o codigo de integracao saia vazio e
+ * o cadastro da transportadora estourava — silenciosamente, porque o chamador engole a
+ * falha e manda o pedido sem transportadora.
+ */
+function toOrderCarrierPushPayload(
+  carrier: PushCarrierPayload & { localCarrierId?: string }
+): PushCarrierPayload {
+  return {
+    ...carrier,
+    localCustomerId: carrier.localCustomerId ?? carrier.localCarrierId ?? "",
+    // O codigo local nunca vale como codigo OMIE: quem manda e o `transport.carrierOmieId`
+    // (ja tratado acima) ou o find-or-create por CNPJ/CPF.
+    omieCustomerId: undefined
+  };
+}
+
+/**
+ * Recusa do OMIE quando o codigo enviado aponta para um cadastro que nao existe (mais)
+ * na conta: "Cliente nao cadastrado para o Codigo [11455924790] ! - tag: [codigo_cliente]".
+ *
+ * O codigo vem do cadastro LOCAL (customers.omie_customer_id / carriers.omie_customer_id),
+ * entao ele fica obsoleto sem ninguem perceber quando o registro e excluido no OMIE, quando
+ * a base passa a apontar para outra conta OMIE ou quando uma importacao antiga gravou um
+ * codigo que nao existe mais. Do lado do operador o cadastro parece completo: sem
+ * tratamento o fechamento re-tenta com o MESMO codigo invalido ate morrer na fila.
+ */
+const OMIE_UNKNOWN_RECORD_PATTERN = /cliente\s+n[aã]o\s+cadastrad/i;
+
+function omieFaultText(error: unknown): string {
+  if (error instanceof OmieHttpError) return `${error.message} ${error.detail ?? ""}`;
+  return error instanceof Error ? error.message : String(error ?? "");
+}
+
+/**
+ * A transportadora tambem e um "cliente" no OMIE, entao a recusa do `codigo_transportadora`
+ * do bloco frete usa a MESMA frase da recusa do `codigo_cliente` do cabecalho. So a tag
+ * separa as duas — e cada uma tem um conserto diferente (recadastrar o cliente x seguir
+ * sem a transportadora).
+ */
+function isUnknownOmieCarrierFault(error: unknown): boolean {
+  const text = omieFaultText(error);
+  return OMIE_UNKNOWN_RECORD_PATTERN.test(text) && /codigo_transportadora/i.test(text);
+}
+
+function isUnknownOmieCustomerFault(error: unknown): boolean {
+  const text = omieFaultText(error);
+  if (!OMIE_UNKNOWN_RECORD_PATTERN.test(text)) return false;
+  return !/codigo_transportadora/i.test(text);
+}
+
+/**
+ * Marca da recusa por codigo de cliente obsoleto que o edge NAO conseguiu consertar
+ * sozinho (fechamento antigo, sem o cadastro do cliente no payload, ou o OMIE recusou o
+ * recadastro). O desktop reconhece este prefixo para limpar o codigo local invalido e
+ * refazer o vinculo antes de reenviar — ver isOmieStaleCustomerCodeFault no desktop.
+ */
+export const STALE_CUSTOMER_CODE_FAULT_PREFIX = "Codigo do cliente no OMIE nao existe mais";
+
+function staleCustomerCodeFaultMessage(
+  staleOmieCustomerId: number,
+  customerName: string | undefined,
+  error: unknown
+): string {
+  const who = customerName?.trim() ? ` (${customerName.trim()})` : "";
+  return (
+    `${STALE_CUSTOMER_CODE_FAULT_PREFIX}${who}. O codigo ${staleOmieCustomerId} gravado no ` +
+    "cadastro local nao existe nesta conta do OMIE (cliente excluido la ou codigo de outra " +
+    "conta). O vinculo sera refeito e o fechamento reenviado sozinho. " +
+    `Detalhe OMIE: ${omieFaultText(error)}`
+  );
+}
+
+/**
+ * Recadastra/relocaliza no OMIE o cliente cujo codigo o pedido acabou de rejeitar. Ignora
+ * de proposito o codigo local (ele e justamente o invalido) e refaz o find-or-create por
+ * CNPJ/CPF a partir do cadastro que viaja no payload, devolvendo o codigo bom para o
+ * pedido ser reenviado na hora — e para o desktop regravar o vinculo.
+ */
+async function recoverUnknownCustomerOmieId(
+  credentials: OmieCredentials,
+  payload: CreateOrderPayload,
+  staleOmieCustomerId: number,
+  error: unknown
+): Promise<number> {
+  const cadastro = payload.customer;
+  if (!cadastro) {
+    throw new Error(staleCustomerCodeFaultMessage(staleOmieCustomerId, undefined, error));
+  }
+  let recovered: number;
+  try {
+    recovered = await pushCustomerToOmie(credentials, {
+      ...cadastro,
+      omieCustomerId: undefined
+    });
+  } catch (registrationError) {
+    throw new Error(
+      staleCustomerCodeFaultMessage(staleOmieCustomerId, cadastro.razaoSocial, registrationError)
+    );
+  }
+  // Mesmo codigo de novo (o OMIE devolveu o invalido): reenviar so repetiria a recusa.
+  if (!(recovered > 0) || recovered === staleOmieCustomerId) {
+    throw new Error(
+      staleCustomerCodeFaultMessage(staleOmieCustomerId, cadastro.razaoSocial, error)
+    );
+  }
+  return recovered;
+}
+
+/**
+ * Mesma ideia para a transportadora cujo codigo o pedido rejeitou: refaz o find-or-create
+ * por CNPJ/CPF a partir do cadastro do payload. Devolve `null` quando nao da para
+ * recuperar — ai o pedido segue sem transportadora, que e o comportamento historico
+ * quando o cadastro dela falha (nunca derruba o fechamento).
+ */
+async function recoverUnknownCarrierOmieId(
+  credentials: OmieCredentials,
+  payload: CreateOrderPayload,
+  staleOmieCarrierId: number
+): Promise<number | null> {
+  if (!payload.carrier) return null;
+  try {
+    const recovered = await pushCarrierToOmie(
+      credentials,
+      toOrderCarrierPushPayload(payload.carrier)
+    );
+    return recovered > 0 && recovered !== staleOmieCarrierId ? recovered : null;
+  } catch (error) {
+    console.error("Falha ao refazer o vinculo da transportadora no OMIE", error);
     return null;
   }
 }
@@ -2737,13 +2876,27 @@ type OmieServiceOrderResponse = {
   codigoOSIntegracao?: string;
 };
 
+/**
+ * Cria o pedido de venda (ou a OS) da operacao no OMIE.
+ *
+ * Resolve cliente e transportadora e, se o OMIE recusar o pedido porque um desses codigos
+ * nao existe la, CONSERTA e reenvia na hora em vez de devolver a falha para a fila:
+ *
+ * - cliente com codigo obsoleto -> recadastra/relocaliza por CNPJ/CPF e reenvia com o
+ *   codigo bom (que volta ao desktop em `omieCustomerId` para regravar o vinculo);
+ * - transportadora com codigo obsoleto -> refaz o vinculo pelo CNPJ/CPF e, se nem isso
+ *   der, reenvia SEM ela (como ja acontece quando o cadastro dela falha): transporte e
+ *   dado acessorio, nunca motivo para o fechamento ficar preso na fila.
+ *
+ * Cada conserto acontece no maximo uma vez por envio, entao um erro persistente continua
+ * subindo (com a mensagem do OMIE) em vez de virar loop.
+ */
 async function createOmieOrder(
   credentials: OmieCredentials,
   payload: CreateOrderPayload
 ): Promise<{ orderId: number; omieCustomerId: number; omieCarrierId: number | null }> {
-  const integrationCode = toOmieIntegrationCode(payload.idempotencyKey);
   // Garante o cliente no OMIE (cadastra na hora quando ainda nao existe) antes do pedido.
-  const customerOmieId = await resolveOrderCustomerOmieId(credentials, payload);
+  let customerOmieId = await resolveOrderCustomerOmieId(credentials, payload);
   // Boleto: quem LIGA a cobranca e a recomendacao do cadastro do cliente, nao o pedido.
   // Vale para os dois caminhos daqui pra frente (pedido de venda e OS).
   if (isBoletoPaymentMethod(payload.paymentMethodOmieCode)) {
@@ -2751,7 +2904,59 @@ async function createOmieOrder(
   }
   // Mesma ideia para a transportadora: sobe o cadastro antes de montar o pedido para o
   // primeiro fechamento com uma transportadora nova ja sair com ela preenchida.
-  const carrierOmieId = await resolveOrderCarrierOmieId(credentials, payload);
+  let carrierOmieId = await resolveOrderCarrierOmieId(credentials, payload);
+  let customerRecovered = false;
+  let carrierFixed = false;
+
+  for (;;) {
+    try {
+      return await submitOmieOrder(credentials, payload, customerOmieId, carrierOmieId);
+    } catch (error) {
+      if (!carrierFixed && carrierOmieId !== null && isUnknownOmieCarrierFault(error)) {
+        const recovered = await recoverUnknownCarrierOmieId(credentials, payload, carrierOmieId);
+        console.error(
+          `[omie] codigo ${carrierOmieId} da transportadora nao existe no OMIE; ` +
+            (recovered !== null
+              ? `reenviando o pedido com o codigo ${recovered}`
+              : "reenviando o pedido SEM transportadora"),
+          error
+        );
+        carrierOmieId = recovered;
+        carrierFixed = true;
+        continue;
+      }
+      if (!customerRecovered && isUnknownOmieCustomerFault(error)) {
+        const recovered = await recoverUnknownCustomerOmieId(
+          credentials,
+          payload,
+          customerOmieId,
+          error
+        );
+        console.error(
+          `[omie] codigo ${customerOmieId} do cliente nao existe no OMIE; ` +
+            `reenviando o pedido com o codigo ${recovered}`,
+          error
+        );
+        customerOmieId = recovered;
+        customerRecovered = true;
+        // O "gerar boletos" foi ligado no cadastro errado (ou nem existia): refaz no novo.
+        if (isBoletoPaymentMethod(payload.paymentMethodOmieCode)) {
+          await ensureCustomerGeneratesBoleto(credentials, customerOmieId);
+        }
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
+async function submitOmieOrder(
+  credentials: OmieCredentials,
+  payload: CreateOrderPayload,
+  customerOmieId: number,
+  carrierOmieId: number | null
+): Promise<{ orderId: number; omieCustomerId: number; omieCarrierId: number | null }> {
+  const integrationCode = toOmieIntegrationCode(payload.idempotencyKey);
   // Conta corrente escolhida na operacao (meio de pagamento -> conta vinculada).
   // Prioridade: (1) nCodCC vindo do desktop; (2) resolucao pelo nome da conta
   // vinculada direto no OMIE (cobre o caso do omie_code local nulo/desatualizado,
