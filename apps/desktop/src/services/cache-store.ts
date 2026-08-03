@@ -536,20 +536,22 @@ function mapCustomerPriceTable(row: CustomerPriceTableRow): CustomerPriceTableEn
   };
 }
 
-/**
- * Digitos do termo de busca quando ele NAO tem letra — ou seja, quando o operador esta
- * procurando por CNPJ/CPF, telefone ou CEP. Vazio nos demais casos (busca por nome).
- */
-function searchDigits(search: string): string {
-  return /[a-z]/i.test(search) ? "" : search.replace(/\D/g, "");
-}
-
-/** Texto comparavel na busca: sem acento e em minusculas ("JOSÉ" acha "jose"). */
+/** Texto comparavel na busca: sem acento e em minusculas ("JOSE" acha "jose"). */
 function normalizeSearchText(value: string): string {
   return value
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase();
+}
+
+/**
+ * Versao sem pontuacao nem espaco, para casar o mesmo dado escrito de formas diferentes:
+ * "144.939.658-51" com "14493965851" (o documento vem mascarado do OMIE e so com digitos
+ * do cadastro local) e "HJI-0517" com "HJI0517" (a placa e guardada sem o traco, mas o
+ * operador a digita como esta escrita no caminhao).
+ */
+function compactSearchText(value: string): string {
+  return normalizeSearchText(value).replace(/[^a-z0-9]/g, "");
 }
 
 function searchFilter<T extends { [key: string]: unknown }>(
@@ -560,17 +562,15 @@ function searchFilter<T extends { [key: string]: unknown }>(
   if (!search) return rows;
   const term = normalizeSearchText(search.trim());
   if (!term) return rows;
-  // O mesmo documento aparece ora com mascara ("144.939.658-51", como vem do OMIE), ora
-  // so com digitos (como o cadastro local grava). Comparar so o texto cru fazia a busca
-  // por CPF/CNPJ nao achar o cliente que estava bem ali — o operador concluia que ele nao
-  // existia e tentava cadastrar de novo. Compara tambem digito a digito.
-  const digits = searchDigits(search);
+  // Sem essa segunda comparacao, procurar pelo CPF ou pela placa nao achava o cadastro que
+  // estava bem ali — e o operador concluia que ele nao existia e cadastrava de novo.
+  const compactTerm = compactSearchText(search);
   return rows.filter((row) =>
     searchFields.some((field) => {
       const value = row[field];
       if (typeof value !== "string") return false;
       if (normalizeSearchText(value).includes(term)) return true;
-      return digits.length > 0 && value.replace(/\D/g, "").includes(digits);
+      return compactTerm.length > 0 && compactSearchText(value).includes(compactTerm);
     })
   );
 }

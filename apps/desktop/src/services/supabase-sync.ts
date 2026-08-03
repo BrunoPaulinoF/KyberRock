@@ -1067,15 +1067,32 @@ function upsertCloudCustomerFreightRules(
   return count;
 }
 
+/** Prazos ("installments[].dueDays") gravados no rules_json da condicao. */
+function dueDaysFromRulesJson(rulesJson: string): number[] | null {
+  try {
+    const rules = JSON.parse(rulesJson) as { installments?: Array<{ dueDays?: unknown }> };
+    if (!Array.isArray(rules.installments) || rules.installments.length === 0) return null;
+    const days = rules.installments.map((installment) => Number(installment?.dueDays));
+    return days.every((value) => Number.isInteger(value) && value >= 0) ? days : null;
+  } catch {
+    return null;
+  }
+}
+
 function upsertCloudPaymentTerms(
   database: DesktopDatabase,
   companyId: string,
   rows: Array<Record<string, unknown>>
 ): number {
+  // A nuvem so guarda o rules_json da condicao. As colunas de prazo ficavam vazias no
+  // desktop que recebia a condicao pela nuvem, e o fechamento saia sem prazo nenhum — o
+  // OMIE entao colocava o vencimento na propria data de emissao. Derivamos as colunas do
+  // rules_json aqui, na entrada.
   const upsert = database.prepare(`
     INSERT INTO payment_terms (
-      id, company_id, omie_code, name, rules_json, is_active, created_at, updated_at, deleted_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      id, company_id, omie_code, name, rules_json, is_active, created_at, updated_at, deleted_at,
+      installment_days_json, first_installment_days, installment_interval_days, installment_count
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
       omie_code = excluded.omie_code,
@@ -1083,7 +1100,11 @@ function upsertCloudPaymentTerms(
       rules_json = excluded.rules_json,
       is_active = excluded.is_active,
       updated_at = excluded.updated_at,
-      deleted_at = excluded.deleted_at
+      deleted_at = excluded.deleted_at,
+      installment_days_json = COALESCE(excluded.installment_days_json, payment_terms.installment_days_json),
+      first_installment_days = COALESCE(excluded.first_installment_days, payment_terms.first_installment_days),
+      installment_interval_days = COALESCE(excluded.installment_interval_days, payment_terms.installment_interval_days),
+      installment_count = COALESCE(excluded.installment_count, payment_terms.installment_count)
   `);
 
   let count = 0;
@@ -1092,16 +1113,22 @@ function upsertCloudPaymentTerms(
     const name = stringValue(row.name);
     if (!id || !name) continue;
     const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
+    const rulesJson = jsonStringValue(row.rules_json) ?? "{}";
+    const dueDays = dueDaysFromRulesJson(rulesJson);
     upsert.run(
       id,
       companyId,
       nullableStringValue(row.omie_code),
       name,
-      jsonStringValue(row.rules_json) ?? "{}",
+      rulesJson,
       booleanToSql(row.is_active, true),
       isoStringValue(row.created_at) || updatedAt,
       updatedAt,
-      isoStringValue(row.deleted_at)
+      isoStringValue(row.deleted_at),
+      dueDays ? JSON.stringify(dueDays) : null,
+      dueDays ? dueDays[0] : null,
+      dueDays && dueDays.length > 1 ? dueDays[1] - dueDays[0] : null,
+      dueDays ? dueDays.length : null
     );
     count++;
   }

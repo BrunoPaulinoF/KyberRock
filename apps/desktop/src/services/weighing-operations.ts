@@ -976,6 +976,53 @@ export function closeWeighingOperation(
   return getWeighingOperation(database, input.operationId);
 }
 
+/**
+ * O que a ultima entrada daquele cliente usou de transporte e pagamento. A pedreira
+ * repete o mesmo arranjo quase sempre (mesma transportadora, mesma condicao, mesma forma
+ * de pagamento), entao a entrada seguinte ja nasce preenchida com isso.
+ *
+ * Vem da ULTIMA operacao, nao do cadastro: o cadastro guarda um padrao que quase ninguem
+ * mantem atualizado, e o que vale na balanca e o que foi feito da ultima vez.
+ */
+export interface CustomerLastEntryPreferences {
+  carrierId: string | null;
+  paymentTermId: string | null;
+  paymentMethodId: string | null;
+}
+
+export function getCustomerLastEntryPreferences(
+  database: DesktopDatabase,
+  customerId: string
+): CustomerLastEntryPreferences | null {
+  if (!customerId.trim()) return null;
+  const row = database
+    .prepare(
+      `SELECT carrier_id, payment_term_id, payment_method_id
+         FROM weighing_operations
+        WHERE customer_id = ?
+          AND deleted_at IS NULL
+          AND status <> 'cancelled'
+          -- Uma entrada aberta ja conta: o operador acabou de escolher esses dados para
+          -- este cliente, e e isso que ele vai repetir no proximo caminhao.
+          AND (carrier_id IS NOT NULL OR payment_term_id IS NOT NULL OR payment_method_id IS NOT NULL)
+        ORDER BY created_at DESC
+        LIMIT 1`
+    )
+    .get(customerId) as
+    | {
+        carrier_id: string | null;
+        payment_term_id: string | null;
+        payment_method_id: string | null;
+      }
+    | undefined;
+  if (!row) return null;
+  return {
+    carrierId: row.carrier_id,
+    paymentTermId: row.payment_term_id,
+    paymentMethodId: row.payment_method_id
+  };
+}
+
 export type FiscalMissingField = "address_number" | "email";
 
 export interface CustomerFiscalReadiness {
@@ -1340,7 +1387,11 @@ export function buildOmieBillingJob(
                   COALESCE(opt.installment_count, pt.installment_count) AS installment_count,
                   COALESCE(opt.installment_days_json, pt.installment_days_json) AS installment_days_json,
                   COALESCE(opt.first_installment_days, pt.first_installment_days) AS first_installment_days,
-                  COALESCE(opt.installment_interval_days, pt.installment_interval_days) AS installment_interval_days
+                  COALESCE(opt.installment_interval_days, pt.installment_interval_days) AS installment_interval_days,
+                  -- Ultimo recurso quando as colunas acima estao vazias: a condicao que
+                  -- chegou pela nuvem traz so o rules_json (ver upsertCloudPaymentTerms),
+                  -- e sem os dias o pedido saia com vencimento = emissao.
+                  pt.rules_json AS rules_json
            FROM payment_terms pt
            LEFT JOIN omie_payment_terms opt
              ON opt.company_id = pt.company_id AND opt.code = pt.omie_parcela_code AND opt.is_active = 1
@@ -1353,6 +1404,7 @@ export function buildOmieBillingJob(
             installment_days_json: string | null;
             first_installment_days: number | null;
             installment_interval_days: number | null;
+            rules_json: string | null;
           }
         | undefined)
     : undefined;
@@ -1428,7 +1480,8 @@ export function buildOmieBillingJob(
       freightModalidade,
       issueDate: (row.exit_weight_captured_at ?? "").slice(0, 10),
       paymentTermOmieCode: omieParcela?.code ?? null,
-      paymentTermInstallmentCount: omieParcela?.installment_count ?? null,
+      paymentTermInstallmentCount:
+        omieParcela?.installment_count ?? resolveInstallmentDays(omieParcela)?.length ?? null,
       paymentTermInstallmentDays: resolveInstallmentDays(omieParcela),
       paymentMethodOmieCode: omiePayment?.method_code ?? null,
       accountOmieCode: omiePayment?.account_code ?? null,
@@ -1535,6 +1588,26 @@ function buildOrderCarrierCadastro(
  * (ex: [7,14,21]) quando presente, senao deriva de primeiro dia + intervalo + quantidade.
  * Retorna null quando a condicao nao informa dias (edge trata como a vista).
  */
+/**
+ * Prazos gravados no `rules_json` da condicao ("installments[].dueDays").
+ *
+ * A condicao que chega pela nuvem traz SO o rules_json — as colunas
+ * installment_days_json/first_installment_days/installment_count ficam vazias no desktop
+ * que a recebeu (ver upsertCloudPaymentTerms). Sem esta leitura, o pedido saia sem
+ * prazo nenhum e o OMIE colocava o vencimento na propria data de emissao.
+ */
+function dueDaysFromRulesJson(rulesJson: string | null | undefined): number[] | null {
+  if (!rulesJson) return null;
+  try {
+    const rules = JSON.parse(rulesJson) as { installments?: Array<{ dueDays?: unknown }> };
+    if (!Array.isArray(rules.installments) || rules.installments.length === 0) return null;
+    const days = rules.installments.map((installment) => Number(installment?.dueDays));
+    return days.every((value) => Number.isInteger(value) && value >= 0) ? days : null;
+  } catch {
+    return null;
+  }
+}
+
 function resolveInstallmentDays(
   omieParcela:
     | {
@@ -1542,6 +1615,7 @@ function resolveInstallmentDays(
         first_installment_days: number | null;
         installment_interval_days: number | null;
         installment_count: number | null;
+        rules_json?: string | null;
       }
     | undefined
 ): number[] | null {
@@ -1563,9 +1637,12 @@ function resolveInstallmentDays(
 
   const count = omieParcela.installment_count;
   const first = omieParcela.first_installment_days;
-  if (!count || count < 1 || first === null || first < 0) return null;
-  const interval = omieParcela.installment_interval_days ?? 0;
-  return Array.from({ length: count }, (_, index) => first + index * interval);
+  if (count && count >= 1 && first !== null && first >= 0) {
+    const interval = omieParcela.installment_interval_days ?? 0;
+    return Array.from({ length: count }, (_, index) => first + index * interval);
+  }
+
+  return dueDaysFromRulesJson(omieParcela.rules_json);
 }
 
 /** Enfileira o job de faturamento/pedido OMIE reconstruido por buildOmieBillingJob. */
