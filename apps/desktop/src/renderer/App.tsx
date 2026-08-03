@@ -4949,10 +4949,11 @@ function CacheSelect({
         const result = await desktopApi.queryCache({
           entityType,
           search: search.trim(),
-          // Quando ha um filtro por vinculo (ex.: transportadoras do cliente),
-          // buscamos mais linhas para nao perder itens vinculados fora das 20
-          // primeiras antes de aplicar o filtro client-side.
-          limit: filterIds !== undefined ? 200 : 20,
+          // 200 linhas em vez das 20 de antes: o cadastro recem-criado quase nunca cai
+          // nas 20 primeiras (a ordem e a da base, nao alfabetica), entao a placa que o
+          // operador acabou de cadastrar sumia da lista do seletor e ele a cadastrava de
+          // novo. Le direto do cache em memoria — 200 linhas nao pesam.
+          limit: 200,
           productFiscalType
         });
         const allOptions = createCacheSelectOptions(result.rows as Array<Record<string, unknown>>);

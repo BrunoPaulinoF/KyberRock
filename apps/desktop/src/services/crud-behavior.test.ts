@@ -9,7 +9,8 @@ import {
   removeProductDefaultPrice,
   upsertProductDefaultPrice
 } from "./product-prices";
-import { createVehicle, deleteVehicle } from "./vehicles";
+import { createVehicle, deleteVehicle, findOrCreateVehicle } from "./vehicles";
+import { CacheStore } from "./cache-store";
 
 describe("desktop cadastro CRUD behavior", () => {
   it("reports missing records when deleting cadastros", () => {
@@ -123,6 +124,105 @@ describe("desktop cadastro CRUD behavior", () => {
       const summaries = listProductDefaultPriceSummaries(database, "company-1");
 
       expect(summaries.map((summary) => summary.productId)).toEqual(["product-1"]);
+    } finally {
+      database.close();
+    }
+  });
+
+  // Sem trava de placa, cada tentativa criava mais um veiculo com a mesma placa: foi
+  // assim que a mesma placa chegou a existir 6 vezes na base.
+  it("recusa cadastrar uma placa que ja existe, com ou sem traco", () => {
+    const database = createDatabase();
+
+    try {
+      createVehicle(database, {
+        companyId: "company-1",
+        plate: "HJI0517",
+        description: "IDEAL TRANSPORTADORA"
+      });
+
+      expect(() => createVehicle(database, { companyId: "company-1", plate: "HJI0517" })).toThrow(
+        /ja existe um veiculo/i
+      );
+      // A placa escrita como esta no caminhao e o mesmo veiculo.
+      expect(() => createVehicle(database, { companyId: "company-1", plate: "HJI-0517" })).toThrow(
+        /ja existe um veiculo/i
+      );
+      // A mensagem identifica qual e, para o operador editar aquele.
+      expect(() => createVehicle(database, { companyId: "company-1", plate: "hji0517" })).toThrow(
+        /IDEAL TRANSPORTADORA/
+      );
+
+      expect(
+        database
+          .prepare("SELECT COUNT(*) FROM vehicles WHERE plate = 'HJI0517' AND deleted_at IS NULL")
+          .pluck()
+          .get()
+      ).toBe(1);
+    } finally {
+      database.close();
+    }
+  });
+
+  // Recusar aqui repetiria a armadilha do cadastro invisivel: a lista esconde os inativos,
+  // entao a placa ficaria ocupada por um veiculo que o operador nao tem como achar.
+  it("reativa o veiculo inativo em vez de duplicar a placa", () => {
+    const database = createDatabase();
+
+    try {
+      const created = createVehicle(database, { companyId: "company-1", plate: "BTT2840" });
+      database.prepare("UPDATE vehicles SET is_active = 0 WHERE id = ?").run(created.id);
+
+      const again = createVehicle(database, {
+        companyId: "company-1",
+        plate: "BTT2840",
+        description: "CARRETA",
+        plateState: "SP"
+      });
+
+      expect(again.id).toBe(created.id);
+      expect(again.is_active).toBe(1);
+      expect(again.description).toBe("CARRETA");
+      expect(again.plate_state).toBe("SP");
+      expect(
+        database
+          .prepare("SELECT COUNT(*) FROM vehicles WHERE plate = 'BTT2840' AND deleted_at IS NULL")
+          .pluck()
+          .get()
+      ).toBe(1);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("reaproveita o veiculo da pesagem quando a placa vem com traco", () => {
+    const database = createDatabase();
+
+    try {
+      const created = createVehicle(database, { companyId: "company-1", plate: "CLJ7386" });
+      const found = findOrCreateVehicle(database, "company-1", "clj-7386");
+
+      expect(found.id).toBe(created.id);
+      expect(
+        database.prepare("SELECT COUNT(*) FROM vehicles WHERE deleted_at IS NULL").pluck().get()
+      ).toBe(1);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("acha a placa na busca com ou sem traco", () => {
+    const database = createDatabase();
+
+    try {
+      createVehicle(database, { companyId: "company-1", plate: "HJI0517" });
+      const cacheStore = new CacheStore(database);
+      cacheStore.loadAll("company-1");
+
+      expect(cacheStore.query({ entityType: "vehicle", search: "HJI-0517" }).total).toBe(1);
+      expect(cacheStore.query({ entityType: "vehicle", search: "hji 0517" }).total).toBe(1);
+      expect(cacheStore.query({ entityType: "vehicle", search: "HJI0517" }).total).toBe(1);
+      expect(cacheStore.query({ entityType: "vehicle", search: "XYZ1234" }).total).toBe(0);
     } finally {
       database.close();
     }

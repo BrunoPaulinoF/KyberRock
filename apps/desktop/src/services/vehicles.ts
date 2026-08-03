@@ -41,14 +41,79 @@ function normalizePlateState(value: string | null | undefined): string | null {
   return /^[A-Z]{2}$/.test(text) ? text : null;
 }
 
+/** Placa comparavel: so letras e numeros, em maiusculas ("hji-0517" e "HJI0517"). */
+function comparablePlate(value: string | null | undefined): string {
+  return (value ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+/**
+ * Veiculo (nao apagado) que ja usa esta placa, ignorando tracos e espacos. A placa
+ * identifica o caminhao: dois cadastros com a mesma placa sao sempre o mesmo veiculo.
+ */
+export function findVehicleByPlate(
+  database: DesktopDatabase,
+  companyId: string,
+  plate: string,
+  excludeId?: string
+): VehicleRow | null {
+  const normalized = comparablePlate(plate);
+  if (!normalized) return null;
+  const row = database
+    .prepare(
+      `SELECT * FROM vehicles
+       WHERE company_id = ?
+         AND deleted_at IS NULL
+         AND UPPER(REPLACE(REPLACE(REPLACE(plate, '-', ''), ' ', ''), '.', '')) = ?
+         AND (? IS NULL OR id <> ?)
+       ORDER BY is_active DESC, created_at ASC
+       LIMIT 1`
+    )
+    .get(companyId, normalized, excludeId ?? null, excludeId ?? null) as VehicleRow | undefined;
+  return row ?? null;
+}
+
+/**
+ * Cadastra a placa. Sem trava, cada tentativa criava mais um veiculo com a mesma placa:
+ * era assim que a mesma placa aparecia 4, 6 vezes na base — o operador nao a encontrava
+ * na lista, cadastrava de novo, e o duplicado nascia calado.
+ *
+ * Quando a placa ja existe:
+ * - cadastro ATIVO: recusa e diz qual e, para o operador editar aquele em vez de duplicar;
+ * - cadastro INATIVO: reativa e aplica o que ele acabou de digitar. Recusar aqui repetiria
+ *   a armadilha do cadastro invisivel (a lista esconde os inativos) — a placa ficaria
+ *   ocupada por um veiculo que ele nao tem como achar.
+ */
 export function createVehicle(
   database: DesktopDatabase,
   input: CreateVehicleInput,
   now: Date = new Date()
 ): VehicleRow {
-  const id = randomUUID();
   const nowIso = now.toISOString();
+  const plate = input.plate.toUpperCase();
 
+  const existing = findVehicleByPlate(database, input.companyId, plate);
+  if (existing) {
+    if (existing.is_active === 1) {
+      const label = existing.description?.trim()
+        ? `${existing.plate} (${existing.description.trim()})`
+        : existing.plate;
+      throw new Error(`Ja existe um veiculo com esta placa: ${label}.`);
+    }
+    return updateVehicle(
+      database,
+      existing.id,
+      {
+        plate,
+        plateState: input.plateState ?? null,
+        description: input.description,
+        carrierId: input.carrierId ?? null,
+        isActive: true
+      },
+      now
+    );
+  }
+
+  const id = randomUUID();
   database
     .prepare(
       `INSERT INTO vehicles (id, company_id, plate, plate_state, description, carrier_id, is_active, created_at, updated_at)
@@ -57,7 +122,7 @@ export function createVehicle(
     .run(
       id,
       input.companyId,
-      input.plate.toUpperCase(),
+      plate,
       normalizePlateState(input.plateState),
       input.description ?? null,
       input.carrierId ?? null,
@@ -85,6 +150,10 @@ export function updateVehicle(
   const values: unknown[] = [];
 
   if (input.plate !== undefined) {
+    const twin = findVehicleByPlate(database, existing.company_id, input.plate, id);
+    if (twin) {
+      throw new Error(`Ja existe outro veiculo com a placa ${twin.plate}.`);
+    }
     sets.push("plate = ?");
     values.push(input.plate.toUpperCase());
   }
@@ -136,10 +205,9 @@ export function findOrCreateVehicle(
   now: Date = new Date()
 ): VehicleRow {
   const normalized = plate.trim().toUpperCase();
-  const existing = database
-    .prepare("SELECT * FROM vehicles WHERE company_id = ? AND plate = ? AND deleted_at IS NULL")
-    .get(companyId, normalized) as VehicleRow | undefined;
-
+  // Comparacao ignorando traco/espaco: casar so pelo texto exato fazia "HJI-0517" nascer
+  // como um segundo veiculo ao lado de "HJI0517".
+  const existing = findVehicleByPlate(database, companyId, normalized);
   if (existing) return existing;
 
   return createVehicle(database, { companyId, plate: normalized }, now);
