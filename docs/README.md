@@ -8,6 +8,7 @@ Documentacao tecnica e operacional do projeto KyberRock.
 - `phase-1/`: design tecnico, modelo de dados, contratos e estrategias de sincronizacao.
 - `phase-2/`: fundacao do monorepo, comandos e decisoes de stack inicial.
 - `ARCHITECTURE.md`: visao tecnica consolidada do sistema.
+- `camera-lpr.md`: proposta de leitura automatica de placas por camera na balanca.
 
 ## Regra De Segredos
 
