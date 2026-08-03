@@ -1324,26 +1324,52 @@ function recalculateCreditBalances(database: DesktopDatabase, customerIds: strin
  * que ja existe aqui. Quando o documento ja esta em uso localmente, a linha da
  * nuvem e ignorada: o cadastro local e o dono do documento.
  */
-function hasLocalCadastroWithDocument(
+function findLocalCadastroWithDocument(
   database: DesktopDatabase,
   table: "customers" | "carriers",
   companyId: string,
   document: string | null,
   cloudId: string
-): boolean {
+): { id: string; omie_customer_id: number | null } | null {
   const digits = (document ?? "").replace(/\D/g, "");
-  if (!digits) return false;
+  if (!digits) return null;
   const row = database
     .prepare(
-      `SELECT 1 FROM ${table}
+      `SELECT id, omie_customer_id FROM ${table}
        WHERE company_id = ?
          AND id <> ?
          AND deleted_at IS NULL
          AND replace(replace(replace(replace(COALESCE(document, ''), '.', ''), '-', ''), '/', ''), ' ', '') = ?
        LIMIT 1`
     )
-    .get(companyId, cloudId, digits);
-  return row !== undefined;
+    .get(companyId, cloudId, digits) as { id: string; omie_customer_id: number | null } | undefined;
+  return row ?? null;
+}
+
+/**
+ * O gemeo do OMIE trouxe o codigo que o cadastro local ainda nao tem: adota o codigo
+ * aqui antes de descartar a linha da nuvem.
+ *
+ * Sem isso, um cliente cadastrado no KyberRock ficava para sempre sem `omie_customer_id`
+ * mesmo depois de existir no OMIE — e todo fechamento dele repetia um `IncluirCliente` de
+ * um cadastro que ja estava la, que o OMIE recusa com "Cliente ja cadastrado". Era assim
+ * que a operacao ficava parada sem subir.
+ */
+function adoptOmieCodeFromCloudTwin(
+  database: DesktopDatabase,
+  table: "customers" | "carriers",
+  local: { id: string; omie_customer_id: number | null },
+  cloudOmieCustomerId: number | null
+): void {
+  if (!cloudOmieCustomerId || cloudOmieCustomerId <= 0) return;
+  if (local.omie_customer_id && local.omie_customer_id > 0) return;
+  database
+    .prepare(
+      `UPDATE ${table}
+       SET omie_customer_id = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+       WHERE id = ? AND (omie_customer_id IS NULL OR omie_customer_id = 0)`
+    )
+    .run(cloudOmieCustomerId, local.id);
 }
 
 function upsertCloudCarriers(
@@ -1372,7 +1398,16 @@ function upsertCloudCarriers(
     const name = stringValue(row.name);
     if (!id || !name) continue;
     const document = nullableStringValue(row.document);
-    if (hasLocalCadastroWithDocument(database, "carriers", companyId, document, id)) continue;
+    const localTwin = findLocalCadastroWithDocument(database, "carriers", companyId, document, id);
+    if (localTwin) {
+      adoptOmieCodeFromCloudTwin(
+        database,
+        "carriers",
+        localTwin,
+        integerValue(row.omie_customer_id)
+      );
+      continue;
+    }
     const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
     upsert.run(
       id,
@@ -1809,7 +1844,16 @@ function upsertCloudCustomers(
     const id = stringValue(row.id);
     if (!id) continue;
     const document = nullableStringValue(row.document);
-    if (hasLocalCadastroWithDocument(database, "customers", companyId, document, id)) continue;
+    const localTwin = findLocalCadastroWithDocument(database, "customers", companyId, document, id);
+    if (localTwin) {
+      adoptOmieCodeFromCloudTwin(
+        database,
+        "customers",
+        localTwin,
+        integerValue(row.omie_customer_id)
+      );
+      continue;
+    }
     const legalName = stringValue(row.legal_name) || stringValue(row.trade_name) || "Cliente";
     const tradeName = stringValue(row.trade_name) || legalName;
     const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();

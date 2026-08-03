@@ -91,6 +91,88 @@ describe("cadastro compartilhado da pedreira", () => {
     }
   });
 
+  // O cliente cadastrado aqui e o gemeo que veio do OMIE sao o mesmo CNPJ/CPF. Descartar
+  // a linha da nuvem sem aproveitar o codigo deixava o cadastro local para sempre sem
+  // omie_customer_id: todo fechamento dele repetia um IncluirCliente de um cadastro que ja
+  // existe no OMIE ("Cliente ja cadastrado") e a operacao nunca subia.
+  it("adota no cadastro local o codigo OMIE do gemeo que veio da nuvem", async () => {
+    const database = createMachine("desktop-b");
+
+    try {
+      const identity = readIdentity(database);
+      database
+        .prepare(
+          `INSERT INTO customers (id, company_id, source, legal_name, trade_name, document,
+                                  omie_customer_id, needs_push, is_active, created_at, updated_at)
+           VALUES ('local-uuid', ?, 'local', 'Multicom LTDA', 'Multicom', '19345178000100',
+                   NULL, 1, 1, ?, ?)`
+        )
+        .run(identity.companyId, "2026-08-03T09:00:00.000Z", "2026-08-03T09:00:00.000Z");
+      database
+        .prepare(
+          `INSERT INTO carriers (id, company_id, name, document, source, omie_customer_id,
+                                 is_active, created_at, updated_at)
+           VALUES ('carrier-uuid', ?, 'Transportes Alfa', '11222333000144', 'local', NULL, 1, ?, ?)`
+        )
+        .run(identity.companyId, "2026-08-03T09:00:00.000Z", "2026-08-03T09:00:00.000Z");
+
+      // O mesmo documento chega da nuvem sob o id do OMIE, ja com o codigo de la.
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          customers: [
+            {
+              id: "omie_11489512176",
+              omie_customer_id: 11489512176,
+              legal_name: "MULTICOM COMERCIO DE MATERAIS DE CONSTRUCAO LTDA",
+              trade_name: "MULTICOM",
+              document: "19.345.178/0001-00",
+              is_active: true,
+              updated_at: "2026-08-03T09:44:34.000Z"
+            }
+          ],
+          carriers: [
+            {
+              id: "omie_555",
+              omie_customer_id: 555,
+              name: "Transportes Alfa",
+              document: "11.222.333/0001-44",
+              source: "omie",
+              is_active: true,
+              updated_at: "2026-08-03T09:44:34.000Z"
+            }
+          ]
+        },
+        error: null
+      });
+
+      await pullDesktopDataFromCloud(database, identity);
+
+      // A linha da nuvem continua descartada (nada de cadastro duplicado na lista)...
+      expect(
+        database.prepare("SELECT id FROM customers WHERE deleted_at IS NULL").pluck().all()
+      ).toEqual(["local-uuid"]);
+      // ...mas o codigo do OMIE foi aproveitado: o proximo envio vira AlterarCliente.
+      expect(
+        database
+          .prepare("SELECT omie_customer_id FROM customers WHERE id = 'local-uuid'")
+          .pluck()
+          .get()
+      ).toBe(11489512176);
+      // O envio ao OMIE segue armado: agora ele tem como se vincular ao cadastro de la.
+      expect(
+        database.prepare("SELECT needs_push FROM customers WHERE id = 'local-uuid'").pluck().get()
+      ).toBe(1);
+      expect(
+        database
+          .prepare("SELECT omie_customer_id FROM carriers WHERE id = 'carrier-uuid'")
+          .pluck()
+          .get()
+      ).toBe(555);
+    } finally {
+      database.close();
+    }
+  });
+
   // O CPF/CNPJ que o operador digita fica com needs_push = 1 esperando o envio ao OMIE.
   // O pull do cadastro sobrescrevia a linha inteira com a versao (mais velha) da nuvem e
   // ainda zerava o needs_push: o documento sumia da tela e o cadastro nunca chegava ao
