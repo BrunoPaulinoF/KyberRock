@@ -9,7 +9,13 @@ import {
   removeProductDefaultPrice,
   upsertProductDefaultPrice
 } from "./product-prices";
-import { createVehicle, deleteVehicle, findOrCreateVehicle } from "./vehicles";
+import {
+  createVehicle,
+  deleteVehicle,
+  findOrCreateVehicle,
+  getVehicleCarriers,
+  updateVehicle
+} from "./vehicles";
 import { CacheStore } from "./cache-store";
 
 describe("desktop cadastro CRUD behavior", () => {
@@ -130,27 +136,27 @@ describe("desktop cadastro CRUD behavior", () => {
   });
 
   // Sem trava de placa, cada tentativa criava mais um veiculo com a mesma placa: foi
-  // assim que a mesma placa chegou a existir 6 vezes na base.
-  it("recusa cadastrar uma placa que ja existe, com ou sem traco", () => {
+  // assim que a mesma placa chegou a existir 6 vezes na base. A trava continua sendo uma
+  // linha por placa — o que nao pode e recusar o cadastro (ver o teste seguinte).
+  it("reaproveita a mesma placa em vez de duplicar, com ou sem traco", () => {
     const database = createDatabase();
 
     try {
-      createVehicle(database, {
+      const first = createVehicle(database, {
         companyId: "company-1",
         plate: "HJI0517",
         description: "IDEAL TRANSPORTADORA"
       });
 
-      expect(() => createVehicle(database, { companyId: "company-1", plate: "HJI0517" })).toThrow(
-        /ja existe um veiculo/i
+      expect(createVehicle(database, { companyId: "company-1", plate: "HJI0517" }).id).toBe(
+        first.id
       );
       // A placa escrita como esta no caminhao e o mesmo veiculo.
-      expect(() => createVehicle(database, { companyId: "company-1", plate: "HJI-0517" })).toThrow(
-        /ja existe um veiculo/i
+      expect(createVehicle(database, { companyId: "company-1", plate: "HJI-0517" }).id).toBe(
+        first.id
       );
-      // A mensagem identifica qual e, para o operador editar aquele.
-      expect(() => createVehicle(database, { companyId: "company-1", plate: "hji0517" })).toThrow(
-        /IDEAL TRANSPORTADORA/
+      expect(createVehicle(database, { companyId: "company-1", plate: "hji0517" }).id).toBe(
+        first.id
       );
 
       expect(
@@ -159,6 +165,72 @@ describe("desktop cadastro CRUD behavior", () => {
           .pluck()
           .get()
       ).toBe(1);
+    } finally {
+      database.close();
+    }
+  });
+
+  // O mesmo caminhao roda para varios clientes: recusar o segundo cadastro travava o
+  // operador ("ja existe um veiculo com esta placa") e a placa nao entrava na operacao.
+  it("soma a transportadora nova a placa que ja existe, sem apagar o cadastro anterior", () => {
+    const database = createDatabase();
+
+    try {
+      const carrierA = createCarrier(database, {
+        companyId: "company-1",
+        name: "Transporte A"
+      }) as { id: string };
+      const carrierB = createCarrier(database, {
+        companyId: "company-1",
+        name: "Transporte B"
+      }) as { id: string };
+
+      const first = createVehicle(database, {
+        companyId: "company-1",
+        plate: "HJI0517",
+        description: "IDEAL",
+        plateState: "MG",
+        carrierId: carrierA.id
+      });
+
+      const again = createVehicle(database, {
+        companyId: "company-1",
+        plate: "hji-0517",
+        carrierId: carrierB.id
+      });
+
+      expect(again.id).toBe(first.id);
+      // O cadastro de quem veio antes fica intacto.
+      expect(again.description).toBe("IDEAL");
+      expect(again.plate_state).toBe("MG");
+      expect(again.carrier_id).toBe(carrierA.id);
+      // E a placa passa a valer para as duas transportadoras.
+      expect(getVehicleCarriers(database, first.id).map((link) => link.carrierId).sort()).toEqual(
+        [carrierA.id, carrierB.id].sort()
+      );
+    } finally {
+      database.close();
+    }
+  });
+
+  // Escolher a transportadora no cadastro da placa precisa bastar: o seletor da entrada
+  // lista vehicle_carriers, entao sem o vinculo a placa editada continuava sumida.
+  it("vincula a transportadora escolhida na edicao da placa", () => {
+    const database = createDatabase();
+
+    try {
+      const carrier = createCarrier(database, { companyId: "company-1", name: "Transporte A" }) as {
+        id: string;
+      };
+      const vehicle = createVehicle(database, { companyId: "company-1", plate: "BTT2840" });
+
+      expect(getVehicleCarriers(database, vehicle.id)).toHaveLength(0);
+
+      updateVehicle(database, vehicle.id, { carrierId: carrier.id });
+
+      expect(getVehicleCarriers(database, vehicle.id).map((link) => link.carrierId)).toEqual([
+        carrier.id
+      ]);
     } finally {
       database.close();
     }

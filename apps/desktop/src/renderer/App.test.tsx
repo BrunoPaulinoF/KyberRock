@@ -5,6 +5,7 @@ import {
   appendAvailableId,
   buildFreightInput,
   carrierSelectorFilterIds,
+  carrierToLinkForPickedVehicle,
   createCacheSelectOptions,
   filterCacheSelectOptions,
   formatElapsedSince,
@@ -139,6 +140,24 @@ describe("App", () => {
     expect(carrierSelectorFilterIds([])).toBeUndefined();
     // Nenhum cliente selecionado ainda: continua sem filtro.
     expect(carrierSelectorFilterIds(undefined)).toBeUndefined();
+  });
+
+  it("links a plate picked outside the carrier's list instead of hiding it", () => {
+    // Bug relatado: o seletor so listava as placas vinculadas a transportadora, entao a
+    // placa que ja rodava para outro cliente nao aparecia — e cadastra-la de novo batia
+    // no "ja existe um veiculo com esta placa". Agora a lista mostra todas e a escolha
+    // cria o vinculo que faltava.
+    const form = createWeighingForm();
+    expect(carrierToLinkForPickedVehicle(form, "vehicle-9", ["vehicle-1"])).toBe("carrier-1");
+    // Ja vinculada: nada a fazer.
+    expect(carrierToLinkForPickedVehicle(form, "vehicle-1", ["vehicle-1"])).toBeNull();
+    // Sem transportadora na entrada (ou transporte proprio do cliente): nao ha vinculo.
+    expect(carrierToLinkForPickedVehicle({ ...form, carrierId: "" }, "vehicle-9", [])).toBeNull();
+    expect(
+      carrierToLinkForPickedVehicle({ ...form, freightModality: "own_recipient" }, "vehicle-9", [])
+    ).toBeNull();
+    // Placa limpa: nada a vincular.
+    expect(carrierToLinkForPickedVehicle(form, "", undefined)).toBeNull();
   });
 
   it("prefers the carrier linked to the customer over the registered default", () => {
