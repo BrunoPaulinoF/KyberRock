@@ -216,10 +216,18 @@ describe("App", () => {
     const options = createCacheSelectOptions([
       { id: "customer-1", tradeName: "Cliente A" },
       { id: "vehicle-1", plate: "ABC1D23" },
-      { omieCode: "term-1", name: "A prazo" }
+      { omieCode: "term-1", name: "A prazo" },
+      // Nome fantasia em branco (nao nulo) vindo do OMIE: cai para a razao social em vez
+      // de virar uma opcao sem rotulo, que o operador nao conseguia enxergar na lista.
+      { id: "customer-2", tradeName: "", legalName: "Levisa Mineracao Ltda" }
     ]);
 
-    expect(options.map((option) => option.label)).toEqual(["Cliente A", "ABC1D23", "A prazo"]);
+    expect(options.map((option) => option.label)).toEqual([
+      "Cliente A",
+      "ABC1D23",
+      "A prazo",
+      "Levisa Mineracao Ltda"
+    ]);
     expect(filterCacheSelectOptions(options, ["vehicle-1"])).toEqual([options[1]]);
     expect(filterCacheSelectOptions(options, undefined)).toEqual(options);
   });
