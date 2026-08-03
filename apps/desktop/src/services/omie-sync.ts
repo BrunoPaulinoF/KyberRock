@@ -702,7 +702,7 @@ export class OmieSyncService {
   /**
    * Puxa o cadastro de veiculos do OMIE (/transportador/veiculo/) para `vehicles`.
    * O que interessa e a **UF da placa**: a NF-e pede placa E UF do veiculo, e o bloco
-   * `frete` do pedido de venda leva os dois (`placa` + `uf_placa`). Sem esse sync a UF
+   * `frete` do pedido de venda leva os dois (`placa` + `placa_estado`). Sem esse sync a UF
    * simplesmente nao existia no KyberRock e o pedido saia so com a placa.
    *
    * Idempotente e casado por placa normalizada (so letras/numeros): veiculo local que

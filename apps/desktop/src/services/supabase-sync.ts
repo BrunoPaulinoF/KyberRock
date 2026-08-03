@@ -3955,7 +3955,7 @@ export async function processOmieSyncQueue(
       omieCategoryCode?: string | null;
       transport?: {
         plate?: string | null;
-        /** UF de emplacamento (`uf_placa` do bloco frete da NF-e). */
+        /** UF de emplacamento (`placa_estado` do bloco frete da NF-e). */
         plateState?: string | null;
         driverName?: string | null;
         carrierOmieId?: number | null;
@@ -4427,7 +4427,7 @@ export async function processFiscalBillingNow(
     accountName?: string | null;
     transport?: {
       plate?: string | null;
-      /** UF de emplacamento (`uf_placa` do bloco frete da NF-e). */
+      /** UF de emplacamento (`placa_estado` do bloco frete da NF-e). */
       plateState?: string | null;
       driverName?: string | null;
       carrierOmieId?: number | null;

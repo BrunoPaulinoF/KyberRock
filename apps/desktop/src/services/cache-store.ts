@@ -56,7 +56,7 @@ export interface ProductCacheEntry {
 export interface VehicleCacheEntry {
   id: string;
   plate: string;
-  /** UF de emplacamento (`uf_placa` do frete no OMIE). */
+  /** UF de emplacamento (`placa_estado` do frete no OMIE). */
   plateState: string | null;
   description: string | null;
   carrierId: string | null;

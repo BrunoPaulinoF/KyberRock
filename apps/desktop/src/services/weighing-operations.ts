@@ -1099,7 +1099,7 @@ export interface OmieOrderCarrierCadastro {
 export interface OmieOrderTransport {
   plate: string | null;
   /**
-   * UF de emplacamento do veiculo (`uf_placa` do bloco frete). A NF-e pede placa E UF
+   * UF de emplacamento do veiculo (`placa_estado` do bloco frete). A NF-e pede placa E UF
    * do veiculo no transporte; vem do cadastro de veiculos (sincronizado do OMIE).
    */
   plateState: string | null;
@@ -1195,7 +1195,7 @@ function resolveFreightModalidade(
 }
 
 /**
- * UF de emplacamento do veiculo da operacao (`uf_placa` do bloco frete do pedido).
+ * UF de emplacamento do veiculo da operacao (`placa_estado` do bloco frete do pedido).
  * Vem do cadastro de veiculos, alimentado pelo sync do OMIE. Null quando o veiculo
  * ainda nao tem UF — o pedido segue so com a placa, como antes.
  */

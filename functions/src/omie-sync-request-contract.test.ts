@@ -172,6 +172,64 @@ describe("cliente ja cadastrado no OMIE", () => {
     expect(updateParam).not.toHaveProperty("codigo_cliente_integracao");
   });
 
+  // Reenvio de um cadastro que ja tinha entrado no OMIE: la a recusa vem pelo codigo de
+  // integracao e o codigo existente aparece como "nCod", nao como "Id". Sem ler essa
+  // grafia o fechamento travava com "Cadastro do cliente recusado pelo OMIE".
+  it("converte IncluirCliente em AlterarCliente quando o codigo de integracao ja existe", async () => {
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          faultstring:
+            "ERROR: Cliente já cadastrado para o Código de Integração [KR3VJZ2L7RLIMCH] com o nCod [11489512176]!"
+        })
+      )
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+    const queue = new OmieQueueManager({ fetchFn, minDelayMs: 0, sleepFn: async () => undefined });
+
+    const id = await pushCustomerToOmieCore(queue, credentials, {
+      localCustomerId: "cliente-reenviado",
+      razaoSocial: "MULTICOM COMERCIO DE MATERIAIS DE CONSTRUCAO LTDA",
+      cnpjCpf: "12345678000190"
+    });
+
+    expect(id).toBe(11489512176);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    const secondBody = readRequestBody(fetchFn, 1);
+    expect(secondBody.call).toBe("AlterarCliente");
+    expect(secondBody.param).toEqual([
+      expect.objectContaining({ codigo_cliente_omie: 11489512176 })
+    ]);
+  });
+
+  // Rede de seguranca: se o OMIE mudar de novo o texto da recusa, o codigo existente vem
+  // do ConsultarCliente pelo nosso codigo de integracao — a duplicidade nunca vira uma
+  // pendencia de cadastro para o operador resolver.
+  it("consulta o cliente pelo codigo de integracao quando a recusa nao traz o codigo", async () => {
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({ faultstring: "ERROR: Cliente já cadastrado para o Código de Integração!" })
+      )
+      .mockResolvedValueOnce(jsonResponse({ codigo_cliente_omie: 555 }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+    const queue = new OmieQueueManager({ fetchFn, minDelayMs: 0, sleepFn: async () => undefined });
+
+    const id = await pushCustomerToOmieCore(queue, credentials, {
+      localCustomerId: "cliente-sem-codigo-na-mensagem",
+      razaoSocial: "Cliente Sem Codigo"
+    });
+
+    expect(id).toBe(555);
+    expect(readRequestBody(fetchFn, 1)).toMatchObject({ call: "ConsultarCliente" });
+    expect(readRequestBody(fetchFn, 1).param).toEqual([
+      { codigo_cliente_integracao: toOmieIntegrationCode("cliente-sem-codigo-na-mensagem") }
+    ]);
+    const updateBody = readRequestBody(fetchFn, 2);
+    expect(updateBody.call).toBe("AlterarCliente");
+    expect(updateBody.param).toEqual([expect.objectContaining({ codigo_cliente_omie: 555 })]);
+  });
+
   it("nao envia codigo_cliente_integracao em updates de cliente com omieCustomerId", async () => {
     const fetchFn = vi.fn(async () => jsonResponse({ ok: true }));
     const queue = new OmieQueueManager({ fetchFn, minDelayMs: 0, sleepFn: async () => undefined });

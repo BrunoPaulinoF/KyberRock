@@ -5,7 +5,7 @@ import type { DesktopDatabase } from "../database/sqlite.js";
 export interface CreateVehicleInput {
   companyId: string;
   plate: string;
-  /** UF de emplacamento (2 letras). Vai no `uf_placa` do frete do pedido no OMIE. */
+  /** UF de emplacamento (2 letras). Vai no `placa_estado` do frete do pedido no OMIE. */
   plateState?: string | null;
   description?: string;
   carrierId?: string;
@@ -33,7 +33,7 @@ export interface VehicleRow {
 }
 
 /**
- * UF em 2 letras maiusculas, ou null. O `uf_placa` do frete e campo fiscal: melhor
+ * UF em 2 letras maiusculas, ou null. O `placa_estado` do frete e campo fiscal: melhor
  * ficar vazio do que ir com texto invalido e o OMIE recusar a nota.
  */
 function normalizePlateState(value: string | null | undefined): string | null {
