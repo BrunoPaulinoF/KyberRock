@@ -1778,21 +1778,30 @@ function upsertCloudCustomers(
     ) VALUES (?, ?, ?, 'hybrid', ?, ?, ?, ?, ?, ?, ?, 'synced', ?, ?, ?, NULL, ?, 0)
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
-      omie_customer_id = excluded.omie_customer_id,
+      -- Nunca apagar o codigo do OMIE que ja temos: sem ele o proximo push tenta um
+      -- IncluirCliente de um cadastro que ja existe la e cai em "Cliente ja cadastrado".
+      omie_customer_id = COALESCE(excluded.omie_customer_id, customers.omie_customer_id),
       source = CASE WHEN customers.source = 'local' THEN 'hybrid' ELSE customers.source END,
-      legal_name = excluded.legal_name,
-      trade_name = excluded.trade_name,
-      document = excluded.document,
-      phone = excluded.phone,
-      email = excluded.email,
-      credit_limit_cents = excluded.credit_limit_cents,
+      -- needs_push = 1 significa cadastro editado aqui e ainda NAO enviado ao OMIE. A
+      -- versao da nuvem e mais velha que essa edicao: sobrescrever apagava da tela o
+      -- CPF/CNPJ (e telefone, e-mail, razao social...) que o operador acabou de digitar
+      -- e ainda zerava o needs_push, cancelando de vez o envio ao OMIE. Mesma protecao
+      -- que carriers/report_recipients ja tinham.
+      legal_name = CASE WHEN customers.needs_push = 0 THEN excluded.legal_name ELSE customers.legal_name END,
+      trade_name = CASE WHEN customers.needs_push = 0 THEN excluded.trade_name ELSE customers.trade_name END,
+      document = CASE WHEN customers.needs_push = 0 THEN excluded.document ELSE customers.document END,
+      phone = CASE WHEN customers.needs_push = 0 THEN excluded.phone ELSE customers.phone END,
+      email = CASE WHEN customers.needs_push = 0 THEN excluded.email ELSE customers.email END,
+      credit_limit_cents = CASE WHEN customers.needs_push = 0 THEN excluded.credit_limit_cents ELSE customers.credit_limit_cents END,
+      -- Saldo em aberto e projecao da nuvem (nunca editado aqui): sempre o valor de la.
       open_receivables_cents = excluded.open_receivables_cents,
-      sync_status = 'synced',
-      is_active = excluded.is_active,
-      updated_at = excluded.updated_at,
-      deleted_at = NULL,
+      sync_status = CASE WHEN customers.needs_push = 0 THEN 'synced' ELSE customers.sync_status END,
+      is_active = CASE WHEN customers.needs_push = 0 THEN excluded.is_active ELSE customers.is_active END,
+      updated_at = CASE WHEN customers.needs_push = 0 THEN excluded.updated_at ELSE customers.updated_at END,
+      -- Exclusao local pendente nao pode ser ressuscitada pelo espelho da nuvem.
+      deleted_at = CASE WHEN customers.needs_push = 0 THEN NULL ELSE customers.deleted_at END,
       last_synced_at = excluded.last_synced_at,
-      needs_push = 0
+      needs_push = customers.needs_push
   `);
 
   let count = 0;
