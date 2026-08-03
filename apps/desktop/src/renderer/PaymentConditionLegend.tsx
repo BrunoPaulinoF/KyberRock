@@ -18,10 +18,11 @@ export const PAYMENT_CONDITION_FORMATS: readonly PaymentConditionFormat[] = [
   { example: "7 14 21", meaning: "3 parcelas nesses prazos (igual a 7/14/21)" },
   { example: "3 parcelas", meaning: "3 parcelas mensais (30, 60 e 90 dias)" },
   { example: "s + 20", meaning: "semana (7) + 20 dias = 1 parcela em 27 dias" },
+  { example: "d + 20", meaning: "dezena (10) + 20 dias = 1 parcela em 30 dias" },
   { example: "q + 20", meaning: "quinzena (15) + 20 dias = 1 parcela em 35 dias" },
   { example: "m + 20", meaning: "mes (30) + 20 dias = 1 parcela em 50 dias" },
   { example: "2s / 3m", meaning: "multiplo do periodo: 2 semanas (14) e 3 meses (90)" },
-  { example: "s+20/m+10", meaning: "periodos na lista = 2 parcelas (27 e 40 dias)" },
+  { example: "s+20/d+20", meaning: "periodos na lista = 2 parcelas (27 e 30 dias)" },
   { example: "A Vista", meaning: "sem prazo; o campo vazio tambem vale a vista" }
 ];
 
@@ -87,8 +88,9 @@ export function PaymentConditionLegend({ value, style }: PaymentConditionLegendP
         ))}
       </ul>
       <p style={{ margin: "6px 0 0 0" }}>
-        Periodos: <strong>s</strong> = semana (7 dias), <strong>q</strong> = quinzena (15 dias),{" "}
-        <strong>m</strong> = mes (30 dias). As parcelas vao para o OMIE nos mesmos dias.
+        Periodos: <strong>s</strong> = semana (7 dias), <strong>d</strong> = dezena (10 dias),{" "}
+        <strong>q</strong> = quinzena (15 dias), <strong>m</strong> = mes (30 dias). As parcelas vao
+        para o OMIE nos mesmos dias.
       </p>
     </div>
   );

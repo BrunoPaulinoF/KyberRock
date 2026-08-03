@@ -5362,7 +5362,7 @@ function validateWeighingForm(form: WeighingFormState): string | null {
   if (form.customConditionText.trim() && !tryParsePaymentCondition(form.customConditionText)) {
     return (
       'Condicao personalizada invalida. Use "30" (dias), "7 14 21", "7/14/21", "3 parcelas" ' +
-      'ou periodo ("s+20" semana, "q+20" quinzena, "m+20" mes).'
+      'ou periodo ("s+20" semana, "d+20" dezena, "q+20" quinzena, "m+20" mes).'
     );
   }
   if (isFreightCharged(form)) {
@@ -7180,7 +7180,7 @@ function OperationDetailsDialog({
     if (condition && !tryParsePaymentCondition(condition)) {
       setError(
         'Condicao de pagamento invalida. Use "30" (dias), "7 14 21", "3 parcelas" ' +
-          'ou periodo ("s+20" semana, "q+20" quinzena, "m+20" mes).'
+          'ou periodo ("s+20" semana, "d+20" dezena, "q+20" quinzena, "m+20" mes).'
       );
       setAskPricePassword(false);
       return;
@@ -10511,7 +10511,7 @@ function PaymentConditionsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi
     <div style={{ marginTop: "28px" }}>
       <CrudSectionHeader
         title="Condicoes de pagamento"
-        description="Cadastradas no KyberRock no padrao de parcelas do OMIE: 10/20/30/40, A Vista/40/60, Para 93 dias, 50, 50 Parcelas ou periodo (s+20, q+20, m+20)."
+        description="Cadastradas no KyberRock no padrao de parcelas do OMIE: 10/20/30/40, A Vista/40/60, Para 93 dias, 50, 50 Parcelas ou periodo (s+20, d+20, q+20, m+20)."
         count={terms.length}
         actionLabel="Nova condicao"
         onAction={openCreate}

@@ -43,6 +43,7 @@ describe("describePaymentCondition", () => {
     expect(describePaymentCondition("30").message).toBe("1 parcela em 30 dias apos a venda.");
     // "s+20" cai no mesmo dia que "27": periodo e so uma forma curta de escrever o prazo.
     expect(describePaymentCondition("s + 20").message).toBe("1 parcela em 27 dias apos a venda.");
+    expect(describePaymentCondition("d+20").message).toBe("1 parcela em 30 dias apos a venda.");
     expect(describePaymentCondition("q+20").message).toBe("1 parcela em 35 dias apos a venda.");
     expect(describePaymentCondition("m+20").message).toBe("1 parcela em 50 dias apos a venda.");
   });
