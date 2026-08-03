@@ -56,6 +56,7 @@ import {
 import { validatePaymentMethodCondition } from "../services/payment-method-condition-guard";
 import { tryParsePaymentCondition } from "../services/payment-condition-parser";
 import { extractConditionRaw, resolveConditionTermId } from "./payment-condition-helpers";
+import { PaymentConditionLegend } from "./PaymentConditionLegend";
 import {
   buildOperationDetailSections,
   buildOperationEditForm,
@@ -4751,7 +4752,10 @@ function validateWeighingForm(form: WeighingFormState): string | null {
     }
   }
   if (form.customConditionText.trim() && !tryParsePaymentCondition(form.customConditionText)) {
-    return 'Condicao personalizada invalida. Use "30" (dias), "7 14 21", "7/14/21" ou "3 parcelas".';
+    return (
+      'Condicao personalizada invalida. Use "30" (dias), "7 14 21", "7/14/21", "3 parcelas" ' +
+      'ou periodo ("s+20" semana, "q+20" quinzena, "m+20" mes).'
+    );
   }
   if (isFreightCharged(form)) {
     if (form.freightBaseValueCents === null && form.freightFixedValueCents === null) {
@@ -5891,7 +5895,7 @@ function WeighingForm({
           ) : null}
           <Field
             label="Condicao de pagamento"
-            hint='Digite: "30" (uma parcela 30 dias apos a venda), "7 14 21" ou "7/14/21" (3 parcelas nesses prazos), "3 parcelas" (3 parcelas mensais), "A Vista". Vazio = a vista. Se a condicao nao existir no OMIE, ela e criada automaticamente no envio.'
+            hint="Se a condicao nao existir no OMIE, ela e criada automaticamente no envio."
           >
             <input
               type="text"
@@ -5903,10 +5907,14 @@ function WeighingForm({
                   paymentTermId: ""
                 }))
               }
-              placeholder='Ex.: "7/14/21"'
+              placeholder='Ex.: "30", "7 14 21", "3 parcelas" ou "s+20"'
               style={getInputStyle(false)}
             />
           </Field>
+          <PaymentConditionLegend
+            value={form.customConditionText}
+            style={{ marginBottom: "6px" }}
+          />
         </article>
 
         <article style={styles.entryCard}>
@@ -6426,7 +6434,10 @@ function OperationDetailsDialog({
 
     const condition = form.conditionText.trim();
     if (condition && !tryParsePaymentCondition(condition)) {
-      setError('Condicao de pagamento invalida. Use "5" (parcelas), "7 14 21" ou "7/14/21".');
+      setError(
+        'Condicao de pagamento invalida. Use "30" (dias), "7 14 21", "3 parcelas" ' +
+          'ou periodo ("s+20" semana, "q+20" quinzena, "m+20" mes).'
+      );
       setAskPricePassword(false);
       return;
     }
@@ -6554,20 +6565,18 @@ function OperationDetailsDialog({
                 onChange={(id) => setForm((prev) => ({ ...prev, paymentMethodId: id }))}
                 desktopApi={desktopApi}
               />
-              <Field
-                label="Condicao de pagamento"
-                hint='Digite: "5" (5 parcelas mensais), "7 14 21" ou "7/14/21" (prazos). Vazio = a vista.'
-              >
+              <Field label="Condicao de pagamento">
                 <input
                   type="text"
                   value={form.conditionText}
                   onChange={(event) =>
                     setForm((prev) => ({ ...prev, conditionText: event.target.value }))
                   }
-                  placeholder='Ex.: "7/14/21"'
+                  placeholder='Ex.: "30", "7 14 21", "3 parcelas" ou "s+20"'
                   style={getInputStyle(false)}
                 />
               </Field>
+              <PaymentConditionLegend value={form.conditionText} style={{ marginBottom: "6px" }} />
             </FormSection>
 
             <FormSection title="Transporte e frete">
@@ -9731,7 +9740,7 @@ function PaymentConditionsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi
     <div style={{ marginTop: "28px" }}>
       <CrudSectionHeader
         title="Condicoes de pagamento"
-        description="Cadastradas no KyberRock no padrao de parcelas do OMIE: 10/20/30/40, A Vista/40/60, Para 93 dias, 50 ou 50 Parcelas."
+        description="Cadastradas no KyberRock no padrao de parcelas do OMIE: 10/20/30/40, A Vista/40/60, Para 93 dias, 50, 50 Parcelas ou periodo (s+20, q+20, m+20)."
         count={terms.length}
         actionLabel="Nova condicao"
         onAction={openCreate}
@@ -9741,7 +9750,6 @@ function PaymentConditionsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi
       {showForm ? (
         <CrudFormShell
           title={editingId ? "Editar condicao" : "Nova condicao"}
-          subtitle="Parcelas: 10/20/30/40 (dias fixos), A Vista/40/60, 50 ou Para 50 dias (1 parcela em 50 dias), 3 Parcelas (parcelas mensais)."
           error={formError}
           saving={saving}
           maxWidth={560}
@@ -9755,8 +9763,9 @@ function PaymentConditionsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi
               value={condition}
               onChange={setCondition}
               required
-              placeholder="Ex: 10/20/30/40"
+              placeholder='Ex.: "10/20/30/40", "3 parcelas" ou "s+20"'
             />
+            <PaymentConditionLegend value={condition} style={{ marginBottom: "6px" }} />
           </FormSection>
           <FormSection title="Integracao OMIE">
             <Field

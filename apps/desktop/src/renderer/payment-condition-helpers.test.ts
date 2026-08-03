@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   conditionTermMatches,
+  describePaymentCondition,
   extractConditionDueDays,
   extractConditionRaw
 } from "./payment-condition-helpers";
@@ -27,6 +28,48 @@ describe("extractConditionDueDays", () => {
     expect(extractConditionDueDays(rulesJson("7/14", [7, 14]))).toEqual([7, 14]);
     expect(extractConditionDueDays(JSON.stringify({ raw: "7/14" }))).toBeNull();
     expect(extractConditionDueDays("{")).toBeNull();
+  });
+});
+
+describe("describePaymentCondition", () => {
+  it("explica o campo vazio como a vista", () => {
+    expect(describePaymentCondition("")).toEqual({
+      status: "empty",
+      message: "Vazio = a vista (vencimento no dia da venda)."
+    });
+  });
+
+  it("explica o prazo unico digitado em dias ou em periodo", () => {
+    expect(describePaymentCondition("30").message).toBe("1 parcela em 30 dias apos a venda.");
+    // "s+20" cai no mesmo dia que "27": periodo e so uma forma curta de escrever o prazo.
+    expect(describePaymentCondition("s + 20").message).toBe("1 parcela em 27 dias apos a venda.");
+    expect(describePaymentCondition("q+20").message).toBe("1 parcela em 35 dias apos a venda.");
+    expect(describePaymentCondition("m+20").message).toBe("1 parcela em 50 dias apos a venda.");
+  });
+
+  it("explica o parcelamento em lista e por quantidade", () => {
+    expect(describePaymentCondition("7 14 21").message).toBe(
+      "3 parcelas: 7, 14 e 21 dias apos a venda."
+    );
+    expect(describePaymentCondition("3 parcelas").message).toBe(
+      "3 parcelas: 30, 60 e 90 dias apos a venda."
+    );
+    expect(describePaymentCondition("A Vista/40/60").message).toBe(
+      "3 parcelas: a vista, 40 e 60 dias apos a venda."
+    );
+  });
+
+  it("resume parcelamentos longos", () => {
+    expect(describePaymentCondition("12 parcelas").message).toBe(
+      "12 parcelas: 30, 60, 90, ... e 360 dias apos a venda."
+    );
+  });
+
+  it("avisa quando o texto nao e reconhecido", () => {
+    expect(describePaymentCondition("qualquer coisa")).toEqual({
+      status: "invalid",
+      message: "Condicao nao reconhecida. Use um dos formatos abaixo."
+    });
   });
 });
 

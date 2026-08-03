@@ -31,6 +31,7 @@ import type { CreditMovementRow, CustomerCreditSummary } from "../services/credi
 import { CrudFormModal } from "./CrudFormModal";
 import { Tooltip } from "./Tooltip";
 import { extractConditionRaw, resolveConditionTermId } from "./payment-condition-helpers";
+import { PaymentConditionLegend } from "./PaymentConditionLegend";
 import { tryParsePaymentCondition } from "../services/payment-condition-parser";
 import {
   CellMuted,
@@ -971,7 +972,8 @@ export function CustomersView({
     const conditionText = defaultConditionText.trim();
     if (conditionText && !tryParsePaymentCondition(conditionText)) {
       setFormError(
-        'Condicao de pagamento padrao invalida. Use "30" (dias), "7 14 21", "7/14/21" ou "3 parcelas".'
+        'Condicao de pagamento padrao invalida. Use "30" (dias), "7 14 21", "7/14/21", ' +
+          '"3 parcelas" ou periodo ("s+20" semana, "q+20" quinzena, "m+20" mes).'
       );
       return;
     }
@@ -1708,16 +1710,20 @@ export function CustomersView({
                   </Field>
                   <Field
                     label="Condicao de pagamento padrao"
-                    hint='Digite: "30" (uma parcela 30 dias apos a venda), "7 14 21" ou "7/14/21" (3 parcelas nesses prazos), "3 parcelas" (3 parcelas mensais), "A Vista". Vazio = sem padrao. Se nao existir no OMIE, e criada automaticamente no envio.'
+                    hint="Vazio = sem padrao. Se nao existir no OMIE, e criada automaticamente no envio."
                   >
                     <input
                       type="text"
                       value={defaultConditionText}
                       onChange={(e) => setDefaultConditionText(e.target.value)}
-                      placeholder='Ex.: "7/14/21"'
+                      placeholder='Ex.: "30", "7 14 21", "3 parcelas" ou "s+20"'
                       style={getInputStyle(false)}
                     />
                   </Field>
+                  <PaymentConditionLegend
+                    value={defaultConditionText}
+                    style={{ marginBottom: "6px" }}
+                  />
                   <Field
                     label="Transportadora padrao"
                     hint="Puxada automaticamente na Nova entrada. Vincular uma transportadora na aba Transportadoras ja assume o padrao quando ele ainda nao foi definido."
