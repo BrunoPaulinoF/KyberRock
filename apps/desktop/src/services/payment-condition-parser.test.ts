@@ -70,14 +70,16 @@ describe("parsePaymentCondition", () => {
     expect(result.installments.map((i) => i.dueDays)).toEqual([30, 60, 90]);
   });
 
-  it("formato 6: periodo + dias (semana, quinzena e mes)", () => {
+  it("formato 6: periodo + dias (semana, dezena, quinzena e mes)", () => {
     expect(parsePaymentCondition("s + 20").installments).toEqual([{ number: 1, dueDays: 27 }]);
+    expect(parsePaymentCondition("d + 20").installments).toEqual([{ number: 1, dueDays: 30 }]);
     expect(parsePaymentCondition("q + 20").installments).toEqual([{ number: 1, dueDays: 35 }]);
     expect(parsePaymentCondition("m + 20").installments).toEqual([{ number: 1, dueDays: 50 }]);
   });
 
-  it("periodo sozinho vale o proprio prazo (s=7, q=15, m=30)", () => {
+  it("periodo sozinho vale o proprio prazo (s=7, d=10, q=15, m=30)", () => {
     expect(parsePaymentCondition("s").installments[0].dueDays).toBe(7);
+    expect(parsePaymentCondition("d").installments[0].dueDays).toBe(10);
     expect(parsePaymentCondition("q").installments[0].dueDays).toBe(15);
     expect(parsePaymentCondition("m").installments[0].dueDays).toBe(30);
     expect(parsePaymentCondition("s").kind).toBe("single");
@@ -93,6 +95,9 @@ describe("parsePaymentCondition", () => {
     expect(parsePaymentCondition("mes + 20").installments[0].dueDays).toBe(50);
     expect(parsePaymentCondition("mês").installments[0].dueDays).toBe(30);
     expect(parsePaymentCondition("2 semanas").installments[0].dueDays).toBe(14);
+    expect(parsePaymentCondition("D+20").installments[0].dueDays).toBe(30);
+    expect(parsePaymentCondition("dezena + 20").installments[0].dueDays).toBe(30);
+    expect(parsePaymentCondition("3 dezenas").installments[0].dueDays).toBe(30);
   });
 
   it("periodo normaliza o raw (mesma condicao = mesmo texto canonico)", () => {
@@ -100,20 +105,22 @@ describe("parsePaymentCondition", () => {
     expect(parsePaymentCondition("semana + 20").raw).toBe("s+20");
     expect(parsePaymentCondition("q").raw).toBe("q");
     expect(parsePaymentCondition("2 meses + 5").raw).toBe("2m+5");
+    expect(parsePaymentCondition("dezena + 20").raw).toBe("d+20");
   });
 
   it("periodo vale dentro da lista de parcelas e leva os mesmos dias", () => {
-    const result = parsePaymentCondition("s+20/m/A Vista");
+    const result = parsePaymentCondition("s+20/d+20/m/A Vista");
     expect(result.kind).toBe("fixed_days");
-    expect(result.installments.map((i) => i.dueDays)).toEqual([27, 30, 0]);
-    expect(result.raw).toBe("s+20/m/A Vista");
+    expect(result.installments.map((i) => i.dueDays)).toEqual([27, 30, 30, 0]);
+    expect(result.raw).toBe("s+20/d+20/m/A Vista");
     // O periodo e apenas uma forma curta de escrever o prazo: cai nos mesmos dias.
-    expect(result.installments).toEqual(parsePaymentCondition("27/30/0").installments);
+    expect(result.installments).toEqual(parsePaymentCondition("27/30/30/0").installments);
   });
 
   it("periodo gera o mesmo summary do prazo equivalente em dias", () => {
     expect(parsePaymentCondition("s+20").summary).toBe("1 parcela em 27 dias");
-    expect(parsePaymentCondition("s/q").summary).toBe("2 parcelas (7/15 dias)");
+    expect(parsePaymentCondition("d+20").summary).toBe("1 parcela em 30 dias");
+    expect(parsePaymentCondition("s/d/q").summary).toBe("3 parcelas (7/10/15 dias)");
   });
 
   it("rejeita periodo sem prazo valido", () => {
@@ -122,6 +129,9 @@ describe("parsePaymentCondition", () => {
     expect(() => parsePaymentCondition("s 20")).toThrow(PaymentConditionParseError);
     expect(() => parsePaymentCondition("x+20")).toThrow(PaymentConditionParseError);
     expect(() => parsePaymentCondition("500m")).toThrow(PaymentConditionParseError);
+    expect(() => parsePaymentCondition("0d")).toThrow(PaymentConditionParseError);
+    // "3 dias" nao e periodo: o prazo em dias e o numero solto ("3").
+    expect(() => parsePaymentCondition("3 dias")).toThrow(PaymentConditionParseError);
   });
 
   it("'A Vista' isolado gera uma parcela em 0 dias", () => {

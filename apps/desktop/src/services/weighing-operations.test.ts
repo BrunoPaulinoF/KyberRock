@@ -2102,7 +2102,7 @@ describe("weighing operations", () => {
       const term = createPaymentTerm(database, {
         companyId: identity.companyId,
         name: "Periodos",
-        condition: "s+20/q+20/m+20"
+        condition: "s+20/d+20/q+20/m+20"
       });
 
       const operation = createWeighingOperation(database, {
@@ -2129,8 +2129,8 @@ describe("weighing operations", () => {
         paymentTermInstallmentCount: number | null;
         paymentTermInstallmentDays: number[] | null;
       };
-      expect(payload.paymentTermInstallmentDays).toEqual([27, 35, 50]);
-      expect(payload.paymentTermInstallmentCount).toBe(3);
+      expect(payload.paymentTermInstallmentDays).toEqual([27, 30, 35, 50]);
+      expect(payload.paymentTermInstallmentCount).toBe(4);
     } finally {
       database.close();
     }

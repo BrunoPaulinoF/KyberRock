@@ -975,7 +975,7 @@ export function CustomersView({
     if (conditionText && !tryParsePaymentCondition(conditionText)) {
       setFormError(
         'Condicao de pagamento padrao invalida. Use "30" (dias), "7 14 21", "7/14/21", ' +
-          '"3 parcelas" ou periodo ("s+20" semana, "q+20" quinzena, "m+20" mes).'
+          '"3 parcelas" ou periodo ("s+20" semana, "d+20" dezena, "q+20" quinzena, "m+20" mes).'
       );
       return;
     }

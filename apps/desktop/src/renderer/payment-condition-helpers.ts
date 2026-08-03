@@ -121,7 +121,7 @@ export async function resolveConditionTermId(
   if (!parsed) {
     throw new Error(
       'Condicao de pagamento invalida. Use formatos como "30" (dias), "7 14 21", "3 parcelas" ' +
-        'ou periodo ("s+20" semana, "q+20" quinzena, "m+20" mes).'
+        'ou periodo ("s+20" semana, "d+20" dezena, "q+20" quinzena, "m+20" mes).'
     );
   }
 

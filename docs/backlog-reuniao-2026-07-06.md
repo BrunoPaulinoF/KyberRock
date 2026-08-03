@@ -50,7 +50,8 @@ financeiro · **P1** essencial para o piloto · **P2** melhoria/escalabilidade.
       operação (ex.: padrão 7/14/21, mas hoje o patrão liberou 7/14/21/28).
       _(Implementado: prefill do cliente na Nova Entrada + campo "Condição personalizada" que aceita
       "30" (dias), "7 14 21"/"7/14/21" (prazos), "3 parcelas" (mensais) e períodos "s+20" (semana),
-      "q+20" (quinzena) e "m+20" (mês); cria/reusa a condição local e a registra no OMIE no envio.
+      "d+20" (dezena), "q+20" (quinzena) e "m+20" (mês); cria/reusa a condição local e a registra
+      no OMIE no envio.
       O período é convertido para os mesmos dias de vencimento que seguem ao OMIE.)_
 - [ ] **P1** Definir a conta padrão por forma de pagamento (dinheiro→caixinha, débito→GetNet,
       boleto/PIX→Home Cash) e permitir alteração posterior **apenas no OMIE**.

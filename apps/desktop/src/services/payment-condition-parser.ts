@@ -9,11 +9,12 @@
  *  4. "50"            -> um numero inteiro isolado = prazo em dias de uma unica
  *                       parcela (mesmo significado de "Para 50 dias").
  *  5. "50 Parcelas"   -> 50 parcelas mensais.
- *  6. "s+20"          -> periodo + dias: semana (s = 7 dias), quinzena (q = 15 dias)
- *                       e mes (m = 30 dias). "s+20" = uma semana e mais 20 dias
- *                       (27 dias), "q+20" = 35 dias, "m+20" = 50 dias. O periodo
- *                       aceita um multiplicador colado ("2s" = 2 semanas) e vale
- *                       tambem dentro da lista com barras ("s+20/m").
+ *  6. "s+20"          -> periodo + dias: semana (s = 7 dias), dezena (d = 10 dias),
+ *                       quinzena (q = 15 dias) e mes (m = 30 dias). "s+20" = uma
+ *                       semana e mais 20 dias (27 dias), "d+20" = 30 dias, "q+20" =
+ *                       35 dias, "m+20" = 50 dias. O periodo aceita um multiplicador
+ *                       colado ("2s" = 2 semanas) e vale tambem dentro da lista com
+ *                       barras ("s+20/m").
  *
  * Todos os formatos terminam em dias de vencimento (`installments[].dueDays`) — e
  * isso que segue para o OMIE (`lista_parcelas` do pedido / `Parcelas` da OS), entao
@@ -49,8 +50,8 @@ const MAX_INSTALLMENTS = 360;
 /** Limite defensivo para o prazo (em dias) de uma parcela. */
 const MAX_DUE_DAYS = 3650;
 
-/** Dias de cada periodo aceito: semana, quinzena e mes. */
-const PERIOD_UNIT_DAYS = { s: 7, q: 15, m: MONTHLY_INTERVAL_DAYS } as const;
+/** Dias de cada periodo aceito: semana, dezena, quinzena e mes. */
+const PERIOD_UNIT_DAYS = { s: 7, d: 10, q: 15, m: MONTHLY_INTERVAL_DAYS } as const;
 
 type PeriodUnit = keyof typeof PERIOD_UNIT_DAYS;
 
@@ -61,10 +62,10 @@ const PARCELAS_PATTERN = /^(\d+)\s*parcelas?$/i;
 const INTEGER_PATTERN = /^\d+$/;
 /**
  * Periodo com dias opcionais: "[quantidade] unidade [+ dias]".
- * Ex.: "s", "s+20", "S + 20 dias", "2q", "3 meses + 5".
+ * Ex.: "s", "s+20", "S + 20 dias", "2q", "3 meses + 5", "d+20".
  */
 const PERIOD_PATTERN =
-  /^(\d+)?\s*(semanas?|s|quinzenas?|q|m[eê]ses|m[eê]s|m)\s*(?:\+\s*(\d+)\s*(?:dias?)?)?$/i;
+  /^(\d+)?\s*(semanas?|s|dezenas?|d|quinzenas?|q|m[eê]ses|m[eê]s|m)\s*(?:\+\s*(\d+)\s*(?:dias?)?)?$/i;
 
 interface PeriodToken {
   unit: PeriodUnit;
@@ -212,7 +213,8 @@ export function parsePaymentCondition(raw: string): ParsedPaymentCondition {
   }
 
   // Formato 6: periodo isolado ("s+20", "q", "2m+5") -> uma unica parcela no dia
-  // equivalente (semana = 7, quinzena = 15, mes = 30, mais os dias informados).
+  // equivalente (semana = 7, dezena = 10, quinzena = 15, mes = 30, mais os dias
+  // informados).
   const period = parsePeriodToken(value);
   if (period !== null) {
     return buildFixedDays(formatPeriodToken(period), [
@@ -267,7 +269,7 @@ export function parsePaymentCondition(raw: string): ParsedPaymentCondition {
   throw new PaymentConditionParseError(
     `Formato de condicao nao reconhecido: "${value}". ` +
       `Use por exemplo "30" (30 dias), "10/20/30/40", "A Vista/40/60", "Para 93 dias", ` +
-      `"3 parcelas" ou "s+20" (semana + dias; "q" quinzena, "m" mes).`
+      `"3 parcelas" ou "s+20" (semana + dias; "d" dezena, "q" quinzena, "m" mes).`
   );
 }
 
