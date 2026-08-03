@@ -6,6 +6,7 @@ import { ensureInitialDesktopIdentity } from "./bootstrap";
 import { CreditService } from "./credit";
 import { CustomerReportService } from "./customer-report";
 import { setDefaultNfeEmail } from "./customers";
+import { createPaymentTerm } from "./payment-terms";
 import { enqueueSyncJob } from "./sync-queue";
 import { buildOmieIntegrationCode } from "@kyberrock/omie-client";
 import {
@@ -2036,6 +2037,99 @@ describe("weighing operations", () => {
       };
       expect(payload.paymentTermInstallmentDays).toEqual([45]);
       expect(payload.paymentTermInstallmentCount).toBe(1);
+    } finally {
+      database.close();
+    }
+  });
+
+  // Periodo ("s+20" = semana + 20 dias) e so uma forma curta de escrever o prazo: o
+  // que segue para o OMIE sao os mesmos dias de vencimento do prazo equivalente.
+  it("envia ao OMIE os dias das parcelas de uma condicao digitada em periodos", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET omie_customer_id = 456 WHERE id = 'customer-1'").run();
+
+      const term = createPaymentTerm(database, {
+        companyId: identity.companyId,
+        name: "Semana + 20 dias",
+        condition: "s + 20"
+      });
+      expect(term.installment_days_json).toBe("[27]");
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        paymentTermId: term.id,
+        entryWeightKg: 12_000
+      });
+
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      const payloadJson = database
+        .prepare("SELECT payload_json FROM sync_queue WHERE target = 'omie'")
+        .pluck()
+        .get() as string;
+      const payload = JSON.parse(payloadJson) as {
+        paymentTermInstallmentCount: number | null;
+        paymentTermInstallmentDays: number[] | null;
+      };
+      expect(payload.paymentTermInstallmentDays).toEqual([27]);
+      expect(payload.paymentTermInstallmentCount).toBe(1);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("envia ao OMIE as parcelas de uma lista com periodos", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET omie_customer_id = 456 WHERE id = 'customer-1'").run();
+
+      const term = createPaymentTerm(database, {
+        companyId: identity.companyId,
+        name: "Periodos",
+        condition: "s+20/q+20/m+20"
+      });
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        paymentTermId: term.id,
+        entryWeightKg: 12_000
+      });
+
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      const payloadJson = database
+        .prepare("SELECT payload_json FROM sync_queue WHERE target = 'omie'")
+        .pluck()
+        .get() as string;
+      const payload = JSON.parse(payloadJson) as {
+        paymentTermInstallmentCount: number | null;
+        paymentTermInstallmentDays: number[] | null;
+      };
+      expect(payload.paymentTermInstallmentDays).toEqual([27, 35, 50]);
+      expect(payload.paymentTermInstallmentCount).toBe(3);
     } finally {
       database.close();
     }
