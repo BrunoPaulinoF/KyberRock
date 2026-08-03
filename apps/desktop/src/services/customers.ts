@@ -144,12 +144,12 @@ export function findCustomerByDocument(
   companyId: string,
   document: string,
   excludeId?: string
-): { id: string; trade_name: string; legal_name: string } | null {
+): { id: string; trade_name: string; legal_name: string; is_active: number } | null {
   const digits = onlyDigits(document);
   if (!digits) return null;
   const row = database
     .prepare(
-      `SELECT id, trade_name, legal_name FROM customers
+      `SELECT id, trade_name, legal_name, is_active FROM customers
        WHERE company_id = ?
          AND deleted_at IS NULL
          AND replace(replace(replace(replace(COALESCE(document, ''), '.', ''), '-', ''), '/', ''), ' ', '') = ?
@@ -157,7 +157,7 @@ export function findCustomerByDocument(
        LIMIT 1`
     )
     .get(companyId, digits, excludeId ?? null, excludeId ?? null) as
-    | { id: string; trade_name: string; legal_name: string }
+    | { id: string; trade_name: string; legal_name: string; is_active: number }
     | undefined;
   return row ?? null;
 }
@@ -172,7 +172,14 @@ function assertDocumentIsFree(
   const existing = findCustomerByDocument(database, companyId, document, excludeId);
   if (!existing) return;
   const name = existing.trade_name?.trim() || existing.legal_name?.trim() || "sem nome";
-  throw new Error(`Ja existe um cliente com este CNPJ/CPF: ${name}.`);
+  // Cliente inativo tambem e dono do documento. Sem dizer que ele esta inativo, o
+  // operador procurava na lista, nao achava (a lista escondia os inativos) e ficava sem
+  // entender por que o CNPJ/CPF estava ocupado.
+  const inactiveHint =
+    existing.is_active === 0
+      ? " Ele esta inativo — procure por ele na lista de clientes e reative em vez de cadastrar de novo."
+      : "";
+  throw new Error(`Ja existe um cliente com este CNPJ/CPF: ${name}.${inactiveHint}`);
 }
 
 export function createCustomer(
