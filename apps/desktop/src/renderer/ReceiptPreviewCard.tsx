@@ -31,6 +31,10 @@ export function ReceiptPreviewCard({
   return (
     <div
       style={{
+        // Acompanha a rolagem: o editor fica a esquerda e e comprido, entao a previa
+        // precisa continuar visivel enquanto o operador mexe nos controles la embaixo.
+        position: "sticky",
+        top: "12px",
         border: "1px solid var(--kr-border)",
         borderRadius: "14px",
         background: "var(--kr-surface-soft)",
@@ -62,14 +66,18 @@ export function ReceiptPreviewCard({
         Atualiza em tempo real conforme voce configura. Dados de exemplo — a impressao usa os dados
         reais da operacao.
       </p>
+      {/*
+        Bloco (nao flex) de proposito: num container flex que rola, o item filho fica com
+        a altura da caixa (`align-items: stretch`) e o texto do cupom vazava para fora do
+        papel — o branco terminava no meio da previa e o resto das linhas caia sobre o
+        fundo escuro. Com bloco + `margin: 0 auto`, o papel cresce com o conteudo.
+      */}
       <div
         style={{
           flex: "1 1 auto",
           minHeight: 0,
-          maxHeight: "460px",
+          maxHeight: "min(60vh, 620px)",
           overflowY: "auto",
-          display: "flex",
-          justifyContent: "center",
           padding: "10px",
           borderRadius: "10px",
           background: "var(--kr-scroll-track)"
@@ -143,6 +151,9 @@ function ReceiptPaper({
     <div
       style={{
         width: `${paperWidthMm}mm`,
+        maxWidth: "100%",
+        // `margin: 0 auto` centraliza sem flex, para o papel poder crescer com o texto.
+        margin: "0 auto",
         background: "#fff",
         color: "#000",
         padding: "4mm",
