@@ -2885,15 +2885,10 @@ export class DesktopRuntime {
   createVehicle(input: Omit<CreateVehicleInput, "companyId">): unknown {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
+    // createVehicle ja cria o vinculo em vehicle_carriers (o seletor de placa da entrada
+    // lista os veiculos VINCULADOS a transportadora, nao os que tem carrier_id) e
+    // reaproveita a placa que ja existe em vez de recusar o cadastro.
     const result = createVehicle(this.database, { ...input, companyId: identity.companyId });
-    // O seletor de placa da entrada lista os veiculos VINCULADOS a transportadora
-    // (vehicle_carriers), nao os que tem carrier_id. Sem criar o vinculo aqui, a placa
-    // cadastrada pelo modal da Nova entrada — que ja vem com a transportadora da tela —
-    // nao aparecia na lista de jeito nenhum enquanto aquela transportadora estivesse
-    // selecionada.
-    if (input.carrierId) {
-      linkVehicleToCarrier(this.database, (result as { id: string }).id, input.carrierId);
-    }
     this.cacheStore.invalidate("vehicle", identity.companyId);
     return result;
   }

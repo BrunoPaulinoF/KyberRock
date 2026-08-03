@@ -5516,6 +5516,26 @@ export function carrierSelectorFilterIds(
 }
 
 /**
+ * Transportadora a vincular a placa que o operador acabou de escolher na nova entrada,
+ * ou `null` quando nao ha nada a fazer.
+ *
+ * O seletor de placa lista TODAS as cadastradas: o mesmo caminhao roda para clientes e
+ * transportadoras diferentes, e filtrar pelos vinculos da transportadora escondia a placa
+ * — o operador tentava cadastra-la de novo e batia no "ja existe um veiculo com esta
+ * placa". Escolher uma placa ainda sem vinculo com a transportadora da entrada cria o
+ * vinculo aqui, entao a lista vai aprendendo quem roda para quem sem nunca barrar.
+ */
+export function carrierToLinkForPickedVehicle(
+  form: Pick<WeighingFormState, "carrierId" | "freightModality">,
+  vehicleId: string,
+  availableVehicleIds: string[] | undefined
+): string | null {
+  if (!vehicleId || isCustomerOwnTransport(form) || !form.carrierId) return null;
+  if (availableVehicleIds?.includes(vehicleId)) return null;
+  return form.carrierId;
+}
+
+/**
  * Transportadora a exibir na nova entrada depois de carregar os vinculos do cliente.
  *
  * A selecao inicial vem da "transportadora padrao" do cadastro, mas o seletor so
@@ -6802,11 +6822,20 @@ function WeighingForm({
               label="Placa"
               entityType="vehicle"
               value={form.vehicleId}
-              onChange={(id) => setForm((prev) => ({ ...prev, vehicleId: id }))}
+              onChange={(id) => {
+                setForm((prev) => ({ ...prev, vehicleId: id }));
+                // Qualquer placa serve para qualquer operacao: a lista nao e filtrada e o
+                // vinculo com a transportadora da entrada nasce da propria escolha.
+                const carrierId = carrierToLinkForPickedVehicle(form, id, availableVehicleIds);
+                if (!carrierId || !desktopApi) return;
+                void desktopApi
+                  .vehiclesLinkCarrier(id, carrierId)
+                  .then(() => setAvailableVehicleIds((prev) => appendAvailableId(prev, id)))
+                  .catch(() => undefined);
+              }}
               onCreateNew={() => setShowVehicleModal(true)}
               desktopApi={desktopApi}
               refreshKey={vehicleRefreshKey}
-              filterIds={isCustomerOwnTransport(form) ? undefined : availableVehicleIds}
               disabled={!transportReady}
             />
             <CacheSelect
@@ -9975,7 +10004,9 @@ function VehicleCrud({
       options: carrierOptions,
       emptyOption: "Sem transportadora",
       section: "Vinculo",
-      helper: "Vincule a placa a transportadora quando houver."
+      helper:
+        "A placa pode rodar para varias transportadoras: escolher uma aqui soma o vinculo, " +
+        "nao substitui os que ja existem."
     }
   ];
 
@@ -10017,7 +10048,7 @@ function VehicleCrud({
       singular="Veiculo"
       gender="m"
       title="Placas"
-      description="Caminhoes identificados pela placa. Vincule a transportadora quando houver."
+      description="Caminhoes identificados pela placa. A mesma placa pode atender varios clientes e transportadoras."
       searchPlaceholder="Buscar por placa..."
       emptyHint={'Cadastre a primeira placa pelo botao "Novo veiculo".'}
       fields={fields}

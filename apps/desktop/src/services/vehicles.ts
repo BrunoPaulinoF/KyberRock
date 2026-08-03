@@ -75,13 +75,15 @@ export function findVehicleByPlate(
 /**
  * Cadastra a placa. Sem trava, cada tentativa criava mais um veiculo com a mesma placa:
  * era assim que a mesma placa aparecia 4, 6 vezes na base — o operador nao a encontrava
- * na lista, cadastrava de novo, e o duplicado nascia calado.
+ * na lista, cadastrava de novo, e o duplicado nascia calado. Continua valendo: uma unica
+ * linha por placa.
  *
- * Quando a placa ja existe:
- * - cadastro ATIVO: recusa e diz qual e, para o operador editar aquele em vez de duplicar;
- * - cadastro INATIVO: reativa e aplica o que ele acabou de digitar. Recusar aqui repetiria
- *   a armadilha do cadastro invisivel (a lista esconde os inativos) — a placa ficaria
- *   ocupada por um veiculo que ele nao tem como achar.
+ * Mas a placa NUNCA e recusada. O mesmo caminhao roda para varios clientes e varias
+ * transportadoras, entao recusar o cadastro travava o operador ("ja existe um veiculo
+ * com esta placa") justamente quando ele queria usar a placa em outra operacao. Placa ja
+ * cadastrada e reaproveitada por `adoptExistingVehicle`: o vinculo novo entra em
+ * `vehicle_carriers` (que aceita varias transportadoras por placa) e nada do cadastro
+ * anterior e apagado.
  */
 export function createVehicle(
   database: DesktopDatabase,
@@ -92,26 +94,7 @@ export function createVehicle(
   const plate = input.plate.toUpperCase();
 
   const existing = findVehicleByPlate(database, input.companyId, plate);
-  if (existing) {
-    if (existing.is_active === 1) {
-      const label = existing.description?.trim()
-        ? `${existing.plate} (${existing.description.trim()})`
-        : existing.plate;
-      throw new Error(`Ja existe um veiculo com esta placa: ${label}.`);
-    }
-    return updateVehicle(
-      database,
-      existing.id,
-      {
-        plate,
-        plateState: input.plateState ?? null,
-        description: input.description,
-        carrierId: input.carrierId ?? null,
-        isActive: true
-      },
-      now
-    );
-  }
+  if (existing) return adoptExistingVehicle(database, existing, input, now);
 
   const id = randomUUID();
   database
@@ -124,13 +107,53 @@ export function createVehicle(
       input.companyId,
       plate,
       normalizePlateState(input.plateState),
-      input.description ?? null,
+      input.description?.trim() || null,
       input.carrierId ?? null,
       nowIso,
       nowIso
     );
 
+  // O seletor de placa da entrada lista os veiculos VINCULADOS a transportadora
+  // (vehicle_carriers), nao os que tem `carrier_id`: sem o vinculo a placa recem-cadastrada
+  // nao apareceria na lista daquela transportadora.
+  if (input.carrierId) linkVehicleToCarrier(database, id, input.carrierId, now);
+
   return database.prepare("SELECT * FROM vehicles WHERE id = ?").get(id) as VehicleRow;
+}
+
+/**
+ * Placa que ja existe: reaproveita o cadastro em vez de recusar ou duplicar.
+ *
+ * Os campos so PREENCHEM o que estava vazio — cadastrar a mesma placa para um segundo
+ * cliente nunca apaga a descricao, a UF ou a transportadora de quem cadastrou antes. A
+ * transportadora informada agora vira mais um vinculo em `vehicle_carriers`, ao lado das
+ * que a placa ja tinha.
+ *
+ * Inativo volta a ativo: a lista esconde os inativos, entao a placa ficaria ocupada por um
+ * veiculo que o operador nao tem como achar.
+ */
+function adoptExistingVehicle(
+  database: DesktopDatabase,
+  existing: VehicleRow,
+  input: CreateVehicleInput,
+  now: Date
+): VehicleRow {
+  const patch: UpdateVehicleInput = {};
+  if (existing.is_active !== 1) patch.isActive = true;
+
+  const plateState = normalizePlateState(input.plateState);
+  if (plateState && !existing.plate_state) patch.plateState = plateState;
+
+  const description = input.description?.trim();
+  if (description && !existing.description?.trim()) patch.description = description;
+
+  // `carrier_id` e a transportadora principal da placa (usada pela coluna do cadastro):
+  // so e preenchida quando ainda nao havia nenhuma. O vinculo real vai na junction.
+  if (input.carrierId && !existing.carrier_id) patch.carrierId = input.carrierId;
+
+  const updated = updateVehicle(database, existing.id, patch, now);
+  if (input.carrierId) linkVehicleToCarrier(database, existing.id, input.carrierId, now);
+  return updated;
 }
 
 export function updateVehicle(
@@ -150,9 +173,14 @@ export function updateVehicle(
   const values: unknown[] = [];
 
   if (input.plate !== undefined) {
+    // Renomear uma placa para outra que ja existe fundiria dois caminhoes diferentes em
+    // um cadastro so (e nao ha como desfazer): aqui o certo e usar o cadastro que ja
+    // existe. Cadastrar a mesma placa de novo, esse sim, e aceito — ver `createVehicle`.
     const twin = findVehicleByPlate(database, existing.company_id, input.plate, id);
     if (twin) {
-      throw new Error(`Ja existe outro veiculo com a placa ${twin.plate}.`);
+      throw new Error(
+        `Ja existe outro veiculo com a placa ${twin.plate}. Use aquele cadastro em vez de renomear este.`
+      );
     }
     sets.push("plate = ?");
     values.push(input.plate.toUpperCase());
@@ -173,6 +201,11 @@ export function updateVehicle(
     sets.push("is_active = ?");
     values.push(input.isActive ? 1 : 0);
   }
+
+  // Escolher a transportadora no cadastro da placa tem de bastar para a placa aparecer
+  // na entrada daquela transportadora — o seletor le `vehicle_carriers`. Sem isto, o
+  // operador editava a placa, salvava, e a lista continuava sem ela.
+  if (input.carrierId) linkVehicleToCarrier(database, id, input.carrierId, now);
 
   if (sets.length === 0) return existing;
 
