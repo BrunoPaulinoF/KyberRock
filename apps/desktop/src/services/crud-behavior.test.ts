@@ -205,9 +205,11 @@ describe("desktop cadastro CRUD behavior", () => {
       expect(again.plate_state).toBe("MG");
       expect(again.carrier_id).toBe(carrierA.id);
       // E a placa passa a valer para as duas transportadoras.
-      expect(getVehicleCarriers(database, first.id).map((link) => link.carrierId).sort()).toEqual(
-        [carrierA.id, carrierB.id].sort()
-      );
+      expect(
+        getVehicleCarriers(database, first.id)
+          .map((link) => link.carrierId)
+          .sort()
+      ).toEqual([carrierA.id, carrierB.id].sort());
     } finally {
       database.close();
     }
