@@ -348,6 +348,14 @@ function registerIpcHandlers(): void {
     return runtime.listClosedWeighingOperations();
   });
 
+  ipcMain.handle("desktop:operation-omie-issue", (_event, operationId: string) => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.getOperationOmieIssue(operationId);
+  });
+
   ipcMain.handle("desktop:clear-canceled-weighing-operations", () => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");

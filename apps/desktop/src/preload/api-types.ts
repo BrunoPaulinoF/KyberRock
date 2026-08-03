@@ -9,6 +9,7 @@ import type { DesktopStatusSnapshot } from "../services/status";
 import type { UpdateState } from "../services/update-flow";
 import type {
   OperationFreightInput,
+  OperationOmieIssue,
   OperationType,
   WeighingOperationSummary
 } from "../services/weighing-operations";
@@ -116,6 +117,11 @@ export interface KyberRockDesktopApi {
   pullCloudNow: () => Promise<{ pulled: number; errors: string[] }>;
   listCanceledWeighingOperations: () => Promise<WeighingOperationSummary[]>;
   listClosedWeighingOperations: () => Promise<WeighingOperationSummary[]>;
+  /**
+   * Por que uma operacao concluida ainda nao chegou ao OMIE, com os campos do cadastro
+   * do cliente que precisam ser corrigidos antes do reenvio.
+   */
+  operationOmieIssue: (operationId: string) => Promise<OperationOmieIssue>;
   clearCanceledWeighingOperations: () => Promise<number>;
   deleteClosedWeighingOperation: (operationId: string) => Promise<void>;
   startWeighing: (input: {

@@ -56,9 +56,11 @@ import { tryParsePaymentCondition } from "../services/payment-condition-parser";
 import { extractConditionRaw, resolveConditionTermId } from "./payment-condition-helpers";
 import type {
   OperationFreightInput,
+  OperationOmieIssue,
   OperationType,
   WeighingOperationSummary
 } from "../services/weighing-operations";
+import type { UpdateCustomerInput } from "../services/customers";
 import {
   FREIGHT_MODALITIES,
   getFreightModalityInfo,
@@ -133,6 +135,14 @@ import type {
   PaymentTermCacheEntry
 } from "./customers.types";
 import type { KyberRockDesktopApi } from "./desktop-api";
+import { filterClosedOperationsBySearch } from "./closed-operations-search";
+import {
+  buildOmieDeliveryStates,
+  diffOmieDeliveryEvents,
+  type OmieDeliveryEvent,
+  type OmieDeliveryState
+} from "./omie-delivery-notifications";
+import { playOmieAlertSound } from "./omie-alert-sound";
 import type { ScaleConfiguration, ScaleConfigurationInput } from "../services/scale-configs";
 import type { SerialPortInfo } from "../services/scale-serial";
 import type { OmieQueueItem } from "../services/sync-queue";
@@ -332,6 +342,16 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const loaderNoticeTimerRef = useRef<number | null>(null);
   const [canceledFilter, setCanceledFilter] = useState<CanceledFilter>("all");
   const [closedProductFilter, setClosedProductFilter] = useState<string>("all");
+  // Busca da aba Concluidas: cliente, CNPJ/CPF ou produto (ver closed-operations-search).
+  const [closedSearch, setClosedSearch] = useState("");
+  // Operacao cujo cadastro esta sendo corrigido para reenviar ao OMIE (alerta da aba
+  // Concluidas e botao "Editar item" da fila OMIE na tela cloud).
+  const [omieIssueOperationId, setOmieIssueOperationId] = useState<string | null>(null);
+  // Avisos no canto superior direito: resultado do envio de cada operacao ao OMIE.
+  const [omieDeliveryToasts, setOmieDeliveryToasts] = useState<OmieDeliveryEvent[]>([]);
+  // Estado anterior (id -> enviado/falhou/pendente) para detectar as transicoes.
+  const omieDeliveryStateRef = useRef<Map<string, OmieDeliveryState>>(new Map());
+  const omieDeliverySeededRef = useRef(false);
   const [printers, setPrinters] = useState<WindowsPrinterSummary[]>([]);
   const [printProfiles, setPrintProfiles] = useState<PrintProfileSummary[]>([]);
   const [printReceipts, setPrintReceipts] = useState<PrintReceiptSummary[]>([]);
@@ -424,7 +444,6 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [omieQueueLoading, setOmieQueueLoading] = useState(false);
   const [omieQueueBusyId, setOmieQueueBusyId] = useState<string | null>(null);
   const [omieQueueConfirmDeleteId, setOmieQueueConfirmDeleteId] = useState<string | null>(null);
-  const [omieResetting, setOmieResetting] = useState(false);
   const [showOmieDirectSync, setShowOmieDirectSync] = useState(false);
   const [omieConnectionFeedback, setOmieConnectionFeedback] = useState<{
     status: "idle" | "checking" | "success" | "warning" | "error";
@@ -437,12 +456,22 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     () => filterCanceledOperations(canceledOperations, canceledFilter),
     [canceledOperations, canceledFilter]
   );
-  const filteredClosedOperations = useMemo(
-    () =>
+  const filteredClosedOperations = useMemo(() => {
+    const byProduct =
       closedProductFilter === "all"
         ? closedOperations
-        : closedOperations.filter((op) => op.productDescription === closedProductFilter),
-    [closedOperations, closedProductFilter]
+        : closedOperations.filter((op) => op.productDescription === closedProductFilter);
+    return filterClosedOperationsBySearch(byProduct, closedSearch);
+  }, [closedOperations, closedProductFilter, closedSearch]);
+  // Operacoes concluidas que ainda nao chegaram ao OMIE: alimentam o alerta do topo da
+  // aba Concluidas, com o motivo e o atalho para corrigir o cadastro.
+  const closedNotSentToOmie = useMemo(
+    () =>
+      closedOperations.filter((operation) => {
+        const status = getFiscalBillingStatus(operation);
+        return status.tone === "warning" || status.tone === "danger";
+      }),
+    [closedOperations]
   );
   // Operacoes abertas cujo caminhao ja passou do tempo medio dentro da pedreira.
   const overtimeOpenOperations = useMemo(() => {
@@ -527,6 +556,26 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       );
     }
   }, [openOperations]);
+
+  // O envio ao OMIE acontece em background (fila + sincronizacao). Comparando o estado
+  // fiscal de cada operacao concluida com o ciclo anterior, cada conclusao vira um aviso
+  // no canto superior direito + um som: suave no sucesso, de alerta na falha.
+  useEffect(() => {
+    const events = omieDeliverySeededRef.current
+      ? diffOmieDeliveryEvents(omieDeliveryStateRef.current, closedOperations)
+      : [];
+    omieDeliveryStateRef.current = buildOmieDeliveryStates(closedOperations);
+    omieDeliverySeededRef.current = true;
+    if (events.length === 0) return;
+
+    setOmieDeliveryToasts((current) => [...current, ...events].slice(-4));
+    if (events.some((event) => event.kind === "error")) {
+      playOmieAlertSound("error");
+    }
+    if (events.some((event) => event.kind === "success")) {
+      playOmieAlertSound("success");
+    }
+  }, [closedOperations]);
 
   useEffect(
     () => () => {
@@ -1224,6 +1273,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     } finally {
       setOmieQueueBusyId(null);
       void refreshOmieQueue();
+      // Recarrega as concluidas para o detector de transicao disparar o som e o aviso
+      // do canto da tela com o resultado deste envio.
+      void refreshOpenOperations();
     }
   }
 
@@ -1439,84 +1491,6 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       });
     } finally {
       setOmieSyncing(false);
-    }
-  }
-
-  async function handleResetOmieMaster(): Promise<void> {
-    if (!desktopApi) return;
-
-    const confirmed = await requestAppConfirm({
-      title: "Resetar dados OMIE locais?",
-      description:
-        "Isso vai apagar todos os clientes, transportadoras e dados de sincronizacao OMIE locais, e depois forcar uma re-sincronizacao completa.",
-      confirmLabel: "Resetar e sincronizar",
-      tone: "danger"
-    });
-    if (!confirmed) return;
-
-    setOmieResetting(true);
-    setOmieConnectionFeedback({
-      status: "checking",
-      message: "Limpando dados locais OMIE..."
-    });
-    setMessage("Limpando dados OMIE...");
-    try {
-      const resetResult = await desktopApi.resetOmieMaster();
-      setMessage(
-        `Dados OMIE limpos: ${resetResult.customersCleared} clientes, ${resetResult.carriersCleared} transportadoras, ${resetResult.productsCleared} produtos, ${resetResult.paymentTermsCleared} condicoes, ${resetResult.syncRunsCleared} runs, ${resetResult.syncQueueCleared} jobs.`
-      );
-
-      setOmieConnectionFeedback({
-        status: "success",
-        message: "Dados locais limpos. Iniciando sincronizacao completa..."
-      });
-
-      // Trigger a full sync after reset
-      const syncResult = await desktopApi.omieSync();
-      const parts: string[] = [];
-      if (syncResult.customersPushed > 0)
-        parts.push(`${syncResult.customersPushed} clientes enviados`);
-      if (syncResult.customersPushFailed > 0)
-        parts.push(`${syncResult.customersPushFailed} clientes com falha`);
-      parts.push(
-        `${syncResult.customersPulled} clientes baixados`,
-        `${syncResult.suppliersSynced} transportadoras`,
-        `${syncResult.productsSynced} produtos`,
-        `${syncResult.paymentTermsSynced} condicoes`,
-        `${syncResult.categoriesSynced} categorias`
-      );
-      parts.push(`pedidos: ${syncResult.ordersProcessed} ok, ${syncResult.ordersFailed} falhas`);
-      if (syncResult.errors.length > 0) {
-        parts.push(`${syncResult.errors.length} erro(s)`);
-      }
-      const omieStatusResult = await desktopApi.getOmieStatus();
-      setOmieStatus(omieStatusResult);
-      const summary = `OMIE re-sync: ${parts.join(" | ")}`;
-      setMessage(summary);
-      const hasFailures =
-        syncResult.errors.length > 0 ||
-        syncResult.ordersFailed > 0 ||
-        syncResult.customersPushFailed > 0;
-      setOmieConnectionFeedback({
-        status: hasFailures ? "warning" : "success",
-        message: hasFailures
-          ? "Re-sincronizacao concluida, mas houve falhas em alguns itens."
-          : "Re-sincronizacao completa concluida com sucesso.",
-        details: summary
-      });
-      if (syncResult.errors.length > 0) {
-        console.error("OMIE re-sync errors:", syncResult.errors);
-      }
-    } catch (error) {
-      const errorMessage = getErrorMessage(error);
-      setMessage(`Falha ao limpar/re-sincronizar OMIE: ${errorMessage}`);
-      setOmieConnectionFeedback({
-        status: "error",
-        message: "Nao foi possivel limpar ou re-sincronizar com o OMIE.",
-        details: errorMessage
-      });
-    } finally {
-      setOmieResetting(false);
     }
   }
 
@@ -2172,6 +2146,14 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       <GlobalUiPolish />
       {appConfirmElement}
       <Toast message={message} onClose={() => setMessage("")} />
+      <OmieDeliveryToasts
+        events={omieDeliveryToasts}
+        onDismiss={(operationId) =>
+          setOmieDeliveryToasts((current) =>
+            current.filter((event) => event.operationId !== operationId)
+          )
+        }
+      />
       <div style={styles.shell}>
         <aside style={styles.sidebar}>
           <div style={styles.sidebarHeader}>
@@ -2719,9 +2701,40 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                             ))}
                         </select>
                       </label>
+                      <label
+                        style={{ ...styles.fieldLabel, marginBottom: 0, flex: "1 1 260px" }}
+                        title={TIPS.operations.searchClosed}
+                      >
+                        Buscar
+                        <input
+                          type="search"
+                          value={closedSearch}
+                          onChange={(event) => setClosedSearch(event.target.value)}
+                          placeholder="Cliente, CNPJ/CPF ou produto"
+                          aria-label="Buscar operacao concluida por cliente, CNPJ/CPF ou produto"
+                          style={{ ...styles.input, minWidth: "240px" }}
+                        />
+                      </label>
+                      {closedSearch.trim() ? (
+                        <IconActionButton
+                          icon="close"
+                          label="Limpar busca"
+                          tip="Limpar a busca e mostrar todas as concluidas"
+                          tone="neutral"
+                          placement="bottom"
+                          onClick={() => setClosedSearch("")}
+                        />
+                      ) : null}
                     </div>
                   ) : null}
                 </div>
+
+                {operationsTab === "closed" && closedNotSentToOmie.length > 0 ? (
+                  <PendingOmieAlert
+                    operations={closedNotSentToOmie}
+                    onFix={(operationId) => setOmieIssueOperationId(operationId)}
+                  />
+                ) : null}
 
                 {showDeviceColors ? <DeviceColorLegend devices={unitDevices} /> : null}
 
@@ -3026,6 +3039,16 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                             disabled={reprintingOperationId === operation.id}
                             onClick={() => void handleReprintOperationReceipt(operation.id)}
                           />
+                          {getFiscalBillingStatus(operation).canRetry ? (
+                            <IconActionButton
+                              icon="edit"
+                              label="Corrigir cadastro e reenviar"
+                              tip={TIPS.operations.fixOmieCadastro}
+                              tone="primary"
+                              placement="left"
+                              onClick={() => setOmieIssueOperationId(operation.id)}
+                            />
+                          ) : null}
                           <IconActionButton
                             icon="edit"
                             label="Editar cliente"
@@ -3307,6 +3330,23 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   </div>
                 </div>
               </CrudFormModal>
+            ) : null}
+
+            {omieIssueOperationId ? (
+              <FixOmieCadastroDialog
+                desktopApi={desktopApi}
+                operationId={omieIssueOperationId}
+                onClose={() => setOmieIssueOperationId(null)}
+                onSaved={async (feedback) => {
+                  setMessage(feedback);
+                  await refreshOpenOperations();
+                  await refreshOmieQueue();
+                }}
+                onResend={async (operationId, operationType) => {
+                  setOmieIssueOperationId(null);
+                  await handleRetryFiscalBilling(operationId, operationType);
+                }}
+              />
             ) : null}
 
             {fiscalCloseProgress ? (
@@ -3862,32 +3902,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                                   : "Busca novos clientes e transportadoras do OMIE e atualiza os existentes sem apagar dados locais."
                               }
                               tone="primary"
-                              disabled={omieSyncing || omieResetting}
+                              disabled={omieSyncing}
                               onClick={handleSyncOmie}
-                            />
-                          </div>
-                          <div style={{ marginTop: "12px" }}>
-                            <p style={{ ...styles.muted, fontSize: "12px", marginBottom: "8px" }}>
-                              Apaga todos os clientes e transportadoras locais e baixa tudo
-                              novamente do OMIE.
-                            </p>
-                            <button
-                              type="button"
-                              onClick={handleResetOmieMaster}
-                              disabled={omieResetting || omieSyncing}
-                              style={{
-                                ...styles.dangerButton,
-                                opacity: omieResetting || omieSyncing ? 0.6 : 1,
-                                cursor: omieResetting || omieSyncing ? "not-allowed" : "pointer"
-                              }}
-                            >
-                              {omieResetting
-                                ? "Limpando e sincronizando..."
-                                : "Limpar tudo e Re-sincronizar OMIE"}
-                            </button>
-                            <HelpTooltip
-                              content="APAGA todos os clientes e transportadoras locais e rebaixa tudo do OMIE. Use com cuidado!"
-                              placement="top"
                             />
                           </div>
                         </>
@@ -3981,6 +3997,15 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                             placement="left"
                             disabled={omieQueueBusyId !== null}
                             onClick={() => void handleOmieQueueSendNow(item.id)}
+                          />
+                          <IconActionButton
+                            icon="edit"
+                            label="Editar item"
+                            tip="Editar o cadastro usado por este item antes de enviar ao OMIE"
+                            tone="neutral"
+                            placement="left"
+                            disabled={omieQueueBusyId !== null}
+                            onClick={() => setOmieIssueOperationId(item.operationId)}
                           />
                           {omieQueueConfirmDeleteId === item.id ? (
                             <>
@@ -4099,6 +4124,401 @@ function Toast({ message, onClose }: { message: string; onClose: () => void }) {
       >
         ×
       </button>
+    </div>
+  );
+}
+
+/**
+ * Avisos empilhados no canto superior direito com o resultado do envio de cada operacao
+ * ao OMIE. Ficam separados do `Toast` geral (rodape, mensagem unica) porque o operador
+ * precisa saber QUAL operacao deu certo ou errado — e um erro nao pode ser apagado pela
+ * proxima mensagem de status que passar pela tela.
+ */
+function OmieDeliveryToasts({
+  events,
+  onDismiss
+}: {
+  events: OmieDeliveryEvent[];
+  onDismiss: (operationId: string) => void;
+}) {
+  if (events.length === 0) return null;
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      style={{
+        position: "fixed",
+        top: "16px",
+        right: "16px",
+        zIndex: 9999,
+        display: "flex",
+        flexDirection: "column",
+        gap: "8px",
+        maxWidth: "min(360px, 90vw)"
+      }}
+    >
+      {events.map((event) => (
+        <OmieDeliveryToast
+          key={`${event.operationId}-${event.kind}`}
+          event={event}
+          onDismiss={() => onDismiss(event.operationId)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function OmieDeliveryToast({
+  event,
+  onDismiss
+}: {
+  event: OmieDeliveryEvent;
+  onDismiss: () => void;
+}) {
+  // O sucesso some sozinho; a falha fica ate o operador fechar, para nao passar batido.
+  useEffect(() => {
+    if (event.kind !== "success") return;
+    const timer = window.setTimeout(onDismiss, 8_000);
+    return () => window.clearTimeout(timer);
+  }, [event.kind, onDismiss]);
+
+  const success = event.kind === "success";
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "flex-start",
+        gap: "10px",
+        padding: "10px 12px",
+        borderRadius: "12px",
+        border: `1px solid ${success ? "var(--kr-success-border)" : "var(--kr-danger-border)"}`,
+        background: success ? "var(--kr-success-soft)" : "var(--kr-danger-soft)",
+        color: success ? "var(--kr-success)" : "var(--kr-danger)",
+        boxShadow: "var(--kr-shadow)",
+        fontSize: "12px"
+      }}
+    >
+      <span aria-hidden="true" style={{ fontWeight: 900, lineHeight: "16px" }}>
+        {success ? "✓" : "!"}
+      </span>
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <strong style={{ display: "block", fontSize: "13px" }}>{event.title}</strong>
+        <span style={{ display: "block", fontWeight: 700 }}>{event.operationLabel}</span>
+        <span style={{ display: "block", wordBreak: "break-word", opacity: 0.9 }}>
+          {event.detail}
+        </span>
+      </span>
+      <button
+        type="button"
+        onClick={onDismiss}
+        aria-label="Fechar aviso do OMIE"
+        style={{
+          border: "none",
+          background: "transparent",
+          color: "inherit",
+          cursor: "pointer",
+          fontWeight: 900,
+          fontSize: "16px",
+          lineHeight: 1,
+          padding: "0 2px"
+        }}
+      >
+        ×
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Alerta do topo da aba Concluidas: lista as operacoes que ja fecharam mas nao chegaram
+ * ao OMIE, com o motivo de cada uma e o atalho para corrigir o cadastro que faltou.
+ */
+function PendingOmieAlert({
+  operations,
+  onFix
+}: {
+  operations: WeighingOperationSummary[];
+  onFix: (operationId: string) => void;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+  const blocking = operations.filter(
+    (operation) => getFiscalBillingStatus(operation).tone === "danger"
+  );
+  const tone = blocking.length > 0 ? "danger" : "warning";
+
+  return (
+    <div
+      role="alert"
+      style={{
+        marginBottom: "10px",
+        padding: "10px 12px",
+        borderRadius: "12px",
+        border: `1px solid ${tone === "danger" ? "var(--kr-danger-border)" : "var(--kr-warning-border)"}`,
+        background: tone === "danger" ? "var(--kr-danger-soft)" : "var(--kr-warning-soft)",
+        color: tone === "danger" ? "var(--kr-danger)" : "var(--kr-warning)"
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+        <strong style={{ flex: 1, fontSize: "13px" }}>
+          {operations.length === 1
+            ? "1 operacao concluida nao foi enviada ao OMIE"
+            : `${operations.length} operacoes concluidas nao foram enviadas ao OMIE`}
+        </strong>
+        <button
+          type="button"
+          onClick={() => setCollapsed((current) => !current)}
+          style={{
+            border: "1px solid currentColor",
+            background: "transparent",
+            color: "inherit",
+            borderRadius: "999px",
+            padding: "2px 10px",
+            cursor: "pointer",
+            fontWeight: 800,
+            fontSize: "11px"
+          }}
+        >
+          {collapsed ? "Ver motivos" : "Ocultar"}
+        </button>
+      </div>
+      {collapsed ? null : (
+        <ul style={{ margin: "8px 0 0", padding: 0, listStyle: "none" }}>
+          {operations.map((operation) => {
+            const status = getFiscalBillingStatus(operation);
+            return (
+              <li
+                key={operation.id}
+                style={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: "8px",
+                  padding: "6px 0",
+                  borderTop: "1px solid currentColor",
+                  fontSize: "12px"
+                }}
+              >
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <strong>
+                    {operation.plate || "SEM PLACA"} —{" "}
+                    {operation.customerName || "Cliente nao informado"}
+                  </strong>
+                  <span style={{ display: "block", fontWeight: 700 }}>{status.label}</span>
+                  <span style={{ display: "block", wordBreak: "break-word", opacity: 0.9 }}>
+                    {status.detail}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onFix(operation.id)}
+                  style={{
+                    border: "1px solid currentColor",
+                    background: "transparent",
+                    color: "inherit",
+                    borderRadius: "10px",
+                    padding: "6px 10px",
+                    cursor: "pointer",
+                    fontWeight: 800,
+                    fontSize: "11px",
+                    whiteSpace: "nowrap"
+                  }}
+                >
+                  Editar itens
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Dialogo "Editar itens da operacao": mostra por que a operacao concluida nao chegou ao
+ * OMIE e deixa corrigir, na mesma tela, os campos do cadastro do cliente que faltaram ou
+ * que o OMIE recusou. Depois de salvar, reenvia a operacao sem sair da tela.
+ */
+function FixOmieCadastroDialog({
+  desktopApi,
+  operationId,
+  onClose,
+  onSaved,
+  onResend
+}: {
+  desktopApi: KyberRockDesktopApi | null;
+  operationId: string;
+  onClose: () => void;
+  onSaved: (feedback: string) => Promise<void>;
+  onResend: (operationId: string, operationType: OperationType) => Promise<void>;
+}) {
+  const [issue, setIssue] = useState<OperationOmieIssue | null>(null);
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!desktopApi) return;
+    let cancelled = false;
+    setLoading(true);
+    void desktopApi
+      .operationOmieIssue(operationId)
+      .then((result) => {
+        if (cancelled) return;
+        setIssue(result);
+        setValues(Object.fromEntries(result.fields.map((field) => [field.key, field.value])));
+        setError(null);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setError(getErrorMessage(err));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [desktopApi, operationId]);
+
+  async function persist(): Promise<boolean> {
+    if (!desktopApi || !issue) return false;
+    if (!issue.customerId) {
+      setError(
+        "Esta operacao nao tem cliente vinculado. Use 'Alterar cliente' na operacao antes de reenviar."
+      );
+      return false;
+    }
+
+    const stillMissing = issue.fields
+      .filter((field) => field.required && !(values[field.key] ?? "").trim())
+      .map((field) => field.label);
+    if (stillMissing.length > 0) {
+      setError(`Preencha ${stillMissing.join(", ")} antes de reenviar ao OMIE.`);
+      return false;
+    }
+
+    setSaving(true);
+    setError(null);
+    try {
+      // overrideOmieFields: o cadastro veio do OMIE mas esta impedindo o envio; a
+      // correcao local passa o cliente a 'hybrid' e sobe junto no proximo push.
+      const patch: UpdateCustomerInput = {};
+      for (const field of issue.fields) {
+        patch[field.key] = (values[field.key] ?? "").trim();
+      }
+      await desktopApi.customersUpdate(issue.customerId, patch, { overrideOmieFields: true });
+      await onSaved(`Cadastro de ${issue.customerName || "cliente"} atualizado.`);
+      return true;
+    } catch (err) {
+      setError(getErrorMessage(err));
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div style={modalOverlayStyle}>
+      <div style={{ ...modalContentStyle, maxWidth: "620px" }}>
+        <h3 style={{ margin: "0 0 4px 0", color: "var(--kr-text-strong)", fontSize: "15px" }}>
+          Editar itens da operacao
+        </h3>
+        {loading ? (
+          <p style={styles.muted}>Carregando a pendencia desta operacao...</p>
+        ) : issue ? (
+          <>
+            <p style={{ ...styles.muted, margin: "0 0 10px 0" }}>
+              {issue.plate || "SEM PLACA"} — {issue.customerName || "Cliente nao informado"}
+            </p>
+            <div
+              style={{
+                ...styles.omieFeedback,
+                ...(issue.blocked ? styles.omieFeedbackError : styles.omieFeedbackWarning)
+              }}
+            >
+              <strong>{issue.reasonLabel}</strong>
+              <p style={{ margin: "6px 0 0" }}>{issue.reason}</p>
+            </div>
+            {issue.customerSource === "omie" ? (
+              <p style={{ ...styles.muted, marginTop: "8px" }}>
+                Cliente veio do OMIE. A correcao vale localmente e sobe ao OMIE no proximo envio de
+                cadastros.
+              </p>
+            ) : null}
+            {error ? <p style={styles.errorMessage}>{error}</p> : null}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+                gap: "10px",
+                marginTop: "12px"
+              }}
+            >
+              {issue.fields.map((field) => (
+                <label key={field.key} style={styles.fieldLabel}>
+                  {field.label}
+                  {field.required ? " *" : ""}
+                  <input
+                    value={values[field.key] ?? ""}
+                    onChange={(event) =>
+                      setValues((current) => ({ ...current, [field.key]: event.target.value }))
+                    }
+                    disabled={saving || !issue.customerId}
+                    style={{
+                      ...styles.input,
+                      borderColor: field.missing
+                        ? "var(--kr-danger-border)"
+                        : "var(--kr-input-border)"
+                    }}
+                  />
+                </label>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: "8px", marginTop: "14px", flexWrap: "wrap" }}>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => {
+                  void (async () => {
+                    const saved = await persist();
+                    if (saved) await onResend(issue.operationId, issue.operationType);
+                  })();
+                }}
+                style={{ ...styles.primaryButton, opacity: saving ? 0.6 : 1 }}
+              >
+                {saving ? "Salvando..." : "Salvar e reenviar ao OMIE"}
+              </button>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => {
+                  void (async () => {
+                    const saved = await persist();
+                    if (saved) onClose();
+                  })();
+                }}
+                style={{ ...styles.secondaryButton, opacity: saving ? 0.6 : 1 }}
+              >
+                Salvar sem reenviar
+              </button>
+              <button type="button" onClick={onClose} style={styles.secondaryButton}>
+                Voltar
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p style={styles.errorMessage}>{error ?? "Nao foi possivel carregar a operacao."}</p>
+            <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+              <button type="button" onClick={onClose} style={styles.secondaryButton}>
+                Voltar
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -11399,8 +11819,10 @@ const styles = {
   },
   closedOperationsTableRow: {
     display: "grid",
+    // A ultima coluna cabe 5 botoes de 30 px + os vaos: a linha com pendencia no OMIE
+    // ganha o atalho "Corrigir cadastro e reenviar" junto das quatro acoes de sempre.
     gridTemplateColumns:
-      "96px minmax(160px, 1.1fr) minmax(110px, 0.7fr) 140px minmax(170px, 0.9fr) 150px",
+      "96px minmax(160px, 1.1fr) minmax(110px, 0.7fr) 140px minmax(170px, 0.9fr) 186px",
     alignItems: "center",
     gap: "10px",
     padding: "8px 10px",

@@ -64,12 +64,14 @@ import {
   closeWeighingOperation,
   createWeighingOperation,
   deleteClosedWeighingOperation,
+  getOperationOmieIssue,
   listCanceledWeighingOperations,
   listClosedWeighingOperations,
   listOpenWeighingOperations,
   updateWeighingOperationProduct,
   updateWeighingOperationCustomer,
   updateWeighingOperationCarrier,
+  type OperationOmieIssue,
   type OperationType,
   type OperationFreightInput,
   type ScaleCaptureAudit,
@@ -1089,6 +1091,16 @@ export class DesktopRuntime {
   listClosedWeighingOperations(): WeighingOperationSummary[] {
     this.assertDesktopAccess();
     return listClosedWeighingOperations(this.database);
+  }
+
+  /**
+   * Diagnostico "por que essa operacao concluida nao foi ao OMIE", com os campos do
+   * cadastro do cliente a corrigir. Usado pelo alerta da tela de Concluidas e pelo
+   * botao "Editar item" da fila OMIE (tela cloud).
+   */
+  getOperationOmieIssue(operationId: string): OperationOmieIssue {
+    this.assertDesktopAccess();
+    return getOperationOmieIssue(this.database, operationId);
   }
 
   clearCanceledWeighingOperations(): number {
