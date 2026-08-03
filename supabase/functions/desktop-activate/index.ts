@@ -4,6 +4,7 @@ import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { sha256Hex } from "../_shared/crypto.ts";
 import { pickNextDeviceColor } from "../_shared/device-colors.ts";
 import { selectDeviceRegistration } from "../_shared/device-registration.ts";
+import { deviceUnitAssignment } from "../_shared/device-unit.ts";
 
 type CompanyRow = {
   id: string;
@@ -146,7 +147,9 @@ Deno.serve(async (req) => {
     const { error: updateDeviceError } = await supabase
       .from("device_registrations")
       .update({
-        unit_id: typedUnit.id,
+        // Mudar de pedreira zera o numero do computador: ele e unico por
+        // unidade e o `assign_device_number` abaixo renumera no destino.
+        ...deviceUnitAssignment(existingDevice.unit_id, typedUnit.id),
         name: deviceName,
         installation_id: installationId ?? existingDevice.installation_id,
         color: deviceColor,

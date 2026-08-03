@@ -1,6 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { verifyAdminSession } from "../_shared/admin-session.ts";
+import { deviceUnitAssignment } from "../_shared/device-unit.ts";
 import { sha256Hex } from "../_shared/crypto.ts";
 import {
   deleteAuthUser,
@@ -357,7 +358,7 @@ Deno.serve(async (req) => {
       const unitId = String(payload.unitId ?? "");
       const { data: device, error: deviceError } = await supabase
         .from("device_registrations")
-        .select("company_id")
+        .select("company_id, unit_id")
         .eq("id", deviceId)
         .single();
       if (deviceError) throw deviceError;
@@ -370,12 +371,26 @@ Deno.serve(async (req) => {
       if (unit.company_id !== device.company_id) {
         return jsonResponse({ error: "A pedreira escolhida e de outra empresa" }, 400);
       }
+      // O numero do computador e por pedreira: leva-lo para a unidade destino
+      // estourava o indice unico (unit_id, device_number) quando la ja existia
+      // um computador com o mesmo numero.
       const { error } = await supabase
         .from("device_registrations")
-        .update({ unit_id: unitId, updated_at: new Date().toISOString() })
+        .update({
+          ...deviceUnitAssignment(device.unit_id as string | null, unitId),
+          updated_at: new Date().toISOString()
+        })
         .eq("id", deviceId);
       if (error) throw error;
-      return jsonResponse({ ok: true });
+      // Renumera na pedreira destino. Best-effort: a troca de pedreira ja esta
+      // gravada e o `desktop-status` atribui o numero na proxima validacao.
+      const { data: assignedNumber } = await supabase.rpc("assign_device_number", {
+        p_device_id: deviceId
+      });
+      return jsonResponse({
+        ok: true,
+        deviceNumber: typeof assignedNumber === "number" ? assignedNumber : null
+      });
     }
 
     if (body.action === "update_company") {
