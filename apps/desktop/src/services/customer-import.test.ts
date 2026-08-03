@@ -271,6 +271,50 @@ describe("customer-import", () => {
     }
   });
 
+  it("nome igual com CNPJ diferente vira cliente novo, nao sobrescreve o antigo", () => {
+    const database = createDatabase();
+    try {
+      importCustomers(database, [record()], { companyId: "company-1" });
+
+      // Matriz e filial (ou o CPF do dono e o CNPJ da empresa) usam o mesmo nome fantasia.
+      const report = importCustomers(
+        database,
+        [record({ document: "45997418000153", phone: "11955554444" })],
+        { companyId: "company-1" }
+      );
+
+      expect(report.created).toBe(1);
+      expect(report.updated).toBe(0);
+      expect(readCustomer(database, "19131243000197")?.phone).toBe("11912345678");
+      expect(readCustomer(database, "45997418000153")?.phone).toBe("11955554444");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("cadastro sem documento e completado pelo CNPJ da planilha quando o nome bate", () => {
+    const database = createDatabase();
+    try {
+      database
+        .prepare(
+          `INSERT INTO customers (id, company_id, source, legal_name, trade_name, is_active, created_at, updated_at)
+           VALUES ('customer-incompleto', 'company-1', 'local', 'Pedreira Sul', 'Pedreira Sul', 1, datetime('now'), datetime('now'))`
+        )
+        .run();
+
+      const report = importCustomers(database, [record()], { companyId: "company-1" });
+
+      expect(report.created).toBe(0);
+      expect(report.updated).toBe(1);
+      expect(database.prepare("SELECT COUNT(*) AS total FROM customers").get()).toEqual({
+        total: 1
+      });
+      expect(readCustomer(database, "19131243000197")?.id).toBe("customer-incompleto");
+    } finally {
+      database.close();
+    }
+  });
+
   it("com --somente-com-cnpj pula quem ficou sem documento", () => {
     const database = createDatabase();
     try {

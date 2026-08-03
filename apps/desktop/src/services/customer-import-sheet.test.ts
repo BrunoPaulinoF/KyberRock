@@ -129,6 +129,40 @@ describe("customer-import-sheet", () => {
       expect(records[1].prices).toEqual([{ product: "Brita 0", unitPriceCents: 5000 }]);
     });
 
+    it("mantem separados dois clientes de mesmo nome com CNPJ/CPF diferentes", () => {
+      const { records } = parseCustomerSheet(
+        sheet([
+          ["Cliente", "CNPJ", "Preco Brita 1"],
+          ["Vespa Casa e Construcao", "37323776000152", "45,90"],
+          ["Vespa Casa e Construcao", "34606275000195", "48,00"]
+        ])
+      );
+
+      expect(records).toHaveLength(2);
+      expect(records.map((record) => record.document)).toEqual([
+        "37323776000152",
+        "34606275000195"
+      ]);
+      expect(records[0].prices).toEqual([{ product: "Brita 1", unitPriceCents: 4590 }]);
+      expect(records[1].prices).toEqual([{ product: "Brita 1", unitPriceCents: 4800 }]);
+    });
+
+    it("junta as linhas do mesmo cliente pelo CNPJ mesmo com o nome escrito diferente", () => {
+      const { records } = parseCustomerSheet(
+        sheet([
+          ["Cliente", "CNPJ", "Produto", "Preco"],
+          ["Pedreira Sul", "19131243000197", "Brita 1", "45,90"],
+          ["PEDREIRA SUL LTDA", "19.131.243/0001-97", "Po de pedra", "38,00"]
+        ])
+      );
+
+      expect(records).toHaveLength(1);
+      expect(records[0].prices).toEqual([
+        { product: "Brita 1", unitPriceCents: 4590 },
+        { product: "Po de pedra", unitPriceCents: 3800 }
+      ]);
+    });
+
     it("avisa em vez de descartar em silencio quando o preco nao e um numero", () => {
       const { records, warnings } = parseCustomerSheet(
         sheet([

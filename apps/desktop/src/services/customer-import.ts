@@ -1,3 +1,5 @@
+import { normalizeDocument } from "@kyberrock/shared";
+
 import type { DesktopDatabase } from "../database/sqlite.js";
 import type { CustomerImportRecord } from "./customer-import-sheet.js";
 import { normalizeMatchKey } from "./customer-import-sheet.js";
@@ -249,7 +251,16 @@ function findExistingCustomer(
     }
   }
 
-  const matches = [...candidates];
+  let matches = [...candidates];
+
+  if (record.document) {
+    // A planilha trouxe um CNPJ/CPF que nao existe em nenhum cadastro. So pode ser o mesmo
+    // cliente se o cadastro estiver SEM documento (cadastro feito na correria, para
+    // completar agora). Cadastro que ja tem outro documento e outro cliente, mesmo com o
+    // nome identico — e o caso de matriz e filial, ou do CPF do dono e do CNPJ da empresa.
+    matches = matches.filter((row) => normalizeDocument(row.document ?? "") === "");
+  }
+
   if (matches.length === 0) return null;
   if (matches.length === 1) return matches[0];
 

@@ -311,7 +311,12 @@ export function parseCustomerSheet(
       continue;
     }
 
-    const key = normalizeMatchKey(displayName);
+    // Linhas do mesmo cliente (formato "uma linha por produto") se juntam num registro so.
+    // O agrupamento e pelo CNPJ/CPF quando ele existe: duas empresas com o mesmo nome
+    // fantasia — matriz e filial, ou o CPF do dono e o CNPJ da empresa dele — sao clientes
+    // diferentes, e agrupar pelo nome faria um comer o cadastro do outro.
+    const documentKey = normalizeDocument(readCell(row, columns.fields.document));
+    const key = documentKey ? `documento:${documentKey}` : `nome:${normalizeMatchKey(displayName)}`;
     const existing = byKey.get(key);
     const record =
       existing ?? createEmptyRecord(row.lineNumber, tradeName || displayName, legalName);
