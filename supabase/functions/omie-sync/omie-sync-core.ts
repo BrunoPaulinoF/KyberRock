@@ -260,7 +260,11 @@ export function buildCustomerPayload(payload: PushCustomerPayload): Record<strin
 
   return dropEmptyFields({
     codigo_cliente_omie: payload.omieCustomerId,
-    codigo_cliente_integracao: toOmieIntegrationCode(payload.localCustomerId),
+    // Sem id local nao ha codigo de integracao a informar (o campo cai em dropEmptyFields);
+    // chamar toOmieIntegrationCode com vazio geraria um codigo que nao aponta para nada.
+    codigo_cliente_integracao: payload.localCustomerId
+      ? toOmieIntegrationCode(payload.localCustomerId)
+      : undefined,
     razao_social: razaoSocial,
     // O OMIE exige razao social E nome fantasia no IncluirCliente; sem o fantasia o
     // cadastro volta com "O preenchimento da tag [nome_fantasia] e obrigatorio!" e o

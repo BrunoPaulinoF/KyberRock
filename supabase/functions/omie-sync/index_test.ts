@@ -1,7 +1,12 @@
 import { assertEquals, assertObjectMatch } from "jsr:@std/assert";
 
-import { handleOmieSyncRequest, type OmieSyncHandlerDependencies } from "./index.ts";
 import {
+  STALE_CUSTOMER_CODE_FAULT_PREFIX,
+  handleOmieSyncRequest,
+  type OmieSyncHandlerDependencies
+} from "./index.ts";
+import {
+  OmieHttpError,
   toOmieIntegrationCode,
   type OmieRequestInput,
   type OmieRequester
@@ -3060,3 +3065,230 @@ Deno.test("settle_advance devolve pendencia quando o pedido ainda nao gerou titu
     0
   );
 });
+
+/**
+ * Fixture das recusas do OMIE quando o codigo enviado no pedido nao existe na conta.
+ * A frase e a mesma para cliente e transportadora (a transportadora tambem e um
+ * "cliente" no OMIE); so a tag diferencia as duas.
+ */
+function unknownRecordFault(code: number, tag: "codigo_cliente" | "codigo_transportadora") {
+  return new OmieHttpError(
+    "OMIE HTTP 500 em IncluirPedido (/produtos/pedido/)",
+    500,
+    `ERROR: Cliente não cadastrado para o Código [${code}] ! - tag: [${tag}]`,
+    null
+  );
+}
+
+Deno.test(
+  "create_order refaz o vinculo do cliente quando o OMIE recusa o codigo obsoleto",
+  async () => {
+    const deviceToken = "token-order-stale-customer";
+    const token_hash = await sha256Hex(deviceToken);
+    const fixtures = createSupabaseDependencies({
+      devices: {
+        "device-order-stale-customer": {
+          id: "device-order-stale-customer",
+          company_id: "company-order-stale-customer",
+          unit_id: "unit-order-stale-customer",
+          token_hash,
+          is_active: true
+        }
+      },
+      companies: {
+        "company-order-stale-customer": {
+          id: "company-order-stale-customer",
+          is_active: true,
+          omie_app_key: "order-stale-customer",
+          omie_app_secret: "secret-order-stale-customer"
+        }
+      }
+    });
+    // O codigo 11455924790 do cadastro local nao existe mais no OMIE; o cliente esta la
+    // com o codigo 8888, achavel pelo CNPJ/CPF.
+    let orderAttempts = 0;
+    const omieQueue = createOmieQueueStub((input) => {
+      if (input.call === "ListarContasCorrentes") return { conta_corrente_lista: [{ nCodCC: 7 }] };
+      if (input.call === "ListarClientesResumido") {
+        return { clientes: [{ codigo_cliente_omie: 8888 }] };
+      }
+      if (input.call === "AlterarCliente") return { codigo_cliente_omie: 8888 };
+      if (input.call === "IncluirPedido") {
+        orderAttempts++;
+        const cabecalho = getParam(input).cabecalho as Record<string, unknown>;
+        if (cabecalho.codigo_cliente === 11455924790) {
+          throw unknownRecordFault(11455924790, "codigo_cliente");
+        }
+        return { codigo_pedido: 12345 };
+      }
+      return defaultOmieListResponse(input);
+    });
+
+    const response = await postOmieSync(
+      {
+        deviceId: "device-order-stale-customer",
+        deviceToken,
+        action: "create_order",
+        payload: {
+          operationType: "invoice",
+          customerOmieId: 11455924790,
+          customer: {
+            localCustomerId: "cust-local-stale",
+            razaoSocial: "L. A. do Nascimento",
+            cnpjCpf: "11444777000161"
+          },
+          productOmieId: 200,
+          quantity: 10,
+          unitPrice: 50,
+          issueDate: "2026-08-03",
+          idempotencyKey: "kyberrock:unit:op-stale:create_sales_order"
+        }
+      },
+      { createClient: fixtures.createClient, omieQueue }
+    );
+
+    // O fechamento SAI: o edge relocaliza o cliente e reenvia o pedido com o codigo bom...
+    assertObjectMatch(response, { ok: true, orderId: 12345, omieCustomerId: 8888 });
+    assertEquals(orderAttempts, 2);
+    // ...e o codigo devolvido e o novo, para o desktop regravar o vinculo local.
+    const lastOrder = omieQueue.requests
+      .filter((request) => request.call === "IncluirPedido")
+      .at(-1)!;
+    const cabecalho = getParam(lastOrder).cabecalho as Record<string, unknown>;
+    assertEquals(cabecalho.codigo_cliente, 8888);
+  }
+);
+
+Deno.test(
+  "create_order sem cadastro do cliente devolve a recusa deterministica do codigo obsoleto",
+  async () => {
+    const deviceToken = "token-order-stale-nocadastro";
+    const token_hash = await sha256Hex(deviceToken);
+    const fixtures = createSupabaseDependencies({
+      devices: {
+        "device-order-stale-nocadastro": {
+          id: "device-order-stale-nocadastro",
+          company_id: "company-order-stale-nocadastro",
+          unit_id: "unit-order-stale-nocadastro",
+          token_hash,
+          is_active: true
+        }
+      },
+      companies: {
+        "company-order-stale-nocadastro": {
+          id: "company-order-stale-nocadastro",
+          is_active: true,
+          omie_app_key: "order-stale-nocadastro",
+          omie_app_secret: "secret-order-stale-nocadastro"
+        }
+      }
+    });
+    const omieQueue = createOmieQueueStub((input) => {
+      if (input.call === "ListarContasCorrentes") return { conta_corrente_lista: [{ nCodCC: 7 }] };
+      if (input.call === "IncluirPedido") throw unknownRecordFault(999, "codigo_cliente");
+      return defaultOmieListResponse(input);
+    });
+
+    const response = await postOmieSync(
+      {
+        deviceId: "device-order-stale-nocadastro",
+        deviceToken,
+        action: "create_order",
+        payload: {
+          operationType: "invoice",
+          customerOmieId: 999,
+          productOmieId: 200,
+          quantity: 10,
+          unitPrice: 50,
+          issueDate: "2026-08-03",
+          idempotencyKey: "kyberrock:unit:op-stale-nocadastro:create_sales_order"
+        }
+      },
+      { createClient: fixtures.createClient, omieQueue }
+    );
+
+    // Sem cadastro no payload nao ha como recadastrar: a mensagem carrega o prefixo que o
+    // desktop usa para limpar o vinculo local em vez de re-tentar o mesmo codigo invalido.
+    const error = String((response as { error?: unknown }).error ?? "");
+    assertEquals(error.startsWith(STALE_CUSTOMER_CODE_FAULT_PREFIX), true);
+    assertEquals(error.includes("999"), true);
+  }
+);
+
+Deno.test(
+  "create_order refaz o vinculo da transportadora quando o OMIE recusa o codigo dela",
+  async () => {
+    const deviceToken = "token-order-stale-carrier";
+    const token_hash = await sha256Hex(deviceToken);
+    const fixtures = createSupabaseDependencies({
+      devices: {
+        "device-order-stale-carrier": {
+          id: "device-order-stale-carrier",
+          company_id: "company-order-stale-carrier",
+          unit_id: "unit-order-stale-carrier",
+          token_hash,
+          is_active: true
+        }
+      },
+      companies: {
+        "company-order-stale-carrier": {
+          id: "company-order-stale-carrier",
+          is_active: true,
+          omie_app_key: "order-stale-carrier",
+          omie_app_secret: "secret-order-stale-carrier"
+        }
+      }
+    });
+    const omieQueue = createOmieQueueStub((input) => {
+      if (input.call === "ListarContasCorrentes") return { conta_corrente_lista: [{ nCodCC: 7 }] };
+      if (input.call === "IncluirCliente") return { codigo_cliente_omie: 4242 };
+      if (input.call === "IncluirPedido") {
+        const frete = getParam(input).frete as Record<string, unknown>;
+        if (frete.codigo_transportadora === 777) {
+          throw unknownRecordFault(777, "codigo_transportadora");
+        }
+        return { codigo_pedido: 12345 };
+      }
+      return defaultOmieListResponse(input);
+    });
+
+    const response = await postOmieSync(
+      {
+        deviceId: "device-order-stale-carrier",
+        deviceToken,
+        action: "create_order",
+        payload: {
+          operationType: "invoice",
+          customerOmieId: 100,
+          productOmieId: 200,
+          quantity: 10,
+          unitPrice: 50,
+          transport: { plate: "ABC1D23", carrierOmieId: 777, cargoWeightKg: 10000 },
+          carrier: {
+            localCarrierId: "carrier-local-1",
+            name: "Transportadora Local LTDA",
+            cnpjCpf: "22222222000182"
+          },
+          issueDate: "2026-08-03",
+          idempotencyKey: "kyberrock:unit:op-stale-carrier:create_sales_order"
+        }
+      },
+      { createClient: fixtures.createClient, omieQueue }
+    );
+
+    // O pedido sai com a transportadora recadastrada, e nao sem transportadora.
+    assertObjectMatch(response, { ok: true, orderId: 12345, omieCarrierId: 4242 });
+    const lastOrder = omieQueue.requests
+      .filter((request) => request.call === "IncluirPedido")
+      .at(-1)!;
+    const frete = getParam(lastOrder).frete as Record<string, unknown>;
+    assertEquals(frete.codigo_transportadora, 4242);
+    // O cadastro da transportadora leva o codigo de integracao do id local dela (antes o
+    // campo vinha de `localCustomerId`, que o pedido nunca manda, e o push estourava).
+    const incluirCliente = getParam(findRequest(omieQueue, "IncluirCliente"));
+    assertEquals(
+      incluirCliente.codigo_cliente_integracao,
+      toOmieIntegrationCode("carrier-local-1")
+    );
+  }
+);

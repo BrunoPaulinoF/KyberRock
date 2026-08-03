@@ -56,6 +56,33 @@ export function isOmieMissingDocumentFault(message: string): boolean {
 const CUSTOMER_REGISTRATION_FAULT_PREFIX = "cadastro do cliente recusado pelo omie";
 
 /**
+ * Prefixo que o edge usa quando o pedido foi recusado porque o codigo OMIE gravado no
+ * cadastro local do cliente nao existe (mais) na conta do OMIE — e o edge nao conseguiu
+ * refazer o vinculo sozinho. Precisa acompanhar STALE_CUSTOMER_CODE_FAULT_PREFIX em
+ * supabase/functions/omie-sync/index.ts.
+ */
+const STALE_CUSTOMER_CODE_FAULT_PREFIX = "codigo do cliente no omie nao existe mais";
+
+/**
+ * Fechamento recusado com "Cliente nao cadastrado para o Codigo [...]": o vinculo local
+ * com o OMIE apodreceu (cliente excluido la, codigo de outra conta OMIE, importacao
+ * antiga). Deterministico: re-tentar manda o MESMO codigo invalido de novo. O conserto e
+ * limpar o codigo local e deixar o cliente subir de novo — ver processOmieSyncQueue.
+ */
+export function isOmieStaleCustomerCodeFault(message: string): boolean {
+  if (!message) return false;
+  const text = normalize(message);
+  if (text.includes(STALE_CUSTOMER_CODE_FAULT_PREFIX)) return true;
+  // Recusa crua do OMIE (fechamento enviado por um edge ainda sem o tratamento acima).
+  // A transportadora tem a mesma frase, mas outra tag — e outro conserto.
+  return (
+    text.includes("cliente nao cadastrado") &&
+    text.includes("codigo_cliente") &&
+    !text.includes("codigo_transportadora")
+  );
+}
+
+/**
  * Fechamento que nao foi ao OMIE porque o CLIENTE nao pode ser cadastrado la.
  * Deterministico: re-tentar sem corrigir o cadastro so repete a recusa (e gera retry
  * storm). O envio volta sozinho quando o cliente entra no OMIE — ver

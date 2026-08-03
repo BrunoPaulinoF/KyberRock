@@ -40,7 +40,8 @@ import {
   isCadastroIncompleteFault,
   isOmieCustomerRegistrationFault,
   isOmieMissingDocumentFault,
-  isOmieProtectedRecordFault
+  isOmieProtectedRecordFault,
+  isOmieStaleCustomerCodeFault
 } from "./omie-fault-classifier.js";
 import { provisionPaymentTermsFromOmieMirror } from "./payment-terms.js";
 import { upsertUnitDevices } from "./unit-devices.js";
@@ -4100,30 +4101,38 @@ export async function processOmieSyncQueue(
 
       // Cliente cadastrado no OMIE na hora do envio: grava o codigo devolvido no cadastro
       // local para os proximos pedidos ja irem vinculados (e nao recriarem o cliente).
+      // Tambem vale quando o envio CORRIGIU um codigo obsoleto (o OMIE recusou o codigo
+      // que mandamos e o edge refez o vinculo): sem regravar, o proximo fechamento do
+      // mesmo cliente repetiria a recusa com o mesmo codigo invalido.
       if (
         data.omieCustomerId &&
         payload.localCustomerId &&
-        (!payload.customerOmieId || payload.customerOmieId <= 0)
+        data.omieCustomerId !== payload.customerOmieId
       ) {
         database
           .prepare(
             `UPDATE customers
              SET omie_customer_id = ?, needs_push = 0, sync_status = 'synced', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-             WHERE id = ? AND (omie_customer_id IS NULL OR omie_customer_id = 0)`
+             WHERE id = ? AND (omie_customer_id IS NULL OR omie_customer_id = 0 OR omie_customer_id = ?)`
           )
-          .run(data.omieCustomerId, payload.localCustomerId);
+          .run(data.omieCustomerId, payload.localCustomerId, payload.customerOmieId ?? 0);
       }
 
       // Transportadora cadastrada no OMIE na hora do envio: grava o codigo devolvido para
-      // os proximos pedidos ja irem vinculados (e nao recriarem a transportadora).
-      if (data.omieCarrierId && payload.localCarrierId) {
+      // os proximos pedidos ja irem vinculados (e nao recriarem a transportadora) — e,
+      // como no cliente, corrige o codigo local quando ele nao existia mais no OMIE.
+      if (
+        data.omieCarrierId &&
+        payload.localCarrierId &&
+        data.omieCarrierId !== payload.transport?.carrierOmieId
+      ) {
         database
           .prepare(
             `UPDATE carriers
              SET omie_customer_id = ?, needs_push = 0, sync_status = 'synced', last_synced_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-             WHERE id = ? AND (omie_customer_id IS NULL OR omie_customer_id = 0)`
+             WHERE id = ? AND (omie_customer_id IS NULL OR omie_customer_id = 0 OR omie_customer_id = ?)`
           )
-          .run(data.omieCarrierId, payload.localCarrierId);
+          .run(data.omieCarrierId, payload.localCarrierId, payload.transport?.carrierOmieId ?? 0);
       }
 
       const updateSql =
@@ -4199,6 +4208,37 @@ export async function processOmieSyncQueue(
       processed++;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Erro OMIE";
+      // "Cliente nao cadastrado para o Codigo [...]": o codigo OMIE gravado no cadastro
+      // local nao existe (mais) la — cliente excluido no OMIE, codigo de outra conta,
+      // importacao antiga. Re-tentar so repete a recusa com o mesmo codigo invalido (era
+      // exatamente isso que enchia a fila de fechamentos mortos). Limpa o vinculo podre e
+      // devolve o cliente para a fila de cadastro: no proximo ciclo ele entra no OMIE com
+      // um codigo valido e rearmOmieBillingForCustomer reenvia o fechamento sozinho.
+      if (isOmieStaleCustomerCodeFault(message)) {
+        markSyncJobBlocked(database, job.id, message);
+        database
+          .prepare(
+            `UPDATE weighing_operations
+             SET omie_billing_status = 'cadastro_incompleto', omie_billing_message = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE id = ?`
+          )
+          .run(message, payload.operationId);
+        if (payload.localCustomerId) {
+          database
+            .prepare(
+              `UPDATE customers
+               SET omie_customer_id = NULL, needs_push = 1, sync_status = 'error', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+               WHERE id = ? AND omie_customer_id = ?`
+            )
+            .run(payload.localCustomerId, payload.customerOmieId ?? 0);
+        }
+        failed++;
+        errors.push(`Job ${job.id}: ${message}`);
+        if (index < jobs.length - 1) {
+          await sleep(delayMs);
+        }
+        continue;
+      }
       // O OMIE recusou o CADASTRO do cliente (ele ainda nao existe la e o IncluirCliente
       // foi rejeitado — campo obrigatorio faltando, documento invalido...). Deterministico:
       // bloqueia o job (sem retry storm) e mostra na operacao o que falta preencher. Vale
@@ -4562,19 +4602,20 @@ export async function processFiscalBillingNow(
       throw new Error("OMIE nao confirmou o faturamento do pedido de venda.");
     }
 
-    // Cliente criado no OMIE na hora: grava o codigo devolvido no cadastro local.
+    // Cliente criado no OMIE na hora (ou codigo local obsoleto corrigido pelo edge):
+    // grava o codigo devolvido no cadastro local.
     if (
       data.omieCustomerId &&
       payload.localCustomerId &&
-      (!payload.customerOmieId || payload.customerOmieId <= 0)
+      data.omieCustomerId !== payload.customerOmieId
     ) {
       database
         .prepare(
           `UPDATE customers
            SET omie_customer_id = ?, needs_push = 0, sync_status = 'synced', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-           WHERE id = ? AND (omie_customer_id IS NULL OR omie_customer_id = 0)`
+           WHERE id = ? AND (omie_customer_id IS NULL OR omie_customer_id = 0 OR omie_customer_id = ?)`
         )
-        .run(data.omieCustomerId, payload.localCustomerId);
+        .run(data.omieCustomerId, payload.localCustomerId, payload.customerOmieId ?? 0);
     }
 
     let documentPrinted = false;
@@ -4625,7 +4666,11 @@ export async function processFiscalBillingNow(
     // job (re-executavel manualmente apos corrigir) e retorna pendencia clara — sem throw/storm.
     // A recusa do cadastro do cliente no OMIE entra aqui pelo mesmo motivo, mas com a
     // mensagem que diz qual campo do cliente falta preencher.
-    if (isCadastroIncompleteFault(message) || isOmieCustomerRegistrationFault(message)) {
+    if (
+      isCadastroIncompleteFault(message) ||
+      isOmieCustomerRegistrationFault(message) ||
+      isOmieStaleCustomerCodeFault(message)
+    ) {
       markSyncJobBlocked(database, job.id, message);
       database
         .prepare(
@@ -4634,6 +4679,17 @@ export async function processFiscalBillingNow(
            WHERE id = ?`
         )
         .run(message, operationId);
+      // Codigo OMIE do cliente que nao existe mais la: limpa o vinculo podre para o
+      // cliente subir de novo no proximo ciclo e o fechamento voltar sozinho para a fila.
+      if (isOmieStaleCustomerCodeFault(message) && payload.localCustomerId) {
+        database
+          .prepare(
+            `UPDATE customers
+             SET omie_customer_id = NULL, needs_push = 1, sync_status = 'error', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE id = ? AND omie_customer_id = ?`
+          )
+          .run(payload.localCustomerId, payload.customerOmieId ?? 0);
+      }
       return {
         orderId: null,
         billed: false,
