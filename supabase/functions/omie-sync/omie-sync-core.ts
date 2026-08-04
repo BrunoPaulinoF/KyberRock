@@ -477,8 +477,16 @@ export function customerRegistrationFaultMessage(error: unknown, customerName?: 
     .join(" ");
 }
 
+/**
+ * Tags de papel que o KyberRock grava no cadastro do OMIE. Sao elas que fazem o cadastro
+ * voltar classificado na sincronizacao seguinte (ver `classifyOmieCustomer`): cliente
+ * cadastrado aqui vai como "cliente", transportadora vai como "transportadora".
+ */
+export const OMIE_CUSTOMER_TAG = "cliente";
+export const OMIE_CARRIER_TAG = "transportadora";
+
 export function buildCarrierPayload(payload: PushCarrierPayload): Record<string, unknown> {
-  const tags = forceOmieTag(payload.tags, "transportadora");
+  const tags = forceOmieTag(payload.tags, OMIE_CARRIER_TAG);
   return buildCustomerPayload({
     ...payload,
     localCustomerId: payload.localCustomerId,
@@ -497,7 +505,7 @@ export function buildCarrierPayload(payload: PushCarrierPayload): Record<string,
 export function buildCustomerCadastroPayload(
   payload: PushCustomerPayload
 ): Record<string, unknown> {
-  return buildCustomerPayload({ ...payload, tags: forceOmieTag(payload.tags, "cliente") });
+  return buildCustomerPayload({ ...payload, tags: forceOmieTag(payload.tags, OMIE_CUSTOMER_TAG) });
 }
 
 export async function pushCustomerToOmieCore(
@@ -505,13 +513,12 @@ export async function pushCustomerToOmieCore(
   credentials: OmieCredentials,
   payload: PushCustomerPayload
 ): Promise<number> {
-  const omieCustomerId = await pushCustomerBodyToOmie(
-    queue,
-    credentials,
-    buildCustomerCadastroPayload(payload),
-    payload.omieCustomerId,
-    buildCustomerPayload(payload)
-  );
+  const omieCustomerId = await pushCustomerBodyToOmie(queue, credentials, {
+    createBody: buildCustomerCadastroPayload(payload),
+    updateBody: buildCustomerPayload(payload),
+    omieCustomerId: payload.omieCustomerId,
+    requiredTag: OMIE_CUSTOMER_TAG
+  });
   await syncCustomerInvoiceEmails(queue, credentials, omieCustomerId, payload.email);
   return omieCustomerId;
 }
@@ -606,11 +613,55 @@ export async function pushCarrierToOmie(
   credentials: OmieCredentials,
   payload: PushCarrierPayload
 ): Promise<number> {
-  return pushCustomerBodyToOmie(
-    queue,
-    credentials,
-    buildCarrierPayload(payload),
-    payload.omieCustomerId
+  return pushCustomerBodyToOmie(queue, credentials, {
+    createBody: buildCarrierPayload(payload),
+    omieCustomerId: payload.omieCustomerId,
+    requiredTag: OMIE_CARRIER_TAG
+  });
+}
+
+/**
+ * Tags a gravar num `AlterarCliente`: as que o cadastro ja tem no OMIE mais a tag do papel
+ * que o KyberRock esta enviando.
+ *
+ * O OMIE substitui a lista inteira a cada alteracao, entao os dois extremos erram: mandar
+ * so a tag do papel apaga as outras (um cliente que tambem e transportadora sumiria de uma
+ * das listas na sincronizacao seguinte) e nao mandar tag nenhuma deixa sem marcacao todo
+ * cadastro que ja existia no OMIE — justamente o caso do cliente reaproveitado por CNPJ.
+ * Cadastro ilegivel no OMIE: segue so com a tag do papel, que e o essencial.
+ */
+export async function mergeOmieCustomerTags(
+  queue: OmieRequester,
+  credentials: OmieCredentials,
+  omieCustomerId: number,
+  requiredTag: string
+): Promise<string[]> {
+  try {
+    const current = await queue.request<
+      { codigoClienteOmie: number },
+      { tags?: Record<string, unknown> | unknown[] }
+    >({
+      credentials,
+      endpoint: "/geral/clientes/",
+      call: "ConsultarCliente",
+      param: { codigoClienteOmie: omieCustomerId }
+    });
+    const existing = readOmieTagValues(current?.tags).filter((tag) => tag.trim().length > 0);
+    return forceOmieTag(existing, requiredTag);
+  } catch {
+    return [requiredTag];
+  }
+}
+
+/** Valores de tag de um cadastro do OMIE, aceitando os formatos que a API devolve. */
+function readOmieTagValues(tags: Record<string, unknown> | unknown[] | null | undefined): string[] {
+  if (!tags) return [];
+  const list = Array.isArray(tags) ? tags : (tags as { tags?: unknown }).tags;
+  if (!Array.isArray(list)) return [];
+  return list.map((tag) =>
+    typeof tag === "object" && tag !== null && "tag" in tag
+      ? String((tag as { tag?: unknown }).tag ?? "")
+      : String(tag ?? "")
   );
 }
 
@@ -744,25 +795,46 @@ export async function resolveDuplicateCustomerId(
   return null;
 }
 
+type PushCustomerBodyInput = {
+  /** Corpo do `IncluirCliente`, ja com a tag do papel (ver `buildCustomerCadastroPayload`). */
+  createBody: Record<string, unknown>;
+  /** Corpo do `AlterarCliente`. Sem ele, o proprio `createBody` e reaproveitado. */
+  updateBody?: Record<string, unknown>;
+  omieCustomerId?: number;
+  /** Tag do papel garantida no cadastro (cliente/transportadora), no create e no update. */
+  requiredTag: string;
+};
+
 /**
- * `createBody` leva a tag do papel (cliente/transportadora) para o cadastro nascer
- * classificado no OMIE; `updateBody` (quando informado) vai sem tags, porque o
- * AlterarCliente substitui a lista inteira e apagaria os outros papeis do cadastro.
+ * Envia o cadastro ao OMIE: `IncluirCliente` quando e novo, `AlterarCliente` quando o
+ * codigo ja e conhecido ou quando o OMIE recusa a inclusao por duplicidade.
+ *
+ * A tag do papel e garantida nos dois caminhos: no create ela ja vem no `createBody`; no
+ * update as tags sao remontadas a partir do que o cadastro tem hoje no OMIE, porque o
+ * `AlterarCliente` substitui a lista inteira (ver `mergeOmieCustomerTags`).
  */
 async function pushCustomerBodyToOmie(
   queue: OmieRequester,
   credentials: OmieCredentials,
-  createBody: Record<string, unknown>,
-  omieCustomerId?: number,
-  updateBody: Record<string, unknown> = createBody
+  input: PushCustomerBodyInput
 ): Promise<number> {
-  if (omieCustomerId) {
+  const { createBody, updateBody = createBody, omieCustomerId, requiredTag } = input;
+
+  const alterCustomer = async (targetOmieId: number): Promise<void> => {
     await queue.request<unknown, unknown>({
       credentials,
       endpoint: "/geral/clientes/",
       call: "AlterarCliente",
-      param: toCustomerUpdateBody(updateBody, omieCustomerId)
+      param: await buildCustomerUpdateBody(queue, credentials, {
+        body: updateBody,
+        omieCustomerId: targetOmieId,
+        requiredTag
+      })
     });
+  };
+
+  if (omieCustomerId) {
+    await alterCustomer(omieCustomerId);
     return omieCustomerId;
   }
 
@@ -780,17 +852,33 @@ async function pushCustomerBodyToOmie(
   } catch (error) {
     const existingId = await resolveDuplicateCustomerId(queue, credentials, createBody, error);
     if (existingId === null) throw error;
-    await queue.request<unknown, unknown>({
-      credentials,
-      endpoint: "/geral/clientes/",
-      call: "AlterarCliente",
-      param: toCustomerUpdateBody(updateBody, existingId)
-    });
+    await alterCustomer(existingId);
     return existingId;
   }
   const id = response.codigo_cliente_omie ?? response.codigoClienteOmie;
   if (!id) throw new Error("OMIE nao retornou codigoClienteOmie");
   return id;
+}
+
+/**
+ * Corpo do `AlterarCliente` com a tag do papel somada as que o cadastro ja tem no OMIE.
+ * Usado tambem pelo index.ts, que faz o find-or-create por CNPJ/CPF antes de alterar.
+ */
+export async function buildCustomerUpdateBody(
+  queue: OmieRequester,
+  credentials: OmieCredentials,
+  input: { body: Record<string, unknown>; omieCustomerId: number; requiredTag: string }
+): Promise<Record<string, unknown>> {
+  const tags = await mergeOmieCustomerTags(
+    queue,
+    credentials,
+    input.omieCustomerId,
+    input.requiredTag
+  );
+  return toCustomerUpdateBody(
+    { ...input.body, tags: tags.map((tag) => ({ tag })) },
+    input.omieCustomerId
+  );
 }
 
 async function readOmieResponseBody(response: Response): Promise<unknown> {

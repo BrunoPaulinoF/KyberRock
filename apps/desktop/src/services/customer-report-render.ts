@@ -7,7 +7,9 @@ import type {
   CustomerReportPeriodRow,
   CustomerReportPlateRow,
   CustomerReportProductRow,
-  CustomerReportVariant
+  CustomerReportVariant,
+  CustomersOverview,
+  CustomersOverviewRow
 } from "./customer-report.js";
 
 /**
@@ -337,7 +339,28 @@ export function renderCustomerReportHtml(
 
   return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8" /><title>${escapeHtml(
     `Relatorio do cliente - ${customer.tradeName || customer.legalName}`
-  )}</title><style>
+  )}</title><style>${documentStyle(complete ? "landscape" : "portrait")}
+</style></head><body>
+<div class="header"><div><h1>Relatorio do cliente</h1><p class="customer">${escapeHtml(
+    customer.tradeName || customer.legalName
+  )}${
+    customer.document ? ` &middot; ${escapeHtml(customer.document)}` : ""
+  }</p><p class="period">${periodText}</p><span class="badge">${escapeHtml(
+    VARIANT_LABEL[variant]
+  )}</span></div><div class="generated">Gerado em<br />${escapeHtml(
+    generatedAt.toLocaleString("pt-BR")
+  )}</div></div>
+${kpiCards(kpis)}
+${sections.join("\n")}
+</body></html>`;
+}
+
+/**
+ * Estilo dos documentos A4 do relatorio por cliente — o individual e o resumo de todos
+ * os clientes. Fica num lugar so para os dois sairem da mesma tela com a mesma cara.
+ */
+function documentStyle(orientation: "portrait" | "landscape"): string {
+  return `
 :root{--ink:#0f172a;--muted:#64748b;--line:#e2e8f0;--soft:#f8fafc;--brand:#1d4ed8}
 *{box-sizing:border-box}
 body{font-family:Arial,Helvetica,sans-serif;color:var(--ink);margin:0;font-size:12px}
@@ -365,25 +388,16 @@ tr{break-inside:avoid}
 .empty{text-align:center;color:var(--muted);font-style:italic}
 .note{margin:6px 0 0;font-size:10px;color:var(--muted);font-style:italic}
 tfoot td{font-weight:bold;background:#eef2ff;border-top:2px solid var(--brand)}
-@page{size:A4 ${complete ? "landscape" : "portrait"};margin:12mm}
-</style></head><body>
-<div class="header"><div><h1>Relatorio do cliente</h1><p class="customer">${escapeHtml(
-    customer.tradeName || customer.legalName
-  )}${
-    customer.document ? ` &middot; ${escapeHtml(customer.document)}` : ""
-  }</p><p class="period">${periodText}</p><span class="badge">${escapeHtml(
-    VARIANT_LABEL[variant]
-  )}</span></div><div class="generated">Gerado em<br />${escapeHtml(
-    generatedAt.toLocaleString("pt-BR")
-  )}</div></div>
-<div class="kpis">${kpis
+@page{size:A4 ${orientation};margin:12mm}`;
+}
+
+function kpiCards(kpis: Array<[string, string]>): string {
+  return `<div class="kpis">${kpis
     .map(
       ([label, value]) =>
         `<div class="kpi"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`
     )
-    .join("")}</div>
-${sections.join("\n")}
-</body></html>`;
+    .join("")}</div>`;
 }
 
 export function renderCustomerReportSpreadsheet(
@@ -705,6 +719,134 @@ function operationCells(operation: CustomerReportOperation): string[] {
     operation.omieSalesOrderId === null ? "-" : String(operation.omieSalesOrderId),
     operation.statusLabel
   ];
+}
+
+// --- Resumo de todos os clientes no periodo ----------------------------------------
+
+/** Cabecalhos da lista comparativa, iguais no PDF e na planilha. */
+const OVERVIEW_HEADERS = [
+  "Cliente",
+  "CNPJ / CPF",
+  "Carregamentos",
+  "Tonelagem",
+  "Preco medio/t",
+  "Total comprado",
+  "A vencer",
+  "Vencidas"
+];
+
+function overviewRowCells(row: CustomersOverviewRow): string[] {
+  return [
+    row.customer.name,
+    row.customer.document ?? "-",
+    num(row.totals.operations),
+    formatTons(row.totals.netWeightKg),
+    formatBRL(row.totals.avgPriceCentsPerTon),
+    formatBRL(row.totals.totalCents),
+    formatBRL(row.installmentTotals.upcomingCents),
+    formatBRL(row.installmentTotals.overdueCents)
+  ];
+}
+
+function overviewFooterCells(overview: CustomersOverview): string[] {
+  return [
+    "TOTAL",
+    "",
+    num(overview.totals.operations),
+    formatTons(overview.totals.netWeightKg),
+    formatBRL(overview.totals.avgPriceCentsPerTon),
+    formatBRL(overview.totals.totalCents),
+    formatBRL(overview.installmentTotals.upcomingCents),
+    formatBRL(overview.installmentTotals.overdueCents)
+  ];
+}
+
+function overviewPeriodText(overview: CustomersOverview): string {
+  const dates = `${escapeHtml(formatDayLabel(overview.startDate))} a ${escapeHtml(
+    formatDayLabel(overview.endDate)
+  )}`;
+  return overview.periodLabel ? `${escapeHtml(overview.periodLabel)} &middot; ${dates}` : dates;
+}
+
+export function customersOverviewFileBaseName(overview: CustomersOverview): string {
+  return `relatorio-clientes-${overview.startDate}-a-${overview.endDate}`;
+}
+
+/**
+ * Resumo comparativo de todos os clientes do periodo em A4 paisagem: um cliente por
+ * linha, do que mais faturou para o que menos faturou, com o total geral no rodape.
+ */
+export function renderCustomersOverviewHtml(
+  overview: CustomersOverview,
+  generatedAt: Date = new Date()
+): string {
+  const { totals } = overview;
+  const kpis: Array<[string, string]> = [
+    ["Clientes", num(overview.customers.length)],
+    ["Carregamentos", num(totals.operations)],
+    ["Tonelagem", formatTons(totals.netWeightKg)],
+    ["Total comprado", formatBRL(totals.totalCents)]
+  ];
+
+  const body = table(
+    OVERVIEW_HEADERS,
+    overview.customers.map(overviewRowCells),
+    overviewFooterCells(overview),
+    "Nenhum cliente com movimento no periodo."
+  );
+
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8" /><title>${escapeHtml(
+    "Relatorio de clientes no periodo"
+  )}</title><style>${documentStyle("landscape")}
+</style></head><body>
+<div class="header"><div><h1>Relatorio por cliente</h1><p class="customer">Todos os clientes</p><p class="period">${overviewPeriodText(
+    overview
+  )}</p><span class="badge">Resumo do periodo</span></div><div class="generated">Gerado em<br />${escapeHtml(
+    generatedAt.toLocaleString("pt-BR")
+  )}</div></div>
+${kpiCards(kpis)}
+${section("Clientes no periodo", body)}
+<p class="note">${escapeHtml(INSTALLMENT_NOTE)}</p>
+</body></html>`;
+}
+
+/** Mesmo resumo em planilha (HTML de tabelas gravado como `.xls`, como os demais). */
+export function renderCustomersOverviewSpreadsheet(
+  overview: CustomersOverview,
+  generatedAt: Date = new Date()
+): string {
+  const { totals } = overview;
+  const blocks = [
+    sheetTable(
+      "Periodo",
+      ["Campo", "Valor"],
+      [
+        ["Periodo", `${formatDayLabel(overview.startDate)} a ${formatDayLabel(overview.endDate)}`],
+        ["Rotulo", overview.periodLabel ?? "-"],
+        ["Clientes com movimento", num(overview.customers.length)],
+        ["Carregamentos", num(totals.operations)],
+        ["Peso liquido (kg)", num(totals.netWeightKg)],
+        ["Tonelagem (t)", formatTonsNumber(totals.netWeightKg)],
+        ["Total comprado", formatBRL(totals.totalCents)],
+        ["Preco medio por tonelada", formatBRL(totals.avgPriceCentsPerTon)],
+        ["Parcelas a vencer no periodo", formatBRL(overview.installmentTotals.upcomingCents)],
+        ["Parcelas vencidas no periodo", formatBRL(overview.installmentTotals.overdueCents)],
+        ["Gerado em", generatedAt.toLocaleString("pt-BR")]
+      ]
+    ),
+    sheetTable("Clientes no periodo", OVERVIEW_HEADERS, [
+      ...overview.customers.map(overviewRowCells),
+      ...(overview.customers.length > 0 ? [overviewFooterCells(overview)] : [])
+    ]),
+    `<p>${escapeHtml(INSTALLMENT_NOTE)}</p>`
+  ];
+
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8" /><title>${escapeHtml(
+    "Relatorio de clientes no periodo"
+  )}</title></head><body>
+<h1>Relatorio por cliente - todos os clientes</h1>
+${blocks.join("\n")}
+</body></html>`;
 }
 
 function section(title: string, body: string): string {

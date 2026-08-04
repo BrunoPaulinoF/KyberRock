@@ -12,10 +12,12 @@ import {
   extractOmieRequiredFields,
   formatOmieEmailList,
   formatOmieInvoiceEmailList,
+  mergeOmieCustomerTags,
   OMIE_INVOICE_EMAIL_FIELD_MAX_LENGTH,
   pushCustomerToOmieCore,
   syncCustomerInvoiceEmails,
-  toOmieIntegrationCode
+  toOmieIntegrationCode,
+  type OmieRequester
 } from "./omie-sync-core.ts";
 
 const credentials = { appKey: "app_key_teste", appSecret: "app_secret_teste" };
@@ -143,16 +145,44 @@ Deno.test(
 );
 
 Deno.test(
-  "buildCustomerCadastroPayload marca o cadastro novo, mas a alteracao vai sem tags",
+  "buildCustomerPayload nao inventa tags: na alteracao elas vem do merge com o OMIE",
   () => {
-    // O AlterarCliente substitui a lista inteira de tags no OMIE: mandar so "cliente"
-    // apagaria "transportadora"/"fornecedor" do cadastro.
+    // O AlterarCliente substitui a lista inteira de tags no OMIE, entao o corpo base nao
+    // carrega tag nenhuma — quem monta a lista final e mergeOmieCustomerTags, a partir do
+    // que o cadastro tem hoje la mais a tag do papel.
     const alteracao = buildCustomerPayload({
       localCustomerId: "cliente-3",
       razaoSocial: "Cliente Existente",
       omieCustomerId: 987
     });
     assert(!("tags" in alteracao));
+  }
+);
+
+Deno.test(
+  "mergeOmieCustomerTags soma a tag do papel as que o cadastro ja tem no OMIE",
+  async () => {
+    const queue = {
+      request: () => Promise.resolve({ tags: [{ tag: "Fornecedor" }, { tag: "  " }] })
+    } as unknown as OmieRequester;
+
+    assertEquals(await mergeOmieCustomerTags(queue, credentials, 42, "cliente"), [
+      "Fornecedor",
+      "cliente"
+    ]);
+  }
+);
+
+Deno.test(
+  "mergeOmieCustomerTags cai na tag do papel quando o OMIE nao devolve o cadastro",
+  async () => {
+    const queue = {
+      request: () => Promise.reject(new Error("ERROR: Cliente nao cadastrado"))
+    } as unknown as OmieRequester;
+
+    assertEquals(await mergeOmieCustomerTags(queue, credentials, 42, "transportadora"), [
+      "transportadora"
+    ]);
   }
 );
 

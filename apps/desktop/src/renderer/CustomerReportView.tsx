@@ -4,7 +4,8 @@ import type { KyberRockDesktopApi } from "../preload/api-types";
 import type {
   CustomerReport,
   CustomerReportOption,
-  CustomerReportVariant
+  CustomerReportVariant,
+  CustomersOverview
 } from "../services/customer-report";
 import { INSTALLMENT_NOTE, INSTALLMENT_SITUATION_LABEL } from "../services/customer-report-render";
 import { IconActionButton } from "./IconActionButton";
@@ -15,6 +16,10 @@ import { HelpTooltip } from "./Tooltip";
  * personalizadas), quais modelos quer (simplificado e/ou completo) e em quais formatos
  * (PDF e/ou Excel). A tela mostra a previa dos mesmos dados que vao para o arquivo:
  * transporte, compras, pagamentos, produtos, tonelagem e placas.
+ *
+ * Escolhendo "Todos os clientes" a tela troca de documento: em vez do relatorio de um
+ * cliente, sai a lista comparativa do periodo — um cliente por linha, do que mais faturou
+ * para o que menos faturou (ver `CustomersOverviewPreview`).
  */
 type PeriodPreset =
   | "today"
@@ -149,10 +154,17 @@ function formatMonthLabel(iso: string): string {
   return `${month}/${year}`;
 }
 
+/**
+ * Valor de `customerId` que pede o resumo comparativo do periodo inteiro em vez do
+ * relatorio de um cliente. Nao colide com id nenhum: os ids sao UUID.
+ */
+const ALL_CUSTOMERS = "__all__";
+
 export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDesktopApi | null }) {
   const [customers, setCustomers] = useState<CustomerReportOption[]>([]);
   const [customerId, setCustomerId] = useState("");
   const [customerSearch, setCustomerSearch] = useState("");
+  const [overview, setOverview] = useState<CustomersOverview | null>(null);
   const [period, setPeriod] = useState<PeriodPreset>("month");
   const [customStart, setCustomStart] = useState(() => toIsoDate(new Date()));
   const [customEnd, setCustomEnd] = useState(() => toIsoDate(new Date()));
@@ -174,6 +186,8 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
     () => resolveRange(period, customStart, customEnd, new Date()),
     [period, customStart, customEnd]
   );
+
+  const allCustomers = customerId === ALL_CUSTOMERS;
 
   const selectedVariants = useMemo(
     () => (Object.keys(variants) as CustomerReportVariant[]).filter((variant) => variants[variant]),
@@ -214,8 +228,9 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
 
   // O cliente selecionado precisa continuar visivel na lista mesmo com a busca ativa;
   // se o filtro o esconder, a selecao e limpa para nao gerar relatorio de quem sumiu.
+  // "Todos os clientes" nao e um cliente da lista e nunca e limpo pela busca.
   useEffect(() => {
-    if (!customerId) return;
+    if (!customerId || customerId === ALL_CUSTOMERS) return;
     if (filteredCustomers.some((customer) => customer.id === customerId)) return;
     setCustomerId("");
   }, [filteredCustomers, customerId]);
@@ -223,20 +238,24 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
   const loadReport = useCallback(async () => {
     if (!desktopApi || !customerId) {
       setReport(null);
+      setOverview(null);
       return;
     }
     setLoading(true);
     setError(null);
     try {
-      const data = await desktopApi.getCustomerReport(
-        customerId,
-        range.start,
-        range.end,
-        range.label
-      );
-      setReport(data);
+      if (customerId === ALL_CUSTOMERS) {
+        setReport(null);
+        setOverview(await desktopApi.getCustomersOverview(range.start, range.end, range.label));
+      } else {
+        setOverview(null);
+        setReport(
+          await desktopApi.getCustomerReport(customerId, range.start, range.end, range.label)
+        );
+      }
     } catch (err) {
       setReport(null);
+      setOverview(null);
       setError(err instanceof Error ? err.message : "Falha ao carregar o relatorio do cliente.");
     } finally {
       setLoading(false);
@@ -249,7 +268,9 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
 
   async function handleExport(): Promise<void> {
     if (!desktopApi || !customerId) return;
-    if (selectedVariants.length === 0) {
+    // O resumo de todos os clientes e uma lista unica: nao ha modelo simplificado/completo
+    // a escolher, so o formato do arquivo.
+    if (!allCustomers && selectedVariants.length === 0) {
       setExportMessage("Selecione ao menos um modelo: simplificado ou completo.");
       return;
     }
@@ -260,14 +281,21 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
     setExporting(true);
     setExportMessage(null);
     try {
-      const result = await desktopApi.exportCustomerReport(
-        customerId,
-        range.start,
-        range.end,
-        selectedVariants,
-        selectedFormats,
-        range.label
-      );
+      const result = allCustomers
+        ? await desktopApi.exportCustomersOverview(
+            range.start,
+            range.end,
+            selectedFormats,
+            range.label
+          )
+        : await desktopApi.exportCustomerReport(
+            customerId,
+            range.start,
+            range.end,
+            selectedVariants,
+            selectedFormats,
+            range.label
+          );
       if (result) {
         setExportMessage(
           result.files.length === 1
@@ -285,7 +313,9 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
   const showComplete = variants.complete;
   const totals = report?.totals ?? null;
   const dues = report?.installmentTotals ?? null;
-  const fileCount = selectedVariants.length * selectedFormats.length;
+  const fileCount = allCustomers
+    ? selectedFormats.length
+    : selectedVariants.length * selectedFormats.length;
 
   return (
     <section style={styles.page}>
@@ -293,7 +323,7 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <h2 style={styles.title}>Relatorio por cliente</h2>
           <HelpTooltip
-            content="Gera o relatorio de um cliente no periodo escolhido, com transporte, compras, pagamentos, produtos, tonelagem, placas e as parcelas a vencer. Use datas futuras para ver os dias em que o cliente ainda tem parcelas a pagar. Escolha os modelos (simplificado e/ou completo) e os formatos (PDF e/ou Excel)."
+            content="Gera o relatorio de um cliente no periodo escolhido, com transporte, compras, pagamentos, produtos, tonelagem, placas e as parcelas a vencer. Use datas futuras para ver os dias em que o cliente ainda tem parcelas a pagar. Escolha os modelos (simplificado e/ou completo) e os formatos (PDF e/ou Excel). Em 'Todos os clientes', sai a lista comparativa do periodo: um cliente por linha, do que mais faturou para o que menos faturou."
             placement="right"
           />
         </div>
@@ -330,12 +360,19 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
               style={styles.input}
             >
               <option value="">Selecione um cliente</option>
+              <option value={ALL_CUSTOMERS}>Todos os clientes (resumo do periodo)</option>
               {filteredCustomers.map((customer) => (
                 <option key={customer.id} value={customer.id}>
                   {customer.document ? `${customer.name} - ${customer.document}` : customer.name}
                 </option>
               ))}
             </select>
+            {allCustomers ? (
+              <p style={styles.hint}>
+                Uma linha por cliente com movimento no periodo, do que mais faturou para o que menos
+                faturou.
+              </p>
+            ) : null}
           </div>
 
           <div style={styles.filterBlock}>
@@ -383,7 +420,8 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
             </p>
           </div>
 
-          <div style={styles.filterBlock}>
+          {/* O resumo de todos os clientes tem um formato so: a lista comparativa. */}
+          <div style={{ ...styles.filterBlock, display: allCustomers ? "none" : undefined }}>
             <span style={styles.filterLabel}>Modelo do relatorio</span>
             <label style={styles.checkbox}>
               <input
@@ -442,7 +480,9 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
             </label>
             <p style={styles.hint}>
               {fileCount === 0
-                ? "Selecione ao menos um modelo e um formato."
+                ? allCustomers
+                  ? "Selecione ao menos um formato."
+                  : "Selecione ao menos um modelo e um formato."
                 : fileCount === 1
                   ? "1 arquivo sera gerado."
                   : `${fileCount} arquivos serao gerados.`}
@@ -456,12 +496,17 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
 
       {!customerId ? (
         <div style={styles.card}>
-          <p style={styles.hint}>Selecione um cliente para ver a previa do relatorio.</p>
+          <p style={styles.hint}>
+            Selecione um cliente — ou &quot;Todos os clientes&quot; — para ver a previa do
+            relatorio.
+          </p>
         </div>
       ) : loading ? (
         <div style={styles.card}>
           <p style={styles.hint}>Carregando relatorio...</p>
         </div>
+      ) : overview ? (
+        <CustomersOverviewPreview overview={overview} />
       ) : report && totals && dues ? (
         <>
           <div style={styles.card}>
@@ -756,6 +801,79 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
         </>
       ) : null}
     </section>
+  );
+}
+
+/**
+ * Previa do resumo de todos os clientes: KPIs do periodo e a lista comparativa, um cliente
+ * por linha do que mais faturou para o que menos faturou — a mesma ordem e as mesmas
+ * colunas do PDF/planilha, para a tela e o arquivo contarem a mesma historia.
+ */
+function CustomersOverviewPreview({ overview }: { overview: CustomersOverview }) {
+  const { totals, installmentTotals } = overview;
+  return (
+    <>
+      <div style={styles.kpiGrid}>
+        <Kpi
+          label="Clientes"
+          value={formatNumber(overview.customers.length)}
+          hint="Com movimento"
+        />
+        <Kpi label="Carregamentos" value={formatNumber(totals.operations)} />
+        <Kpi
+          label="Tonelagem"
+          value={formatTons(totals.netWeightKg)}
+          hint={formatKg(totals.netWeightKg)}
+        />
+        <Kpi label="Total comprado" value={formatBRL(totals.totalCents)} />
+        <Kpi
+          label="A vencer"
+          value={formatBRL(installmentTotals.upcomingCents)}
+          hint={`Vencidas: ${formatBRL(installmentTotals.overdueCents)}`}
+        />
+      </div>
+
+      <DataCard
+        title="Clientes no periodo"
+        empty={overview.customers.length === 0}
+        emptyMessage="Nenhum cliente com movimento no periodo."
+        footNote={INSTALLMENT_NOTE}
+      >
+        <Table
+          headers={[
+            "Cliente",
+            "Carregamentos",
+            "Tonelagem",
+            "Preco medio/t",
+            "Total comprado",
+            "A vencer",
+            "Vencidas"
+          ]}
+          rows={[
+            ...overview.customers.map((row) => [
+              row.customer.document
+                ? `${row.customer.name} - ${row.customer.document}`
+                : row.customer.name,
+              formatNumber(row.totals.operations),
+              formatTons(row.totals.netWeightKg),
+              formatBRL(row.totals.avgPriceCentsPerTon),
+              formatBRL(row.totals.totalCents),
+              formatBRL(row.installmentTotals.upcomingCents),
+              formatBRL(row.installmentTotals.overdueCents)
+            ]),
+            [
+              "TOTAL",
+              formatNumber(totals.operations),
+              formatTons(totals.netWeightKg),
+              formatBRL(totals.avgPriceCentsPerTon),
+              formatBRL(totals.totalCents),
+              formatBRL(installmentTotals.upcomingCents),
+              formatBRL(installmentTotals.overdueCents)
+            ]
+          ]}
+        />
+      </DataCard>
+    </>
   );
 }
 

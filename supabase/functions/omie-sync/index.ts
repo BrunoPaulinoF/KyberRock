@@ -1,15 +1,16 @@
 import { createClient as createSupabaseClient } from "jsr:@supabase/supabase-js@2";
 import {
   CUSTOMER_REGISTRATION_FAULT_PREFIX,
+  OMIE_CUSTOMER_TAG,
   OmieHttpError,
   OmieQueueManager,
   buildCustomerCadastroPayload,
   buildCustomerPayload,
+  buildCustomerUpdateBody,
   customerRegistrationFaultMessage,
   pushCarrierToOmie as pushCarrierToOmieCore,
   resolveDuplicateCustomerId,
   syncCustomerInvoiceEmails as syncCustomerInvoiceEmailsCore,
-  toCustomerUpdateBody,
   toOmieIntegrationCode,
   type OmieCredentials,
   type OmieCustomerRecommendations,
@@ -2160,17 +2161,25 @@ async function pushCustomerToOmie(
 ): Promise<number> {
   // Cliente NOVO nasce no OMIE ja com a tag "cliente" (o mesmo que o carrier faz com
   // "transportadora"): e ela que faz o cadastro voltar como cliente na sincronizacao.
-  // Na ALTERACAO o corpo vai sem tags de proposito — o OMIE substitui a lista inteira, e
-  // um cadastro que tambem e transportadora/fornecedor perderia as outras marcacoes.
+  // Na ALTERACAO as tags sao remontadas a partir das que o cadastro tem hoje no OMIE
+  // (mergeOmieCustomerTags): o AlterarCliente substitui a lista inteira, entao mandar so
+  // "cliente" apagaria os outros papeis e nao mandar nada deixaria sem marcacao todo
+  // cadastro reaproveitado por CNPJ/CPF.
   const createBody = buildCustomerCadastroPayload(payload);
   const updateBody = buildCustomerPayload(payload);
+  const toUpdateBody = (omieCustomerId: number): Promise<Record<string, unknown>> =>
+    buildCustomerUpdateBody(activeOmieQueue, credentials, {
+      body: updateBody,
+      omieCustomerId,
+      requiredTag: OMIE_CUSTOMER_TAG
+    });
 
   if (payload.omieCustomerId) {
     await callOmie<unknown, unknown>(
       credentials,
       "/geral/clientes/",
       "AlterarCliente",
-      toCustomerUpdateBody(updateBody, payload.omieCustomerId)
+      await toUpdateBody(payload.omieCustomerId)
     );
     await syncCustomerInvoiceEmailsCore(
       activeOmieQueue,
@@ -2188,7 +2197,7 @@ async function pushCustomerToOmie(
         credentials,
         "/geral/clientes/",
         "AlterarCliente",
-        toCustomerUpdateBody(updateBody, existing)
+        await toUpdateBody(existing)
       );
       await syncCustomerInvoiceEmailsCore(activeOmieQueue, credentials, existing, payload.email);
       return existing;
@@ -2218,7 +2227,7 @@ async function pushCustomerToOmie(
       credentials,
       "/geral/clientes/",
       "AlterarCliente",
-      toCustomerUpdateBody(updateBody, existingId)
+      await toUpdateBody(existingId)
     );
     await syncCustomerInvoiceEmailsCore(activeOmieQueue, credentials, existingId, payload.email);
     return existingId;

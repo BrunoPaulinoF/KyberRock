@@ -85,7 +85,8 @@ describe("omie-sync Edge Function", () => {
     const source = getOmieSyncSource();
 
     expect(source).toContain("function pushCarrierToOmie");
-    expect(source).toContain('forceOmieTag(payload.tags, "transportadora")');
+    expect(source).toContain('export const OMIE_CARRIER_TAG = "transportadora"');
+    expect(source).toContain("forceOmieTag(payload.tags, OMIE_CARRIER_TAG)");
     expect(source).toContain("buildCarrierPayload(payload)");
   });
 
