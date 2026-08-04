@@ -773,6 +773,220 @@ Deno.test("create_order envia o codigo_parcela vinculado no pedido de venda", as
   assertEquals(cabecalho.etapa, "50");
 });
 
+// A aba Fiscal do cadastro do cliente manda nos "Enderecos de e-mail que recebem a NF"
+// da OPERACAO. Espelhar a lista so no cadastro (recomendacoes.email_fatura) nao chegava
+// ao pedido: a tela de e-mails do pedido nascia vazia.
+Deno.test("create_order leva os e-mails da aba fiscal para utilizar_emails do pedido", async () => {
+  const deviceToken = "token-order-emails";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-order-emails": {
+        id: "device-order-emails",
+        company_id: "company-order-emails",
+        unit_id: "unit-order-emails",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-order-emails": {
+        id: "company-order-emails",
+        is_active: true,
+        omie_app_key: "order-emails",
+        omie_app_secret: "secret-order-emails"
+      }
+    }
+  });
+  const omieQueue = orderQueueStub();
+
+  await postOmieSync(
+    {
+      deviceId: "device-order-emails",
+      deviceToken,
+      action: "create_order",
+      payload: {
+        operationType: "invoice",
+        customerOmieId: 100,
+        productOmieId: 200,
+        quantity: 10,
+        unitPrice: 50,
+        issueDate: "2026-07-20",
+        idempotencyKey: "kyberrock:unit:op-emails:create_sales_order",
+        invoiceEmails: "Fiscal@Cliente.com; financeiro@cliente.com , fiscal@cliente.com"
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  const infos = getParam(findRequest(omieQueue, "IncluirPedido")).informacoes_adicionais as Record<
+    string,
+    unknown
+  >;
+  // Todos os enderecos da aba Fiscal, normalizados e sem repetidos.
+  assertEquals(infos.utilizar_emails, "fiscal@cliente.com, financeiro@cliente.com");
+});
+
+// Desktop antigo: a aba Fiscal ainda sobe so dentro do cadastro do cliente que acompanha
+// o pedido. O documento tem que sair com os destinatarios do mesmo jeito.
+Deno.test(
+  "create_order usa a aba fiscal do cadastro quando o pedido nao traz os e-mails",
+  async () => {
+    const deviceToken = "token-order-emails-cadastro";
+    const token_hash = await sha256Hex(deviceToken);
+    const fixtures = createSupabaseDependencies({
+      devices: {
+        "device-order-emails-cadastro": {
+          id: "device-order-emails-cadastro",
+          company_id: "company-order-emails-cadastro",
+          unit_id: "unit-order-emails-cadastro",
+          token_hash,
+          is_active: true
+        }
+      },
+      companies: {
+        "company-order-emails-cadastro": {
+          id: "company-order-emails-cadastro",
+          is_active: true,
+          omie_app_key: "order-emails-cadastro",
+          omie_app_secret: "secret-order-emails-cadastro"
+        }
+      }
+    });
+    const omieQueue = orderQueueStub();
+
+    await postOmieSync(
+      {
+        deviceId: "device-order-emails-cadastro",
+        deviceToken,
+        action: "create_order",
+        payload: {
+          operationType: "invoice",
+          customerOmieId: 100,
+          productOmieId: 200,
+          quantity: 10,
+          unitPrice: 50,
+          issueDate: "2026-07-20",
+          idempotencyKey: "kyberrock:unit:op-emails-cadastro:create_sales_order",
+          customer: {
+            localCustomerId: "cliente-local",
+            razaoSocial: "Cliente Teste",
+            email: "contato@cliente.com",
+            fiscalEmails: "nota@cliente.com"
+          }
+        }
+      },
+      { createClient: fixtures.createClient, omieQueue }
+    );
+
+    const infos = getParam(findRequest(omieQueue, "IncluirPedido"))
+      .informacoes_adicionais as Record<string, unknown>;
+    assertEquals(infos.utilizar_emails, "nota@cliente.com");
+  }
+);
+
+// Cliente sem aba Fiscal: o campo nem vai, e o OMIE cai no cadastro do cliente — o
+// comportamento de antes desta mudanca.
+Deno.test("create_order omite utilizar_emails quando a aba fiscal esta vazia", async () => {
+  const deviceToken = "token-order-emails-vazio";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-order-emails-vazio": {
+        id: "device-order-emails-vazio",
+        company_id: "company-order-emails-vazio",
+        unit_id: "unit-order-emails-vazio",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-order-emails-vazio": {
+        id: "company-order-emails-vazio",
+        is_active: true,
+        omie_app_key: "order-emails-vazio",
+        omie_app_secret: "secret-order-emails-vazio"
+      }
+    }
+  });
+  const omieQueue = orderQueueStub();
+
+  await postOmieSync(
+    {
+      deviceId: "device-order-emails-vazio",
+      deviceToken,
+      action: "create_order",
+      payload: {
+        operationType: "invoice",
+        customerOmieId: 100,
+        productOmieId: 200,
+        quantity: 10,
+        unitPrice: 50,
+        issueDate: "2026-07-20",
+        idempotencyKey: "kyberrock:unit:op-emails-vazio:create_sales_order",
+        invoiceEmails: "   "
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  const infos = getParam(findRequest(omieQueue, "IncluirPedido")).informacoes_adicionais as Record<
+    string,
+    unknown
+  >;
+  assertEquals("utilizar_emails" in infos, false);
+});
+
+// A OS nao tem `informacoes_adicionais.utilizar_emails`: o equivalente e o bloco `Email`,
+// com o "Utilizar os seguintes enderecos de e-mail" em `cEnviarPara`.
+Deno.test("create_order leva os e-mails da aba fiscal para o bloco Email da OS", async () => {
+  const deviceToken = "token-os-emails";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-os-emails": {
+        id: "device-os-emails",
+        company_id: "company-os-emails",
+        unit_id: "unit-os-emails",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-os-emails": {
+        id: "company-os-emails",
+        is_active: true,
+        omie_app_key: "os-emails",
+        omie_app_secret: "secret-os-emails"
+      }
+    }
+  });
+  const omieQueue = orderQueueStub();
+
+  await postOmieSync(
+    {
+      deviceId: "device-os-emails",
+      deviceToken,
+      action: "create_order",
+      payload: {
+        operationType: "internal",
+        customerOmieId: 100,
+        serviceDescription: "Brita 1",
+        quantity: 10,
+        unitPrice: 50,
+        issueDate: "2026-07-20",
+        idempotencyKey: "kyberrock:unit:op-os-emails:create_service_order",
+        invoiceEmails: "fiscal@cliente.com, financeiro@cliente.com"
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  const body = getParam(findRequest(omieQueue, "IncluirOS"));
+  const email = body.Email as Record<string, unknown>;
+  assertEquals(email.cEnviarPara, "fiscal@cliente.com, financeiro@cliente.com");
+});
+
 Deno.test("create_order envia a modalidade de frete escolhida (FOB) com o valor", async () => {
   const deviceToken = "token-order-freight";
   const token_hash = await sha256Hex(deviceToken);

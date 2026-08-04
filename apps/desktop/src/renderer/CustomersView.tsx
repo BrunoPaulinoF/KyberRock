@@ -1637,13 +1637,16 @@ export function CustomersView({
                       value={form.fiscalEmails}
                       onChange={(fiscalEmails) => setForm({ ...form, fiscalEmails })}
                       disabled={false}
-                      hint="Quem recebe a nota e o boleto. Vao para o 'Utilizar os seguintes enderecos de e-mail' do OMIE."
+                      hint="Quem recebe a nota e o boleto. Vao para o cadastro do cliente e para cada operacao no OMIE."
                     />
                   </div>
                   <p style={styles.formHint}>
                     Estes enderecos sao os destinatarios da NF-e e do boleto no OMIE — coisa
                     distinta do e-mail de contato da aba Contato, que serve so para falar com o
-                    cliente. Deixe vazio para o OMIE seguir com o que estiver configurado la.
+                    cliente. Todos eles vao para o &quot;Utilizar os seguintes enderecos de
+                    e-mail&quot; do cadastro do cliente E para os &quot;Enderecos de e-mail que
+                    recebem a NF&quot; de cada operacao enviada ao OMIE. Deixe vazio para o OMIE
+                    seguir com o que estiver configurado la.
                   </p>
                 </section>
               ) : null}

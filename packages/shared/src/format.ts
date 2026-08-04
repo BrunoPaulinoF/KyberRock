@@ -99,6 +99,14 @@ export const OMIE_EMAIL_FIELD_MAX_LENGTH = 500;
 export const OMIE_INVOICE_EMAIL_FIELD_MAX_LENGTH = 200;
 
 /**
+ * Tamanho maximo do "Enderecos de e-mail que recebem a NF" do PEDIDO/OS
+ * (`informacoes_adicionais.utilizar_emails` do pedido de venda, `Email.cEnviarPara` da OS).
+ * O campo do documento e `text` no OMIE, sem limite documentado; cortamos em 500 (o mesmo
+ * do campo de e-mail do cadastro) so para nao mandar um texto sem fim.
+ */
+export const OMIE_ORDER_INVOICE_EMAIL_FIELD_MAX_LENGTH = 500;
+
+/**
  * Quebra a lista de e-mails digitada (ou vinda do OMIE) em enderecos. Aceita virgula, ponto
  * e virgula, quebra de linha e espaco como separadores — e o que aparece quando o operador
  * cola uma lista de outro sistema — e remove repetidos preservando a ordem.
