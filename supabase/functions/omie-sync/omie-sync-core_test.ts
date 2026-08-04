@@ -11,7 +11,10 @@ import {
   customerRegistrationFaultMessage,
   extractOmieRequiredFields,
   formatOmieEmailList,
+  formatOmieInvoiceEmailList,
+  OMIE_INVOICE_EMAIL_FIELD_MAX_LENGTH,
   pushCustomerToOmieCore,
+  syncCustomerInvoiceEmails,
   toOmieIntegrationCode
 } from "./omie-sync-core.ts";
 
@@ -186,9 +189,54 @@ Deno.test("buildCustomerPayload envia todos os e-mails do cliente no campo do OM
     email: "Fiscal@Cliente.com; financeiro@cliente.com , fiscal@cliente.com"
   });
 
-  // Virgula simples e o separador que o OMIE usa para mandar NF-e/boleto a todos.
+  // O cadastro do OMIE mostra a mesma lista que o KyberRock tem, em virgula simples.
+  // Quem garante a entrega a todos e o `email_fatura` (ver formatOmieInvoiceEmailList).
   assertEquals(payload.email, "fiscal@cliente.com, financeiro@cliente.com");
 });
+
+Deno.test("formatOmieInvoiceEmailList so entra em acao com mais de um destinatario", () => {
+  // Um e-mail so: o campo principal do cadastro ja resolve, nada a configurar.
+  assertEquals(formatOmieInvoiceEmailList("fiscal@cliente.com"), undefined);
+  assertEquals(formatOmieInvoiceEmailList("   "), undefined);
+  assertEquals(formatOmieInvoiceEmailList(undefined), undefined);
+
+  // Com varios, a lista vai INTEIRA (o primeiro endereco incluido: o `email_fatura` tem
+  // prioridade no OMIE, entao quem ficasse so no campo principal pararia de receber).
+  assertEquals(
+    formatOmieInvoiceEmailList("Fiscal@Cliente.com; financeiro@cliente.com , fiscal@cliente.com"),
+    "fiscal@cliente.com, financeiro@cliente.com"
+  );
+});
+
+Deno.test("formatOmieInvoiceEmailList respeita o limite do email_fatura sem cortar ao meio", () => {
+  const emails = Array.from(
+    { length: 20 },
+    (_unused, index) => `destinatario${index}@empresa.com.br`
+  ).join(",");
+  const sent = formatOmieInvoiceEmailList(emails) ?? "";
+
+  assert(sent.length <= OMIE_INVOICE_EMAIL_FIELD_MAX_LENGTH);
+  assert(sent.split(", ").every((email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)));
+});
+
+Deno.test(
+  "syncCustomerInvoiceEmails nao consulta o OMIE quando o cliente nao tem e-mail",
+  async () => {
+    let calls = 0;
+    const queue = new OmieQueueManager({
+      fetchFn: async () => {
+        calls++;
+        return jsonResponse({});
+      },
+      minDelayMs: 0,
+      sleepFn: async () => undefined
+    });
+
+    await syncCustomerInvoiceEmails(queue, credentials, 99, "  ");
+
+    assertEquals(calls, 0);
+  }
+);
 
 Deno.test("formatOmieEmailList respeita o limite do campo sem cortar um e-mail ao meio", () => {
   const emails = Array.from(

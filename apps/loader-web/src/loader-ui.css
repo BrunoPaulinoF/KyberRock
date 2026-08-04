@@ -477,6 +477,49 @@ select {
   margin-bottom: 14px;
 }
 
+/* Faixa de contadores por produto, entre a barra compacta e a fila: quantas cargas de
+   cada produto estao esperando o carregador. */
+.product-counters {
+  max-width: 1240px;
+  margin-inline: auto;
+  margin-bottom: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.product-counter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 6px 8px 6px 14px;
+  border: 1px solid #dbeafe;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 10px 26px rgba(37, 99, 235, 0.08);
+}
+
+.product-counter__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.product-counter__value {
+  min-width: 24px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 14px;
+  font-weight: 900;
+  text-align: center;
+}
+
 .queue-stat--compact {
   min-width: 0;
   display: inline-flex;

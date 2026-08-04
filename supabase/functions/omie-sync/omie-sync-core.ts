@@ -277,7 +277,9 @@ export function buildCustomerPayload(payload: PushCustomerPayload): Record<strin
     // e recusa o cadastro de qualquer cliente pessoa fisica.
     pessoa_fisica: document ? (document.length === 11 ? "S" : "N") : undefined,
     // O e-mail tem regra propria (lista de destinatarios cortada por endereco inteiro):
-    // ver formatOmieEmailList / OMIE_EMAIL_FIELD_MAX_LENGTH.
+    // ver formatOmieEmailList / OMIE_EMAIL_FIELD_MAX_LENGTH. Este campo entrega so ao
+    // primeiro endereco; os demais destinatarios da NF-e/boleto entram no `email_fatura`
+    // da aba "Recomendacoes" (ver syncCustomerInvoiceEmails no index.ts).
     email: formatOmieEmailList(payload.email),
     telefone1_ddd: clampOmieText(
       payload.telefone1Ddd,
@@ -330,27 +332,63 @@ function trimOrUndefined(value: string | undefined): string | undefined {
 export const OMIE_EMAIL_FIELD_MAX_LENGTH = 500;
 
 /**
- * O cliente pode ter varios e-mails no KyberRock. O OMIE aceita todos no mesmo campo,
- * separados por virgula simples, e manda NF-e e boleto para cada um.
- *
- * O corte do limite de 500 caracteres e feito por endereco inteiro: truncar no meio de um
- * e-mail geraria um destinatario invalido e o OMIE recusaria o cadastro inteiro.
+ * Tamanho maximo do `email_fatura` (aba "Recomendacoes" do cadastro: "Enviar a NF-e e
+ * Boleto para outro e-mail?"). E menor que o do campo principal.
  */
-export function formatOmieEmailList(value: string | undefined): string | undefined {
+export const OMIE_INVOICE_EMAIL_FIELD_MAX_LENGTH = 200;
+
+/** Enderecos da lista guardada no cadastro, em minusculas, sem vazios nem repetidos. */
+export function parseOmieEmailList(value: string | undefined): string[] {
   const emails: string[] = [];
   for (const part of (value ?? "").split(/[,;\s]+/)) {
     const email = part.trim().toLowerCase();
     if (email.length > 0 && !emails.includes(email)) emails.push(email);
   }
+  return emails;
+}
 
+/**
+ * Junta os enderecos com virgula simples ate o limite do campo. O corte e feito por
+ * endereco INTEIRO: truncar no meio de um e-mail geraria um destinatario invalido e o
+ * OMIE recusaria o cadastro inteiro.
+ */
+function joinOmieEmails(emails: string[], maxLength: number): string {
   const accepted: string[] = [];
   for (const email of emails) {
     const candidate = [...accepted, email].join(", ");
-    if (candidate.length > OMIE_EMAIL_FIELD_MAX_LENGTH) break;
+    if (candidate.length > maxLength) break;
     accepted.push(email);
   }
+  return accepted.join(", ");
+}
 
-  return accepted.length > 0 ? accepted.join(", ") : undefined;
+/**
+ * Campo `email` do cadastro: o endereco principal de contato do cliente. A lista inteira
+ * vai junto (separada por virgula, dentro dos 500 caracteres) para o cadastro do OMIE
+ * mostrar os mesmos e-mails que o KyberRock tem — mas quem garante que a NF-e e o boleto
+ * chegam a TODOS e o `email_fatura` da aba "Recomendacoes" (ver
+ * `formatOmieInvoiceEmailList`): o campo principal so entrega ao primeiro endereco.
+ */
+export function formatOmieEmailList(value: string | undefined): string | undefined {
+  const joined = joinOmieEmails(parseOmieEmailList(value), OMIE_EMAIL_FIELD_MAX_LENGTH);
+  return joined.length > 0 ? joined : undefined;
+}
+
+/**
+ * Destinatarios da NF-e e do boleto quando o cliente tem MAIS DE UM e-mail: o campo
+ * `email_fatura` da aba "Recomendacoes", que o OMIE prioriza no faturamento.
+ *
+ * A lista vai completa, inclusive o primeiro endereco — se ele ficasse so no campo
+ * principal, deixaria de receber justamente quando a prioridade do `email_fatura` vale.
+ *
+ * Com um endereco so devolve `undefined`: o campo principal ja resolve, e nao ha motivo
+ * para mexer no que esteja configurado a mao no OMIE.
+ */
+export function formatOmieInvoiceEmailList(value: string | undefined): string | undefined {
+  const emails = parseOmieEmailList(value);
+  if (emails.length < 2) return undefined;
+  const joined = joinOmieEmails(emails, OMIE_INVOICE_EMAIL_FIELD_MAX_LENGTH);
+  return joined.length > 0 ? joined : undefined;
 }
 
 function onlyDigits(value: string | undefined): string | undefined {
@@ -467,13 +505,100 @@ export async function pushCustomerToOmieCore(
   credentials: OmieCredentials,
   payload: PushCustomerPayload
 ): Promise<number> {
-  return pushCustomerBodyToOmie(
+  const omieCustomerId = await pushCustomerBodyToOmie(
     queue,
     credentials,
     buildCustomerCadastroPayload(payload),
     payload.omieCustomerId,
     buildCustomerPayload(payload)
   );
+  await syncCustomerInvoiceEmails(queue, credentials, omieCustomerId, payload.email);
+  return omieCustomerId;
+}
+
+/**
+ * Bloco `recomendacoes` do cadastro de cliente do OMIE (aba "Recomendacoes"). Reenviado
+ * INTEIRO no AlterarCliente: ver `syncCustomerInvoiceEmails`.
+ */
+export type OmieCustomerRecommendations = {
+  numero_parcelas?: unknown;
+  codigo_vendedor?: unknown;
+  email_fatura?: unknown;
+  gerar_boletos?: string | null;
+  codigo_transportadora?: unknown;
+  tipo_assinante?: unknown;
+};
+
+/**
+ * Faz a NF-e e o boleto do OMIE chegarem a TODOS os e-mails do cliente.
+ *
+ * O `email` do cadastro e o endereco principal: com uma lista ali, o OMIE continua
+ * mandando o faturamento para um endereco so — foi isso que o operador viu ao cadastrar
+ * varios e-mails e so um receber. Quem define os destinatarios do faturamento e o
+ * `email_fatura` da aba "Recomendacoes" ("Enviar a NF-e e Boleto para outro e-mail?"),
+ * que o OMIE PRIORIZA sobre o campo principal. Por isso a lista vai completa para la,
+ * inclusive o primeiro endereco: deixa-lo so no campo principal o tiraria dos envios
+ * justamente quando a prioridade vale.
+ *
+ * Regras de escrita, para nunca atropelar o que foi configurado a mao no OMIE:
+ * - com mais de um e-mail, grava a lista inteira (cortada por endereco inteiro em 200);
+ * - com um e-mail so, limpa o campo APENAS se o que esta la e uma lista (mais de um
+ *   endereco), isto e, algo que este fluxo escreveu — um endereco unico ali e escolha de
+ *   quem mexeu no OMIE e fica como esta;
+ * - ja igual ao desejado: nao gasta um AlterarCliente (o OMIE cobra rate limit por chamada).
+ *
+ * O bloco `recomendacoes` volta INTEIRO no AlterarCliente: nao esta documentado se o OMIE
+ * faz merge parcial do complexo, e reenviar o que o ConsultarCliente devolveu garante que
+ * nada configurado a mao (vendedor, transportadora, numero de parcelas, gerar boletos) se
+ * perca.
+ *
+ * Nunca lanca. Os destinatarios extras sao um detalhe do faturamento, nao um requisito do
+ * cadastro: se a consulta ou a alteracao falhar, o cadastro — e o fechamento que depende
+ * dele — segue, com o log dizendo o que nao foi gravado.
+ */
+export async function syncCustomerInvoiceEmails(
+  queue: OmieRequester,
+  credentials: OmieCredentials,
+  omieCustomerId: number,
+  email: string | undefined
+): Promise<void> {
+  // Cadastro sem e-mail nao decide nada sobre destinatarios; poupa a consulta.
+  if (parseOmieEmailList(email).length === 0) return;
+  const desired = formatOmieInvoiceEmailList(email) ?? "";
+
+  try {
+    const customer = await queue.request<
+      { codigo_cliente_omie: number },
+      { recomendacoes?: OmieCustomerRecommendations } | null
+    >({
+      credentials,
+      endpoint: "/geral/clientes/",
+      call: "ConsultarCliente",
+      param: { codigo_cliente_omie: omieCustomerId }
+    });
+
+    const recomendacoes: OmieCustomerRecommendations = customer?.recomendacoes ?? {};
+    const current =
+      typeof recomendacoes.email_fatura === "string" ? recomendacoes.email_fatura.trim() : "";
+    if (!desired && parseOmieEmailList(current).length < 2) return;
+    if (current.toLowerCase() === desired) return;
+
+    await queue.request<Record<string, unknown>, unknown>({
+      credentials,
+      endpoint: "/geral/clientes/",
+      call: "AlterarCliente",
+      param: {
+        codigo_cliente_omie: omieCustomerId,
+        recomendacoes: { ...recomendacoes, email_fatura: desired }
+      }
+    });
+  } catch (error) {
+    console.error(
+      "[omie] falha ao gravar os e-mails de NF-e/boleto (recomendacoes.email_fatura) do " +
+        "cliente; o cadastro segue com o e-mail principal",
+      error
+    );
+  }
 }
 
 export async function pushCarrierToOmie(

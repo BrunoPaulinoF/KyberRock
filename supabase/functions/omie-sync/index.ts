@@ -8,9 +8,11 @@ import {
   customerRegistrationFaultMessage,
   pushCarrierToOmie as pushCarrierToOmieCore,
   resolveDuplicateCustomerId,
+  syncCustomerInvoiceEmails as syncCustomerInvoiceEmailsCore,
   toCustomerUpdateBody,
   toOmieIntegrationCode,
   type OmieCredentials,
+  type OmieCustomerRecommendations,
   type OmieRequester
 } from "./omie-sync-core.ts";
 import { classifyOmieCustomer } from "../_shared/omie-customer-classification.ts";
@@ -2170,6 +2172,12 @@ async function pushCustomerToOmie(
       "AlterarCliente",
       toCustomerUpdateBody(updateBody, payload.omieCustomerId)
     );
+    await syncCustomerInvoiceEmailsCore(
+      activeOmieQueue,
+      credentials,
+      payload.omieCustomerId,
+      payload.email
+    );
     return payload.omieCustomerId;
   }
 
@@ -2182,6 +2190,7 @@ async function pushCustomerToOmie(
         "AlterarCliente",
         toCustomerUpdateBody(updateBody, existing)
       );
+      await syncCustomerInvoiceEmailsCore(activeOmieQueue, credentials, existing, payload.email);
       return existing;
     }
   }
@@ -2211,6 +2220,7 @@ async function pushCustomerToOmie(
       "AlterarCliente",
       toCustomerUpdateBody(updateBody, existingId)
     );
+    await syncCustomerInvoiceEmailsCore(activeOmieQueue, credentials, existingId, payload.email);
     return existingId;
   }
 
@@ -2218,6 +2228,7 @@ async function pushCustomerToOmie(
   if (!omieCustomerId) {
     throw new Error("OMIE nao retornou codigoClienteOmie");
   }
+  await syncCustomerInvoiceEmailsCore(activeOmieQueue, credentials, omieCustomerId, payload.email);
   return omieCustomerId;
 }
 
@@ -2626,19 +2637,6 @@ function isOmieStructureRejection(error: unknown): boolean {
  * desktop usa esse prefixo para bloquear o job e mostrar o que falta preencher, em vez
  * de exibir a mensagem crua do OMIE ("O preenchimento da tag [email] e obrigatorio!").
  */
-/**
- * Bloco `recomendacoes` do cadastro de cliente do OMIE (aba "Recomendacoes"). Reenviado
- * inteiro no AlterarCliente, ver `ensureCustomerGeneratesBoleto`.
- */
-type OmieCustomerRecommendations = {
-  numero_parcelas?: unknown;
-  codigo_vendedor?: unknown;
-  email_fatura?: unknown;
-  gerar_boletos?: string | null;
-  codigo_transportadora?: unknown;
-  tipo_assinante?: unknown;
-};
-
 /**
  * Liga o "Por padrao: Gerar Boletos ao Emitir NF-e" no cadastro do cliente antes de subir
  * uma operacao em boleto.
