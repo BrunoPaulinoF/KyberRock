@@ -1659,5 +1659,43 @@ WHERE operation_code IS NULL;
 CREATE INDEX IF NOT EXISTS idx_weighing_operations_code
   ON weighing_operations(unit_id, operation_code);
 `
+  },
+  {
+    version: 47,
+    name: "bonificacao_method_and_carteira_account_binding",
+    sql: `
+-- Cada forma na sua conta corrente do OMIE: a venda em carteira sai da OMIE Cash e passa
+-- a lancar na conta EM CARTEIRA (migracao 45). O UPDATE nao filtra por account_id nulo de
+-- proposito — o vinculo antigo (OMIE Cash) existe e e justamente ele que muda.
+UPDATE payment_methods SET
+  account_id = (
+    SELECT ac.id FROM accounts ac
+    WHERE ac.company_id = payment_methods.company_id AND ac.code = 'em_carteira'
+      AND ac.deleted_at IS NULL
+  ),
+  updated_at = datetime('now')
+WHERE code = 'wallet' AND deleted_at IS NULL
+  AND EXISTS (
+    SELECT 1 FROM accounts ac
+    WHERE ac.company_id = payment_methods.company_id AND ac.code = 'em_carteira'
+      AND ac.deleted_at IS NULL
+  );
+
+-- Forma de pagamento "Bonificacao", lancada na conta BONIFICACAO. Vai ao OMIE como
+-- "99 - outros" (mesmo tPag da carteira), que faz o pedido sair com nao_gerar_boleto "S":
+-- a nota da mercadoria bonificada e emitida e nenhuma cobranca nasce dela.
+INSERT INTO payment_methods
+  (id, company_id, code, name, omie_code, account_id, is_system, is_customer_credit, is_wallet,
+   sort_order, is_active, created_at, updated_at)
+SELECT lower(hex(randomblob(16))), c.id, 'bonificacao', 'Bonificação', '99',
+       (SELECT ac.id FROM accounts ac
+        WHERE ac.company_id = c.id AND ac.code = 'bonificacao' AND ac.deleted_at IS NULL),
+       1, 0, 0, 8, 1, datetime('now'), datetime('now')
+FROM companies c
+WHERE NOT EXISTS (
+  SELECT 1 FROM payment_methods pm
+  WHERE pm.company_id = c.id AND pm.code = 'bonificacao' AND pm.deleted_at IS NULL
+);
+`
   }
 ];
