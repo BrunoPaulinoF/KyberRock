@@ -66,6 +66,20 @@ let runtime: DesktopRuntime | null = null;
 let updateState: UpdateState = createInitialUpdateState();
 const UPDATE_CHECK_INTERVAL_MS = 30 * 60 * 1000; // 30 minutos
 
+/**
+ * Encaminha as leituras da balanca ao renderer. Uma unica funcao, e nao um closure
+ * novo por conexao: o runtime indexa os forwarders pela propria funcao, entao cada
+ * conexao registrava mais um e o renderer recebia a mesma leitura N vezes.
+ */
+function forwardScaleReadingToRenderer(reading: unknown): void {
+  mainWindow?.webContents.send("desktop:scale-reading", reading);
+}
+
+/** Registra o forwarder do renderer no adaptador ativo (idempotente pelo runtime). */
+function attachScaleReadingForwarder(): void {
+  runtime?.onScaleReading(forwardScaleReadingToRenderer);
+}
+
 async function createMainWindow(): Promise<void> {
   writeStartupLog("createMainWindow:start");
   runtime = DesktopRuntime.initialize();
@@ -129,9 +143,7 @@ async function createMainWindow(): Promise<void> {
   try {
     const connected = await runtime.tryAutoConnectScale();
     if (connected) {
-      runtime.onScaleReading((reading) => {
-        mainWindow?.webContents.send("desktop:scale-reading", reading);
-      });
+      attachScaleReadingForwarder();
       writeStartupLog("scale:auto-connected");
     }
   } catch {
@@ -1489,9 +1501,7 @@ function registerIpcHandlers(): void {
     // Conecta usando a configuracao salva (TCP, serial COM/USB ou virtual)
     await runtime.connectScale();
     // Register live stream forwarding to renderer
-    runtime.onScaleReading((reading) => {
-      mainWindow?.webContents.send("desktop:scale-reading", reading);
-    });
+    attachScaleReadingForwarder();
   });
 
   ipcMain.handle("desktop:scale-list-serial-ports", async () => {
@@ -1555,9 +1565,7 @@ function registerIpcHandlers(): void {
       throw new Error("Modo virtual nao esta configurado. Altere em Configuracoes > Balanca.");
     }
     await runtime.connectScale();
-    runtime.onScaleReading((reading) => {
-      mainWindow?.webContents.send("desktop:scale-reading", reading);
-    });
+    attachScaleReadingForwarder();
   });
 
   ipcMain.handle("desktop:omie-config", () => {

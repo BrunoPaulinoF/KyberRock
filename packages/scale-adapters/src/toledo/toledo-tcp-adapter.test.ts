@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createServer } from "node:net";
-import type { AddressInfo } from "node:net";
+import type { AddressInfo, Socket } from "node:net";
 
 import { createToledoTcpAdapter } from "./toledo-tcp-adapter";
 
@@ -222,5 +222,67 @@ describe("toledo-tcp-adapter leitura vencida", () => {
 
     expect(adapter.getStatus().lastReading).toBeNull();
     expect(adapter.getStatus().stale).toBe(true);
+  });
+});
+
+describe("toledo-tcp-adapter conexao derrubada por erro", () => {
+  /** Servidor que transmite quadros e depois derruba a conexao com RST. */
+  async function startResettingServer(): Promise<{
+    port: number;
+    reset: () => void;
+    close: () => Promise<void>;
+  }> {
+    let live: Socket | null = null;
+    const server = createServer((socket) => {
+      live = socket;
+      const interval = setInterval(() => socket.write("       000015200kg\r\n"), 50);
+      socket.on("close", () => clearInterval(interval));
+      socket.on("error", () => clearInterval(interval));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    return {
+      port: (server.address() as AddressInfo).port,
+      // RST em vez de FIN: e o caminho que cai no handler de erro do socket, onde a
+      // sessao morta continuava viva entregando leituras.
+      reset: () => live?.resetAndDestroy(),
+      close: () => new Promise<void>((resolve) => server.close(() => resolve()))
+    };
+  }
+
+  it("cala a sessao derrubada por RST em vez de deixa-la entregando leituras", async () => {
+    // Contrato que a tela depende: enquanto o status disser "conectada" pode haver
+    // peso ao vivo, mas depois de uma queda nenhum quadro novo pode escapar da
+    // sessao morta — senao a tela mostra peso de uma conexao que ja nao existe.
+    const scale = await startResettingServer();
+    const adapter = createToledoTcpAdapter();
+    await adapter.connect({
+      host: "127.0.0.1",
+      port: scale.port,
+      staleReadingMs: 3000,
+      // Reconexao longa: o teste observa a janela em que a sessao antiga ficava viva.
+      reconnectIntervalMs: 60_000,
+      maxReconnectAttempts: 1
+    });
+
+    const seen: number[] = [];
+    adapter.onReading((reading) => seen.push(reading.weightKg));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(adapter.getStatus().state).toBe("connected");
+    expect(seen.length).toBeGreaterThan(0);
+
+    scale.reset();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    expect(adapter.getStatus().state).not.toBe("connected");
+    const readingsAtDrop = seen.length;
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    // Nenhum quadro novo depois da queda: sem isto a tela mostrava peso ao vivo de
+    // uma conexao que o proprio adaptador ja dava por perdida.
+    expect(seen.length).toBe(readingsAtDrop);
+    expect(adapter.getStatus().lastReading).toBeNull();
+
+    adapter.disconnect();
+    await scale.close();
   });
 });
