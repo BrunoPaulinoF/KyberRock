@@ -81,6 +81,7 @@ import type { UpdateCustomerInput } from "../services/customers";
 import {
   FREIGHT_MODALITY_DEFAULT,
   FREIGHT_VALUE_ON_INVOICE,
+  freightCarrierGoesToInvoice,
   freightValueGoesToInvoice,
   getFreightModalityInfo,
   isFreightModalityWithFreight,
@@ -162,6 +163,10 @@ import type {
 import type { KyberRockDesktopApi } from "./desktop-api";
 import { filterClosedOperationsBySearch } from "./closed-operations-search";
 import { countOpenOperationsByProduct } from "./open-operations-product-summary";
+import {
+  filterOpenOperationsByPlate,
+  sortOpenOperationsByLoaderQueue
+} from "./open-operations-queue";
 import {
   buildOmieDeliveryStates,
   diffOmieDeliveryEvents,
@@ -433,6 +438,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [closedProductFilter, setClosedProductFilter] = useState<string>("all");
   // Busca da aba Concluidas: cliente, CNPJ/CPF ou produto (ver closed-operations-search).
   const [closedSearch, setClosedSearch] = useState("");
+  // Busca da aba Abertas: a placa do caminhao (ver open-operations-queue).
+  const [openPlateSearch, setOpenPlateSearch] = useState("");
   // Operacao cujo cadastro esta sendo corrigido para reenviar ao OMIE (alerta da aba
   // Concluidas e botao "Editar item" da fila OMIE na tela cloud).
   const [omieIssueOperationId, setOmieIssueOperationId] = useState<string | null>(null);
@@ -576,6 +583,17 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         return status.tone === "warning" || status.tone === "danger";
       }),
     [closedOperations]
+  );
+  // A fila como o operador ve na tela: as cargas ja concluidas pelo carregador no topo,
+  // na ordem em que foram concluidas (a primeira concluida e a primeira a ser fechada), e
+  // so entao o filtro da placa digitada na busca.
+  const queuedOpenOperations = useMemo(
+    () => sortOpenOperationsByLoaderQueue(openOperations),
+    [openOperations]
+  );
+  const visibleOpenOperations = useMemo(
+    () => filterOpenOperationsByPlate(queuedOpenOperations, openPlateSearch),
+    [queuedOpenOperations, openPlateSearch]
   );
   // Operacoes abertas cujo caminhao ja passou do tempo medio dentro da pedreira.
   const overtimeOpenOperations = useMemo(() => {
@@ -2798,7 +2816,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   </div>
                   <span style={styles.countBadge}>
                     {operationsTab === "open"
-                      ? `${openOperations.length} abertas`
+                      ? openPlateSearch.trim()
+                        ? `${visibleOpenOperations.length} de ${openOperations.length} abertas`
+                        : `${openOperations.length} abertas`
                       : operationsTab === "canceled"
                         ? `${filteredCanceledOperations.length} canceladas`
                         : `${filteredClosedOperations.length} concluidas`}
@@ -2842,7 +2862,41 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     </Tooltip>
                   </div>
 
-                  {operationsTab === "canceled" ? (
+                  {operationsTab === "open" ? (
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: "8px",
+                        alignItems: "center",
+                        flexWrap: "wrap"
+                      }}
+                    >
+                      <label
+                        style={{ ...styles.fieldLabel, marginBottom: 0, flex: "1 1 260px" }}
+                        title={TIPS.operations.searchOpenPlate}
+                      >
+                        Buscar placa
+                        <input
+                          type="search"
+                          value={openPlateSearch}
+                          onChange={(event) => setOpenPlateSearch(event.target.value)}
+                          placeholder="Placa do caminhao"
+                          aria-label="Buscar operacao aberta pela placa"
+                          style={{ ...styles.input, minWidth: "240px" }}
+                        />
+                      </label>
+                      {openPlateSearch.trim() ? (
+                        <IconActionButton
+                          icon="close"
+                          label="Limpar busca"
+                          tip="Limpar a busca e mostrar todas as operacoes abertas"
+                          tone="neutral"
+                          placement="bottom"
+                          onClick={() => setOpenPlateSearch("")}
+                        />
+                      ) : null}
+                    </div>
+                  ) : operationsTab === "canceled" ? (
                     <div
                       style={{
                         display: "flex",
@@ -3096,7 +3150,15 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                           <span>Entrada / Preco</span>
                           <span>Acoes</span>
                         </div>
-                        {openOperations.map((operation) => {
+                        {visibleOpenOperations.length === 0 ? (
+                          <div style={styles.emptyState}>
+                            <strong>Nenhuma operacao aberta com essa placa</strong>
+                            <span>
+                              Confira a placa digitada ou limpe a busca para ver a fila inteira.
+                            </span>
+                          </div>
+                        ) : null}
+                        {visibleOpenOperations.map((operation) => {
                           const isOvertime = overtimeOpenIds.has(operation.id);
                           return (
                             <div
@@ -5285,12 +5347,26 @@ async function resolvePaymentConditionGuard(
   return validatePaymentMethodCondition(methodLike, { raw });
 }
 
+/**
+ * A transportadora e obrigatoria na nova entrada?
+ *
+ * So quando ela vai constar na nota. Desmarcando "transportador na nota" no tipo de
+ * frete (situacao 4, sem ocorrencia de transporte), a nota sai sem transportador — nao
+ * faz sentido travar a entrada exigindo um cadastro que ninguem vai usar. O transporte
+ * proprio do cliente (modalidade legada) segue dispensado pelo mesmo motivo.
+ */
+export function isCarrierRequiredForEntry(
+  form: Pick<WeighingFormState, "freightModality">
+): boolean {
+  return !isCustomerOwnTransport(form) && freightCarrierGoesToInvoice(form.freightModality);
+}
+
 function validateWeighingForm(form: WeighingFormState): string | null {
   if (!form.vehicleId) return "Selecione a placa.";
   if (!form.customerId) return "Selecione o cliente.";
   if (!form.driverId) return "Selecione o motorista.";
   if (!form.productId) return "Selecione o produto.";
-  if (!isCustomerOwnTransport(form) && !form.carrierId) {
+  if (isCarrierRequiredForEntry(form) && !form.carrierId) {
     return "Selecione a transportadora.";
   }
   if (form.paymentMode === "manual") {
@@ -5539,6 +5615,21 @@ export function resolveCarrierPrefill(
   return "";
 }
 
+/** Visual dos botoes "Vazio" / "Editar" que ficam dentro do campo do CacheSelect. */
+const cacheSelectInlineButtonStyle: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "4px",
+  border: "1px solid var(--kr-border)",
+  borderRadius: "8px",
+  background: "var(--kr-surface-soft)",
+  color: "var(--kr-text)",
+  cursor: "pointer",
+  fontSize: "11px",
+  fontWeight: 800,
+  padding: "4px 8px"
+};
+
 function CacheSelect({
   label,
   entityType,
@@ -5546,6 +5637,7 @@ function CacheSelect({
   onChange,
   onCreateNew,
   onEditSelected,
+  onClear,
   desktopApi,
   disabled = false,
   refreshKey = 0,
@@ -5559,6 +5651,8 @@ function CacheSelect({
   onCreateNew?: () => void;
   /** Abre o cadastro do item ja selecionado para correcao (botao "Editar"). */
   onEditSelected?: () => void;
+  /** Esvazia o campo (botao "Vazio"). Sem ele o campo nao oferece a limpeza. */
+  onClear?: () => void;
   desktopApi: KyberRockDesktopApi | null;
   disabled?: boolean;
   refreshKey?: number;
@@ -5626,6 +5720,20 @@ function CacheSelect({
     setSearch("");
   }
 
+  // Botoes que moram DENTRO do campo, a direita. "Vazio" some junto com a selecao —
+  // nao ha o que limpar num campo ja vazio — e o espaco reservado a direita do texto
+  // cresce conforme os botoes visiveis, para o nome selecionado nao passar por baixo.
+  const showClearButton = Boolean(onClear) && Boolean(value) && !disabled;
+  const showEditButton = Boolean(onEditSelected) && Boolean(value) && !disabled;
+  const inlineActionsPadding =
+    showEditButton && showClearButton
+      ? "146px"
+      : showEditButton
+        ? "76px"
+        : showClearButton
+          ? "74px"
+          : undefined;
+
   function getOptionMeta(option: CacheSelectOption): string | null {
     if (entityType !== "payment_term") return null;
     const rawCount = option.raw?.installmentCount;
@@ -5665,18 +5773,11 @@ function CacheSelect({
             style={{
               ...styles.input,
               cursor: disabled ? "not-allowed" : "pointer",
-              paddingRight: onEditSelected && value ? "76px" : undefined
+              paddingRight: inlineActionsPadding
             }}
           />
-          {onEditSelected && value && !disabled ? (
-            <button
-              type="button"
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                onEditSelected();
-              }}
-              title={`Editar o cadastro de ${label.toLowerCase()}`}
+          {showClearButton || showEditButton ? (
+            <span
               style={{
                 position: "absolute",
                 right: "6px",
@@ -5684,20 +5785,40 @@ function CacheSelect({
                 transform: "translateY(-50%)",
                 display: "inline-flex",
                 alignItems: "center",
-                gap: "4px",
-                border: "1px solid var(--kr-border)",
-                borderRadius: "8px",
-                background: "var(--kr-surface-soft)",
-                color: "var(--kr-text)",
-                cursor: "pointer",
-                fontSize: "11px",
-                fontWeight: 800,
-                padding: "4px 8px"
+                gap: "4px"
               }}
             >
-              <OpIcon name="edit" />
-              Editar
-            </button>
+              {showClearButton ? (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onClear?.();
+                  }}
+                  title={`Deixar ${label.toLowerCase()} em branco`}
+                  style={cacheSelectInlineButtonStyle}
+                >
+                  <OpIcon name="close" />
+                  Vazio
+                </button>
+              ) : null}
+              {showEditButton ? (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onEditSelected?.();
+                  }}
+                  title={`Editar o cadastro de ${label.toLowerCase()}`}
+                  style={cacheSelectInlineButtonStyle}
+                >
+                  <OpIcon name="edit" />
+                  Editar
+                </button>
+              ) : null}
+            </span>
           ) : null}
         </span>
       </label>
@@ -6765,10 +6886,18 @@ function WeighingForm({
               setEditingCarrierId(form.carrierId);
               setShowCarrierModal(true);
             }}
+            // Limpar a transportadora nao mexe na placa nem no motorista: quem deixa o
+            // campo vazio quer a entrada SEM transportadora, nao recomecar o transporte.
+            onClear={() => setForm((prev) => ({ ...prev, carrierId: "" }))}
             desktopApi={desktopApi}
             refreshKey={carrierRefreshKey}
             filterIds={carrierSelectorFilterIds(availableCarrierIds)}
           />
+          {!isCarrierRequiredForEntry(form) ? (
+            <p style={{ ...styles.helperText, margin: "2px 0 0" }}>
+              Transportadora opcional: o tipo de frete escolhido nao leva transportador na nota.
+            </p>
+          ) : null}
           {form.customerId && availableCarrierIds && availableCarrierIds.length === 0 ? (
             <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" }}>
               <p style={{ ...styles.helperText, color: "#d97706", margin: 0 }}>
@@ -6804,6 +6933,7 @@ function WeighingForm({
                   .catch(() => undefined);
               }}
               onCreateNew={() => setShowVehicleModal(true)}
+              onClear={() => setForm((prev) => ({ ...prev, vehicleId: "" }))}
               desktopApi={desktopApi}
               refreshKey={vehicleRefreshKey}
             />
@@ -6813,6 +6943,7 @@ function WeighingForm({
               value={form.driverId}
               onChange={(id) => setForm({ ...form, driverId: id })}
               onCreateNew={() => setShowDriverModal(true)}
+              onClear={() => setForm((prev) => ({ ...prev, driverId: "" }))}
               desktopApi={desktopApi}
               refreshKey={driverRefreshKey}
               filterIds={getDriverFilterIds(form, availableDriverIds)}

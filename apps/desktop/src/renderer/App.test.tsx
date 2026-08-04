@@ -12,6 +12,7 @@ import {
   formatElapsedSince,
   getDriverFilterIds,
   getFiscalBillingStatus,
+  isCarrierRequiredForEntry,
   omieQueueActionLabel,
   omieQueueStatusLabel,
   previousDayIso,
@@ -127,6 +128,23 @@ describe("App", () => {
     expect(
       getDriverFilterIds(createWeighingForm({ freightModality: "none" }), ["driver-1"])
     ).toEqual(["driver-1"]);
+  });
+
+  it("so exige transportadora quando ela vai constar na nota", () => {
+    // Situacoes 1, 2 e 3: o transportador sai na nota, entao o cadastro e obrigatorio.
+    expect(isCarrierRequiredForEntry(createWeighingForm({ freightModality: "fob" }))).toBe(true);
+    expect(isCarrierRequiredForEntry(createWeighingForm({ freightModality: "cif" }))).toBe(true);
+    expect(isCarrierRequiredForEntry(createWeighingForm({ freightModality: "third_party" }))).toBe(
+      true
+    );
+
+    // Situacao 4 ("transportador na nota" desmarcado): a nota sai sem transportador,
+    // entao a entrada pode ser aberta com o campo vazio.
+    expect(isCarrierRequiredForEntry(createWeighingForm({ freightModality: "none" }))).toBe(false);
+    // Transporte proprio do cliente (legado) segue dispensado.
+    expect(
+      isCarrierRequiredForEntry(createWeighingForm({ freightModality: "own_recipient" }))
+    ).toBe(false);
   });
 
   it("restores the last valid theme mode from storage", () => {

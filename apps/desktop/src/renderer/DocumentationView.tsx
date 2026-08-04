@@ -117,11 +117,12 @@ export const documentationSections: DocumentationSection[] = [
       "Selecione placa, cliente, motorista, produto, condicao de pagamento e tabela de preco quando aplicavel.",
       "Defina frete quando houver: por conta do cliente, da pedreira ou de terceiro.",
       "Aguarde o peso estabilizar e capture a entrada.",
-      "Depois do carregamento, abra Operacoes, localize a placa e feche a saida.",
+      "Depois do carregamento, abra Operacoes e use a busca por placa para localizar o caminhao e fechar a saida.",
       "Confira peso liquido, valores, credito, frete e impressao antes de finalizar."
     ],
     details: [
       "O peso liquido e calculado pela diferenca entre saida e entrada. Saida menor ou igual a entrada deve ser corrigida antes do fechamento.",
+      "Na aba de operacoes em aberto, as cargas ja concluidas pelo carregador sobem para o topo da fila, na ordem em que foram concluidas.",
       "Se a mesma placa ja estiver em aberto, o sistema alerta para evitar duplicidade.",
       "Cancelamentos exigem motivo e ficam registrados para auditoria."
     ],
