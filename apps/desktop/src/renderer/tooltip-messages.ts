@@ -53,7 +53,8 @@ export const TIPS = {
     pending: "Pendencias que pedem atencao: pesagens paradas, faturamento pendente e logs."
   },
   insights: {
-    period: "Muda o periodo de analise dos KPIs e graficos.",
+    period:
+      "Muda o periodo dos KPIs, graficos e relatorios exportados. Em 'Personalizado', escolha a data inicial e a final.",
     exportPdf: "Exporta um relatorio em PDF para o periodo selecionado.",
     exportExcel: "Exporta a planilha detalhada em Excel para o periodo selecionado.",
     syncCloud: "Envia dados pendentes para a nuvem.",

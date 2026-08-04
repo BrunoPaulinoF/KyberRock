@@ -776,52 +776,50 @@ function registerIpcHandlers(): void {
         throw new Error("Selecione ao menos um formato de arquivo (PDF ou Excel).");
       }
 
-      const documents = runtime.buildCustomerReportDocuments(
-        customerId,
-        startDate,
-        endDate,
-        selectedVariants,
-        selectedFormats,
-        periodLabel
+      return saveReportDocuments(
+        runtime.buildCustomerReportDocuments(
+          customerId,
+          startDate,
+          endDate,
+          selectedVariants,
+          selectedFormats,
+          periodLabel
+        )
       );
+    }
+  );
 
-      const fs = await import("node:fs/promises");
-      const path = await import("node:path");
+  // Resumo comparativo de todos os clientes do periodo (uma linha por cliente).
+  ipcMain.handle(
+    "desktop:get-customers-overview",
+    (_event, startDate: string, endDate: string, periodLabel?: string) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.getCustomersOverview(startDate, endDate, periodLabel);
+    }
+  );
 
-      const writeDocument = async (
-        document: (typeof documents)[number],
-        filePath: string
-      ): Promise<void> => {
-        if (document.format === "pdf") {
-          await fs.writeFile(filePath, await renderHtmlToPdf(document.html));
-          return;
-        }
-        await fs.writeFile(filePath, document.html, "utf8");
-      };
+  ipcMain.handle(
+    "desktop:export-customers-overview",
+    async (
+      _event,
+      startDate: string,
+      endDate: string,
+      formats: Array<"pdf" | "excel">,
+      periodLabel?: string
+    ) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      if (!mainWindow) return null;
 
-      if (documents.length === 1) {
-        const [document] = documents;
-        const filePath = await pickReportFilePath(document.fileName, [
-          document.format === "pdf" ? "pdf" : "xls"
-        ]);
-        if (!filePath) return null;
-        await writeDocument(document, filePath);
-        return { files: [filePath] };
+      const selectedFormats = (formats ?? []).filter(
+        (format): format is "pdf" | "excel" => format === "pdf" || format === "excel"
+      );
+      if (selectedFormats.length === 0) {
+        throw new Error("Selecione ao menos um formato de arquivo (PDF ou Excel).");
       }
 
-      const folder = await dialog.showOpenDialog(mainWindow, {
-        title: "Escolher a pasta dos relatorios",
-        properties: ["openDirectory", "createDirectory"]
-      });
-      if (folder.canceled || folder.filePaths.length === 0) return null;
-
-      const files: string[] = [];
-      for (const document of documents) {
-        const filePath = path.join(folder.filePaths[0], document.fileName);
-        await writeDocument(document, filePath);
-        files.push(filePath);
-      }
-      return { files };
+      return saveReportDocuments(
+        runtime.buildCustomersOverviewDocuments(startDate, endDate, selectedFormats, periodLabel)
+      );
     }
   );
 
@@ -2102,6 +2100,55 @@ async function renderHtmlToPdf(html: string): Promise<Buffer> {
     win.destroy();
     await fs.unlink(tmpFile).catch(() => {});
   }
+}
+
+/**
+ * Grava em disco os documentos ja renderizados de um relatorio. Um unico arquivo usa o
+ * "salvar como" de sempre; a partir de dois, pede a pasta uma vez so em vez de abrir um
+ * dialogo por arquivo. Devolve `null` quando o operador cancela a escolha do destino.
+ */
+async function saveReportDocuments(
+  documents: Array<{ format: "pdf" | "excel"; fileName: string; html: string }>
+): Promise<{ files: string[] } | null> {
+  if (!mainWindow || documents.length === 0) return null;
+
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+
+  const writeDocument = async (
+    document: (typeof documents)[number],
+    filePath: string
+  ): Promise<void> => {
+    if (document.format === "pdf") {
+      await fs.writeFile(filePath, await renderHtmlToPdf(document.html));
+      return;
+    }
+    await fs.writeFile(filePath, document.html, "utf8");
+  };
+
+  if (documents.length === 1) {
+    const [document] = documents;
+    const filePath = await pickReportFilePath(document.fileName, [
+      document.format === "pdf" ? "pdf" : "xls"
+    ]);
+    if (!filePath) return null;
+    await writeDocument(document, filePath);
+    return { files: [filePath] };
+  }
+
+  const folder = await dialog.showOpenDialog(mainWindow, {
+    title: "Escolher a pasta dos relatorios",
+    properties: ["openDirectory", "createDirectory"]
+  });
+  if (folder.canceled || folder.filePaths.length === 0) return null;
+
+  const files: string[] = [];
+  for (const document of documents) {
+    const filePath = path.join(folder.filePaths[0], document.fileName);
+    await writeDocument(document, filePath);
+    files.push(filePath);
+  }
+  return { files };
 }
 
 async function pickReportFilePath(

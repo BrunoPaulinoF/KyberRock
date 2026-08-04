@@ -156,8 +156,11 @@ import { listUnitDevices, type UnitDeviceInfo } from "./unit-devices.js";
 import { CustomerReportService, type CustomerReportVariant } from "./customer-report.js";
 import {
   customerReportFileBaseName,
+  customersOverviewFileBaseName,
   renderCustomerReportHtml,
-  renderCustomerReportSpreadsheet
+  renderCustomerReportSpreadsheet,
+  renderCustomersOverviewHtml,
+  renderCustomersOverviewSpreadsheet
 } from "./customer-report-render.js";
 import { ReportService } from "./reports.js";
 import {
@@ -1918,6 +1921,38 @@ export class DesktopRuntime {
       this.ensureIdentity().unitId,
       periodLabel
     );
+  }
+
+  getCustomersOverview(
+    startDate: string,
+    endDate: string,
+    periodLabel?: string | null
+  ): ReturnType<CustomerReportService["getCustomersOverview"]> {
+    return this.customerReportService.getCustomersOverview(
+      startDate,
+      endDate,
+      this.ensureIdentity().unitId,
+      periodLabel
+    );
+  }
+
+  /** Resumo comparativo de todos os clientes do periodo, pronto para gravar em disco. */
+  buildCustomersOverviewDocuments(
+    startDate: string,
+    endDate: string,
+    formats: Array<"pdf" | "excel">,
+    periodLabel?: string | null
+  ): Array<{ format: "pdf" | "excel"; fileName: string; html: string }> {
+    const overview = this.getCustomersOverview(startDate, endDate, periodLabel);
+    const baseName = customersOverviewFileBaseName(overview);
+    return formats.map((format) => ({
+      format,
+      fileName: `${baseName}.${format === "pdf" ? "pdf" : "xls"}`,
+      html:
+        format === "pdf"
+          ? renderCustomersOverviewHtml(overview)
+          : renderCustomersOverviewSpreadsheet(overview)
+    }));
   }
 
   /**

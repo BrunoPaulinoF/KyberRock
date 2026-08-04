@@ -238,6 +238,32 @@ export interface CustomerReport {
   referenceDate: string;
 }
 
+/** Uma linha por cliente no resumo do periodo (ver `CustomersOverview`). */
+export interface CustomersOverviewRow {
+  customer: CustomerReportCustomerKey;
+  totals: CustomerReportTotals;
+  installmentTotals: CustomerReportInstallmentTotals;
+}
+
+/**
+ * Resumo comparativo de TODOS os clientes no periodo: um cliente por linha, do que mais
+ * faturou para o que menos faturou.
+ *
+ * Sai dos mesmos carregamentos do relatorio individual (`getCustomerReport`), so que sem
+ * filtrar o cliente — a linha de um cliente aqui bate numero a numero com o relatorio
+ * dele, em vez de ser uma segunda contagem que pode divergir.
+ */
+export interface CustomersOverview {
+  startDate: string;
+  endDate: string;
+  periodLabel: string | null;
+  /** Dia usado para classificar vencida/hoje/a vencer. */
+  referenceDate: string;
+  customers: CustomersOverviewRow[];
+  totals: CustomerReportTotals;
+  installmentTotals: CustomerReportInstallmentTotals;
+}
+
 const STATUS_LABELS: Record<string, string> = {
   draft: "Rascunho",
   entry_registered: "Entrada registrada",
@@ -270,7 +296,48 @@ interface CustomerRow {
   carrier_name: string | null;
 }
 
-interface OperationRow {
+/**
+ * Cliente dono das operacoes/parcelas carregadas. Sai junto das linhas para o resumo de
+ * "todos os clientes" agrupar sem uma segunda ida ao banco. `id` nulo e a operacao que
+ * ficou sem cliente vinculado — ela some do relatorio individual (nao ha quem escolher),
+ * mas precisa aparecer no resumo para os totais baterem com os do periodo.
+ */
+export interface CustomerReportCustomerKey {
+  id: string | null;
+  name: string;
+  document: string | null;
+}
+
+interface CustomerColumns {
+  customer_id: string | null;
+  customer_trade_name: string | null;
+  customer_legal_name: string | null;
+  customer_document: string | null;
+}
+
+const CUSTOMER_COLUMNS_SQL = `
+           o.customer_id as customer_id,
+           cust.trade_name as customer_trade_name,
+           COALESCE(cust.legal_name, o.remote_customer_name) as customer_legal_name,
+           cust.document as customer_document`;
+
+const CUSTOMER_JOIN_SQL = "LEFT JOIN customers cust ON cust.id = o.customer_id";
+
+/**
+ * Filtro de cliente aceitando "todos": com `customerId` nulo o primeiro parametro anula a
+ * comparacao e a consulta devolve o periodo inteiro. Os dois `?` recebem o mesmo valor.
+ */
+const CUSTOMER_FILTER_SQL = "AND (? IS NULL OR o.customer_id = ?)";
+
+function readCustomerKey(row: CustomerColumns): CustomerReportCustomerKey {
+  const name =
+    (row.customer_trade_name ?? "").trim() ||
+    (row.customer_legal_name ?? "").trim() ||
+    "Sem cliente";
+  return { id: row.customer_id, name, document: row.customer_document };
+}
+
+interface OperationRow extends CustomerColumns {
   id: string;
   status: string;
   operation_type: "invoice" | "internal";
@@ -359,13 +426,14 @@ export class CustomerReportService {
     const cancelledOperations = all.filter((operation) => operation.cancelled);
 
     const referenceDate = toLocalIsoDate(now);
+    // O cliente ja e um so aqui: a chave que o resumo usa para agrupar sai do relatorio.
     const installments = this.loadInstallments(
       customerId,
       startDate,
       endDate,
       unitId,
       referenceDate
-    );
+    ).map(dropCustomerKey);
 
     return {
       installments,
@@ -387,6 +455,95 @@ export class CustomerReportService {
       byMonth: groupByPeriod(operations, (op) => op.date.slice(0, 7)),
       operations,
       cancelledOperations
+    };
+  }
+
+  /**
+   * Resumo comparativo de todos os clientes com movimento no periodo. Carrega o periodo
+   * inteiro uma unica vez e agrupa por cliente em memoria, com as MESMAS funcoes de
+   * totalizacao do relatorio individual — e por isso que a linha de um cliente aqui bate
+   * com o relatorio dele.
+   *
+   * Entra na lista quem teve movimento no periodo: carregamento OU parcela vencendo nele
+   * (quem comprou antes e paga agora e dinheiro do periodo, e sem essa linha o total de
+   * "a vencer" nao fecharia com a soma das linhas). Cliente cadastrado que nao fez nem
+   * deve nada fica de fora — a lista existe para comparar quem comprou, e uma pagina de
+   * linhas zeradas so esconderia quem interessa.
+   */
+  getCustomersOverview(
+    startDate: string,
+    endDate: string,
+    unitId: string,
+    periodLabel?: string | null,
+    now: Date = new Date()
+  ): CustomersOverview {
+    const referenceDate = toLocalIsoDate(now);
+    const rows = this.loadOperations(null, startDate, endDate, unitId);
+    const installments = this.loadInstallments(null, startDate, endDate, unitId, referenceDate);
+
+    // Chaveado pelo id do cliente; as operacoes sem cliente vinculado caem todas na mesma
+    // linha "Sem cliente" (id nulo) em vez de virar uma linha por operacao.
+    const buckets = new Map<
+      string,
+      {
+        customer: CustomerReportCustomerKey;
+        operations: CustomerReportOperation[];
+        cancelled: CustomerReportOperation[];
+        installments: CustomerReportInstallment[];
+      }
+    >();
+    const bucketFor = (customer: CustomerReportCustomerKey) => {
+      const key = customer.id ?? "";
+      const existing = buckets.get(key);
+      if (existing) return existing;
+      const created = {
+        customer,
+        operations: [] as CustomerReportOperation[],
+        cancelled: [] as CustomerReportOperation[],
+        installments: [] as CustomerReportInstallment[]
+      };
+      buckets.set(key, created);
+      return created;
+    };
+
+    const allOperations: CustomerReportOperation[] = [];
+    const allCancelled: CustomerReportOperation[] = [];
+    for (const row of rows) {
+      const operation = mapOperation(row);
+      const bucket = bucketFor(readCustomerKey(row));
+      if (operation.cancelled) {
+        bucket.cancelled.push(operation);
+        allCancelled.push(operation);
+      } else {
+        bucket.operations.push(operation);
+        allOperations.push(operation);
+      }
+    }
+    for (const { customer, ...installment } of installments) {
+      bucketFor(customer).installments.push(installment);
+    }
+
+    const customers = [...buckets.values()]
+      .map((bucket) => ({
+        customer: bucket.customer,
+        totals: buildTotals(bucket.operations, bucket.cancelled),
+        installmentTotals: buildInstallmentTotals(bucket.installments)
+      }))
+      // Maior faturamento primeiro; empate desempata pelo nome para a ordem ser estavel.
+      .sort(
+        (a, b) =>
+          b.totals.totalCents - a.totals.totalCents ||
+          a.customer.name.localeCompare(b.customer.name, "pt-BR")
+      );
+
+    return {
+      startDate,
+      endDate,
+      periodLabel: periodLabel ?? null,
+      referenceDate,
+      customers,
+      totals: buildTotals(allOperations, allCancelled),
+      installmentTotals: buildInstallmentTotals(installments.map(dropCustomerKey))
     };
   }
 
@@ -431,15 +588,16 @@ export class CustomerReportService {
     };
   }
 
+  /** `customerId` nulo carrega o periodo inteiro (resumo de todos os clientes). */
   private loadOperations(
-    customerId: string,
+    customerId: string | null,
     startDate: string,
     endDate: string,
     unitId: string
   ): OperationRow[] {
     return this.db
       .prepare(
-        `SELECT
+        `SELECT${CUSTOMER_COLUMNS_SQL},
            o.id, o.status, o.operation_type, o.cancel_reason, o.created_at,
            p.code as product_code,
            COALESCE(p.description, o.remote_product_description) as product_description,
@@ -463,15 +621,16 @@ export class CustomerReportService {
          LEFT JOIN carriers ca ON ca.id = o.carrier_id
          LEFT JOIN payment_methods pm ON pm.id = o.payment_method_id
          LEFT JOIN payment_terms pt ON pt.id = o.payment_term_id
+         ${CUSTOMER_JOIN_SQL}
          WHERE o.unit_id = ?
-           AND o.customer_id = ?
+           ${CUSTOMER_FILTER_SQL}
            AND o.deleted_at IS NULL
            AND o.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST}, 'cancelled')
            AND date(o.created_at) >= date(?)
            AND date(o.created_at) <= date(?)
          ORDER BY o.created_at ASC`
       )
-      .all(unitId, customerId, startDate, endDate) as OperationRow[];
+      .all(unitId, customerId, customerId, startDate, endDate) as OperationRow[];
   }
 
   /**
@@ -481,16 +640,17 @@ export class CustomerReportService {
    * limite superior de data de operacao porque uma operacao posterior ao periodo so
    * geraria vencimentos posteriores ainda.
    */
+  /** `customerId` nulo carrega o periodo inteiro (resumo de todos os clientes). */
   private loadInstallments(
-    customerId: string,
+    customerId: string | null,
     startDate: string,
     endDate: string,
     unitId: string,
     referenceDate: string
-  ): CustomerReportInstallment[] {
+  ): ScopedInstallment[] {
     const rows = this.db
       .prepare(
-        `SELECT
+        `SELECT${CUSTOMER_COLUMNS_SQL},
            o.id, o.created_at, o.exit_weight_captured_at as exit_at,
            o.total_cents, o.manual_installments, o.omie_sales_order_id,
            COALESCE(p.description, o.remote_product_description) as product_description,
@@ -510,17 +670,19 @@ export class CustomerReportService {
            ON opt.company_id = pt.company_id
           AND opt.code = pt.omie_parcela_code
           AND opt.is_active = 1
+         ${CUSTOMER_JOIN_SQL}
          WHERE o.unit_id = ?
-           AND o.customer_id = ?
+           ${CUSTOMER_FILTER_SQL}
            AND o.deleted_at IS NULL
            AND o.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
            AND date(COALESCE(o.exit_weight_captured_at, o.created_at)) <= date(?)
          ORDER BY o.created_at ASC`
       )
-      .all(unitId, customerId, endDate) as InstallmentSourceRow[];
+      .all(unitId, customerId, customerId, endDate) as InstallmentSourceRow[];
 
-    const installments: CustomerReportInstallment[] = [];
+    const installments: ScopedInstallment[] = [];
     for (const row of rows) {
+      const customer = readCustomerKey(row);
       const baseDate = (row.exit_at ?? row.created_at).slice(0, 10);
       const dueDays = resolveInstallmentDueDays(row);
       const amounts = splitInstallmentAmounts(row.total_cents ?? 0, dueDays.length);
@@ -530,6 +692,7 @@ export class CustomerReportService {
         if (dueDate < startDate || dueDate > endDate) return;
         const daysUntilDue = daysBetweenIsoDates(referenceDate, dueDate);
         installments.push({
+          customer,
           operationId: row.id,
           operationDate: baseDate,
           dueDate,
@@ -553,7 +716,17 @@ export class CustomerReportService {
   }
 }
 
-interface InstallmentSourceRow {
+/** Parcela com o cliente dono junto, para o resumo agrupar sem reconsultar o banco. */
+type ScopedInstallment = CustomerReportInstallment & { customer: CustomerReportCustomerKey };
+
+/** Tira o cliente da parcela: quem ja sabe de quem e a parcela nao carrega a chave adiante. */
+function dropCustomerKey(scoped: ScopedInstallment): CustomerReportInstallment {
+  const { customer, ...installment } = scoped;
+  void customer;
+  return installment;
+}
+
+interface InstallmentSourceRow extends CustomerColumns {
   id: string;
   created_at: string;
   exit_at: string | null;

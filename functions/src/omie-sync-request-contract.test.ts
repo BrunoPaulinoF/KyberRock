@@ -149,6 +149,8 @@ describe("cliente ja cadastrado no OMIE", () => {
             "ERROR: Cliente já cadastrado para o CPF/CNPJ [456.487.238-90] com o Id [11474590160] e código de integração [f5f664d2-7243-4a90-936a-f285fbd7df97] ! (add)"
         })
       )
+      // ConsultarCliente que le as tags atuais antes de alterar (ver mergeOmieCustomerTags).
+      .mockResolvedValueOnce(jsonResponse({ tags: [{ tag: "cliente" }] }))
       .mockResolvedValueOnce(jsonResponse({ ok: true }));
     const queue = new OmieQueueManager({ fetchFn, minDelayMs: 0, sleepFn: async () => undefined });
 
@@ -159,16 +161,20 @@ describe("cliente ja cadastrado no OMIE", () => {
     });
 
     expect(id).toBe(11474590160);
-    expect(fetchFn).toHaveBeenCalledTimes(2);
-    const secondBody = readRequestBody(fetchFn, 1);
-    expect(secondBody.call).toBe("AlterarCliente");
-    expect(secondBody.param).toEqual([
-      expect.objectContaining({ codigo_cliente_omie: 11474590160 })
+    expect(fetchFn).toHaveBeenCalledTimes(3);
+    const updateRequest = readRequestBody(fetchFn, 2);
+    expect(updateRequest.call).toBe("AlterarCliente");
+    expect(updateRequest.param).toEqual([
+      expect.objectContaining({
+        codigo_cliente_omie: 11474590160,
+        // A tag do papel entra sem apagar a que o cadastro ja tinha no OMIE.
+        tags: [{ tag: "cliente" }, { tag: "transportadora" }]
+      })
     ]);
     // O cadastro adotado tem outro codigo de integracao no OMIE; enviar o nosso
     // faria o AlterarCliente falhar com "Cliente nao cadastrado para o Codigo
     // de Integracao". O update deve identificar apenas pelo codigo_cliente_omie.
-    const updateParam = (secondBody.param as Array<Record<string, unknown>>)[0];
+    const updateParam = (updateRequest.param as Array<Record<string, unknown>>)[0];
     expect(updateParam).not.toHaveProperty("codigo_cliente_integracao");
   });
 
@@ -184,6 +190,7 @@ describe("cliente ja cadastrado no OMIE", () => {
             "ERROR: Cliente já cadastrado para o Código de Integração [KR3VJZ2L7RLIMCH] com o nCod [11489512176]!"
         })
       )
+      .mockResolvedValueOnce(jsonResponse({ tags: [{ tag: "transportadora" }] }))
       .mockResolvedValueOnce(jsonResponse({ ok: true }));
     const queue = new OmieQueueManager({ fetchFn, minDelayMs: 0, sleepFn: async () => undefined });
 
@@ -194,11 +201,15 @@ describe("cliente ja cadastrado no OMIE", () => {
     });
 
     expect(id).toBe(11489512176);
-    expect(fetchFn).toHaveBeenCalledTimes(2);
-    const secondBody = readRequestBody(fetchFn, 1);
-    expect(secondBody.call).toBe("AlterarCliente");
-    expect(secondBody.param).toEqual([
-      expect.objectContaining({ codigo_cliente_omie: 11489512176 })
+    expect(fetchFn).toHaveBeenCalledTimes(3);
+    const updateRequest = readRequestBody(fetchFn, 2);
+    expect(updateRequest.call).toBe("AlterarCliente");
+    expect(updateRequest.param).toEqual([
+      expect.objectContaining({
+        codigo_cliente_omie: 11489512176,
+        // Cadastro que tambem transporta continua transportadora e ganha o papel cliente.
+        tags: [{ tag: "transportadora" }, { tag: "cliente" }]
+      })
     ]);
   });
 
@@ -212,6 +223,7 @@ describe("cliente ja cadastrado no OMIE", () => {
         jsonResponse({ faultstring: "ERROR: Cliente já cadastrado para o Código de Integração!" })
       )
       .mockResolvedValueOnce(jsonResponse({ codigo_cliente_omie: 555 }))
+      .mockResolvedValueOnce(jsonResponse({ tags: [] }))
       .mockResolvedValueOnce(jsonResponse({ ok: true }));
     const queue = new OmieQueueManager({ fetchFn, minDelayMs: 0, sleepFn: async () => undefined });
 
@@ -225,7 +237,7 @@ describe("cliente ja cadastrado no OMIE", () => {
     expect(readRequestBody(fetchFn, 1).param).toEqual([
       { codigo_cliente_integracao: toOmieIntegrationCode("cliente-sem-codigo-na-mensagem") }
     ]);
-    const updateBody = readRequestBody(fetchFn, 2);
+    const updateBody = readRequestBody(fetchFn, 3);
     expect(updateBody.call).toBe("AlterarCliente");
     expect(updateBody.param).toEqual([expect.objectContaining({ codigo_cliente_omie: 555 })]);
   });
@@ -241,11 +253,100 @@ describe("cliente ja cadastrado no OMIE", () => {
     });
 
     expect(id).toBe(777);
-    const body = readRequestBody(fetchFn);
+    const body = readRequestBody(fetchFn, 1);
     expect(body.call).toBe("AlterarCliente");
     const param = (body.param as Array<Record<string, unknown>>)[0];
     expect(param.codigo_cliente_omie).toBe(777);
     expect(param).not.toHaveProperty("codigo_cliente_integracao");
+  });
+});
+
+// O KyberRock e a origem do papel do cadastro: quem e cadastrado como cliente na balanca
+// tem que chegar no OMIE marcado "cliente", e quem e cadastrado como transportadora tem
+// que chegar marcado "transportadora" — nunca as duas coisas por acidente do transporte.
+describe("tag do papel no cadastro enviado ao OMIE", () => {
+  it("cria o cliente com a tag cliente e a transportadora com a tag transportadora", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse({ codigo_cliente_omie: 1 }));
+    const queue = new OmieQueueManager({ fetchFn, minDelayMs: 0, sleepFn: async () => undefined });
+
+    await pushCustomerToOmieCore(queue, credentials, {
+      localCustomerId: "cliente-novo",
+      razaoSocial: "Cliente Novo",
+      cnpjCpf: "12345678000190"
+    });
+    await pushCarrierToOmie(queue, credentials, {
+      localCustomerId: "carrier:novo",
+      name: "Transportadora Nova",
+      cnpjCpf: "98765432000199"
+    });
+
+    const customerParam = (readRequestBody(fetchFn, 0).param as Array<Record<string, unknown>>)[0];
+    expect(readRequestBody(fetchFn, 0).call).toBe("IncluirCliente");
+    expect(customerParam.tags).toEqual([{ tag: "cliente" }]);
+
+    const carrierParam = (readRequestBody(fetchFn, 1).param as Array<Record<string, unknown>>)[0];
+    expect(readRequestBody(fetchFn, 1).call).toBe("IncluirCliente");
+    // A transportadora nao pode sair daqui marcada tambem como cliente: no pull seguinte
+    // ela voltaria para a lista de clientes da balanca.
+    expect(carrierParam.tags).toEqual([{ tag: "transportadora" }]);
+  });
+
+  it("garante a tag do papel na alteracao sem apagar as tags que o cadastro ja tem", async () => {
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ tags: [{ tag: "Fornecedor" }] }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+    const queue = new OmieQueueManager({ fetchFn, minDelayMs: 0, sleepFn: async () => undefined });
+
+    await pushCustomerToOmieCore(queue, credentials, {
+      localCustomerId: "cliente-existente",
+      omieCustomerId: 4242,
+      razaoSocial: "Fornecedor Que Tambem Compra"
+    });
+
+    expect(readRequestBody(fetchFn, 0)).toMatchObject({ call: "ConsultarCliente" });
+    const updateParam = (readRequestBody(fetchFn, 1).param as Array<Record<string, unknown>>)[0];
+    expect(updateParam.tags).toEqual([{ tag: "Fornecedor" }, { tag: "cliente" }]);
+  });
+
+  it("nao repete a tag do papel que o cadastro ja tem no OMIE", async () => {
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ tags: [{ tag: "Transportadora" }] }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+    const queue = new OmieQueueManager({ fetchFn, minDelayMs: 0, sleepFn: async () => undefined });
+
+    await pushCarrierToOmie(queue, credentials, {
+      localCustomerId: "carrier:existente",
+      omieCustomerId: 909,
+      name: "Transportadora Existente"
+    });
+
+    const updateParam = (readRequestBody(fetchFn, 1).param as Array<Record<string, unknown>>)[0];
+    // Uma so entrada: a tag do papel nao duplica por diferenca de caixa/acento.
+    expect(updateParam.tags).toEqual([{ tag: "transportadora" }]);
+  });
+
+  it("alterando com o cadastro ilegivel no OMIE, envia ao menos a tag do papel", async () => {
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ faultstring: "ERROR: Cliente nao encontrado" }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+    const queue = new OmieQueueManager({
+      fetchFn,
+      minDelayMs: 0,
+      maxRetries: 0,
+      sleepFn: async () => undefined
+    });
+
+    await pushCarrierToOmie(queue, credentials, {
+      localCustomerId: "carrier:ilegivel",
+      omieCustomerId: 31,
+      name: "Transportadora Ilegivel"
+    });
+
+    const updateParam = (readRequestBody(fetchFn, 1).param as Array<Record<string, unknown>>)[0];
+    expect(updateParam.tags).toEqual([{ tag: "transportadora" }]);
   });
 });
 

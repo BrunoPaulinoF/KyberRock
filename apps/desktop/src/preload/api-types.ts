@@ -48,7 +48,8 @@ import type {
 import type {
   CustomerReport as CustomerFullReport,
   CustomerReportOption,
-  CustomerReportVariant
+  CustomerReportVariant,
+  CustomersOverview
 } from "../services/customer-report";
 import type { CreateCustomerInput, UpdateCustomerInput } from "../services/customers";
 import type { UpdatePaymentMethodInput } from "../services/payment-methods";
@@ -238,6 +239,18 @@ export interface KyberRockDesktopApi {
   exportTruckControlPdf: (startDate: string, endDate: string) => Promise<{ path: string } | null>;
   exportReportExcel: (startDate: string, endDate: string) => Promise<{ path: string } | null>;
   listCustomerReportCustomers: () => Promise<CustomerReportOption[]>;
+  /** Resumo comparativo de todos os clientes com movimento no periodo. */
+  getCustomersOverview: (
+    startDate: string,
+    endDate: string,
+    periodLabel?: string
+  ) => Promise<CustomersOverview>;
+  exportCustomersOverview: (
+    startDate: string,
+    endDate: string,
+    formats: Array<"pdf" | "excel">,
+    periodLabel?: string
+  ) => Promise<{ files: string[] } | null>;
   getCustomerReport: (
     customerId: string,
     startDate: string,

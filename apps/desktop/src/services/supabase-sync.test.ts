@@ -790,7 +790,10 @@ describe("supabase sync", () => {
     }
   });
 
-  it("pushes local carriers to OMIE as customers tagged as transportadora", async () => {
+  // A transportadora vai pela acao `push_carrier`, nao pela `push_customer`: esta ultima
+  // marca o cadastro como "cliente" no OMIE por definicao, e a transportadora voltaria na
+  // sincronizacao seguinte para a lista de clientes da balanca.
+  it("pushes local carriers to OMIE through the carrier action", async () => {
     const database = createDatabase();
 
     try {
@@ -805,13 +808,11 @@ describe("supabase sync", () => {
         body: expect.objectContaining({
           deviceId: "device-1",
           deviceToken: "device-token-1",
-          action: "push_customer",
+          action: "push_carrier",
           payload: expect.objectContaining({
             localCustomerId: "carrier:carrier-1",
-            razaoSocial: "Transportadora Local LTDA",
-            nomeFantasia: "Transportadora Local LTDA",
-            cnpjCpf: "22222222000182",
-            tags: ["transportadora"]
+            name: "Transportadora Local LTDA",
+            cnpjCpf: "22222222000182"
           })
         })
       });
@@ -1165,9 +1166,10 @@ describe("supabase sync", () => {
 
       expect(invokeMock).toHaveBeenCalledWith("omie-sync", {
         body: expect.objectContaining({
+          action: "push_carrier",
           payload: expect.objectContaining({
             omieCustomerId: 777,
-            tags: ["transportadora"]
+            name: "Transportadora Local LTDA"
           })
         })
       });
