@@ -1,3 +1,4 @@
+import { renderTotalBar } from "./report-total-bar.js";
 import type {
   CustomerReport,
   CustomerReportCarrierRow,
@@ -352,6 +353,13 @@ export function renderCustomerReportHtml(
   )}</div></div>
 ${kpiCards(kpis)}
 ${sections.join("\n")}
+${renderTotalBar([
+  { label: "Carregamentos", value: num(totals.operations) },
+  { label: "Tonelagem", value: formatTons(totals.netWeightKg) },
+  { label: "Produto", value: formatBRL(totals.productCents) },
+  { label: "Frete", value: formatBRL(totals.freightCents) },
+  { label: "Total comprado", value: formatBRL(totals.totalCents), emphasis: true }
+])}
 </body></html>`;
 }
 
@@ -807,6 +815,13 @@ export function renderCustomersOverviewHtml(
 ${kpiCards(kpis)}
 ${section("Clientes no periodo", body)}
 <p class="note">${escapeHtml(INSTALLMENT_NOTE)}</p>
+${renderTotalBar([
+  { label: "Clientes", value: num(overview.customers.length) },
+  { label: "Carregamentos", value: num(totals.operations) },
+  { label: "Tonelagem", value: formatTons(totals.netWeightKg) },
+  { label: "A vencer", value: formatBRL(overview.installmentTotals.upcomingCents) },
+  { label: "Total comprado", value: formatBRL(totals.totalCents), emphasis: true }
+])}
 </body></html>`;
 }
 

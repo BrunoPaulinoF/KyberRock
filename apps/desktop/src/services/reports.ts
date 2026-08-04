@@ -1,4 +1,5 @@
 import type { DesktopDatabase } from "../database/sqlite.js";
+import { renderTotalBar } from "./report-total-bar.js";
 import {
   CLOSED_OPERATION_STATUS_SQL_LIST,
   isClosedOperationStatus
@@ -701,7 +702,7 @@ export class ReportService {
       })
       .join("");
 
-    return `<!doctype html><html><head><meta charset="utf-8" /><style>body{font-family:Arial,sans-serif;color:#0f172a;margin:28px}h1{margin:0 0 4px;font-size:22px}p{margin:0 0 18px;color:#475569}.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:18px 0}.card{border:1px solid #cbd5e1;border-radius:10px;padding:10px}.card span{display:block;color:#64748b;font-size:12px}.card strong{font-size:16px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #cbd5e1;padding:7px;text-align:left;vertical-align:top}th{background:#e2e8f0}.num{text-align:right}@page{size:A4;margin:14mm}</style></head><body><h1>Controle de caminhoes</h1><p>Periodo: ${escapeHtml(
+    return `<!doctype html><html><head><meta charset="utf-8" /><style>body{font-family:Arial,sans-serif;color:#0f172a;margin:28px}h1{margin:0 0 4px;font-size:22px}p{margin:0 0 18px;color:#475569}.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:18px 0}.card{border:1px solid #cbd5e1;border-radius:10px;padding:10px}.card span{display:block;color:#64748b;font-size:12px}.card strong{font-size:16px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #cbd5e1;padding:7px;text-align:left;vertical-align:top}th{background:#e2e8f0}.num{text-align:right}thead{display:table-header-group}tr{page-break-inside:avoid}@page{size:A4;margin:14mm}</style></head><body><h1>Controle de caminhoes</h1><p>Periodo: ${escapeHtml(
       startDate
     )} a ${escapeHtml(
       endDate
@@ -713,7 +714,12 @@ export class ReportService {
       maximumFractionDigits: 2
     })} t</strong></div></section><table><thead><tr><th>Placa</th><th>Motorista</th><th>Operacoes</th><th>Tempo medio</th><th>Tempo total</th><th>Peso kg</th><th>Peso por produto</th></tr></thead><tbody>${
       truckRows || '<tr><td colspan="7">Sem operacoes no periodo.</td></tr>'
-    }</tbody></table></body></html>`;
+    }</tbody></table>${renderTotalBar([
+      { label: "Caminhoes", value: report.trucks.length.toLocaleString("pt-BR") },
+      { label: "Operacoes", value: report.totalOperations.toLocaleString("pt-BR") },
+      { label: "Tempo medio", value: formatMinutes(report.averageMinutes) },
+      { label: "Tonelagem", value: formatTons(report.totalNetWeightKg), emphasis: true }
+    ])}</body></html>`;
   }
 
   exportRangeToHtml(startDate: string, endDate: string, unitId: string): string {
@@ -729,7 +735,13 @@ export class ReportService {
       )
       .join("");
 
-    return `<!doctype html><html><head><meta charset="utf-8" /><style>body{font-family:Arial,sans-serif;color:#0f172a;margin:28px}h1{margin:0 0 4px;font-size:22px}p{margin:0 0 18px;color:#475569}.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:18px 0}.card{border:1px solid #cbd5e1;border-radius:10px;padding:10px}.card span{display:block;color:#64748b;font-size:12px}.card strong{font-size:16px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #cbd5e1;padding:7px;text-align:left}th{background:#e2e8f0}.num{text-align:right}tfoot td{font-weight:bold;background:#f8fafc}thead{display:table-header-group}tfoot{display:table-row-group}tr{page-break-inside:avoid}@page{size:A4;margin:14mm}</style></head><body><h1>Relatorio KyberRock</h1><p>Periodo: ${escapeHtml(startDate)} a ${escapeHtml(endDate)}</p><section class="summary"><div class="card"><span>Carregamentos</span><strong>${operations.length}</strong></div><div class="card"><span>Tonelagem</span><strong>${(totalWeight / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} t</strong></div><div class="card"><span>Produto</span><strong>${this.formatCurrency(totalProduct)}</strong></div><div class="card"><span>Total</span><strong>${this.formatCurrency(total)}</strong></div></section><table><thead><tr><th>Data</th><th>Cliente</th><th>Produto</th><th>Peso kg</th><th>Produto</th><th>Frete</th><th>Total</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="3">TOTAL</td><td class="num">${totalWeight.toLocaleString("pt-BR")}</td><td class="num">${this.formatCurrency(totalProduct)}</td><td class="num">${this.formatCurrency(totalFreight)}</td><td class="num">${this.formatCurrency(total)}</td></tr></tfoot></table></body></html>`;
+    return `<!doctype html><html><head><meta charset="utf-8" /><style>body{font-family:Arial,sans-serif;color:#0f172a;margin:28px}h1{margin:0 0 4px;font-size:22px}p{margin:0 0 18px;color:#475569}.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:18px 0}.card{border:1px solid #cbd5e1;border-radius:10px;padding:10px}.card span{display:block;color:#64748b;font-size:12px}.card strong{font-size:16px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #cbd5e1;padding:7px;text-align:left}th{background:#e2e8f0}.num{text-align:right}tfoot td{font-weight:bold;background:#f8fafc}thead{display:table-header-group}tfoot{display:table-row-group}tr{page-break-inside:avoid}@page{size:A4;margin:14mm}</style></head><body><h1>Relatorio KyberRock</h1><p>Periodo: ${escapeHtml(startDate)} a ${escapeHtml(endDate)}</p><section class="summary"><div class="card"><span>Carregamentos</span><strong>${operations.length}</strong></div><div class="card"><span>Tonelagem</span><strong>${(totalWeight / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} t</strong></div><div class="card"><span>Produto</span><strong>${this.formatCurrency(totalProduct)}</strong></div><div class="card"><span>Total</span><strong>${this.formatCurrency(total)}</strong></div></section><table><thead><tr><th>Data</th><th>Cliente</th><th>Produto</th><th>Peso kg</th><th>Produto</th><th>Frete</th><th>Total</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="3">TOTAL</td><td class="num">${totalWeight.toLocaleString("pt-BR")}</td><td class="num">${this.formatCurrency(totalProduct)}</td><td class="num">${this.formatCurrency(totalFreight)}</td><td class="num">${this.formatCurrency(total)}</td></tr></tfoot></table>${renderTotalBar([
+      { label: "Carregamentos", value: operations.length.toLocaleString("pt-BR") },
+      { label: "Tonelagem", value: formatTons(totalWeight) },
+      { label: "Produto", value: this.formatCurrency(totalProduct) },
+      { label: "Frete", value: this.formatCurrency(totalFreight) },
+      { label: "Total", value: this.formatCurrency(total), emphasis: true }
+    ])}</body></html>`;
   }
 
   // Relatorio "Painel de Insights": documento A4 estruturado (KPIs, mix de operacoes,
@@ -890,6 +902,12 @@ tfoot td{font-weight:bold;background:#eef2ff;border-top:2px solid var(--brand)}
     )}</td><td class="num">${formatTons(weightKg)}</td><td class="num">${formatBRL(
       totalCents
     )}</td></tr></tfoot></table></section>
+${renderTotalBar([
+  { label: "Operacoes", value: operations.toLocaleString("pt-BR") },
+  { label: "Peso liquido", value: formatTons(weightKg) },
+  { label: "Ticket medio", value: formatBRL(ticketCents) },
+  { label: "Faturamento", value: formatBRL(totalCents), emphasis: true }
+])}
 </body></html>`;
   }
 
