@@ -2087,10 +2087,14 @@ export class DesktopRuntime {
         reportType: "sales",
         bundleLabel: bundle.label
       });
+      // Vendas vai em PDF (mesmo HTML A4 do relatorio da tela) — o anexo era um
+      // `.xls` de tabelas HTML, que muitos destinatarios abriam no celular sem
+      // Excel instalado.
+      const salesPdf = await renderPdf(this.getReportHtml(bundle.startDate, bundle.endDate));
       attachments.push({
-        filename: `vendas-${suffix}.xls`,
-        mimetype: "application/vnd.ms-excel",
-        content: Buffer.from(this.getReportHtml(bundle.startDate, bundle.endDate), "utf8"),
+        filename: `vendas-${suffix}.pdf`,
+        mimetype: "application/pdf",
+        content: salesPdf,
         reportType: "sales",
         bundleLabel: bundle.label
       });

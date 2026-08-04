@@ -1,6 +1,6 @@
 // Agendamento local dos envios automaticos de relatorios (e-mail + WhatsApp),
 // configurado na tela de Relatorios. O desktop e quem gera os anexos (PDF das
-// telas de Insights/Controle de Caminhoes + Excel) e envia — a nuvem nao tem
+// telas de Insights, Vendas e Controle de Caminhoes) e envia — a nuvem nao tem
 // como renderizar os mesmos documentos das telas.
 //
 // Pacotes ("bundles") e seus periodos:
