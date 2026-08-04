@@ -1266,6 +1266,83 @@ describe("weighing operations", () => {
     }
   });
 
+  // A aba Fiscal do cadastro do cliente alimenta os "Enderecos de e-mail que recebem a NF"
+  // da propria operacao no OMIE: o espelho no cadastro (email_fatura) nao preenchia esse
+  // campo do pedido, entao a tela de e-mails da operacao nascia vazia.
+  it("sends every fiscal-tab email of the customer as the invoice recipients of the order", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database
+        .prepare(
+          `UPDATE customers
+             SET omie_customer_id = 456,
+                 document = '12345678000195',
+                 email = 'contato@cliente.com',
+                 fiscal_emails = 'fiscal@cliente.com, financeiro@cliente.com'
+           WHERE id = 'customer-1'`
+        )
+        .run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      const built = buildOmieBillingJob(database, operation.id);
+
+      expect(built!.payload.invoiceEmails).toBe("fiscal@cliente.com, financeiro@cliente.com");
+      // O e-mail de CONTATO continua sendo outra coisa: ele nao decide quem recebe a nota.
+      expect(built!.payload.customer?.email).toBe("contato@cliente.com");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("leaves the order invoice recipients empty when the customer has no fiscal emails", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database
+        .prepare(
+          "UPDATE customers SET omie_customer_id = 456, document = '12345678000195', fiscal_emails = NULL WHERE id = 'customer-1'"
+        )
+        .run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      // Vazio: o edge nao manda o campo e o OMIE cai no cadastro do cliente.
+      expect(buildOmieBillingJob(database, operation.id)!.payload.invoiceEmails).toBe("");
+    } finally {
+      database.close();
+    }
+  });
+
   it("sends the customer cadastro with the default NF-e email when the customer has none", () => {
     const database = createDatabase();
 

@@ -12,8 +12,10 @@ import {
   extractOmieRequiredFields,
   formatOmieEmailList,
   formatOmieInvoiceEmailList,
+  formatOmieOrderInvoiceEmailList,
   mergeOmieCustomerTags,
   OMIE_INVOICE_EMAIL_FIELD_MAX_LENGTH,
+  OMIE_ORDER_INVOICE_EMAIL_FIELD_MAX_LENGTH,
   pushCustomerToOmieCore,
   syncCustomerInvoiceEmails,
   toOmieIntegrationCode,
@@ -243,6 +245,29 @@ Deno.test("formatOmieInvoiceEmailList respeita o limite do email_fatura sem cort
 
   assert(sent.length <= OMIE_INVOICE_EMAIL_FIELD_MAX_LENGTH);
   assert(sent.split(", ").every((email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)));
+});
+
+// O campo do DOCUMENTO (utilizar_emails do pedido / Email.cEnviarPara da OS) nao tem o
+// limite de 200 do email_fatura do cadastro: cortar a aba Fiscal ali deixaria
+// destinatarios de fora sem necessidade.
+Deno.test("formatOmieOrderInvoiceEmailList leva a aba fiscal inteira para o documento", () => {
+  const emails = Array.from(
+    { length: 20 },
+    (_unused, index) => `destinatario${index}@empresa.com.br`
+  ).join(",");
+  const sent = formatOmieOrderInvoiceEmailList(emails);
+
+  assert(sent.length <= OMIE_ORDER_INVOICE_EMAIL_FIELD_MAX_LENGTH);
+  assert(sent.length > OMIE_INVOICE_EMAIL_FIELD_MAX_LENGTH);
+  assert(sent.split(", ").every((email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)));
+  // Mesma normalizacao da aba fiscal: minusculas, virgula simples, sem repetidos.
+  assertEquals(
+    formatOmieOrderInvoiceEmailList("Fiscal@Cliente.com; fiscal@cliente.com , nota@cliente.com"),
+    "fiscal@cliente.com, nota@cliente.com"
+  );
+  // Sem aba fiscal -> vazio, e o campo nem e enviado no pedido/OS.
+  assertEquals(formatOmieOrderInvoiceEmailList("   "), "");
+  assertEquals(formatOmieOrderInvoiceEmailList(undefined), "");
 });
 
 Deno.test(

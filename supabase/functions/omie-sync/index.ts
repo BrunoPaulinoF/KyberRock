@@ -8,6 +8,7 @@ import {
   buildCustomerPayload,
   buildCustomerUpdateBody,
   customerRegistrationFaultMessage,
+  formatOmieOrderInvoiceEmailList,
   pushCarrierToOmie as pushCarrierToOmieCore,
   resolveDuplicateCustomerId,
   syncCustomerInvoiceEmails as syncCustomerInvoiceEmailsCore,
@@ -313,6 +314,16 @@ type CreateOrderPayload = {
    * pedido: ele segue sem transportadora, como antes.
    */
   carrier?: PushCarrierPayload;
+  /**
+   * Destinatarios da NF DESTE documento: os e-mails da aba Fiscal do cadastro do cliente,
+   * enviados pelo desktop junto do pedido. Vao para "Enderecos de e-mail que recebem a NF"
+   * do pedido de venda (`informacoes_adicionais.utilizar_emails`) e da OS
+   * (`Email.cEnviarPara`).
+   *
+   * Ausente (desktop antigo) -> cai no `customer.fiscalEmails` do cadastro que sobe junto.
+   * Vazio nos dois -> o campo nao e enviado e o OMIE usa o cadastro do cliente, como antes.
+   */
+  invoiceEmails?: string;
   idempotencyKey: string;
 };
 
@@ -3034,51 +3045,51 @@ async function submitOmieOrder(
       throw new Error("productOmieId obrigatorio para pedido de venda");
     }
     const parcelamento = buildOrderParcelamento(payload);
-    const response = await callOmie<unknown, unknown>(
-      credentials,
-      "/produtos/pedido/",
-      "IncluirPedido",
-      {
-        cabecalho: {
-          codigo_pedido_integracao: integrationCode,
-          codigo_cliente: customerOmieId,
-          data_previsao: toOmieDate(payload.issueDate),
-          // Etapa "50" = coluna "Faturar" do kanban de Vendas do OMIE: o pedido chega
-          // pronto para faturar, e a emissao da NF-e e feita DENTRO do OMIE.
-          etapa: "50",
-          ...parcelamento.cabecalho,
-          quantidade_itens: 1
-        },
-        det: [
-          {
-            ide: { codigo_item_integracao: toOmieIntegrationCode(`${payload.idempotencyKey}:1`) },
-            produto: {
-              codigo_produto: payload.productOmieId,
-              quantidade: payload.quantity,
-              valor_unitario: payload.unitPrice,
-              tipo_desconto: "P",
-              percentual_desconto: 0
-            }
+    const buildSalesOrderBody = (invoiceEmails: string) => ({
+      cabecalho: {
+        codigo_pedido_integracao: integrationCode,
+        codigo_cliente: customerOmieId,
+        data_previsao: toOmieDate(payload.issueDate),
+        // Etapa "50" = coluna "Faturar" do kanban de Vendas do OMIE: o pedido chega
+        // pronto para faturar, e a emissao da NF-e e feita DENTRO do OMIE.
+        etapa: "50",
+        ...parcelamento.cabecalho,
+        quantidade_itens: 1
+      },
+      det: [
+        {
+          ide: { codigo_item_integracao: toOmieIntegrationCode(`${payload.idempotencyKey}:1`) },
+          produto: {
+            codigo_produto: payload.productOmieId,
+            quantidade: payload.quantity,
+            valor_unitario: payload.unitPrice,
+            tipo_desconto: "P",
+            percentual_desconto: 0
           }
-        ],
-        frete: buildOmieFreight(payload.freightTotalCents, payload.freightModalidade, {
-          ...(payload.transport ?? {}),
-          carrierOmieId
-        }),
-        informacoes_adicionais: {
-          codigo_categoria: resolveCategoryCode(payload.omieCategoryCode),
-          ...(accountCode !== null ? { codigo_conta_corrente: accountCode } : {}),
-          ...(buildTransportAdditionalData(payload.transport) !== null
-            ? { dados_adicionais_nf: buildTransportAdditionalData(payload.transport) }
-            : {})
-        },
-        // Parcelamento informado (codigo_parcela "999"): leva os vencimentos e o
-        // meio de pagamento (tPag da NF-e) por parcela.
-        ...(parcelamento.listaParcelas !== null
-          ? { lista_parcelas: parcelamento.listaParcelas }
-          : {})
-      }
-    ).catch(async (error) => {
+        }
+      ],
+      frete: buildOmieFreight(payload.freightTotalCents, payload.freightModalidade, {
+        ...(payload.transport ?? {}),
+        carrierOmieId
+      }),
+      informacoes_adicionais: {
+        codigo_categoria: resolveCategoryCode(payload.omieCategoryCode),
+        ...(accountCode !== null ? { codigo_conta_corrente: accountCode } : {}),
+        ...(buildTransportAdditionalData(payload.transport) !== null
+          ? { dados_adicionais_nf: buildTransportAdditionalData(payload.transport) }
+          : {}),
+        // "Enderecos de e-mail que recebem a NF" do pedido: todos os e-mails da aba
+        // Fiscal do cadastro do cliente. Sem lista o campo nem vai, e o OMIE usa o
+        // cadastro do cliente.
+        ...(invoiceEmails.length > 0 ? { utilizar_emails: invoiceEmails } : {})
+      },
+      // Parcelamento informado (codigo_parcela "999"): leva os vencimentos e o
+      // meio de pagamento (tPag da NF-e) por parcela.
+      ...(parcelamento.listaParcelas !== null ? { lista_parcelas: parcelamento.listaParcelas } : {})
+    });
+
+    const invoiceEmails = resolveOrderInvoiceEmails(payload);
+    const consultExistingSalesOrder = async (): Promise<unknown | null> => {
       // So aceita a consulta como fallback se ela realmente devolver o pedido;
       // caso contrario propaga o erro original do IncluirPedido (antes, uma
       // resposta vazia da consulta mascarava a causa real com
@@ -3086,7 +3097,38 @@ async function submitOmieOrder(
       const existing = await consultSalesOrderByIntegrationCode(credentials, integrationCode).catch(
         () => null
       );
-      if (existing && extractSalesOrderId(existing) !== null) return existing;
+      return existing && extractSalesOrderId(existing) !== null ? existing : null;
+    };
+
+    const response = await callOmie<unknown, unknown>(
+      credentials,
+      "/produtos/pedido/",
+      "IncluirPedido",
+      buildSalesOrderBody(invoiceEmails)
+    ).catch(async (error) => {
+      const existing = await consultExistingSalesOrder();
+      if (existing) return existing;
+
+      // O OMIE recusou o campo de destinatarios: reenvia sem ele para o fechamento nao
+      // ficar sem pedido. Os e-mails continuam no cadastro do cliente (email_fatura).
+      if (invoiceEmails.length > 0 && isOmieInvoiceEmailStructureRejection(error)) {
+        console.error(
+          "[omie] IncluirPedido recusou utilizar_emails; reenviando o pedido SEM os " +
+            "destinatarios da NF — eles seguem so no cadastro do cliente",
+          error
+        );
+        return await callOmie<unknown, unknown>(
+          credentials,
+          "/produtos/pedido/",
+          "IncluirPedido",
+          buildSalesOrderBody("")
+        ).catch(async (retryError) => {
+          const retryExisting = await consultExistingSalesOrder();
+          if (retryExisting) return retryExisting;
+          throw retryError;
+        });
+      }
+
       throw error;
     });
 
@@ -3123,9 +3165,11 @@ async function submitOmieOrder(
     linkedParcelaCode === null || isBoletoPaymentMethod(payload.paymentMethodOmieCode)
       ? buildServiceOrderParcelas(payload)
       : null;
+  const serviceOrderInvoiceEmails = resolveOrderInvoiceEmails(payload);
   const buildServiceOrderBody = (
     parcelaCode: string,
-    parcelas: Array<Record<string, unknown>> | null
+    parcelas: Array<Record<string, unknown>> | null,
+    invoiceEmails: string
   ) => ({
     Cabecalho: {
       cCodIntOS: integrationCode,
@@ -3167,7 +3211,11 @@ async function submitOmieOrder(
       cCodCateg: resolveCategoryCode(payload.omieCategoryCode),
       ...(accountCode !== null ? { nCodCC: accountCode } : {}),
       cDadosAdicNF: buildServiceOrderAdditionalData(payload)
-    }
+    },
+    // "Utilizar os seguintes enderecos de e-mail" da OS — o equivalente ao
+    // `utilizar_emails` do pedido de venda. Leva todos os e-mails da aba Fiscal do
+    // cadastro do cliente; sem lista o bloco nem vai, e o OMIE usa o cadastro.
+    ...(invoiceEmails.length > 0 ? { Email: { cEnviarPara: invoiceEmails } } : {})
   });
 
   const consultExistingServiceOrder = async (): Promise<OmieServiceOrderResponse | null> => {
@@ -3183,12 +3231,40 @@ async function submitOmieOrder(
     "/servicos/os/",
     "IncluirOS",
     // "999" = parcelamento informado; sem ele vale o codigo vinculado (ou "000", a vista).
-    buildServiceOrderBody(osParcelas !== null ? "999" : (linkedParcelaCode ?? "000"), osParcelas)
+    buildServiceOrderBody(
+      osParcelas !== null ? "999" : (linkedParcelaCode ?? "000"),
+      osParcelas,
+      serviceOrderInvoiceEmails
+    )
   ).catch(async (error) => {
     // Idempotencia: se a OS ja existe (reenvio apos erro desconhecido), consulta por
     // cCodIntOS e reaproveita o nCodOS.
     const existing = await consultExistingServiceOrder();
     if (existing) return existing;
+
+    // O OMIE recusou o bloco de destinatarios: reenvia sem ele para a operacao nao ficar
+    // sem OS. Os e-mails continuam no cadastro do cliente (email_fatura).
+    if (serviceOrderInvoiceEmails.length > 0 && isOmieInvoiceEmailStructureRejection(error)) {
+      console.error(
+        "[omie] IncluirOS recusou o bloco Email; reenviando a OS SEM os destinatarios da " +
+          "NF — eles seguem so no cadastro do cliente",
+        error
+      );
+      return await callOmie<unknown, OmieServiceOrderResponse>(
+        credentials,
+        "/servicos/os/",
+        "IncluirOS",
+        buildServiceOrderBody(
+          osParcelas !== null ? "999" : (linkedParcelaCode ?? "000"),
+          osParcelas,
+          ""
+        )
+      ).catch(async (retryError) => {
+        const retryExisting = await consultExistingServiceOrder();
+        if (retryExisting) return retryExisting;
+        throw retryError;
+      });
+    }
 
     // O OMIE recusou o FORMATO do parcelamento informado: reenvia pelo cadastro de
     // parcelas (caminho historico) para a operacao nao ficar sem OS. O pior caso volta
@@ -3210,7 +3286,7 @@ async function submitOmieOrder(
         credentials,
         "/servicos/os/",
         "IncluirOS",
-        buildServiceOrderBody(fallbackCode, null)
+        buildServiceOrderBody(fallbackCode, null, serviceOrderInvoiceEmails)
       ).catch(async (retryError) => {
         const retryExisting = await consultExistingServiceOrder();
         if (retryExisting) return retryExisting;
@@ -3512,6 +3588,37 @@ const OMIE_DEFAULT_CATEGORY_CODE = "1.01.01";
 
 function resolveCategoryCode(code: string | null | undefined): string {
   return typeof code === "string" && code.trim() ? code.trim() : OMIE_DEFAULT_CATEGORY_CODE;
+}
+
+/**
+ * Lista para "Enderecos de e-mail que recebem a NF" do documento: os e-mails da aba Fiscal
+ * do cadastro do cliente.
+ *
+ * Espelhar a aba Fiscal no `recomendacoes.email_fatura` do cadastro (ver
+ * `syncCustomerInvoiceEmails`) nao chegava ao pedido: o documento guarda a PROPRIA lista de
+ * destinatarios e nascia com ela vazia, entao a tela de e-mails da operacao ficava em branco
+ * mesmo com a aba Fiscal preenchida. Agora todos os e-mails da aba Fiscal vao junto do
+ * pedido/OS.
+ *
+ * `invoiceEmails` e o campo dedicado do desktop; o `customer.fiscalEmails` cobre desktops
+ * antigos, que ainda mandam a aba Fiscal so dentro do cadastro do cliente. Vazio nos dois ->
+ * string vazia, e o campo nao e enviado (o OMIE cai no cadastro do cliente).
+ */
+function resolveOrderInvoiceEmails(payload: CreateOrderPayload): string {
+  const fromOrder = formatOmieOrderInvoiceEmailList(payload.invoiceEmails);
+  if (fromOrder.length > 0) return fromOrder;
+  return formatOmieOrderInvoiceEmailList(payload.customer?.fiscalEmails);
+}
+
+/**
+ * Recusa do OMIE por causa do campo de e-mails do documento (`utilizar_emails` do pedido,
+ * bloco `Email`/`cEnviarPara` da OS). O documento e reenviado SEM os destinatarios: eles
+ * sao um detalhe do faturamento (o cadastro do cliente ja os tem), e um pedido a menos
+ * travaria o fechamento da operacao.
+ */
+function isOmieInvoiceEmailStructureRejection(error: unknown): boolean {
+  if (!isOmieStructureRejection(error)) return false;
+  return /utilizar_emails|cenviarpara|\bemail\b/i.test(omieFaultText(error));
 }
 
 /** Codigos "modalidade" (modFrete) validos no frete do pedido de venda do OMIE. */

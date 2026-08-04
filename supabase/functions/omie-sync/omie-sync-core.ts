@@ -344,6 +344,13 @@ export const OMIE_EMAIL_FIELD_MAX_LENGTH = 500;
  */
 export const OMIE_INVOICE_EMAIL_FIELD_MAX_LENGTH = 200;
 
+/**
+ * Tamanho maximo do "Enderecos de e-mail que recebem a NF" do PEDIDO/OS
+ * (`informacoes_adicionais.utilizar_emails` / `Email.cEnviarPara`). E um `text` no OMIE,
+ * sem limite documentado; cortamos em 500 so para nao mandar um texto sem fim.
+ */
+export const OMIE_ORDER_INVOICE_EMAIL_FIELD_MAX_LENGTH = 500;
+
 /** Enderecos da lista guardada no cadastro, em minusculas, sem vazios nem repetidos. */
 export function parseOmieEmailList(value: string | undefined): string[] {
   const emails: string[] = [];
@@ -386,6 +393,20 @@ export function formatOmieEmailList(value: string | undefined): string | undefin
  */
 export function formatOmieInvoiceEmailList(value: string | undefined): string {
   return joinOmieEmails(parseOmieEmailList(value), OMIE_INVOICE_EMAIL_FIELD_MAX_LENGTH);
+}
+
+/**
+ * Mesma lista da aba Fiscal, agora no formato do campo do DOCUMENTO: os "Enderecos de
+ * e-mail que recebem a NF" do pedido de venda (`utilizar_emails`) e da OS
+ * (`Email.cEnviarPara`). Virgula simples, dentro dos 500 caracteres. Lista vazia devolve
+ * string vazia — nesse caso o campo nao e enviado e o OMIE cai no cadastro do cliente.
+ *
+ * Existe separado de `formatOmieInvoiceEmailList` porque o campo do documento nao tem o
+ * limite de 200 do `email_fatura` do cadastro: cortar a lista do pedido nesse limite
+ * deixaria destinatarios da aba Fiscal de fora sem necessidade.
+ */
+export function formatOmieOrderInvoiceEmailList(value: string | undefined): string {
+  return joinOmieEmails(parseOmieEmailList(value), OMIE_ORDER_INVOICE_EMAIL_FIELD_MAX_LENGTH);
 }
 
 function onlyDigits(value: string | undefined): string | undefined {

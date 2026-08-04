@@ -18,7 +18,11 @@ import { calculateSavingsPercent, PricingService, type PriceDetails } from "./pr
 import { cancelPendingOmieJobs, enqueueSyncJob } from "./sync-queue.js";
 import { CreditService } from "./credit.js";
 import { buildOmieIntegrationCode } from "@kyberrock/omie-client";
-import { formatEmailListForOmie, OMIE_INVOICE_EMAIL_FIELD_MAX_LENGTH } from "@kyberrock/shared";
+import {
+  formatEmailListForOmie,
+  OMIE_INVOICE_EMAIL_FIELD_MAX_LENGTH,
+  OMIE_ORDER_INVOICE_EMAIL_FIELD_MAX_LENGTH
+} from "@kyberrock/shared";
 import { DEFAULT_NFE_EMAIL_KEY } from "./customers.js";
 import { readStringLocalSetting } from "./local-settings.js";
 import { DEFAULT_OMIE_CATEGORY_SETTING_KEY, resolveOrderCategoryCode } from "./omie-categories.js";
@@ -1478,6 +1482,17 @@ export interface OmieBillingJobPayload {
    * (null = transportadora ausente ou sem CNPJ/CPF).
    */
   carrier: OmieOrderCarrierCadastro | null;
+  /**
+   * Destinatarios da NF DA OPERACAO: os e-mails da aba Fiscal do cadastro do cliente,
+   * copiados para "Enderecos de e-mail que recebem a NF" do pedido de venda
+   * (`informacoes_adicionais.utilizar_emails`) / da OS (`Email.cEnviarPara`).
+   *
+   * O espelho no cadastro do OMIE (`recomendacoes.email_fatura`) nao basta: o documento
+   * guarda a propria lista, e quando ela nasce vazia o operador via a tela de e-mails do
+   * pedido em branco mesmo com a aba Fiscal preenchida. String vazia = cliente sem aba
+   * Fiscal; nesse caso o campo nao e enviado e o OMIE cai no cadastro, como antes.
+   */
+  invoiceEmails: string;
 }
 
 export interface BuiltOmieBillingJob {
@@ -1776,7 +1791,13 @@ export function buildOmieBillingJob(
       omieCategoryCode,
       transport,
       localCarrierId: carrierOnInvoice ? (orderCarrier?.id ?? null) : null,
-      carrier: carrierOnInvoice ? carrierCadastro : null
+      carrier: carrierOnInvoice ? carrierCadastro : null,
+      // Todos os e-mails da aba Fiscal do cliente vao para a tela de e-mails que recebem
+      // a NF do proprio pedido/OS — o cadastro sozinho nao preenchia esse campo.
+      invoiceEmails: formatEmailListForOmie(
+        customerRow?.fiscal_emails,
+        OMIE_ORDER_INVOICE_EMAIL_FIELD_MAX_LENGTH
+      )
     }
   };
 }
