@@ -81,6 +81,7 @@ import type { UpdateCustomerInput } from "../services/customers";
 import {
   FREIGHT_MODALITY_DEFAULT,
   FREIGHT_VALUE_ON_INVOICE,
+  freightCarrierGoesToInvoice,
   freightValueGoesToInvoice,
   getFreightModalityInfo,
   isFreightModalityWithFreight,
@@ -5346,12 +5347,26 @@ async function resolvePaymentConditionGuard(
   return validatePaymentMethodCondition(methodLike, { raw });
 }
 
+/**
+ * A transportadora e obrigatoria na nova entrada?
+ *
+ * So quando ela vai constar na nota. Desmarcando "transportador na nota" no tipo de
+ * frete (situacao 4, sem ocorrencia de transporte), a nota sai sem transportador — nao
+ * faz sentido travar a entrada exigindo um cadastro que ninguem vai usar. O transporte
+ * proprio do cliente (modalidade legada) segue dispensado pelo mesmo motivo.
+ */
+export function isCarrierRequiredForEntry(
+  form: Pick<WeighingFormState, "freightModality">
+): boolean {
+  return !isCustomerOwnTransport(form) && freightCarrierGoesToInvoice(form.freightModality);
+}
+
 function validateWeighingForm(form: WeighingFormState): string | null {
   if (!form.vehicleId) return "Selecione a placa.";
   if (!form.customerId) return "Selecione o cliente.";
   if (!form.driverId) return "Selecione o motorista.";
   if (!form.productId) return "Selecione o produto.";
-  if (!isCustomerOwnTransport(form) && !form.carrierId) {
+  if (isCarrierRequiredForEntry(form) && !form.carrierId) {
     return "Selecione a transportadora.";
   }
   if (form.paymentMode === "manual") {
@@ -5600,6 +5615,21 @@ export function resolveCarrierPrefill(
   return "";
 }
 
+/** Visual dos botoes "Vazio" / "Editar" que ficam dentro do campo do CacheSelect. */
+const cacheSelectInlineButtonStyle: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "4px",
+  border: "1px solid var(--kr-border)",
+  borderRadius: "8px",
+  background: "var(--kr-surface-soft)",
+  color: "var(--kr-text)",
+  cursor: "pointer",
+  fontSize: "11px",
+  fontWeight: 800,
+  padding: "4px 8px"
+};
+
 function CacheSelect({
   label,
   entityType,
@@ -5607,6 +5637,7 @@ function CacheSelect({
   onChange,
   onCreateNew,
   onEditSelected,
+  onClear,
   desktopApi,
   disabled = false,
   refreshKey = 0,
@@ -5620,6 +5651,8 @@ function CacheSelect({
   onCreateNew?: () => void;
   /** Abre o cadastro do item ja selecionado para correcao (botao "Editar"). */
   onEditSelected?: () => void;
+  /** Esvazia o campo (botao "Vazio"). Sem ele o campo nao oferece a limpeza. */
+  onClear?: () => void;
   desktopApi: KyberRockDesktopApi | null;
   disabled?: boolean;
   refreshKey?: number;
@@ -5687,6 +5720,20 @@ function CacheSelect({
     setSearch("");
   }
 
+  // Botoes que moram DENTRO do campo, a direita. "Vazio" some junto com a selecao —
+  // nao ha o que limpar num campo ja vazio — e o espaco reservado a direita do texto
+  // cresce conforme os botoes visiveis, para o nome selecionado nao passar por baixo.
+  const showClearButton = Boolean(onClear) && Boolean(value) && !disabled;
+  const showEditButton = Boolean(onEditSelected) && Boolean(value) && !disabled;
+  const inlineActionsPadding =
+    showEditButton && showClearButton
+      ? "146px"
+      : showEditButton
+        ? "76px"
+        : showClearButton
+          ? "74px"
+          : undefined;
+
   function getOptionMeta(option: CacheSelectOption): string | null {
     if (entityType !== "payment_term") return null;
     const rawCount = option.raw?.installmentCount;
@@ -5726,18 +5773,11 @@ function CacheSelect({
             style={{
               ...styles.input,
               cursor: disabled ? "not-allowed" : "pointer",
-              paddingRight: onEditSelected && value ? "76px" : undefined
+              paddingRight: inlineActionsPadding
             }}
           />
-          {onEditSelected && value && !disabled ? (
-            <button
-              type="button"
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                onEditSelected();
-              }}
-              title={`Editar o cadastro de ${label.toLowerCase()}`}
+          {showClearButton || showEditButton ? (
+            <span
               style={{
                 position: "absolute",
                 right: "6px",
@@ -5745,20 +5785,40 @@ function CacheSelect({
                 transform: "translateY(-50%)",
                 display: "inline-flex",
                 alignItems: "center",
-                gap: "4px",
-                border: "1px solid var(--kr-border)",
-                borderRadius: "8px",
-                background: "var(--kr-surface-soft)",
-                color: "var(--kr-text)",
-                cursor: "pointer",
-                fontSize: "11px",
-                fontWeight: 800,
-                padding: "4px 8px"
+                gap: "4px"
               }}
             >
-              <OpIcon name="edit" />
-              Editar
-            </button>
+              {showClearButton ? (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onClear?.();
+                  }}
+                  title={`Deixar ${label.toLowerCase()} em branco`}
+                  style={cacheSelectInlineButtonStyle}
+                >
+                  <OpIcon name="close" />
+                  Vazio
+                </button>
+              ) : null}
+              {showEditButton ? (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onEditSelected?.();
+                  }}
+                  title={`Editar o cadastro de ${label.toLowerCase()}`}
+                  style={cacheSelectInlineButtonStyle}
+                >
+                  <OpIcon name="edit" />
+                  Editar
+                </button>
+              ) : null}
+            </span>
           ) : null}
         </span>
       </label>
@@ -6826,10 +6886,18 @@ function WeighingForm({
               setEditingCarrierId(form.carrierId);
               setShowCarrierModal(true);
             }}
+            // Limpar a transportadora nao mexe na placa nem no motorista: quem deixa o
+            // campo vazio quer a entrada SEM transportadora, nao recomecar o transporte.
+            onClear={() => setForm((prev) => ({ ...prev, carrierId: "" }))}
             desktopApi={desktopApi}
             refreshKey={carrierRefreshKey}
             filterIds={carrierSelectorFilterIds(availableCarrierIds)}
           />
+          {!isCarrierRequiredForEntry(form) ? (
+            <p style={{ ...styles.helperText, margin: "2px 0 0" }}>
+              Transportadora opcional: o tipo de frete escolhido nao leva transportador na nota.
+            </p>
+          ) : null}
           {form.customerId && availableCarrierIds && availableCarrierIds.length === 0 ? (
             <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" }}>
               <p style={{ ...styles.helperText, color: "#d97706", margin: 0 }}>
@@ -6865,6 +6933,7 @@ function WeighingForm({
                   .catch(() => undefined);
               }}
               onCreateNew={() => setShowVehicleModal(true)}
+              onClear={() => setForm((prev) => ({ ...prev, vehicleId: "" }))}
               desktopApi={desktopApi}
               refreshKey={vehicleRefreshKey}
             />
@@ -6874,6 +6943,7 @@ function WeighingForm({
               value={form.driverId}
               onChange={(id) => setForm({ ...form, driverId: id })}
               onCreateNew={() => setShowDriverModal(true)}
+              onClear={() => setForm((prev) => ({ ...prev, driverId: "" }))}
               desktopApi={desktopApi}
               refreshKey={driverRefreshKey}
               filterIds={getDriverFilterIds(form, availableDriverIds)}
