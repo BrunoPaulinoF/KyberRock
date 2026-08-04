@@ -27,15 +27,14 @@ import type { WeighingOperationSummary } from "../services/weighing-operations";
 import { HelpTooltip } from "./Tooltip";
 import { IconActionButton } from "./IconActionButton";
 import { formatDbDateTime } from "./format-datetime";
+import {
+  INSIGHTS_PERIOD_OPTIONS,
+  formatDayLabel,
+  resolveInsightsRange,
+  toIsoDate,
+  type InsightsPeriod
+} from "./insights-period";
 import { TIPS } from "./tooltip-messages";
-
-type Period = "today" | "7d" | "30d" | "month" | "lastMonth";
-
-interface DateRange {
-  start: string;
-  end: string;
-  label: string;
-}
 
 interface InsightsProps {
   desktopApi: KyberRockDesktopApi | null;
@@ -65,41 +64,6 @@ const CHART_PALETTE = [
 
 const CHART_AXIS = "var(--kr-chart-axis)";
 const CHART_GRID = "var(--kr-chart-grid)";
-
-function toIsoDate(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function resolveRange(period: Period, now: Date): DateRange {
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  if (period === "today") {
-    return { start: toIsoDate(today), end: toIsoDate(today), label: "Hoje" };
-  }
-  if (period === "7d") {
-    const start = new Date(today);
-    start.setDate(start.getDate() - 6);
-    return { start: toIsoDate(start), end: toIsoDate(today), label: "Ultimos 7 dias" };
-  }
-  if (period === "30d") {
-    const start = new Date(today);
-    start.setDate(start.getDate() - 29);
-    return { start: toIsoDate(start), end: toIsoDate(today), label: "Ultimos 30 dias" };
-  }
-  if (period === "month") {
-    const start = new Date(today.getFullYear(), today.getMonth(), 1);
-    return { start: toIsoDate(start), end: toIsoDate(today), label: "Mes atual" };
-  }
-  const lastMonthEnd = new Date(today.getFullYear(), today.getMonth(), 0);
-  const lastMonthStart = new Date(lastMonthEnd.getFullYear(), lastMonthEnd.getMonth(), 1);
-  return {
-    start: toIsoDate(lastMonthStart),
-    end: toIsoDate(lastMonthEnd),
-    label: "Mes anterior"
-  };
-}
 
 function formatBRL(cents: number): string {
   return new Intl.NumberFormat("pt-BR", {
@@ -137,7 +101,9 @@ export function InsightsView({
   onSyncOmie,
   onSyncCloud
 }: InsightsProps) {
-  const [period, setPeriod] = useState<Period>("7d");
+  const [period, setPeriod] = useState<InsightsPeriod>("7d");
+  const [customStart, setCustomStart] = useState(() => toIsoDate(new Date()));
+  const [customEnd, setCustomEnd] = useState(() => toIsoDate(new Date()));
   const [series, setSeries] = useState<DailySeriesPoint[]>([]);
   const [topProducts, setTopProducts] = useState<ProductReport[]>([]);
   const [mix, setMix] = useState<OperationMix | null>(null);
@@ -150,7 +116,10 @@ export function InsightsView({
   const [pivotCustomerId, setPivotCustomerId] = useState<string>("");
   const [pivotProductId, setPivotProductId] = useState<string>("");
 
-  const range = useMemo(() => resolveRange(period, new Date()), [period]);
+  const range = useMemo(
+    () => resolveInsightsRange(period, customStart, customEnd, new Date()),
+    [period, customStart, customEnd]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -273,44 +242,65 @@ export function InsightsView({
             placement="right"
           />
         </div>
-        <div style={styles.periodRow}>
-          {(
-            [
-              { id: "today", label: "Hoje" },
-              { id: "7d", label: "7 dias" },
-              { id: "30d", label: "30 dias" },
-              { id: "month", label: "Mes atual" },
-              { id: "lastMonth", label: "Mes anterior" }
-            ] as Array<{ id: Period; label: string }>
-          ).map((opt) => (
-            <button
-              key={opt.id}
-              type="button"
-              onClick={() => setPeriod(opt.id)}
-              style={period === opt.id ? styles.periodChipActive : styles.periodChip}
-            >
-              {opt.label}
-            </button>
-          ))}
-          <HelpTooltip content={TIPS.insights.period} placement="bottom" />
-          <IconActionButton
-            icon="file-text"
-            label="Exportar PDF"
-            tip={exporting === "pdf" ? "Gerando PDF..." : TIPS.insights.exportPdf}
-            tone="primary"
-            placement="bottom"
-            disabled={exporting !== null}
-            onClick={() => void exportReport("pdf")}
-          />
-          <IconActionButton
-            icon="table"
-            label="Exportar Excel"
-            tip={exporting === "excel" ? "Gerando Excel..." : TIPS.insights.exportExcel}
-            tone="primary"
-            placement="bottom"
-            disabled={exporting !== null}
-            onClick={() => void exportReport("excel")}
-          />
+        <div style={styles.periodColumn}>
+          <div style={styles.periodRow}>
+            {INSIGHTS_PERIOD_OPTIONS.map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => setPeriod(opt.id)}
+                style={period === opt.id ? styles.periodChipActive : styles.periodChip}
+              >
+                {opt.label}
+              </button>
+            ))}
+            <HelpTooltip content={TIPS.insights.period} placement="bottom" />
+            <IconActionButton
+              icon="file-text"
+              label="Exportar PDF"
+              tip={exporting === "pdf" ? "Gerando PDF..." : TIPS.insights.exportPdf}
+              tone="primary"
+              placement="bottom"
+              disabled={exporting !== null}
+              onClick={() => void exportReport("pdf")}
+            />
+            <IconActionButton
+              icon="table"
+              label="Exportar Excel"
+              tip={exporting === "excel" ? "Gerando Excel..." : TIPS.insights.exportExcel}
+              tone="primary"
+              placement="bottom"
+              disabled={exporting !== null}
+              onClick={() => void exportReport("excel")}
+            />
+          </div>
+          {period === "custom" ? (
+            <div style={styles.customDates}>
+              <label style={styles.dateField}>
+                De
+                <input
+                  type="date"
+                  value={customStart}
+                  max={customEnd || undefined}
+                  onChange={(event) => setCustomStart(event.target.value)}
+                  style={styles.dateInput}
+                />
+              </label>
+              <label style={styles.dateField}>
+                Ate
+                <input
+                  type="date"
+                  value={customEnd}
+                  min={customStart || undefined}
+                  onChange={(event) => setCustomEnd(event.target.value)}
+                  style={styles.dateInput}
+                />
+              </label>
+            </div>
+          ) : null}
+          <p style={styles.periodHint}>
+            {formatDayLabel(range.start)} a {formatDayLabel(range.end)}
+          </p>
         </div>
       </header>
 
@@ -735,10 +725,45 @@ const styles: Record<string, React.CSSProperties> = {
     color: "var(--kr-muted)",
     margin: "4px 0 0 0"
   },
+  periodColumn: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-end",
+    gap: "6px"
+  },
   periodRow: {
     display: "flex",
     gap: "6px",
-    flexWrap: "wrap"
+    flexWrap: "wrap",
+    justifyContent: "flex-end"
+  },
+  customDates: {
+    display: "flex",
+    gap: "8px",
+    flexWrap: "wrap",
+    justifyContent: "flex-end"
+  },
+  dateField: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    fontSize: "12px",
+    fontWeight: 700,
+    color: "var(--kr-muted)"
+  },
+  dateInput: {
+    border: "1px solid var(--kr-card-border)",
+    borderRadius: "8px",
+    padding: "5px 8px",
+    font: "inherit",
+    fontSize: "13px",
+    background: "var(--kr-card-bg)",
+    color: "var(--kr-text-strong)"
+  },
+  periodHint: {
+    fontSize: "11px",
+    color: "var(--kr-muted)",
+    margin: 0
   },
   periodChip: {
     padding: "6px 10px",
