@@ -1833,15 +1833,21 @@ async function waitForReceiptImages(printWindow: BrowserWindow): Promise<void> {
  */
 interface PreparedReceiptLogo {
   raster: EscPosRasterImage;
-  html: PrintReadyReceiptLogo;
+  /**
+   * Imagem de 1 bit para o HTML da impressora do Windows. `null` quando o raster sairia
+   * praticamente em branco: nesse caso o HTML volta a usar a imagem ORIGINAL, para o
+   * driver do Windows fazer a propria conversao em vez de imprimir um retangulo vazio.
+   */
+  html: PrintReadyReceiptLogo | null;
   /** Sairia praticamente em branco no papel (logo clara / traco branco). */
   blank: boolean;
 }
 
 /**
  * Converte o data URL configurado no preto-e-branco que a impressora termica imprime:
- * decodifica com o Electron, enquadra igual a previa da tela (contain/cover/fill) e aplica
- * o limiar de 1 bit no tamanho exato em pontos (203 dpi).
+ * decodifica com o Electron, enquadra igual a previa da tela (contain/cover/fill) e
+ * converte para 1 bit no tamanho exato em pontos (203 dpi) — com contraste sobre a tinta e
+ * pontilhado (ver `buildThermalDotMap`), para logo em cor de marca nao sair em branco.
  *
  * Retorna null quando o Electron nao consegue decodificar a imagem. Isso acontece de verdade:
  * `nativeImage` so le PNG e JPEG, enquanto a previa da tela (Chromium) mostra tambem WebP,
@@ -1894,7 +1900,11 @@ function prepareReceiptLogo(
   }
 
   const renderedSize = rendered.getSize();
-  const raster = packRasterImage(rendered.toBitmap(), renderedSize.width, renderedSize.height);
+  // `toBitmap()` entrega BGRA premultiplicado; sem avisar, a borda suavizada da logo
+  // chegaria escurecida na conversao de 1 bit.
+  const raster = packRasterImage(rendered.toBitmap(), renderedSize.width, renderedSize.height, {
+    premultiplied: true
+  });
 
   if (!raster) {
     return null;
@@ -1916,11 +1926,13 @@ function prepareReceiptLogo(
 
   return {
     raster,
-    html: {
-      dataUrl: monochrome.toDataURL(),
-      widthMm: dotsToMm(raster.widthPx),
-      heightMm: dotsToMm(raster.heightPx)
-    },
+    html: blank
+      ? null
+      : {
+          dataUrl: monochrome.toDataURL(),
+          widthMm: dotsToMm(raster.widthPx),
+          heightMm: dotsToMm(raster.heightPx)
+        },
     blank
   };
 }
