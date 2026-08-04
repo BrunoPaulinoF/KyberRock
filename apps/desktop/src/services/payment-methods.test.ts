@@ -38,7 +38,7 @@ describe("payment-methods service", () => {
     database.close();
   });
 
-  it("seeds the seven system defaults idempotently", () => {
+  it("seeds the system defaults idempotently", () => {
     ensureDefaultPaymentMethods(database, COMPANY_ID);
     ensureDefaultPaymentMethods(database, COMPANY_ID); // segunda chamada nao duplica
 
@@ -51,7 +51,8 @@ describe("payment-methods service", () => {
       "debit_card",
       "boleto",
       "customer_credit",
-      "wallet"
+      "wallet",
+      "bonificacao"
     ]);
     expect(methods.every((m) => m.is_system === 1)).toBe(true);
   });

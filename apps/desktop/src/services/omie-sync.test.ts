@@ -6,7 +6,7 @@ import type { DesktopDatabase } from "../database/sqlite.js";
 import type { OmieClient } from "@kyberrock/omie-client";
 import { createOmieClient, OmieSyncService } from "./omie-sync";
 import { ensureDefaultPaymentMethods } from "./payment-methods.js";
-import { ensureDefaultAccounts } from "./accounts.js";
+import { DEFAULT_ACCOUNTS, ensureDefaultAccounts } from "./accounts.js";
 
 describe("createOmieClient", () => {
   it("creates client with credentials", () => {
@@ -768,7 +768,7 @@ describe("OmieSyncService", () => {
           )
           .pluck()
           .get()
-      ).toBe(4); // caixinha, omie_cash, getnet + Home Cash
+      ).toBe(6); // as 5 contas padrao + Home Cash
     } finally {
       db.close();
     }
@@ -817,7 +817,7 @@ describe("OmieSyncService", () => {
           )
           .pluck()
           .get()
-      ).toBe(3);
+      ).toBe(DEFAULT_ACCOUNTS.length);
 
       // Idempotente: re-sincronizar nao mexe nas contas ja reconciliadas.
       const second = await service.syncCheckingAccounts("company-1");

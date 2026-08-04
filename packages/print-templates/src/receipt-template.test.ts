@@ -55,6 +55,36 @@ describe("buildReceiptLines", () => {
     expect(lines).toContain("Cond.Pagto.: NAO INFORMADA");
   });
 
+  // O codigo da operacao e o que o operador usa para achar a venda depois; por isso sai
+  // na primeira linha, antes de qualquer bloco do cabecalho.
+  it("imprime o codigo da operacao com seis digitos no topo do cupom", () => {
+    const lines = buildReceiptLines({ ...baseInput(), operationCode: 42 });
+
+    expect(lines[0]?.trim()).toBe("OPERACAO 000042");
+  });
+
+  it("nao imprime a linha do codigo nos cupons anteriores ao campo existir", () => {
+    const lines = buildReceiptLines({ ...baseInput(), operationCode: null });
+
+    expect(lines.some((line) => line.includes("OPERACAO 0"))).toBe(false);
+  });
+
+  // Duas vias da MESMA operacao: o codigo repete (e a mesma venda), o numero do cupom nao.
+  it("mantem o codigo da operacao entre as vias, com numeros de cupom diferentes", () => {
+    const first = buildReceiptDocument(
+      { ...baseInput(), operationCode: 7, receiptNumber: 101, copyNumber: 1 },
+      DEFAULT_RECEIPT_TEMPLATE_CONFIG
+    );
+    const second = buildReceiptDocument(
+      { ...baseInput(), operationCode: 7, receiptNumber: 102, copyNumber: 2 },
+      DEFAULT_RECEIPT_TEMPLATE_CONFIG
+    );
+
+    expect(first.header.operationCodeLabel).toBe("000007");
+    expect(second.header.operationCodeLabel).toBe("000007");
+    expect(first.header.receiptNumberLabel).not.toBe(second.header.receiptNumberLabel);
+  });
+
   it("imprime o numero do computador como sufixo quando a pedreira tem mais de um", () => {
     // Cada balanca numera offline pela propria sequencia: sem o sufixo, duas
     // maquinas emitiriam o mesmo numero de cupom para caminhoes diferentes.
@@ -250,7 +280,9 @@ describe("buildReceiptDocument", () => {
 
     expect(document.header.companyName).toBeNull();
     expect(document.header.receiptNumberLabel).toBeNull();
-    expect(document.lines).toEqual(document.bodyLines);
+    // O codigo da operacao nao e um bloco opcional: identifica a venda e sai sempre.
+    expect(document.header.operationCodeLabel).toBe("000001");
+    expect(document.lines.slice(2)).toEqual(document.bodyLines);
   });
 
   it("devolve o estilo ja resolvido para a previa e para a impressao", () => {
@@ -276,6 +308,7 @@ function baseInput(): Parameters<typeof buildReceiptLines>[0] {
     companyDocument: "00.000.000/0001-00",
     companyStateRegistration: "000.000.000.000",
     unitName: "Pedreira Principal",
+    operationCode: 1,
     receiptNumber: 1,
     copyNumber: 1,
     printedAt: "2026-06-07T12:00:00.000Z",

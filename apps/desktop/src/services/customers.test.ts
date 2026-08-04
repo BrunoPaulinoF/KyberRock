@@ -111,6 +111,37 @@ describe("customers", () => {
     }
   });
 
+  // Aba Fiscal: quem recebe a NF-e. Dado proprio, que nao se mistura com o contato.
+  it("guarda os e-mails da NF-e separados do e-mail de contato", () => {
+    const database = createDatabase();
+
+    try {
+      const customer = createCustomer(database, {
+        companyId: "company-1",
+        tradeName: "Cliente Fiscal",
+        legalName: "Cliente Fiscal LTDA",
+        email: "contato@cliente.com",
+        fiscalEmails: " Fiscal@Cliente.com ; financeiro@cliente.com , fiscal@cliente.com "
+      });
+
+      expect(customer.email).toBe("contato@cliente.com");
+      expect(customer.fiscal_emails).toBe("fiscal@cliente.com, financeiro@cliente.com");
+
+      // Mexer num nao mexe no outro.
+      const updated = updateCustomer(database, customer.id, {
+        fiscalEmails: "nota@cliente.com"
+      });
+      expect(updated.fiscal_emails).toBe("nota@cliente.com");
+      expect(updated.email).toBe("contato@cliente.com");
+
+      const cleared = updateCustomer(database, customer.id, { fiscalEmails: "  " });
+      expect(cleared.fiscal_emails).toBeNull();
+      expect(cleared.email).toBe("contato@cliente.com");
+    } finally {
+      database.close();
+    }
+  });
+
   it("accepts more than one default NF-e email", () => {
     const database = createDatabase();
 

@@ -18,11 +18,31 @@ import { calculateSavingsPercent, PricingService, type PriceDetails } from "./pr
 import { cancelPendingOmieJobs, enqueueSyncJob } from "./sync-queue.js";
 import { CreditService } from "./credit.js";
 import { buildOmieIntegrationCode } from "@kyberrock/omie-client";
-import { formatEmailListForOmie } from "@kyberrock/shared";
+import { formatEmailListForOmie, OMIE_INVOICE_EMAIL_FIELD_MAX_LENGTH } from "@kyberrock/shared";
 import { DEFAULT_NFE_EMAIL_KEY } from "./customers.js";
 import { readStringLocalSetting } from "./local-settings.js";
 import { DEFAULT_OMIE_CATEGORY_SETTING_KEY, resolveOrderCategoryCode } from "./omie-categories.js";
 import { consumeQuotation } from "./quotations.js";
+
+/**
+ * Proximo codigo sequencial da operacao na pedreira: o maior ja usado + 1, sem
+ * reaproveitar codigo de operacao cancelada (a sequencia so anda para frente, senao dois
+ * cupons diferentes sairiam com o mesmo numero).
+ *
+ * A sequencia e por UNIDADE e conta OPERACOES — nao se confunde com
+ * `units.receipt_sequence`, que conta impressoes de cupom. Numa pedreira com mais de uma
+ * balanca, o MAX olha tambem as operacoes que a sincronizacao trouxe das outras maquinas,
+ * entao a sequencia continua de onde a pedreira parou assim que a nuvem alcanca. Duas
+ * balancas OFFLINE ao mesmo tempo podem chegar ao mesmo numero — e o mesmo compromisso
+ * offline-first que o numero do cupom ja faz (ver `formatReceiptNumber`).
+ */
+export function nextOperationCode(database: DesktopDatabase, unitId: string): number {
+  const current = database
+    .prepare("SELECT MAX(operation_code) FROM weighing_operations WHERE unit_id = ?")
+    .pluck()
+    .get(unitId) as number | null | undefined;
+  return (typeof current === "number" ? current : 0) + 1;
+}
 
 type OperationStatus =
   | "draft"
@@ -156,6 +176,11 @@ export interface CancelWeighingOperationInput {
 
 export interface WeighingOperationSummary {
   id: string;
+  /**
+   * Codigo sequencial da operacao na pedreira (o que sai no topo do cupom). Null nas
+   * operacoes anteriores ao codigo existir e nas projetadas de uma nuvem sem o campo.
+   */
+  operationCode: number | null;
   status: OperationStatus;
   operationType: OperationType;
   customerId: string | null;
@@ -229,6 +254,7 @@ export interface WeighingOperationSummary {
 
 interface OperationRow {
   id: string;
+  operation_code: number | null;
   status: OperationStatus;
   operation_type: OperationType;
   entry_weight_kg: number | null;
@@ -411,17 +437,18 @@ export function createSimulatedWeighingOperation(
     database
       .prepare(
         `INSERT INTO weighing_operations (
-          id, company_id, unit_id, device_id, status, operation_type, customer_id, vehicle_id, driver_id, product_id,
+          id, company_id, unit_id, device_id, operation_code, status, operation_type, customer_id, vehicle_id, driver_id, product_id,
           payment_term_id, entry_weight_kg, entry_weight_captured_at, unit_price_cents,
           base_unit_price_cents, applied_price_table_id, applied_price_table_name, applied_price_table_item_id,
           price_unit, price_savings_percent, freight_total_cents, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, 'loading_requested', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ton', ?, 0, ?, ?)`
+        ) VALUES (?, ?, ?, ?, ?, 'loading_requested', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ton', ?, 0, ?, ?)`
       )
       .run(
         ids.operationId,
         input.identity.companyId,
         input.identity.unitId,
         input.identity.deviceId,
+        nextOperationCode(database, input.identity.unitId),
         operationType,
         ids.customerId,
         ids.vehicleId,
@@ -621,18 +648,19 @@ export function createWeighingOperation(
     database
       .prepare(
         `INSERT INTO weighing_operations (
-          id, company_id, unit_id, device_id, status, operation_type, customer_id, vehicle_id, carrier_id, driver_id, product_id,
+          id, company_id, unit_id, device_id, operation_code, status, operation_type, customer_id, vehicle_id, carrier_id, driver_id, product_id,
           payment_term_id, payment_method_id, manual_installments, manual_down_payment_cents, entry_weight_kg, entry_weight_captured_at, unit_price_cents,
           base_unit_price_cents, applied_price_table_id, applied_price_table_name, applied_price_table_item_id,
           price_unit, price_savings_percent, freight_total_cents, freight_json, freight_type, deduct_freight_from_credit,
           product_credit_debit_cents, freight_credit_debit_cents, quotation_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, 'loading_requested', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 0, 0, ?, ?, ?)`
+        ) VALUES (?, ?, ?, ?, ?, 'loading_requested', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 0, 0, ?, ?, ?)`
       )
       .run(
         operationId,
         input.identity.companyId,
         input.identity.unitId,
         input.identity.deviceId,
+        nextOperationCode(database, input.identity.unitId),
         operationType,
         input.customerId,
         input.vehicleId,
@@ -1339,6 +1367,8 @@ export interface OmieOrderCustomerCadastro {
   nomeFantasia?: string;
   cnpjCpf?: string;
   email?: string;
+  /** Destinatarios da NF-e (aba Fiscal do cadastro). Vazio limpa o campo no OMIE. */
+  fiscalEmails?: string;
   telefone1Ddd?: string;
   telefone1Numero?: string;
   zipcode?: string;
@@ -1509,6 +1539,7 @@ interface OrderCustomerRow {
   document: string | null;
   phone: string | null;
   email: string | null;
+  fiscal_emails: string | null;
   zipcode: string | null;
   address_street: string | null;
   address_number: string | null;
@@ -1543,6 +1574,8 @@ function buildOrderCustomerCadastro(
     nomeFantasia: row.trade_name ?? row.legal_name ?? undefined,
     cnpjCpf: row.document?.trim() || undefined,
     email: formatEmailListForOmie(row.email) || formatEmailListForOmie(fallbackEmail) || undefined,
+    // Sempre enviado (inclusive vazio): o cadastro local manda nos destinatarios da NF-e.
+    fiscalEmails: formatEmailListForOmie(row.fiscal_emails, OMIE_INVOICE_EMAIL_FIELD_MAX_LENGTH),
     telefone1Ddd: phone.ddd,
     telefone1Numero: phone.numero,
     zipcode: row.zipcode ?? undefined,
@@ -1580,7 +1613,7 @@ export function buildOmieBillingJob(
   const customerRow = row.customer_id
     ? (database
         .prepare(
-          `SELECT omie_customer_id, legal_name, trade_name, document, phone, email,
+          `SELECT omie_customer_id, legal_name, trade_name, document, phone, email, fiscal_emails,
                   zipcode, address_street, address_number, neighborhood, city, state
            FROM customers WHERE id = ?`
         )
@@ -2079,7 +2112,7 @@ export function listOpenWeighingOperations(database: DesktopDatabase): WeighingO
   return database
     .prepare(
       `SELECT
-        o.id, o.status, o.operation_type, o.entry_weight_kg, o.exit_weight_kg, o.net_weight_kg,
+        o.id, o.operation_code, o.status, o.operation_type, o.entry_weight_kg, o.exit_weight_kg, o.net_weight_kg,
         o.unit_price_cents, o.base_unit_price_cents, o.applied_price_table_id, o.applied_price_table_name,
         o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
         o.product_total_cents, o.freight_total_cents, o.freight_json, o.freight_type, o.total_cents,
@@ -2127,7 +2160,7 @@ export function listCanceledWeighingOperations(
   return database
     .prepare(
       `SELECT
-        o.id, o.status, o.operation_type, o.entry_weight_kg, o.exit_weight_kg, o.net_weight_kg,
+        o.id, o.operation_code, o.status, o.operation_type, o.entry_weight_kg, o.exit_weight_kg, o.net_weight_kg,
         o.unit_price_cents, o.base_unit_price_cents, o.applied_price_table_id, o.applied_price_table_name,
         o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
         o.product_total_cents, o.freight_total_cents, o.freight_json, o.freight_type, o.total_cents,
@@ -2173,7 +2206,7 @@ export function listClosedWeighingOperations(
   return database
     .prepare(
       `SELECT
-        o.id, o.status, o.operation_type, o.entry_weight_kg, o.exit_weight_kg, o.net_weight_kg,
+        o.id, o.operation_code, o.status, o.operation_type, o.entry_weight_kg, o.exit_weight_kg, o.net_weight_kg,
         o.unit_price_cents, o.base_unit_price_cents, o.applied_price_table_id, o.applied_price_table_name,
         o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
         o.product_total_cents, o.freight_total_cents, o.freight_json, o.freight_type, o.total_cents,
@@ -2314,7 +2347,7 @@ export function getWeighingOperation(
   const row = database
     .prepare(
       `SELECT
-        o.id, o.status, o.operation_type, o.entry_weight_kg, o.exit_weight_kg, o.net_weight_kg,
+        o.id, o.operation_code, o.status, o.operation_type, o.entry_weight_kg, o.exit_weight_kg, o.net_weight_kg,
         o.unit_price_cents, o.base_unit_price_cents, o.applied_price_table_id, o.applied_price_table_name,
         o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
         o.product_total_cents, o.freight_total_cents, o.freight_json, o.freight_type, o.total_cents,
@@ -3158,6 +3191,7 @@ function insertAuditLog(
 function mapOperationRow(row: OperationRow): WeighingOperationSummary {
   return {
     id: row.id,
+    operationCode: row.operation_code ?? null,
     status: row.status,
     operationType: row.operation_type,
     customerId: row.customer_id ?? null,

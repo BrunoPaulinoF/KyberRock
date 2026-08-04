@@ -57,6 +57,7 @@ export function buildReceiptHtml(
       @page { size: ${payload.paperWidthMm}mm auto; margin: 4mm; }
       body { margin: 0; font-family: ${RECEIPT_FONT_STACKS[style.fontFamily]}; font-size: ${style.fontSizePx}px; color: #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       .receipt { width: 100%; }
+      .operation-code { text-align: center; font-weight: 900; letter-spacing: 0.08em; font-size: ${Math.round(style.headerFontSizePx * 1.3)}px; margin-bottom: 4px; }
       .custom-header { text-align: center; font-weight: 800; margin-bottom: 4px; }
       .non-fiscal { text-align: center; font-weight: 900; letter-spacing: 0.06em; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 2px 0; margin-bottom: 4px; }
       .top-company { font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
@@ -75,6 +76,7 @@ export function buildReceiptHtml(
   </head>
   <body>
     <div class="receipt">
+      ${header.operationCodeLabel ? `<div class="operation-code">OPERACAO ${escapeHtml(header.operationCodeLabel)}</div>` : ""}
       ${header.customHeaderText ? `<div class="custom-header">${escapeHtml(header.customHeaderText)}</div>` : ""}
       ${header.nonFiscalLabel ? `<div class="non-fiscal">${escapeHtml(header.nonFiscalLabel)}</div>` : ""}
       ${header.companyName ? `<div class="top-company">${escapeHtml(header.companyName)}</div><div class="rule"></div>` : ""}

@@ -34,7 +34,14 @@ export type PushCustomerPayload = {
   razaoSocial: string;
   nomeFantasia?: string;
   cnpjCpf?: string;
+  /** E-mail de CONTATO do cliente (campo `email` do cadastro do OMIE). */
   email?: string;
+  /**
+   * Destinatarios da NF-e e do boleto (aba Fiscal do cadastro do KyberRock -> tag
+   * `email_fatura` do OMIE). String vazia limpa o campo la; `undefined` (chamador que
+   * nao gerencia o campo, como o push de transportadora) nao mexe nele.
+   */
+  fiscalEmails?: string;
   telefone1Ddd?: string;
   telefone1Numero?: string;
   zipcode?: string;
@@ -277,7 +284,9 @@ export function buildCustomerPayload(payload: PushCustomerPayload): Record<strin
     // e recusa o cadastro de qualquer cliente pessoa fisica.
     pessoa_fisica: document ? (document.length === 11 ? "S" : "N") : undefined,
     // O e-mail tem regra propria (lista de destinatarios cortada por endereco inteiro):
-    // ver formatOmieEmailList / OMIE_EMAIL_FIELD_MAX_LENGTH.
+    // ver formatOmieEmailList / OMIE_EMAIL_FIELD_MAX_LENGTH. Este campo entrega so ao
+    // primeiro endereco; os demais destinatarios da NF-e/boleto entram no `email_fatura`
+    // da aba "Recomendacoes" (ver syncCustomerInvoiceEmails no index.ts).
     email: formatOmieEmailList(payload.email),
     telefone1_ddd: clampOmieText(
       payload.telefone1Ddd,
@@ -330,27 +339,53 @@ function trimOrUndefined(value: string | undefined): string | undefined {
 export const OMIE_EMAIL_FIELD_MAX_LENGTH = 500;
 
 /**
- * O cliente pode ter varios e-mails no KyberRock. O OMIE aceita todos no mesmo campo,
- * separados por virgula simples, e manda NF-e e boleto para cada um.
- *
- * O corte do limite de 500 caracteres e feito por endereco inteiro: truncar no meio de um
- * e-mail geraria um destinatario invalido e o OMIE recusaria o cadastro inteiro.
+ * Tamanho maximo do `email_fatura` — o "Utilizar os seguintes enderecos de e-mail" da aba
+ * "Recomendacoes" do cadastro. E menor que o do campo de contato.
  */
-export function formatOmieEmailList(value: string | undefined): string | undefined {
+export const OMIE_INVOICE_EMAIL_FIELD_MAX_LENGTH = 200;
+
+/** Enderecos da lista guardada no cadastro, em minusculas, sem vazios nem repetidos. */
+export function parseOmieEmailList(value: string | undefined): string[] {
   const emails: string[] = [];
   for (const part of (value ?? "").split(/[,;\s]+/)) {
     const email = part.trim().toLowerCase();
     if (email.length > 0 && !emails.includes(email)) emails.push(email);
   }
+  return emails;
+}
 
+/**
+ * Junta os enderecos com virgula simples ate o limite do campo. O corte e feito por
+ * endereco INTEIRO: truncar no meio de um e-mail geraria um destinatario invalido e o
+ * OMIE recusaria o cadastro inteiro.
+ */
+function joinOmieEmails(emails: string[], maxLength: number): string {
   const accepted: string[] = [];
   for (const email of emails) {
     const candidate = [...accepted, email].join(", ");
-    if (candidate.length > OMIE_EMAIL_FIELD_MAX_LENGTH) break;
+    if (candidate.length > maxLength) break;
     accepted.push(email);
   }
+  return accepted.join(", ");
+}
 
-  return accepted.length > 0 ? accepted.join(", ") : undefined;
+/**
+ * Campo `email` do cadastro: o e-mail de CONTATO do cliente. Aceita mais de um endereco
+ * (virgula simples, dentro dos 500 caracteres), mas quem recebe a NF-e e o boleto e o
+ * `email_fatura` da aba "Recomendacoes" — ver `formatOmieInvoiceEmailList`.
+ */
+export function formatOmieEmailList(value: string | undefined): string | undefined {
+  const joined = joinOmieEmails(parseOmieEmailList(value), OMIE_EMAIL_FIELD_MAX_LENGTH);
+  return joined.length > 0 ? joined : undefined;
+}
+
+/**
+ * Lista da aba Fiscal no formato do `email_fatura` do OMIE ("Utilizar os seguintes
+ * enderecos de e-mail"): virgula simples, dentro dos 200 caracteres. Lista vazia devolve
+ * string vazia, que e o valor que LIMPA o campo la.
+ */
+export function formatOmieInvoiceEmailList(value: string | undefined): string {
+  return joinOmieEmails(parseOmieEmailList(value), OMIE_INVOICE_EMAIL_FIELD_MAX_LENGTH);
 }
 
 function onlyDigits(value: string | undefined): string | undefined {
@@ -475,12 +510,97 @@ export async function pushCustomerToOmieCore(
   credentials: OmieCredentials,
   payload: PushCustomerPayload
 ): Promise<number> {
-  return pushCustomerBodyToOmie(queue, credentials, {
+  const omieCustomerId = await pushCustomerBodyToOmie(queue, credentials, {
     createBody: buildCustomerCadastroPayload(payload),
     updateBody: buildCustomerPayload(payload),
     omieCustomerId: payload.omieCustomerId,
     requiredTag: OMIE_CUSTOMER_TAG
   });
+  await syncCustomerInvoiceEmails(queue, credentials, omieCustomerId, payload.fiscalEmails);
+  return omieCustomerId;
+}
+
+/**
+ * Bloco `recomendacoes` do cadastro de cliente do OMIE (aba "Recomendacoes"). Reenviado
+ * INTEIRO no AlterarCliente: ver `syncCustomerInvoiceEmails`.
+ */
+export type OmieCustomerRecommendations = {
+  numero_parcelas?: unknown;
+  codigo_vendedor?: unknown;
+  email_fatura?: unknown;
+  gerar_boletos?: string | null;
+  codigo_transportadora?: unknown;
+  tipo_assinante?: unknown;
+};
+
+/**
+ * Espelha os e-mails da aba Fiscal do cadastro no `email_fatura` do OMIE — o "Utilizar os
+ * seguintes enderecos de e-mail" da aba "Recomendacoes", que e quem manda nos
+ * destinatarios da NF-e e do boleto.
+ *
+ * Por que nao usar o `email` do cadastro: aquele campo e o e-mail de CONTATO do cliente e
+ * o OMIE entrega a um endereco so, por mais que a lista caiba nele — foi isso que o
+ * operador viu ao cadastrar varios e-mails e so um receber. Sao dois dados distintos, e o
+ * KyberRock trata assim: contato na aba Contato, destinatarios da nota na aba Fiscal.
+ *
+ * `fiscalEmails` undefined = o chamador nao gerencia este campo (ex.: push de
+ * transportadora); nada e consultado nem alterado. String vazia = a aba Fiscal esta vazia,
+ * e o campo e LIMPO no OMIE — o cadastro local e a fonte da verdade dele, e o pull do OMIE
+ * traz o valor de la para a aba Fiscal, entao o que foi configurado a mao aparece aqui
+ * antes de qualquer envio em vez de ser sobrescrito as cegas.
+ *
+ * Ja igual ao desejado: nao gasta um AlterarCliente (o OMIE cobra rate limit por chamada).
+ *
+ * O bloco `recomendacoes` volta INTEIRO no AlterarCliente: nao esta documentado se o OMIE
+ * faz merge parcial do complexo, e reenviar o que o ConsultarCliente devolveu garante que
+ * nada configurado a mao (vendedor, transportadora, numero de parcelas, gerar boletos) se
+ * perca.
+ *
+ * Nunca lanca. Os destinatarios da nota sao um detalhe do faturamento, nao um requisito do
+ * cadastro: se a consulta ou a alteracao falhar, o cadastro — e o fechamento que depende
+ * dele — segue, com o log dizendo o que nao foi gravado.
+ */
+export async function syncCustomerInvoiceEmails(
+  queue: OmieRequester,
+  credentials: OmieCredentials,
+  omieCustomerId: number,
+  fiscalEmails: string | undefined
+): Promise<void> {
+  if (fiscalEmails === undefined) return;
+  const desired = formatOmieInvoiceEmailList(fiscalEmails);
+
+  try {
+    const customer = await queue.request<
+      { codigo_cliente_omie: number },
+      { recomendacoes?: OmieCustomerRecommendations } | null
+    >({
+      credentials,
+      endpoint: "/geral/clientes/",
+      call: "ConsultarCliente",
+      param: { codigo_cliente_omie: omieCustomerId }
+    });
+
+    const recomendacoes: OmieCustomerRecommendations = customer?.recomendacoes ?? {};
+    const current =
+      typeof recomendacoes.email_fatura === "string" ? recomendacoes.email_fatura.trim() : "";
+    if (current.toLowerCase() === desired) return;
+
+    await queue.request<Record<string, unknown>, unknown>({
+      credentials,
+      endpoint: "/geral/clientes/",
+      call: "AlterarCliente",
+      param: {
+        codigo_cliente_omie: omieCustomerId,
+        recomendacoes: { ...recomendacoes, email_fatura: desired }
+      }
+    });
+  } catch (error) {
+    console.error(
+      "[omie] falha ao gravar os e-mails de NF-e/boleto (recomendacoes.email_fatura) do " +
+        "cliente; o cadastro segue com o e-mail principal",
+      error
+    );
+  }
 }
 
 export async function pushCarrierToOmie(

@@ -28,6 +28,8 @@ export interface CreateCustomerInput {
   document?: string;
   phone?: string;
   email?: string;
+  /** Destinatarios da NF-e (aba Fiscal). Lista separada por virgula; vazio = nenhum. */
+  fiscalEmails?: string;
   creditLimitCents?: number;
   creditMode?: "normal" | "prepaid";
   omieBillingBlocked?: boolean;
@@ -58,6 +60,8 @@ export interface UpdateCustomerInput {
   document?: string;
   phone?: string;
   email?: string;
+  /** Destinatarios da NF-e (aba Fiscal). Lista separada por virgula; vazio limpa. */
+  fiscalEmails?: string;
   /** null limpa o limite de credito; undefined mantem o valor atual. */
   creditLimitCents?: number | null;
   creditMode?: "normal" | "prepaid";
@@ -95,6 +99,7 @@ export interface CustomerRow {
   document: string | null;
   phone: string | null;
   email: string | null;
+  fiscal_emails: string | null;
   credit_limit_cents: number | null;
   credit_mode: "normal" | "prepaid";
   open_receivables_cents: number;
@@ -221,7 +226,7 @@ export function createCustomer(
   database
     .prepare(
       `INSERT INTO customers (
-        id, company_id, source, legal_name, trade_name, document, phone, email,
+        id, company_id, source, legal_name, trade_name, document, phone, email, fiscal_emails,
         credit_limit_cents, credit_mode, open_receivables_cents, omie_billing_blocked,
         observations, default_carrier_id, default_payment_term_id, default_payment_method_id,
         credit_account_enabled, credit_closing_day, credit_boleto_days, nf_required,
@@ -229,7 +234,7 @@ export function createCustomer(
         zipcode, address_street, address_number,
         address_complement, neighborhood, city, state, sync_status, needs_push, local_updated_at, is_active,
         created_at, updated_at
-      ) VALUES (?, ?, 'local', ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1, ?, 1, ?, ?)`
+      ) VALUES (?, ?, 'local', ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1, ?, 1, ?, ?)`
     )
     .run(
       id,
@@ -239,6 +244,7 @@ export function createCustomer(
       input.document ?? null,
       input.phone ?? null,
       normalizeCustomerEmails(input.email),
+      normalizeCustomerEmails(input.fiscalEmails),
       input.creditLimitCents ?? null,
       input.creditMode ?? "normal",
       input.omieBillingBlocked ? 1 : 0,
@@ -302,6 +308,7 @@ export function updateCustomer(
       "document",
       "phone",
       "email",
+      "fiscalEmails",
       "creditLimitCents",
       "omieBillingBlocked",
       "zipcode",
@@ -357,6 +364,10 @@ export function updateCustomer(
   if (input.email !== undefined) {
     sets.push("email = ?");
     values.push(normalizeCustomerEmails(input.email));
+  }
+  if (input.fiscalEmails !== undefined) {
+    sets.push("fiscal_emails = ?");
+    values.push(normalizeCustomerEmails(input.fiscalEmails));
   }
   if (input.creditLimitCents !== undefined) {
     sets.push("credit_limit_cents = ?");

@@ -1,3 +1,5 @@
+import { formatOperationCode } from "@kyberrock/print-templates";
+
 import {
   freightValueGoesToInvoice,
   getFreightModalityInfo,
@@ -127,6 +129,8 @@ export function buildOperationDetailSections(
     {
       title: "Operacao",
       items: [
+        // Primeiro item: e o codigo impresso no cupom que o operador tem em maos.
+        { label: "Codigo", value: formatOperationCode(operation.operationCode) ?? "—" },
         { label: "Placa", value: operation.plate || "—" },
         { label: "Status", value: operationStatusLabel(operation.status) },
         {

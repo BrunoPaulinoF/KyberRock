@@ -1601,5 +1601,101 @@ ALTER TABLE weighing_operations ADD COLUMN wallet_settlement_note TEXT;
 CREATE INDEX IF NOT EXISTS idx_weighing_operations_wallet
   ON weighing_operations(payment_method_id, wallet_settled_at);
 `
+  },
+  {
+    version: 44,
+    name: "customer_fiscal_emails",
+    sql: `
+-- E-mails da NF-e do cliente, separados do e-mail de contato. Sao os destinatarios do
+-- "Utilizar os seguintes enderecos de e-mail" da aba Recomendacoes do cadastro do OMIE
+-- (tag \`email_fatura\`), que o OMIE prioriza no envio da nota e do boleto. O \`email\`
+-- continua sendo so o contato do cliente.
+ALTER TABLE customers ADD COLUMN fiscal_emails TEXT;
+`
+  },
+  {
+    version: 45,
+    name: "bonificacao_and_carteira_accounts",
+    sql: `
+-- Contas BONIFICACAO e EM CARTEIRA para as empresas que ja existem (as novas passam
+-- pelo ensureDefaultAccounts). O vinculo com a conta corrente de mesmo nome no OMIE e
+-- feito pela sincronizacao, que preenche o omie_code (ver canonicalDefaultAccountCode).
+INSERT INTO accounts (id, company_id, code, name, is_system, sort_order, is_active, created_at, updated_at)
+SELECT lower(hex(randomblob(16))), c.id, a.code, a.name, 1, a.sort_order, 1,
+       datetime('now'), datetime('now')
+FROM companies c
+CROSS JOIN (
+  SELECT 'bonificacao' AS code, 'BONIFICAÇÃO' AS name, 4 AS sort_order
+  UNION ALL SELECT 'em_carteira', 'EM CARTEIRA', 5
+) a
+WHERE NOT EXISTS (
+  SELECT 1 FROM accounts ac
+  WHERE ac.company_id = c.id AND ac.code = a.code AND ac.deleted_at IS NULL
+);
+`
+  },
+  {
+    version: 46,
+    name: "operation_sequential_code",
+    sql: `
+-- Codigo sequencial da operacao, impresso no topo do cupom (000001, 000002, ...). E uma
+-- sequencia unica por pedreira: cada operacao nova pega o maior codigo ja usado + 1,
+-- independente de cliente, produto ou balanca. Distinto do numero do cupom
+-- (units.receipt_sequence), que conta IMPRESSOES e reinicia a cada via.
+ALTER TABLE weighing_operations ADD COLUMN operation_code INTEGER;
+
+-- As operacoes que ja existem entram na sequencia pela ordem em que nasceram, para o
+-- codigo continuar de onde a pedreira parou em vez de recomecar do 1.
+UPDATE weighing_operations SET operation_code = (
+  SELECT seq FROM (
+    SELECT id, ROW_NUMBER() OVER (PARTITION BY unit_id ORDER BY created_at ASC, id ASC) AS seq
+    FROM weighing_operations
+  ) numbered
+  WHERE numbered.id = weighing_operations.id
+)
+WHERE operation_code IS NULL;
+
+-- Leitura do proximo codigo (MAX por pedreira) a cada operacao nova.
+CREATE INDEX IF NOT EXISTS idx_weighing_operations_code
+  ON weighing_operations(unit_id, operation_code);
+`
+  },
+  {
+    version: 47,
+    name: "bonificacao_method_and_carteira_account_binding",
+    sql: `
+-- Cada forma na sua conta corrente do OMIE: a venda em carteira sai da OMIE Cash e passa
+-- a lancar na conta EM CARTEIRA (migracao 45). O UPDATE nao filtra por account_id nulo de
+-- proposito — o vinculo antigo (OMIE Cash) existe e e justamente ele que muda.
+UPDATE payment_methods SET
+  account_id = (
+    SELECT ac.id FROM accounts ac
+    WHERE ac.company_id = payment_methods.company_id AND ac.code = 'em_carteira'
+      AND ac.deleted_at IS NULL
+  ),
+  updated_at = datetime('now')
+WHERE code = 'wallet' AND deleted_at IS NULL
+  AND EXISTS (
+    SELECT 1 FROM accounts ac
+    WHERE ac.company_id = payment_methods.company_id AND ac.code = 'em_carteira'
+      AND ac.deleted_at IS NULL
+  );
+
+-- Forma de pagamento "Bonificacao", lancada na conta BONIFICACAO. Vai ao OMIE como
+-- "99 - outros" (mesmo tPag da carteira), que faz o pedido sair com nao_gerar_boleto "S":
+-- a nota da mercadoria bonificada e emitida e nenhuma cobranca nasce dela.
+INSERT INTO payment_methods
+  (id, company_id, code, name, omie_code, account_id, is_system, is_customer_credit, is_wallet,
+   sort_order, is_active, created_at, updated_at)
+SELECT lower(hex(randomblob(16))), c.id, 'bonificacao', 'Bonificação', '99',
+       (SELECT ac.id FROM accounts ac
+        WHERE ac.company_id = c.id AND ac.code = 'bonificacao' AND ac.deleted_at IS NULL),
+       1, 0, 0, 8, 1, datetime('now'), datetime('now')
+FROM companies c
+WHERE NOT EXISTS (
+  SELECT 1 FROM payment_methods pm
+  WHERE pm.company_id = c.id AND pm.code = 'bonificacao' AND pm.deleted_at IS NULL
+);
+`
   }
 ];

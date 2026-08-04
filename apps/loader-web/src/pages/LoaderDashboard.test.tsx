@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  countInProgressByProduct,
   formatArrival,
   getInProgressOperations,
   getOvertimeOperations,
@@ -141,6 +142,42 @@ describe("LoaderDashboard recent completions history", () => {
   it("returns an empty list when nothing was completed", () => {
     const waiting = makeOperation("1", "2026-07-31T11:50:00.000Z");
     expect(getRecentCompletedOperations([waiting], now)).toEqual([]);
+  });
+});
+
+describe("countInProgressByProduct", () => {
+  function withProduct(id: string, productDescription: string): WeighingOperation {
+    return { ...makeOperation(id, "2026-06-25T10:00:00.000Z"), productDescription };
+  }
+
+  it("conta as cargas em aberto de cada produto, da maior fila para a menor", () => {
+    const counts = countInProgressByProduct([
+      withProduct("1", "Po de pedra"),
+      withProduct("2", "Brita 1"),
+      withProduct("3", "Brita 1")
+    ]);
+
+    expect(counts).toEqual([
+      { label: "Brita 1", count: 2 },
+      { label: "Po de pedra", count: 1 }
+    ]);
+  });
+
+  it("junta a mesma descricao com caixa diferente e nomeia o produto vazio", () => {
+    const counts = countInProgressByProduct([
+      withProduct("1", "Brita 1"),
+      withProduct("2", "BRITA 1"),
+      withProduct("3", "  ")
+    ]);
+
+    expect(counts).toEqual([
+      { label: "Brita 1", count: 2 },
+      { label: "Sem produto", count: 1 }
+    ]);
+  });
+
+  it("devolve lista vazia sem cargas em aberto", () => {
+    expect(countInProgressByProduct([])).toEqual([]);
   });
 });
 

@@ -90,6 +90,38 @@ export function getInProgressOperations(operations: WeighingOperation[]): Weighi
   return operations.filter((operation) => !operation.loaderCompletedAt);
 }
 
+/** Um produto e quantas cargas dele estao esperando o carregador. */
+export interface ProductQueueCount {
+  label: string;
+  count: number;
+}
+
+/**
+ * Quantas cargas em aberto existem de cada produto, para os contadores no topo da fila:
+ * o carregador ve de uma vez quantos caminhoes de cada brita estao no patio, sem contar
+ * card por card. Agrupa pela descricao (o projeto da nuvem nao traz o id do produto),
+ * ordena da maior fila para a menor e, no empate, em ordem alfabetica, para a faixa nao
+ * dancar a cada atualizacao.
+ */
+export function countInProgressByProduct(operations: WeighingOperation[]): ProductQueueCount[] {
+  const counts = new Map<string, ProductQueueCount>();
+
+  for (const operation of operations) {
+    const label = operation.productDescription?.trim() || "Sem produto";
+    const key = label.toLowerCase();
+    const current = counts.get(key);
+    if (current) {
+      current.count++;
+    } else {
+      counts.set(key, { label, count: 1 });
+    }
+  }
+
+  return [...counts.values()].sort(
+    (a, b) => b.count - a.count || a.label.localeCompare(b.label, "pt-BR")
+  );
+}
+
 /**
  * Operations that should be rendered as cards: everything still in progress
  * plus any concluded operation whose truck is still driving off screen, so the
@@ -377,6 +409,7 @@ export function LoaderDashboard() {
   }
 
   const inProgressOperations = getInProgressOperations(operations);
+  const inProgressByProduct = countInProgressByProduct(inProgressOperations);
   const renderedOperations = getRenderedOperations(operations, departingIds);
   const recentCompletedOperations = getRecentCompletedOperations(operations, now);
   const overtimeOperations = getOvertimeOperations(inProgressOperations, avgQuarryMinutes, now);
@@ -432,6 +465,25 @@ export function LoaderDashboard() {
           </span>
         </button>
       </section>
+
+      {/* Quanto de cada produto esta esperando agora, antes da fila em si. */}
+      {inProgressByProduct.length > 0 ? (
+        <section className="product-counters" role="list" aria-label="Cargas em aberto por produto">
+          {inProgressByProduct.map((product) => (
+            <span
+              key={product.label}
+              role="listitem"
+              className="product-counter"
+              title={`${product.count} ${
+                product.count === 1 ? "carga em aberto" : "cargas em aberto"
+              } de ${product.label}`}
+            >
+              <span className="product-counter__label">{product.label}</span>
+              <strong className="product-counter__value">{product.count}</strong>
+            </span>
+          ))}
+        </section>
+      ) : null}
 
       {errorMessage ? (
         <div className="error-banner" role="alert">

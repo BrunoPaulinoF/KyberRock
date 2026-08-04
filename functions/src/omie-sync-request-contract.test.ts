@@ -24,6 +24,20 @@ function readRequestBody(fetchFn: ReturnType<typeof vi.fn>, index = 0): Record<s
   return JSON.parse(String(request?.body)) as Record<string, unknown>;
 }
 
+/**
+ * Stub do OMIE que responde por `call`, para os fluxos que encadeiam chamadas diferentes
+ * (IncluirCliente -> ConsultarCliente -> AlterarCliente). Uma `call` sem resposta
+ * declarada e um erro do teste, nao um `{}` silencioso.
+ */
+function omieStub(responses: Record<string, unknown>): ReturnType<typeof vi.fn> {
+  return vi.fn(async (_url: unknown, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body)) as { call?: string };
+    const call = body.call ?? "";
+    if (!(call in responses)) throw new Error(`Chamada OMIE inesperada no teste: ${call}`);
+    return jsonResponse(responses[call]);
+  });
+}
+
 describe("omie-sync contratos de requisicao", () => {
   it("envia chamadas OMIE com credenciais, call e param no formato exigido", async () => {
     const fetchFn = vi.fn(async () => jsonResponse({ codigo_cliente_omie: 123 }));
@@ -240,6 +254,114 @@ describe("cliente ja cadastrado no OMIE", () => {
     const updateBody = readRequestBody(fetchFn, 3);
     expect(updateBody.call).toBe("AlterarCliente");
     expect(updateBody.param).toEqual([expect.objectContaining({ codigo_cliente_omie: 555 })]);
+  });
+
+  // Aba Fiscal do cadastro -> "Utilizar os seguintes enderecos de e-mail" do OMIE. O
+  // `email` do cadastro e outra coisa: o contato do cliente, que nao decide quem recebe
+  // a nota.
+  it("grava os e-mails da aba fiscal no email_fatura das recomendacoes", async () => {
+    const fetchFn = omieStub({
+      IncluirCliente: { codigo_cliente_omie: 42 },
+      ConsultarCliente: { recomendacoes: { codigo_vendedor: 9, gerar_boletos: "S" } },
+      AlterarCliente: { ok: true }
+    });
+    const queue = new OmieQueueManager({ fetchFn, minDelayMs: 0, sleepFn: async () => undefined });
+
+    const id = await pushCustomerToOmieCore(queue, credentials, {
+      localCustomerId: "cliente-fiscal",
+      razaoSocial: "Cliente Fiscal",
+      email: "contato@cliente.com",
+      fiscalEmails: "Fiscal@cliente.com; financeiro@cliente.com"
+    });
+
+    expect(id).toBe(42);
+    // O contato segue no campo `email`, sem virar destinatario de nota.
+    expect((readRequestBody(fetchFn, 0).param as Array<Record<string, unknown>>)[0]).toMatchObject({
+      email: "contato@cliente.com"
+    });
+    expect(readRequestBody(fetchFn, 1)).toMatchObject({ call: "ConsultarCliente" });
+    const alter = readRequestBody(fetchFn, 2);
+    expect(alter.call).toBe("AlterarCliente");
+    const param = (alter.param as Array<Record<string, unknown>>)[0];
+    expect(param.codigo_cliente_omie).toBe(42);
+    // O bloco volta inteiro: o que estava configurado no OMIE nao pode se perder.
+    expect(param.recomendacoes).toEqual({
+      codigo_vendedor: 9,
+      gerar_boletos: "S",
+      email_fatura: "fiscal@cliente.com, financeiro@cliente.com"
+    });
+  });
+
+  // Chamador que nao gerencia o campo (push de transportadora, versao antiga do desktop):
+  // nem consulta, nem altera — o que estiver no OMIE fica como esta.
+  it("nao toca no email_fatura quando o cadastro nao informa a aba fiscal", async () => {
+    const fetchFn = omieStub({ IncluirCliente: { codigo_cliente_omie: 43 } });
+    const queue = new OmieQueueManager({ fetchFn, minDelayMs: 0, sleepFn: async () => undefined });
+
+    await pushCustomerToOmieCore(queue, credentials, {
+      localCustomerId: "cliente-sem-fiscal",
+      razaoSocial: "Cliente Sem Fiscal",
+      email: "contato@cliente.com, comprador@cliente.com"
+    });
+
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  // O operador esvaziou a aba Fiscal: quem estava la para de receber a nota.
+  it("limpa o email_fatura quando a aba fiscal fica vazia", async () => {
+    const fetchFn = omieStub({
+      IncluirCliente: { codigo_cliente_omie: 44 },
+      ConsultarCliente: {
+        recomendacoes: { email_fatura: "fiscal@cliente.com, antigo@cliente.com" }
+      },
+      AlterarCliente: { ok: true }
+    });
+    const queue = new OmieQueueManager({ fetchFn, minDelayMs: 0, sleepFn: async () => undefined });
+
+    await pushCustomerToOmieCore(queue, credentials, {
+      localCustomerId: "cliente-fiscal-vazio",
+      razaoSocial: "Cliente Fiscal Vazio",
+      fiscalEmails: ""
+    });
+
+    const param = (readRequestBody(fetchFn, 2).param as Array<Record<string, unknown>>)[0];
+    expect(param.recomendacoes).toEqual({ email_fatura: "" });
+  });
+
+  it("nao gasta um AlterarCliente quando o email_fatura ja esta correto", async () => {
+    const fetchFn = omieStub({
+      IncluirCliente: { codigo_cliente_omie: 45 },
+      ConsultarCliente: {
+        recomendacoes: { email_fatura: "fiscal@cliente.com, financeiro@cliente.com" }
+      }
+    });
+    const queue = new OmieQueueManager({ fetchFn, minDelayMs: 0, sleepFn: async () => undefined });
+
+    await pushCustomerToOmieCore(queue, credentials, {
+      localCustomerId: "cliente-ja-sincronizado",
+      razaoSocial: "Cliente Ja Sincronizado",
+      fiscalEmails: "fiscal@cliente.com, financeiro@cliente.com"
+    });
+
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
+  // Destinatario da nota e detalhe do faturamento: nao pode derrubar o cadastro (nem o
+  // fechamento que depende dele).
+  it("mantem o cadastro quando a gravacao do email_fatura falha", async () => {
+    const fetchFn = omieStub({
+      IncluirCliente: { codigo_cliente_omie: 46 },
+      ConsultarCliente: { faultstring: "ERROR: OMIE indisponivel" }
+    });
+    const queue = new OmieQueueManager({ fetchFn, minDelayMs: 0, sleepFn: async () => undefined });
+
+    const id = await pushCustomerToOmieCore(queue, credentials, {
+      localCustomerId: "cliente-consulta-falha",
+      razaoSocial: "Cliente Consulta Falha",
+      fiscalEmails: "fiscal@cliente.com, financeiro@cliente.com"
+    });
+
+    expect(id).toBe(46);
   });
 
   it("nao envia codigo_cliente_integracao em updates de cliente com omieCustomerId", async () => {

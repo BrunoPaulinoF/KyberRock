@@ -208,6 +208,8 @@ interface OmieReferenceCustomer {
   municipalRegistration?: string | null;
   isIndividual?: boolean;
   email: string | null;
+  /** `recomendacoes.email_fatura` do OMIE: os destinatarios da NF-e/boleto. */
+  fiscalEmails?: string | null;
   homepage?: string | null;
   contactName?: string | null;
   phone: string | null;
@@ -1991,7 +1993,7 @@ function upsertCloudOperations(
 ): number {
   const upsert = database.prepare(`
     INSERT INTO weighing_operations (
-      id, company_id, unit_id, device_id, status, operation_type, customer_id, vehicle_id, driver_id,
+      id, company_id, unit_id, device_id, operation_code, status, operation_type, customer_id, vehicle_id, driver_id,
       carrier_id,
       product_id, payment_term_id, entry_weight_kg, entry_weight_captured_at, exit_weight_kg,
       exit_weight_captured_at, net_weight_kg, unit_price_cents, product_total_cents,
@@ -2002,11 +2004,14 @@ function upsertCloudOperations(
       price_savings_percent, deduct_freight_from_credit, product_credit_debit_cents,
       freight_credit_debit_cents, quotation_id,
       remote_plate, remote_driver_name, remote_customer_name, remote_product_description
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
       unit_id = excluded.unit_id,
       device_id = excluded.device_id,
+      -- Codigo da operacao nasce com ela e nunca muda; um projecao sem o campo (nuvem
+      -- ainda sem a coluna) nao pode apagar o que esta maquina ja imprimiu no cupom.
+      operation_code = COALESCE(excluded.operation_code, weighing_operations.operation_code),
       status = excluded.status,
       operation_type = excluded.operation_type,
       customer_id = excluded.customer_id,
@@ -2101,6 +2106,7 @@ function upsertCloudOperations(
         settings.companyId,
         settings.unitId,
         existingId(database, "devices", row.device_id) ?? settings.deviceId,
+        integerValue(row.operation_code),
         mapCloudOperationStatus(row.status),
         mapCloudOperationType(row.operation_type),
         customerId,
@@ -3063,6 +3069,9 @@ function getOperationPayload(
         ? "open"
         : operation.status,
     operation_type: operation.operation_type,
+    // Codigo sequencial da operacao (o que sai no topo do cupom). Vai para a nuvem para a
+    // outra balanca da pedreira continuar a sequencia de onde ela parou.
+    operation_code: operation.operation_code,
     customer_id: operation.customer_id,
     product_id: operation.product_id,
     // Transportadora: as tres trocas permitidas numa operacao aberta sao
@@ -3174,7 +3183,7 @@ export async function pushOmieCustomersToCloud(
   const pending = database
     .prepare(
       `SELECT id, omie_customer_id, omie_integration_code, legal_name, trade_name, document, phone, email,
-              zipcode, address_street, address_number, address_complement, neighborhood, city, state,
+              fiscal_emails, zipcode, address_street, address_number, address_complement, neighborhood, city, state,
               default_payment_term_id, omie_billing_blocked
        FROM customers
        WHERE company_id = ? AND deleted_at IS NULL AND needs_push = 1 AND source IN ('local', 'hybrid')
@@ -3190,6 +3199,7 @@ export async function pushOmieCustomersToCloud(
     document: string | null;
     phone: string | null;
     email: string | null;
+    fiscal_emails: string | null;
     zipcode: string | null;
     address_street: string | null;
     address_number: string | null;
@@ -3263,6 +3273,9 @@ export async function pushOmieCustomersToCloud(
               nomeFantasia: customer.trade_name || customer.legal_name,
               cnpjCpf: customer.document ?? undefined,
               email: customer.email ?? undefined,
+              // String vazia = "sem destinatario de NF-e aqui", e limpa o campo no OMIE;
+              // o cadastro local e quem manda nesse campo (ver syncCustomerInvoiceEmails).
+              fiscalEmails: customer.fiscal_emails ?? "",
               telefone1Ddd: phoneMatch?.[1] ?? undefined,
               telefone1Numero: phoneMatch?.[2] ?? undefined,
               zipcode: customer.zipcode ?? undefined,
@@ -4950,14 +4963,14 @@ function upsertOmieCustomers(
     INSERT INTO customers (
       id, company_id, omie_customer_id, omie_integration_code, source, legal_name, trade_name,
       document, state_registration, municipal_registration, is_individual,
-      email, homepage, contact_name, phone, phone_secondary,
+      email, fiscal_emails, homepage, contact_name, phone, phone_secondary,
       zipcode, address_street, address_number, address_complement,
       neighborhood, city, state, country, country_code,
       ibge_city_code, ibge_state_code, customer_type, is_foreign,
       omie_billing_blocked, observations, tags_json, salesperson_id,
       default_payment_term_id, is_active, sync_status, last_synced_at,
       omie_updated_at, needs_push, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, 'omie', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    ) VALUES (?, ?, ?, ?, 'omie', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
       omie_customer_id = excluded.omie_customer_id,
@@ -4969,6 +4982,7 @@ function upsertOmieCustomers(
       municipal_registration = CASE WHEN customers.needs_push = 0 THEN excluded.municipal_registration ELSE customers.municipal_registration END,
       is_individual = CASE WHEN customers.needs_push = 0 THEN excluded.is_individual ELSE customers.is_individual END,
       email = CASE WHEN customers.needs_push = 0 THEN excluded.email ELSE customers.email END,
+      fiscal_emails = CASE WHEN customers.needs_push = 0 THEN excluded.fiscal_emails ELSE customers.fiscal_emails END,
       homepage = CASE WHEN customers.needs_push = 0 THEN excluded.homepage ELSE customers.homepage END,
       contact_name = CASE WHEN customers.needs_push = 0 THEN excluded.contact_name ELSE customers.contact_name END,
       phone = CASE WHEN customers.needs_push = 0 THEN excluded.phone ELSE customers.phone END,
@@ -5048,6 +5062,7 @@ function upsertOmieCustomers(
       customer.municipalRegistration ?? null,
       customer.isIndividual ? 1 : 0,
       customer.email,
+      customer.fiscalEmails ?? null,
       customer.homepage ?? null,
       customer.contactName ?? null,
       customer.phone,

@@ -148,6 +148,8 @@ interface PrintProfileRow {
 interface OperationReceiptRow {
   id: string;
   unit_id: string;
+  /** Codigo sequencial da operacao, impresso no topo do cupom. */
+  operation_code: number | null;
   company_name: string;
   company_document: string | null;
   company_state_registration: string | null;
@@ -622,7 +624,7 @@ function getOperationForReceipt(
   const row = database
     .prepare(
       `SELECT
-        o.id, o.unit_id, co.trade_name AS company_name, co.document AS company_document,
+        o.id, o.unit_id, o.operation_code, co.trade_name AS company_name, co.document AS company_document,
         NULL AS company_state_registration, u.name AS unit_name, o.status, o.operation_type,
         o.entry_weight_captured_at, o.entry_weight_kg, o.exit_weight_captured_at, o.exit_weight_kg,
         o.net_weight_kg, o.unit_price_cents, o.product_total_cents, o.freight_total_cents,
@@ -720,6 +722,7 @@ function buildReceiptSnapshot(
     companyDocument: operation.company_document,
     companyStateRegistration: operation.company_state_registration,
     unitName: operation.unit_name,
+    operationCode: operation.operation_code,
     receiptNumber,
     deviceNumber,
     copyNumber,

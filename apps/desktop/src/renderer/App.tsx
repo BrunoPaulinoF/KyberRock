@@ -161,6 +161,7 @@ import type {
 } from "./customers.types";
 import type { KyberRockDesktopApi } from "./desktop-api";
 import { filterClosedOperationsBySearch } from "./closed-operations-search";
+import { countOpenOperationsByProduct } from "./open-operations-product-summary";
 import {
   buildOmieDeliveryStates,
   diffOmieDeliveryEvents,
@@ -587,6 +588,12 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const overtimeOpenIds = useMemo(
     () => new Set(overtimeOpenOperations.map((op) => op.id)),
     [overtimeOpenOperations]
+  );
+  // Quantas operacoes de cada produto estao abertas: vira a faixa de contadores no topo
+  // da fila, para o operador saber o que tem no patio sem contar linha por linha.
+  const openOperationsByProduct = useMemo(
+    () => countOpenOperationsByProduct(openOperations),
+    [openOperations]
   );
   // O polling da "luz" fica ligado enquanto houver operacao aberta (nao so as
   // aguardando): o carregador tambem pode CANCELAR uma conclusao no loader-web,
@@ -2956,212 +2963,238 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       </span>
                     </div>
                   ) : (
-                    <div style={styles.operationsTable}>
-                      {loaderCompletionNotice ? (
-                        <div
-                          role="status"
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: "8px",
-                            padding: "10px 12px",
-                            marginBottom: "8px",
-                            borderRadius: "10px",
-                            border: `1px solid ${
-                              loaderCompletionNotice.kind === "completed"
-                                ? "var(--kr-success-border)"
-                                : "var(--kr-warning-border)"
-                            }`,
-                            background:
-                              loaderCompletionNotice.kind === "completed"
-                                ? "var(--kr-success-soft)"
-                                : "var(--kr-warning-soft)",
-                            color:
-                              loaderCompletionNotice.kind === "completed"
-                                ? "var(--kr-success)"
-                                : "var(--kr-warning)",
-                            fontSize: "13px",
-                            fontWeight: 700
-                          }}
-                        >
+                    <>
+                      {/* Quanto de cada produto esta no patio agora, antes da fila em si. */}
+                      <div
+                        style={styles.productCounterRow}
+                        role="list"
+                        aria-label="Operacoes abertas por produto"
+                      >
+                        {openOperationsByProduct.map((product) => (
                           <span
-                            aria-hidden="true"
-                            style={{
-                              width: "10px",
-                              height: "10px",
-                              borderRadius: "50%",
-                              background:
-                                loaderCompletionNotice.kind === "completed" ? "#22c55e" : "#f59e0b",
-                              flexShrink: 0
-                            }}
-                          />
-                          <span style={{ flex: 1 }}>
-                            {loaderCompletionNotice.kind === "completed" ? "✓ " : "↩ "}
-                            {loaderCompletionNotice.text}
+                            key={product.key}
+                            role="listitem"
+                            title={`${product.count} ${
+                              product.count === 1 ? "operacao aberta" : "operacoes abertas"
+                            } de ${product.label}`}
+                            style={styles.productCounter}
+                          >
+                            <span style={styles.productCounterLabel}>{product.label}</span>
+                            <strong style={styles.productCounterValue}>{product.count}</strong>
                           </span>
-                          <button
-                            type="button"
-                            onClick={() => setLoaderCompletionNotice(null)}
-                            aria-label="Dispensar aviso"
+                        ))}
+                      </div>
+                      <div style={styles.operationsTable}>
+                        {loaderCompletionNotice ? (
+                          <div
+                            role="status"
                             style={{
-                              border: "none",
-                              background: "transparent",
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "8px",
+                              padding: "10px 12px",
+                              marginBottom: "8px",
+                              borderRadius: "10px",
+                              border: `1px solid ${
+                                loaderCompletionNotice.kind === "completed"
+                                  ? "var(--kr-success-border)"
+                                  : "var(--kr-warning-border)"
+                              }`,
+                              background:
+                                loaderCompletionNotice.kind === "completed"
+                                  ? "var(--kr-success-soft)"
+                                  : "var(--kr-warning-soft)",
                               color:
                                 loaderCompletionNotice.kind === "completed"
                                   ? "var(--kr-success)"
                                   : "var(--kr-warning)",
-                              cursor: "pointer",
-                              fontWeight: 900,
-                              fontSize: "15px",
-                              lineHeight: 1,
-                              padding: "0 2px"
-                            }}
-                          >
-                            ×
-                          </button>
-                        </div>
-                      ) : null}
-                      {overtimeOpenOperations.length > 0 ? (
-                        <div
-                          role="alert"
-                          style={{
-                            display: "flex",
-                            flexWrap: "wrap",
-                            alignItems: "center",
-                            gap: "8px",
-                            padding: "10px 12px",
-                            marginBottom: "8px",
-                            borderRadius: "10px",
-                            border: "1px solid var(--kr-danger-border)",
-                            background: "var(--kr-danger-soft)",
-                            color: "var(--kr-danger)",
-                            fontSize: "13px",
-                            fontWeight: 700
-                          }}
-                        >
-                          <span>
-                            ⚠ Acima do tempo medio ({formatMinutes(truckAverageMinutes)}):
-                          </span>
-                          {overtimeOpenOperations.map((op) => (
-                            <span
-                              key={op.id}
-                              style={{
-                                background: "var(--kr-surface)",
-                                border: "1px solid var(--kr-danger-border)",
-                                borderRadius: "8px",
-                                padding: "2px 8px",
-                                letterSpacing: "0.06em"
-                              }}
-                            >
-                              {op.plate || "SEM PLACA"} · {formatElapsedSince(op.createdAt)}
-                            </span>
-                          ))}
-                        </div>
-                      ) : null}
-                      <div style={{ ...styles.operationsTableRow, ...styles.operationsTableHead }}>
-                        <span>Placa / Carregador</span>
-                        <span>Cliente / Produto</span>
-                        <span>Entrada / Preco</span>
-                        <span>Acoes</span>
-                      </div>
-                      {openOperations.map((operation) => {
-                        const isOvertime = overtimeOpenIds.has(operation.id);
-                        return (
-                          <div
-                            key={operation.id}
-                            {...operationRowOpenProps(operation)}
-                            style={{
-                              ...styles.operationsTableRow,
-                              cursor: "pointer",
-                              ...(isOvertime ? { background: "var(--kr-danger-surface)" } : {}),
-                              ...operationOutlineStyle(operation)
+                              fontSize: "13px",
+                              fontWeight: 700
                             }}
                           >
                             <span
+                              aria-hidden="true"
                               style={{
-                                display: "flex",
-                                flexDirection: "column",
-                                alignItems: "flex-start",
-                                gap: "5px",
-                                minWidth: 0
+                                width: "10px",
+                                height: "10px",
+                                borderRadius: "50%",
+                                background:
+                                  loaderCompletionNotice.kind === "completed"
+                                    ? "#22c55e"
+                                    : "#f59e0b",
+                                flexShrink: 0
+                              }}
+                            />
+                            <span style={{ flex: 1 }}>
+                              {loaderCompletionNotice.kind === "completed" ? "✓ " : "↩ "}
+                              {loaderCompletionNotice.text}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setLoaderCompletionNotice(null)}
+                              aria-label="Dispensar aviso"
+                              style={{
+                                border: "none",
+                                background: "transparent",
+                                color:
+                                  loaderCompletionNotice.kind === "completed"
+                                    ? "var(--kr-success)"
+                                    : "var(--kr-warning)",
+                                cursor: "pointer",
+                                fontWeight: 900,
+                                fontSize: "15px",
+                                lineHeight: 1,
+                                padding: "0 2px"
                               }}
                             >
-                              <strong style={styles.plateBadge}>{operation.plate}</strong>
-                              <LoaderStatusLight completedAt={operation.loaderCompletedAt} />
-                            </span>
-                            <span style={styles.operationCellStack}>
-                              <strong>{operation.customerName}</strong>
-                              <span>{operation.productDescription}</span>
-                              <small>Motorista: {operation.driverName}</small>
-                            </span>
-                            <span style={styles.operationCellStack}>
-                              <strong>{formatWeightKg(operation.entryWeightKg ?? 0)}</strong>
-                              <span>{formatMoney(operation.unitPriceCents)}/ton</span>
-                              <small
-                                style={{
-                                  color: isOvertime ? "var(--kr-danger)" : "var(--kr-muted)",
-                                  fontWeight: isOvertime ? 700 : undefined
-                                }}
-                                title={formatDbDateTime(operation.createdAt)}
-                              >
-                                Entrou {formatElapsedSince(operation.createdAt)}
-                                {isOvertime ? " · acima da media ▲" : ""}
-                              </small>
-                            </span>
-                            <span style={styles.rowActions}>
-                              <IconActionButton
-                                icon="file-text"
-                                label="Ver / editar operacao"
-                                tip={TIPS.operations.details}
-                                tone="neutral"
-                                placement="left"
-                                onClick={() => setDetailOperation(operation)}
-                              />
-                              <IconActionButton
-                                icon="swap"
-                                label="Alterar material"
-                                tip={TIPS.operations.changeProduct}
-                                tone="neutral"
-                                placement="left"
-                                onClick={() => void handleOpenChangeProduct(operation)}
-                              />
-                              <IconActionButton
-                                icon="edit"
-                                label="Alterar cliente"
-                                tip={TIPS.operations.changeCustomer}
-                                tone="neutral"
-                                placement="left"
-                                onClick={() => void handleOpenChangeCustomer(operation)}
-                              />
-                              <IconActionButton
-                                icon="truck"
-                                label="Alterar transportadora"
-                                tip={TIPS.operations.changeCarrier}
-                                tone="neutral"
-                                placement="left"
-                                onClick={() => void handleOpenChangeCarrier(operation)}
-                              />
-                              <IconActionButton
-                                icon="check"
-                                label="Fechar operacao"
-                                tip={TIPS.operations.close}
-                                tone="primary"
-                                placement="left"
-                                onClick={() => setClosingOperation(operation)}
-                              />
-                              <IconActionButton
-                                icon="ban"
-                                label="Cancelar operacao"
-                                tip={TIPS.operations.cancel}
-                                tone="danger"
-                                placement="left"
-                                onClick={() => setCancelTarget({ operation, context: "open" })}
-                              />
-                            </span>
+                              ×
+                            </button>
                           </div>
-                        );
-                      })}
-                    </div>
+                        ) : null}
+                        {overtimeOpenOperations.length > 0 ? (
+                          <div
+                            role="alert"
+                            style={{
+                              display: "flex",
+                              flexWrap: "wrap",
+                              alignItems: "center",
+                              gap: "8px",
+                              padding: "10px 12px",
+                              marginBottom: "8px",
+                              borderRadius: "10px",
+                              border: "1px solid var(--kr-danger-border)",
+                              background: "var(--kr-danger-soft)",
+                              color: "var(--kr-danger)",
+                              fontSize: "13px",
+                              fontWeight: 700
+                            }}
+                          >
+                            <span>
+                              ⚠ Acima do tempo medio ({formatMinutes(truckAverageMinutes)}):
+                            </span>
+                            {overtimeOpenOperations.map((op) => (
+                              <span
+                                key={op.id}
+                                style={{
+                                  background: "var(--kr-surface)",
+                                  border: "1px solid var(--kr-danger-border)",
+                                  borderRadius: "8px",
+                                  padding: "2px 8px",
+                                  letterSpacing: "0.06em"
+                                }}
+                              >
+                                {op.plate || "SEM PLACA"} · {formatElapsedSince(op.createdAt)}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+                        <div
+                          style={{ ...styles.operationsTableRow, ...styles.operationsTableHead }}
+                        >
+                          <span>Placa / Carregador</span>
+                          <span>Cliente / Produto</span>
+                          <span>Entrada / Preco</span>
+                          <span>Acoes</span>
+                        </div>
+                        {openOperations.map((operation) => {
+                          const isOvertime = overtimeOpenIds.has(operation.id);
+                          return (
+                            <div
+                              key={operation.id}
+                              {...operationRowOpenProps(operation)}
+                              style={{
+                                ...styles.operationsTableRow,
+                                cursor: "pointer",
+                                ...(isOvertime ? { background: "var(--kr-danger-surface)" } : {}),
+                                ...operationOutlineStyle(operation)
+                              }}
+                            >
+                              <span
+                                style={{
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  alignItems: "flex-start",
+                                  gap: "5px",
+                                  minWidth: 0
+                                }}
+                              >
+                                <strong style={styles.plateBadge}>{operation.plate}</strong>
+                                <LoaderStatusLight completedAt={operation.loaderCompletedAt} />
+                              </span>
+                              <span style={styles.operationCellStack}>
+                                <strong>{operation.customerName}</strong>
+                                <span>{operation.productDescription}</span>
+                                <small>Motorista: {operation.driverName}</small>
+                              </span>
+                              <span style={styles.operationCellStack}>
+                                <strong>{formatWeightKg(operation.entryWeightKg ?? 0)}</strong>
+                                <span>{formatMoney(operation.unitPriceCents)}/ton</span>
+                                <small
+                                  style={{
+                                    color: isOvertime ? "var(--kr-danger)" : "var(--kr-muted)",
+                                    fontWeight: isOvertime ? 700 : undefined
+                                  }}
+                                  title={formatDbDateTime(operation.createdAt)}
+                                >
+                                  Entrou {formatElapsedSince(operation.createdAt)}
+                                  {isOvertime ? " · acima da media ▲" : ""}
+                                </small>
+                              </span>
+                              <span style={styles.rowActions}>
+                                <IconActionButton
+                                  icon="file-text"
+                                  label="Ver / editar operacao"
+                                  tip={TIPS.operations.details}
+                                  tone="neutral"
+                                  placement="left"
+                                  onClick={() => setDetailOperation(operation)}
+                                />
+                                <IconActionButton
+                                  icon="swap"
+                                  label="Alterar material"
+                                  tip={TIPS.operations.changeProduct}
+                                  tone="neutral"
+                                  placement="left"
+                                  onClick={() => void handleOpenChangeProduct(operation)}
+                                />
+                                <IconActionButton
+                                  icon="edit"
+                                  label="Alterar cliente"
+                                  tip={TIPS.operations.changeCustomer}
+                                  tone="neutral"
+                                  placement="left"
+                                  onClick={() => void handleOpenChangeCustomer(operation)}
+                                />
+                                <IconActionButton
+                                  icon="truck"
+                                  label="Alterar transportadora"
+                                  tip={TIPS.operations.changeCarrier}
+                                  tone="neutral"
+                                  placement="left"
+                                  onClick={() => void handleOpenChangeCarrier(operation)}
+                                />
+                                <IconActionButton
+                                  icon="check"
+                                  label="Fechar operacao"
+                                  tip={TIPS.operations.close}
+                                  tone="primary"
+                                  placement="left"
+                                  onClick={() => setClosingOperation(operation)}
+                                />
+                                <IconActionButton
+                                  icon="ban"
+                                  label="Cancelar operacao"
+                                  tip={TIPS.operations.cancel}
+                                  tone="danger"
+                                  placement="left"
+                                  onClick={() => setCancelTarget({ operation, context: "open" })}
+                                />
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </>
                   )
                 ) : operationsTab === "canceled" ? (
                   filteredCanceledOperations.length === 0 ? (
@@ -12682,6 +12715,42 @@ const styles = {
     maxHeight: "calc(100vh - 230px)",
     border: "1px solid var(--kr-border)",
     borderRadius: "14px"
+  },
+  // Faixa de contadores por produto no topo da fila de operacoes abertas. Fica FORA da
+  // caixa rolante da tabela para continuar visivel com a fila cheia.
+  productCounterRow: {
+    display: "flex",
+    flexWrap: "wrap" as const,
+    gap: "6px",
+    marginBottom: "8px"
+  },
+  productCounter: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "6px",
+    padding: "4px 6px 4px 10px",
+    borderRadius: "999px",
+    border: "1px solid var(--kr-border)",
+    background: "var(--kr-surface-soft)",
+    fontSize: "12px",
+    maxWidth: "100%"
+  },
+  productCounterLabel: {
+    color: "var(--kr-text-strong)",
+    fontWeight: 600,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap" as const
+  },
+  productCounterValue: {
+    minWidth: "20px",
+    padding: "1px 6px",
+    borderRadius: "999px",
+    background: "var(--kr-info-bg)",
+    border: "1px solid var(--kr-info-border)",
+    color: "var(--kr-info-text)",
+    fontWeight: 800,
+    textAlign: "center" as const
   },
   operationsTableRow: {
     display: "grid",

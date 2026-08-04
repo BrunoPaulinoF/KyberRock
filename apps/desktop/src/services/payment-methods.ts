@@ -126,6 +126,17 @@ export const DEFAULT_PAYMENT_METHODS: readonly DefaultPaymentMethod[] = [
     isWallet: true,
     sortOrder: 7,
     omieCode: "99"
+  },
+  // Bonificacao: a mercadoria sai com nota, mas nao ha o que cobrar. Mesmo "99 - outros"
+  // da carteira, que faz o pedido sair com nao_gerar_boleto "S" (ver boletoGenerationFlag
+  // no omie-sync): a NF e emitida e nenhuma cobranca nasce dela.
+  {
+    code: "bonificacao",
+    name: "Bonificação",
+    isCustomerCredit: false,
+    isWallet: false,
+    sortOrder: 8,
+    omieCode: "99"
   }
 ];
 
@@ -336,9 +347,11 @@ const DEFAULT_METHOD_ACCOUNT_BINDINGS: ReadonlyArray<{ methodCode: string; accou
     { methodCode: "credit_card", accountCode: "getnet" },
     // Credito do cliente (fiado) e lancado uma unica vez no OMIE pela OMIE Cash.
     { methodCode: "customer_credit", accountCode: "omie_cash" },
-    // Em carteira: o titulo fica na OMIE Cash ate o fechamento definir como o cliente
-    // paga; sem esse vinculo o pedido cairia na primeira conta corrente do tenant.
-    { methodCode: "wallet", accountCode: "omie_cash" }
+    // Cada uma na sua conta corrente do OMIE: a venda em carteira fica na EM CARTEIRA ate
+    // o fechamento definir como o cliente paga, e a bonificacao na BONIFICACAO. Sem o
+    // vinculo o pedido cairia na primeira conta corrente do tenant.
+    { methodCode: "wallet", accountCode: "em_carteira" },
+    { methodCode: "bonificacao", accountCode: "bonificacao" }
   ];
 
 /**

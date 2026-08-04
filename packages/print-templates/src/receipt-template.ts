@@ -3,6 +3,13 @@ export interface ReceiptTemplateInput {
   companyDocument: string | null;
   companyStateRegistration: string | null;
   unitName: string;
+  /**
+   * Codigo sequencial da OPERACAO na pedreira (000001, 000002, ...), impresso no topo do
+   * cupom. Distinto de `receiptNumber`, que numera IMPRESSOES: duas vias da mesma
+   * operacao saem com o mesmo codigo de operacao e numeros de cupom diferentes.
+   * Ausente nos cupons emitidos antes do codigo existir.
+   */
+  operationCode?: number | null;
   receiptNumber: number;
   /**
    * Numero do computador dentro da pedreira, impresso como sufixo do cupom
@@ -228,6 +235,7 @@ export const NON_FISCAL_SALE_LABEL = "VENDA SEM VALOR FISCAL";
  * cupom sair com o cabecalho picado.
  */
 export interface ReceiptHeaderBlock {
+  operationCodeLabel: string | null;
   customHeaderText: string | null;
   nonFiscalLabel: string | null;
   companyName: string | null;
@@ -311,6 +319,8 @@ function buildHeaderBlock(
   const nonFiscal = input.operationType === "internal";
 
   return {
+    // Primeira coisa do cupom: e por este codigo que o operador acha a operacao depois.
+    operationCodeLabel: formatOperationCode(input.operationCode),
     customHeaderText: config.customHeaderText.trim()
       ? config.customHeaderText.trim().toUpperCase()
       : null,
@@ -335,6 +345,10 @@ function buildHeaderBlock(
 function buildHeaderLines(header: ReceiptHeaderBlock): string[] {
   const lines: string[] = [];
 
+  if (header.operationCodeLabel) {
+    lines.push(centered(`OPERACAO ${header.operationCodeLabel}`));
+  }
+
   if (header.customHeaderText) {
     lines.push(header.customHeaderText);
   }
@@ -357,6 +371,9 @@ function buildHeaderLines(header: ReceiptHeaderBlock): string[] {
   }
 
   if (lines.length > 0 && (header.companyName || header.receiptNumberLabel)) {
+    lines.push(divider());
+  } else if (lines.length > 0 && header.operationCodeLabel) {
+    // Cupom com todos os blocos desligados: o codigo ainda precisa se separar do corpo.
     lines.push(divider());
   }
 
@@ -494,6 +511,7 @@ export function buildSampleReceiptInput(printedAt: string): ReceiptTemplateInput
     companyDocument: "00.000.000/0001-00",
     companyStateRegistration: "000.000.000.000",
     unitName: "Pedreira Teste",
+    operationCode: 1,
     receiptNumber: 0,
     copyNumber: 0,
     printedAt,
@@ -564,6 +582,18 @@ function threeColumns(col1: string, col2: string, col3: string): string {
  * Numero do cupom como sai no papel: sequencia da balanca com o numero do
  * computador como sufixo quando a pedreira tem mais de um (000000101-2).
  */
+/**
+ * Codigo da operacao como sai no papel: seis digitos com zeros a esquerda (000001).
+ * `null` quando a operacao nao tem codigo (cupons anteriores ao campo existir), e ai a
+ * linha simplesmente nao sai.
+ */
+export function formatOperationCode(operationCode: number | null | undefined): string | null {
+  if (typeof operationCode !== "number" || !Number.isFinite(operationCode) || operationCode <= 0) {
+    return null;
+  }
+  return Math.trunc(operationCode).toString().padStart(6, "0");
+}
+
 export function formatReceiptNumber(receiptNumber: number, deviceNumber?: number | null): string {
   const base = receiptNumber.toString().padStart(9, "0");
   return deviceNumber && deviceNumber > 0 ? `${base}-${deviceNumber}` : base;
