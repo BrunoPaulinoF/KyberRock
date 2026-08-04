@@ -195,6 +195,27 @@ npx supabase@latest functions deploy omie-sync --project-ref vksihzfrgqoemcqpqui
 `--use-api` bundles server-side, so Docker is not needed. The project ref is not a secret (it is
 already in `.env.example`). Omit `--no-verify-jwt`: `config.toml` now carries that setting.
 
+## SQL migrations
+
+**Not automated.** Unlike the Edge Functions and the desktop installer, nothing deploys
+`supabase/migrations/**` on a push to `main`. A migration merged to `main` does **not** exist in
+production until someone applies it — with the `supabase_kyberrock_*` MCP tools (`apply_migration`)
+or the CLI. `list_migrations` shows what the project actually has.
+
+**Apply the migration before the desktop release that needs it.** The desktop ships by auto-update
+(30 min check, install on quit) while the cloud schema does not, so a new column always reaches the
+scale first. When the cloud is behind, the desktop keeps sending the field and PostgREST rejects the
+**whole batch** with `PGRST204` — not just that column.
+
+`desktop-sync` degrades instead of freezing: an unknown column is dropped from the payload and the
+write is retried without it (`supabase/functions/_shared/unknown-column.ts`), so the rest of the
+projection still lands and the field arrives on the next push after the migration. The dropped
+columns come back in the response as `droppedColumns` and are logged as
+`desktop-sync: colunas ausentes na nuvem foram ignoradas` — **that log line means a migration is
+pending in production**. Do not treat it as noise: without this fallback, a missing column on
+`weighing_operations` also blocks `loading_requests` (FK `operation_id`) and the loader's screen
+goes empty, with every truck already in the quarry invisible to him.
+
 ## Subagents
 
 All subagents (`explore`, `qa-build`, `qa-lint`, `qa-test`) **must** use the model `minimax-m3`. Other models require explicit user approval.

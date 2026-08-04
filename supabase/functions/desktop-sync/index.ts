@@ -2,6 +2,13 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { safeEqual, sha256Hex } from "../_shared/crypto.ts";
 import { scopeRowsToDevice } from "../_shared/device-scope.ts";
+import {
+  MAX_UNKNOWN_COLUMN_ROUNDS,
+  type PostgrestLikeError,
+  rowsHaveColumn,
+  stripColumn,
+  unknownColumnFromError
+} from "../_shared/unknown-column.ts";
 
 type CloudPayload = {
   deviceId?: string;
@@ -104,12 +111,19 @@ Deno.serve(async (req) => {
       cadastro: 0
     };
     const stepErrors: string[] = [];
+    // Colunas que o desktop enviou e a nuvem ainda nao tem (migracao pendente).
+    // Saem do payload em vez de derrubar o lote inteiro — ver `_shared/unknown-column.ts`.
+    const droppedColumns: string[] = [];
+    const upsert = (
+      table: string,
+      rows: Record<string, unknown>[],
+      onConflict: string
+    ): Promise<{ error: PostgrestLikeError | null }> =>
+      upsertSkippingUnknownColumns(supabase, table, rows, onConflict, droppedColumns);
 
     // Ordem importa: dependencias antes de dependentes (FK customers/products -> operations/loadingRequests/printReceipts).
     if (body.customers?.length) {
-      const { error } = await supabase
-        .from("customers")
-        .upsert(body.customers, { onConflict: "id" });
+      const { error } = await upsert("customers", body.customers, "id");
       if (error) {
         stepErrors.push(`customers: ${error.message} (code=${error.code ?? "n/a"})`);
       } else {
@@ -117,7 +131,7 @@ Deno.serve(async (req) => {
       }
     }
     if (body.products?.length) {
-      const { error } = await supabase.from("products").upsert(body.products, { onConflict: "id" });
+      const { error } = await upsert("products", body.products, "id");
       if (error) {
         stepErrors.push(`products: ${error.message} (code=${error.code ?? "n/a"})`);
       } else {
@@ -130,7 +144,7 @@ Deno.serve(async (req) => {
       // company_id vem sempre do registro do dispositivo: um desktop nunca grava
       // cadastro em outra pedreira, mesmo que envie outro id no payload.
       const scoped = rows.map((row) => ({ ...row, company_id: device.company_id }));
-      const { error } = await supabase.from(table).upsert(scoped, { onConflict: "id" });
+      const { error } = await upsert(table, scoped, "id");
       if (error) {
         stepErrors.push(`${table}: ${error.message} (code=${error.code ?? "n/a"})`);
       } else {
@@ -147,9 +161,7 @@ Deno.serve(async (req) => {
         scopeRowsToDevice(body.operations, device)
       );
       if (operations.length) {
-        const { error } = await supabase
-          .from("weighing_operations")
-          .upsert(operations, { onConflict: "id" });
+        const { error } = await upsert("weighing_operations", operations, "id");
         if (error) {
           stepErrors.push(`weighing_operations: ${error.message} (code=${error.code ?? "n/a"})`);
         } else {
@@ -163,9 +175,7 @@ Deno.serve(async (req) => {
         scopeRowsToDevice(body.loadingRequests, device)
       );
       if (loadingRequests.length) {
-        const { error } = await supabase
-          .from("loading_requests")
-          .upsert(loadingRequests, { onConflict: "id" });
+        const { error } = await upsert("loading_requests", loadingRequests, "id");
         if (error) {
           stepErrors.push(`loading_requests: ${error.message} (code=${error.code ?? "n/a"})`);
         } else {
@@ -174,9 +184,7 @@ Deno.serve(async (req) => {
       }
     }
     if (body.printReceipts?.length) {
-      const { error } = await supabase
-        .from("print_receipts")
-        .upsert(body.printReceipts, { onConflict: "id" });
+      const { error } = await upsert("print_receipts", body.printReceipts, "id");
       if (error) {
         stepErrors.push(`print_receipts: ${error.message} (code=${error.code ?? "n/a"})`);
       } else {
@@ -184,9 +192,7 @@ Deno.serve(async (req) => {
       }
     }
     if (body.reportRecipients?.length) {
-      const { error } = await supabase
-        .from("report_recipients")
-        .upsert(body.reportRecipients, { onConflict: "id" });
+      const { error } = await upsert("report_recipients", body.reportRecipients, "id");
       if (error) {
         stepErrors.push(`report_recipients: ${error.message} (code=${error.code ?? "n/a"})`);
       } else {
@@ -196,9 +202,11 @@ Deno.serve(async (req) => {
     // Configuracao dos canais de envio (SMTP/WhatsApp) da empresa: um registro
     // por empresa, usado pelo daily-report-email no lugar dos envs.
     if (body.reportChannelSettings && typeof body.reportChannelSettings === "object") {
-      const { error } = await supabase
-        .from("report_channel_settings")
-        .upsert(body.reportChannelSettings, { onConflict: "company_id" });
+      const { error } = await upsert(
+        "report_channel_settings",
+        [body.reportChannelSettings],
+        "company_id"
+      );
       if (error) {
         stepErrors.push(`report_channel_settings: ${error.message} (code=${error.code ?? "n/a"})`);
       }
@@ -227,6 +235,16 @@ Deno.serve(async (req) => {
       .update({ last_seen_at: new Date().toISOString() })
       .eq("id", deviceId);
 
+    // Migracao pendente: o dado foi gravado sem o campo novo. Nao e erro (o
+    // desktop reenvia e o campo entra depois), mas precisa ficar no log do
+    // projeto para alguem aplicar a migracao que falta.
+    if (droppedColumns.length > 0) {
+      console.warn("desktop-sync: colunas ausentes na nuvem foram ignoradas", {
+        deviceId,
+        droppedColumns
+      });
+    }
+
     if (stepErrors.length > 0) {
       // Tambem no log do projeto: o desktop mostra o `details` ao operador, mas
       // sem isto nao havia como investigar depois pelo painel do Supabase — os
@@ -239,13 +257,14 @@ Deno.serve(async (req) => {
         {
           error: "Falha ao persistir alguns payloads",
           details: stepErrors,
-          counts
+          counts,
+          droppedColumns
         },
         500
       );
     }
 
-    return jsonResponse({ ok: true, counts });
+    return jsonResponse({ ok: true, counts, droppedColumns });
   } catch (error) {
     return jsonResponse(
       {
@@ -256,6 +275,44 @@ Deno.serve(async (req) => {
     );
   }
 });
+
+/**
+ * Upsert que sobrevive a uma migracao ainda nao aplicada na nuvem.
+ *
+ * O PostgREST recusa o lote INTEIRO (PGRST204) quando o payload traz uma coluna
+ * que a tabela nao tem — e a balanca costuma ser atualizada antes das migracoes.
+ * Aqui a coluna desconhecida sai do payload e a gravacao e refeita, uma coluna
+ * por rodada (o PostgREST so reporta a primeira). Erro de qualquer outra
+ * natureza continua subindo intacto: so a defasagem de schema e tolerada.
+ *
+ * As colunas descartadas voltam em `droppedColumns` para virarem aviso.
+ */
+async function upsertSkippingUnknownColumns(
+  supabase: SupabaseServiceClient,
+  table: string,
+  rows: Record<string, unknown>[],
+  onConflict: string,
+  droppedColumns: string[]
+): Promise<{ error: PostgrestLikeError | null }> {
+  let payload = rows;
+  for (let round = 0; round < MAX_UNKNOWN_COLUMN_ROUNDS; round++) {
+    const { error } = await supabase.from(table).upsert(payload, { onConflict });
+    if (!error) return { error: null };
+
+    const missing = unknownColumnFromError(error);
+    // Coluna que o payload nao envia: reenviar o mesmo lote so repetiria o erro.
+    if (!missing || !rowsHaveColumn(payload, missing)) return { error };
+
+    droppedColumns.push(`${table}.${missing}`);
+    payload = stripColumn(payload, missing);
+  }
+  return {
+    error: {
+      code: "PGRST204",
+      message: `${table}: colunas demais ausentes na nuvem (${MAX_UNKNOWN_COLUMN_ROUNDS} rodadas). Aplique as migracoes pendentes de supabase/migrations.`
+    }
+  };
+}
 
 // Status de operacao que nao pode voltar para aberto por um re-envio atrasado.
 const TERMINAL_OPERATION_STATUSES = new Set([
