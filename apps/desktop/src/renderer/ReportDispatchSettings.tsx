@@ -7,7 +7,7 @@ import { HelpTooltip } from "./Tooltip";
 // Card "Envios automaticos" da tela de Relatorios: liga/desliga o agendador
 // local, escolhe a hora e quais pacotes saem (diario todo dia, semanal toda
 // sexta-feira, mensal na virada do mes). Quando os pacotes coincidem no mesmo
-// dia, os anexos (PDF Insights + Excel de vendas + PDF de caminhoes) vao
+// dia, os anexos (PDF Insights + PDF de vendas + PDF de caminhoes) vao
 // juntos em um unico envio para cada destinatario.
 
 const styles = {
@@ -231,7 +231,7 @@ export function ReportDispatchSettings({ desktopApi }: { desktopApi: KyberRockDe
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <h3 style={styles.headerTitle}>Envios automaticos de relatorios</h3>
           <HelpTooltip
-            content="Cada envio leva os mesmos arquivos das telas: PDF do Painel de Insights + Excel de vendas e PDF do Controle de Caminhoes, para os destinatarios ativos conforme o tipo de relatorio de cada um. Quando os periodos coincidem (ex.: dia de semanal), os relatorios vao juntos no mesmo envio. O computador precisa estar ligado com o KyberRock aberto no horario configurado — envios perdidos sao recuperados na proxima abertura do app."
+            content="Cada envio leva os mesmos arquivos das telas, todos em PDF: Painel de Insights, relatorio de vendas e Controle de Caminhoes, para os destinatarios ativos conforme o tipo de relatorio de cada um. Quando os periodos coincidem (ex.: dia de semanal), os relatorios vao juntos no mesmo envio. O computador precisa estar ligado com o KyberRock aberto no horario configurado — envios perdidos sao recuperados na proxima abertura do app."
             placement="right"
           />
         </div>

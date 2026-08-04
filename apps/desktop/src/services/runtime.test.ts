@@ -6,7 +6,9 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { DesktopDatabase } from "../database/sqlite";
 import { DesktopRuntime } from "./runtime";
+import type { EmailSendInput } from "./email";
 import { writeLocalSetting, readLocalSetting } from "./local-settings";
+import { createReportRecipient } from "./report-recipients";
 import { ensureInitialDesktopIdentity } from "./bootstrap";
 
 describe("DesktopRuntime OMIE status", () => {
@@ -300,6 +302,68 @@ describe("DesktopRuntime customer edits", () => {
       expect(JSON.parse(job.payload_json).customer).toMatchObject({
         razaoSocial: "LOGI TRANSPORTES LTDA"
       });
+    } finally {
+      runtime.close();
+    }
+  });
+});
+
+describe("DesktopRuntime report dispatch attachments", () => {
+  const tempDirectories: string[] = [];
+
+  afterEach(() => {
+    for (const directory of tempDirectories.splice(0)) {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  // O anexo de vendas saia como `.xls` (tabelas HTML): destinatario sem Excel —
+  // celular, na maioria — nao conseguia abrir. Todo o pacote vai em PDF.
+  it("sends every bundle attachment as PDF", async () => {
+    const baseDirectory = mkdtempSync(path.join(tmpdir(), "kyberrock-runtime-"));
+    tempDirectories.push(baseDirectory);
+    const runtime = DesktopRuntime.initialize(baseDirectory);
+
+    try {
+      const database = (runtime as unknown as { database: DesktopDatabase }).database;
+      ensureInitialDesktopIdentity(database, {
+        companyId: "company-1",
+        companyLegalName: "KyberRock Mineracao LTDA",
+        unitId: "unit-1",
+        unitName: "Pedreira Principal",
+        deviceId: "device-1",
+        deviceName: "PC Balanca"
+      });
+      createReportRecipient(database, {
+        companyId: "company-1",
+        email: "gestor@exemplo.com",
+        sendEmail: true,
+        sendWhatsapp: false,
+        reportTypes: "both"
+      });
+
+      const sent: EmailSendInput[] = [];
+      runtime.sendReportEmail = async (input: EmailSendInput) => {
+        sent.push(input);
+        return { success: true };
+      };
+
+      const result = await runtime.sendReportsNow(async (html) =>
+        Buffer.from(`pdf:${html.length}`, "utf8")
+      );
+
+      expect(result.emailsSent).toBe(1);
+      expect(sent).toHaveLength(1);
+      const attachments = sent[0]?.attachments ?? [];
+      expect(attachments.map((attachment) => attachment.contentType)).toEqual([
+        "application/pdf",
+        "application/pdf",
+        "application/pdf"
+      ]);
+      expect(attachments.every((attachment) => attachment.filename.endsWith(".pdf"))).toBe(true);
+      expect(attachments.some((attachment) => attachment.filename.startsWith("vendas-"))).toBe(
+        true
+      );
     } finally {
       runtime.close();
     }
