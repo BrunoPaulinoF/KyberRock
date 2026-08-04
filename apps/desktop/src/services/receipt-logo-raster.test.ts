@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildThermalDotMap,
+  composeThermalLuminance,
   computeLogoRasterLayout,
   dotsToMm,
   isBlankDotRatio,
@@ -98,5 +100,91 @@ describe("isBlankDotRatio", () => {
 
   it("treats an empty box as blank", () => {
     expect(isBlankDotRatio(0, 0)).toBe(true);
+  });
+});
+
+/** Bloco RGBA de uma cor so, no formato do `getImageData` do canvas. */
+function solidRgba(
+  width: number,
+  height: number,
+  [red, green, blue, alpha]: [number, number, number, number]
+): Uint8Array {
+  const pixels = new Uint8Array(width * height * 4);
+  for (let index = 0; index < width * height; index += 1) {
+    pixels.set([red, green, blue, alpha], index * 4);
+  }
+  return pixels;
+}
+
+function countDots(dots: Uint8Array | null): number {
+  return dots ? dots.reduce((total, dot) => total + dot, 0) : 0;
+}
+
+describe("buildThermalDotMap", () => {
+  it("prints a logo in a light brand colour instead of leaving the receipt blank", () => {
+    // Laranja de marca (245,166,35): luminancia 0.69, acima do limiar de 50%. Com o
+    // limiar direto que existia aqui, NENHUM ponto era marcado — a logo aparecia na
+    // previa colorida da tela e o cupom saia sem logo nenhuma.
+    const dots = buildThermalDotMap(solidRgba(16, 16, [245, 166, 35, 255]), 16, 16, {
+      order: "rgba"
+    });
+
+    expect(countDots(dots)).toBe(256);
+  });
+
+  it("keeps a black logo solid and the paper around it clean", () => {
+    const black = buildThermalDotMap(solidRgba(8, 8, [0, 0, 0, 255]), 8, 8, { order: "rgba" });
+    const transparent = buildThermalDotMap(solidRgba(8, 8, [0, 0, 0, 0]), 8, 8, { order: "rgba" });
+
+    expect(countDots(black)).toBe(64);
+    expect(countDots(transparent)).toBe(0);
+  });
+
+  it("still refuses to invent ink for a white logo made for dark backgrounds", () => {
+    // O aviso "esta logo sai em branco no cupom" depende disto: traco branco nao pode
+    // ganhar contraste e virar uma silhueta preta.
+    const dots = buildThermalDotMap(solidRgba(8, 8, [255, 255, 255, 255]), 8, 8, {
+      order: "rgba"
+    });
+
+    expect(countDots(dots)).toBe(0);
+  });
+
+  it("halftones a gradient instead of losing half of it", () => {
+    const width = 64;
+    const height = 8;
+    const pixels = new Uint8Array(width * height * 4);
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const tone = Math.round((x / (width - 1)) * 255);
+        pixels.set([tone, tone, tone, 255], (y * width + x) * 4);
+      }
+    }
+
+    const dots = buildThermalDotMap(pixels, width, height, { order: "rgba" });
+    const marked = countDots(dots);
+
+    // Meio-tom vira padrao de pontos: nem tudo preto, nem tudo branco.
+    expect(marked).toBeGreaterThan(width * height * 0.2);
+    expect(marked).toBeLessThan(width * height * 0.8);
+  });
+
+  it("reads premultiplied bitmaps without darkening the anti-aliased edges", () => {
+    // `toBitmap()` do Electron entrega BGRA premultiplicado: branco a 50% chega como
+    // (128,128,128,128). Lido como se fosse direto, o alfa era aplicado duas vezes e a
+    // borda de uma logo branca virava tinta.
+    expect(composeThermalLuminance(128, 128, 128, 128, true)).toBeCloseTo(1, 2);
+    expect(composeThermalLuminance(128, 128, 128, 128)).toBeCloseTo(0.75, 2);
+
+    const dots = buildThermalDotMap(solidRgba(8, 8, [128, 128, 128, 128]), 8, 8, {
+      order: "rgba",
+      premultiplied: true
+    });
+
+    expect(countDots(dots)).toBe(0);
+  });
+
+  it("rejects a pixel buffer that does not match the declared size", () => {
+    expect(buildThermalDotMap(new Uint8Array(8), 16, 8)).toBeNull();
   });
 });

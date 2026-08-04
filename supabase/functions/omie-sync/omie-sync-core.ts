@@ -450,6 +450,18 @@ export function buildCarrierPayload(payload: PushCarrierPayload): Record<string,
   });
 }
 
+/**
+ * Cadastro de cliente do KyberRock no OMIE, sempre com a tag "cliente" (ver
+ * `buildCarrierPayload`, que faz o mesmo com "transportadora"). Sem a tag, o cadastro
+ * criado aqui volta na sincronizacao seguinte sem papel declarado e a classificacao
+ * precisa adivinhar o que ele e.
+ */
+export function buildCustomerCadastroPayload(
+  payload: PushCustomerPayload
+): Record<string, unknown> {
+  return buildCustomerPayload({ ...payload, tags: forceOmieTag(payload.tags, "cliente") });
+}
+
 export async function pushCustomerToOmieCore(
   queue: OmieRequester,
   credentials: OmieCredentials,
@@ -458,8 +470,9 @@ export async function pushCustomerToOmieCore(
   return pushCustomerBodyToOmie(
     queue,
     credentials,
-    buildCustomerPayload(payload),
-    payload.omieCustomerId
+    buildCustomerCadastroPayload(payload),
+    payload.omieCustomerId,
+    buildCustomerPayload(payload)
   );
 }
 
@@ -606,18 +619,24 @@ export async function resolveDuplicateCustomerId(
   return null;
 }
 
+/**
+ * `createBody` leva a tag do papel (cliente/transportadora) para o cadastro nascer
+ * classificado no OMIE; `updateBody` (quando informado) vai sem tags, porque o
+ * AlterarCliente substitui a lista inteira e apagaria os outros papeis do cadastro.
+ */
 async function pushCustomerBodyToOmie(
   queue: OmieRequester,
   credentials: OmieCredentials,
-  body: Record<string, unknown>,
-  omieCustomerId?: number
+  createBody: Record<string, unknown>,
+  omieCustomerId?: number,
+  updateBody: Record<string, unknown> = createBody
 ): Promise<number> {
   if (omieCustomerId) {
     await queue.request<unknown, unknown>({
       credentials,
       endpoint: "/geral/clientes/",
       call: "AlterarCliente",
-      param: toCustomerUpdateBody(body, omieCustomerId)
+      param: toCustomerUpdateBody(updateBody, omieCustomerId)
     });
     return omieCustomerId;
   }
@@ -631,16 +650,16 @@ async function pushCustomerBodyToOmie(
       credentials,
       endpoint: "/geral/clientes/",
       call: "IncluirCliente",
-      param: body
+      param: createBody
     });
   } catch (error) {
-    const existingId = await resolveDuplicateCustomerId(queue, credentials, body, error);
+    const existingId = await resolveDuplicateCustomerId(queue, credentials, createBody, error);
     if (existingId === null) throw error;
     await queue.request<unknown, unknown>({
       credentials,
       endpoint: "/geral/clientes/",
       call: "AlterarCliente",
-      param: toCustomerUpdateBody(body, existingId)
+      param: toCustomerUpdateBody(updateBody, existingId)
     });
     return existingId;
   }

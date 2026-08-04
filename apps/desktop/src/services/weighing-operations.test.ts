@@ -1654,17 +1654,25 @@ describe("weighing operations", () => {
       });
 
       const built = buildOmieBillingJob(database, operation.id);
-      // 6,5 t x R$ 100,00 = R$ 650,00 -> vai como valor_frete no bloco frete do pedido.
+      // Situacao 1 (valor do frete na nota): 6,5 t x R$ 100,00 = R$ 650,00 vai como
+      // valor_frete no bloco frete do pedido, com modalidade "1 - FOB".
       expect(built!.payload.freightTotalCents).toBe(65_000);
-      // FOB = frete por conta do cliente -> "9" (sem incidencia de frete) no OMIE, mesmo
-      // com valor lancado: a Pedreira nao responde pelo transporte.
-      expect(built!.payload.freightModalidade).toBe("9");
+      expect(built!.payload.freightModalidade).toBe("1");
+
+      // Situacao 2 (valor so no sistema): o pedido vai sem valor de frete, mas ainda com
+      // o transportador e modalidade "1" — o frete e cobrado por fora, em NF de servico.
+      database
+        .prepare("UPDATE weighing_operations SET freight_type = 'cif' WHERE id = ?")
+        .run(operation.id);
+      const internalFreight = buildOmieBillingJob(database, operation.id);
+      expect(internalFreight!.payload.freightTotalCents).toBe(0);
+      expect(internalFreight!.payload.freightModalidade).toBe("1");
     } finally {
       database.close();
     }
   });
 
-  it("sends FOB freight as 'sem incidencia' (9) to OMIE", () => {
+  it("maps each freight situation to its OMIE modalidade and carrier rule", () => {
     const database = createDatabase();
 
     try {
@@ -1672,16 +1680,24 @@ describe("weighing operations", () => {
       insertCatalog(database);
       database.prepare("UPDATE customers SET omie_customer_id = 456 WHERE id = 'customer-1'").run();
 
+      const now = new Date().toISOString();
+      database
+        .prepare(
+          `INSERT INTO carriers (id, company_id, name, source, omie_customer_id, created_at, updated_at)
+           VALUES ('carrier-1', 'company-1', 'Transportes Rocha', 'local', 987, ?, ?)`
+        )
+        .run(now, now);
       const operation = createWeighingOperation(database, {
         identity,
         customerId: "customer-1",
         vehicleId: "vehicle-1",
         driverId: "driver-1",
         productId: "product-1",
+        carrierId: "carrier-1",
         entryWeightKg: 12_000
       });
       database
-        .prepare("UPDATE weighing_operations SET freight_type = 'fob' WHERE id = ?")
+        .prepare("UPDATE weighing_operations SET freight_type = 'third_party' WHERE id = ?")
         .run(operation.id);
       closeWeighingOperation(database, {
         operationId: operation.id,
@@ -1689,12 +1705,22 @@ describe("weighing operations", () => {
         operationType: "invoice"
       });
 
-      expect(buildOmieBillingJob(database, operation.id)!.payload.freightModalidade).toBe("9");
-      // As demais modalidades seguem o mapeamento modFrete da NF-e.
+      // Situacao 3: sem valor de frete, transportador na nota -> "1 - FOB".
+      expect(buildOmieBillingJob(database, operation.id)!.payload.freightModalidade).toBe("1");
+      expect(buildOmieBillingJob(database, operation.id)!.payload.transport?.carrierName).toBe(
+        "Transportes Rocha"
+      );
+
+      // Situacao 4: sem ocorrencia de transporte -> "9" e sem transportador na nota.
       database
-        .prepare("UPDATE weighing_operations SET freight_type = 'cif' WHERE id = ?")
+        .prepare("UPDATE weighing_operations SET freight_type = 'none' WHERE id = ?")
         .run(operation.id);
-      expect(buildOmieBillingJob(database, operation.id)!.payload.freightModalidade).toBe("0");
+      const noFreight = buildOmieBillingJob(database, operation.id);
+      expect(noFreight!.payload.freightModalidade).toBe("9");
+      expect(noFreight!.payload.transport?.carrierName).toBeNull();
+      expect(noFreight!.payload.carrier).toBeNull();
+
+      // O transporte proprio legado mantem o codigo modFrete dele (veiculo_proprio "S").
       database
         .prepare("UPDATE weighing_operations SET freight_type = 'own_recipient' WHERE id = ?")
         .run(operation.id);

@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 
 import type { DesktopDatabase } from "../database/sqlite.js";
-import { getFreightModalityInfo, isFreightModality } from "./freight.js";
+import {
+  freightMemoryKey,
+  freightModalityLookupKeys,
+  getFreightModalityInfo,
+  isFreightModality
+} from "./freight.js";
 import type { FreightModality, FreightRule } from "./freight.js";
 
 export interface CustomerFreightRuleRow {
@@ -29,6 +34,11 @@ export interface CustomerFreightModalityValue {
   baseValueCents: number;
   fixedValueCents?: number;
   minValueCents?: number;
+  distanceKm?: number;
+  /** Destino/observacao usado da ultima vez nesse tipo de frete. */
+  destination?: string | null;
+  /** Se o valor do frete saiu impresso no cupom da ultima operacao desse tipo. */
+  showOnReceipt?: boolean;
   source: CustomerFreightValueSource;
   updatedAt: string;
 }
@@ -49,6 +59,10 @@ export interface CustomerFreightRule {
   modality?: FreightModality;
   /** Origem do valor resolvido: cadastro do cliente ou ultima venda. */
   source?: CustomerFreightValueSource;
+  /** Destino/observacao memorizado junto com o valor resolvido. */
+  destination?: string | null;
+  /** Se o valor do frete deve sair impresso no cupom (memoria da ultima venda). */
+  showOnReceipt?: boolean;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -67,6 +81,10 @@ export interface RememberCustomerFreightValueInput {
   productId?: string | null;
   modality: FreightModality;
   rule: FreightRule;
+  /** Destino/observacao da operacao, para a proxima entrada do cliente ja vir com ele. */
+  destination?: string | null;
+  /** Se o valor do frete saiu no cupom desta operacao. */
+  showOnReceipt?: boolean;
 }
 
 interface RuleJsonPayload extends FreightRule {
@@ -130,12 +148,25 @@ export function getCustomerFreightRuleForProduct(
   if (candidates.length === 0) return null;
 
   if (modality) {
+    // As chaves legadas (FOB, terceiros, transporte proprio) entram na busca depois da
+    // chave atual: o valor que o cliente usou antes da simplificacao dos tipos de frete
+    // continua sendo puxado na proxima entrada.
+    const lookupKeys = freightModalityLookupKeys(modality);
     for (const source of ["manual", "last_used"] as const) {
-      for (const row of candidates) {
-        const mapped = mapQueryRow(row);
-        const value = mapped.modalities[modality];
-        if (value && value.source === source) {
-          return { ...mapped, rule: toFreightRule(value, modality), modality, source };
+      for (const key of lookupKeys) {
+        for (const row of candidates) {
+          const mapped = mapQueryRow(row);
+          const value = mapped.modalities[key];
+          if (value && value.source === source) {
+            return {
+              ...mapped,
+              rule: toFreightRule(value, key),
+              modality: freightMemoryKey(key),
+              source,
+              destination: value.destination ?? null,
+              showOnReceipt: value.showOnReceipt ?? true
+            };
+          }
         }
       }
     }
@@ -159,7 +190,7 @@ export function setCustomerFreightRule(
   const id = upsertRule(database, {
     customerId: input.customerId,
     productId: input.productId ?? null,
-    modality: input.modality ?? null,
+    modality: input.modality ? freightMemoryKey(input.modality) : null,
     rule: input.rule,
     source: "manual",
     now
@@ -182,8 +213,10 @@ export function rememberCustomerFreightValue(
   upsertRule(database, {
     customerId: input.customerId,
     productId: input.productId ?? null,
-    modality: input.modality,
+    modality: freightMemoryKey(input.modality),
     rule: input.rule,
+    destination: input.destination ?? null,
+    showOnReceipt: input.showOnReceipt,
     source: "last_used",
     now
   });
@@ -238,6 +271,8 @@ function upsertRule(
     productId: string | null;
     modality: FreightModality | null;
     rule: FreightRule;
+    destination?: string | null;
+    showOnReceipt?: boolean;
     source: CustomerFreightValueSource;
     now: Date;
   }
@@ -259,6 +294,8 @@ function upsertRule(
     current,
     modality: input.modality,
     rule: input.rule,
+    destination: input.destination ?? null,
+    showOnReceipt: input.showOnReceipt,
     source: input.source,
     timestamp
   });
@@ -284,6 +321,8 @@ function buildRulePayload(input: {
   current: RuleJsonPayload | null;
   modality: FreightModality | null;
   rule: FreightRule;
+  destination?: string | null;
+  showOnReceipt?: boolean;
   source: CustomerFreightValueSource;
   timestamp: string;
 }): RuleJsonPayload | null {
@@ -303,6 +342,10 @@ function buildRulePayload(input: {
     baseValueCents: input.rule.baseValueCents,
     fixedValueCents: input.rule.fixedValueCents,
     minValueCents: input.rule.minValueCents,
+    distanceKm: input.rule.distanceKm,
+    // Cadastro sem destino/cupom informados nao apaga o que a ultima venda memorizou.
+    destination: input.destination ?? previous?.destination ?? null,
+    showOnReceipt: input.showOnReceipt ?? previous?.showOnReceipt,
     source: input.source,
     updatedAt: input.timestamp
   };
@@ -324,6 +367,7 @@ function toFreightRule(
     baseValueCents: value.baseValueCents,
     fixedValueCents: value.fixedValueCents,
     minValueCents: value.minValueCents,
+    distanceKm: value.distanceKm,
     unit: "ton"
   };
 }
@@ -344,6 +388,9 @@ function readModalities(payload: RuleJsonPayload | null): CustomerFreightModalit
       baseValueCents,
       fixedValueCents: numberOrUndefined(value.fixedValueCents),
       minValueCents: numberOrUndefined(value.minValueCents),
+      distanceKm: numberOrUndefined(value.distanceKm),
+      destination: typeof value.destination === "string" ? value.destination : null,
+      showOnReceipt: typeof value.showOnReceipt === "boolean" ? value.showOnReceipt : undefined,
       source: value.source === "manual" ? "manual" : "last_used",
       updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : ""
     };

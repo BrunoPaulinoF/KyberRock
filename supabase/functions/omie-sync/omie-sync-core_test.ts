@@ -5,6 +5,7 @@ import {
   OMIE_EMAIL_FIELD_MAX_LENGTH,
   OmieQueueManager,
   buildCarrierPayload,
+  buildCustomerCadastroPayload,
   buildCustomerPayload,
   clampOmieText,
   customerRegistrationFaultMessage,
@@ -116,6 +117,39 @@ Deno.test(
     assertEquals(payload.nome_fantasia, "Transportadora Teste");
     assert(Array.isArray(payload.tags));
     assertEquals(payload.tags, [{ tag: "cliente" }, { tag: "transportadora" }]);
+  }
+);
+
+Deno.test(
+  "buildCustomerCadastroPayload sempre inclui a tag cliente sem remover as existentes",
+  () => {
+    const novo = buildCustomerCadastroPayload({
+      localCustomerId: "cliente-1",
+      razaoSocial: "Cliente Teste Ltda"
+    });
+    assertEquals(novo.tags, [{ tag: "cliente" }]);
+
+    const jaMarcado = buildCustomerCadastroPayload({
+      localCustomerId: "cliente-2",
+      razaoSocial: "Cliente e Transportadora",
+      tags: ["Transportadora", "Cliente"]
+    });
+    // A tag do papel entra normalizada, e as demais do cadastro seguem intactas.
+    assertEquals(jaMarcado.tags, [{ tag: "Transportadora" }, { tag: "cliente" }]);
+  }
+);
+
+Deno.test(
+  "buildCustomerCadastroPayload marca o cadastro novo, mas a alteracao vai sem tags",
+  () => {
+    // O AlterarCliente substitui a lista inteira de tags no OMIE: mandar so "cliente"
+    // apagaria "transportadora"/"fornecedor" do cadastro.
+    const alteracao = buildCustomerPayload({
+      localCustomerId: "cliente-3",
+      razaoSocial: "Cliente Existente",
+      omieCustomerId: 987
+    });
+    assert(!("tags" in alteracao));
   }
 );
 

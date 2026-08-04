@@ -1,5 +1,11 @@
-import { getFreightModalityInfo } from "../services/freight";
-import type { FreightModality, FreightRule } from "../services/freight";
+import {
+  freightValueGoesToInvoice,
+  getFreightModalityInfo,
+  isFreightModalityWithFreight,
+  normalizeFreightModality,
+  resolveFreightModality
+} from "../services/freight";
+import type { FreightGroup, FreightModality, FreightRule } from "../services/freight";
 import type {
   OperationFreightInput,
   OperationType,
@@ -75,6 +81,8 @@ export interface OperationFreight {
   payer: string;
   rule: FreightRule;
   destination: string | null;
+  /** O valor do frete sai no cupom. Ausente nas operacoes antigas: vale `true`. */
+  showOnReceipt: boolean;
 }
 
 /** Regra de frete gravada na operacao; null quando nao ha valor lancado ou o JSON e invalido. */
@@ -86,7 +94,8 @@ export function parseOperationFreight(freightJson: string | null): OperationFrei
     return {
       payer: parsed.payer ?? "quarry",
       rule: parsed.rule,
-      destination: parsed.destination ?? null
+      destination: parsed.destination ?? null,
+      showOnReceipt: parsed.showOnReceipt !== false
     };
   } catch {
     return null;
@@ -182,8 +191,16 @@ export function buildOperationDetailSections(
     {
       title: "Frete",
       items: [
-        { label: "Tipo de frete", value: `${modality.label} — ${modality.description}` },
+        {
+          label: "Tipo de frete",
+          value: `${modality.group === "with_freight" ? "Com frete" : "Sem frete"} — ${modality.label}`
+        },
         { label: "Valor lancado", value: freight ? "Sim" : "Nao" },
+        {
+          label: "Valor na nota e no cupom",
+          value: freight ? (modality.valueOnInvoice ? "Sim" : "Nao (so no sistema)") : "—"
+        },
+        { label: "Transportador na nota", value: modality.carrierOnInvoice ? "Sim" : "Nao" },
         {
           label: "Responsavel",
           value: freight ? (FREIGHT_PAYER_LABELS[freight.payer] ?? freight.payer) : "—"
@@ -259,6 +276,8 @@ export interface OperationEditFormState {
   freightMinValueCents: number | null;
   freightDistanceKm: string;
   freightDestination: string;
+  /** Caixa "mostrar o valor do frete no cupom". */
+  freightShowOnReceipt: boolean;
   deductFreightFromCredit: boolean;
 }
 
@@ -290,7 +309,32 @@ export function buildOperationEditForm(
     freightMinValueCents: freight?.rule.minValueCents ?? null,
     freightDistanceKm: freight?.rule.distanceKm ? String(freight.rule.distanceKm) : "",
     freightDestination: freight?.destination ?? "",
+    freightShowOnReceipt: freight?.showOnReceipt !== false,
     deductFreightFromCredit: operation.deductFreightFromCredit
+  };
+}
+
+/**
+ * Troca do grupo do tipo de frete na edicao da operacao. Preserva a caixa de "valor na
+ * nota" / "transportador na nota" que o grupo ja usava, para uma correcao de tipo nao
+ * mudar em silencio o que sai na nota.
+ */
+export function applyFreightGroupToOperationForm(
+  form: OperationEditFormState,
+  group: FreightGroup
+): OperationEditFormState {
+  const withFreight = group === "with_freight";
+  const current = getFreightModalityInfo(form.freightModality);
+  const freightModality = resolveFreightModality(
+    withFreight
+      ? { group, valueOnInvoice: current.valueOnInvoice || current.group !== group }
+      : { group, carrierOnInvoice: current.carrierOnInvoice }
+  );
+  return {
+    ...form,
+    freightModality,
+    chargeFreight: withFreight,
+    deductFreightFromCredit: withFreight ? form.deductFreightFromCredit : false
   };
 }
 
@@ -298,7 +342,7 @@ export function buildOperationEditForm(
 export function isOperationFreightCharged(
   form: Pick<OperationEditFormState, "freightModality" | "chargeFreight">
 ): boolean {
-  return form.chargeFreight && getFreightModalityInfo(form.freightModality).supportsCharge;
+  return isFreightModalityWithFreight(form.freightModality) && form.chargeFreight;
 }
 
 function parsePositiveNumber(value: string): number | null {
@@ -315,6 +359,8 @@ export function buildOperationFreightInput(
   return {
     payer: getFreightModalityInfo(form.freightModality).defaultPayer,
     destination: form.freightDestination.trim() || null,
+    // A situacao do frete manda: o espelho no formulario existe so para a tela.
+    showOnReceipt: freightValueGoesToInvoice(form.freightModality),
     rule: {
       id: "operation-freight",
       name: "Frete da operacao",
@@ -387,7 +433,9 @@ export function buildOperationUpdateInput(
     operationType: form.operationType,
     unitPriceCents: form.unitPriceCents ?? 0,
     freight: buildOperationFreightInput(form),
-    freightModality: form.freightModality,
+    // A operacao passa a gravar so os dois tipos de hoje: reabrir e salvar uma operacao
+    // antiga normaliza a modalidade legada para "com frete"/"sem frete".
+    freightModality: normalizeFreightModality(form.freightModality),
     deductFreightFromCredit: form.deductFreightFromCredit
   };
 }

@@ -1,7 +1,7 @@
 import {
+  buildThermalDotMap,
   isBlankDotRatio,
-  isThermalBlackPixel,
-  RECEIPT_LOGO_LUMINANCE_THRESHOLD
+  type ThermalDotMapOptions
 } from "./receipt-logo-raster.js";
 
 export interface EscPosLine {
@@ -18,12 +18,7 @@ export interface EscPosRasterImage {
   bits: Buffer;
 }
 
-export interface PackRasterOptions {
-  /** Ordem dos canais do buffer de pixels. `toBitmap()` do Electron entrega BGRA. */
-  order?: "bgra" | "rgba";
-  /** Luminancia (0..1) abaixo da qual o ponto vira preto. */
-  threshold?: number;
-}
+export type PackRasterOptions = ThermalDotMapOptions;
 
 const ESC = 0x1b;
 const GS = 0x1d;
@@ -90,8 +85,9 @@ export function encodeEscPos(
 }
 
 /**
- * Converte pixels RGBA/BGRA em bits 1 = preto. O canal alfa e composto sobre branco (papel),
- * entao logo com fundo transparente nao vira um bloco preto.
+ * Converte pixels RGBA/BGRA nos bits da impressora (1 = ponto preto). A regra de cor ->
+ * ponto (alfa sobre o branco do papel, contraste da tinta e pontilhado) e a mesma da
+ * previa da tela: ver `buildThermalDotMap`.
  */
 export function packRasterImage(
   pixels: Uint8Array,
@@ -99,28 +95,15 @@ export function packRasterImage(
   heightPx: number,
   options: PackRasterOptions = {}
 ): EscPosRasterImage | null {
-  if (widthPx <= 0 || heightPx <= 0 || pixels.length < widthPx * heightPx * 4) {
-    return null;
-  }
+  const dots = buildThermalDotMap(pixels, widthPx, heightPx, options);
+  if (!dots) return null;
 
-  const redOffset = options.order === "rgba" ? 0 : 2;
-  const blueOffset = options.order === "rgba" ? 2 : 0;
-  const threshold = options.threshold ?? RECEIPT_LOGO_LUMINANCE_THRESHOLD;
   const bytesPerRow = Math.ceil(widthPx / 8);
   const bits = Buffer.alloc(bytesPerRow * heightPx);
 
   for (let y = 0; y < heightPx; y += 1) {
     for (let x = 0; x < widthPx; x += 1) {
-      const pixel = (y * widthPx + x) * 4;
-      const isBlack = isThermalBlackPixel(
-        pixels[pixel + redOffset],
-        pixels[pixel + 1],
-        pixels[pixel + blueOffset],
-        pixels[pixel + 3],
-        threshold
-      );
-
-      if (isBlack) {
+      if (dots[y * widthPx + x]) {
         bits[y * bytesPerRow + (x >> 3)] |= 0x80 >> (x & 7);
       }
     }

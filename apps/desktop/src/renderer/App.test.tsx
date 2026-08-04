@@ -3,14 +3,15 @@ import { describe, expect, it } from "vitest";
 import {
   App,
   appendAvailableId,
+  applyFreightGroupToEntryForm,
   buildFreightInput,
   carrierSelectorFilterIds,
   carrierToLinkForPickedVehicle,
   createCacheSelectOptions,
   filterCacheSelectOptions,
   formatElapsedSince,
+  getDriverFilterIds,
   getFiscalBillingStatus,
-  isTransportReady,
   omieQueueActionLabel,
   omieQueueStatusLabel,
   previousDayIso,
@@ -89,9 +90,43 @@ describe("App", () => {
     expect(shouldLinkCreatedDriverToCarrier(createWeighingForm({ carrierId: "" }))).toBeNull();
   });
 
-  it("is transport ready only when a carrier is selected", () => {
-    expect(isTransportReady(createWeighingForm({ carrierId: "carrier-1" }))).toBe(true);
-    expect(isTransportReady(createWeighingForm({ carrierId: "" }))).toBe(false);
+  it("switches between the four freight situations from the group plus the checkbox", () => {
+    const entry = createWeighingForm({ freightModality: "none" }) as Parameters<
+      typeof applyFreightGroupToEntryForm
+    >[0];
+
+    // "Com frete" nasce na situacao 1 (valor na nota) e ja abre os campos de valor.
+    const withFreight = applyFreightGroupToEntryForm(entry, "with_freight");
+    expect(withFreight.freightModality).toBe("fob");
+    expect(withFreight.chargeFreight).toBe(true);
+
+    // "Sem frete" nasce na situacao 3 (so o transportador na nota) e zera a cobranca.
+    const withoutFreight = applyFreightGroupToEntryForm(withFreight, "without_freight");
+    expect(withoutFreight.freightModality).toBe("third_party");
+    expect(withoutFreight.chargeFreight).toBe(false);
+    expect(withoutFreight.deductFreightFromCredit).toBe(false);
+  });
+
+  it("keeps the freight value out of the operation when it stays in the system", () => {
+    // Situacao 2: o valor e gravado, mas marcado para nao sair na nota/cupom.
+    const freight = buildFreightInput(
+      createWeighingForm({
+        freightModality: "cif",
+        chargeFreight: true,
+        freightBaseValueCents: 10_000
+      })
+    );
+
+    expect(freight?.showOnReceipt).toBe(false);
+    expect(freight?.rule.baseValueCents).toBe(10_000);
+  });
+
+  it("keeps carrier, plate and driver available in any freight type", () => {
+    // "Consolidar os transportadores e motoristas em qualquer que for a modalidade do
+    // tipo de frete": os campos de transporte nao dependem mais do tipo escolhido.
+    expect(
+      getDriverFilterIds(createWeighingForm({ freightModality: "none" }), ["driver-1"])
+    ).toEqual(["driver-1"]);
   });
 
   it("restores the last valid theme mode from storage", () => {

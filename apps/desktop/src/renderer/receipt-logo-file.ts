@@ -1,7 +1,7 @@
 import {
+  buildThermalDotMap,
   computeLogoRasterLayout,
   isBlankDotRatio,
-  isThermalBlackPixel,
   maxLogoWidthDots,
   RECEIPT_PRINTER_DOTS_PER_MM
 } from "../services/receipt-logo-raster.js";
@@ -100,17 +100,19 @@ export async function renderThermalLogoPreview(
   context.drawImage(image, -layout.cropX, -layout.cropY, layout.resizeWidth, layout.resizeHeight);
 
   const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+  // Mesma conversao da impressao (contraste da tinta + pontilhado), para a previa mostrar
+  // exatamente os pontos que a impressora vai marcar.
+  const dots = buildThermalDotMap(pixels.data, canvas.width, canvas.height, { order: "rgba" });
+
+  if (!dots) return null;
+
   let blackDots = 0;
 
-  for (let offset = 0; offset < pixels.data.length; offset += 4) {
-    const black = isThermalBlackPixel(
-      pixels.data[offset],
-      pixels.data[offset + 1],
-      pixels.data[offset + 2],
-      pixels.data[offset + 3]
-    );
+  for (let index = 0; index < dots.length; index += 1) {
+    const black = dots[index] === 1;
     const channel = black ? 0 : 255;
     if (black) blackDots += 1;
+    const offset = index * 4;
     pixels.data[offset] = channel;
     pixels.data[offset + 1] = channel;
     pixels.data[offset + 2] = channel;

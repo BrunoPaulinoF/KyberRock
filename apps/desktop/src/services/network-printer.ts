@@ -82,6 +82,12 @@ export class NetworkEscPosPrinter implements ReceiptPrinter {
   private buildLogo(payload: ReceiptPrintPayload): EscPosRasterImage | null {
     const logo = payload.snapshot.receiptLogo;
 
+    // "Imprimir a logo" desligado na personalizacao vale para as duas impressoras: antes
+    // so o HTML (impressora do Windows) respeitava a escolha.
+    if (payload.snapshot.style?.showLogo === false) {
+      return null;
+    }
+
     if (!this.rasterizeLogo || !logo?.dataUrl) {
       return null;
     }

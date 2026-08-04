@@ -13,6 +13,7 @@ import {
 
 import type { DesktopDatabase } from "../database/sqlite.js";
 import type { LocalDesktopIdentity } from "./bootstrap.js";
+import { freightValueGoesToInvoice } from "./freight.js";
 import { enqueueSyncJob } from "./sync-queue.js";
 import { isClosedOperationStatus } from "./weighing-operations.js";
 
@@ -161,6 +162,8 @@ interface OperationReceiptRow {
   unit_price_cents: number | null;
   product_total_cents: number | null;
   freight_total_cents: number;
+  freight_json: string | null;
+  freight_type: string | null;
   total_cents: number | null;
   customer_name: string | null;
   customer_document: string | null;
@@ -596,6 +599,22 @@ function getRequiredPrintReceipt(
   return mapPrintReceiptRow(row);
 }
 
+/**
+ * O valor do frete sai neste cupom. Quem manda e a situacao gravada no `freight_type`
+ * (valor na nota x valor so no sistema); o `showOnReceipt` do `freight_json` cobre as
+ * operacoes gravadas antes das quatro situacoes existirem.
+ */
+function readFreightShowOnReceipt(freightJson: string | null, freightType: string | null): boolean {
+  if (freightType) return freightValueGoesToInvoice(freightType);
+  if (!freightJson) return true;
+  try {
+    const parsed = JSON.parse(freightJson) as { showOnReceipt?: unknown };
+    return parsed.showOnReceipt !== false;
+  } catch {
+    return true;
+  }
+}
+
 function getOperationForReceipt(
   database: DesktopDatabase,
   operationId: string
@@ -607,7 +626,7 @@ function getOperationForReceipt(
         NULL AS company_state_registration, u.name AS unit_name, o.status, o.operation_type,
         o.entry_weight_captured_at, o.entry_weight_kg, o.exit_weight_captured_at, o.exit_weight_kg,
         o.net_weight_kg, o.unit_price_cents, o.product_total_cents, o.freight_total_cents,
-        o.total_cents,
+        o.freight_json, o.freight_type, o.total_cents,
         COALESCE(c.trade_name, o.remote_customer_name) AS customer_name,
         c.document AS customer_document,
         c.phone AS customer_phone, c.zipcode AS customer_zipcode, c.city AS customer_city,
@@ -731,6 +750,7 @@ function buildReceiptSnapshot(
     unitPriceCents: operation.unit_price_cents,
     productTotalCents: operation.product_total_cents ?? 0,
     freightTotalCents: operation.freight_total_cents,
+    showFreightValue: readFreightShowOnReceipt(operation.freight_json, operation.freight_type),
     totalCents: operation.total_cents ?? 0
   };
   const document = buildReceiptDocument(templateInput, templateConfig);

@@ -97,16 +97,20 @@ describe("aggregateSalesReport", () => {
 
 describe("filtro por modalidade de frete", () => {
   it("normaliza modalidades desconhecidas/ausentes para 'none'", () => {
+    // Valor na nota (fob), valor so no sistema (cif) e o transporte proprio legado
+    // contam como "com frete"; so o transportador na nota (third_party) nao.
     expect(normalizeFreightType("cif")).toBe("cif");
-    expect(normalizeFreightType("fob")).toBe("fob");
-    expect(normalizeFreightType("own_recipient")).toBe("own_recipient");
+    expect(normalizeFreightType("fob")).toBe("cif");
+    expect(normalizeFreightType("own_sender")).toBe("cif");
+    expect(normalizeFreightType("third_party")).toBe("none");
+    expect(normalizeFreightType("own_recipient")).toBe("none");
     expect(normalizeFreightType(null)).toBe("none");
     expect(normalizeFreightType("modalidade-nova")).toBe("none");
   });
 
-  it("rotula as modalidades do catalogo", () => {
-    expect(freightTypeLabel("cif")).toBe("CIF");
-    expect(freightTypeLabel("fob")).toBe("FOB");
+  it("rotula os dois tipos de frete", () => {
+    expect(freightTypeLabel("cif")).toBe("Com frete");
+    expect(freightTypeLabel("fob")).toBe("Com frete");
     expect(freightTypeLabel(undefined)).toBe("Sem frete");
   });
 
@@ -120,20 +124,20 @@ describe("filtro por modalidade de frete", () => {
     expect(rows.filter((row) => matchesFreightFilter(row, SALES_FREIGHT_ALL))).toHaveLength(3);
   });
 
-  it("separa CIF de FOB somando so as vendas da modalidade", () => {
-    const cif = aggregateSalesReport(
+  it("separa com frete de sem frete somando so as vendas do tipo", () => {
+    // As tres linhas do cenario tem modalidade antiga (cif/fob) — todas com frete.
+    const withFreight = aggregateSalesReport(
       rows.filter((row) => matchesFreightFilter(row, "cif")),
       "product"
     );
-    expect(cif.totals.operations).toBe(1);
-    expect(cif.totals.totalCents).toBe(80_000);
+    expect(withFreight.totals.operations).toBe(3);
+    expect(withFreight.totals.totalCents).toBe(270_000);
 
-    const fob = aggregateSalesReport(
-      rows.filter((row) => matchesFreightFilter(row, "fob")),
+    const withoutFreight = aggregateSalesReport(
+      rows.filter((row) => matchesFreightFilter(row, "none")),
       "product"
     );
-    expect(fob.totals.operations).toBe(2);
-    expect(fob.totals.totalCents).toBe(190_000);
+    expect(withoutFreight.totals.operations).toBe(0);
   });
 
   it("trata operacao sem modalidade projetada como 'sem frete'", () => {

@@ -764,7 +764,9 @@ export class DesktopRuntime {
           customerId: input.customerId,
           productId: input.productId,
           modality: input.freightModality,
-          rule: input.freight.rule
+          rule: input.freight.rule,
+          destination: input.freight.destination ?? null,
+          showOnReceipt: input.freight.showOnReceipt !== false
         });
       } catch {
         /* ignore */
@@ -1058,6 +1060,22 @@ export class DesktopRuntime {
   updateWeighingOperation(input: UpdateWeighingOperationDetailsInput): WeighingOperationSummary {
     this.assertDesktopAccess();
     const operation = updateWeighingOperationDetails(this.database, input);
+    // A correcao do frete tambem vira o "ultimo usado" do cliente: a proxima entrada
+    // dele precisa vir com o valor certo, e nao com o que foi corrigido aqui.
+    if (input.freight && input.freightModality && operation.customerId && operation.productId) {
+      try {
+        rememberCustomerFreightValue(this.database, {
+          customerId: operation.customerId,
+          productId: operation.productId,
+          modality: input.freightModality,
+          rule: input.freight.rule,
+          destination: input.freight.destination ?? null,
+          showOnReceipt: input.freight.showOnReceipt !== false
+        });
+      } catch {
+        /* ignore */
+      }
+    }
     this.triggerOperationCloudPush("operation_updated", input.operationId);
     return operation;
   }

@@ -61,6 +61,7 @@ import { tryParsePaymentCondition } from "../services/payment-condition-parser";
 import { extractConditionRaw, resolveConditionTermId } from "./payment-condition-helpers";
 import { PaymentConditionLegend } from "./PaymentConditionLegend";
 import {
+  applyFreightGroupToOperationForm,
   buildOperationDetailSections,
   buildOperationEditForm,
   buildOperationUpdateInput,
@@ -78,8 +79,14 @@ import type {
 } from "../services/weighing-operations";
 import type { UpdateCustomerInput } from "../services/customers";
 import {
-  FREIGHT_MODALITIES,
+  FREIGHT_MODALITY_DEFAULT,
+  FREIGHT_VALUE_ON_INVOICE,
+  freightValueGoesToInvoice,
   getFreightModalityInfo,
+  isFreightModalityWithFreight,
+  normalizeFreightModality,
+  resolveFreightModality,
+  type FreightGroup,
   type FreightModality
 } from "../services/freight";
 import type { PriceDetails } from "../services/pricing";
@@ -202,6 +209,8 @@ export interface WeighingFormState {
   freightMinValueCents: number | null;
   freightDistanceKm: string;
   freightDestination: string;
+  /** Caixa "mostrar o valor do frete no cupom" (abaixo do tipo de frete). */
+  freightShowOnReceipt: boolean;
 }
 
 type ActiveView =
@@ -236,14 +245,16 @@ const initialWeighingForm: WeighingFormState = {
   manualDownPaymentCents: null,
   quotationId: "",
   deductFreightFromCredit: false,
-  freightModality: "none",
+  // Sem frete, com o transportador na nota (situacao 3): o caso mais comum da balanca.
+  freightModality: FREIGHT_MODALITY_DEFAULT,
   chargeFreight: false,
   freightCalculationType: "per_ton",
   freightBaseValueCents: null,
   freightFixedValueCents: null,
   freightMinValueCents: null,
   freightDistanceKm: "",
-  freightDestination: ""
+  freightDestination: "",
+  freightShowOnReceipt: true
 };
 
 /**
@@ -1707,7 +1718,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
             ? (form.manualDownPaymentCents ?? 0)
             : undefined,
         freight: buildFreightInput(form),
-        freightModality: form.freightModality,
+        freightModality: normalizeFreightModality(form.freightModality),
         quotationId: form.quotationId || undefined,
         deductFreightFromCredit: form.deductFreightFromCredit || freightGoesToCustomerInvoice(form),
         scaleCaptureId
@@ -3444,7 +3455,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   `Operacao: ${changeCustomerOperation.plate} — ${changeCustomerOperation.productDescription}`,
                   `Cliente atual: ${changeCustomerOperation.customerName}`
                 ]}
-                searchPlaceholder="Pesquisar cliente pelo nome..."
+                searchPlaceholder="Pesquisar cliente por nome ou CNPJ/CPF..."
                 items={changeCustomerOptions}
                 loading={changeCustomerLoading}
                 selectedId={changeCustomerOperation.customerId ?? null}
@@ -3462,7 +3473,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 contextLines={[
                   `Operacao: ${changeCarrierOperation.plate} — ${changeCarrierOperation.customerName}`
                 ]}
-                searchPlaceholder="Pesquisar transportadora pelo nome..."
+                searchPlaceholder="Pesquisar transportadora por nome ou CNPJ/CPF..."
                 items={changeCarrierOptions}
                 loading={changeCarrierLoading}
                 selectedId={changeCarrierOperation.carrierId ?? null}
@@ -5278,6 +5289,28 @@ function validateWeighingForm(form: WeighingFormState): string | null {
   return null;
 }
 
+/**
+ * Troca do grupo do tipo de frete na Nova entrada. Mantem a caixa "valor na nota" /
+ * "transportador na nota" no estado que o grupo escolhido usa por padrao: com frete o
+ * valor sai na nota (situacao 1) e sem frete o transportador consta (situacao 3), que sao
+ * os casos mais comuns da balanca.
+ */
+export function applyFreightGroupToEntryForm(
+  form: WeighingFormState,
+  group: FreightGroup
+): WeighingFormState {
+  const withFreight = group === "with_freight";
+  const freightModality = resolveFreightModality(
+    withFreight ? { group, valueOnInvoice: true } : { group, carrierOnInvoice: true }
+  );
+  return {
+    ...form,
+    freightModality,
+    chargeFreight: withFreight,
+    deductFreightFromCredit: withFreight ? form.deductFreightFromCredit : false
+  };
+}
+
 /** A operacao tem um valor de frete lancado pela Pedreira (modalidade cobravel + toggle). */
 export function isFreightCharged(
   form: Pick<WeighingFormState, "freightModality" | "chargeFreight">
@@ -5291,6 +5324,8 @@ export function buildFreightInput(form: WeighingFormState): OperationFreightInpu
   return {
     payer: getFreightModalityInfo(form.freightModality).defaultPayer,
     destination: form.freightDestination.trim() || null,
+    // A situacao do frete manda: o espelho no formulario existe so para a tela.
+    showOnReceipt: freightValueGoesToInvoice(form.freightModality),
     rule: {
       id: "operation-freight",
       name: "Frete da operacao",
@@ -5319,12 +5354,6 @@ export function getDriverFilterIds(
 ): string[] | undefined {
   if (isCustomerOwnTransport(form)) return undefined;
   return availableDriverIds;
-}
-
-export function isTransportReady(
-  form: Pick<WeighingFormState, "carrierId" | "freightModality">
-): boolean {
-  return isCustomerOwnTransport(form) || Boolean(form.carrierId);
 }
 
 function parsePositiveNumber(value: string): number | null {
@@ -5890,8 +5919,11 @@ function WeighingForm({
   // Ids em edicao pelo botao "Editar" ao lado dos seletores (null = cadastro novo).
   const [editingCustomerId, setEditingCustomerId] = useState<string | null>(null);
   const [editingCarrierId, setEditingCarrierId] = useState<string | null>(null);
-  const [showFreightModal, setShowFreightModal] = useState(false);
   const [vehicleRefreshKey, setVehicleRefreshKey] = useState(0);
+  // Ultimo par (cliente, produto) que ja teve as configuracoes de frete puxadas: evita
+  // que o preenchimento automatico volte a ligar o frete depois de o operador escolher
+  // "sem frete" na mesma entrada.
+  const lastFreightPullKeyRef = useRef("");
   const [driverRefreshKey, setDriverRefreshKey] = useState(0);
   const [customerRefreshKey, setCustomerRefreshKey] = useState(0);
   const [carrierRefreshKey, setCarrierRefreshKey] = useState(0);
@@ -6106,14 +6138,9 @@ function WeighingForm({
     };
   }, [desktopApi]);
 
-  // Com um modal aberto por cima (cadastro na hora, tipo de frete) os atalhos da
-  // entrada ficam suspensos: Esc precisa fechar so o modal, e nao a entrada inteira.
-  const hasModalOpen =
-    showVehicleModal ||
-    showDriverModal ||
-    showCustomerModal ||
-    showCarrierModal ||
-    showFreightModal;
+  // Com um modal aberto por cima (cadastro na hora) os atalhos da entrada ficam
+  // suspensos: Esc precisa fechar so o modal, e nao a entrada inteira.
+  const hasModalOpen = showVehicleModal || showDriverModal || showCustomerModal || showCarrierModal;
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -6171,40 +6198,51 @@ function WeighingForm({
     fetchPrice();
   }, [desktopApi, form.customerId, form.productId]);
 
-  // Puxa o valor de frete do cliente para o tipo de frete selecionado: primeiro o que
-  // esta configurado no cadastro dele, senao o ultimo valor usado numa venda igual.
-  // Roda tambem ao trocar o tipo de frete, porque cada tipo tem o seu valor.
+  // Puxa as configuracoes de frete do cliente assim que ele (e o produto) sao escolhidos:
+  // primeiro o que esta configurado no cadastro dele, senao as ULTIMAS configuracoes que
+  // ele usou numa venda igual — calculo, valores, distancia, destino e se o valor sai no
+  // cupom. Roda de novo ao voltar para "com frete", para reabastecer os campos.
   useEffect(() => {
     if (!desktopApi || !form.customerId || !form.productId) return;
 
     const api = desktopApi;
-    const modality = form.freightModality;
+    const customerId = form.customerId;
+    const productId = form.productId;
+    const pairKey = `${customerId}|${productId}`;
+    const isNewPair = lastFreightPullKeyRef.current !== pairKey;
+    // "Sem frete" escolhido de proposito nao pode ser desfeito pelo preenchimento
+    // automatico: fora a troca de cliente/produto, so reabastece quando ha frete.
+    if (!isNewPair && !isFreightModalityWithFreight(form.freightModality)) return;
+    lastFreightPullKeyRef.current = pairKey;
     let canceled = false;
 
     async function fetchCustomerFreight(): Promise<void> {
       try {
         const rule = await api.getCustomerFreightForProduct(
-          form.customerId,
-          form.productId,
-          modality
+          customerId,
+          productId,
+          FREIGHT_VALUE_ON_INVOICE
         );
         if (canceled || !rule) return;
-        setForm((prev) => ({
-          ...prev,
-          // Sem tipo de frete escolhido, um valor cadastrado assume FOB (frete por conta
-          // do cliente). Nao sobrescreve o transporte proprio do cliente, que nao
-          // comporta valor, nem um tipo que o operador ja escolheu.
-          freightModality: getFreightModalityInfo(prev.freightModality).supportsCharge
-            ? prev.freightModality
-            : isCustomerOwnTransport(prev)
-              ? prev.freightModality
-              : "fob",
-          chargeFreight: !isCustomerOwnTransport(prev),
-          freightCalculationType: rule.rule.type as WeighingFormState["freightCalculationType"],
-          freightBaseValueCents: rule.rule.baseValueCents,
-          freightFixedValueCents: rule.rule.fixedValueCents ?? null,
-          freightMinValueCents: rule.rule.minValueCents ?? prev.freightMinValueCents
-        }));
+        setForm((prev) => {
+          // A situacao volta como o cliente usou da ultima vez: valor na nota (1) ou
+          // valor so no sistema (2).
+          const valueOnInvoice = rule.showOnReceipt ?? true;
+          return {
+            ...prev,
+            freightModality: resolveFreightModality({ group: "with_freight", valueOnInvoice }),
+            chargeFreight: true,
+            freightCalculationType: rule.rule.type as WeighingFormState["freightCalculationType"],
+            freightBaseValueCents: rule.rule.baseValueCents,
+            freightFixedValueCents: rule.rule.fixedValueCents ?? null,
+            freightMinValueCents: rule.rule.minValueCents ?? prev.freightMinValueCents,
+            freightDistanceKm: rule.rule.distanceKm
+              ? String(rule.rule.distanceKm)
+              : prev.freightDistanceKm,
+            freightDestination: rule.destination ?? prev.freightDestination,
+            freightShowOnReceipt: valueOnInvoice
+          };
+        });
       } catch {
         // ignore
       }
@@ -6215,8 +6253,6 @@ function WeighingForm({
       canceled = true;
     };
   }, [desktopApi, form.customerId, form.productId, form.freightModality]);
-
-  const transportReady = isTransportReady(form);
 
   return (
     <section style={styles.entryShell}>
@@ -6557,45 +6593,29 @@ function WeighingForm({
             description="Transportadora, placa e motorista"
           />
           <div style={styles.freightBox}>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: "8px",
-                flexWrap: "wrap"
-              }}
-            >
-              <div
-                style={{ display: "flex", flexDirection: "column", gap: "2px", minWidth: "160px" }}
-              >
-                <span style={{ fontWeight: 600, fontSize: "13px" }}>Tipo de frete</span>
-                <span style={styles.helperText}>
-                  {form.freightModality === "none"
-                    ? "Sem frete. Selecione a modalidade enviada ao OMIE."
-                    : `${getFreightModalityInfo(form.freightModality).label} — ${getFreightModalityInfo(form.freightModality).description}`}
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowFreightModal(true)}
-                style={{ ...styles.secondaryButton, whiteSpace: "nowrap" }}
-              >
-                Selecionar tipo de frete
-              </button>
+            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+              <span style={{ fontWeight: 600, fontSize: "13px" }}>Tipo de frete</span>
+              <FreightTypeChoice
+                selected={form.freightModality}
+                onSelect={(group) => setForm((prev) => applyFreightGroupToEntryForm(prev, group))}
+              />
+              <span style={styles.helperText}>
+                {getFreightModalityInfo(form.freightModality).description}
+              </span>
             </div>
-            {getFreightModalityInfo(form.freightModality).supportsCharge ? (
+            <FreightInvoiceChoice
+              modality={form.freightModality}
+              onChange={(modality) =>
+                setForm((prev) => ({
+                  ...prev,
+                  freightModality: modality,
+                  chargeFreight: isFreightModalityWithFreight(modality),
+                  freightShowOnReceipt: freightValueGoesToInvoice(modality)
+                }))
+              }
+            />
+            {isFreightModalityWithFreight(form.freightModality) ? (
               <>
-                <label style={styles.checkboxLabel}>
-                  <input
-                    type="checkbox"
-                    checked={form.chargeFreight}
-                    onChange={(event) =>
-                      setForm((prev) => ({ ...prev, chargeFreight: event.target.checked }))
-                    }
-                  />
-                  Lancar valor de frete nesta operacao
-                </label>
                 {form.chargeFreight ? (
                   <div style={styles.freightCompactGrid}>
                     <label style={styles.fieldLabel}>
@@ -6715,7 +6735,6 @@ function WeighingForm({
             desktopApi={desktopApi}
             refreshKey={carrierRefreshKey}
             filterIds={carrierSelectorFilterIds(availableCarrierIds)}
-            disabled={isCustomerOwnTransport(form)}
           />
           {form.customerId && availableCarrierIds && availableCarrierIds.length === 0 ? (
             <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" }}>
@@ -6754,7 +6773,6 @@ function WeighingForm({
               onCreateNew={() => setShowVehicleModal(true)}
               desktopApi={desktopApi}
               refreshKey={vehicleRefreshKey}
-              disabled={!transportReady}
             />
             <CacheSelect
               label="Motorista"
@@ -6765,7 +6783,6 @@ function WeighingForm({
               desktopApi={desktopApi}
               refreshKey={driverRefreshKey}
               filterIds={getDriverFilterIds(form, availableDriverIds)}
-              disabled={!transportReady}
             />
           </div>
           {form.carrierId && availableDriverIds && availableDriverIds.length === 0 ? (
@@ -6920,99 +6937,97 @@ function WeighingForm({
           }}
         />
       ) : null}
-
-      {showFreightModal ? (
-        <FreightTypeModal
-          selected={form.freightModality}
-          onClose={() => setShowFreightModal(false)}
-          onSelect={(modality) => {
-            setForm((prev) => {
-              const info = getFreightModalityInfo(modality);
-              const ownRecipient = modality === "own_recipient";
-              return {
-                ...prev,
-                freightModality: modality,
-                // Modalidade cobravel ja abre os campos de valor; sem cobranca, zera o toggle.
-                chargeFreight: info.supportsCharge,
-                deductFreightFromCredit: info.supportsCharge ? prev.deductFreightFromCredit : false,
-                // Transporte proprio do cliente: a transportadora da Pedreira nao se aplica.
-                carrierId: ownRecipient ? "" : prev.carrierId,
-                vehicleId: ownRecipient ? "" : prev.vehicleId,
-                driverId: ownRecipient ? "" : prev.driverId
-              };
-            });
-            setShowFreightModal(false);
-          }}
-        />
-      ) : null}
     </section>
   );
 }
 
-function FreightTypeModal({
+/**
+ * Seletor do GRUPO do tipo de frete: com frete (a operacao tem valor de frete) ou sem
+ * frete. A situacao exata — quatro no total — sai da caixa logo abaixo (`FreightInvoiceChoice`):
+ * no grupo com frete, se o valor vai na nota; no grupo sem frete, se o transportador vai.
+ */
+function FreightTypeChoice({
   selected,
-  onSelect,
-  onClose
+  onSelect
 }: {
   selected: FreightModality;
-  onSelect: (modality: FreightModality) => void;
-  onClose: () => void;
+  onSelect: (group: FreightGroup) => void;
 }) {
-  // A entrada suspende os proprios atalhos enquanto este modal esta aberto, entao
-  // o Esc precisa ser tratado aqui para continuar fechando a selecao.
-  useEffect(() => {
-    function onKey(event: KeyboardEvent): void {
-      if (event.key === "Escape") onClose();
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  const current = getFreightModalityInfo(selected).group;
+  return (
+    <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+      {FREIGHT_GROUPS.map((group) => {
+        const isSelected = group.key === current;
+        return (
+          <button
+            key={group.key}
+            type="button"
+            onClick={() => onSelect(group.key)}
+            aria-pressed={isSelected}
+            style={{
+              flex: "1 1 140px",
+              padding: "9px 12px",
+              borderRadius: "10px",
+              border: `1px solid ${isSelected ? "var(--kr-accent, #2563eb)" : "var(--kr-border)"}`,
+              background: isSelected
+                ? "var(--kr-accent-soft, rgba(37,99,235,0.08))"
+                : "var(--kr-surface)",
+              color: "var(--kr-text)",
+              cursor: "pointer",
+              fontWeight: isSelected ? 700 : 600,
+              fontSize: "13px"
+            }}
+          >
+            {group.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Os dois grupos do tipo de frete, na ordem do seletor. */
+const FREIGHT_GROUPS: ReadonlyArray<{ key: FreightGroup; label: string }> = [
+  { key: "with_freight", label: "Com frete" },
+  { key: "without_freight", label: "Sem frete" }
+];
+
+/**
+ * Caixa de selecao logo abaixo do tipo de frete, a que separa as duas situacoes de cada
+ * grupo: com frete, se o VALOR sai na nota/cupom (situacao 1) ou fica so no sistema
+ * (situacao 2); sem frete, se o TRANSPORTADOR consta na nota (situacao 3) ou a operacao
+ * sai sem ocorrencia de transporte (situacao 4).
+ */
+function FreightInvoiceChoice({
+  modality,
+  onChange
+}: {
+  modality: FreightModality;
+  onChange: (modality: FreightModality) => void;
+}) {
+  const info = getFreightModalityInfo(modality);
+  const withFreight = info.group === "with_freight";
+  const checked = withFreight ? info.valueOnInvoice : info.carrierOnInvoice;
 
   return (
-    <div style={modalOverlayStyle} onClick={onClose}>
-      <div
-        style={{ ...modalContentStyle, maxWidth: "440px" }}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <h3 style={{ margin: "0 0 4px" }}>Selecionar tipo de frete</h3>
-        <p style={{ ...styles.helperText, marginTop: 0 }}>
-          Escolha a modalidade enviada ao OMIE no pedido de venda. Apenas uma por operacao.
-        </p>
-        <div style={{ display: "flex", flexDirection: "column", gap: "8px", margin: "12px 0" }}>
-          {FREIGHT_MODALITIES.map((modality) => {
-            const isSelected = modality.key === selected;
-            return (
-              <button
-                key={modality.key}
-                type="button"
-                onClick={() => onSelect(modality.key)}
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "2px",
-                  alignItems: "flex-start",
-                  textAlign: "left",
-                  padding: "10px 12px",
-                  borderRadius: "10px",
-                  border: `1px solid ${isSelected ? "var(--kr-accent, #2563eb)" : "var(--kr-border)"}`,
-                  background: isSelected
-                    ? "var(--kr-accent-soft, rgba(37,99,235,0.08))"
-                    : "var(--kr-surface)",
-                  color: "var(--kr-text)",
-                  cursor: "pointer"
-                }}
-              >
-                <span style={{ fontWeight: 600, fontSize: "13px" }}>{modality.label}</span>
-                <span style={styles.helperText}>{modality.description}</span>
-              </button>
-            );
-          })}
-        </div>
-        <button type="button" onClick={onClose} style={styles.secondaryButton}>
-          Fechar
-        </button>
-      </div>
-    </div>
+    <label style={styles.checkboxLabel}>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) =>
+          onChange(
+            resolveFreightModality(
+              withFreight
+                ? { group: "with_freight", valueOnInvoice: event.target.checked }
+                : { group: "without_freight", carrierOnInvoice: event.target.checked }
+            )
+          )
+        }
+      />
+      {withFreight
+        ? "O valor do frete aparece na nota e no cupom"
+        : "Informar o transportador na nota"}
+    </label>
   );
 }
 
@@ -7040,7 +7055,6 @@ function OperationDetailsDialog({
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodCacheEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [showFreightModal, setShowFreightModal] = useState(false);
   const [askPricePassword, setAskPricePassword] = useState(false);
   const [passwordError, setPasswordError] = useState<string | null>(null);
 
@@ -7243,41 +7257,29 @@ function OperationDetailsDialog({
 
             <FormSection title="Transporte e frete">
               <div style={styles.freightBox}>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: "8px",
-                    flexWrap: "wrap"
-                  }}
-                >
-                  <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-                    <span style={{ fontWeight: 600, fontSize: "13px" }}>Tipo de frete</span>
-                    <span style={styles.helperText}>
-                      {freightModalityInfo.label} — {freightModalityInfo.description}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowFreightModal(true)}
-                    style={{ ...styles.secondaryButton, whiteSpace: "nowrap" }}
-                  >
-                    Selecionar tipo de frete
-                  </button>
+                <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                  <span style={{ fontWeight: 600, fontSize: "13px" }}>Tipo de frete</span>
+                  <FreightTypeChoice
+                    selected={form.freightModality}
+                    onSelect={(group) =>
+                      setForm((prev) => applyFreightGroupToOperationForm(prev, group))
+                    }
+                  />
+                  <span style={styles.helperText}>{freightModalityInfo.description}</span>
                 </div>
-                {freightModalityInfo.supportsCharge ? (
+                <FreightInvoiceChoice
+                  modality={form.freightModality}
+                  onChange={(modality) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      freightModality: modality,
+                      chargeFreight: isFreightModalityWithFreight(modality),
+                      freightShowOnReceipt: freightValueGoesToInvoice(modality)
+                    }))
+                  }
+                />
+                {isFreightModalityWithFreight(form.freightModality) ? (
                   <>
-                    <label style={styles.checkboxLabel}>
-                      <input
-                        type="checkbox"
-                        checked={form.chargeFreight}
-                        onChange={(event) =>
-                          setForm((prev) => ({ ...prev, chargeFreight: event.target.checked }))
-                        }
-                      />
-                      Lancar valor de frete nesta operacao
-                    </label>
                     {isOperationFreightCharged(form) ? (
                       <div style={styles.freightCompactGrid}>
                         <label style={styles.fieldLabel}>
@@ -7418,28 +7420,6 @@ function OperationDetailsDialog({
           </div>
         </div>
       </CrudFormModal>
-
-      {showFreightModal ? (
-        <FreightTypeModal
-          selected={form.freightModality}
-          onClose={() => setShowFreightModal(false)}
-          onSelect={(modality) => {
-            setForm((prev) => {
-              const info = getFreightModalityInfo(modality);
-              const ownRecipient = modality === "own_recipient";
-              return {
-                ...prev,
-                freightModality: modality,
-                chargeFreight: info.supportsCharge ? prev.chargeFreight : false,
-                deductFreightFromCredit: info.supportsCharge ? prev.deductFreightFromCredit : false,
-                // Transporte proprio do cliente: a transportadora da Pedreira nao se aplica.
-                carrierId: ownRecipient ? "" : prev.carrierId
-              };
-            });
-            setShowFreightModal(false);
-          }}
-        />
-      ) : null}
 
       {askPricePassword ? (
         <PriceChangePasswordDialog

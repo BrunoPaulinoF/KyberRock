@@ -27,6 +27,20 @@ describe("buildReceiptLines", () => {
     expect(lines.at(-1)).toBe("------------------------------------------------");
   });
 
+  it("keeps the freight out of the document when the value stays in the system", () => {
+    // Situacao 2 do frete: o valor fica no KyberRock para controle e nao entra na nota.
+    const lines = buildReceiptLines({
+      ...baseInput(),
+      freightTotalCents: 25_000,
+      showFreightValue: false,
+      totalCents: 175_000
+    });
+
+    expect(lines.find((line) => line.startsWith("FRETE"))).toBeUndefined();
+    // O total impresso desconta o frete: e o que a nota cobra do cliente.
+    expect(lines).toContain("VENCTO: 07/06/2026 - VALOR R$ 1.500,00");
+  });
+
   it("marks reprints as second copy", () => {
     const lines = buildReceiptLines({
       ...baseInput(),

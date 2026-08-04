@@ -374,8 +374,8 @@ describe("CustomerReportService.getCustomerReport", () => {
       ).toEqual(["ABC1D23"]);
 
       expect(report.byFreightModality.map((row) => row.name).sort()).toEqual([
-        "CIF",
-        "Transp. proprio do cliente"
+        "Com frete (transp. proprio do cliente)",
+        "Valor so no sistema"
       ]);
 
       expect(report.byMonth.map((row) => row.period)).toEqual(["2026-06", "2026-07"]);
@@ -421,7 +421,7 @@ describe("CustomerReportService.getCustomerReport", () => {
         carrierName: "Transportes Rocha",
         productDescription: "Brita 0",
         freightModality: "cif",
-        freightModalityLabel: "CIF",
+        freightModalityLabel: "Valor so no sistema",
         freightDestination: "Obra Centro",
         freightDistanceKm: 42,
         freightRuleName: "Por tonelada",

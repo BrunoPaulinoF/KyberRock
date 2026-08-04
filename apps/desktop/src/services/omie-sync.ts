@@ -9,8 +9,10 @@ import {
   OmiePaymentMethodsService,
   OmieProductsService,
   OmieVehiclesService,
-  hasClienteTag,
-  hasTransportadoraTag,
+  isOmieCarrierCadastro,
+  isOmieCustomerCadastro,
+  normalizeOmieTagValue,
+  readOmieTagValues,
   type CreateCustomerInput,
   type Customer,
   type Product,
@@ -25,6 +27,10 @@ import {
   type OmieReferencePaymentTerm
 } from "./supabase-sync.js";
 import { provisionPaymentTermsFromOmieMirror } from "./payment-terms.js";
+
+/** Tags do OMIE que marcam o papel do cadastro criado/alterado pelo KyberRock. */
+const CUSTOMER_OMIE_TAG = "Cliente";
+const CARRIER_OMIE_TAG = "Transportadora";
 
 export interface OmieSyncConfig {
   appKey: string;
@@ -45,6 +51,8 @@ export interface OmieSyncResult {
 export interface TaggedSupplierSyncResult {
   customersPulled: number;
   suppliersSynced: number;
+  /** Cadastros que sao so fornecedor/transportadora e sairam da lista de clientes. */
+  nonCustomersRemoved: number;
 }
 
 export function createOmieClient(config: OmieSyncConfig): OmieClient {
@@ -123,12 +131,27 @@ export class OmieSyncService {
     return result;
   }
 
+  /**
+   * Reconstroi clientes e transportadoras a partir do cadastro do OMIE.
+   *
+   * Entram como CLIENTE todos os cadastros que nao sao apenas fornecedor/transportadora
+   * (ver `isOmieCustomerCadastro`) — inclusive os que ainda nao receberam a tag "Cliente",
+   * que antes ficavam de fora e faziam o operador nao achar cliente real na balanca. Os
+   * que sao so fornecedor/transportadora sao removidos do cadastro de clientes, mesmo
+   * quando foram criados localmente ou por importacao de planilha.
+   */
   async rebuildCustomersAndCarriersFromOmie(companyId: string): Promise<TaggedSupplierSyncResult> {
     const omieCustomers = await this.customersService.listAll();
-    const customers = omieCustomers.filter((customer) => hasClienteTag(customer));
-    const carriers = omieCustomers.filter((customer) => hasTransportadoraTag(customer));
+    const customers = omieCustomers.filter((customer) => isOmieCustomerCadastro(customer));
+    const carriers = omieCustomers.filter((customer) => isOmieCarrierCadastro(customer));
+    const nonCustomers = omieCustomers.filter((customer) => !isOmieCustomerCadastro(customer));
 
+    let nonCustomersRemoved = 0;
     this.runInTransaction(() => {
+      // A limpeza vem antes da reconciliacao para contar todo fornecedor que estava no
+      // cadastro de clientes (a reconciliacao ja apaga os vindos do OMIE) e para nenhum
+      // deles ser "ressuscitado" pelos upserts seguintes.
+      nonCustomersRemoved = this.removeNonCustomerRegistrations(companyId, nonCustomers);
       this.clearCustomerCarrierRegistrations(companyId);
       this.upsertCustomersFromOmieCustomers(companyId, customers);
       this.upsertCarriersFromOmieCustomers(companyId, carriers);
@@ -136,8 +159,55 @@ export class OmieSyncService {
 
     return {
       customersPulled: customers.length,
-      suppliersSynced: carriers.length
+      suppliersSynced: carriers.length,
+      nonCustomersRemoved
     };
+  }
+
+  /**
+   * Tira do cadastro de clientes quem o OMIE classifica como fornecedor/transportadora e
+   * nao como cliente. Casa pelo codigo OMIE e pelo CNPJ/CPF (so digitos), porque o
+   * fornecedor pode ter entrado por importacao de planilha, sem codigo OMIE.
+   *
+   * E soft-delete: as operacoes ja gravadas continuam apontando para a linha e mantendo
+   * o historico; o cadastro so deixa de aparecer nas listas.
+   */
+  private removeNonCustomerRegistrations(companyId: string, nonCustomers: Customer[]): number {
+    if (nonCustomers.length === 0) return 0;
+
+    const softDelete = this.db.prepare(`
+      UPDATE customers
+      SET deleted_at = datetime('now'),
+          is_active = 0,
+          needs_push = 0,
+          updated_at = datetime('now')
+      WHERE id = ? AND deleted_at IS NULL
+    `);
+    const byOmieId = this.db.prepare(
+      "SELECT id FROM customers WHERE company_id = ? AND omie_customer_id = ? AND deleted_at IS NULL"
+    );
+    const byDocument = this.db.prepare(
+      `SELECT id FROM customers
+       WHERE company_id = ?
+         AND deleted_at IS NULL
+         AND replace(replace(replace(replace(COALESCE(document, ''), '.', ''), '-', ''), '/', ''), ' ', '') = ?`
+    );
+
+    const removedIds = new Set<string>();
+    for (const supplier of nonCustomers) {
+      const rows = byOmieId.all(companyId, supplier.id) as Array<{ id: string }>;
+      const digits = (supplier.document ?? "").replace(/\D/g, "");
+      if (digits) {
+        rows.push(...(byDocument.all(companyId, digits) as Array<{ id: string }>));
+      }
+      for (const row of rows) {
+        if (removedIds.has(row.id)) continue;
+        removedIds.add(row.id);
+        softDelete.run(row.id);
+      }
+    }
+
+    return removedIds.size;
   }
 
   async syncCustomersBidirectional(companyId: string): Promise<{
@@ -150,7 +220,7 @@ export class OmieSyncService {
 
   async pullCustomersFromOmie(companyId: string): Promise<number> {
     const listedCustomers = await this.customersService.listAll();
-    const omieCustomers = listedCustomers.filter((customer) => hasClienteTag(customer));
+    const omieCustomers = listedCustomers.filter((customer) => isOmieCustomerCadastro(customer));
 
     this.runInTransaction(() => {
       this.clearCustomers(companyId);
@@ -251,7 +321,11 @@ export class OmieSyncService {
           const updateInput: UpdateCustomerInput = {
             codigoClienteOmie: customer.omie_customer_id,
             razaoSocial: customer.legal_name,
-            nomeFantasia: customer.trade_name
+            nomeFantasia: customer.trade_name,
+            // Cliente do KyberRock sempre vai ao OMIE com a tag "Cliente" (somada as que
+            // ele ja tem la): e a tag que faz o cadastro voltar como cliente na proxima
+            // sincronizacao, em vez de sumir da balanca.
+            tags: await this.mergeOmieTags(customer.omie_customer_id, CUSTOMER_OMIE_TAG)
           };
           if (customer.document) updateInput.cnpjCpf = customer.document;
           if (customer.email) updateInput.email = customer.email;
@@ -261,7 +335,8 @@ export class OmieSyncService {
         } else {
           const createInput: CreateCustomerInput = {
             razaoSocial: customer.legal_name,
-            cnpjCpf: customer.document || ""
+            cnpjCpf: customer.document || "",
+            tags: [{ tag: CUSTOMER_OMIE_TAG }]
           };
           if (customer.trade_name) createInput.nomeFantasia = customer.trade_name;
           if (customer.email) createInput.email = customer.email;
@@ -323,7 +398,7 @@ export class OmieSyncService {
     for (const carrier of pending) {
       try {
         const phoneMatch = carrier.phone?.match(/\(?(\d{2})\)?\s*(\d+)/);
-        const tags = [{ tag: "transportadora" }];
+        const tags = [{ tag: CARRIER_OMIE_TAG }];
         if (!omieCustomersByDocument && !carrier.omie_customer_id && carrier.document) {
           omieCustomersByDocument = await this.listOmieCustomersByDocument();
         }
@@ -338,7 +413,7 @@ export class OmieSyncService {
             codigoClienteOmie: matchingOmieId,
             razaoSocial: carrier.name,
             nomeFantasia: carrier.name,
-            tags
+            tags: await this.mergeOmieTags(matchingOmieId, CARRIER_OMIE_TAG)
           };
           if (carrier.document) updateInput.cnpjCpf = carrier.document;
           if (carrier.email) updateInput.email = carrier.email;
@@ -371,6 +446,29 @@ export class OmieSyncService {
     }
 
     return pushed;
+  }
+
+  /**
+   * Tags a enviar num AlterarCliente: as que o cadastro ja tem no OMIE mais a tag do
+   * papel que o KyberRock esta gravando. O OMIE substitui a lista inteira, entao mandar
+   * so a tag nova apagaria as outras — um cliente que tambem e transportadora perderia
+   * a marcacao e sumiria de uma das listas na proxima sincronizacao.
+   */
+  private async mergeOmieTags(
+    omieCustomerId: number,
+    requiredTag: string
+  ): Promise<Array<{ tag: string }>> {
+    const normalizedRequired = normalizeOmieTagValue(requiredTag);
+    let existing: string[] = [];
+    try {
+      const current = await this.customersService.getById(omieCustomerId);
+      existing = readOmieTagValues(current?.tags ?? null).filter(
+        (tag) => tag.trim().length > 0 && normalizeOmieTagValue(tag) !== normalizedRequired
+      );
+    } catch {
+      // Cadastro ilegivel no OMIE: segue so com a tag do papel, que e o essencial.
+    }
+    return [...existing, requiredTag].map((tag) => ({ tag }));
   }
 
   private async listOmieCustomersByDocument(): Promise<Map<string, Customer>> {
@@ -927,7 +1025,7 @@ export class OmieSyncService {
 
   async syncSuppliers(companyId: string): Promise<number> {
     const customers = await this.customersService.listAll();
-    const transportadoras = customers.filter((customer) => hasTransportadoraTag(customer));
+    const transportadoras = customers.filter((customer) => isOmieCarrierCadastro(customer));
 
     this.runInTransaction(() => {
       this.clearCarriers(companyId);

@@ -3,6 +3,7 @@ import {
   CUSTOMER_REGISTRATION_FAULT_PREFIX,
   OmieHttpError,
   OmieQueueManager,
+  buildCustomerCadastroPayload,
   buildCustomerPayload,
   customerRegistrationFaultMessage,
   pushCarrierToOmie as pushCarrierToOmieCore,
@@ -2155,14 +2156,19 @@ async function pushCustomerToOmie(
   credentials: OmieCredentials,
   payload: PushCustomerPayload
 ): Promise<number> {
-  const body = buildCustomerPayload(payload);
+  // Cliente NOVO nasce no OMIE ja com a tag "cliente" (o mesmo que o carrier faz com
+  // "transportadora"): e ela que faz o cadastro voltar como cliente na sincronizacao.
+  // Na ALTERACAO o corpo vai sem tags de proposito — o OMIE substitui a lista inteira, e
+  // um cadastro que tambem e transportadora/fornecedor perderia as outras marcacoes.
+  const createBody = buildCustomerCadastroPayload(payload);
+  const updateBody = buildCustomerPayload(payload);
 
   if (payload.omieCustomerId) {
     await callOmie<unknown, unknown>(
       credentials,
       "/geral/clientes/",
       "AlterarCliente",
-      toCustomerUpdateBody(body, payload.omieCustomerId)
+      toCustomerUpdateBody(updateBody, payload.omieCustomerId)
     );
     return payload.omieCustomerId;
   }
@@ -2174,7 +2180,7 @@ async function pushCustomerToOmie(
         credentials,
         "/geral/clientes/",
         "AlterarCliente",
-        toCustomerUpdateBody(body, existing)
+        toCustomerUpdateBody(updateBody, existing)
       );
       return existing;
     }
@@ -2188,17 +2194,22 @@ async function pushCustomerToOmie(
         codigo_cliente_omie?: number;
         codigoClienteOmie?: number;
       }
-    >(credentials, "/geral/clientes/", "IncluirCliente", body);
+    >(credentials, "/geral/clientes/", "IncluirCliente", createBody);
   } catch (error) {
     // O cadastro ja existe la (por documento ou pelo nosso codigo de integracao, quando um
     // envio anterior entrou e a resposta se perdeu): vira update em vez de recusa.
-    const existingId = await resolveDuplicateCustomerId(activeOmieQueue, credentials, body, error);
+    const existingId = await resolveDuplicateCustomerId(
+      activeOmieQueue,
+      credentials,
+      createBody,
+      error
+    );
     if (existingId === null) throw error;
     await callOmie<unknown, unknown>(
       credentials,
       "/geral/clientes/",
       "AlterarCliente",
-      toCustomerUpdateBody(body, existingId)
+      toCustomerUpdateBody(updateBody, existingId)
     );
     return existingId;
   }

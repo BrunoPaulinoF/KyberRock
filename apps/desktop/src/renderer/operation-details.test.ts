@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import type { WeighingOperationSummary } from "../services/weighing-operations";
 import {
+  applyFreightGroupToOperationForm,
   buildOperationDetailSections,
   buildOperationEditForm,
   buildOperationUpdateInput,
@@ -203,6 +204,54 @@ describe("edicao completa da operacao", () => {
     });
     // Condicao intocada: nao viaja, para nao duplicar payment_terms a cada gravacao.
     expect("paymentTermId" in input).toBe(false);
+  });
+
+  it("leva a escolha de mostrar o valor do frete no cupom", () => {
+    // Operacao antiga (sem o campo no freight_json) mantem o frete no cupom.
+    const legacy = buildOperationEditForm(
+      createOperation({ freightJson: FREIGHT_JSON, freightModality: "cif" })
+    );
+    expect(legacy.freightShowOnReceipt).toBe(true);
+
+    const hidden = buildOperationEditForm(
+      createOperation({
+        freightJson: JSON.stringify({ ...JSON.parse(FREIGHT_JSON), showOnReceipt: false }),
+        freightModality: "cif"
+      })
+    );
+    expect(hidden.freightShowOnReceipt).toBe(false);
+
+    const input = buildOperationUpdateInput("op-1", { ...hidden, freightShowOnReceipt: false });
+    expect(input.freight).toMatchObject({ showOnReceipt: false });
+  });
+
+  it("preserva o que sai na nota ao trocar o grupo do tipo de frete", () => {
+    const form = buildOperationEditForm(
+      createOperation({ freightJson: FREIGHT_JSON, freightModality: "cif" })
+    );
+
+    // Situacao 2 -> "sem frete" mantem o transportador na nota (situacao 3).
+    const withoutFreight = applyFreightGroupToOperationForm(form, "without_freight");
+    expect(withoutFreight.freightModality).toBe("third_party");
+    expect(withoutFreight.chargeFreight).toBe(false);
+
+    // Situacao 4 -> "com frete" volta com o valor na nota (situacao 1).
+    const backToFreight = applyFreightGroupToOperationForm(
+      { ...form, freightModality: "none" },
+      "with_freight"
+    );
+    expect(backToFreight.freightModality).toBe("fob");
+    expect(backToFreight.chargeFreight).toBe(true);
+  });
+
+  it("normaliza a modalidade legada para uma das quatro situacoes de hoje", () => {
+    // Transporte proprio da Pedreira levava valor de frete na nota -> situacao 1 (fob).
+    const legacy = buildOperationEditForm(
+      createOperation({ freightJson: FREIGHT_JSON, freightModality: "own_sender" })
+    );
+
+    expect(legacy.freightModality).toBe("own_sender");
+    expect(buildOperationUpdateInput("op-1", legacy).freightModality).toBe("fob");
   });
 
   it("manda a condicao apenas quando ela mudou (null limpa)", () => {
