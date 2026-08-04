@@ -94,6 +94,21 @@ const desktopApi = {
   exportReportExcel: (startDate: string, endDate: string) =>
     ipcRenderer.invoke("desktop:export-report-excel", startDate, endDate),
   listCustomerReportCustomers: () => ipcRenderer.invoke("desktop:list-customer-report-customers"),
+  getCustomersOverview: (startDate: string, endDate: string, periodLabel?: string) =>
+    ipcRenderer.invoke("desktop:get-customers-overview", startDate, endDate, periodLabel),
+  exportCustomersOverview: (
+    startDate: string,
+    endDate: string,
+    formats: string[],
+    periodLabel?: string
+  ) =>
+    ipcRenderer.invoke(
+      "desktop:export-customers-overview",
+      startDate,
+      endDate,
+      formats,
+      periodLabel
+    ),
   getCustomerReport: (
     customerId: string,
     startDate: string,

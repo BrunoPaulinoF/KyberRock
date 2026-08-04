@@ -9,8 +9,11 @@ import {
 } from "./customer-report";
 import {
   customerReportFileBaseName,
+  customersOverviewFileBaseName,
   renderCustomerReportHtml,
-  renderCustomerReportSpreadsheet
+  renderCustomerReportSpreadsheet,
+  renderCustomersOverviewHtml,
+  renderCustomersOverviewSpreadsheet
 } from "./customer-report-render";
 
 function createDatabase() {
@@ -640,6 +643,353 @@ describe("customer report rendering", () => {
       );
       expect(customerReportFileBaseName(report, "complete")).toBe(
         "relatorio-cliente-alfa-completo-2026-06-01-a-2026-06-30"
+      );
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe("CustomerReportService.getCustomersOverview", () => {
+  it("lists every customer with movement in the range, biggest revenue first", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      seedCustomerOperations(db);
+      // Desempata o mes: Beta passa a faturar mais que Alfa, e vem antes apesar de vir
+      // depois no alfabeto — e a receita que manda na ordem.
+      insertOperations(db, [
+        {
+          id: "op-6",
+          customer: "cust-2",
+          product: "prod-1",
+          vehicle: "veh-1",
+          net: 12000,
+          productCents: 600000,
+          freightCents: 0,
+          totalCents: 600000,
+          entry: "2026-06-09 08:00:00",
+          exit: "2026-06-09 08:30:00"
+        }
+      ]);
+
+      const overview = new CustomerReportService(db).getCustomersOverview(
+        "2026-06-01",
+        "2026-06-30",
+        "unit-1",
+        "Mes atual"
+      );
+
+      expect(overview.customers.map((row) => row.customer.name)).toEqual(["Beta", "Alfa"]);
+      expect(overview.customers[0]).toMatchObject({
+        customer: { id: "cust-2" },
+        totals: { operations: 2, netWeightKg: 42000, totalCents: 2_100_000 }
+      });
+      expect(overview.periodLabel).toBe("Mes atual");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("breaks a revenue tie by customer name, so the order never dances", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      seedCustomerOperations(db);
+
+      // Em junho os dois faturam R$ 15.000 (Alfa em duas operacoes, Beta em uma).
+      const overview = new CustomerReportService(db).getCustomersOverview(
+        "2026-06-01",
+        "2026-06-30",
+        "unit-1"
+      );
+
+      expect(overview.customers.map((row) => row.totals.totalCents)).toEqual([
+        1_500_000, 1_500_000
+      ]);
+      expect(overview.customers.map((row) => row.customer.name)).toEqual(["Alfa", "Beta"]);
+    } finally {
+      db.close();
+    }
+  });
+
+  // O resumo existe para comparar com o relatorio individual: se as duas contas
+  // divergirem, o operador nao sabe em qual acreditar.
+  it("matches the individual report of the same customer, number by number", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      seedCustomerOperations(db);
+      const service = new CustomerReportService(db);
+
+      const report = service.getCustomerReport("cust-1", "2026-06-01", "2026-06-30", "unit-1");
+      const overview = service.getCustomersOverview("2026-06-01", "2026-06-30", "unit-1");
+      const alfa = overview.customers.find((row) => row.customer.id === "cust-1");
+
+      expect(alfa?.totals).toEqual(report.totals);
+      expect(alfa?.installmentTotals).toEqual(report.installmentTotals);
+    } finally {
+      db.close();
+    }
+  });
+
+  // A cancelada nao pode entrar no faturamento, mas precisa ser contada como cancelada —
+  // exatamente como no relatorio individual.
+  it("keeps cancelled operations out of the revenue and counts them apart", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      seedCustomerOperations(db);
+
+      const overview = new CustomerReportService(db).getCustomersOverview(
+        "2026-06-01",
+        "2026-06-30",
+        "unit-1"
+      );
+      const alfa = overview.customers.find((row) => row.customer.id === "cust-1");
+
+      expect(alfa?.totals).toMatchObject({
+        operations: 2,
+        totalCents: 1_500_000,
+        cancelledOperations: 1,
+        cancelledNetWeightKg: 5000
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("totals the whole period in the footer row", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      seedCustomerOperations(db);
+
+      const overview = new CustomerReportService(db).getCustomersOverview(
+        "2026-06-01",
+        "2026-06-30",
+        "unit-1"
+      );
+
+      // Alfa (2 operacoes, 25t, R$ 15.000) + Beta (1 operacao, 30t, R$ 15.000).
+      expect(overview.totals).toMatchObject({
+        operations: 3,
+        netWeightKg: 55000,
+        totalCents: 3_000_000
+      });
+      expect(overview.customers.reduce((sum, row) => sum + row.totals.totalCents, 0)).toBe(
+        overview.totals.totalCents
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  // Quem so tem parcela vencendo no periodo (comprou antes) precisa aparecer: e dinheiro
+  // do periodo, e sem a linha o total de "a vencer" nao fecharia com a soma das linhas.
+  it("keeps a customer that only has installments falling due in the range", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      seedCustomerOperations(db);
+
+      // Julho: Alfa carregou (op-3); Beta nao, mas a op-5 de 06/06 vence 30 dias depois.
+      const overview = new CustomerReportService(db).getCustomersOverview(
+        "2026-07-01",
+        "2026-07-31",
+        "unit-1"
+      );
+      const beta = overview.customers.find((row) => row.customer.id === "cust-2");
+
+      expect(beta?.totals.operations).toBe(0);
+      expect(beta?.installmentTotals.amountCents).toBeGreaterThan(0);
+      expect(overview.installmentTotals.amountCents).toBe(
+        overview.customers.reduce((sum, row) => sum + row.installmentTotals.amountCents, 0)
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  // Cliente cadastrado que nunca carregou nem deve nada nao polui a lista com uma linha
+  // zerada — a comparacao existe para achar quem comprou.
+  it("leaves out customers without any movement in the range", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      seedCustomerOperations(db);
+
+      const overview = new CustomerReportService(db).getCustomersOverview(
+        "2026-06-01",
+        "2026-06-30",
+        "unit-1"
+      );
+
+      expect(overview.customers.map((row) => row.customer.id)).not.toContain("cust-3");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("returns an empty overview for a range without operations", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      seedCustomerOperations(db);
+
+      const overview = new CustomerReportService(db).getCustomersOverview(
+        "2026-01-01",
+        "2026-01-31",
+        "unit-1"
+      );
+
+      expect(overview.customers).toEqual([]);
+      expect(overview.totals).toMatchObject({ operations: 0, totalCents: 0 });
+      expect(overview.installmentTotals).toMatchObject({ installments: 0, amountCents: 0 });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("groups operations without a linked customer into a single row", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      seedCustomerOperations(db);
+      // Operacoes vindas de outro desktop podem chegar sem o cliente vinculado: elas
+      // precisam somar numa linha so, senao o total do periodo nao fecha.
+      db.prepare(
+        `UPDATE weighing_operations SET customer_id = NULL, remote_customer_name = 'Cliente Remoto'
+         WHERE id IN ('op-1', 'op-2')`
+      ).run();
+
+      const overview = new CustomerReportService(db).getCustomersOverview(
+        "2026-06-01",
+        "2026-06-30",
+        "unit-1"
+      );
+      const orphan = overview.customers.find((row) => row.customer.id === null);
+
+      expect(orphan?.customer.name).toBe("Cliente Remoto");
+      expect(orphan?.totals).toMatchObject({ operations: 2, totalCents: 1_500_000 });
+      expect(overview.totals.totalCents).toBe(3_000_000);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("sums the installments due in the period per customer", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      seedCustomerOperations(db);
+
+      // As parcelas da op-1 (R$ 9.000 em 30/60/90 dias a partir de 06/06) vencem em
+      // julho, agosto e setembro; a janela de julho pega apenas a primeira.
+      const overview = new CustomerReportService(db).getCustomersOverview(
+        "2026-07-01",
+        "2026-07-31",
+        "unit-1",
+        null,
+        new Date(2026, 5, 15)
+      );
+      const alfa = overview.customers.find((row) => row.customer.id === "cust-1");
+
+      expect(alfa?.installmentTotals.installments).toBeGreaterThan(0);
+      expect(overview.installmentTotals.amountCents).toBe(
+        overview.customers.reduce((sum, row) => sum + row.installmentTotals.amountCents, 0)
+      );
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe("customers overview rendering", () => {
+  function buildOverview(db: Database) {
+    setupBaseData(db);
+    seedCustomerOperations(db);
+    return new CustomerReportService(db).getCustomersOverview(
+      "2026-06-01",
+      "2026-06-30",
+      "unit-1",
+      "Mes atual"
+    );
+  }
+
+  it("renders the PDF with one row per customer and a total row", () => {
+    const db = createDatabase();
+    try {
+      const html = renderCustomersOverviewHtml(buildOverview(db));
+
+      expect(html).toContain("Todos os clientes");
+      expect(html).toContain("Mes atual");
+      expect(html).toContain("Beta");
+      expect(html).toContain("Alfa");
+      expect(html).toContain("TOTAL");
+      // Lista larga: sai em paisagem para as colunas caberem.
+      expect(html).toContain("size:A4 landscape");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("renders the spreadsheet with the period block and the customer list", () => {
+    const db = createDatabase();
+    try {
+      const sheet = renderCustomersOverviewSpreadsheet(buildOverview(db));
+
+      expect(sheet).toContain("Clientes no periodo");
+      expect(sheet).toContain("Clientes com movimento");
+      expect(sheet).toContain("Beta");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("escapes customer data so a quote in the name cannot break the document", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      seedCustomerOperations(db);
+      db.prepare(`UPDATE customers SET trade_name = '<script>"Alfa"' WHERE id = 'cust-1'`).run();
+      const overview = new CustomerReportService(db).getCustomersOverview(
+        "2026-06-01",
+        "2026-06-30",
+        "unit-1"
+      );
+
+      const html = renderCustomersOverviewHtml(overview);
+      expect(html).not.toContain("<script>");
+      expect(html).toContain("&lt;script&gt;&quot;Alfa&quot;");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("says the period is empty instead of rendering a headerless table", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      const overview = new CustomerReportService(db).getCustomersOverview(
+        "2026-06-01",
+        "2026-06-30",
+        "unit-1"
+      );
+
+      expect(renderCustomersOverviewHtml(overview)).toContain(
+        "Nenhum cliente com movimento no periodo."
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  it("builds a file name with the range", () => {
+    const db = createDatabase();
+    try {
+      expect(customersOverviewFileBaseName(buildOverview(db))).toBe(
+        "relatorio-clientes-2026-06-01-a-2026-06-30"
       );
     } finally {
       db.close();
