@@ -194,6 +194,7 @@ import {
   type ReportChannelSettings,
   type UazapiInstanceState
 } from "./report-channels.js";
+import { renderTotalBar } from "./report-total-bar.js";
 import {
   createReportRecipient,
   deleteReportRecipient,
@@ -3893,7 +3894,18 @@ function renderDailyReportHtml(input: {
     )
     .join("");
 
-  return `<!doctype html><html><head><meta charset="utf-8" /><title>Fechamento diario ${input.date}</title></head><body style="font-family:Arial,sans-serif;color:#0f172a;padding:24px;background:#f8fafc"><h1 style="margin:0 0 4px;font-size:22px">Fechamento diario ${input.date}</h1><p style="margin:0 0 16px;color:#475569">${escapeHtml(input.companyName)}</p><table cellpadding="8" cellspacing="0" style="border-collapse:collapse;width:100%;background:#fff;border:1px solid #cbd5e1;margin-bottom:24px"><thead><tr style="background:#1e293b;color:#fff"><th>Carregamentos</th><th>Tonelagem</th><th>Produto</th><th>Frete</th><th>Total</th><th>Preco medio</th></tr></thead><tbody><tr><td>${input.report.totalOperations}</td><td>${(input.report.totalNetWeightKg / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} t</td><td>${centsToBRL(input.report.totalProductCents)}</td><td>${centsToBRL(input.report.totalFreightCents)}</td><td>${centsToBRL(input.report.totalCents)}</td><td>${centsToBRL(input.report.totalNetWeightKg > 0 ? Math.round(input.report.totalCents / input.report.totalNetWeightKg) : 0)}</td></tr></tbody></table><table cellpadding="8" cellspacing="0" style="border-collapse:collapse;width:100%;background:#fff;border:1px solid #cbd5e1"><thead><tr style="background:#e2e8f0"><th>Cliente</th><th>Produto</th><th>Peso</th><th>Produto</th><th>Frete</th><th>Total</th></tr></thead><tbody>${rows}</tbody></table></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8" /><title>Fechamento diario ${input.date}</title></head><body style="font-family:Arial,sans-serif;color:#0f172a;padding:24px;background:#f8fafc"><h1 style="margin:0 0 4px;font-size:22px">Fechamento diario ${input.date}</h1><p style="margin:0 0 16px;color:#475569">${escapeHtml(input.companyName)}</p><table cellpadding="8" cellspacing="0" style="border-collapse:collapse;width:100%;background:#fff;border:1px solid #cbd5e1;margin-bottom:24px"><thead><tr style="background:#1e293b;color:#fff"><th>Carregamentos</th><th>Tonelagem</th><th>Produto</th><th>Frete</th><th>Total</th><th>Preco medio</th></tr></thead><tbody><tr><td>${input.report.totalOperations}</td><td>${(input.report.totalNetWeightKg / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} t</td><td>${centsToBRL(input.report.totalProductCents)}</td><td>${centsToBRL(input.report.totalFreightCents)}</td><td>${centsToBRL(input.report.totalCents)}</td><td>${centsToBRL(input.report.totalNetWeightKg > 0 ? Math.round(input.report.totalCents / input.report.totalNetWeightKg) : 0)}</td></tr></tbody></table><table cellpadding="8" cellspacing="0" style="border-collapse:collapse;width:100%;background:#fff;border:1px solid #cbd5e1"><thead><tr style="background:#e2e8f0"><th>Cliente</th><th>Produto</th><th>Peso</th><th>Produto</th><th>Frete</th><th>Total</th></tr></thead><tbody>${rows}</tbody></table>${renderTotalBar(
+    [
+      { label: "Carregamentos", value: input.report.totalOperations.toLocaleString("pt-BR") },
+      {
+        label: "Tonelagem",
+        value: `${(input.report.totalNetWeightKg / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} t`
+      },
+      { label: "Produto", value: centsToBRL(input.report.totalProductCents) },
+      { label: "Frete", value: centsToBRL(input.report.totalFreightCents) },
+      { label: "Total", value: centsToBRL(input.report.totalCents), emphasis: true }
+    ]
+  )}</body></html>`;
 }
 
 function escapeHtml(value: string): string {
