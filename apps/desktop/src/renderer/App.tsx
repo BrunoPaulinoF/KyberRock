@@ -163,6 +163,10 @@ import type { KyberRockDesktopApi } from "./desktop-api";
 import { filterClosedOperationsBySearch } from "./closed-operations-search";
 import { countOpenOperationsByProduct } from "./open-operations-product-summary";
 import {
+  filterOpenOperationsByPlate,
+  sortOpenOperationsByLoaderQueue
+} from "./open-operations-queue";
+import {
   buildOmieDeliveryStates,
   diffOmieDeliveryEvents,
   type OmieDeliveryEvent,
@@ -433,6 +437,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [closedProductFilter, setClosedProductFilter] = useState<string>("all");
   // Busca da aba Concluidas: cliente, CNPJ/CPF ou produto (ver closed-operations-search).
   const [closedSearch, setClosedSearch] = useState("");
+  // Busca da aba Abertas: a placa do caminhao (ver open-operations-queue).
+  const [openPlateSearch, setOpenPlateSearch] = useState("");
   // Operacao cujo cadastro esta sendo corrigido para reenviar ao OMIE (alerta da aba
   // Concluidas e botao "Editar item" da fila OMIE na tela cloud).
   const [omieIssueOperationId, setOmieIssueOperationId] = useState<string | null>(null);
@@ -576,6 +582,17 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         return status.tone === "warning" || status.tone === "danger";
       }),
     [closedOperations]
+  );
+  // A fila como o operador ve na tela: as cargas ja concluidas pelo carregador no topo,
+  // na ordem em que foram concluidas (a primeira concluida e a primeira a ser fechada), e
+  // so entao o filtro da placa digitada na busca.
+  const queuedOpenOperations = useMemo(
+    () => sortOpenOperationsByLoaderQueue(openOperations),
+    [openOperations]
+  );
+  const visibleOpenOperations = useMemo(
+    () => filterOpenOperationsByPlate(queuedOpenOperations, openPlateSearch),
+    [queuedOpenOperations, openPlateSearch]
   );
   // Operacoes abertas cujo caminhao ja passou do tempo medio dentro da pedreira.
   const overtimeOpenOperations = useMemo(() => {
@@ -2798,7 +2815,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   </div>
                   <span style={styles.countBadge}>
                     {operationsTab === "open"
-                      ? `${openOperations.length} abertas`
+                      ? openPlateSearch.trim()
+                        ? `${visibleOpenOperations.length} de ${openOperations.length} abertas`
+                        : `${openOperations.length} abertas`
                       : operationsTab === "canceled"
                         ? `${filteredCanceledOperations.length} canceladas`
                         : `${filteredClosedOperations.length} concluidas`}
@@ -2842,7 +2861,41 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     </Tooltip>
                   </div>
 
-                  {operationsTab === "canceled" ? (
+                  {operationsTab === "open" ? (
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: "8px",
+                        alignItems: "center",
+                        flexWrap: "wrap"
+                      }}
+                    >
+                      <label
+                        style={{ ...styles.fieldLabel, marginBottom: 0, flex: "1 1 260px" }}
+                        title={TIPS.operations.searchOpenPlate}
+                      >
+                        Buscar placa
+                        <input
+                          type="search"
+                          value={openPlateSearch}
+                          onChange={(event) => setOpenPlateSearch(event.target.value)}
+                          placeholder="Placa do caminhao"
+                          aria-label="Buscar operacao aberta pela placa"
+                          style={{ ...styles.input, minWidth: "240px" }}
+                        />
+                      </label>
+                      {openPlateSearch.trim() ? (
+                        <IconActionButton
+                          icon="close"
+                          label="Limpar busca"
+                          tip="Limpar a busca e mostrar todas as operacoes abertas"
+                          tone="neutral"
+                          placement="bottom"
+                          onClick={() => setOpenPlateSearch("")}
+                        />
+                      ) : null}
+                    </div>
+                  ) : operationsTab === "canceled" ? (
                     <div
                       style={{
                         display: "flex",
@@ -3096,7 +3149,15 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                           <span>Entrada / Preco</span>
                           <span>Acoes</span>
                         </div>
-                        {openOperations.map((operation) => {
+                        {visibleOpenOperations.length === 0 ? (
+                          <div style={styles.emptyState}>
+                            <strong>Nenhuma operacao aberta com essa placa</strong>
+                            <span>
+                              Confira a placa digitada ou limpe a busca para ver a fila inteira.
+                            </span>
+                          </div>
+                        ) : null}
+                        {visibleOpenOperations.map((operation) => {
                           const isOvertime = overtimeOpenIds.has(operation.id);
                           return (
                             <div

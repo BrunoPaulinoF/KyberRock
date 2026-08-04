@@ -65,6 +65,8 @@ export const TIPS = {
     filterProduct: "Filtra operacoes concluidas por produto.",
     searchClosed:
       "Busca nas concluidas por cliente, CNPJ/CPF (com ou sem pontuacao), produto, placa ou motorista.",
+    searchOpenPlate:
+      "Busca na fila de abertas pela placa do caminhao (com ou sem hifen). As cargas ja concluidas pelo carregador ficam no topo da fila.",
     fixOmieCadastro:
       "Corrige o cadastro que faltou/falhou e reenvia esta operacao concluida ao OMIE.",
     clearCanceled:
