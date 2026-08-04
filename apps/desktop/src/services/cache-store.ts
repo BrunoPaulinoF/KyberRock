@@ -9,6 +9,8 @@ export interface CustomerCacheEntry {
   document: string | null;
   phone: string | null;
   email: string | null;
+  /** Destinatarios da NF-e (aba Fiscal), separados do e-mail de contato. */
+  fiscalEmails: string | null;
   creditLimitCents: number | null;
   creditMode: "normal" | "prepaid";
   openReceivablesCents: number;
@@ -192,6 +194,7 @@ interface CustomerRow {
   document: string | null;
   phone: string | null;
   email: string | null;
+  fiscal_emails: string | null;
   credit_limit_cents: number | null;
   credit_mode: "normal" | "prepaid";
   open_receivables_cents: number;
@@ -343,6 +346,7 @@ function mapCustomer(row: CustomerRow): CustomerCacheEntry {
     document: row.document,
     phone: row.phone,
     email: row.email,
+    fiscalEmails: row.fiscal_emails,
     creditLimitCents: row.credit_limit_cents,
     creditMode: row.credit_mode,
     openReceivablesCents: row.open_receivables_cents,
@@ -798,7 +802,7 @@ export class CacheStore {
   private loadCustomers(companyId: string): void {
     const rows = this.db
       .prepare(
-        `SELECT id, omie_customer_id, legal_name, trade_name, document, phone, email,
+        `SELECT id, omie_customer_id, legal_name, trade_name, document, phone, email, fiscal_emails,
                 credit_limit_cents, credit_mode, open_receivables_cents, omie_billing_blocked,
                 source, sync_status, needs_push, last_synced_at, observations, default_carrier_id, default_payment_term_id,
                 default_payment_method_id, credit_account_enabled, credit_closing_day, credit_boleto_days, nf_required,

@@ -18,7 +18,7 @@ import { calculateSavingsPercent, PricingService, type PriceDetails } from "./pr
 import { cancelPendingOmieJobs, enqueueSyncJob } from "./sync-queue.js";
 import { CreditService } from "./credit.js";
 import { buildOmieIntegrationCode } from "@kyberrock/omie-client";
-import { formatEmailListForOmie } from "@kyberrock/shared";
+import { formatEmailListForOmie, OMIE_INVOICE_EMAIL_FIELD_MAX_LENGTH } from "@kyberrock/shared";
 import { DEFAULT_NFE_EMAIL_KEY } from "./customers.js";
 import { readStringLocalSetting } from "./local-settings.js";
 import { DEFAULT_OMIE_CATEGORY_SETTING_KEY, resolveOrderCategoryCode } from "./omie-categories.js";
@@ -1339,6 +1339,8 @@ export interface OmieOrderCustomerCadastro {
   nomeFantasia?: string;
   cnpjCpf?: string;
   email?: string;
+  /** Destinatarios da NF-e (aba Fiscal do cadastro). Vazio limpa o campo no OMIE. */
+  fiscalEmails?: string;
   telefone1Ddd?: string;
   telefone1Numero?: string;
   zipcode?: string;
@@ -1509,6 +1511,7 @@ interface OrderCustomerRow {
   document: string | null;
   phone: string | null;
   email: string | null;
+  fiscal_emails: string | null;
   zipcode: string | null;
   address_street: string | null;
   address_number: string | null;
@@ -1543,6 +1546,8 @@ function buildOrderCustomerCadastro(
     nomeFantasia: row.trade_name ?? row.legal_name ?? undefined,
     cnpjCpf: row.document?.trim() || undefined,
     email: formatEmailListForOmie(row.email) || formatEmailListForOmie(fallbackEmail) || undefined,
+    // Sempre enviado (inclusive vazio): o cadastro local manda nos destinatarios da NF-e.
+    fiscalEmails: formatEmailListForOmie(row.fiscal_emails, OMIE_INVOICE_EMAIL_FIELD_MAX_LENGTH),
     telefone1Ddd: phone.ddd,
     telefone1Numero: phone.numero,
     zipcode: row.zipcode ?? undefined,
@@ -1580,7 +1585,7 @@ export function buildOmieBillingJob(
   const customerRow = row.customer_id
     ? (database
         .prepare(
-          `SELECT omie_customer_id, legal_name, trade_name, document, phone, email,
+          `SELECT omie_customer_id, legal_name, trade_name, document, phone, email, fiscal_emails,
                   zipcode, address_street, address_number, neighborhood, city, state
            FROM customers WHERE id = ?`
         )

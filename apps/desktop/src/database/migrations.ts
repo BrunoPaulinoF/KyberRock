@@ -1601,5 +1601,16 @@ ALTER TABLE weighing_operations ADD COLUMN wallet_settlement_note TEXT;
 CREATE INDEX IF NOT EXISTS idx_weighing_operations_wallet
   ON weighing_operations(payment_method_id, wallet_settled_at);
 `
+  },
+  {
+    version: 44,
+    name: "customer_fiscal_emails",
+    sql: `
+-- E-mails da NF-e do cliente, separados do e-mail de contato. Sao os destinatarios do
+-- "Utilizar os seguintes enderecos de e-mail" da aba Recomendacoes do cadastro do OMIE
+-- (tag \`email_fatura\`), que o OMIE prioriza no envio da nota e do boleto. O \`email\`
+-- continua sendo so o contato do cliente.
+ALTER TABLE customers ADD COLUMN fiscal_emails TEXT;
+`
   }
 ];

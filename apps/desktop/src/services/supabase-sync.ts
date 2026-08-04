@@ -208,6 +208,8 @@ interface OmieReferenceCustomer {
   municipalRegistration?: string | null;
   isIndividual?: boolean;
   email: string | null;
+  /** `recomendacoes.email_fatura` do OMIE: os destinatarios da NF-e/boleto. */
+  fiscalEmails?: string | null;
   homepage?: string | null;
   contactName?: string | null;
   phone: string | null;
@@ -3174,7 +3176,7 @@ export async function pushOmieCustomersToCloud(
   const pending = database
     .prepare(
       `SELECT id, omie_customer_id, omie_integration_code, legal_name, trade_name, document, phone, email,
-              zipcode, address_street, address_number, address_complement, neighborhood, city, state,
+              fiscal_emails, zipcode, address_street, address_number, address_complement, neighborhood, city, state,
               default_payment_term_id, omie_billing_blocked
        FROM customers
        WHERE company_id = ? AND deleted_at IS NULL AND needs_push = 1 AND source IN ('local', 'hybrid')
@@ -3190,6 +3192,7 @@ export async function pushOmieCustomersToCloud(
     document: string | null;
     phone: string | null;
     email: string | null;
+    fiscal_emails: string | null;
     zipcode: string | null;
     address_street: string | null;
     address_number: string | null;
@@ -3263,6 +3266,9 @@ export async function pushOmieCustomersToCloud(
               nomeFantasia: customer.trade_name || customer.legal_name,
               cnpjCpf: customer.document ?? undefined,
               email: customer.email ?? undefined,
+              // String vazia = "sem destinatario de NF-e aqui", e limpa o campo no OMIE;
+              // o cadastro local e quem manda nesse campo (ver syncCustomerInvoiceEmails).
+              fiscalEmails: customer.fiscal_emails ?? "",
               telefone1Ddd: phoneMatch?.[1] ?? undefined,
               telefone1Numero: phoneMatch?.[2] ?? undefined,
               zipcode: customer.zipcode ?? undefined,
@@ -4950,14 +4956,14 @@ function upsertOmieCustomers(
     INSERT INTO customers (
       id, company_id, omie_customer_id, omie_integration_code, source, legal_name, trade_name,
       document, state_registration, municipal_registration, is_individual,
-      email, homepage, contact_name, phone, phone_secondary,
+      email, fiscal_emails, homepage, contact_name, phone, phone_secondary,
       zipcode, address_street, address_number, address_complement,
       neighborhood, city, state, country, country_code,
       ibge_city_code, ibge_state_code, customer_type, is_foreign,
       omie_billing_blocked, observations, tags_json, salesperson_id,
       default_payment_term_id, is_active, sync_status, last_synced_at,
       omie_updated_at, needs_push, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, 'omie', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    ) VALUES (?, ?, ?, ?, 'omie', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
       omie_customer_id = excluded.omie_customer_id,
@@ -4969,6 +4975,7 @@ function upsertOmieCustomers(
       municipal_registration = CASE WHEN customers.needs_push = 0 THEN excluded.municipal_registration ELSE customers.municipal_registration END,
       is_individual = CASE WHEN customers.needs_push = 0 THEN excluded.is_individual ELSE customers.is_individual END,
       email = CASE WHEN customers.needs_push = 0 THEN excluded.email ELSE customers.email END,
+      fiscal_emails = CASE WHEN customers.needs_push = 0 THEN excluded.fiscal_emails ELSE customers.fiscal_emails END,
       homepage = CASE WHEN customers.needs_push = 0 THEN excluded.homepage ELSE customers.homepage END,
       contact_name = CASE WHEN customers.needs_push = 0 THEN excluded.contact_name ELSE customers.contact_name END,
       phone = CASE WHEN customers.needs_push = 0 THEN excluded.phone ELSE customers.phone END,
@@ -5048,6 +5055,7 @@ function upsertOmieCustomers(
       customer.municipalRegistration ?? null,
       customer.isIndividual ? 1 : 0,
       customer.email,
+      customer.fiscalEmails ?? null,
       customer.homepage ?? null,
       customer.contactName ?? null,
       customer.phone,

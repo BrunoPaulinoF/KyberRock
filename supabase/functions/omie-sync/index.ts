@@ -110,6 +110,8 @@ type OmieCustomer = {
   municipalRegistration: string | null;
   isIndividual: boolean;
   email: string | null;
+  /** `recomendacoes.email_fatura`: quem recebe a NF-e e o boleto (aba Fiscal). */
+  fiscalEmails: string | null;
   homepage: string | null;
   contactName: string | null;
   phone: string | null;
@@ -330,7 +332,14 @@ type PushCustomerPayload = {
   razaoSocial: string;
   nomeFantasia?: string;
   cnpjCpf?: string;
+  /** E-mail de CONTATO do cliente (campo `email` do cadastro do OMIE). */
   email?: string;
+  /**
+   * Destinatarios da NF-e e do boleto (aba Fiscal do cadastro do KyberRock -> tag
+   * `email_fatura` do OMIE). String vazia limpa o campo la; `undefined` (chamador que
+   * nao gerencia o campo, como o push de transportadora) nao mexe nele.
+   */
+  fiscalEmails?: string;
   telefone1Ddd?: string;
   telefone1Numero?: string;
   zipcode?: string;
@@ -942,6 +951,7 @@ async function listCustomersPage(
 }
 
 type OmieCustomerRaw = {
+  recomendacoes?: OmieCustomerRecommendations;
   codigo_cliente_omie?: number | string;
   codigoClienteOmie?: number | string;
   codigo_cliente_integracao?: string;
@@ -1025,6 +1035,12 @@ function mapOmieCustomerRaw(item: OmieCustomerRaw): OmieCustomer | null {
     municipalRegistration: pickFirst(item.inscricao_municipal, item.inscricaoMunicipal),
     isIndividual: isYesFlag(pickFirst(item.pessoa_fisica, item.pessoaFisica)),
     email: pickFirst(item.email),
+    // O que estiver configurado a mao no OMIE aparece na aba Fiscal do cadastro, em vez
+    // de ser sobrescrito as cegas no proximo push (ver syncCustomerInvoiceEmails).
+    fiscalEmails:
+      typeof item.recomendacoes?.email_fatura === "string"
+        ? pickFirst(item.recomendacoes.email_fatura)
+        : null,
     homepage: pickFirst(item.homepage),
     contactName: pickFirst(item.contato),
     phone,
@@ -2185,7 +2201,7 @@ async function pushCustomerToOmie(
       activeOmieQueue,
       credentials,
       payload.omieCustomerId,
-      payload.email
+      payload.fiscalEmails
     );
     return payload.omieCustomerId;
   }
@@ -2199,7 +2215,12 @@ async function pushCustomerToOmie(
         "AlterarCliente",
         await toUpdateBody(existing)
       );
-      await syncCustomerInvoiceEmailsCore(activeOmieQueue, credentials, existing, payload.email);
+      await syncCustomerInvoiceEmailsCore(
+        activeOmieQueue,
+        credentials,
+        existing,
+        payload.fiscalEmails
+      );
       return existing;
     }
   }
@@ -2229,7 +2250,12 @@ async function pushCustomerToOmie(
       "AlterarCliente",
       await toUpdateBody(existingId)
     );
-    await syncCustomerInvoiceEmailsCore(activeOmieQueue, credentials, existingId, payload.email);
+    await syncCustomerInvoiceEmailsCore(
+      activeOmieQueue,
+      credentials,
+      existingId,
+      payload.fiscalEmails
+    );
     return existingId;
   }
 
@@ -2237,7 +2263,12 @@ async function pushCustomerToOmie(
   if (!omieCustomerId) {
     throw new Error("OMIE nao retornou codigoClienteOmie");
   }
-  await syncCustomerInvoiceEmailsCore(activeOmieQueue, credentials, omieCustomerId, payload.email);
+  await syncCustomerInvoiceEmailsCore(
+    activeOmieQueue,
+    credentials,
+    omieCustomerId,
+    payload.fiscalEmails
+  );
   return omieCustomerId;
 }
 

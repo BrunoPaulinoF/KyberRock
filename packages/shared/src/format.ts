@@ -92,6 +92,13 @@ export const EMAIL_LIST_SEPARATOR = ", ";
 export const OMIE_EMAIL_FIELD_MAX_LENGTH = 500;
 
 /**
+ * Tamanho maximo do `email_fatura` do OMIE — o "Utilizar os seguintes enderecos de e-mail"
+ * da aba Recomendacoes, que define quem recebe a NF-e e o boleto. E menor que o do campo
+ * de contato.
+ */
+export const OMIE_INVOICE_EMAIL_FIELD_MAX_LENGTH = 200;
+
+/**
  * Quebra a lista de e-mails digitada (ou vinda do OMIE) em enderecos. Aceita virgula, ponto
  * e virgula, quebra de linha e espaco como separadores — e o que aparece quando o operador
  * cola uma lista de outro sistema — e remove repetidos preservando a ordem.

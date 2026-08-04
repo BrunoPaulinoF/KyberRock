@@ -5,6 +5,8 @@ export interface CustomerCacheEntry {
   document: string | null;
   phone: string | null;
   email: string | null;
+  /** Destinatarios da NF-e (aba Fiscal), separados do e-mail de contato. */
+  fiscalEmails: string | null;
   creditLimitCents: number | null;
   creditMode: "normal" | "prepaid";
   openReceivablesCents: number;
@@ -96,6 +98,7 @@ export interface CustomerFormData {
   document: string;
   phone: string;
   email: string;
+  fiscalEmails: string;
   creditLimitReais: string;
   creditMode: "normal" | "prepaid";
   omieBillingBlocked: boolean;

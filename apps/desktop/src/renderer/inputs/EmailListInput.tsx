@@ -17,9 +17,10 @@ export interface EmailListInputProps {
 }
 
 /**
- * Campo de e-mails do cadastro: o operador adiciona quantos quiser (NF-e, boleto,
- * financeiro, comprador...). Todos vao para o OMIE no mesmo campo, separados por virgula —
- * e assim que a nota e o boleto chegam a todos os destinatarios.
+ * Campo de lista de e-mails: o operador adiciona quantos quiser e eles ficam guardados
+ * separados por virgula. Usado nos dois campos do cadastro do cliente, que sao coisas
+ * distintas: o e-mail de CONTATO (aba Contato) e os destinatarios da NF-e e do boleto
+ * (aba Fiscal, que alimenta o "Utilizar os seguintes enderecos de e-mail" do OMIE).
  *
  * Aceita colar uma lista pronta ("a@x.com; b@y.com"), que entra ja separada em varios itens.
  */
@@ -59,7 +60,7 @@ export function EmailListInput({
     <Field
       label={label}
       required={required}
-      hint={hint ?? "Adicione quantos e-mails quiser. Todos sao enviados ao OMIE."}
+      hint={hint ?? "Adicione quantos e-mails quiser."}
       error={
         draftInvalid
           ? "Email invalido."

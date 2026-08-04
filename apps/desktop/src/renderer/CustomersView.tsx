@@ -65,6 +65,7 @@ const initialForm: CustomerFormData = {
   document: "",
   phone: "",
   email: "",
+  fiscalEmails: "",
   creditLimitReais: "",
   creditMode: "normal",
   omieBillingBlocked: false,
@@ -155,6 +156,13 @@ const styles = {
     textTransform: "uppercase" as const,
     color: "var(--kr-muted)",
     letterSpacing: "0.04em"
+  },
+  // Explicacao de uma secao inteira do formulario (nao de um campo, que usa o `hint`).
+  formHint: {
+    margin: "8px 0 0 0",
+    fontSize: "12px",
+    lineHeight: 1.45,
+    color: "var(--kr-muted)"
   },
   fieldRow: {
     display: "grid",
@@ -370,6 +378,7 @@ interface PaymentTermOption {
 const CUSTOMER_FORM_SECTIONS = [
   { key: "identificacao", label: "Identificacao" },
   { key: "contato", label: "Contato" },
+  { key: "fiscal", label: "Fiscal" },
   { key: "endereco", label: "Endereco" },
   { key: "comercial", label: "Comercial" },
   { key: "credito", label: "Credito" },
@@ -681,6 +690,7 @@ export function CustomersView({
       document: customer.document ?? "",
       phone: customer.phone ?? "",
       email: customer.email ?? "",
+      fiscalEmails: customer.fiscalEmails ?? "",
       creditLimitReais: customer.creditLimitCents
         ? formatMoneyInput(String(customer.creditLimitCents / 100))
         : "",
@@ -909,7 +919,13 @@ export function CustomersView({
       setFormError(`Email invalido: ${invalidEmails.join(", ")}.`);
       return;
     }
+    const invalidFiscalEmails = invalidEmailsInList(form.fiscalEmails);
+    if (invalidFiscalEmails.length > 0) {
+      setFormError(`Email da NF-e invalido: ${invalidFiscalEmails.join(", ")}.`);
+      return;
+    }
     const normalizedEmail = normalizeEmailList(form.email);
+    const normalizedFiscalEmails = normalizeEmailList(form.fiscalEmails);
     const creditLimitText = form.creditLimitReais.trim();
     const creditLimitCents = creditLimitText
       ? (parseMoneyInputToCents(creditLimitText) ?? undefined)
@@ -1009,6 +1025,9 @@ export function CustomersView({
           document: normalizedDocument || undefined,
           phone: normalizedPhone || undefined,
           email: normalizedEmail || undefined,
+          // String vazia limpa os destinatarios da NF-e (o campo e sempre enviado, senao
+          // remover todos os enderecos no formulario nao apagaria nada).
+          fiscalEmails: normalizedFiscalEmails,
           // Campo vazio limpa o limite (null); preenchido grava o valor em centavos.
           creditLimitCents: creditLimitText ? creditLimitCents : null,
           omieBillingBlocked: form.omieBillingBlocked,
@@ -1037,6 +1056,7 @@ export function CustomersView({
           document: normalizedDocument || undefined,
           phone: normalizedPhone || undefined,
           email: normalizedEmail || undefined,
+          fiscalEmails: normalizedFiscalEmails || undefined,
           creditLimitCents: creditLimitCents ?? undefined,
           creditMode: form.creditMode,
           omieBillingBlocked: form.omieBillingBlocked,
@@ -1368,6 +1388,10 @@ export function CustomersView({
         ]
       },
       {
+        title: "Fiscal",
+        items: [{ label: "E-mails da NF-e", value: customer.fiscalEmails ?? "" }]
+      },
+      {
         title: "Endereco",
         items: [
           { label: "CEP", value: customer.zipcode ?? "" },
@@ -1598,9 +1622,29 @@ export function CustomersView({
                       value={form.email}
                       onChange={(email) => setForm({ ...form, email })}
                       disabled={false}
-                      hint="Quantos e-mails quiser: a NF-e e o boleto do OMIE vao para todos."
+                      hint="E-mail de contato do cliente. Os destinatarios da NF-e ficam na aba Fiscal."
                     />
                   </div>
+                </section>
+              ) : null}
+
+              {activeFormSection === "fiscal" ? (
+                <section style={styles.formSection}>
+                  <h4 style={styles.formSectionTitle}>Fiscal</h4>
+                  <div style={styles.fieldRow}>
+                    <EmailListInput
+                      label="E-mails da NF-e"
+                      value={form.fiscalEmails}
+                      onChange={(fiscalEmails) => setForm({ ...form, fiscalEmails })}
+                      disabled={false}
+                      hint="Quem recebe a nota e o boleto. Vao para o 'Utilizar os seguintes enderecos de e-mail' do OMIE."
+                    />
+                  </div>
+                  <p style={styles.formHint}>
+                    Estes enderecos sao os destinatarios da NF-e e do boleto no OMIE — coisa
+                    distinta do e-mail de contato da aba Contato, que serve so para falar com o
+                    cliente. Deixe vazio para o OMIE seguir com o que estiver configurado la.
+                  </p>
                 </section>
               ) : null}
 
