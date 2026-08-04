@@ -14,9 +14,9 @@ export type SalesGroupBy = "product" | "customer" | "customer_product" | "day";
 
 /**
  * Tipo de frete da operacao (`weighing_operations.freight_type`), espelhado do desktop
- * (`apps/desktop/src/services/freight.ts`): a balanca so tem "sem frete" e "com frete".
- * As modalidades antigas gravadas nas vendas ja fechadas (CIF, FOB, terceiros,
- * transporte proprio) entram todas em "com frete", para nenhuma venda sumir do filtro.
+ * (`apps/desktop/src/services/freight.ts`). A balanca grava quatro situacoes em dois
+ * grupos; o comercial filtra pelo grupo: "com frete" (a operacao tem valor de frete,
+ * saia ele na nota ou fique so no sistema) e "sem frete".
  */
 export type SalesFreightType = "cif" | "none";
 
@@ -30,20 +30,17 @@ export const SALES_FREIGHT_TYPES: ReadonlyArray<{ value: SalesFreightType; label
   { value: "none", label: "Sem frete" }
 ];
 
-/** Modalidades antigas do desktop, todas com frete. */
-const LEGACY_FREIGHT_TYPES_WITH_FREIGHT = [
-  "cif",
-  "fob",
-  "third_party",
-  "own_sender",
-  "own_recipient"
-];
+/**
+ * Situacoes gravadas que significam "a operacao tem valor de frete": valor na nota
+ * (`fob`), valor so no sistema (`cif`) e o transporte proprio da Pedreira do catalogo
+ * antigo (`own_sender`). `third_party` (so o transportador na nota), `own_recipient`
+ * (cliente busca) e `none` ficam em "sem frete".
+ */
+const FREIGHT_TYPES_WITH_FREIGHT = ["cif", "fob", "own_sender"];
 
-/** Tipo de frete da linha: qualquer modalidade antiga com frete cai em "com frete". */
+/** Grupo de frete da linha. */
 export function normalizeFreightType(value: unknown): SalesFreightType {
-  return typeof value === "string" && LEGACY_FREIGHT_TYPES_WITH_FREIGHT.includes(value)
-    ? "cif"
-    : "none";
+  return typeof value === "string" && FREIGHT_TYPES_WITH_FREIGHT.includes(value) ? "cif" : "none";
 }
 
 export function freightTypeLabel(value: unknown): string {

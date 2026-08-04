@@ -47,7 +47,7 @@ function createDatabase(): DesktopDatabase {
 }
 
 describe("frete do cliente por tipo de frete", () => {
-  it("guarda o valor do tipo com frete, normalizando as modalidades antigas", () => {
+  it("guarda um unico valor para o grupo com frete, venha de que situacao vier", () => {
     const database = createDatabase();
     try {
       // "fob" e legado: com os dois tipos de hoje, todo valor cai em "com frete" (cif).
@@ -66,7 +66,7 @@ describe("frete do cliente por tipo de frete", () => {
         getCustomerFreightRuleForProduct(database, "customer-1", "product-1", "cif")?.rule
           .baseValueCents
       ).toBe(12000);
-      // Consultar por uma modalidade antiga devolve o mesmo valor de "com frete".
+      // As duas situacoes com valor compartilham a memoria: o frete do cliente e um so.
       expect(
         getCustomerFreightRuleForProduct(database, "customer-1", "product-1", "fob")?.rule
           .baseValueCents

@@ -88,7 +88,7 @@ describe("lista de fretes do cliente", () => {
       ["fob", 9_000, "manual"],
       ["cif", 12_000, "last_used"]
     ]);
-    expect(entries[0].modalityLabel).toBe("Com frete (FOB)");
+    expect(entries[0].modalityLabel).toBe("Valor na nota");
     expect(entries[0].scopeLabel).toBe("Frete fixo");
   });
 

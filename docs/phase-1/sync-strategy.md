@@ -121,20 +121,31 @@ Financeiro:
 - Enviar frete no bloco `frete` quando aplicavel, incluindo modalidade, transportadora, peso e valor.
 - Salvar `codigo_pedido` retornado.
 
-#### Modalidade do frete (implementado)
+#### Tipo de frete (implementado)
 
-- A balanca tem **dois tipos de frete**: `none` (sem frete) e `cif` (com frete) — e, dentro de
-  "com frete", se a Pedreira lanca ou nao um **valor**. As modalidades antigas (`fob`,
-  `third_party`, `own_sender`, `own_recipient`) continuam sendo lidas nas operacoes ja gravadas,
-  mas nao sao mais escolhidas; ao salvar, a operacao passa a gravar `cif`/`none`.
-- O que decide o `modalidade` (modFrete da NF-e) do bloco `frete` e o **valor**:
-  - com valor de frete lancado → CIF `"0"` (o valor segue em `valor_frete`);
-  - sem valor lancado → `"9"` (sem incidencia de frete): a Pedreira nao cobra nem responde
-    pelo transporte. E a mesma regra que o FOB legado ja seguia.
-- Compat: operacao antiga com transporte proprio (`own_sender`/`own_recipient`) e sem valor
-  mantem o codigo dela (`"3"`/`"4"`, com `veiculo_proprio "S"`).
-- A caixa **"mostrar o valor do frete no cupom"** e por operacao e fica no `freight_json`
-  (`showOnReceipt`). Ela nao muda nada do que vai ao OMIE — so a linha `FRETE` do cupom.
+Sao **quatro situacoes em dois grupos** (definicao do comercial, "Frete Pedreira"). O
+operador escolhe o grupo e, na caixa logo abaixo do tipo de frete, a situacao:
+
+| #   | Grupo     | Situacao                         | `freight_type` | modFrete | Valor no pedido     | Transportador na NF |
+| --- | --------- | -------------------------------- | -------------- | -------- | ------------------- | ------------------- |
+| 1   | Com frete | valor do frete **na nota**       | `fob`          | `1`      | sim (soma no total) | sim                 |
+| 2   | Com frete | valor **so no sistema**          | `cif`          | `1`      | nao                 | sim                 |
+| 3   | Sem frete | so o **transportador** na nota   | `third_party`  | `1`      | nao (nao ha)        | sim                 |
+| 4   | Sem frete | **sem ocorrencia** de transporte | `none`         | `9`      | nao                 | nao                 |
+
+- As chaves gravadas sao as do catalogo antigo porque a coluna `freight_type` tem CHECK com
+  essa lista (SQLite migracao 32 e espelho da nuvem); o significado de cada uma e o da tabela.
+  `own_sender`/`own_recipient` sao legado de leitura e mantem o modFrete `"3"`/`"4"`
+  (`veiculo_proprio "S"`).
+- **Situacao 2**: o valor fica no KyberRock (`freight_json` + `freight_total_cents`) para
+  controle e para a **NF de servico de transporte**; nao vai em `valor_frete` do pedido, nao
+  soma no total da nota e nao sai no cupom (o total impresso desconta o frete).
+- **Situacao 4**: o pedido vai sem transportadora nenhuma (`carrier`, `localCarrierId` e o
+  `carrierName`/`carrierOmieId` do bloco de transporte ficam nulos).
+- Operacao gravada **sem escolha de tipo** nasce na situacao 3 (`FREIGHT_MODALITY_DEFAULT`) —
+  o comportamento historico da balanca, em que o pedido sempre levava a transportadora.
+- Transportadora, placa e motorista sao selecionaveis em **qualquer** tipo de frete; o tipo
+  decide o que vai para a nota, nao o que o operador pode registrar.
 
 #### Placa e UF do veiculo (implementado)
 

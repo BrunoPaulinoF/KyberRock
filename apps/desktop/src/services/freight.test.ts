@@ -2,15 +2,21 @@ import { describe, expect, it } from "vitest";
 
 import {
   FreightCalculator,
+  FREIGHT_CARRIER_ONLY,
   FREIGHT_MODALITIES,
+  FREIGHT_MODALITY_DEFAULT,
   FREIGHT_MODALITY_NONE,
-  FREIGHT_MODALITY_WITH_FREIGHT,
+  FREIGHT_VALUE_INTERNAL_ONLY,
+  FREIGHT_VALUE_ON_INVOICE,
+  freightCarrierGoesToInvoice,
   freightModalityLookupKeys,
   freightModalityOmieCode,
+  freightValueGoesToInvoice,
   getFreightModalityInfo,
   isFreightModality,
   isFreightModalityWithFreight,
   normalizeFreightModality,
+  resolveFreightModality,
   type FreightRule
 } from "./freight";
 
@@ -115,13 +121,15 @@ describe("FreightCalculator", () => {
 });
 
 describe("freight modalities", () => {
-  it("maps each modality to the OMIE modalidade code (modFrete)", () => {
-    expect(freightModalityOmieCode("cif")).toBe("0");
-    expect(freightModalityOmieCode("fob")).toBe("1");
-    expect(freightModalityOmieCode("third_party")).toBe("2");
+  it("maps the four situations to the OMIE modalidade code (modFrete)", () => {
+    // As tres situacoes com transportador na nota sao FOB "1"; so "sem ocorrencia" e "9".
+    expect(freightModalityOmieCode(FREIGHT_VALUE_ON_INVOICE)).toBe("1");
+    expect(freightModalityOmieCode(FREIGHT_VALUE_INTERNAL_ONLY)).toBe("1");
+    expect(freightModalityOmieCode(FREIGHT_CARRIER_ONLY)).toBe("1");
+    expect(freightModalityOmieCode(FREIGHT_MODALITY_NONE)).toBe("9");
+    // Transporte proprio legado mantem o codigo dele.
     expect(freightModalityOmieCode("own_sender")).toBe("3");
     expect(freightModalityOmieCode("own_recipient")).toBe("4");
-    expect(freightModalityOmieCode("none")).toBe("9");
   });
 
   it("falls back to sem frete (9) for unknown or missing modalities", () => {
@@ -131,50 +139,88 @@ describe("freight modalities", () => {
     expect(getFreightModalityInfo("bogus").key).toBe("none");
   });
 
-  it("offers only two freight types to pick from: none and with freight", () => {
+  it("offers the four situations grouped in com frete / sem frete", () => {
     expect(FREIGHT_MODALITIES.map((modality) => modality.key)).toEqual([
-      FREIGHT_MODALITY_NONE,
-      FREIGHT_MODALITY_WITH_FREIGHT
+      FREIGHT_VALUE_ON_INVOICE,
+      FREIGHT_VALUE_INTERNAL_ONLY,
+      FREIGHT_CARRIER_ONLY,
+      FREIGHT_MODALITY_NONE
     ]);
-    expect(FREIGHT_MODALITIES.map((modality) => modality.label)).toEqual([
-      "Sem frete",
-      "Com frete"
+    expect(FREIGHT_MODALITIES.map((modality) => modality.group)).toEqual([
+      "with_freight",
+      "with_freight",
+      "without_freight",
+      "without_freight"
     ]);
   });
 
-  it("supports a freight charge only on the with-freight type", () => {
+  it("puts the freight value on the invoice only in situation 1", () => {
+    expect(freightValueGoesToInvoice(FREIGHT_VALUE_ON_INVOICE)).toBe(true);
+    expect(freightValueGoesToInvoice(FREIGHT_VALUE_INTERNAL_ONLY)).toBe(false);
+    expect(freightValueGoesToInvoice(FREIGHT_CARRIER_ONLY)).toBe(false);
+    expect(freightValueGoesToInvoice(FREIGHT_MODALITY_NONE)).toBe(false);
+  });
+
+  it("keeps the carrier out of the invoice only in situation 4", () => {
+    expect(freightCarrierGoesToInvoice(FREIGHT_VALUE_ON_INVOICE)).toBe(true);
+    expect(freightCarrierGoesToInvoice(FREIGHT_VALUE_INTERNAL_ONLY)).toBe(true);
+    expect(freightCarrierGoesToInvoice(FREIGHT_CARRIER_ONLY)).toBe(true);
+    expect(freightCarrierGoesToInvoice(FREIGHT_MODALITY_NONE)).toBe(false);
+  });
+
+  it("supports a freight value only in the com frete group", () => {
     const chargeable = FREIGHT_MODALITIES.filter((modality) => modality.supportsCharge).map(
       (modality) => modality.key
     );
-    expect(chargeable).toEqual([FREIGHT_MODALITY_WITH_FREIGHT]);
+    expect(chargeable).toEqual([FREIGHT_VALUE_ON_INVOICE, FREIGHT_VALUE_INTERNAL_ONLY]);
+  });
+
+  it("resolves the situation from the group plus the checkbox below it", () => {
+    expect(resolveFreightModality({ group: "with_freight", valueOnInvoice: true })).toBe(
+      FREIGHT_VALUE_ON_INVOICE
+    );
+    expect(resolveFreightModality({ group: "with_freight", valueOnInvoice: false })).toBe(
+      FREIGHT_VALUE_INTERNAL_ONLY
+    );
+    expect(resolveFreightModality({ group: "without_freight", carrierOnInvoice: true })).toBe(
+      FREIGHT_CARRIER_ONLY
+    );
+    expect(resolveFreightModality({ group: "without_freight", carrierOnInvoice: false })).toBe(
+      FREIGHT_MODALITY_NONE
+    );
   });
 
   it("validates modality keys, legacy ones included", () => {
     expect(isFreightModality("cif")).toBe(true);
     expect(isFreightModality("fob")).toBe(true);
+    expect(isFreightModality("own_recipient")).toBe(true);
     expect(isFreightModality("nope")).toBe(false);
     expect(isFreightModality(42)).toBe(false);
   });
 
-  it("reads every legacy modality as an operation with freight", () => {
-    for (const legacy of ["cif", "fob", "third_party", "own_sender", "own_recipient"]) {
-      expect(isFreightModalityWithFreight(legacy)).toBe(true);
-      expect(normalizeFreightModality(legacy)).toBe(FREIGHT_MODALITY_WITH_FREIGHT);
-    }
-    expect(isFreightModalityWithFreight("none")).toBe(false);
-    expect(isFreightModalityWithFreight("bogus")).toBe(false);
+  it("normalizes legacy modalities into one of the four situations", () => {
+    // Transporte proprio da Pedreira tinha valor de frete na nota -> situacao 1.
+    expect(normalizeFreightModality("own_sender")).toBe(FREIGHT_VALUE_ON_INVOICE);
+    // Transporte proprio do cliente nunca teve valor, mas levava transportador -> 3.
+    expect(normalizeFreightModality("own_recipient")).toBe(FREIGHT_CARRIER_ONLY);
+    expect(isFreightModalityWithFreight("own_sender")).toBe(true);
+    expect(isFreightModalityWithFreight(FREIGHT_CARRIER_ONLY)).toBe(false);
     expect(normalizeFreightModality(null)).toBe(FREIGHT_MODALITY_NONE);
   });
 
-  it("looks the customer's freight memory up by the legacy keys too", () => {
-    // O valor gravado antes da simplificacao (ex.: FOB) nao pode sumir da proxima venda.
-    expect(freightModalityLookupKeys(FREIGHT_MODALITY_WITH_FREIGHT)).toEqual([
-      "cif",
-      "fob",
-      "third_party",
+  it("defaults an operation without a chosen freight type to carrier-on-invoice", () => {
+    // Comportamento historico: o pedido sempre levava a transportadora.
+    expect(FREIGHT_MODALITY_DEFAULT).toBe(FREIGHT_CARRIER_ONLY);
+  });
+
+  it("shares the customer's freight memory between the two com-frete situations", () => {
+    // O valor de frete do cliente e o mesmo; muda so se ele sai na nota.
+    expect(freightModalityLookupKeys(FREIGHT_VALUE_ON_INVOICE)).toEqual([
+      FREIGHT_VALUE_ON_INVOICE,
+      FREIGHT_VALUE_INTERNAL_ONLY,
       "own_sender",
       "own_recipient"
     ]);
-    expect(freightModalityLookupKeys("none")).toEqual(["none"]);
+    expect(freightModalityLookupKeys(FREIGHT_MODALITY_NONE)).toEqual([FREIGHT_MODALITY_NONE]);
   });
 });

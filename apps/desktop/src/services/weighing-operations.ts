@@ -5,8 +5,11 @@ import type { DesktopDatabase } from "../database/sqlite.js";
 import type { LocalDesktopIdentity } from "./bootstrap.js";
 import { FinancialBlockService } from "./financial-block.js";
 import {
+  FREIGHT_MODALITY_DEFAULT,
   FreightCalculator,
+  freightCarrierGoesToInvoice,
   freightModalityOmieCode,
+  freightValueGoesToInvoice,
   getFreightModalityInfo,
   type FreightModality,
   type FreightRule
@@ -650,7 +653,7 @@ export function createWeighingOperation(
         priceDetails?.priceUnit ?? "ton",
         priceDetails?.savingsPercent ?? null,
         serializeOperationFreight(input.freight),
-        getFreightModalityInfo(input.freightModality).key,
+        resolveOperationFreightModality(input.freightModality),
         input.deductFreightFromCredit ? 1 : 0,
         input.quotationId ?? null,
         timestamp,
@@ -1461,22 +1464,25 @@ export interface BuiltOmieBillingJob {
  * OMIE. Retorna null quando o cliente nao tem omie_customer_id (nada a enviar).
  */
 /**
- * Codigo "modalidade" do frete para o OMIE a partir do tipo salvo (modFrete da NF-e).
- *
- * Com os dois tipos de frete de hoje, quem manda e o VALOR: operacao com frete e com
- * valor lancado pela Pedreira e frete contratado pelo remetente — CIF "0"; sem valor
- * lancado (com ou sem frete) a Pedreira nao contrata nem responde pelo transporte, entao
- * vai "9 - sem incidencia de frete". E a mesma regra que o FOB legado ja seguia, e por
- * isso as operacoes antigas (FOB, terceiros, transporte proprio) continuam corretas.
+ * Situacao de frete a gravar. Sem escolha informada, a operacao nasce como "sem valor de
+ * frete, com o transportador na nota" (situacao 3) — o comportamento historico da balanca.
  */
-function resolveFreightModalidade(
-  freightType: string | null | undefined,
-  freightTotalCents: number
-): string {
-  if (freightTotalCents > 0) return "0";
-  // Sem valor, so o transporte proprio legado mantem o codigo dele (veiculo_proprio "S").
-  const code = freightModalityOmieCode(freightType);
-  return code === "3" || code === "4" ? code : "9";
+function resolveOperationFreightModality(
+  modality: FreightModality | null | undefined
+): FreightModality {
+  if (!modality) return FREIGHT_MODALITY_DEFAULT;
+  return getFreightModalityInfo(modality).key;
+}
+
+/**
+ * Codigo "modalidade" do frete para o OMIE (modFrete da NF-e) a partir da situacao
+ * gravada na operacao. As tres situacoes em que o transportador consta na nota vao como
+ * "1 - Contratacao do Frete por conta do Destinatario (FOB)"; a quarta (sem ocorrencia
+ * de transporte) vai como "9". Operacoes antigas de transporte proprio mantem o codigo
+ * delas (3/4, com veiculo_proprio "S").
+ */
+function resolveFreightModalidade(freightType: string | null | undefined): string {
+  return freightModalityOmieCode(freightType);
 }
 
 /**
@@ -1680,13 +1686,21 @@ export function buildOmieBillingJob(
   // O cadastro sobe junto: o edge cria a transportadora antes de montar o pedido quando
   // ela ainda nao existe no OMIE e refaz o vinculo quando o codigo local esta obsoleto.
   const carrierCadastro = buildOrderCarrierCadastro(orderCarrier);
-  const freightModalidade = resolveFreightModalidade(row.freight_type, operation.freightTotalCents);
+  const freightModalidade = resolveFreightModalidade(row.freight_type);
+  // O transportador so vai a nota nas situacoes 1, 2 e 3; "sem ocorrencia de frete" nao
+  // leva transportadora nenhuma para o pedido.
+  const carrierOnInvoice = freightCarrierGoesToInvoice(row.freight_type);
+  // O valor do frete so entra no pedido (e soma no total da nota) na situacao 1. Na
+  // situacao 2 ele fica so no KyberRock, para controle e NF de servico de transporte.
+  const invoiceFreightTotalCents = freightValueGoesToInvoice(row.freight_type)
+    ? operation.freightTotalCents
+    : 0;
   const transport: OmieOrderTransport = {
     plate: operation.plate?.trim() || null,
     plateState: resolveVehiclePlateState(database, row.vehicle_id),
     driverName: operation.driverName?.trim() || null,
-    carrierOmieId: carrierOmieId && carrierOmieId > 0 ? carrierOmieId : null,
-    carrierName: orderCarrier?.name?.trim() || null,
+    carrierOmieId: carrierOnInvoice && carrierOmieId && carrierOmieId > 0 ? carrierOmieId : null,
+    carrierName: carrierOnInvoice ? orderCarrier?.name?.trim() || null : null,
     cargoWeightKg: operation.netWeightKg,
     ownVehicle: freightModalidade === "3" || freightModalidade === "4"
   };
@@ -1716,7 +1730,7 @@ export function buildOmieBillingJob(
       serviceDescription: operation.productDescription,
       quantity: (operation.netWeightKg ?? 0) / 1000,
       unitPrice: operation.unitPriceCents ? operation.unitPriceCents / 100 : 0,
-      freightTotalCents: operation.freightTotalCents,
+      freightTotalCents: invoiceFreightTotalCents,
       freightModalidade,
       issueDate: (row.exit_weight_captured_at ?? "").slice(0, 10),
       paymentTermOmieCode: omieParcela?.code ?? null,
@@ -1728,8 +1742,8 @@ export function buildOmieBillingJob(
       accountName: omiePayment?.account_name ?? null,
       omieCategoryCode,
       transport,
-      localCarrierId: orderCarrier?.id ?? null,
-      carrier: carrierCadastro
+      localCarrierId: carrierOnInvoice ? (orderCarrier?.id ?? null) : null,
+      carrier: carrierOnInvoice ? carrierCadastro : null
     }
   };
 }
@@ -2926,9 +2940,9 @@ export function updateWeighingOperationDetails(
   const freightJson = freightProvided
     ? serializeOperationFreight(input.freight)
     : before.freightJson;
-  const freightModality = getFreightModalityInfo(
+  const freightModality = resolveOperationFreightModality(
     input.freightModality ?? before.freightModality
-  ).key;
+  );
   const deductFreightFromCredit =
     input.deductFreightFromCredit !== undefined
       ? input.deductFreightFromCredit

@@ -2,10 +2,10 @@ import { randomUUID } from "node:crypto";
 
 import type { DesktopDatabase } from "../database/sqlite.js";
 import {
+  freightMemoryKey,
   freightModalityLookupKeys,
   getFreightModalityInfo,
-  isFreightModality,
-  normalizeFreightModality
+  isFreightModality
 } from "./freight.js";
 import type { FreightModality, FreightRule } from "./freight.js";
 
@@ -161,7 +161,7 @@ export function getCustomerFreightRuleForProduct(
             return {
               ...mapped,
               rule: toFreightRule(value, key),
-              modality: normalizeFreightModality(key),
+              modality: freightMemoryKey(key),
               source,
               destination: value.destination ?? null,
               showOnReceipt: value.showOnReceipt ?? true
@@ -190,7 +190,7 @@ export function setCustomerFreightRule(
   const id = upsertRule(database, {
     customerId: input.customerId,
     productId: input.productId ?? null,
-    modality: input.modality ? normalizeFreightModality(input.modality) : null,
+    modality: input.modality ? freightMemoryKey(input.modality) : null,
     rule: input.rule,
     source: "manual",
     now
@@ -213,7 +213,7 @@ export function rememberCustomerFreightValue(
   upsertRule(database, {
     customerId: input.customerId,
     productId: input.productId ?? null,
-    modality: normalizeFreightModality(input.modality),
+    modality: freightMemoryKey(input.modality),
     rule: input.rule,
     destination: input.destination ?? null,
     showOnReceipt: input.showOnReceipt,

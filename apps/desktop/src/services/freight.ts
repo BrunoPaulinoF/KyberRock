@@ -4,15 +4,22 @@ export interface DistanceRange {
 }
 
 /**
- * Tipo (modalidade) de frete gravado na operacao (`weighing_operations.freight_type`).
+ * Tipo de frete gravado na operacao (`weighing_operations.freight_type`).
  *
- * O operador escolhe apenas entre DOIS tipos: "sem frete" e "com frete" (e, dentro de
- * "com frete", se lanca ou nao um valor). Os demais valores da uniao sao legado: ficaram
- * gravados nas operacoes e no cadastro antes da simplificacao e continuam sendo lidos
- * (rotulos, relatorios, memoria de frete do cliente), mas nao aparecem mais para escolha.
+ * Sao QUATRO situacoes, em dois grupos (ver `docs/phase-1/sync-strategy.md`):
  *
- * O codigo "modalidade" do frete no pedido de venda do OMIE (modFrete da NF-e:
- * 0 CIF, 1 FOB, 2 terceiros, 3/4 transporte proprio, 9 sem frete) sai de `omieCode`.
+ * | # | Grupo      | Situacao                                  | Valor | NF                          |
+ * |---|------------|-------------------------------------------|-------|-----------------------------|
+ * | 1 | Com frete  | valor de frete NA nota                    | sim   | valor + transportador, soma no total |
+ * | 2 | Com frete  | valor de frete so no sistema              | sim   | so o transportador          |
+ * | 3 | Sem frete  | sem valor, transportador na nota          | nao   | so o transportador          |
+ * | 4 | Sem frete  | sem ocorrencia de transporte              | nao   | nada                        |
+ *
+ * As chaves gravadas sao as do catalogo antigo (`fob`, `cif`, `third_party`, `none`)
+ * porque a coluna `freight_type` tem CHECK com essa lista — no SQLite local (migracao 32)
+ * e no espelho da nuvem. Reusar valores ja aceitos evita reconstruir a tabela de
+ * operacoes so para renomear um enum; o significado de cada chave e o desta tabela.
+ * `own_sender`/`own_recipient` sao legado de leitura (operacoes gravadas antes disto).
  */
 export type FreightModality =
   | "cif"
@@ -22,12 +29,17 @@ export type FreightModality =
   | "own_recipient"
   | "none";
 
+/** Grupo do tipo de frete, como o operador escolhe na tela. */
+export type FreightGroup = "with_freight" | "without_freight";
+
 /** Responsavel padrao pelo valor de frete de cada modalidade (reusa o enum de payer). */
 export type FreightModalityPayer = "customer" | "quarry" | "third_party";
 
 export interface FreightModalityInfo {
   key: FreightModality;
-  /** Rotulo curto para o chip/botao. */
+  /** Grupo exibido no seletor: com frete (situacoes 1 e 2) ou sem frete (3 e 4). */
+  group: FreightGroup;
+  /** Rotulo curto para o botao/chip. */
   label: string;
   /** Descricao exibida no seletor. */
   description: string;
@@ -35,45 +47,92 @@ export interface FreightModalityInfo {
   omieCode: string;
   /**
    * A transportadora da Pedreira se aplica (placa/motorista vinculados). Falso apenas
-   * quando o cliente traz o proprio caminhao (transporte proprio do destinatario).
+   * quando o cliente traz o proprio caminhao (transporte proprio do destinatario, legado).
    */
   usesCarrier: boolean;
-  /** A modalidade comporta um valor de frete lancado pela Pedreira (campos de calculo). */
+  /** A operacao comporta um valor de frete lancado pela Pedreira (campos de calculo). */
   supportsCharge: boolean;
+  /** O valor do frete vai na nota/cupom e soma no total (so a situacao 1). */
+  valueOnInvoice: boolean;
+  /** O transportador consta na nota (situacoes 1, 2 e 3). */
+  carrierOnInvoice: boolean;
   /** Responsavel padrao pelo frete quando ha valor lancado. */
   defaultPayer: FreightModalityPayer;
 }
 
-/**
- * Modalidade gravada para "com frete". Continua sendo `cif` (e nao um valor novo) porque
- * a coluna `freight_type` tem CHECK com o catalogo antigo — no SQLite local (migracao 32)
- * e no espelho da nuvem. Reusar um valor ja aceito evita reconstruir a tabela de operacoes
- * so para renomear um enum.
- */
-export const FREIGHT_MODALITY_WITH_FREIGHT: FreightModality = "cif";
+/** Situacao 1: com frete, valor na nota. */
+export const FREIGHT_VALUE_ON_INVOICE: FreightModality = "fob";
+/** Situacao 2: com frete, valor so no sistema. */
+export const FREIGHT_VALUE_INTERNAL_ONLY: FreightModality = "cif";
+/** Situacao 3: sem valor de frete, com transportador na nota. */
+export const FREIGHT_CARRIER_ONLY: FreightModality = "third_party";
+/** Situacao 4: sem ocorrencia de frete. */
 export const FREIGHT_MODALITY_NONE: FreightModality = "none";
 
+/** Compat: "com frete" grava a situacao 2 quando nada mais e informado. */
+export const FREIGHT_MODALITY_WITH_FREIGHT: FreightModality = FREIGHT_VALUE_INTERNAL_ONLY;
+
 /**
- * Os dois unicos tipos de frete que o operador escolhe hoje. A ordem e a exibida no
- * seletor da entrada e da edicao da operacao.
+ * Situacao de uma operacao que nao informou tipo de frete: sem valor de frete, com o
+ * transportador na nota (situacao 3). E o comportamento historico da balanca — o pedido
+ * sempre levava a transportadora —, entao so quem escolhe "sem ocorrencia de frete" de
+ * proposito (situacao 4) fica sem transportador na nota.
+ */
+export const FREIGHT_MODALITY_DEFAULT: FreightModality = FREIGHT_CARRIER_ONLY;
+
+/**
+ * As quatro situacoes que o operador escolhe, na ordem exibida (grupo "com frete"
+ * primeiro). Todas usam o mesmo tipo de frete no OMIE — "1 - Contratacao do Frete por
+ * conta do Destinatario (FOB)" —, menos a ultima, que e "9 - Sem Ocorrencia de Transporte".
  */
 export const FREIGHT_MODALITIES: readonly FreightModalityInfo[] = [
   {
-    key: FREIGHT_MODALITY_NONE,
-    label: "Sem frete",
-    description: "Operacao sem frete.",
-    omieCode: "9",
+    key: FREIGHT_VALUE_ON_INVOICE,
+    group: "with_freight",
+    label: "Valor na nota",
+    description: "O valor do frete e o transportador saem na nota e o frete soma no total (FOB).",
+    omieCode: "1",
     usesCarrier: true,
-    supportsCharge: false,
+    supportsCharge: true,
+    valueOnInvoice: true,
+    carrierOnInvoice: true,
+    defaultPayer: "customer"
+  },
+  {
+    key: FREIGHT_VALUE_INTERNAL_ONLY,
+    group: "with_freight",
+    label: "Valor so no sistema",
+    description:
+      "O valor fica no KyberRock para controle e NF de servico de transporte; na nota sai so o transportador.",
+    omieCode: "1",
+    usesCarrier: true,
+    supportsCharge: true,
+    valueOnInvoice: false,
+    carrierOnInvoice: true,
     defaultPayer: "quarry"
   },
   {
-    key: FREIGHT_MODALITY_WITH_FREIGHT,
-    label: "Com frete",
-    description: "Operacao com frete; marque abaixo se o frete tem valor lancado.",
-    omieCode: "0",
+    key: FREIGHT_CARRIER_ONLY,
+    group: "without_freight",
+    label: "So o transportador na nota",
+    description: "Sem valor de frete; o transportador consta na nota (FOB).",
+    omieCode: "1",
     usesCarrier: true,
-    supportsCharge: true,
+    supportsCharge: false,
+    valueOnInvoice: false,
+    carrierOnInvoice: true,
+    defaultPayer: "customer"
+  },
+  {
+    key: FREIGHT_MODALITY_NONE,
+    group: "without_freight",
+    label: "Sem ocorrencia de frete",
+    description: "Nao saem transportador nem valor de frete na nota.",
+    omieCode: "9",
+    usesCarrier: true,
+    supportsCharge: false,
+    valueOnInvoice: false,
+    carrierOnInvoice: false,
     defaultPayer: "quarry"
   }
 ];
@@ -85,39 +144,27 @@ export const FREIGHT_MODALITIES: readonly FreightModalityInfo[] = [
  */
 export const LEGACY_FREIGHT_MODALITIES: readonly FreightModalityInfo[] = [
   {
-    key: "fob",
-    label: "Com frete (FOB)",
-    description: "Legado: frete por conta do cliente (destinatario).",
-    omieCode: "1",
-    usesCarrier: true,
-    supportsCharge: true,
-    defaultPayer: "customer"
-  },
-  {
-    key: "third_party",
-    label: "Com frete (terceiros)",
-    description: "Legado: frete por conta de terceiros.",
-    omieCode: "2",
-    usesCarrier: true,
-    supportsCharge: true,
-    defaultPayer: "third_party"
-  },
-  {
     key: "own_sender",
+    group: "with_freight",
     label: "Com frete (transp. proprio da Pedreira)",
     description: "Legado: transporte proprio por conta do remetente (Pedreira).",
     omieCode: "3",
     usesCarrier: true,
     supportsCharge: true,
+    valueOnInvoice: true,
+    carrierOnInvoice: true,
     defaultPayer: "quarry"
   },
   {
     key: "own_recipient",
+    group: "without_freight",
     label: "Com frete (transp. proprio do cliente)",
     description: "Legado: o cliente traz o proprio caminhao.",
     omieCode: "4",
     usesCarrier: false,
     supportsCharge: false,
+    valueOnInvoice: false,
+    carrierOnInvoice: true,
     defaultPayer: "customer"
   }
 ];
@@ -146,38 +193,84 @@ export function isFreightModality(value: unknown): value is FreightModality {
   );
 }
 
-/**
- * Tipo de frete "de verdade" da operacao: com ou sem frete. Toda modalidade legada
- * diferente de "sem frete" e uma operacao COM frete — inclusive o transporte proprio do
- * cliente, que tem transporte mas nunca teve valor lancado pela Pedreira.
- */
+/** Grupo "com frete": a operacao tem valor de frete (situacoes 1 e 2). */
 export function isFreightModalityWithFreight(
   key: FreightModality | string | null | undefined
 ): boolean {
-  return getFreightModalityInfo(key).key !== FREIGHT_MODALITY_NONE;
+  return getFreightModalityInfo(key).group === "with_freight";
+}
+
+/** O valor do frete sai na nota/cupom e soma no total (situacao 1). */
+export function freightValueGoesToInvoice(
+  key: FreightModality | string | null | undefined
+): boolean {
+  return getFreightModalityInfo(key).valueOnInvoice;
+}
+
+/** O transportador consta na nota (situacoes 1, 2 e 3). */
+export function freightCarrierGoesToInvoice(
+  key: FreightModality | string | null | undefined
+): boolean {
+  return getFreightModalityInfo(key).carrierOnInvoice;
 }
 
 /**
- * Modalidade a gravar para o tipo escolhido no seletor. Normaliza as legadas: uma
- * operacao antiga reaberta e salva volta gravada como "com frete" (`cif`).
+ * Situacao a gravar a partir das duas escolhas da tela: o grupo (com/sem frete) e a
+ * caixa que fica logo abaixo dele — "valor na nota" no grupo com frete, "transportador
+ * na nota" no grupo sem frete.
+ */
+export function resolveFreightModality(input: {
+  group: FreightGroup;
+  valueOnInvoice?: boolean;
+  carrierOnInvoice?: boolean;
+}): FreightModality {
+  if (input.group === "with_freight") {
+    return input.valueOnInvoice ? FREIGHT_VALUE_ON_INVOICE : FREIGHT_VALUE_INTERNAL_ONLY;
+  }
+  return input.carrierOnInvoice ? FREIGHT_CARRIER_ONLY : FREIGHT_MODALITY_NONE;
+}
+
+/**
+ * Normaliza uma modalidade legada para uma das quatro situacoes de hoje, preservando o
+ * que a operacao antiga significava (grupo, valor na nota e transportador na nota).
  */
 export function normalizeFreightModality(
+  key: FreightModality | string | null | undefined
+): FreightModality {
+  const info = getFreightModalityInfo(key);
+  return resolveFreightModality({
+    group: info.group,
+    valueOnInvoice: info.valueOnInvoice,
+    carrierOnInvoice: info.carrierOnInvoice
+  });
+}
+
+/**
+ * Chave sob a qual a memoria de frete do cliente e GRAVADA. As duas situacoes com valor
+ * (1 e 2) compartilham a mesma memoria: o valor do frete do cliente e um so — o que muda
+ * entre elas e apenas se ele sai na nota, e isso vai gravado a parte (`showOnReceipt`).
+ */
+export function freightMemoryKey(
   key: FreightModality | string | null | undefined
 ): FreightModality {
   return isFreightModalityWithFreight(key) ? FREIGHT_MODALITY_WITH_FREIGHT : FREIGHT_MODALITY_NONE;
 }
 
 /**
- * Chaves a consultar na memoria de frete do cliente para um tipo de frete. "Com frete"
- * tambem procura pelas modalidades antigas (FOB, terceiros, transporte proprio): o valor
- * usado na ultima venda do cliente nao pode sumir por causa da simplificacao.
+ * Chaves a consultar na memoria de frete do cliente para um tipo de frete. As situacoes
+ * com valor (1 e 2) compartilham a memoria — e o mesmo valor de frete do cliente, muda
+ * so se ele sai na nota — e as modalidades antigas entram no fim, para o valor usado
+ * antes da mudanca continuar sendo puxado.
  */
 export function freightModalityLookupKeys(
   key: FreightModality | string | null | undefined
 ): FreightModality[] {
   if (!isFreightModalityWithFreight(key)) return [FREIGHT_MODALITY_NONE];
+  const requested = getFreightModalityInfo(key).key;
+  const withValue: FreightModality[] = [FREIGHT_VALUE_INTERNAL_ONLY, FREIGHT_VALUE_ON_INVOICE];
   return [
-    FREIGHT_MODALITY_WITH_FREIGHT,
+    requested,
+    ...withValue.filter((modality) => modality !== requested),
     ...LEGACY_FREIGHT_MODALITIES.map((modality) => modality.key)
   ];
 }

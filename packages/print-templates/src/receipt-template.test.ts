@@ -27,8 +27,8 @@ describe("buildReceiptLines", () => {
     expect(lines.at(-1)).toBe("------------------------------------------------");
   });
 
-  it("omits the freight line when the operation asked to keep it off the receipt", () => {
-    // Caixa "mostrar o valor do frete no cupom", marcada por operacao no tipo de frete.
+  it("keeps the freight out of the document when the value stays in the system", () => {
+    // Situacao 2 do frete: o valor fica no KyberRock para controle e nao entra na nota.
     const lines = buildReceiptLines({
       ...baseInput(),
       freightTotalCents: 25_000,
@@ -37,8 +37,8 @@ describe("buildReceiptLines", () => {
     });
 
     expect(lines.find((line) => line.startsWith("FRETE"))).toBeUndefined();
-    // O total continua sendo o que o cliente paga (produto + frete).
-    expect(lines).toContain("VENCTO: 07/06/2026 - VALOR R$ 1.750,00");
+    // O total impresso desconta o frete: e o que a nota cobra do cliente.
+    expect(lines).toContain("VENCTO: 07/06/2026 - VALOR R$ 1.500,00");
   });
 
   it("marks reprints as second copy", () => {

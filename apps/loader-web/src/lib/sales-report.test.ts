@@ -97,10 +97,13 @@ describe("aggregateSalesReport", () => {
 
 describe("filtro por modalidade de frete", () => {
   it("normaliza modalidades desconhecidas/ausentes para 'none'", () => {
-    // As modalidades antigas do desktop (FOB, transporte proprio) sao "com frete".
+    // Valor na nota (fob), valor so no sistema (cif) e o transporte proprio legado
+    // contam como "com frete"; so o transportador na nota (third_party) nao.
     expect(normalizeFreightType("cif")).toBe("cif");
     expect(normalizeFreightType("fob")).toBe("cif");
-    expect(normalizeFreightType("own_recipient")).toBe("cif");
+    expect(normalizeFreightType("own_sender")).toBe("cif");
+    expect(normalizeFreightType("third_party")).toBe("none");
+    expect(normalizeFreightType("own_recipient")).toBe("none");
     expect(normalizeFreightType(null)).toBe("none");
     expect(normalizeFreightType("modalidade-nova")).toBe("none");
   });

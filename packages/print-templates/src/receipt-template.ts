@@ -37,10 +37,10 @@ export interface ReceiptTemplateInput {
   productTotalCents: number;
   freightTotalCents: number;
   /**
-   * A operacao pediu para imprimir o valor do frete no cupom (caixa de selecao do tipo de
-   * frete). `undefined` nos cupons antigos, quando a escolha nao existia: vale como
-   * `true`, o comportamento de sempre. Quando `false`, a linha FRETE nao sai no papel —
-   * o total continua o mesmo, porque e o que o cliente paga.
+   * O valor do frete sai no documento (situacao 1 do frete: "valor na nota"). Quando
+   * `false` — situacao 2, valor so no sistema —, a linha FRETE nao sai no papel E o total
+   * impresso desconta o frete: o que o cliente ve e o que a nota cobra dele. `undefined`
+   * nos cupons antigos, quando a escolha nao existia: vale como `true`.
    */
   showFreightValue?: boolean;
   totalCents: number;
@@ -290,6 +290,20 @@ export function buildReceiptDocument(
   };
 }
 
+/** O valor do frete sai neste documento (cupons antigos, sem a escolha, mantem "sim"). */
+function showsFreightValue(input: ReceiptTemplateInput): boolean {
+  return input.showFreightValue !== false;
+}
+
+/**
+ * Total impresso. Com o frete fora do documento (valor so no sistema), o frete tambem sai
+ * do total — senao o cupom cobraria um valor que a nota nao mostra de onde veio.
+ */
+function invoiceTotalCents(input: ReceiptTemplateInput): number {
+  if (showsFreightValue(input)) return input.totalCents;
+  return Math.max(0, input.totalCents - input.freightTotalCents);
+}
+
 function buildHeaderBlock(
   input: ReceiptTemplateInput,
   config: ReceiptTemplateConfig
@@ -394,7 +408,7 @@ function buildBodyLines(input: ReceiptTemplateInput, config: ReceiptTemplateConf
     );
   }
 
-  if (config.showFreight && input.showFreightValue !== false && input.freightTotalCents > 0) {
+  if (config.showFreight && showsFreightValue(input) && input.freightTotalCents > 0) {
     lines.push(`FRETE R$ ${formatNumber(input.freightTotalCents / 100)}`);
   }
 
@@ -430,7 +444,7 @@ function buildBodyLines(input: ReceiptTemplateInput, config: ReceiptTemplateConf
     lines.push(
       divider(),
       "FINANCEIRO",
-      `VENCTO: ${formatDate(input.printedAt)} - VALOR R$ ${formatNumber(input.totalCents / 100)}`
+      `VENCTO: ${formatDate(input.printedAt)} - VALOR R$ ${formatNumber(invoiceTotalCents(input) / 100)}`
     );
   }
 
