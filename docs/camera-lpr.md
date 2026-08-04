@@ -122,6 +122,62 @@ O contrato de adapter descrito adiante torna essa decisao **reversivel**: `LprAd
 para os tres caminhos. Trocar camera com LPR embarcado por camera comum + OCR (ou o contrario)
 troca uma implementacao de adapter e nao encosta em servico, IPC ou tela.
 
+## Aproveitar A Camera Que A Pedreira Ja Tem
+
+A pedreira ja possui cameras **Intelbras VIP 1220 B Full Color G4** instaladas. Do datasheet:
+
+| Item                 | Valor                                                                |
+| -------------------- | -------------------------------------------------------------------- |
+| Sensor / resolucao   | 1/2.8" CMOS, 2 MP (1920 x 1080)                                      |
+| Lente                | **Fixa**, 3,6 mm (H: 92°) ou 2,8 mm (H: 112°), F2.0                  |
+| Obturador            | Automatico ou **manual, 1/3s a 1/100.000s**                          |
+| Iluminacao           | LED de **luz branca** (Full Color), alcance 20 m, controle manual    |
+| Alimentacao          | 12 Vdc ou PoE Ativo 802.3af; anti-surto 15 kV                        |
+| Protocolos           | RTSP, HTTP/HTTPS, FTP, MJPEG, **ONVIF Perfil S**                     |
+| Funcoes inteligentes | Mascaramento, deteccao de movimento, area de interesse — **sem LPR** |
+
+Duas conclusoes:
+
+- **Nao tem LPR embarcado.** Se for usada, e pelo caminho B ou C (foto + OCR fora da camera).
+- **Da para puxar snapshot** por ONVIF/RTSP/MJPEG, que e tudo que o `SnapshotOcrAdapter` precisa.
+- Dois pontos a favor que camera barata costuma nao ter: **luz branca em vez de IR** (placa
+  refletiva se comporta muito melhor sob luz branca que sob infravermelho) e **obturador manual**,
+  que permite travar exposicao curta em vez de deixar a placa estourar no automatico.
+
+### O Limite Real E A Lente Fixa Grande-Angular
+
+Com lente fixa de 92° ou 112°, a cena e larguissima e a placa ocupa poucos pixels. Um OCR precisa
+de aproximadamente **100 px de largura na placa** (0,40 m no padrao brasileiro) para ler bem;
+130 px ou mais e confortavel. Calculando a partir do angulo do datasheet:
+
+| Distancia camera/placa | Lente 3,6 mm (92°) | Lente 2,8 mm (112°) |
+| ---------------------- | ------------------ | ------------------- |
+| 2 m                    | ~186 px            | ~130 px             |
+| 3 m                    | ~124 px            | ~86 px              |
+| 4 m                    | ~93 px             | ~65 px              |
+| 5 m                    | ~74 px             | ~52 px              |
+| 7 m                    | ~53 px             | ~37 px              |
+
+Ou seja: a VIP 1220 so serve para ler placa se ficar **dedicada e muito perto** — ate ~4 m com a
+lente de 3,6 mm, ate ~3 m com a de 2,8 mm. Numa posicao de visao geral (poste alto olhando o
+patio) ela nao le placa nenhuma, por melhor que seja o OCR.
+
+Uma varifocal como a VIP 3240 Z resolve isso com folga: em 12 mm o campo fecha para ~26°, e a
+mesma placa a 6 m passa dos 250 px. E por isso que a recomendacao do caminho economico e
+varifocal, e nao lente fixa.
+
+### Como Confirmar Sem Gastar Nada
+
+1. Descobrir qual lente as unidades instaladas usam (3,6 mm ou 2,8 mm) — a interface web da
+   camera informa.
+2. Apontar uma delas para o ponto de parada da balanca, a 2-3 m, na altura da placa.
+3. Tirar snapshot de uns 50 caminhoes reais: de dia, a noite e com placa suja de barro.
+4. Recortar a placa e **contar a largura em pixels**. Abaixo de ~90 px, nao adianta seguir.
+5. Rodar o OCR nessas fotos e medir a taxa de acerto.
+
+Esse teste custa zero e responde a pergunta mais cara do projeto antes de qualquer compra ou
+linha de codigo.
+
 ## Instalacao Fisica
 
 ### Posicionamento
@@ -142,7 +198,8 @@ causa numero um de leitura errada.
 
 - **Poeira**: instalar com viseira/capa de protecao e prever limpeza da lente na rotina de
   manutencao (semanal, ou diaria em periodo seco). Lente suja derruba a leitura antes de
-  qualquer outra coisa.
+  qualquer outra coisa. Isso nao e hipotetico: as cameras ja instaladas na pedreira estao com o
+  corpo coberto de po fino, e o que gruda no gabinete gruda na lente.
 - **Posicao vs. plumas de poeira**: evitar linha direta com britador, peneira e trafego de pa
   carregadeira.
 - **Vibracao**: fixar em estrutura rigida. Detonacao e trafego pesado desalinham suporte fraco;
@@ -373,6 +430,7 @@ antes de escrever qualquer linha de adapter.
 - [Dahua HTTP API — evento TrafficJunction / snapManager.cgi](https://ipcamtalk.com/threads/get-trafficjunction-event-information-from-offline-dahua-camera.68075/)
 - [Hikvision — guia rapido de ANPR via ISAPI](https://www.hikvisioneurope.com/eu/portal/portal/Technology%20Partner%20Program/02-Solutioins%20of%20Hikvision%20product%20integration/Fast%20guide%20for%20ANPR%20of%20TCG%20camera%20via%20ISAPI.pdf)
 - [Intelbras VIP 3240 Z G3 — camera varifocal comum do caminho economico](https://www.intelbras.com/pt-br/camera-bullet-com-zoom-motorizado-vip-3240-z-g3)
+- [Datasheet VIP 1220 B/D Full Color G4 — modelo ja instalado na pedreira](https://www.dicomp.com.br/downloads/materiais_apoio/datasheet/21039-1.pdf)
 - [Plate Recognizer Snapshot on-premise](https://platerecognizer.com/snapshot/) e
   [tabela de precos por leituras/mes](https://platerecognizer.com/pricing/)
 - [fast-alpr — reconhecimento aberto em ONNX, roda em CPU](https://github.com/ankandrew/fast-alpr)
