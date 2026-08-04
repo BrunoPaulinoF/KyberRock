@@ -161,6 +161,12 @@ import type {
   PaymentTermCacheEntry
 } from "./customers.types";
 import type { KyberRockDesktopApi } from "./desktop-api";
+import {
+  buildScaleLinkMessage,
+  buildScaleLinkViewModel,
+  trackScaleDegradedSince
+} from "./scale-link-view-model";
+import type { ScaleConnectionState, ScaleLinkViewModel } from "./scale-link-view-model";
 import { filterClosedOperationsBySearch } from "./closed-operations-search";
 import { countOpenOperationsByProduct } from "./open-operations-product-summary";
 import {
@@ -6037,6 +6043,18 @@ function CacheSelect({
   );
 }
 
+/**
+ * Conexao em curso, sem nada a pedir ao operador. Serve tanto para a montagem da
+ * tela (ainda sem resposta do adaptador) quanto para o instante logo apos o
+ * clique em "Reconectar balanca" — nos dois casos o botao sai da tela e so volta
+ * se a carencia de `buildScaleLinkViewModel` expirar com a balanca ainda fora.
+ */
+const INITIAL_SCALE_LINK: ScaleLinkViewModel = {
+  usable: false,
+  showReconnect: false,
+  tone: "connecting"
+};
+
 interface WeighingFormProps {
   desktopApi: KyberRockDesktopApi | null;
   form: WeighingFormState;
@@ -6058,10 +6076,13 @@ function WeighingForm({
 }: WeighingFormProps) {
   const [liveWeight, setLiveWeight] = useState<number | null>(null);
   const [capturedWeight, setCapturedWeight] = useState<number | null>(null);
-  const [scaleState, setScaleState] = useState<
-    "disconnected" | "connecting" | "connected" | "error"
-  >("disconnected");
-  const [scaleStateMessage, setScaleStateMessage] = useState<string>("Balança desconectada");
+  const [scaleLink, setScaleLink] = useState<ScaleLinkViewModel>(INITIAL_SCALE_LINK);
+  const [scaleStateMessage, setScaleStateMessage] = useState<string>("Conectando a balanca...");
+  // Marcos usados pela carencia do botao "Reconectar balanca": ultima leitura ao
+  // vivo (prova de link vivo) e inicio da queda (evita pedir acao a cada
+  // reconexao automatica). Refs, e nao state, para nao redisparar os efeitos.
+  const lastScaleReadingAtRef = useRef<number | null>(null);
+  const scaleDegradedSinceRef = useRef<number | null>(null);
   const [isVirtual, setIsVirtual] = useState(false);
   const [virtualWeightInput, setVirtualWeightInput] = useState("");
   const [isCapturing, setIsCapturing] = useState(false);
@@ -6219,7 +6240,12 @@ function WeighingForm({
   }, [desktopApi, form.driverId]);
   useEffect(() => {
     if (!desktopApi) return;
-    const handler = (reading: { weightKg: number }) => setLiveWeight(reading.weightKg);
+    const handler = (reading: { weightKg: number }) => {
+      // Cada quadro recebido prova que o link esta vivo agora — e essa prova que
+      // impede a tela de pedir reconexao enquanto o peso continua atualizando.
+      lastScaleReadingAtRef.current = Date.now();
+      setLiveWeight(reading.weightKg);
+    };
     desktopApi.onScaleReading(handler as (reading: unknown) => void);
     return () => {
       desktopApi.offScaleReading(handler as (reading: unknown) => void);
@@ -6235,28 +6261,39 @@ function WeighingForm({
       try {
         const status = await api.scaleGetStatus();
         if (canceled) return;
-        setScaleState(status.state);
-        if (status.state === "connected" && status.stale) {
-          // Socket aberto nao significa balanca funcionando: sem leitura recente o
-          // rotulo precisa dizer isso, senao a tela afirma "conectada" enquanto a
-          // captura de peso falha — a contradicao vista na operacao.
-          setScaleStateMessage("Conectada, mas sem leitura do indicador");
-        } else if (status.state === "connected") {
-          setScaleStateMessage("Balança conectada");
-        } else if (status.state === "connecting") {
-          setScaleStateMessage("Conectando à balança...");
-        } else if (status.state === "error") {
-          setScaleStateMessage(status.errorMessage || "Erro na balança");
-        } else {
-          setScaleStateMessage("Balança desconectada");
-        }
+        applyScaleStatus(status);
       } catch {
         if (!canceled) {
-          setScaleState("error");
-          setScaleStateMessage("Erro ao verificar balança");
+          applyScaleStatus({
+            state: "error",
+            stale: true,
+            errorMessage: "Erro ao verificar balança"
+          });
         }
       }
     }
+
+    function applyScaleStatus(status: {
+      state: ScaleConnectionState;
+      stale: boolean;
+      errorMessage?: string | null;
+    }): void {
+      const now = Date.now();
+      scaleDegradedSinceRef.current = trackScaleDegradedSince(
+        scaleDegradedSinceRef.current,
+        status.state,
+        now
+      );
+      const link = buildScaleLinkViewModel({
+        state: status.state,
+        lastReadingAt: lastScaleReadingAtRef.current,
+        degradedSince: scaleDegradedSinceRef.current,
+        now
+      });
+      setScaleLink(link);
+      setScaleStateMessage(buildScaleLinkMessage(link, status));
+    }
+
     checkStatus();
     const interval = setInterval(checkStatus, 2000);
     return () => {
@@ -6278,8 +6315,6 @@ function WeighingForm({
         const status = await api.scaleGetStatus();
         if (canceled) return;
         if (status.state !== "connected") {
-          setScaleState("connecting");
-          setScaleStateMessage("Tentando conectar à balança...");
           await api.scaleConnect();
         }
       } catch {
@@ -6464,9 +6499,9 @@ function WeighingForm({
                   height: "10px",
                   borderRadius: "50%",
                   backgroundColor:
-                    scaleState === "connected"
+                    scaleLink.tone === "connected"
                       ? "#22c55e"
-                      : scaleState === "connecting"
+                      : scaleLink.tone === "connecting"
                         ? "#f59e0b"
                         : "#ef4444",
                   marginLeft: "auto"
@@ -6486,23 +6521,21 @@ function WeighingForm({
                   : "-- kg"}
             </strong>
             <span style={styles.metricHint}>
-              {capturedWeight !== null
-                ? "Leitura estavel capturada"
-                : scaleState === "connected"
-                  ? "Leitura em tempo real"
-                  : scaleStateMessage}
+              {capturedWeight !== null ? "Leitura estavel capturada" : scaleStateMessage}
             </span>
-            {scaleState !== "connected" ? (
+            {scaleLink.showReconnect ? (
               <button
                 type="button"
                 onClick={async () => {
                   if (!desktopApi) return;
-                  setScaleState("connecting");
+                  // Reinicia a carencia: a tentativa manual merece a mesma janela
+                  // de silencio da automatica, senao o botao reaparece em 2s.
+                  scaleDegradedSinceRef.current = Date.now();
+                  setScaleLink(INITIAL_SCALE_LINK);
                   setScaleStateMessage("Conectando...");
                   try {
                     await desktopApi.scaleConnect();
                   } catch (err) {
-                    setScaleState("error");
                     setScaleStateMessage(err instanceof Error ? err.message : "Falha ao conectar");
                   }
                 }}
@@ -6518,7 +6551,7 @@ function WeighingForm({
             ) : null}
           </div>
         </div>
-        {isVirtual && scaleState === "connected" ? (
+        {isVirtual && scaleLink.usable ? (
           <div style={{ marginTop: "12px", display: "flex", gap: "8px", alignItems: "flex-end" }}>
             <div style={{ flex: 1 }}>
               <label
@@ -6976,11 +7009,11 @@ function WeighingForm({
             <button
               type="button"
               onClick={() => void handleCalculateWeight()}
-              disabled={isCapturing || scaleState !== "connected"}
+              disabled={isCapturing || !scaleLink.usable}
               style={{
                 ...styles.captureButton,
                 flex: 1,
-                opacity: isCapturing || scaleState !== "connected" ? 0.55 : 1
+                opacity: isCapturing || !scaleLink.usable ? 0.55 : 1
               }}
             >
               <Scale size={18} strokeWidth={2.4} />
@@ -7677,10 +7710,10 @@ function CloseOperationWeighingDialog({
   const [liveWeight, setLiveWeight] = useState<number | null>(null);
   const [capturedExitWeight, setCapturedExitWeight] = useState<number | null>(null);
   const [capturedExitCaptureId, setCapturedExitCaptureId] = useState<string | null>(null);
-  const [scaleState, setScaleState] = useState<
-    "disconnected" | "connecting" | "connected" | "error"
-  >("disconnected");
-  const [scaleMessage, setScaleMessage] = useState<string>("Balança desconectada");
+  const [scaleLink, setScaleLink] = useState<ScaleLinkViewModel>(INITIAL_SCALE_LINK);
+  const [scaleMessage, setScaleMessage] = useState<string>("Conectando a balanca...");
+  const lastScaleReadingAtRef = useRef<number | null>(null);
+  const scaleDegradedSinceRef = useRef<number | null>(null);
   const [isVirtual, setIsVirtual] = useState(false);
   const [virtualWeightInput, setVirtualWeightInput] = useState("");
   const [isCapturing, setIsCapturing] = useState(false);
@@ -7688,7 +7721,10 @@ function CloseOperationWeighingDialog({
 
   useEffect(() => {
     if (!desktopApi) return;
-    const handler = (reading: { weightKg: number }) => setLiveWeight(reading.weightKg);
+    const handler = (reading: { weightKg: number }) => {
+      lastScaleReadingAtRef.current = Date.now();
+      setLiveWeight(reading.weightKg);
+    };
     desktopApi.onScaleReading(handler as (reading: unknown) => void);
     return () => {
       desktopApi.offScaleReading(handler as (reading: unknown) => void);
@@ -7703,25 +7739,39 @@ function CloseOperationWeighingDialog({
       try {
         const status = await api.scaleGetStatus();
         if (canceled) return;
-        setScaleState(status.state);
-        if (status.state === "connected" && status.stale) {
-          setScaleMessage("Conectada, mas sem leitura do indicador");
-        } else if (status.state === "connected") {
-          setScaleMessage("Balança conectada");
-        } else if (status.state === "connecting") {
-          setScaleMessage("Conectando...");
-        } else if (status.state === "error") {
-          setScaleMessage(status.errorMessage || "Erro na balança");
-        } else {
-          setScaleMessage("Balança desconectada");
-        }
+        applyScaleStatus(status);
       } catch {
         if (!canceled) {
-          setScaleState("error");
-          setScaleMessage("Erro ao verificar balança");
+          applyScaleStatus({
+            state: "error",
+            stale: true,
+            errorMessage: "Erro ao verificar balança"
+          });
         }
       }
     }
+
+    function applyScaleStatus(status: {
+      state: ScaleConnectionState;
+      stale: boolean;
+      errorMessage?: string | null;
+    }): void {
+      const now = Date.now();
+      scaleDegradedSinceRef.current = trackScaleDegradedSince(
+        scaleDegradedSinceRef.current,
+        status.state,
+        now
+      );
+      const link = buildScaleLinkViewModel({
+        state: status.state,
+        lastReadingAt: lastScaleReadingAtRef.current,
+        degradedSince: scaleDegradedSinceRef.current,
+        now
+      });
+      setScaleLink(link);
+      setScaleMessage(buildScaleLinkMessage(link, status));
+    }
+
     checkStatus();
     const interval = setInterval(checkStatus, 2000);
     return () => {
@@ -7861,9 +7911,9 @@ function CloseOperationWeighingDialog({
                   height: "10px",
                   borderRadius: "50%",
                   backgroundColor:
-                    scaleState === "connected"
+                    scaleLink.tone === "connected"
                       ? "#22c55e"
-                      : scaleState === "connecting"
+                      : scaleLink.tone === "connecting"
                         ? "#f59e0b"
                         : "#ef4444"
                 }}
@@ -7875,19 +7925,21 @@ function CloseOperationWeighingDialog({
               {liveWeight !== null ? formatWeightKg(liveWeight) : "-- kg"}
             </strong>
             <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "4px" }}>
-              {scaleState === "connected" ? "Leitura em tempo real" : scaleMessage}
+              {scaleMessage}
             </div>
-            {scaleState !== "connected" ? (
+            {scaleLink.showReconnect ? (
               <button
                 type="button"
                 onClick={async () => {
                   if (!desktopApi) return;
                   const api = desktopApi;
-                  setScaleState("connecting");
+                  // Reinicia a carencia para a tentativa manual, como na entrada.
+                  scaleDegradedSinceRef.current = Date.now();
+                  setScaleLink(INITIAL_SCALE_LINK);
+                  setScaleMessage("Conectando...");
                   try {
                     await api.scaleConnect();
                   } catch (err) {
-                    setScaleState("error");
                     setScaleMessage(err instanceof Error ? err.message : "Falha ao conectar");
                   }
                 }}
@@ -7934,7 +7986,7 @@ function CloseOperationWeighingDialog({
           </div>
         </div>
 
-        {isVirtual && scaleState === "connected" ? (
+        {isVirtual && scaleLink.usable ? (
           <div
             style={{ marginBottom: "16px", display: "flex", gap: "8px", alignItems: "flex-end" }}
           >
@@ -8045,10 +8097,10 @@ function CloseOperationWeighingDialog({
           <button
             type="button"
             onClick={handleCaptureExitWeight}
-            disabled={isCapturing || scaleState !== "connected"}
+            disabled={isCapturing || !scaleLink.usable}
             style={{
               ...styles.captureButton,
-              opacity: isCapturing || scaleState !== "connected" ? 0.5 : 1,
+              opacity: isCapturing || !scaleLink.usable ? 0.5 : 1,
               fontSize: "16px",
               padding: "12px 24px"
             }}

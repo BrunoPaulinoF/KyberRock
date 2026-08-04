@@ -134,6 +134,13 @@ export function createToledoSerialAdapter(
   function scheduleReconnect(): void {
     if (!config) return;
 
+    // Erro e fechamento podem chegar juntos na mesma queda; sem limpar o timer
+    // anterior, duas tentativas concorrentes disputavam a mesma porta COM.
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+
     const maxAttempts = config.maxReconnectAttempts ?? 10;
     const interval = config.reconnectIntervalMs ?? 5000;
 
@@ -201,6 +208,9 @@ export function createToledoSerialAdapter(
       if (transport === candidate && state === "connected") {
         transport = null;
         state = "disconnected";
+        // Paridade com o adaptador TCP: o peso morre junto com a sessao, senao o
+        // status segue publicando a ultima leitura de uma porta ja fechada.
+        clearLastReading();
         scheduleReconnect();
       }
     });

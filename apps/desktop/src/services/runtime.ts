@@ -341,6 +341,7 @@ import {
 } from "./scale-serial.js";
 import {
   readScaleConfiguration,
+  scaleSessionKey,
   writeScaleConfiguration,
   SCALE_CONNECTION_TUNING,
   type ScaleAdapterType,
@@ -522,6 +523,19 @@ export class DesktopRuntime {
     (reading: ParsedToledoReading) => void,
     () => void
   >();
+  /**
+   * Conexao de balanca em andamento. Varias telas chamam connectScale ao abrir e
+   * cada chamada derrubava os adaptadores antes de reconectar; concorrentes, elas
+   * fechavam a sessao uma da outra e a balanca ficava piscando entre conectada e
+   * desconectada. Todas passam a aguardar a mesma tentativa.
+   */
+  private scaleConnectInFlight: Promise<void> | null = null;
+  /**
+   * Configuracao com que a sessao viva foi aberta (ver `scaleSessionKey`). Serve
+   * para distinguir "ja conectada na mesma balanca" de "conectada na configuracao
+   * antiga" quando o operador troca IP/porta/baud em Configuracoes > Balanca.
+   */
+  private activeScaleSessionKey: string | null = null;
   private readonly pendingScaleCaptures = new Map<
     string,
     { operationType: ScaleCaptureOperationType; reading: ScaleReading; expiresAt: number }
@@ -1635,7 +1649,34 @@ export class DesktopRuntime {
    * virtual passam todos por aqui.
    */
   async connectScale(): Promise<void> {
+    if (this.scaleConnectInFlight) return this.scaleConnectInFlight;
+    const attempt = this.runConnectScale().finally(() => {
+      this.scaleConnectInFlight = null;
+    });
+    this.scaleConnectInFlight = attempt;
+    return attempt;
+  }
+
+  private async runConnectScale(): Promise<void> {
     const scaleConfig = this.getScaleConfiguration();
+    const sessionKey = scaleSessionKey(scaleConfig);
+
+    // Mesma configuracao e sessao viva: nao ha o que reconectar. Derrubar a sessao
+    // para reabri-la — o que acontecia a cada tela de pesagem que abria — cortava o
+    // peso ao vivo por alguns segundos e fazia a tela pedir reconexao sem motivo.
+    // A chave inclui host/porta/baud: se o operador mudar a configuracao em
+    // Configuracoes > Balanca, a sessao antiga cai e a nova entra normalmente.
+    if (
+      this.activeScaleSessionKey === sessionKey &&
+      this.activeScaleAdapter === this.adapterFor(scaleConfig.adapterType) &&
+      this.activeScaleAdapter.getStatus().state === "connected"
+    ) {
+      // Sem tocar no adaptador, os forwarders ja registrados continuam validos —
+      // reanexa-los aqui duplicaria cada leitura enviada ao renderer.
+      return;
+    }
+
+    this.activeScaleSessionKey = null;
     this.activateAdapter(scaleConfig.adapterType);
     this.activeScaleAdapter.removeAllListeners();
     // Reanexa os forwarders persistentes ao adaptador recem-ativado. Sem isto, o listener que
@@ -1645,6 +1686,7 @@ export class DesktopRuntime {
 
     if (scaleConfig.adapterType === "virtual") {
       await this.virtualScaleAdapter.connect({ host: "virtual", port: 0 });
+      this.activeScaleSessionKey = sessionKey;
       return;
     }
 
@@ -1662,6 +1704,7 @@ export class DesktopRuntime {
         maxReconnectAttempts: SCALE_CONNECTION_TUNING.maxReconnectAttempts,
         staleReadingMs: SCALE_CONNECTION_TUNING.staleReadingMs
       });
+      this.activeScaleSessionKey = sessionKey;
       return;
     }
 
@@ -1673,18 +1716,20 @@ export class DesktopRuntime {
       maxReconnectAttempts: SCALE_CONNECTION_TUNING.maxReconnectAttempts,
       staleReadingMs: SCALE_CONNECTION_TUNING.staleReadingMs
     });
+    this.activeScaleSessionKey = sessionKey;
+  }
+
+  private adapterFor(adapterType: ScaleAdapterType): ActiveScaleAdapter {
+    if (adapterType === "virtual") return this.virtualScaleAdapter;
+    if (adapterType === "serial") return this.serialScaleAdapter;
+    return this.tcpScaleAdapter;
   }
 
   private activateAdapter(adapterType: ScaleAdapterType): void {
     this.tcpScaleAdapter.disconnect();
     this.serialScaleAdapter.disconnect();
     this.virtualScaleAdapter.disconnect();
-    this.activeScaleAdapter =
-      adapterType === "virtual"
-        ? this.virtualScaleAdapter
-        : adapterType === "serial"
-          ? this.serialScaleAdapter
-          : this.tcpScaleAdapter;
+    this.activeScaleAdapter = this.adapterFor(adapterType);
   }
 
   async virtualScaleSetWeight(weightKg: number): Promise<void> {
@@ -1710,6 +1755,7 @@ export class DesktopRuntime {
   }
 
   disconnectScale(): void {
+    this.activeScaleSessionKey = null;
     this.tcpScaleAdapter.disconnect();
     this.serialScaleAdapter.disconnect();
     this.virtualScaleAdapter.disconnect();
@@ -1746,8 +1792,12 @@ export class DesktopRuntime {
   }
 
   onScaleReading(callback: (reading: ParsedToledoReading) => void): () => void {
-    const unsubscribe = this.activeScaleAdapter.onReading(callback);
-    this.scaleReadingUnsubscribes.set(callback, unsubscribe);
+    // Idempotente: o main reregistra o forwarder do renderer a cada conexao, e sem
+    // esta guarda o mesmo callback entrava varias vezes na lista do adaptador —
+    // cada leitura chegava duplicada na tela e a inscricao antiga vazava.
+    if (!this.scaleReadingUnsubscribes.has(callback)) {
+      this.scaleReadingUnsubscribes.set(callback, this.activeScaleAdapter.onReading(callback));
+    }
     return () => {
       const current = this.scaleReadingUnsubscribes.get(callback);
       if (current) {

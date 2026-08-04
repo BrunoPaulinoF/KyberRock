@@ -61,6 +61,20 @@ export interface ScaleConfigurationInput {
   connection?: Partial<ScaleConnectionConfig>;
 }
 
+/**
+ * Identifica a sessao de balanca que uma configuracao abre. Duas configuracoes com
+ * a mesma chave conectam exatamente no mesmo lugar, entao uma sessao viva com essa
+ * chave nao precisa ser derrubada e reaberta. Campos que nao mudam o destino da
+ * conexao (como `autoConnect`) ficam de fora de proposito.
+ */
+export function scaleSessionKey(config: ScaleConfiguration): string {
+  if (config.adapterType === "virtual") return "virtual";
+  if (config.adapterType === "serial") {
+    return `serial:${config.connection.serialPath.trim()}:${config.connection.baudRate}`;
+  }
+  return `tcp:${config.connection.host.trim()}:${config.connection.port}`;
+}
+
 export const DEFAULT_SCALE_CONNECTION_CONFIG: ScaleConnectionConfig = {
   host: "192.168.1.100",
   port: 4001,

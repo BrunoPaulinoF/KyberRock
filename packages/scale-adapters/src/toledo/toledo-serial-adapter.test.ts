@@ -185,6 +185,29 @@ describe("createToledoSerialAdapter", () => {
     }
   });
 
+  it("descarta o peso da sessao anterior quando a porta fecha", async () => {
+    vi.useFakeTimers();
+    try {
+      const { adapter, transports } = createAdapterWithTransports();
+      await adapter.connect({
+        path: "COM3",
+        baudRate: 9600,
+        reconnectIntervalMs: 100,
+        maxReconnectAttempts: 3
+      });
+
+      transports[0]?.emitData("0000000  00012340k g\r\n");
+      expect(adapter.getStatus().lastReading).not.toBeNull();
+
+      // Porta fechada: o peso do caminhao anterior nao pode sobreviver a queda, senao
+      // a tela segue exibindo um valor que a balanca ja nao esta confirmando.
+      transports[0]?.emitClose();
+      expect(adapter.getStatus().lastReading).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("disconnect closes the transport and clears state", async () => {
     const { adapter, transports } = createAdapterWithTransports();
     await adapter.connect({ path: "COM3", baudRate: 9600 });

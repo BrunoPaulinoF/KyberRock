@@ -246,6 +246,13 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
   function scheduleReconnect(): void {
     if (!config) return;
 
+    // Uma queda pode disparar mais de um caminho (erro + fechamento). Sem limpar o
+    // timer anterior, duas tentativas simultaneas abriam dois sockets no conversor.
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+
     const maxAttempts = config.maxReconnectAttempts ?? 10;
     const interval = config.reconnectIntervalMs ?? 5000;
 
@@ -326,9 +333,13 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
         if (currentGeneration !== generation) return;
         errorMessage = err.message;
         state = "error";
-        clearDataWatchdog();
         clearLastReading();
-        socket = null;
+        // Encerra de fato o socket com erro. Apenas soltar a referencia deixava a
+        // sessao viva: os handlers continuavam entregando leituras ao renderer
+        // (peso atualizando na tela) enquanto o estado dizia "desconectada", e o
+        // conversor serial<->TCP, que aceita uma sessao por vez, recusava a
+        // reconexao porque a sessao morta ainda ocupava a porta.
+        teardownSocket();
         scheduleReconnect();
         reject(err);
       });
@@ -337,6 +348,8 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
         if (currentGeneration !== generation) return;
         socket = null;
         clearDataWatchdog();
+        // A sondagem escrevia num socket ja fechado ate a proxima conexao trocar o timer.
+        stopPolling();
         if (state === "connected") {
           state = "disconnected";
           // A conexao caiu: o peso exibido morre junto, senao a tela segue mostrando
@@ -353,6 +366,9 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
           teardownSocket();
           state = "error";
           errorMessage = `Timeout de conexao (${timeout}ms)`;
+          // Indicador que demora a responder no boot nao pode deixar a balanca
+          // parada ate alguem clicar: a reconexao automatica continua daqui.
+          scheduleReconnect();
           reject(new Error(errorMessage));
         }
       });
