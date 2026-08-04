@@ -1325,5 +1325,7 @@ function canonicalDefaultAccountCode(name: string): string | null {
   if (flat.includes("omiecash")) return "omie_cash";
   if (flat.includes("getnet")) return "getnet";
   if (flat.includes("caixinha")) return "caixinha";
+  if (flat.includes("bonificacao")) return "bonificacao";
+  if (flat.includes("emcarteira")) return "em_carteira";
   return null;
 }

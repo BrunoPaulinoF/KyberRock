@@ -39,11 +39,18 @@ interface DefaultAccount {
   sortOrder: number;
 }
 
-/** Contas padrao pre-configuradas (podem ser renomeadas, nao excluidas). */
+/**
+ * Contas padrao pre-configuradas (podem ser renomeadas, nao excluidas). Cada uma se
+ * vincula sozinha a conta corrente de mesmo nome no OMIE quando a sincronizacao roda
+ * (ver `syncCheckingAccounts` / `canonicalDefaultAccountCode`), entao o nome aqui e o
+ * nome que a conta tem la.
+ */
 export const DEFAULT_ACCOUNTS: readonly DefaultAccount[] = [
   { code: "caixinha", name: "Caixinha", sortOrder: 1 },
   { code: "omie_cash", name: "OMIE Cash", sortOrder: 2 },
-  { code: "getnet", name: "GetNet", sortOrder: 3 }
+  { code: "getnet", name: "GetNet", sortOrder: 3 },
+  { code: "bonificacao", name: "BONIFICAÇÃO", sortOrder: 4 },
+  { code: "em_carteira", name: "EM CARTEIRA", sortOrder: 5 }
 ];
 
 /**

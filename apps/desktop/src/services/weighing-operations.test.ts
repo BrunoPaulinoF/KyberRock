@@ -17,6 +17,7 @@ import {
   closeWeighingOperation,
   createWeighingOperation,
   createSimulatedWeighingOperation,
+  nextOperationCode,
   deleteClosedWeighingOperation,
   getOperationOmieIssue,
   getWeighingOperation,
@@ -55,6 +56,69 @@ describe("weighing operations", () => {
       });
       expect(database.prepare("SELECT COUNT(*) FROM loading_requests").pluck().get()).toBe(1);
       expect(listOpenWeighingOperations(database)).toHaveLength(1);
+    } finally {
+      database.close();
+    }
+  });
+
+  // Codigo sequencial que sai no topo do cupom: uma sequencia unica da pedreira, que
+  // anda de 1 em 1 independente de cliente, produto ou balanca.
+  it("numera cada operacao com o proximo codigo da pedreira", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      const first = createSimulatedWeighingOperation(database, {
+        identity,
+        customerName: "Cliente A",
+        plate: "AAA1A11",
+        driverName: "Motorista A",
+        productDescription: "Brita 1",
+        entryWeightKg: 12_000
+      });
+      const second = createSimulatedWeighingOperation(database, {
+        identity,
+        customerName: "Cliente B",
+        plate: "BBB2B22",
+        driverName: "Motorista B",
+        productDescription: "Po de pedra",
+        entryWeightKg: 13_000
+      });
+
+      const codeOf = (id: string): number =>
+        database
+          .prepare("SELECT operation_code FROM weighing_operations WHERE id = ?")
+          .pluck()
+          .get(id) as number;
+
+      expect(codeOf(first.id)).toBe(1);
+      expect(codeOf(second.id)).toBe(2);
+      expect(nextOperationCode(database, identity.unitId)).toBe(3);
+    } finally {
+      database.close();
+    }
+  });
+
+  // A sequencia so anda para frente: reaproveitar o codigo de uma cancelada faria dois
+  // cupons diferentes sairem com o mesmo numero.
+  it("nao reaproveita o codigo de uma operacao ja criada", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      const operation = createSimulatedWeighingOperation(database, {
+        identity,
+        customerName: "Cliente A",
+        plate: "AAA1A11",
+        driverName: "Motorista A",
+        productDescription: "Brita 1",
+        entryWeightKg: 12_000
+      });
+      database
+        .prepare("UPDATE weighing_operations SET status = 'cancelled' WHERE id = ?")
+        .run(operation.id);
+
+      expect(nextOperationCode(database, identity.unitId)).toBe(2);
     } finally {
       database.close();
     }

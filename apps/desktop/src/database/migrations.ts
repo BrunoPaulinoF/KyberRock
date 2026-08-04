@@ -1612,5 +1612,52 @@ CREATE INDEX IF NOT EXISTS idx_weighing_operations_wallet
 -- continua sendo so o contato do cliente.
 ALTER TABLE customers ADD COLUMN fiscal_emails TEXT;
 `
+  },
+  {
+    version: 45,
+    name: "bonificacao_and_carteira_accounts",
+    sql: `
+-- Contas BONIFICACAO e EM CARTEIRA para as empresas que ja existem (as novas passam
+-- pelo ensureDefaultAccounts). O vinculo com a conta corrente de mesmo nome no OMIE e
+-- feito pela sincronizacao, que preenche o omie_code (ver canonicalDefaultAccountCode).
+INSERT INTO accounts (id, company_id, code, name, is_system, sort_order, is_active, created_at, updated_at)
+SELECT lower(hex(randomblob(16))), c.id, a.code, a.name, 1, a.sort_order, 1,
+       datetime('now'), datetime('now')
+FROM companies c
+CROSS JOIN (
+  SELECT 'bonificacao' AS code, 'BONIFICAÇÃO' AS name, 4 AS sort_order
+  UNION ALL SELECT 'em_carteira', 'EM CARTEIRA', 5
+) a
+WHERE NOT EXISTS (
+  SELECT 1 FROM accounts ac
+  WHERE ac.company_id = c.id AND ac.code = a.code AND ac.deleted_at IS NULL
+);
+`
+  },
+  {
+    version: 46,
+    name: "operation_sequential_code",
+    sql: `
+-- Codigo sequencial da operacao, impresso no topo do cupom (000001, 000002, ...). E uma
+-- sequencia unica por pedreira: cada operacao nova pega o maior codigo ja usado + 1,
+-- independente de cliente, produto ou balanca. Distinto do numero do cupom
+-- (units.receipt_sequence), que conta IMPRESSOES e reinicia a cada via.
+ALTER TABLE weighing_operations ADD COLUMN operation_code INTEGER;
+
+-- As operacoes que ja existem entram na sequencia pela ordem em que nasceram, para o
+-- codigo continuar de onde a pedreira parou em vez de recomecar do 1.
+UPDATE weighing_operations SET operation_code = (
+  SELECT seq FROM (
+    SELECT id, ROW_NUMBER() OVER (PARTITION BY unit_id ORDER BY created_at ASC, id ASC) AS seq
+    FROM weighing_operations
+  ) numbered
+  WHERE numbered.id = weighing_operations.id
+)
+WHERE operation_code IS NULL;
+
+-- Leitura do proximo codigo (MAX por pedreira) a cada operacao nova.
+CREATE INDEX IF NOT EXISTS idx_weighing_operations_code
+  ON weighing_operations(unit_id, operation_code);
+`
   }
 ];

@@ -1993,7 +1993,7 @@ function upsertCloudOperations(
 ): number {
   const upsert = database.prepare(`
     INSERT INTO weighing_operations (
-      id, company_id, unit_id, device_id, status, operation_type, customer_id, vehicle_id, driver_id,
+      id, company_id, unit_id, device_id, operation_code, status, operation_type, customer_id, vehicle_id, driver_id,
       carrier_id,
       product_id, payment_term_id, entry_weight_kg, entry_weight_captured_at, exit_weight_kg,
       exit_weight_captured_at, net_weight_kg, unit_price_cents, product_total_cents,
@@ -2004,11 +2004,14 @@ function upsertCloudOperations(
       price_savings_percent, deduct_freight_from_credit, product_credit_debit_cents,
       freight_credit_debit_cents, quotation_id,
       remote_plate, remote_driver_name, remote_customer_name, remote_product_description
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
       unit_id = excluded.unit_id,
       device_id = excluded.device_id,
+      -- Codigo da operacao nasce com ela e nunca muda; um projecao sem o campo (nuvem
+      -- ainda sem a coluna) nao pode apagar o que esta maquina ja imprimiu no cupom.
+      operation_code = COALESCE(excluded.operation_code, weighing_operations.operation_code),
       status = excluded.status,
       operation_type = excluded.operation_type,
       customer_id = excluded.customer_id,
@@ -2103,6 +2106,7 @@ function upsertCloudOperations(
         settings.companyId,
         settings.unitId,
         existingId(database, "devices", row.device_id) ?? settings.deviceId,
+        integerValue(row.operation_code),
         mapCloudOperationStatus(row.status),
         mapCloudOperationType(row.operation_type),
         customerId,
@@ -3065,6 +3069,9 @@ function getOperationPayload(
         ? "open"
         : operation.status,
     operation_type: operation.operation_type,
+    // Codigo sequencial da operacao (o que sai no topo do cupom). Vai para a nuvem para a
+    // outra balanca da pedreira continuar a sequencia de onde ela parou.
+    operation_code: operation.operation_code,
     customer_id: operation.customer_id,
     product_id: operation.product_id,
     // Transportadora: as tres trocas permitidas numa operacao aberta sao

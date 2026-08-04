@@ -48,8 +48,20 @@ describe("accounts service", () => {
 
     const accounts = listAccounts(database, COMPANY_ID);
     expect(accounts).toHaveLength(DEFAULT_ACCOUNTS.length);
-    expect(accounts.map((a) => a.code)).toEqual(["caixinha", "omie_cash", "getnet"]);
-    expect(accounts.map((a) => a.name)).toEqual(["Caixinha", "OMIE Cash", "GetNet"]);
+    expect(accounts.map((a) => a.code)).toEqual([
+      "caixinha",
+      "omie_cash",
+      "getnet",
+      "bonificacao",
+      "em_carteira"
+    ]);
+    expect(accounts.map((a) => a.name)).toEqual([
+      "Caixinha",
+      "OMIE Cash",
+      "GetNet",
+      "BONIFICAÇÃO",
+      "EM CARTEIRA"
+    ]);
     expect(accounts.every((a) => a.is_system === 1)).toBe(true);
   });
 
