@@ -36,6 +36,13 @@ export interface ReceiptTemplateInput {
   unitPriceCents: number | null;
   productTotalCents: number;
   freightTotalCents: number;
+  /**
+   * A operacao pediu para imprimir o valor do frete no cupom (caixa de selecao do tipo de
+   * frete). `undefined` nos cupons antigos, quando a escolha nao existia: vale como
+   * `true`, o comportamento de sempre. Quando `false`, a linha FRETE nao sai no papel —
+   * o total continua o mesmo, porque e o que o cliente paga.
+   */
+  showFreightValue?: boolean;
   totalCents: number;
 }
 
@@ -387,7 +394,7 @@ function buildBodyLines(input: ReceiptTemplateInput, config: ReceiptTemplateConf
     );
   }
 
-  if (config.showFreight && input.freightTotalCents > 0) {
+  if (config.showFreight && input.showFreightValue !== false && input.freightTotalCents > 0) {
     lines.push(`FRETE R$ ${formatNumber(input.freightTotalCents / 100)}`);
   }
 

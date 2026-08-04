@@ -86,6 +86,13 @@ export interface OperationFreightInput {
   payer: FreightPayer;
   rule: FreightRule;
   destination?: string | null;
+  /**
+   * O valor do frete sai impresso no cupom desta operacao. Fica no proprio `freight_json`
+   * (e nao numa coluna nova) porque so faz sentido quando ha valor de frete lancado.
+   * Ausente nas operacoes gravadas antes da caixa de selecao: vale como `true`, que era
+   * o comportamento anterior (frete sempre no cupom).
+   */
+  showOnReceipt?: boolean;
 }
 
 export interface ScaleCaptureAudit {
@@ -1454,24 +1461,22 @@ export interface BuiltOmieBillingJob {
  * OMIE. Retorna null quando o cliente nao tem omie_customer_id (nada a enviar).
  */
 /**
- * Codigo "modalidade" do frete para o OMIE a partir do tipo salvo. Compat: operacoes
- * anteriores a esta feature nao tem tipo salvo (default "none" -> "9"); quando elas tem
- * valor de frete, mantemos o comportamento legado (CIF "0" com valor), evitando enviar
- * "sem frete" para um pedido que tinha frete.
+ * Codigo "modalidade" do frete para o OMIE a partir do tipo salvo (modFrete da NF-e).
+ *
+ * Com os dois tipos de frete de hoje, quem manda e o VALOR: operacao com frete e com
+ * valor lancado pela Pedreira e frete contratado pelo remetente — CIF "0"; sem valor
+ * lancado (com ou sem frete) a Pedreira nao contrata nem responde pelo transporte, entao
+ * vai "9 - sem incidencia de frete". E a mesma regra que o FOB legado ja seguia, e por
+ * isso as operacoes antigas (FOB, terceiros, transporte proprio) continuam corretas.
  */
 function resolveFreightModalidade(
   freightType: string | null | undefined,
   freightTotalCents: number
 ): string {
-  // FOB (frete por conta do cliente) vai ao OMIE como "9 - sem incidencia de frete":
-  // quando o frete e responsabilidade do cliente a Pedreira nao contrata nem responde
-  // pelo transporte, entao a operacao nao deve nascer no OMIE como "frete por conta do
-  // destinatario". Sai antes da compatibilidade abaixo de proposito: FOB com valor
-  // lancado continua "9", nao vira CIF.
-  if (getFreightModalityInfo(freightType).key === "fob") return "9";
+  if (freightTotalCents > 0) return "0";
+  // Sem valor, so o transporte proprio legado mantem o codigo dele (veiculo_proprio "S").
   const code = freightModalityOmieCode(freightType);
-  if (code === "9" && freightTotalCents > 0) return "0";
-  return code;
+  return code === "3" || code === "4" ? code : "9";
 }
 
 /**
@@ -3091,7 +3096,8 @@ function serializeOperationFreight(
   return JSON.stringify({
     payer: freight.payer,
     rule: freight.rule,
-    destination: freight.destination?.trim() || null
+    destination: freight.destination?.trim() || null,
+    showOnReceipt: freight.showOnReceipt !== false
   });
 }
 

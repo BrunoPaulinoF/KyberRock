@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { isOmieCustomerCadastro } from "@kyberrock/omie-client";
 
 import {
   getDefaultSupabasePublishableKey,
@@ -4995,6 +4996,15 @@ function upsertOmieCustomers(
       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
   `);
 
+  const softDeleteNonCustomer = database.prepare(`
+    UPDATE customers
+    SET deleted_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+        is_active = 0,
+        needs_push = 0,
+        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    WHERE id = ? AND deleted_at IS NULL
+  `);
+
   let persisted = 0;
   for (const customer of customers) {
     const existing = findLocalId.get(companyId, customer.id) as { id: string } | undefined;
@@ -5011,6 +5021,18 @@ function upsertOmieCustomers(
       byIntegrationCode?.id ??
       byDocument?.id ??
       resolveOmieLocalId(database, "customers", companyId, `omie_${customer.id}`);
+    // Fornecedor/transportadora que nao e cliente nao entra (nem volta) no cadastro de
+    // clientes: a projecao da nuvem tambem e uma porta de entrada e, sem isso, o cadastro
+    // limpo pela sincronizacao com o OMIE voltava sujo no proximo pull.
+    if (
+      !isOmieCustomerCadastro({
+        tags: customer.tagsJson ?? undefined,
+        customerType: customer.customerType ?? undefined
+      })
+    ) {
+      softDeleteNonCustomer.run(localId);
+      continue;
+    }
     upsert.run(
       localId,
       companyId,

@@ -27,6 +27,20 @@ describe("buildReceiptLines", () => {
     expect(lines.at(-1)).toBe("------------------------------------------------");
   });
 
+  it("omits the freight line when the operation asked to keep it off the receipt", () => {
+    // Caixa "mostrar o valor do frete no cupom", marcada por operacao no tipo de frete.
+    const lines = buildReceiptLines({
+      ...baseInput(),
+      freightTotalCents: 25_000,
+      showFreightValue: false,
+      totalCents: 175_000
+    });
+
+    expect(lines.find((line) => line.startsWith("FRETE"))).toBeUndefined();
+    // O total continua sendo o que o cliente paga (produto + frete).
+    expect(lines).toContain("VENCTO: 07/06/2026 - VALOR R$ 1.750,00");
+  });
+
   it("marks reprints as second copy", () => {
     const lines = buildReceiptLines({
       ...baseInput(),

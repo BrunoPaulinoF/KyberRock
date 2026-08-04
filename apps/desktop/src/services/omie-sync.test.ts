@@ -174,6 +174,62 @@ describe("OmieSyncService", () => {
     }
   });
 
+  it("removes suppliers that were registered as customers, matching by OMIE id or document", async () => {
+    const db = openDesktopDatabase({ databasePath: ":memory:" });
+
+    try {
+      runDesktopMigrations(db);
+      db.exec(`
+        INSERT INTO companies (id, legal_name, trade_name, created_at, updated_at)
+        VALUES ('company-1', 'Empresa Teste', 'Empresa', datetime('now'), datetime('now'));
+
+        -- Fornecedor que entrou pela sincronizacao antiga, com codigo OMIE.
+        INSERT INTO customers (id, company_id, omie_customer_id, source, legal_name, trade_name, is_active, created_at, updated_at)
+        VALUES ('omie_777', 'company-1', 777, 'omie', 'Fornecedor de Oleo', 'Fornecedor de Oleo', 1, datetime('now'), datetime('now'));
+
+        -- Fornecedor que entrou por importacao de planilha: sem codigo OMIE, casa pelo CNPJ.
+        INSERT INTO customers (id, company_id, source, legal_name, trade_name, document, needs_push, is_active, created_at, updated_at)
+        VALUES ('planilha-1', 'company-1', 'hybrid', 'Pecas e Servicos ME', 'Pecas e Servicos', '44.444.444/0001-44', 1, 1, datetime('now'), datetime('now'));
+      `);
+
+      const service = new OmieSyncService(createMockClient(), db);
+      vi.spyOn(
+        (service as unknown as Record<string, unknown>).customersService as {
+          listAll: () => Promise<unknown[]>;
+        },
+        "listAll"
+      ).mockResolvedValue([
+        {
+          id: 555,
+          name: "Cliente de Verdade Ltda",
+          document: "55555555000155",
+          isActive: true,
+          customerType: "C"
+        },
+        { id: 777, name: "Fornecedor de Oleo", isActive: true, tags: { tags: ["Fornecedor"] } },
+        {
+          id: 888,
+          name: "Pecas e Servicos ME",
+          document: "44444444000144",
+          isActive: true,
+          customerType: "F"
+        }
+      ]);
+
+      const result = await service.rebuildCustomersAndCarriersFromOmie("company-1");
+
+      expect(result.customersPulled).toBe(1);
+      expect(result.nonCustomersRemoved).toBe(2);
+      const remaining = db
+        .prepare("SELECT legal_name FROM customers WHERE deleted_at IS NULL ORDER BY legal_name")
+        .pluck()
+        .all();
+      expect(remaining).toEqual(["Cliente de Verdade Ltda"]);
+    } finally {
+      db.close();
+    }
+  });
+
   it("rebuilds customers and carriers from ListarClientes tags while preserving local registrations", async () => {
     const db = openDesktopDatabase({ databasePath: ":memory:" });
 
@@ -257,7 +313,8 @@ describe("OmieSyncService", () => {
       ]);
       const result = await service.rebuildCustomersAndCarriersFromOmie("company-1");
 
-      expect(result).toEqual({ customersPulled: 2, suppliersSynced: 2 });
+      // O fornecedor puro (404) nao entra como cliente e sai do cadastro local.
+      expect(result).toEqual({ customersPulled: 2, suppliersSynced: 2, nonCustomersRemoved: 0 });
       // 2 clientes OMIE (101, 303) + 1 cliente local preservado.
       expect(
         db
@@ -346,6 +403,64 @@ describe("OmieSyncService", () => {
     }
   });
 
+  it("creates customers in OMIE with the Cliente tag and merges tags on update", async () => {
+    const db = openDesktopDatabase({ databasePath: ":memory:" });
+
+    try {
+      runDesktopMigrations(db);
+      db.exec(`
+        INSERT INTO companies (id, legal_name, trade_name, created_at, updated_at)
+        VALUES ('company-1', 'Empresa Teste', 'Empresa', datetime('now'), datetime('now'));
+
+        INSERT INTO customers (
+          id, company_id, source, legal_name, trade_name, document, sync_status, needs_push, is_active, created_at, updated_at
+        ) VALUES (
+          'novo', 'company-1', 'local', 'Cliente Novo Ltda', 'Cliente Novo', '99999999000199', 'pending', 1, 1, datetime('now'), datetime('now')
+        ), (
+          'existente', 'company-1', 'local', 'Cliente Antigo Ltda', 'Cliente Antigo', '88888888000188', 'pending', 1, 1, datetime('now'), datetime('now')
+        );
+
+        UPDATE customers SET omie_customer_id = 321 WHERE id = 'existente';
+      `);
+
+      const service = new OmieSyncService(createMockClient(), db);
+      const customersService = (service as unknown as Record<string, unknown>).customersService as {
+        create: (input: unknown) => Promise<number>;
+        update: (input: unknown) => Promise<void>;
+        getById: (id: number) => Promise<unknown>;
+      };
+      const create = vi.spyOn(customersService, "create").mockResolvedValue(999);
+      const update = vi.spyOn(customersService, "update").mockResolvedValue(undefined);
+      vi.spyOn(customersService, "getById").mockResolvedValue({
+        id: 321,
+        name: "Cliente Antigo Ltda",
+        isActive: true,
+        tags: { tags: ["Transportadora"] }
+      } as never);
+
+      const pushed = await service.pushCustomersToOmie("company-1");
+
+      expect(pushed).toBe(2);
+      expect(create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          razaoSocial: "Cliente Novo Ltda",
+          tags: [{ tag: "Cliente" }]
+        })
+      );
+      expect(update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          codigoClienteOmie: 321,
+          tags: [{ tag: "Transportadora" }, { tag: "Cliente" }]
+        })
+      );
+      expect(
+        db.prepare("SELECT omie_customer_id FROM customers WHERE id = 'novo'").pluck().get()
+      ).toBe(999);
+    } finally {
+      db.close();
+    }
+  });
+
   it("pushes local carriers to OMIE as tagged customers and deduplicates by document", async () => {
     const db = openDesktopDatabase({ databasePath: ":memory:" });
 
@@ -366,6 +481,7 @@ describe("OmieSyncService", () => {
       const customersService = (service as unknown as Record<string, unknown>).customersService as {
         listAll: () => Promise<unknown[]>;
         update: (input: unknown) => Promise<void>;
+        getById: (id: number) => Promise<unknown>;
       };
       const listAll = vi.spyOn(customersService, "listAll").mockResolvedValue([
         {
@@ -377,16 +493,25 @@ describe("OmieSyncService", () => {
         }
       ]);
       const update = vi.spyOn(customersService, "update").mockResolvedValue(undefined);
+      vi.spyOn(customersService, "getById").mockResolvedValue({
+        id: 654,
+        name: "Transportadora OMIE",
+        isActive: true,
+        tags: { tags: ["Cliente", "transportadora"] }
+      } as never);
 
       const pushed = await service.pushCarriersToOmie("company-1");
 
       expect(pushed).toBe(1);
       expect(listAll).toHaveBeenCalledTimes(1);
+      // A alteracao mantem as tags que o cadastro ja tem no OMIE e garante a do papel:
+      // o OMIE substitui a lista inteira, entao mandar so "Transportadora" apagaria
+      // o "Cliente" e o cadastro sumiria da lista de clientes na proxima sincronizacao.
       expect(update).toHaveBeenCalledWith(
         expect.objectContaining({
           codigoClienteOmie: 654,
           razaoSocial: "Transportadora Local",
-          tags: [{ tag: "transportadora" }]
+          tags: [{ tag: "Cliente" }, { tag: "Transportadora" }]
         })
       );
       expect(

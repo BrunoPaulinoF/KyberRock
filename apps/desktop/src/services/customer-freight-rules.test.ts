@@ -47,9 +47,10 @@ function createDatabase(): DesktopDatabase {
 }
 
 describe("frete do cliente por tipo de frete", () => {
-  it("guarda um valor por tipo de frete e devolve o do tipo pedido", () => {
+  it("guarda o valor do tipo com frete, normalizando as modalidades antigas", () => {
     const database = createDatabase();
     try {
+      // "fob" e legado: com os dois tipos de hoje, todo valor cai em "com frete" (cif).
       setCustomerFreightRule(database, {
         customerId: "customer-1",
         modality: "fob",
@@ -62,18 +63,80 @@ describe("frete do cliente por tipo de frete", () => {
       });
 
       expect(
-        getCustomerFreightRuleForProduct(database, "customer-1", "product-1", "fob")?.rule
-          .baseValueCents
-      ).toBe(9000);
-      expect(
         getCustomerFreightRuleForProduct(database, "customer-1", "product-1", "cif")?.rule
           .baseValueCents
       ).toBe(12000);
+      // Consultar por uma modalidade antiga devolve o mesmo valor de "com frete".
+      expect(
+        getCustomerFreightRuleForProduct(database, "customer-1", "product-1", "fob")?.rule
+          .baseValueCents
+      ).toBe(12000);
 
-      // Um so registro por (cliente, produto): os tipos convivem dentro dele.
+      // Um so registro por (cliente, produto), com um unico tipo cobravel dentro dele.
       const rules = getCustomerFreightRules(database, "customer-1");
       expect(rules).toHaveLength(1);
-      expect(Object.keys(rules[0].modalities).sort()).toEqual(["cif", "fob"]);
+      expect(Object.keys(rules[0].modalities)).toEqual(["cif"]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("puxa o valor gravado numa modalidade antiga quando so ela existe", () => {
+    const database = createDatabase();
+    try {
+      // Memoria gravada antes da simplificacao dos tipos de frete.
+      database
+        .prepare(
+          `INSERT INTO customer_freight_rules (id, customer_id, product_id, rule_json, is_active, created_at, updated_at)
+           VALUES ('legacy-rule', 'customer-1', NULL, ?, 1, datetime('now'), datetime('now'))`
+        )
+        .run(
+          JSON.stringify({
+            id: "default",
+            name: "Frete do cliente",
+            type: "per_ton",
+            baseValueCents: 0,
+            unit: "ton",
+            modalities: {
+              fob: {
+                type: "per_ton",
+                baseValueCents: 8800,
+                source: "last_used",
+                updatedAt: "2026-01-01T00:00:00.000Z",
+                destination: "Obra do centro",
+                showOnReceipt: false
+              }
+            }
+          })
+        );
+
+      const resolved = getCustomerFreightRuleForProduct(database, "customer-1", "product-1", "cif");
+      expect(resolved?.rule.baseValueCents).toBe(8800);
+      expect(resolved?.modality).toBe("cif");
+      expect(resolved?.destination).toBe("Obra do centro");
+      expect(resolved?.showOnReceipt).toBe(false);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("memoriza destino e a escolha de mostrar o frete no cupom", () => {
+    const database = createDatabase();
+    try {
+      rememberCustomerFreightValue(database, {
+        customerId: "customer-1",
+        productId: "product-1",
+        modality: "cif",
+        rule: perTon(7700),
+        destination: "Pedreira -> Obra Norte",
+        showOnReceipt: false
+      });
+
+      const resolved = getCustomerFreightRuleForProduct(database, "customer-1", "product-1", "cif");
+      expect(resolved?.rule.baseValueCents).toBe(7700);
+      expect(resolved?.destination).toBe("Pedreira -> Obra Norte");
+      expect(resolved?.showOnReceipt).toBe(false);
+      expect(resolved?.source).toBe("last_used");
     } finally {
       database.close();
     }
@@ -153,8 +216,9 @@ describe("frete do cliente por tipo de frete", () => {
         rule: perTon(13000)
       });
 
+      // "Sem frete" nao tem valor proprio: cai na regra unica antiga.
       expect(
-        getCustomerFreightRuleForProduct(database, "customer-1", "product-1", "fob")?.rule
+        getCustomerFreightRuleForProduct(database, "customer-1", "product-1", "none")?.rule
           .baseValueCents
       ).toBe(5000);
       expect(
@@ -175,7 +239,7 @@ describe("frete do cliente por tipo de frete", () => {
       });
 
       expect(
-        getCustomerFreightRuleForProduct(database, "customer-1", "product-1", "fob")
+        getCustomerFreightRuleForProduct(database, "customer-1", "product-1", "none")
       ).toBeNull();
     } finally {
       database.close();
@@ -197,24 +261,15 @@ describe("frete do cliente por tipo de frete", () => {
     }
   });
 
-  it("remove so o tipo pedido e apaga a regra quando ela fica vazia", () => {
+  it("remove o valor do tipo e apaga a regra quando ela fica vazia", () => {
     const database = createDatabase();
     try {
-      setCustomerFreightRule(database, {
-        customerId: "customer-1",
-        modality: "fob",
-        rule: perTon(9000)
-      });
       setCustomerFreightRule(database, {
         customerId: "customer-1",
         modality: "cif",
         rule: perTon(12000)
       });
       const ruleId = getCustomerFreightRules(database, "customer-1")[0].id;
-
-      removeCustomerFreightModality(database, ruleId, "fob");
-      const remaining = getCustomerFreightRules(database, "customer-1");
-      expect(Object.keys(remaining[0].modalities)).toEqual(["cif"]);
 
       removeCustomerFreightModality(database, ruleId, "cif");
       expect(getCustomerFreightRules(database, "customer-1")).toHaveLength(0);

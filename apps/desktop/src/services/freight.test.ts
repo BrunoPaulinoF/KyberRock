@@ -3,9 +3,14 @@ import { describe, expect, it } from "vitest";
 import {
   FreightCalculator,
   FREIGHT_MODALITIES,
+  FREIGHT_MODALITY_NONE,
+  FREIGHT_MODALITY_WITH_FREIGHT,
+  freightModalityLookupKeys,
   freightModalityOmieCode,
   getFreightModalityInfo,
   isFreightModality,
+  isFreightModalityWithFreight,
+  normalizeFreightModality,
   type FreightRule
 } from "./freight";
 
@@ -126,21 +131,50 @@ describe("freight modalities", () => {
     expect(getFreightModalityInfo("bogus").key).toBe("none");
   });
 
-  it("marks only the client's own transport as not using the Pedreira carrier", () => {
-    const withoutCarrier = FREIGHT_MODALITIES.filter((modality) => !modality.usesCarrier);
-    expect(withoutCarrier.map((modality) => modality.key)).toEqual(["own_recipient"]);
+  it("offers only two freight types to pick from: none and with freight", () => {
+    expect(FREIGHT_MODALITIES.map((modality) => modality.key)).toEqual([
+      FREIGHT_MODALITY_NONE,
+      FREIGHT_MODALITY_WITH_FREIGHT
+    ]);
+    expect(FREIGHT_MODALITIES.map((modality) => modality.label)).toEqual([
+      "Sem frete",
+      "Com frete"
+    ]);
   });
 
-  it("supports a freight charge only on billable modalities", () => {
+  it("supports a freight charge only on the with-freight type", () => {
     const chargeable = FREIGHT_MODALITIES.filter((modality) => modality.supportsCharge).map(
       (modality) => modality.key
     );
-    expect(chargeable).toEqual(["cif", "fob", "third_party", "own_sender"]);
+    expect(chargeable).toEqual([FREIGHT_MODALITY_WITH_FREIGHT]);
   });
 
-  it("validates modality keys", () => {
+  it("validates modality keys, legacy ones included", () => {
     expect(isFreightModality("cif")).toBe(true);
+    expect(isFreightModality("fob")).toBe(true);
     expect(isFreightModality("nope")).toBe(false);
     expect(isFreightModality(42)).toBe(false);
+  });
+
+  it("reads every legacy modality as an operation with freight", () => {
+    for (const legacy of ["cif", "fob", "third_party", "own_sender", "own_recipient"]) {
+      expect(isFreightModalityWithFreight(legacy)).toBe(true);
+      expect(normalizeFreightModality(legacy)).toBe(FREIGHT_MODALITY_WITH_FREIGHT);
+    }
+    expect(isFreightModalityWithFreight("none")).toBe(false);
+    expect(isFreightModalityWithFreight("bogus")).toBe(false);
+    expect(normalizeFreightModality(null)).toBe(FREIGHT_MODALITY_NONE);
+  });
+
+  it("looks the customer's freight memory up by the legacy keys too", () => {
+    // O valor gravado antes da simplificacao (ex.: FOB) nao pode sumir da proxima venda.
+    expect(freightModalityLookupKeys(FREIGHT_MODALITY_WITH_FREIGHT)).toEqual([
+      "cif",
+      "fob",
+      "third_party",
+      "own_sender",
+      "own_recipient"
+    ]);
+    expect(freightModalityLookupKeys("none")).toEqual(["none"]);
   });
 });

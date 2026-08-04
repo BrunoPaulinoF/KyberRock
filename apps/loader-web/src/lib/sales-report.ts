@@ -13,18 +13,12 @@ export const REPORT_UTC_OFFSET_MINUTES = -180;
 export type SalesGroupBy = "product" | "customer" | "customer_product" | "day";
 
 /**
- * Modalidade de frete da operacao (`weighing_operations.freight_type`), espelhada
- * do catalogo do desktop (`apps/desktop/src/services/freight.ts`). CIF e FOB sao as
- * duas modalidades que o comercial usa para separar "frete da Pedreira" x "cliente
- * busca"; as demais existem no dominio e aparecem no filtro para nao esconder venda.
+ * Tipo de frete da operacao (`weighing_operations.freight_type`), espelhado do desktop
+ * (`apps/desktop/src/services/freight.ts`): a balanca so tem "sem frete" e "com frete".
+ * As modalidades antigas gravadas nas vendas ja fechadas (CIF, FOB, terceiros,
+ * transporte proprio) entram todas em "com frete", para nenhuma venda sumir do filtro.
  */
-export type SalesFreightType =
-  | "cif"
-  | "fob"
-  | "third_party"
-  | "own_sender"
-  | "own_recipient"
-  | "none";
+export type SalesFreightType = "cif" | "none";
 
 /** Valor usado no filtro quando nenhuma modalidade esta selecionada. */
 export const SALES_FREIGHT_ALL = "all" as const;
@@ -32,18 +26,23 @@ export const SALES_FREIGHT_ALL = "all" as const;
 export type SalesFreightFilter = SalesFreightType | typeof SALES_FREIGHT_ALL;
 
 export const SALES_FREIGHT_TYPES: ReadonlyArray<{ value: SalesFreightType; label: string }> = [
-  { value: "cif", label: "CIF" },
-  { value: "fob", label: "FOB" },
-  { value: "third_party", label: "Terceiros" },
-  { value: "own_sender", label: "Transp. próprio (Pedreira)" },
-  { value: "own_recipient", label: "Transp. próprio do cliente" },
+  { value: "cif", label: "Com frete" },
   { value: "none", label: "Sem frete" }
 ];
 
-/** Modalidade valida da linha; qualquer coisa fora do catalogo cai em "sem frete". */
+/** Modalidades antigas do desktop, todas com frete. */
+const LEGACY_FREIGHT_TYPES_WITH_FREIGHT = [
+  "cif",
+  "fob",
+  "third_party",
+  "own_sender",
+  "own_recipient"
+];
+
+/** Tipo de frete da linha: qualquer modalidade antiga com frete cai em "com frete". */
 export function normalizeFreightType(value: unknown): SalesFreightType {
-  return SALES_FREIGHT_TYPES.some((type) => type.value === value)
-    ? (value as SalesFreightType)
+  return typeof value === "string" && LEGACY_FREIGHT_TYPES_WITH_FREIGHT.includes(value)
+    ? "cif"
     : "none";
 }
 

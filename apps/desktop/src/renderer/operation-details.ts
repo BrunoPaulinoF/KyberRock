@@ -1,4 +1,4 @@
-import { getFreightModalityInfo } from "../services/freight";
+import { getFreightModalityInfo, normalizeFreightModality } from "../services/freight";
 import type { FreightModality, FreightRule } from "../services/freight";
 import type {
   OperationFreightInput,
@@ -75,6 +75,8 @@ export interface OperationFreight {
   payer: string;
   rule: FreightRule;
   destination: string | null;
+  /** O valor do frete sai no cupom. Ausente nas operacoes antigas: vale `true`. */
+  showOnReceipt: boolean;
 }
 
 /** Regra de frete gravada na operacao; null quando nao ha valor lancado ou o JSON e invalido. */
@@ -86,7 +88,8 @@ export function parseOperationFreight(freightJson: string | null): OperationFrei
     return {
       payer: parsed.payer ?? "quarry",
       rule: parsed.rule,
-      destination: parsed.destination ?? null
+      destination: parsed.destination ?? null,
+      showOnReceipt: parsed.showOnReceipt !== false
     };
   } catch {
     return null;
@@ -185,6 +188,10 @@ export function buildOperationDetailSections(
         { label: "Tipo de frete", value: `${modality.label} — ${modality.description}` },
         { label: "Valor lancado", value: freight ? "Sim" : "Nao" },
         {
+          label: "Valor no cupom",
+          value: freight ? (freight.showOnReceipt ? "Sim" : "Nao") : "—"
+        },
+        {
           label: "Responsavel",
           value: freight ? (FREIGHT_PAYER_LABELS[freight.payer] ?? freight.payer) : "—"
         },
@@ -259,6 +266,8 @@ export interface OperationEditFormState {
   freightMinValueCents: number | null;
   freightDistanceKm: string;
   freightDestination: string;
+  /** Caixa "mostrar o valor do frete no cupom". */
+  freightShowOnReceipt: boolean;
   deductFreightFromCredit: boolean;
 }
 
@@ -290,6 +299,7 @@ export function buildOperationEditForm(
     freightMinValueCents: freight?.rule.minValueCents ?? null,
     freightDistanceKm: freight?.rule.distanceKm ? String(freight.rule.distanceKm) : "",
     freightDestination: freight?.destination ?? "",
+    freightShowOnReceipt: freight?.showOnReceipt !== false,
     deductFreightFromCredit: operation.deductFreightFromCredit
   };
 }
@@ -315,6 +325,7 @@ export function buildOperationFreightInput(
   return {
     payer: getFreightModalityInfo(form.freightModality).defaultPayer,
     destination: form.freightDestination.trim() || null,
+    showOnReceipt: form.freightShowOnReceipt,
     rule: {
       id: "operation-freight",
       name: "Frete da operacao",
@@ -387,7 +398,9 @@ export function buildOperationUpdateInput(
     operationType: form.operationType,
     unitPriceCents: form.unitPriceCents ?? 0,
     freight: buildOperationFreightInput(form),
-    freightModality: form.freightModality,
+    // A operacao passa a gravar so os dois tipos de hoje: reabrir e salvar uma operacao
+    // antiga normaliza a modalidade legada para "com frete"/"sem frete".
+    freightModality: normalizeFreightModality(form.freightModality),
     deductFreightFromCredit: form.deductFreightFromCredit
   };
 }

@@ -47,6 +47,14 @@ describe("entity picker items", () => {
     expect(sameName.subtitle).toBeNull();
     expect(differentName.subtitle).toBe("Beta Mineracao SA");
   });
+
+  it("shows the document in the subtitle, next to the legal name", () => {
+    const [item] = buildEntityPickerItems("customer", [
+      { id: "c1", tradeName: "Levisa", legalName: "Levisa Mineracao", document: "12345678000190" }
+    ]);
+
+    expect(item.subtitle).toBe("Levisa Mineracao · 12345678000190");
+  });
 });
 
 describe("entity picker search", () => {

@@ -123,14 +123,18 @@ Financeiro:
 
 #### Modalidade do frete (implementado)
 
-- A modalidade do KyberRock mapeia para o `modalidade` (modFrete da NF-e) do bloco `frete`:
-  CIF `"0"`, terceiros `"2"`, transporte proprio `"3"`/`"4"`, sem frete `"9"`.
-- **FOB (frete por conta do cliente) vai como `"9"` — sem incidencia de frete.** Quando o frete
-  e responsabilidade do cliente a Pedreira nao contrata nem responde pelo transporte, entao a
-  operacao nao nasce no OMIE como "frete por conta do destinatario". Vale inclusive com valor
-  de frete lancado na operacao (o valor continua indo em `valor_frete`).
-- Compat: operacao antiga sem tipo salvo (default `none` -> `"9"`) que tenha valor de frete
-  continua indo como CIF `"0"`, para nao enviar "sem frete" num pedido que tinha frete.
+- A balanca tem **dois tipos de frete**: `none` (sem frete) e `cif` (com frete) — e, dentro de
+  "com frete", se a Pedreira lanca ou nao um **valor**. As modalidades antigas (`fob`,
+  `third_party`, `own_sender`, `own_recipient`) continuam sendo lidas nas operacoes ja gravadas,
+  mas nao sao mais escolhidas; ao salvar, a operacao passa a gravar `cif`/`none`.
+- O que decide o `modalidade` (modFrete da NF-e) do bloco `frete` e o **valor**:
+  - com valor de frete lancado → CIF `"0"` (o valor segue em `valor_frete`);
+  - sem valor lancado → `"9"` (sem incidencia de frete): a Pedreira nao cobra nem responde
+    pelo transporte. E a mesma regra que o FOB legado ja seguia.
+- Compat: operacao antiga com transporte proprio (`own_sender`/`own_recipient`) e sem valor
+  mantem o codigo dela (`"3"`/`"4"`, com `veiculo_proprio "S"`).
+- A caixa **"mostrar o valor do frete no cupom"** e por operacao e fica no `freight_json`
+  (`showOnReceipt`). Ela nao muda nada do que vai ao OMIE — so a linha `FRETE` do cupom.
 
 #### Placa e UF do veiculo (implementado)
 

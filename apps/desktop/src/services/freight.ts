@@ -4,9 +4,15 @@ export interface DistanceRange {
 }
 
 /**
- * Tipo (modalidade) de frete da operacao. Mapeia 1:1 para o codigo "modalidade" do
- * frete no pedido de venda do OMIE, que reusa os codigos modFrete da NF-e:
- * 0 CIF, 1 FOB, 2 terceiros, 3/4 transporte proprio, 9 sem frete.
+ * Tipo (modalidade) de frete gravado na operacao (`weighing_operations.freight_type`).
+ *
+ * O operador escolhe apenas entre DOIS tipos: "sem frete" e "com frete" (e, dentro de
+ * "com frete", se lanca ou nao um valor). Os demais valores da uniao sao legado: ficaram
+ * gravados nas operacoes e no cadastro antes da simplificacao e continuam sendo lidos
+ * (rotulos, relatorios, memoria de frete do cliente), mas nao aparecem mais para escolha.
+ *
+ * O codigo "modalidade" do frete no pedido de venda do OMIE (modFrete da NF-e:
+ * 0 CIF, 1 FOB, 2 terceiros, 3/4 transporte proprio, 9 sem frete) sai de `omieCode`.
  */
 export type FreightModality =
   | "cif"
@@ -23,7 +29,7 @@ export interface FreightModalityInfo {
   key: FreightModality;
   /** Rotulo curto para o chip/botao. */
   label: string;
-  /** Descricao exibida no modal de selecao. */
+  /** Descricao exibida no seletor. */
   description: string;
   /** Codigo "modalidade" enviado ao OMIE (modFrete da NF-e). */
   omieCode: string;
@@ -39,24 +45,49 @@ export interface FreightModalityInfo {
 }
 
 /**
- * Catalogo dos tipos de frete do OMIE. A ordem e a exibida no modal de selecao.
- * `own_recipient` substitui a antiga caixa "transportadora propria do cliente" e
- * `cif`/`fob` substituem a antiga caixa "operacao com frete" (parte CIF/FOB).
+ * Modalidade gravada para "com frete". Continua sendo `cif` (e nao um valor novo) porque
+ * a coluna `freight_type` tem CHECK com o catalogo antigo — no SQLite local (migracao 32)
+ * e no espelho da nuvem. Reusar um valor ja aceito evita reconstruir a tabela de operacoes
+ * so para renomear um enum.
+ */
+export const FREIGHT_MODALITY_WITH_FREIGHT: FreightModality = "cif";
+export const FREIGHT_MODALITY_NONE: FreightModality = "none";
+
+/**
+ * Os dois unicos tipos de frete que o operador escolhe hoje. A ordem e a exibida no
+ * seletor da entrada e da edicao da operacao.
  */
 export const FREIGHT_MODALITIES: readonly FreightModalityInfo[] = [
   {
-    key: "cif",
-    label: "CIF",
-    description: "Frete por conta da Pedreira (remetente).",
+    key: FREIGHT_MODALITY_NONE,
+    label: "Sem frete",
+    description: "Operacao sem frete.",
+    omieCode: "9",
+    usesCarrier: true,
+    supportsCharge: false,
+    defaultPayer: "quarry"
+  },
+  {
+    key: FREIGHT_MODALITY_WITH_FREIGHT,
+    label: "Com frete",
+    description: "Operacao com frete; marque abaixo se o frete tem valor lancado.",
     omieCode: "0",
     usesCarrier: true,
     supportsCharge: true,
     defaultPayer: "quarry"
-  },
+  }
+];
+
+/**
+ * Modalidades antigas: nao aparecem mais no seletor, mas continuam gravadas em operacoes
+ * fechadas e na memoria de frete dos clientes. Ficam aqui so para leitura (rotulo do
+ * detalhe da operacao, relatorios e `getFreightModalityInfo`).
+ */
+export const LEGACY_FREIGHT_MODALITIES: readonly FreightModalityInfo[] = [
   {
     key: "fob",
-    label: "FOB",
-    description: "Frete por conta do cliente (destinatario).",
+    label: "Com frete (FOB)",
+    description: "Legado: frete por conta do cliente (destinatario).",
     omieCode: "1",
     usesCarrier: true,
     supportsCharge: true,
@@ -64,8 +95,8 @@ export const FREIGHT_MODALITIES: readonly FreightModalityInfo[] = [
   },
   {
     key: "third_party",
-    label: "Terceiros",
-    description: "Frete por conta de terceiros.",
+    label: "Com frete (terceiros)",
+    description: "Legado: frete por conta de terceiros.",
     omieCode: "2",
     usesCarrier: true,
     supportsCharge: true,
@@ -73,8 +104,8 @@ export const FREIGHT_MODALITIES: readonly FreightModalityInfo[] = [
   },
   {
     key: "own_sender",
-    label: "Transp. proprio (Pedreira)",
-    description: "Transporte proprio por conta do remetente (Pedreira).",
+    label: "Com frete (transp. proprio da Pedreira)",
+    description: "Legado: transporte proprio por conta do remetente (Pedreira).",
     omieCode: "3",
     usesCarrier: true,
     supportsCharge: true,
@@ -82,36 +113,73 @@ export const FREIGHT_MODALITIES: readonly FreightModalityInfo[] = [
   },
   {
     key: "own_recipient",
-    label: "Transp. proprio do cliente",
-    description: "Transporte proprio por conta do destinatario: o cliente traz o proprio caminhao.",
+    label: "Com frete (transp. proprio do cliente)",
+    description: "Legado: o cliente traz o proprio caminhao.",
     omieCode: "4",
     usesCarrier: false,
     supportsCharge: false,
     defaultPayer: "customer"
-  },
-  {
-    key: "none",
-    label: "Sem frete",
-    description: "Sem ocorrencia de transporte / sem frete.",
-    omieCode: "9",
-    usesCarrier: true,
-    supportsCharge: false,
-    defaultPayer: "quarry"
   }
 ];
 
-const DEFAULT_FREIGHT_MODALITY: FreightModalityInfo =
-  FREIGHT_MODALITIES.find((modality) => modality.key === "none") ?? FREIGHT_MODALITIES[0];
+const ALL_FREIGHT_MODALITIES: readonly FreightModalityInfo[] = [
+  ...FREIGHT_MODALITIES,
+  ...LEGACY_FREIGHT_MODALITIES
+];
 
-/** Retorna os metadados da modalidade; cai em "sem frete" quando o valor e invalido. */
+const DEFAULT_FREIGHT_MODALITY: FreightModalityInfo =
+  FREIGHT_MODALITIES.find((modality) => modality.key === FREIGHT_MODALITY_NONE) ??
+  FREIGHT_MODALITIES[0];
+
+/** Retorna os metadados da modalidade (inclusive as legadas); cai em "sem frete". */
 export function getFreightModalityInfo(
   key: FreightModality | string | null | undefined
 ): FreightModalityInfo {
-  return FREIGHT_MODALITIES.find((modality) => modality.key === key) ?? DEFAULT_FREIGHT_MODALITY;
+  return (
+    ALL_FREIGHT_MODALITIES.find((modality) => modality.key === key) ?? DEFAULT_FREIGHT_MODALITY
+  );
 }
 
 export function isFreightModality(value: unknown): value is FreightModality {
-  return typeof value === "string" && FREIGHT_MODALITIES.some((modality) => modality.key === value);
+  return (
+    typeof value === "string" && ALL_FREIGHT_MODALITIES.some((modality) => modality.key === value)
+  );
+}
+
+/**
+ * Tipo de frete "de verdade" da operacao: com ou sem frete. Toda modalidade legada
+ * diferente de "sem frete" e uma operacao COM frete — inclusive o transporte proprio do
+ * cliente, que tem transporte mas nunca teve valor lancado pela Pedreira.
+ */
+export function isFreightModalityWithFreight(
+  key: FreightModality | string | null | undefined
+): boolean {
+  return getFreightModalityInfo(key).key !== FREIGHT_MODALITY_NONE;
+}
+
+/**
+ * Modalidade a gravar para o tipo escolhido no seletor. Normaliza as legadas: uma
+ * operacao antiga reaberta e salva volta gravada como "com frete" (`cif`).
+ */
+export function normalizeFreightModality(
+  key: FreightModality | string | null | undefined
+): FreightModality {
+  return isFreightModalityWithFreight(key) ? FREIGHT_MODALITY_WITH_FREIGHT : FREIGHT_MODALITY_NONE;
+}
+
+/**
+ * Chaves a consultar na memoria de frete do cliente para um tipo de frete. "Com frete"
+ * tambem procura pelas modalidades antigas (FOB, terceiros, transporte proprio): o valor
+ * usado na ultima venda do cliente nao pode sumir por causa da simplificacao.
+ */
+export function freightModalityLookupKeys(
+  key: FreightModality | string | null | undefined
+): FreightModality[] {
+  if (!isFreightModalityWithFreight(key)) return [FREIGHT_MODALITY_NONE];
+  return [
+    FREIGHT_MODALITY_WITH_FREIGHT,
+    ...LEGACY_FREIGHT_MODALITIES.map((modality) => modality.key)
+  ];
 }
 
 /** Codigo "modalidade" do OMIE para a modalidade escolhida (default "9" = sem frete). */

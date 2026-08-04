@@ -205,6 +205,35 @@ describe("edicao completa da operacao", () => {
     expect("paymentTermId" in input).toBe(false);
   });
 
+  it("leva a escolha de mostrar o valor do frete no cupom", () => {
+    // Operacao antiga (sem o campo no freight_json) mantem o frete no cupom.
+    const legacy = buildOperationEditForm(
+      createOperation({ freightJson: FREIGHT_JSON, freightModality: "cif" })
+    );
+    expect(legacy.freightShowOnReceipt).toBe(true);
+
+    const hidden = buildOperationEditForm(
+      createOperation({
+        freightJson: JSON.stringify({ ...JSON.parse(FREIGHT_JSON), showOnReceipt: false }),
+        freightModality: "cif"
+      })
+    );
+    expect(hidden.freightShowOnReceipt).toBe(false);
+
+    const input = buildOperationUpdateInput("op-1", { ...hidden, freightShowOnReceipt: false });
+    expect(input.freight).toMatchObject({ showOnReceipt: false });
+  });
+
+  it("normaliza a modalidade legada para os dois tipos de hoje", () => {
+    const form = buildOperationEditForm(
+      createOperation({ freightJson: FREIGHT_JSON, freightModality: "fob" })
+    );
+
+    expect(form.freightModality).toBe("fob");
+    // Salvar grava "com frete" (cif) — o catalogo antigo nao e mais escolhido.
+    expect(buildOperationUpdateInput("op-1", form).freightModality).toBe("cif");
+  });
+
   it("manda a condicao apenas quando ela mudou (null limpa)", () => {
     const form = buildOperationEditForm(createOperation());
 

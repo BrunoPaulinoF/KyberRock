@@ -158,7 +158,11 @@ export async function syncOmieMasterData(
 
   try {
     const mapping = readOmieSyncMapping(database);
-    let taggedSupplierResult: { customersPulled: number; suppliersSynced: number } | null = null;
+    let taggedSupplierResult: {
+      customersPulled: number;
+      suppliersSynced: number;
+      nonCustomersRemoved: number;
+    } | null = null;
 
     // 1. Customers
     entities.push(
@@ -171,7 +175,8 @@ export async function syncOmieMasterData(
             fetched: taggedSupplierResult.customersPulled,
             created: taggedSupplierResult.customersPulled,
             updated: 0,
-            skipped: 0
+            // Fornecedores/transportadoras que sairam do cadastro de clientes.
+            skipped: taggedSupplierResult.nonCustomersRemoved
           };
         }
         // Cloud sync path is handled by the scheduler; for master data we focus on direct/local when credentials provided

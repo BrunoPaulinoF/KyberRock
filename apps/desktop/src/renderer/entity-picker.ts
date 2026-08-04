@@ -52,8 +52,8 @@ const TITLE_FIELDS: Record<string, string[]> = {
 };
 
 const SUBTITLE_FIELDS: Record<string, string[]> = {
-  customer: ["legalName", "document"],
-  carrier: ["document", "city"]
+  customer: ["legalName"],
+  carrier: ["city"]
 };
 
 /**
@@ -71,9 +71,13 @@ export function buildEntityPickerItems(
   const items = rows.map((row) => {
     const id = readString(row, "id");
     const title = firstFilled(row, titleFields) || readString(row, "document") || id;
-    const subtitleSource = firstFilled(row, subtitleFields);
-    const subtitle = subtitleSource && subtitleSource !== title ? subtitleSource : null;
     const document = readString(row, "document");
+    // O documento entra sempre no subtitulo: e por ele que o operador separa homonimos
+    // (e e um dos campos que a barra de pesquisa aceita).
+    const subtitleParts = [firstFilled(row, subtitleFields), document].filter(
+      (part) => part && part !== title
+    );
+    const subtitle = subtitleParts.length > 0 ? subtitleParts.join(" · ") : null;
     const searchSource = [title, subtitle ?? "", document, readString(row, "city")]
       .filter(Boolean)
       .join(" ");

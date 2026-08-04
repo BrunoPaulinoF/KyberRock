@@ -1656,15 +1656,15 @@ describe("weighing operations", () => {
       const built = buildOmieBillingJob(database, operation.id);
       // 6,5 t x R$ 100,00 = R$ 650,00 -> vai como valor_frete no bloco frete do pedido.
       expect(built!.payload.freightTotalCents).toBe(65_000);
-      // FOB = frete por conta do cliente -> "9" (sem incidencia de frete) no OMIE, mesmo
-      // com valor lancado: a Pedreira nao responde pelo transporte.
-      expect(built!.payload.freightModalidade).toBe("9");
+      // Com valor de frete lancado pela Pedreira, o pedido vai como CIF ("0"), qualquer
+      // que seja a modalidade antiga gravada na operacao.
+      expect(built!.payload.freightModalidade).toBe("0");
     } finally {
       database.close();
     }
   });
 
-  it("sends FOB freight as 'sem incidencia' (9) to OMIE", () => {
+  it("sends freight without a charged value as 'sem incidencia' (9) to OMIE", () => {
     const database = createDatabase();
 
     try {
@@ -1690,11 +1690,13 @@ describe("weighing operations", () => {
       });
 
       expect(buildOmieBillingJob(database, operation.id)!.payload.freightModalidade).toBe("9");
-      // As demais modalidades seguem o mapeamento modFrete da NF-e.
+      // Sem valor lancado, "com frete" (cif) tambem vai como sem incidencia: a Pedreira
+      // nao cobra nem responde pelo transporte.
       database
         .prepare("UPDATE weighing_operations SET freight_type = 'cif' WHERE id = ?")
         .run(operation.id);
-      expect(buildOmieBillingJob(database, operation.id)!.payload.freightModalidade).toBe("0");
+      expect(buildOmieBillingJob(database, operation.id)!.payload.freightModalidade).toBe("9");
+      // O transporte proprio legado mantem o codigo modFrete dele (veiculo_proprio "S").
       database
         .prepare("UPDATE weighing_operations SET freight_type = 'own_recipient' WHERE id = ?")
         .run(operation.id);
