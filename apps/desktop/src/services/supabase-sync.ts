@@ -3492,12 +3492,16 @@ export async function pushOmieCarriersToCloud(
           body: {
             deviceId: settings.deviceId,
             deviceToken: settings.deviceToken,
-            action: "push_customer",
+            // Transportadora vai pela acao propria: o `push_customer` monta o cadastro com
+            // a tag "cliente" (e o que ele faz por definicao), entao a transportadora
+            // enviada por ele nascia marcada tambem como cliente no OMIE e voltava na
+            // sincronizacao seguinte para a lista de clientes da balanca. O `push_carrier`
+            // grava so a tag "transportadora".
+            action: "push_carrier",
             payload: {
               localCustomerId: `carrier:${carrier.id}`,
               omieCustomerId: carrier.omie_customer_id ?? undefined,
-              razaoSocial: carrier.name,
-              nomeFantasia: carrier.name,
+              name: carrier.name,
               cnpjCpf: carrier.document ?? undefined,
               email: carrier.email ?? undefined,
               telefone1Ddd: phoneMatch?.[1] ?? undefined,
@@ -3507,8 +3511,7 @@ export async function pushOmieCarriersToCloud(
               addressNumber: carrier.address_number ?? undefined,
               neighborhood: carrier.neighborhood ?? undefined,
               city: carrier.city ?? undefined,
-              state: carrier.state ?? undefined,
-              tags: ["transportadora"]
+              state: carrier.state ?? undefined
             }
           }
         }
