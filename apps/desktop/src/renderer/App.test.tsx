@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { isFreightModalityWithFreight, resolveFreightModality } from "../services/freight";
 import {
   App,
   appendAvailableId,
@@ -17,6 +18,7 @@ import {
   omieQueueStatusLabel,
   previousDayIso,
   readStoredThemeMode,
+  resolveAutoFilledFreightValueOnInvoice,
   resolveCarrierPrefill,
   shouldLinkCreatedDriverToCarrier
 } from "./App";
@@ -120,6 +122,41 @@ describe("App", () => {
 
     expect(freight?.showOnReceipt).toBe(false);
     expect(freight?.rule.baseValueCents).toBe(10_000);
+  });
+
+  it("keeps the operator's coupon choice when the customer freight is auto-filled", () => {
+    // O operador desmarcou "o valor do frete aparece na nota e no cupom": o
+    // preenchimento automatico do cliente nao pode remarcar a caixa sozinho.
+    expect(resolveAutoFilledFreightValueOnInvoice(false, true)).toBe(false);
+    expect(resolveAutoFilledFreightValueOnInvoice(true, false)).toBe(true);
+    // Sem escolha do operador, vale a memoria do cliente (e "sim" quando ela nao existe).
+    expect(resolveAutoFilledFreightValueOnInvoice(null, false)).toBe(false);
+    expect(resolveAutoFilledFreightValueOnInvoice(null, true)).toBe(true);
+    expect(resolveAutoFilledFreightValueOnInvoice(null, undefined)).toBe(true);
+  });
+
+  it("keeps the freight group when the coupon checkbox is toggled", () => {
+    // A caixa so troca a situacao DENTRO do grupo; o grupo e o que dispara o
+    // preenchimento automatico, entao ele nao pode mudar ao marcar/desmarcar.
+    const withFreight = applyFreightGroupToEntryForm(
+      createWeighingForm() as Parameters<typeof applyFreightGroupToEntryForm>[0],
+      "with_freight"
+    );
+    expect(withFreight.freightModality).toBe("fob");
+    expect(
+      isFreightModalityWithFreight(
+        resolveFreightModality({ group: "with_freight", valueOnInvoice: false })
+      )
+    ).toBe(true);
+
+    // "Sem frete": desmarcar o transportador continua no mesmo grupo (situacao 4).
+    const withoutFreight = applyFreightGroupToEntryForm(withFreight, "without_freight");
+    expect(withoutFreight.freightModality).toBe("third_party");
+    expect(
+      isFreightModalityWithFreight(
+        resolveFreightModality({ group: "without_freight", carrierOnInvoice: false })
+      )
+    ).toBe(false);
   });
 
   it("keeps carrier, plate and driver available in any freight type", () => {

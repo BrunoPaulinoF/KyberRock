@@ -5433,6 +5433,20 @@ export function isFreightCharged(
   return form.chargeFreight && getFreightModalityInfo(form.freightModality).supportsCharge;
 }
 
+/**
+ * Se o valor do frete sai na nota/cupom quando o preenchimento automatico do cliente
+ * roda. A caixa "o valor do frete aparece na nota e no cupom" e uma escolha do operador
+ * para ESTA entrada: depois de ele desmarcar, a memoria do cliente nao pode religa-la —
+ * era assim que a caixa voltava sozinha e a operacao fechava com o frete no cupom.
+ */
+export function resolveAutoFilledFreightValueOnInvoice(
+  operatorChoice: boolean | null,
+  rememberedShowOnReceipt: boolean | null | undefined
+): boolean {
+  if (operatorChoice !== null) return operatorChoice;
+  return rememberedShowOnReceipt !== false;
+}
+
 export function buildFreightInput(form: WeighingFormState): OperationFreightInput | null {
   if (!isFreightCharged(form)) return null;
   const distanceKm = parsePositiveNumber(form.freightDistanceKm);
@@ -6099,6 +6113,11 @@ function WeighingForm({
   // que o preenchimento automatico volte a ligar o frete depois de o operador escolher
   // "sem frete" na mesma entrada.
   const lastFreightPullKeyRef = useRef("");
+  // Escolha do operador na caixa "o valor do frete aparece na nota e no cupom" desta
+  // entrada (null = ainda nao mexeu). Enquanto ela existe, o preenchimento automatico
+  // nao pode reverte-la. Zera na troca de cliente/produto e na troca do tipo de frete,
+  // quando o padrao do botao volta a valer.
+  const freightInvoiceChoiceRef = useRef<boolean | null>(null);
   const [driverRefreshKey, setDriverRefreshKey] = useState(0);
   const [customerRefreshKey, setCustomerRefreshKey] = useState(0);
   const [carrierRefreshKey, setCarrierRefreshKey] = useState(0);
@@ -6391,6 +6410,12 @@ function WeighingForm({
   // primeiro o que esta configurado no cadastro dele, senao as ULTIMAS configuracoes que
   // ele usou numa venda igual — calculo, valores, distancia, destino e se o valor sai no
   // cupom. Roda de novo ao voltar para "com frete", para reabastecer os campos.
+  //
+  // A dependencia e o GRUPO do frete, nunca a modalidade: alternar entre "valor na nota"
+  // (fob) e "valor so no sistema" (cif) e a mesma situacao para este efeito, e re-rodar
+  // nessa troca fazia o preenchimento remarcar a caixa que o operador tinha acabado de
+  // desmarcar — a entrada era gravada como "valor na nota" e o frete saia no cupom.
+  const freightHasValue = isFreightModalityWithFreight(form.freightModality);
   useEffect(() => {
     if (!desktopApi || !form.customerId || !form.productId) return;
 
@@ -6401,8 +6426,11 @@ function WeighingForm({
     const isNewPair = lastFreightPullKeyRef.current !== pairKey;
     // "Sem frete" escolhido de proposito nao pode ser desfeito pelo preenchimento
     // automatico: fora a troca de cliente/produto, so reabastece quando ha frete.
-    if (!isNewPair && !isFreightModalityWithFreight(form.freightModality)) return;
+    if (!isNewPair && !freightHasValue) return;
     lastFreightPullKeyRef.current = pairKey;
+    // Outro cliente/produto e outro frete: a memoria dele volta a definir a caixa.
+    if (isNewPair) freightInvoiceChoiceRef.current = null;
+    const operatorChoice = freightInvoiceChoiceRef.current;
     let canceled = false;
 
     async function fetchCustomerFreight(): Promise<void> {
@@ -6415,8 +6443,11 @@ function WeighingForm({
         if (canceled || !rule) return;
         setForm((prev) => {
           // A situacao volta como o cliente usou da ultima vez: valor na nota (1) ou
-          // valor so no sistema (2).
-          const valueOnInvoice = rule.showOnReceipt ?? true;
+          // valor so no sistema (2) — a menos que o operador ja tenha escolhido.
+          const valueOnInvoice = resolveAutoFilledFreightValueOnInvoice(
+            operatorChoice,
+            rule.showOnReceipt
+          );
           return {
             ...prev,
             freightModality: resolveFreightModality({ group: "with_freight", valueOnInvoice }),
@@ -6441,7 +6472,7 @@ function WeighingForm({
     return () => {
       canceled = true;
     };
-  }, [desktopApi, form.customerId, form.productId, form.freightModality]);
+  }, [desktopApi, form.customerId, form.productId, freightHasValue]);
 
   return (
     <section style={styles.entryShell}>
@@ -6784,7 +6815,12 @@ function WeighingForm({
               <span style={{ fontWeight: 600, fontSize: "13px" }}>Tipo de frete</span>
               <FreightTypeChoice
                 selected={form.freightModality}
-                onSelect={(group) => setForm((prev) => applyFreightGroupToEntryForm(prev, group))}
+                onSelect={(group) => {
+                  // O botao do tipo de frete traz de volta o padrao do grupo: a escolha
+                  // anterior na caixa nao pode desmarcar sozinha o que ele acabou de ligar.
+                  freightInvoiceChoiceRef.current = null;
+                  setForm((prev) => applyFreightGroupToEntryForm(prev, group));
+                }}
               />
               <span style={styles.helperText}>
                 {getFreightModalityInfo(form.freightModality).description}
@@ -6792,14 +6828,19 @@ function WeighingForm({
             </div>
             <FreightInvoiceChoice
               modality={form.freightModality}
-              onChange={(modality) =>
+              onChange={(modality) => {
+                // Marcar/desmarcar a caixa e uma escolha explicita do operador para esta
+                // entrada; o preenchimento automatico do cliente passa a respeita-la.
+                if (isFreightModalityWithFreight(modality)) {
+                  freightInvoiceChoiceRef.current = freightValueGoesToInvoice(modality);
+                }
                 setForm((prev) => ({
                   ...prev,
                   freightModality: modality,
                   chargeFreight: isFreightModalityWithFreight(modality),
                   freightShowOnReceipt: freightValueGoesToInvoice(modality)
-                }))
-              }
+                }));
+              }}
             />
             {isFreightModalityWithFreight(form.freightModality) ? (
               <>
