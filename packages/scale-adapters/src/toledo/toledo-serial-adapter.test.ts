@@ -185,6 +185,69 @@ describe("createToledoSerialAdapter", () => {
     }
   });
 
+  it("nunca desiste quando maxReconnectAttempts e infinito", async () => {
+    vi.useFakeTimers();
+    try {
+      const { adapter, transports, openFailures } = createAdapterWithTransports();
+      // A balanca some por muito mais tempo do que o limite antigo de 10 tentativas
+      // cobria. Antes o adaptador entrava em "error" definitivo e so um clique em
+      // "Reconectar balanca" o trazia de volta — todo dia, na abertura da pedreira.
+      for (let i = 0; i < 40; i++) openFailures.push(new Error("porta indisponivel"));
+
+      await expect(
+        adapter.connect({
+          path: "COM3",
+          baudRate: 9600,
+          reconnectIntervalMs: 5000,
+          maxReconnectAttempts: Number.POSITIVE_INFINITY,
+          reconnectBackoffMaxMs: 30_000
+        })
+      ).rejects.toThrow("porta indisponivel");
+
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      const tentativasDurantePane = transports.length;
+      expect(tentativasDurantePane).toBeGreaterThan(10);
+      expect(adapter.getStatus().state).toBe("connecting");
+
+      // A balanca volta: a proxima tentativa agendada reconecta sem ninguem clicar.
+      openFailures.length = 0;
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(transports.length).toBeGreaterThan(tentativasDurantePane);
+      expect(adapter.getStatus().state).toBe("connected");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("espaca as tentativas ate o teto durante uma queda longa", async () => {
+    vi.useFakeTimers();
+    try {
+      const { adapter, transports, openFailures } = createAdapterWithTransports();
+      for (let i = 0; i < 40; i++) openFailures.push(new Error("porta indisponivel"));
+
+      await expect(
+        adapter.connect({
+          path: "COM3",
+          baudRate: 9600,
+          reconnectIntervalMs: 5000,
+          maxReconnectAttempts: Number.POSITIVE_INFINITY,
+          reconnectBackoffMaxMs: 30_000
+        })
+      ).rejects.toThrow();
+
+      // 5s + 10s + 20s = 35s cobre exatamente 3 reagendamentos apos a inicial.
+      await vi.advanceTimersByTimeAsync(35_000);
+      expect(transports.length).toBe(4);
+
+      // Sem backoff seriam 12 tentativas nesse mesmo minuto; com o teto de 30s, 2.
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(transports.length).toBe(6);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("descarta o peso da sessao anterior quando a porta fecha", async () => {
     vi.useFakeTimers();
     try {
