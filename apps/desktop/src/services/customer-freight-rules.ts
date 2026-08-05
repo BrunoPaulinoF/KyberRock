@@ -334,8 +334,25 @@ function buildRulePayload(input: {
   }
 
   const previous = modalities[input.modality];
-  // A memoria da ultima venda nunca sobrepoe o que foi configurado no cadastro.
-  if (input.source === "last_used" && previous?.source === "manual") return null;
+  const base: FreightRule = input.current
+    ? stripModalities(input.current)
+    : { id: "default", name: "Frete do cliente", type: "per_ton", baseValueCents: 0, unit: "ton" };
+
+  // A memoria da ultima venda nunca sobrepoe o VALOR configurado no cadastro — mas o
+  // cadastro nao diz se esse valor sai na nota/cupom, isso e escolha da venda. Entao ela
+  // e memorizada por cima do valor do cadastro, que fica intacto: sem isso a proxima
+  // entrada do cliente voltava a marcar "valor na nota" mesmo apos ele desmarcar.
+  if (input.source === "last_used" && previous?.source === "manual") {
+    if (input.showOnReceipt === undefined || input.showOnReceipt === previous.showOnReceipt) {
+      return null;
+    }
+    modalities[input.modality] = {
+      ...previous,
+      showOnReceipt: input.showOnReceipt,
+      updatedAt: input.timestamp
+    };
+    return { ...base, modalities };
+  }
 
   modalities[input.modality] = {
     type: input.rule.type,
@@ -350,9 +367,6 @@ function buildRulePayload(input: {
     updatedAt: input.timestamp
   };
 
-  const base: FreightRule = input.current
-    ? stripModalities(input.current)
-    : { id: "default", name: "Frete do cliente", type: "per_ton", baseValueCents: 0, unit: "ton" };
   return { ...base, modalities };
 }
 

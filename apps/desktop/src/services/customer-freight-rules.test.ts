@@ -182,6 +182,32 @@ describe("frete do cliente por tipo de frete", () => {
     }
   });
 
+  it("memoriza a escolha de nao mostrar o frete no cupom mesmo com valor do cadastro", () => {
+    const database = createDatabase();
+    try {
+      // O cadastro define o VALOR do frete, mas nao diz se ele sai na nota/cupom.
+      setCustomerFreightRule(database, {
+        customerId: "customer-1",
+        modality: "cif",
+        rule: perTon(9000)
+      });
+      rememberCustomerFreightValue(database, {
+        customerId: "customer-1",
+        modality: "cif",
+        rule: perTon(9000),
+        showOnReceipt: false
+      });
+
+      const resolved = getCustomerFreightRuleForProduct(database, "customer-1", "product-1", "cif");
+      // O valor do cadastro continua mandando; so a escolha do cupom foi memorizada.
+      expect(resolved?.rule.baseValueCents).toBe(9000);
+      expect(resolved?.source).toBe("manual");
+      expect(resolved?.showOnReceipt).toBe(false);
+    } finally {
+      database.close();
+    }
+  });
+
   it("o valor do produto vence o valor padrao do cliente no mesmo tipo", () => {
     const database = createDatabase();
     try {
