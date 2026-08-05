@@ -41,7 +41,20 @@ export interface ScaleConnectionConfig {
 export const SCALE_CONNECTION_TUNING = {
   timeoutMs: 3000,
   reconnectIntervalMs: 5000,
-  maxReconnectAttempts: 10,
+  /**
+   * A balanca nunca desiste sozinha. Com o limite anterior de 10 tentativas, um
+   * indicador fora do ar por 50s (queda de energia, PC ligado antes da rede,
+   * indicador desligado no fim do expediente) deixava o app em erro definitivo:
+   * mesmo com a balanca de volta, so um clique em "Reconectar balanca" a trazia
+   * de volta — e era isso que a operacao via todo dia.
+   */
+  maxReconnectAttempts: Number.POSITIVE_INFINITY,
+  /**
+   * Teto do intervalo entre tentativas. Comeca em `reconnectIntervalMs` e dobra
+   * (5s, 10s, 20s, 30s, 30s...): queda curta se recupera em segundos e balanca
+   * desligada a noite toda nao vira uma tentativa a cada 5s ate de manha.
+   */
+  reconnectBackoffMaxMs: 30_000,
   /**
    * Silencio maximo tolerado com a conexao aberta. Passado disso a leitura vence,
    * a conexao e derrubada e a reconexao entra — em vez de a tela seguir exibindo

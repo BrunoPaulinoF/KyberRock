@@ -22,8 +22,19 @@ export interface ToledoTcpConfig {
   timeoutMs?: number;
   /** Intervalo entre tentativas de reconexao (ms). Padrao: 5000 */
   reconnectIntervalMs?: number;
-  /** Numero maximo de tentativas de reconexao. Padrao: 10 */
+  /**
+   * Numero maximo de tentativas de reconexao. Padrao: 10. Use
+   * `Number.POSITIVE_INFINITY` para nunca desistir — e o que a operacao precisa
+   * quando o indicador fica fora do ar (queda de energia, PC ligado antes da
+   * rede): desistindo, so um clique manual traz a balanca de volta.
+   */
   maxReconnectAttempts?: number;
+  /**
+   * Teto do intervalo entre tentativas (ms). Quando definido, o intervalo dobra a
+   * cada tentativa ate este limite, em vez de ficar fixo em `reconnectIntervalMs`.
+   * Omitido, o intervalo e constante — comportamento historico.
+   */
+  reconnectBackoffMaxMs?: number;
   /**
    * Silencio maximo tolerado com o socket aberto (ms). Padrao: 4000.
    * Indicadores em transmissao continua enviam varios quadros por segundo; passar
@@ -50,8 +61,16 @@ export interface ToledoSerialConfig {
   baudRate: number;
   /** Intervalo entre tentativas de reconexao (ms). Padrao: 5000 */
   reconnectIntervalMs?: number;
-  /** Numero maximo de tentativas de reconexao. Padrao: 10 */
+  /**
+   * Numero maximo de tentativas de reconexao. Padrao: 10.
+   * `Number.POSITIVE_INFINITY` para nunca desistir (ver `ToledoTcpConfig`).
+   */
   maxReconnectAttempts?: number;
+  /**
+   * Teto do intervalo entre tentativas (ms). Definido, o intervalo dobra a cada
+   * tentativa ate este limite; omitido, fica constante em `reconnectIntervalMs`.
+   */
+  reconnectBackoffMaxMs?: number;
   /** Silencio maximo tolerado com a porta aberta (ms). Padrao: 4000. */
   staleReadingMs?: number;
 }

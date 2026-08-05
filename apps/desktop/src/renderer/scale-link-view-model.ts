@@ -105,7 +105,11 @@ export function buildScaleLinkMessage(
     return "Reconectando a balanca...";
   }
 
-  if (status.state === "error" && status.errorMessage) {
+  // Qualquer estado, nao so `error`: desde que a reconexao deixou de desistir, uma
+  // balanca fora do ar fica indefinidamente em `connecting`, e prender o diagnostico
+  // ao estado `error` esconderia do operador justamente a causa da queda
+  // ("Timeout de conexao", "Porta COM3 nao encontrada", baud rate divergente).
+  if (status.errorMessage) {
     return status.errorMessage;
   }
 

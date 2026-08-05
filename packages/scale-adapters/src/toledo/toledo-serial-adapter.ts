@@ -1,3 +1,4 @@
+import { reconnectDelayMs } from "./reconnect-backoff.js";
 import { parseToledoLine } from "./toledo-protocol-parser.js";
 import { normalizeParsedReading } from "./toledo-reading.js";
 import type { ParsedToledoReading, ToledoSerialConfig } from "./toledo-types.js";
@@ -153,13 +154,16 @@ export function createToledoSerialAdapter(
     reconnectCount++;
     state = "connecting";
 
-    reconnectTimer = setTimeout(() => {
-      if (config) {
-        void attemptConnect(config).catch(() => {
-          // attemptConnect ja agenda a proxima tentativa em caso de falha
-        });
-      }
-    }, interval);
+    reconnectTimer = setTimeout(
+      () => {
+        if (config) {
+          void attemptConnect(config).catch(() => {
+            // attemptConnect ja agenda a proxima tentativa em caso de falha
+          });
+        }
+      },
+      reconnectDelayMs(reconnectCount, interval, config.reconnectBackoffMaxMs)
+    );
   }
 
   function handleChunk(chunk: Uint8Array): void {

@@ -1,6 +1,7 @@
 import { createConnection } from "node:net";
 import type { Socket } from "node:net";
 
+import { reconnectDelayMs } from "./reconnect-backoff.js";
 import { parseToledoLine } from "./toledo-protocol-parser.js";
 import { normalizeParsedReading } from "./toledo-reading.js";
 import type { ParsedToledoReading, ToledoTcpConfig } from "./toledo-types.js";
@@ -265,11 +266,14 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
     reconnectCount++;
     state = "connecting";
 
-    reconnectTimer = setTimeout(() => {
-      // `catch` obrigatorio: a rejeicao desta tentativa em segundo plano nao tem
-      // quem a aguarde, e sem tratamento virava unhandled rejection no processo main.
-      if (config) void attemptConnect(config).catch(() => undefined);
-    }, interval);
+    reconnectTimer = setTimeout(
+      () => {
+        // `catch` obrigatorio: a rejeicao desta tentativa em segundo plano nao tem
+        // quem a aguarde, e sem tratamento virava unhandled rejection no processo main.
+        if (config) void attemptConnect(config).catch(() => undefined);
+      },
+      reconnectDelayMs(reconnectCount, interval, config.reconnectBackoffMaxMs)
+    );
   }
 
   async function attemptConnect(cfg: ToledoTcpConfig): Promise<void> {

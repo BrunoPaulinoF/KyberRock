@@ -225,6 +225,68 @@ describe("toledo-tcp-adapter leitura vencida", () => {
   });
 });
 
+describe("toledo-tcp-adapter reconexao sem desistir", () => {
+  /** Espera uma condicao ficar verdadeira, com teto de tempo para nao travar a suite. */
+  async function waitFor(check: () => boolean, timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (check()) return true;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    return check();
+  }
+
+  it("continua tentando e reconecta sozinha quando o indicador volta ao ar", async () => {
+    // Caminho principal da operacao: balanca por IP. O indicador cai (queda de
+    // energia, PC ligado antes da rede) e volta minutos depois. Com o limite antigo
+    // de 10 tentativas o adaptador ja teria desistido em definitivo, e a balanca so
+    // voltaria com o operador clicando em "Reconectar balanca".
+    const idle = createServer();
+    await new Promise<void>((resolve) => idle.listen(0, "127.0.0.1", resolve));
+    const port = (idle.address() as AddressInfo).port;
+    // Libera a porta: as proximas conexoes sao recusadas, como um indicador fora do ar.
+    await new Promise<void>((resolve) => idle.close(() => resolve()));
+
+    const adapter = createToledoTcpAdapter();
+    await expect(
+      adapter.connect({
+        host: "127.0.0.1",
+        port,
+        timeoutMs: 200,
+        reconnectIntervalMs: 30,
+        reconnectBackoffMaxMs: 60,
+        maxReconnectAttempts: Number.POSITIVE_INFINITY,
+        autoPoll: false
+      })
+    ).rejects.toThrow();
+
+    // Passa folgadamente do ponto em que o limite antigo (10) teria zerado o app.
+    const passouDoLimiteAntigo = await waitFor(
+      () => adapter.getStatus().reconnectAttempts > 12,
+      4000
+    );
+    expect(passouDoLimiteAntigo).toBe(true);
+    expect(adapter.getStatus().state).not.toBe("error");
+
+    // O indicador volta ao ar, sem ninguem tocar no app.
+    const scale = createServer((socket) => {
+      const interval = setInterval(() => socket.write("       000015200kg\r\n"), 30);
+      socket.on("close", () => clearInterval(interval));
+      socket.on("error", () => clearInterval(interval));
+    });
+    await new Promise<void>((resolve) => scale.listen(port, "127.0.0.1", resolve));
+
+    const voltou = await waitFor(() => adapter.getStatus().state === "connected", 4000);
+    expect(voltou).toBe(true);
+
+    const leituraVoltou = await waitFor(() => adapter.getStatus().lastReading !== null, 2000);
+    expect(leituraVoltou).toBe(true);
+
+    adapter.disconnect();
+    await new Promise<void>((resolve) => scale.close(() => resolve()));
+  }, 20_000);
+});
+
 describe("toledo-tcp-adapter conexao derrubada por erro", () => {
   /** Servidor que transmite quadros e depois derruba a conexao com RST. */
   async function startResettingServer(): Promise<{

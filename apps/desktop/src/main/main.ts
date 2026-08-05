@@ -142,13 +142,17 @@ async function createMainWindow(): Promise<void> {
   // Auto-connect scale on startup if configured
   try {
     const connected = await runtime.tryAutoConnectScale();
-    if (connected) {
-      attachScaleReadingForwarder();
-      writeStartupLog("scale:auto-connected");
-    }
+    writeStartupLog(connected ? "scale:auto-connected" : "scale:auto-connect:failed");
   } catch {
     writeStartupLog("scale:auto-connect:skipped");
   }
+  // Fora do `if (connected)` de proposito: quando o indicador ainda nao responde no
+  // boot (PC ligado antes da rede), o adaptador reconecta sozinho minutos depois, e
+  // antes disso o forwarder nunca chegava a ser registrado — a balanca ficava
+  // conectada e o peso ao vivo parado em "-- kg". Registrar aqui e seguro porque
+  // `connectScale` ja deixou o adaptador certo ativo, mesmo tendo falhado a conexao,
+  // e `onScaleReading` e idempotente.
+  attachScaleReadingForwarder();
 
   const devServerUrl = process.env.KYBERROCK_DESKTOP_DEV_SERVER_URL;
 

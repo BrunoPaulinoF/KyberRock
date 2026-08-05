@@ -10962,6 +10962,9 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
 
   const connectedRef = useRef(connected);
   connectedRef.current = connected;
+  // Mesma evidencia usada nas telas de pesagem: leitura ao vivo recente prova que a
+  // balanca esta respondendo, mesmo que o adaptador esteja no meio de uma reconexao.
+  const lastScaleReadingAtRef = useRef<number | null>(null);
 
   const isSerialType = connectionType === "usb" || connectionType === "com";
 
@@ -10969,6 +10972,7 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
     if (!desktopApi) return;
 
     const handler = (r: { weightKg: number; stable: boolean }) => {
+      lastScaleReadingAtRef.current = Date.now();
       setReading(r);
       const next = [...readingsRef.current, { ...r, at: Date.now() }].slice(-100);
       readingsRef.current = next;
@@ -11030,22 +11034,35 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   }, [desktopApi]);
 
   useEffect(() => {
-    // Poll status every 3 seconds
-    if (!connected || !desktopApi) return;
+    // Sonda o status a cada 3s SEMPRE. Antes o efeito so rodava com `connected`
+    // ligado e se desligava sozinho ao ver a primeira queda (`setConnected(false)`
+    // derrubava o proprio intervalo): a tela travava em "Desconectado" e nunca mais
+    // voltava sozinha, mesmo com o adaptador ja reconectado — so o botao manual
+    // recuperava. Agora a tela reflete o adaptador nos dois sentidos.
+    if (!desktopApi) return;
 
     const interval = setInterval(async () => {
       try {
         const s = await desktopApi.scaleGetStatus();
-        if (s.state === "disconnected" || s.state === "error") {
-          setConnected(false);
-          setStatus(s.errorMessage ?? "Desconectado");
-        } else if (s.state === "connected") {
-          // Tela de Configuracoes > Balanca: distingue socket aberto de balanca lendo.
-          // Antes ela exibia "Conectado" mesmo sem quadro nenhum chegando, enquanto a
-          // Nova Entrada — que exige leitura recente — pedia para reconectar.
+        // Mesma regra das telas de pesagem: leitura ao vivo recente conta como
+        // balanca utilizavel, para uma reconexao normal nao piscar o painel.
+        const link = buildScaleLinkViewModel({
+          state: s.state,
+          lastReadingAt: lastScaleReadingAtRef.current,
+          degradedSince: null,
+          now: Date.now()
+        });
+        setConnected(link.usable);
+
+        if (s.state === "connected") {
+          // Distingue socket aberto de balanca lendo: antes a tela exibia "Conectado"
+          // mesmo sem quadro nenhum chegando, enquanto a Nova Entrada — que exige
+          // leitura recente — pedia para reconectar.
           setStatus(s.stale ? "Conectado, sem leitura do indicador" : "Conectado");
-        } else {
+        } else if (s.state === "connecting") {
           setStatus("Conectando...");
+        } else {
+          setStatus(s.errorMessage ?? "Desconectado");
         }
         if (s.errorMessage) setError(s.errorMessage);
       } catch {
@@ -11054,7 +11071,7 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [connected, desktopApi]);
+  }, [desktopApi]);
 
   // Atualiza a lista de portas ao entrar em um tipo serial (USB/COM)
   useEffect(() => {
@@ -11143,6 +11160,10 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
     await desktopApi.scaleDisconnect();
     setConnected(false);
     setStatus("Desconectado");
+    // Zera a prova de leitura ao vivo junto: sem isto a sondagem veria a leitura de
+    // segundos atras, concluiria que a balanca esta utilizavel e desfaria na tela a
+    // desconexao que o operador acabou de pedir.
+    lastScaleReadingAtRef.current = null;
     setReading(null);
     readingsRef.current = [];
     setStats({ count: 0, min: 0, max: 0, avg: 0, variation: 0, stableCount: 0, unstableCount: 0 });

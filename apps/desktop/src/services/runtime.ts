@@ -1703,6 +1703,7 @@ export class DesktopRuntime {
         baudRate: scaleConfig.connection.baudRate,
         reconnectIntervalMs: SCALE_CONNECTION_TUNING.reconnectIntervalMs,
         maxReconnectAttempts: SCALE_CONNECTION_TUNING.maxReconnectAttempts,
+        reconnectBackoffMaxMs: SCALE_CONNECTION_TUNING.reconnectBackoffMaxMs,
         staleReadingMs: SCALE_CONNECTION_TUNING.staleReadingMs
       });
       this.activeScaleSessionKey = sessionKey;
@@ -1715,6 +1716,7 @@ export class DesktopRuntime {
       timeoutMs: SCALE_CONNECTION_TUNING.timeoutMs,
       reconnectIntervalMs: SCALE_CONNECTION_TUNING.reconnectIntervalMs,
       maxReconnectAttempts: SCALE_CONNECTION_TUNING.maxReconnectAttempts,
+      reconnectBackoffMaxMs: SCALE_CONNECTION_TUNING.reconnectBackoffMaxMs,
       staleReadingMs: SCALE_CONNECTION_TUNING.staleReadingMs
     });
     this.activeScaleSessionKey = sessionKey;
@@ -1834,6 +1836,9 @@ export class DesktopRuntime {
     this.cloudSyncScheduler = null;
     this.omieScheduler?.stop();
     this.omieScheduler = null;
+    // A reconexao da balanca nao desiste mais sozinha: sem encerrar o adaptador no
+    // fechamento, o timer da proxima tentativa sobrevive ao pedido de saida.
+    this.disconnectScale();
     this.database.close();
   }
 

@@ -135,4 +135,22 @@ describe("buildScaleLinkMessage", () => {
       })
     ).toBe("Falha ao abrir a porta COM3.");
   });
+
+  it("mostra o diagnostico mesmo com a reconexao ainda em curso", () => {
+    // A reconexao nao desiste mais, entao uma balanca fora do ar fica indefinidamente
+    // em "connecting": prender a mensagem ao estado "error" esconderia a causa.
+    expect(
+      buildScaleLinkMessage(down, {
+        state: "connecting",
+        stale: true,
+        errorMessage: "Timeout de conexao (3000ms)"
+      })
+    ).toBe("Timeout de conexao (3000ms)");
+  });
+
+  it("cai na mensagem generica quando o adaptador nao informa causa", () => {
+    expect(buildScaleLinkMessage(down, { state: "disconnected", stale: true })).toBe(
+      "Balanca desconectada"
+    );
+  });
 });
