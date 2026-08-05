@@ -10,6 +10,7 @@ import {
   assertDatabaseFileHealthy,
   createAutomaticBackup,
   exportManualBackup,
+  pruneOldBackups,
   restoreBackup,
   type BackupResult
 } from "./backup.js";
@@ -55,6 +56,7 @@ import {
   deleteOmieQueueJob,
   getSyncJobById,
   listOmieQueueItems,
+  pruneCompletedSyncJobs,
   resetOmieQueueJobForRetry,
   type OmieQueueItem
 } from "./sync-queue.js";
@@ -582,8 +584,39 @@ export class DesktopRuntime {
     });
 
     recordLastBackupAt(this.database, now);
+    this.runDatabaseMaintenance(now);
 
     return backup;
+  }
+
+  /**
+   * Manutencao diaria, executada logo APOS um backup bem-sucedido — nessa ordem de
+   * proposito: tudo que e podado aqui ja esta dentro do backup recem-criado.
+   *
+   * Best-effort inteira: manutencao nunca pode derrubar a rotina de backup nem uma
+   * operacao em andamento, entao cada etapa falha em silencio e tenta de novo amanha.
+   */
+  private runDatabaseMaintenance(now: Date = new Date()): void {
+    try {
+      pruneCompletedSyncJobs(this.database, { now });
+    } catch {
+      // proxima janela tenta de novo
+    }
+
+    try {
+      pruneOldBackups(this.paths.backupDirectory);
+    } catch {
+      // proxima janela tenta de novo
+    }
+
+    try {
+      // Reamostra as estatisticas que o planejador do SQLite usa para escolher indice.
+      // Sem isso, os indices novos (migracao 48) podem ser ignorados num banco que ja
+      // acumulou historico. `optimize` so faz o ANALYZE do que realmente mudou.
+      this.database.pragma("optimize");
+    } catch {
+      // proxima janela tenta de novo
+    }
   }
 
   async exportBackup(destinationPath: string): Promise<BackupResult> {

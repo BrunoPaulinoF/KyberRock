@@ -1697,5 +1697,39 @@ WHERE NOT EXISTS (
   WHERE pm.company_id = c.id AND pm.code = 'bonificacao' AND pm.deleted_at IS NULL
 );
 `
+  },
+  {
+    version: 48,
+    name: "operation_and_sync_queue_read_indexes",
+    sql: `
+-- As tres listagens da tela de operacoes (abertas, concluidas, canceladas) filtram por
+-- status + deleted_at IS NULL e ordenam por created_at/updated_at. Nenhum indice cobria
+-- esse recorte, entao cada leitura varria a tabela inteira -- e as tres rodam juntas a
+-- cada 15s no tick do multi-desktop. Indice PARCIAL porque "deleted_at IS NULL" e
+-- constante nas tres consultas: mantem o indice do tamanho do que esta vivo, nao do
+-- historico apagado. Sem DESC na definicao de proposito: o SQLite percorre o indice nos
+-- dois sentidos, entao um indice ASC ja serve o ORDER BY ... DESC das listagens.
+CREATE INDEX IF NOT EXISTS idx_weighing_operations_live_status_updated
+  ON weighing_operations(status, updated_at)
+  WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_weighing_operations_live_status_created
+  ON weighing_operations(status, created_at)
+  WHERE deleted_at IS NULL;
+
+-- listRunnableSyncJobs filtra "target = ? AND status IN (...) AND next_attempt_at <= ?".
+-- O indice existente (status, target, next_attempt_at) tem a coluna lider errada para
+-- esse acesso; este segue a ordem real do WHERE.
+CREATE INDEX IF NOT EXISTS idx_sync_queue_target_status_next_attempt
+  ON sync_queue(target, status, next_attempt_at);
+
+-- listOmieQueueItems (tela cloud) filtra target='omie' + status e ordena por created_at.
+CREATE INDEX IF NOT EXISTS idx_sync_queue_target_status_created
+  ON sync_queue(target, status, created_at);
+
+-- Poda dos jobs ja concluidos (pruneCompletedSyncJobs), que roda junto do backup diario.
+CREATE INDEX IF NOT EXISTS idx_sync_queue_status_updated
+  ON sync_queue(status, updated_at);
+`
   }
 ];

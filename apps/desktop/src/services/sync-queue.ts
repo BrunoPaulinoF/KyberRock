@@ -280,6 +280,35 @@ export function markSyncJobDone(
     .run(now.toISOString(), id);
 }
 
+/**
+ * Retencao dos jobs ja concluidos. 90 dias e folgado de proposito: apagar um job 'done'
+ * libera a chave de idempotencia dele, e a folga garante que isso so aconteca muito
+ * depois de a operacao correspondente ter fechado o ciclo (nuvem + OMIE).
+ */
+export const SYNC_QUEUE_DONE_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+
+/**
+ * Remove da fila os jobs 'done' mais antigos que a retencao. A tabela nunca era limpa e
+ * crescia para sempre (~3 jobs por operacao, ~100 operacoes/dia).
+ *
+ * Apaga SOMENTE 'done'. Pendentes, falhos e dead_letter ficam: sao a trilha de auditoria
+ * e exatamente o que a tela cloud lista para o operador reprocessar.
+ */
+export function pruneCompletedSyncJobs(
+  database: DesktopDatabase,
+  options: { now?: Date; retentionMs?: number } = {}
+): number {
+  const now = options.now ?? new Date();
+  const retentionMs = Math.max(0, options.retentionMs ?? SYNC_QUEUE_DONE_RETENTION_MS);
+  const cutoff = new Date(now.getTime() - retentionMs).toISOString();
+
+  const result = database
+    .prepare("DELETE FROM sync_queue WHERE status = 'done' AND updated_at < ?")
+    .run(cutoff);
+
+  return result.changes;
+}
+
 // Sentinela lexicograficamente maior que qualquer ISO real: o loop batch
 // (listRunnableSyncJobs filtra next_attempt_at <= now) nunca repega o job, mas
 // processFiscalBillingNow (que so filtra por status) ainda consegue re-executa-lo.
@@ -306,14 +335,52 @@ export function markSyncJobBlocked(
     .run(BLOCKED_NEXT_ATTEMPT_AT, sanitizeErrorMessage(errorMessage), now.toISOString(), id);
 }
 
+/** Primeiro atraso entre tentativas da fila; tambem o piso do backoff. */
+export const SYNC_RETRY_BASE_MS = 60_000;
+/**
+ * Teto do backoff. Sem teto, a 10a tentativa cairia a ~8h da falha e o operador veria a
+ * fila "parada"; com teto de 15 min ela continua tentando num ritmo que ele reconhece.
+ */
+export const SYNC_RETRY_MAX_MS = 15 * 60_000;
+/** Jitter aplicado ao atraso (+/- 20%), para as balancas da mesma pedreira nao repetirem juntas. */
+export const SYNC_RETRY_JITTER_RATIO = 0.2;
+
+/**
+ * Atraso ate a proxima tentativa: dobra a cada tentativa ate o teto, com jitter.
+ *
+ * O atraso fixo de 60s anterior gastava as 10 tentativas em 10 minutos — uma queda do
+ * OMIE mais longa que isso mandava para dead_letter um job que so precisava esperar, e
+ * cada um deles exige um clique do operador na tela cloud para voltar. Com backoff, a
+ * mesma janela de 10 tentativas cobre ~2h de indisponibilidade.
+ */
+export function computeSyncRetryDelayMs(
+  attemptCount: number,
+  options: { baseMs?: number; maxMs?: number; random?: () => number } = {}
+): number {
+  const baseMs = options.baseMs ?? SYNC_RETRY_BASE_MS;
+  const maxMs = options.maxMs ?? SYNC_RETRY_MAX_MS;
+  const random = options.random ?? Math.random;
+  // Expoente limitado antes da potenciacao: 2 ** 1024 e Infinity, e um attemptCount
+  // corrompido no banco nao pode virar um next_attempt_at invalido.
+  const exponent = Math.min(Math.max(attemptCount - 1, 0), 30);
+  const delayMs = Math.min(maxMs, baseMs * 2 ** exponent);
+  const jitterMs = delayMs * SYNC_RETRY_JITTER_RATIO * (random() * 2 - 1);
+
+  return Math.max(1_000, Math.round(delayMs + jitterMs));
+}
+
 export function markSyncJobFailed(
   database: DesktopDatabase,
   id: string,
   errorMessage: string,
-  options: { now?: Date; retryAfterMs?: number; deadLetterAfterAttempts?: number } = {}
+  options: {
+    now?: Date;
+    retryAfterMs?: number;
+    deadLetterAfterAttempts?: number;
+    random?: () => number;
+  } = {}
 ): void {
   const now = options.now ?? new Date();
-  const retryAfterMs = options.retryAfterMs ?? 60_000;
   const deadLetterAfterAttempts = options.deadLetterAfterAttempts ?? 10;
   const current = getSyncJobById(database, id);
 
@@ -322,6 +389,10 @@ export function markSyncJobFailed(
   }
 
   const attemptCount = current.attemptCount + 1;
+  // Um retryAfterMs explicito continua mandando (o chamador sabe algo que a formula nao
+  // sabe, ex.: o Retry-After devolvido pelo OMIE).
+  const retryAfterMs =
+    options.retryAfterMs ?? computeSyncRetryDelayMs(attemptCount, { random: options.random });
   const nextStatus: SyncQueueStatus =
     attemptCount >= deadLetterAfterAttempts ? "dead_letter" : "failed";
   const nextAttemptAt = new Date(now.getTime() + retryAfterMs).toISOString();
