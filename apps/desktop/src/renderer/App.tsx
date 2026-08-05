@@ -12906,6 +12906,13 @@ const styles = {
     justifyContent: "center",
     gap: "8px"
   },
+  /**
+   * O painel de operacoes ocupa exatamente a altura livre da tela e nunca mais que
+   * isso: e ele quem define o unico ponto de rolagem da lista (a caixa da tabela).
+   * Sem `flex: 1` + `overflow: hidden`, o painel crescia junto com a lista, empurrava
+   * a coluna de conteudo e a tela ganhava uma segunda barra de rolagem — com a borda
+   * de baixo do card fora do campo de visao, as ultimas linhas pareciam escapar dele.
+   */
   operationsPanel: {
     marginTop: 0,
     padding: "14px",
@@ -12913,7 +12920,11 @@ const styles = {
     background: "var(--kr-surface)",
     border: "1px solid var(--kr-border)",
     boxShadow: "var(--kr-shadow)",
-    minHeight: 0
+    display: "flex",
+    flexDirection: "column" as const,
+    flex: 1,
+    minHeight: 0,
+    overflow: "hidden" as const
   },
   sectionTitleRow: {
     display: "flex",
@@ -12954,10 +12965,20 @@ const styles = {
     gap: "6px",
     alignItems: "center"
   },
+  /**
+   * Caixa rolante da lista. A altura vem do espaco que sobra no painel, nao de uma
+   * conta fixa sobre a altura da janela: com `calc(100vh - 230px)` a caixa ignorava
+   * o que estivesse acima dela (filtros em duas linhas, aviso de pendencia no OMIE,
+   * legenda de cores com muitos computadores) e terminava abaixo do fim da tela: as
+   * ultimas linhas ficavam fora do card e a tela ganhava uma segunda rolagem.
+   * `minHeight: 0` e o que permite a caixa encolher ate o espaco disponivel — sem
+   * ele a lista voltaria a empurrar o card para fora da tela.
+   */
   operationsTable: {
     overflowX: "auto" as const,
     overflowY: "auto" as const,
-    maxHeight: "calc(100vh - 230px)",
+    flex: 1,
+    minHeight: 0,
     border: "1px solid var(--kr-border)",
     borderRadius: "14px"
   },
