@@ -11,6 +11,7 @@ import {
   syncOperationToSupabase
 } from "./supabase-sync";
 import { listUnitDevices, upsertUnitDevices } from "./unit-devices";
+import { getWalletReport, reopenWalletOperations, settleWalletOperations } from "./wallet";
 import {
   createSimulatedWeighingOperation,
   listCanceledWeighingOperations,
@@ -352,6 +353,128 @@ describe("multi-desktop na mesma pedreira", () => {
       expect(listOpenWeighingOperations(database)).toHaveLength(0);
       expect(listClosedWeighingOperations(database).map((op) => op.id)).toContain("op-to-close");
       expect(listCanceledWeighingOperations(database).map((op) => op.id)).toContain("op-to-cancel");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("carteira: a venda e o fechamento de uma balanca chegam na outra", async () => {
+    // A carteira e da pedreira, nao do computador: a venda em carteira feita na
+    // balanca A e o fechamento lancado nela tem de aparecer na balanca B.
+    const machineA = createMachine("desktop-a");
+    const machineB = createMachine("desktop-b");
+
+    try {
+      const identityA = readIdentity(machineA);
+      const identityB = readIdentity(machineB);
+      for (const database of [machineA, machineB]) {
+        insertWalletPaymentMethods(database);
+        upsertUnitDevices(database, readIdentity(database), [
+          { id: "desktop-a", name: "Balanca 1", color: "#2563eb", is_active: true },
+          { id: "desktop-b", name: "Balanca 2", color: "#ea580c", is_active: true }
+        ]);
+      }
+      insertOperation(machineA, {
+        id: "op-wallet",
+        deviceId: "desktop-a",
+        status: "closed_local",
+        updatedAt: "2026-07-22T12:00:00.000Z"
+      });
+      machineA
+        .prepare(
+          "UPDATE weighing_operations SET payment_method_id = 'pm-wallet', total_cents = 50000 WHERE id = ?"
+        )
+        .run("op-wallet");
+
+      // A venda em aberto ja aparece na carteira da outra balanca.
+      await syncOperationToSupabase(machineA, "op-wallet", identityA);
+      await pullPushedOperation(machineB, identityB);
+      const openOnB = getWalletReport(machineB, { status: "open" });
+      expect(openOnB.summary.openCount).toBe(1);
+      expect(openOnB.summary.openTotalCents).toBe(50_000);
+
+      // Fechamento lancado na balanca A: a B passa a ver a venda como fechada.
+      expect(
+        settleWalletOperations(
+          machineA,
+          { operationIds: ["op-wallet"], settlementMethodId: "pm-pix", dueDate: "2026-08-10" },
+          new Date("2026-07-22T13:00:00.000Z")
+        )
+      ).toBe(1);
+      await syncOperationToSupabase(machineA, "op-wallet", identityA);
+      await pullPushedOperation(machineB, identityB);
+
+      const settledOnB = getWalletReport(machineB, { status: "settled" });
+      expect(settledOnB.summary.settledCount).toBe(1);
+      const operation = settledOnB.groups[0]?.operations[0];
+      expect(operation?.settlementMethodName).toBe("PIX da Pedreira");
+      expect(operation?.settlementDueDate).toBe("2026-08-10");
+      expect(operation?.settledAt).not.toBeNull();
+      expect(getWalletReport(machineB, { status: "open" }).summary.openCount).toBe(0);
+
+      // Reabertura na balanca A tambem viaja: o nulo e informacao, nao ausencia.
+      expect(
+        reopenWalletOperations(machineA, ["op-wallet"], new Date("2026-07-22T14:00:00.000Z"))
+      ).toBe(1);
+      await syncOperationToSupabase(machineA, "op-wallet", identityA);
+      await pullPushedOperation(machineB, identityB);
+      expect(getWalletReport(machineB, { status: "open" }).summary.openCount).toBe(1);
+      expect(getWalletReport(machineB, { status: "settled" }).summary.settledCount).toBe(0);
+    } finally {
+      machineA.close();
+      machineB.close();
+    }
+  });
+
+  it("carteira: projecao antiga da nuvem nao apaga o fechamento desta maquina", async () => {
+    // Enquanto a migracao da nuvem nao roda, a operacao volta do pull SEM as colunas
+    // da carteira. Sobrescrever com nulo apagaria o fechamento que esta maquina
+    // acabou de lancar — o valor local e o unico que existe.
+    const database = createMachine("desktop-a");
+
+    try {
+      const identity = readIdentity(database);
+      insertWalletPaymentMethods(database);
+      insertOperation(database, {
+        id: "op-wallet",
+        deviceId: "desktop-a",
+        status: "closed_local",
+        updatedAt: "2026-07-22T12:00:00.000Z"
+      });
+      database
+        .prepare(
+          "UPDATE weighing_operations SET payment_method_id = 'pm-wallet', total_cents = 30000 WHERE id = ?"
+        )
+        .run("op-wallet");
+      settleWalletOperations(
+        database,
+        { operationIds: ["op-wallet"], settlementMethodId: "pm-pix" },
+        new Date("2026-07-22T13:00:00.000Z")
+      );
+
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          operations: [
+            {
+              id: "op-wallet",
+              company_id: "company-1",
+              unit_id: "unit-1",
+              device_id: "desktop-a",
+              status: "closed_local",
+              operation_type: "invoice",
+              total_cents: 30_000,
+              created_at: "2026-07-22T11:00:00.000Z",
+              updated_at: "2026-07-22T13:30:00.000Z"
+            }
+          ]
+        },
+        error: null
+      });
+      await pullDesktopDataFromCloud(database, identity);
+
+      const report = getWalletReport(database, { status: "settled" });
+      expect(report.summary.settledCount).toBe(1);
+      expect(report.groups[0]?.operations[0]?.settlementMethodName).toBe("PIX da Pedreira");
     } finally {
       database.close();
     }
@@ -797,6 +920,18 @@ function insertCadastro(database: DesktopDatabase): void {
   product.run("prod-2", "prod-2", "Po de Pedra", at, at);
   carrier.run("carr-1", "Transportadora Um", at, at);
   carrier.run("carr-2", "Transportadora Dois", at, at);
+}
+
+/** Formas de pagamento compartilhadas: uma "em carteira" e uma de recebimento. */
+function insertWalletPaymentMethods(database: DesktopDatabase): void {
+  const at = "2026-07-22T10:00:00.000Z";
+  const method = database.prepare(
+    `INSERT INTO payment_methods (id, company_id, code, name, alias, is_wallet, is_active, created_at, updated_at)
+     VALUES (?, 'company-1', ?, ?, ?, ?, 1, ?, ?)`
+  );
+  method.run("pm-wallet", "CARTEIRA", "Em carteira", null, 1, at, at);
+  // Apelido dado pela pedreira: e o rotulo que a Carteira exibe nas duas balancas.
+  method.run("pm-pix", "PIX", "PIX", "PIX da Pedreira", 0, at, at);
 }
 
 /** Devolve para a outra maquina exatamente o payload que o ultimo push enviou. */
