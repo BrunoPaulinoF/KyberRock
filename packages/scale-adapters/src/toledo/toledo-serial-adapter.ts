@@ -171,6 +171,10 @@ export function createToledoSerialAdapter(
     // Registrado antes do parser: numa porta serial, baud errado entrega lixo em vez
     // de silencio, e sem esta distincao os dois casos ficavam identicos na tela.
     lastDataAt = Date.now();
+    // Abrir a porta nao prova nada — dados, sim. Zerar a contagem no `open` fazia o
+    // backoff nunca engatar numa porta que abre e cai em seguida (conversor USB
+    // instavel), e a reconexao ficava batendo de 5 em 5s indefinidamente.
+    reconnectCount = 0;
     lastRawSample = text.replace(/[^\x20-\x7e]/g, ".").slice(-120);
     buffer += text;
 
@@ -236,7 +240,6 @@ export function createToledoSerialAdapter(
     transport = candidate;
     state = "connected";
     errorMessage = null;
-    reconnectCount = 0;
   }
 
   return {

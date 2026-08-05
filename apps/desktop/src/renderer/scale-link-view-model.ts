@@ -73,16 +73,21 @@ export function buildScaleLinkViewModel(input: ScaleLinkInput): ScaleLinkViewMod
 }
 
 /**
- * Mantem o marco de inicio da queda entre duas consultas de status. Conectado
- * zera o marco; qualquer outro estado preserva o marco anterior, senao a
- * carencia reiniciaria a cada consulta e o botao nunca apareceria.
+ * Mantem o marco de inicio da queda entre duas consultas de status. So uma balanca
+ * entregando leitura zera o marco; qualquer outra situacao preserva o marco
+ * anterior, senao a carencia reiniciaria a cada consulta e o botao nunca apareceria.
+ *
+ * Socket aberto sem leitura nao conta como recuperacao: numa balanca que abre a
+ * sessao, fica muda e cai de novo, o `connected` intermitente zerava a carencia a
+ * cada ciclo — a tela ficava eternamente em "Reconectando a balanca..." e o
+ * diagnostico real nunca chegava a aparecer.
  */
 export function trackScaleDegradedSince(
   previous: number | null,
-  state: ScaleConnectionState,
+  status: { state: ScaleConnectionState; stale: boolean },
   now: number
 ): number | null {
-  if (state === "connected") return null;
+  if (status.state === "connected" && !status.stale) return null;
   return previous ?? now;
 }
 

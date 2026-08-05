@@ -6300,7 +6300,7 @@ function WeighingForm({
       const now = Date.now();
       scaleDegradedSinceRef.current = trackScaleDegradedSince(
         scaleDegradedSinceRef.current,
-        status.state,
+        status,
         now
       );
       const link = buildScaleLinkViewModel({
@@ -7800,7 +7800,7 @@ function CloseOperationWeighingDialog({
       const now = Date.now();
       scaleDegradedSinceRef.current = trackScaleDegradedSince(
         scaleDegradedSinceRef.current,
-        status.state,
+        status,
         now
       );
       const link = buildScaleLinkViewModel({

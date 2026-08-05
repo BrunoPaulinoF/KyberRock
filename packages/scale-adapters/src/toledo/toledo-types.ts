@@ -43,6 +43,15 @@ export interface ToledoTcpConfig {
    */
   staleReadingMs?: number;
   /**
+   * Silencio absoluto tolerado antes de fechar e reabrir a sessao (ms). Padrao:
+   * 45000. Um indicador calado nao justifica derrubar a conexao a cada
+   * `staleReadingMs`: com o socket aberto o proximo quadro chega na hora, enquanto
+   * o ciclo de queda-e-reconexao a cada poucos segundos aparecia na tela como uma
+   * balanca reconectando sem parar. A sessao so e girada depois deste tempo, que e
+   * quando vale suspeitar de socket meio-aberto ou de sessao entregue a outro cliente.
+   */
+  silenceRotateMs?: number;
+  /**
    * Sondar o indicador enquanto nenhum byte chegar. Indicadores em modo sob demanda
    * so respondem a um comando; do lado do cliente isso e indistinguivel de um
    * indicador mudo. Padrao: `true`. A sondagem se desliga ao primeiro byte recebido.
