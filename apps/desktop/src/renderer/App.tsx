@@ -7446,7 +7446,9 @@ function OperationDetailsDialog({
         onClose={onClose}
         onEdit={canEdit ? () => setEditing(true) : undefined}
         editLabel="Editar operacao"
-        maxWidth={920}
+        // A ficha da operacao e a mais cheia do sistema (seis blocos): quanto mais
+        // largura, mais colunas de jornal cabem e menor fica a altura total.
+        maxWidth={1180}
       />
     );
   }

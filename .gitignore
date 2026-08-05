@@ -23,6 +23,9 @@ ui-debug.log
 *omie*kommo*.txt
 
 # Local operational/customer data
+# Banco local do desktop: fora do Windows, `resolveDataRoot` (database/paths.ts) cai
+# em `<cwd>/.kyberrock-data`, entao rodar app ou testes aqui cria a base no repositorio.
+.kyberrock-data/
 planilhas/
 *.xlsx
 *.csv
