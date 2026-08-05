@@ -5792,6 +5792,10 @@ function CacheSelect({
             readOnly
             style={{
               ...styles.input,
+              // O campo acompanha a largura da coluna em vez da largura padrao de
+              // ~20 caracteres do <input>: sem isto ele vazava da coluna estreita
+              // (Placa/Motorista) e o card ganhava barra de rolagem horizontal.
+              width: "100%",
               cursor: disabled ? "not-allowed" : "pointer",
               paddingRight: inlineActionsPadding
             }}
@@ -6477,24 +6481,133 @@ function WeighingForm({
   return (
     <section style={styles.entryShell}>
       <div style={styles.entryHero}>
+        {/* Marca d'agua da marca: menor e mais discreta que antes porque o cabecalho
+            compacto nao tem mais faixa vazia embaixo do card de peso. */}
         <MountainOutline
-          opacity={0.5}
+          opacity={0.28}
           style={{
             position: "absolute",
-            right: "-8px",
+            right: "-6px",
             bottom: "-6px",
-            width: "232px",
-            height: "87px",
+            width: "150px",
+            height: "46px",
             pointerEvents: "none",
             zIndex: 0
           }}
         />
-        <div style={{ position: "relative", zIndex: 1 }}>
-          <p style={{ ...styles.kicker, color: "#fbbf24" }}>Operacao de balanca</p>
-          <h2 style={{ ...styles.title, marginBottom: "4px", color: "#ffffff" }}>Nova entrada</h2>
-          <p style={{ ...styles.subtitle, color: "#d6d3d1" }}>
-            Use Tab para avancar e Ctrl+Enter para capturar.
-          </p>
+        {/* Coluna da esquerda do cabecalho: identificacao da tela e, na balanca
+            virtual, o envio do peso simulado — juntos numa coluna so, para o
+            cabecalho ocupar uma unica faixa da altura da tela. */}
+        <div
+          style={{
+            position: "relative",
+            zIndex: 1,
+            minWidth: 0,
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "center",
+            gap: "6px"
+          }}
+        >
+          <div>
+            <p style={{ ...styles.kicker, color: "#fbbf24", fontSize: "10px" }}>
+              Operacao de balanca
+            </p>
+            <h2
+              style={{
+                ...styles.title,
+                fontSize: "19px",
+                margin: "1px 0 2px",
+                color: "#ffffff"
+              }}
+            >
+              Nova entrada
+            </h2>
+            <p style={{ ...styles.subtitle, color: "#d6d3d1", fontSize: "11px" }}>
+              Use Tab para avancar e Ctrl+Enter para capturar.
+            </p>
+          </div>
+          {isVirtual && scaleLink.usable ? (
+            <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+              <label
+                htmlFor="virtual-weight-input"
+                style={{
+                  fontSize: "11px",
+                  fontWeight: 700,
+                  color: "#d6d3d1",
+                  whiteSpace: "nowrap"
+                }}
+              >
+                Peso para simular (kg)
+              </label>
+              <input
+                id="virtual-weight-input"
+                type="number"
+                value={virtualWeightInput}
+                onChange={(e) => setVirtualWeightInput(e.target.value)}
+                onKeyDown={async (e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    if (!desktopApi) return;
+                    const kg = parseFloat(virtualWeightInput);
+                    if (!Number.isFinite(kg) || kg < 0) return;
+                    try {
+                      await desktopApi.virtualScaleSetWeight(kg);
+                      setLiveWeight(kg);
+                    } catch (err) {
+                      setScaleStateMessage(
+                        err instanceof Error ? err.message : "Erro ao enviar peso"
+                      );
+                    }
+                  }
+                }}
+                placeholder="Ex: 15500"
+                min="0"
+                step="1"
+                style={{
+                  flex: "1 1 120px",
+                  minWidth: 0,
+                  maxWidth: "180px",
+                  padding: "6px 10px",
+                  fontSize: "14px",
+                  fontWeight: 700,
+                  border: "1px solid #86efac",
+                  borderRadius: "8px",
+                  background: "#f0fdf4",
+                  outline: "none",
+                  boxSizing: "border-box",
+                  fontFamily: "monospace"
+                }}
+              />
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!desktopApi) return;
+                  const kg = parseFloat(virtualWeightInput);
+                  if (!Number.isFinite(kg) || kg < 0) {
+                    setScaleStateMessage("Digite um peso valido em kg.");
+                    return;
+                  }
+                  try {
+                    await desktopApi.virtualScaleSetWeight(kg);
+                    setLiveWeight(kg);
+                  } catch (err) {
+                    setScaleStateMessage(
+                      err instanceof Error ? err.message : "Erro ao enviar peso"
+                    );
+                  }
+                }}
+                style={{
+                  ...styles.primaryButton,
+                  padding: "7px 14px",
+                  fontSize: "13px",
+                  whiteSpace: "nowrap"
+                }}
+              >
+                Enviar peso
+              </button>
+            </div>
+          ) : null}
         </div>
         {/* Card unico de peso: mostra a leitura da balanca (real ou virtual) e, apos a
             captura, o peso capturado — sem o card separado de "peso ao vivo". */}
@@ -6582,85 +6695,6 @@ function WeighingForm({
             ) : null}
           </div>
         </div>
-        {isVirtual && scaleLink.usable ? (
-          <div style={{ marginTop: "12px", display: "flex", gap: "8px", alignItems: "flex-end" }}>
-            <div style={{ flex: 1 }}>
-              <label
-                style={{
-                  fontSize: "12px",
-                  fontWeight: 600,
-                  color: "#475569",
-                  display: "block",
-                  marginBottom: "4px"
-                }}
-              >
-                Peso para simular (kg)
-              </label>
-              <input
-                type="number"
-                value={virtualWeightInput}
-                onChange={(e) => setVirtualWeightInput(e.target.value)}
-                onKeyDown={async (e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    if (!desktopApi) return;
-                    const kg = parseFloat(virtualWeightInput);
-                    if (!Number.isFinite(kg) || kg < 0) return;
-                    try {
-                      await desktopApi.virtualScaleSetWeight(kg);
-                      setLiveWeight(kg);
-                    } catch (err) {
-                      setScaleStateMessage(
-                        err instanceof Error ? err.message : "Erro ao enviar peso"
-                      );
-                    }
-                  }
-                }}
-                placeholder="Ex: 15500"
-                min="0"
-                step="1"
-                style={{
-                  width: "100%",
-                  padding: "10px 12px",
-                  fontSize: "16px",
-                  fontWeight: 700,
-                  border: "2px solid #86efac",
-                  borderRadius: "8px",
-                  background: "#f0fdf4",
-                  outline: "none",
-                  boxSizing: "border-box",
-                  fontFamily: "monospace"
-                }}
-              />
-            </div>
-            <button
-              type="button"
-              onClick={async () => {
-                if (!desktopApi) return;
-                const kg = parseFloat(virtualWeightInput);
-                if (!Number.isFinite(kg) || kg < 0) {
-                  setScaleStateMessage("Digite um peso valido em kg.");
-                  return;
-                }
-                try {
-                  await desktopApi.virtualScaleSetWeight(kg);
-                  setLiveWeight(kg);
-                } catch (err) {
-                  setScaleStateMessage(err instanceof Error ? err.message : "Erro ao enviar peso");
-                }
-              }}
-              style={{
-                ...styles.primaryButton,
-                padding: "10px 20px",
-                fontSize: "14px",
-                fontWeight: 700,
-                whiteSpace: "nowrap"
-              }}
-            >
-              Enviar peso
-            </button>
-          </div>
-        ) : null}
       </div>
 
       {formError ? <p style={styles.errorMessage}>{formError}</p> : null}
@@ -12724,10 +12758,10 @@ const styles = {
     position: "relative" as const,
     overflow: "hidden",
     display: "grid",
-    gridTemplateColumns: "minmax(220px, 0.7fr) minmax(360px, 1fr)",
+    gridTemplateColumns: "minmax(220px, 0.7fr) minmax(320px, 1fr)",
     alignItems: "stretch",
     gap: "10px",
-    padding: "10px 12px",
+    padding: "8px 12px",
     borderRadius: "14px",
     background: "#1c1917",
     border: "1px solid #292524",
@@ -12737,13 +12771,14 @@ const styles = {
   },
   liveWeightCard: {
     minWidth: "180px",
-    padding: "8px 10px",
+    padding: "6px 10px",
     borderRadius: "12px",
     background: "rgba(255,255,255,0.12)",
     border: "1px solid rgba(255,255,255,0.22)",
     display: "flex",
     flexDirection: "column" as const,
-    gap: "2px"
+    justifyContent: "center",
+    gap: "1px"
   },
   metricHeader: {
     display: "flex",
@@ -12765,11 +12800,14 @@ const styles = {
   },
   metricHint: {
     color: "#e7e5e4",
-    fontSize: "12px"
+    fontSize: "11px"
   },
   entryGrid: {
+    // Minimos menores que os antigos (300/340/360 = 1016px + gaps): a coluna de
+    // conteudo esconde o transbordo horizontal, entao o que nao cabe some da tela.
+    // Com 260/280/300 os tres cards continuam inteiros em janelas mais estreitas.
     display: "grid",
-    gridTemplateColumns: "minmax(300px, 1fr) minmax(340px, 1fr) minmax(360px, 1.05fr)",
+    gridTemplateColumns: "minmax(260px, 1fr) minmax(280px, 1fr) minmax(300px, 1.05fr)",
     gap: "8px",
     alignItems: "stretch",
     flex: 1,
@@ -13176,7 +13214,11 @@ const styles = {
     font: "inherit",
     fontSize: "13px",
     background: "var(--kr-input-bg)",
-    color: "var(--kr-text-strong)"
+    color: "var(--kr-text-strong)",
+    // Sem isto o campo carrega a largura minima de ~20 caracteres do proprio
+    // <input>, que estourava a coluna do card (barra de rolagem horizontal na
+    // dupla Placa/Motorista). Quem precisa de largura minima ainda a declara.
+    minWidth: 0
   },
   operationRow: {
     display: "flex",
