@@ -2104,11 +2104,19 @@ function upsertCloudOperations(
     // maquina fechou/alterou e ainda nao terminou o push). Nunca sobrescreve
     // uma versao local mais nova nem regride status terminal para aberto.
     const local = readLocal.get(id) as LocalOperationSnapshot | undefined;
+    // A projecao so pode APAGAR um campo desta operacao quando e mais nova que a
+    // copia local. No empate ela e o eco do nosso proprio push — e um eco vazio
+    // (a nuvem gravou a linha antes de ganhar a coluna, ou quem enviou foi uma
+    // balanca de versao antiga) nao pode limpar o que esta maquina gravou.
+    let cloudIsNewer = true;
     if (local) {
       const localTs = parseTimestamp(local.updated_at);
       const cloudTs = parseTimestamp(updatedAt);
-      if (localTs !== null && cloudTs !== null && cloudTs < localTs) {
-        continue;
+      if (localTs !== null && cloudTs !== null) {
+        if (cloudTs < localTs) {
+          continue;
+        }
+        cloudIsNewer = cloudTs > localTs;
       }
       const incomingStatus = mapCloudOperationStatus(row.status);
       if (
@@ -2135,15 +2143,28 @@ function upsertCloudOperations(
     const vehicleId = findVehicleIdByPlate(database, settings.companyId, remotePlate);
     const driverId = findDriverIdByName(database, settings.companyId, remoteDriverName);
     // Carteira da pedreira: a forma de pagamento diz se a venda e "em carteira" e as
-    // colunas `wallet_*` sao o fechamento lancado em qualquer uma das balancas. FK de
-    // payment_methods resolvida como as demais — uma forma ainda nao espelhada aqui
-    // derrubaria a gravacao da operacao inteira.
-    const paymentMethodId = isProjectedColumn(row, "payment_method_id")
-      ? existingId(database, "payment_methods", row.payment_method_id)
+    // colunas `wallet_*` sao o fechamento lancado em qualquer uma das balancas. Vale a
+    // projecao so quando ela e mais nova (a outra balanca trocou a forma ou reabriu a
+    // venda); no empate manda o que esta maquina gravou, senao a forma escolhida na
+    // entrada some sozinha no primeiro pull. E a FK e resolvida como as demais: uma
+    // forma ainda nao espelhada aqui mantem o vinculo local em vez de apaga-lo.
+    const paymentProjected = isProjectedColumn(row, "payment_method_id") && cloudIsNewer;
+    const paymentMethodId = paymentProjected
+      ? resolveMirroredId(
+          database,
+          "payment_methods",
+          row.payment_method_id,
+          local?.payment_method_id
+        )
       : (local?.payment_method_id ?? null);
-    const walletProjected = isProjectedColumn(row, "wallet_settled_at");
+    const walletProjected = isProjectedColumn(row, "wallet_settled_at") && cloudIsNewer;
     const walletSettlementMethodId = walletProjected
-      ? existingId(database, "payment_methods", row.wallet_settlement_method_id)
+      ? resolveMirroredId(
+          database,
+          "payment_methods",
+          row.wallet_settlement_method_id,
+          local?.wallet_settlement_method_id
+        )
       : (local?.wallet_settlement_method_id ?? null);
     const walletSettlementDueDate = walletProjected
       ? nullableStringValue(row.wallet_settlement_due_date)

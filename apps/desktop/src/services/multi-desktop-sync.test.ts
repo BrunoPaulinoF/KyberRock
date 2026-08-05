@@ -801,6 +801,111 @@ describe("multi-desktop na mesma pedreira", () => {
     }
   });
 
+  it("pull nao apaga a forma de pagamento quando a nuvem devolve a linha sem ela", async () => {
+    // Eco do proprio push: a projecao volta com o mesmo `updated_at` e sem a forma de
+    // pagamento — e o que acontece quando a nuvem gravou a linha antes de ganhar a
+    // coluna, ou quando quem enviou foi uma balanca de versao antiga. Aceitar esse
+    // vazio apagava a forma escolhida na entrada, e a ficha da operacao passava a
+    // mostrar "Forma de pagamento —" sozinha, no primeiro pull depois da entrada.
+    const database = createMachine("desktop-a");
+
+    try {
+      const identity = readIdentity(database);
+      insertWalletPaymentMethods(database);
+      insertOperation(database, {
+        id: "op-forma",
+        deviceId: "desktop-a",
+        status: "awaiting_exit",
+        updatedAt: "2026-07-22T11:00:00.000Z"
+      });
+      database
+        .prepare(
+          "UPDATE weighing_operations SET payment_method_id = 'pm-pix' WHERE id = 'op-forma'"
+        )
+        .run();
+
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          operations: [
+            {
+              id: "op-forma",
+              company_id: "company-1",
+              unit_id: "unit-1",
+              device_id: "desktop-a",
+              status: "open",
+              operation_type: "invoice",
+              payment_method_id: null,
+              wallet_settled_at: null,
+              created_at: "2026-07-22T11:00:00.000Z",
+              updated_at: "2026-07-22T11:00:00.000Z"
+            }
+          ]
+        },
+        error: null
+      });
+
+      await pullDesktopDataFromCloud(database, identity);
+
+      expect(
+        listOpenWeighingOperations(database).find((operation) => operation.id === "op-forma")
+      ).toMatchObject({ paymentMethodId: "pm-pix", paymentMethodName: "PIX" });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("pull aceita a troca de forma de pagamento feita depois na outra balanca", async () => {
+    // O outro lado da regra: quando a projecao e mais nova que a copia local, ela manda
+    // — inclusive para limpar a forma de pagamento.
+    const database = createMachine("desktop-a");
+
+    try {
+      const identity = readIdentity(database);
+      upsertUnitDevices(database, identity, [
+        { id: "desktop-b", name: "Balanca 2", color: "#ea580c", is_active: true }
+      ]);
+      insertWalletPaymentMethods(database);
+      insertOperation(database, {
+        id: "op-trocada",
+        deviceId: "desktop-b",
+        status: "awaiting_exit",
+        updatedAt: "2026-07-22T11:00:00.000Z"
+      });
+      database
+        .prepare(
+          "UPDATE weighing_operations SET payment_method_id = 'pm-pix' WHERE id = 'op-trocada'"
+        )
+        .run();
+
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          operations: [
+            {
+              id: "op-trocada",
+              company_id: "company-1",
+              unit_id: "unit-1",
+              device_id: "desktop-b",
+              status: "open",
+              operation_type: "invoice",
+              payment_method_id: "pm-wallet",
+              created_at: "2026-07-22T11:00:00.000Z",
+              updated_at: "2026-07-22T12:00:00.000Z"
+            }
+          ]
+        },
+        error: null
+      });
+
+      await pullDesktopDataFromCloud(database, identity);
+
+      expect(
+        listOpenWeighingOperations(database).find((operation) => operation.id === "op-trocada")
+      ).toMatchObject({ paymentMethodId: "pm-wallet", paymentMethodName: "Em carteira" });
+    } finally {
+      database.close();
+    }
+  });
+
   it("pull nao sobrescreve versao local mais nova nem reabre solicitacao fechada", async () => {
     const database = createMachine("desktop-a");
 

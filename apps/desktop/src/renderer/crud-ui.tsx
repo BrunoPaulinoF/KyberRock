@@ -856,7 +856,7 @@ export function RecordDetailModal({
     <CrudFormModal onClose={onClose} maxWidth={maxWidth}>
       <div
         style={{
-          padding: "16px 56px 12px 18px",
+          padding: "12px 56px 10px 14px",
           borderBottom: "1px solid var(--kr-border)",
           background: "var(--kr-surface-soft)",
           borderTopLeftRadius: "16px",
@@ -877,33 +877,36 @@ export function RecordDetailModal({
           </p>
         ) : null}
       </div>
+      {/*
+        Colunas de jornal em vez de grade: cada secao ocupa a altura que precisa e as
+        proximas sobem para o espaco livre, entao um bloco alto (frete) nao deixa buraco
+        ao lado dos curtos. E o que faz a ficha inteira caber sem rolar por dentro.
+      */}
       <div
         style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-          gap: "14px",
-          padding: "18px"
+          columnWidth: "205px",
+          columnGap: "8px",
+          padding: "10px 12px"
         }}
       >
         {sections.map((section) => (
           <section
             key={section.title}
             style={{
-              display: "grid",
-              alignContent: "start",
-              gap: "10px",
-              padding: "14px",
+              breakInside: "avoid",
+              marginBottom: "8px",
+              padding: "8px 10px",
               border: "1px solid var(--kr-border)",
-              borderRadius: "12px",
+              borderRadius: "10px",
               background: "var(--kr-surface-soft)",
               minWidth: 0,
-              ...(section.fullWidth ? { gridColumn: "1 / -1" } : {})
+              ...(section.fullWidth ? { columnSpan: "all" } : {})
             }}
           >
             <h4
               style={{
-                margin: "0 0 4px 0",
-                fontSize: "11px",
+                margin: "0 0 5px 0",
+                fontSize: "10px",
                 fontWeight: 800,
                 textTransform: "uppercase",
                 letterSpacing: "0.05em",
@@ -916,20 +919,32 @@ export function RecordDetailModal({
               style={{
                 margin: 0,
                 display: "grid",
-                gap: "10px 18px",
+                gap: "2px 14px",
                 ...(section.fullWidth
-                  ? { gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }
+                  ? { gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }
                   : {})
               }}
             >
               {section.items.map((item) => (
-                <div key={item.label} style={{ minWidth: 0 }}>
+                // Rotulo e valor na mesma linha (o valor longo cai para a linha de
+                // baixo sozinho): metade da altura de um item empilhado.
+                <div
+                  key={item.label}
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    alignItems: "baseline",
+                    justifyContent: "space-between",
+                    gap: "0 10px",
+                    minWidth: 0
+                  }}
+                >
                   <dt
                     style={{
                       fontSize: "11px",
-                      fontWeight: 700,
+                      fontWeight: 600,
                       color: "var(--kr-muted)",
-                      marginBottom: "2px"
+                      lineHeight: 1.45
                     }}
                   >
                     {item.label}
@@ -937,10 +952,16 @@ export function RecordDetailModal({
                   <dd
                     style={{
                       margin: 0,
-                      fontSize: "13px",
+                      fontSize: "12px",
                       fontWeight: 600,
+                      lineHeight: 1.45,
                       color: "var(--kr-text-strong)",
-                      overflowWrap: "anywhere"
+                      // "anywhere" e `minWidth: 0`: o valor pode encolher e quebrar
+                      // dentro da propria coluna. Sem isso um e-mail longo vazaria por
+                      // cima do bloco vizinho nas janelas estreitas.
+                      overflowWrap: "anywhere",
+                      textAlign: "right",
+                      minWidth: 0
                     }}
                   >
                     {detailDisplayValue(item.value)}
@@ -956,7 +977,7 @@ export function RecordDetailModal({
           display: "flex",
           justifyContent: "flex-end",
           gap: "8px",
-          padding: "14px 18px",
+          padding: "10px 14px",
           borderTop: "1px solid var(--kr-border)",
           background: "var(--kr-surface-soft)",
           borderBottomLeftRadius: "16px",

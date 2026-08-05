@@ -329,3 +329,67 @@ describe("tela de Operacoes", () => {
     expect(app).toContain("onEdit={canEdit ? () => setEditing(true) : undefined}");
   });
 });
+
+/**
+ * A ficha da operacao e a mais cheia do sistema (seis blocos, 46 campos) e abria com
+ * mais de metade do conteudo escondido atras da rolagem interna. Estes testes prendem
+ * as decisoes que fazem tudo caber de uma vez — nenhum campo foi removido, so mudou a
+ * forma de apresentar.
+ *
+ * Medido no Chromium com a ficha real montada (RecordDetailModal + as secoes desta
+ * operacao) dentro do painel do modal:
+ * - antes: 1260px de conteudo em um painel de 648px — 612px escondidos a 1116x706;
+ * - depois: 553px a 1116x706, 585px a 960x640 e 527px a 1920x1040, sem rolagem
+ *   vertical nem horizontal em nenhum dos tres.
+ */
+describe("ficha da operacao sem rolagem", () => {
+  it("continua mostrando os seis blocos e todos os campos da operacao", () => {
+    const sections = buildOperationDetailSections(
+      createOperation({ freightJson: FREIGHT_JSON, freightModality: "cif" })
+    );
+
+    expect(sections).toHaveLength(6);
+    expect(sections.reduce((total, section) => total + section.items.length, 0)).toBe(46);
+  });
+
+  it("empilha as secoes em colunas de jornal, sem grade de linhas", () => {
+    const modal = recordDetailModalSource();
+
+    // Colunas de jornal: a secao curta nao reserva a altura da secao alta ao lado,
+    // que era de onde vinha metade da altura perdida.
+    expect(modal).toContain('columnWidth: "205px"');
+    expect(modal).toContain('breakInside: "avoid"');
+    // A secao "fullWidth" atravessa as colunas em vez de ocupar uma linha da grade.
+    expect(modal).toContain('{ columnSpan: "all" }');
+    expect(modal).not.toContain('gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))"');
+  });
+
+  it("poe rotulo e valor na mesma linha, com quebra segura no valor longo", () => {
+    const modal = recordDetailModalSource();
+    const item = modal.slice(
+      modal.indexOf("{section.items.map((item) => ("),
+      modal.indexOf("</dl>")
+    );
+
+    expect(item).toContain('justifyContent: "space-between"');
+    expect(item).toContain('flexWrap: "wrap"');
+    expect(item).toContain('alignItems: "baseline"');
+    // O valor longo quebra dentro da propria coluna: sem isso ele vazava por cima
+    // do bloco vizinho nas janelas estreitas.
+    expect(item).toContain('overflowWrap: "anywhere"');
+    expect(item).toContain("minWidth: 0");
+  });
+
+  it("da mais largura para a ficha da operacao, que e a mais cheia", () => {
+    expect(read("App.tsx")).toContain("maxWidth={1180}");
+  });
+});
+
+/** Corpo do `RecordDetailModal` — o resto de crud-ui.tsx tem outros modais. */
+function recordDetailModalSource(): string {
+  const crud = read("crud-ui.tsx");
+  const from = crud.indexOf("export function RecordDetailModal(");
+  expect(from).toBeGreaterThan(-1);
+  const to = crud.indexOf("\nexport ", from + 1);
+  return crud.slice(from, to === -1 ? undefined : to);
+}
