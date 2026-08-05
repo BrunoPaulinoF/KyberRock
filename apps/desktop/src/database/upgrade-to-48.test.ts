@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { runDesktopMigrations } from "./migrate";
@@ -154,6 +158,56 @@ describe("atualizacao de um banco em uso (47 -> 48)", () => {
       expect(database.prepare("PRAGMA integrity_check").pluck().get()).toBe("ok");
     } finally {
       database.close();
+    }
+  });
+
+  it("aplica sobre um banco em ARQUIVO com WAL, como nas balancas", () => {
+    // Os outros casos usam :memory:, que pula journal_mode=WAL e o caminho de disco --
+    // exatamente a diferenca entre o teste e a maquina da pedreira.
+    const tempDirectory = mkdtempSync(path.join(os.tmpdir(), "kyberrock-upgrade-"));
+    const databasePath = path.join(tempDirectory, "data", "kyberrock.sqlite3");
+
+    try {
+      const previous = DESKTOP_MIGRATIONS.filter((migration) => migration.version <= 47);
+      let database = openDesktopDatabase({ databasePath });
+      runDesktopMigrations(database, previous);
+      expect(database.pragma("journal_mode", { simple: true })).toBe("wal");
+
+      const identity = ensureInitialDesktopIdentity(database, {
+        companyId: "c1",
+        companyLegalName: "KyberRock Mineracao LTDA",
+        unitId: "u1",
+        unitName: "Pedreira Principal",
+        deviceId: "d1",
+        deviceName: "PC Balanca",
+        installationId: "i1"
+      });
+      database
+        .prepare(
+          `INSERT INTO weighing_operations
+             (id, company_id, unit_id, device_id, status, operation_type,
+              entry_weight_kg, exit_weight_kg, net_weight_kg, total_cents, created_at, updated_at)
+           VALUES ('op-1', ?, ?, ?, 'synced', 'invoice', 1000, 3000, 2000, 5000, ?, ?)`
+        )
+        .run(
+          identity.companyId,
+          identity.unitId,
+          identity.deviceId,
+          "2026-08-01T09:00:00.000Z",
+          "2026-08-01T09:00:00.000Z"
+        );
+
+      // Fecha e reabre, como o app faz entre um uso e o proximo.
+      database.close();
+      database = openDesktopDatabase({ databasePath });
+
+      const applied = runDesktopMigrations(database);
+      expect(applied.at(-1)?.version).toBe(48);
+      expect(listClosedWeighingOperations(database).map((o) => o.id)).toEqual(["op-1"]);
+      expect(database.prepare("PRAGMA integrity_check").pluck().get()).toBe("ok");
+      database.close();
+    } finally {
+      rmSync(tempDirectory, { recursive: true, force: true });
     }
   });
 
