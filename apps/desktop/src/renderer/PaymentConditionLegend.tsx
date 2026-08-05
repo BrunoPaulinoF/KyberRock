@@ -7,6 +7,10 @@ import { describePaymentCondition } from "./payment-condition-helpers";
  * (previa) e como escrever cada formato aceito. Os prazos abaixo sao os mesmos que
  * seguem para o OMIE — um periodo ("s+20") e so uma forma curta de escrever o prazo
  * em dias, e a parcela cai exatamente no mesmo dia.
+ *
+ * A previa fica sempre a vista (e ela que responde ao que esta sendo digitado); a
+ * tabela de formatos vive dentro de um "Como escrever" recolhido, para a legenda
+ * inteira nao empurrar o formulario da Nova entrada para fora da tela.
  */
 export interface PaymentConditionFormat {
   example: string;
@@ -57,41 +61,58 @@ export function PaymentConditionLegend({ value, style }: PaymentConditionLegendP
     >
       <p
         style={{
-          margin: "0 0 6px 0",
+          margin: 0,
           fontWeight: 700,
           color: PREVIEW_COLOR[preview.status] ?? "var(--kr-muted)"
         }}
       >
         {preview.message}
       </p>
-      <p style={{ margin: "0 0 4px 0", fontWeight: 700, color: "var(--kr-text-strong)" }}>
-        Como escrever
-      </p>
-      <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "grid", gap: "2px" }}>
-        {PAYMENT_CONDITION_FORMATS.map((format) => (
-          <li
-            key={format.example}
-            style={{ display: "grid", gridTemplateColumns: "84px 1fr", gap: "8px" }}
-          >
-            <code
-              style={{
-                fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-                fontWeight: 700,
-                color: "var(--kr-text-strong)",
-                whiteSpace: "nowrap"
-              }}
+      <details>
+        <summary
+          style={{
+            cursor: "pointer",
+            marginTop: "4px",
+            fontWeight: 700,
+            color: "var(--kr-text-strong)"
+          }}
+        >
+          Como escrever
+        </summary>
+        <ul
+          style={{
+            margin: "4px 0 0 0",
+            padding: 0,
+            listStyle: "none",
+            display: "grid",
+            gap: "2px"
+          }}
+        >
+          {PAYMENT_CONDITION_FORMATS.map((format) => (
+            <li
+              key={format.example}
+              style={{ display: "grid", gridTemplateColumns: "84px 1fr", gap: "8px" }}
             >
-              {format.example}
-            </code>
-            <span>{format.meaning}</span>
-          </li>
-        ))}
-      </ul>
-      <p style={{ margin: "6px 0 0 0" }}>
-        Periodos: <strong>s</strong> = semana (7 dias), <strong>d</strong> = dezena (10 dias),{" "}
-        <strong>q</strong> = quinzena (15 dias), <strong>m</strong> = mes (30 dias). As parcelas vao
-        para o OMIE nos mesmos dias.
-      </p>
+              <code
+                style={{
+                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                  fontWeight: 700,
+                  color: "var(--kr-text-strong)",
+                  whiteSpace: "nowrap"
+                }}
+              >
+                {format.example}
+              </code>
+              <span>{format.meaning}</span>
+            </li>
+          ))}
+        </ul>
+        <p style={{ margin: "6px 0 0 0" }}>
+          Periodos: <strong>s</strong> = semana (7 dias), <strong>d</strong> = dezena (10 dias),{" "}
+          <strong>q</strong> = quinzena (15 dias), <strong>m</strong> = mes (30 dias). As parcelas
+          vao para o OMIE nos mesmos dias.
+        </p>
+      </details>
     </div>
   );
 }
