@@ -102,6 +102,12 @@ export function pruneOldBackups(
     for (const entry of group.slice(0, Math.max(0, group.length - keep))) {
       try {
         rmSync(path.join(backupDirectory, entry), { force: true });
+        // A verificacao de saude abre o backup e deixa os sidecars do WAL ao lado dele.
+        // Sem apaga-los junto, sobrariam orfaos acumulando para sempre — exatamente o
+        // problema que esta poda existe para resolver.
+        for (const suffix of ["-wal", "-shm"]) {
+          rmSync(path.join(backupDirectory, `${entry}${suffix}`), { force: true });
+        }
         removed.push(entry);
       } catch {
         // best-effort: o proximo backup tenta de novo

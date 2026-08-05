@@ -130,6 +130,35 @@ describe("backup retention", () => {
     }
   });
 
+  it("removes the WAL sidecars together with the backup they belong to", () => {
+    const tempDirectory = mkdtempSync(path.join(os.tmpdir(), "kyberrock-sidecar-"));
+
+    try {
+      const unit = "unit-1";
+      const write = (name: string) => writeFileSync(path.join(tempDirectory, name), "x");
+      // A verificacao de saude abre cada backup e deixa -wal/-shm ao lado. Se a poda
+      // apagasse so o .sqlite3, esses orfaos ficariam para sempre.
+      for (const day of ["01", "02"]) {
+        const backup = `kyberrock-${unit}-202608${day}-120000.sqlite3`;
+        write(backup);
+        write(`${backup}-wal`);
+        write(`${backup}-shm`);
+      }
+
+      const removed = pruneOldBackups(tempDirectory, { keep: 1 });
+
+      expect(removed).toEqual([`kyberrock-${unit}-20260801-120000.sqlite3`]);
+      // O backup antigo saiu inteiro, com sidecars; o mantido segue completo.
+      expect(readdirSync(tempDirectory).sort()).toEqual([
+        `kyberrock-${unit}-20260802-120000.sqlite3`,
+        `kyberrock-${unit}-20260802-120000.sqlite3-shm`,
+        `kyberrock-${unit}-20260802-120000.sqlite3-wal`
+      ]);
+    } finally {
+      rmSync(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("never empties the directory and tolerates a missing one", () => {
     const tempDirectory = mkdtempSync(path.join(os.tmpdir(), "kyberrock-retention-min-"));
 
