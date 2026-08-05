@@ -1,5 +1,6 @@
 import type { DesktopDatabase } from "../database/sqlite.js";
 import { paymentMethodDisplayName } from "./payment-methods.js";
+import { enqueueSyncJob } from "./sync-queue.js";
 import { CLOSED_OPERATION_STATUS_SQL_LIST } from "./weighing-operations.js";
 
 /**
@@ -259,6 +260,34 @@ interface OperationWalletRow {
 }
 
 /**
+ * Enfileira o envio da operacao para a nuvem depois de um fechamento/reabertura de
+ * carteira. A carteira e da pedreira inteira: sem isto o fechamento lancado numa
+ * balanca ficava so no SQLite dela e a outra continuava mostrando a venda em aberto.
+ * Vai dentro da mesma transacao do fechamento — se a maquina estiver offline o job
+ * espera na fila, e a reconciliacao (`listOperationsPendingCloudPush`) ainda cobre o
+ * caso de o job morrer, porque o fechamento move o `updated_at` da operacao.
+ */
+function enqueueWalletCloudPush(
+  database: DesktopDatabase,
+  operationId: string,
+  timestamp: string,
+  now: Date
+): void {
+  enqueueSyncJob(
+    database,
+    {
+      target: "cloud",
+      action: "upsert_operation",
+      entityType: "operation",
+      entityId: operationId,
+      idempotencyKey: `cloud:operation:${operationId}:wallet:${timestamp}`,
+      payload: { operationId }
+    },
+    now
+  );
+}
+
+/**
  * Registra o fechamento das vendas em carteira: define a forma de recebimento (e o
  * vencimento combinado) das operacoes escolhidas. Tudo em uma transacao — ou o
  * fechamento inteiro entra, ou nada muda.
@@ -325,6 +354,7 @@ export function settleWalletOperations(
         throw new Error(`A operacao ${operationId} foi cancelada e nao pode ser fechada.`);
       }
       update.run(method.id, dueDate, nowIso, input.note?.trim() || null, nowIso, operationId);
+      enqueueWalletCloudPush(database, operationId, nowIso, now);
       count++;
     }
     return count;
@@ -361,7 +391,10 @@ export function reopenWalletOperations(
   const reopen = database.transaction(() => {
     let count = 0;
     for (const id of ids) {
-      count += update.run(nowIso, id).changes;
+      const changes = update.run(nowIso, id).changes;
+      // So a venda que realmente voltou para a carteira precisa ir para a nuvem.
+      if (changes > 0) enqueueWalletCloudPush(database, id, nowIso, now);
+      count += changes;
     }
     return count;
   });

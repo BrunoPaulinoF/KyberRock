@@ -2867,13 +2867,19 @@ export class DesktopRuntime {
   /** Registra o fechamento e devolve quantas vendas foram fechadas. */
   settleWalletOperations(input: SettleWalletInput): number {
     this.assertDesktopAccess();
-    return settleWalletOperations(this.database, input);
+    const settled = settleWalletOperations(this.database, input);
+    // A carteira e da pedreira inteira: o fechamento tem de aparecer nas outras
+    // balancas. O job ja ficou na fila (duravel); isto so adianta a varredura.
+    if (settled > 0) this.triggerBackgroundCloudSync("wallet_settled", { count: settled });
+    return settled;
   }
 
   /** Desfaz o fechamento e devolve quantas vendas voltaram para a carteira. */
   reopenWalletOperations(operationIds: string[]): number {
     this.assertDesktopAccess();
-    return reopenWalletOperations(this.database, operationIds);
+    const reopened = reopenWalletOperations(this.database, operationIds);
+    if (reopened > 0) this.triggerBackgroundCloudSync("wallet_reopened", { count: reopened });
+    return reopened;
   }
 
   listAccounts(): unknown {

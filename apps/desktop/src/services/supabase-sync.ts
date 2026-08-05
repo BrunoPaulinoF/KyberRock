@@ -1152,12 +1152,15 @@ function upsertCloudPaymentMethods(
   );
   const upsert = database.prepare(`
     INSERT INTO payment_methods (
-      id, company_id, code, name, omie_code, is_system, is_customer_credit, is_wallet,
+      id, company_id, code, name, alias, omie_code, is_system, is_customer_credit, is_wallet,
       sort_order, is_active, created_at, updated_at, deleted_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
       name = excluded.name,
+      -- Apelido: uma nuvem ainda sem a coluna chega nulo e nao pode apagar o que esta
+      -- maquina ja tem (o valor volta a viajar no proximo push).
+      alias = COALESCE(excluded.alias, payment_methods.alias),
       omie_code = excluded.omie_code,
       is_customer_credit = excluded.is_customer_credit,
       is_wallet = excluded.is_wallet,
@@ -1184,6 +1187,7 @@ function upsertCloudPaymentMethods(
       companyId,
       code,
       name,
+      nullableStringValue(row.alias),
       nullableStringValue(row.omie_code),
       booleanToSql(row.is_system, false),
       booleanToSql(row.is_customer_credit, false),
@@ -1961,7 +1965,24 @@ type LocalOperationSnapshot = {
   customer_id: string | null;
   product_id: string | null;
   carrier_id: string | null;
+  payment_method_id: string | null;
+  wallet_settlement_method_id: string | null;
+  wallet_settlement_due_date: string | null;
+  wallet_settled_at: string | null;
+  wallet_settlement_note: string | null;
 };
+
+/**
+ * A projecao da nuvem carrega esta coluna. Uma nuvem ainda sem a migracao responde a
+ * operacao SEM a chave (o `select *` do desktop-pull so devolve o que existe), e ai o
+ * valor local e o unico que existe — sobrescrever com nulo apagaria, por exemplo, o
+ * fechamento de carteira que esta maquina acabou de lancar. Com a coluna ja na nuvem a
+ * chave vem sempre, inclusive nula, e o nulo passa a ser uma informacao legitima
+ * (a venda foi reaberta na outra balanca).
+ */
+function isProjectedColumn(row: Record<string, unknown>, column: string): boolean {
+  return Object.prototype.hasOwnProperty.call(row, column);
+}
 
 /**
  * Id de cadastro vindo da nuvem traduzido para o espelho local.
@@ -2003,8 +2024,10 @@ function upsertCloudOperations(
       applied_price_table_item_id, price_unit,
       price_savings_percent, deduct_freight_from_credit, product_credit_debit_cents,
       freight_credit_debit_cents, quotation_id,
-      remote_plate, remote_driver_name, remote_customer_name, remote_product_description
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      remote_plate, remote_driver_name, remote_customer_name, remote_product_description,
+      payment_method_id, wallet_settlement_method_id, wallet_settlement_due_date,
+      wallet_settled_at, wallet_settlement_note
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
       unit_id = excluded.unit_id,
@@ -2054,11 +2077,22 @@ function upsertCloudOperations(
       remote_plate = COALESCE(excluded.remote_plate, weighing_operations.remote_plate),
       remote_driver_name = COALESCE(excluded.remote_driver_name, weighing_operations.remote_driver_name),
       remote_customer_name = COALESCE(excluded.remote_customer_name, weighing_operations.remote_customer_name),
-      remote_product_description = COALESCE(excluded.remote_product_description, weighing_operations.remote_product_description)
+      remote_product_description = COALESCE(excluded.remote_product_description, weighing_operations.remote_product_description),
+      -- Carteira: os valores ja chegam resolvidos de isProjectedColumn (nuvem sem as
+      -- colunas devolve o que esta maquina tem), entao aqui a projecao manda — inclusive
+      -- o nulo, que e como a reabertura feita na outra balanca chega ate aqui.
+      payment_method_id = excluded.payment_method_id,
+      wallet_settlement_method_id = excluded.wallet_settlement_method_id,
+      wallet_settlement_due_date = excluded.wallet_settlement_due_date,
+      wallet_settled_at = excluded.wallet_settled_at,
+      wallet_settlement_note = excluded.wallet_settlement_note
   `);
 
   const readLocal = database.prepare(
-    "SELECT status, updated_at, customer_id, product_id, carrier_id FROM weighing_operations WHERE id = ?"
+    `SELECT status, updated_at, customer_id, product_id, carrier_id, payment_method_id,
+       wallet_settlement_method_id, wallet_settlement_due_date, wallet_settled_at,
+       wallet_settlement_note
+     FROM weighing_operations WHERE id = ?`
   );
 
   let count = 0;
@@ -2100,6 +2134,26 @@ function upsertCloudOperations(
     const remoteDriverName = nullableStringValue(row.driver_name);
     const vehicleId = findVehicleIdByPlate(database, settings.companyId, remotePlate);
     const driverId = findDriverIdByName(database, settings.companyId, remoteDriverName);
+    // Carteira da pedreira: a forma de pagamento diz se a venda e "em carteira" e as
+    // colunas `wallet_*` sao o fechamento lancado em qualquer uma das balancas. FK de
+    // payment_methods resolvida como as demais — uma forma ainda nao espelhada aqui
+    // derrubaria a gravacao da operacao inteira.
+    const paymentMethodId = isProjectedColumn(row, "payment_method_id")
+      ? existingId(database, "payment_methods", row.payment_method_id)
+      : (local?.payment_method_id ?? null);
+    const walletProjected = isProjectedColumn(row, "wallet_settled_at");
+    const walletSettlementMethodId = walletProjected
+      ? existingId(database, "payment_methods", row.wallet_settlement_method_id)
+      : (local?.wallet_settlement_method_id ?? null);
+    const walletSettlementDueDate = walletProjected
+      ? nullableStringValue(row.wallet_settlement_due_date)
+      : (local?.wallet_settlement_due_date ?? null);
+    const walletSettledAt = walletProjected
+      ? isoStringValue(row.wallet_settled_at)
+      : (local?.wallet_settled_at ?? null);
+    const walletSettlementNote = walletProjected
+      ? nullableStringValue(row.wallet_settlement_note)
+      : (local?.wallet_settlement_note ?? null);
     try {
       upsert.run(
         id,
@@ -2148,7 +2202,12 @@ function upsertCloudOperations(
         remotePlate,
         remoteDriverName,
         nullableStringValue(row.customer_name),
-        nullableStringValue(row.product_description)
+        nullableStringValue(row.product_description),
+        paymentMethodId,
+        walletSettlementMethodId,
+        walletSettlementDueDate,
+        walletSettledAt,
+        walletSettlementNote
       );
       count++;
     } catch (error) {
@@ -3080,6 +3139,15 @@ function getOperationPayload(
     carrier_id: operation.carrier_id,
     carrier_name: operation.carrier_name,
     payment_term_id: operation.payment_term_id,
+    // Forma de pagamento e o fechamento da carteira: a tela Carteira e da pedreira
+    // inteira, entao a venda em carteira feita numa balanca e o fechamento lancado nela
+    // precisam chegar as outras. Sem `payment_method_id` na projecao a outra maquina nem
+    // sabe que a venda foi em carteira (a classificacao vem de payment_methods.is_wallet).
+    payment_method_id: operation.payment_method_id,
+    wallet_settlement_method_id: operation.wallet_settlement_method_id,
+    wallet_settlement_due_date: operation.wallet_settlement_due_date,
+    wallet_settled_at: operation.wallet_settled_at,
+    wallet_settlement_note: operation.wallet_settlement_note,
     plate: operation.plate,
     customer_name: operation.customer_name,
     driver_name: operation.driver_name,
@@ -5930,7 +5998,7 @@ const CADASTRO_PUSH_ENTITIES: readonly CadastroPushEntity[] = [
       table: "payment_methods",
       alias: "pm",
       columns:
-        "pm.id, pm.code, pm.name, pm.omie_code, pm.is_system, pm.is_customer_credit, pm.is_wallet, pm.sort_order, pm.is_active, pm.created_at, pm.updated_at, pm.deleted_at",
+        "pm.id, pm.code, pm.name, pm.alias, pm.omie_code, pm.is_system, pm.is_customer_credit, pm.is_wallet, pm.sort_order, pm.is_active, pm.created_at, pm.updated_at, pm.deleted_at",
       where: "pm.company_id = @companyId"
     }),
     map: (row, companyId) => {
@@ -5940,6 +6008,10 @@ const CADASTRO_PUSH_ENTITIES: readonly CadastroPushEntity[] = [
         company_id: companyId,
         code: stringValue(row.code) || stringValue(row.id),
         name: stringValue(row.name) || "Forma de pagamento",
+        // Apelido dado pela pedreira ("Em carteira" -> "Fiado", ...). E o nome que a
+        // Carteira e o seletor de pagamento exibem; sem projetar, cada computador
+        // mostrava um rotulo diferente para a mesma forma.
+        alias: nullableStringValue(row.alias),
         omie_code: nullableStringValue(row.omie_code),
         is_system: Number(row.is_system ?? 0) === 1,
         is_customer_credit: Number(row.is_customer_credit ?? 0) === 1,
