@@ -5,6 +5,7 @@ import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite";
 import { ensureInitialDesktopIdentity } from "./bootstrap";
 import {
   BLOCKED_NEXT_ATTEMPT_AT,
+  computeSyncRetryDelayMs,
   deleteOmieQueueJob,
   enqueueSyncJob,
   getSyncJobById,
@@ -13,7 +14,10 @@ import {
   markSyncJobBlocked,
   markSyncJobDone,
   markSyncJobFailed,
-  resetOmieQueueJobForRetry
+  pruneCompletedSyncJobs,
+  resetOmieQueueJobForRetry,
+  SYNC_RETRY_BASE_MS,
+  SYNC_RETRY_MAX_MS
 } from "./sync-queue";
 
 describe("sync queue", () => {
@@ -288,6 +292,131 @@ describe("sync queue", () => {
       expect(listRunnableSyncJobs(database, { target: "omie" }).map((j) => j.id)).not.toContain(
         job.id
       );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+describe("sync retry backoff", () => {
+  // random() = 0.5 -> jitter zero: isola a curva do backoff do ruido do jitter.
+  const noJitter = () => 0.5;
+
+  it("doubles the delay at each attempt, up to the cap", () => {
+    expect(computeSyncRetryDelayMs(1, { random: noJitter })).toBe(SYNC_RETRY_BASE_MS);
+    expect(computeSyncRetryDelayMs(2, { random: noJitter })).toBe(SYNC_RETRY_BASE_MS * 2);
+    expect(computeSyncRetryDelayMs(3, { random: noJitter })).toBe(SYNC_RETRY_BASE_MS * 4);
+    expect(computeSyncRetryDelayMs(4, { random: noJitter })).toBe(SYNC_RETRY_BASE_MS * 8);
+    // A partir daqui o teto manda.
+    expect(computeSyncRetryDelayMs(5, { random: noJitter })).toBe(SYNC_RETRY_MAX_MS);
+    expect(computeSyncRetryDelayMs(10, { random: noJitter })).toBe(SYNC_RETRY_MAX_MS);
+  });
+
+  it("keeps the delay finite even with an absurd attempt count", () => {
+    // 2 ** 1024 e Infinity; o expoente limitado impede um next_attempt_at invalido.
+    const delay = computeSyncRetryDelayMs(5_000, { random: noJitter });
+    expect(Number.isFinite(delay)).toBe(true);
+    expect(delay).toBe(SYNC_RETRY_MAX_MS);
+  });
+
+  it("spreads retries with jitter inside +/- 20%", () => {
+    const earliest = computeSyncRetryDelayMs(1, { random: () => 0 });
+    const latest = computeSyncRetryDelayMs(1, { random: () => 1 });
+
+    expect(earliest).toBe(SYNC_RETRY_BASE_MS * 0.8);
+    expect(latest).toBe(SYNC_RETRY_BASE_MS * 1.2);
+  });
+
+  it("applies the backoff when a job fails and still dead-letters at the limit", () => {
+    const database = createMigratedDatabase();
+
+    try {
+      const job = enqueueSyncJob(database, {
+        target: "omie",
+        action: "create_order",
+        entityType: "weighing_operation",
+        entityId: "op-1",
+        idempotencyKey: "omie:op-1:create",
+        payload: { operationId: "op-1" }
+      });
+
+      const now = new Date("2026-06-06T12:00:00.000Z");
+      markSyncJobFailed(database, job.id, "OMIE fora do ar", { now, random: noJitter });
+      expect(getSyncJobById(database, job.id)).toMatchObject({
+        status: "failed",
+        attemptCount: 1,
+        // 1a tentativa -> base de 60s
+        nextAttemptAt: "2026-06-06T12:01:00.000Z"
+      });
+
+      markSyncJobFailed(database, job.id, "OMIE fora do ar", { now, random: noJitter });
+      expect(getSyncJobById(database, job.id)).toMatchObject({
+        status: "failed",
+        attemptCount: 2,
+        // 2a tentativa -> 120s
+        nextAttemptAt: "2026-06-06T12:02:00.000Z"
+      });
+
+      // O limite de dead_letter continua em 10 tentativas.
+      database.prepare("UPDATE sync_queue SET attempt_count = 9 WHERE id = ?").run(job.id);
+      markSyncJobFailed(database, job.id, "OMIE fora do ar", { now, random: noJitter });
+      expect(getSyncJobById(database, job.id)?.status).toBe("dead_letter");
+    } finally {
+      database.close();
+    }
+  });
+});
+
+describe("sync queue pruning", () => {
+  it("removes only completed jobs past the retention window", () => {
+    const database = createMigratedDatabase();
+
+    try {
+      const cases = [
+        { key: "cloud:old-done", status: "done", updatedAt: "2026-01-01T00:00:00.000Z" },
+        { key: "cloud:recent-done", status: "done", updatedAt: "2026-06-01T00:00:00.000Z" },
+        { key: "cloud:old-failed", status: "failed", updatedAt: "2026-01-01T00:00:00.000Z" },
+        { key: "omie:old-dead", status: "dead_letter", updatedAt: "2026-01-01T00:00:00.000Z" },
+        { key: "omie:old-pending", status: "pending", updatedAt: "2026-01-01T00:00:00.000Z" }
+      ];
+
+      for (const item of cases) {
+        const job = enqueueSyncJob(database, {
+          target: "cloud",
+          action: "upsert_operation",
+          entityType: "operation",
+          entityId: item.key,
+          idempotencyKey: item.key,
+          payload: {}
+        });
+        database
+          .prepare("UPDATE sync_queue SET status = ?, updated_at = ? WHERE id = ?")
+          .run(item.status, item.updatedAt, job.id);
+      }
+
+      const removed = pruneCompletedSyncJobs(database, {
+        now: new Date("2026-06-06T00:00:00.000Z"),
+        retentionMs: 90 * 24 * 60 * 60 * 1000
+      });
+
+      expect(removed).toBe(1);
+
+      const remaining = (
+        database.prepare("SELECT idempotency_key FROM sync_queue").all() as {
+          idempotency_key: string;
+        }[]
+      )
+        .map((row) => row.idempotency_key)
+        .sort();
+
+      // So o 'done' antigo sai. Falhos, mortos e pendentes sao a trilha de auditoria
+      // e o que a tela cloud mostra para reprocessar.
+      expect(remaining).toEqual([
+        "cloud:old-failed",
+        "cloud:recent-done",
+        "omie:old-dead",
+        "omie:old-pending"
+      ]);
     } finally {
       database.close();
     }

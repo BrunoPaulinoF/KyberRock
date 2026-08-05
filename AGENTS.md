@@ -40,6 +40,28 @@ npm run dist:win -w @kyberrock/desktop      # NSIS installer -> apps/desktop/rel
 - **Electron security**: `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`. All Node / IPC flows through `src/preload/preload.ts` and `ipcMain.handle("desktop:*", …)` in `src/main/main.ts`.
 - **Auto-update** (`electron-updater`): `autoDownload: true`, `autoInstallOnAppQuit: true` (see `AUTO_DOWNLOAD_UPDATES` / `AUTO_INSTALL_ON_QUIT` in `src/services/update-flow.ts`). Provider is **GitHub Releases** on this (private) repo. Because the repo is private, the app carries a read-only token to fetch the release; the token is **not** in Git — it lives in the `GH_UPDATER_TOKEN` secret and is injected into `src/main/updater-config.ts` at build time by CI, then set as `process.env.GH_TOKEN` at runtime (`configureAutoUpdater`). Checks every 30 min **only when `app.isPackaged`**, downloads new versions in the background, and installs them the next time the operator quits the app — no mid-operation interruption. The manual "check / install now" buttons still work as an override. The installer itself is generated and published automatically by CI (see "Desktop versioning").
 - **SQLite path**: `%ProgramData%\\KyberRock\\data\\kyberrock.sqlite3` (see `src/database/paths.ts`).
+- **Manutencao diaria**: `runAutomaticBackup` (`services/runtime.ts`) chama `runDatabaseMaintenance`
+  logo **apos** o backup — nessa ordem de proposito, para que tudo o que e podado ja esteja
+  dentro do backup recem-criado. Ela poda os jobs `done` do `sync_queue` com mais de 90 dias
+  (`pruneCompletedSyncJobs`), mantem os 30 backups mais recentes **por pedreira**
+  (`pruneOldBackups` — a contagem e por unidade porque um desktop pode trocar de pedreira e o
+  `unitId` esta no nome do arquivo) e roda `PRAGMA optimize`. As tres etapas sao best-effort:
+  manutencao nunca pode derrubar o backup nem uma operacao em andamento.
+- **Fila de sync**: o retry usa backoff exponencial com jitter (`computeSyncRetryDelayMs`),
+  de 60 s ate um teto de 15 min. Antes era fixo em 60 s, o que gastava as 10 tentativas em
+  10 minutos e mandava para `dead_letter` (que exige clique do operador) um job que so
+  precisava esperar o OMIE voltar. Um `retryAfterMs` explicito ainda tem prioridade sobre a
+  formula. `markSyncJobBlocked` continua fora dessa logica: falha determinística nao gasta
+  tentativa.
+- **Listagens de operacao e o teto de escala**: `listOpenWeighingOperations` /
+  `listClosedWeighingOperations` / `listCanceledWeighingOperations` ainda **nao tem LIMIT** e
+  o tick de 15 s do multi-desktop (`App.tsx`) rebusca as tres. Os indices da migracao 48
+  ajudam so as consultas seletivas — medido com 20 mil operacoes: abertas 3,3x mais rapido,
+  canceladas 1,4x, **concluidas 0,98x** (devolve 86% da tabela, entao varrer ja e o plano
+  otimo). O remedio para as concluidas e paginar: a mesma consulta com `LIMIT 300` cai de
+  251 ms para 0,3 ms. Ao paginar, a busca precisa descer junto para o backend — hoje
+  `filterClosedOperationsBySearch` filtra no renderer sobre o array inteiro, entao um LIMIT
+  cru tornaria o historico antigo inalcancavel pela busca.
 - **Startup log**: `%LOCALAPPDATA%\\KyberRock Desktop\\startup.log`. Check here first when the window fails to open.
 - **Icon**: `apps/desktop/midia/icon.ico` (source PNG: `apps/desktop/midia/kyberrocklogo.png`); consumed by `electron-builder` for the executable and the NSIS installer.
 - **Logo do cupom**: o upload (`renderer/receipt-logo-file.ts`) **converte a imagem para PNG** antes de salvar — `nativeImage.createFromDataURL` só decodifica PNG/JPEG, enquanto o Chromium (prévia e HTML do cupom) abre também WebP/GIF/BMP/SVG; sem a conversão a logo aparecia na tela e sumia no papel. Na impressão, `prepareReceiptLogo` (em `src/main/main.ts`) gera **um único raster de 1 bit** a 203 dpi que alimenta os dois caminhos: bit image ESC/POS (impressora de rede) e `<img>` PNG monocromático no HTML (impressora do Windows). A conversão cor → ponto vive só em `buildThermalDotMap` (`services/receipt-logo-raster.ts`), usada também pela prévia da tela: ela **estica o contraste da tinta** (sem isso, logo em cor de marca mais clara que o cinza médio — laranja, amarelo, azul claro — virava papel em branco e o cupom saía sem logo) e aplica **pontilhado Floyd‑Steinberg** nos meios-tons. Buffers do `toBitmap()` do Electron são **BGRA premultiplicado**: passe `premultiplied: true`, senão o alfa é aplicado duas vezes e a borda suavizada escurece. Logo que sairia em branco é detectada (`isRasterBlank`), avisada na tela e o HTML volta a usar a imagem original em vez de imprimir um retângulo vazio.

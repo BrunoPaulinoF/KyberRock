@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, rmSync } from "node:fs";
+import { copyFileSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import path from "node:path";
 
 import Database from "better-sqlite3";
@@ -47,6 +47,75 @@ export async function exportManualBackup(
     backupPath: destinationPath,
     createdAt: now.toISOString()
   };
+}
+
+/** Quantos backups automaticos manter por pedreira (~1 por dia = ~1 mes de historico). */
+export const DEFAULT_BACKUP_RETENTION_COUNT = 30;
+
+// Nome gerado por createAutomaticBackup: kyberrock-{unitId}-{YYYYMMDD}-{HHMMSS}.sqlite3.
+// O unitId e um UUID e carrega hifens, entao o grupo 1 e guloso e o carimbo de tempo,
+// ancorado no fim, e quem delimita os dois.
+const AUTOMATIC_BACKUP_PATTERN = /^kyberrock-(.+)-(\d{8}-\d{6})\.sqlite3$/;
+
+/**
+ * Apaga os backups automaticos mais antigos, mantendo os `keep` mais recentes DE CADA
+ * pedreira. Nada era podado antes e a pasta crescia sem limite (um arquivo do tamanho do
+ * banco por dia).
+ *
+ * A contagem e por unidade porque um mesmo desktop pode trocar de pedreira (o nome do
+ * arquivo carrega o unitId): contar a pasta inteira apagaria todo o historico da pedreira
+ * antiga assim que a nova acumulasse `keep` backups.
+ *
+ * Best-effort por design: e chamado depois de um backup bem-sucedido, entao falhar em
+ * apagar um arquivo antigo nunca pode derrubar a rotina de backup.
+ */
+export function pruneOldBackups(
+  backupDirectory: string,
+  options: { keep?: number } = {}
+): string[] {
+  const keep = Math.max(1, options.keep ?? DEFAULT_BACKUP_RETENTION_COUNT);
+
+  let entries: string[];
+  try {
+    entries = readdirSync(backupDirectory);
+  } catch {
+    return [];
+  }
+
+  const byUnit = new Map<string, string[]>();
+  for (const entry of entries) {
+    const match = AUTOMATIC_BACKUP_PATTERN.exec(entry);
+    if (!match) continue;
+    const unitId = match[1];
+    const group = byUnit.get(unitId);
+    if (group) {
+      group.push(entry);
+    } else {
+      byUnit.set(unitId, [entry]);
+    }
+  }
+
+  const removed: string[] = [];
+  for (const group of byUnit.values()) {
+    // O carimbo de tempo e UTC e de largura fixa, entao ordem alfabetica == cronologica.
+    group.sort();
+    for (const entry of group.slice(0, Math.max(0, group.length - keep))) {
+      try {
+        rmSync(path.join(backupDirectory, entry), { force: true });
+        // A verificacao de saude abre o backup e deixa os sidecars do WAL ao lado dele.
+        // Sem apaga-los junto, sobrariam orfaos acumulando para sempre — exatamente o
+        // problema que esta poda existe para resolver.
+        for (const suffix of ["-wal", "-shm"]) {
+          rmSync(path.join(backupDirectory, `${entry}${suffix}`), { force: true });
+        }
+        removed.push(entry);
+      } catch {
+        // best-effort: o proximo backup tenta de novo
+      }
+    }
+  }
+
+  return removed;
 }
 
 export function restoreBackup(backupPath: string, databasePath: string): void {
