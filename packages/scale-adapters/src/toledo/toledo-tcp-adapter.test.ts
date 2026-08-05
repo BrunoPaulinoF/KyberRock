@@ -287,6 +287,112 @@ describe("toledo-tcp-adapter reconexao sem desistir", () => {
   }, 20_000);
 });
 
+describe("toledo-tcp-adapter indicador calado", () => {
+  /** Servidor que aceita conexoes e nunca envia nada, contando quantas sessoes abriu. */
+  async function startMuteServer(onCommand?: (data: string, socket: Socket) => void): Promise<{
+    port: number;
+    sessions: () => number;
+    close: () => Promise<void>;
+  }> {
+    let sessions = 0;
+    const server = createServer((socket) => {
+      sessions++;
+      socket.on("error", () => undefined);
+      socket.on("data", (chunk: Buffer) => onCommand?.(chunk.toString("binary"), socket));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    return {
+      port: (server.address() as AddressInfo).port,
+      sessions: () => sessions,
+      close: () => new Promise<void>((resolve) => server.close(() => resolve()))
+    };
+  }
+
+  it("nao fica abrindo e fechando a sessao quando o indicador esta calado", async () => {
+    // O que a operacao via na tela: "a balanca fica reconectando o tempo todo".
+    // Derrubar a conexao a cada `staleReadingMs` de silencio condenava um indicador
+    // mudo a um ciclo perpetuo de queda e reconexao a cada poucos segundos.
+    const scale = await startMuteServer();
+    const adapter = createToledoTcpAdapter();
+    await adapter.connect({
+      host: "127.0.0.1",
+      port: scale.port,
+      staleReadingMs: 100,
+      silenceRotateMs: 10_000,
+      reconnectIntervalMs: 20,
+      autoPoll: false
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 800));
+
+    // Uma unica sessao depois de 8 janelas de silencio: nenhuma reconexao.
+    expect(scale.sessions()).toBe(1);
+    expect(adapter.getStatus().state).toBe("connected");
+    // O peso continua morrendo no prazo normal — a tela nunca mostra o caminhao anterior.
+    expect(adapter.getStatus().lastReading).toBeNull();
+    expect(adapter.getStatus().stale).toBe(true);
+    expect(adapter.getStatus().errorMessage).toMatch(/nao envia nada/i);
+
+    adapter.disconnect();
+    await scale.close();
+  });
+
+  it("gira a sessao depois do silencio longo, para recuperar conexao meio-aberta", async () => {
+    // O outro lado da moeda: uma sessao que o conversor entregou a outro cliente
+    // fica aberta e inutil, e so uma reconexao a recupera.
+    const scale = await startMuteServer();
+    const adapter = createToledoTcpAdapter();
+    await adapter.connect({
+      host: "127.0.0.1",
+      port: scale.port,
+      staleReadingMs: 100,
+      silenceRotateMs: 300,
+      reconnectIntervalMs: 20,
+      autoPoll: false
+    });
+
+    const deadline = Date.now() + 3000;
+    while (scale.sessions() < 2 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    expect(scale.sessions()).toBeGreaterThanOrEqual(2);
+
+    adapter.disconnect();
+    await scale.close();
+  });
+
+  it("percorre a lista de comandos ate achar o que o indicador responde", async () => {
+    // Indicador sob demanda que so entende o ultimo comando da lista. Com a sondagem
+    // reiniciando do primeiro comando a cada rearme, ele nunca chegava a ser perguntado
+    // — a balanca ficava eternamente calada e reconectando.
+    const scale = await startMuteServer((data, socket) => {
+      if (data.includes("W")) socket.write("       000012500kg\r\n");
+    });
+
+    const adapter = createToledoTcpAdapter();
+    await adapter.connect({
+      host: "127.0.0.1",
+      port: scale.port,
+      staleReadingMs: 120,
+      silenceRotateMs: 10_000,
+      pollIntervalMs: 60
+    });
+
+    const deadline = Date.now() + 3000;
+    while (adapter.getStatus().lastReading === null && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    expect((await adapter.read()).weightKg).toBe(12_500);
+    // Sem nenhuma reconexao pelo caminho.
+    expect(scale.sessions()).toBe(1);
+
+    adapter.disconnect();
+    await scale.close();
+  });
+});
+
 describe("toledo-tcp-adapter conexao derrubada por erro", () => {
   /** Servidor que transmite quadros e depois derruba a conexao com RST. */
   async function startResettingServer(): Promise<{

@@ -88,18 +88,28 @@ describe("buildScaleLinkViewModel", () => {
 });
 
 describe("trackScaleDegradedSince", () => {
-  it("zera o marco assim que o adaptador conecta", () => {
-    expect(trackScaleDegradedSince(NOW - 10_000, "connected", NOW)).toBeNull();
+  it("zera o marco assim que a balanca volta a entregar leitura", () => {
+    expect(
+      trackScaleDegradedSince(NOW - 10_000, { state: "connected", stale: false }, NOW)
+    ).toBeNull();
   });
 
   it("marca o inicio da queda na primeira consulta fora de conectado", () => {
-    expect(trackScaleDegradedSince(null, "disconnected", NOW)).toBe(NOW);
+    expect(trackScaleDegradedSince(null, { state: "disconnected", stale: true }, NOW)).toBe(NOW);
   });
 
   it("preserva o marco em consultas seguintes para a carencia avancar", () => {
     const start = NOW - 5_000;
-    expect(trackScaleDegradedSince(start, "connecting", NOW)).toBe(start);
-    expect(trackScaleDegradedSince(start, "error", NOW)).toBe(start);
+    expect(trackScaleDegradedSince(start, { state: "connecting", stale: true }, NOW)).toBe(start);
+    expect(trackScaleDegradedSince(start, { state: "error", stale: true }, NOW)).toBe(start);
+  });
+
+  it("nao aceita socket aberto sem leitura como recuperacao", () => {
+    // Balanca que abre a sessao, fica muda e cai de novo: o `connected` intermitente
+    // zerava a carencia a cada ciclo, a tela vivia em "Reconectando a balanca..." e o
+    // diagnostico real nunca aparecia por mais que a queda durasse.
+    const start = NOW - 30_000;
+    expect(trackScaleDegradedSince(start, { state: "connected", stale: true }, NOW)).toBe(start);
   });
 });
 

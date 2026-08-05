@@ -35,6 +35,22 @@ export interface ToledoTcpAdapterStatus {
 export const DEFAULT_STALE_READING_MS = 4000;
 
 /**
+ * Silencio absoluto tolerado antes de girar a sessao (fechar e reabrir). Fica bem
+ * acima de `staleReadingMs` de proposito: derrubar a conexao a cada 4s de silencio
+ * transformava um indicador mudo num ciclo de reconexao sem fim — socket aberto,
+ * 4s de silencio, queda, nova conexao 5s depois, de novo — que o operador via como
+ * "Reconectando a balanca..." o tempo todo, e que ainda matava a sondagem antes de
+ * ela completar um ciclo de comandos.
+ */
+export const DEFAULT_SILENCE_ROTATE_MS = 45_000;
+
+/** Diagnostico exibido enquanto a conexao esta aberta e o indicador nao fala. */
+const SILENT_LINK_MESSAGE =
+  "Conexao aberta, mas o indicador nao envia nada. Verifique se outro programa " +
+  "esta conectado na balanca, se a porta do conversor corresponde ao canal serial " +
+  "ligado ao indicador e se ele esta em transmissao continua.";
+
+/**
  * Comandos de leitura aceitos por indicadores em modo sob demanda. ENQ (0x05) e o
  * pedido padrao da Toledo; "P" (print) e "W" (weight) cobrem os demais firmwares
  * comuns. Todos sao comandos de consulta — nenhum altera estado da balanca.
@@ -76,6 +92,9 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
   // conteudo que o parser rejeita" produziam exatamente o mesmo estado, e os dois
   // exigem correcoes opostas no campo.
   let lastDataAt: number | null = null;
+  // Inicio da sessao atual: enquanto nenhum byte chegou, e daqui que se mede ha
+  // quanto tempo o indicador esta calado.
+  let sessionOpenedAt: number | null = null;
   let lastRawSample: string | null = null;
   let errorMessage: string | null = null;
   let reconnectCount = 0;
@@ -83,6 +102,11 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let dataWatchdog: ReturnType<typeof setTimeout> | null = null;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
+  // Posicao no rodizio de comandos de sondagem. Vive fora de `startPolling` de
+  // proposito: o rodizio recomeca por sessao, nao a cada rearme. Reiniciando do
+  // primeiro comando toda vez, um indicador que so responde ao ultimo da lista
+  // nunca chegava a ser perguntado.
+  let pollCommandIndex = 0;
   let buffer = "";
   // Invalida handlers de tentativas antigas: sem isto, uma tentativa de conexao ainda
   // em voo sobrescrevia o socket da tentativa nova e dois sockets ficavam vivos ao
@@ -96,6 +120,16 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
 
   function staleThresholdMs(): number {
     return config?.staleReadingMs ?? DEFAULT_STALE_READING_MS;
+  }
+
+  function silenceRotateThresholdMs(): number {
+    return Math.max(staleThresholdMs(), config?.silenceRotateMs ?? DEFAULT_SILENCE_ROTATE_MS);
+  }
+
+  /** Ha quanto tempo nenhum byte chega nesta sessao. */
+  function silentForMs(now: number): number {
+    const since = lastDataAt ?? sessionOpenedAt ?? now;
+    return Math.max(0, now - since);
   }
 
   function isStale(): boolean {
@@ -125,6 +159,12 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
   function recordRawData(chunk: string): void {
     lastDataAt = Date.now();
     lastRawSample = chunk.replace(/[^\x20-\x7e]/g, ".").slice(-120);
+    // Trafego de verdade e a unica prova de que a sessao serve para alguma coisa.
+    // Enquanto ela nao vier, a contagem de tentativas nao pode ser zerada: um
+    // conversor que aceita a conexao e nao entrega nada zerava o backoff a cada
+    // ciclo e o app reabria a sessao a cada poucos segundos, para sempre.
+    reconnectCount = 0;
+    errorMessage = null;
     // Chegou algo: o indicador nao esta em modo sob demanda, entao para de sondar.
     stopPolling();
   }
@@ -151,15 +191,17 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
     if (commands.length === 0) return;
 
     const currentGeneration = generation;
-    let index = 0;
     pollTimer = setInterval(() => {
       if (currentGeneration !== generation || state !== "connected" || !socket) return;
-      if (lastDataAt !== null) {
+      // Sai de cena so enquanto o indicador estiver falando sozinho. Se ele voltar a
+      // silenciar, o watchdog rearma a sondagem: e a unica forma de recuperar um
+      // indicador sob demanda sem fechar e reabrir a conexao.
+      if (lastDataAt !== null && Date.now() - lastDataAt <= staleThresholdMs()) {
         stopPolling();
         return;
       }
-      const command = commands[index % commands.length] ?? "";
-      index++;
+      const command = commands[pollCommandIndex % commands.length] ?? "";
+      pollCommandIndex++;
       try {
         socket.write(Buffer.from(command, "binary"));
       } catch {
@@ -176,24 +218,45 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
   }
 
   /**
-   * Rearma a cada quadro recebido. Se o indicador parar de transmitir com o socket
-   * ainda aberto, derruba a conexao e reconecta em vez de manter "connected" exibindo
-   * um peso que nao existe mais.
+   * Rearma a cada quadro recebido e vigia o silencio em dois estagios.
+   *
+   * 1. Passado `staleReadingMs`, o peso exibido morre na hora — a tela nunca pode
+   *    seguir mostrando o caminhao anterior — e a sondagem volta ao ar, caso o
+   *    indicador so responda sob comando.
+   * 2. A sessao so e girada (fechada e reaberta) depois de `silenceRotateMs` de
+   *    silencio absoluto, quando ja vale suspeitar de socket meio-aberto ou de
+   *    sessao do conversor entregue a outro cliente.
+   *
+   * Derrubar a conexao ja no estagio 1, como era feito antes, condenava um
+   * indicador calado a um ciclo perpetuo de queda e reconexao a cada poucos
+   * segundos: era isso que a operacao via como "a balanca fica reconectando o
+   * tempo todo". Pior, a sondagem morria junto — com 4s de tolerancia e um
+   * comando a cada 1,5s, um indicador que so responde ao terceiro comando nunca
+   * chegava a ser perguntado.
    */
   function armDataWatchdog(): void {
     clearDataWatchdog();
     const currentGeneration = generation;
     dataWatchdog = setTimeout(() => {
       if (currentGeneration !== generation || state !== "connected") return;
-      // Chegou aqui: o trafego bruto parou. Link morto de fato — derruba e reconecta.
-      errorMessage =
-        "Conexao aberta, mas o indicador nao envia nada. Verifique se outro programa " +
-        "esta conectado na balanca, se a porta do conversor corresponde ao canal serial " +
-        "ligado ao indicador e se ele esta em transmissao continua.";
+
+      const silent = silentForMs(Date.now());
+      errorMessage = SILENT_LINK_MESSAGE;
       clearLastReading();
-      teardownSocket();
-      state = "disconnected";
-      scheduleReconnect();
+
+      if (silent >= silenceRotateThresholdMs()) {
+        teardownSocket();
+        state = "disconnected";
+        scheduleReconnect();
+        return;
+      }
+
+      // Conexao mantida de pe: sem trafego nenhum ela custa nada, e enquanto
+      // estiver aberta o primeiro quadro que o indicador enviar chega na hora.
+      // A sondagem so e religada se tinha parado (o indicador falava e emudeceu);
+      // religar por cima reiniciaria o intervalo e atrasaria o proximo comando.
+      if (!pollTimer) startPolling();
+      armDataWatchdog();
     }, staleThresholdMs());
   }
 
@@ -241,6 +304,7 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
     // Zera a leitura: peso de uma sessao anterior nunca pode reaparecer apos reconectar.
     clearLastReading();
     lastDataAt = null;
+    sessionOpenedAt = null;
     lastRawSample = null;
   }
 
@@ -291,7 +355,6 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
         }
         state = "connected";
         errorMessage = null;
-        reconnectCount = 0;
         buffer = "";
         // O timeout de socket cobre so a fase de conexao; a partir daqui quem vigia
         // o silencio e o watchdog de dados, que sabe distinguir conexao morta de peso parado.
@@ -300,6 +363,8 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
         // Cada sessao comeca sem historico de trafego: o que chegou na anterior nao
         // diz nada sobre esta, e a sondagem precisa saber que ainda nao veio nada.
         lastDataAt = null;
+        sessionOpenedAt = Date.now();
+        pollCommandIndex = 0;
         startPolling();
         resolve();
       });

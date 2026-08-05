@@ -56,11 +56,21 @@ export const SCALE_CONNECTION_TUNING = {
    */
   reconnectBackoffMaxMs: 30_000,
   /**
-   * Silencio maximo tolerado com a conexao aberta. Passado disso a leitura vence,
-   * a conexao e derrubada e a reconexao entra — em vez de a tela seguir exibindo
-   * o peso do caminhao anterior.
+   * Silencio maximo tolerado com a conexao aberta. Passado disso a leitura vence
+   * — em vez de a tela seguir exibindo o peso do caminhao anterior.
    */
-  staleReadingMs: 4000
+  staleReadingMs: 4000,
+  /**
+   * Silencio absoluto antes de fechar e reabrir a sessao. Antes a conexao caia
+   * junto com a leitura, aos 4s: um indicador calado (desligado, cabo do conversor
+   * no canal errado, outro programa segurando a sessao) virava um ciclo perpetuo
+   * de queda e reconexao a cada poucos segundos — a operacao via a balanca
+   * "reconectando o tempo todo" e a sondagem nem chegava a completar um ciclo de
+   * comandos. Mantendo a conexao de pe, o primeiro quadro que o indicador enviar
+   * chega na hora, e a sessao so e girada quando o silencio ja sugere socket
+   * meio-aberto ou sessao entregue a outro cliente.
+   */
+  silenceRotateMs: 45_000
 } as const;
 
 export interface ScaleConfiguration {
