@@ -1179,7 +1179,14 @@ function upsertCloudPaymentMethods(
     const deletedAt = isoStringValue(row.deleted_at);
     if (!deletedAt) {
       const conflict = findConflict.get(companyId, code) as { id: string } | undefined;
-      if (conflict && conflict.id !== id) continue;
+      if (conflict && conflict.id !== id) {
+        // A gemea da outra maquina nao entra (UNIQUE(company_id, code)), mas a
+        // equivalencia fica registrada: sem ela a operacao que chega de la aponta
+        // para um id inexistente aqui e perde a forma de pagamento — foi o que
+        // sumia com a venda em carteira da outra balanca na tela Carteira.
+        rememberPaymentMethodAlias(database, companyId, id, conflict.id);
+        continue;
+      }
     }
     const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
     upsert.run(
@@ -1985,6 +1992,34 @@ function isProjectedColumn(row: Record<string, unknown>, column: string): boolea
 }
 
 /**
+ * Valor de uma coluna projetada, decidido entre o que a nuvem mandou e a copia local.
+ *
+ * Tres desfechos, e o do meio e o que faz a carteira da pedreira aparecer inteira:
+ * - a nuvem ainda nao tem a coluna (migracao pendente) ⇒ o valor local e o unico que
+ *   existe e continua valendo;
+ * - a projecao e mais nova ⇒ ela manda, inclusive o nulo (e assim que a reabertura
+ *   lancada na outra balanca chega ate aqui);
+ * - `updated_at` empatado ⇒ a projecao so PREENCHE o que esta vazio aqui. O empate
+ *   quer dizer que esta linha nasceu da propria nuvem: ou e o eco do nosso push, ou e
+ *   uma linha que esta maquina espelhou ANTES de conhecer a coluna — o caso da venda
+ *   em carteira feita na outra balanca, gravada aqui sem a forma de pagamento e por
+ *   isso invisivel na tela Carteira. Preencher recupera a venda; sobrescrever com
+ *   nulo apagaria o fechamento que esta maquina acabou de lancar.
+ */
+function mergeProjectedValue(
+  row: Record<string, unknown>,
+  column: string,
+  cloudIsNewer: boolean,
+  readProjected: () => string | null,
+  localValue: string | null | undefined
+): string | null {
+  if (!isProjectedColumn(row, column)) return localValue ?? null;
+  const projected = readProjected();
+  if (cloudIsNewer) return projected;
+  return projected ?? localValue ?? null;
+}
+
+/**
  * Id de cadastro vindo da nuvem traduzido para o espelho local.
  *
  * Tres casos, e cada um precisa de um desfecho diferente:
@@ -2004,6 +2039,63 @@ function resolveMirroredId(
   const incoming = nullableStringValue(value);
   if (!incoming) return null;
   return existingId(database, table, incoming) ?? localValue ?? null;
+}
+
+/**
+ * Registra que a forma de pagamento `remoteId` (o id que a outra balanca da pedreira
+ * usa) e a mesma forma que a `localId` daqui — as duas nasceram do mesmo padrao do
+ * sistema, com o mesmo `code` e ids diferentes. Ver a migracao local
+ * `payment_method_cloud_aliases`.
+ */
+function rememberPaymentMethodAlias(
+  database: DesktopDatabase,
+  companyId: string,
+  remoteId: string,
+  localId: string
+): void {
+  if (!remoteId || !localId || remoteId === localId) return;
+  const now = new Date().toISOString();
+  database
+    .prepare(
+      `INSERT INTO payment_method_aliases (remote_id, company_id, local_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(remote_id) DO UPDATE SET
+         company_id = excluded.company_id,
+         local_id = excluded.local_id,
+         updated_at = excluded.updated_at`
+    )
+    .run(remoteId, companyId, localId, now, now);
+}
+
+/**
+ * Forma de pagamento da projecao traduzida para o espelho local.
+ *
+ * Diferente das outras FKs, esta nao pode se contentar com `existingId`: a forma que a
+ * outra balanca usou tem id proprio e nunca chega a ser gravada aqui (UNIQUE por
+ * `code`). Sem consultar a equivalencia, a operacao vinda da outra maquina perdia a
+ * forma de pagamento — e uma venda sem forma nao e classificada como "em carteira",
+ * entao sumia da tela Carteira desta maquina.
+ */
+function resolvePaymentMethodId(
+  database: DesktopDatabase,
+  value: unknown,
+  localValue: string | null | undefined
+): string | null {
+  const incoming = nullableStringValue(value);
+  if (!incoming) return null;
+  const direct = existingId(database, "payment_methods", incoming);
+  if (direct) return direct;
+  const twin = database
+    .prepare(
+      `SELECT alias.local_id AS id
+       FROM payment_method_aliases alias
+       JOIN payment_methods pm ON pm.id = alias.local_id AND pm.deleted_at IS NULL
+       WHERE alias.remote_id = ?`
+    )
+    .get(incoming) as { id: string } | undefined;
+  // Ainda sem equivalencia (o cadastro chega no mesmo pull, mas pode ter falhado):
+  // mantem o que esta maquina ja tinha em vez de apagar o vinculo.
+  return twin?.id ?? localValue ?? null;
 }
 
 function upsertCloudOperations(
@@ -2143,38 +2235,52 @@ function upsertCloudOperations(
     const vehicleId = findVehicleIdByPlate(database, settings.companyId, remotePlate);
     const driverId = findDriverIdByName(database, settings.companyId, remoteDriverName);
     // Carteira da pedreira: a forma de pagamento diz se a venda e "em carteira" e as
-    // colunas `wallet_*` sao o fechamento lancado em qualquer uma das balancas. Vale a
-    // projecao so quando ela e mais nova (a outra balanca trocou a forma ou reabriu a
-    // venda); no empate manda o que esta maquina gravou, senao a forma escolhida na
-    // entrada some sozinha no primeiro pull. E a FK e resolvida como as demais: uma
-    // forma ainda nao espelhada aqui mantem o vinculo local em vez de apaga-lo.
-    const paymentProjected = isProjectedColumn(row, "payment_method_id") && cloudIsNewer;
-    const paymentMethodId = paymentProjected
-      ? resolveMirroredId(
+    // colunas `wallet_*` sao o fechamento lancado em qualquer uma das balancas. Cada
+    // uma passa por `mergeProjectedValue`: a projecao mais nova manda (a outra balanca
+    // trocou a forma ou reabriu a venda), o empate so preenche o que esta vazio aqui
+    // (venda espelhada antes desta maquina conhecer a coluna) e a nuvem sem a coluna
+    // nao apaga nada. E a FK e resolvida como as demais: uma forma ainda nao espelhada
+    // aqui mantem o vinculo local em vez de apaga-lo.
+    const paymentMethodId = mergeProjectedValue(
+      row,
+      "payment_method_id",
+      cloudIsNewer,
+      () => resolvePaymentMethodId(database, row.payment_method_id, local?.payment_method_id),
+      local?.payment_method_id
+    );
+    const walletSettlementMethodId = mergeProjectedValue(
+      row,
+      "wallet_settlement_method_id",
+      cloudIsNewer,
+      () =>
+        resolvePaymentMethodId(
           database,
-          "payment_methods",
-          row.payment_method_id,
-          local?.payment_method_id
-        )
-      : (local?.payment_method_id ?? null);
-    const walletProjected = isProjectedColumn(row, "wallet_settled_at") && cloudIsNewer;
-    const walletSettlementMethodId = walletProjected
-      ? resolveMirroredId(
-          database,
-          "payment_methods",
           row.wallet_settlement_method_id,
           local?.wallet_settlement_method_id
-        )
-      : (local?.wallet_settlement_method_id ?? null);
-    const walletSettlementDueDate = walletProjected
-      ? nullableStringValue(row.wallet_settlement_due_date)
-      : (local?.wallet_settlement_due_date ?? null);
-    const walletSettledAt = walletProjected
-      ? isoStringValue(row.wallet_settled_at)
-      : (local?.wallet_settled_at ?? null);
-    const walletSettlementNote = walletProjected
-      ? nullableStringValue(row.wallet_settlement_note)
-      : (local?.wallet_settlement_note ?? null);
+        ),
+      local?.wallet_settlement_method_id
+    );
+    const walletSettlementDueDate = mergeProjectedValue(
+      row,
+      "wallet_settlement_due_date",
+      cloudIsNewer,
+      () => nullableStringValue(row.wallet_settlement_due_date),
+      local?.wallet_settlement_due_date
+    );
+    const walletSettledAt = mergeProjectedValue(
+      row,
+      "wallet_settled_at",
+      cloudIsNewer,
+      () => isoStringValue(row.wallet_settled_at),
+      local?.wallet_settled_at
+    );
+    const walletSettlementNote = mergeProjectedValue(
+      row,
+      "wallet_settlement_note",
+      cloudIsNewer,
+      () => nullableStringValue(row.wallet_settlement_note),
+      local?.wallet_settlement_note
+    );
     try {
       upsert.run(
         id,

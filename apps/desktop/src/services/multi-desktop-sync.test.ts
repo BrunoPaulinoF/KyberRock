@@ -426,6 +426,190 @@ describe("multi-desktop na mesma pedreira", () => {
     }
   });
 
+  it("carteira: venda da outra balanca aparece mesmo com a forma de pagamento gemea", async () => {
+    // Cada computador semeia as formas padrao com um id proprio, entao a venda feita na
+    // outra balanca aponta para a "Em carteira" DELA — um id que nunca entra aqui
+    // (UNIQUE(company_id, code) mantem a forma local). Sem traduzir o id para a gemea
+    // local a operacao chegava sem forma de pagamento e a venda sumia da Carteira.
+    const database = createMachine("desktop-b");
+
+    try {
+      const identity = readIdentity(database);
+      insertWalletPaymentMethods(database);
+
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          paymentMethods: [
+            {
+              id: "pm-wallet-da-balanca-a",
+              company_id: "company-1",
+              code: "CARTEIRA",
+              name: "Em carteira",
+              is_wallet: true,
+              is_system: true,
+              is_active: true,
+              sort_order: 1,
+              created_at: "2026-07-22T09:00:00.000Z",
+              updated_at: "2026-07-22T09:00:00.000Z"
+            }
+          ],
+          operations: [
+            {
+              id: "op-wallet",
+              company_id: "company-1",
+              unit_id: "unit-1",
+              device_id: "desktop-a",
+              status: "closed_local",
+              operation_type: "invoice",
+              customer_name: "Cliente da outra balanca",
+              total_cents: 50_000,
+              payment_method_id: "pm-wallet-da-balanca-a",
+              wallet_settlement_method_id: null,
+              wallet_settlement_due_date: null,
+              wallet_settled_at: null,
+              wallet_settlement_note: null,
+              created_at: "2026-07-22T11:00:00.000Z",
+              updated_at: "2026-07-22T12:00:00.000Z"
+            }
+          ]
+        },
+        error: null
+      });
+      await pullDesktopDataFromCloud(database, identity);
+
+      const report = getWalletReport(database, { status: "open" });
+      expect(report.summary.openCount).toBe(1);
+      expect(report.summary.openTotalCents).toBe(50_000);
+      // A forma gravada e a desta maquina, nao o id que veio da outra.
+      expect(
+        database
+          .prepare("SELECT payment_method_id FROM weighing_operations WHERE id = 'op-wallet'")
+          .pluck()
+          .get()
+      ).toBe("pm-wallet");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("carteira: venda ja espelhada sem a forma de pagamento e completada no pull seguinte", async () => {
+    // A venda foi espelhada aqui por uma versao que ainda nao trazia a carteira: ficou
+    // com a forma de pagamento vazia e `updated_at` identico ao da nuvem. Como o empate
+    // nao e "projecao mais nova", o valor nunca era preenchido e a venda ficava invisivel
+    // para sempre nesta maquina. No empate a projecao preenche o que falta (e so isso).
+    const database = createMachine("desktop-b");
+
+    try {
+      const identity = readIdentity(database);
+      insertWalletPaymentMethods(database);
+      upsertUnitDevices(database, identity, [
+        { id: "desktop-a", name: "Balanca 1", color: "#2563eb", is_active: true }
+      ]);
+      insertOperation(database, {
+        id: "op-wallet",
+        deviceId: "desktop-a",
+        status: "closed_local",
+        updatedAt: "2026-07-22T12:00:00.000Z"
+      });
+      database
+        .prepare("UPDATE weighing_operations SET total_cents = 40000 WHERE id = 'op-wallet'")
+        .run();
+      expect(getWalletReport(database, { status: "open" }).summary.openCount).toBe(0);
+
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          operations: [
+            {
+              id: "op-wallet",
+              company_id: "company-1",
+              unit_id: "unit-1",
+              device_id: "desktop-a",
+              status: "closed_local",
+              operation_type: "invoice",
+              total_cents: 40_000,
+              payment_method_id: "pm-wallet",
+              wallet_settlement_method_id: null,
+              wallet_settlement_due_date: null,
+              wallet_settled_at: null,
+              wallet_settlement_note: null,
+              created_at: "2026-07-22T11:00:00.000Z",
+              updated_at: "2026-07-22T12:00:00.000Z"
+            }
+          ]
+        },
+        error: null
+      });
+      await pullDesktopDataFromCloud(database, identity);
+
+      expect(getWalletReport(database, { status: "open" }).summary.openCount).toBe(1);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("carteira: empate de updated_at nao apaga o fechamento lancado nesta maquina", async () => {
+    // O outro lado do empate: a nuvem gravou a linha antes de ganhar as colunas (ou quem
+    // enviou foi uma balanca de versao antiga) e o eco volta com os campos vazios. No
+    // empate a projecao so preenche — nunca limpa o fechamento que acabou de ser lancado.
+    const database = createMachine("desktop-a");
+
+    try {
+      const identity = readIdentity(database);
+      insertWalletPaymentMethods(database);
+      insertOperation(database, {
+        id: "op-wallet",
+        deviceId: "desktop-a",
+        status: "closed_local",
+        updatedAt: "2026-07-22T12:00:00.000Z"
+      });
+      database
+        .prepare(
+          "UPDATE weighing_operations SET payment_method_id = 'pm-wallet', total_cents = 30000 WHERE id = ?"
+        )
+        .run("op-wallet");
+      settleWalletOperations(
+        database,
+        { operationIds: ["op-wallet"], settlementMethodId: "pm-pix" },
+        new Date("2026-07-22T13:00:00.000Z")
+      );
+      const localUpdatedAt = database
+        .prepare("SELECT updated_at FROM weighing_operations WHERE id = 'op-wallet'")
+        .pluck()
+        .get() as string;
+
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          operations: [
+            {
+              id: "op-wallet",
+              company_id: "company-1",
+              unit_id: "unit-1",
+              device_id: "desktop-a",
+              status: "closed_local",
+              operation_type: "invoice",
+              total_cents: 30_000,
+              payment_method_id: null,
+              wallet_settlement_method_id: null,
+              wallet_settlement_due_date: null,
+              wallet_settled_at: null,
+              wallet_settlement_note: null,
+              created_at: "2026-07-22T11:00:00.000Z",
+              updated_at: localUpdatedAt
+            }
+          ]
+        },
+        error: null
+      });
+      await pullDesktopDataFromCloud(database, identity);
+
+      const report = getWalletReport(database, { status: "settled" });
+      expect(report.summary.settledCount).toBe(1);
+      expect(report.groups[0]?.operations[0]?.settlementMethodName).toBe("PIX da Pedreira");
+    } finally {
+      database.close();
+    }
+  });
+
   it("carteira: projecao antiga da nuvem nao apaga o fechamento desta maquina", async () => {
     // Enquanto a migracao da nuvem nao roda, a operacao volta do pull SEM as colunas
     // da carteira. Sobrescrever com nulo apagaria o fechamento que esta maquina

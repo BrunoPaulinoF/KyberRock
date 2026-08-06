@@ -88,8 +88,11 @@ describe("atualizacao de um banco em uso (47 -> 48)", () => {
         totalOperacoes: database.prepare("SELECT COUNT(*) FROM weighing_operations").pluck().get()
       };
 
-      // 3) A atualizacao propriamente dita.
-      const applied = runDesktopMigrations(database);
+      // 3) A atualizacao propriamente dita (ate a 48: o salto seguinte tem teste proprio).
+      const applied = runDesktopMigrations(
+        database,
+        DESKTOP_MIGRATIONS.filter((migration) => migration.version <= 48)
+      );
       expect(applied.at(-1)?.version).toBe(48);
 
       // 4) Nada mudou para o operador: as mesmas linhas, na mesma ordem.
@@ -142,8 +145,11 @@ describe("atualizacao de um banco em uso (47 -> 48)", () => {
     const database = openDesktopDatabase({ databasePath: ":memory:" });
 
     try {
-      // Banco ja atualizado...
-      runDesktopMigrations(database);
+      // Banco ja atualizado ate a 48...
+      runDesktopMigrations(
+        database,
+        DESKTOP_MIGRATIONS.filter((migration) => migration.version <= 48)
+      );
 
       // ...e o operador volta para o instalador anterior, que so conhece ate a 47.
       // runDesktopMigrations itera a PROPRIA lista, entao a versao 48 gravada em
@@ -201,7 +207,10 @@ describe("atualizacao de um banco em uso (47 -> 48)", () => {
       database.close();
       database = openDesktopDatabase({ databasePath });
 
-      const applied = runDesktopMigrations(database);
+      const applied = runDesktopMigrations(
+        database,
+        DESKTOP_MIGRATIONS.filter((migration) => migration.version <= 48)
+      );
       expect(applied.at(-1)?.version).toBe(48);
       expect(listClosedWeighingOperations(database).map((o) => o.id)).toEqual(["op-1"]);
       expect(database.prepare("PRAGMA integrity_check").pluck().get()).toBe("ok");

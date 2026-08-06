@@ -1731,5 +1731,36 @@ CREATE INDEX IF NOT EXISTS idx_sync_queue_target_status_created
 CREATE INDEX IF NOT EXISTS idx_sync_queue_status_updated
   ON sync_queue(status, updated_at);
 `
+  },
+  {
+    version: 49,
+    name: "payment_method_cloud_aliases",
+    sql: `
+-- Formas de pagamento gemeas entre as balancas da mesma pedreira.
+--
+-- Cada computador semeia as formas padrao (dinheiro, pix, ..., "em carteira") com um id
+-- proprio, e todos empurram as suas para a nuvem — a mesma forma existe la varias vezes,
+-- uma por maquina, sempre com o mesmo \`code\`. Como aqui vale UNIQUE(company_id, code),
+-- o pull nao pode gravar a gemea da outra maquina: a local prevalece e a de la e
+-- descartada. So que a operacao que chega da outra balanca aponta para o id DELA, que
+-- entao nao existe nesta maquina — o vinculo caia no vazio e a venda em carteira feita
+-- na outra balanca sumia da tela Carteira daqui (a classificacao vem de
+-- payment_methods.is_wallet, e sem forma de pagamento nao ha classificacao).
+--
+-- Esta tabela guarda essa equivalencia: id remoto (o que vem na projecao) -> id local
+-- com o mesmo code. E alimentada pelo proprio pull do cadastro e consultada ao projetar
+-- as operacoes, entao a forma de pagamento e o fechamento da carteira passam a chegar
+-- resolvidos em qualquer computador da unidade.
+CREATE TABLE IF NOT EXISTS payment_method_aliases (
+  remote_id TEXT PRIMARY KEY,
+  company_id TEXT NOT NULL,
+  local_id TEXT NOT NULL REFERENCES payment_methods(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_payment_method_aliases_local
+  ON payment_method_aliases(company_id, local_id);
+`
   }
 ];

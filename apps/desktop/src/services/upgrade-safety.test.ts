@@ -112,7 +112,9 @@ describe("atualizacao com volume de dados", () => {
       expect(before.closed.length).toBeGreaterThan(4_000);
 
       const applied = runDesktopMigrations(database);
-      expect(applied.at(-1)?.version).toBe(48);
+      // A ultima migracao da lista, seja qual for a do release: o que importa aqui e que
+      // a atualizacao completa rodou sobre o volume sem mexer no que a tela mostra.
+      expect(applied.at(-1)?.version).toBe(DESKTOP_MIGRATIONS.at(-1)?.version);
 
       expect(listOpenWeighingOperations(database).map((operation) => operation.id)).toEqual(
         before.open
