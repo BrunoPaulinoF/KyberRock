@@ -189,13 +189,55 @@ export interface DemoProduct {
 }
 
 export const PRODUCTS: DemoProduct[] = [
-  { id: "prd_001", omieProductId: 90011, code: "BR-00", description: "Brita 0", unitPriceCents: 8_900 },
-  { id: "prd_002", omieProductId: 90012, code: "BR-01", description: "Brita 1", unitPriceCents: 9_250 },
-  { id: "prd_003", omieProductId: 90013, code: "BR-02", description: "Brita 2", unitPriceCents: 9_100 },
-  { id: "prd_004", omieProductId: 90014, code: "PO-PD", description: "Po de pedra", unitPriceCents: 6_400 },
-  { id: "prd_005", omieProductId: 90015, code: "RCH-1", description: "Rachao", unitPriceCents: 5_800 },
-  { id: "prd_006", omieProductId: 90016, code: "BC-CR", description: "Bica corrida", unitPriceCents: 6_950 },
-  { id: "prd_007", omieProductId: 90017, code: "AR-IN", description: "Areia industrial", unitPriceCents: 10_400 }
+  {
+    id: "prd_001",
+    omieProductId: 90011,
+    code: "BR-00",
+    description: "Brita 0",
+    unitPriceCents: 8_900
+  },
+  {
+    id: "prd_002",
+    omieProductId: 90012,
+    code: "BR-01",
+    description: "Brita 1",
+    unitPriceCents: 9_250
+  },
+  {
+    id: "prd_003",
+    omieProductId: 90013,
+    code: "BR-02",
+    description: "Brita 2",
+    unitPriceCents: 9_100
+  },
+  {
+    id: "prd_004",
+    omieProductId: 90014,
+    code: "PO-PD",
+    description: "Po de pedra",
+    unitPriceCents: 6_400
+  },
+  {
+    id: "prd_005",
+    omieProductId: 90015,
+    code: "RCH-1",
+    description: "Rachao",
+    unitPriceCents: 5_800
+  },
+  {
+    id: "prd_006",
+    omieProductId: 90016,
+    code: "BC-CR",
+    description: "Bica corrida",
+    unitPriceCents: 6_950
+  },
+  {
+    id: "prd_007",
+    omieProductId: 90017,
+    code: "AR-IN",
+    description: "Areia industrial",
+    unitPriceCents: 10_400
+  }
 ];
 
 export const CARRIERS = [
@@ -232,13 +274,55 @@ export const CARRIERS = [
 ];
 
 export const DRIVERS = [
-  { id: "drv_001", name: "Anderson Rocha Lima", document: "204.558.310-92", phone: "(31) 98411-2277", carrierId: "car_001" },
-  { id: "drv_002", name: "Gilmar Teixeira Alves", document: "318.740.226-05", phone: "(31) 99120-4433", carrierId: "car_001" },
-  { id: "drv_003", name: "Wesley Antunes Prado", document: "155.902.487-16", phone: "(31) 98230-7781", carrierId: "car_002" },
-  { id: "drv_004", name: "Ronaldo Bastos Vieira", document: "402.117.559-30", phone: "(31) 99744-2210", carrierId: "car_002" },
-  { id: "drv_005", name: "Marcio Duarte Nogueira", document: "271.336.804-58", phone: "(31) 98066-3391", carrierId: "car_003" },
-  { id: "drv_006", name: "Elton Ferraz Camargo", document: "509.228.176-44", phone: "(31) 99388-1102", carrierId: "car_003" },
-  { id: "drv_007", name: "Sebastiao Correia Pinto", document: "633.041.298-77", phone: "(31) 98577-6620", carrierId: null }
+  {
+    id: "drv_001",
+    name: "Anderson Rocha Lima",
+    document: "204.558.310-92",
+    phone: "(31) 98411-2277",
+    carrierId: "car_001"
+  },
+  {
+    id: "drv_002",
+    name: "Gilmar Teixeira Alves",
+    document: "318.740.226-05",
+    phone: "(31) 99120-4433",
+    carrierId: "car_001"
+  },
+  {
+    id: "drv_003",
+    name: "Wesley Antunes Prado",
+    document: "155.902.487-16",
+    phone: "(31) 98230-7781",
+    carrierId: "car_002"
+  },
+  {
+    id: "drv_004",
+    name: "Ronaldo Bastos Vieira",
+    document: "402.117.559-30",
+    phone: "(31) 99744-2210",
+    carrierId: "car_002"
+  },
+  {
+    id: "drv_005",
+    name: "Marcio Duarte Nogueira",
+    document: "271.336.804-58",
+    phone: "(31) 98066-3391",
+    carrierId: "car_003"
+  },
+  {
+    id: "drv_006",
+    name: "Elton Ferraz Camargo",
+    document: "509.228.176-44",
+    phone: "(31) 99388-1102",
+    carrierId: "car_003"
+  },
+  {
+    id: "drv_007",
+    name: "Sebastiao Correia Pinto",
+    document: "633.041.298-77",
+    phone: "(31) 98577-6620",
+    carrierId: null
+  }
 ];
 
 export const VEHICLES = [
@@ -252,18 +336,99 @@ export const VEHICLES = [
 ];
 
 export const PAYMENT_METHODS = [
-  { id: "pay_001", code: "01", name: "Dinheiro", omieCode: "01", accountId: "acc_001", accountName: "Caixa da balanca", isWallet: false, isCustomerCredit: false, sortOrder: 1 },
-  { id: "pay_002", code: "03", name: "PIX", omieCode: "99", accountId: "acc_002", accountName: "Banco Cedro - C/C 4471-2", isWallet: false, isCustomerCredit: false, sortOrder: 2 },
-  { id: "pay_003", code: "15", name: "Boleto bancario", omieCode: "15", accountId: "acc_002", accountName: "Banco Cedro - C/C 4471-2", isWallet: false, isCustomerCredit: false, sortOrder: 3 },
-  { id: "pay_004", code: "04", name: "Cartao de credito", omieCode: "04", accountId: "acc_003", accountName: "Adquirente - recebiveis", isWallet: false, isCustomerCredit: false, sortOrder: 4 },
-  { id: "pay_005", code: "90", name: "Credito do cliente (adiantamento)", omieCode: "90", accountId: null, accountName: null, isWallet: false, isCustomerCredit: true, sortOrder: 5 },
-  { id: "pay_006", code: "98", name: "Em carteira", omieCode: null, accountId: null, accountName: null, isWallet: true, isCustomerCredit: false, sortOrder: 6 }
+  {
+    id: "pay_001",
+    code: "01",
+    name: "Dinheiro",
+    omieCode: "01",
+    accountId: "acc_001",
+    accountName: "Caixa da balanca",
+    isWallet: false,
+    isCustomerCredit: false,
+    sortOrder: 1
+  },
+  {
+    id: "pay_002",
+    code: "03",
+    name: "PIX",
+    omieCode: "99",
+    accountId: "acc_002",
+    accountName: "Banco Cedro - C/C 4471-2",
+    isWallet: false,
+    isCustomerCredit: false,
+    sortOrder: 2
+  },
+  {
+    id: "pay_003",
+    code: "15",
+    name: "Boleto bancario",
+    omieCode: "15",
+    accountId: "acc_002",
+    accountName: "Banco Cedro - C/C 4471-2",
+    isWallet: false,
+    isCustomerCredit: false,
+    sortOrder: 3
+  },
+  {
+    id: "pay_004",
+    code: "04",
+    name: "Cartao de credito",
+    omieCode: "04",
+    accountId: "acc_003",
+    accountName: "Adquirente - recebiveis",
+    isWallet: false,
+    isCustomerCredit: false,
+    sortOrder: 4
+  },
+  {
+    id: "pay_005",
+    code: "90",
+    name: "Credito do cliente (adiantamento)",
+    omieCode: "90",
+    accountId: null,
+    accountName: null,
+    isWallet: false,
+    isCustomerCredit: true,
+    sortOrder: 5
+  },
+  {
+    id: "pay_006",
+    code: "98",
+    name: "Em carteira",
+    omieCode: null,
+    accountId: null,
+    accountName: null,
+    isWallet: true,
+    isCustomerCredit: false,
+    sortOrder: 6
+  }
 ];
 
 export const ACCOUNTS = [
-  { id: "acc_001", code: "1.01", name: "Caixa da balanca", omieCode: "3110022", isSystem: false, sortOrder: 1 },
-  { id: "acc_002", code: "1.02", name: "Banco Cedro - C/C 4471-2", omieCode: "3110024", isSystem: false, sortOrder: 2 },
-  { id: "acc_003", code: "1.03", name: "Adquirente - recebiveis", omieCode: "3110031", isSystem: false, sortOrder: 3 }
+  {
+    id: "acc_001",
+    code: "1.01",
+    name: "Caixa da balanca",
+    omieCode: "3110022",
+    isSystem: false,
+    sortOrder: 1
+  },
+  {
+    id: "acc_002",
+    code: "1.02",
+    name: "Banco Cedro - C/C 4471-2",
+    omieCode: "3110024",
+    isSystem: false,
+    sortOrder: 2
+  },
+  {
+    id: "acc_003",
+    code: "1.03",
+    name: "Adquirente - recebiveis",
+    omieCode: "3110031",
+    isSystem: false,
+    sortOrder: 3
+  }
 ];
 
 export const PAYMENT_TERMS = [

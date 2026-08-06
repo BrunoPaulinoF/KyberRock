@@ -71,7 +71,12 @@ const CUSTOMER_ROWS = CUSTOMERS.map((customer, index) => ({
   creditSecondBoletoDays: null,
   creditClosingWeekday: null,
   zipcode: `3${index}550-${100 + index}`,
-  addressStreet: ["Rodovia BR-040 km", "Avenida das Industrias", "Rua das Pedreiras", "Avenida Central"][index % 4],
+  addressStreet: [
+    "Rodovia BR-040 km",
+    "Avenida das Industrias",
+    "Rua das Pedreiras",
+    "Avenida Central"
+  ][index % 4],
   addressNumber: String(120 + index * 37),
   addressComplement: index % 2 === 0 ? "Galpao 2" : null,
   neighborhood: ["Distrito Industrial", "Cinco", "Jardim das Acacias", "Centro"][index % 4],
@@ -381,7 +386,12 @@ function totalsFor(operations: typeof CLOSED_OPERATIONS) {
 function seriesFor(startDate: string, endDate: string) {
   const start = new Date(`${startDate}T12:00:00`);
   const end = new Date(`${endDate}T12:00:00`);
-  const points: Array<{ date: string; totalOperations: number; totalNetWeightKg: number; totalCents: number }> = [];
+  const points: Array<{
+    date: string;
+    totalOperations: number;
+    totalNetWeightKg: number;
+    totalCents: number;
+  }> = [];
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return points;
 
   for (let cursor = new Date(start); cursor <= end; cursor.setDate(cursor.getDate() + 1)) {
@@ -501,9 +511,15 @@ function buildCustomerReport(customerId: string, startDate: string, endDate: str
     productCents: totalCents - freightCents,
     freightCents,
     totalCents,
-    avgPriceCentsPerTon: row ? Math.round((totalCents - freightCents) / (row.totalWeightKg / 1000)) : shape.avgPriceCentsPerTon,
-    avgTicketCents: row ? Math.round(totalCents / Math.max(1, row.totalOperations)) : shape.avgTicketCents,
-    avgNetWeightKg: row ? Math.round(row.totalWeightKg / Math.max(1, row.totalOperations)) : shape.avgNetWeightKg,
+    avgPriceCentsPerTon: row
+      ? Math.round((totalCents - freightCents) / (row.totalWeightKg / 1000))
+      : shape.avgPriceCentsPerTon,
+    avgTicketCents: row
+      ? Math.round(totalCents / Math.max(1, row.totalOperations))
+      : shape.avgTicketCents,
+    avgNetWeightKg: row
+      ? Math.round(row.totalWeightKg / Math.max(1, row.totalOperations))
+      : shape.avgNetWeightKg,
     invoiceOperations: Math.round((row?.totalOperations ?? shape.operations) * 0.9),
     internalOperations: Math.round((row?.totalOperations ?? shape.operations) * 0.1),
     firstOperationDate: startDate,
@@ -536,7 +552,10 @@ function buildCustomerReport(customerId: string, startDate: string, endDate: str
       return {
         productCode: product.code,
         productDescription: product.description,
-        operations: Math.max(1, Math.round(scaled.operations * [0.34, 0.26, 0.18, 0.13, 0.09][index])),
+        operations: Math.max(
+          1,
+          Math.round(scaled.operations * [0.34, 0.26, 0.18, 0.13, 0.09][index])
+        ),
         netWeightKg: weight,
         productCents: Math.round((weight / 1000) * product.unitPriceCents),
         freightCents: Math.round(weight * 1.2),
@@ -564,18 +583,58 @@ function buildCustomerReport(customerId: string, startDate: string, endDate: str
       plates: VEHICLES.filter((vehicle) => vehicle.carrierId === carrier.id).map((v) => v.plate)
     })),
     byPaymentMethod: [
-      { name: "Boleto bancario", operations: 21, netWeightKg: Math.round(scaled.netWeightKg * 0.52), totalCents: Math.round(scaled.totalCents * 0.52) },
-      { name: "PIX", operations: 11, netWeightKg: Math.round(scaled.netWeightKg * 0.28), totalCents: Math.round(scaled.totalCents * 0.28) },
-      { name: "Em carteira", operations: 8, netWeightKg: Math.round(scaled.netWeightKg * 0.2), totalCents: Math.round(scaled.totalCents * 0.2) }
+      {
+        name: "Boleto bancario",
+        operations: 21,
+        netWeightKg: Math.round(scaled.netWeightKg * 0.52),
+        totalCents: Math.round(scaled.totalCents * 0.52)
+      },
+      {
+        name: "PIX",
+        operations: 11,
+        netWeightKg: Math.round(scaled.netWeightKg * 0.28),
+        totalCents: Math.round(scaled.totalCents * 0.28)
+      },
+      {
+        name: "Em carteira",
+        operations: 8,
+        netWeightKg: Math.round(scaled.netWeightKg * 0.2),
+        totalCents: Math.round(scaled.totalCents * 0.2)
+      }
     ],
     byPaymentTerm: [
-      { name: "30/60 dias", operations: 24, netWeightKg: Math.round(scaled.netWeightKg * 0.6), totalCents: Math.round(scaled.totalCents * 0.6) },
-      { name: "28 dias", operations: 10, netWeightKg: Math.round(scaled.netWeightKg * 0.25), totalCents: Math.round(scaled.totalCents * 0.25) },
-      { name: "A vista", operations: 6, netWeightKg: Math.round(scaled.netWeightKg * 0.15), totalCents: Math.round(scaled.totalCents * 0.15) }
+      {
+        name: "30/60 dias",
+        operations: 24,
+        netWeightKg: Math.round(scaled.netWeightKg * 0.6),
+        totalCents: Math.round(scaled.totalCents * 0.6)
+      },
+      {
+        name: "28 dias",
+        operations: 10,
+        netWeightKg: Math.round(scaled.netWeightKg * 0.25),
+        totalCents: Math.round(scaled.totalCents * 0.25)
+      },
+      {
+        name: "A vista",
+        operations: 6,
+        netWeightKg: Math.round(scaled.netWeightKg * 0.15),
+        totalCents: Math.round(scaled.totalCents * 0.15)
+      }
     ],
     byFreightModality: [
-      { name: "FOB (cliente paga o frete)", operations: 26, netWeightKg: Math.round(scaled.netWeightKg * 0.65), totalCents: Math.round(scaled.totalCents * 0.65) },
-      { name: "CIF (pedreira paga o frete)", operations: 14, netWeightKg: Math.round(scaled.netWeightKg * 0.35), totalCents: Math.round(scaled.totalCents * 0.35) }
+      {
+        name: "FOB (cliente paga o frete)",
+        operations: 26,
+        netWeightKg: Math.round(scaled.netWeightKg * 0.65),
+        totalCents: Math.round(scaled.totalCents * 0.65)
+      },
+      {
+        name: "CIF (pedreira paga o frete)",
+        operations: 14,
+        netWeightKg: Math.round(scaled.netWeightKg * 0.35),
+        totalCents: Math.round(scaled.totalCents * 0.35)
+      }
     ],
     byDay: DAILY_SERIES.slice(-12).map((point) => ({
       period: point.date,
@@ -586,9 +645,30 @@ function buildCustomerReport(customerId: string, startDate: string, endDate: str
       totalCents: Math.round(point.totalCents * 0.2)
     })),
     byMonth: [
-      { period: "2026-05", operations: 38, netWeightKg: 1_042_000, productCents: 9_180_000, freightCents: 610_000, totalCents: 9_790_000 },
-      { period: "2026-06", operations: 44, netWeightKg: 1_218_400, productCents: 10_740_000, freightCents: 702_000, totalCents: 11_442_000 },
-      { period: "2026-07", operations: scaled.operations, netWeightKg: scaled.netWeightKg, productCents: scaled.productCents, freightCents: scaled.freightCents, totalCents: scaled.totalCents }
+      {
+        period: "2026-05",
+        operations: 38,
+        netWeightKg: 1_042_000,
+        productCents: 9_180_000,
+        freightCents: 610_000,
+        totalCents: 9_790_000
+      },
+      {
+        period: "2026-06",
+        operations: 44,
+        netWeightKg: 1_218_400,
+        productCents: 10_740_000,
+        freightCents: 702_000,
+        totalCents: 11_442_000
+      },
+      {
+        period: "2026-07",
+        operations: scaled.operations,
+        netWeightKg: scaled.netWeightKg,
+        productCents: scaled.productCents,
+        freightCents: scaled.freightCents,
+        totalCents: scaled.totalCents
+      }
     ],
     operations: source.map((operation) => ({
       ...operation,
@@ -633,32 +713,34 @@ function buildCustomerReport(customerId: string, startDate: string, endDate: str
 }
 
 function buildCustomersOverview(startDate: string, endDate: string) {
-  const rows = customerRowsFor(startDate, endDate).map((row, index) => {
-    const customer = CUSTOMERS.find((item) => item.id === row.customerId) ?? CUSTOMERS[index];
-    const weight = row.totalWeightKg;
-    const total = row.totalValueCents;
-    const operations = row.totalOperations;
-    return {
-      customer: { id: customer.id, name: customer.tradeName, document: customer.document },
-      totals: {
-        operations,
-        netWeightKg: weight,
-        productCents: Math.round(total * 0.94),
-        freightCents: Math.round(total * 0.06),
-        totalCents: total,
-        avgPriceCentsPerTon: Math.round((total * 0.94) / (weight / 1000)),
-        avgTicketCents: Math.round(total / Math.max(1, operations)),
-        avgNetWeightKg: Math.round(weight / Math.max(1, operations)),
-        invoiceOperations: Math.round(operations * 0.9),
-        internalOperations: operations - Math.round(operations * 0.9),
-        cancelledOperations: index % 3 === 0 ? 1 : 0,
-        cancelledNetWeightKg: index % 3 === 0 ? 27_600 : 0,
-        firstOperationDate: startDate,
-        lastOperationDate: endDate
-      },
-      installmentTotals: buildInstallmentTotals(Math.round(total * 0.42))
-    };
-  }).sort((a, b) => b.totals.totalCents - a.totals.totalCents);
+  const rows = customerRowsFor(startDate, endDate)
+    .map((row, index) => {
+      const customer = CUSTOMERS.find((item) => item.id === row.customerId) ?? CUSTOMERS[index];
+      const weight = row.totalWeightKg;
+      const total = row.totalValueCents;
+      const operations = row.totalOperations;
+      return {
+        customer: { id: customer.id, name: customer.tradeName, document: customer.document },
+        totals: {
+          operations,
+          netWeightKg: weight,
+          productCents: Math.round(total * 0.94),
+          freightCents: Math.round(total * 0.06),
+          totalCents: total,
+          avgPriceCentsPerTon: Math.round((total * 0.94) / (weight / 1000)),
+          avgTicketCents: Math.round(total / Math.max(1, operations)),
+          avgNetWeightKg: Math.round(weight / Math.max(1, operations)),
+          invoiceOperations: Math.round(operations * 0.9),
+          internalOperations: operations - Math.round(operations * 0.9),
+          cancelledOperations: index % 3 === 0 ? 1 : 0,
+          cancelledNetWeightKg: index % 3 === 0 ? 27_600 : 0,
+          firstOperationDate: startDate,
+          lastOperationDate: endDate
+        },
+        installmentTotals: buildInstallmentTotals(Math.round(total * 0.42))
+      };
+    })
+    .sort((a, b) => b.totals.totalCents - a.totals.totalCents);
 
   const totals = rows.reduce(
     (acc, row) => ({
@@ -861,7 +943,8 @@ export function createMockDesktopApi(): AnyRecord {
     logoutDesktop: () => delay(undefined),
     getUpdateState: () => delay({ status: "idle", availableVersion: null, errorMessage: null }),
     checkForUpdates: () => delay({ status: "idle", availableVersion: null, errorMessage: null }),
-    downloadAndInstallUpdate: () => delay({ status: "idle", availableVersion: null, errorMessage: null }),
+    downloadAndInstallUpdate: () =>
+      delay({ status: "idle", availableVersion: null, errorMessage: null }),
     exportBackup: () => delay({ path: "C:\\KyberRock\\backups\\kyberrock-2026-07-14.db" }),
     restoreBackup: () => delay(true),
 
@@ -876,8 +959,22 @@ export function createMockDesktopApi(): AnyRecord {
     pullCloudNow: () => delay({ pulled: 0, errors: [] }),
     listUnitDevices: () =>
       delay([
-        { id: "dev_balanca_01", name: "Balanca 01", color: "#2563eb", deviceNumber: 1, isActive: true, isSelf: true },
-        { id: "dev_balanca_02", name: "Balanca 02", color: "#16a34a", deviceNumber: 2, isActive: true, isSelf: false }
+        {
+          id: "dev_balanca_01",
+          name: "Balanca 01",
+          color: "#2563eb",
+          deviceNumber: 1,
+          isActive: true,
+          isSelf: true
+        },
+        {
+          id: "dev_balanca_02",
+          name: "Balanca 02",
+          color: "#16a34a",
+          deviceNumber: 2,
+          isActive: true,
+          isSelf: false
+        }
       ]),
 
     startWeighing: () => delay(OPEN_OPERATIONS[0]),
@@ -888,7 +985,11 @@ export function createMockDesktopApi(): AnyRecord {
     updateWeighingCarrier: () => delay(OPEN_OPERATIONS[0]),
     updateWeighingOperation: () => delay(OPEN_OPERATIONS[0]),
     getCustomerLastEntryPreferences: () =>
-      delay({ carrierId: CARRIERS[0].id, paymentTermId: PAYMENT_TERMS[4].id, paymentMethodId: PAYMENT_METHODS[2].id }),
+      delay({
+        carrierId: CARRIERS[0].id,
+        paymentTermId: PAYMENT_TERMS[4].id,
+        paymentMethodId: PAYMENT_METHODS[2].id
+      }),
 
     getCustomerFreightRules: () => delay([]),
     getCustomerFreightForProduct: () => delay(null),
@@ -937,7 +1038,13 @@ export function createMockDesktopApi(): AnyRecord {
       delay({
         mode: "cloud",
         synced: 3,
-        pulled: { customers: 8, products: 7, operations: 23, loadingRequests: 4, printReceipts: 10 },
+        pulled: {
+          customers: 8,
+          products: 7,
+          operations: 23,
+          loadingRequests: 4,
+          printReceipts: 10
+        },
         errors: []
       }),
     syncToCloud: () => delay({ success: true, synced: 4, failed: 0, errors: [] }),
@@ -945,10 +1052,21 @@ export function createMockDesktopApi(): AnyRecord {
     isCloudConnected: () => delay(true),
     syncCloudNow: () => delay({ success: true, synced: 4, failed: 0, errors: [] }),
     getCloudSyncSchedulerStatus: () =>
-      delay({ enabled: true, intervalMinutes: 5, lastRunAt: iso(minutesAgo(3)), nextRunAt: iso(minutesAgo(-2)) }),
+      delay({
+        enabled: true,
+        intervalMinutes: 5,
+        lastRunAt: iso(minutesAgo(3)),
+        nextRunAt: iso(minutesAgo(-2))
+      }),
     setCloudSyncConfig: () =>
-      delay({ enabled: true, intervalMinutes: 5, lastRunAt: iso(minutesAgo(3)), nextRunAt: iso(minutesAgo(-2)) }),
-    probeConnectivity: () => delay({ internetOnline: true, cloudReachable: true, omieReachable: true }),
+      delay({
+        enabled: true,
+        intervalMinutes: 5,
+        lastRunAt: iso(minutesAgo(3)),
+        nextRunAt: iso(minutesAgo(-2))
+      }),
+    probeConnectivity: () =>
+      delay({ internetOnline: true, cloudReachable: true, omieReachable: true }),
 
     getOmieStatus: () =>
       delay({
@@ -965,12 +1083,20 @@ export function createMockDesktopApi(): AnyRecord {
       }),
     omieConfig: () => delay({ configured: true, appKeyMasked: "••••••••4472" }),
     omieSync: () =>
-      delay({ customersPulled: 8, customersPushed: 1, suppliersSynced: 3, productsSynced: 7, paymentTermsSynced: 6, errors: [] }),
+      delay({
+        customersPulled: 8,
+        customersPushed: 1,
+        suppliersSynced: 3,
+        productsSynced: 7,
+        paymentTermsSynced: 6,
+        errors: []
+      }),
     omieQueueList: () => delay(OMIE_QUEUE),
     omieQueueDelete: () => delay(undefined),
     omieQueueSendNow: () => delay(undefined),
     syncOmieDirect: () => delay({ customersPulled: 8, productsSynced: 7 }),
-    syncOmieMasterData: () => delay({ customersPulled: 8, productsSynced: 7, paymentTermsSynced: 6, errors: [] }),
+    syncOmieMasterData: () =>
+      delay({ customersPulled: 8, productsSynced: 7, paymentTermsSynced: 6, errors: [] }),
     getLastOmieSyncRun: () =>
       delay({
         id: "run_2026_07_14",
@@ -982,9 +1108,33 @@ export function createMockDesktopApi(): AnyRecord {
       }),
     getOmieSyncEntitiesByRun: () =>
       delay([
-        { entity: "customers", success: true, totalFetched: 8, totalCreated: 0, totalUpdated: 2, totalSkipped: 6, errorMessage: null },
-        { entity: "products", success: true, totalFetched: 7, totalCreated: 0, totalUpdated: 1, totalSkipped: 6, errorMessage: null },
-        { entity: "payment_terms", success: true, totalFetched: 6, totalCreated: 0, totalUpdated: 0, totalSkipped: 6, errorMessage: null }
+        {
+          entity: "customers",
+          success: true,
+          totalFetched: 8,
+          totalCreated: 0,
+          totalUpdated: 2,
+          totalSkipped: 6,
+          errorMessage: null
+        },
+        {
+          entity: "products",
+          success: true,
+          totalFetched: 7,
+          totalCreated: 0,
+          totalUpdated: 1,
+          totalSkipped: 6,
+          errorMessage: null
+        },
+        {
+          entity: "payment_terms",
+          success: true,
+          totalFetched: 6,
+          totalCreated: 0,
+          totalUpdated: 0,
+          totalSkipped: 6,
+          errorMessage: null
+        }
       ]),
     listOmieDocumentTypes: () =>
       delay([
@@ -993,12 +1143,29 @@ export function createMockDesktopApi(): AnyRecord {
       ]),
     resetOmieMaster: () => delay(undefined),
     startOmieDataEntryLoop: () =>
-      delay({ customersPulled: 8, productsSynced: 7, paymentTermsSynced: 6, iterations: 1, finished: true, errors: [] }),
+      delay({
+        customersPulled: 8,
+        productsSynced: 7,
+        paymentTermsSynced: 6,
+        iterations: 1,
+        finished: true,
+        errors: []
+      }),
     getOmieLoopStatus: () => delay(null),
     getOmieSchedulerStatus: () =>
-      delay({ enabled: true, intervalMinutes: 30, lastPullAt: iso(minutesAgo(22)), nextPullAt: iso(minutesAgo(-8)) }),
+      delay({
+        enabled: true,
+        intervalMinutes: 30,
+        lastPullAt: iso(minutesAgo(22)),
+        nextPullAt: iso(minutesAgo(-8))
+      }),
     setOmieSchedulerConfig: () =>
-      delay({ enabled: true, intervalMinutes: 30, lastPullAt: iso(minutesAgo(22)), nextPullAt: iso(minutesAgo(-8)) }),
+      delay({
+        enabled: true,
+        intervalMinutes: 30,
+        lastPullAt: iso(minutesAgo(22)),
+        nextPullAt: iso(minutesAgo(-8))
+      }),
     omieCategoriesList: () =>
       delay([
         { code: "1.01.01", description: "Venda de agregados" },
@@ -1008,8 +1175,18 @@ export function createMockDesktopApi(): AnyRecord {
     productOmieCategorySet: () => delay(undefined),
     omieDefaultCategoryGet: () => delay("1.01.01"),
     omieDefaultCategorySet: () => delay("1.01.01"),
-    omieAdvanceConfigGet: () => delay({ categoryCodes: ["2.01.05"], accountCode: 3110024, accountName: "Banco Cedro - C/C 4471-2" }),
-    omieAdvanceConfigSet: () => delay({ categoryCodes: ["2.01.05"], accountCode: 3110024, accountName: "Banco Cedro - C/C 4471-2" }),
+    omieAdvanceConfigGet: () =>
+      delay({
+        categoryCodes: ["2.01.05"],
+        accountCode: 3110024,
+        accountName: "Banco Cedro - C/C 4471-2"
+      }),
+    omieAdvanceConfigSet: () =>
+      delay({
+        categoryCodes: ["2.01.05"],
+        accountCode: 3110024,
+        accountName: "Banco Cedro - C/C 4471-2"
+      }),
 
     getDailyReport: (date: string) =>
       delay({
@@ -1042,15 +1219,28 @@ export function createMockDesktopApi(): AnyRecord {
     getReportHtml: () => delay("<html><body><h1>Relatorio</h1></body></html>"),
     exportReportPdf: () => delay({ path: "C:\\KyberRock\\relatorios\\relatorio.pdf" }),
     exportReportExcel: () => delay({ path: "C:\\KyberRock\\relatorios\\relatorio.xlsx" }),
-    getReportByProduct: (startDate: string, endDate: string) => delay(productReportFor(startDate, endDate)),
-    getReportByCustomer: (startDate: string, endDate: string) => delay(customerReportFor(startDate, endDate)),
+    getReportByProduct: (startDate: string, endDate: string) =>
+      delay(productReportFor(startDate, endDate)),
+    getReportByCustomer: (startDate: string, endDate: string) =>
+      delay(customerReportFor(startDate, endDate)),
     getDailySeries: (startDate: string, endDate: string) => delay(seriesFor(startDate, endDate)),
     getOperationMix: (startDate: string, endDate: string) => {
       const totals = sumSeries(seriesFor(startDate, endDate));
       return delay({
-        invoice: { count: Math.round(totals.operations * 0.88), weightKg: Math.round(totals.weightKg * 0.9), totalCents: Math.round(totals.cents * 0.91) },
-        internal: { count: Math.round(totals.operations * 0.12), weightKg: Math.round(totals.weightKg * 0.1), totalCents: Math.round(totals.cents * 0.09) },
-        cancelled: { count: Math.max(1, Math.round(totals.operations * 0.012)), weightKg: Math.round(totals.weightKg * 0.009) }
+        invoice: {
+          count: Math.round(totals.operations * 0.88),
+          weightKg: Math.round(totals.weightKg * 0.9),
+          totalCents: Math.round(totals.cents * 0.91)
+        },
+        internal: {
+          count: Math.round(totals.operations * 0.12),
+          weightKg: Math.round(totals.weightKg * 0.1),
+          totalCents: Math.round(totals.cents * 0.09)
+        },
+        cancelled: {
+          count: Math.max(1, Math.round(totals.operations * 0.012)),
+          weightKg: Math.round(totals.weightKg * 0.009)
+        }
       });
     },
     getSalesPivot: (startDate: string, endDate: string) => {
@@ -1081,8 +1271,15 @@ export function createMockDesktopApi(): AnyRecord {
     exportTruckControlPdf: () => delay({ path: "C:\\KyberRock\\relatorios\\caminhoes.pdf" }),
 
     listCustomerReportCustomers: () =>
-      delay(CUSTOMERS.map((customer) => ({ id: customer.id, name: customer.tradeName, document: customer.document }))),
-    getCustomersOverview: (startDate: string, endDate: string) => delay(buildCustomersOverview(startDate, endDate), 120),
+      delay(
+        CUSTOMERS.map((customer) => ({
+          id: customer.id,
+          name: customer.tradeName,
+          document: customer.document
+        }))
+      ),
+    getCustomersOverview: (startDate: string, endDate: string) =>
+      delay(buildCustomersOverview(startDate, endDate), 120),
     exportCustomersOverview: () => delay([{ path: "C:\\KyberRock\\relatorios\\clientes.pdf" }]),
     getCustomerReport: (customerId: string, startDate: string, endDate: string) =>
       delay(buildCustomerReport(customerId, startDate, endDate), 120),
@@ -1125,11 +1322,40 @@ export function createMockDesktopApi(): AnyRecord {
         instanceToken: "••••••••",
         lastDisconnectReason: null
       }),
-    whatsappConnect: () => delay({ status: "connected", connected: true, loggedIn: true, qrcode: null, paircode: null, profileName: "KyberRock Pedreira Norte", owner: "+55 31 99999-0001", instanceToken: "••••••••", lastDisconnectReason: null }),
-    whatsappDisconnect: () => delay({ status: "disconnected", connected: false, loggedIn: false, qrcode: null, paircode: null, profileName: null, owner: null, instanceToken: null, lastDisconnectReason: "Desconectado pelo operador" }),
+    whatsappConnect: () =>
+      delay({
+        status: "connected",
+        connected: true,
+        loggedIn: true,
+        qrcode: null,
+        paircode: null,
+        profileName: "KyberRock Pedreira Norte",
+        owner: "+55 31 99999-0001",
+        instanceToken: "••••••••",
+        lastDisconnectReason: null
+      }),
+    whatsappDisconnect: () =>
+      delay({
+        status: "disconnected",
+        connected: false,
+        loggedIn: false,
+        qrcode: null,
+        paircode: null,
+        profileName: null,
+        owner: null,
+        instanceToken: null,
+        lastDisconnectReason: "Desconectado pelo operador"
+      }),
     getReportDispatchConfig: () =>
       delay({
-        settings: { enabled: true, sendHour: 18, daily: true, weekly: true, monthly: false, updatedAt: iso(daysAgo(3)) },
+        settings: {
+          enabled: true,
+          sendHour: 18,
+          daily: true,
+          weekly: true,
+          monthly: false,
+          updatedAt: iso(daysAgo(3))
+        },
         state: {
           lastDailyDate: dayIso(daysAgo(1)),
           lastWeeklyDate: dayIso(daysAgo(6)),
@@ -1140,11 +1366,25 @@ export function createMockDesktopApi(): AnyRecord {
       }),
     saveReportDispatchConfig: () =>
       delay({
-        settings: { enabled: true, sendHour: 18, daily: true, weekly: true, monthly: false, updatedAt: iso(NOW) },
-        state: { lastDailyDate: dayIso(daysAgo(1)), lastWeeklyDate: dayIso(daysAgo(6)), lastMonthlyMonth: "2026-06", lastAttemptAt: iso(daysAgo(1)), lastError: null }
+        settings: {
+          enabled: true,
+          sendHour: 18,
+          daily: true,
+          weekly: true,
+          monthly: false,
+          updatedAt: iso(NOW)
+        },
+        state: {
+          lastDailyDate: dayIso(daysAgo(1)),
+          lastWeeklyDate: dayIso(daysAgo(6)),
+          lastMonthlyMonth: "2026-06",
+          lastAttemptAt: iso(daysAgo(1)),
+          lastError: null
+        }
       }),
     sendReportsNow: () => delay({ sent: 3, skipped: 0, errors: [] }),
-    sendFinancialReportNow: () => delay([{ recipient: "diretoria@serradocedro.demo", success: true, message: null }]),
+    sendFinancialReportNow: () =>
+      delay([{ recipient: "diretoria@serradocedro.demo", success: true, message: null }]),
 
     getPriceForCustomerProduct: () => delay(9_250),
     getPriceDetailsForCustomerProduct: (_customerId: string, productId: string) => {
@@ -1241,8 +1481,14 @@ export function createMockDesktopApi(): AnyRecord {
       const keepSettled = status === "settled";
       const groups = WALLET_REPORT.groups
         .map((group) => {
-          const operations = group.operations.filter((row) => Boolean(row.settledAt) === keepSettled);
-          return { ...group, operations, totalCents: operations.reduce((sum, row) => sum + row.totalCents, 0) };
+          const operations = group.operations.filter(
+            (row) => Boolean(row.settledAt) === keepSettled
+          );
+          return {
+            ...group,
+            operations,
+            totalCents: operations.reduce((sum, row) => sum + row.totalCents, 0)
+          };
         })
         .filter((group) => group.operations.length > 0);
       return delay({ groups, summary: WALLET_REPORT.summary }, 90);
@@ -1255,7 +1501,8 @@ export function createMockDesktopApi(): AnyRecord {
     paymentTermsCreate: () => delay(undefined),
     paymentTermsUpdate: () => delay(undefined),
     paymentTermsDelete: () => delay(undefined),
-    paymentTermsListOmie: () => delay(PAYMENT_TERM_ROWS.map((term) => ({ code: term.omieCode, description: term.name }))),
+    paymentTermsListOmie: () =>
+      delay(PAYMENT_TERM_ROWS.map((term) => ({ code: term.omieCode, description: term.name }))),
 
     priceTablesCreate: () => delay(PRICE_TABLE_ROWS[0]),
     priceTablesUpdateName: () => delay(undefined),
@@ -1286,7 +1533,8 @@ export function createMockDesktopApi(): AnyRecord {
     carriersUpdate: () => delay(undefined),
     carriersDelete: () => delay(undefined),
     carriersList: () => delay(CARRIER_ROWS),
-    carriersGetVehicles: (carrierId: string) => delay(VEHICLE_ROWS.filter((v) => v.carrierId === carrierId)),
+    carriersGetVehicles: (carrierId: string) =>
+      delay(VEHICLE_ROWS.filter((v) => v.carrierId === carrierId)),
     linkCustomerCarrier: () => delay(undefined),
     unlinkCustomerCarrier: () => delay(undefined),
     listCarriersByCustomer: () => delay([CARRIER_ROWS[0]]),
@@ -1294,7 +1542,10 @@ export function createMockDesktopApi(): AnyRecord {
     linkDriverCarrier: () => delay(undefined),
     unlinkDriverCarrier: () => delay(undefined),
     listCarriersByDriver: () => delay([CARRIER_ROWS[0]]),
-    listDriversByCarrier: (carrierId: string) => delay(DRIVER_ROWS.filter((d) => DRIVERS.find((row) => row.id === d.id)?.carrierId === carrierId)),
+    listDriversByCarrier: (carrierId: string) =>
+      delay(
+        DRIVER_ROWS.filter((d) => DRIVERS.find((row) => row.id === d.id)?.carrierId === carrierId)
+      ),
     listIndependentDrivers: () => delay(DRIVER_ROWS.filter((d) => d.isIndependent)),
 
     scaleConnect: () => delay(undefined),
@@ -1340,7 +1591,14 @@ export function createMockDesktopApi(): AnyRecord {
 
     verifyPriceChangePassword: () => delay(true),
     lookupCep: () =>
-      delay({ zipcode: "32250-100", street: "Avenida das Industrias", complement: "", neighborhood: "Distrito Industrial", city: "Contagem", state: "MG" }),
+      delay({
+        zipcode: "32250-100",
+        street: "Avenida das Industrias",
+        complement: "",
+        neighborhood: "Distrito Industrial",
+        city: "Contagem",
+        state: "MG"
+      }),
     lookupCnpj: () =>
       delay({
         found: true,
@@ -1370,7 +1628,11 @@ export function createMockDesktopApi(): AnyRecord {
       // Mantem o mostrador da balanca vivo nas capturas, com uma pequena oscilacao.
       const timer = window.setInterval(() => {
         const drift = Math.round((Math.random() - 0.5) * 40);
-        callback({ ...SCALE_READING, weightKg: SCALE_READING.weightKg + drift, capturedAt: new Date().toISOString() });
+        callback({
+          ...SCALE_READING,
+          weightKg: SCALE_READING.weightKg + drift,
+          capturedAt: new Date().toISOString()
+        });
       }, 1200);
       (callback as AnyRecord).__timer = timer;
     },

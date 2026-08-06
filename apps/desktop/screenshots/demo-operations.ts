@@ -138,9 +138,10 @@ export function buildOperation(input: BuildInput): DemoOperation {
   const device = DEVICES[input.deviceIndex ?? 0];
   const method = PAYMENT_METHODS[input.paymentMethodIndex ?? 2];
   const term = PAYMENT_TERMS[input.paymentTermIndex ?? 4];
-  const table = input.priceTableIndex === null || input.priceTableIndex === undefined
-    ? null
-    : PRICE_TABLES[input.priceTableIndex];
+  const table =
+    input.priceTableIndex === null || input.priceTableIndex === undefined
+      ? null
+      : PRICE_TABLES[input.priceTableIndex];
   const createdAt = input.createdAtDate ?? minutesAgo(input.minutesAgoCreated);
   const updatedAt =
     input.updatedAtDate ?? minutesAgo(input.minutesAgoUpdated ?? input.minutesAgoCreated);
@@ -286,25 +287,199 @@ export const OPEN_OPERATIONS: DemoOperation[] = [
 ];
 
 const CLOSED_SPECS: Array<Partial<BuildInput> & { code: number }> = [
-  { code: 4820, customerIndex: 1, productIndex: 1, vehicleIndex: 2, driverIndex: 2, tare: 18_540, gross: 46_820, minutesAgoCreated: 128, omieSalesOrderId: 302118, omieBillingStatus: "billed", freightCents: 44_800, priceTableIndex: 1 },
-  { code: 4819, customerIndex: 0, productIndex: 0, vehicleIndex: 0, driverIndex: 0, tare: 13_220, gross: 32_960, minutesAgoCreated: 152, omieSalesOrderId: 302117, omieBillingStatus: "billed" },
-  { code: 4818, customerIndex: 4, productIndex: 3, vehicleIndex: 3, driverIndex: 3, tare: 11_380, gross: 27_540, minutesAgoCreated: 177, omieSalesOrderId: 302116, omieBillingStatus: "billed", freightCents: 21_900 },
-  { code: 4817, customerIndex: 7, productIndex: 2, vehicleIndex: 4, driverIndex: 4, tare: 21_140, gross: 58_420, minutesAgoCreated: 201, omieSalesOrderId: 302115, omieBillingStatus: "billed", deviceIndex: 1, priceTableIndex: 0 },
-  { code: 4816, customerIndex: 3, productIndex: 5, vehicleIndex: 5, driverIndex: 5, tare: 19_760, gross: 51_310, minutesAgoCreated: 238, omieSalesOrderId: null, omieBillingStatus: "pending", omieBillingMessage: "Aguardando envio ao OMIE (fila local)" },
-  { code: 4815, customerIndex: 5, productIndex: 4, vehicleIndex: 6, driverIndex: 1, tare: 16_620, gross: 43_180, minutesAgoCreated: 264, omieSalesOrderId: 302113, omieBillingStatus: "billed", freightCents: 33_100 },
-  { code: 4814, customerIndex: 2, productIndex: 6, vehicleIndex: 1, driverIndex: 0, tare: 12_940, gross: 30_120, minutesAgoCreated: 289, omieSalesOrderId: null, omieBillingStatus: "error", omieBillingMessage: "Cliente sem inscricao estadual valida no cadastro do OMIE", deviceIndex: 1 },
-  { code: 4813, customerIndex: 6, productIndex: 1, vehicleIndex: 2, driverIndex: 2, tare: 18_480, gross: 47_960, minutesAgoCreated: 316, omieSalesOrderId: 302111, omieBillingStatus: "billed" },
-  { code: 4812, customerIndex: 1, productIndex: 0, vehicleIndex: 0, driverIndex: 3, tare: 13_260, gross: 33_540, minutesAgoCreated: 344, omieSalesOrderId: 302110, omieBillingStatus: "billed", freightCents: 18_700 },
-  { code: 4811, customerIndex: 0, productIndex: 3, vehicleIndex: 3, driverIndex: 4, tare: 11_420, gross: 28_880, minutesAgoCreated: 372, operationType: "internal", paymentMethodIndex: 5, omieBillingStatus: null },
-  { code: 4810, customerIndex: 4, productIndex: 2, vehicleIndex: 4, driverIndex: 5, tare: 21_080, gross: 57_640, minutesAgoCreated: 401, omieSalesOrderId: 302108, omieBillingStatus: "billed", priceTableIndex: 1 },
-  { code: 4809, customerIndex: 7, productIndex: 5, vehicleIndex: 5, driverIndex: 0, tare: 19_820, gross: 52_470, minutesAgoCreated: 433, omieSalesOrderId: 302107, omieBillingStatus: "billed", freightCents: 39_600, deviceIndex: 1 },
-  { code: 4808, customerIndex: 5, productIndex: 4, vehicleIndex: 6, driverIndex: 1, tare: 16_580, gross: 41_920, minutesAgoCreated: 462, omieSalesOrderId: 302106, omieBillingStatus: "billed" },
-  { code: 4807, customerIndex: 3, productIndex: 6, vehicleIndex: 1, driverIndex: 2, tare: 12_880, gross: 31_460, minutesAgoCreated: 488, omieSalesOrderId: 302105, omieBillingStatus: "billed", paymentMethodIndex: 5 }
+  {
+    code: 4820,
+    customerIndex: 1,
+    productIndex: 1,
+    vehicleIndex: 2,
+    driverIndex: 2,
+    tare: 18_540,
+    gross: 46_820,
+    minutesAgoCreated: 128,
+    omieSalesOrderId: 302118,
+    omieBillingStatus: "billed",
+    freightCents: 44_800,
+    priceTableIndex: 1
+  },
+  {
+    code: 4819,
+    customerIndex: 0,
+    productIndex: 0,
+    vehicleIndex: 0,
+    driverIndex: 0,
+    tare: 13_220,
+    gross: 32_960,
+    minutesAgoCreated: 152,
+    omieSalesOrderId: 302117,
+    omieBillingStatus: "billed"
+  },
+  {
+    code: 4818,
+    customerIndex: 4,
+    productIndex: 3,
+    vehicleIndex: 3,
+    driverIndex: 3,
+    tare: 11_380,
+    gross: 27_540,
+    minutesAgoCreated: 177,
+    omieSalesOrderId: 302116,
+    omieBillingStatus: "billed",
+    freightCents: 21_900
+  },
+  {
+    code: 4817,
+    customerIndex: 7,
+    productIndex: 2,
+    vehicleIndex: 4,
+    driverIndex: 4,
+    tare: 21_140,
+    gross: 58_420,
+    minutesAgoCreated: 201,
+    omieSalesOrderId: 302115,
+    omieBillingStatus: "billed",
+    deviceIndex: 1,
+    priceTableIndex: 0
+  },
+  {
+    code: 4816,
+    customerIndex: 3,
+    productIndex: 5,
+    vehicleIndex: 5,
+    driverIndex: 5,
+    tare: 19_760,
+    gross: 51_310,
+    minutesAgoCreated: 238,
+    omieSalesOrderId: null,
+    omieBillingStatus: "pending",
+    omieBillingMessage: "Aguardando envio ao OMIE (fila local)"
+  },
+  {
+    code: 4815,
+    customerIndex: 5,
+    productIndex: 4,
+    vehicleIndex: 6,
+    driverIndex: 1,
+    tare: 16_620,
+    gross: 43_180,
+    minutesAgoCreated: 264,
+    omieSalesOrderId: 302113,
+    omieBillingStatus: "billed",
+    freightCents: 33_100
+  },
+  {
+    code: 4814,
+    customerIndex: 2,
+    productIndex: 6,
+    vehicleIndex: 1,
+    driverIndex: 0,
+    tare: 12_940,
+    gross: 30_120,
+    minutesAgoCreated: 289,
+    omieSalesOrderId: null,
+    omieBillingStatus: "error",
+    omieBillingMessage: "Cliente sem inscricao estadual valida no cadastro do OMIE",
+    deviceIndex: 1
+  },
+  {
+    code: 4813,
+    customerIndex: 6,
+    productIndex: 1,
+    vehicleIndex: 2,
+    driverIndex: 2,
+    tare: 18_480,
+    gross: 47_960,
+    minutesAgoCreated: 316,
+    omieSalesOrderId: 302111,
+    omieBillingStatus: "billed"
+  },
+  {
+    code: 4812,
+    customerIndex: 1,
+    productIndex: 0,
+    vehicleIndex: 0,
+    driverIndex: 3,
+    tare: 13_260,
+    gross: 33_540,
+    minutesAgoCreated: 344,
+    omieSalesOrderId: 302110,
+    omieBillingStatus: "billed",
+    freightCents: 18_700
+  },
+  {
+    code: 4811,
+    customerIndex: 0,
+    productIndex: 3,
+    vehicleIndex: 3,
+    driverIndex: 4,
+    tare: 11_420,
+    gross: 28_880,
+    minutesAgoCreated: 372,
+    operationType: "internal",
+    paymentMethodIndex: 5,
+    omieBillingStatus: null
+  },
+  {
+    code: 4810,
+    customerIndex: 4,
+    productIndex: 2,
+    vehicleIndex: 4,
+    driverIndex: 5,
+    tare: 21_080,
+    gross: 57_640,
+    minutesAgoCreated: 401,
+    omieSalesOrderId: 302108,
+    omieBillingStatus: "billed",
+    priceTableIndex: 1
+  },
+  {
+    code: 4809,
+    customerIndex: 7,
+    productIndex: 5,
+    vehicleIndex: 5,
+    driverIndex: 0,
+    tare: 19_820,
+    gross: 52_470,
+    minutesAgoCreated: 433,
+    omieSalesOrderId: 302107,
+    omieBillingStatus: "billed",
+    freightCents: 39_600,
+    deviceIndex: 1
+  },
+  {
+    code: 4808,
+    customerIndex: 5,
+    productIndex: 4,
+    vehicleIndex: 6,
+    driverIndex: 1,
+    tare: 16_580,
+    gross: 41_920,
+    minutesAgoCreated: 462,
+    omieSalesOrderId: 302106,
+    omieBillingStatus: "billed"
+  },
+  {
+    code: 4807,
+    customerIndex: 3,
+    productIndex: 6,
+    vehicleIndex: 1,
+    driverIndex: 2,
+    tare: 12_880,
+    gross: 31_460,
+    minutesAgoCreated: 488,
+    omieSalesOrderId: 302105,
+    omieBillingStatus: "billed",
+    paymentMethodIndex: 5
+  }
 ];
 
 export const CLOSED_OPERATIONS: DemoOperation[] = CLOSED_SPECS.map((spec) =>
   buildOperation({
-    status: spec.omieBillingStatus === "billed" ? "synced" : spec.omieBillingStatus === "error" ? "sync_error" : "pending_omie",
+    status:
+      spec.omieBillingStatus === "billed"
+        ? "synced"
+        : spec.omieBillingStatus === "error"
+          ? "sync_error"
+          : "pending_omie",
     customerIndex: 0,
     productIndex: 0,
     vehicleIndex: 0,
@@ -363,7 +538,7 @@ export const DAILY_SERIES = Array.from({ length: 30 }, (_, index) => {
   const weekend = weekday === 0 ? 0 : weekday === 6 ? 0.35 : 1;
   const wave = 1 + Math.sin(index / 3.1) * 0.18 + Math.cos(index / 5.7) * 0.11;
   const operations = Math.max(0, Math.round(34 * weekend * wave));
-  const weight = Math.round(operations * 27_400 * (0.94 + ((index % 5) * 0.03)));
+  const weight = Math.round(operations * 27_400 * (0.94 + (index % 5) * 0.03));
   const cents = Math.round((weight / 1000) * 8_640 * 100) / 100;
   return {
     date: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`,
