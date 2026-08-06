@@ -8,13 +8,15 @@ import { runDesktopMigrations } from "./migrate";
 import { DESKTOP_MIGRATIONS } from "./migrations";
 import { openDesktopDatabase, type DesktopDatabase } from "./sqlite";
 import { ensureInitialDesktopIdentity } from "../services/bootstrap";
+import { listOperationsPendingCloudPush } from "../services/supabase-sync";
 import { listClosedWeighingOperations } from "../services/weighing-operations";
 import { getWalletReport } from "../services/wallet";
 
 /**
  * O caminho de atualizacao real do release seguinte: a balanca esta na 48 com dados e o
- * instalador novo sobe para a 49 (tabela `payment_method_aliases`, as formas de pagamento
- * gemeas entre os computadores da pedreira). Os demais testes migram banco vazio.
+ * instalador novo sobe para a 49 — a tabela `payment_method_aliases` (as formas de
+ * pagamento gemeas entre os computadores da pedreira) e a republicacao das vendas em
+ * carteira que esta maquina ja tinha fechado. Os demais testes migram banco vazio.
  */
 describe("atualizacao de um banco em uso (48 -> 49)", () => {
   it("aplica a migracao 49 sobre um banco com dados sem perder nada", () => {
@@ -53,6 +55,27 @@ describe("atualizacao de um banco em uso (48 -> 49)", () => {
           .get("pm-da-outra-balanca")
       ).toBe("pm-wallet");
 
+      // A venda em carteira que ja estava fechada volta para a fila de publicacao
+      // (cloud_synced_at zerado), para chegar as outras balancas.
+      expect(
+        database
+          .prepare("SELECT cloud_synced_at FROM weighing_operations WHERE id = 'op-wallet'")
+          .pluck()
+          .get()
+      ).toBeNull();
+      expect(
+        listOperationsPendingCloudPush(database, new Date("2026-08-06T12:00:00.000Z")).map(
+          (operation) => operation.id
+        )
+      ).toEqual(["op-wallet"]);
+      // A venda que nao e em carteira nao foi mexida: continua publicada.
+      expect(
+        database
+          .prepare("SELECT cloud_synced_at FROM weighing_operations WHERE id = 'op-dinheiro'")
+          .pluck()
+          .get()
+      ).toBe("2026-08-06T09:30:00.000Z");
+
       expect(database.prepare("PRAGMA integrity_check").pluck().get()).toBe("ok");
       expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     } finally {
@@ -60,7 +83,7 @@ describe("atualizacao de um banco em uso (48 -> 49)", () => {
     }
   });
 
-  it("permite voltar para o build anterior: a 49 so adiciona tabela", () => {
+  it("permite voltar para o build anterior: a 49 nao cria coluna nem apaga dado", () => {
     const database = openDesktopDatabase({ databasePath: ":memory:" });
 
     try {
@@ -70,6 +93,8 @@ describe("atualizacao de um banco em uso (48 -> 49)", () => {
       // O operador volta para o instalador anterior, que so conhece ate a 48:
       // runDesktopMigrations itera a PROPRIA lista, entao a 49 gravada em
       // schema_migrations e ignorada, e a tabela extra fica inerte para o build antigo.
+      // A unica marca que a 49 mexe (cloud_synced_at) o build antigo tambem entende:
+      // ele simplesmente republica a operacao, como faz com qualquer pendencia.
       const previous = DESKTOP_MIGRATIONS.filter((migration) => migration.version <= 48);
       expect(() => runDesktopMigrations(database, previous)).not.toThrow();
       expect(() => listClosedWeighingOperations(database)).not.toThrow();
@@ -130,10 +155,39 @@ function seedWalletSale(database: DesktopDatabase): void {
     .run(identity.companyId, at, at);
   database
     .prepare(
-      `INSERT INTO weighing_operations
-         (id, company_id, unit_id, device_id, status, operation_type, payment_method_id,
-          entry_weight_kg, exit_weight_kg, net_weight_kg, total_cents, created_at, updated_at)
-       VALUES ('op-wallet', ?, ?, ?, 'synced', 'invoice', 'pm-wallet', 1000, 3000, 2000, 5000, ?, ?)`
+      `INSERT INTO payment_methods
+         (id, company_id, code, name, is_system, is_customer_credit, is_wallet, sort_order,
+          is_active, created_at, updated_at)
+       VALUES ('pm-cash', ?, 'cash-teste', 'Dinheiro', 1, 0, 0, 2, 1, ?, ?)`
     )
-    .run(identity.companyId, identity.unitId, identity.deviceId, at, at);
+    .run(identity.companyId, at, at);
+  // As duas ja publicadas na nuvem, como estao hoje nas balancas.
+  const operation = database.prepare(
+    `INSERT INTO weighing_operations
+       (id, company_id, unit_id, device_id, status, operation_type, payment_method_id,
+        entry_weight_kg, exit_weight_kg, net_weight_kg, total_cents,
+        cloud_synced_at, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 'synced', 'invoice', ?, 1000, 3000, 2000, 5000, ?, ?, ?)`
+  );
+  const syncedAt = "2026-08-06T09:30:00.000Z";
+  operation.run(
+    "op-wallet",
+    identity.companyId,
+    identity.unitId,
+    identity.deviceId,
+    "pm-wallet",
+    syncedAt,
+    at,
+    at
+  );
+  operation.run(
+    "op-dinheiro",
+    identity.companyId,
+    identity.unitId,
+    identity.deviceId,
+    "pm-cash",
+    syncedAt,
+    at,
+    at
+  );
 }

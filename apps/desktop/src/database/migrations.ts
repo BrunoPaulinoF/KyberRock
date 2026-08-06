@@ -1734,7 +1734,7 @@ CREATE INDEX IF NOT EXISTS idx_sync_queue_status_updated
   },
   {
     version: 49,
-    name: "payment_method_cloud_aliases",
+    name: "wallet_sharing_between_desktops",
     sql: `
 -- Formas de pagamento gemeas entre as balancas da mesma pedreira.
 --
@@ -1761,6 +1761,30 @@ CREATE TABLE IF NOT EXISTS payment_method_aliases (
 
 CREATE INDEX IF NOT EXISTS idx_payment_method_aliases_local
   ON payment_method_aliases(company_id, local_id);
+
+-- Republica as vendas em carteira que ESTA maquina ja tinha fechado.
+--
+-- A projecao so passou a levar a forma de pagamento depois que a venda ja existia: as
+-- vendas em carteira anteriores estao na nuvem sem \`payment_method_id\`, e a nuvem e a
+-- unica coisa que as outras balancas leem. Como a operacao so volta a ser enviada
+-- enquanto \`cloud_synced_at\` estiver atras de \`updated_at\` (listOperationsPendingCloudPush),
+-- essas vendas ja estavam marcadas como enviadas e nunca subiriam de novo — ficariam
+-- para sempre so no computador que as fez.
+--
+-- Zerar a marca coloca cada uma de volta na reconciliacao, que reenvia no proximo ciclo
+-- (janela de 30 dias, 200 por vez) sem duplicar nada: o desktop-sync so aceita a escrita
+-- que nao regride a versao ja projetada.
+--
+-- O filtro por \`payment_method_id\` de uma forma "em carteira" e de proposito: republica
+-- so na maquina que SABE que a venda foi em carteira. A copia espelhada nas outras (que
+-- esta justamente sem a forma) nao entra, senao elas reenviariam o proprio vazio por
+-- cima do que a balanca de origem publicou.
+UPDATE weighing_operations
+SET cloud_synced_at = NULL
+WHERE deleted_at IS NULL
+  AND payment_method_id IN (
+    SELECT id FROM payment_methods WHERE is_wallet = 1 AND deleted_at IS NULL
+  );
 `
   }
 ];
