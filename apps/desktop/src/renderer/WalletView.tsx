@@ -131,7 +131,13 @@ const styles = {
     border: "1px solid var(--kr-border)",
     borderRadius: "14px",
     boxShadow: "var(--kr-shadow)",
-    overflow: "hidden"
+    overflow: "hidden",
+    // O container da lista e uma coluna flex (e o que espaca os cards), e num flex
+    // o filho encolhe por padrao. Com poucos clientes cabia tudo e ninguem encolhia;
+    // com a carteira da pedreira inteira os cards eram espremidos ate virarem faixas
+    // vazias -- a lista "sumia" mesmo com os totais certos no topo. Cada card mantem
+    // a propria altura e quem rola e o container.
+    flexShrink: 0
   },
   groupHeader: {
     display: "flex",
