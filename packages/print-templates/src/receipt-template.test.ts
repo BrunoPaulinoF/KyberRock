@@ -60,13 +60,13 @@ describe("buildReceiptLines", () => {
   it("imprime o codigo da operacao com seis digitos no topo do cupom", () => {
     const lines = buildReceiptLines({ ...baseInput(), operationCode: 42 });
 
-    expect(lines[0]?.trim()).toBe("OPERACAO 000042");
+    expect(lines[0]?.trim()).toBe("COD 000042");
   });
 
   it("nao imprime a linha do codigo nos cupons anteriores ao campo existir", () => {
     const lines = buildReceiptLines({ ...baseInput(), operationCode: null });
 
-    expect(lines.some((line) => line.includes("OPERACAO 0"))).toBe(false);
+    expect(lines.some((line) => line.includes("COD 0"))).toBe(false);
   });
 
   // Duas vias da MESMA operacao: o codigo repete (e a mesma venda), o numero do cupom nao.

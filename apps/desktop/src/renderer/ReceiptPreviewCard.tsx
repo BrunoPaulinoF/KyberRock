@@ -4,6 +4,7 @@ import {
   buildSampleReceiptInput,
   DEFAULT_RECEIPT_TEMPLATE_CONFIG,
   RECEIPT_FONT_STACKS,
+  receiptOperationCodeLine,
   type ReceiptTemplateConfig
 } from "@kyberrock/print-templates";
 
@@ -163,6 +164,25 @@ function ReceiptPaper({
         boxSizing: "border-box"
       }}
     >
+      {/*
+        Codigo da operacao: a primeira linha do cupom, e e por ele que o operador acha a
+        venda a partir do papel em maos. A previa nao o desenhava — o cabecalho grafico foi
+        copiado para ca antes de o codigo existir —, entao a tela de impressao mostrava
+        apenas o numero da copia e parecia que o cupom saia sem codigo nenhum.
+      */}
+      {header.operationCodeLabel ? (
+        <div
+          style={{
+            textAlign: "center",
+            fontWeight: 900,
+            letterSpacing: "0.08em",
+            fontSize: `${Math.round(style.headerFontSizePx * 1.3)}px`,
+            marginBottom: "4px"
+          }}
+        >
+          {receiptOperationCodeLine(header.operationCodeLabel)}
+        </div>
+      ) : null}
       {header.customHeaderText ? (
         <div style={{ textAlign: "center", fontWeight: 800, marginBottom: "4px" }}>
           {header.customHeaderText}

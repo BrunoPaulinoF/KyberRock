@@ -83,6 +83,16 @@ describe("previa do cupom", () => {
     expect(previewSource).toContain("DEFAULT_RECEIPT_TEMPLATE_CONFIG");
   });
 
+  // A previa foi escrita antes de o codigo da operacao existir e nunca ganhou a linha: a
+  // tela de impressao mostrava so "COPIA NRO 000000000" e parecia que o cupom saia sem
+  // codigo. Os tres renderizadores (ESC/POS, HTML e previa) montam a linha pela MESMA
+  // funcao, para nao voltarem a divergir.
+  it("mostra o codigo da operacao no topo, como o cupom impresso", () => {
+    expect(previewSource).toContain("header.operationCodeLabel");
+    expect(previewSource).toContain("receiptOperationCodeLine(header.operationCodeLabel)");
+    expect(receiptHtmlSource).toContain("receiptOperationCodeLine(header.operationCodeLabel)");
+  });
+
   // Num container flex que rola, o papel ficava com a altura da caixa (align-items:
   // stretch) e o texto vazava para fora do branco — o cupom aparecia cortado no meio.
   it("deixa o papel crescer com o conteudo em vez de esticar num flex", () => {
