@@ -147,6 +147,33 @@ operador escolhe o grupo e, na caixa logo abaixo do tipo de frete, a situacao:
 - Transportadora, placa e motorista sao selecionaveis em **qualquer** tipo de frete; o tipo
   decide o que vai para a nota, nao o que o operador pode registrar.
 
+#### Calculo do valor do frete (implementado)
+
+O que a entrada grava e a **regra** (`freight_json`), nao o valor: frete so vira dinheiro
+quando existe peso liquido, ou seja, no **fechamento**. Os tres calculos da tela, sempre
+sobre o peso liquido pesado (`net_weight_kg`, em kg, convertido para tonelada pela regra):
+
+| Calculo          | Formula                                       |
+| ---------------- | --------------------------------------------- |
+| `per_ton`        | `kg / 1000 x valor_por_tonelada`              |
+| `per_ton_km`     | `kg / 1000 x distancia_km x valor_por_ton_km` |
+| `fixed_plus_ton` | `valor_fixo + kg / 1000 x valor_por_tonelada` |
+
+O `minValueCents` (frete minimo) e um piso aplicado depois do calculo. O resultado vai para
+`freight_total_cents`, soma em `total_cents` e, na situacao 1, sai como `valor_frete` no
+bloco `frete` do pedido — a aba **"Frete e Outras Despesas"** do OMIE, onde `peso_bruto` e
+`peso_liquido` sao em **kg** (granel: os dois iguais ao peso liquido pesado).
+
+`freight_json` **e projetado na nuvem** (migracao `202608070001_operation_freight_json`).
+Antes nao era, e o pull gravava a coluna com o que a nuvem devolvia: a regra da operacao
+ainda aberta era apagada a cada ciclo e a saida fechava com frete zero — cupom sem a linha
+FRETE e pedido sem `valor_frete`. Hoje o pull trata a coluna como as da carteira
+(`mergeProjectedValue`): nuvem sem a coluna nao apaga nada, projecao mais nova manda
+(inclusive o nulo de "tirei o frete", feito na outra balanca). Como rede de seguranca, uma
+operacao "com frete" que chegue ao fechamento sem regra tem a regra reconstruida pela
+memoria de frete do cliente para (cliente, produto, tipo) — a mesma fonte que preencheu a
+entrada; sem memoria, fecha sem frete, nunca com um valor inventado.
+
 #### Placa e UF do veiculo (implementado)
 
 - A NF-e pede placa **e** UF do veiculo no transporte: o bloco `frete` leva `placa` +

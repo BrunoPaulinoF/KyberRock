@@ -5,6 +5,7 @@ import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite";
 import { ensureInitialDesktopIdentity } from "./bootstrap";
 import { CreditService } from "./credit";
 import { CustomerReportService } from "./customer-report";
+import { rememberCustomerFreightValue } from "./customer-freight-rules";
 import { setDefaultNfeEmail } from "./customers";
 import { createPaymentTerm } from "./payment-terms";
 import { enqueueSyncJob } from "./sync-queue";
@@ -1866,6 +1867,172 @@ describe("weighing operations", () => {
         .prepare("UPDATE weighing_operations SET freight_type = 'own_recipient' WHERE id = ?")
         .run(operation.id);
       expect(buildOmieBillingJob(database, operation.id)!.payload.freightModalidade).toBe("4");
+    } finally {
+      database.close();
+    }
+  });
+
+  // Os tres tipos que a tela oferece, calculados sobre o peso liquido PESADO (em kg,
+  // convertido para tonelada pela regra) e enviados como valor total em `valor_frete`.
+  it.each([
+    {
+      label: "por tonelada",
+      rule: { type: "per_ton" as const, baseValueCents: 9_000 },
+      // 6,5 t x R$ 90,00/t
+      expectedCents: 58_500
+    },
+    {
+      label: "tonelada-km",
+      rule: { type: "per_ton_km" as const, baseValueCents: 300, distanceKm: 40 },
+      // 6,5 t x 40 km x R$ 3,00/ton-km
+      expectedCents: 78_000
+    },
+    {
+      label: "fixo + tonelada",
+      rule: { type: "fixed_plus_ton" as const, baseValueCents: 5_000, fixedValueCents: 20_000 },
+      // R$ 200,00 fixos + 6,5 t x R$ 50,00/t
+      expectedCents: 52_500
+    }
+  ])("calcula o frete $label no fechamento e manda o total ao OMIE", (scenario) => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET omie_customer_id = 456 WHERE id = 'customer-1'").run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000,
+        // Situacao 1: o valor do frete sai na nota e no cupom.
+        freightModality: "fob",
+        freight: {
+          payer: "customer",
+          rule: {
+            id: "operation-freight",
+            name: "Frete da operacao",
+            unit: "ton",
+            ...scenario.rule
+          }
+        }
+      });
+
+      // 18.500 - 12.000 = 6.500 kg de carga.
+      const closed = closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      expect(closed.netWeightKg).toBe(6_500);
+      expect(closed.freightTotalCents).toBe(scenario.expectedCents);
+      // O total da operacao ja sai com o frete embutido.
+      expect(closed.totalCents).toBe((closed.productTotalCents ?? 0) + scenario.expectedCents);
+
+      const built = buildOmieBillingJob(database, operation.id);
+      expect(built!.payload.freightTotalCents).toBe(scenario.expectedCents);
+      expect(built!.payload.freightModalidade).toBe("1");
+      // Peso da carga no bloco frete do pedido continua em KG (peso_bruto/peso_liquido).
+      expect(built!.payload.transport?.cargoWeightKg).toBe(6_500);
+    } finally {
+      database.close();
+    }
+  });
+
+  // Operacao que perdeu a regra de frete (o pull antigo apagava `freight_json`): ela diz
+  // "com frete, valor na nota", entao o fechamento nao pode cobrar zero em silencio.
+  it("resgata a regra de frete pela memoria do cliente quando a operacao ficou sem ela", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET omie_customer_id = 456 WHERE id = 'customer-1'").run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000,
+        freightModality: "fob",
+        freight: {
+          payer: "customer",
+          rule: {
+            id: "operation-freight",
+            name: "Frete da operacao",
+            type: "per_ton",
+            baseValueCents: 9_000,
+            unit: "ton"
+          }
+        }
+      });
+      rememberCustomerFreightValue(database, {
+        customerId: "customer-1",
+        productId: "product-1",
+        modality: "fob",
+        rule: {
+          id: "operation-freight",
+          name: "Frete da operacao",
+          type: "per_ton",
+          baseValueCents: 9_000,
+          unit: "ton"
+        }
+      });
+      // Estado deixado pelo pull que apagava a coluna: tipo de frete intacto, regra vazia.
+      database
+        .prepare("UPDATE weighing_operations SET freight_json = NULL WHERE id = ?")
+        .run(operation.id);
+
+      const closed = closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      expect(closed.freightTotalCents).toBe(58_500);
+      // A regra resgatada fica gravada na operacao: cupom, ficha e 2a via veem a mesma.
+      expect(JSON.parse(closed.freightJson ?? "{}")).toMatchObject({
+        showOnReceipt: true,
+        rule: { type: "per_ton", baseValueCents: 9_000 }
+      });
+      expect(buildOmieBillingJob(database, operation.id)!.payload.freightTotalCents).toBe(58_500);
+    } finally {
+      database.close();
+    }
+  });
+
+  // Sem memoria do cliente nao ha o que resgatar: fecha sem frete, nunca inventa valor.
+  it("fecha sem frete quando a operacao ficou sem regra e o cliente nao tem memoria", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000,
+        freightModality: "fob"
+      });
+
+      const closed = closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      expect(closed.freightTotalCents).toBe(0);
+      expect(closed.freightJson).toBeNull();
     } finally {
       database.close();
     }

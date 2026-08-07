@@ -13,6 +13,7 @@ import {
 import { listUnitDevices, upsertUnitDevices } from "./unit-devices";
 import { getWalletReport, reopenWalletOperations, settleWalletOperations } from "./wallet";
 import {
+  closeWeighingOperation,
   createSimulatedWeighingOperation,
   listCanceledWeighingOperations,
   listClosedWeighingOperations,
@@ -1144,7 +1145,184 @@ describe("multi-desktop na mesma pedreira", () => {
       database.close();
     }
   });
+
+  // O frete so vira valor no FECHAMENTO (precisa do peso liquido), entao a regra de
+  // calculo precisa sobreviver a todos os pulls entre a entrada e a saida. Ela nao era
+  // projetada: o pull devolvia a operacao sem `freight_json`, apagava a regra local e a
+  // saida fechava com frete zero — sem linha FRETE no cupom e sem `valor_frete` no OMIE.
+  it("a regra de frete da operacao aberta sobrevive ao pull e o fechamento cobra o frete", async () => {
+    const machineA = createMachine("desktop-a");
+    const machineB = createMachine("desktop-b");
+
+    try {
+      const identityA = readIdentity(machineA);
+      const identityB = readIdentity(machineB);
+      insertOperation(machineA, {
+        id: "op-frete",
+        deviceId: "desktop-a",
+        status: "loading_requested",
+        updatedAt: "2026-07-22T12:00:00.000Z"
+      });
+      setOperationFreight(machineA, "op-frete", PER_TON_FREIGHT_RULE);
+
+      await syncOperationToSupabase(machineA, "op-frete", identityA);
+      const projected = lastPushedOperation();
+      expect(projected).toMatchObject({
+        id: "op-frete",
+        freight_json: PER_TON_FREIGHT_RULE,
+        freight_type: "fob"
+      });
+
+      // A MESMA projecao volta para as duas balancas: para a que registrou a entrada
+      // ela e o eco do proprio push (mesmo `updated_at`), e para a outra e a operacao
+      // da colega — nenhuma das duas pode perder a regra de frete no caminho.
+      for (const [database, identity] of [
+        [machineA, identityA],
+        [machineB, identityB]
+      ] as const) {
+        invokeMock.mockResolvedValueOnce({ data: { operations: [projected] }, error: null });
+        await pullDesktopDataFromCloud(database, identity);
+      }
+
+      for (const database of [machineA, machineB]) {
+        expect(readFreightJson(database, "op-frete")).toBe(PER_TON_FREIGHT_RULE);
+        // 20.000 kg de saida - 10.000 kg de entrada = 10 t x R$ 90,00/t = R$ 900,00.
+        expect(
+          closeWeighingOperation(database, { operationId: "op-frete", exitWeightKg: 20_000 })
+            .freightTotalCents
+        ).toBe(90_000);
+      }
+    } finally {
+      machineA.close();
+      machineB.close();
+    }
+  });
+
+  // Migracao da nuvem ainda nao aplicada (ou push de uma balanca de versao antiga): a
+  // operacao volta SEM a chave `freight_json`. Ausencia nao e "apagaram o frete".
+  it("projecao sem a coluna de frete nao apaga a regra local", async () => {
+    const database = createMachine("desktop-a");
+
+    try {
+      const identity = readIdentity(database);
+      insertOperation(database, {
+        id: "op-frete-legado",
+        deviceId: "desktop-a",
+        status: "loading_requested",
+        updatedAt: "2026-07-22T12:00:00.000Z"
+      });
+      setOperationFreight(database, "op-frete-legado", PER_TON_FREIGHT_RULE);
+
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          operations: [
+            {
+              id: "op-frete-legado",
+              company_id: "company-1",
+              unit_id: "unit-1",
+              device_id: "desktop-a",
+              status: "open",
+              operation_type: "invoice",
+              freight_type: "fob",
+              entry_weight_kg: 10_000,
+              created_at: "2026-07-22T11:00:00.000Z",
+              updated_at: "2026-07-22T12:00:00.000Z"
+            }
+          ]
+        },
+        error: null
+      });
+      await pullDesktopDataFromCloud(database, identity);
+
+      expect(readFreightJson(database, "op-frete-legado")).toBe(PER_TON_FREIGHT_RULE);
+    } finally {
+      database.close();
+    }
+  });
+
+  // O contrario tambem precisa valer: quando a OUTRA balanca tira o frete da operacao,
+  // a projecao mais nova chega com o campo vazio e essa remocao tem de valer aqui.
+  it("projecao mais nova sem frete remove a regra local", async () => {
+    const database = createMachine("desktop-a");
+
+    try {
+      const identity = readIdentity(database);
+      insertOperation(database, {
+        id: "op-frete-removido",
+        deviceId: "desktop-a",
+        status: "loading_requested",
+        updatedAt: "2026-07-22T12:00:00.000Z"
+      });
+      setOperationFreight(database, "op-frete-removido", PER_TON_FREIGHT_RULE);
+
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          operations: [
+            {
+              id: "op-frete-removido",
+              company_id: "company-1",
+              unit_id: "unit-1",
+              device_id: "desktop-a",
+              status: "open",
+              operation_type: "invoice",
+              freight_json: null,
+              freight_type: "none",
+              entry_weight_kg: 10_000,
+              created_at: "2026-07-22T11:00:00.000Z",
+              updated_at: "2026-07-22T13:00:00.000Z"
+            }
+          ]
+        },
+        error: null
+      });
+      await pullDesktopDataFromCloud(database, identity);
+
+      expect(readFreightJson(database, "op-frete-removido")).toBeNull();
+    } finally {
+      database.close();
+    }
+  });
 });
+
+/** Regra de frete "por tonelada" a R$ 90,00/t, como o `freight_json` da operacao guarda. */
+const PER_TON_FREIGHT_RULE = JSON.stringify({
+  payer: "customer",
+  rule: {
+    id: "operation-freight",
+    name: "Frete da operacao",
+    type: "per_ton",
+    baseValueCents: 9_000,
+    unit: "ton"
+  },
+  destination: null,
+  showOnReceipt: true
+});
+
+/** Lanca na operacao um frete "com valor na nota" (situacao 1). */
+function setOperationFreight(
+  database: DesktopDatabase,
+  operationId: string,
+  freightJson: string
+): void {
+  database
+    .prepare("UPDATE weighing_operations SET freight_json = ?, freight_type = 'fob' WHERE id = ?")
+    .run(freightJson, operationId);
+}
+
+function readFreightJson(database: DesktopDatabase, operationId: string): string | null {
+  return (database
+    .prepare("SELECT freight_json FROM weighing_operations WHERE id = ?")
+    .pluck()
+    .get(operationId) ?? null) as string | null;
+}
+
+/** Ultima operacao que o push enviou para o desktop-sync. */
+function lastPushedOperation(): Record<string, unknown> {
+  const call = invokeMock.mock.calls.at(-1)?.[1] as {
+    body: { operations: Array<Record<string, unknown>> };
+  };
+  return call.body.operations[0];
+}
 
 /** Cria o SQLite de uma maquina ja ativada na nuvem com o id de dispositivo dado. */
 function createMachine(deviceId: string): DesktopDatabase {
