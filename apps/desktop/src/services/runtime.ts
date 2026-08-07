@@ -786,6 +786,8 @@ export class DesktopRuntime {
     freightModality?: FreightModality | null;
     quotationId?: string;
     deductFreightFromCredit?: boolean;
+    /** Venda em carteira que sai do adiantamento do cliente (ver createWeighingOperation). */
+    settleFromAdvance?: boolean;
     scaleCaptureId?: string;
   }): Promise<WeighingOperationSummary> {
     this.assertDesktopAccess();
@@ -809,6 +811,7 @@ export class DesktopRuntime {
       freightModality: input.freightModality,
       quotationId: input.quotationId,
       deductFreightFromCredit: input.deductFreightFromCredit,
+      settleFromAdvance: input.settleFromAdvance,
       entryWeightKg: entryReading.weightKg,
       entryScaleCapture: buildScaleCaptureAudit(entryReading)
     });

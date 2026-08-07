@@ -18,6 +18,10 @@ interface OperationSeed {
   totalCents: number;
   soldAt: string;
   status?: string;
+  /** Quanto da venda saiu do adiantamento do cliente no fechamento da balanca. */
+  advanceAppliedCents?: number;
+  /** Venda ja quitada pelo adiantamento (fechada sem forma de recebimento). */
+  settledByAdvanceAt?: string;
 }
 
 function seedBaseData(database: DesktopDatabase): void {
@@ -72,9 +76,10 @@ function insertOperations(database: DesktopDatabase, seeds: OperationSeed[]): vo
        id, company_id, unit_id, device_id, status, operation_type, customer_id, product_id,
        vehicle_id, payment_method_id, entry_weight_kg, exit_weight_kg, net_weight_kg,
        unit_price_cents, product_total_cents, freight_total_cents, total_cents,
+       omie_advance_settle_cents, wallet_settled_at,
        entry_weight_captured_at, exit_weight_captured_at, created_at, updated_at
      ) VALUES (?, ?, 'unit-1', 'dev-1', ?, 'invoice', ?, 'prod-1', 'veh-1', ?,
-               10000, 40000, 30000, 5000, ?, 0, ?, datetime(?), datetime(?), datetime(?), datetime(?))`
+               10000, 40000, 30000, 5000, ?, 0, ?, ?, ?, datetime(?), datetime(?), datetime(?), datetime(?))`
   );
   for (const seed of seeds) {
     insert.run(
@@ -85,6 +90,8 @@ function insertOperations(database: DesktopDatabase, seeds: OperationSeed[]): vo
       seed.paymentMethodId,
       seed.totalCents,
       seed.totalCents,
+      seed.advanceAppliedCents ?? 0,
+      seed.settledByAdvanceAt ?? null,
       seed.soldAt,
       seed.soldAt,
       seed.soldAt,
@@ -385,5 +392,100 @@ describe("wallet service", () => {
     expect(all.summary.openCount).toBe(1);
     expect(all.summary.settledCount).toBe(1);
     expect(all.groups[0].operations).toHaveLength(2);
+  });
+
+  it("desconta do 'a receber' o que o adiantamento do cliente ja cobriu", () => {
+    insertOperations(database, [
+      // 300,00 de venda com 120,00 vindos do adiantamento: sobram 180,00 a receber.
+      {
+        id: "op-1",
+        customer: "cust-1",
+        paymentMethodId: walletMethodId,
+        totalCents: 30000,
+        advanceAppliedCents: 12000,
+        soldAt: "2026-07-10"
+      },
+      {
+        id: "op-2",
+        customer: "cust-1",
+        paymentMethodId: walletMethodId,
+        totalCents: 20000,
+        soldAt: "2026-07-12"
+      }
+    ]);
+
+    const report = getWalletReport(database, { status: "open" });
+    expect(report.summary).toMatchObject({
+      openCount: 2,
+      openTotalCents: 38000,
+      advanceAppliedTotalCents: 12000
+    });
+    expect(report.groups[0]).toMatchObject({ totalCents: 50000, openTotalCents: 38000 });
+    const abatida = report.groups[0].operations.find((op) => op.operationId === "op-1");
+    expect(abatida).toMatchObject({
+      totalCents: 30000,
+      advanceAppliedCents: 12000,
+      openAmountCents: 18000,
+      settledByAdvance: false
+    });
+  });
+
+  it("marca como fechada pelo adiantamento a venda que ele cobriu inteira", () => {
+    insertOperations(database, [
+      {
+        id: "op-1",
+        customer: "cust-1",
+        paymentMethodId: walletMethodId,
+        totalCents: 30000,
+        advanceAppliedCents: 30000,
+        settledByAdvanceAt: "2026-07-10T12:00:00.000Z",
+        soldAt: "2026-07-10"
+      }
+    ]);
+
+    // Nao aparece mais como pendencia: o cliente ja tinha pago.
+    expect(getWalletReport(database, { status: "open" }).summary.openCount).toBe(0);
+    const settled = getWalletReport(database, { status: "settled" });
+    expect(settled.summary).toMatchObject({ settledCount: 1, settledTotalCents: 30000 });
+    expect(settled.groups[0].operations[0]).toMatchObject({
+      settledByAdvance: true,
+      settlementMethodName: null,
+      openAmountCents: 0
+    });
+  });
+
+  it("recusa reabrir a venda quitada pelo adiantamento", () => {
+    insertOperations(database, [
+      {
+        id: "op-1",
+        customer: "cust-1",
+        paymentMethodId: walletMethodId,
+        totalCents: 30000,
+        advanceAppliedCents: 30000,
+        settledByAdvanceAt: "2026-07-10T12:00:00.000Z",
+        soldAt: "2026-07-10"
+      }
+    ]);
+
+    expect(() => reopenWalletOperations(database, ["op-1"])).toThrow(/adiantamento/i);
+    expect(getWalletReport(database, { status: "settled" }).summary.settledCount).toBe(1);
+  });
+
+  it("reabre normalmente o fechamento manual do que passou do adiantamento", () => {
+    insertOperations(database, [
+      {
+        id: "op-1",
+        customer: "cust-1",
+        paymentMethodId: walletMethodId,
+        totalCents: 30000,
+        advanceAppliedCents: 12000,
+        soldAt: "2026-07-10"
+      }
+    ]);
+    settleWalletOperations(database, { operationIds: ["op-1"], settlementMethodId: pixMethodId });
+
+    expect(reopenWalletOperations(database, ["op-1"])).toBe(1);
+    // O abatimento continua valendo: volta a receber so o que passou do adiantamento.
+    expect(getWalletReport(database, { status: "open" }).summary.openTotalCents).toBe(18000);
   });
 });

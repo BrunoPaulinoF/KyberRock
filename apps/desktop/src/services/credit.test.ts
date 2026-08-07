@@ -369,12 +369,43 @@ describe("reserva da baixa do adiantamento no OMIE", () => {
     }
   });
 
+  it("publica no resumo o adiantamento livre, que e o numero mostrado na balanca", () => {
+    const database = createDatabase();
+
+    try {
+      insertCustomer(database, { creditLimitCents: 0, creditMode: "normal" });
+      insertOmieAdvance(database, {
+        id: "omie-adv-1",
+        titleId: 7001,
+        amountCents: 100_000,
+        createdAt: "2026-07-20T10:00:00.000Z"
+      });
+      insertOperation(database, "operation-1");
+      database
+        .prepare(
+          `UPDATE weighing_operations
+             SET omie_advance_settle_cents = 30000, omie_advance_status = 'pending'
+           WHERE id = 'operation-1'`
+        )
+        .run();
+
+      const summary = new CreditService(database).getSummary("customer-1");
+      // O total espelhado nao muda com o consumo; o que a balanca oferece para abater, sim.
+      expect(summary.omieAdvanceCents).toBe(100_000);
+      expect(summary.advanceAvailableCents).toBe(70_000);
+    } finally {
+      database.close();
+    }
+  });
+
   it("nao reserva nada quando o cliente nao tem adiantamento espelhado", () => {
     const database = createDatabase();
 
     try {
       insertCustomer(database, { creditLimitCents: 100_000, creditMode: "normal" });
-      expect(new CreditService(database).getAdvanceAvailableToSettleCents("customer-1")).toBe(0);
+      const service = new CreditService(database);
+      expect(service.getAdvanceAvailableToSettleCents("customer-1")).toBe(0);
+      expect(service.getSummary("customer-1").advanceAvailableCents).toBe(0);
     } finally {
       database.close();
     }

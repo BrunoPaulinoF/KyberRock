@@ -24,7 +24,13 @@ function formatKg(kg: number | null): string {
 
 const EMPTY_REPORT: WalletReport = {
   groups: [],
-  summary: { openCount: 0, openTotalCents: 0, settledCount: 0, settledTotalCents: 0 }
+  summary: {
+    openCount: 0,
+    openTotalCents: 0,
+    settledCount: 0,
+    settledTotalCents: 0,
+    advanceAppliedTotalCents: 0
+  }
 };
 
 const styles = {
@@ -264,7 +270,9 @@ export function WalletView({ desktopApi }: { desktopApi: KyberRockDesktopApi | n
       [...selected].map((id) => operationsById.get(id)).filter((op): op is WalletOperation => !!op),
     [selected, operationsById]
   );
-  const selectedTotalCents = selectedOperations.reduce((sum, op) => sum + op.totalCents, 0);
+  // O que o adiantamento ja cobriu nao entra no fechamento: o operador soma aqui o que
+  // ainda vai receber das vendas escolhidas.
+  const selectedTotalCents = selectedOperations.reduce((sum, op) => sum + op.openAmountCents, 0);
   const selectedOpenCount = selectedOperations.filter((op) => !op.settledAt).length;
   const selectedSettledCount = selectedOperations.length - selectedOpenCount;
 
@@ -352,7 +360,7 @@ export function WalletView({ desktopApi }: { desktopApi: KyberRockDesktopApi | n
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <h2 style={styles.title}>Carteira</h2>
           <HelpTooltip
-            content="Vendas fechadas na forma de pagamento 'Em carteira': elas saem da balanca sem forma de recebimento definida e ficam aqui ate o fechamento, quando voce escolhe como o cliente vai pagar e para quando."
+            content="Vendas fechadas na forma de pagamento 'Em carteira': elas saem da balanca sem forma de recebimento definida e ficam aqui ate o fechamento, quando voce escolhe como o cliente vai pagar e para quando. Quem pagou adiantado ja chega com a compra abatida do deposito: 'A receber' mostra so o que passou do adiantamento."
             placement="right"
           />
         </div>
@@ -403,6 +411,10 @@ export function WalletView({ desktopApi }: { desktopApi: KyberRockDesktopApi | n
         <div style={styles.card}>
           <span style={styles.cardLabel}>Total em carteira</span>
           <span style={styles.cardValue}>{formatBRL(report.summary.openTotalCents)}</span>
+        </div>
+        <div style={styles.card}>
+          <span style={styles.cardLabel}>Abatido do adiantamento</span>
+          <span style={styles.cardValue}>{formatBRL(report.summary.advanceAppliedTotalCents)}</span>
         </div>
         <div style={styles.card}>
           <span style={styles.cardLabel}>Vendas fechadas</span>
@@ -502,6 +514,9 @@ export function WalletView({ desktopApi }: { desktopApi: KyberRockDesktopApi | n
                   </label>
                   <span style={styles.groupTotal}>
                     {group.operations.length} venda(s) · {formatBRL(group.totalCents)}
+                    {group.openTotalCents !== group.totalCents
+                      ? ` · a receber ${formatBRL(group.openTotalCents)}`
+                      : ""}
                   </span>
                 </div>
                 <table style={styles.table}>
@@ -513,6 +528,8 @@ export function WalletView({ desktopApi }: { desktopApi: KyberRockDesktopApi | n
                       <th style={styles.th}>Produto</th>
                       <th style={{ ...styles.th, ...styles.num }}>Peso</th>
                       <th style={{ ...styles.th, ...styles.num }}>Valor</th>
+                      <th style={{ ...styles.th, ...styles.num }}>Adiantamento</th>
+                      <th style={{ ...styles.th, ...styles.num }}>A receber</th>
                       <th style={styles.th}>Fechamento</th>
                     </tr>
                   </thead>
@@ -538,11 +555,21 @@ export function WalletView({ desktopApi }: { desktopApi: KyberRockDesktopApi | n
                         <td style={{ ...styles.td, ...styles.num }}>
                           {formatBRL(operation.totalCents)}
                         </td>
+                        <td style={{ ...styles.td, ...styles.num }}>
+                          {operation.advanceAppliedCents > 0
+                            ? `- ${formatBRL(operation.advanceAppliedCents)}`
+                            : "-"}
+                        </td>
+                        <td style={{ ...styles.td, ...styles.num }}>
+                          {formatBRL(operation.settledAt ? 0 : operation.openAmountCents)}
+                        </td>
                         <td style={styles.td}>
                           {operation.settledAt ? (
                             <>
                               <span style={styles.settledTag}>
-                                {operation.settlementMethodName ?? "Fechada"}
+                                {operation.settledByAdvance
+                                  ? "Adiantamento do cliente"
+                                  : (operation.settlementMethodName ?? "Fechada")}
                               </span>
                               <div style={styles.muted}>
                                 {operation.settlementDueDate
@@ -552,7 +579,11 @@ export function WalletView({ desktopApi }: { desktopApi: KyberRockDesktopApi | n
                               </div>
                             </>
                           ) : (
-                            <span style={styles.muted}>Aguardando fechamento</span>
+                            <span style={styles.muted}>
+                              {operation.advanceAppliedCents > 0
+                                ? "Aguardando fechamento do que passou do adiantamento"
+                                : "Aguardando fechamento"}
+                            </span>
                           )}
                         </td>
                       </tr>

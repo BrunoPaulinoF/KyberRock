@@ -28,6 +28,13 @@ export interface WalletOperation {
   productDescription: string;
   netWeightKg: number | null;
   totalCents: number;
+  /**
+   * Parte da venda que saiu do adiantamento do cliente no fechamento da balanca
+   * (dinheiro que ele ja tinha depositado no OMIE). Zero na venda em carteira comum.
+   */
+  advanceAppliedCents: number;
+  /** Quanto ainda ha para receber desta venda: total menos o que o adiantamento cobriu. */
+  openAmountCents: number;
   /** Nome exibido da forma "em carteira" usada na venda (respeita o apelido). */
   paymentMethodName: string;
   /** Forma de recebimento definida no fechamento; null enquanto em aberto. */
@@ -38,6 +45,12 @@ export interface WalletOperation {
   /** Quando o fechamento foi registrado; null = venda ainda em aberto na carteira. */
   settledAt: string | null;
   settlementNote: string | null;
+  /**
+   * A venda foi quitada pelo adiantamento do cliente no proprio fechamento da balanca
+   * (nao houve fechamento manual de carteira). Nao pode ser reaberta: o estorno do
+   * adiantamento e o cancelamento da operacao.
+   */
+  settledByAdvance: boolean;
   omieSalesOrderId: number | null;
 }
 
@@ -47,13 +60,18 @@ export interface WalletCustomerGroup {
   customerName: string;
   operations: WalletOperation[];
   totalCents: number;
+  /** Quanto do grupo ainda ha para receber (vendas em aberto, ja sem o adiantamento). */
+  openTotalCents: number;
 }
 
 export interface WalletSummary {
   openCount: number;
+  /** Dinheiro a receber: soma do que sobrou das vendas em aberto, sem o adiantamento. */
   openTotalCents: number;
   settledCount: number;
   settledTotalCents: number;
+  /** Quanto do adiantamento dos clientes o recorte consumiu. */
+  advanceAppliedTotalCents: number;
 }
 
 export interface WalletReport {
@@ -92,6 +110,7 @@ interface WalletOperationRow {
   product_description: string | null;
   net_weight_kg: number | null;
   total_cents: number | null;
+  omie_advance_settle_cents: number | null;
   method_name: string;
   method_alias: string | null;
   settlement_method_id: string | null;
@@ -112,6 +131,10 @@ function assertDate(value: string, label: string): void {
 }
 
 function mapRow(row: WalletOperationRow): WalletOperation {
+  const totalCents = row.total_cents ?? 0;
+  // Nunca negativo: o adiantamento cobre no maximo a propria venda, mas uma projecao
+  // truncada da nuvem nao pode virar "a receber" negativo na tela.
+  const advanceAppliedCents = Math.min(Math.max(0, row.omie_advance_settle_cents ?? 0), totalCents);
   return {
     operationId: row.id,
     soldAt: row.sold_at,
@@ -120,7 +143,9 @@ function mapRow(row: WalletOperationRow): WalletOperation {
     plate: row.plate ?? "-",
     productDescription: row.product_description ?? "-",
     netWeightKg: row.net_weight_kg,
-    totalCents: row.total_cents ?? 0,
+    totalCents,
+    advanceAppliedCents,
+    openAmountCents: totalCents - advanceAppliedCents,
     paymentMethodName: paymentMethodDisplayName({
       alias: row.method_alias,
       name: row.method_name
@@ -136,6 +161,12 @@ function mapRow(row: WalletOperationRow): WalletOperation {
     settlementDueDate: row.wallet_settlement_due_date,
     settledAt: row.wallet_settled_at,
     settlementNote: row.wallet_settlement_note,
+    // Fechada sem forma de recebimento e com adiantamento aplicado: quem "recebeu" foi
+    // o adiantamento do cliente, no proprio fechamento da balanca.
+    settledByAdvance:
+      row.wallet_settled_at !== null &&
+      row.settlement_method_id === null &&
+      advanceAppliedCents > 0,
     omieSalesOrderId: row.omie_sales_order_id
   };
 }
@@ -190,7 +221,7 @@ export function getWalletReport(database: DesktopDatabase, query: WalletQuery = 
          COALESCE(c.trade_name, o.remote_customer_name) AS customer_name,
          COALESCE(v.plate, o.remote_plate) AS plate,
          COALESCE(p.description, o.remote_product_description) AS product_description,
-         o.net_weight_kg, o.total_cents, o.omie_sales_order_id,
+         o.net_weight_kg, o.total_cents, o.omie_advance_settle_cents, o.omie_sales_order_id,
          pm.name AS method_name, pm.alias AS method_alias,
          o.wallet_settlement_method_id AS settlement_method_id,
          sm.name AS settlement_method_name, sm.alias AS settlement_method_alias,
@@ -212,30 +243,36 @@ export function getWalletReport(database: DesktopDatabase, query: WalletQuery = 
     openCount: 0,
     openTotalCents: 0,
     settledCount: 0,
-    settledTotalCents: 0
+    settledTotalCents: 0,
+    advanceAppliedTotalCents: 0
   };
 
   for (const operation of operations) {
+    const openCents = operation.settledAt ? 0 : operation.openAmountCents;
     const key = operation.customerId ?? `name:${operation.customerName}`;
     const group = groups.get(key);
     if (group) {
       group.operations.push(operation);
       group.totalCents += operation.totalCents;
+      group.openTotalCents += openCents;
     } else {
       groups.set(key, {
         customerId: operation.customerId,
         customerName: operation.customerName,
         operations: [operation],
-        totalCents: operation.totalCents
+        totalCents: operation.totalCents,
+        openTotalCents: openCents
       });
     }
 
+    summary.advanceAppliedTotalCents += operation.advanceAppliedCents;
     if (operation.settledAt) {
       summary.settledCount++;
       summary.settledTotalCents += operation.totalCents;
     } else {
       summary.openCount++;
-      summary.openTotalCents += operation.totalCents;
+      // O que o adiantamento ja cobriu nao esta a receber: entra so o restante.
+      summary.openTotalCents += operation.openAmountCents;
     }
   }
 
@@ -366,6 +403,10 @@ export function settleWalletOperations(
 /**
  * Desfaz o fechamento: a venda volta a ficar em aberto na carteira. Usado quando o
  * fechamento foi lancado na forma errada.
+ *
+ * A venda quitada pelo adiantamento nao entra: reabri-la a colocaria de volta na fila de
+ * cobranca sem devolver o dinheiro ao adiantamento (nem aqui nem no OMIE), e o cliente
+ * seria cobrado duas vezes pela mesma retirada. O estorno correto e cancelar a operacao.
  */
 export function reopenWalletOperations(
   database: DesktopDatabase,
@@ -376,6 +417,12 @@ export function reopenWalletOperations(
   if (ids.length === 0) {
     throw new Error("Selecione ao menos uma venda para reabrir.");
   }
+
+  const findSettledByAdvance = database.prepare(
+    `SELECT id FROM weighing_operations
+     WHERE id = ? AND deleted_at IS NULL AND wallet_settled_at IS NOT NULL
+       AND wallet_settlement_method_id IS NULL AND omie_advance_settle_cents > 0`
+  );
 
   const nowIso = now.toISOString();
   const update = database.prepare(
@@ -391,6 +438,12 @@ export function reopenWalletOperations(
   const reopen = database.transaction(() => {
     let count = 0;
     for (const id of ids) {
+      if (findSettledByAdvance.get(id)) {
+        throw new Error(
+          "Esta venda foi abatida do adiantamento do cliente e nao pode ser reaberta. " +
+            "Para desfazer, cancele a operacao — o adiantamento volta para o saldo dele."
+        );
+      }
       const changes = update.run(nowIso, id).changes;
       // So a venda que realmente voltou para a carteira precisa ir para a nuvem.
       if (changes > 0) enqueueWalletCloudPush(database, id, nowIso, now);

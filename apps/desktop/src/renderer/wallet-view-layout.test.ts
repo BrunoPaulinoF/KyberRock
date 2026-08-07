@@ -42,4 +42,15 @@ describe("layout da lista da Carteira", () => {
     expect(walletSource).toContain("group.operations.map((operation) => (");
     expect(walletSource).not.toMatch(/group\.operations\.slice\(/);
   });
+
+  it("separa o que o adiantamento cobriu do que ainda ha para receber", () => {
+    // O operador cobra pela coluna "A receber": mostrar so o valor cheio faria ele
+    // cobrar de novo o que o cliente ja tinha deixado pago.
+    expect(walletSource).toContain(">Adiantamento</th>");
+    expect(walletSource).toContain(">A receber</th>");
+    expect(walletSource).toContain("operation.advanceAppliedCents");
+    expect(walletSource).toContain("operation.openAmountCents");
+    // O fechamento pelo adiantamento tem rotulo proprio: nao ha forma de recebimento.
+    expect(walletSource).toContain("Adiantamento do cliente");
+  });
 });

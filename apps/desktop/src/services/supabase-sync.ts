@@ -1978,6 +1978,8 @@ type LocalOperationSnapshot = {
   wallet_settlement_due_date: string | null;
   wallet_settled_at: string | null;
   wallet_settlement_note: string | null;
+  settle_from_advance: number | null;
+  omie_advance_settle_cents: number | null;
 };
 
 /**
@@ -2018,6 +2020,23 @@ function mergeProjectedValue(
   const projected = readProjected();
   if (cloudIsNewer) return projected;
   return projected ?? localValue ?? null;
+}
+
+/**
+ * Mesma decisao de `mergeProjectedValue` para uma coluna numerica (o abatimento do
+ * adiantamento e a marca que o gerou). Zero e valor legitimo, entao o criterio de
+ * "vazio" e o nulo/ausente — nunca o falsy.
+ */
+function mergeProjectedNumber(
+  row: Record<string, unknown>,
+  column: string,
+  cloudIsNewer: boolean,
+  projected: number | null,
+  localValue: number | null | undefined
+): number {
+  if (!isProjectedColumn(row, column)) return localValue ?? 0;
+  if (cloudIsNewer) return projected ?? 0;
+  return projected ?? localValue ?? 0;
 }
 
 /**
@@ -2119,8 +2138,8 @@ function upsertCloudOperations(
       freight_credit_debit_cents, quotation_id,
       remote_plate, remote_driver_name, remote_customer_name, remote_product_description,
       payment_method_id, wallet_settlement_method_id, wallet_settlement_due_date,
-      wallet_settled_at, wallet_settlement_note
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      wallet_settled_at, wallet_settlement_note, settle_from_advance, omie_advance_settle_cents
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
       unit_id = excluded.unit_id,
@@ -2178,14 +2197,21 @@ function upsertCloudOperations(
       wallet_settlement_method_id = excluded.wallet_settlement_method_id,
       wallet_settlement_due_date = excluded.wallet_settlement_due_date,
       wallet_settled_at = excluded.wallet_settled_at,
-      wallet_settlement_note = excluded.wallet_settlement_note
+      wallet_settlement_note = excluded.wallet_settlement_note,
+      -- Abatimento do adiantamento: a marca "abater" e o valor abatido no fechamento.
+      -- Passam pelo mesmo criterio das colunas da carteira (ver mergeProjectedNumber), e
+      -- por isso chegam aqui ja decididos entre a projecao e a copia local. Sem eles a
+      -- outra balanca da pedreira mostraria a venda inteira a receber na Carteira e
+      -- reservaria de novo um adiantamento que ja foi consumido.
+      settle_from_advance = excluded.settle_from_advance,
+      omie_advance_settle_cents = excluded.omie_advance_settle_cents
   `);
 
   const readLocal = database.prepare(
     `SELECT status, updated_at, customer_id, product_id, carrier_id, freight_json,
        payment_method_id,
        wallet_settlement_method_id, wallet_settlement_due_date, wallet_settled_at,
-       wallet_settlement_note
+       wallet_settlement_note, settle_from_advance, omie_advance_settle_cents
      FROM weighing_operations WHERE id = ?`
   );
 
@@ -2283,6 +2309,24 @@ function upsertCloudOperations(
       () => nullableStringValue(row.wallet_settlement_note),
       local?.wallet_settlement_note
     );
+    // Abatimento do adiantamento do cliente: a marca escolhida na entrada e quanto o
+    // fechamento consumiu. A saida pode ser pesada em outra balanca, entao a marca
+    // precisa viajar antes do fechamento; o valor abatido viaja depois dele, para a
+    // Carteira das duas maquinas mostrar o mesmo "a receber".
+    const settleFromAdvance = mergeProjectedNumber(
+      row,
+      "settle_from_advance",
+      cloudIsNewer,
+      nullableBooleanToSql(row.settle_from_advance),
+      local?.settle_from_advance
+    );
+    const advanceSettleCents = mergeProjectedNumber(
+      row,
+      "omie_advance_settle_cents",
+      cloudIsNewer,
+      integerValue(row.omie_advance_settle_cents),
+      local?.omie_advance_settle_cents
+    );
     // Regra de frete: passa pelo mesmo criterio das colunas da carteira, e nao
     // direto do payload. Uma nuvem sem a coluna (migracao pendente, ou o eco do push
     // de uma balanca de versao antiga) devolve a operacao SEM `freight_json` — e
@@ -2350,7 +2394,9 @@ function upsertCloudOperations(
         walletSettlementMethodId,
         walletSettlementDueDate,
         walletSettledAt,
-        walletSettlementNote
+        walletSettlementNote,
+        settleFromAdvance,
+        advanceSettleCents
       );
       count++;
     } catch (error) {
@@ -2626,6 +2672,17 @@ function booleanToSql(value: unknown, fallback: boolean): number {
   if (typeof value === "boolean") return value ? 1 : 0;
   if (typeof value === "number") return value === 0 ? 0 : 1;
   return fallback ? 1 : 0;
+}
+
+/**
+ * Booleano da projecao em 0/1, preservando o "a nuvem nao sabe" como null. Usado nas
+ * colunas que passam por `mergeProjectedNumber`: la o nulo e o que faz o valor local
+ * prevalecer numa linha antiga (gravada antes da coluna existir), enquanto um `false`
+ * assumido apagaria a marca que esta maquina acabou de gravar.
+ */
+function nullableBooleanToSql(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  return booleanToSql(value, false);
 }
 
 function jsonStringValue(value: unknown): string | null {
@@ -3291,6 +3348,12 @@ function getOperationPayload(
     wallet_settlement_due_date: operation.wallet_settlement_due_date,
     wallet_settled_at: operation.wallet_settled_at,
     wallet_settlement_note: operation.wallet_settlement_note,
+    // Abatimento do adiantamento do cliente: a marca escolhida na entrada (a saida pode
+    // ser pesada na outra balanca) e quanto o fechamento consumiu do adiantamento — e o
+    // que a Carteira desconta do "a receber" e o que o proximo fechamento nao pode
+    // reservar de novo.
+    settle_from_advance: Number(operation.settle_from_advance ?? 0) === 1,
+    omie_advance_settle_cents: operation.omie_advance_settle_cents ?? 0,
     plate: operation.plate,
     customer_name: operation.customer_name,
     driver_name: operation.driver_name,

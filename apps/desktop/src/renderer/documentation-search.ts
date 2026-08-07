@@ -180,8 +180,14 @@ const SYNONYMS: Record<string, string[]> = {
   parcelar: ["parcelamento", "condicao", "vencimento"],
   vencimento: ["parcela", "condicao", "prazo"],
   prazo: ["condicao", "parcela", "vencimento"],
-  carteira: ["fechamento", "acerto", "recebimento"],
+  carteira: ["fechamento", "acerto", "recebimento", "adiantamento"],
   acerto: ["carteira", "fechamento"],
+  // O operador procura pelo que o cliente fez ("deixou pago", "pagou adiantado"), nao
+  // pelo nome contabil do lancamento.
+  adiantamento: ["carteira", "credito", "saldo", "antecipado"],
+  adiantado: ["adiantamento", "carteira", "credito"],
+  antecipado: ["adiantamento", "carteira", "credito"],
+  abater: ["adiantamento", "desconto", "carteira"],
   bonificacao: ["cortesia", "sem cobranca"],
   frete: ["transporte", "transportadora", "modalidade"],
   transporte: ["frete", "transportadora"],

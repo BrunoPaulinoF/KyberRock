@@ -9,7 +9,10 @@ import { DESKTOP_MIGRATIONS } from "./migrations";
 import { openDesktopDatabase, type DesktopDatabase } from "./sqlite";
 import { ensureInitialDesktopIdentity } from "../services/bootstrap";
 import { listOperationsPendingCloudPush } from "../services/supabase-sync";
-import { listClosedWeighingOperations } from "../services/weighing-operations";
+import {
+  CLOSED_OPERATION_STATUS_SQL_LIST,
+  listClosedWeighingOperations
+} from "../services/weighing-operations";
 import { getWalletReport } from "../services/wallet";
 
 /**
@@ -28,11 +31,20 @@ describe("atualizacao de um banco em uso (48 -> 49)", () => {
       expect(previous.at(-1)?.version).toBe(48);
       seedWalletSale(database);
 
-      const before = listClosedWeighingOperations(database).map((operation) => operation.id);
+      // Por SQL cru: o banco ainda esta na versao antiga e listClosedWeighingOperations e
+      // do build NOVO, que ja pede colunas criadas pelas migracoes seguintes.
+      const before = database
+        .prepare(
+          `SELECT id FROM weighing_operations
+           WHERE status IN (${CLOSED_OPERATION_STATUS_SQL_LIST}) AND deleted_at IS NULL
+           ORDER BY updated_at DESC`
+        )
+        .pluck()
+        .all() as string[];
       const walletBefore = getWalletReport(database, { status: "open" }).summary;
 
       const applied = runDesktopMigrations(database);
-      expect(applied.at(-1)?.version).toBe(49);
+      expect(applied.map((migration) => migration.version)).toContain(49);
 
       // Nada mudou para o operador: as mesmas vendas, a mesma carteira.
       expect(listClosedWeighingOperations(database).map((operation) => operation.id)).toEqual(
@@ -123,7 +135,7 @@ describe("atualizacao de um banco em uso (48 -> 49)", () => {
       database = openDesktopDatabase({ databasePath });
 
       const applied = runDesktopMigrations(database);
-      expect(applied.at(-1)?.version).toBe(49);
+      expect(applied.map((migration) => migration.version)).toContain(49);
       expect(getWalletReport(database, { status: "open" }).summary.openCount).toBe(1);
       expect(database.prepare("PRAGMA integrity_check").pluck().get()).toBe("ok");
       database.close();

@@ -61,6 +61,8 @@ function createOperation(
     deductFreightFromCredit: false,
     productCreditDebitCents: 0,
     freightCreditDebitCents: 0,
+    settleFromAdvance: false,
+    advanceAppliedCents: 0,
     quotationId: null,
     omieSalesOrderId: null,
     omieServiceOrderId: null,
@@ -87,7 +89,6 @@ const FREIGHT_JSON = JSON.stringify({
     name: "Frete da operacao",
     type: "per_ton_km",
     baseValueCents: 250,
-    minValueCents: 8_000,
     distanceKm: 35,
     unit: "ton"
   }
@@ -174,7 +175,6 @@ describe("edicao completa da operacao", () => {
       chargeFreight: true,
       freightCalculationType: "per_ton_km",
       freightBaseValueCents: 250,
-      freightMinValueCents: 8_000,
       freightDistanceKm: "35",
       freightDestination: "Obra do centro"
     });
@@ -349,7 +349,7 @@ describe("ficha da operacao sem rolagem", () => {
     );
 
     expect(sections).toHaveLength(6);
-    expect(sections.reduce((total, section) => total + section.items.length, 0)).toBe(46);
+    expect(sections.reduce((total, section) => total + section.items.length, 0)).toBe(47);
   });
 
   it("empilha as secoes em colunas de jornal, sem grade de linhas", () => {
