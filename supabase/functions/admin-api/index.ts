@@ -62,7 +62,19 @@ type AdminAction =
   | "update_loader_password"
   | "delete_loader"
   | "toggle_device"
-  | "update_device_unit";
+  | "update_device_unit"
+  | "get_ai_settings"
+  | "update_ai_settings";
+
+/**
+ * Configuracao da IA do assistente da documentacao. E uma linha unica e global:
+ * todas as pedreiras usam a mesma conta. Ver a migracao
+ * `202608070003_ai_assistant_settings.sql`.
+ */
+const AI_SETTINGS_ID = true;
+const AI_SETTINGS_TABLE = "ai_assistant_settings";
+/** Enviado pela UI para dizer "mantenha a chave que ja esta gravada". */
+const AI_KEY_UNCHANGED = "********";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -469,6 +481,67 @@ Deno.serve(async (req) => {
         if (error) throw error;
         return jsonResponse({ ok: true });
       }
+    }
+
+    if (body.action === "get_ai_settings") {
+      const { data, error } = await supabase
+        .from(AI_SETTINGS_TABLE)
+        .select("provider, api_key, model, is_enabled, updated_at")
+        .eq("id", AI_SETTINGS_ID)
+        .maybeSingle();
+      if (error) throw error;
+      const row = (data ?? null) as {
+        provider?: string;
+        api_key?: string | null;
+        model?: string;
+        is_enabled?: boolean;
+        updated_at?: string;
+      } | null;
+      const apiKey = String(row?.api_key ?? "");
+      // A chave NUNCA volta para o navegador. O painel so precisa saber se ela
+      // existe e reconhecer qual esta gravada — os 4 ultimos caracteres bastam.
+      return jsonResponse({
+        ok: true,
+        settings: {
+          provider: row?.provider ?? "openai",
+          model: row?.model ?? "",
+          isEnabled: row?.is_enabled !== false,
+          hasApiKey: apiKey.length > 0,
+          apiKeyPreview: apiKey.length >= 4 ? `••••${apiKey.slice(-4)}` : "",
+          updatedAt: row?.updated_at ?? null
+        }
+      });
+    }
+
+    if (body.action === "update_ai_settings") {
+      const model = String(payload.model ?? "").trim();
+      if (!model) {
+        return jsonResponse({ error: "Escolha o modelo de IA" }, 400);
+      }
+
+      const updatePayload: Record<string, unknown> = {
+        id: AI_SETTINGS_ID,
+        provider: String(payload.provider ?? "openai").trim() || "openai",
+        model,
+        is_enabled: payload.isEnabled !== false,
+        updated_at: new Date().toISOString()
+      };
+
+      // Mesmo contrato do segredo do OMIE: a mascara mantem a chave atual,
+      // string vazia apaga, qualquer outra coisa substitui. Sem isso, salvar o
+      // modelo sem redigitar a chave apagaria a chave.
+      if (payload.apiKey !== undefined) {
+        const key = String(payload.apiKey ?? "").trim();
+        if (key.length === 0) {
+          updatePayload.api_key = null;
+        } else if (key !== AI_KEY_UNCHANGED) {
+          updatePayload.api_key = key;
+        }
+      }
+
+      const { error } = await supabase.from(AI_SETTINGS_TABLE).upsert(updatePayload);
+      if (error) throw error;
+      return jsonResponse({ ok: true });
     }
 
     return jsonResponse({ error: "Invalid action" }, 400);

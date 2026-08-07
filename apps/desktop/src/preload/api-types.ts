@@ -710,7 +710,8 @@ export interface KyberRockDesktopApi {
   }) => Promise<{
     available: boolean;
     answer: string;
-    grounded: boolean;
+    /** "documentacao" | "conhecimento" | "desconhecido". */
+    answerSource: string;
     sources: string[];
     reason?: string;
   }>;

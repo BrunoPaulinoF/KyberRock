@@ -1634,7 +1634,7 @@ function registerIpcHandlers(): void {
       return {
         available: false,
         answer: "",
-        grounded: false,
+        answerSource: "desconhecido",
         sources: [],
         reason: "Desktop runtime is not ready."
       } satisfies DocsAssistantResult;
