@@ -37,6 +37,25 @@ describe("ASSISTANT_OUTPUT_SCHEMA", () => {
     expect(ASSISTANT_OUTPUT_SCHEMA.required).toEqual(["answer", "grounded", "sources"]);
     expect(ASSISTANT_OUTPUT_SCHEMA.additionalProperties).toBe(false);
   });
+
+  // O `strict: true` da OpenAI exige que TODA propriedade esteja em `required`
+  // e `additionalProperties: false`. Quem esquecer disso ao adicionar um campo
+  // nao ve erro no build: a API rejeita com 400 em producao e o chat degrada em
+  // silencio para a resposta local. Este teste e a rede desse caso.
+  it("continua compativel com o modo estrito de structured outputs", () => {
+    const properties = Object.keys(ASSISTANT_OUTPUT_SCHEMA.properties);
+    expect([...ASSISTANT_OUTPUT_SCHEMA.required].sort()).toEqual([...properties].sort());
+    expect(ASSISTANT_OUTPUT_SCHEMA.type).toBe("object");
+  });
+
+  // Palavras-chave que o modo estrito recusa (minLength, format, pattern...).
+  it("nao usa palavras-chave que o modo estrito recusa", () => {
+    const unsupported = ["minLength", "maxLength", "pattern", "format", "minimum", "maximum"];
+    const serialized = JSON.stringify(ASSISTANT_OUTPUT_SCHEMA);
+    for (const keyword of unsupported) {
+      expect(serialized, `schema usa "${keyword}"`).not.toContain(`"${keyword}"`);
+    }
+  });
 });
 
 describe("sanitizeQuestion", () => {

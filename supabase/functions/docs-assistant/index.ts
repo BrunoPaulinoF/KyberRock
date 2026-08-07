@@ -25,7 +25,7 @@ import {
 //   - nenhum dado de operacao, cliente ou peso sai do computador da balanca —
 //     o que sobe e a nossa propria documentacao e a frase digitada.
 //
-// A chave da Anthropic vive so aqui, como toda credencial sensivel do projeto.
+// A chave da OpenAI vive so aqui, como toda credencial sensivel do projeto.
 // ---------------------------------------------------------------------------
 
 type DeviceRow = {
@@ -36,96 +36,122 @@ type DeviceRow = {
   is_active: boolean;
 };
 
-/** Ver AGENTS.md ("Secrets & security"): configurado como secret da Edge Function. */
-const ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY";
-const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
-const ANTHROPIC_VERSION = "2023-06-01";
-const ASSISTANT_MODEL = "claude-opus-5";
-const ANTHROPIC_TIMEOUT_MS = 45_000;
+/** Ver AGENTS.md ("Secrets & security"): configurados como secrets da Edge Function. */
+const OPENAI_API_KEY_ENV = "OPENAI_API_KEY";
+const OPENAI_MODEL_ENV = "OPENAI_MODEL";
+const OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions";
 
-interface AnthropicContentBlock {
-  type?: string;
-  text?: string;
+/**
+ * Trocar de modelo e mudar um secret, nao um deploy. O padrao e um modelo
+ * pequeno de proposito: a resposta aqui e reescrever em linguagem natural os
+ * trechos que o desktop ja selecionou — o trabalho pesado (achar o trecho
+ * certo) acontece no renderer, nao no modelo.
+ */
+const DEFAULT_MODEL = "gpt-4.1-mini";
+
+/**
+ * Teto da resposta. Folgado de proposito: uma resposta cortada no meio vira
+ * JSON invalido, e um JSON invalido custa mais (vira "fale com o suporte" sem
+ * necessidade) do que os tokens economizados.
+ */
+const MAX_COMPLETION_TOKENS = 1_200;
+const REQUEST_TIMEOUT_MS = 45_000;
+
+interface OpenAiChoice {
+  message?: {
+    content?: string | null;
+    /** Preenchido quando o modelo recusa sob structured outputs. */
+    refusal?: string | null;
+  };
+  finish_reason?: string;
 }
 
-interface AnthropicMessageResponse {
-  content?: AnthropicContentBlock[];
-  stop_reason?: string;
-  model?: string;
+interface OpenAiChatResponse {
+  choices?: OpenAiChoice[];
+  error?: { message?: string; type?: string; code?: string };
 }
 
-function extractText(response: AnthropicMessageResponse): string {
-  return (response.content ?? [])
-    .filter((block) => block.type === "text" && typeof block.text === "string")
-    .map((block) => block.text ?? "")
-    .join("")
-    .trim();
-}
+const SUPPORT_ON_REFUSAL: AssistantAnswer = {
+  answer:
+    "Nao consigo responder essa pergunta por aqui. Fale diretamente com o suporte do KyberRock.",
+  grounded: false,
+  sources: []
+};
 
-async function askAnthropic(
+async function askOpenAi(
   apiKey: string,
-  messages: Array<{ role: "user" | "assistant"; content: string }>
+  model: string,
+  messages: Array<{ role: "system" | "user" | "assistant"; content: string }>
 ): Promise<AssistantAnswer> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), ANTHROPIC_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   let response: Response;
   try {
-    response = await fetch(ANTHROPIC_MESSAGES_URL, {
+    response = await fetch(OPENAI_CHAT_URL, {
       method: "POST",
       signal: controller.signal,
       headers: {
         "content-type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": ANTHROPIC_VERSION
+        authorization: `Bearer ${apiKey}`
       },
       body: JSON.stringify({
-        model: ASSISTANT_MODEL,
-        // Teto do turno inteiro (raciocinio + resposta). Folgado de proposito:
-        // uma resposta cortada no meio e pior do que uma resposta um pouco mais
-        // cara, e o `effort: low` ja mantem o raciocinio curto.
-        max_tokens: 4_000,
-        system: ASSISTANT_SYSTEM_PROMPT,
-        // Duvida de documentacao nao precisa de raciocinio profundo, e o
-        // operador esta esperando na tela: `low` responde rapido sem perder a
-        // ancoragem, que aqui vem do contexto e nao do raciocinio.
-        output_config: {
-          effort: "low",
-          // Formato garantido: sem isso a deteccao de "nao sei" viraria
-          // comparacao de string, que quebra a cada mudanca de redacao.
-          format: { type: "json_schema", schema: ASSISTANT_OUTPUT_SCHEMA }
-        },
-        messages
+        model,
+        messages,
+        // `max_completion_tokens` em vez de `max_tokens`: e o campo aceito
+        // tambem pelos modelos de raciocinio, entao trocar OPENAI_MODEL nao
+        // exige mexer no codigo.
+        max_completion_tokens: MAX_COMPLETION_TOKENS,
+        // Sem `temperature` de proposito: varios modelos so aceitam o valor
+        // padrao e rejeitam a requisicao com qualquer outro. Omitir mantem a
+        // funcao compativel com qualquer modelo configurado no secret.
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "resposta_do_assistente",
+            // Formato garantido pelo servidor: sem isso a deteccao de
+            // "nao sei" viraria comparacao de string, que quebra a cada
+            // mudanca de redacao.
+            strict: true,
+            schema: ASSISTANT_OUTPUT_SCHEMA
+          }
+        }
       })
     });
   } finally {
     clearTimeout(timeout);
   }
 
+  const payload = (await response.json().catch(() => null)) as OpenAiChatResponse | null;
+
   if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(`Anthropic respondeu ${response.status}: ${detail.slice(0, 300)}`);
+    const detail = payload?.error?.message ?? `HTTP ${response.status}`;
+    throw new Error(`OpenAI respondeu ${response.status}: ${detail.slice(0, 300)}`);
   }
 
-  const payload = (await response.json()) as AnthropicMessageResponse;
+  const choice = payload?.choices?.[0];
 
-  // Classificador de seguranca recusou a requisicao: `content` vem vazio ou
-  // parcial. Nao ha o que ler — devolve o caminho do suporte.
+  // Recusa do modelo sob structured outputs: `content` vem nulo e o motivo vai
+  // em `refusal`. Nao ha resposta a ler — devolve o caminho do suporte.
   //
-  // Sem `fallbacks` de proposito: aqui a recusa nao e uma falha a recuperar. O
-  // valor deste assistente e responder ancorado na documentacao, e mandar a
-  // pergunta para outro modelo so trocaria "nao sei" por um palpite. Encaminhar
-  // ao suporte E a resposta certa neste caso.
-  if (payload.stop_reason === "refusal") {
-    return {
-      answer:
-        "Nao consigo responder essa pergunta por aqui. Fale diretamente com o suporte do KyberRock.",
-      grounded: false,
-      sources: []
-    };
+  // Sem tentar outro modelo de proposito: aqui a recusa nao e uma falha a
+  // recuperar. O valor deste assistente e responder ancorado na documentacao,
+  // e reenviar a pergunta so trocaria "nao sei" por um palpite.
+  if (choice?.message?.refusal) {
+    return SUPPORT_ON_REFUSAL;
+  }
+  if (choice?.finish_reason === "content_filter") {
+    return SUPPORT_ON_REFUSAL;
   }
 
-  return parseAssistantAnswer(extractText(payload));
+  // Resposta truncada: o JSON esta pela metade e nao da para confiar no
+  // `grounded` dele. Melhor encaminhar do que entregar meia instrucao fiscal.
+  if (choice?.finish_reason === "length") {
+    console.error("docs-assistant: resposta truncada pelo limite de tokens");
+    return SUPPORT_ON_REFUSAL;
+  }
+
+  return parseAssistantAnswer(choice?.message?.content ?? "");
 }
 
 Deno.serve(async (req) => {
@@ -162,19 +188,23 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: "Pergunta vazia." }, 400);
   }
 
-  const apiKey = Deno.env.get(ANTHROPIC_API_KEY_ENV) ?? "";
+  const apiKey = Deno.env.get(OPENAI_API_KEY_ENV) ?? "";
   if (!apiKey) {
     // Assistente de nuvem nao configurado. 503 e proposital: o desktop
     // reconhece isso e cai na resposta local, sem mostrar erro ao operador.
     return jsonResponse({ error: "Assistente de IA nao configurado nesta instalacao." }, 503);
   }
+  const model = (Deno.env.get(OPENAI_MODEL_ENV) ?? "").trim() || DEFAULT_MODEL;
 
   const passages = sanitizePassages(body.passages);
   const history = sanitizeHistory(body.history);
 
   try {
-    const answer = await askAnthropic(apiKey, buildMessages(question, passages, history));
-    return jsonResponse({ ok: true, ...answer, model: ASSISTANT_MODEL });
+    const answer = await askOpenAi(apiKey, model, [
+      { role: "system", content: ASSISTANT_SYSTEM_PROMPT },
+      ...buildMessages(question, passages, history)
+    ]);
+    return jsonResponse({ ok: true, ...answer, model });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Falha ao consultar o assistente.";
     console.error("docs-assistant: falha ao consultar a IA", message);

@@ -140,7 +140,7 @@ offending link of the chain, not above the `return`.
 - `KYBERROCK_ADMIN_PASSWORD_HASH = sha256(SALT + plain_password)`. Configure `SALT` and `HASH` in Edge Function secrets only.
 - `SUPABASE_SERVICE_ROLE_KEY` is Edge-Function-only. Desktop and web use `VITE_SUPABASE_PUBLISHABLE_KEY` / `SUPABASE_PUBLISHABLE_KEY`.
 - OMIE creds (`OMIE_APP_KEY` / `OMIE_APP_SECRET`) live in Edge Function env. **Always** call OMIE from an Edge Function — never from frontend or desktop.
-- `ANTHROPIC_API_KEY` (assistente da documentação) is Edge-Function-only, read by `docs-assistant`. Sem ele a função responde **503** e o desktop cai silenciosamente na resposta local — a ausência da chave desliga a IA, não quebra a tela.
+- `OPENAI_API_KEY` (assistente da documentação) is Edge-Function-only, read by `docs-assistant`. Sem ele a função responde **503** e o desktop cai silenciosamente na resposta local — a ausência da chave desliga a IA, não quebra a tela. `OPENAI_MODEL` troca o modelo (padrão `gpt-4.1-mini`) sem redeploy; a função omite `temperature` e usa `max_completion_tokens` justamente para aceitar qualquer modelo configurado ali.
 - For local dev, copy `.env.example` to `.env` and fill placeholder values; real secrets stay out of Git.
 
 ## OMIE idempotency

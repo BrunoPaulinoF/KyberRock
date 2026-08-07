@@ -55,7 +55,7 @@ apps/loader-web (React)  --read-only-->  Supabase Postgres   (loader sees open l
   (`desktop-sync`, `desktop-pull`, `desktop-status`, `desktop-activate`, `desktop-download`),
   scheduled reporting (`daily-report-scheduler`, `daily-report-email`) and the documentation
   assistant (`docs-assistant`). `_shared/` holds code common to them. Never call OMIE, the
-  Anthropic API or the service-role key from desktop or web. Note: this is distinct from the
+  OpenAI API or the service-role key from desktop or web. Note: this is distinct from the
   `functions/` workspace (`@kyberrock/functions`), which is a plain TypeScript utils library.
 - **`packages/*`** — shared building blocks consumed by the apps: `shared` (domain types, enums,
   ID + format helpers), `scale-adapters` (one adapter contract, e.g. Toledo + a virtual test
