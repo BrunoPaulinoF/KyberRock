@@ -330,7 +330,12 @@ describe("App", () => {
   it("diz ao operador de quanto e o adiantamento antes de ele marcar a caixa", () => {
     expect(advanceHintText("", null)).toContain("Escolha o cliente");
     expect(advanceHintText("customer-1", null)).toContain("Consultando");
-    expect(advanceHintText("customer-1", 0)).toContain("nao tem adiantamento disponivel");
+    // Saldo zero pode ser so atraso do espelho: a frase precisa dizer que a pesagem
+    // confere no OMIE, senao o operador deixa de marcar a caixa e a venda inteira cai
+    // na carteira de quem ja tinha pago.
+    const semSaldo = advanceHintText("customer-1", 0);
+    expect(semSaldo).toContain("Nenhum adiantamento espelhado");
+    expect(semSaldo).toContain("conferido no OMIE ao capturar o peso");
     const comSaldo = advanceHintText("customer-1", 78_000);
     // Intl separa "R$" do numero com espaco nao-quebravel: a asserçao olha o valor.
     expect(comSaldo).toContain("780,00");

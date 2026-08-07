@@ -264,6 +264,14 @@ entrada; sem memoria, fecha sem frete, nunca com um valor inventado.
   operacao. As duas colunas (`settle_from_advance` e `omie_advance_settle_cents`) tambem
   vao na projecao: a saida pode ser pesada na outra balanca, e sem elas a outra maquina
   cobraria a venda inteira e reservaria de novo um adiantamento ja consumido.
+- **A pesagem confere o saldo**: com a marca ligada, capturar o peso (na entrada e no
+  fechamento) dispara um `pull_customer_advances` MIRADO naquele cliente
+  (`filtrar_cliente`), disparado junto com a captura para nao somar espera. Sem ele o
+  abatimento dependeria da varredura agendada, e o cliente que "deixou pago" de manha
+  seria abatido contra saldo velho. A conferencia e **best-effort** (offline-first: sem
+  internet a pesagem acontece igual, com o saldo ja espelhado — o erro e sempre para
+  MENOS, e o restante fica em carteira) e **nao mexe no cursor** da varredura completa,
+  senao ela passaria a pular os adiantamentos antigos dos demais clientes.
 - Diferenca para o credito do cliente (fiado): a carteira **nao** consome limite/saldo do
   cadastro e nao tem periodicidade automatica — o fechamento e manual, quando o comercial
   e o cliente combinam.

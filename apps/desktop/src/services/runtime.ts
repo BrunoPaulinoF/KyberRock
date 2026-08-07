@@ -791,9 +791,17 @@ export class DesktopRuntime {
     scaleCaptureId?: string;
   }): Promise<WeighingOperationSummary> {
     this.assertDesktopAccess();
+    // Venda que vai sair do adiantamento: confere o saldo do cliente no OMIE agora,
+    // enquanto o caminhao estabiliza na balanca. O financeiro lanca o adiantamento la,
+    // e o que ainda nao foi espelhado aqui e dinheiro que a balanca nao enxerga.
+    const advanceSync = input.settleFromAdvance
+      ? this.refreshCustomerAdvanceFromOmie(input.customerId, "entrada")
+      : Promise.resolve();
+
     const entryReading =
       this.consumeScaleCapture(input.scaleCaptureId, "entry") ??
       (await this.captureStableWeight({ operationType: "entry" }));
+    await advanceSync;
 
     const operation = createWeighingOperation(this.database, {
       identity: this.ensureIdentity(),
@@ -852,9 +860,21 @@ export class DesktopRuntime {
       throw new Error("Invalid operation type.");
     }
 
+    // O abatimento do adiantamento e calculado NO fechamento: e aqui que o saldo
+    // precisa estar em dia com o OMIE. Dispara junto com a captura do peso para nao
+    // somar espera, e e conferido antes de fechar.
+    const advanceSync = this.customerIdOfAdvanceSale(operationId)
+      .then((customerId) =>
+        customerId ? this.refreshCustomerAdvanceFromOmie(customerId, "fechamento") : undefined
+      )
+      // A conferencia nunca derruba o fechamento: a operacao fecha local, como manda o
+      // offline-first, e a falha ja foi registrada nos logs tecnicos.
+      .catch(() => undefined);
+
     const exitReading =
       this.consumeScaleCapture(scaleCaptureId, "exit") ??
       (await this.captureStableWeight({ operationType: "exit" }));
+    await advanceSync;
 
     const operation = closeWeighingOperation(this.database, {
       operationId,
@@ -2695,6 +2715,76 @@ export class DesktopRuntime {
       finished: result.finished
     });
     return result;
+  }
+
+  /**
+   * Cliente da operacao QUANDO ela e uma venda em carteira marcada para abater do
+   * adiantamento. `null` em qualquer outro caso — e o que decide se a pesagem para
+   * de sair para conferir saldo no OMIE.
+   */
+  private async customerIdOfAdvanceSale(operationId: string): Promise<string | null> {
+    const row = this.database
+      .prepare(
+        `SELECT o.customer_id
+         FROM weighing_operations o
+         JOIN payment_methods pm ON pm.id = o.payment_method_id
+         WHERE o.id = ? AND o.settle_from_advance = 1 AND pm.is_wallet = 1`
+      )
+      .get(operationId) as { customer_id: string | null } | undefined;
+    return row?.customer_id ?? null;
+  }
+
+  /**
+   * Confere no OMIE, na hora, o adiantamento de UM cliente — o passo que garante que a
+   * venda em carteira marcada para abater saia contra o saldo real, e nao contra o que
+   * a ultima varredura por acaso ja tinha espelhado.
+   *
+   * Best-effort de proposito. A balanca e offline-first: sem internet, com o OMIE fora
+   * do ar ou com a nuvem nao configurada, a pesagem acontece do mesmo jeito e o
+   * abatimento usa o adiantamento ja espelhado. O erro dessa falha e sempre seguro —
+   * abate de MENOS e o restante fica em carteira, que e cobravel depois; nunca abate
+   * de mais nem inventa saldo. A falha fica registrada nos logs tecnicos.
+   */
+  private async refreshCustomerAdvanceFromOmie(
+    customerId: string,
+    stage: "entrada" | "fechamento"
+  ): Promise<void> {
+    try {
+      const omieCode = this.database
+        .prepare("SELECT omie_customer_id FROM customers WHERE id = ? AND deleted_at IS NULL")
+        .pluck()
+        .get(customerId) as number | null | undefined;
+      // Cliente ainda sem cadastro no OMIE nao tem adiantamento la para conferir.
+      if (!omieCode) return;
+
+      initializeSupabaseFromSettings(this.database);
+      if (!isSupabaseInitialized()) return;
+
+      const result = await syncCustomerAdvancesFromCloud(this.database, this.ensureIdentity(), {
+        customerOmieCode: omieCode
+      });
+      this.recordTechnicalLog(
+        "info",
+        "omie-sync",
+        `Adiantamento do cliente conferido no OMIE na ${stage} da pesagem.`,
+        {
+          customerId,
+          omieCustomerId: omieCode,
+          advances: result.advances,
+          imported: result.imported,
+          adjusted: result.adjusted,
+          movementsApplied: result.movementsApplied
+        }
+      );
+    } catch (error) {
+      this.recordTechnicalLog(
+        "warning",
+        "omie-sync",
+        `Nao foi possivel conferir o adiantamento do cliente no OMIE na ${stage} da pesagem. ` +
+          "A pesagem seguiu com o adiantamento ja espelhado nesta maquina.",
+        { customerId, error: error instanceof Error ? error.message : String(error) }
+      );
+    }
   }
 
   createQuotation(input: Omit<CreateQuotationInput, "companyId">): QuotationRow {

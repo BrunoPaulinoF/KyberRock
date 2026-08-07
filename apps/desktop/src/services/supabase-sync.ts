@@ -2875,7 +2875,8 @@ interface OmieAdvancesState {
   pendingEndDate?: string | null;
 }
 
-const OMIE_ADVANCES_STATE_KEY = "omie_advances_state";
+/** Cursor da varredura de adiantamentos (janela ja sincronizada e pagina pendente). */
+export const OMIE_ADVANCES_STATE_KEY = "omie_advances_state";
 /** Paginas de contas a receber por ciclo: teto para nao prender a sincronizacao. */
 const OMIE_ADVANCES_MAX_PAGES = 20;
 /**
@@ -2911,6 +2912,12 @@ export interface CustomerAdvancesSyncResult {
  * unico ficam na nuvem); aqui so aplicamos as linhas que voltam, pelo mesmo
  * caminho de qualquer movimento vindo de outra maquina — entao o saldo continua
  * sendo recalculado pelo log e o que foi lancado offline nao se perde.
+ *
+ * `customerOmieCode` faz a consulta MIRAR UM CLIENTE, sem janela de data e sem
+ * mexer no cursor do ciclo completo: e a conferencia que a balanca dispara na
+ * pesagem de uma venda em carteira abatida do adiantamento. Fosse pelo cursor,
+ * essa conferencia diria ao proximo ciclo que tudo ate hoje ja foi varrido e os
+ * adiantamentos ANTIGOS dos DEMAIS clientes ficariam fora da janela seguinte.
  */
 export async function syncCustomerAdvancesFromCloud(
   database: DesktopDatabase,
@@ -2919,9 +2926,11 @@ export async function syncCustomerAdvancesFromCloud(
 ): Promise<CustomerAdvancesSyncResult> {
   const settings = getCloudSettings(database, identity);
   const supabase = getSupabaseClient();
-  const state = options.fullRescan
-    ? {}
-    : (readLocalSetting<OmieAdvancesState>(database, OMIE_ADVANCES_STATE_KEY) ?? {});
+  const targeted = typeof options.customerOmieCode === "number" && options.customerOmieCode > 0;
+  const state =
+    options.fullRescan || targeted
+      ? {}
+      : (readLocalSetting<OmieAdvancesState>(database, OMIE_ADVANCES_STATE_KEY) ?? {});
   // Categoria fixada na configuracao vence a deteccao por nome: pedreira que
   // renomeou a categoria de adiantamento continua sincronizando.
   const configuredCategoryCodes = readOmieAdvanceConfig(database).categoryCodes;
@@ -3001,16 +3010,19 @@ export async function syncCustomerAdvancesFromCloud(
     // Guarda o progresso ate no erro: uma queda na pagina 15 nao pode obrigar o
     // proximo ciclo a varrer as 14 anteriores de novo. As paginas ja aplicadas
     // sao idempotentes (movimento com id conhecido nao entra duas vezes).
-    writeLocalSetting(database, OMIE_ADVANCES_STATE_KEY, {
-      categoryCodes: result.categoryCodes,
-      // A janela so avanca quando o ciclo varreu ate a ultima pagina; senao o
-      // proximo ciclo retoma na pagina seguinte e nada fica para tras.
-      lastSyncedDate: result.finished ? (endDate ?? today) : state.lastSyncedDate,
-      lastSyncedAt: new Date().toISOString(),
-      pendingPage: result.finished ? undefined : lastCompletedPage + 1,
-      pendingStartDate: result.finished ? undefined : (startDate ?? null),
-      pendingEndDate: result.finished ? undefined : (endDate ?? null)
-    } satisfies OmieAdvancesState);
+    // A conferencia de um cliente so nao grava nada: ela nao varreu o tenant
+    // inteiro e nao pode adiantar o cursor de quem varre.
+    if (!targeted)
+      writeLocalSetting(database, OMIE_ADVANCES_STATE_KEY, {
+        categoryCodes: result.categoryCodes,
+        // A janela so avanca quando o ciclo varreu ate a ultima pagina; senao o
+        // proximo ciclo retoma na pagina seguinte e nada fica para tras.
+        lastSyncedDate: result.finished ? (endDate ?? today) : state.lastSyncedDate,
+        lastSyncedAt: new Date().toISOString(),
+        pendingPage: result.finished ? undefined : lastCompletedPage + 1,
+        pendingStartDate: result.finished ? undefined : (startDate ?? null),
+        pendingEndDate: result.finished ? undefined : (endDate ?? null)
+      } satisfies OmieAdvancesState);
   }
 
   return result;

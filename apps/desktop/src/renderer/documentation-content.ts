@@ -341,6 +341,7 @@ export const documentationSections: DocumentationSection[] = [
       "A forma 'Em carteira' e compartilhada entre as balancas, mas o fechamento fica no computador que o registrou.",
       "Use a carteira para o cliente que compra varias cargas na semana e acerta tudo de uma vez.",
       'Cliente que pagou adiantado: com "Abater do adiantamento" marcado, o fechamento desconta a compra do que ele tem depositado e baixa esse valor no OMIE, na conta de adiantamento de clientes.',
+      "Com a caixa marcada, o adiantamento daquele cliente e conferido no OMIE na hora de capturar o peso (na entrada e na saida) — nao e preciso sincronizar a mao antes de carregar. Sem internet a pesagem acontece do mesmo jeito, usando o saldo ja espelhado.",
       "Se a compra passar do adiantamento, o sistema abate o que da e deixa a diferenca em carteira, esperando o fechamento normal; se o adiantamento cobrir tudo, a venda ja sai quitada.",
       'Na tela Carteira, a coluna "Adiantamento" mostra quanto saiu do deposito do cliente e a coluna "A receber" mostra o que ainda falta cobrar.',
       "Venda quitada pelo adiantamento nao pode ser reaberta: para desfazer, cancele a operacao — o adiantamento volta para o saldo do cliente."

@@ -308,14 +308,17 @@ export function advanceHintText(customerId: string, advanceAvailableCents: numbe
   if (!customerId) return "Escolha o cliente para ver o adiantamento disponivel.";
   if (advanceAvailableCents === null) return "Consultando o adiantamento do cliente...";
   if (advanceAvailableCents <= 0) {
+    // Pode ser saldo velho: o adiantamento acabado de lancar no OMIE ainda nao chegou
+    // aqui. Marcar a caixa nao custa nada — a pesagem confere o saldo no OMIE.
     return (
-      "Este cliente nao tem adiantamento disponivel. O adiantamento e lancado no financeiro " +
-      "do OMIE e chega aqui pela sincronizacao."
+      "Nenhum adiantamento espelhado nesta maquina ate agora. Se o financeiro acabou de " +
+      "lancar, marque assim mesmo: o saldo e conferido no OMIE ao capturar o peso."
     );
   }
   return (
     `Adiantamento disponivel: ${formatMoney(advanceAvailableCents)}. ` +
-    "No fechamento, a compra e abatida desse valor; o que passar dele continua em carteira."
+    "O saldo e reconferido no OMIE ao capturar o peso; a compra e abatida dele e o que " +
+    "passar continua em carteira."
   );
 }
 
