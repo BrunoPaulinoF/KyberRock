@@ -631,6 +631,9 @@ describe("customer report rendering", () => {
       const html = renderCustomerReportHtml(report, "complete", new Date("2026-07-15T12:00:00Z"));
 
       expect(html).toContain("Completo");
+      // Os materiais com os dias saem nos dois modelos, nao so no simplificado.
+      expect(html).toContain("Materiais por dia");
+      expect(html).toContain("Datas");
       expect(html).toContain("Transporte por transportadora");
       expect(html).toContain("Tipos de frete");
       expect(html).toContain("Pagamentos por forma");
