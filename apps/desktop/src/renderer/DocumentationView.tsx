@@ -1,744 +1,84 @@
-import { useEffect, useLayoutEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
+  BookMarked,
   BookOpen,
   CheckCircle2,
   ChevronDown,
-  Cloud,
   Copy,
-  FileText,
   HelpCircle,
-  Laptop,
   LifeBuoy,
   ListChecks,
-  Printer,
   Rocket,
   RotateCcw,
-  Scale,
+  Search,
   Settings,
   ShieldCheck,
   Truck,
-  Users,
-  Wallet,
-  Wrench
+  Wrench,
+  X
 } from "lucide-react";
+
+import { DocumentationAssistant } from "./DocumentationAssistant";
+import type { DocsAssistantBridge } from "./documentation-assistant";
+import {
+  buildSupportClipboardText,
+  documentationFaqCategories,
+  documentationFaqs,
+  documentationGlossary,
+  documentationSections,
+  operationFlowStages,
+  quickStartTasks,
+  supportChecklist,
+  troubleshootingFlows,
+  type DocumentationFaqCategory,
+  type DocumentationTabId
+} from "./documentation-content";
+import {
+  filterFaqsByCategory,
+  searchDocumentation,
+  type DocumentationSearchResult
+} from "./documentation-search";
 
 // ---------------------------------------------------------------------------
 // Central de ajuda do KyberRock.
-// A tela e organizada em cinco areas navegaveis (Comecar, Guias, Duvidas,
-// Diagnostico e Suporte) com busca global. O progresso do usuario (checklist
-// de preparacao e passos dos guias) persiste em localStorage para funcionar
-// como material de treinamento, nao apenas leitura.
+//
+// A tela e organizada em seis areas navegaveis (Comecar, Guias, Duvidas,
+// Diagnostico, Glossario e Suporte), com uma busca global que atravessa todas
+// elas, e o assistente flutuante no canto.
+//
+// O conteudo vive em `documentation-content.ts` e a busca em
+// `documentation-search.ts`. Aqui fica so a interface: quem for corrigir um
+// texto operacional nao precisa passar por este arquivo.
+//
+// O progresso do usuario (checklist de preparacao e passos dos guias) persiste
+// em localStorage para a tela funcionar como material de treinamento, e nao
+// apenas de leitura.
 // ---------------------------------------------------------------------------
 
-export type DocumentationTabId = "start" | "guides" | "faq" | "troubleshoot" | "support";
-
-interface DocumentationSection {
-  id: string;
-  title: string;
-  eyebrow: string;
-  summary: string;
-  icon: LucideIcon;
-  steps: string[];
-  details: string[];
-  keywords: string[];
-}
-
-export type DocumentationFaqCategory = "operacao" | "balanca" | "impressao" | "cloud" | "seguranca";
-
-interface DocumentationFaq {
-  question: string;
-  answer: string;
-  category: DocumentationFaqCategory;
-  keywords: string[];
-}
-
-interface QuickStartTask {
-  id: string;
-  label: string;
-  description: string;
-  sectionId: string;
-}
-
-interface OperationFlowStage {
-  id: string;
-  title: string;
-  description: string;
-  icon: LucideIcon;
-  sectionId: string;
-}
-
-interface TroubleshootingFlow {
-  id: string;
-  title: string;
-  symptom: string;
-  icon: LucideIcon;
-  checks: string[];
-  escalation: string;
-  keywords: string[];
-}
-
-export const documentationSections: DocumentationSection[] = [
-  {
-    id: "overview",
-    title: "Como o KyberRock funciona",
-    eyebrow: "Visao geral",
-    summary:
-      "O sistema controla a operacao da balanca, registra entradas e saidas, imprime cupons, sincroniza com a cloud e envia dados ao OMIE quando configurado.",
-    icon: Laptop,
-    steps: [
-      "Ative o desktop com o codigo da empresa/unidade.",
-      "Configure balanca, impressora e cloud no botao de engrenagem do topo.",
-      "Cadastre ou sincronize clientes, produtos, veiculos, motoristas, transportadoras e precos.",
-      "Registre a entrada do caminhao em Nova entrada.",
-      "Acompanhe o carregamento em Operacoes e feche a saida com peso capturado da balanca.",
-      "Confira pendencias de sincronizacao no Painel, Insights ou Cloud."
-    ],
-    details: [
-      "O desktop e offline-first: a operacao continua localmente mesmo sem internet e sincroniza depois.",
-      "Pesos devem vir da balanca configurada. O sistema nao foi desenhado para lancamento manual de peso.",
-      "Cada acao importante deixa rastro de auditoria: entrada, saida, cancelamento, reimpressao e sincronizacao."
-    ],
-    keywords: ["inicio", "primeiros passos", "desktop", "operacao", "offline", "auditoria"]
-  },
-  {
-    id: "weighing",
-    title: "Fluxo de pesagem",
-    eyebrow: "Entrada, carregamento e saida",
-    summary:
-      "Use Nova entrada para abrir a operacao, Operacoes para acompanhar os carregamentos e o fechamento de saida para calcular o peso liquido.",
-    icon: Truck,
-    steps: [
-      "Em Nova entrada, escolha o tipo da operacao: com nota fiscal ou interna.",
-      "Selecione placa, cliente, motorista, produto, condicao de pagamento e tabela de preco quando aplicavel.",
-      "Defina frete quando houver: por conta do cliente, da pedreira ou de terceiro.",
-      "Aguarde o peso estabilizar e capture a entrada.",
-      "Depois do carregamento, abra Operacoes e use a busca por placa para localizar o caminhao e fechar a saida.",
-      "Confira peso liquido, valores, credito, frete e impressao antes de finalizar."
-    ],
-    details: [
-      "O peso liquido e calculado pela diferenca entre saida e entrada. Saida menor ou igual a entrada deve ser corrigida antes do fechamento.",
-      "Na aba de operacoes em aberto, as cargas ja concluidas pelo carregador sobem para o topo da fila, na ordem em que foram concluidas.",
-      "Se a mesma placa ja estiver em aberto, o sistema alerta para evitar duplicidade.",
-      "Cancelamentos exigem motivo e ficam registrados para auditoria."
-    ],
-    keywords: ["pesagem", "entrada", "saida", "placa", "frete", "peso liquido", "cancelar"]
-  },
-  {
-    id: "scale",
-    title: "Integrar balancas",
-    eyebrow: "Configuracao de hardware",
-    summary:
-      "A balanca e configurada em Configuracoes > Balanca. Escolha o tipo de conexao (Rede/IP, USB ou Serial COM) e informe apenas os dados dessa conexao.",
-    icon: Scale,
-    steps: [
-      "Clique na engrenagem do topo e escolha Balanca.",
-      "Escolha o tipo de conexao: Rede (IP), USB, Serial (COM) ou Virtual (teste).",
-      'Rede (IP): informe o IP e a porta do indicador, ou use "Procurar balanca na rede".',
-      "USB ou Serial (COM): selecione a porta na lista e a velocidade (baud rate, padrao 9600).",
-      'Clique em Conectar e use "Testar captura de peso" para validar antes de operar.',
-      "Se precisar simular, use a balanca Virtual somente em ambiente de teste."
-    ],
-    details: [
-      "Ao capturar peso, o sistema aguarda a balanca estabilizar e captura o valor exibido naquele momento — nao ha media nem calculo.",
-      "Peso instavel normalmente indica caminhao em movimento, oscilacao fisica ou cabo/rede com falha.",
-      "Quando a balanca falha, pare a operacao e corrija a conexao antes de capturar pesos."
-    ],
-    keywords: ["balanca", "toledo", "tcp", "usb", "serial", "com", "porta", "ip", "host", "peso"]
-  },
-  {
-    id: "printing",
-    title: "Integrar impressoras",
-    eyebrow: "Cupons e relatorios",
-    summary:
-      "Configure impressoras do Windows em Configuracoes > Impressao para emitir cupom termico de 80 mm e relatorios A4.",
-    icon: Printer,
-    steps: [
-      "Instale a impressora no Windows e confirme que ela aparece na lista do sistema.",
-      "No KyberRock, clique na engrenagem do topo e escolha Impressao.",
-      "Selecione a impressora desejada e crie/ative o perfil do documento.",
-      "Use o teste de impressao para validar papel, margem e tamanho.",
-      "Ao fechar uma pesagem, imprima o cupom e entregue ao motorista/cliente.",
-      "Use reimpressao quando necessario; o cupom fica marcado como segunda via."
-    ],
-    details: [
-      "Falha de impressao nao apaga nem desfaz a operacao fechada.",
-      "O cupom mostra dados da pedreira, cliente, produto, pesos, valor, frete, veiculo, motorista e assinatura.",
-      "Para relatorios, use os perfis A4 e confira a impressora padrao do Windows."
-    ],
-    keywords: ["impressora", "impressao", "cupom", "segunda via", "reimpressao", "a4", "80mm"]
-  },
-  {
-    id: "cloud",
-    title: "Integrar cloud e OMIE",
-    eyebrow: "Sincronizacao",
-    summary:
-      "A cloud sincroniza operacoes e dados de referencia. O OMIE fica protegido nas Edge Functions e nunca deve ser configurado diretamente no desktop.",
-    icon: Cloud,
-    steps: [
-      "Ative o desktop usando o codigo de 6 digitos da unidade.",
-      "Clique na engrenagem do topo e abra Cloud para ver status, fila e sincronizacao.",
-      "Use Sincronizar agora quando houver pendencias ou apos voltar a internet.",
-      "Para OMIE, cadastre App Key e App Secret no painel administrativo/cloud, nao no computador da balanca.",
-      "Aguarde a importacao de clientes, produtos, condicoes, transportadoras e financeiro.",
-      "Monitore erros em Cloud, Insights e Logs do topo."
-    ],
-    details: [
-      "A fila local reenvia automaticamente sem duplicar pedidos quando a chave de idempotencia e preservada.",
-      "O desktop tem periodo de tolerancia offline para continuar operando apos uma validacao recente.",
-      "Dados enviados: operacoes abertas, fechadas, canceladas, cupons, cadastros locais e pedidos para OMIE quando aplicavel."
-    ],
-    keywords: [
-      "cloud",
-      "supabase",
-      "omie",
-      "sincronizacao",
-      "fila",
-      "pendente",
-      "offline",
-      "ativacao"
-    ]
-  },
-  {
-    id: "registrations",
-    title: "Cadastros e precos",
-    eyebrow: "Dados mestres",
-    summary:
-      "A tela Cadastros centraliza clientes, produtos, condicoes, transporte, tabelas de preco e dados usados na operacao diaria.",
-    icon: Users,
-    steps: [
-      "Abra Cadastros pela sidebar.",
-      "Revise clientes sincronizados do OMIE ou crie clientes locais quando permitido.",
-      "Confira produtos e condicoes de pagamento vindos do OMIE.",
-      "Cadastre veiculos, motoristas, transportadoras e vinculos de transporte.",
-      "Configure precos por cliente/produto para reduzir erro na entrada.",
-      "Antes de operar, confirme documento, telefone, limite de credito e status financeiro do cliente."
-    ],
-    details: [
-      "Campos controlados pelo OMIE podem ficar bloqueados para edicao local para evitar divergencia.",
-      "O bloqueio financeiro considera limite, contas a receber e operacoes locais ainda nao sincronizadas.",
-      "Credito pre-pago pode ser debitado no fechamento e estornado em cancelamentos quando aplicavel."
-    ],
-    keywords: [
-      "cadastro",
-      "cliente",
-      "produto",
-      "preco",
-      "veiculo",
-      "motorista",
-      "transportadora",
-      "credito"
-    ]
-  },
-  {
-    id: "wallet",
-    title: "Vendas em carteira",
-    eyebrow: "Financeiro",
-    summary:
-      "A forma de pagamento 'Em carteira' fecha a venda sem definir o recebimento: ela fica na tela Carteira ate o fechamento, quando voce escolhe como o cliente vai pagar.",
-    icon: Wallet,
-    steps: [
-      "Na entrada, escolha a forma de pagamento 'Em carteira' quando o pagamento ficar para um fechamento futuro.",
-      "Feche a operacao normalmente: a nota sai, mas o OMIE nao gera cobranca ainda.",
-      "Abra Carteira pela sidebar para ver as vendas em aberto agrupadas por cliente.",
-      "Selecione as vendas do cliente, escolha a forma de recebimento e o vencimento combinado e clique em Fechar.",
-      "Use 'Reabrir fechamento' se a forma tiver sido lancada errada."
-    ],
-    details: [
-      "A venda em carteira vai ao OMIE como meio '99 - outros' e com o boleto desativado; a cobranca so nasce depois do fechamento.",
-      "Diferente do credito do cliente (fiado), a carteira nao consome limite nem saldo do cadastro e o fechamento e manual.",
-      "O fechamento fica no computador que o registrou: a forma 'Em carteira' e compartilhada entre as balancas, o fechamento nao."
-    ],
-    keywords: ["carteira", "fechamento", "recebimento", "cobranca", "pagamento", "boleto", "fiado"]
-  },
-  {
-    id: "loader",
-    title: "Site do carregador",
-    eyebrow: "Operacao de patio",
-    summary:
-      "O carregador usa a aplicacao web para ver os carregamentos em aberto da unidade, sem alterar pesos ou dados financeiros.",
-    icon: ListChecks,
-    steps: [
-      "O administrador cria o usuario carregador vinculado a unidade correta.",
-      "O carregador acessa o site, entra com login autorizado e ve somente sua unidade.",
-      "A lista mostra placa, cliente, motorista, veiculo e produto em aberto.",
-      "Quando o desktop atualiza a operacao, a tela do carregador reflete a mudanca pela cloud.",
-      "Se uma operacao nao aparecer, confira internet, unidade vinculada e status de sincronizacao do desktop."
-    ],
-    details: [
-      "O carregador tem acesso somente leitura.",
-      "Dados sao segregados por empresa e unidade.",
-      "Carregadores nao se cadastram sozinhos; o acesso e controlado pelo admin."
-    ],
-    keywords: ["carregador", "loader", "site", "web", "patio", "unidade", "login"]
-  },
-  {
-    id: "reports",
-    title: "Relatorios, insights e fechamento diario",
-    eyebrow: "Gestao",
-    summary:
-      "Use Painel, Insights e Relatorios para acompanhar producao, faturamento, mix de produtos, operacoes canceladas e e-mails de fechamento.",
-    icon: FileText,
-    steps: [
-      "Abra Painel para status operacional, pendencias e alertas rapidos.",
-      "Use Insights para acompanhar indicadores e acionar sincronizacoes quando necessario.",
-      "Abra Relatorios para cadastrar destinatarios do fechamento diario por e-mail.",
-      "No card 'Relatorio financeiro (OMIE)' escolha quem recebe o resumo de financas do OMIE e o horario proprio de cada um.",
-      "Exporte ou imprima relatorios quando o perfil de impressao estiver configurado.",
-      "Compare dia, mes, ano, cliente, produto e operacoes internas/fiscais conforme a necessidade."
-    ],
-    details: [
-      "O fechamento diario pode ser enviado automaticamente pela cloud aos destinatarios ativos.",
-      "O financeiro do OMIE tem horario proprio, separado dos relatorios do KyberRock: ele e montado e enviado pela cloud, entao nao depende do computador estar ligado.",
-      "Relatorios dependem dos dados locais e sincronizados; pendencias podem atrasar consolidacoes externas.",
-      "Operacoes canceladas devem ser analisadas com motivo e horario para controle interno."
-    ],
-    keywords: ["relatorio", "insight", "fechamento", "email", "pdf", "excel", "csv", "indicador"]
-  },
-  {
-    id: "security",
-    title: "Backup, acesso e seguranca",
-    eyebrow: "Confiabilidade",
-    summary:
-      "O KyberRock protege credenciais, restringe acesso por unidade e mantem dados locais para operacao offline.",
-    icon: ShieldCheck,
-    steps: [
-      "Mantenha o computador da balanca com usuario Windows restrito e energia estavel.",
-      "Nao salve chaves OMIE, service role ou senhas em arquivos fora do painel correto.",
-      "Confira logs quando houver erro de abertura, sincronizacao ou hardware.",
-      "Use backup local antes de manutencoes, troca de computador ou reinstalacao.",
-      "Atualize o desktop somente por pacote oficial e valide a versao apos instalar."
-    ],
-    details: [
-      "O banco local fica em ProgramData e deve ser protegido contra copia indevida.",
-      "O desktop usa ativacao por dispositivo e validacao periodica online.",
-      "Electron roda com isolamento de contexto, sandbox e sem Node no renderer."
-    ],
-    keywords: ["backup", "seguranca", "acesso", "ativacao", "logs", "atualizacao", "banco"]
-  }
-];
-
-export const documentationFaqs: DocumentationFaq[] = [
-  {
-    question: "A balanca nao conecta. O que verificar?",
-    answer:
-      'Na conexao por rede, confira o IP e a porta do indicador. Na conexao USB ou Serial (COM), confira se o cabo esta conectado, use "Atualizar portas" para reencontrar a porta e verifique se outro programa nao esta usando a mesma porta. Depois volte em Configuracoes > Balanca e teste novamente.',
-    category: "balanca",
-    keywords: ["balanca", "tcp", "usb", "serial", "com", "ip", "porta", "conexao", "host"]
-  },
-  {
-    question: "O peso fica oscilando e nao estabiliza.",
-    answer:
-      "Verifique a balanca fisicamente, vento/vibracao, caminhao ainda em movimento e parametros de estabilidade. Aumente o tempo minimo estavel ou a tolerancia de variacao somente se a equipe tecnica validar.",
-    category: "balanca",
-    keywords: ["peso", "estavel", "estabilidade", "oscilando", "captura"]
-  },
-  {
-    question: "A impressora nao aparece na lista.",
-    answer:
-      "Instale ou reinstale a impressora no Windows, imprima uma pagina de teste pelo proprio Windows e reabra a tela Configuracoes > Impressao. Se for impressora de rede, confirme permissao e nome compartilhado.",
-    category: "impressao",
-    keywords: ["impressora", "windows", "lista", "driver", "rede"]
-  },
-  {
-    question: "A impressao falhou depois de fechar a operacao.",
-    answer:
-      "A operacao continua salva. Corrija papel, energia, driver ou perfil de impressao e use reimpressao. A segunda via fica registrada para auditoria.",
-    category: "impressao",
-    keywords: ["impressora", "impressao", "cupom", "falhou", "reimpressao", "segunda via"]
-  },
-  {
-    question: "Estou sem internet. Posso continuar operando?",
-    answer:
-      "Sim, se o desktop foi validado recentemente e estiver dentro do periodo de tolerancia offline. As operacoes ficam na fila local e sincronizam quando a internet voltar.",
-    category: "cloud",
-    keywords: ["internet", "offline", "cloud", "fila", "sincronizacao"]
-  },
-  {
-    question: "Por que uma operacao ficou pendente de cloud ou OMIE?",
-    answer:
-      "Pode haver internet instavel, credenciais OMIE ausentes, erro de validacao, dependencia nao sincronizada ou falha temporaria da API. Abra Cloud ou Logs, corrija a causa e tente sincronizar novamente.",
-    category: "cloud",
-    keywords: ["pendente", "cloud", "omie", "sincronizar", "erro", "fila"]
-  },
-  {
-    question: "Posso digitar peso manualmente?",
-    answer:
-      "Nao. O fluxo operacional foi desenhado para capturar peso direto da balanca configurada, reduzindo erro e fraude. Se a balanca falhar, corrija a integracao antes de operar.",
-    category: "operacao",
-    keywords: ["manual", "peso", "digitar", "balanca"]
-  },
-  {
-    question: "Como ver ou corrigir todos os dados de uma operacao?",
-    answer:
-      "Em Operacoes, de duplo clique na linha (ou use o botao de ficha) para abrir todas as informacoes da operacao: pesos, precos, frete, pagamento, transporte e situacao no OMIE. Enquanto a operacao estiver em andamento, o botao Editar operacao libera a correcao completa — cliente, produto, preco por tonelada, valor e regra de frete, placa, motorista, transportadora, forma e condicao de pagamento e o tipo de fechamento. Alterar o preco pede a senha de 4 digitos. Depois de fechada, a ficha continua abrindo, mas so para consulta.",
-    category: "operacao",
-    keywords: [
-      "editar",
-      "alterar",
-      "corrigir",
-      "preco",
-      "frete",
-      "detalhes",
-      "duplo clique",
-      "operacao"
-    ]
-  },
-  {
-    question: "Como cancelar uma pesagem?",
-    answer:
-      "Abra Operacoes, localize a operacao e use a acao de cancelamento. Informe um motivo claro. O cancelamento e auditado e pode estornar credito quando aplicavel.",
-    category: "operacao",
-    keywords: ["cancelar", "cancelamento", "motivo", "auditoria", "credito"]
-  },
-  {
-    question: "O cliente esta bloqueado por credito.",
-    answer:
-      "Confira limite, contas a receber no OMIE, operacoes locais ainda pendentes e saldo pre-pago. Se o limite estiver zerado ou sem regra de bloqueio, revise o cadastro no OMIE/painel correto.",
-    category: "operacao",
-    keywords: ["credito", "financeiro", "cliente", "bloqueado", "omie"]
-  },
-  {
-    question: "O carregador nao ve a operacao no site.",
-    answer:
-      "Verifique se a operacao foi enviada para a cloud, se o carregador esta vinculado a unidade correta e se a internet esta ativa. Depois atualize o site do carregador.",
-    category: "cloud",
-    keywords: ["carregador", "loader", "site", "unidade", "cloud"]
-  },
-  {
-    question: "Onde encontro os logs tecnicos?",
-    answer:
-      "Use o botao de configuracoes/logs no topo para erros recentes. Quando o desktop nao abrir, confira o startup.log em AppData Local do KyberRock Desktop.",
-    category: "seguranca",
-    keywords: ["logs", "erro", "startup", "suporte", "desktop"]
-  },
-  {
-    question: "O que fazer antes de trocar o computador da balanca?",
-    answer:
-      "Faca backup do banco local, confirme que a cloud esta sincronizada, registre a versao instalada e depois ative o novo dispositivo com o codigo da unidade.",
-    category: "seguranca",
-    keywords: ["backup", "computador", "troca", "ativacao", "banco"]
-  }
-];
-
-export const documentationFaqCategories: Array<{
-  id: DocumentationFaqCategory | "all";
-  label: string;
-}> = [
-  { id: "all", label: "Todas" },
-  { id: "operacao", label: "Operacao" },
-  { id: "balanca", label: "Balanca" },
-  { id: "impressao", label: "Impressao" },
-  { id: "cloud", label: "Cloud e OMIE" },
-  { id: "seguranca", label: "Acesso e seguranca" }
-];
-
-export const quickStartTasks: QuickStartTask[] = [
-  {
-    id: "activate",
-    label: "Ativar o desktop",
-    description: "Use o codigo de 6 digitos da empresa/unidade na primeira abertura.",
-    sectionId: "overview"
-  },
-  {
-    id: "scale",
-    label: "Configurar e testar a balanca",
-    description: "Informe modelo, IP/host, porta e regras de estabilidade; teste a leitura.",
-    sectionId: "scale"
-  },
-  {
-    id: "printer",
-    label: "Configurar a impressora",
-    description: "Selecione a impressora do Windows, ative o perfil e faca um teste de impressao.",
-    sectionId: "printing"
-  },
-  {
-    id: "cloud",
-    label: "Conectar a cloud",
-    description: "Confira o status na tela Cloud e rode a primeira sincronizacao completa.",
-    sectionId: "cloud"
-  },
-  {
-    id: "registrations",
-    label: "Revisar cadastros e precos",
-    description: "Confirme clientes, produtos, condicoes de pagamento e tabelas de preco.",
-    sectionId: "registrations"
-  },
-  {
-    id: "transport",
-    label: "Cadastrar veiculos e motoristas",
-    description: "Cadastre placas, motoristas, transportadoras e vinculos de transporte.",
-    sectionId: "registrations"
-  },
-  {
-    id: "test-weighing",
-    label: "Fazer uma pesagem de teste",
-    description: "Registre entrada, feche a saida e imprima o cupom para validar o ciclo completo.",
-    sectionId: "weighing"
-  },
-  {
-    id: "reports",
-    label: "Configurar o fechamento diario",
-    description: "Cadastre os destinatarios do relatorio por e-mail na tela Relatorios.",
-    sectionId: "reports"
-  }
-];
-
-export const operationFlowStages: OperationFlowStage[] = [
-  {
-    id: "entry",
-    title: "Entrada",
-    description:
-      "Caminhao vazio sobe na balanca. Registre placa, cliente e produto em Nova entrada.",
-    icon: Truck,
-    sectionId: "weighing"
-  },
-  {
-    id: "loading",
-    title: "Carregamento",
-    description: "O carregador ve a operacao em aberto no site e carrega o caminhao no patio.",
-    icon: ListChecks,
-    sectionId: "loader"
-  },
-  {
-    id: "exit",
-    title: "Saida",
-    description: "Caminhao carregado volta a balanca. Feche a saida e confira o peso liquido.",
-    icon: Scale,
-    sectionId: "weighing"
-  },
-  {
-    id: "coupon",
-    title: "Cupom",
-    description: "Imprima o cupom com pesos, valores e frete e entregue ao motorista.",
-    icon: Printer,
-    sectionId: "printing"
-  },
-  {
-    id: "sync",
-    title: "Sincronizacao",
-    description: "A operacao fechada vai para a fila local e sobe para cloud e OMIE.",
-    icon: Cloud,
-    sectionId: "cloud"
-  }
-];
-
-export const troubleshootingFlows: TroubleshootingFlow[] = [
-  {
-    id: "scale-connection",
-    title: "Balanca nao conecta",
-    symptom: "O sistema nao le peso ou mostra erro de conexao com a balanca.",
-    icon: Scale,
-    checks: [
-      "Confirme que o indicador da balanca esta ligado e sem mensagem de erro no visor.",
-      "Verifique o cabo de rede entre o indicador e o computador e se os conectores estao firmes.",
-      "Abra Configuracoes > Balanca e confira IP/host e porta exatamente como na instalacao original.",
-      "Garanta que nenhum outro programa esta conectado na mesma porta da balanca.",
-      "Salve a configuracao novamente e use o teste de leitura da propria tela."
-    ],
-    escalation:
-      "Se seguir sem conexao, anote o modelo do indicador, IP, porta e o texto do erro exibido antes de acionar o suporte.",
-    keywords: ["balanca", "conexao", "tcp", "ip", "porta", "erro", "nao conecta"]
-  },
-  {
-    id: "scale-unstable",
-    title: "Peso nao estabiliza",
-    symptom: "O peso fica oscilando na tela e a captura nunca conclui.",
-    icon: AlertTriangle,
-    checks: [
-      "Confirme que o caminhao parou totalmente sobre a plataforma e que ninguem esta sobre ela.",
-      "Observe vento forte, vibracao de maquinas proximas ou plataforma encostando na estrutura.",
-      "Veja se o peso oscila tambem no indicador fisico: se oscilar la, o problema e da balanca, nao do sistema.",
-      "Revise com a equipe tecnica os parametros de estabilidade (tempo minimo estavel e variacao maxima)."
-    ],
-    escalation:
-      "Se o indicador fisico estiver estavel e o sistema nao, registre o comportamento e acione o suporte com os parametros configurados.",
-    keywords: ["peso", "instavel", "oscilando", "estabilidade", "captura"]
-  },
-  {
-    id: "printer",
-    title: "Impressora nao imprime",
-    symptom: "O cupom ou relatorio nao sai, ou a impressora nao aparece na lista.",
-    icon: Printer,
-    checks: [
-      "Confira papel, tampa e luz de erro na propria impressora.",
-      "Imprima uma pagina de teste pelo Windows para isolar se o problema e do sistema ou do driver.",
-      "Se a impressora nao aparece na lista, reinstale o driver no Windows e reabra Configuracoes > Impressao.",
-      "Confirme que o perfil de impressao correto esta ativo para o documento (cupom 80 mm ou A4).",
-      "Se a operacao ja foi fechada, use a reimpressao: a falha de impressao nao desfaz a pesagem."
-    ],
-    escalation:
-      "Persistindo, anote modelo da impressora, se e USB ou rede, e o comportamento do teste do Windows antes de chamar o suporte.",
-    keywords: ["impressora", "cupom", "driver", "windows", "reimpressao", "nao imprime"]
-  },
-  {
-    id: "sync-pending",
-    title: "Operacao pendente de cloud ou OMIE",
-    symptom: "Operacoes fechadas aparecem como pendentes de sincronizacao ha muito tempo.",
-    icon: Cloud,
-    checks: [
-      "Confira a internet do computador da balanca abrindo qualquer site.",
-      "Abra a tela Cloud e veja o status da fila e a mensagem de erro da pendencia.",
-      "Use Sincronizar agora e acompanhe se a pendencia diminui.",
-      "Para pendencias de OMIE, confirme com o administrador se as credenciais estao validas no painel.",
-      "Consulte os Logs do topo para identificar a causa exata do erro."
-    ],
-    escalation:
-      "A operacao local esta salva e nao se perde. Se a pendencia persistir apos a internet voltar, envie o texto do erro dos Logs ao suporte.",
-    keywords: ["pendente", "sincronizacao", "cloud", "omie", "fila", "erro"]
-  },
-  {
-    id: "credit-blocked",
-    title: "Cliente bloqueado por credito",
-    symptom: "O sistema impede a entrada ou o fechamento por bloqueio financeiro do cliente.",
-    icon: Users,
-    checks: [
-      "Abra o cadastro do cliente e confira limite de credito e status financeiro.",
-      "Verifique contas a receber em aberto no OMIE.",
-      "Considere operacoes locais fechadas e ainda nao sincronizadas: elas tambem consomem limite.",
-      "Para clientes pre-pagos, confira o saldo disponivel antes da operacao."
-    ],
-    escalation:
-      "Liberacao de credito e uma decisao do financeiro: ajuste limite ou baixa de titulos no OMIE/painel e sincronize novamente.",
-    keywords: ["credito", "bloqueado", "financeiro", "limite", "cliente"]
-  },
-  {
-    id: "loader-missing",
-    title: "Carregador nao ve a operacao",
-    symptom: "A operacao aberta no desktop nao aparece no site do carregador.",
-    icon: ListChecks,
-    checks: [
-      "Confirme que o desktop esta com internet e que a operacao foi enviada para a cloud.",
-      "Verifique se o usuario carregador esta vinculado a mesma unidade da operacao.",
-      "Peca ao carregador para atualizar a pagina e conferir a propria internet.",
-      "Confira pendencias de sincronizacao na tela Cloud do desktop."
-    ],
-    escalation:
-      "Se a operacao sincronizou e mesmo assim nao aparece, informe ao suporte o usuario do carregador e a placa da operacao.",
-    keywords: ["carregador", "loader", "site", "patio", "unidade", "nao aparece"]
-  },
-  {
-    id: "app-blocked",
-    title: "Desktop nao abre ou pede ativacao",
-    symptom: "O aplicativo nao inicia, trava na abertura ou exibe tela de bloqueio/ativacao.",
-    icon: Laptop,
-    checks: [
-      "Reinicie o computador da balanca e abra o KyberRock novamente.",
-      "Se aparecer a tela de ativacao, use o codigo de 6 digitos da unidade fornecido pelo administrador.",
-      "Se houver bloqueio por validacao, conecte o computador a internet para revalidar a licenca.",
-      "Quando o desktop nem abre, consulte o startup.log em AppData Local do KyberRock Desktop."
-    ],
-    escalation:
-      "Envie ao suporte o conteudo do startup.log e a versao instalada. Nao reinstale antes de fazer backup do banco local.",
-    keywords: ["desktop", "nao abre", "ativacao", "bloqueio", "startup", "licenca"]
-  }
-];
-
-export const supportChecklist: string[] = [
-  "Nome da empresa, unidade e computador da balanca.",
-  "Horario aproximado do problema e placa da operacao, se existir.",
-  "Print ou texto do erro exibido no KyberRock.",
-  "Status de internet, cloud, OMIE, balanca e impressora no Painel.",
-  "Ultima acao feita antes da falha: entrada, saida, impressao ou sincronizacao.",
-  "Se houve queda de energia, troca de cabo, troca de impressora ou alteracao de rede."
-];
-
-// ---------------------------------------------------------------------------
-// Busca e helpers puros (testaveis sem renderizar)
-// ---------------------------------------------------------------------------
-
-function normalizeSearchText(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .trim();
-}
-
-function sectionSearchText(section: DocumentationSection): string {
-  return [
-    section.title,
-    section.eyebrow,
-    section.summary,
-    ...section.steps,
-    ...section.details,
-    ...section.keywords
-  ].join(" ");
-}
-
-function faqSearchText(faq: DocumentationFaq): string {
-  return [faq.question, faq.answer, ...faq.keywords].join(" ");
-}
-
-function flowSearchText(flow: TroubleshootingFlow): string {
-  return [flow.title, flow.symptom, ...flow.checks, flow.escalation, ...flow.keywords].join(" ");
-}
-
-function matchesSearchQuery(searchText: string, query: string): boolean {
-  const normalizedText = normalizeSearchText(searchText);
-  const terms = normalizeSearchText(query).split(/\s+/).filter(Boolean);
-
-  return terms.every((term) => normalizedText.includes(term));
-}
-
-export function filterDocumentationContent(query: string): {
-  sections: DocumentationSection[];
-  faqs: DocumentationFaq[];
-} {
-  const normalizedQuery = normalizeSearchText(query);
-
-  if (!normalizedQuery) {
-    return { sections: documentationSections, faqs: documentationFaqs };
-  }
-
-  return {
-    sections: documentationSections.filter((section) =>
-      matchesSearchQuery(sectionSearchText(section), normalizedQuery)
-    ),
-    faqs: documentationFaqs.filter((faq) => matchesSearchQuery(faqSearchText(faq), normalizedQuery))
-  };
-}
-
-export function filterTroubleshootingFlows(query: string): TroubleshootingFlow[] {
-  const normalizedQuery = normalizeSearchText(query);
-
-  if (!normalizedQuery) {
-    return troubleshootingFlows;
-  }
-
-  return troubleshootingFlows.filter((flow) =>
-    matchesSearchQuery(flowSearchText(flow), normalizedQuery)
-  );
-}
-
-export function filterFaqsByCategory(
-  category: DocumentationFaqCategory | "all"
-): DocumentationFaq[] {
-  if (category === "all") {
-    return documentationFaqs;
-  }
-
-  return documentationFaqs.filter((faq) => faq.category === category);
-}
-
-export function buildSupportClipboardText(): string {
-  return [
-    "CHAMADO DE SUPORTE - KYBERROCK",
-    "",
-    "Empresa / unidade: ",
-    "Computador da balanca: ",
-    "Data e horario do problema: ",
-    "Placa da operacao (se houver): ",
-    "Erro exibido (texto ou print): ",
-    "Status no Painel (internet / cloud / OMIE / balanca / impressora): ",
-    "Ultima acao antes da falha: ",
-    "Mudancas recentes (energia, cabos, impressora, rede): "
-  ].join("\n");
-}
+// Reexportados para nao quebrar quem ja importava daqui.
+export type { DocumentationTabId, DocumentationFaqCategory };
+export {
+  buildSupportClipboardText,
+  documentationFaqCategories,
+  documentationFaqs,
+  documentationGlossary,
+  documentationSections,
+  operationFlowStages,
+  quickStartTasks,
+  supportChecklist,
+  troubleshootingFlows
+};
+export {
+  filterDocumentationContent,
+  filterFaqsByCategory,
+  filterTroubleshootingFlows,
+  searchDocumentation
+} from "./documentation-search";
 
 // ---------------------------------------------------------------------------
 // Persistencia local do progresso (treinamento)
@@ -795,15 +135,32 @@ const documentationTabs: Array<{ id: DocumentationTabId; label: string; icon: Lu
   { id: "guides", label: "Guias", icon: BookOpen },
   { id: "faq", label: "Duvidas", icon: HelpCircle },
   { id: "troubleshoot", label: "Diagnostico", icon: Wrench },
+  { id: "glossary", label: "Glossario", icon: BookMarked },
   { id: "support", label: "Suporte", icon: LifeBuoy }
 ];
 
-export function DocumentationView() {
+const RESULT_KIND_LABEL: Record<DocumentationSearchResult["kind"], string> = {
+  section: "Guia",
+  faq: "Duvida",
+  flow: "Diagnostico",
+  glossary: "Glossario"
+};
+
+const RESULT_KIND_ICON: Record<DocumentationSearchResult["kind"], LucideIcon> = {
+  section: BookOpen,
+  faq: HelpCircle,
+  flow: Wrench,
+  glossary: BookMarked
+};
+
+export function DocumentationView({ desktopApi }: { desktopApi?: DocsAssistantBridge | null }) {
   const [activeTab, setActiveTab] = useState<DocumentationTabId>("start");
   const [activeSectionId, setActiveSectionId] = useState(documentationSections[0]?.id ?? "");
   const [expandedFaq, setExpandedFaq] = useState<string | null>(null);
   const [faqCategory, setFaqCategory] = useState<DocumentationFaqCategory | "all">("all");
   const [activeFlowId, setActiveFlowId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const [doneQuickStart, setDoneQuickStart] = useState<string[]>(() =>
     loadStoredStringArray(QUICK_START_STORAGE_KEY)
@@ -820,9 +177,45 @@ export function DocumentationView() {
     storeJson(GUIDE_STEPS_STORAGE_KEY, doneGuideSteps);
   }, [doneGuideSteps]);
 
+  // A busca so roda quando a consulta muda: o indice e estatico, entao repetir
+  // a varredura a cada marcacao de checkbox seria trabalho jogado fora.
+  const searchResults = useMemo(
+    () => searchDocumentation(searchQuery, { limit: 24 }),
+    [searchQuery]
+  );
+  const searching = searchQuery.trim().length > 0;
+
   const openGuide = (sectionId: string) => {
     setActiveSectionId(sectionId);
     setActiveTab("guides");
+    setSearchQuery("");
+  };
+
+  const openResult = (result: DocumentationSearchResult) => {
+    setSearchQuery("");
+    if (result.kind === "section") {
+      setActiveSectionId(result.id);
+      setActiveTab("guides");
+      return;
+    }
+    if (result.kind === "faq") {
+      setFaqCategory("all");
+      setExpandedFaq(result.id);
+      setActiveTab("faq");
+      return;
+    }
+    if (result.kind === "flow") {
+      setActiveFlowId(result.id);
+      setActiveTab("troubleshoot");
+      return;
+    }
+    // Glossario: abre o guia relacionado quando existe, senao a propria aba.
+    if (result.sectionId) {
+      setActiveSectionId(result.sectionId);
+      setActiveTab("guides");
+      return;
+    }
+    setActiveTab("glossary");
   };
 
   const toggleQuickStartTask = (taskId: string) => {
@@ -856,15 +249,67 @@ export function DocumentationView() {
 
   return (
     <section style={styles.page} aria-labelledby="documentation-title">
-      <nav
-        id="documentation-title"
-        aria-label="Areas da documentacao"
-        style={styles.tabBar}
-        role="tablist"
-      >
+      <header style={styles.hero}>
+        <div style={styles.heroText}>
+          <p style={styles.kicker}>Central de ajuda</p>
+          <h1 id="documentation-title" style={styles.title}>
+            Documentacao do KyberRock
+          </h1>
+          <p style={styles.subtitle}>
+            Guias da operacao, faturamento no OMIE, duvidas frequentes e diagnostico passo a passo.
+            Digite sua duvida com as suas palavras — a busca entende a frase inteira.
+          </p>
+        </div>
+        <div style={styles.heroSearch}>
+          <label style={styles.searchLabel} htmlFor="documentation-search">
+            <Search size={14} />
+            Buscar na documentacao
+          </label>
+          <div style={styles.searchRow}>
+            <input
+              id="documentation-search"
+              ref={searchInputRef}
+              className="krdoc-input"
+              style={styles.searchInput}
+              type="search"
+              value={searchQuery}
+              placeholder='ex.: "como emitir nota fiscal"'
+              autoComplete="off"
+              onChange={(event) => setSearchQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape" && searchQuery) {
+                  event.stopPropagation();
+                  setSearchQuery("");
+                }
+              }}
+            />
+            {searching ? (
+              <button
+                type="button"
+                className="krdoc-ghost-btn"
+                style={styles.clearButton}
+                onClick={() => {
+                  setSearchQuery("");
+                  searchInputRef.current?.focus();
+                }}
+              >
+                <X size={13} />
+                Limpar
+              </button>
+            ) : null}
+          </div>
+          <p style={styles.searchHint}>
+            {searching
+              ? `${searchResults.length} ${searchResults.length === 1 ? "resultado" : "resultados"} em guias, duvidas, diagnosticos e glossario.`
+              : "Palavra-chave ou frase completa. Acentos e pontuacao nao fazem diferenca."}
+          </p>
+        </div>
+      </header>
+
+      <nav aria-label="Areas da documentacao" style={styles.tabBar} role="tablist">
         {documentationTabs.map((tab) => {
           const Icon = tab.icon;
-          const isActive = activeTab === tab.id;
+          const isActive = !searching && activeTab === tab.id;
           return (
             <button
               key={tab.id}
@@ -872,7 +317,10 @@ export function DocumentationView() {
               role="tab"
               aria-selected={isActive}
               className={isActive ? "krdoc-tab krdoc-tab-active" : "krdoc-tab"}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => {
+                setSearchQuery("");
+                setActiveTab(tab.id);
+              }}
             >
               <Icon size={15} />
               {tab.label}
@@ -881,43 +329,139 @@ export function DocumentationView() {
         })}
       </nav>
 
-      {activeTab === "start" ? (
-        <StartTab
-          doneTasks={doneQuickStart}
-          onToggleTask={toggleQuickStartTask}
-          onOpenGuide={openGuide}
-        />
-      ) : null}
-      {activeTab === "guides" ? (
-        <GuidesTab
-          activeSectionId={activeSectionId}
-          onSelectSection={setActiveSectionId}
-          doneSteps={doneGuideSteps}
-          onToggleStep={toggleGuideStep}
-          onResetSteps={resetGuideSteps}
-        />
-      ) : null}
-      {activeTab === "faq" ? (
-        <FaqTab
-          category={faqCategory}
-          onSelectCategory={(next) => {
-            setFaqCategory(next);
-            setExpandedFaq(null);
+      {searching ? (
+        <SearchResultsPanel
+          query={searchQuery}
+          results={searchResults}
+          onOpenResult={openResult}
+          onClear={() => {
+            setSearchQuery("");
+            searchInputRef.current?.focus();
           }}
-          expandedQuestion={expandedFaq}
-          onToggleQuestion={(question) =>
-            setExpandedFaq((current) => (current === question ? null : question))
-          }
         />
-      ) : null}
-      {activeTab === "troubleshoot" ? (
-        <TroubleshootTab
-          activeFlowId={activeFlowId}
-          onSelectFlow={setActiveFlowId}
-          onOpenSupport={() => setActiveTab("support")}
-        />
-      ) : null}
-      {activeTab === "support" ? <SupportTab /> : null}
+      ) : (
+        <>
+          {activeTab === "start" ? (
+            <StartTab
+              doneTasks={doneQuickStart}
+              onToggleTask={toggleQuickStartTask}
+              onOpenGuide={openGuide}
+            />
+          ) : null}
+          {activeTab === "guides" ? (
+            <GuidesTab
+              activeSectionId={activeSectionId}
+              onSelectSection={setActiveSectionId}
+              doneSteps={doneGuideSteps}
+              onToggleStep={toggleGuideStep}
+              onResetSteps={resetGuideSteps}
+            />
+          ) : null}
+          {activeTab === "faq" ? (
+            <FaqTab
+              category={faqCategory}
+              onSelectCategory={(next) => {
+                setFaqCategory(next);
+                setExpandedFaq(null);
+              }}
+              expandedQuestion={expandedFaq}
+              onToggleQuestion={(question) =>
+                setExpandedFaq((current) => (current === question ? null : question))
+              }
+              onOpenGuide={openGuide}
+            />
+          ) : null}
+          {activeTab === "troubleshoot" ? (
+            <TroubleshootTab
+              activeFlowId={activeFlowId}
+              onSelectFlow={setActiveFlowId}
+              onOpenSupport={() => setActiveTab("support")}
+            />
+          ) : null}
+          {activeTab === "glossary" ? <GlossaryTab onOpenGuide={openGuide} /> : null}
+          {activeTab === "support" ? <SupportTab /> : null}
+        </>
+      )}
+
+      <DocumentationAssistant
+        bridge={desktopApi ?? null}
+        onOpenSection={openGuide}
+        onOpenSupport={() => {
+          setSearchQuery("");
+          setActiveTab("support");
+        }}
+      />
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Resultados da busca
+// ---------------------------------------------------------------------------
+
+function SearchResultsPanel({
+  query,
+  results,
+  onOpenResult,
+  onClear
+}: {
+  query: string;
+  results: DocumentationSearchResult[];
+  onOpenResult: (result: DocumentationSearchResult) => void;
+  onClear: () => void;
+}) {
+  if (results.length === 0) {
+    return (
+      <section style={styles.emptyState} aria-live="polite">
+        <Search size={22} />
+        <strong style={styles.emptyTitle}>Nada encontrado para &ldquo;{query.trim()}&rdquo;</strong>
+        <span>
+          Tente outras palavras (por exemplo &ldquo;nota&rdquo; em vez de &ldquo;NF&rdquo;), ou
+          pergunte ao assistente no canto da tela — ele procura na documentacao inteira e, se nao
+          souber, te encaminha ao suporte.
+        </span>
+        <button
+          type="button"
+          className="krdoc-ghost-btn"
+          style={styles.pagerButton}
+          onClick={onClear}
+        >
+          <X size={13} />
+          Limpar busca
+        </button>
+      </section>
+    );
+  }
+
+  return (
+    <section style={styles.resultGroup} aria-live="polite" aria-label="Resultados da busca">
+      <h2 style={styles.resultGroupTitle}>
+        <Search size={15} />
+        Resultados para &ldquo;{query.trim()}&rdquo;
+      </h2>
+      <div style={styles.resultList}>
+        {results.map((result) => {
+          const Icon = RESULT_KIND_ICON[result.kind];
+          return (
+            <button
+              key={`${result.kind}-${result.id}`}
+              type="button"
+              className="krdoc-result"
+              onClick={() => onOpenResult(result)}
+            >
+              <span style={styles.resultIcon}>
+                <Icon size={17} />
+              </span>
+              <span style={styles.resultText}>
+                <span style={styles.resultKind}>{RESULT_KIND_LABEL[result.kind]}</span>
+                <strong>{result.title}</strong>
+                <small style={styles.resultSnippet}>{result.snippet}</small>
+              </span>
+              <ArrowRight size={15} style={{ flexShrink: 0 }} />
+            </button>
+          );
+        })}
+      </div>
     </section>
   );
 }
@@ -1220,12 +764,14 @@ function FaqTab({
   category,
   onSelectCategory,
   expandedQuestion,
-  onToggleQuestion
+  onToggleQuestion,
+  onOpenGuide
 }: {
   category: DocumentationFaqCategory | "all";
   onSelectCategory: (category: DocumentationFaqCategory | "all") => void;
   expandedQuestion: string | null;
   onToggleQuestion: (question: string) => void;
+  onOpenGuide: (sectionId: string) => void;
 }) {
   const faqs = filterFaqsByCategory(category);
 
@@ -1240,7 +786,8 @@ function FaqTab({
             Duvidas comuns
           </h2>
           <p style={styles.panelDescription}>
-            Clique em uma pergunta para ver a resposta. Filtre por assunto para achar mais rapido.
+            Clique em uma pergunta para ver a resposta. Filtre por assunto, ou use a busca la em
+            cima para procurar pela frase inteira.
           </p>
         </div>
       </div>
@@ -1280,7 +827,22 @@ function FaqTab({
                   }}
                 />
               </button>
-              {expanded ? <p style={styles.faqAnswer}>{faq.answer}</p> : null}
+              {expanded ? (
+                <div style={styles.faqAnswerBox}>
+                  <p style={styles.faqAnswer}>{faq.answer}</p>
+                  {faq.sectionId ? (
+                    <button
+                      type="button"
+                      className="krdoc-ghost-btn"
+                      style={styles.faqGuideButton}
+                      onClick={() => onOpenGuide(faq.sectionId as string)}
+                    >
+                      Ver o guia completo
+                      <ArrowRight size={13} />
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           );
         })}
@@ -1429,6 +991,49 @@ function TroubleshootTab({
 }
 
 // ---------------------------------------------------------------------------
+// Aba Glossario
+// ---------------------------------------------------------------------------
+
+function GlossaryTab({ onOpenGuide }: { onOpenGuide: (sectionId: string) => void }) {
+  return (
+    <section style={styles.panel} aria-labelledby="glossary-title">
+      <div style={styles.panelHeader}>
+        <span style={styles.headerIcon}>
+          <BookMarked size={18} />
+        </span>
+        <div>
+          <h2 id="glossary-title" style={styles.panelTitle}>
+            Glossario
+          </h2>
+          <p style={styles.panelDescription}>
+            O que cada termo do sistema quer dizer, na linguagem da pedreira.
+          </p>
+        </div>
+      </div>
+      <div style={styles.glossaryGrid}>
+        {documentationGlossary.map((entry) => (
+          <div key={entry.term} style={styles.glossaryItem}>
+            <strong style={styles.glossaryTerm}>{entry.term}</strong>
+            <span style={styles.glossaryDefinition}>{entry.definition}</span>
+            {entry.sectionId ? (
+              <button
+                type="button"
+                className="krdoc-ghost-btn"
+                style={styles.glossaryLink}
+                onClick={() => onOpenGuide(entry.sectionId as string)}
+              >
+                Ver guia
+                <ArrowRight size={12} />
+              </button>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Aba Suporte
 // ---------------------------------------------------------------------------
 
@@ -1512,12 +1117,16 @@ function SupportTab() {
         </div>
         <ul style={styles.detailList}>
           <li style={styles.detailItem}>
-            <strong>Erros recentes:</strong> use o botao de logs no topo do aplicativo para ver
-            falhas de sincronizacao, balanca e impressao.
+            <strong>Erros recentes:</strong> use o botao de logs no menu da engrenagem (F10) para
+            ver falhas de sincronizacao, balanca e impressao.
           </li>
           <li style={styles.detailItem}>
-            <strong>Desktop nao abre:</strong> consulte o arquivo startup.log em AppData Local do
-            KyberRock Desktop no Windows.
+            <strong>Desktop nao abre:</strong> consulte o arquivo startup.log em AppData Local, na
+            pasta do KyberRock Desktop.
+          </li>
+          <li style={styles.detailItem}>
+            <strong>Faturamento recusado:</strong> copie tambem a mensagem exibida pelo OMIE — e ela
+            que nomeia o campo que faltou no cadastro.
           </li>
           <li style={styles.detailItem}>
             <strong>Antes de reinstalar:</strong> sempre faca backup do banco local. A operacao
@@ -1527,9 +1136,40 @@ function SupportTab() {
         <div style={styles.startHintCard}>
           <ShieldCheck size={16} />
           <span>
-            Nunca envie chaves OMIE, senhas ou o arquivo do banco de dados por canais inseguros.
+            Nunca envie chaves do OMIE, senhas ou o arquivo do banco de dados por canais inseguros.
           </span>
         </div>
+      </section>
+
+      <section style={styles.panel} aria-labelledby="assistant-title">
+        <div style={styles.panelHeader}>
+          <span style={styles.headerIcon}>
+            <ListChecks size={18} />
+          </span>
+          <div>
+            <h2 id="assistant-title" style={styles.panelTitle}>
+              Assistente da documentacao
+            </h2>
+            <p style={styles.panelDescription}>
+              O botao no canto inferior direito abre um chat que responde com base nesta
+              documentacao.
+            </p>
+          </div>
+        </div>
+        <ul style={styles.detailList}>
+          <li style={styles.detailItem}>
+            Pergunte com as suas palavras: ele entende a frase inteira, nao so palavra-chave.
+          </li>
+          <li style={styles.detailItem}>
+            Toda resposta mostra as fontes usadas, e cada fonte abre o guia correspondente.
+          </li>
+          <li style={styles.detailItem}>
+            Sem internet ele continua respondendo, usando a documentacao instalada neste computador.
+          </li>
+          <li style={styles.detailItem}>
+            O que a documentacao nao cobre ele nao inventa: ele avisa e encaminha voce ao suporte.
+          </li>
+        </ul>
       </section>
     </div>
   );
@@ -1772,7 +1412,7 @@ const styles: Record<string, CSSProperties> = {
     position: "relative",
     overflow: "hidden",
     display: "grid",
-    gridTemplateColumns: "minmax(260px, 1fr) minmax(240px, 360px)",
+    gridTemplateColumns: "minmax(260px, 1fr) minmax(260px, 400px)",
     gap: "14px",
     alignItems: "center",
     padding: "18px",
@@ -1847,25 +1487,23 @@ const styles: Record<string, CSSProperties> = {
     color: "var(--kr-text-strong)"
   },
   clearButton: {
-    padding: "8px 11px"
+    padding: "8px 11px",
+    flexShrink: 0
+  },
+  searchHint: {
+    margin: 0,
+    color: "#d6d3d1",
+    fontSize: "11px",
+    lineHeight: 1.4
   },
   tabBar: {
     display: "flex",
     flexWrap: "wrap",
     gap: "8px"
   },
-  searchResults: {
-    display: "grid",
-    gap: "12px"
-  },
-  searchHint: {
-    margin: 0,
-    color: "var(--kr-muted)",
-    fontSize: "12px"
-  },
   resultGroup: {
     display: "grid",
-    gap: "8px",
+    gap: "10px",
     padding: "14px",
     borderRadius: "16px",
     background: "var(--kr-surface)",
@@ -1879,6 +1517,10 @@ const styles: Record<string, CSSProperties> = {
     margin: 0,
     color: "var(--kr-text-strong)",
     fontSize: "13px"
+  },
+  resultList: {
+    display: "grid",
+    gap: "6px"
   },
   resultIcon: {
     display: "inline-flex",
@@ -1900,18 +1542,36 @@ const styles: Record<string, CSSProperties> = {
     fontSize: "13px",
     lineHeight: 1.4
   },
+  resultKind: {
+    color: "var(--kr-muted)",
+    fontSize: "10px",
+    fontWeight: 900,
+    letterSpacing: "0.07em",
+    textTransform: "uppercase"
+  },
+  resultSnippet: {
+    color: "var(--kr-muted)",
+    fontSize: "12px",
+    lineHeight: 1.45
+  },
   emptyState: {
     display: "flex",
     flexDirection: "column",
-    gap: "6px",
+    gap: "8px",
     alignItems: "center",
     justifyContent: "center",
-    padding: "26px",
+    padding: "30px 26px",
     borderRadius: "16px",
     background: "var(--kr-surface)",
     border: "1px solid var(--kr-border)",
     color: "var(--kr-muted)",
+    fontSize: "13px",
+    lineHeight: 1.5,
     textAlign: "center"
+  },
+  emptyTitle: {
+    color: "var(--kr-text-strong)",
+    fontSize: "14px"
   },
   startGrid: {
     display: "grid",
@@ -2238,12 +1898,21 @@ const styles: Record<string, CSSProperties> = {
     flex: 1,
     minWidth: 0
   },
+  faqAnswerBox: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-start",
+    gap: "8px",
+    padding: "0 12px 11px 12px"
+  },
   faqAnswer: {
     margin: 0,
-    padding: "0 12px 11px 12px",
     color: "var(--kr-muted)",
     fontSize: "13px",
     lineHeight: 1.5
+  },
+  faqGuideButton: {
+    padding: "6px 10px"
   },
   flowGrid: {
     display: "grid",
@@ -2278,6 +1947,34 @@ const styles: Record<string, CSSProperties> = {
     color: "var(--kr-text)",
     fontSize: "13px",
     lineHeight: 1.5
+  },
+  glossaryGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+    gap: "8px"
+  },
+  glossaryItem: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-start",
+    gap: "5px",
+    padding: "11px 12px",
+    borderRadius: "12px",
+    background: "var(--kr-surface-soft)",
+    border: "1px solid var(--kr-border)"
+  },
+  glossaryTerm: {
+    color: "var(--kr-text-strong)",
+    fontSize: "13px"
+  },
+  glossaryDefinition: {
+    color: "var(--kr-muted)",
+    fontSize: "12px",
+    lineHeight: 1.5
+  },
+  glossaryLink: {
+    padding: "5px 9px",
+    fontSize: "11px"
   },
   supportGrid: {
     display: "grid",

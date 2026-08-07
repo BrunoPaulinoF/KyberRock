@@ -52,11 +52,11 @@ apps/loader-web (React)  --read-only-->  Supabase Postgres   (loader sees open l
   requests projected into Supabase Postgres. Served via nginx in Docker.
 - **`supabase/functions/*`** — Deno Edge Functions, the _only_ place sensitive integrations run:
   admin surface (`admin-api`, `admin-auth`), OMIE bridge (`omie-sync`), desktop sync/lifecycle
-  (`desktop-sync`, `desktop-pull`, `desktop-status`, `desktop-activate`, `desktop-download`) and
-  scheduled reporting (`daily-report-scheduler`, `daily-report-email`). `_shared/` holds code
-  common to them. Never call OMIE or use the service-role key from desktop or web. Note: this is
-  distinct from the `functions/` workspace (`@kyberrock/functions`), which is a plain TypeScript
-  utils library.
+  (`desktop-sync`, `desktop-pull`, `desktop-status`, `desktop-activate`, `desktop-download`),
+  scheduled reporting (`daily-report-scheduler`, `daily-report-email`) and the documentation
+  assistant (`docs-assistant`). `_shared/` holds code common to them. Never call OMIE, the
+  OpenAI API or the service-role key from desktop or web. Note: this is distinct from the
+  `functions/` workspace (`@kyberrock/functions`), which is a plain TypeScript utils library.
 - **`packages/*`** — shared building blocks consumed by the apps: `shared` (domain types, enums,
   ID + format helpers), `scale-adapters` (one adapter contract, e.g. Toledo + a virtual test
   adapter), `omie-client` (typed OMIE client with idempotency), `print-templates` (80 mm coupon
@@ -82,6 +82,13 @@ These recur across the codebase and are easy to violate accidentally:
 - **Monorepo TS**: root `tsconfig.json` is references-only; each workspace is `composite: true`
   and excludes `**/*.test.ts` from its build — use `import type` for test-only symbols and for
   all type imports (`@typescript-eslint/consistent-type-imports` is an error).
+- **Central de ajuda** (`apps/desktop/src/renderer/documentation-*`): o texto vive em
+  `documentation-content.ts` (dados puros), a busca em `documentation-search.ts` e a tela em
+  `DocumentationView.tsx` — corrigir uma dúvida operacional não deve tocar o componente. O
+  assistente flutuante **recupera os trechos no renderer** e manda só eles para a Edge Function
+  `docs-assistant`: a documentação usada é sempre a da versão instalada, e nenhum dado de
+  operação, cliente ou peso sai do computador da balança. Sem nuvem ele responde com a
+  documentação local; o que ela não cobre vira "fale com o suporte", nunca um palpite.
 
 ## Product & design docs
 

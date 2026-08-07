@@ -6,18 +6,21 @@ import {
   ensureDocumentationStyles,
   documentationFaqCategories,
   documentationFaqs,
+  documentationGlossary,
   documentationSections,
   filterDocumentationContent,
   filterFaqsByCategory,
   filterTroubleshootingFlows,
   operationFlowStages,
   quickStartTasks,
+  searchDocumentation,
+  supportChecklist,
   troubleshootingFlows
 } from "./DocumentationView";
 
 describe("DocumentationView search", () => {
   it("finds scale integration guidance by keyword", () => {
-    const result = filterDocumentationContent("balanca tcp");
+    const result = filterDocumentationContent("balanca conexao");
 
     expect(result.sections.some((section) => section.id === "scale")).toBe(true);
   });
@@ -43,6 +46,21 @@ describe("DocumentationView search", () => {
   it("returns every flow when the query is empty", () => {
     expect(filterTroubleshootingFlows("  ")).toHaveLength(troubleshootingFlows.length);
   });
+
+  it("exposes the global search across every content type", () => {
+    const kinds = new Set(
+      [
+        ...searchDocumentation("balanca"),
+        ...searchDocumentation("danfe"),
+        ...searchDocumentation("cliente bloqueado")
+      ].map((result) => result.kind)
+    );
+
+    expect(kinds.has("section")).toBe(true);
+    expect(kinds.has("faq")).toBe(true);
+    expect(kinds.has("flow")).toBe(true);
+    expect(kinds.has("glossary")).toBe(true);
+  });
 });
 
 describe("DocumentationView faq categories", () => {
@@ -66,6 +84,16 @@ describe("DocumentationView faq categories", () => {
     expect(printingFaqs.length).toBeGreaterThan(0);
     expect(printingFaqs.every((faq) => faq.category === "impressao")).toBe(true);
   });
+
+  it("has at least one faq in every offered category", () => {
+    for (const category of documentationFaqCategories) {
+      if (category.id === "all") continue;
+      expect(
+        filterFaqsByCategory(category.id).length,
+        `categoria vazia: ${category.id}`
+      ).toBeGreaterThan(0);
+    }
+  });
 });
 
 describe("DocumentationView cross-links", () => {
@@ -83,6 +111,22 @@ describe("DocumentationView cross-links", () => {
     for (const stage of operationFlowStages) {
       expect(sectionIds).toContain(stage.sectionId);
     }
+  });
+
+  it("covers the OMIE billing guide asked for by the operation", () => {
+    const omie = documentationSections.find((section) => section.id === "omie-billing");
+
+    expect(omie).toBeDefined();
+    expect(omie?.steps.length).toBeGreaterThan(3);
+    expect(omie?.details.join(" ")).toContain("NF-e");
+  });
+
+  it("keeps a glossary entry for the terms the guides rely on", () => {
+    const terms = documentationGlossary.map((entry) => entry.term.toLowerCase());
+
+    expect(terms.some((term) => term.includes("danfe"))).toBe(true);
+    expect(terms.some((term) => term.includes("faturar"))).toBe(true);
+    expect(terms.some((term) => term.includes("peso liquido"))).toBe(true);
   });
 });
 
@@ -137,7 +181,12 @@ describe("DocumentationView support template", () => {
 
     expect(template).toContain("CHAMADO DE SUPORTE");
     expect(template).toContain("Empresa / unidade:");
-    expect(template).toContain("Placa da operacao");
+    expect(template).toContain("Codigo (COD) ou placa da operacao:");
     expect(template).toContain("Ultima acao antes da falha:");
+  });
+
+  it("keeps the on-screen checklist and the copied template aligned", () => {
+    expect(supportChecklist.length).toBeGreaterThan(0);
+    expect(buildSupportClipboardText().split("\n").length).toBeGreaterThan(supportChecklist.length);
   });
 });

@@ -695,6 +695,22 @@ export interface KyberRockDesktopApi {
     state: string | null;
     status: string | null;
   }>;
+  /**
+   * Chat da documentacao. Os trechos vem do renderer (a documentacao instalada);
+   * `available: false` significa "sem nuvem agora" e o chat responde com o que
+   * encontrou localmente, sem exibir erro.
+   */
+  docsAssistantAsk: (request: {
+    question: string;
+    passages: Array<{ source: string; text: string }>;
+    history: Array<{ role: "user" | "assistant"; content: string }>;
+  }) => Promise<{
+    available: boolean;
+    answer: string;
+    grounded: boolean;
+    sources: string[];
+    reason?: string;
+  }>;
   onUpdateAvailable: (callback: (event: unknown, version: string) => void) => void;
   offUpdateAvailable: (callback: (event: unknown, version: string) => void) => void;
   onUpdateDownloadProgress: (callback: (event: unknown, percent: number) => void) => void;

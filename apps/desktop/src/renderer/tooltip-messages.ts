@@ -18,7 +18,8 @@ export const TIPS = {
       "Relatorio por cliente: escolha o cliente e o periodo e gere o relatorio simplificado e/ou completo em PDF e/ou Excel.",
     reports:
       "Relatorios: cadastre destinatarios que receberao os relatorios automaticos por e-mail.",
-    documentation: "Documentacao do produto (em breve)."
+    documentation:
+      "Central de ajuda: guias da operacao, faturamento no OMIE, duvidas, diagnostico e o assistente de IA."
   },
   nav: {
     panel: "Painel inicial com KPIs e pendencias do turno. Atalho: F1.",
@@ -31,7 +32,7 @@ export const TIPS = {
     cloud: "Sincronizacao de dados com a nuvem. Atalho: F8.",
     customerReport: "Relatorio completo ou simplificado de um cliente no periodo, em PDF ou Excel.",
     reports: "Destinatarios dos relatorios automaticos por e-mail.",
-    documentation: "Documentacao do produto (em breve)."
+    documentation: "Guias, duvidas, diagnostico guiado e assistente de IA da documentacao."
   },
   header: {
     theme: "Alterna entre tema claro e escuro. Atalho: F11.",
