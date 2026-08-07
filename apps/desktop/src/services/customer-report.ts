@@ -10,8 +10,8 @@ import {
  * Relatorio por cliente: todos os dados das operacoes de um cliente num periodo
  * (transporte, compras, pagamentos, produtos, tonelagem e placas), em duas versoes:
  *
- * - `simplified`: os dados principais (cabecalho do cliente, KPIs, produtos, placas
- *   e evolucao mensal) — o que o dono olha no dia a dia.
+ * - `simplified`: os dados principais (cabecalho do cliente, KPIs, produtos com os dias
+ *   em que foram carregados, placas e evolucao mensal) — o que o dono olha no dia a dia.
  * - `complete`: tudo do simplificado + transportadoras, pagamentos, evolucao diaria,
  *   a lista operacao a operacao com pesos/precos/frete/OMIE e as canceladas.
  *
@@ -127,6 +127,27 @@ export interface CustomerReportProductRow {
   freightCents: number;
   totalCents: number;
   avgPriceCentsPerTon: number;
+  /** Dias distintos (YYYY-MM-DD, em ordem) em que o cliente carregou esse material. */
+  dates: string[];
+  firstDate: string | null;
+  lastDate: string | null;
+}
+
+/**
+ * Um material num dia: quanto o cliente carregou daquele material naquela data. E o
+ * detalhe por tras da tabela de produtos — a resposta para "o que ele levou, quanto e
+ * em que dias".
+ */
+export interface CustomerReportProductDayRow {
+  date: string;
+  productCode: string | null;
+  productDescription: string;
+  operations: number;
+  netWeightKg: number;
+  productCents: number;
+  freightCents: number;
+  totalCents: number;
+  avgPriceCentsPerTon: number;
 }
 
 export interface CustomerReportPlateRow {
@@ -217,6 +238,8 @@ export interface CustomerReport {
   periodLabel: string | null;
   totals: CustomerReportTotals;
   byProduct: CustomerReportProductRow[];
+  /** O mesmo agrupamento por material aberto dia a dia, na ordem dos materiais. */
+  byProductDay: CustomerReportProductDayRow[];
   byPlate: CustomerReportPlateRow[];
   byCarrier: CustomerReportCarrierRow[];
   byPaymentMethod: CustomerReportPaymentRow[];
@@ -243,6 +266,11 @@ export interface CustomersOverviewRow {
   customer: CustomerReportCustomerKey;
   totals: CustomerReportTotals;
   installmentTotals: CustomerReportInstallmentTotals;
+  /**
+   * O que esse cliente carregou de cada material no periodo, com os dias de cada um —
+   * as mesmas linhas que sairiam no relatorio individual dele.
+   */
+  byProduct: CustomerReportProductRow[];
 }
 
 /**
@@ -446,6 +474,7 @@ export class CustomerReportService {
       periodLabel: periodLabel ?? null,
       totals: buildTotals(operations, cancelledOperations),
       byProduct: groupByProduct(operations),
+      byProductDay: groupByProductDay(operations),
       byPlate: groupByPlate(operations),
       byCarrier: groupByCarrier(operations),
       byPaymentMethod: groupByLabel(operations, (op) => op.paymentMethodName ?? "Nao informado"),
@@ -527,7 +556,8 @@ export class CustomerReportService {
       .map((bucket) => ({
         customer: bucket.customer,
         totals: buildTotals(bucket.operations, bucket.cancelled),
-        installmentTotals: buildInstallmentTotals(bucket.installments)
+        installmentTotals: buildInstallmentTotals(bucket.installments),
+        byProduct: groupByProduct(bucket.operations)
       }))
       // Maior faturamento primeiro; empate desempata pelo nome para a ordem ser estavel.
       .sort(
@@ -1001,11 +1031,65 @@ function buildTotals(
   };
 }
 
+/** Chave de agrupamento de material: codigo + descricao, como aparece na operacao. */
+function productKey(operation: CustomerReportOperation): string {
+  return `${operation.productCode ?? ""}|${operation.productDescription}`;
+}
+
 function groupByProduct(operations: CustomerReportOperation[]): CustomerReportProductRow[] {
-  const map = new Map<string, CustomerReportProductRow>();
+  const map = new Map<string, CustomerReportProductRow & { dateSet: Set<string> }>();
   for (const op of operations) {
-    const key = `${op.productCode ?? ""}|${op.productDescription}`;
+    const key = productKey(op);
     const row = map.get(key) ?? {
+      productCode: op.productCode,
+      productDescription: op.productDescription,
+      operations: 0,
+      netWeightKg: 0,
+      productCents: 0,
+      freightCents: 0,
+      totalCents: 0,
+      avgPriceCentsPerTon: 0,
+      dates: [],
+      firstDate: null,
+      lastDate: null,
+      dateSet: new Set<string>()
+    };
+    row.operations += 1;
+    row.netWeightKg += op.netWeightKg;
+    row.productCents += op.productTotalCents;
+    row.freightCents += op.freightTotalCents;
+    row.totalCents += op.totalCents;
+    row.dateSet.add(op.date);
+    map.set(key, row);
+  }
+  return Array.from(map.values())
+    .map(({ dateSet, ...row }) => {
+      const dates = Array.from(dateSet).sort();
+      return {
+        ...row,
+        avgPriceCentsPerTon: avgPriceCentsPerTon(row.productCents, row.netWeightKg),
+        dates,
+        firstDate: dates[0] ?? null,
+        lastDate: dates[dates.length - 1] ?? null
+      };
+    })
+    .sort((a, b) => b.netWeightKg - a.netWeightKg);
+}
+
+/**
+ * Material x dia: quanto o cliente carregou de cada material em cada data. A ordem segue
+ * a da tabela de produtos (material com mais peso primeiro) e, dentro do material, o dia
+ * mais antigo primeiro — le-se como o historico de cada material.
+ */
+function groupByProductDay(operations: CustomerReportOperation[]): CustomerReportProductDayRow[] {
+  const weightByProduct = new Map<string, number>();
+  const map = new Map<string, CustomerReportProductDayRow>();
+  for (const op of operations) {
+    const product = productKey(op);
+    weightByProduct.set(product, (weightByProduct.get(product) ?? 0) + op.netWeightKg);
+    const key = `${product}|${op.date}`;
+    const row = map.get(key) ?? {
+      date: op.date,
       productCode: op.productCode,
       productDescription: op.productDescription,
       operations: 0,
@@ -1022,12 +1106,19 @@ function groupByProduct(operations: CustomerReportOperation[]): CustomerReportPr
     row.totalCents += op.totalCents;
     map.set(key, row);
   }
+  const productOf = (row: CustomerReportProductDayRow) =>
+    `${row.productCode ?? ""}|${row.productDescription}`;
   return Array.from(map.values())
     .map((row) => ({
       ...row,
       avgPriceCentsPerTon: avgPriceCentsPerTon(row.productCents, row.netWeightKg)
     }))
-    .sort((a, b) => b.netWeightKg - a.netWeightKg);
+    .sort(
+      (a, b) =>
+        (weightByProduct.get(productOf(b)) ?? 0) - (weightByProduct.get(productOf(a)) ?? 0) ||
+        a.productDescription.localeCompare(b.productDescription, "pt-BR") ||
+        a.date.localeCompare(b.date)
+    );
 }
 
 function groupByPlate(operations: CustomerReportOperation[]): CustomerReportPlateRow[] {

@@ -10,6 +10,7 @@ import {
 import {
   customerReportFileBaseName,
   customersOverviewFileBaseName,
+  formatDatesSummary,
   renderCustomerReportHtml,
   renderCustomerReportSpreadsheet,
   renderCustomersOverviewHtml,
@@ -393,6 +394,71 @@ describe("CustomerReportService.getCustomerReport", () => {
     }
   });
 
+  it("records how much of each material was loaded and on which days", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      seedCustomerOperations(db);
+      // Segundo carregamento do mesmo material no mesmo dia: vira uma linha so, com dois
+      // carregamentos somados — o dia nao pode aparecer duas vezes.
+      insertOperations(db, [
+        {
+          id: "op-7",
+          customer: "cust-1",
+          product: "prod-1",
+          vehicle: "veh-2",
+          net: 5000,
+          productCents: 250000,
+          freightCents: 0,
+          totalCents: 250000,
+          entry: "2026-06-06 14:00:00",
+          exit: "2026-06-06 14:30:00"
+        }
+      ]);
+
+      const report = new CustomerReportService(db).getCustomerReport(
+        "cust-1",
+        "2026-01-01",
+        "2026-12-31",
+        "unit-1"
+      );
+
+      const brita0 = report.byProduct.find((row) => row.productCode === "B0");
+      // 08/06 e a operacao cancelada: nao conta como dia carregado.
+      expect(brita0).toMatchObject({
+        operations: 3,
+        netWeightKg: 40000,
+        dates: ["2026-06-06", "2026-07-02"],
+        firstDate: "2026-06-06",
+        lastDate: "2026-07-02"
+      });
+      expect(report.byProduct.find((row) => row.productCode === "B1")).toMatchObject({
+        dates: ["2026-06-07"],
+        firstDate: "2026-06-07",
+        lastDate: "2026-06-07"
+      });
+
+      // Material com mais peso primeiro, e dentro dele o dia mais antigo primeiro.
+      expect(
+        report.byProductDay.map((row) => [row.productDescription, row.date, row.netWeightKg])
+      ).toEqual([
+        ["Brita 0", "2026-06-06", 20000],
+        ["Brita 0", "2026-07-02", 20000],
+        ["Brita 1", "2026-06-07", 10000]
+      ]);
+      expect(report.byProductDay[0]).toMatchObject({
+        productCode: "B0",
+        operations: 2,
+        productCents: 1_000_000,
+        totalCents: 1_150_000,
+        // 1.000.000 centavos / 20 t
+        avgPriceCentsPerTon: 50_000
+      });
+    } finally {
+      db.close();
+    }
+  });
+
   it("reads the customer registration data and the freight details of each operation", () => {
     const db = createDatabase();
     try {
@@ -494,6 +560,7 @@ describe("CustomerReportService.getCustomerReport", () => {
       expect(report.totals.operations).toBe(0);
       expect(report.totals.avgPriceCentsPerTon).toBe(0);
       expect(report.byProduct).toEqual([]);
+      expect(report.byProductDay).toEqual([]);
       expect(report.operations).toEqual([]);
     } finally {
       db.close();
@@ -534,9 +601,12 @@ describe("customer report rendering", () => {
       expect(html).toContain("Simplificado");
       expect(html).toContain("Mes atual");
       expect(html).toContain("Produtos comprados");
+      expect(html).toContain("Materiais por dia");
       expect(html).toContain("Placas");
       expect(html).toContain("Compras por mes");
       expect(html).toContain("ABC1D23");
+      // O dia de cada material sai no simplificado, nao so no completo.
+      expect(html).toContain("06/06/2026");
       // Secoes exclusivas do completo ficam de fora.
       expect(html).not.toContain("Operacoes (detalhado)");
       expect(html).not.toContain("Pagamentos por forma");
@@ -561,6 +631,9 @@ describe("customer report rendering", () => {
       const html = renderCustomerReportHtml(report, "complete", new Date("2026-07-15T12:00:00Z"));
 
       expect(html).toContain("Completo");
+      // Os materiais com os dias saem nos dois modelos, nao so no simplificado.
+      expect(html).toContain("Materiais por dia");
+      expect(html).toContain("Datas");
       expect(html).toContain("Transporte por transportadora");
       expect(html).toContain("Tipos de frete");
       expect(html).toContain("Pagamentos por forma");
@@ -591,6 +664,7 @@ describe("customer report rendering", () => {
       const simplified = renderCustomerReportSpreadsheet(report, "simplified");
       expect(simplified).toContain("Resumo");
       expect(simplified).toContain("Produtos");
+      expect(simplified).toContain("Materiais por dia");
       expect(simplified).toContain("Placas");
       expect(simplified).not.toContain("Canceladas");
 
@@ -624,6 +698,15 @@ describe("customer report rendering", () => {
     } finally {
       db.close();
     }
+  });
+
+  it("writes out one or two loading days and summarizes longer lists", () => {
+    expect(formatDatesSummary([])).toBe("-");
+    expect(formatDatesSummary(["2026-06-06"])).toBe("06/06/2026");
+    expect(formatDatesSummary(["2026-06-06", "2026-07-02"])).toBe("06/06/2026, 02/07/2026");
+    expect(formatDatesSummary(["2026-06-06", "2026-06-07", "2026-07-02"])).toBe(
+      "06/06/2026 a 02/07/2026 (3 dias)"
+    );
   });
 
   it("builds a file name with the customer, the variant and the range", () => {
@@ -686,6 +769,34 @@ describe("CustomerReportService.getCustomersOverview", () => {
         totals: { operations: 2, netWeightKg: 42000, totalCents: 2_100_000 }
       });
       expect(overview.periodLabel).toBe("Mes atual");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("carries what each customer loaded of each material, with the days", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      seedCustomerOperations(db);
+
+      const overview = new CustomerReportService(db).getCustomersOverview(
+        "2026-06-01",
+        "2026-06-30",
+        "unit-1"
+      );
+
+      const alfa = overview.customers.find((row) => row.customer.id === "cust-1");
+      expect(
+        alfa?.byProduct.map((row) => [row.productDescription, row.netWeightKg, row.dates])
+      ).toEqual([
+        ["Brita 0", 15000, ["2026-06-06"]],
+        ["Brita 1", 10000, ["2026-06-07"]]
+      ]);
+
+      const beta = overview.customers.find((row) => row.customer.id === "cust-2");
+      expect(beta?.byProduct.map((row) => row.productDescription)).toEqual(["Brita 0"]);
+      expect(beta?.byProduct[0]).toMatchObject({ netWeightKg: 30000, dates: ["2026-06-06"] });
     } finally {
       db.close();
     }
@@ -929,6 +1040,10 @@ describe("customers overview rendering", () => {
       expect(html).toContain("TOTAL");
       // Lista larga: sai em paisagem para as colunas caberem.
       expect(html).toContain("size:A4 landscape");
+      // Cada cliente com os materiais que carregou e os dias de cada um.
+      expect(html).toContain("Materiais por cliente");
+      expect(html).toContain("Brita 0");
+      expect(html).toContain("06/06/2026");
     } finally {
       db.close();
     }
@@ -942,6 +1057,8 @@ describe("customers overview rendering", () => {
       expect(sheet).toContain("Clientes no periodo");
       expect(sheet).toContain("Clientes com movimento");
       expect(sheet).toContain("Beta");
+      expect(sheet).toContain("Materiais por cliente");
+      expect(sheet).toContain("Brita 1");
     } finally {
       db.close();
     }
