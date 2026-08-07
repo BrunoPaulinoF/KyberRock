@@ -439,8 +439,8 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
               <span>
                 Simplificado
                 <span style={styles.checkboxHint}>
-                  Dados principais: cadastro, KPIs, vencimentos, produtos, materiais por dia,
-                  placas e compras por mes.
+                  Dados principais: cadastro, KPIs, vencimentos, produtos, materiais por dia, placas
+                  e compras por mes.
                 </span>
               </span>
             </label>

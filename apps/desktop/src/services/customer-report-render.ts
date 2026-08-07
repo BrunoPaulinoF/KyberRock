@@ -536,7 +536,11 @@ export function renderCustomerReportSpreadsheet(
   );
 
   blocks.push(
-    sheetTable("Produtos", PRODUCT_HEADERS, report.byProduct.map((row) => productCells(row)))
+    sheetTable(
+      "Produtos",
+      PRODUCT_HEADERS,
+      report.byProduct.map((row) => productCells(row))
+    )
   );
 
   blocks.push(
