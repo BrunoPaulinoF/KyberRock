@@ -249,62 +249,55 @@ export function DocumentationView({ desktopApi }: { desktopApi?: DocsAssistantBr
 
   return (
     <section style={styles.page} aria-labelledby="documentation-title">
-      <header style={styles.hero}>
-        <div style={styles.heroText}>
-          <p style={styles.kicker}>Central de ajuda</p>
-          <h1 id="documentation-title" style={styles.title}>
-            Documentacao do KyberRock
-          </h1>
-          <p style={styles.subtitle}>
-            Guias da operacao, faturamento no OMIE, duvidas frequentes e diagnostico passo a passo.
-            Digite sua duvida com as suas palavras — a busca entende a frase inteira.
-          </p>
-        </div>
-        <div style={styles.heroSearch}>
-          <label style={styles.searchLabel} htmlFor="documentation-search">
-            <Search size={14} />
-            Buscar na documentacao
-          </label>
-          <div style={styles.searchRow}>
-            <input
-              id="documentation-search"
-              ref={searchInputRef}
-              className="krdoc-input"
-              style={styles.searchInput}
-              type="search"
-              value={searchQuery}
-              placeholder='ex.: "como emitir nota fiscal"'
-              autoComplete="off"
-              onChange={(event) => setSearchQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape" && searchQuery) {
-                  event.stopPropagation();
-                  setSearchQuery("");
-                }
+      {/*
+        Faixa de busca simples, em linha. O cabecalho escuro que existia aqui
+        tinha altura propria e era esmagado pelo grid da area de conteudo — o
+        titulo aparecia cortado e a caixa de busca junto. Como o titulo ja esta
+        no menu lateral, ele saiu inteiro em vez de ser remendado: sobrou o que
+        precisa de espaco garantido, que e o campo de busca.
+      */}
+      <div style={styles.searchBar}>
+        <label style={styles.searchLabel} htmlFor="documentation-search">
+          <Search size={15} />
+          <span id="documentation-title">Buscar na documentacao</span>
+        </label>
+        <input
+          id="documentation-search"
+          ref={searchInputRef}
+          className="krdoc-input"
+          style={styles.searchInput}
+          type="search"
+          value={searchQuery}
+          placeholder='Digite sua duvida: "como emitir nota fiscal", "a balanca nao conecta"...'
+          autoComplete="off"
+          onChange={(event) => setSearchQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && searchQuery) {
+              event.stopPropagation();
+              setSearchQuery("");
+            }
+          }}
+        />
+        {searching ? (
+          <>
+            <span style={styles.searchCount}>
+              {searchResults.length} {searchResults.length === 1 ? "resultado" : "resultados"}
+            </span>
+            <button
+              type="button"
+              className="krdoc-ghost-btn"
+              style={styles.clearButton}
+              onClick={() => {
+                setSearchQuery("");
+                searchInputRef.current?.focus();
               }}
-            />
-            {searching ? (
-              <button
-                type="button"
-                className="krdoc-ghost-btn"
-                style={styles.clearButton}
-                onClick={() => {
-                  setSearchQuery("");
-                  searchInputRef.current?.focus();
-                }}
-              >
-                <X size={13} />
-                Limpar
-              </button>
-            ) : null}
-          </div>
-          <p style={styles.searchHint}>
-            {searching
-              ? `${searchResults.length} ${searchResults.length === 1 ? "resultado" : "resultados"} em guias, duvidas, diagnosticos e glossario.`
-              : "Palavra-chave ou frase completa. Acentos e pontuacao nao fazem diferenca."}
-          </p>
-        </div>
-      </header>
+            >
+              <X size={13} />
+              Limpar
+            </button>
+          </>
+        ) : null}
+      </div>
 
       <nav aria-label="Areas da documentacao" style={styles.tabBar} role="tablist">
         {documentationTabs.map((tab) => {
@@ -1408,76 +1401,29 @@ const styles: Record<string, CSSProperties> = {
     minHeight: 0,
     alignContent: "start"
   },
-  hero: {
-    position: "relative",
-    overflow: "hidden",
-    display: "grid",
-    gridTemplateColumns: "minmax(260px, 1fr) minmax(260px, 400px)",
-    gap: "14px",
+  searchBar: {
+    display: "flex",
     alignItems: "center",
-    padding: "18px",
-    borderRadius: "18px",
-    background: "#1c1917",
-    border: "1px solid #292524",
-    color: "#ffffff",
-    boxShadow: "0 18px 45px rgba(28, 25, 23, 0.2)"
-  },
-  heroText: {
-    position: "relative",
-    zIndex: 1,
-    display: "flex",
-    flexDirection: "column",
-    justifyContent: "center",
-    gap: "6px"
-  },
-  kicker: {
-    margin: 0,
-    color: "#fde68a",
-    fontSize: "12px",
-    fontWeight: 900,
-    letterSpacing: "0.08em",
-    textTransform: "uppercase"
-  },
-  title: {
-    margin: 0,
-    fontSize: "26px",
-    lineHeight: 1.05,
-    color: "#ffffff"
-  },
-  subtitle: {
-    margin: 0,
-    color: "#e7e5e4",
-    fontSize: "13px",
-    lineHeight: 1.45,
-    maxWidth: "620px"
-  },
-  heroSearch: {
-    position: "relative",
-    zIndex: 1,
-    display: "flex",
-    flexDirection: "column",
-    gap: "6px",
-    padding: "12px",
+    gap: "10px",
+    flexWrap: "wrap",
+    padding: "10px 12px",
     borderRadius: "14px",
-    background: "rgba(255,255,255,0.1)",
-    border: "1px solid rgba(255,255,255,0.2)"
+    background: "var(--kr-surface)",
+    border: "1px solid var(--kr-border)",
+    boxShadow: "var(--kr-shadow)"
   },
   searchLabel: {
-    display: "flex",
+    display: "inline-flex",
     alignItems: "center",
     gap: "6px",
-    color: "#fafaf9",
+    color: "var(--kr-text-strong)",
     fontWeight: 800,
-    fontSize: "12px"
-  },
-  searchRow: {
-    display: "flex",
-    gap: "8px",
-    alignItems: "center"
+    fontSize: "13px",
+    flexShrink: 0
   },
   searchInput: {
     flex: 1,
-    minWidth: "160px",
+    minWidth: "220px",
     border: "1px solid var(--kr-input-border)",
     borderRadius: "10px",
     padding: "9px 11px",
@@ -1486,15 +1432,15 @@ const styles: Record<string, CSSProperties> = {
     background: "var(--kr-input-bg)",
     color: "var(--kr-text-strong)"
   },
+  searchCount: {
+    color: "var(--kr-muted)",
+    fontSize: "12px",
+    fontWeight: 700,
+    flexShrink: 0
+  },
   clearButton: {
     padding: "8px 11px",
     flexShrink: 0
-  },
-  searchHint: {
-    margin: 0,
-    color: "#d6d3d1",
-    fontSize: "11px",
-    lineHeight: 1.4
   },
   tabBar: {
     display: "flex",

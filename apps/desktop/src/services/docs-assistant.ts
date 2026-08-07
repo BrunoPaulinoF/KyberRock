@@ -40,7 +40,8 @@ export interface DocsAssistantResult {
   /** `true` quando a nuvem respondeu; `false` manda o renderer usar a resposta local. */
   available: boolean;
   answer: string;
-  grounded: boolean;
+  /** "documentacao" | "conhecimento" | "desconhecido" — validado no renderer. */
+  answerSource: string;
   sources: string[];
   /** Motivo da indisponibilidade, para o log — nunca exibido cru ao operador. */
   reason?: string;
@@ -50,13 +51,13 @@ const CLOUD_DEVICE_ID_KEY = "cloud_device_id";
 const CLOUD_DEVICE_TOKEN_KEY = "cloud_device_token";
 
 function unavailable(reason: string): DocsAssistantResult {
-  return { available: false, answer: "", grounded: false, sources: [], reason };
+  return { available: false, answer: "", answerSource: "desconhecido", sources: [], reason };
 }
 
 interface DocsAssistantResponseBody {
   ok?: boolean;
   answer?: unknown;
-  grounded?: unknown;
+  answerSource?: unknown;
   sources?: unknown;
   error?: unknown;
 }
@@ -66,7 +67,7 @@ function readAnswer(data: DocsAssistantResponseBody | null): DocsAssistantResult
   return {
     available: true,
     answer: data.answer.trim(),
-    grounded: data.grounded === true,
+    answerSource: typeof data.answerSource === "string" ? data.answerSource : "desconhecido",
     sources: Array.isArray(data.sources)
       ? data.sources.filter((item): item is string => typeof item === "string")
       : []

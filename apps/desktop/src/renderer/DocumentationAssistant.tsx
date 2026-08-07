@@ -3,6 +3,7 @@ import type { CSSProperties, FormEvent } from "react";
 import {
   ArrowRight,
   Bot,
+  Info,
   LifeBuoy,
   Loader,
   MessageCircle,
@@ -17,6 +18,7 @@ import {
   ASSISTANT_SUGGESTIONS,
   askAssistant,
   type AssistantReply,
+  type AssistantAnswerSource,
   type AssistantSource,
   type AssistantTurn,
   type DocsAssistantBridge
@@ -26,10 +28,15 @@ import {
 // Botao flutuante + painel de chat da documentacao.
 //
 // A regra de produto que este componente carrega: o assistente nunca finge
-// saber. Toda resposta ou vem da documentacao (com as fontes clicaveis logo
-// abaixo) ou termina oferecendo o caminho do suporte. E por isso que a resposta
-// nao-ancorada ganha um botao "Abrir checklist de suporte" em vez de so um
-// texto pedindo desculpas.
+// saber, e sempre diz de onde a resposta veio.
+//
+//   documentacao — fontes clicaveis abaixo da resposta, que abrem o guia.
+//   conhecimento — aviso de que aquilo nao esta na documentacao e veio do
+//                  funcionamento do sistema, mais o caminho do suporte.
+//   desconhecido — so o caminho do suporte.
+//
+// E por isso que a resposta fora da documentacao ganha um botao "Abrir
+// checklist de suporte" em vez de so um texto pedindo desculpas.
 // ---------------------------------------------------------------------------
 
 interface ChatMessage {
@@ -37,7 +44,7 @@ interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   sources?: AssistantSource[];
-  grounded?: boolean;
+  answerSource?: AssistantAnswerSource;
   offlineFallback?: boolean;
 }
 
@@ -60,7 +67,7 @@ export function DocumentationAssistant({
   const [pending, setPending] = useState(false);
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([
-    { id: "greeting", role: "assistant", content: ASSISTANT_GREETING, grounded: true }
+    { id: "greeting", role: "assistant", content: ASSISTANT_GREETING, answerSource: "documentacao" }
   ]);
 
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -126,7 +133,7 @@ export function DocumentationAssistant({
           role: "assistant",
           content: reply.answer,
           sources: reply.sources,
-          grounded: reply.grounded,
+          answerSource: reply.answerSource,
           offlineFallback: reply.offlineFallback
         }
       ]);
@@ -257,7 +264,11 @@ function ChatBubble({
     return <div className="krchat-bubble krchat-bubble-user">{message.content}</div>;
   }
 
-  const showSupport = message.grounded === false && message.id !== "greeting";
+  // A resposta que veio da documentacao se basta. Tudo o mais — inclusive a que
+  // a IA respondeu bem pelo conhecimento do sistema — oferece o caminho do
+  // suporte, porque nao foi conferida contra o texto instalado.
+  const showSupport = message.answerSource !== undefined && message.answerSource !== "documentacao";
+  const fromKnowledge = message.answerSource === "conhecimento";
 
   return (
     <div className="krchat-bubble krchat-bubble-assistant">
@@ -294,6 +305,13 @@ function ChatBubble({
               )
             )}
           </div>
+        ) : null}
+
+        {fromKnowledge ? (
+          <span style={styles.offlineNote}>
+            <Info size={12} />
+            Isto nao esta na documentacao: veio do funcionamento do sistema. Vale confirmar.
+          </span>
         ) : null}
 
         {message.offlineFallback ? (

@@ -36,18 +36,64 @@ type DeviceRow = {
   is_active: boolean;
 };
 
-/** Ver AGENTS.md ("Secrets & security"): configurados como secrets da Edge Function. */
-const OPENAI_API_KEY_ENV = "OPENAI_API_KEY";
-const OPENAI_MODEL_ENV = "OPENAI_MODEL";
 const OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions";
 
 /**
- * Trocar de modelo e mudar um secret, nao um deploy. O padrao e um modelo
- * pequeno de proposito: a resposta aqui e reescrever em linguagem natural os
- * trechos que o desktop ja selecionou — o trabalho pesado (achar o trecho
- * certo) acontece no renderer, nao no modelo.
+ * A chave e o modelo vem da tabela `ai_assistant_settings`, cadastrada uma
+ * unica vez no painel administrativo do loader-web e compartilhada por todas as
+ * pedreiras. As envs abaixo sao so o caminho de emergencia (instalacao local,
+ * ou o painel ainda nao configurado) — a fonte de verdade e a tabela, para que
+ * trocar a chave nao dependa de acesso ao projeto Supabase.
  */
+const OPENAI_API_KEY_ENV = "OPENAI_API_KEY";
+const OPENAI_MODEL_ENV = "OPENAI_MODEL";
+const AI_SETTINGS_TABLE = "ai_assistant_settings";
+
 const DEFAULT_MODEL = "gpt-4.1-mini";
+
+interface AiSettings {
+  apiKey: string;
+  model: string;
+  isEnabled: boolean;
+}
+
+/**
+ * Le a configuracao da nuvem e completa com as envs. Falha de leitura nao
+ * derruba nada: cai para as envs e, se nem elas existirem, o chamador responde
+ * 503 e o desktop usa a documentacao local.
+ */
+async function readAiSettings(supabase: ReturnType<typeof createClient>): Promise<AiSettings> {
+  const envKey = (Deno.env.get(OPENAI_API_KEY_ENV) ?? "").trim();
+  const envModel = (Deno.env.get(OPENAI_MODEL_ENV) ?? "").trim();
+
+  try {
+    const { data, error } = await supabase
+      .from(AI_SETTINGS_TABLE)
+      .select("api_key, model, is_enabled")
+      .eq("id", true)
+      .maybeSingle();
+    if (error) throw error;
+    const row = (data ?? null) as {
+      api_key?: string | null;
+      model?: string | null;
+      is_enabled?: boolean | null;
+    } | null;
+
+    return {
+      apiKey: String(row?.api_key ?? "").trim() || envKey,
+      model: String(row?.model ?? "").trim() || envModel || DEFAULT_MODEL,
+      // `is_enabled` desliga o assistente de nuvem para todas as pedreiras sem
+      // apagar a chave — util para cortar custo ou pausar durante um incidente.
+      isEnabled: row?.is_enabled !== false
+    };
+  } catch (error) {
+    console.error(
+      "docs-assistant: nao consegui ler ai_assistant_settings, usando as envs",
+      error instanceof Error ? error.message : error
+    );
+    return { apiKey: envKey, model: envModel || DEFAULT_MODEL, isEnabled: true };
+  }
+}
 
 /**
  * Teto da resposta. Folgado de proposito: uma resposta cortada no meio vira
@@ -74,7 +120,7 @@ interface OpenAiChatResponse {
 const SUPPORT_ON_REFUSAL: AssistantAnswer = {
   answer:
     "Nao consigo responder essa pergunta por aqui. Fale diretamente com o suporte do KyberRock.",
-  grounded: false,
+  answerSource: "desconhecido",
   sources: []
 };
 
@@ -99,12 +145,12 @@ async function askOpenAi(
         model,
         messages,
         // `max_completion_tokens` em vez de `max_tokens`: e o campo aceito
-        // tambem pelos modelos de raciocinio, entao trocar OPENAI_MODEL nao
-        // exige mexer no codigo.
+        // tambem pelos modelos de raciocinio, entao trocar o modelo no
+        // painel nunca exige mexer no codigo.
         max_completion_tokens: MAX_COMPLETION_TOKENS,
         // Sem `temperature` de proposito: varios modelos so aceitam o valor
         // padrao e rejeitam a requisicao com qualquer outro. Omitir mantem a
-        // funcao compativel com qualquer modelo configurado no secret.
+        // funcao compativel com qualquer modelo escolhido no painel.
         response_format: {
           type: "json_schema",
           json_schema: {
@@ -144,8 +190,8 @@ async function askOpenAi(
     return SUPPORT_ON_REFUSAL;
   }
 
-  // Resposta truncada: o JSON esta pela metade e nao da para confiar no
-  // `grounded` dele. Melhor encaminhar do que entregar meia instrucao fiscal.
+  // Resposta truncada: o JSON esta pela metade e nao da para confiar na origem
+  // que ele declara. Melhor encaminhar do que entregar meia instrucao fiscal.
   if (choice?.finish_reason === "length") {
     console.error("docs-assistant: resposta truncada pelo limite de tokens");
     return SUPPORT_ON_REFUSAL;
@@ -188,23 +234,23 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: "Pergunta vazia." }, 400);
   }
 
-  const apiKey = Deno.env.get(OPENAI_API_KEY_ENV) ?? "";
-  if (!apiKey) {
-    // Assistente de nuvem nao configurado. 503 e proposital: o desktop
-    // reconhece isso e cai na resposta local, sem mostrar erro ao operador.
+  const settings = await readAiSettings(supabase);
+  if (!settings.apiKey || !settings.isEnabled) {
+    // Assistente de nuvem nao configurado ou desligado no painel. 503 e
+    // proposital: o desktop reconhece isso e cai na resposta local, sem mostrar
+    // erro ao operador.
     return jsonResponse({ error: "Assistente de IA nao configurado nesta instalacao." }, 503);
   }
-  const model = (Deno.env.get(OPENAI_MODEL_ENV) ?? "").trim() || DEFAULT_MODEL;
 
   const passages = sanitizePassages(body.passages);
   const history = sanitizeHistory(body.history);
 
   try {
-    const answer = await askOpenAi(apiKey, model, [
+    const answer = await askOpenAi(settings.apiKey, settings.model, [
       { role: "system", content: ASSISTANT_SYSTEM_PROMPT },
       ...buildMessages(question, passages, history)
     ]);
-    return jsonResponse({ ok: true, ...answer, model });
+    return jsonResponse({ ok: true, ...answer, model: settings.model });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Falha ao consultar o assistente.";
     console.error("docs-assistant: falha ao consultar a IA", message);

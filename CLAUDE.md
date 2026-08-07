@@ -87,8 +87,13 @@ These recur across the codebase and are easy to violate accidentally:
   `DocumentationView.tsx` — corrigir uma dúvida operacional não deve tocar o componente. O
   assistente flutuante **recupera os trechos no renderer** e manda só eles para a Edge Function
   `docs-assistant`: a documentação usada é sempre a da versão instalada, e nenhum dado de
-  operação, cliente ou peso sai do computador da balança. Sem nuvem ele responde com a
-  documentação local; o que ela não cobre vira "fale com o suporte", nunca um palpite.
+  operação, cliente ou peso sai do computador da balança. Quem responde é a IA — a nuvem é
+  chamada mesmo quando a busca não achou trecho nenhum, e aí ela raciocina pelo briefing do
+  sistema/OMIE que vive em `docs-assistant/prompt.ts`. A resposta se declara em três origens
+  (`documentacao` | `conhecimento` | `desconhecido`): só a primeira cita fonte, as outras duas
+  oferecem o suporte. Sem nuvem ele cai na documentação local, e o que ela não cobre vira "fale
+  com o suporte", nunca um palpite. A chave e o modelo da OpenAI são **globais** e vêm do painel
+  do loader-web (tabela `ai_assistant_settings`), não de secret por instalação.
 
 ## Product & design docs
 

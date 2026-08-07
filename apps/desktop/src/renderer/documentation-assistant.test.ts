@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   ASSISTANT_HISTORY_TURNS,
+  ASSISTANT_PASSAGE_LIMIT,
   ASSISTANT_SUGGESTIONS,
   SUPPORT_ESCALATION_NOTE,
   askAssistant,
@@ -11,8 +12,7 @@ import {
   type AssistantTurn,
   type DocsAssistantBridge
 } from "./documentation-assistant";
-import { SUPPORT_FALLBACK_ANSWER } from "./documentation-search";
-import { searchDocumentation } from "./documentation-search";
+import { SUPPORT_FALLBACK_ANSWER, searchDocumentation } from "./documentation-search";
 
 function bridgeReturning(
   response: Awaited<ReturnType<DocsAssistantBridge["docsAssistantAsk"]>>
@@ -69,45 +69,69 @@ describe("buildAssistantHistory", () => {
 });
 
 describe("withSupportEscalation", () => {
-  it("nao mexe na resposta ancorada", () => {
-    expect(withSupportEscalation("Va em Vendas > Pedidos.", true)).toBe("Va em Vendas > Pedidos.");
+  it("nao mexe na resposta vinda da documentacao", () => {
+    expect(withSupportEscalation("Va em Vendas > Pedidos.", "documentacao")).toBe(
+      "Va em Vendas > Pedidos."
+    );
   });
 
-  it("acrescenta o caminho do suporte quando nao esta ancorada", () => {
-    const result = withSupportEscalation("Sei apenas parte disso.", false);
-    expect(result).toContain("Sei apenas parte disso.");
+  it("oferece o suporte na resposta vinda do conhecimento do sistema", () => {
+    const result = withSupportEscalation("O pedido nasce na etapa Faturar.", "conhecimento");
+    expect(result).toContain("O pedido nasce na etapa Faturar.");
     expect(result).toContain(SUPPORT_ESCALATION_NOTE);
   });
 
+  it("oferece o suporte quando a origem e desconhecida", () => {
+    expect(withSupportEscalation("Nao sei.", "desconhecido")).toContain(SUPPORT_ESCALATION_NOTE);
+  });
+
   it("nao repete quando a resposta ja fala do suporte", () => {
-    const result = withSupportEscalation(SUPPORT_FALLBACK_ANSWER, false);
-    expect(result).toBe(SUPPORT_FALLBACK_ANSWER);
+    expect(withSupportEscalation(SUPPORT_FALLBACK_ANSWER, "desconhecido")).toBe(
+      SUPPORT_FALLBACK_ANSWER
+    );
   });
 });
 
 describe("askAssistant", () => {
-  it("usa a resposta da nuvem quando ela vem ancorada", async () => {
+  it("usa a resposta da nuvem quando ela vem da documentacao", async () => {
     const bridge = bridgeReturning({
       available: true,
       answer: "Abra Vendas > Pedidos de Venda e clique em Faturar.",
-      grounded: true,
+      answerSource: "documentacao",
       sources: ["Guia: Faturar e emitir a nota no OMIE"]
     });
 
     const reply = await askAssistant("como emito a nota fiscal?", [], bridge);
 
     expect(reply.origin).toBe("cloud");
-    expect(reply.grounded).toBe(true);
+    expect(reply.answerSource).toBe("documentacao");
     expect(reply.answer).toContain("Faturar");
     expect(reply.offlineFallback).toBe(false);
     expect(reply.sources.some((source) => source.sectionId === "omie-billing")).toBe(true);
+  });
+
+  it("aceita a resposta vinda do conhecimento do sistema, sem citar fonte", async () => {
+    const bridge = bridgeReturning({
+      available: true,
+      answer: "O pedido de venda nasce no OMIE ja na etapa Faturar.",
+      answerSource: "conhecimento",
+      // Mesmo que a IA mande fonte, ela nao e exibida: a resposta nao veio dali.
+      sources: ["Guia: Faturar e emitir a nota no OMIE"]
+    });
+
+    const reply = await askAssistant("como emito a nota fiscal?", [], bridge);
+
+    expect(reply.origin).toBe("cloud");
+    expect(reply.answerSource).toBe("conhecimento");
+    expect(reply.sources).toHaveLength(0);
+    expect(reply.answer).toContain(SUPPORT_ESCALATION_NOTE);
   });
 
   it("envia a documentacao local como contexto, e nada alem da pergunta", async () => {
     const bridge = bridgeReturning({
       available: true,
       answer: "ok",
-      grounded: true,
+      answerSource: "documentacao",
       sources: []
     });
 
@@ -119,14 +143,39 @@ describe("askAssistant", () => {
     };
     expect(request.question).toBe("como emito a nota fiscal?");
     expect(request.passages.length).toBeGreaterThan(0);
+    expect(request.passages.length).toBeLessThanOrEqual(ASSISTANT_PASSAGE_LIMIT);
     for (const passage of request.passages) {
       expect(passage.source).not.toHaveLength(0);
       expect(passage.text).not.toHaveLength(0);
     }
   });
 
+  // O ponto do assistente: a pergunta que a documentacao nao antecipou e
+  // exatamente onde ele agrega. Curto-circuitar a nuvem quando a busca nao acha
+  // nada o deixaria mudo justamente ali.
+  it("chama a nuvem mesmo sem nenhum trecho da documentacao", async () => {
+    const bridge = bridgeReturning({
+      available: true,
+      answer: "O KyberRock e offline-first: a pesagem fecha no computador da balanca.",
+      answerSource: "conhecimento",
+      sources: []
+    });
+
+    const reply = await askAssistant("posso usar em outro ramo?", [], bridge);
+
+    expect(bridge.calls).toHaveLength(1);
+    expect((bridge.calls[0] as { passages: unknown[] }).passages).toEqual([]);
+    expect(reply.origin).toBe("cloud");
+    expect(reply.answerSource).toBe("conhecimento");
+  });
+
   it("limita o historico enviado a nuvem", async () => {
-    const bridge = bridgeReturning({ available: true, answer: "ok", grounded: true, sources: [] });
+    const bridge = bridgeReturning({
+      available: true,
+      answer: "ok",
+      answerSource: "documentacao",
+      sources: []
+    });
     const history: AssistantTurn[] = Array.from({ length: 30 }, (_, index) => ({
       role: index % 2 === 0 ? "user" : "assistant",
       content: `turno ${index}`
@@ -138,19 +187,18 @@ describe("askAssistant", () => {
     expect(request.history).toHaveLength(ASSISTANT_HISTORY_TURNS);
   });
 
-  it("acrescenta o caminho do suporte quando a nuvem responde sem ancoragem", async () => {
+  it("trata origem desconhecida devolvida pela nuvem", async () => {
     const bridge = bridgeReturning({
       available: true,
-      answer: "Sei so uma parte disso.",
-      grounded: false,
-      sources: ["Guia: Faturar e emitir a nota no OMIE"]
+      answer: "Nao alcanco essa.",
+      answerSource: "desconhecido",
+      sources: []
     });
 
     const reply = await askAssistant("como emito a nota fiscal?", [], bridge);
 
-    expect(reply.grounded).toBe(false);
+    expect(reply.answerSource).toBe("desconhecido");
     expect(reply.answer).toContain(SUPPORT_ESCALATION_NOTE);
-    // Sem ancoragem nao ha fonte a citar: citar induziria confianca indevida.
     expect(reply.sources).toHaveLength(0);
   });
 
@@ -158,7 +206,7 @@ describe("askAssistant", () => {
     const bridge = bridgeReturning({
       available: false,
       answer: "",
-      grounded: false,
+      answerSource: "desconhecido",
       sources: [],
       reason: "sem internet"
     });
@@ -167,7 +215,7 @@ describe("askAssistant", () => {
 
     expect(reply.origin).toBe("local");
     expect(reply.offlineFallback).toBe(true);
-    expect(reply.grounded).toBe(true);
+    expect(reply.answerSource).toBe("documentacao");
     expect(reply.answer.length).toBeGreaterThan(0);
   });
 
@@ -188,21 +236,13 @@ describe("askAssistant", () => {
 
     expect(reply.origin).toBe("local");
     expect(reply.offlineFallback).toBe(false);
-    expect(reply.grounded).toBe(true);
+    expect(reply.answerSource).toBe("documentacao");
   });
 
-  it("nao chama a nuvem quando a documentacao nao tem nada sobre o assunto", async () => {
-    const bridge = bridgeReturning({
-      available: true,
-      answer: "chute",
-      grounded: true,
-      sources: []
-    });
+  it("manda falar com o suporte quando nem a nuvem nem a documentacao alcancam", async () => {
+    const reply = await askAssistant("qual a cotacao do dolar hoje?", [], null);
 
-    const reply = await askAssistant("qual a cotacao do dolar hoje?", [], bridge);
-
-    expect(bridge.calls).toHaveLength(0);
-    expect(reply.grounded).toBe(false);
+    expect(reply.answerSource).toBe("desconhecido");
     expect(reply.answer).toBe(SUPPORT_FALLBACK_ANSWER);
   });
 

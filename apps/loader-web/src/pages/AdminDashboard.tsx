@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { AdminSessionExpiredError, callAdminFunction } from "../lib/admin-api";
+import { AiAssistantSettings } from "./AiAssistantSettings";
 
 interface Company {
   id: string;
@@ -174,9 +175,9 @@ export function AdminDashboard() {
   const [units, setUnits] = useState<Unit[]>([]);
   const [users, setUsers] = useState<LoaderUser[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
-  const [activeTab, setActiveTab] = useState<"companies" | "loaders" | "comercial" | "devices">(
-    "companies"
-  );
+  const [activeTab, setActiveTab] = useState<
+    "companies" | "loaders" | "comercial" | "devices" | "ai"
+  >("companies");
   // Filtro por pedreira (empresa) aplicado as listagens de todas as abas. "" = todas.
   const [filterCompanyId, setFilterCompanyId] = useState("");
   const [isLoading, setIsLoading] = useState(true);
@@ -816,11 +817,19 @@ export function AdminDashboard() {
         >
           Dispositivos e Licencas
         </button>
+        <button
+          onClick={() => setActiveTab("ai")}
+          className={`admin-tab ${activeTab === "ai" ? "admin-tab-active" : ""}`}
+        >
+          Assistente de IA
+        </button>
       </nav>
 
+      {/* A aba de IA usa uma credencial global; um filtro de pedreira ao lado dela
+          sugeriria que cada uma tem a sua chave. */}
       <div
         style={{
-          display: "flex",
+          display: activeTab === "ai" ? "none" : "flex",
           alignItems: "center",
           gap: "10px",
           flexWrap: "wrap",
@@ -1565,6 +1574,8 @@ export function AdminDashboard() {
           {activeTab === "loaders" && renderUsersTab("loader")}
 
           {activeTab === "comercial" && renderUsersTab("comercial")}
+
+          {activeTab === "ai" && <AiAssistantSettings onSessionExpired={() => void logout()} />}
 
           {activeTab === "devices" && (
             <section style={{ display: "flex", flexDirection: "column", gap: "24px" }}>

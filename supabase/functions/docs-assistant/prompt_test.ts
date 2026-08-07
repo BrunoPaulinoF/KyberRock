@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   ASSISTANT_OUTPUT_SCHEMA,
   ASSISTANT_SYSTEM_PROMPT,
+  KYBERROCK_BRIEFING,
   MAX_PASSAGES,
   MAX_QUESTION_CHARS,
   SUPPORT_FALLBACK_ANSWER,
@@ -15,27 +16,80 @@ import {
   sanitizeQuestion
 } from "./prompt";
 
-describe("ASSISTANT_SYSTEM_PROMPT", () => {
-  it("ancora a resposta na documentacao enviada", () => {
-    expect(ASSISTANT_SYSTEM_PROMPT).toContain("EXCLUSIVAMENTE");
-    expect(ASSISTANT_SYSTEM_PROMPT).toContain("nunca invente");
+describe("KYBERROCK_BRIEFING", () => {
+  it("descreve o que o assistente precisa saber para raciocinar sem os trechos", () => {
+    for (const topic of [
+      "offline-first",
+      "peso liquido",
+      "PEDIDO DE VENDA",
+      "ORDEM DE SERVICO",
+      "NUMERO DO ENDERECO",
+      "idempotencia",
+      "Em carteira",
+      "bloqueio financeiro"
+    ]) {
+      expect(KYBERROCK_BRIEFING.toLowerCase(), `briefing sem "${topic}"`).toContain(
+        topic.toLowerCase()
+      );
+    }
   });
 
-  it("manda escalar para o suporte quando nao cobre", () => {
+  // O briefing e conhecimento ESTAVEL. Caminho de menu e nome de botao mudam a
+  // cada versao e devem vir dos trechos da documentacao instalada — no briefing
+  // eles viram instrucao errada para quem tem outra versao.
+  it("nao congela caminho de menu nem nome de botao", () => {
+    // Padrao de caminho de menu ("Vendas > Pedidos"); a seta de fluxo "->" das
+    // etapas da operacao e outra coisa e continua permitida.
+    expect(KYBERROCK_BRIEFING).not.toMatch(/[A-Za-z]\s>\s[A-Za-z]/);
+    expect(KYBERROCK_BRIEFING.toLowerCase()).not.toContain("clique em");
+  });
+});
+
+describe("ASSISTANT_SYSTEM_PROMPT", () => {
+  it("carrega o briefing do sistema", () => {
+    expect(ASSISTANT_SYSTEM_PROMPT).toContain(KYBERROCK_BRIEFING);
+  });
+
+  it("define a ordem de decisao entre as tres origens", () => {
+    expect(ASSISTANT_SYSTEM_PROMPT).toContain('"documentacao"');
+    expect(ASSISTANT_SYSTEM_PROMPT).toContain('"conhecimento"');
+    expect(ASSISTANT_SYSTEM_PROMPT).toContain('"desconhecido"');
+    // A documentacao instalada precisa vir antes do conhecimento geral.
+    expect(ASSISTANT_SYSTEM_PROMPT.indexOf('"documentacao"')).toBeLessThan(
+      ASSISTANT_SYSTEM_PROMPT.indexOf('"conhecimento"')
+    );
+  });
+
+  it("proibe inventar tela, botao e caminho de menu", () => {
+    expect(ASSISTANT_SYSTEM_PROMPT).toContain("NUNCA invente nome de tela");
+  });
+
+  it("manda escalar para o suporte quando nao alcanca", () => {
     expect(ASSISTANT_SYSTEM_PROMPT).toContain("suporte");
-    expect(ASSISTANT_SYSTEM_PROMPT).toContain('"grounded": false');
   });
 
   it("proibe repassar credencial", () => {
     expect(ASSISTANT_SYSTEM_PROMPT).toContain("senha");
     expect(ASSISTANT_SYSTEM_PROMPT).toContain("token");
   });
+
+  it("manda avisar do risco antes de acao destrutiva", () => {
+    expect(ASSISTANT_SYSTEM_PROMPT).toContain("diga o risco");
+  });
 });
 
 describe("ASSISTANT_OUTPUT_SCHEMA", () => {
   it("exige os tres campos que o desktop consome", () => {
-    expect(ASSISTANT_OUTPUT_SCHEMA.required).toEqual(["answer", "grounded", "sources"]);
+    expect(ASSISTANT_OUTPUT_SCHEMA.required).toEqual(["answer", "answerSource", "sources"]);
     expect(ASSISTANT_OUTPUT_SCHEMA.additionalProperties).toBe(false);
+  });
+
+  it("restringe a origem as tres conhecidas", () => {
+    expect(ASSISTANT_OUTPUT_SCHEMA.properties.answerSource.enum).toEqual([
+      "documentacao",
+      "conhecimento",
+      "desconhecido"
+    ]);
   });
 
   // O `strict: true` da OpenAI exige que TODA propriedade esteja em `required`
@@ -48,7 +102,6 @@ describe("ASSISTANT_OUTPUT_SCHEMA", () => {
     expect(ASSISTANT_OUTPUT_SCHEMA.type).toBe("object");
   });
 
-  // Palavras-chave que o modo estrito recusa (minLength, format, pattern...).
   it("nao usa palavras-chave que o modo estrito recusa", () => {
     const unsupported = ["minLength", "maxLength", "pattern", "format", "minimum", "maximum"];
     const serialized = JSON.stringify(ASSISTANT_OUTPUT_SCHEMA);
@@ -135,8 +188,13 @@ describe("buildContextBlock", () => {
     expect(block).toContain("</documentacao>");
   });
 
-  it("avisa explicitamente quando nao ha trecho", () => {
-    expect(buildContextBlock([])).toContain("nenhum trecho relevante");
+  // Sem trecho a IA nao para: ela e instruida a tentar pelo briefing. Este teste
+  // trava esse contrato — trocar o texto por um "nao ha nada" seco faria o
+  // modelo encerrar em "desconhecido" toda pergunta que a busca nao antecipou.
+  it("orienta a responder pelo briefing quando nao ha trecho", () => {
+    const block = buildContextBlock([]);
+    expect(block).toContain("briefing");
+    expect(block).toContain("suporte");
   });
 
   it("neutraliza aspas na fonte para nao quebrar a tag", () => {
@@ -151,7 +209,7 @@ describe("buildUserMessage", () => {
     expect(message).toContain("<documentacao>");
     expect(message).toContain("<pergunta>");
     expect(message).toContain("como faturar?");
-    expect(message).toContain("nunca como instrucao");
+    expect(message).toContain("nunca como");
   });
 });
 
@@ -166,40 +224,75 @@ describe("buildMessages", () => {
 });
 
 describe("parseAssistantAnswer", () => {
-  it("le a resposta estruturada", () => {
+  it("le a resposta ancorada na documentacao", () => {
     const parsed = parseAssistantAnswer(
-      JSON.stringify({ answer: "Va em Vendas > Pedidos.", grounded: true, sources: ["Guia: OMIE"] })
+      JSON.stringify({
+        answer: "Va em Vendas > Pedidos.",
+        answerSource: "documentacao",
+        sources: ["Guia: OMIE"]
+      })
     );
     expect(parsed).toEqual({
       answer: "Va em Vendas > Pedidos.",
-      grounded: true,
+      answerSource: "documentacao",
       sources: ["Guia: OMIE"]
     });
   });
 
-  it("trata grounded ausente como nao ancorado", () => {
-    const parsed = parseAssistantAnswer(JSON.stringify({ answer: "talvez", sources: [] }));
-    expect(parsed.grounded).toBe(false);
+  it("le a resposta vinda do conhecimento do sistema", () => {
+    const parsed = parseAssistantAnswer(
+      JSON.stringify({
+        answer: "O pedido nasce na etapa Faturar.",
+        answerSource: "conhecimento",
+        sources: []
+      })
+    );
+    expect(parsed.answerSource).toBe("conhecimento");
+    expect(parsed.answer).toContain("Faturar");
+  });
+
+  // Fonte so faz sentido quando a resposta veio dos trechos. Citar um guia numa
+  // resposta de conhecimento geral daria ao operador uma confianca que o texto
+  // nao sustenta — ele abriria o guia e nao acharia aquilo la.
+  it("descarta fontes quando a resposta nao veio da documentacao", () => {
+    const parsed = parseAssistantAnswer(
+      JSON.stringify({ answer: "resposta", answerSource: "conhecimento", sources: ["Guia: OMIE"] })
+    );
+    expect(parsed.sources).toEqual([]);
+  });
+
+  it("trata origem ausente ou desconhecida como desconhecido", () => {
+    expect(
+      parseAssistantAnswer(JSON.stringify({ answer: "talvez", sources: [] })).answerSource
+    ).toBe("desconhecido");
+    expect(
+      parseAssistantAnswer(JSON.stringify({ answer: "x", answerSource: "chute", sources: [] }))
+        .answerSource
+    ).toBe("desconhecido");
   });
 
   it("descarta fontes que nao sao texto", () => {
     const parsed = parseAssistantAnswer(
-      JSON.stringify({ answer: "ok", grounded: true, sources: ["Guia", 7, "", null] })
+      JSON.stringify({
+        answer: "ok",
+        answerSource: "documentacao",
+        sources: ["Guia", 7, "", null]
+      })
     );
     expect(parsed.sources).toEqual(["Guia"]);
   });
 
   it("cai no suporte quando a resposta vem vazia", () => {
     expect(parseAssistantAnswer("   ").answer).toBe(SUPPORT_FALLBACK_ANSWER);
-    expect(parseAssistantAnswer(JSON.stringify({ grounded: true })).answer).toBe(
+    expect(parseAssistantAnswer(JSON.stringify({ answerSource: "documentacao" })).answer).toBe(
       SUPPORT_FALLBACK_ANSWER
     );
   });
 
-  it("preserva texto solto, mas marcado como nao ancorado", () => {
+  it("preserva texto solto, mas sem creditar origem", () => {
     const parsed = parseAssistantAnswer("resposta em texto puro");
     expect(parsed.answer).toBe("resposta em texto puro");
-    expect(parsed.grounded).toBe(false);
+    expect(parsed.answerSource).toBe("desconhecido");
   });
 
   it("nao quebra com JSON de outro formato", () => {

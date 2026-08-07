@@ -3,17 +3,21 @@ import { answerFromDocumentation, retrieveDocumentationPassages } from "./docume
 // ---------------------------------------------------------------------------
 // Regras do assistente, separadas da tela para poderem ser testadas.
 //
-// O assistente tem dois niveis, nesta ordem de preferencia:
+// Quem responde e a IA. Ela recebe a pergunta e os trechos que a busca local
+// encontrou na documentacao instalada, e responde declarando DE ONDE tirou a
+// resposta:
 //
-//   1. NUVEM — a IA reescreve, em linguagem natural, a resposta a partir dos
-//      trechos da documentacao que este computador enviou. Ancorada por
-//      construcao: ela so ve os trechos.
-//   2. LOCAL — a propria documentacao instalada, recuperada aqui. E o piso:
-//      funciona sem internet, que e exatamente quando o operador mais precisa
-//      de ajuda.
+//   documentacao — os trechos cobriram; as fontes viram links para os guias.
+//   conhecimento — os trechos nao cobriram, mas a IA sabe como o KyberRock e a
+//                  integracao com o OMIE funcionam (briefing no prompt) e
+//                  responde a partir dai, avisando que nao esta na documentacao.
+//   desconhecido — nem uma coisa nem outra: encaminha ao suporte.
 //
-// Em qualquer nivel, o que nao esta na documentacao vira "fale com o suporte".
-// Nao existe caminho em que o assistente responda de cabeca.
+// A busca local nao e mais um portao: mesmo sem nenhum trecho a IA e chamada,
+// porque a pergunta que a documentacao nao antecipou e justamente onde ela
+// agrega. A resposta montada so com o texto local ficou como PISO — o que
+// aparece quando nao ha internet ou a nuvem nao responde, que e quando o
+// operador mais precisa de ajuda.
 // ---------------------------------------------------------------------------
 
 export interface AssistantSource {
@@ -22,14 +26,16 @@ export interface AssistantSource {
 }
 
 export type AssistantOrigin = "cloud" | "local";
+export type AssistantAnswerSource = "documentacao" | "conhecimento" | "desconhecido";
 
 export interface AssistantReply {
   answer: string;
-  /** `false` = a documentacao nao cobre; a tela oferece o caminho do suporte. */
-  grounded: boolean;
+  /** De onde a resposta saiu — governa fontes, aviso e botao de suporte na tela. */
+  answerSource: AssistantAnswerSource;
   sources: AssistantSource[];
+  /** `cloud` = respondido pela IA; `local` = montado com a documentacao instalada. */
   origin: AssistantOrigin;
-  /** `true` quando a nuvem nao respondeu e a resposta veio da documentacao local. */
+  /** `true` quando a IA nao respondeu e a documentacao local cobriu o lugar dela. */
   offlineFallback: boolean;
 }
 
@@ -46,7 +52,7 @@ export interface DocsAssistantBridge {
   }) => Promise<{
     available: boolean;
     answer: string;
-    grounded: boolean;
+    answerSource: string;
     sources: string[];
     reason?: string;
   }>;
@@ -55,18 +61,22 @@ export interface DocsAssistantBridge {
 /** Quantos turnos anteriores viajam junto. Curto de proposito: duvida de balanca e pontual. */
 export const ASSISTANT_HISTORY_TURNS = 6;
 
+/** Quantos trechos da documentacao acompanham a pergunta. */
+export const ASSISTANT_PASSAGE_LIMIT = 6;
+
 export const ASSISTANT_GREETING =
-  "Ola! Sou o assistente da documentacao do KyberRock. Pergunte com suas palavras — " +
-  'por exemplo "como emito a nota fiscal?" ou "a balanca nao conecta". Respondo com base ' +
-  "na documentacao deste sistema e, quando ela nao cobrir, te oriento a falar com o suporte.";
+  "Ola! Sou o assistente do KyberRock. Pergunte com suas palavras — por exemplo " +
+  '"como emito a nota fiscal?" ou "a balanca nao conecta". Respondo com base na documentacao ' +
+  "deste sistema e no funcionamento dele com o OMIE; o que eu nao souber, te oriento a falar " +
+  "com o suporte.";
 
 /**
- * Encerramento acrescentado quando a IA responde so em parte. Curto e
+ * Encerramento acrescentado quando a resposta nao veio da documentacao. Curto e
  * complementar de proposito: o texto longo de "nao encontrei" contradiria a
- * parte que ela conseguiu responder.
+ * parte que a IA conseguiu responder.
  */
 export const SUPPORT_ESCALATION_NOTE =
-  "Para o que ficou de fora, fale diretamente com o suporte — a aba Suporte aqui da documentacao " +
+  "Se isso nao resolver, fale diretamente com o suporte — a aba Suporte aqui da documentacao " +
   "tem o modelo de chamado pronto para copiar.";
 
 export const ASSISTANT_SUGGESTIONS = [
@@ -77,6 +87,10 @@ export const ASSISTANT_SUGGESTIONS = [
   "Estou sem internet, posso operar?",
   "Como fecho a carteira de um cliente?"
 ];
+
+function toAnswerSource(value: unknown): AssistantAnswerSource {
+  return value === "documentacao" || value === "conhecimento" ? value : "desconhecido";
+}
 
 /**
  * Casa o rotulo da fonte devolvido pela IA ("Guia: Faturar e emitir a nota no
@@ -112,16 +126,14 @@ export function buildAssistantHistory(turns: AssistantTurn[]): AssistantTurn[] {
 }
 
 /**
- * Garante que uma resposta nao ancorada sempre termine mandando falar com o
- * suporte — mesmo quando a IA respondeu parte da pergunta. A parte util fica;
- * so nao pode terminar como se fosse resposta completa.
+ * Garante que uma resposta fora da documentacao sempre termine oferecendo o
+ * suporte — inclusive quando a IA respondeu bem pelo conhecimento do sistema.
+ * A parte util fica; ela so nao pode terminar como se fosse palavra final.
  */
-export function withSupportEscalation(answer: string, grounded: boolean): string {
-  if (grounded) return answer;
-  const normalized = answer.toLowerCase();
-  // A propria funcao na nuvem ja pode ter devolvido o texto completo de
-  // escalonamento; nesse caso repetir soaria como erro.
-  if (normalized.includes("suporte")) return answer;
+export function withSupportEscalation(answer: string, answerSource: AssistantAnswerSource): string {
+  if (answerSource === "documentacao") return answer;
+  // A propria resposta ja pode ter oferecido o suporte; repetir soaria como erro.
+  if (answer.toLowerCase().includes("suporte")) return answer;
   return `${answer}\n\n${SUPPORT_ESCALATION_NOTE}`;
 }
 
@@ -135,47 +147,39 @@ export async function askAssistant(
   history: AssistantTurn[],
   bridge: DocsAssistantBridge | null
 ): Promise<AssistantReply> {
-  const local = answerFromDocumentation(question);
-  const passages = retrieveDocumentationPassages(question, 6);
+  const passages = retrieveDocumentationPassages(question, ASSISTANT_PASSAGE_LIMIT);
 
-  if (!bridge || passages.length === 0) {
-    // Sem ponte com a nuvem, ou sem nada na documentacao para embasar a
-    // resposta: nao ha o que a IA possa fazer melhor do que o texto local.
-    return {
-      answer: local.answer,
-      grounded: local.grounded,
-      sources: local.sources,
-      origin: "local",
-      offlineFallback: false
-    };
-  }
+  if (bridge) {
+    try {
+      const response = await bridge.docsAssistantAsk({
+        question,
+        passages: passages.map((passage) => ({ source: passage.source, text: passage.text })),
+        history: buildAssistantHistory(history)
+      });
 
-  try {
-    const response = await bridge.docsAssistantAsk({
-      question,
-      passages: passages.map((passage) => ({ source: passage.source, text: passage.text })),
-      history: buildAssistantHistory(history)
-    });
-
-    if (response?.available && typeof response.answer === "string" && response.answer.trim()) {
-      const grounded = response.grounded === true;
-      return {
-        answer: withSupportEscalation(response.answer.trim(), grounded),
-        grounded,
-        sources: grounded ? matchSources(response.sources ?? [], passages) : [],
-        origin: "cloud",
-        offlineFallback: false
-      };
+      if (response?.available && typeof response.answer === "string" && response.answer.trim()) {
+        const answerSource = toAnswerSource(response.answerSource);
+        return {
+          answer: withSupportEscalation(response.answer.trim(), answerSource),
+          answerSource,
+          sources:
+            answerSource === "documentacao" ? matchSources(response.sources ?? [], passages) : [],
+          origin: "cloud",
+          offlineFallback: false
+        };
+      }
+    } catch {
+      // Cai para o local logo abaixo.
     }
-  } catch {
-    // Cai para o local logo abaixo.
   }
 
+  const local = answerFromDocumentation(question);
   return {
     answer: local.answer,
-    grounded: local.grounded,
+    answerSource: local.grounded ? "documentacao" : "desconhecido",
     sources: local.sources,
     origin: "local",
-    offlineFallback: true
+    // Sem ponte (fora do Electron) nao houve nuvem a perder; com ponte, houve.
+    offlineFallback: bridge !== null
   };
 }
