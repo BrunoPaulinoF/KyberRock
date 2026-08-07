@@ -606,6 +606,23 @@ function getRequiredPrintReceipt(
  * (valor na nota x valor so no sistema); o `showOnReceipt` do `freight_json` cobre as
  * operacoes gravadas antes das quatro situacoes existirem.
  */
+/**
+ * Observacao do frete gravada na entrada (`freight_json.destination`, o campo
+ * "Destino/obs."). Frete corrompido nao pode derrubar a impressao: sem observacao, o
+ * cupom sai como sempre saiu.
+ */
+function readFreightNote(freightJson: string | null): string | null {
+  if (!freightJson) return null;
+  try {
+    const parsed = JSON.parse(freightJson) as { destination?: unknown };
+    return typeof parsed.destination === "string" && parsed.destination.trim()
+      ? parsed.destination.trim()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function readFreightShowOnReceipt(freightJson: string | null, freightType: string | null): boolean {
   if (freightType) return freightValueGoesToInvoice(freightType);
   if (!freightJson) return true;
@@ -754,6 +771,7 @@ function buildReceiptSnapshot(
     productTotalCents: operation.product_total_cents ?? 0,
     freightTotalCents: operation.freight_total_cents,
     showFreightValue: readFreightShowOnReceipt(operation.freight_json, operation.freight_type),
+    freightNote: readFreightNote(operation.freight_json),
     totalCents: operation.total_cents ?? 0
   };
   const document = buildReceiptDocument(templateInput, templateConfig);

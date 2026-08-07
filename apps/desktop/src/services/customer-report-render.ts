@@ -24,7 +24,8 @@ import type {
  *   nativamente sem exigir dependencia nova.
  *
  * A versao `simplified` traz os dados principais (cabecalho, KPIs, produtos com os dias
- * em que foram carregados, materiais por dia, placas e evolucao mensal). A `complete`
+ * em que foram carregados, materiais por dia, placas com as viagens de cada motorista e
+ * evolucao mensal). A `complete`
  * acrescenta transporte, pagamentos, evolucao diaria, a lista operacao a operacao e as
  * canceladas.
  */
@@ -222,6 +223,19 @@ export function renderCustomerReportHtml(
         report.byPlate.map((row) => plateCells(row)),
         null,
         "Sem placas no periodo."
+      )
+    )
+  );
+
+  sections.push(
+    section(
+      "Viagens por placa e motorista",
+      table(
+        TRIP_HEADERS,
+        report.tripsByPlate.map((operation) => tripCells(operation)),
+        null,
+        "Sem viagens no periodo.",
+        "detail"
       )
     )
   );
@@ -512,7 +526,8 @@ export function renderCustomerReportSpreadsheet(
         formatMonthLabel(row.period),
         num(row.installments),
         formatBRL(row.amountCents)
-      ])
+      ]),
+      ["TOTAL", num(dues.installments), formatBRL(dues.amountCents)]
     )
   );
 
@@ -535,11 +550,25 @@ export function renderCustomerReportSpreadsheet(
     )
   );
 
+  // As mesmas linhas de TOTAL do PDF: quem abre a planilha nao precisa somar a mao para
+  // conferir se o bloco fecha com o resumo la de cima.
+  const productTotalCells = [
+    "TOTAL",
+    "",
+    num(totals.operations),
+    formatDatesSummary(report.byDay.map((row) => row.period)),
+    num(totals.netWeightKg),
+    formatBRL(totals.productCents),
+    `${formatBRL(totals.avgPriceCentsPerTon)}/t`,
+    formatBRL(totals.totalCents)
+  ];
+
   blocks.push(
     sheetTable(
       "Produtos",
       PRODUCT_HEADERS,
-      report.byProduct.map((row) => productCells(row))
+      report.byProduct.map((row) => productCells(row)),
+      productTotalCells
     )
   );
 
@@ -547,7 +576,16 @@ export function renderCustomerReportSpreadsheet(
     sheetTable(
       "Materiais por dia",
       PRODUCT_DAY_HEADERS,
-      report.byProductDay.map((row) => productDayCells(row))
+      report.byProductDay.map((row) => productDayCells(row)),
+      [
+        "TOTAL",
+        "",
+        num(totals.operations),
+        num(totals.netWeightKg),
+        formatBRL(totals.productCents),
+        `${formatBRL(totals.avgPriceCentsPerTon)}/t`,
+        formatBRL(totals.totalCents)
+      ]
     )
   );
 
@@ -561,9 +599,25 @@ export function renderCustomerReportSpreadsheet(
 
   blocks.push(
     sheetTable(
+      "Viagens por placa",
+      TRIP_HEADERS,
+      report.tripsByPlate.map((operation) => tripCells(operation))
+    )
+  );
+
+  blocks.push(
+    sheetTable(
       "Compras por mes",
       ["Mes", "Carregamentos", "Peso (kg)", "Produto", "Frete", "Total"],
-      report.byMonth.map((row) => periodCells(row, formatMonthLabel))
+      report.byMonth.map((row) => periodCells(row, formatMonthLabel)),
+      [
+        "TOTAL",
+        num(totals.operations),
+        num(totals.netWeightKg),
+        formatBRL(totals.productCents),
+        formatBRL(totals.freightCents),
+        formatBRL(totals.totalCents)
+      ]
     )
   );
 
@@ -648,19 +702,23 @@ export function renderCustomerReportSpreadsheet(
     );
   }
 
+  const subtitle = [
+    customer.document,
+    `${formatDayLabel(report.startDate)} a ${formatDayLabel(report.endDate)}`,
+    report.periodLabel,
+    VARIANT_LABEL[variant],
+    `Gerado em ${generatedAt.toLocaleString("pt-BR")}`
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8" /><title>${escapeHtml(
     `Relatorio do cliente - ${customer.tradeName || customer.legalName}`
-  )}</title><style>
-body{font-family:Arial,Helvetica,sans-serif;font-size:12px}
-h2{font-size:13px;margin:18px 0 4px}
-table{border-collapse:collapse}
-th,td{border:1px solid #94a3b8;padding:4px 6px;text-align:left;mso-number-format:"\\@"}
-th{background:#e2e8f0;font-weight:bold}
-</style></head><body>
-<h1>Relatorio do cliente - ${escapeHtml(customer.tradeName || customer.legalName)} (${escapeHtml(
-    VARIANT_LABEL[variant]
-  )})</h1>
+  )}</title><style>${SPREADSHEET_STYLE}</style></head><body>
+<h1>${escapeHtml(customer.tradeName || customer.legalName)}</h1>
+<p class="sub">${escapeHtml(subtitle)}</p>
 ${blocks.join("\n")}
+<p class="note">${escapeHtml(INSTALLMENT_NOTE)}</p>
 </body></html>`;
 }
 
@@ -723,6 +781,39 @@ function productDayCells(row: CustomerReportProductDayRow): string[] {
     formatBRL(row.productCents),
     `${formatBRL(row.avgPriceCentsPerTon)}/t`,
     formatBRL(row.totalCents)
+  ];
+}
+
+/**
+ * Colunas de uma viagem na lista por placa/motorista. A placa e o motorista se repetem em
+ * cada linha de proposito: a tabela continua legivel sem o cabecalho do grupo por perto e
+ * a planilha pode ser filtrada por qualquer uma das duas.
+ */
+const TRIP_HEADERS = [
+  "Placa",
+  "Motorista",
+  "Data",
+  "Produto",
+  "Peso (kg)",
+  "Preco/t",
+  "Produto (R$)",
+  "Frete (R$)",
+  "Total (R$)",
+  "Tempo"
+];
+
+function tripCells(operation: CustomerReportOperation): string[] {
+  return [
+    operation.plate,
+    operation.driverName,
+    formatDayLabel(operation.date),
+    operation.productDescription,
+    num(operation.netWeightKg),
+    operation.unitPriceCents === null ? "-" : formatBRL(operation.unitPriceCents),
+    formatBRL(operation.productTotalCents),
+    formatBRL(operation.freightTotalCents),
+    formatBRL(operation.totalCents),
+    operation.minutesInside === null ? "-" : formatMinutes(operation.minutesInside)
   ];
 }
 
@@ -964,22 +1055,36 @@ export function renderCustomersOverviewSpreadsheet(
         ["Gerado em", generatedAt.toLocaleString("pt-BR")]
       ]
     ),
-    sheetTable("Clientes no periodo", OVERVIEW_HEADERS, [
-      ...overview.customers.map(overviewRowCells),
-      ...(overview.customers.length > 0 ? [overviewFooterCells(overview)] : [])
-    ]),
-    sheetTable("Materiais por cliente", OVERVIEW_PRODUCT_HEADERS, [
-      ...productRows,
-      ...(productRows.length > 0 ? [overviewProductFooterCells(overview)] : [])
-    ]),
-    `<p>${escapeHtml(INSTALLMENT_NOTE)}</p>`
+    sheetTable(
+      "Clientes no periodo",
+      OVERVIEW_HEADERS,
+      overview.customers.map(overviewRowCells),
+      overviewFooterCells(overview)
+    ),
+    sheetTable(
+      "Materiais por cliente",
+      OVERVIEW_PRODUCT_HEADERS,
+      productRows,
+      overviewProductFooterCells(overview)
+    )
   ];
+
+  const subtitle = [
+    `${formatDayLabel(overview.startDate)} a ${formatDayLabel(overview.endDate)}`,
+    overview.periodLabel,
+    `${num(overview.customers.length)} cliente(s) com movimento`,
+    `Gerado em ${generatedAt.toLocaleString("pt-BR")}`
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8" /><title>${escapeHtml(
     "Relatorio de clientes no periodo"
-  )}</title></head><body>
+  )}</title><style>${SPREADSHEET_STYLE}</style></head><body>
 <h1>Relatorio por cliente - todos os clientes</h1>
+<p class="sub">${escapeHtml(subtitle)}</p>
 ${blocks.join("\n")}
+<p class="note">${escapeHtml(INSTALLMENT_NOTE)}</p>
 </body></html>`;
 }
 
@@ -1022,15 +1127,104 @@ function table(
   return `<table${className ? ` class="${className}"` : ""}><thead><tr>${head}</tr></thead><tbody>${body}</tbody>${foot}</table>`;
 }
 
-function sheetTable(title: string, headers: string[], rows: string[][]): string {
+/**
+ * Estilo das planilhas. O arquivo e HTML de tabelas gravado com extensao `.xls`, entao
+ * quem le este CSS e o importador do Excel: ele entende seletor de elemento e de CLASSE,
+ * mas nao seletor estrutural — por isso a faixa zebrada e a linha de total vem marcadas
+ * linha a linha, e nao com `:nth-child`.
+ */
+const SPREADSHEET_STYLE = `
+body{font-family:Calibri,Arial,Helvetica,sans-serif;font-size:11pt;color:#0f172a;margin:14px}
+h1{font-size:16pt;margin:0;color:#1d4ed8}
+p.sub{margin:2px 0 0;font-size:10pt;color:#475569}
+p.note{margin:10px 0 0;font-size:9pt;color:#64748b;font-style:italic}
+h2{font-size:12pt;margin:20px 0 4px;color:#1d4ed8;border-bottom:2px solid #1d4ed8;padding-bottom:2px}
+table{border-collapse:collapse;margin:0 0 4px}
+th{background:#1d4ed8;color:#ffffff;font-weight:bold;border:1px solid #1e40af;padding:5px 8px;text-align:left}
+td{border:1px solid #cbd5e1;padding:4px 8px;mso-number-format:"\\@";vertical-align:top}
+tr.alt td{background:#f1f5f9}
+th.num,td.num{text-align:right}
+tr.total td{font-weight:bold;background:#dbeafe;border-top:2px solid #1d4ed8}
+`;
+
+/**
+ * Celulas que valem como numero para efeito de ALINHAMENTO (o conteudo continua texto,
+ * senao o Excel comeria o zero a esquerda de um codigo e transformaria CNPJ em notacao
+ * cientifica): valor, peso, contagem, preco por tonelada, parcela "1/3", duracao, data
+ * e mes. Um texto solto na coluna ja a desqualifica — meia coluna alinhada a direita e
+ * pior que uma inteira a esquerda.
+ */
+const NUMERIC_SHEET_CELL = /^-?(r\$\s*)?[\d.,]+(\s*(kg|t|%|\/t|min|h)|\/\d+)?$/i;
+const DURATION_SHEET_CELL = /^\d+h\s*\d{1,2}min$/i;
+const DAY_SHEET_CELL = /^\d{2}\/\d{2}\/\d{4}$/;
+const MONTH_SHEET_CELL = /^\d{2}\/\d{4}$/;
+
+function isNumericSheetColumn(rows: string[][], index: number): boolean {
+  let hasValue = false;
+  for (const row of rows) {
+    const cell = (row[index] ?? "").trim();
+    if (!cell || cell === "-") continue;
+    if (
+      !NUMERIC_SHEET_CELL.test(cell) &&
+      !DURATION_SHEET_CELL.test(cell) &&
+      !DAY_SHEET_CELL.test(cell) &&
+      !MONTH_SHEET_CELL.test(cell)
+    ) {
+      return false;
+    }
+    hasValue = true;
+  }
+  return hasValue;
+}
+
+/**
+ * Largura da coluna estimada pelo conteudo mais longo. O Excel nao ajusta as colunas de
+ * um HTML importado sozinho: sem isto a planilha abre com "#####" nos valores e nomes
+ * cortados, que e exatamente o que se quer evitar.
+ */
+function sheetColumnWidth(header: string, rows: string[][], index: number): number {
+  let longest = header.length;
+  for (const row of rows) {
+    longest = Math.max(longest, (row[index] ?? "").length);
+  }
+  return Math.min(Math.max(longest * 8 + 22, 72), 360);
+}
+
+function sheetTable(
+  title: string,
+  headers: string[],
+  rows: string[][],
+  footer: string[] | null = null
+): string {
+  // A primeira coluna e sempre o rotulo da linha (mes, placa, produto, cliente) e fica a
+  // esquerda mesmo quando so tem data ou numero — e por onde se le a tabela.
+  const numeric = headers.map((_header, index) => index > 0 && isNumericSheetColumn(rows, index));
+  const cellClass = (index: number) => (numeric[index] ? ' class="num"' : "");
+  const head = headers
+    .map(
+      (header, index) =>
+        `<th${cellClass(index)} style="width:${sheetColumnWidth(header, rows, index)}px">${escapeHtml(header)}</th>`
+    )
+    .join("");
   const body = rows.length
     ? rows
-        .map((cells) => `<tr>${cells.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`)
+        .map(
+          (cells, rowIndex) =>
+            `<tr${rowIndex % 2 === 1 ? ' class="alt"' : ""}>${cells
+              .map((cell, index) => `<td${cellClass(index)}>${escapeHtml(cell)}</td>`)
+              .join("")}</tr>`
+        )
         .join("")
     : `<tr><td colspan="${headers.length}">Sem dados no periodo.</td></tr>`;
-  return `<h2>${escapeHtml(title)}</h2><table><thead><tr>${headers
-    .map((header) => `<th>${escapeHtml(header)}</th>`)
-    .join("")}</tr></thead><tbody>${body}</tbody></table>`;
+  // O total fica dentro do `tbody`: `tfoot` importado do HTML nem sempre chega no fim da
+  // planilha, e uma linha de total no meio da tabela seria pior que nao ter.
+  const foot =
+    footer && rows.length
+      ? `<tr class="total">${footer
+          .map((cell, index) => `<td${cellClass(index)}>${escapeHtml(cell)}</td>`)
+          .join("")}</tr>`
+      : "";
+  return `<h2>${escapeHtml(title)}</h2><table><thead><tr>${head}</tr></thead><tbody>${body}${foot}</tbody></table>`;
 }
 
 function num(value: number): string {

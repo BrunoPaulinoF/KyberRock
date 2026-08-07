@@ -459,6 +459,66 @@ describe("CustomerReportService.getCustomerReport", () => {
     }
   });
 
+  it("lines up the trips of each plate and driver in sequence", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      seedCustomerOperations(db);
+      db.prepare(
+        `INSERT INTO drivers (id, company_id, name, created_at, updated_at)
+         VALUES ('drv-2', 'comp-1', 'Ana Motorista', datetime('now'), datetime('now'))`
+      ).run();
+      // Mesma placa da op-1/op-3 (ABC1D23), outro motorista: as viagens de cada um saem
+      // juntas, sem intercalar pela data.
+      insertOperations(db, [
+        {
+          id: "op-8",
+          customer: "cust-1",
+          product: "prod-2",
+          vehicle: "veh-1",
+          net: 8000,
+          productCents: 400000,
+          freightCents: 0,
+          totalCents: 400000,
+          entry: "2026-06-20 08:00:00",
+          exit: "2026-06-20 08:20:00"
+        }
+      ]);
+      db.prepare("UPDATE weighing_operations SET driver_id = 'drv-2' WHERE id = 'op-8'").run();
+
+      const report = new CustomerReportService(db).getCustomerReport(
+        "cust-1",
+        "2026-01-01",
+        "2026-12-31",
+        "unit-1"
+      );
+
+      // ABC1D23 carregou mais que XYZ4E56, entao vem primeiro; dentro da placa, cada
+      // motorista com as suas viagens da mais antiga para a mais nova.
+      expect(
+        report.tripsByPlate.map((operation) => [
+          operation.plate,
+          operation.driverName,
+          operation.date,
+          operation.productDescription
+        ])
+      ).toEqual([
+        ["ABC1D23", "Ana Motorista", "2026-06-20", "Brita 1"],
+        ["ABC1D23", "Joao Motorista", "2026-06-06", "Brita 0"],
+        ["ABC1D23", "Joao Motorista", "2026-07-02", "Brita 0"],
+        ["XYZ4E56", "Joao Motorista", "2026-06-07", "Brita 1"]
+      ]);
+      // Mesma lista de operacoes do relatorio, so que em outra ordem: nada some nem sobra.
+      expect(report.tripsByPlate.map((operation) => operation.id).sort()).toEqual(
+        report.operations.map((operation) => operation.id).sort()
+      );
+      // A cancelada de 08/06 nao e viagem.
+      expect(report.tripsByPlate.some((operation) => operation.id === "op-4")).toBe(false);
+    } finally {
+      db.close();
+    }
+  });
+
   it("reads the customer registration data and the freight details of each operation", () => {
     const db = createDatabase();
     try {
@@ -603,6 +663,8 @@ describe("customer report rendering", () => {
       expect(html).toContain("Produtos comprados");
       expect(html).toContain("Materiais por dia");
       expect(html).toContain("Placas");
+      expect(html).toContain("Viagens por placa e motorista");
+      expect(html).toContain("Joao Motorista");
       expect(html).toContain("Compras por mes");
       expect(html).toContain("ABC1D23");
       // O dia de cada material sai no simplificado, nao so no completo.
@@ -631,9 +693,10 @@ describe("customer report rendering", () => {
       const html = renderCustomerReportHtml(report, "complete", new Date("2026-07-15T12:00:00Z"));
 
       expect(html).toContain("Completo");
-      // Os materiais com os dias saem nos dois modelos, nao so no simplificado.
+      // Os materiais com os dias e as viagens por placa saem nos dois modelos.
       expect(html).toContain("Materiais por dia");
       expect(html).toContain("Datas");
+      expect(html).toContain("Viagens por placa e motorista");
       expect(html).toContain("Transporte por transportadora");
       expect(html).toContain("Tipos de frete");
       expect(html).toContain("Pagamentos por forma");
@@ -666,12 +729,47 @@ describe("customer report rendering", () => {
       expect(simplified).toContain("Produtos");
       expect(simplified).toContain("Materiais por dia");
       expect(simplified).toContain("Placas");
+      expect(simplified).toContain("Viagens por placa");
       expect(simplified).not.toContain("Canceladas");
 
       const complete = renderCustomerReportSpreadsheet(report, "complete");
       expect(complete).toContain("Transporte");
       expect(complete).toContain("Operacoes");
       expect(complete).toContain("Canceladas");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("formats the spreadsheet with a header, banded rows, totals and sized columns", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      seedCustomerOperations(db);
+      const report = new CustomerReportService(db).getCustomerReport(
+        "cust-1",
+        "2026-06-01",
+        "2026-06-30",
+        "unit-1",
+        "Mes atual"
+      );
+
+      const sheet = renderCustomerReportSpreadsheet(report, "simplified");
+
+      // Cabecalho do documento: cliente, periodo e modelo antes da primeira tabela.
+      expect(sheet).toContain("<h1>Alfa</h1>");
+      expect(sheet).toContain("01/06/2026 a 30/06/2026");
+      expect(sheet).toContain("Mes atual");
+      // Faixa zebrada e linha de total marcadas linha a linha (o Excel nao le nth-child).
+      expect(sheet).toContain('<tr class="alt">');
+      expect(sheet).toContain('<tr class="total">');
+      // Colunas com largura: sem isso a planilha abre com valores em "#####".
+      expect(sheet).toMatch(/<th[^>]*style="width:\d+px"/);
+      // Peso e valor alinhados a direita; a primeira coluna, que rotula a linha, nao.
+      expect(sheet).toContain('<td class="num">15.000</td>');
+      expect(sheet).toContain('<td class="num">06/06/2026</td>');
+      expect(sheet).toContain("<td>Brita 0</td>");
+      expect(sheet).toContain("<td>06/2026</td>");
     } finally {
       db.close();
     }

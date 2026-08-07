@@ -41,6 +41,54 @@ describe("buildReceiptLines", () => {
     expect(lines).toContain("VENCTO: 07/06/2026 - VALOR R$ 1.500,00");
   });
 
+  it("prints the freight note written on the entry", () => {
+    const lines = buildReceiptLines({
+      ...baseInput(),
+      freightNote: "Entregar na obra do centro"
+    });
+
+    expect(lines).toContain("OBS.: Entregar na obra do centro");
+  });
+
+  it("prints the freight note even when the freight value stays in the system", () => {
+    // A observacao e recado para quem recebe a carga, nao dinheiro: sai no papel mesmo
+    // na situacao 2 do frete, em que o valor nao entra na nota.
+    const lines = buildReceiptLines({
+      ...baseInput(),
+      freightTotalCents: 25_000,
+      showFreightValue: false,
+      freightNote: "Portao dos fundos",
+      totalCents: 175_000
+    });
+
+    expect(lines.find((line) => line.startsWith("FRETE R$"))).toBeUndefined();
+    expect(lines).toContain("OBS.: Portao dos fundos");
+  });
+
+  it("breaks a long freight note into lines that fit the paper", () => {
+    const lines = buildReceiptLines({
+      ...baseInput(),
+      freightNote:
+        "Entregar no canteiro da rodovia BR-101 km 42, portao dos fundos, procurar o encarregado"
+    });
+
+    const noteIndex = lines.findIndex((line) => line.startsWith("OBS.:"));
+    expect(noteIndex).toBeGreaterThanOrEqual(0);
+    const noteLines = lines.slice(noteIndex, noteIndex + 3);
+    expect(noteLines.length).toBeGreaterThan(1);
+    for (const line of noteLines) {
+      expect(line.length).toBeLessThanOrEqual(48);
+    }
+    expect(noteLines.join(" ")).toContain("procurar o encarregado");
+  });
+
+  it("leaves the note line out when the entry had no observation", () => {
+    expect(buildReceiptLines({ ...baseInput(), freightNote: "   " }).join("\n")).not.toContain(
+      "OBS.:"
+    );
+    expect(buildReceiptLines(baseInput()).join("\n")).not.toContain("OBS.:");
+  });
+
   it("marks reprints as second copy", () => {
     const lines = buildReceiptLines({
       ...baseInput(),

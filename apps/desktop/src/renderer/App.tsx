@@ -6122,6 +6122,9 @@ function WeighingForm({
   // nao pode reverte-la. Zera na troca de cliente/produto e na troca do tipo de frete,
   // quando o padrao do botao volta a valer.
   const freightInvoiceChoiceRef = useRef<boolean | null>(null);
+  // Ultimo cliente que ja teve a observacao de frete puxada nesta entrada: a observacao
+  // e buscada uma vez por cliente, e nao a cada tecla no campo.
+  const lastFreightNoteCustomerRef = useRef("");
   const [driverRefreshKey, setDriverRefreshKey] = useState(0);
   const [customerRefreshKey, setCustomerRefreshKey] = useState(0);
   const [carrierRefreshKey, setCarrierRefreshKey] = useState(0);
@@ -6477,6 +6480,42 @@ function WeighingForm({
       canceled = true;
     };
   }, [desktopApi, form.customerId, form.productId, freightHasValue]);
+
+  // A observacao ("Destino/obs.") da ultima entrada do cliente volta na proxima, seja
+  // qual for o produto ou o tipo de frete — a memoria por (cliente, produto, tipo) acima
+  // so cobre a repeticao exata, e o combinado de entrega do cliente costuma ser o mesmo
+  // em qualquer material. Nunca sobrescreve o que o operador ja digitou nesta entrada:
+  // preenche apenas o campo vazio.
+  useEffect(() => {
+    if (!desktopApi || !form.customerId) {
+      lastFreightNoteCustomerRef.current = "";
+      return;
+    }
+    if (lastFreightNoteCustomerRef.current === form.customerId) return;
+    lastFreightNoteCustomerRef.current = form.customerId;
+
+    const api = desktopApi;
+    const customerId = form.customerId;
+    let canceled = false;
+
+    void (async () => {
+      try {
+        const note = await api.getLastCustomerFreightNote(customerId);
+        if (canceled || !note) return;
+        setForm((prev) =>
+          prev.customerId === customerId && !prev.freightDestination.trim()
+            ? { ...prev, freightDestination: note }
+            : prev
+        );
+      } catch {
+        // Conveniencia: sem a observacao anterior a entrada segue normalmente.
+      }
+    })();
+
+    return () => {
+      canceled = true;
+    };
+  }, [desktopApi, form.customerId]);
 
   return (
     <section style={styles.entryShell}>
@@ -6947,7 +6986,8 @@ function WeighingForm({
                       onChange={(freightDestination) =>
                         setForm((prev) => ({ ...prev, freightDestination }))
                       }
-                      placeholder="Destino ou regra comercial"
+                      placeholder="Ex: entregar na obra do centro"
+                      hint="Sai impressa no cupom e volta preenchida na proxima entrada deste cliente."
                     />
                     <label style={styles.checkboxLabel}>
                       <input
@@ -7623,7 +7663,7 @@ function OperationDetailsDialog({
                           onChange={(freightDestination) =>
                             setForm((prev) => ({ ...prev, freightDestination }))
                           }
-                          placeholder="Destino ou regra comercial"
+                          placeholder="Ex: entregar na obra do centro"
                         />
                         <label style={styles.checkboxLabel}>
                           <input

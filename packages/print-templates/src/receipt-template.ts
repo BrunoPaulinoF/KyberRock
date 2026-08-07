@@ -50,6 +50,12 @@ export interface ReceiptTemplateInput {
    * nos cupons antigos, quando a escolha nao existia: vale como `true`.
    */
   showFreightValue?: boolean;
+  /**
+   * Observacao do frete escrita na entrada (campo "Destino/obs."): o destino da carga ou
+   * o combinado com o cliente. Sai sempre que existir, mesmo quando o VALOR do frete nao
+   * sai — e recado para quem recebe a carga, nao dinheiro. Ausente/vazia: a linha nao sai.
+   */
+  freightNote?: string | null;
   totalCents: number;
 }
 
@@ -429,6 +435,14 @@ function buildBodyLines(input: ReceiptTemplateInput, config: ReceiptTemplateConf
     lines.push(`FRETE R$ ${formatNumber(input.freightTotalCents / 100)}`);
   }
 
+  // A observacao do frete sai independente de mostrar o VALOR do frete (e de o bloco de
+  // frete estar ligado no layout): quem escreveu o destino/combinado na entrada quer que
+  // o cliente e o motorista leiam isso no papel.
+  const freightNote = input.freightNote?.trim();
+  if (freightNote) {
+    lines.push(...wrapReceiptText(`OBS.: ${freightNote}`));
+  }
+
   if (config.showProductDetail) {
     lines.push(`Cond.Pagto.: ${input.paymentTermName ?? "NAO INFORMADA"}`);
     lines.push(`Meio Pagto.: ${input.paymentMethodName ?? "NAO INFORMADO"}`);
@@ -538,6 +552,8 @@ export function buildSampleReceiptInput(printedAt: string): ReceiptTemplateInput
     unitPriceCents: 12_000,
     productTotalCents: 78_000,
     freightTotalCents: 0,
+    // A previa mostra onde a observacao da entrada cai no papel.
+    freightNote: "Entregar na obra do centro - falar com o encarregado",
     totalCents: 78_000
   };
 }
@@ -557,6 +573,38 @@ export const RECEIPT_FONT_STACKS: Record<ReceiptFontFamily, string> = {
 function centered(text: string): string {
   const padding = Math.max(0, Math.floor((RECEIPT_LINE_WIDTH - text.length) / 2));
   return `${" ".repeat(padding)}${text}`;
+}
+
+/**
+ * Quebra um texto livre na largura do papel, respeitando as palavras. O corpo do cupom
+ * sai dentro de um `<pre>` e a impressora escreve caractere a caractere: linha maior que
+ * a bobina nao quebra sozinha, ela se perde na borda. Palavra maior que a linha inteira
+ * (um link, um codigo comprido) e cortada no limite em vez de estourar sozinha.
+ */
+function wrapReceiptText(text: string): string[] {
+  const lines: string[] = [];
+  let current = "";
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    let pending = word;
+    while (pending.length > RECEIPT_LINE_WIDTH) {
+      if (current) {
+        lines.push(current);
+        current = "";
+      }
+      lines.push(pending.slice(0, RECEIPT_LINE_WIDTH));
+      pending = pending.slice(RECEIPT_LINE_WIDTH);
+    }
+    if (!current) {
+      current = pending;
+    } else if (current.length + 1 + pending.length <= RECEIPT_LINE_WIDTH) {
+      current = `${current} ${pending}`;
+    } else {
+      lines.push(current);
+      current = pending;
+    }
+  }
+  if (current) lines.push(current);
+  return lines;
 }
 
 /**

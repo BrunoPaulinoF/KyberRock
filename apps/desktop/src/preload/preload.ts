@@ -62,6 +62,8 @@ const desktopApi = {
       productId,
       modality ?? null
     ),
+  getLastCustomerFreightNote: (customerId: string) =>
+    ipcRenderer.invoke("desktop:get-last-customer-freight-note", customerId),
   setCustomerFreightRule: (input: unknown) =>
     ipcRenderer.invoke("desktop:set-customer-freight-rule", input),
   removeCustomerFreightRule: (ruleId: string) =>

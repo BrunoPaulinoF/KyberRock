@@ -90,6 +90,7 @@ import {
 import {
   getCustomerFreightRules,
   getCustomerFreightRuleForProduct,
+  getLastCustomerFreightNote,
   setCustomerFreightRule,
   rememberCustomerFreightValue,
   removeCustomerFreightRule,
@@ -1269,6 +1270,12 @@ export class DesktopRuntime {
   ) {
     this.assertDesktopAccess();
     return getCustomerFreightRuleForProduct(this.database, customerId, productId, modality);
+  }
+
+  /** Ultima observacao de frete escrita para esse cliente, seja qual for o produto. */
+  getLastCustomerFreightNote(customerId: string) {
+    this.assertDesktopAccess();
+    return getLastCustomerFreightNote(this.database, customerId);
   }
 
   setCustomerFreightRule(input: SetCustomerFreightRuleInput) {

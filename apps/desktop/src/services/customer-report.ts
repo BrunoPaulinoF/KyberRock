@@ -11,7 +11,8 @@ import {
  * (transporte, compras, pagamentos, produtos, tonelagem e placas), em duas versoes:
  *
  * - `simplified`: os dados principais (cabecalho do cliente, KPIs, produtos com os dias
- *   em que foram carregados, placas e evolucao mensal) — o que o dono olha no dia a dia.
+ *   em que foram carregados, placas com as viagens de cada motorista e evolucao mensal)
+ *   — o que o dono olha no dia a dia.
  * - `complete`: tudo do simplificado + transportadoras, pagamentos, evolucao diaria,
  *   a lista operacao a operacao com pesos/precos/frete/OMIE e as canceladas.
  *
@@ -241,6 +242,12 @@ export interface CustomerReport {
   /** O mesmo agrupamento por material aberto dia a dia, na ordem dos materiais. */
   byProductDay: CustomerReportProductDayRow[];
   byPlate: CustomerReportPlateRow[];
+  /**
+   * As mesmas operacoes de `operations`, so que na ordem de placa/motorista: as viagens
+   * de cada motorista saem juntas e em sequencia. E o detalhe da tabela de placas, como
+   * `byProductDay` e o detalhe da tabela de produtos.
+   */
+  tripsByPlate: CustomerReportOperation[];
   byCarrier: CustomerReportCarrierRow[];
   byPaymentMethod: CustomerReportPaymentRow[];
   byPaymentTerm: CustomerReportPaymentRow[];
@@ -476,6 +483,7 @@ export class CustomerReportService {
       byProduct: groupByProduct(operations),
       byProductDay: groupByProductDay(operations),
       byPlate: groupByPlate(operations),
+      tripsByPlate: sortTripsByPlate(operations),
       byCarrier: groupByCarrier(operations),
       byPaymentMethod: groupByLabel(operations, (op) => op.paymentMethodName ?? "Nao informado"),
       byPaymentTerm: groupByLabel(operations, (op) => op.paymentTermName ?? "Nao informado"),
@@ -1155,6 +1163,27 @@ function groupByPlate(operations: CustomerReportOperation[]): CustomerReportPlat
       avgMinutes: minutesSamples > 0 ? Math.round(row.totalMinutes / minutesSamples) : 0
     }))
     .sort((a, b) => b.netWeightKg - a.netWeightKg || b.operations - a.operations);
+}
+
+/**
+ * Viagem a viagem na ordem de placa/motorista: a placa que mais carregou primeiro (a
+ * mesma ordem da tabela de placas) e, dentro dela, cada motorista com as suas viagens da
+ * mais antiga para a mais nova. Placa dividida por dois motoristas nao intercala as
+ * viagens: cada um sai com a sua sequencia inteira.
+ */
+function sortTripsByPlate(operations: CustomerReportOperation[]): CustomerReportOperation[] {
+  const weightByPlate = new Map<string, number>();
+  for (const op of operations) {
+    weightByPlate.set(op.plate, (weightByPlate.get(op.plate) ?? 0) + op.netWeightKg);
+  }
+  return [...operations].sort(
+    (a, b) =>
+      (weightByPlate.get(b.plate) ?? 0) - (weightByPlate.get(a.plate) ?? 0) ||
+      a.plate.localeCompare(b.plate, "pt-BR") ||
+      a.driverName.localeCompare(b.driverName, "pt-BR") ||
+      a.createdAt.localeCompare(b.createdAt) ||
+      a.id.localeCompare(b.id)
+  );
 }
 
 function groupByCarrier(operations: CustomerReportOperation[]): CustomerReportCarrierRow[] {

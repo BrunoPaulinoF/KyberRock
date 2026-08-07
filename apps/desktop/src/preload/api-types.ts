@@ -201,6 +201,11 @@ export interface KyberRockDesktopApi {
     /** Tipo de frete da operacao; resolve o valor configurado para ele. */
     modality?: FreightModality | null
   ) => Promise<CustomerFreightRuleView | null>;
+  /**
+   * Ultima observacao de frete ("Destino/obs.") escrita numa entrada desse cliente, seja
+   * qual for o produto ou o tipo de frete. `null` quando ele nunca escreveu nenhuma.
+   */
+  getLastCustomerFreightNote: (customerId: string) => Promise<string | null>;
   setCustomerFreightRule: (input: {
     customerId: string;
     productId?: string | null;
