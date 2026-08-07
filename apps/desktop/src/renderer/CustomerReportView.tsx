@@ -7,7 +7,11 @@ import type {
   CustomerReportVariant,
   CustomersOverview
 } from "../services/customer-report";
-import { INSTALLMENT_NOTE, INSTALLMENT_SITUATION_LABEL } from "../services/customer-report-render";
+import {
+  INSTALLMENT_NOTE,
+  INSTALLMENT_SITUATION_LABEL,
+  formatDatesSummary
+} from "../services/customer-report-render";
 import { IconActionButton } from "./IconActionButton";
 import { HelpTooltip } from "./Tooltip";
 
@@ -15,7 +19,8 @@ import { HelpTooltip } from "./Tooltip";
  * Relatorio por cliente: o usuario escolhe o cliente, o periodo (atalhos ou datas
  * personalizadas), quais modelos quer (simplificado e/ou completo) e em quais formatos
  * (PDF e/ou Excel). A tela mostra a previa dos mesmos dados que vao para o arquivo:
- * transporte, compras, pagamentos, produtos, tonelagem e placas.
+ * transporte, compras, pagamentos, produtos (com os dias em que cada material foi
+ * carregado), tonelagem e placas.
  *
  * Escolhendo "Todos os clientes" a tela troca de documento: em vez do relatorio de um
  * cliente, sai a lista comparativa do periodo — um cliente por linha, do que mais faturou
@@ -323,7 +328,7 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <h2 style={styles.title}>Relatorio por cliente</h2>
           <HelpTooltip
-            content="Gera o relatorio de um cliente no periodo escolhido, com transporte, compras, pagamentos, produtos, tonelagem, placas e as parcelas a vencer. Use datas futuras para ver os dias em que o cliente ainda tem parcelas a pagar. Escolha os modelos (simplificado e/ou completo) e os formatos (PDF e/ou Excel). Em 'Todos os clientes', sai a lista comparativa do periodo: um cliente por linha, do que mais faturou para o que menos faturou."
+            content="Gera o relatorio de um cliente no periodo escolhido, com transporte, compras, pagamentos, quanto ele carregou de cada material e em que dias, tonelagem, placas e as parcelas a vencer. Use datas futuras para ver os dias em que o cliente ainda tem parcelas a pagar. Escolha os modelos (simplificado e/ou completo) e os formatos (PDF e/ou Excel). Em 'Todos os clientes', sai a lista comparativa do periodo: um cliente por linha, do que mais faturou para o que menos faturou, e os materiais que cada um carregou."
             placement="right"
           />
         </div>
@@ -370,7 +375,7 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
             {allCustomers ? (
               <p style={styles.hint}>
                 Uma linha por cliente com movimento no periodo, do que mais faturou para o que menos
-                faturou.
+                faturou, mais o que cada um carregou de cada material.
               </p>
             ) : null}
           </div>
@@ -434,7 +439,8 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
               <span>
                 Simplificado
                 <span style={styles.checkboxHint}>
-                  Dados principais: cadastro, KPIs, vencimentos, produtos, placas e compras por mes.
+                  Dados principais: cadastro, KPIs, vencimentos, produtos, materiais por dia,
+                  placas e compras por mes.
                 </span>
               </span>
             </label>
@@ -631,6 +637,7 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
                 "Produto",
                 "Codigo",
                 "Carregamentos",
+                "Datas",
                 "Peso",
                 "Valor produto",
                 "Preco medio",
@@ -639,6 +646,35 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
               rows={report.byProduct.map((row) => [
                 row.productDescription,
                 row.productCode ?? "-",
+                formatNumber(row.operations),
+                formatDatesSummary(row.dates),
+                formatKg(row.netWeightKg),
+                formatBRL(row.productCents),
+                `${formatBRL(row.avgPriceCentsPerTon)}/t`,
+                formatBRL(row.totalCents)
+              ])}
+            />
+          </DataCard>
+
+          {/* O detalhe da tabela acima: o que o cliente levou de cada material em cada dia. */}
+          <DataCard
+            title="Materiais por dia"
+            empty={report.byProductDay.length === 0}
+            emptyMessage="Nenhum carregamento neste periodo."
+          >
+            <Table
+              headers={[
+                "Produto",
+                "Dia",
+                "Carregamentos",
+                "Peso",
+                "Valor produto",
+                "Preco medio",
+                "Total"
+              ]}
+              rows={report.byProductDay.map((row) => [
+                row.productDescription,
+                formatDayLabel(row.date),
                 formatNumber(row.operations),
                 formatKg(row.netWeightKg),
                 formatBRL(row.productCents),
@@ -871,6 +907,38 @@ function CustomersOverviewPreview({ overview }: { overview: CustomersOverview })
               formatBRL(installmentTotals.overdueCents)
             ]
           ]}
+        />
+      </DataCard>
+
+      {/* O que cada cliente carregou de cada material, quanto e em que dias. */}
+      <DataCard
+        title="Materiais por cliente"
+        empty={overview.customers.every((row) => row.byProduct.length === 0)}
+        emptyMessage="Nenhum carregamento no periodo."
+      >
+        <Table
+          headers={[
+            "Cliente",
+            "Produto",
+            "Codigo",
+            "Carregamentos",
+            "Datas",
+            "Peso",
+            "Preco medio/t",
+            "Total"
+          ]}
+          rows={overview.customers.flatMap((row) =>
+            row.byProduct.map((product) => [
+              row.customer.name,
+              product.productDescription,
+              product.productCode ?? "-",
+              formatNumber(product.operations),
+              formatDatesSummary(product.dates),
+              formatKg(product.netWeightKg),
+              formatBRL(product.avgPriceCentsPerTon),
+              formatBRL(product.totalCents)
+            ])
+          )}
         />
       </DataCard>
     </>

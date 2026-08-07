@@ -7,6 +7,7 @@ import type {
   CustomerReportPaymentRow,
   CustomerReportPeriodRow,
   CustomerReportPlateRow,
+  CustomerReportProductDayRow,
   CustomerReportProductRow,
   CustomerReportVariant,
   CustomersOverview,
@@ -22,9 +23,10 @@ import type {
  *   — o mesmo truque ja usado em `desktop:export-report-excel`, que o Excel abre
  *   nativamente sem exigir dependencia nova.
  *
- * A versao `simplified` traz os dados principais (cabecalho, KPIs, produtos, placas e
- * evolucao mensal). A `complete` acrescenta transporte, pagamentos, evolucao diaria,
- * a lista operacao a operacao e as canceladas.
+ * A versao `simplified` traz os dados principais (cabecalho, KPIs, produtos com os dias
+ * em que foram carregados, materiais por dia, placas e evolucao mensal). A `complete`
+ * acrescenta transporte, pagamentos, evolucao diaria, a lista operacao a operacao e as
+ * canceladas.
  */
 export const VARIANT_LABEL: Record<CustomerReportVariant, string> = {
   simplified: "Simplificado",
@@ -170,20 +172,44 @@ export function renderCustomerReportHtml(
     section(
       "Produtos comprados",
       table(
-        ["Produto", "Codigo", "Carregamentos", "Peso", "Valor produto", "Preco medio", "Total"],
+        PRODUCT_HEADERS,
         report.byProduct.map((row) => productCells(row)),
         report.byProduct.length > 0
           ? [
               "TOTAL",
               "",
               num(totals.operations),
-              formatTons(totals.netWeightKg),
+              formatDatesSummary(report.byDay.map((row) => row.period)),
+              // As linhas somam quilos: o rodape fecha na mesma unidade da coluna.
+              num(totals.netWeightKg),
               formatBRL(totals.productCents),
               `${formatBRL(totals.avgPriceCentsPerTon)}/t`,
               formatBRL(totals.totalCents)
             ]
           : null,
         "Sem produtos no periodo."
+      )
+    )
+  );
+
+  sections.push(
+    section(
+      "Materiais por dia",
+      table(
+        PRODUCT_DAY_HEADERS,
+        report.byProductDay.map((row) => productDayCells(row)),
+        report.byProductDay.length > 0
+          ? [
+              "TOTAL",
+              "",
+              num(totals.operations),
+              num(totals.netWeightKg),
+              formatBRL(totals.productCents),
+              `${formatBRL(totals.avgPriceCentsPerTon)}/t`,
+              formatBRL(totals.totalCents)
+            ]
+          : null,
+        "Sem carregamentos no periodo."
       )
     )
   );
@@ -510,18 +536,14 @@ export function renderCustomerReportSpreadsheet(
   );
 
   blocks.push(
+    sheetTable("Produtos", PRODUCT_HEADERS, report.byProduct.map((row) => productCells(row)))
+  );
+
+  blocks.push(
     sheetTable(
-      "Produtos",
-      [
-        "Produto",
-        "Codigo",
-        "Carregamentos",
-        "Peso (kg)",
-        "Valor produto",
-        "Preco medio/t",
-        "Total"
-      ],
-      report.byProduct.map((row) => productCells(row))
+      "Materiais por dia",
+      PRODUCT_DAY_HEADERS,
+      report.byProductDay.map((row) => productDayCells(row))
     )
   );
 
@@ -653,10 +675,45 @@ function installmentCells(installment: CustomerReportInstallment): string[] {
   ];
 }
 
+/** Colunas de material, iguais no PDF e na planilha (o resumo e o detalhe por dia). */
+const PRODUCT_HEADERS = [
+  "Produto",
+  "Codigo",
+  "Carregamentos",
+  "Datas",
+  "Peso (kg)",
+  "Valor produto",
+  "Preco medio/t",
+  "Total"
+];
+
+const PRODUCT_DAY_HEADERS = [
+  "Produto",
+  "Dia",
+  "Carregamentos",
+  "Peso (kg)",
+  "Valor produto",
+  "Preco medio/t",
+  "Total"
+];
+
 function productCells(row: CustomerReportProductRow): string[] {
   return [
     row.productDescription,
     row.productCode ?? "-",
+    num(row.operations),
+    formatDatesSummary(row.dates),
+    num(row.netWeightKg),
+    formatBRL(row.productCents),
+    `${formatBRL(row.avgPriceCentsPerTon)}/t`,
+    formatBRL(row.totalCents)
+  ];
+}
+
+function productDayCells(row: CustomerReportProductDayRow): string[] {
+  return [
+    row.productDescription,
+    formatDayLabel(row.date),
     num(row.operations),
     num(row.netWeightKg),
     formatBRL(row.productCents),
@@ -769,6 +826,50 @@ function overviewFooterCells(overview: CustomersOverview): string[] {
   ];
 }
 
+/**
+ * Materiais de cada cliente no resumo do periodo: o que cada um carregou de cada
+ * material, quanto e em que dias. Segue a ordem da lista de clientes (quem mais faturou
+ * primeiro) e, dentro do cliente, o material de maior peso primeiro.
+ */
+const OVERVIEW_PRODUCT_HEADERS = [
+  "Cliente",
+  "Produto",
+  "Codigo",
+  "Carregamentos",
+  "Datas",
+  "Peso (kg)",
+  "Preco medio/t",
+  "Total"
+];
+
+function overviewProductRows(overview: CustomersOverview): string[][] {
+  return overview.customers.flatMap((row) =>
+    row.byProduct.map((product) => [
+      row.customer.name,
+      product.productDescription,
+      product.productCode ?? "-",
+      num(product.operations),
+      formatDatesSummary(product.dates),
+      num(product.netWeightKg),
+      `${formatBRL(product.avgPriceCentsPerTon)}/t`,
+      formatBRL(product.totalCents)
+    ])
+  );
+}
+
+function overviewProductFooterCells(overview: CustomersOverview): string[] {
+  return [
+    "TOTAL",
+    "",
+    "",
+    num(overview.totals.operations),
+    "",
+    num(overview.totals.netWeightKg),
+    `${formatBRL(overview.totals.avgPriceCentsPerTon)}/t`,
+    formatBRL(overview.totals.totalCents)
+  ];
+}
+
 function overviewPeriodText(overview: CustomersOverview): string {
   const dates = `${escapeHtml(formatDayLabel(overview.startDate))} a ${escapeHtml(
     formatDayLabel(overview.endDate)
@@ -814,6 +915,15 @@ export function renderCustomersOverviewHtml(
   )}</div></div>
 ${kpiCards(kpis)}
 ${section("Clientes no periodo", body)}
+${section(
+  "Materiais por cliente",
+  table(
+    OVERVIEW_PRODUCT_HEADERS,
+    overviewProductRows(overview),
+    overviewProductFooterCells(overview),
+    "Nenhum carregamento no periodo."
+  )
+)}
 <p class="note">${escapeHtml(INSTALLMENT_NOTE)}</p>
 ${renderTotalBar([
   { label: "Clientes", value: num(overview.customers.length) },
@@ -831,6 +941,7 @@ export function renderCustomersOverviewSpreadsheet(
   generatedAt: Date = new Date()
 ): string {
   const { totals } = overview;
+  const productRows = overviewProductRows(overview);
   const blocks = [
     sheetTable(
       "Periodo",
@@ -852,6 +963,10 @@ export function renderCustomersOverviewSpreadsheet(
     sheetTable("Clientes no periodo", OVERVIEW_HEADERS, [
       ...overview.customers.map(overviewRowCells),
       ...(overview.customers.length > 0 ? [overviewFooterCells(overview)] : [])
+    ]),
+    sheetTable("Materiais por cliente", OVERVIEW_PRODUCT_HEADERS, [
+      ...productRows,
+      ...(productRows.length > 0 ? [overviewProductFooterCells(overview)] : [])
     ]),
     `<p>${escapeHtml(INSTALLMENT_NOTE)}</p>`
   ];
@@ -942,6 +1057,21 @@ function formatMinutes(totalMinutes: number): string {
   if (minutes < 60) return `${minutes}min`;
   const hours = Math.floor(minutes / 60);
   return `${hours}h ${String(minutes % 60).padStart(2, "0")}min`;
+}
+
+/**
+ * Resumo dos dias em que houve carregamento, na ordem em que vieram (mais antigo
+ * primeiro): ate dois dias saem escritos ("03/08/2026, 06/08/2026"), dai em diante sai o
+ * intervalo com a contagem ("03/08/2026 a 07/08/2026 (4 dias)") — escrever quinze datas
+ * numa celula so nao ajudaria ninguem. O dia a dia completo fica na tabela "Materiais
+ * por dia".
+ *
+ * Exportado porque a previa na tela mostra a mesma coluna do PDF e da planilha.
+ */
+export function formatDatesSummary(dates: readonly string[]): string {
+  if (dates.length === 0) return "-";
+  if (dates.length <= 2) return dates.map(formatDayLabel).join(", ");
+  return `${formatDayLabel(dates[0])} a ${formatDayLabel(dates[dates.length - 1])} (${dates.length} dias)`;
 }
 
 /** "2026-07-15" -> "15/07/2026"; devolve a entrada crua fora do formato ISO. */
