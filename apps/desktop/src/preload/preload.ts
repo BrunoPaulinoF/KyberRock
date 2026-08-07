@@ -317,6 +317,7 @@ const desktopApi = {
   omieConfig: () => ipcRenderer.invoke("desktop:omie-config"),
   lookupCep: (cep: string) => ipcRenderer.invoke("desktop:lookup-cep", cep),
   lookupCnpj: (cnpj: string) => ipcRenderer.invoke("desktop:lookup-cnpj", cnpj),
+  docsAssistantAsk: (request: unknown) => ipcRenderer.invoke("desktop:docs-assistant-ask", request),
   omieSync: () => ipcRenderer.invoke("desktop:omie-sync"),
   omieQueueList: () => ipcRenderer.invoke("desktop:omie-queue-list"),
   omieQueueDelete: (jobId: string) => ipcRenderer.invoke("desktop:omie-queue-delete", jobId),

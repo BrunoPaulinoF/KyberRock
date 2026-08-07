@@ -4471,7 +4471,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
               <CustomerReportView desktopApi={desktopApi} />
             ) : null}
             {activeView === "reports" ? <ReportsView desktopApi={desktopApi} /> : null}
-            {activeView === "documentation" ? <DocumentationView /> : null}
+            {activeView === "documentation" ? <DocumentationView desktopApi={desktopApi} /> : null}
           </div>
         </div>
       </div>

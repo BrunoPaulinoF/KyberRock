@@ -27,6 +27,7 @@ import type { CreateCarrierInput, UpdateCarrierInput } from "../services/carrier
 import { isFreightModality } from "../services/freight.js";
 import type { ScaleConfigurationInput } from "../services/scale-configs.js";
 import type { CreateQuotationInput } from "../services/quotations.js";
+import type { DocsAssistantRequest, DocsAssistantResult } from "../services/docs-assistant.js";
 import type {
   ConfigureReceiptPrintProfileInput,
   ReceiptLogoConfig,
@@ -1624,6 +1625,21 @@ function registerIpcHandlers(): void {
   ipcMain.handle("desktop:lookup-cnpj", async (_event, cnpj: string) => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.lookupCnpj(cnpj);
+  });
+
+  // Chat da documentacao. Nunca lanca: sem runtime pronto ou sem nuvem, o
+  // renderer usa a resposta montada com a documentacao local.
+  ipcMain.handle("desktop:docs-assistant-ask", async (_event, request: DocsAssistantRequest) => {
+    if (!runtime) {
+      return {
+        available: false,
+        answer: "",
+        grounded: false,
+        sources: [],
+        reason: "Desktop runtime is not ready."
+      } satisfies DocsAssistantResult;
+    }
+    return runtime.askDocsAssistant(request);
   });
 
   ipcMain.handle("desktop:omie-sync", async () => {

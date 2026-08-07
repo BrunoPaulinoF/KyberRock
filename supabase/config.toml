@@ -53,6 +53,11 @@ verify_jwt = false
 [functions.financial-report-email]
 verify_jwt = false
 
+# Assistente da documentacao (chat do desktop). Autentica por deviceId +
+# deviceToken no corpo, como as demais funcoes do desktop.
+[functions.docs-assistant]
+verify_jwt = false
+
 # --- Protegidas pelo JWT do Supabase -----------------------------------------
 
 [functions.cnpj-lookup]

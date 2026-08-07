@@ -241,6 +241,11 @@ import {
 } from "./quotations.js";
 import { createOmieClient, OmieSyncService } from "./omie-sync.js";
 import {
+  askDocsAssistant,
+  type DocsAssistantRequest,
+  type DocsAssistantResult
+} from "./docs-assistant.js";
+import {
   syncOmieMasterData,
   getLastSyncRun,
   getSyncEntitiesByRun,
@@ -1359,6 +1364,16 @@ export class DesktopRuntime {
   lookupCnpj(cnpj: string): Promise<CnpjLookupResult> {
     this.assertDesktopAccess();
     return lookupCnpjFromCloud(this.database, this.ensureIdentity(), cnpj);
+  }
+
+  /**
+   * Assistente da documentacao. Sem `assertDesktopAccess` de proposito: a tela
+   * de ajuda tem que responder justamente quando o acesso esta com problema —
+   * "o app pediu ativacao de novo" e uma das duvidas que ele existe para
+   * resolver. A funcao na nuvem ainda valida o dispositivo por conta propria.
+   */
+  askDocsAssistant(request: DocsAssistantRequest): Promise<DocsAssistantResult> {
+    return askDocsAssistant(this.database, request);
   }
 
   async syncToCloud(): Promise<SyncResult> {
