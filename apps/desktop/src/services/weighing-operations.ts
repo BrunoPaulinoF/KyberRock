@@ -11,9 +11,11 @@ import {
   freightModalityOmieCode,
   freightValueGoesToInvoice,
   getFreightModalityInfo,
+  isFreightModalityWithFreight,
   type FreightModality,
   type FreightRule
 } from "./freight.js";
+import { getCustomerFreightRuleForProduct } from "./customer-freight-rules.js";
 import { calculateSavingsPercent, PricingService, type PriceDetails } from "./pricing.js";
 import { cancelPendingOmieJobs, enqueueSyncJob } from "./sync-queue.js";
 import { CreditService } from "./credit.js";
@@ -808,7 +810,8 @@ export function closeWeighingOperation(
 
   const netWeightKg = calculateNetWeightKg(operation.entryWeightKg, input.exitWeightKg);
   const productTotalCents = calculateProductTotalCents(netWeightKg, operation.unitPriceCents);
-  const freightTotalCents = calculateFreightTotalCents(operation.freightJson, netWeightKg);
+  const freightJson = resolveFreightRuleForClose(database, operation);
+  const freightTotalCents = calculateFreightTotalCents(freightJson, netWeightKg);
   const totalCents = productTotalCents === null ? null : productTotalCents + freightTotalCents;
   const timestamp = now.toISOString();
   const nextOperationType: OperationType = input.operationType ?? operation.operationType;
@@ -859,6 +862,15 @@ export function closeWeighingOperation(
   }
 
   const closeOperation = database.transaction(() => {
+    // Regra resgatada da memoria do cliente: grava de volta na operacao para que o
+    // cupom, a ficha da operacao e o relatorio mostrem exatamente a regra que gerou o
+    // valor cobrado — e para uma segunda via nao depender de consultar a memoria outra vez.
+    if (freightJson !== operation.freightJson) {
+      database
+        .prepare("UPDATE weighing_operations SET freight_json = ? WHERE id = ?")
+        .run(freightJson, input.operationId);
+    }
+
     if (input.operationType) {
       database
         .prepare(
@@ -3166,6 +3178,45 @@ function serializeOperationFreight(
     rule: freight.rule,
     destination: freight.destination?.trim() || null,
     showOnReceipt: freight.showOnReceipt !== false
+  });
+}
+
+/**
+ * Regra de frete a usar no fechamento — e dela que sai `freight_total_cents`, porque o
+ * valor do frete so pode ser calculado quando existe peso liquido.
+ *
+ * Normalmente e a que a entrada gravou em `freight_json`. O resgate serve as operacoes que
+ * ficaram SEM regra por causa do pull que apagava a coluna (ver a migracao
+ * `202608070001_operation_freight_json`): a operacao diz "com frete", mas nao tem mais
+ * como calcular, e fecharia com frete zero — sem linha FRETE no cupom e sem `valor_frete`
+ * no pedido do OMIE. Nesses casos reconstroi a regra pela memoria de frete do cliente para
+ * (cliente, produto, tipo de frete), que e a MESMA fonte que preencheu a entrada. Sem
+ * memoria, a operacao fecha sem frete, como antes: nunca inventa um valor.
+ */
+function resolveFreightRuleForClose(
+  database: DesktopDatabase,
+  operation: WeighingOperationSummary
+): string | null {
+  if (operation.freightJson) return operation.freightJson;
+  if (!isFreightModalityWithFreight(operation.freightModality)) return null;
+  if (!operation.customerId || !operation.productId) return null;
+
+  const remembered = getCustomerFreightRuleForProduct(
+    database,
+    operation.customerId,
+    operation.productId,
+    operation.freightModality
+  );
+  const rule = remembered?.rule;
+  if (!rule || (rule.baseValueCents <= 0 && !rule.fixedValueCents)) return null;
+
+  return serializeOperationFreight({
+    payer: getFreightModalityInfo(operation.freightModality).defaultPayer,
+    rule,
+    destination: remembered?.destination ?? null,
+    // Quem manda em "o valor sai na nota/cupom" e a situacao gravada na operacao,
+    // nao o que o cliente usou da ultima vez.
+    showOnReceipt: freightValueGoesToInvoice(operation.freightModality)
   });
 }
 

@@ -45,8 +45,9 @@ describe("buildReceiptHtml", () => {
       heightMm: 16
     });
 
-    expect(html).toContain('<img src="data:image/png;base64,MONO" alt="Logo" />');
-    expect(html).not.toContain(LOGO_DATA_URL);
+    expect(html).toContain('<img src="data:image/png;base64,MONO" alt="Logo"');
+    // A original nao e o que se IMPRIME — fica so como reserva, se o raster nao carregar.
+    expect(html).not.toContain(`<img src="${LOGO_DATA_URL}"`);
     expect(html).toContain("width: 16mm; height: 16mm;");
     expect(html).toContain("object-fit: contain;");
     // Imagem de 1 bit ja no tamanho final: sem suavizacao, os pontos saem nitidos.
@@ -115,6 +116,36 @@ describe("buildReceiptHtml", () => {
 
   it("nao marca os numeros quando o tamanho e o mesmo do corpo", () => {
     expect(buildReceiptHtml(payload({ dataUrl: null }))).not.toContain('<span class="num">');
+  });
+
+  // O raster monocromatico vem do `nativeImage` do Electron, um decodificador diferente do
+  // Chromium que desenha a previa: quando ele devolve imagem vazia, o `<img>` quebra e o
+  // cupom saia sem logo nenhuma. O endereco de reserva deixa a impressao voltar para a
+  // imagem original do perfil em vez de desistir da logo.
+  it("guarda a logo original como reserva do raster monocromatico", () => {
+    const html = buildReceiptHtml(payload({ dataUrl: LOGO_DATA_URL, fit: "cover" }), {
+      dataUrl: "data:image/png;base64,MONO",
+      widthMm: 16,
+      heightMm: 16
+    });
+
+    expect(html).toContain(`data-fallback-src="${LOGO_DATA_URL}"`);
+    expect(html).toContain('data-fallback-fit="cover"');
+  });
+
+  it("nao repete a reserva quando o cupom ja usa a imagem original", () => {
+    expect(buildReceiptHtml(payload({ dataUrl: LOGO_DATA_URL }))).not.toContain(
+      "data-fallback-src"
+    );
+  });
+
+  // O codigo da operacao e o que liga o papel na mao do operador a venda no sistema, e sai
+  // como "COD 000001" — nao confundir com "COPIA NRO", que conta impressoes.
+  it("abre o cupom com o codigo da operacao", () => {
+    const html = buildReceiptHtml(payload({ dataUrl: null }));
+
+    expect(html).toContain('<div class="operation-code">COD 000001</div>');
+    expect(html).not.toContain("OPERACAO 000001");
   });
 
   it("keeps the paper width of the profile in the page size", () => {

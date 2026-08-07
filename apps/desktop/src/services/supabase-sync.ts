@@ -1972,6 +1972,7 @@ type LocalOperationSnapshot = {
   customer_id: string | null;
   product_id: string | null;
   carrier_id: string | null;
+  freight_json: string | null;
   payment_method_id: string | null;
   wallet_settlement_method_id: string | null;
   wallet_settlement_due_date: string | null;
@@ -2181,7 +2182,8 @@ function upsertCloudOperations(
   `);
 
   const readLocal = database.prepare(
-    `SELECT status, updated_at, customer_id, product_id, carrier_id, payment_method_id,
+    `SELECT status, updated_at, customer_id, product_id, carrier_id, freight_json,
+       payment_method_id,
        wallet_settlement_method_id, wallet_settlement_due_date, wallet_settled_at,
        wallet_settlement_note
      FROM weighing_operations WHERE id = ?`
@@ -2281,6 +2283,20 @@ function upsertCloudOperations(
       () => nullableStringValue(row.wallet_settlement_note),
       local?.wallet_settlement_note
     );
+    // Regra de frete: passa pelo mesmo criterio das colunas da carteira, e nao
+    // direto do payload. Uma nuvem sem a coluna (migracao pendente, ou o eco do push
+    // de uma balanca de versao antiga) devolve a operacao SEM `freight_json` — e
+    // sobrescrever com nulo apagava a regra da operacao ainda aberta. Sem regra, o
+    // fechamento calculava frete zero: o cupom saia sem a linha FRETE e o pedido do
+    // OMIE sem `valor_frete`. Projecao mais nova continua mandando, inclusive o nulo
+    // (e assim que "tirei o frete desta operacao", feito na outra balanca, chega aqui).
+    const freightJson = mergeProjectedValue(
+      row,
+      "freight_json",
+      cloudIsNewer,
+      () => jsonStringValue(row.freight_json),
+      local?.freight_json
+    );
     try {
       upsert.run(
         id,
@@ -2307,7 +2323,7 @@ function upsertCloudOperations(
         integerValue(row.product_total_cents),
         integerValue(row.freight_total_cents) ?? 0,
         integerValue(row.total_cents),
-        jsonStringValue(row.freight_json),
+        freightJson,
         // Projecoes antigas (antes da coluna na nuvem) chegam sem modalidade: cai em 'none'.
         getFreightModalityInfo(stringValue(row.freight_type)).key,
         integerValue(row.omie_sales_order_id),
@@ -3291,6 +3307,13 @@ function getOperationPayload(
     price_savings_percent: operation.price_savings_percent,
     product_total_cents: operation.product_total_cents,
     freight_total_cents: operation.freight_total_cents,
+    // Regra de calculo do frete (tipo, valor base, fixo, minimo, distancia, destino). Vai
+    // para a nuvem porque e ela que o FECHAMENTO usa para transformar o peso liquido em
+    // valor de frete: sem projeta-la, o pull devolvia a operacao sem regra, apagava a
+    // copia local da balanca que registrou a entrada e a saida fechava com frete zero —
+    // sem linha FRETE no cupom e sem `valor_frete` no pedido do OMIE. Projetada, a saida
+    // tambem pode ser pesada em outra balanca da pedreira sem perder o frete.
+    freight_json: operation.freight_json,
     // Modalidade do frete (CIF/FOB/…): o relatorio de vendas do comercial filtra por ela.
     freight_type: getFreightModalityInfo(stringValue(operation.freight_type)).key,
     total_cents: operation.total_cents,

@@ -346,7 +346,7 @@ function buildHeaderLines(header: ReceiptHeaderBlock): string[] {
   const lines: string[] = [];
 
   if (header.operationCodeLabel) {
-    lines.push(centered(`OPERACAO ${header.operationCodeLabel}`));
+    lines.push(centered(receiptOperationCodeLine(header.operationCodeLabel)));
   }
 
   if (header.customHeaderText) {
@@ -592,6 +592,16 @@ export function formatOperationCode(operationCode: number | null | undefined): s
     return null;
   }
   return Math.trunc(operationCode).toString().padStart(6, "0");
+}
+
+/**
+ * Linha do codigo da operacao no topo do cupom ("COD 000123"). Fica aqui, e nao repetida em
+ * cada renderizador, porque sao TRES que desenham este cabecalho — texto ESC/POS, HTML da
+ * impressora do Windows e previa da tela — e foi justamente a copia solta que deixou a
+ * previa sem a linha quando o codigo passou a existir.
+ */
+export function receiptOperationCodeLine(operationCodeLabel: string): string {
+  return `COD ${operationCodeLabel}`;
 }
 
 export function formatReceiptNumber(receiptNumber: number, deviceNumber?: number | null): string {

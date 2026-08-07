@@ -101,6 +101,73 @@ describe("printing", () => {
     }
   });
 
+  // Situacao 1 do frete ("O valor do frete aparece na nota e no cupom"): o cupom traz a
+  // linha FRETE com o total calculado no fechamento e o VALOR do financeiro ja embutido.
+  it("imprime o valor do frete no cupom e soma no total quando o frete vai na nota", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createIdentity(database);
+      configureReceiptPrintProfile(database, {
+        identity,
+        windowsPrinterName: "TERMICA-80",
+        paperWidthMm: 80
+      });
+      const operation = createClosedOperationWithFreight(database, identity, "fob");
+
+      await printWeighingReceipt(
+        database,
+        { operationId: operation.id, identity },
+        printer,
+        new Date("2026-06-07T12:00:00.000Z")
+      );
+
+      // 6,5 t x R$ 90,00/t = R$ 585,00 de frete.
+      expect(operation.freightTotalCents).toBe(58_500);
+      const lines = printer.calls[0].lines;
+      expect(lines).toContain("FRETE R$ 585,00");
+      expect(lines.some((line) => line.startsWith("VENCTO:") && line.includes("R$ 585,78"))).toBe(
+        true
+      );
+    } finally {
+      database.close();
+    }
+  });
+
+  // Situacao 2 ("valor so no sistema"): o frete continua calculado e gravado, mas nao sai
+  // no papel — e o total impresso desconta ele, senao o cupom cobraria um valor sem origem.
+  it("nao imprime o frete quando o valor fica so no sistema", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createIdentity(database);
+      configureReceiptPrintProfile(database, {
+        identity,
+        windowsPrinterName: "TERMICA-80",
+        paperWidthMm: 80
+      });
+      const operation = createClosedOperationWithFreight(database, identity, "cif");
+
+      await printWeighingReceipt(
+        database,
+        { operationId: operation.id, identity },
+        printer,
+        new Date("2026-06-07T12:00:00.000Z")
+      );
+
+      expect(operation.freightTotalCents).toBe(58_500);
+      const lines = printer.calls[0].lines;
+      expect(lines.some((line) => line.startsWith("FRETE"))).toBe(false);
+      expect(lines.some((line) => line.startsWith("VENCTO:") && line.includes("R$ 0,78"))).toBe(
+        true
+      );
+    } finally {
+      database.close();
+    }
+  });
+
   it("reprints a receipt as the next copy", async () => {
     const database = createDatabase();
     const printer = createFakePrinter();
@@ -454,6 +521,51 @@ function createClosedOperation(
     operationId: operation.id,
     exitWeightKg: 18_500,
     operationType
+  });
+}
+
+/**
+ * Operacao fechada com frete por tonelada lancado. `modality` escolhe entre a situacao 1
+ * ("fob": o valor sai na nota e no cupom) e a 2 ("cif": o valor fica so no sistema).
+ */
+function createClosedOperationWithFreight(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity,
+  modality: "fob" | "cif"
+) {
+  const operation = createSimulatedWeighingOperation(database, {
+    identity,
+    customerName: "Cliente Teste",
+    plate: "ABC1D23",
+    driverName: "Motorista Teste",
+    productDescription: "Brita 1",
+    paymentTermName: "A vista",
+    unitPriceCents: 12,
+    entryWeightKg: 12_000
+  });
+  database
+    .prepare("UPDATE weighing_operations SET freight_json = ?, freight_type = ? WHERE id = ?")
+    .run(
+      JSON.stringify({
+        payer: "customer",
+        rule: {
+          id: "operation-freight",
+          name: "Frete da operacao",
+          type: "per_ton",
+          baseValueCents: 9_000,
+          unit: "ton"
+        },
+        destination: null,
+        showOnReceipt: modality === "fob"
+      }),
+      modality,
+      operation.id
+    );
+
+  return closeWeighingOperation(database, {
+    operationId: operation.id,
+    exitWeightKg: 18_500,
+    operationType: "invoice"
   });
 }
 

@@ -1,4 +1,4 @@
-import { RECEIPT_FONT_STACKS } from "@kyberrock/print-templates";
+import { RECEIPT_FONT_STACKS, receiptOperationCodeLine } from "@kyberrock/print-templates";
 
 import type { ReceiptPrintPayload } from "./printing.js";
 
@@ -38,8 +38,20 @@ export function buildReceiptHtml(
   const slotHeightMm = printReadyLogo?.heightMm ?? logo.heightMm;
   const logoFit = printReadyLogo ? "contain" : logo.fit;
   const logoSource = printReadyLogo?.dataUrl ?? logo.dataUrl;
+  // Segunda fonte para a MESMA logo: a imagem original do perfil, usada quando o raster
+  // monocromatico nao carrega no papel. O raster e gerado pelo `nativeImage` do Electron,
+  // um decodificador diferente do Chromium que desenha a previa — quando ele devolve uma
+  // imagem vazia, o `<img>` quebra e o cupom saia SEM logo nenhuma, mesmo com a logo
+  // perfeita na tela. Com o endereco de reserva aqui, `waitForReceiptImages` troca a fonte
+  // em vez de remover a imagem (ver `main.ts`).
+  const logoFallbackSource =
+    printReadyLogo && logo.dataUrl && logo.dataUrl !== printReadyLogo.dataUrl ? logo.dataUrl : null;
   const logoMarkup = logoSource
-    ? `<img src="${escapeHtml(logoSource)}" alt="Logo" />`
+    ? `<img src="${escapeHtml(logoSource)}" alt="Logo"${
+        logoFallbackSource
+          ? ` data-fallback-src="${escapeHtml(logoFallbackSource)}" data-fallback-fit="${escapeHtml(logo.fit)}"`
+          : ""
+      } />`
     : `<div class="logo-fallback">${escapeHtml(snapshot.unitName)}</div>`;
   const logoJustify =
     style.logoAlignment === "left"
@@ -76,7 +88,7 @@ export function buildReceiptHtml(
   </head>
   <body>
     <div class="receipt">
-      ${header.operationCodeLabel ? `<div class="operation-code">OPERACAO ${escapeHtml(header.operationCodeLabel)}</div>` : ""}
+      ${header.operationCodeLabel ? `<div class="operation-code">${escapeHtml(receiptOperationCodeLine(header.operationCodeLabel))}</div>` : ""}
       ${header.customHeaderText ? `<div class="custom-header">${escapeHtml(header.customHeaderText)}</div>` : ""}
       ${header.nonFiscalLabel ? `<div class="non-fiscal">${escapeHtml(header.nonFiscalLabel)}</div>` : ""}
       ${header.companyName ? `<div class="top-company">${escapeHtml(header.companyName)}</div><div class="rule"></div>` : ""}

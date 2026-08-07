@@ -1798,10 +1798,12 @@ const RECEIPT_IMAGE_WAIT_TIMEOUT_MS = 3000;
  * de carregar. Sem esperar a decodificacao das imagens, a logo entrava no PDF de impressao ainda
  * vazia e o cupom saia sem ela.
  *
- * So sai do documento a imagem que realmente falhou (`naturalWidth === 0`), para nao imprimir o
- * icone de imagem quebrada. A versao anterior removia a imagem sempre que `decode()` rejeitava —
- * inclusive quando a logo ja estava carregada — e o cupom saia sem logo por causa da propria
- * protecao. A espera tem teto: impressao nunca fica pendurada esperando uma imagem.
+ * Uma imagem que realmente falhou (`naturalWidth === 0`) primeiro tenta o endereco de reserva
+ * (`data-fallback-src`, a logo ORIGINAL do perfil — ver `buildReceiptHtml`): o raster
+ * monocromatico vem do `nativeImage` do Electron, um decodificador diferente do Chromium que
+ * desenha a previa, e quando ele devolve imagem vazia o cupom saia sem logo nenhuma mesmo com a
+ * logo perfeita na tela. So sai do documento a imagem que falhou TAMBEM na reserva, para nao
+ * imprimir o icone de imagem quebrada. A espera tem teto: impressao nunca fica pendurada.
  */
 async function waitForReceiptImages(printWindow: BrowserWindow): Promise<void> {
   try {
@@ -1814,22 +1816,37 @@ async function waitForReceiptImages(printWindow: BrowserWindow): Promise<void> {
                  image.addEventListener("load", resolve, { once: true });
                  image.addEventListener("error", resolve, { once: true });
                });
+         const settleAll = (images) =>
+           Promise.all(
+             images.map((image) => settle(image).then(() => image.decode().catch(() => undefined)))
+           );
+         const isBroken = (image) => image.complete && image.naturalWidth === 0;
+         const withTimeout = (work) =>
+           Promise.race([
+             work,
+             new Promise((resolve) => setTimeout(resolve, ${RECEIPT_IMAGE_WAIT_TIMEOUT_MS}))
+           ]);
          const images = Array.from(document.images);
-         const done = Promise.all(
-           images.map((image) => settle(image).then(() => image.decode().catch(() => undefined)))
-         );
-         const timeout = new Promise((resolve) =>
-           setTimeout(resolve, ${RECEIPT_IMAGE_WAIT_TIMEOUT_MS})
-         );
-         return Promise.race([done, timeout]).then(() => {
-           const broken = images.filter((image) => image.complete && image.naturalWidth === 0);
-           broken.forEach((image) => image.remove());
-           return { total: images.length, broken: broken.length };
+         return withTimeout(settleAll(images)).then(() => {
+           // Troca para a logo original antes de desistir dela.
+           const recovering = images.filter(
+             (image) => isBroken(image) && image.dataset.fallbackSrc
+           );
+           recovering.forEach((image) => {
+             image.style.objectFit = image.dataset.fallbackFit || "contain";
+             image.src = image.dataset.fallbackSrc;
+             delete image.dataset.fallbackSrc;
+           });
+           return withTimeout(settleAll(recovering)).then(() => {
+             const broken = images.filter(isBroken);
+             broken.forEach((image) => image.remove());
+             return { total: images.length, recovered: recovering.length, broken: broken.length };
+           });
          });
        })()`
-    )) as { total: number; broken: number };
+    )) as { total: number; recovered: number; broken: number };
 
-    if (report.broken > 0) {
+    if (report.recovered > 0 || report.broken > 0) {
       writeStartupLog("receipt-print:image-broken", report);
     }
   } catch (error) {
@@ -1947,9 +1964,19 @@ function prepareReceiptLogo(
   };
 }
 
-/** Impressora de rede: so o bit image ESC/POS interessa. */
-const rasterizeReceiptLogo: ReceiptLogoRasterizer = (logo, maxWidthPx) =>
-  prepareReceiptLogo(logo, maxWidthPx)?.raster ?? null;
+/**
+ * Impressora de rede: so o bit image ESC/POS interessa — a termica e de 1 bit e nao tem
+ * como cair na imagem original, como o HTML faz.
+ *
+ * Raster que sairia em branco NAO e enviado: a impressora gastaria uma faixa de papel para
+ * imprimir nada, e o cupom sairia com um bloco vazio no lugar da logo. Sem imagem, o
+ * cabecalho comeca direto no texto — e o motivo fica no log de inicializacao.
+ */
+const rasterizeReceiptLogo: ReceiptLogoRasterizer = (logo, maxWidthPx) => {
+  const prepared = prepareReceiptLogo(logo, maxWidthPx);
+  if (!prepared) return null;
+  return prepared.blank ? null : prepared.raster;
+};
 
 function createElectronFiscalDocumentPrinter(parentWindow: BrowserWindow): FiscalDocumentPrinter {
   return {
