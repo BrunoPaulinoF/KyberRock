@@ -24,7 +24,8 @@ import type {
  *   nativamente sem exigir dependencia nova.
  *
  * A versao `simplified` traz os dados principais (cabecalho, KPIs, produtos com os dias
- * em que foram carregados, materiais por dia, placas e evolucao mensal). A `complete`
+ * em que foram carregados, materiais por dia, placas com as viagens de cada motorista e
+ * evolucao mensal). A `complete`
  * acrescenta transporte, pagamentos, evolucao diaria, a lista operacao a operacao e as
  * canceladas.
  */
@@ -222,6 +223,19 @@ export function renderCustomerReportHtml(
         report.byPlate.map((row) => plateCells(row)),
         null,
         "Sem placas no periodo."
+      )
+    )
+  );
+
+  sections.push(
+    section(
+      "Viagens por placa e motorista",
+      table(
+        TRIP_HEADERS,
+        report.tripsByPlate.map((operation) => tripCells(operation)),
+        null,
+        "Sem viagens no periodo.",
+        "detail"
       )
     )
   );
@@ -561,6 +575,14 @@ export function renderCustomerReportSpreadsheet(
 
   blocks.push(
     sheetTable(
+      "Viagens por placa",
+      TRIP_HEADERS,
+      report.tripsByPlate.map((operation) => tripCells(operation))
+    )
+  );
+
+  blocks.push(
+    sheetTable(
       "Compras por mes",
       ["Mes", "Carregamentos", "Peso (kg)", "Produto", "Frete", "Total"],
       report.byMonth.map((row) => periodCells(row, formatMonthLabel))
@@ -723,6 +745,39 @@ function productDayCells(row: CustomerReportProductDayRow): string[] {
     formatBRL(row.productCents),
     `${formatBRL(row.avgPriceCentsPerTon)}/t`,
     formatBRL(row.totalCents)
+  ];
+}
+
+/**
+ * Colunas de uma viagem na lista por placa/motorista. A placa e o motorista se repetem em
+ * cada linha de proposito: a tabela continua legivel sem o cabecalho do grupo por perto e
+ * a planilha pode ser filtrada por qualquer uma das duas.
+ */
+const TRIP_HEADERS = [
+  "Placa",
+  "Motorista",
+  "Data",
+  "Produto",
+  "Peso (kg)",
+  "Preco/t",
+  "Produto (R$)",
+  "Frete (R$)",
+  "Total (R$)",
+  "Tempo"
+];
+
+function tripCells(operation: CustomerReportOperation): string[] {
+  return [
+    operation.plate,
+    operation.driverName,
+    formatDayLabel(operation.date),
+    operation.productDescription,
+    num(operation.netWeightKg),
+    operation.unitPriceCents === null ? "-" : formatBRL(operation.unitPriceCents),
+    formatBRL(operation.productTotalCents),
+    formatBRL(operation.freightTotalCents),
+    formatBRL(operation.totalCents),
+    operation.minutesInside === null ? "-" : formatMinutes(operation.minutesInside)
   ];
 }
 

@@ -328,7 +328,7 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <h2 style={styles.title}>Relatorio por cliente</h2>
           <HelpTooltip
-            content="Gera o relatorio de um cliente no periodo escolhido, com transporte, compras, pagamentos, quanto ele carregou de cada material e em que dias, tonelagem, placas e as parcelas a vencer. Use datas futuras para ver os dias em que o cliente ainda tem parcelas a pagar. Escolha os modelos (simplificado e/ou completo) e os formatos (PDF e/ou Excel). Em 'Todos os clientes', sai a lista comparativa do periodo: um cliente por linha, do que mais faturou para o que menos faturou, e os materiais que cada um carregou."
+            content="Gera o relatorio de um cliente no periodo escolhido, com transporte, compras, pagamentos, quanto ele carregou de cada material e em que dias, tonelagem, as viagens de cada placa/motorista em sequencia e as parcelas a vencer. Use datas futuras para ver os dias em que o cliente ainda tem parcelas a pagar. Escolha os modelos (simplificado e/ou completo) e os formatos (PDF e/ou Excel). Em 'Todos os clientes', sai a lista comparativa do periodo: um cliente por linha, do que mais faturou para o que menos faturou, e os materiais que cada um carregou."
             placement="right"
           />
         </div>
@@ -440,7 +440,7 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
                 Simplificado
                 <span style={styles.checkboxHint}>
                   Dados principais: cadastro, KPIs, vencimentos, produtos, materiais por dia, placas
-                  e compras por mes.
+                  com as viagens de cada motorista e compras por mes.
                 </span>
               </span>
             </label>
@@ -703,6 +703,40 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
                 formatKg(row.netWeightKg),
                 formatMinutes(row.avgMinutes),
                 formatBRL(row.totalCents)
+              ])}
+            />
+          </DataCard>
+
+          {/* O detalhe da tabela acima: as viagens de cada motorista, em sequencia. */}
+          <DataCard
+            title="Viagens por placa e motorista"
+            empty={report.tripsByPlate.length === 0}
+            emptyMessage="Nenhuma viagem neste periodo."
+          >
+            <Table
+              headers={[
+                "Placa",
+                "Motorista",
+                "Data",
+                "Produto",
+                "Peso",
+                "Preco/t",
+                "Produto (R$)",
+                "Frete (R$)",
+                "Total",
+                "Tempo"
+              ]}
+              rows={report.tripsByPlate.map((operation) => [
+                operation.plate,
+                operation.driverName,
+                formatDayLabel(operation.date),
+                operation.productDescription,
+                formatKg(operation.netWeightKg),
+                operation.unitPriceCents === null ? "-" : formatBRL(operation.unitPriceCents),
+                formatBRL(operation.productTotalCents),
+                formatBRL(operation.freightTotalCents),
+                formatBRL(operation.totalCents),
+                operation.minutesInside === null ? "-" : formatMinutes(operation.minutesInside)
               ])}
             />
           </DataCard>
