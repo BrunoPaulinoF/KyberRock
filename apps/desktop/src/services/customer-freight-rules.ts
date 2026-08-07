@@ -222,6 +222,61 @@ export function rememberCustomerFreightValue(
   });
 }
 
+/**
+ * Quantas entradas do cliente sao olhadas para achar a ultima observacao de frete. A
+ * observacao mora dentro do `freight_json` da operacao, entao nao da para filtrar no
+ * SQL sem depender do JSON1 — o corte existe para a consulta nao ler o historico
+ * inteiro de um cliente antigo. Quem escreveu a observacao acabou de escrever: ela
+ * esta nas ultimas entradas, nao no ano passado.
+ */
+const FREIGHT_NOTE_LOOKBACK = 25;
+
+/**
+ * Observacao de frete que o cliente usou na ULTIMA entrada em que escreveu uma, seja
+ * qual for o produto ou o tipo de frete. A memoria por (cliente, produto, tipo) de
+ * `getCustomerFreightRuleForProduct` continua mandando quando existe — esta aqui e a
+ * rede de seguranca para a proxima entrada do cliente ja vir com o combinado dele
+ * mesmo quando o produto ou o tipo de frete mudou.
+ *
+ * Le as operacoes (e nao a regra do cliente) de proposito: e a "ultima entrada que ele
+ * deu", inclusive a que ainda esta aberta na balanca.
+ */
+export function getLastCustomerFreightNote(
+  database: DesktopDatabase,
+  customerId: string
+): string | null {
+  const rows = database
+    .prepare(
+      `SELECT freight_json
+       FROM weighing_operations
+       WHERE customer_id = ?
+         AND deleted_at IS NULL
+         AND freight_json IS NOT NULL
+       ORDER BY created_at DESC
+       LIMIT ?`
+    )
+    .all(customerId, FREIGHT_NOTE_LOOKBACK) as Array<{ freight_json: string | null }>;
+
+  for (const row of rows) {
+    const note = readFreightJsonDestination(row.freight_json);
+    if (note) return note;
+  }
+  return null;
+}
+
+/** Destino/observacao de um `freight_json`; JSON quebrado vale como sem observacao. */
+function readFreightJsonDestination(freightJson: string | null): string | null {
+  if (!freightJson) return null;
+  try {
+    const parsed = JSON.parse(freightJson) as { destination?: unknown };
+    return typeof parsed.destination === "string" && parsed.destination.trim()
+      ? parsed.destination.trim()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export function removeCustomerFreightRule(
   database: DesktopDatabase,
   ruleId: string,

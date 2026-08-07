@@ -509,6 +509,13 @@ function registerIpcHandlers(): void {
     }
   );
 
+  ipcMain.handle("desktop:get-last-customer-freight-note", (_event, customerId: string) => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+    return runtime.getLastCustomerFreightNote(customerId);
+  });
+
   ipcMain.handle("desktop:set-customer-freight-rule", (_event, input: unknown) => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");

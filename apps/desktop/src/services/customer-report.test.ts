@@ -741,6 +741,40 @@ describe("customer report rendering", () => {
     }
   });
 
+  it("formats the spreadsheet with a header, banded rows, totals and sized columns", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      seedCustomerOperations(db);
+      const report = new CustomerReportService(db).getCustomerReport(
+        "cust-1",
+        "2026-06-01",
+        "2026-06-30",
+        "unit-1",
+        "Mes atual"
+      );
+
+      const sheet = renderCustomerReportSpreadsheet(report, "simplified");
+
+      // Cabecalho do documento: cliente, periodo e modelo antes da primeira tabela.
+      expect(sheet).toContain("<h1>Alfa</h1>");
+      expect(sheet).toContain("01/06/2026 a 30/06/2026");
+      expect(sheet).toContain("Mes atual");
+      // Faixa zebrada e linha de total marcadas linha a linha (o Excel nao le nth-child).
+      expect(sheet).toContain('<tr class="alt">');
+      expect(sheet).toContain('<tr class="total">');
+      // Colunas com largura: sem isso a planilha abre com valores em "#####".
+      expect(sheet).toMatch(/<th[^>]*style="width:\d+px"/);
+      // Peso e valor alinhados a direita; a primeira coluna, que rotula a linha, nao.
+      expect(sheet).toContain('<td class="num">15.000</td>');
+      expect(sheet).toContain('<td class="num">06/06/2026</td>');
+      expect(sheet).toContain("<td>Brita 0</td>");
+      expect(sheet).toContain("<td>06/2026</td>");
+    } finally {
+      db.close();
+    }
+  });
+
   it("escapes customer data so a quote in the name cannot break the document", () => {
     const db = createDatabase();
     try {

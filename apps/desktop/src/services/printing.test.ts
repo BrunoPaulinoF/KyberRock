@@ -168,6 +168,41 @@ describe("printing", () => {
     }
   });
 
+  // A observacao escrita no campo "Destino/obs." da entrada e recado para quem recebe a
+  // carga: sai no papel ate quando o VALOR do frete fica so no sistema.
+  it("imprime a observacao do frete escrita na entrada", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createIdentity(database);
+      configureReceiptPrintProfile(database, {
+        identity,
+        windowsPrinterName: "TERMICA-80",
+        paperWidthMm: 80
+      });
+      const operation = createClosedOperationWithFreight(
+        database,
+        identity,
+        "cif",
+        "Entregar na obra do centro"
+      );
+
+      await printWeighingReceipt(
+        database,
+        { operationId: operation.id, identity },
+        printer,
+        new Date("2026-06-07T12:00:00.000Z")
+      );
+
+      const lines = printer.calls[0].lines;
+      expect(lines.some((line) => line.startsWith("FRETE R$"))).toBe(false);
+      expect(lines).toContain("OBS.: Entregar na obra do centro");
+    } finally {
+      database.close();
+    }
+  });
+
   it("reprints a receipt as the next copy", async () => {
     const database = createDatabase();
     const printer = createFakePrinter();
@@ -531,7 +566,8 @@ function createClosedOperation(
 function createClosedOperationWithFreight(
   database: DesktopDatabase,
   identity: LocalDesktopIdentity,
-  modality: "fob" | "cif"
+  modality: "fob" | "cif",
+  destination: string | null = null
 ) {
   const operation = createSimulatedWeighingOperation(database, {
     identity,
@@ -555,7 +591,7 @@ function createClosedOperationWithFreight(
           baseValueCents: 9_000,
           unit: "ton"
         },
-        destination: null,
+        destination,
         showOnReceipt: modality === "fob"
       }),
       modality,

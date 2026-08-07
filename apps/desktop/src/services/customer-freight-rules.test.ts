@@ -6,6 +6,7 @@ import type { DesktopDatabase } from "../database/sqlite";
 import {
   getCustomerFreightRuleForProduct,
   getCustomerFreightRules,
+  getLastCustomerFreightNote,
   rememberCustomerFreightValue,
   removeCustomerFreightModality,
   setCustomerFreightRule
@@ -43,8 +44,101 @@ function createDatabase(): DesktopDatabase {
        VALUES ('product-1', 'company-1', 'P1', 'Brita 1', 'ton', datetime('now'), datetime('now'))`
     )
     .run();
+  database
+    .prepare(
+      `INSERT INTO units (id, company_id, name, timezone, created_at, updated_at)
+       VALUES ('unit-1', 'company-1', 'Unidade', 'America/Sao_Paulo', datetime('now'), datetime('now'))`
+    )
+    .run();
+  database
+    .prepare(
+      `INSERT INTO devices (id, company_id, unit_id, name, device_type, installation_id, created_at, updated_at)
+       VALUES ('device-1', 'company-1', 'unit-1', 'Desktop', 'desktop_scale', 'inst-1', datetime('now'), datetime('now'))`
+    )
+    .run();
   return database;
 }
+
+/** Entrada do cliente com (ou sem) observacao de frete, para a memoria por cliente. */
+function insertEntry(
+  database: DesktopDatabase,
+  id: string,
+  createdAt: string,
+  freightJson: string | null,
+  deletedAt: string | null = null
+): void {
+  database
+    .prepare(
+      `INSERT INTO weighing_operations (
+         id, company_id, unit_id, device_id, status, operation_type, customer_id, product_id,
+         freight_json, created_at, updated_at, deleted_at
+       ) VALUES (?, 'company-1', 'unit-1', 'device-1', 'closed_local', 'invoice', 'customer-1',
+         'product-1', ?, ?, ?, ?)`
+    )
+    .run(id, freightJson, createdAt, createdAt, deletedAt);
+}
+
+describe("observacao de frete da ultima entrada do cliente", () => {
+  it("devolve a observacao da entrada mais recente que tinha uma", () => {
+    const database = createDatabase();
+    try {
+      insertEntry(
+        database,
+        "op-1",
+        "2026-08-01 08:00:00",
+        JSON.stringify({ destination: "Obra antiga" })
+      );
+      insertEntry(
+        database,
+        "op-2",
+        "2026-08-05 08:00:00",
+        JSON.stringify({ destination: "Obra do centro" })
+      );
+      // Entrada mais recente sem observacao: nao apaga a memoria, so nao tem o que dizer.
+      insertEntry(database, "op-3", "2026-08-06 08:00:00", JSON.stringify({ destination: "  " }));
+
+      expect(getLastCustomerFreightNote(database, "customer-1")).toBe("Obra do centro");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("ignora entradas apagadas, frete sem observacao e json quebrado", () => {
+    const database = createDatabase();
+    try {
+      insertEntry(
+        database,
+        "op-1",
+        "2026-08-01 08:00:00",
+        JSON.stringify({ destination: "Valida" })
+      );
+      insertEntry(database, "op-2", "2026-08-02 08:00:00", "{oops");
+      insertEntry(database, "op-3", "2026-08-03 08:00:00", JSON.stringify({ rule: { id: "r" } }));
+      insertEntry(
+        database,
+        "op-4",
+        "2026-08-04 08:00:00",
+        JSON.stringify({ destination: "Apagada" }),
+        "2026-08-04 09:00:00"
+      );
+
+      expect(getLastCustomerFreightNote(database, "customer-1")).toBe("Valida");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("devolve nulo para o cliente que nunca escreveu observacao", () => {
+    const database = createDatabase();
+    try {
+      insertEntry(database, "op-1", "2026-08-01 08:00:00", null);
+      expect(getLastCustomerFreightNote(database, "customer-1")).toBeNull();
+      expect(getLastCustomerFreightNote(database, "customer-2")).toBeNull();
+    } finally {
+      database.close();
+    }
+  });
+});
 
 describe("frete do cliente por tipo de frete", () => {
   it("guarda um unico valor para o grupo com frete, venha de que situacao vier", () => {
