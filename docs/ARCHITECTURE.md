@@ -240,6 +240,13 @@ adiantamentos do OMIE e precisa ser amortizado la, senao os dois lados divergem.
 - No fechamento, a operacao reserva em `omie_advance_settle_cents` a parte da
   compra que sai do adiantamento — limitada ao adiantamento espelhado que ainda
   nao foi amortizado (o excedente e fiado e nao gera baixa).
+- Duas portas levam a essa reserva: a venda no **credito do cliente** (fiado ou
+  pre-pago), que sempre abate o que houver de adiantamento; e a venda **em
+  carteira** com `settle_from_advance = 1`, a marca "abater do adiantamento" que
+  o operador liga na entrada quando o cliente pagou adiantado e agora esta
+  retirando. Na carteira o excedente nao vira fiado: continua em carteira, e a
+  venda so nasce quitada (`wallet_settled_at` sem forma de recebimento) quando o
+  adiantamento cobre o total.
 - Depois que o pedido/OS existe no OMIE (e, na venda com nota, foi faturado), a
   fila OMIE despacha o job `settle_advance`: a Edge Function acha os titulos do
   pedido (`nCodPedido`/`numero_pedido`), distribui o valor entre as parcelas em

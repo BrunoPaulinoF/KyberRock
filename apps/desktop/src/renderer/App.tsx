@@ -211,6 +211,11 @@ export interface WeighingFormState {
   manualDownPaymentCents: number | null;
   quotationId: string;
   deductFreightFromCredit: boolean;
+  /**
+   * Venda em carteira que sai do adiantamento do cliente. So aparece (e so vale) quando
+   * a forma de pagamento escolhida e "em carteira".
+   */
+  settleFromAdvance: boolean;
   /** Tipo (modalidade) de frete da operacao, enviado ao OMIE. Default "none" (sem frete). */
   freightModality: FreightModality;
   /** Se a Pedreira lanca um valor de frete nesta operacao (habilita os campos de valor). */
@@ -218,7 +223,6 @@ export interface WeighingFormState {
   freightCalculationType: "per_ton" | "per_ton_km" | "fixed_plus_ton";
   freightBaseValueCents: number | null;
   freightFixedValueCents: number | null;
-  freightMinValueCents: number | null;
   freightDistanceKm: string;
   freightDestination: string;
   /** Caixa "mostrar o valor do frete no cupom" (abaixo do tipo de frete). */
@@ -257,13 +261,13 @@ const initialWeighingForm: WeighingFormState = {
   manualDownPaymentCents: null,
   quotationId: "",
   deductFreightFromCredit: false,
+  settleFromAdvance: false,
   // Sem frete, com o transportador na nota (situacao 3): o caso mais comum da balanca.
   freightModality: FREIGHT_MODALITY_DEFAULT,
   chargeFreight: false,
   freightCalculationType: "per_ton",
   freightBaseValueCents: null,
   freightFixedValueCents: null,
-  freightMinValueCents: null,
   freightDistanceKm: "",
   freightDestination: "",
   freightShowOnReceipt: true
@@ -292,6 +296,30 @@ export function previousDayIso(now: Date = new Date()): string {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${date.getFullYear()}-${month}-${day}`;
+}
+
+/**
+ * Frase abaixo da caixa "abater do adiantamento": quanto o cliente ainda tem depositado
+ * no OMIE para bancar esta compra. O operador precisa do numero na hora de marcar — sem
+ * ele a caixa e uma aposta —, e o texto e explicito sobre o que acontece quando a compra
+ * passa do saldo: o excedente continua em carteira.
+ */
+export function advanceHintText(customerId: string, advanceAvailableCents: number | null): string {
+  if (!customerId) return "Escolha o cliente para ver o adiantamento disponivel.";
+  if (advanceAvailableCents === null) return "Consultando o adiantamento do cliente...";
+  if (advanceAvailableCents <= 0) {
+    // Pode ser saldo velho: o adiantamento acabado de lancar no OMIE ainda nao chegou
+    // aqui. Marcar a caixa nao custa nada — a pesagem confere o saldo no OMIE.
+    return (
+      "Nenhum adiantamento espelhado nesta maquina ate agora. Se o financeiro acabou de " +
+      "lancar, marque assim mesmo: o saldo e conferido no OMIE ao capturar o peso."
+    );
+  }
+  return (
+    `Adiantamento disponivel: ${formatMoney(advanceAvailableCents)}. ` +
+    "O saldo e reconferido no OMIE ao capturar o peso; a compra e abatida dele e o que " +
+    "passar continua em carteira."
+  );
 }
 
 function freightGoesToCustomerInvoice(form: WeighingFormState): boolean {
@@ -1752,6 +1780,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         freightModality: normalizeFreightModality(form.freightModality),
         quotationId: form.quotationId || undefined,
         deductFreightFromCredit: form.deductFreightFromCredit || freightGoesToCustomerInvoice(form),
+        settleFromAdvance: form.settleFromAdvance,
         scaleCaptureId
       });
       setMessage(`Entrada registrada com peso estavel capturado: ${operation.entryWeightKg} kg.`);
@@ -5461,7 +5490,6 @@ export function buildFreightInput(form: WeighingFormState): OperationFreightInpu
       type: form.freightCalculationType,
       baseValueCents: form.freightBaseValueCents ?? 0,
       fixedValueCents: form.freightFixedValueCents ?? undefined,
-      minValueCents: form.freightMinValueCents ?? undefined,
       distanceKm: distanceKm ?? undefined,
       unit: "ton"
     }
@@ -6132,6 +6160,9 @@ function WeighingForm({
   const [availableVehicleIds, setAvailableVehicleIds] = useState<string[] | undefined>(undefined);
   const [availableDriverIds, setAvailableDriverIds] = useState<string[] | undefined>(undefined);
   const [isWalletMethod, setIsWalletMethod] = useState(false);
+  // Adiantamento do cliente ainda livre para abater uma compra (centavos). null = ainda
+  // nao consultado ou cliente sem cadastro local.
+  const [customerAdvanceCents, setCustomerAdvanceCents] = useState<number | null>(null);
   // Opcoes do seletor de transportadora dos formularios completos de cadastro
   // (placa e motorista) abertos por esta tela.
   const [carrierOptions, setCarrierOptions] = useState<CrudSelectOption[]>([]);
@@ -6180,6 +6211,35 @@ function WeighingForm({
       cancelled = true;
     };
   }, [desktopApi, form.paymentMethodId]);
+
+  // Adiantamento disponivel do cliente: o operador precisa ver quanto ele ainda tem
+  // depositado ANTES de marcar "abater do adiantamento". So consulta na venda em
+  // carteira, que e a unica em que a marca aparece.
+  useEffect(() => {
+    if (!desktopApi || !form.customerId || !isWalletMethod) {
+      setCustomerAdvanceCents(null);
+      return;
+    }
+    let cancelled = false;
+    void desktopApi
+      .customerCreditSummary(form.customerId)
+      .then((summary) => {
+        if (!cancelled) setCustomerAdvanceCents(summary.advanceAvailableCents);
+      })
+      .catch(() => {
+        if (!cancelled) setCustomerAdvanceCents(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [desktopApi, form.customerId, isWalletMethod]);
+
+  // Trocar a forma de pagamento para uma que nao e "em carteira" desliga a marca: ela
+  // nao teria efeito no fechamento e ficaria mentindo na ficha da operacao.
+  useEffect(() => {
+    if (isWalletMethod) return;
+    setForm((prev) => (prev.settleFromAdvance ? { ...prev, settleFromAdvance: false } : prev));
+  }, [isWalletMethod]);
 
   // Buscar transportadoras vinculadas ao cliente
   useEffect(() => {
@@ -6462,7 +6522,6 @@ function WeighingForm({
             freightCalculationType: rule.rule.type as WeighingFormState["freightCalculationType"],
             freightBaseValueCents: rule.rule.baseValueCents,
             freightFixedValueCents: rule.rule.fixedValueCents ?? null,
-            freightMinValueCents: rule.rule.minValueCents ?? prev.freightMinValueCents,
             freightDistanceKm: rule.rule.distanceKm
               ? String(rule.rule.distanceKm)
               : prev.freightDistanceKm,
@@ -6848,10 +6907,23 @@ function WeighingForm({
             desktopApi={desktopApi}
           />
           {isWalletMethod ? (
-            <p style={styles.muted}>
-              Venda em carteira: a nota sai sem cobranca e a venda fica na tela Carteira ate o
-              fechamento, onde voce define como o cliente vai pagar.
-            </p>
+            <>
+              <p style={styles.muted}>
+                Venda em carteira: a nota sai sem cobranca e a venda fica na tela Carteira ate o
+                fechamento, onde voce define como o cliente vai pagar.
+              </p>
+              <label style={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={form.settleFromAdvance}
+                  onChange={(event) =>
+                    setForm((prev) => ({ ...prev, settleFromAdvance: event.target.checked }))
+                  }
+                />
+                Abater do adiantamento do cliente
+              </label>
+              <p style={styles.muted}>{advanceHintText(form.customerId, customerAdvanceCents)}</p>
+            </>
           ) : null}
           <Field
             label="Condicao de pagamento"
@@ -6971,15 +7043,6 @@ function WeighingForm({
                         placeholder="Ex: 35"
                       />
                     ) : null}
-                    <PriceInput
-                      label="Frete minimo"
-                      suffix=""
-                      valueCents={form.freightMinValueCents}
-                      onChange={(cents) =>
-                        setForm((prev) => ({ ...prev, freightMinValueCents: cents }))
-                      }
-                      compact
-                    />
                     <TextInput
                       label="Destino/obs."
                       value={form.freightDestination}
@@ -7369,6 +7432,40 @@ function OperationDetailsDialog({
   const [saving, setSaving] = useState(false);
   const [askPricePassword, setAskPricePassword] = useState(false);
   const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [editingCustomerAdvanceCents, setEditingCustomerAdvanceCents] = useState<number | null>(
+    null
+  );
+  // A marca "abater do adiantamento" so vale na venda em carteira: a caixa acompanha a
+  // forma escolhida AQUI, e nao a que estava gravada quando o modal abriu.
+  const editingMethodIsWallet =
+    paymentMethods.find((item) => item.id === form.paymentMethodId)?.isWallet === true;
+
+  // Adiantamento livre do cliente, para a caixa "abater do adiantamento" mostrar do que
+  // a compra vai sair. Segue o cliente escolhido no formulario, que pode ser trocado aqui.
+  useEffect(() => {
+    if (!desktopApi || !form.customerId || !editingMethodIsWallet) {
+      setEditingCustomerAdvanceCents(null);
+      return;
+    }
+    let active = true;
+    void desktopApi
+      .customerCreditSummary(form.customerId)
+      .then((summary) => {
+        if (active) setEditingCustomerAdvanceCents(summary.advanceAvailableCents);
+      })
+      .catch(() => {
+        if (active) setEditingCustomerAdvanceCents(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [desktopApi, form.customerId, editingMethodIsWallet]);
+
+  // Forma que nao e "em carteira" desliga a marca, como na entrada.
+  useEffect(() => {
+    if (editingMethodIsWallet) return;
+    setForm((prev) => (prev.settleFromAdvance ? { ...prev, settleFromAdvance: false } : prev));
+  }, [editingMethodIsWallet]);
 
   // Texto da condicao gravada: a operacao guarda so o id do payment_term, e o campo de
   // edicao e o mesmo texto livre da entrada ("7/14/21").
@@ -7555,6 +7652,23 @@ function OperationDetailsDialog({
                 onChange={(id) => setForm((prev) => ({ ...prev, paymentMethodId: id }))}
                 desktopApi={desktopApi}
               />
+              {editingMethodIsWallet ? (
+                <>
+                  <label style={styles.checkboxLabel}>
+                    <input
+                      type="checkbox"
+                      checked={form.settleFromAdvance}
+                      onChange={(event) =>
+                        setForm((prev) => ({ ...prev, settleFromAdvance: event.target.checked }))
+                      }
+                    />
+                    Abater do adiantamento do cliente
+                  </label>
+                  <p style={styles.muted}>
+                    {advanceHintText(form.customerId, editingCustomerAdvanceCents)}
+                  </p>
+                </>
+              ) : null}
               <Field label="Condicao de pagamento">
                 <input
                   type="text"
@@ -7648,15 +7762,6 @@ function OperationDetailsDialog({
                             placeholder="Ex: 35"
                           />
                         ) : null}
-                        <PriceInput
-                          label="Frete minimo"
-                          suffix=""
-                          valueCents={form.freightMinValueCents}
-                          onChange={(cents) =>
-                            setForm((prev) => ({ ...prev, freightMinValueCents: cents }))
-                          }
-                          compact
-                        />
                         <TextInput
                           label="Destino/obs."
                           value={form.freightDestination}

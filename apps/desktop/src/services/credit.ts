@@ -75,6 +75,13 @@ export interface CustomerCreditSummary extends CustomerCreditSettings {
    * sao abatidas desse dinheiro; o valor nao e editavel aqui.
    */
   omieAdvanceCents: number;
+  /**
+   * Quanto do adiantamento ainda esta livre para abater uma nova compra: o total
+   * espelhado menos o que as operacoes anteriores ja consumiram (ou reservaram e
+   * ainda estao na fila de baixa do OMIE). E o numero que a balanca mostra ao
+   * operador quando ele marca "abater do adiantamento" numa venda em carteira.
+   */
+  advanceAvailableCents: number;
   /** Quando os adiantamentos foram conferidos com o OMIE pela ultima vez. */
   omieSyncedAt: string | null;
 }
@@ -132,6 +139,7 @@ export class CreditService {
       usedCents: balanceCents < 0 ? -balanceCents : 0,
       availableCents: availableCreditCents(settings, balanceCents),
       omieAdvanceCents: advance.cents,
+      advanceAvailableCents: this.getAdvanceAvailableToSettleCents(customerId),
       omieSyncedAt: advance.syncedAt
     };
   }

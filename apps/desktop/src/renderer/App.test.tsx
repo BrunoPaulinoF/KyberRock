@@ -1,7 +1,12 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { describe, expect, it } from "vitest";
 
 import { isFreightModalityWithFreight, resolveFreightModality } from "../services/freight";
 import {
+  advanceHintText,
   App,
   appendAvailableId,
   applyFreightGroupToEntryForm,
@@ -42,12 +47,12 @@ function createWeighingForm(overrides: Partial<WeighingFormForTest> = {}): Weigh
     manualDownPaymentCents: null,
     quotationId: "",
     deductFreightFromCredit: false,
+    settleFromAdvance: false,
     freightModality: "cif",
     chargeFreight: true,
     freightCalculationType: "per_ton",
     freightBaseValueCents: 12_500,
     freightFixedValueCents: null,
-    freightMinValueCents: null,
     freightDistanceKm: "",
     freightDestination: "",
     ...overrides
@@ -321,6 +326,36 @@ describe("App", () => {
     expect(filterCacheSelectOptions(options, ["vehicle-1"])).toEqual([options[1]]);
     expect(filterCacheSelectOptions(options, undefined)).toEqual(options);
   });
+
+  it("diz ao operador de quanto e o adiantamento antes de ele marcar a caixa", () => {
+    expect(advanceHintText("", null)).toContain("Escolha o cliente");
+    expect(advanceHintText("customer-1", null)).toContain("Consultando");
+    // Saldo zero pode ser so atraso do espelho: a frase precisa dizer que a pesagem
+    // confere no OMIE, senao o operador deixa de marcar a caixa e a venda inteira cai
+    // na carteira de quem ja tinha pago.
+    const semSaldo = advanceHintText("customer-1", 0);
+    expect(semSaldo).toContain("Nenhum adiantamento espelhado");
+    expect(semSaldo).toContain("conferido no OMIE ao capturar o peso");
+    const comSaldo = advanceHintText("customer-1", 78_000);
+    // Intl separa "R$" do numero com espaco nao-quebravel: a asserçao olha o valor.
+    expect(comSaldo).toContain("780,00");
+    // A regra do excedente precisa estar na tela: e a duvida que a caixa levanta.
+    expect(comSaldo).toContain("continua em carteira");
+  });
+
+  it("mantem na tela de entrada a caixa de abater do adiantamento e o saldo do cliente", () => {
+    const source = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), "App.tsx"),
+      "utf8"
+    );
+
+    // A caixa so aparece na venda em carteira, e sempre acompanhada do saldo.
+    expect(source).toContain("Abater do adiantamento do cliente");
+    expect(source).toContain("advanceHintText(form.customerId, customerAdvanceCents)");
+    expect(source).toContain("settleFromAdvance: form.settleFromAdvance");
+    // O frete minimo saiu do sistema: nao pode voltar por copiar/colar de formulario.
+    expect(source).not.toContain("Frete minimo");
+  });
 });
 
 function createInternalOperationForTest(
@@ -354,6 +389,8 @@ function createInternalOperationForTest(
     deductFreightFromCredit: false,
     productCreditDebitCents: 0,
     freightCreditDebitCents: 0,
+    settleFromAdvance: false,
+    advanceAppliedCents: 0,
     quotationId: null,
     omieSalesOrderId: null,
     omieServiceOrderId: null,

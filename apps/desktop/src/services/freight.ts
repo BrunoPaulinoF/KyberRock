@@ -285,7 +285,6 @@ export interface FreightRule {
   name: string;
   type: "per_ton" | "per_ton_km" | "fixed_plus_ton" | "distance_range";
   baseValueCents: number;
-  minValueCents?: number;
   fixedValueCents?: number;
   distanceKm?: number;
   ranges?: DistanceRange[];
@@ -332,11 +331,6 @@ export class FreightCalculator {
 
       default:
         freightCents = Math.round(tons * rule.baseValueCents);
-    }
-
-    // Aplica valor mínimo se definido
-    if (rule.minValueCents && freightCents < rule.minValueCents) {
-      return rule.minValueCents;
     }
 
     return freightCents;

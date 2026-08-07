@@ -493,6 +493,122 @@ describe("multi-desktop na mesma pedreira", () => {
     }
   });
 
+  it("carteira: o abatimento do adiantamento chega junto com a venda da outra balanca", async () => {
+    // A venda foi abatida do adiantamento na outra balanca. Sem projetar o abatimento, a
+    // Carteira daqui cobraria os 500,00 inteiros de um cliente que ja pagou 300,00
+    // adiantado — e o proximo fechamento reservaria de novo um adiantamento ja gasto.
+    const database = createMachine("desktop-b");
+
+    try {
+      const identity = readIdentity(database);
+      insertWalletPaymentMethods(database);
+
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          operations: [
+            {
+              id: "op-wallet",
+              company_id: "company-1",
+              unit_id: "unit-1",
+              device_id: "desktop-a",
+              status: "closed_local",
+              operation_type: "invoice",
+              customer_name: "Cliente da outra balanca",
+              total_cents: 50_000,
+              payment_method_id: "pm-wallet",
+              wallet_settlement_method_id: null,
+              wallet_settlement_due_date: null,
+              wallet_settled_at: null,
+              wallet_settlement_note: null,
+              settle_from_advance: true,
+              omie_advance_settle_cents: 30_000,
+              created_at: "2026-07-22T11:00:00.000Z",
+              updated_at: "2026-07-22T12:00:00.000Z"
+            }
+          ]
+        },
+        error: null
+      });
+      await pullDesktopDataFromCloud(database, identity);
+
+      const report = getWalletReport(database, { status: "open" });
+      expect(report.summary).toMatchObject({
+        openCount: 1,
+        openTotalCents: 20_000,
+        advanceAppliedTotalCents: 30_000
+      });
+      expect(
+        database
+          .prepare("SELECT settle_from_advance FROM weighing_operations WHERE id = 'op-wallet'")
+          .pluck()
+          .get()
+      ).toBe(1);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("carteira: nuvem sem as colunas do adiantamento nao apaga o abatimento local", async () => {
+    // Nuvem ainda sem a migracao: o pull devolve a operacao SEM as chaves. O valor local
+    // e o unico que existe e precisa sobreviver — sobrescrever com zero faria a venda ja
+    // paga pelo adiantamento voltar a ser cobranca.
+    const database = createMachine("desktop-b");
+
+    try {
+      const identity = readIdentity(database);
+      insertWalletPaymentMethods(database);
+      upsertUnitDevices(database, identity, [
+        { id: "desktop-a", name: "Balanca 1", color: "#2563eb", is_active: true }
+      ]);
+      insertOperation(database, {
+        id: "op-wallet",
+        deviceId: "desktop-a",
+        status: "closed_local",
+        updatedAt: "2026-07-22T12:00:00.000Z"
+      });
+      database
+        .prepare(
+          `UPDATE weighing_operations
+             SET total_cents = 50000, payment_method_id = 'pm-wallet',
+                 settle_from_advance = 1, omie_advance_settle_cents = 30000
+           WHERE id = 'op-wallet'`
+        )
+        .run();
+
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          operations: [
+            {
+              id: "op-wallet",
+              company_id: "company-1",
+              unit_id: "unit-1",
+              device_id: "desktop-a",
+              status: "closed_local",
+              operation_type: "invoice",
+              total_cents: 50_000,
+              created_at: "2026-07-22T11:00:00.000Z",
+              updated_at: "2026-07-22T13:00:00.000Z"
+            }
+          ]
+        },
+        error: null
+      });
+      await pullDesktopDataFromCloud(database, identity);
+
+      expect(
+        database
+          .prepare(
+            "SELECT omie_advance_settle_cents FROM weighing_operations WHERE id = 'op-wallet'"
+          )
+          .pluck()
+          .get()
+      ).toBe(30_000);
+      expect(getWalletReport(database, { status: "open" }).summary.openTotalCents).toBe(20_000);
+    } finally {
+      database.close();
+    }
+  });
+
   it("carteira: venda ja espelhada sem a forma de pagamento e completada no pull seguinte", async () => {
     // A venda foi espelhada aqui por uma versao que ainda nao trazia a carteira: ficou
     // com a forma de pagamento vazia e `updated_at` identico ao da nuvem. Como o empate

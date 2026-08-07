@@ -155,6 +155,8 @@ export interface KyberRockDesktopApi {
     freightModality?: FreightModality | null;
     quotationId?: string;
     deductFreightFromCredit?: boolean;
+    /** Venda em carteira abatida do adiantamento do cliente. */
+    settleFromAdvance?: boolean;
     scaleCaptureId?: string;
   }) => Promise<WeighingOperationSummary>;
   closeWeighing: (
@@ -193,6 +195,7 @@ export interface KyberRockDesktopApi {
     freight?: OperationFreightInput | null;
     freightModality?: FreightModality;
     deductFreightFromCredit?: boolean;
+    settleFromAdvance?: boolean;
   }) => Promise<WeighingOperationSummary>;
   getCustomerFreightRules: (customerId: string) => Promise<CustomerFreightRuleView[]>;
   getCustomerFreightForProduct: (

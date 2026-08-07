@@ -18,7 +18,11 @@ import {
   markSyncJobFailed,
   pruneCompletedSyncJobs
 } from "./sync-queue";
-import { listClosedWeighingOperations, listOpenWeighingOperations } from "./weighing-operations";
+import {
+  CLOSED_OPERATION_STATUS_SQL_LIST,
+  listClosedWeighingOperations,
+  listOpenWeighingOperations
+} from "./weighing-operations";
 
 /**
  * Bateria de seguranca da atualizacao: cobre os caminhos que a mudanca de fato tocou,
@@ -102,9 +106,23 @@ describe("atualizacao com volume de dados", () => {
         }
       })();
 
+      // Foto do "antes" por SQL cru, com o mesmo filtro e a mesma ordem das listagens:
+      // aqui o banco ainda esta na versao antiga, e as funcoes de leitura sao as do build
+      // NOVO — elas ja pedem colunas que so nascem na migracao que este teste vai aplicar.
+      const readIds = (sql: string): string[] => database.prepare(sql).pluck().all() as string[];
       const before = {
-        open: listOpenWeighingOperations(database).map((operation) => operation.id),
-        closed: listClosedWeighingOperations(database).map((operation) => operation.id),
+        open: readIds(
+          `SELECT id FROM weighing_operations
+           WHERE status IN ('loading_requested', 'awaiting_exit', 'entry_registered')
+             AND deleted_at IS NULL
+           ORDER BY created_at DESC`
+        ),
+        closed: readIds(
+          `SELECT id FROM weighing_operations
+           WHERE status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
+             AND deleted_at IS NULL
+           ORDER BY updated_at DESC`
+        ),
         runnable: listRunnableSyncJobs(database, { target: "omie", limit: 1_000 }).map(
           (job) => job.id
         )

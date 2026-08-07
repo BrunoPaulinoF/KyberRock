@@ -9,6 +9,7 @@ import { rememberCustomerFreightValue } from "./customer-freight-rules";
 import { setDefaultNfeEmail } from "./customers";
 import { createPaymentTerm } from "./payment-terms";
 import { enqueueSyncJob } from "./sync-queue";
+import { getWalletReport } from "./wallet";
 import { buildOmieIntegrationCode } from "@kyberrock/omie-client";
 import {
   buildOmieBillingJob,
@@ -672,6 +673,235 @@ describe("weighing operations", () => {
         omie_advance_status: string | null;
       };
       expect(row).toEqual({ omie_advance_settle_cents: 0, omie_advance_status: null });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("abate a venda em carteira do adiantamento e fecha a venda quando ele cobre tudo", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      const walletMethodId = insertWalletPaymentMethod(database, identity.companyId);
+      // Cliente deixou 1.000,00 pagos adiantado; a retirada de hoje da 780,00.
+      seedOmieAdvance(database, identity.companyId, 100_000);
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        paymentMethodId: walletMethodId,
+        settleFromAdvance: true,
+        entryWeightKg: 12_000
+      });
+      expect(operation.settleFromAdvance).toBe(true);
+
+      const closed = closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500
+      });
+
+      expect(closed).toMatchObject({ totalCents: 78_000, advanceAppliedCents: 78_000 });
+      // Sobra 220,00 do adiantamento para a proxima retirada.
+      expect(new CreditService(database).getAdvanceAvailableToSettleCents("customer-1")).toBe(
+        22_000
+      );
+
+      const row = database
+        .prepare(
+          `SELECT omie_advance_settle_cents, omie_advance_status, wallet_settled_at,
+                  wallet_settlement_method_id, wallet_settlement_note
+           FROM weighing_operations WHERE id = ?`
+        )
+        .get(operation.id) as {
+        omie_advance_settle_cents: number;
+        omie_advance_status: string;
+        wallet_settled_at: string | null;
+        wallet_settlement_method_id: string | null;
+        wallet_settlement_note: string | null;
+      };
+      expect(row.omie_advance_settle_cents).toBe(78_000);
+      // Vai virar baixa no OMIE contra a conta de adiantamentos.
+      expect(row.omie_advance_status).toBe("pending");
+      // Nada a cobrar depois: a venda ja sai fechada na carteira, sem forma de recebimento.
+      expect(row.wallet_settled_at).not.toBeNull();
+      expect(row.wallet_settlement_method_id).toBeNull();
+      expect(row.wallet_settlement_note).toBe("Abatido do adiantamento do cliente");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("abate o que o adiantamento cobre e deixa o restante em carteira", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      const walletMethodId = insertWalletPaymentMethod(database, identity.companyId);
+      // So 300,00 de adiantamento para uma compra de 780,00.
+      seedOmieAdvance(database, identity.companyId, 30_000);
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        paymentMethodId: walletMethodId,
+        settleFromAdvance: true,
+        entryWeightKg: 12_000
+      });
+      const closed = closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500
+      });
+
+      expect(closed).toMatchObject({ totalCents: 78_000, advanceAppliedCents: 30_000 });
+      expect(new CreditService(database).getAdvanceAvailableToSettleCents("customer-1")).toBe(0);
+
+      const row = database
+        .prepare(
+          `SELECT omie_advance_settle_cents, wallet_settled_at
+           FROM weighing_operations WHERE id = ?`
+        )
+        .get(operation.id) as {
+        omie_advance_settle_cents: number;
+        wallet_settled_at: string | null;
+      };
+      expect(row.omie_advance_settle_cents).toBe(30_000);
+      // Os 480,00 que passaram do adiantamento continuam esperando o fechamento.
+      expect(row.wallet_settled_at).toBeNull();
+
+      const wallet = getWalletReport(database, { status: "open" });
+      expect(wallet.summary).toMatchObject({
+        openCount: 1,
+        openTotalCents: 48_000,
+        advanceAppliedTotalCents: 30_000
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("nao abate nada da venda em carteira sem a marca do operador", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      const walletMethodId = insertWalletPaymentMethod(database, identity.companyId);
+      seedOmieAdvance(database, identity.companyId, 100_000);
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        paymentMethodId: walletMethodId,
+        entryWeightKg: 12_000
+      });
+      const closed = closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500
+      });
+
+      expect(closed.advanceAppliedCents).toBe(0);
+      // O adiantamento continua inteiro, e a venda inteira na carteira.
+      expect(new CreditService(database).getAdvanceAvailableToSettleCents("customer-1")).toBe(
+        100_000
+      );
+      expect(getWalletReport(database, { status: "open" }).summary.openTotalCents).toBe(78_000);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("devolve o adiantamento ao cancelar a venda em carteira abatida", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      const walletMethodId = insertWalletPaymentMethod(database, identity.companyId);
+      seedOmieAdvance(database, identity.companyId, 100_000);
+      const creditService = new CreditService(database);
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        paymentMethodId: walletMethodId,
+        settleFromAdvance: true,
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, { operationId: operation.id, exitWeightKg: 18_500 });
+      expect(creditService.getBalance("customer-1")).toBe(22_000);
+
+      cancelWeighingOperation(database, { operationId: operation.id, reason: "caminhao voltou" });
+
+      // O dinheiro volta para o cliente dos dois lados do extrato.
+      expect(creditService.getBalance("customer-1")).toBe(100_000);
+      expect(creditService.getAdvanceAvailableToSettleCents("customer-1")).toBe(100_000);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("recalcula o abatimento no fechamento: duas retiradas nao gastam o mesmo adiantamento", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      const walletMethodId = insertWalletPaymentMethod(database, identity.companyId);
+      // 1.000,00 de adiantamento para duas retiradas de 780,00 cada.
+      seedOmieAdvance(database, identity.companyId, 100_000);
+      database
+        .prepare(
+          "INSERT INTO vehicles (id, company_id, plate, created_at, updated_at) VALUES ('vehicle-2', 'company-1', 'XYZ9A88', ?, ?)"
+        )
+        .run("2026-06-06T12:00:00.000Z", "2026-06-06T12:00:00.000Z");
+
+      const first = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        paymentMethodId: walletMethodId,
+        settleFromAdvance: true,
+        entryWeightKg: 12_000
+      });
+      // As duas entram ANTES de qualquer fechamento: o saldo so e reservado na saida.
+      const second = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-2",
+        driverId: "driver-1",
+        productId: "product-1",
+        paymentMethodId: walletMethodId,
+        settleFromAdvance: true,
+        entryWeightKg: 12_000
+      });
+
+      expect(
+        closeWeighingOperation(database, { operationId: first.id, exitWeightKg: 18_500 })
+          .advanceAppliedCents
+      ).toBe(78_000);
+      // Sobraram 220,00: e so isso que a segunda retirada pode abater.
+      expect(
+        closeWeighingOperation(database, { operationId: second.id, exitWeightKg: 18_500 })
+          .advanceAppliedCents
+      ).toBe(22_000);
+      expect(new CreditService(database).getAdvanceAvailableToSettleCents("customer-1")).toBe(0);
     } finally {
       database.close();
     }
@@ -3758,6 +3988,20 @@ function seedOmieAdvance(
     )
     .run(id, companyId, amountCents, amountCents, "2026-07-20T10:00:00.000Z");
   recalculateCreditBalance(database);
+}
+
+/** Forma de pagamento "Em carteira" para as vendas abatidas do adiantamento. */
+function insertWalletPaymentMethod(database: DesktopDatabase, companyId: string): string {
+  const now = "2026-06-06T12:00:00.000Z";
+  database
+    .prepare(
+      `INSERT INTO payment_methods (
+        id, company_id, code, name, omie_code, is_system, is_customer_credit, is_wallet,
+        sort_order, is_active, created_at, updated_at
+      ) VALUES ('pm-wallet', ?, 'wallet', 'Em carteira', '99', 1, 0, 1, 7, 1, ?, ?)`
+    )
+    .run(companyId, now, now);
+  return "pm-wallet";
 }
 
 /** Movimento local herdado (de quando o desktop ainda lancava credito). */

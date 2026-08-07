@@ -26,7 +26,6 @@ describe("FreightCalculator", () => {
     name: "Frete por Tonelada",
     type: "per_ton",
     baseValueCents: 1000, // R$ 10,00 por tonelada
-    minValueCents: 5000, // R$ 50,00 mínimo
     unit: "ton"
   };
 
@@ -39,13 +38,11 @@ describe("FreightCalculator", () => {
     expect(result).toBe(15000); // 150,00 em centavos
   });
 
-  it("applies minimum value when freight is too low", () => {
+  it("cobra sempre o valor calculado, sem piso: a pedreira nao usa frete minimo", () => {
     const calculator = new FreightCalculator();
 
-    // 2 toneladas a R$ 10,00/ton = R$ 20,00 (abaixo do mínimo de R$ 50,00)
-    const result = calculator.calculate(2000, baseRule);
-
-    expect(result).toBe(5000); // R$ 50,00 mínimo
+    // 2 toneladas a R$ 10,00/ton = R$ 20,00, e e isso que sai no cupom.
+    expect(calculator.calculate(2000, baseRule)).toBe(2000);
   });
 
   it("calculates freight per ton-km", () => {

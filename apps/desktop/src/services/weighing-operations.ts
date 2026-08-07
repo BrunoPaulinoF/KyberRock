@@ -166,6 +166,12 @@ export interface CreateWeighingOperationInput {
   freightModality?: FreightModality | null;
   quotationId?: string;
   deductFreightFromCredit?: boolean;
+  /**
+   * Venda em carteira que deve ser abatida do adiantamento do cliente. So tem efeito
+   * quando a forma de pagamento e "em carteira": o fechamento consome o adiantamento
+   * ate onde ele der e o que sobrar continua em carteira.
+   */
+  settleFromAdvance?: boolean;
 }
 
 export interface CloseWeighingOperationInput {
@@ -232,6 +238,14 @@ export interface WeighingOperationSummary {
   deductFreightFromCredit: boolean;
   productCreditDebitCents: number;
   freightCreditDebitCents: number;
+  /** Marca "abater do adiantamento" da venda em carteira (escolhida na entrada). */
+  settleFromAdvance: boolean;
+  /**
+   * Quanto desta operacao saiu do adiantamento do cliente, em centavos. Preenchido no
+   * fechamento e usado tambem como valor a baixar no OMIE. O que passar disso continua
+   * a receber (em carteira ou no fiado, conforme a forma de pagamento).
+   */
+  advanceAppliedCents: number;
   quotationId: string | null;
   omieSalesOrderId: number | null;
   /** Numero da ordem de servico criada no OMIE para a operacao interna (sem nota). */
@@ -281,6 +295,8 @@ interface OperationRow {
   deduct_freight_from_credit: number;
   product_credit_debit_cents: number;
   freight_credit_debit_cents: number;
+  settle_from_advance?: number | null;
+  omie_advance_settle_cents?: number | null;
   quotation_id: string | null;
   omie_sales_order_id: number | null;
   omie_service_order_id: number | null;
@@ -658,8 +674,8 @@ export function createWeighingOperation(
           payment_term_id, payment_method_id, manual_installments, manual_down_payment_cents, entry_weight_kg, entry_weight_captured_at, unit_price_cents,
           base_unit_price_cents, applied_price_table_id, applied_price_table_name, applied_price_table_item_id,
           price_unit, price_savings_percent, freight_total_cents, freight_json, freight_type, deduct_freight_from_credit,
-          product_credit_debit_cents, freight_credit_debit_cents, quotation_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 'loading_requested', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 0, 0, ?, ?, ?)`
+          settle_from_advance, product_credit_debit_cents, freight_credit_debit_cents, quotation_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 'loading_requested', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 0, 0, ?, ?, ?)`
       )
       .run(
         operationId,
@@ -689,6 +705,7 @@ export function createWeighingOperation(
         serializeOperationFreight(input.freight),
         resolveOperationFreightModality(input.freightModality),
         input.deductFreightFromCredit ? 1 : 0,
+        input.settleFromAdvance ? 1 : 0,
         input.quotationId ?? null,
         timestamp,
         timestamp
@@ -818,8 +835,9 @@ export function closeWeighingOperation(
 
   const opRow = database
     .prepare(
-      `SELECT o.customer_id, o.deduct_freight_from_credit, o.quotation_id,
-              COALESCE(pm.is_customer_credit, 0) AS payment_is_customer_credit
+      `SELECT o.customer_id, o.deduct_freight_from_credit, o.quotation_id, o.settle_from_advance,
+              COALESCE(pm.is_customer_credit, 0) AS payment_is_customer_credit,
+              COALESCE(pm.is_wallet, 0) AS payment_is_wallet
        FROM weighing_operations o
        LEFT JOIN payment_methods pm ON pm.id = o.payment_method_id
        WHERE o.id = ?`
@@ -829,12 +847,18 @@ export function closeWeighingOperation(
         customer_id: string | null;
         deduct_freight_from_credit: number;
         quotation_id: string | null;
+        settle_from_advance: number;
         payment_is_customer_credit: number;
+        payment_is_wallet: number;
       }
     | undefined;
 
   let productCreditDebitCents = 0;
   let freightCreditDebitCents = 0;
+  // Venda em carteira abatida do adiantamento: quanto do adiantamento esta compra
+  // consome, e se ela fica quitada (nada mais a receber na carteira).
+  let advanceAppliedCents = 0;
+  let walletPaidByAdvance = false;
 
   if (opRow?.customer_id && productTotalCents !== null) {
     const creditService = new CreditService(database);
@@ -858,6 +882,21 @@ export function closeWeighingOperation(
 
       productCreditDebitCents = productTotalCents;
       freightCreditDebitCents = deductFreight ? (freightTotalCents ?? 0) : 0;
+    } else if (opRow.payment_is_wallet === 1 && opRow.settle_from_advance === 1) {
+      // Cliente que pagou adiantado e agora esta retirando: a compra sai do
+      // adiantamento que ele ainda tem no OMIE, ate onde ele der. O saldo e
+      // reconferido AQUI (e nao na entrada) porque outras retiradas do mesmo dia
+      // podem ter consumido o adiantamento enquanto o caminhao carregava.
+      const available = creditService.getAdvanceAvailableToSettleCents(opRow.customer_id);
+      advanceAppliedCents = Math.max(0, Math.min(totalCents ?? 0, available));
+      // O abatimento debita produto primeiro e frete depois, como o fiado: e o mesmo
+      // par de colunas que o cancelamento estorna.
+      productCreditDebitCents = Math.min(advanceAppliedCents, productTotalCents);
+      freightCreditDebitCents = advanceAppliedCents - productCreditDebitCents;
+      // Adiantamento cobriu a compra inteira: nao sobra nada para cobrar depois, entao
+      // a venda ja nasce fechada na carteira. Se cobriu so uma parte, o restante fica
+      // em aberto la, esperando o fechamento normal.
+      walletPaidByAdvance = advanceAppliedCents > 0 && advanceAppliedCents === totalCents;
     }
   }
 
@@ -939,6 +978,21 @@ export function closeWeighingOperation(
             )
             .run(settleCents, timestamp, input.operationId);
         }
+        // Adiantamento cobriu a venda em carteira inteira: ela ja esta paga e nao vai
+        // esperar fechamento nenhum. Fica sem forma de recebimento de proposito — quem
+        // "recebeu" foi o adiantamento, e e assim que a tela Carteira a identifica.
+        if (walletPaidByAdvance && settleCents === totalCents) {
+          database
+            .prepare(
+              `UPDATE weighing_operations
+                 SET wallet_settled_at = ?, wallet_settlement_method_id = NULL,
+                     wallet_settlement_due_date = NULL,
+                     wallet_settlement_note = 'Abatido do adiantamento do cliente',
+                     updated_at = ?
+               WHERE id = ?`
+            )
+            .run(timestamp, timestamp, input.operationId);
+        }
       }
     }
 
@@ -965,6 +1019,8 @@ export function closeWeighingOperation(
         productTotalCents,
         freightTotalCents,
         totalCents,
+        advanceAppliedCents,
+        walletPaidByAdvance,
         operationType: input.operationType ?? operation.operationType
       },
       timestamp
@@ -2150,6 +2206,7 @@ export function listOpenWeighingOperations(database: DesktopDatabase): WeighingO
         o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
         o.product_total_cents, o.freight_total_cents, o.freight_json, o.freight_type, o.total_cents,
         o.deduct_freight_from_credit, o.product_credit_debit_cents, o.freight_credit_debit_cents, o.quotation_id,
+        o.settle_from_advance, o.omie_advance_settle_cents,
         o.omie_sales_order_id, o.omie_service_order_id, o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
@@ -2198,6 +2255,7 @@ export function listCanceledWeighingOperations(
         o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
         o.product_total_cents, o.freight_total_cents, o.freight_json, o.freight_type, o.total_cents,
         o.deduct_freight_from_credit, o.product_credit_debit_cents, o.freight_credit_debit_cents, o.quotation_id,
+        o.settle_from_advance, o.omie_advance_settle_cents,
         o.omie_sales_order_id, o.omie_service_order_id, o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
@@ -2244,6 +2302,7 @@ export function listClosedWeighingOperations(
         o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
         o.product_total_cents, o.freight_total_cents, o.freight_json, o.freight_type, o.total_cents,
         o.deduct_freight_from_credit, o.product_credit_debit_cents, o.freight_credit_debit_cents, o.quotation_id,
+        o.settle_from_advance, o.omie_advance_settle_cents,
         o.omie_sales_order_id, o.omie_service_order_id, o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
@@ -2385,6 +2444,7 @@ export function getWeighingOperation(
         o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
         o.product_total_cents, o.freight_total_cents, o.freight_json, o.freight_type, o.total_cents,
         o.deduct_freight_from_credit, o.product_credit_debit_cents, o.freight_credit_debit_cents, o.quotation_id,
+        o.settle_from_advance, o.omie_advance_settle_cents,
         o.omie_sales_order_id, o.omie_service_order_id, o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
@@ -2804,6 +2864,8 @@ export interface UpdateWeighingOperationDetailsInput {
   freight?: OperationFreightInput | null;
   freightModality?: FreightModality;
   deductFreightFromCredit?: boolean;
+  /** Marca "abater do adiantamento" da venda em carteira. */
+  settleFromAdvance?: boolean;
 }
 
 interface EditableOperationRow {
@@ -2819,6 +2881,7 @@ interface EditableOperationRow {
   unit_price_cents: number | null;
   base_unit_price_cents: number | null;
   deduct_freight_from_credit: number;
+  settle_from_advance: number;
 }
 
 export function updateWeighingOperationDetails(
@@ -2836,7 +2899,7 @@ export function updateWeighingOperationDetails(
     .prepare(
       `SELECT unit_id, customer_id, product_id, vehicle_id, driver_id, carrier_id,
               payment_term_id, payment_method_id, operation_type, unit_price_cents,
-              base_unit_price_cents, deduct_freight_from_credit
+              base_unit_price_cents, deduct_freight_from_credit, settle_from_advance
        FROM weighing_operations
        WHERE id = ?`
     )
@@ -3013,6 +3076,10 @@ export function updateWeighingOperationDetails(
     input.deductFreightFromCredit !== undefined
       ? input.deductFreightFromCredit
       : current.deduct_freight_from_credit === 1;
+  const settleFromAdvance =
+    input.settleFromAdvance !== undefined
+      ? input.settleFromAdvance
+      : current.settle_from_advance === 1;
 
   const timestamp = now.toISOString();
 
@@ -3029,6 +3096,7 @@ export function updateWeighingOperationDetails(
              manual_installments = CASE WHEN ? = 1 THEN NULL ELSE manual_installments END,
              manual_down_payment_cents = CASE WHEN ? = 1 THEN NULL ELSE manual_down_payment_cents END,
              freight_json = ?, freight_type = ?, deduct_freight_from_credit = ?,
+             settle_from_advance = ?,
              updated_at = ?
          WHERE id = ?`
       )
@@ -3052,6 +3120,7 @@ export function updateWeighingOperationDetails(
         freightJson,
         freightModality,
         deductFreightFromCredit ? 1 : 0,
+        settleFromAdvance ? 1 : 0,
         timestamp,
         input.operationId
       );
@@ -3090,7 +3159,8 @@ export function updateWeighingOperationDetails(
         unitPriceCents: current.unit_price_cents,
         freightJson: before.freightJson,
         freightModality: before.freightModality,
-        deductFreightFromCredit: current.deduct_freight_from_credit === 1
+        deductFreightFromCredit: current.deduct_freight_from_credit === 1,
+        settleFromAdvance: current.settle_from_advance === 1
       },
       {
         customerId,
@@ -3108,7 +3178,8 @@ export function updateWeighingOperationDetails(
         unitPriceCents,
         freightJson,
         freightModality,
-        deductFreightFromCredit
+        deductFreightFromCredit,
+        settleFromAdvance
       },
       timestamp
     );
@@ -3299,6 +3370,8 @@ function mapOperationRow(row: OperationRow): WeighingOperationSummary {
     deductFreightFromCredit: row.deduct_freight_from_credit === 1,
     productCreditDebitCents: row.product_credit_debit_cents ?? 0,
     freightCreditDebitCents: row.freight_credit_debit_cents ?? 0,
+    settleFromAdvance: row.settle_from_advance === 1,
+    advanceAppliedCents: row.omie_advance_settle_cents ?? 0,
     quotationId: row.quotation_id,
     omieSalesOrderId: row.omie_sales_order_id,
     omieServiceOrderId: row.omie_service_order_id ?? null,

@@ -33,7 +33,6 @@ export interface CustomerFreightModalityValue {
   type: FreightRule["type"];
   baseValueCents: number;
   fixedValueCents?: number;
-  minValueCents?: number;
   distanceKm?: number;
   /** Destino/observacao usado da ultima vez nesse tipo de frete. */
   destination?: string | null;
@@ -413,7 +412,6 @@ function buildRulePayload(input: {
     type: input.rule.type,
     baseValueCents: input.rule.baseValueCents,
     fixedValueCents: input.rule.fixedValueCents,
-    minValueCents: input.rule.minValueCents,
     distanceKm: input.rule.distanceKm,
     // Cadastro sem destino/cupom informados nao apaga o que a ultima venda memorizou.
     destination: input.destination ?? previous?.destination ?? null,
@@ -435,7 +433,6 @@ function toFreightRule(
     type: value.type,
     baseValueCents: value.baseValueCents,
     fixedValueCents: value.fixedValueCents,
-    minValueCents: value.minValueCents,
     distanceKm: value.distanceKm,
     unit: "ton"
   };
@@ -456,7 +453,6 @@ function readModalities(payload: RuleJsonPayload | null): CustomerFreightModalit
       type: value.type ?? "per_ton",
       baseValueCents,
       fixedValueCents: numberOrUndefined(value.fixedValueCents),
-      minValueCents: numberOrUndefined(value.minValueCents),
       distanceKm: numberOrUndefined(value.distanceKm),
       destination: typeof value.destination === "string" ? value.destination : null,
       showOnReceipt: typeof value.showOnReceipt === "boolean" ? value.showOnReceipt : undefined,

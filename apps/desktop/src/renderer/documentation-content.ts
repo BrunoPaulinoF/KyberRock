@@ -301,6 +301,7 @@ export const documentationSections: DocumentationSection[] = [
       "O bloqueio financeiro soma tres coisas: os titulos em aberto no OMIE, o limite de credito do cadastro e as operacoes fechadas AQUI que ainda nao subiram. Por isso um cliente pode bloquear mesmo com o OMIE aparentemente limpo — sao as cargas de hoje que ainda nao sincronizaram.",
       "Adiantamentos lancados no OMIE viram saldo de credito aqui quando a sincronizacao roda. Se o adiantamento acabou de ser lancado, sincronize antes de tentar de novo.",
       "Cancelar uma operacao paga com credito estorna o valor para o cliente.",
+      'Cliente que pagou adiantado e vai retirando aos poucos nao precisa ser pre-pago: venda "Em carteira" e marque "Abater do adiantamento do cliente" na entrada — veja o guia da carteira.',
       "Liberar credito e decisao do financeiro, nao da balanca: ajuste o limite ou de baixa nos titulos no OMIE e sincronize.",
       "Frete pode ser descontado do credito do cliente quando a operacao estiver configurada assim."
     ],
@@ -328,6 +329,7 @@ export const documentationSections: DocumentationSection[] = [
     icon: Wallet,
     steps: [
       'Na entrada, escolha "Em carteira" quando o pagamento ficar para um acerto futuro.',
+      'Se o cliente ja pagou adiantado, marque tambem "Abater do adiantamento do cliente" — a tela mostra quanto ele ainda tem depositado.',
       "Feche a operacao normalmente: a nota sai, mas o OMIE nao gera cobranca ainda.",
       "Abra Carteira na barra lateral para ver as vendas em aberto agrupadas por cliente.",
       "Selecione as vendas do cliente, escolha a forma de recebimento e o vencimento combinado e clique em Fechar.",
@@ -337,7 +339,12 @@ export const documentationSections: DocumentationSection[] = [
       'A venda em carteira vai ao OMIE como meio "99 - outros" e com o boleto desativado: a cobranca so nasce depois do fechamento.',
       "Diferente do credito do cliente (fiado), a carteira nao consome limite nem saldo do cadastro, e o fechamento e manual.",
       "A forma 'Em carteira' e compartilhada entre as balancas, mas o fechamento fica no computador que o registrou.",
-      "Use a carteira para o cliente que compra varias cargas na semana e acerta tudo de uma vez."
+      "Use a carteira para o cliente que compra varias cargas na semana e acerta tudo de uma vez.",
+      'Cliente que pagou adiantado: com "Abater do adiantamento" marcado, o fechamento desconta a compra do que ele tem depositado e baixa esse valor no OMIE, na conta de adiantamento de clientes.',
+      "Com a caixa marcada, o adiantamento daquele cliente e conferido no OMIE na hora de capturar o peso (na entrada e na saida) — nao e preciso sincronizar a mao antes de carregar. Sem internet a pesagem acontece do mesmo jeito, usando o saldo ja espelhado.",
+      "Se a compra passar do adiantamento, o sistema abate o que da e deixa a diferenca em carteira, esperando o fechamento normal; se o adiantamento cobrir tudo, a venda ja sai quitada.",
+      'Na tela Carteira, a coluna "Adiantamento" mostra quanto saiu do deposito do cliente e a coluna "A receber" mostra o que ainda falta cobrar.',
+      "Venda quitada pelo adiantamento nao pode ser reaberta: para desfazer, cancele a operacao — o adiantamento volta para o saldo do cliente."
     ],
     keywords: [
       "carteira",
@@ -347,7 +354,12 @@ export const documentationSections: DocumentationSection[] = [
       "recebimento",
       "cobranca depois",
       "reabrir fechamento",
-      "venda em aberto"
+      "venda em aberto",
+      "adiantamento",
+      "pagou adiantado",
+      "abater do adiantamento",
+      "pagamento antecipado",
+      "deixou pago"
     ]
   },
   {

@@ -1786,5 +1786,26 @@ WHERE deleted_at IS NULL
     SELECT id FROM payment_methods WHERE is_wallet = 1 AND deleted_at IS NULL
   );
 `
+  },
+  {
+    version: 50,
+    name: "operation_settle_from_advance",
+    sql: `
+-- Venda em carteira abatida do adiantamento do cliente.
+--
+-- O cliente paga adiantado na pedreira e o financeiro lanca o dinheiro no OMIE como
+-- adiantamento (categoria de adiantamento, conta corrente "Adiantamento de Clientes").
+-- Depois ele vai retirando material aos poucos. Na balanca a venda continua sendo "Em
+-- carteira" — o que muda e esta marca: com ela ligada, o fechamento abate a compra do
+-- adiantamento que sobrou (e baixa o titulo do pedido contra a conta de adiantamentos
+-- no OMIE, pela fila \`settle_advance\` que ja existe).
+--
+-- Quanto foi abatido nao ganha coluna nova: e o \`omie_advance_settle_cents\` da
+-- migracao 42, que ja significa "quanto desta operacao sai do adiantamento" e ja e
+-- descontado do saldo disponivel do cliente no proximo fechamento. O que passar do
+-- adiantamento continua em carteira, esperando o fechamento normal.
+ALTER TABLE weighing_operations ADD COLUMN settle_from_advance INTEGER NOT NULL DEFAULT 0
+  CHECK (settle_from_advance IN (0, 1));
+`
   }
 ];

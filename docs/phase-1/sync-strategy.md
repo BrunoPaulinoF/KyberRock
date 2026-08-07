@@ -250,10 +250,28 @@ entrada; sem memoria, fecha sem frete, nunca com um valor inventado.
 - O fechamento em si e **local** (tela Carteira do desktop): grava em
   `weighing_operations` a forma de recebimento escolhida
   (`wallet_settlement_method_id`), o vencimento combinado (`wallet_settlement_due_date`),
-  quando foi fechado (`wallet_settled_at`) e a observacao. Como
-  `weighing_operations.payment_method_id` nao faz parte da projecao da nuvem, esses campos
-  tambem ficam na maquina — o que viaja entre desktops e a **forma** (`payment_methods`,
-  com `is_wallet`), para as duas balancas classificarem a venda igual.
+  quando foi fechado (`wallet_settled_at`) e a observacao. A carteira e da pedreira
+  inteira, entao esses campos **e** a forma de pagamento da venda viajam na projecao da
+  nuvem (junto com `payment_methods.is_wallet`, que e o que classifica a venda), para as
+  duas balancas mostrarem a mesma carteira.
+- **Cliente que pagou adiantado**: a marca `settle_from_advance` (caixa "abater do
+  adiantamento" na entrada) faz o fechamento descontar a compra do adiantamento que o
+  cliente tem no OMIE, ate onde ele der — a reserva vai para `omie_advance_settle_cents`
+  e a baixa la e a mesma do fiado (job `settle_advance`, ver `docs/ARCHITECTURE.md`). O
+  que passar do adiantamento continua em carteira esperando o fechamento normal; se o
+  adiantamento cobrir o total, a venda ja sai fechada, sem forma de recebimento (foi o
+  adiantamento que recebeu) e sem poder ser reaberta — o estorno e o cancelamento da
+  operacao. As duas colunas (`settle_from_advance` e `omie_advance_settle_cents`) tambem
+  vao na projecao: a saida pode ser pesada na outra balanca, e sem elas a outra maquina
+  cobraria a venda inteira e reservaria de novo um adiantamento ja consumido.
+- **A pesagem confere o saldo**: com a marca ligada, capturar o peso (na entrada e no
+  fechamento) dispara um `pull_customer_advances` MIRADO naquele cliente
+  (`filtrar_cliente`), disparado junto com a captura para nao somar espera. Sem ele o
+  abatimento dependeria da varredura agendada, e o cliente que "deixou pago" de manha
+  seria abatido contra saldo velho. A conferencia e **best-effort** (offline-first: sem
+  internet a pesagem acontece igual, com o saldo ja espelhado — o erro e sempre para
+  MENOS, e o restante fica em carteira) e **nao mexe no cursor** da varredura completa,
+  senao ela passaria a pular os adiantamentos antigos dos demais clientes.
 - Diferenca para o credito do cliente (fiado): a carteira **nao** consome limite/saldo do
   cadastro e nao tem periodicidade automatica — o fechamento e manual, quando o comercial
   e o cliente combinam.

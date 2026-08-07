@@ -10,6 +10,7 @@ import { openDesktopDatabase } from "./sqlite";
 import { ensureInitialDesktopIdentity } from "../services/bootstrap";
 import { enqueueSyncJob, listRunnableSyncJobs } from "../services/sync-queue";
 import {
+  CLOSED_OPERATION_STATUS_SQL_LIST,
   listCanceledWeighingOperations,
   listClosedWeighingOperations,
   listOpenWeighingOperations
@@ -79,21 +80,33 @@ describe("atualizacao de um banco em uso (47 -> 48)", () => {
         payload: { operationId: "op-closed" }
       });
 
-      // Estado ANTES da atualizacao.
+      // Estado ANTES da atualizacao. As operacoes saem por SQL cru, com o mesmo filtro e
+      // a mesma ordem das listagens: o banco ainda esta na versao antiga e as funcoes de
+      // leitura sao as do build NOVO, que ja pedem colunas criadas pela atualizacao.
+      const idsPorStatus = (statusList: string, order: string): string[] =>
+        database
+          .prepare(
+            `SELECT id FROM weighing_operations
+             WHERE status IN (${statusList}) AND deleted_at IS NULL
+             ORDER BY ${order} DESC`
+          )
+          .pluck()
+          .all() as string[];
       const before = {
-        open: listOpenWeighingOperations(database).map((o) => o.id),
-        closed: listClosedWeighingOperations(database).map((o) => o.id),
-        canceled: listCanceledWeighingOperations(database).map((o) => o.id),
+        open: idsPorStatus(
+          "'loading_requested', 'awaiting_exit', 'entry_registered'",
+          "created_at"
+        ),
+        closed: idsPorStatus(CLOSED_OPERATION_STATUS_SQL_LIST, "updated_at"),
+        canceled: idsPorStatus("'cancelled'", "updated_at"),
         runnable: listRunnableSyncJobs(database, { target: "omie" }).map((j) => j.id),
         totalOperacoes: database.prepare("SELECT COUNT(*) FROM weighing_operations").pluck().get()
       };
 
-      // 3) A atualizacao propriamente dita (ate a 48: o salto seguinte tem teste proprio).
-      const applied = runDesktopMigrations(
-        database,
-        DESKTOP_MIGRATIONS.filter((migration) => migration.version <= 48)
-      );
-      expect(applied.at(-1)?.version).toBe(48);
+      // 3) A atualizacao propriamente dita. Roda a lista INTEIRA porque o instalador novo
+      //    e o build atual: parar na 48 deixaria o banco atras do codigo que le abaixo.
+      const applied = runDesktopMigrations(database);
+      expect(applied.map((migration) => migration.version)).toContain(48);
 
       // 4) Nada mudou para o operador: as mesmas linhas, na mesma ordem.
       expect(listOpenWeighingOperations(database).map((o) => o.id)).toEqual(before.open);
@@ -145,11 +158,8 @@ describe("atualizacao de um banco em uso (47 -> 48)", () => {
     const database = openDesktopDatabase({ databasePath: ":memory:" });
 
     try {
-      // Banco ja atualizado ate a 48...
-      runDesktopMigrations(
-        database,
-        DESKTOP_MIGRATIONS.filter((migration) => migration.version <= 48)
-      );
+      // Banco ja atualizado pelo instalador novo (a 48 inclusive)...
+      runDesktopMigrations(database);
 
       // ...e o operador volta para o instalador anterior, que so conhece ate a 47.
       // runDesktopMigrations itera a PROPRIA lista, entao a versao 48 gravada em
@@ -207,11 +217,8 @@ describe("atualizacao de um banco em uso (47 -> 48)", () => {
       database.close();
       database = openDesktopDatabase({ databasePath });
 
-      const applied = runDesktopMigrations(
-        database,
-        DESKTOP_MIGRATIONS.filter((migration) => migration.version <= 48)
-      );
-      expect(applied.at(-1)?.version).toBe(48);
+      const applied = runDesktopMigrations(database);
+      expect(applied.map((migration) => migration.version)).toContain(48);
       expect(listClosedWeighingOperations(database).map((o) => o.id)).toEqual(["op-1"]);
       expect(database.prepare("PRAGMA integrity_check").pluck().get()).toBe("ok");
       database.close();

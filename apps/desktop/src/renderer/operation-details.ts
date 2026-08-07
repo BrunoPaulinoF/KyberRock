@@ -186,6 +186,14 @@ export function buildOperationDetailSections(
           value: operation.deductFreightFromCredit ? "Sim" : "Nao"
         },
         {
+          label: "Abate do adiantamento",
+          value: operation.settleFromAdvance ? "Sim" : "Nao"
+        },
+        {
+          label: "Abatido do adiantamento",
+          value: formatCents(operation.advanceAppliedCents)
+        },
+        {
           label: "Credito debitado (produto)",
           value: formatCents(operation.productCreditDebitCents)
         },
@@ -219,10 +227,6 @@ export function buildOperationDetailSections(
         {
           label: "Valor fixo",
           value: freight?.rule.fixedValueCents ? formatCents(freight.rule.fixedValueCents) : "—"
-        },
-        {
-          label: "Frete minimo",
-          value: freight?.rule.minValueCents ? formatCents(freight.rule.minValueCents) : "—"
         },
         {
           label: "Distancia",
@@ -277,12 +281,13 @@ export interface OperationEditFormState {
   freightCalculationType: FreightCalculationType;
   freightBaseValueCents: number | null;
   freightFixedValueCents: number | null;
-  freightMinValueCents: number | null;
   freightDistanceKm: string;
   freightDestination: string;
   /** Caixa "mostrar o valor do frete no cupom". */
   freightShowOnReceipt: boolean;
   deductFreightFromCredit: boolean;
+  /** Caixa "abater do adiantamento" da venda em carteira. */
+  settleFromAdvance: boolean;
 }
 
 function editableCalculationType(type: string | undefined): FreightCalculationType {
@@ -310,11 +315,11 @@ export function buildOperationEditForm(
     freightCalculationType: editableCalculationType(freight?.rule.type),
     freightBaseValueCents: freight?.rule.baseValueCents ?? null,
     freightFixedValueCents: freight?.rule.fixedValueCents ?? null,
-    freightMinValueCents: freight?.rule.minValueCents ?? null,
     freightDistanceKm: freight?.rule.distanceKm ? String(freight.rule.distanceKm) : "",
     freightDestination: freight?.destination ?? "",
     freightShowOnReceipt: freight?.showOnReceipt !== false,
-    deductFreightFromCredit: operation.deductFreightFromCredit
+    deductFreightFromCredit: operation.deductFreightFromCredit,
+    settleFromAdvance: operation.settleFromAdvance
   };
 }
 
@@ -371,7 +376,6 @@ export function buildOperationFreightInput(
       type: form.freightCalculationType,
       baseValueCents: form.freightBaseValueCents ?? 0,
       fixedValueCents: form.freightFixedValueCents ?? undefined,
-      minValueCents: form.freightMinValueCents ?? undefined,
       distanceKm: distanceKm ?? undefined,
       unit: "ton"
     }
@@ -413,6 +417,7 @@ export interface OperationUpdateInput {
   freight: OperationFreightInput | null;
   freightModality: FreightModality;
   deductFreightFromCredit: boolean;
+  settleFromAdvance: boolean;
 }
 
 /**
@@ -440,6 +445,7 @@ export function buildOperationUpdateInput(
     // A operacao passa a gravar so os dois tipos de hoje: reabrir e salvar uma operacao
     // antiga normaliza a modalidade legada para "com frete"/"sem frete".
     freightModality: normalizeFreightModality(form.freightModality),
-    deductFreightFromCredit: form.deductFreightFromCredit
+    deductFreightFromCredit: form.deductFreightFromCredit,
+    settleFromAdvance: form.settleFromAdvance
   };
 }

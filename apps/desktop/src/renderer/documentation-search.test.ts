@@ -111,6 +111,15 @@ describe("searchDocumentation", () => {
     expect(ranksWithin("fiado", (result) => result.id === "credit", 5)).toBe(true);
   });
 
+  it("acha a carteira pelo jeito que o operador fala do pagamento adiantado", () => {
+    // "o cliente deixou pago e depois vem retirar" e a frase da pedreira, nao
+    // "adiantamento de clientes" — as duas precisam cair no mesmo guia.
+    expect(ranksWithin("cliente pagou adiantado", (result) => result.id === "wallet", 5)).toBe(
+      true
+    );
+    expect(ranksWithin("abater do adiantamento", (result) => result.id === "wallet", 5)).toBe(true);
+  });
+
   it("casa prefixo a partir de quatro letras", () => {
     expect(searchDocumentation("sincroniz").length).toBeGreaterThan(0);
   });
