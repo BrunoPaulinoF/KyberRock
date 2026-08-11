@@ -87,6 +87,32 @@ describe("trava de cadastro OMIE na abertura da operacao", () => {
     }
   });
 
+  it("nao barra o cliente que ja tem codigo OMIE, mesmo sem endereco local", async () => {
+    // Cenario multi-balanca: o push do cadastro para a nuvem nao leva endereco, entao o
+    // cliente completo na balanca A chega aqui sem endereco. Ele existe no OMIE e o pedido
+    // vai com o codigo dele — barrar pararia caminhao por um dado que nem e usado.
+    const runtime = createRuntime(tempDirectories);
+    try {
+      const database = internalsOf(runtime);
+      insertBaseRows(database);
+      insertCustomer(database, { id: "customer-da-outra-balanca", city: null, zipcode: null });
+      database
+        .prepare("UPDATE customers SET omie_customer_id = 11492171563 WHERE id = ?")
+        .run("customer-da-outra-balanca");
+
+      expect(
+        runtime.getCustomerOmieReadiness("customer-da-outra-balanca", "invoice")
+      ).toMatchObject({ ready: true });
+
+      // E a entrada acontece de verdade: a trava nao pode deixar resto pelo caminho.
+      await expect(
+        runtime.startWeighing(weighingInput({ customerId: "customer-da-outra-balanca" }))
+      ).rejects.toThrow(/[Bb]alanca/);
+    } finally {
+      runtime.close();
+    }
+  });
+
   it("libera assim que o cadastro e completado", () => {
     const runtime = createRuntime(tempDirectories);
     try {

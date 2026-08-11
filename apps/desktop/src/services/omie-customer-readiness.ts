@@ -13,9 +13,14 @@ import { getDefaultNfeEmail } from "./customers.js";
  * recusou o PEDIDO, porque o destinatario da NF-e precisa do endereco inteiro. A venda
  * ficou pesada, impressa e sem pedido no OMIE.
  *
- * Regra do bloqueio: **so campo que o OMIE exige**. Telefone, complemento e afins ficam
- * de fora de proposito — atrapalhar a balanca por campo opcional custa mais que preenche-lo
- * depois.
+ * Regra do bloqueio, deliberadamente estreita — travar a balanca a toa custa mais caro que
+ * o problema que a trava evita:
+ *
+ *  1. **So cliente que ainda nao existe no OMIE.** Com codigo OMIE o cadastro que o pedido
+ *     usa e o de la, e o espelho local pode estar vazio por motivos que nada tem a ver com
+ *     o OMIE (ver `evaluateOmieCustomerReadiness`).
+ *  2. **So campo que o OMIE exige.** Telefone e complemento ficam de fora.
+ *  3. **So na abertura.** Nunca no fechamento.
  */
 
 export type OmieCustomerFieldKey =
@@ -76,6 +81,13 @@ export function omieRequiredCustomerFields(
 
 /** Cadastro do cliente na forma que a regra le — sem depender do SQLite. */
 export interface OmieCustomerCadastro {
+  /**
+   * Codigo do cliente no OMIE. Quando existe, o cadastro que o pedido usa mora LA: o
+   * fechamento envia `customerOmieId` e o edge nem olha para o bloco local (ver
+   * `buildOmieBillingJob`). Ver `evaluateOmieCustomerReadiness` para o porque disso
+   * dispensar a conferencia.
+   */
+  omieCustomerId: number | null;
   document: string | null;
   email: string | null;
   zipcode: string | null;
@@ -129,6 +141,21 @@ export function evaluateOmieCustomerReadiness(
     };
   }
 
+  // Cliente que JA existe no OMIE: o cadastro que o pedido usa e o de la, nao este.
+  // Conferir os campos locais aqui so produz bloqueio errado, porque o espelho local pode
+  // estar vazio por motivos que nada tem a ver com o OMIE:
+  //
+  //   - multi-balanca: o push do cadastro para a nuvem NAO leva endereco (ver
+  //     CADASTRO_PUSH_ENTITIES), entao o cliente cadastrado completo na balanca A chega
+  //     na balanca B sem endereco nenhum. Barrar ali pararia caminhao por um dado que
+  //     existe no OMIE e na outra balanca;
+  //   - cliente que entrou por `upsertCloudCustomers`, que nem escreve as colunas de
+  //     endereco.
+  //
+  // A trava existe para o caso em que o cadastro local E o que vai ao OMIE — o cliente
+  // novo, sem codigo. Foi exatamente esse o fechamento que se perdeu.
+  if (cadastro.omieCustomerId && cadastro.omieCustomerId > 0) return READY;
+
   const hasDefaultNfeEmail = Boolean((options.defaultNfeEmail ?? "").trim());
   const filled = (value: string | null): boolean => Boolean((value ?? "").trim());
 
@@ -170,13 +197,14 @@ export function checkCustomerOmieReadiness(
 
   const row = database
     .prepare(
-      `SELECT document, email, zipcode, address_street, address_number,
+      `SELECT omie_customer_id, document, email, zipcode, address_street, address_number,
               neighborhood, city, state, source
          FROM customers
         WHERE id = ? AND deleted_at IS NULL`
     )
     .get(customerId) as
     | {
+        omie_customer_id: number | null;
         document: string | null;
         email: string | null;
         zipcode: string | null;
@@ -193,6 +221,7 @@ export function checkCustomerOmieReadiness(
 
   return evaluateOmieCustomerReadiness(
     {
+      omieCustomerId: row.omie_customer_id,
       document: row.document,
       email: row.email,
       zipcode: row.zipcode,
