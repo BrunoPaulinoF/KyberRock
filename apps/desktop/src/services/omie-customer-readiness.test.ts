@@ -8,6 +8,7 @@ import {
 
 function cadastro(overrides: Partial<OmieCustomerCadastro> = {}): OmieCustomerCadastro {
   return {
+    omieCustomerId: null,
     document: "12345678000195",
     email: "cliente@pedreira.com.br",
     zipcode: "18150-000",
@@ -59,6 +60,51 @@ describe("cadastro que o OMIE exige para abrir a operacao", () => {
     expect(readiness.message).toContain("CEP");
     expect(readiness.message).toContain("Cidade e Estado (UF)");
     expect(readiness.message).toContain("recusa o pedido");
+  });
+
+  /**
+   * Contrapeso da trava: ela so pode barrar quando o cadastro LOCAL e o que vai ao OMIE.
+   * Travar a balanca a toa custa mais caro que o fechamento que a trava evita perder.
+   */
+  describe("nao barra quem o OMIE ja conhece", () => {
+    it("libera cliente com codigo OMIE mesmo sem endereco local", () => {
+      // O pedido vai com `customerOmieId` e o edge nem olha o bloco local: quem vale e a
+      // copia do OMIE. Barrar aqui e chutar sobre um dado que nao e usado.
+      expect(
+        evaluateOmieCustomerReadiness(
+          cadastro({
+            omieCustomerId: 11492171563,
+            document: null,
+            email: null,
+            zipcode: null,
+            addressStreet: null,
+            addressNumber: null,
+            neighborhood: null,
+            city: null,
+            state: null
+          }),
+          "invoice"
+        )
+      ).toMatchObject({ ready: true, missing: [] });
+    });
+
+    it("libera o cliente que chegou da outra balanca sem endereco", () => {
+      // O push do cadastro para a nuvem NAO leva endereco: o cliente cadastrado completo
+      // na balanca A chega na balanca B sem endereco nenhum. Sem esta regra, a balanca B
+      // pararia o caminhao de um cliente que esta completo no OMIE e na balanca A.
+      expect(
+        evaluateOmieCustomerReadiness(
+          cadastro({ omieCustomerId: 4242, city: null, zipcode: null, source: "hybrid" }),
+          "invoice"
+        )
+      ).toMatchObject({ ready: true });
+    });
+
+    it("ignora codigo OMIE zerado (equivale a nao ter codigo)", () => {
+      expect(
+        evaluateOmieCustomerReadiness(cadastro({ omieCustomerId: 0, city: null }), "invoice")
+      ).toMatchObject({ ready: false });
+    });
   });
 
   it("barra os dois tipos de operacao sem CNPJ/CPF", () => {

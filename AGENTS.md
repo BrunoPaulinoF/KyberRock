@@ -76,17 +76,24 @@ npm run dist:win -w @kyberrock/desktop      # NSIS installer -> apps/desktop/rel
   tentativa sobrando a operacao fica neutra, so exibindo o motivo. Um envio que der certo
   depois limpa o marcador da recusa anterior.
 - **Trava de cadastro na ABERTURA** (`omie-customer-readiness.ts`): a entrada e recusada
-  enquanto faltar campo que o OMIE exige — CNPJ/CPF nos dois tipos e, na venda com nota, o
-  bloco do destinatario da NF-e (CEP, endereco, numero, bairro, cidade, UF) mais e-mail.
-  **So campo obrigatorio**: telefone e complemento ficam de fora de proposito. A regra vive
-  em um modulo puro e e aplicada em DOIS lugares que nunca podem divergir — `startWeighing`
-  (trava de verdade, antes de capturar peso) e o aviso da tela de entrada
-  (`customerOmieReadiness`, que desabilita "Capturar peso" e leva ao cadastro).
-  **Nunca travar o FECHAMENTO**: la o caminhao ja esta carregado sobre a balanca e a
-  operacao tem que fechar local (offline-first) — a abertura e a ultima hora barata de
-  dizer "nao". O e-mail e dispensado quando existe e-mail padrao de NF-e, porque o
-  fechamento ja preenche o do cliente sozinho (`autoCompleteCustomerForNfe`). A operacao
-  interna vira ordem de servico e nao emite NF-e: dela so se cobra o documento.
+  enquanto faltar campo que o OMIE exige. A regra vive num modulo puro e e aplicada em DOIS
+  lugares que nunca podem divergir — `startWeighing` (trava de verdade, antes de capturar
+  peso) e o aviso da tela de entrada (`customerOmieReadiness`, que desabilita "Capturar
+  peso" e leva ao cadastro). Ela e deliberadamente **estreita**, porque parar a balanca a
+  toa custa mais caro que o fechamento perdido que ela evita:
+  - **So cliente SEM codigo OMIE.** Com codigo, o cadastro que o pedido usa e o do OMIE
+    (`buildOmieBillingJob` manda `customerOmieId` e o edge nem olha o bloco local), e o
+    espelho local pode estar vazio por motivo nenhum: o push do cadastro para a nuvem
+    **nao leva endereco** (ver `CADASTRO_PUSH_ENTITIES`) e `upsertCloudCustomers` nem
+    escreve essas colunas — ou seja, o cliente completo na balanca A chega na balanca B
+    sem endereco. Conferir ali pararia caminhao por um dado que nao e usado.
+  - **So campo obrigatorio**: telefone e complemento ficam de fora. Venda com nota pede
+    CNPJ/CPF, o bloco do destinatario da NF-e (CEP, endereco, numero, bairro, cidade, UF)
+    e e-mail — este ultimo dispensado quando ha e-mail padrao de NF-e, que o fechamento ja
+    aplica sozinho (`autoCompleteCustomerForNfe`). A operacao interna vira ordem de
+    servico, nao emite NF-e: dela so se cobra o documento.
+  - **Nunca no FECHAMENTO**: la o caminhao ja esta carregado sobre a balanca e a operacao
+    tem que fechar local (offline-first). A abertura e a ultima hora barata de dizer "nao".
 - **Listagens de operacao e o teto de escala**: `listOpenWeighingOperations` /
   `listClosedWeighingOperations` / `listCanceledWeighingOperations` ainda **nao tem LIMIT** e
   o tick de 15 s do multi-desktop (`App.tsx`) rebusca as tres. Os indices da migracao 48
