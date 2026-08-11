@@ -78,6 +78,7 @@ import type {
   WeighingOperationSummary
 } from "../services/weighing-operations";
 import type { UpdateCustomerInput } from "../services/customers";
+import type { OmieCustomerReadiness } from "../services/omie-customer-readiness";
 import {
   FREIGHT_MODALITY_DEFAULT,
   FREIGHT_VALUE_ON_INVOICE,
@@ -6111,6 +6112,62 @@ interface WeighingFormProps {
   onCancel: () => void;
 }
 
+/**
+ * Aviso que trava a captura de peso enquanto o cadastro do cliente nao tem o que o OMIE
+ * exige para essa operacao. Fica ao lado do botao — o lugar onde o operador esta olhando
+ * quando decide registrar a entrada — e leva direto ao cadastro para a correcao.
+ *
+ * Existe porque descobrir isso no FECHAMENTO ja e tarde: a carga esta pesada, o cupom
+ * impresso e o pedido nao vai ao OMIE. Na entrada o custo e um minuto de digitacao.
+ */
+function OmieCadastroBlocker({
+  readiness,
+  onFix
+}: {
+  readiness: OmieCustomerReadiness | null;
+  onFix: () => void;
+}) {
+  if (!readiness || readiness.ready) return null;
+
+  return (
+    <div
+      role="alert"
+      style={{
+        margin: "0 0 10px",
+        padding: "10px 12px",
+        borderRadius: "12px",
+        border: "1px solid var(--kr-danger-border)",
+        background: "var(--kr-danger-soft)",
+        color: "var(--kr-danger)"
+      }}
+    >
+      <strong style={{ display: "block", fontSize: "13px" }}>
+        {readiness.missingLabels.length > 0
+          ? `Cadastro do cliente sem ${readiness.missingLabels.join(", ")}`
+          : "Cadastro do cliente incompleto para o OMIE"}
+      </strong>
+      <p style={{ margin: "6px 0 0", fontSize: "12px", lineHeight: 1.4 }}>{readiness.message}</p>
+      <button
+        type="button"
+        onClick={onFix}
+        style={{
+          marginTop: "8px",
+          border: "1px solid currentColor",
+          background: "transparent",
+          color: "inherit",
+          borderRadius: "999px",
+          padding: "4px 12px",
+          cursor: "pointer",
+          fontWeight: 800,
+          fontSize: "11px"
+        }}
+      >
+        Completar cadastro
+      </button>
+    </div>
+  );
+}
+
 function WeighingForm({
   desktopApi,
   form,
@@ -6155,6 +6212,13 @@ function WeighingForm({
   const lastFreightNoteCustomerRef = useRef("");
   const [driverRefreshKey, setDriverRefreshKey] = useState(0);
   const [customerRefreshKey, setCustomerRefreshKey] = useState(0);
+  // Pendencia de cadastro que o OMIE exige para ESTE tipo de operacao. Mostrada assim que
+  // o cliente e escolhido, para o operador corrigir com o caminhao ainda na fila em vez de
+  // descobrir no fechamento — com a carga pesada — que o pedido nao vai sair.
+  const [omieReadiness, setOmieReadiness] = useState<OmieCustomerReadiness | null>(null);
+  // Sem cliente escolhido nao ha cadastro a cobrar — quem reclama disso e o
+  // validateWeighingForm, com a mensagem certa para o campo vazio.
+  const omieBlocked = Boolean(form.customerId) && omieReadiness !== null && !omieReadiness.ready;
   const [carrierRefreshKey, setCarrierRefreshKey] = useState(0);
   const [availableCarrierIds, setAvailableCarrierIds] = useState<string[] | undefined>(undefined);
   const [availableVehicleIds, setAvailableVehicleIds] = useState<string[] | undefined>(undefined);
@@ -6440,6 +6504,21 @@ function WeighingForm({
       setFormError(validationError);
       return;
     }
+    // Cadastro conferido ANTES de pedir peso a balanca. O backend recusa de novo em
+    // startWeighing (a trava de verdade), mas parar aqui evita capturar um peso que seria
+    // descartado e deixa o operador com o caminhao ainda na fila, dando tempo de corrigir.
+    // Reconsultado no clique de proposito: o cadastro pode ter sido corrigido (ou piorado)
+    // desde a ultima checagem da tela.
+    try {
+      const readiness = await desktopApi.customerOmieReadiness(form.customerId, form.operationType);
+      setOmieReadiness(readiness);
+      if (!readiness.ready) {
+        setFormError(readiness.message ?? "Cadastro do cliente incompleto para o OMIE.");
+        return;
+      }
+    } catch {
+      // Falha na consulta nao pode travar a balanca: startWeighing ainda barra no backend.
+    }
     setIsCapturing(true);
     setFormError(null);
     try {
@@ -6452,6 +6531,36 @@ function WeighingForm({
       setIsCapturing(false);
     }
   }
+
+  // Reconfere a cada troca de cliente e de tipo de operacao — a venda com nota exige o
+  // endereco inteiro do destinatario, a interna nao. `customerRefreshKey` traz a
+  // reconferencia depois de o operador editar o cadastro no modal: o aviso some sozinho
+  // assim que o campo que faltava e preenchido.
+  useEffect(() => {
+    let canceled = false;
+
+    async function checkOmieReadiness() {
+      if (!desktopApi || !form.customerId) {
+        setOmieReadiness(null);
+        return;
+      }
+      try {
+        const readiness = await desktopApi.customerOmieReadiness(
+          form.customerId,
+          form.operationType
+        );
+        if (!canceled) setOmieReadiness(readiness);
+      } catch {
+        // Sem diagnostico a tela nao avisa, mas a trava do backend continua valendo.
+        if (!canceled) setOmieReadiness(null);
+      }
+    }
+
+    void checkOmieReadiness();
+    return () => {
+      canceled = true;
+    };
+  }, [desktopApi, form.customerId, form.operationType, customerRefreshKey]);
 
   useEffect(() => {
     async function fetchPrice() {
@@ -7183,15 +7292,22 @@ function WeighingForm({
             description="Preco, frete e captura"
           />
           <PriceDetailsPanel details={priceDetails} />
+          <OmieCadastroBlocker
+            readiness={omieReadiness}
+            onFix={() => {
+              setEditingCustomerId(form.customerId);
+              setShowCustomerModal(true);
+            }}
+          />
           <div style={styles.actionStack}>
             <button
               type="button"
               onClick={() => void handleCalculateWeight()}
-              disabled={isCapturing || !scaleLink.usable}
+              disabled={isCapturing || !scaleLink.usable || omieBlocked}
               style={{
                 ...styles.captureButton,
                 flex: 1,
-                opacity: isCapturing || !scaleLink.usable ? 0.55 : 1
+                opacity: isCapturing || !scaleLink.usable || omieBlocked ? 0.55 : 1
               }}
             >
               <Scale size={18} strokeWidth={2.4} />

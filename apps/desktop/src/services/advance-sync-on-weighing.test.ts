@@ -334,11 +334,15 @@ function seedCatalog(database: DesktopDatabase): void {
     .run(at, at);
   database
     .prepare(
+      // Cadastro completo de proposito: a abertura exige o que o OMIE pede (ver
+      // omie-customer-readiness). Este teste e sobre adiantamento, nao sobre cadastro.
       `INSERT INTO customers (
-        id, company_id, source, legal_name, trade_name, email, address_number,
+        id, company_id, source, legal_name, trade_name, document, email,
+        zipcode, address_street, address_number, neighborhood, city, state,
         omie_customer_id, created_at, updated_at
       ) VALUES ('customer-1', 'company-1', 'omie', 'Cliente Teste LTDA', 'Cliente Teste',
-                'cliente@example.com', '123', 4242, ?, ?)`
+                '12345678000195', 'cliente@example.com',
+                '18150-000', 'Rua das Pedras', '123', 'Centro', 'Ibiuna', 'SP', 4242, ?, ?)`
     )
     .run(at, at);
   database

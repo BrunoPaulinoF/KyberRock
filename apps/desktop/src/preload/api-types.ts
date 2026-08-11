@@ -13,6 +13,7 @@ import type {
   OperationType,
   WeighingOperationSummary
 } from "../services/weighing-operations";
+import type { OmieCustomerReadiness } from "../services/omie-customer-readiness";
 import type { FreightModality } from "../services/freight";
 import type { CustomerFreightRule as CustomerFreightRuleView } from "../services/customer-freight-rules";
 import type {
@@ -136,6 +137,15 @@ export interface KyberRockDesktopApi {
    * do cliente que precisam ser corrigidos antes do reenvio.
    */
   operationOmieIssue: (operationId: string) => Promise<OperationOmieIssue>;
+  /**
+   * Cadastro do cliente conferido contra o que o OMIE exige para esse tipo de operacao.
+   * A tela de entrada usa isto para avisar (e travar o botao) ANTES do caminhao entrar —
+   * mesma regra que `startWeighing` aplica no backend.
+   */
+  customerOmieReadiness: (
+    customerId: string,
+    operationType?: "invoice" | "internal"
+  ) => Promise<OmieCustomerReadiness>;
   clearCanceledWeighingOperations: () => Promise<number>;
   /** Limpa as concluidas em lote; `untilDate` preserva o movimento do dia. */
   clearClosedWeighingOperations: (options?: { untilDate?: string }) => Promise<number>;
