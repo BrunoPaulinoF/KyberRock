@@ -91,6 +91,8 @@ async function createMainWindow(): Promise<void> {
   writeStartupLog("omieScheduler:started");
   runtime.startCloudSyncScheduler();
   writeStartupLog("cloudScheduler:started");
+  runtime.startOmieQueueDrainScheduler();
+  writeStartupLog("omieQueueDrainScheduler:started");
   startReportDispatchScheduler();
   writeStartupLog("reportDispatchScheduler:started");
 

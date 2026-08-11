@@ -307,6 +307,34 @@ describe("App", () => {
     ).toMatchObject({ label: "Cadastro incompleto", tone: "warning" });
   });
 
+  it("shows why an operation on its way to OMIE has not arrived yet", () => {
+    // Sem isto, um pedido recusado pelo OMIE repetia "sera enviado na proxima
+    // sincronizacao" para sempre e o operador nao tinha como saber o motivo.
+    const refused = getFiscalBillingStatus(
+      createInternalOperationForTest({
+        operationType: "invoice",
+        omieBillingMessage: "ERROR: Consumo redundante detectado"
+      })
+    );
+    expect(refused.label).toBe("Enviando ao OMIE");
+    expect(refused.detail).toContain("Consumo redundante");
+    // Enquanto ha tentativa automatica sobrando o tom continua neutro: o vermelho (e o
+    // alerta do topo da tela) fica para quando o envio realmente para.
+    expect(refused.tone).toBe("neutral");
+    expect(refused.canRetry).toBe(false);
+
+    expect(
+      getFiscalBillingStatus(
+        createInternalOperationForTest({ omieBillingMessage: "Cliente cadastrado no OMIE." })
+      ).detail
+    ).toContain("Cliente cadastrado no OMIE.");
+
+    // Sem mensagem nenhuma o texto generico continua valendo.
+    expect(getFiscalBillingStatus(createInternalOperationForTest({})).detail).toBe(
+      "Ordem de servico sera enviada ao OMIE na proxima sincronizacao."
+    );
+  });
+
   it("builds and filters cache select modal options", () => {
     const options = createCacheSelectOptions([
       { id: "customer-1", tradeName: "Cliente A" },

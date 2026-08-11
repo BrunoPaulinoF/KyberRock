@@ -56,10 +56,15 @@ import {
   deleteOmieQueueJob,
   getSyncJobById,
   listOmieQueueItems,
+  listRunnableSyncJobs,
   pruneCompletedSyncJobs,
   resetOmieQueueJobForRetry,
   type OmieQueueItem
 } from "./sync-queue.js";
+import {
+  startOmieQueueDrainScheduler,
+  type OmieQueueDrainSchedulerHandle
+} from "./omie-queue-scheduler.js";
 import {
   cancelWeighingOperation,
   clearCanceledWeighingOperations,
@@ -513,6 +518,9 @@ export class DesktopRuntime {
   private operationPushChain: Promise<void> = Promise.resolve();
   private omieSyncInProgress = false;
   private omieQueueProcessing = false;
+  /** Pedido de execucao da fila OMIE que chegou com outra em andamento — roda ao terminar. */
+  private omieQueueRerunRequested = false;
+  private omieQueueDrainScheduler: OmieQueueDrainSchedulerHandle | null = null;
   private receiptPrinter: ReceiptPrinter = { printReceipt: async () => undefined };
   private fiscalDocumentPrinter: FiscalDocumentPrinter = {
     printDocument: async () => ({ printed: false, error: null })
@@ -897,14 +905,29 @@ export class DesktopRuntime {
    * Processa a fila OMIE (pedidos/OS/cancelamentos) com trava unica contra execucoes
    * concorrentes (push do fechamento x sincronizacao agendada). entityId limita aos
    * jobs de uma operacao. Retorna null quando outro processamento ja esta em andamento
-   * (os jobs permanecem na fila e a proxima passada os pega).
+   * — e, nesse caso, agenda uma passada COMPLETA para logo apos a atual terminar.
+   *
+   * Esse re-agendamento e o que impede o pedido de ficar parado: antes, o envio imediato
+   * do fechamento que caisse em cima de uma varredura em andamento era simplesmente
+   * descartado, e o job so era pego na proxima sincronizacao cloud — ate 30 minutos
+   * depois. A passada de recuperacao e completa (sem entityId) de proposito: ela cobre a
+   * operacao descartada e qualquer outra que tenha esbarrado na mesma trava.
    */
   private async runOmieQueue(
     entityId?: string
   ): Promise<{ processed: number; failed: number; errors: string[] } | null> {
-    if (this.omieQueueProcessing) return null;
+    if (this.omieQueueProcessing) {
+      this.omieQueueRerunRequested = true;
+      return null;
+    }
     this.omieQueueProcessing = true;
     try {
+      // Fila sem job vencido: nada a fazer. Corta antes de qualquer chamada de rede,
+      // para o tick de drenagem (e as passadas de recuperacao) custarem uma consulta
+      // local quando nao ha fechamento esperando.
+      if (!this.hasRunnableOmieJobs(entityId)) {
+        return { processed: 0, failed: 0, errors: [] };
+      }
       initializeSupabaseFromSettings(this.database);
       if (!isSupabaseInitialized()) {
         return { processed: 0, failed: 0, errors: ["Supabase nao configurado."] };
@@ -913,7 +936,54 @@ export class DesktopRuntime {
       return await processOmieSyncQueue(this.database, identity, { entityId });
     } finally {
       this.omieQueueProcessing = false;
+      if (this.omieQueueRerunRequested) {
+        // Limpa ANTES de re-executar: a passada de recuperacao pode receber novos
+        // pedidos enquanto roda, e eles precisam marcar a proxima — nao esta.
+        this.omieQueueRerunRequested = false;
+        void this.runOmieQueue().catch((error: unknown) => {
+          this.recordTechnicalLog(
+            "warning",
+            "omie-sync",
+            error instanceof Error ? error.message : "Nova passada da fila OMIE falhou.",
+            {}
+          );
+        });
+      }
     }
+  }
+
+  /** Ha job OMIE elegivel agora (respeitando o backoff de `next_attempt_at`)? */
+  private hasRunnableOmieJobs(entityId?: string): boolean {
+    try {
+      return listRunnableSyncJobs(this.database, { target: "omie", entityId, limit: 1 }).length > 0;
+    } catch {
+      // Consulta local falhou (banco ocupado): segue para a passada normal em vez de
+      // engolir o envio — errar para o lado de tentar.
+      return true;
+    }
+  }
+
+  /**
+   * Liga o tick que drena a fila OMIE (ver omie-queue-scheduler). Sem ele, a
+   * re-tentativa de um job que falhou (60 s, 2 min, 4 min...) so acontecia quando algo
+   * disparava a sincronizacao cloud — no pior caso, o ciclo de 30 minutos.
+   */
+  startOmieQueueDrainScheduler(): OmieQueueDrainSchedulerHandle {
+    this.omieQueueDrainScheduler?.stop();
+    this.omieQueueDrainScheduler = startOmieQueueDrainScheduler({
+      hasRunnableJobs: () => this.hasRunnableOmieJobs(),
+      drain: async () => {
+        await this.runOmieQueue();
+      },
+      onError: (error) => console.error("Drenagem da fila OMIE falhou", error)
+    });
+
+    return this.omieQueueDrainScheduler;
+  }
+
+  stopOmieQueueDrainScheduler(): void {
+    this.omieQueueDrainScheduler?.stop();
+    this.omieQueueDrainScheduler = null;
   }
 
   /**
@@ -1915,6 +1985,10 @@ export class DesktopRuntime {
     this.cloudSyncScheduler = null;
     this.omieScheduler?.stop();
     this.omieScheduler = null;
+    // Antes do database.close(): o tick da fila consulta o SQLite, e um timer vivo
+    // depois do fechamento bate num handle fechado a cada 30 s.
+    this.omieQueueDrainScheduler?.stop();
+    this.omieQueueDrainScheduler = null;
     // A reconexao da balanca nao desiste mais sozinha: sem encerrar o adaptador no
     // fechamento, o timer da proxima tentativa sobrevive ao pedido de saida.
     this.disconnectScale();

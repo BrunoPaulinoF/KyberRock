@@ -53,6 +53,28 @@ npm run dist:win -w @kyberrock/desktop      # NSIS installer -> apps/desktop/rel
   precisava esperar o OMIE voltar. Um `retryAfterMs` explicito ainda tem prioridade sobre a
   formula. `markSyncJobBlocked` continua fora dessa logica: falha determinística nao gasta
   tentativa.
+- **Quem executa a fila OMIE**: o pedido/OS sai no proprio fechamento
+  (`triggerBackgroundOmieOrderPush` → `runOmieQueue(operationId)`), mas a trava
+  (`omieQueueProcessing`) e unica e disputada com `syncCloudNow` e `syncOmieNow`. Quem
+  esbarra nela **nao e mais descartado**: marca `omieQueueRerunRequested` e o `finally` da
+  passada em andamento roda uma passada COMPLETA logo em seguida (mesmo padrao do
+  `cloudSyncRerunRequested`). Antes, um fechamento que caisse em cima de uma varredura
+  ficava esperando o proximo ciclo cloud — ate 30 min com "sera enviado na proxima
+  sincronizacao" na tela. Alem disso, `startOmieQueueDrainScheduler` (tick de 30 s,
+  `omie-queue-scheduler.ts`, ligado no `main.ts`) executa o que o `next_attempt_at` ja
+  autorizou: sem ele o backoff de 60 s / 2 min / 4 min nao tinha executor nenhum entre as
+  varreduras de 30 minutos. O tick **nao acelera tentativa** — `hasRunnableOmieJobs` (uma
+  consulta local) corta antes de qualquer chamada de rede quando nao ha job vencido.
+- **Falha de envio precisa aparecer na operacao**: a tela de Concluidas
+  (`getFiscalBillingStatus`) le **so as colunas da operacao**, nunca o `sync_queue`. Uma
+  recusa que a classificacao nao reconhece (rede, 5xx, campo que o edge nao prefixou) cai
+  no `markSyncJobFailed`, que guarda o motivo **no job** — por isso `processOmieSyncQueue`
+  copia a mensagem para `omie_billing_message` tambem na venda com nota (a interna ja
+  fazia isso com `service_order_failed`). O `omie_billing_status = 'failed'` — vermelho,
+  aviso sonoro (`omie-delivery-notifications`) e botao de reenvio — entra **so no
+  dead_letter**: e o unico momento em que o envio parou de andar sozinho. Enquanto ha
+  tentativa sobrando a operacao fica neutra, so exibindo o motivo. Um envio que der certo
+  depois limpa o marcador da recusa anterior.
 - **Listagens de operacao e o teto de escala**: `listOpenWeighingOperations` /
   `listClosedWeighingOperations` / `listCanceledWeighingOperations` ainda **nao tem LIMIT** e
   o tick de 15 s do multi-desktop (`App.tsx`) rebusca as tres. Os indices da migracao 48
