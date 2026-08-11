@@ -16,6 +16,8 @@ export const TIPS = {
       "Insights: KPIs, graficos de peso por dia, top produtos e mix de operacoes no periodo.",
     customerReport:
       "Relatorio por cliente: escolha o cliente e o periodo e gere o relatorio simplificado e/ou completo em PDF e/ou Excel.",
+    billingConference:
+      "Conferencia de faturamento: a lista pesagem a pesagem do periodo (cliente, data, produto, peso, frete e total) com a situacao de cada uma no OMIE.",
     reports:
       "Relatorios: cadastre destinatarios que receberao os relatorios automaticos por e-mail.",
     documentation:
@@ -31,6 +33,8 @@ export const TIPS = {
     printing: "Configure a impressora de cupom de 80 mm. Atalho: F7.",
     cloud: "Sincronizacao de dados com a nuvem. Atalho: F8.",
     customerReport: "Relatorio completo ou simplificado de um cliente no periodo, em PDF ou Excel.",
+    billingConference:
+      "Pesagem a pesagem do periodo com a situacao no OMIE: confira o que foi fechado contra o que foi faturado.",
     reports: "Destinatarios dos relatorios automaticos por e-mail.",
     documentation: "Guias, duvidas, diagnostico guiado e assistente de IA da documentacao."
   },

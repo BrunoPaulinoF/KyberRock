@@ -137,6 +137,21 @@ const desktopApi = {
       formats,
       periodLabel
     ),
+  getWeighingBillingReport: (startDate: string, endDate: string, options?: unknown) =>
+    ipcRenderer.invoke("desktop:get-weighing-billing-report", startDate, endDate, options),
+  exportWeighingBillingReport: (
+    startDate: string,
+    endDate: string,
+    formats: string[],
+    options?: unknown
+  ) =>
+    ipcRenderer.invoke(
+      "desktop:export-weighing-billing-report",
+      startDate,
+      endDate,
+      formats,
+      options
+    ),
   getTruckControl: (startDate: string, endDate: string) =>
     ipcRenderer.invoke("desktop:get-truck-control", startDate, endDate),
   exportTruckControlPdf: (startDate: string, endDate: string) =>
