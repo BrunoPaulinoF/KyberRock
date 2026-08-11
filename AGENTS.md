@@ -65,6 +65,16 @@ npm run dist:win -w @kyberrock/desktop      # NSIS installer -> apps/desktop/rel
   autorizou: sem ele o backoff de 60 s / 2 min / 4 min nao tinha executor nenhum entre as
   varreduras de 30 minutos. O tick **nao acelera tentativa** — `hasRunnableOmieJobs` (uma
   consulta local) corta antes de qualquer chamada de rede quando nao ha job vencido.
+- **Falha de envio precisa aparecer na operacao**: a tela de Concluidas
+  (`getFiscalBillingStatus`) le **so as colunas da operacao**, nunca o `sync_queue`. Uma
+  recusa que a classificacao nao reconhece (rede, 5xx, campo que o edge nao prefixou) cai
+  no `markSyncJobFailed`, que guarda o motivo **no job** — por isso `processOmieSyncQueue`
+  copia a mensagem para `omie_billing_message` tambem na venda com nota (a interna ja
+  fazia isso com `service_order_failed`). O `omie_billing_status = 'failed'` — vermelho,
+  aviso sonoro (`omie-delivery-notifications`) e botao de reenvio — entra **so no
+  dead_letter**: e o unico momento em que o envio parou de andar sozinho. Enquanto ha
+  tentativa sobrando a operacao fica neutra, so exibindo o motivo. Um envio que der certo
+  depois limpa o marcador da recusa anterior.
 - **Listagens de operacao e o teto de escala**: `listOpenWeighingOperations` /
   `listClosedWeighingOperations` / `listCanceledWeighingOperations` ainda **nao tem LIMIT** e
   o tick de 15 s do multi-desktop (`App.tsx`) rebusca as tres. Os indices da migracao 48

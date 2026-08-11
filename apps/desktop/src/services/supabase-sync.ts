@@ -27,6 +27,7 @@ import { isSellableProduct } from "./product-classification.js";
 import { readReportChannelSettings, toCloudChannelSettingsRow } from "./report-channels.js";
 import {
   enqueueSyncJob,
+  getSyncJobById,
   listRunnableSyncJobs,
   markSyncJobBlocked,
   markSyncJobDone,
@@ -4490,6 +4491,19 @@ export async function processOmieSyncQueue(
             payload.operationId
           );
       }
+      // Pedido/OS criado depois de uma recusa: o marcador da falha anterior ficaria
+      // gravado na operacao (o UPDATE acima so mexe em status/mensagem quando o OMIE
+      // fatura). Limita-se aos estados de falha — 'billed' e os de cancelamento nao
+      // sao tocados.
+      database
+        .prepare(
+          `UPDATE weighing_operations
+             SET omie_billing_status = NULL, omie_billing_message = NULL,
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+           WHERE id = ?
+             AND omie_billing_status IN ('failed', 'cadastro_incompleto', 'service_order_failed')`
+        )
+        .run(payload.operationId);
       markSyncJobDone(database, job.id);
       // Cliente criado no OMIE agora (customerOmieId devolvido pelo envio): os OUTROS
       // fechamentos dele que pararam por isso voltam para a fila. Depois do markSyncJobDone
@@ -4619,6 +4633,27 @@ export async function processOmieSyncQueue(
              WHERE id = ?`
           )
           .run(message, payload.operationId);
+      } else {
+        // A venda com nota ficava MUDA numa recusa que a classificacao nao reconhece
+        // (erro de rede, 5xx, campo que o edge nao prefixou): o motivo ia so para o job
+        // do sync_queue, e a tela de Concluidas le a operacao — entao o fechamento
+        // seguia exibindo "sera enviado na proxima sincronizacao" ate morrer em
+        // dead_letter sem ninguem ficar sabendo. Grava o motivo real na operacao.
+        //
+        // O status 'failed' (vermelho + aviso sonoro + botao de reenvio) so entra quando
+        // as tentativas automaticas ACABARAM: e o unico momento em que o envio parou de
+        // andar sozinho e precisa do operador. Enquanto ha tentativa sobrando, a operacao
+        // continua neutra — so ganha o motivo da ultima recusa.
+        const exhausted = getSyncJobById(database, job.id)?.status === "dead_letter";
+        database
+          .prepare(
+            `UPDATE weighing_operations
+             SET omie_billing_status = CASE WHEN ? THEN 'failed' ELSE omie_billing_status END,
+                 omie_billing_message = ?,
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE id = ?`
+          )
+          .run(exhausted ? 1 : 0, message, payload.operationId);
       }
       failed++;
       errors.push(`Job ${job.id}: ${message}`);

@@ -8975,7 +8975,10 @@ export function getFiscalBillingStatus(operation: WeighingOperationSummary): {
 
     return {
       label: "Enviando OS",
-      detail: "Ordem de servico sera enviada ao OMIE na proxima sincronizacao.",
+      detail: pendingOmieDetail(
+        operation,
+        "Ordem de servico sera enviada ao OMIE na proxima sincronizacao."
+      ),
       tone: "neutral",
       canRetry: false
     };
@@ -9029,10 +9032,26 @@ export function getFiscalBillingStatus(operation: WeighingOperationSummary): {
 
   return {
     label: "Enviando ao OMIE",
-    detail: "Pedido sera enviado ao OMIE na proxima sincronizacao.",
+    detail: pendingOmieDetail(operation, "Pedido sera enviado ao OMIE na proxima sincronizacao."),
     tone: "neutral",
     canRetry: false
   };
+}
+
+/**
+ * Texto da operacao que ainda nao chegou ao OMIE. Quando existe mensagem gravada
+ * (a ultima recusa do OMIE, ou o aviso de que o cliente acabou de ser cadastrado la),
+ * ela vale mais que o generico: era exatamente o "sera enviado na proxima
+ * sincronizacao" repetido para sempre que escondia um pedido recusado. O tom continua
+ * neutro de proposito — ha tentativa automatica sobrando; o vermelho fica para quando
+ * elas acabam.
+ */
+function pendingOmieDetail(
+  operation: Pick<WeighingOperationSummary, "omieBillingMessage">,
+  fallback: string
+): string {
+  const message = operation.omieBillingMessage?.trim();
+  return message ? `${message} — nova tentativa automatica em andamento.` : fallback;
 }
 
 function fiscalBillingPillStyle(

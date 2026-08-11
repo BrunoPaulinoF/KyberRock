@@ -1430,6 +1430,121 @@ describe("supabase sync", () => {
     }
   });
 
+  /**
+   * A venda com nota ficava MUDA numa recusa que a classificacao nao reconhece: o motivo
+   * ia so para o job do sync_queue, e a tela de Concluidas le a operacao — entao o
+   * fechamento seguia exibindo "sera enviado na proxima sincronizacao" ate morrer em
+   * dead_letter sem ninguem ficar sabendo.
+   */
+  it("records on the invoice operation why OMIE refused it, without crying wolf on a retry", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertClosedOperationForNewCustomer(database);
+      enqueueBillingJobForNewCustomer(database);
+      invokeMock.mockResolvedValueOnce({
+        error: createFunctionHttpError("ERROR: Consumo redundante detectado"),
+        data: null
+      });
+
+      const result = await processOmieSyncQueue(database, identity);
+
+      expect(result.failed).toBe(1);
+      const operation = database
+        .prepare(
+          "SELECT omie_billing_status, omie_billing_message FROM weighing_operations WHERE id = 'operation-1'"
+        )
+        .get() as { omie_billing_status: string | null; omie_billing_message: string | null };
+      expect(operation.omie_billing_message).toContain("Consumo redundante");
+      // Ainda ha tentativa automatica sobrando: nada de vermelho (nem aviso sonoro).
+      expect(operation.omie_billing_status).toBeNull();
+      expect(
+        database
+          .prepare("SELECT status FROM sync_queue WHERE id = ?")
+          .pluck()
+          .get("omie-job-novo-cliente")
+      ).toBe("failed");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("marks the invoice operation as failed once the automatic retries are exhausted", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertClosedOperationForNewCustomer(database);
+      enqueueBillingJobForNewCustomer(database);
+      // Ultima tentativa antes do dead_letter (markSyncJobFailed usa 10 por padrao).
+      database
+        .prepare("UPDATE sync_queue SET attempt_count = 9 WHERE id = 'omie-job-novo-cliente'")
+        .run();
+      invokeMock.mockResolvedValueOnce({
+        error: createFunctionHttpError("ERROR: Consumo redundante detectado"),
+        data: null
+      });
+
+      await processOmieSyncQueue(database, identity);
+
+      // O envio parou de andar sozinho: e o unico caso que exige o operador.
+      expect(
+        database
+          .prepare("SELECT status FROM sync_queue WHERE id = ?")
+          .pluck()
+          .get("omie-job-novo-cliente")
+      ).toBe("dead_letter");
+      expect(
+        database
+          .prepare("SELECT omie_billing_status FROM weighing_operations WHERE id = 'operation-1'")
+          .pluck()
+          .get()
+      ).toBe("failed");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("clears the failure marker when a later attempt creates the order", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertClosedOperationForNewCustomer(database);
+      enqueueBillingJobForNewCustomer(database);
+      database
+        .prepare(
+          `UPDATE weighing_operations
+             SET omie_billing_status = 'failed', omie_billing_message = 'ERROR: Consumo redundante detectado'
+           WHERE id = 'operation-1'`
+        )
+        .run();
+      invokeMock.mockResolvedValueOnce({ data: { orderId: 4242 }, error: null });
+
+      await processOmieSyncQueue(database, identity);
+
+      // Sem isto o pedido aparecia criado e o marcador vermelho da recusa anterior ficava
+      // gravado na operacao para sempre.
+      expect(
+        database
+          .prepare(
+            "SELECT omie_sales_order_id, omie_billing_status, omie_billing_message FROM weighing_operations WHERE id = 'operation-1'"
+          )
+          .get()
+      ).toMatchObject({
+        omie_sales_order_id: 4242,
+        omie_billing_status: null,
+        omie_billing_message: null
+      });
+    } finally {
+      database.close();
+    }
+  });
+
   it("refreshes the queued closing with the customer cadastro completed after the close", () => {
     const database = createDatabase();
 
