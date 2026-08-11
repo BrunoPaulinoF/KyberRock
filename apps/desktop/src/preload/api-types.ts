@@ -52,6 +52,10 @@ import type {
   CustomerReportVariant,
   CustomersOverview
 } from "../services/customer-report";
+import type {
+  WeighingBillingReport,
+  WeighingBillingReportOptions
+} from "../services/weighing-billing-report";
 import type { CreateCustomerInput, UpdateCustomerInput } from "../services/customers";
 import type { UpdatePaymentMethodInput } from "../services/payment-methods";
 import type { SettleWalletInput, WalletQuery, WalletReport } from "../services/wallet";
@@ -253,6 +257,18 @@ export interface KyberRockDesktopApi {
     endDate: string,
     periodLabel?: string
   ) => Promise<{ path: string } | null>;
+  /** Conferencia de faturamento: uma linha por pesagem fechada do periodo. */
+  getWeighingBillingReport: (
+    startDate: string,
+    endDate: string,
+    options?: WeighingBillingReportOptions
+  ) => Promise<WeighingBillingReport>;
+  exportWeighingBillingReport: (
+    startDate: string,
+    endDate: string,
+    formats: Array<"pdf" | "excel">,
+    options?: WeighingBillingReportOptions
+  ) => Promise<{ files: string[] } | null>;
   getTruckControl: (startDate: string, endDate: string) => Promise<TruckControlReport>;
   exportTruckControlPdf: (startDate: string, endDate: string) => Promise<{ path: string } | null>;
   exportReportExcel: (startDate: string, endDate: string) => Promise<{ path: string } | null>;

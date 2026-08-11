@@ -24,6 +24,7 @@ import {
   Upload,
   User,
   UserSearch,
+  ClipboardCheck,
   Users,
   Package,
   CreditCard,
@@ -136,6 +137,7 @@ import { DashboardView } from "./DashboardView";
 import { DocumentationView } from "./DocumentationView";
 import { InsightsView } from "./InsightsView";
 import { CustomerReportView } from "./CustomerReportView";
+import { WeighingBillingReportView } from "./WeighingBillingReportView";
 import { ReportsView } from "./ReportsView";
 import { TruckControlView, formatMinutes } from "./TruckControlView";
 import { WalletView } from "./WalletView";
@@ -242,6 +244,7 @@ type ActiveView =
   | "insights"
   | "truck-control"
   | "customer-report"
+  | "billing-conference"
   | "reports"
   | "documentation";
 
@@ -2478,6 +2481,14 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 tooltip={TIPS.nav.customerReport}
               />
               <SidebarItem
+                id="billing-conference"
+                label="Conferencia de faturamento"
+                icon={ClipboardCheck}
+                activeView={activeView}
+                onSelect={setActiveView}
+                tooltip={TIPS.nav.billingConference}
+              />
+              <SidebarItem
                 id="reports"
                 label="Relatorios"
                 icon={FileText}
@@ -4499,6 +4510,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
             {activeView === "truck-control" ? <TruckControlView desktopApi={desktopApi} /> : null}
             {activeView === "customer-report" ? (
               <CustomerReportView desktopApi={desktopApi} />
+            ) : null}
+            {activeView === "billing-conference" ? (
+              <WeighingBillingReportView desktopApi={desktopApi} />
             ) : null}
             {activeView === "reports" ? <ReportsView desktopApi={desktopApi} /> : null}
             {activeView === "documentation" ? <DocumentationView desktopApi={desktopApi} /> : null}

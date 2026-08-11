@@ -175,6 +175,13 @@ import {
   renderCustomersOverviewHtml,
   renderCustomersOverviewSpreadsheet
 } from "./customer-report-render.js";
+import { WeighingBillingReportService } from "./weighing-billing-report.js";
+import type { WeighingBillingReportOptions } from "./weighing-billing-report.js";
+import {
+  renderWeighingBillingReportHtml,
+  renderWeighingBillingReportSpreadsheet,
+  weighingBillingReportFileBaseName
+} from "./weighing-billing-report-render.js";
 import { ReportService } from "./reports.js";
 import {
   sendEmail,
@@ -564,6 +571,7 @@ export class DesktopRuntime {
   >();
   private reportService: ReportService;
   private customerReportService: CustomerReportService;
+  private weighingBillingReportService: WeighingBillingReportService;
 
   private constructor(initialized: InitializedDesktopDatabase) {
     this.database = initialized.database;
@@ -571,6 +579,7 @@ export class DesktopRuntime {
     this.cacheStore = new CacheStore(this.database);
     this.reportService = new ReportService(this.database);
     this.customerReportService = new CustomerReportService(this.database);
+    this.weighingBillingReportService = new WeighingBillingReportService(this.database);
     this.ensureIdentity();
     ensureDefaultAccounts(this.database, this.ensureIdentity().companyId);
     ensureDefaultPaymentMethods(this.database, this.ensureIdentity().companyId);
@@ -2247,6 +2256,45 @@ export class DesktopRuntime {
       }
     }
     return documents;
+  }
+
+  // --- Conferencia de faturamento --------------------------------------------
+
+  getWeighingBillingReport(
+    startDate: string,
+    endDate: string,
+    options?: WeighingBillingReportOptions
+  ): ReturnType<WeighingBillingReportService["getReport"]> {
+    return this.weighingBillingReportService.getReport(
+      startDate,
+      endDate,
+      this.ensureIdentity().unitId,
+      options
+    );
+  }
+
+  /**
+   * Os documentos da conferencia prontos para gravar. Recebem os MESMOS filtros da tela:
+   * o arquivo tem de trazer exatamente as pesagens que o operador estava olhando quando
+   * clicou em gerar — um PDF com o periodo inteiro depois de filtrar por "Recusada pelo
+   * OMIE" nao serviria para conferir nada.
+   */
+  buildWeighingBillingReportDocuments(
+    startDate: string,
+    endDate: string,
+    formats: Array<"pdf" | "excel">,
+    options?: WeighingBillingReportOptions
+  ): Array<{ format: "pdf" | "excel"; fileName: string; html: string }> {
+    const report = this.getWeighingBillingReport(startDate, endDate, options);
+    const baseName = weighingBillingReportFileBaseName(report);
+    return formats.map((format) => ({
+      format,
+      fileName: `${baseName}.${format === "pdf" ? "pdf" : "xls"}`,
+      html:
+        format === "pdf"
+          ? renderWeighingBillingReportHtml(report)
+          : renderWeighingBillingReportSpreadsheet(report)
+    }));
   }
 
   getReportDispatchConfig(): { settings: ReportDispatchSettings; state: ReportDispatchState } {

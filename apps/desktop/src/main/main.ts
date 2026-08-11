@@ -55,6 +55,8 @@ import {
   type UpdateState
 } from "../services/update-flow.js";
 import { isCustomerReportVariant } from "../services/customer-report.js";
+import { isWeighingBillingSituation } from "../services/weighing-billing-situation.js";
+import type { WeighingBillingReportOptions } from "../services/weighing-billing-report.js";
 import { GITHUB_UPDATER_TOKEN } from "./updater-config.js";
 import type { OperationType } from "../services/weighing-operations.js";
 
@@ -856,6 +858,50 @@ function registerIpcHandlers(): void {
 
       return saveReportDocuments(
         runtime.buildCustomersOverviewDocuments(startDate, endDate, selectedFormats, periodLabel)
+      );
+    }
+  );
+
+  // Conferencia de faturamento: a lista pesagem a pesagem do periodo com a situacao de
+  // cada uma no OMIE.
+  ipcMain.handle(
+    "desktop:get-weighing-billing-report",
+    (_event, startDate: string, endDate: string, options?: unknown) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.getWeighingBillingReport(
+        startDate,
+        endDate,
+        sanitizeWeighingBillingOptions(options)
+      );
+    }
+  );
+
+  ipcMain.handle(
+    "desktop:export-weighing-billing-report",
+    async (
+      _event,
+      startDate: string,
+      endDate: string,
+      formats: Array<"pdf" | "excel">,
+      options?: unknown
+    ) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      if (!mainWindow) return null;
+
+      const selectedFormats = (formats ?? []).filter(
+        (format): format is "pdf" | "excel" => format === "pdf" || format === "excel"
+      );
+      if (selectedFormats.length === 0) {
+        throw new Error("Selecione ao menos um formato de arquivo (PDF ou Excel).");
+      }
+
+      return saveReportDocuments(
+        runtime.buildWeighingBillingReportDocuments(
+          startDate,
+          endDate,
+          selectedFormats,
+          sanitizeWeighingBillingOptions(options)
+        )
       );
     }
   );
@@ -2182,6 +2228,25 @@ async function renderHtmlToPdf(html: string): Promise<Buffer> {
  * "salvar como" de sempre; a partir de dois, pede a pasta uma vez so em vez de abrir um
  * dialogo por arquivo. Devolve `null` quando o operador cancela a escolha do destino.
  */
+/**
+ * Filtros da conferencia de faturamento vindos do renderer. Chegam pelo IPC como
+ * `unknown` e sao reconstruidos campo a campo: o que nao for reconhecido e descartado em
+ * vez de descer ate a consulta.
+ */
+function sanitizeWeighingBillingOptions(options: unknown): WeighingBillingReportOptions {
+  if (!options || typeof options !== "object") return {};
+  const raw = options as Record<string, unknown>;
+  const situations = Array.isArray(raw.situations)
+    ? raw.situations.filter(isWeighingBillingSituation)
+    : [];
+  return {
+    customerId: typeof raw.customerId === "string" && raw.customerId ? raw.customerId : null,
+    situations,
+    search: typeof raw.search === "string" ? raw.search : null,
+    periodLabel: typeof raw.periodLabel === "string" ? raw.periodLabel : null
+  };
+}
+
 async function saveReportDocuments(
   documents: Array<{ format: "pdf" | "excel"; fileName: string; html: string }>
 ): Promise<{ files: string[] } | null> {

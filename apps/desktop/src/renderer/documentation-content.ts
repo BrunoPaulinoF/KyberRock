@@ -594,13 +594,14 @@ export const documentationSections: DocumentationSection[] = [
     title: "Painel, insights e relatorios",
     eyebrow: "Gestao",
     summary:
-      "Painel, Insights, Controle de caminhoes, Relatorio por cliente e Relatorios cobrem o acompanhamento do dia e o fechamento por e-mail.",
+      "Painel, Insights, Controle de caminhoes, Relatorio por cliente, Conferencia de faturamento e Relatorios cobrem o acompanhamento do dia, a conferencia do que foi faturado e o fechamento por e-mail.",
     icon: FileText,
     steps: [
       "Abra o Painel (F1) para o status do turno, os KPIs do dia e as pendencias que precisam de atencao agora.",
       "Use Insights (F5) para peso por dia, top produtos, mix de operacoes e exportacao em PDF ou Excel do periodo.",
       "Use Controle de caminhoes para acompanhar as viagens do periodo.",
       "Use Relatorio por cliente para gerar o relatorio simplificado e/ou completo de um cliente em PDF e/ou Excel.",
+      "Use Conferencia de faturamento para ver o periodo pesagem a pesagem — cliente, data, produto, peso, frete e total de cada carregamento — e conferir contra o faturamento do OMIE.",
       "Em Relatorios, cadastre quem recebe o fechamento diario por e-mail e, no card do relatorio financeiro (OMIE), quem recebe o resumo financeiro e em que horario."
     ],
     details: [
@@ -608,7 +609,10 @@ export const documentationSections: DocumentationSection[] = [
       "O relatorio financeiro do OMIE tem horario proprio, separado do fechamento operacional.",
       "Relatorios usam os dados locais e os ja sincronizados. Pendencia de sincronizacao pode atrasar a consolidacao externa.",
       "Operacoes canceladas saem dos insights e dos relatorios, mas continuam auditaveis com motivo e horario.",
-      "Limpar concluidas apaga da lista e dos relatorios as operacoes ate ontem — as de hoje ficam. Isso nao mexe no pedido do OMIE."
+      "Limpar concluidas apaga da lista e dos relatorios as operacoes ate ontem — as de hoje ficam. Isso nao mexe no pedido do OMIE.",
+      "Na Conferencia de faturamento, filtre pela situacao para isolar o que ainda nao foi faturado: 'Recusada pelo OMIE' e 'Cadastro incompleto' precisam de correcao e reenvio; 'Nao enviada ao OMIE' esta em nova tentativa automatica.",
+      "'No OMIE, falta faturar' nao e erro do KyberRock: o pedido (ou a ordem de servico, na venda interna) ja chegou la e a nota e emitida no proprio OMIE, na etapa Faturar.",
+      "O PDF e a planilha da conferencia saem com as mesmas pesagens que estao na tela, com os filtros aplicados."
     ],
     keywords: [
       "relatorio",
@@ -622,6 +626,12 @@ export const documentationSections: DocumentationSection[] = [
       "exportar",
       "controle de caminhoes",
       "relatorio por cliente",
+      "conferencia de faturamento",
+      "conferir faturamento",
+      "pesagem a pesagem",
+      "faturado certinho",
+      "nao faturado",
+      "falta faturar",
       "grafico",
       "producao do dia"
     ]
