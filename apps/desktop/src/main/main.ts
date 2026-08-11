@@ -390,6 +390,17 @@ function registerIpcHandlers(): void {
     return runtime.getOperationOmieIssue(operationId);
   });
 
+  ipcMain.handle(
+    "desktop:customer-omie-readiness",
+    (_event, customerId: string, operationType?: "invoice" | "internal") => {
+      if (!runtime) {
+        throw new Error("Desktop runtime is not ready.");
+      }
+
+      return runtime.getCustomerOmieReadiness(customerId, operationType);
+    }
+  );
+
   ipcMain.handle("desktop:clear-canceled-weighing-operations", () => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");

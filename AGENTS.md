@@ -75,6 +75,18 @@ npm run dist:win -w @kyberrock/desktop      # NSIS installer -> apps/desktop/rel
   dead_letter**: e o unico momento em que o envio parou de andar sozinho. Enquanto ha
   tentativa sobrando a operacao fica neutra, so exibindo o motivo. Um envio que der certo
   depois limpa o marcador da recusa anterior.
+- **Trava de cadastro na ABERTURA** (`omie-customer-readiness.ts`): a entrada e recusada
+  enquanto faltar campo que o OMIE exige — CNPJ/CPF nos dois tipos e, na venda com nota, o
+  bloco do destinatario da NF-e (CEP, endereco, numero, bairro, cidade, UF) mais e-mail.
+  **So campo obrigatorio**: telefone e complemento ficam de fora de proposito. A regra vive
+  em um modulo puro e e aplicada em DOIS lugares que nunca podem divergir — `startWeighing`
+  (trava de verdade, antes de capturar peso) e o aviso da tela de entrada
+  (`customerOmieReadiness`, que desabilita "Capturar peso" e leva ao cadastro).
+  **Nunca travar o FECHAMENTO**: la o caminhao ja esta carregado sobre a balanca e a
+  operacao tem que fechar local (offline-first) — a abertura e a ultima hora barata de
+  dizer "nao". O e-mail e dispensado quando existe e-mail padrao de NF-e, porque o
+  fechamento ja preenche o do cliente sozinho (`autoCompleteCustomerForNfe`). A operacao
+  interna vira ordem de servico e nao emite NF-e: dela so se cobra o documento.
 - **Listagens de operacao e o teto de escala**: `listOpenWeighingOperations` /
   `listClosedWeighingOperations` / `listCanceledWeighingOperations` ainda **nao tem LIMIT** e
   o tick de 15 s do multi-desktop (`App.tsx`) rebusca as tres. Os indices da migracao 48

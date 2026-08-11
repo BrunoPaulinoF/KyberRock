@@ -66,6 +66,11 @@ import {
   type OmieQueueDrainSchedulerHandle
 } from "./omie-queue-scheduler.js";
 import {
+  checkCustomerOmieReadiness,
+  type OmieCustomerReadiness,
+  type OmieReadinessOperationType
+} from "./omie-customer-readiness.js";
+import {
   cancelWeighingOperation,
   clearCanceledWeighingOperations,
   clearClosedWeighingOperations,
@@ -799,6 +804,12 @@ export class DesktopRuntime {
     scaleCaptureId?: string;
   }): Promise<WeighingOperationSummary> {
     this.assertDesktopAccess();
+    // Trava de cadastro ANTES de tudo — antes de capturar peso e antes de conferir
+    // adiantamento. O fechamento acontece com o caminhao carregado em cima da balanca e
+    // TEM que fechar local (offline-first), entao a abertura e a unica hora em que dizer
+    // "falta o endereco do cliente" ainda e barato. Sem isso a venda ia ate o fim e so
+    // entao o OMIE recusava o pedido, com a carga ja pesada, impressa e faturada.
+    this.assertCustomerReadyForOmie(input.customerId, input.operationType);
     // Venda que vai sair do adiantamento: confere o saldo do cliente no OMIE agora,
     // enquanto o caminhao estabiliza na balanca. O financeiro lanca o adiantamento la,
     // e o que ainda nao foi espelhado aqui e dinheiro que a balanca nao enxerga.
@@ -950,6 +961,38 @@ export class DesktopRuntime {
         });
       }
     }
+  }
+
+  /**
+   * Cadastro do cliente conferido contra o que o OMIE exige para esse tipo de operacao.
+   * Alimenta o aviso da tela de entrada (que desabilita o botao antes do operador tentar)
+   * e usa a mesma regra da trava de `startWeighing` — tela e backend nunca divergem.
+   */
+  getCustomerOmieReadiness(
+    customerId: string | null,
+    operationType?: OperationType
+  ): OmieCustomerReadiness {
+    this.assertDesktopAccess();
+    return checkCustomerOmieReadiness(
+      this.database,
+      customerId,
+      resolveReadinessType(operationType)
+    );
+  }
+
+  /**
+   * Trava da abertura: recusa a entrada enquanto faltar campo que o OMIE exige. A mensagem
+   * ja nomeia os campos, entao ela serve tanto para o erro do formulario quanto para o
+   * operador saber o que preencher.
+   */
+  private assertCustomerReadyForOmie(customerId: string, operationType?: OperationType): void {
+    const readiness = checkCustomerOmieReadiness(
+      this.database,
+      customerId,
+      resolveReadinessType(operationType)
+    );
+    if (readiness.ready) return;
+    throw new Error(readiness.message ?? "Cadastro do cliente incompleto para o OMIE.");
   }
 
   /** Ha job OMIE elegivel agora (respeitando o backoff de `next_attempt_at`)? */
@@ -4149,6 +4192,15 @@ function escapeHtml(value: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
+}
+
+/**
+ * Tipo da operacao para a regra de cadastro. A entrada sem tipo escolhido nasce fiscal
+ * (ver `createWeighingOperation`), e a trava tem que assumir o MESMO padrao: assumir
+ * "interna" aqui deixaria passar exatamente a venda com nota que a regra existe para pegar.
+ */
+function resolveReadinessType(operationType?: OperationType): OmieReadinessOperationType {
+  return operationType === "internal" ? "internal" : "invoice";
 }
 
 function buildScaleCaptureAudit(reading: ScaleReading): ScaleCaptureAudit {
