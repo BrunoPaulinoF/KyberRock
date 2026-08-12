@@ -198,9 +198,12 @@ Cobrança da plataforma (Kybernan → pedreira). Guia completo em `docs/financei
   `billing-run` (pg_cron, `202608120002_billing_run_cron.sql`, 2×/dia). `billing-webhook` recebe a
   notificação do Mercado Pago e **reconsulta a API** antes de dar baixa — o corpo da requisição
   nunca é a fonte da verdade.
-- Segredos (`billing_settings`): access token do Mercado Pago, segredo do webhook e token da
-  instância UAZAPI. Ficam na tabela, com os envs `MERCADO_PAGO_*` / `UAZAPI_*` como fallback; o
-  painel só vê os quatro últimos caracteres e campo vazio no submit significa "manter".
+- **Segredos ficam nos secrets do Supabase, não no banco** (`_shared/billing-secrets.ts`,
+  migração `202608120003`). `billing_settings` guarda só o NOME da variável
+  (`MERCADO_PAGO_ACCESS_TOKEN`, `MERCADO_PAGO_WEBHOOK_SECRET`, `UAZAPI_INSTANCE_TOKEN` por
+  padrão) e a Edge Function lê o valor com `Deno.env.get()`. O painel vê nome, situação e os
+  quatro últimos caracteres — nunca o valor. Não reintroduza coluna de valor: as antigas foram
+  removidas de propósito.
 - Idempotência do boleto: `kyberrock:{companyId}:{invoiceId}:create_boleto` (+ `:{n}` na
   reemissão), mesma convenção do OMIE.
 - **A migração `202608120001_financial_backoffice.sql` precisa ser aplicada à mão** antes de abrir

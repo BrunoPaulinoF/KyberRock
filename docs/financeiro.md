@@ -24,6 +24,7 @@ WhatsApp e bloqueio automático por inadimplência.
 | Tela                          | `apps/loader-web/src/pages/FinancialBackoffice.tsx`         | Aba **Financeiro** do painel admin.                                                 |
 | Schema                        | `supabase/migrations/202608120001_financial_backoffice.sql` | Colunas de cobrança + `billing_settings` / `billing_invoices` / `billing_events`.   |
 | Agendamento                   | `supabase/migrations/202608120002_billing_run_cron.sql`     | Job `kyberrock_billing_run`.                                                        |
+| Segredos                      | `supabase/functions/_shared/billing-secrets.ts`             | Resolve cada credencial pelo nome da variável. **Puro e testado.**                  |
 
 O painel e o cron chamam **o mesmo motor**: "gerar agora" e "gerar sozinho"
 produzem exatamente a mesma fatura.
@@ -98,16 +99,14 @@ em andamento) sem desligar a cobrança.
 
 ## Configuração (aba Financeiro → Configurações)
 
-- **Access token do Mercado Pago** — da conta que emite os boletos. Fica só no
-  servidor; o painel mostra os quatro últimos caracteres. Campo vazio no submit
-  significa "mantenha o que está gravado", igual ao segredo do OMIE e à chave da
-  IA. Os envs `MERCADO_PAGO_ACCESS_TOKEN` / `UAZAPI_*` continuam como fallback
-  para instalação antiga, mas a tabela tem precedência.
+- **Credenciais** — ver "Onde moram os segredos" abaixo. A tela guarda apenas o
+  **nome da variável**; o valor fica no secret do Supabase.
 - **Segredo de assinatura do webhook** — opcional. Sem ele, o `billing-webhook`
   ainda confirma o pagamento **consultando a API** do Mercado Pago, que é a
   fonte da verdade; a assinatura só evita a consulta desnecessária de um POST
   forjado.
-- **WhatsApp** — instância UAZAPI da Kybernan. É diferente de
+- **WhatsApp** — URL e nome da instância UAZAPI da Kybernan ficam na tabela (não
+  são credencial); o token vem do secret. É diferente de
   `report_channel_settings`, que é a instância de cada pedreira para os
   relatórios dela.
 - **Padrões do ciclo** e as quatro chaves gerais: fechar, emitir boleto, enviar
@@ -116,6 +115,35 @@ em andamento) sem desligar a cobrança.
   WhatsApp, com marcadores (`{pedreira}`, `{valor}`, `{vencimento}`, `{boleto}`,
   `{linha_digitavel}`, `{pix}`, …). Marcador desconhecido fica visível no texto
   em vez de sumir — o erro aparece no boleto de teste.
+
+## Onde moram os segredos
+
+Nenhuma credencial do financeiro fica no banco, no repositório ou no navegador.
+`billing_settings` guarda só o **nome da variável de ambiente**; o valor vive no
+secret do Supabase e é lido pela Edge Function com `Deno.env.get()`.
+
+| Segredo                          | Variável padrão               | Sem ele                                                    |
+| -------------------------------- | ----------------------------- | ---------------------------------------------------------- |
+| Access token do Mercado Pago     | `MERCADO_PAGO_ACCESS_TOKEN`   | Nenhum boleto é emitido.                                   |
+| Segredo de assinatura do webhook | `MERCADO_PAGO_WEBHOOK_SECRET` | A baixa continua funcionando (o webhook reconsulta a API). |
+| Token da instância de WhatsApp   | `UAZAPI_INSTANCE_TOKEN`       | A fatura é gerada mas não enviada.                         |
+
+Para gravar o valor: **Supabase → Edge Functions → Secrets**, ou
+`supabase secrets set MERCADO_PAGO_ACCESS_TOKEN=...`. A tela mostra, por
+segredo, o nome da variável, se ela foi encontrada e os quatro últimos
+caracteres — o bastante para reconhecer qual credencial está ativa, nunca o
+valor.
+
+O campo de nome aceita um nome diferente do padrão (duas contas do Mercado Pago
+no mesmo projeto, troca de credencial em paralelo); vazio usa o padrão. Colar o
+token nesse campo é recusado com uma mensagem que diz onde o valor deve ir —
+`APP_USR-...` não é nome de variável, e o erro genérico faria a pessoa tentar de
+novo em vez de entender.
+
+Trocar uma credencial é trocar o secret no Supabase: sem deploy, sem SQL e sem
+nenhum ponto onde o token possa vazar por descuido. As chaves do próprio
+Supabase seguem a regra de sempre — `SUPABASE_SERVICE_ROLE_KEY` só existe dentro
+da Edge Function, e o loader-web carrega apenas a _publishable key_.
 
 ### Webhook no painel do Mercado Pago
 
@@ -154,8 +182,10 @@ reemissão cancela o anterior antes de criar o novo.
 
 ## Deploy
 
-1. **Aplique a migração antes de usar a tela.** Migrações não são automáticas
+1. **Aplique as migrações antes de usar a tela.** Migrações não são automáticas
    (ver AGENTS.md § "SQL migrations"): use `apply_migration` ou a CLI.
+   `202608120003` move os segredos para os secrets do Supabase e **remove** as
+   colunas de valor de `billing_settings`.
 2. As Edge Functions saem no push para `main` pelo
    `.github/workflows/edge-functions-deploy.yml`. As três novas já estão em
    `supabase/config.toml` com `verify_jwt = false` — função sem bloco lá é

@@ -21,7 +21,6 @@ import {
   BILLING_SETTINGS_ID,
   BILLING_SETTINGS_TABLE,
   COMPANY_BILLING_COLUMNS,
-  SECRET_UNCHANGED,
   buildCompanyBillingPlan,
   evaluateCompanyBlock,
   createInvoiceForPeriod,
@@ -48,6 +47,7 @@ import {
 } from "../_shared/billing-cycle.ts";
 import { missingBillingFields, resolveBillingCustomer } from "../_shared/billing-invoice.ts";
 import { cancelPayment } from "../_shared/mercado-pago.ts";
+import { BILLING_SECRETS, describeEnvVarNameError } from "../_shared/billing-secrets.ts";
 
 /**
  * Cliente generico do Supabase. Nao usamos `ReturnType<typeof createClient>`
@@ -102,11 +102,6 @@ function nonNegativeInt(value: unknown, fallback = 0): number {
 function optionalDate(value: unknown): string | null {
   const result = text(value);
   return /^\d{4}-\d{2}-\d{2}$/.test(result) ? result : null;
-}
-
-/** Segredo NUNCA volta inteiro para o navegador: so o suficiente para reconhecer qual esta gravado. */
-function maskSecret(value: string): string {
-  return value.length >= 4 ? `••••${value.slice(-4)}` : "";
 }
 
 Deno.serve(async (req) => {
@@ -246,12 +241,10 @@ async function handleList(supabase: SupabaseAdminClient): Promise<Response> {
     today,
     settings: {
       mercadoPagoEnvironment: settings.mercadoPagoEnvironment,
-      hasMercadoPagoAccessToken: settings.mercadoPagoAccessToken.length > 0,
-      mercadoPagoAccessTokenPreview: maskSecret(settings.mercadoPagoAccessToken),
-      hasMercadoPagoWebhookSecret: settings.mercadoPagoWebhookSecret.length > 0,
+      // Os segredos aparecem so como nome da variavel + situacao. O valor fica
+      // no secret do Supabase e nao trafega para o navegador em nenhum momento.
+      secrets: settings.secrets,
       whatsappUrl: settings.whatsappUrl,
-      hasWhatsappInstanceToken: settings.whatsappInstanceToken.length > 0,
-      whatsappInstanceTokenPreview: maskSecret(settings.whatsappInstanceToken),
       whatsappInstanceName: settings.whatsappInstanceName,
       whatsappStatus: settings.whatsappStatus,
       defaultClosingDay: settings.defaultClosingDay,
@@ -308,12 +301,18 @@ async function handleUpdateSettings(
     update.mercado_pago_environment =
       text(payload.mercadoPagoEnvironment) === "sandbox" ? "sandbox" : "production";
   }
-  // Mesmo contrato do segredo do OMIE e da chave da IA: a mascara mantem o que
-  // esta gravado, string vazia apaga, qualquer outra coisa substitui. Sem isso,
-  // salvar o dia do fechamento apagaria o token do Mercado Pago.
-  assignSecret(update, "mercado_pago_access_token", payload.mercadoPagoAccessToken);
-  assignSecret(update, "mercado_pago_webhook_secret", payload.mercadoPagoWebhookSecret);
-  assignSecret(update, "whatsapp_instance_token", payload.whatsappInstanceToken);
+  // Segredo NAO passa por aqui. A tela envia apenas o NOME da variavel de
+  // ambiente; o valor vive no secret do Supabase e e lido pela Edge Function.
+  // Colar o token no campo do nome e o erro provavel, entao ele e recusado com
+  // uma mensagem que diz onde o valor deve ir.
+  for (const definition of BILLING_SECRETS) {
+    const field = `${definition.key}Env`;
+    if (payload[field] === undefined) continue;
+    const name = text(payload[field]);
+    const error = describeEnvVarNameError(name);
+    if (error) return jsonResponse({ error: `${definition.label}: ${error}` }, 400);
+    update[definition.column] = name.length > 0 ? name : null;
+  }
 
   if (payload.whatsappUrl !== undefined) update.whatsapp_url = optionalText(payload.whatsappUrl);
   if (payload.whatsappInstanceName !== undefined) {
@@ -359,16 +358,6 @@ async function handleUpdateSettings(
     message: "Configuracao do financeiro atualizada."
   });
   return jsonResponse({ ok: true });
-}
-
-function assignSecret(update: Record<string, unknown>, column: string, value: unknown): void {
-  if (value === undefined) return;
-  const secret = text(value);
-  if (secret.length === 0) {
-    update[column] = null;
-  } else if (secret !== SECRET_UNCHANGED && !secret.startsWith("••••")) {
-    update[column] = secret;
-  }
 }
 
 function clampDay(value: unknown, fallback: number): number {
