@@ -105,14 +105,27 @@ export interface BillingInvoice {
   updated_at: string;
 }
 
+/**
+ * Situacao de um segredo. Repare no que NAO existe aqui: o valor. Ele mora no
+ * secret do Supabase, e lido pela Edge Function com `Deno.env.get()` e nunca
+ * chega ao navegador — a tela conhece so o nome da variavel, se ela esta
+ * preenchida e os quatro ultimos caracteres, o bastante para reconhecer qual
+ * credencial esta ativa.
+ */
+export interface BillingSecretStatus {
+  key: string;
+  label: string;
+  missingHint: string;
+  envVar: string;
+  isCustomEnvVar: boolean;
+  configured: boolean;
+  preview: string;
+}
+
 export interface BillingSettingsView {
   mercadoPagoEnvironment: string;
-  hasMercadoPagoAccessToken: boolean;
-  mercadoPagoAccessTokenPreview: string;
-  hasMercadoPagoWebhookSecret: boolean;
+  secrets: BillingSecretStatus[];
   whatsappUrl: string;
-  hasWhatsappInstanceToken: boolean;
-  whatsappInstanceTokenPreview: string;
   whatsappInstanceName: string;
   whatsappStatus: string;
   defaultClosingDay: number;
@@ -316,4 +329,22 @@ export function downloadBase64Pdf(base64: string, fileName: string): void {
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
+}
+
+/** Situacao de um segredo pelo identificador, com um vazio seguro quando o backend e mais antigo. */
+export function findSecret(
+  settings: Pick<BillingSettingsView, "secrets">,
+  key: string
+): BillingSecretStatus {
+  return (
+    (settings.secrets ?? []).find((secret) => secret.key === key) ?? {
+      key,
+      label: key,
+      missingHint: "",
+      envVar: "",
+      isCustomEnvVar: false,
+      configured: false,
+      preview: ""
+    }
+  );
 }

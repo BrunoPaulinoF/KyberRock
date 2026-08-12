@@ -92,7 +92,9 @@ These recur across the codebase and are easy to violate accidentally:
   para o botão do painel (`admin-billing`) e para a passada do pg_cron (`billing-run`): fechar,
   emitir boleto no Mercado Pago, enviar por WhatsApp (instância UAZAPI **global**, não a da
   pedreira) e bloquear por inadimplência via `companies.payment_blocked`, a coluna que o
-  `desktop-status` já consulta. A passada é idempotente — índice único por ciclo, boleto só quando
+  `desktop-status` já consulta. As credenciais (Mercado Pago e WhatsApp) **não ficam no banco**:
+  `billing_settings` guarda só o nome da variável e o valor vem do secret do Supabase
+  (`_shared/billing-secrets.ts`). A passada é idempotente — índice único por ciclo, boleto só quando
   não há `boleto_payment_id`, WhatsApp só quando `whatsapp_sent_at` está vazio — e recupera ciclos
   pulados em vez de perder o mês. A liberação do bloqueio é conservadora: só desfaz bloqueio que o
   próprio motor aplicou (`billing_invoices.blocked_at`).

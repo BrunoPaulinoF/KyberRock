@@ -5,6 +5,7 @@ import {
   daysOverdue,
   describeNextClosing,
   filterInvoices,
+  findSecret,
   formatCents,
   formatDateBr,
   invoiceStatusLabel,
@@ -260,5 +261,44 @@ describe("describeNextClosing", () => {
         billing_plan: { ...target.billing_plan, nextPeriod: null, nextAmountCents: null }
       })
     ).toBe("Informe a data de virada do sistema");
+  });
+});
+
+describe("findSecret", () => {
+  const settings = {
+    secrets: [
+      {
+        key: "mercadoPagoAccessToken",
+        label: "Access token do Mercado Pago",
+        missingHint: "Sem ele nenhum boleto e emitido.",
+        envVar: "MERCADO_PAGO_ACCESS_TOKEN",
+        isCustomEnvVar: false,
+        configured: true,
+        preview: "••••3456"
+      }
+    ]
+  };
+
+  it("finds the secret by key", () => {
+    expect(findSecret(settings, "mercadoPagoAccessToken").envVar).toBe("MERCADO_PAGO_ACCESS_TOKEN");
+    expect(findSecret(settings, "mercadoPagoAccessToken").configured).toBe(true);
+  });
+
+  it("returns a safe empty status for an unknown key instead of crashing the screen", () => {
+    expect(findSecret(settings, "naoExiste")).toEqual({
+      key: "naoExiste",
+      label: "naoExiste",
+      missingHint: "",
+      envVar: "",
+      isCustomEnvVar: false,
+      configured: false,
+      preview: ""
+    });
+  });
+
+  it("survives a backend that does not send the list at all", () => {
+    expect(
+      findSecret({ secrets: undefined as unknown as typeof settings.secrets }, "x").configured
+    ).toBe(false);
   });
 });

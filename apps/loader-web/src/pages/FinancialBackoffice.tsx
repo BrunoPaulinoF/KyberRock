@@ -7,6 +7,7 @@ import {
   describeNextClosing,
   downloadBase64Pdf,
   filterInvoices,
+  findSecret,
   formatCents,
   formatDateBr,
   formatDateTimeBr,
@@ -18,6 +19,7 @@ import {
 import type {
   BillingCompany,
   BillingInvoice,
+  BillingSecretStatus,
   BillingSettingsView,
   BillingSummary
 } from "../lib/billing";
@@ -38,9 +40,6 @@ import type {
  */
 
 type FinancialTab = "invoices" | "companies" | "settings";
-
-/** Mascara devolvida pelo backend; reenviada para dizer "mantenha o segredo gravado". */
-const SECRET_UNCHANGED = "********";
 
 const CARD: React.CSSProperties = {
   background: "#fff",
@@ -1446,12 +1445,12 @@ function BillingSettingsForm({
     const form = new FormData(event.currentTarget);
     onSave({
       mercadoPagoEnvironment: form.get("mercadoPagoEnvironment"),
-      // Campo vazio significa "mantenha": o valor gravado nunca chega ao
-      // navegador, entao um submit sem redigitar nao pode apagar o token.
-      mercadoPagoAccessToken: keepSecret(form.get("mercadoPagoAccessToken")),
-      mercadoPagoWebhookSecret: keepSecret(form.get("mercadoPagoWebhookSecret")),
+      // Vao os NOMES das variaveis, nunca os valores: o segredo mora no secret
+      // do Supabase e este formulario jamais chega a ver o token.
+      mercadoPagoAccessTokenEnv: form.get("mercadoPagoAccessTokenEnv"),
+      mercadoPagoWebhookSecretEnv: form.get("mercadoPagoWebhookSecretEnv"),
+      whatsappInstanceTokenEnv: form.get("whatsappInstanceTokenEnv"),
       whatsappUrl: form.get("whatsappUrl"),
-      whatsappInstanceToken: keepSecret(form.get("whatsappInstanceToken")),
       whatsappInstanceName: form.get("whatsappInstanceName"),
       defaultClosingDay: form.get("defaultClosingDay"),
       defaultDueDay: form.get("defaultDueDay"),
@@ -1474,27 +1473,12 @@ function BillingSettingsForm({
     <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
       <article style={CARD}>
         <h3 style={{ margin: "0 0 4px 0" }}>Mercado Pago</h3>
-        <p style={{ margin: "0 0 16px 0", fontSize: "13px", color: "#64748b" }}>
-          O access token e da conta que EMITE os boletos. Ele fica so no servidor — o painel mostra
-          apenas os quatro ultimos caracteres.
-        </p>
+        <SecretsNotice />
         <div style={GRID_TWO}>
-          <Field
-            label="Access token"
-            hint={
-              settings.hasMercadoPagoAccessToken
-                ? `Configurado (${settings.mercadoPagoAccessTokenPreview}). Deixe vazio para manter.`
-                : "Nao configurado. Sem ele, nenhum boleto e emitido."
-            }
-          >
-            <input
-              name="mercadoPagoAccessToken"
-              type="password"
-              autoComplete="off"
-              placeholder={settings.hasMercadoPagoAccessToken ? SECRET_UNCHANGED : "APP_USR-..."}
-              style={INPUT}
-            />
-          </Field>
+          <SecretField
+            secret={findSecret(settings, "mercadoPagoAccessToken")}
+            name="mercadoPagoAccessTokenEnv"
+          />
           <Field label="Ambiente">
             <select
               name="mercadoPagoEnvironment"
@@ -1505,31 +1489,20 @@ function BillingSettingsForm({
               <option value="sandbox">Sandbox (teste)</option>
             </select>
           </Field>
-          <Field
-            label="Segredo da assinatura do webhook"
-            hint={
-              settings.hasMercadoPagoWebhookSecret
-                ? "Configurado. Deixe vazio para manter."
-                : "Opcional. Sem ele, a baixa e confirmada consultando a API do Mercado Pago."
-            }
-          >
-            <input
-              name="mercadoPagoWebhookSecret"
-              type="password"
-              autoComplete="off"
-              placeholder={settings.hasMercadoPagoWebhookSecret ? SECRET_UNCHANGED : ""}
-              style={INPUT}
-            />
-          </Field>
+          <SecretField
+            secret={findSecret(settings, "mercadoPagoWebhookSecret")}
+            name="mercadoPagoWebhookSecretEnv"
+          />
         </div>
       </article>
 
       <article style={CARD}>
         <h3 style={{ margin: "0 0 4px 0" }}>WhatsApp da cobranca</h3>
-        <p style={{ margin: "0 0 16px 0", fontSize: "13px", color: "#64748b" }}>
+        <p style={{ margin: "0 0 12px 0", fontSize: "13px", color: "#64748b" }}>
           Instancia UAZAPI da Kybernan, usada para mandar fatura e boleto a todas as pedreiras. E
           diferente da instancia que cada pedreira configura para os relatorios dela.
         </p>
+        <SecretsNotice />
         <div style={GRID_TWO}>
           <Field label="URL da instancia">
             <input
@@ -1539,22 +1512,10 @@ function BillingSettingsForm({
               style={INPUT}
             />
           </Field>
-          <Field
-            label="Token da instancia"
-            hint={
-              settings.hasWhatsappInstanceToken
-                ? `Configurado (${settings.whatsappInstanceTokenPreview}). Deixe vazio para manter.`
-                : "Nao configurado. Sem ele, a fatura e gerada mas nao enviada."
-            }
-          >
-            <input
-              name="whatsappInstanceToken"
-              type="password"
-              autoComplete="off"
-              placeholder={settings.hasWhatsappInstanceToken ? SECRET_UNCHANGED : ""}
-              style={INPUT}
-            />
-          </Field>
+          <SecretField
+            secret={findSecret(settings, "whatsappInstanceToken")}
+            name="whatsappInstanceTokenEnv"
+          />
           <Field label="Nome da instancia">
             <input
               name="whatsappInstanceName"
@@ -1705,6 +1666,72 @@ function BillingSettingsForm({
   );
 }
 
+/**
+ * Explica, uma vez por bloco, onde o valor do segredo realmente mora. Sem este
+ * aviso o campo "nome da variavel" parece um campo de senha, e a primeira coisa
+ * que alguem faz e colar o token ali.
+ */
+function SecretsNotice() {
+  return (
+    <div
+      style={{
+        margin: "0 0 16px 0",
+        padding: "12px 14px",
+        borderRadius: "10px",
+        background: "#f1f5f9",
+        border: "1px solid #cbd5e1",
+        fontSize: "13px",
+        color: "#334155"
+      }}
+    >
+      As credenciais ficam nos <strong>secrets do Supabase</strong>, nunca no banco nem no codigo.
+      Aqui voce informa apenas o <strong>nome da variavel</strong>; o valor e gravado em{" "}
+      <em>Supabase &gt; Edge Functions &gt; Secrets</em> (ou{" "}
+      <code>supabase secrets set NOME=valor</code>) e so a Edge Function o enxerga.
+    </div>
+  );
+}
+
+/**
+ * Um segredo: campo com o NOME da variavel e a situacao lida do servidor.
+ * Deixar vazio mantem o nome padrao — por isso o placeholder mostra qual e.
+ */
+function SecretField({ secret, name }: { secret: BillingSecretStatus; name: string }) {
+  return (
+    <Field
+      label={secret.label}
+      hint={
+        secret.configured
+          ? `Secret ${secret.envVar} encontrado (${secret.preview}).`
+          : `Secret ${secret.envVar} nao encontrado no Supabase. ${secret.missingHint}`
+      }
+    >
+      <input
+        name={name}
+        defaultValue={secret.isCustomEnvVar ? secret.envVar : ""}
+        placeholder={secret.envVar}
+        autoComplete="off"
+        spellCheck={false}
+        style={INPUT}
+      />
+      <span
+        style={{
+          alignSelf: "flex-start",
+          marginTop: "2px",
+          padding: "2px 8px",
+          borderRadius: "999px",
+          fontSize: "11px",
+          fontWeight: 700,
+          background: secret.configured ? "#dcfce7" : "#fef3c7",
+          color: secret.configured ? "#166534" : "#92400e"
+        }}
+      >
+        {secret.configured ? "Configurado no Supabase" : "Pendente no Supabase"}
+      </span>
+    </Field>
+  );
+}
+
 function Checkbox({
   name,
   label,
@@ -1743,12 +1770,6 @@ const GRID_TWO: React.CSSProperties = {
   gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
   gap: "12px"
 };
-
-/** Campo vazio = "mantenha o que esta gravado"; `undefined` nao vai no payload. */
-function keepSecret(value: FormDataEntryValue | null): string | undefined {
-  const text = String(value ?? "").trim();
-  return text.length > 0 ? text : undefined;
-}
 
 function emptyToNull(value: FormDataEntryValue | null): number | null {
   const text = String(value ?? "").trim();

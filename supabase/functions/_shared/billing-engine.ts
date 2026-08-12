@@ -39,6 +39,8 @@ import {
 } from "./billing-invoice.ts";
 import type { BillingCustomer } from "./billing-invoice.ts";
 import { buildInvoicePdf, toBase64 } from "./billing-pdf.ts";
+import { resolveAllBillingSecrets } from "./billing-secrets.ts";
+import type { ResolvedBillingSecret } from "./billing-secrets.ts";
 import {
   MercadoPagoError,
   cancelPayment,
@@ -53,15 +55,21 @@ const MAX_PAYMENT_POLLS_PER_RUN = 40;
 
 export const BILLING_SETTINGS_TABLE = "billing_settings";
 export const BILLING_SETTINGS_ID = true;
-/** Enviado pela UI para dizer "mantenha o segredo que ja esta gravado". */
-export const SECRET_UNCHANGED = "********";
 
 export interface BillingSettings {
+  /** Valor lido do secret do Supabase. NUNCA sai da Edge Function. */
   mercadoPagoAccessToken: string;
   mercadoPagoEnvironment: string;
+  /** Valor lido do secret do Supabase. NUNCA sai da Edge Function. */
   mercadoPagoWebhookSecret: string;
   whatsappUrl: string;
+  /** Valor lido do secret do Supabase. NUNCA sai da Edge Function. */
   whatsappInstanceToken: string;
+  /**
+   * Resumo por segredo (nome da variavel, se esta preenchida, quatro ultimos
+   * caracteres). E a UNICA parte dos segredos que pode chegar ao navegador.
+   */
+  secrets: ResolvedBillingSecret[];
   whatsappInstanceName: string;
   whatsappStatus: string;
   defaultClosingDay: number;
@@ -172,10 +180,15 @@ function nowIso(): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Configuracao global. Os envs `MERCADO_PAGO_*`/`UAZAPI_*` ficam como fallback
- * para instalacao que ainda nao passou pelo painel — a tabela tem precedencia,
- * pelo mesmo motivo de `ai_assistant_settings`: credencial de plataforma se
- * troca no painel, nao em deploy.
+ * Configuracao global.
+ *
+ * Os SEGREDOS (access token do Mercado Pago, segredo do webhook, token da
+ * instancia de WhatsApp) nao ficam no banco: a tabela guarda so o NOME da
+ * variavel e o valor e lido aqui do secret do Supabase. Ver
+ * `billing-secrets.ts` e a migracao 202608120003.
+ *
+ * O resto — URL do WhatsApp, padroes do ciclo, emitente, textos — continua na
+ * tabela, porque nao e credencial e precisa ser editavel na tela.
  */
 export async function loadBillingSettings(supabase: SupabaseClient): Promise<BillingSettings> {
   const { data, error } = await supabase
@@ -186,15 +199,18 @@ export async function loadBillingSettings(supabase: SupabaseClient): Promise<Bil
   if (error) throw error;
   const row = (data ?? {}) as Record<string, unknown>;
 
+  const { values, status } = resolveAllBillingSecrets({
+    settingsRow: row,
+    readEnv: (name) => Deno.env.get(name)
+  });
+
   return {
-    mercadoPagoAccessToken:
-      text(row.mercado_pago_access_token) || (Deno.env.get("MERCADO_PAGO_ACCESS_TOKEN") ?? ""),
+    mercadoPagoAccessToken: values.mercadoPagoAccessToken,
     mercadoPagoEnvironment: text(row.mercado_pago_environment) || "production",
-    mercadoPagoWebhookSecret:
-      text(row.mercado_pago_webhook_secret) || (Deno.env.get("MERCADO_PAGO_WEBHOOK_SECRET") ?? ""),
+    mercadoPagoWebhookSecret: values.mercadoPagoWebhookSecret,
     whatsappUrl: text(row.whatsapp_url) || (Deno.env.get("UAZAPI_WHATSAPP_URL") ?? ""),
-    whatsappInstanceToken:
-      text(row.whatsapp_instance_token) || (Deno.env.get("UAZAPI_INSTANCE_TOKEN") ?? ""),
+    whatsappInstanceToken: values.whatsappInstanceToken,
+    secrets: status,
     whatsappInstanceName: text(row.whatsapp_instance_name),
     whatsappStatus: text(row.whatsapp_status),
     defaultClosingDay: Number(row.default_closing_day ?? 25),
