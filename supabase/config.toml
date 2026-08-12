@@ -41,6 +41,21 @@ verify_jwt = false
 [functions.admin-api]
 verify_jwt = false
 
+# Backoffice financeiro: mesma sessao administrativa do admin-api, validada no
+# header x-admin-session pela propria funcao.
+[functions.admin-billing]
+verify_jwt = false
+
+# Motor de cobranca disparado pelo pg_cron (header x-cron-secret).
+[functions.billing-run]
+verify_jwt = false
+
+# Notificacoes de pagamento do Mercado Pago. Publica por necessidade — quem
+# chama e o Mercado Pago, que nao tem JWT do Supabase. A funcao nao confia no
+# corpo: ela reconsulta o pagamento na API antes de dar baixa.
+[functions.billing-webhook]
+verify_jwt = false
+
 [functions.daily-report-scheduler]
 verify_jwt = false
 

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { buildDeleteConfirmationMessage, buildDeleteRequest } from "./AdminDashboard";
+import {
+  buildDeleteConfirmationMessage,
+  buildDeleteRequest,
+  matchesCadastroSearch
+} from "./AdminDashboard";
 
 describe("buildDeleteConfirmationMessage", () => {
   it("avisa sobre a cascata ao excluir uma pedreira", () => {
@@ -23,6 +27,17 @@ describe("buildDeleteConfirmationMessage", () => {
 
     expect(message).toContain('"Unidade Centro"');
     expect(message).toContain("dispositivos");
+  });
+
+  it("avisa que o desktop tera de ser ativado de novo", () => {
+    const message = buildDeleteConfirmationMessage({
+      type: "device",
+      id: "device-1",
+      name: "Balanca 01"
+    });
+
+    expect(message).toContain('"Balanca 01"');
+    expect(message).toContain("ativa");
   });
 
   it("usa o papel do usuario na confirmacao", () => {
@@ -80,6 +95,13 @@ describe("buildDeleteRequest", () => {
     ).toEqual({ action: "delete_loader", payload: { userId: "user-2" } });
   });
 
+  it("mapeia o dispositivo para delete_device", () => {
+    expect(buildDeleteRequest({ type: "device", id: "device-1", name: "Balanca 01" })).toEqual({
+      action: "delete_device",
+      payload: { deviceId: "device-1" }
+    });
+  });
+
   it("nao envia senha do administrador em nenhum payload", () => {
     const payloads = [
       buildDeleteRequest({ type: "company", id: "c", name: "C" }).payload,
@@ -90,5 +112,32 @@ describe("buildDeleteRequest", () => {
     for (const payload of payloads) {
       expect(Object.keys(payload)).not.toContain("adminPassword");
     }
+  });
+});
+
+describe("matchesCadastroSearch", () => {
+  it("aceita tudo quando a busca esta vazia", () => {
+    expect(matchesCadastroSearch("", ["Pedreira Sul"])).toBe(true);
+    expect(matchesCadastroSearch("   ", ["Pedreira Sul"])).toBe(true);
+  });
+
+  it("casa em qualquer um dos campos, sem diferenciar maiuscula", () => {
+    const fields = ["Pedreira Sul", "Sul Mineracao LTDA", "12345678000199"];
+    expect(matchesCadastroSearch("sul", fields)).toBe(true);
+    expect(matchesCadastroSearch("MINERACAO", fields)).toBe(true);
+    expect(matchesCadastroSearch("000199", fields)).toBe(true);
+    expect(matchesCadastroSearch("norte", fields)).toBe(false);
+  });
+
+  it("exige todos os termos, em qualquer ordem", () => {
+    const fields = ["Joao Silva", "joao@sul.com", "Pedreira Sul"];
+    expect(matchesCadastroSearch("joao sul", fields)).toBe(true);
+    expect(matchesCadastroSearch("sul joao", fields)).toBe(true);
+    expect(matchesCadastroSearch("joao norte", fields)).toBe(false);
+  });
+
+  it("ignora campo vazio ou ausente", () => {
+    expect(matchesCadastroSearch("sul", [null, undefined, "Pedreira Sul"])).toBe(true);
+    expect(matchesCadastroSearch("sul", [null, undefined])).toBe(false);
   });
 });
