@@ -15,6 +15,11 @@ import {
   buildDeviceCredentials,
   buildUserCredentials
 } from "../_shared/admin-credentials.ts";
+import {
+  decryptCredential,
+  encryptCredential,
+  isCipherConfigured
+} from "../_shared/credential-cipher.ts";
 
 /**
  * Cliente generico do Supabase. Nao usamos `ReturnType<typeof createClient>`
@@ -90,6 +95,65 @@ const AI_SETTINGS_ID = true;
 const AI_SETTINGS_TABLE = "ai_assistant_settings";
 /** Enviado pela UI para dizer "mantenha a chave que ja esta gravada". */
 const AI_KEY_UNCHANGED = "********";
+
+/**
+ * Chave do cofre de senhas. Fica no secret do Supabase, FORA do banco: um dump
+ * de `user_password_vault` sozinho nao abre nada. Sem ela o cofre simplesmente
+ * nao funciona — e a tela de credenciais explica como liga-lo.
+ */
+const CREDENTIAL_KEY_ENV = "KYBERROCK_CREDENTIAL_KEY";
+
+function credentialKey(): string {
+  return Deno.env.get(CREDENTIAL_KEY_ENV) ?? "";
+}
+
+/**
+ * Guarda no cofre a senha que o painel acabou de definir.
+ *
+ * Best-effort DE PROPOSITO: criar um usuario ou redefinir uma senha nao pode
+ * falhar porque o cofre nao esta configurado ou porque a gravacao deu erro. O
+ * acesso do usuario e o que importa; a copia para consulta e conveniencia.
+ */
+async function storePasswordInVault(
+  supabase: SupabaseAdminClient,
+  userId: string,
+  password: string
+): Promise<void> {
+  const key = credentialKey();
+  if (!isCipherConfigured(key) || !password) return;
+  try {
+    const ciphertext = await encryptCredential(password, key);
+    await supabase
+      .from("user_password_vault")
+      .upsert({ user_id: userId, ciphertext, updated_at: new Date().toISOString() });
+  } catch {
+    // Cofre indisponivel nao pode derrubar o cadastro.
+  }
+}
+
+/** Le e decifra a senha guardada. Devolve null quando nao ha, ou quando nao abre. */
+async function readPasswordFromVault(
+  supabase: SupabaseAdminClient,
+  userId: string
+): Promise<{ password: string | null; savedAt: string | null }> {
+  const key = credentialKey();
+  if (!isCipherConfigured(key)) return { password: null, savedAt: null };
+  try {
+    const { data } = await supabase
+      .from("user_password_vault")
+      .select("ciphertext, updated_at")
+      .eq("user_id", userId)
+      .maybeSingle();
+    const row = data as { ciphertext?: string; updated_at?: string } | null;
+    if (!row?.ciphertext) return { password: null, savedAt: null };
+    return {
+      password: await decryptCredential(row.ciphertext, key),
+      savedAt: row.updated_at ?? null
+    };
+  } catch {
+    return { password: null, savedAt: null };
+  }
+}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -295,6 +359,7 @@ Deno.serve(async (req) => {
         is_active: true
       });
       if (profileError) throw profileError;
+      await storePasswordInVault(supabase, userId, password);
       return jsonResponse({ userId });
     }
 
@@ -350,6 +415,7 @@ Deno.serve(async (req) => {
       }
       const updated = await supabase.auth.admin.updateUserById(userId, { password });
       if (updated.error) throw updated.error;
+      await storePasswordInVault(supabase, userId, password);
       return jsonResponse({ ok: true });
     }
 
@@ -560,7 +626,15 @@ Deno.serve(async (req) => {
           entityType: "user",
           entityId: id
         });
-        return jsonResponse({ ok: true, bundle: buildUserCredentials(data) });
+        const vault = await readPasswordFromVault(supabase, id);
+        return jsonResponse({
+          ok: true,
+          bundle: buildUserCredentials(data, {
+            password: vault.password,
+            savedAt: vault.savedAt,
+            cipherConfigured: isCipherConfigured(credentialKey())
+          })
+        });
       }
 
       if (type === "device") {
