@@ -4,6 +4,9 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { registerServiceWorker } from "./lib/pwa-install";
 import "./loader-ui.css";
+// Depois do loader-ui.css de proposito: o painel administrativo tem densidade e
+// publico proprios, e as regras de `.adm` precisam vencer as gerais.
+import "./admin-ui.css";
 
 registerServiceWorker();
 

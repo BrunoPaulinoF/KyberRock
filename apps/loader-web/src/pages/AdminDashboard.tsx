@@ -1,8 +1,41 @@
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+
 import { useAuth } from "../contexts/AuthContext";
 import { AdminSessionExpiredError, callAdminFunction } from "../lib/admin-api";
+import { supabaseConfig } from "../config/supabase-config";
 import { AiAssistantSettings } from "./AiAssistantSettings";
 import { FinancialBackoffice } from "./FinancialBackoffice";
+import {
+  AdminShell,
+  Badge,
+  Button,
+  ButtonGroup,
+  ConfirmDialog,
+  CopyButton,
+  DataTable,
+  Field,
+  Fieldset,
+  Modal,
+  Note,
+  PageHead,
+  Panel
+} from "../components/admin";
+import type { Column, NavSection } from "../components/admin";
+
+/**
+ * Console administrativo da plataforma.
+ *
+ * Organizado como console tecnico: uma secao por entidade, cada uma com a sua
+ * tabela densa e as acoes na propria linha. O formato anterior — listas em
+ * cartao lado a lado com o formulario de criacao — gastava varias vezes mais
+ * altura por registro, e com dezenas de pedreiras achar uma exigia rolar a
+ * pagina inteira. Criar e editar viraram modal justamente para devolver a
+ * largura toda a listagem.
+ *
+ * Estilo: `admin-ui.css` + primitivos de `components/admin`. Nao acrescente
+ * estilo inline aqui — o motivo de o arquivo ter encolhido pela metade e que
+ * ele parou de carregar a aparencia de cada elemento.
+ */
 
 interface Company {
   id: string;
@@ -107,133 +140,27 @@ export function matchesCadastroSearch(search: string, fields: Array<string | nul
   return terms.every((term) => haystack.includes(term));
 }
 
-/**
- * Campo com rotulo visivel. Os formularios de cadastro usavam so `placeholder`,
- * que some assim que a pessoa digita: revisar um cadastro preenchido virava
- * adivinhacao de qual caixa era a razao social e qual era o CNPJ.
- */
-function LabeledField({
-  label,
-  hint,
-  children
-}: {
-  label: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "13px" }}>
-      <span style={{ fontWeight: 700, color: "#334155" }}>{label}</span>
-      {children}
-      {hint && <span style={{ fontSize: "12px", color: "#64748b" }}>{hint}</span>}
-    </label>
-  );
+type Section = "companies" | "units" | "loaders" | "comercial" | "devices" | "financeiro" | "ai";
+
+function formatDate(value: string | null | undefined): string {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? "—" : parsed.toLocaleDateString("pt-BR");
 }
 
-function FormSection({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <fieldset
-      style={{ border: "1px solid #e2e8f0", borderRadius: "12px", padding: "16px", margin: 0 }}
-    >
-      <legend style={{ padding: "0 8px", fontSize: "13px", fontWeight: 700, color: "#334155" }}>
-        {title}
-      </legend>
-      <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>{children}</div>
-    </fieldset>
-  );
+function formatDateTime(value: string | null | undefined): string {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? "—" : parsed.toLocaleString("pt-BR");
 }
 
-const TEXT_INPUT: React.CSSProperties = {
-  padding: "10px",
-  borderRadius: "8px",
-  border: "1px solid #cbd5e1",
-  width: "100%",
-  boxSizing: "border-box"
-};
-
-const TWO_COLUMN_GRID = "repeat(auto-fit, minmax(min(100%, 320px), 1fr))";
-const COMPACT_GRID = "repeat(auto-fit, minmax(min(100%, 240px), 1fr))";
-const MODAL_Z_INDEX = 1200;
-
-/**
- * Campo de senha exibido em texto claro por padrao. O admin cadastra a senha do carregador e
- * precisa conferir/anotar o que digitou antes de repassar — mascarar so gerava senha errada e
- * usuario sem acesso. O botao esconde o valor quando houver alguem olhando a tela.
- *
- * Vale para senha nova: o Auth guarda apenas o hash, entao a senha de um usuario ja cadastrado
- * nao pode ser exibida por lugar nenhum. Para saber a senha de alguem, redefina-a.
- */
-function PasswordField({
-  name,
-  placeholder,
-  required = false,
-  minLength,
-  maxLength,
-  autoFocus = false
-}: {
-  name: string;
-  placeholder: string;
-  required?: boolean;
-  minLength?: number;
-  maxLength?: number;
-  autoFocus?: boolean;
-}) {
-  const [isVisible, setIsVisible] = useState(true);
-  return (
-    <div style={{ display: "flex", gap: "8px", alignItems: "stretch" }}>
-      <input
-        name={name}
-        type={isVisible ? "text" : "password"}
-        placeholder={placeholder}
-        required={required}
-        minLength={minLength}
-        maxLength={maxLength}
-        autoFocus={autoFocus}
-        autoComplete="off"
-        style={{
-          flex: 1,
-          minWidth: 0,
-          padding: "10px",
-          borderRadius: "8px",
-          border: "1px solid #cbd5e1"
-        }}
-      />
-      <button
-        type="button"
-        onClick={() => setIsVisible((visible) => !visible)}
-        style={{
-          padding: "0 12px",
-          borderRadius: "8px",
-          border: "1px solid #cbd5e1",
-          background: "#f8fafc",
-          cursor: "pointer",
-          fontSize: "12px",
-          whiteSpace: "nowrap"
-        }}
-      >
-        {isVisible ? "Ocultar" : "Mostrar"}
-      </button>
-    </div>
-  );
-}
-
-/**
- * Copia o codigo de ativacao com feedback fiel. navigator.clipboard e undefined em contexto nao
- * seguro (HTTP puro, plausivel atras de proxy interno) e a escrita e assincrona: a versao antiga
- * podia lancar TypeError e sempre mostrava "Codigo copiado!" mesmo quando a copia falhava. Aqui
- * so confirmamos apos o sucesso e caimos para copia manual (prompt) quando a API nao esta disponivel.
- */
-async function copyActivationCode(code: string): Promise<void> {
+/** Projeto na barra superior: emitir boleto no projeto errado sai caro. */
+function environmentLabel(): string {
   try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(code);
-      alert("Codigo copiado!");
-      return;
-    }
+    return new URL(supabaseConfig.url).hostname.split(".")[0];
   } catch {
-    // cai para a copia manual abaixo
+    return "";
   }
-  window.prompt("Copie o codigo de ativacao:", code);
 }
 
 export function AdminDashboard() {
@@ -242,39 +169,37 @@ export function AdminDashboard() {
   const [units, setUnits] = useState<Unit[]>([]);
   const [users, setUsers] = useState<LoaderUser[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
-  const [activeTab, setActiveTab] = useState<
-    "companies" | "loaders" | "comercial" | "devices" | "financeiro" | "ai"
-  >("companies");
-  // Busca aplicada as listagens de cadastro (pedreira, unidade, usuario,
-  // dispositivo). Com dezenas de registros, rolar a pagina inteira para achar
-  // um nome era o que mais atrasava uma correcao simples de cadastro.
-  const [cadastroSearch, setCadastroSearch] = useState("");
-  // Filtro por pedreira (empresa) aplicado as listagens de todas as abas. "" = todas.
+  const [section, setSection] = useState<Section>("companies");
   const [filterCompanyId, setFilterCompanyId] = useState("");
+  const [search, setSearch] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+  const [feedback, setFeedback] = useState<{ tone: "ok" | "danger"; text: string } | null>(null);
+
   const [generatedCode, setGeneratedCode] = useState<string | null>(null);
+  const [creating, setCreating] = useState<null | "company" | "unit" | "loader" | "comercial">(
+    null
+  );
   const [editingCompany, setEditingCompany] = useState<Company | null>(null);
   const [editingUnit, setEditingUnit] = useState<Unit | null>(null);
   const [resettingPasswordUser, setResettingPasswordUser] = useState<LoaderUser | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<DeleteTarget | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
   // Sessao expirou no meio do uso: desloga (o guard PrivateAdminRoute redireciona para
   // /admin/login quando isAdmin vira false). Sem isto, callAdminFunction lancava e o dashboard
   // ficava renderizado com todas as listas vazias, sem erro nem redirect ("parece que apagou tudo").
-  function handleAdminError(error: unknown): boolean {
-    if (error instanceof AdminSessionExpiredError) {
-      void logout();
-      return true;
-    }
-    return false;
-  }
+  const handleError = useCallback(
+    (error: unknown, fallback: string) => {
+      if (error instanceof AdminSessionExpiredError) {
+        void logout();
+        return;
+      }
+      setFeedback({ tone: "danger", text: error instanceof Error ? error.message : fallback });
+    },
+    [logout]
+  );
 
-  async function loadData() {
+  const loadData = useCallback(async () => {
     setIsLoading(true);
     try {
       const data = await callAdminFunction<{
@@ -365,161 +290,537 @@ export function AdminDashboard() {
         }))
       );
     } catch (error) {
-      if (!handleAdminError(error)) {
-        console.error("Error loading data:", error);
-      }
+      handleError(error, "Nao foi possivel carregar os cadastros.");
     } finally {
       setIsLoading(false);
     }
-  }
+  }, [handleError]);
 
-  async function handleCreateCompany(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const formData = new FormData(form);
-    const omieAppKey = String(formData.get("omieAppKey") ?? "").trim();
-    const omieAppSecret = String(formData.get("omieAppSecret") ?? "").trim();
+  useEffect(() => {
+    void loadData();
+  }, [loadData]);
 
-    try {
-      await callAdminFunction("admin-api", {
-        action: "create_company",
-        payload: {
-          name: formData.get("name"),
-          legalName: formData.get("legalName"),
-          document: formData.get("document"),
-          omieAppKey: omieAppKey || null,
-          omieAppSecret: omieAppSecret || null
-        }
-      });
-      form.reset();
-      await loadData();
-    } catch (error) {
-      console.error("Error creating company:", error);
-      alert("Erro ao criar empresa");
-    }
-  }
-
-  async function handleToggleCompany(companyId: string, currentStatus: boolean) {
-    try {
-      await callAdminFunction("admin-api", {
-        action: "toggle_company",
-        payload: { companyId, isActive: !currentStatus }
-      });
-      await loadData();
-    } catch (error) {
-      console.error("Error toggling company:", error);
-    }
-  }
-
-  async function handleCreateUnit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const formData = new FormData(form);
-
-    try {
-      await callAdminFunction("admin-api", {
-        action: "create_unit",
-        payload: {
-          companyId: formData.get("companyId"),
-          name: formData.get("name")
-        }
-      });
-      form.reset();
-      await loadData();
-    } catch (error) {
-      console.error("Error creating unit:", error);
-      alert("Erro ao criar unidade");
-    }
-  }
-
-  async function handleCreateUser(
-    event: React.FormEvent<HTMLFormElement>,
-    role: "loader" | "comercial"
-  ) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const formData = new FormData(form);
-    const email = formData.get("email") as string;
-    const password = formData.get("password") as string;
-
-    try {
-      await callAdminFunction("admin-api", {
-        action: "create_loader",
-        payload: {
-          email,
-          password,
-          name: formData.get("name"),
-          unitId: formData.get("unitId"),
-          role
-        }
-      });
-
-      form.reset();
-      await loadData();
-    } catch (error) {
-      console.error("Error creating user:", error);
-      alert(
-        "Erro ao criar usuário: " + (error instanceof Error ? error.message : "Erro desconhecido")
-      );
-    }
-  }
-
-  async function handleToggleUser(userId: string, currentStatus: boolean) {
-    try {
-      await callAdminFunction("admin-api", {
-        action: "toggle_loader",
-        payload: { userId, isActive: !currentStatus }
-      });
-      await loadData();
-    } catch (error) {
-      console.error("Error toggling user:", error);
-    }
-  }
-
-  /**
-   * Move o usuario para outra unidade. A pedreira do perfil acompanha a unidade escolhida no
-   * servidor, entao trocar para uma unidade de outra pedreira tambem funciona.
-   */
-  async function handleChangeUserUnit(userId: string, unitId: string): Promise<void> {
-    if (!unitId) return;
-    try {
-      await callAdminFunction("admin-api", {
-        action: "update_loader_unit",
-        payload: { userId, unitId }
-      });
-      await loadData();
-    } catch (error) {
-      if (!handleAdminError(error)) {
-        console.error("Error changing user unit:", error);
-        alert(error instanceof Error ? error.message : "Erro ao mudar a unidade do usuario");
+  /** Executa uma acao do admin-api, mostra o resultado e recarrega a lista. */
+  const run = useCallback(
+    async (
+      action: string,
+      payload: Record<string, unknown>,
+      successMessage: string
+    ): Promise<boolean> => {
+      setFeedback(null);
+      try {
+        await callAdminFunction("admin-api", { action, payload });
+        await loadData();
+        setFeedback({ tone: "ok", text: successMessage });
+        return true;
+      } catch (error) {
+        handleError(error, "A acao falhou.");
+        return false;
       }
+    },
+    [handleError, loadData]
+  );
+
+  const companyName = useCallback(
+    (companyId: string) => companies.find((company) => company.id === companyId)?.name ?? "—",
+    [companies]
+  );
+  const unitName = useCallback(
+    (unitId: string) => units.find((unit) => unit.id === unitId)?.name ?? "—",
+    [units]
+  );
+
+  const filteredCompanies = useMemo(
+    () =>
+      companies.filter(
+        (company) =>
+          (!filterCompanyId || company.id === filterCompanyId) &&
+          matchesCadastroSearch(search, [company.name, company.legalName, company.document])
+      ),
+    [companies, filterCompanyId, search]
+  );
+
+  const filteredUnits = useMemo(
+    () =>
+      units.filter(
+        (unit) =>
+          (!filterCompanyId || unit.companyId === filterCompanyId) &&
+          matchesCadastroSearch(search, [unit.name, companyName(unit.companyId)])
+      ),
+    [units, filterCompanyId, search, companyName]
+  );
+
+  const filteredDevices = useMemo(
+    () =>
+      devices.filter(
+        (device) =>
+          (!filterCompanyId || device.companyId === filterCompanyId) &&
+          matchesCadastroSearch(search, [
+            device.name,
+            device.id,
+            companyName(device.companyId),
+            unitName(device.unitId)
+          ])
+      ),
+    [devices, filterCompanyId, search, companyName, unitName]
+  );
+
+  const usersByRole = useCallback(
+    (role: "loader" | "comercial") =>
+      users.filter(
+        (user) =>
+          user.role === role &&
+          (!filterCompanyId || user.companyId === filterCompanyId) &&
+          matchesCadastroSearch(search, [user.name, user.email, companyName(user.companyId)])
+      ),
+    [users, filterCompanyId, search, companyName]
+  );
+
+  const sections: NavSection[] = [
+    { id: "companies", label: "Pedreiras", group: "Cadastros", count: companies.length },
+    { id: "units", label: "Unidades", group: "Cadastros", count: units.length },
+    {
+      id: "loaders",
+      label: "Carregadores",
+      group: "Acessos",
+      count: users.filter((user) => user.role === "loader").length
+    },
+    {
+      id: "comercial",
+      label: "Comercial",
+      group: "Acessos",
+      count: users.filter((user) => user.role === "comercial").length
+    },
+    { id: "devices", label: "Balancas", group: "Acessos", count: devices.length },
+    { id: "financeiro", label: "Financeiro", group: "Plataforma" },
+    { id: "ai", label: "Assistente de IA", group: "Plataforma" }
+  ];
+
+  const filterToolbar = (
+    <>
+      <select
+        className="adm-select adm-toolbar-grow"
+        aria-label="Filtrar por pedreira"
+        value={filterCompanyId}
+        onChange={(event) => setFilterCompanyId(event.target.value)}
+      >
+        <option value="">Todas as pedreiras</option>
+        {companies.map((company) => (
+          <option key={company.id} value={company.id}>
+            {company.name}
+          </option>
+        ))}
+      </select>
+      <input
+        className="adm-input adm-toolbar-grow"
+        aria-label="Buscar nos cadastros"
+        value={search}
+        onChange={(event) => setSearch(event.target.value)}
+        placeholder="Buscar por nome, e-mail ou documento"
+      />
+      {(filterCompanyId || search) && (
+        <Button
+          size="sm"
+          onClick={() => {
+            setFilterCompanyId("");
+            setSearch("");
+          }}
+        >
+          Limpar
+        </Button>
+      )}
+    </>
+  );
+
+  // -------------------------------------------------------------------------
+  // Colunas
+  // -------------------------------------------------------------------------
+
+  const companyColumns: Array<Column<Company>> = [
+    {
+      key: "name",
+      header: "Pedreira",
+      render: (company) => (
+        <>
+          <span className="adm-cell-primary">{company.name}</span>
+          <p className="adm-cell-sub">{company.legalName}</p>
+        </>
+      )
+    },
+    {
+      key: "document",
+      header: "CNPJ",
+      render: (company) => <span className="adm-mono">{company.document || "—"}</span>
+    },
+    {
+      key: "units",
+      header: "Unidades",
+      numeric: true,
+      render: (company) => units.filter((unit) => unit.companyId === company.id).length
+    },
+    {
+      key: "omie",
+      header: "OMIE",
+      render: (company) =>
+        company.omieAppKeyMasked ? (
+          <Badge tone="ok" dot>
+            Conectado
+          </Badge>
+        ) : (
+          <Badge tone="warn" dot>
+            Sem token
+          </Badge>
+        )
+    },
+    {
+      key: "status",
+      header: "Situacao",
+      render: (company) =>
+        company.isActive ? (
+          <Badge tone="ok" dot>
+            Ativa
+          </Badge>
+        ) : (
+          <Badge tone="danger" dot>
+            Inativa
+          </Badge>
+        )
+    },
+    {
+      key: "created",
+      header: "Criada em",
+      render: (company) => <span className="adm-mono">{formatDate(company.createdAt)}</span>
+    },
+    {
+      key: "actions",
+      header: "",
+      actions: true,
+      render: (company) => (
+        <ButtonGroup>
+          <Button size="sm" onClick={() => setEditingCompany(company)}>
+            Editar
+          </Button>
+          <Button
+            size="sm"
+            onClick={() =>
+              void run(
+                "toggle_company",
+                { companyId: company.id, isActive: !company.isActive },
+                company.isActive
+                  ? "Pedreira desativada. Os desktops dela perdem o acesso."
+                  : "Pedreira ativada."
+              )
+            }
+          >
+            {company.isActive ? "Desativar" : "Ativar"}
+          </Button>
+          <Button
+            size="sm"
+            variant="danger"
+            onClick={() =>
+              setConfirmDelete({ type: "company", id: company.id, name: company.name })
+            }
+          >
+            Excluir
+          </Button>
+        </ButtonGroup>
+      )
     }
+  ];
+
+  const unitColumns: Array<Column<Unit>> = [
+    {
+      key: "name",
+      header: "Unidade",
+      render: (unit) => <span className="adm-cell-primary">{unit.name}</span>
+    },
+    { key: "company", header: "Pedreira", render: (unit) => companyName(unit.companyId) },
+    {
+      key: "devices",
+      header: "Balancas",
+      numeric: true,
+      render: (unit) => devices.filter((device) => device.unitId === unit.id).length
+    },
+    {
+      key: "users",
+      header: "Usuarios",
+      numeric: true,
+      render: (unit) => users.filter((user) => user.unitId === unit.id).length
+    },
+    {
+      key: "status",
+      header: "Situacao",
+      render: (unit) =>
+        unit.isActive ? (
+          <Badge tone="ok" dot>
+            Ativa
+          </Badge>
+        ) : (
+          <Badge tone="danger" dot>
+            Inativa
+          </Badge>
+        )
+    },
+    {
+      key: "actions",
+      header: "",
+      actions: true,
+      render: (unit) => (
+        <ButtonGroup>
+          <Button size="sm" onClick={() => setEditingUnit(unit)}>
+            Editar
+          </Button>
+          <Button
+            size="sm"
+            onClick={() =>
+              void run(
+                "toggle_unit",
+                { unitId: unit.id, isActive: !unit.isActive },
+                unit.isActive ? "Unidade desativada." : "Unidade ativada."
+              )
+            }
+          >
+            {unit.isActive ? "Desativar" : "Ativar"}
+          </Button>
+          <Button
+            size="sm"
+            variant="danger"
+            onClick={() => setConfirmDelete({ type: "unit", id: unit.id, name: unit.name })}
+          >
+            Excluir
+          </Button>
+        </ButtonGroup>
+      )
+    }
+  ];
+
+  function userColumns(role: "loader" | "comercial"): Array<Column<LoaderUser>> {
+    const roleLabel = role === "comercial" ? "Comercial" : "Carregador";
+    return [
+      {
+        key: "name",
+        header: "Usuario",
+        render: (user) => (
+          <>
+            <span className="adm-cell-primary">{user.name}</span>
+            <p className="adm-cell-sub">{user.email}</p>
+          </>
+        )
+      },
+      {
+        key: "unit",
+        header: "Unidade",
+        render: (user) => (
+          <select
+            className="adm-select"
+            aria-label={`Unidade de ${user.name}`}
+            value={user.unitId}
+            onChange={(event) =>
+              void run(
+                "update_loader_unit",
+                { userId: user.id, unitId: event.target.value },
+                "Usuario movido de unidade."
+              )
+            }
+          >
+            {!units.some((unit) => unit.id === user.unitId) && (
+              <option value={user.unitId}>Unidade removida</option>
+            )}
+            {units.map((unit) => (
+              <option key={unit.id} value={unit.id}>
+                {unit.name} — {companyName(unit.companyId)}
+              </option>
+            ))}
+          </select>
+        )
+      },
+      { key: "company", header: "Pedreira", render: (user) => companyName(user.companyId) },
+      {
+        key: "status",
+        header: "Situacao",
+        render: (user) =>
+          user.isActive ? (
+            <Badge tone="ok" dot>
+              Ativo
+            </Badge>
+          ) : (
+            <Badge tone="danger" dot>
+              Bloqueado
+            </Badge>
+          )
+      },
+      {
+        key: "actions",
+        header: "",
+        actions: true,
+        render: (user) => (
+          <ButtonGroup>
+            <Button size="sm" onClick={() => setResettingPasswordUser(user)}>
+              Senha
+            </Button>
+            <Button
+              size="sm"
+              onClick={() =>
+                void run(
+                  "toggle_loader",
+                  { userId: user.id, isActive: !user.isActive },
+                  user.isActive ? "Acesso bloqueado." : "Acesso liberado."
+                )
+              }
+            >
+              {user.isActive ? "Bloquear" : "Liberar"}
+            </Button>
+            <Button
+              size="sm"
+              variant="danger"
+              onClick={() =>
+                setConfirmDelete({ type: "user", id: user.id, name: user.name, roleLabel })
+              }
+            >
+              Excluir
+            </Button>
+          </ButtonGroup>
+        )
+      }
+    ];
   }
 
-  async function handleResetPassword(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!resettingPasswordUser) return;
-    const formData = new FormData(event.currentTarget);
-    const password = String(formData.get("password") ?? "");
-    try {
-      await callAdminFunction("admin-api", {
-        action: "update_loader_password",
-        payload: { userId: resettingPasswordUser.id, password }
-      });
-      setResettingPasswordUser(null);
-      alert("Senha atualizada.");
-    } catch (error) {
-      if (!handleAdminError(error)) {
-        console.error("Error resetting password:", error);
-        alert(
-          "Erro ao redefinir a senha: " +
-            (error instanceof Error ? error.message : "Erro desconhecido")
+  const deviceColumns: Array<Column<Device>> = [
+    {
+      key: "name",
+      header: "Balanca",
+      render: (device) => (
+        <>
+          <span className="adm-cell-primary">{device.name}</span>
+          <p className="adm-cell-sub adm-mono">{device.id.slice(0, 12)}…</p>
+        </>
+      )
+    },
+    { key: "company", header: "Pedreira", render: (device) => companyName(device.companyId) },
+    {
+      key: "unit",
+      header: "Unidade",
+      render: (device) => (
+        <select
+          className="adm-select"
+          aria-label={`Unidade da balanca ${device.name}`}
+          value={device.unitId}
+          onChange={(event) =>
+            void run(
+              "update_device_unit",
+              { deviceId: device.id, unitId: event.target.value },
+              "Balanca movida de unidade."
+            )
+          }
+        >
+          {units
+            .filter((unit) => unit.companyId === device.companyId)
+            .map((unit) => (
+              <option key={unit.id} value={unit.id}>
+                {unit.name}
+              </option>
+            ))}
+        </select>
+      )
+    },
+    {
+      key: "lastSeen",
+      header: "Ultimo contato",
+      render: (device) => <span className="adm-mono">{formatDateTime(device.lastSeenAt)}</span>
+    },
+    {
+      key: "status",
+      header: "Situacao",
+      render: (device) =>
+        device.isActive ? (
+          <Badge tone="ok" dot>
+            Ativa
+          </Badge>
+        ) : (
+          <Badge tone="danger" dot>
+            Bloqueada
+          </Badge>
+        )
+    },
+    {
+      key: "actions",
+      header: "",
+      actions: true,
+      render: (device) => (
+        <ButtonGroup>
+          <Button
+            size="sm"
+            onClick={() =>
+              void run(
+                "toggle_device",
+                { deviceId: device.id, isActive: !device.isActive },
+                device.isActive ? "Balanca bloqueada." : "Balanca liberada."
+              )
+            }
+          >
+            {device.isActive ? "Bloquear" : "Liberar"}
+          </Button>
+          <Button
+            size="sm"
+            variant="danger"
+            onClick={() => setConfirmDelete({ type: "device", id: device.id, name: device.name })}
+          >
+            Excluir
+          </Button>
+        </ButtonGroup>
+      )
+    }
+  ];
+
+  const activationColumns: Array<Column<Company>> = [
+    {
+      key: "company",
+      header: "Pedreira",
+      render: (company) => <span className="adm-cell-primary">{company.name}</span>
+    },
+    {
+      key: "code",
+      header: "Codigo ativo",
+      render: (company) =>
+        company.desktopActivationCode ? (
+          <span className="adm-mono adm-activation-code">{company.desktopActivationCode}</span>
+        ) : (
+          <Badge tone="warn">Nenhum gerado</Badge>
+        )
+    },
+    {
+      key: "rotated",
+      header: "Gerado em",
+      render: (company) => (
+        <span className="adm-mono">{formatDate(company.desktopActivationCodeRotatedAt)}</span>
+      )
+    },
+    {
+      key: "actions",
+      header: "",
+      actions: true,
+      render: (company) => {
+        const hasActiveUnit = units.some((unit) => unit.companyId === company.id && unit.isActive);
+        return (
+          <ButtonGroup>
+            {company.desktopActivationCode && (
+              <CopyButton value={company.desktopActivationCode} label="Copiar" />
+            )}
+            <Button
+              size="sm"
+              disabled={!hasActiveUnit}
+              title={hasActiveUnit ? undefined : "Cadastre uma unidade ativa antes de gerar"}
+              onClick={() => void handleGenerateCode(company.id)}
+            >
+              Gerar novo
+            </Button>
+          </ButtonGroup>
         );
       }
     }
-  }
+  ];
 
-  async function handleGenerateActivationCode(companyId: string): Promise<void> {
+  async function handleGenerateCode(companyId: string): Promise<void> {
     try {
       const result = await callAdminFunction<{ code: string }>("admin-api", {
         action: "generate_desktop_activation_code",
@@ -528,1476 +829,639 @@ export function AdminDashboard() {
       setGeneratedCode(result.code);
       await loadData();
     } catch (error) {
-      console.error("Error generating code:", error);
-      alert("Erro ao gerar codigo de ativacao");
+      handleError(error, "Nao foi possivel gerar o codigo de ativacao.");
     }
   }
 
-  async function handleToggleDevice(deviceId: string, currentStatus: boolean): Promise<void> {
-    try {
-      await callAdminFunction("admin-api", {
-        action: "toggle_device",
-        payload: { deviceId, isActive: !currentStatus }
-      });
-      await loadData();
-    } catch (error) {
-      console.error("Error toggling device:", error);
-    }
-  }
-
-  /**
-   * Corrige a pedreira de um desktop ja ativado. A fila do carregador e por
-   * pedreira: com o desktop vinculado a pedreira errada, as entradas dele
-   * apareciam na fila de outra pedreira (ou de nenhuma).
-   */
-  async function handleChangeDeviceUnit(deviceId: string, unitId: string): Promise<void> {
-    if (!unitId) return;
-    try {
-      await callAdminFunction("admin-api", {
-        action: "update_device_unit",
-        payload: { deviceId, unitId }
-      });
-      await loadData();
-    } catch (error) {
-      console.error("Error changing device unit:", error);
-      alert(error instanceof Error ? error.message : "Erro ao mudar a pedreira do desktop");
-    }
-  }
-
-  async function handleConfirmDelete() {
+  async function handleConfirmDelete(): Promise<void> {
     if (!confirmDelete || isDeleting) return;
     setIsDeleting(true);
-    try {
-      const { action, payload } = buildDeleteRequest(confirmDelete);
-      await callAdminFunction("admin-api", { action, payload });
-      setConfirmDelete(null);
-      await loadData();
-    } catch (error) {
-      if (!handleAdminError(error)) {
-        console.error("Error deleting:", error);
-        alert("Erro ao excluir: " + (error instanceof Error ? error.message : "Erro desconhecido"));
-      }
-    } finally {
-      setIsDeleting(false);
-    }
+    const { action, payload } = buildDeleteRequest(confirmDelete);
+    const ok = await run(action, payload, "Registro excluido.");
+    setIsDeleting(false);
+    if (ok) setConfirmDelete(null);
   }
 
-  async function handleUpdateCompany(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!editingCompany) return;
-    const form = event.currentTarget;
-    const formData = new FormData(form);
-    const omieAppKey = String(formData.get("omieAppKey") ?? "").trim();
-    const omieAppSecret = String(formData.get("omieAppSecret") ?? "").trim();
-    const priceChangePassword = String(formData.get("priceChangePassword") ?? "").trim();
-    const payload: Record<string, unknown> = {
-      companyId: editingCompany.id,
-      name: formData.get("name"),
-      legalName: formData.get("legalName"),
-      document: formData.get("document")
-    };
-    if (omieAppKey) payload.omieAppKey = omieAppKey;
-    if (omieAppSecret) payload.omieAppSecret = omieAppSecret;
-    try {
-      await callAdminFunction("admin-api", { action: "update_company", payload });
-      if (priceChangePassword) {
-        if (!/^\d{4}$/.test(priceChangePassword)) {
-          alert("A senha para alterar precos deve ter exatamente 4 digitos");
-          return;
-        }
-        await callAdminFunction("admin-api", {
-          action: "update_company_price_password",
-          payload: { companyId: editingCompany.id, priceChangePassword }
-        });
-      }
-      setEditingCompany(null);
-      await loadData();
-    } catch (error) {
-      console.error("Error updating company:", error);
-      alert("Erro ao atualizar empresa");
-    }
-  }
+  const inactiveRow = (item: { isActive: boolean }) =>
+    item.isActive ? undefined : "adm-row-muted";
 
-  async function handleUpdateUnit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!editingUnit) return;
-    const form = event.currentTarget;
-    const formData = new FormData(form);
-    try {
-      await callAdminFunction("admin-api", {
-        action: "update_unit",
-        payload: {
-          unitId: editingUnit.id,
-          name: formData.get("name")
-        }
-      });
-      setEditingUnit(null);
-      await loadData();
-    } catch (error) {
-      console.error("Error updating unit:", error);
-      alert("Erro ao atualizar unidade");
-    }
-  }
-
-  function companyNameOf(companyId: string): string {
-    return companies.find((company) => company.id === companyId)?.name ?? "";
-  }
-
-  const filteredCompanies = companies.filter(
-    (company) =>
-      (!filterCompanyId || company.id === filterCompanyId) &&
-      matchesCadastroSearch(cadastroSearch, [company.name, company.legalName, company.document])
-  );
-  const filteredUnits = units.filter(
-    (unit) =>
-      (!filterCompanyId || unit.companyId === filterCompanyId) &&
-      matchesCadastroSearch(cadastroSearch, [unit.name, companyNameOf(unit.companyId)])
-  );
-  const filteredDevices = devices.filter(
-    (device) =>
-      (!filterCompanyId || device.companyId === filterCompanyId) &&
-      matchesCadastroSearch(cadastroSearch, [
-        device.name,
-        device.id,
-        companyNameOf(device.companyId),
-        units.find((unit) => unit.id === device.unitId)?.name
-      ])
-  );
-
-  function filteredUsersByRole(role: "loader" | "comercial"): LoaderUser[] {
-    return users.filter(
-      (user) =>
-        user.role === role &&
-        (!filterCompanyId || user.companyId === filterCompanyId) &&
-        matchesCadastroSearch(cadastroSearch, [
-          user.name,
-          user.email,
-          companyNameOf(user.companyId)
-        ])
-    );
-  }
-
-  function renderUsersTab(role: "loader" | "comercial") {
-    const roleLabel = role === "comercial" ? "Comercial" : "Carregador";
-    const roleUsers = filteredUsersByRole(role);
-    return (
-      <section style={{ display: "grid", gridTemplateColumns: TWO_COLUMN_GRID, gap: "24px" }}>
-        <article style={{ background: "#fff", padding: "24px", borderRadius: "16px" }}>
-          <h2 style={{ margin: "0 0 16px 0" }}>
-            {role === "comercial" ? "Usuarios Comerciais" : "Usuarios Carregadores"}
-          </h2>
-          {roleUsers.length === 0 && (
-            <p style={{ color: "#64748b" }}>
-              {filterCompanyId
-                ? `Nenhum usuario ${roleLabel.toLowerCase()} nesta pedreira.`
-                : `Nenhum usuario ${roleLabel.toLowerCase()} cadastrado.`}
-            </p>
-          )}
-          {roleUsers.map((user) => (
-            <div key={user.id} style={{ padding: "12px 0", borderBottom: "1px solid #e2e8f0" }}>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center"
-                }}
-              >
-                <div>
-                  <strong>{user.name}</strong>
-                  <p style={{ margin: "2px 0 0 0", fontSize: "14px", color: "#64748b" }}>
-                    {user.email}
-                  </p>
-                </div>
-                <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                  <span
-                    style={{
-                      padding: "4px 8px",
-                      borderRadius: "6px",
-                      fontSize: "12px",
-                      background: user.isActive ? "#dcfce7" : "#fee2e2",
-                      color: user.isActive ? "#166534" : "#991b1b"
-                    }}
-                  >
-                    {user.isActive ? "Ativo" : "Inativo"}
-                  </span>
-                  <button
-                    onClick={() => handleToggleUser(user.id, user.isActive)}
-                    style={{
-                      padding: "6px 12px",
-                      borderRadius: "6px",
-                      border: "1px solid #cbd5e1",
-                      background: "#fff",
-                      cursor: "pointer",
-                      fontSize: "12px"
-                    }}
-                  >
-                    {user.isActive ? "Bloquear" : "Liberar"}
-                  </button>
-                  <button
-                    onClick={() => setResettingPasswordUser(user)}
-                    style={{
-                      padding: "6px 12px",
-                      borderRadius: "6px",
-                      border: "1px solid #e2e8f0",
-                      background: "#f8fafc",
-                      cursor: "pointer",
-                      fontSize: "12px"
-                    }}
-                  >
-                    Senha
-                  </button>
-                  <button
-                    onClick={() =>
-                      setConfirmDelete({
-                        type: "user",
-                        id: user.id,
-                        name: user.name,
-                        roleLabel
-                      })
-                    }
-                    style={{
-                      padding: "6px 12px",
-                      borderRadius: "6px",
-                      border: "1px solid #fecaca",
-                      background: "#fef2f2",
-                      cursor: "pointer",
-                      fontSize: "12px",
-                      color: "#dc2626"
-                    }}
-                  >
-                    Excluir
-                  </button>
-                </div>
-              </div>
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "8px",
-                  flexWrap: "wrap",
-                  margin: "8px 0 0 0",
-                  fontSize: "12px",
-                  color: "#475569"
-                }}
-              >
-                Unidade:
-                <select
-                  value={user.unitId}
-                  onChange={(event) => void handleChangeUserUnit(user.id, event.target.value)}
-                  style={{
-                    padding: "4px 8px",
-                    borderRadius: "6px",
-                    border: "1px solid #cbd5e1",
-                    fontSize: "12px"
-                  }}
-                >
-                  {!units.some((u) => u.id === user.unitId) && (
-                    <option value={user.unitId}>Unidade removida</option>
-                  )}
-                  {units.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.name}
-                      {` — ${companies.find((c) => c.id === u.companyId)?.name ?? ""}`}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          ))}
-        </article>
-
-        <article style={{ background: "#fff", padding: "24px", borderRadius: "16px" }}>
-          <h2 style={{ margin: "0 0 16px 0" }}>
-            {role === "comercial" ? "Novo Usuario Comercial" : "Novo Carregador"}
-          </h2>
-          <p style={{ margin: "0 0 16px 0", fontSize: "13px", color: "#64748b" }}>
-            {role === "comercial"
-              ? "Acessa os relatorios de venda da pedreira."
-              : "Acessa a fila de carregamento da unidade."}
-          </p>
-          <form
-            onSubmit={(event) => handleCreateUser(event, role)}
-            style={{ display: "flex", flexDirection: "column", gap: "12px" }}
-          >
-            <input
-              name="name"
-              placeholder="Nome completo"
-              required
-              style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
-            />
-            <input
-              name="email"
-              type="email"
-              placeholder="E-mail"
-              required
-              style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
-            />
-            <PasswordField name="password" placeholder="Senha" required minLength={6} />
-            <select
-              name="unitId"
-              required
-              style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
-            >
-              <option value="">Selecione a unidade</option>
-              {filteredUnits
-                .filter((u) => u.isActive)
-                .map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.name}
-                    {filterCompanyId
-                      ? ""
-                      : ` — ${companies.find((c) => c.id === u.companyId)?.name ?? ""}`}
-                  </option>
-                ))}
-            </select>
-            <button
-              type="submit"
-              style={{
-                padding: "10px",
-                borderRadius: "8px",
-                border: "none",
-                background: "#0f172a",
-                color: "#fff",
-                cursor: "pointer",
-                fontWeight: 700
-              }}
-            >
-              {role === "comercial" ? "Criar Usuario Comercial" : "Criar Carregador"}
-            </button>
-          </form>
-        </article>
-      </section>
-    );
-  }
+  // -------------------------------------------------------------------------
 
   return (
-    <main className="admin-page">
-      <header className="admin-shell-header">
-        <div className="admin-brand">
-          <img className="admin-logo" src="/kyberrocklogo.png" alt="KyberRock" />
-          <div>
-            <h1 className="admin-title">KyberRock Admin</h1>
-            <p className="admin-subtitle">Gerenciamento de pedreiras, unidades e acessos</p>
-          </div>
-        </div>
-        <button onClick={logout} className="secondary-action">
+    <AdminShell
+      sections={sections}
+      activeSection={section}
+      onSelectSection={(id) => setSection(id as Section)}
+      environmentLabel={environmentLabel()}
+      headerActions={
+        <Button size="sm" onClick={() => void logout()}>
           Sair
-        </button>
-      </header>
+        </Button>
+      }
+    >
+      {feedback && <Note tone={feedback.tone === "ok" ? "ok" : "danger"}>{feedback.text}</Note>}
 
-      <nav className="admin-tabs" aria-label="Secoes administrativas">
-        <button
-          onClick={() => setActiveTab("companies")}
-          className={`admin-tab ${activeTab === "companies" ? "admin-tab-active" : ""}`}
-        >
-          Empresas e Unidades
-        </button>
-        <button
-          onClick={() => setActiveTab("loaders")}
-          className={`admin-tab ${activeTab === "loaders" ? "admin-tab-active" : ""}`}
-        >
-          Carregadores
-        </button>
-        <button
-          onClick={() => setActiveTab("comercial")}
-          className={`admin-tab ${activeTab === "comercial" ? "admin-tab-active" : ""}`}
-        >
-          Comercial
-        </button>
-        <button
-          onClick={() => setActiveTab("devices")}
-          className={`admin-tab ${activeTab === "devices" ? "admin-tab-active" : ""}`}
-        >
-          Dispositivos e Licencas
-        </button>
-        <button
-          onClick={() => setActiveTab("financeiro")}
-          className={`admin-tab ${activeTab === "financeiro" ? "admin-tab-active" : ""}`}
-        >
-          Financeiro
-        </button>
-        <button
-          onClick={() => setActiveTab("ai")}
-          className={`admin-tab ${activeTab === "ai" ? "admin-tab-active" : ""}`}
-        >
-          Assistente de IA
-        </button>
-      </nav>
-
-      {/* A aba de IA usa uma credencial global (um filtro de pedreira ao lado dela
-          sugeriria que cada uma tem a sua chave) e a do Financeiro tem os
-          proprios filtros, por pedreira, situacao e busca. */}
-      <div
-        style={{
-          display: activeTab === "ai" || activeTab === "financeiro" ? "none" : "flex",
-          alignItems: "center",
-          gap: "10px",
-          flexWrap: "wrap",
-          margin: "0 0 24px 0"
-        }}
-      >
-        <label
-          htmlFor="admin-company-filter"
-          style={{ fontSize: "14px", fontWeight: 700, color: "#334155" }}
-        >
-          Filtrar por pedreira
-        </label>
-        <select
-          id="admin-company-filter"
-          value={filterCompanyId}
-          onChange={(e) => setFilterCompanyId(e.target.value)}
-          style={{
-            padding: "8px 12px",
-            borderRadius: "8px",
-            border: "1px solid #cbd5e1",
-            background: "#fff",
-            minWidth: "220px"
-          }}
-        >
-          <option value="">Todas as pedreiras</option>
-          {companies.map((company) => (
-            <option key={company.id} value={company.id}>
-              {company.name}
-            </option>
-          ))}
-        </select>
-        <input
-          value={cadastroSearch}
-          onChange={(e) => setCadastroSearch(e.target.value)}
-          placeholder="Buscar por nome, e-mail ou documento"
-          aria-label="Buscar nos cadastros"
-          style={{
-            padding: "8px 12px",
-            borderRadius: "8px",
-            border: "1px solid #cbd5e1",
-            background: "#fff",
-            minWidth: "260px",
-            flex: "1 1 260px"
-          }}
-        />
-        {(filterCompanyId || cadastroSearch) && (
-          <button
-            type="button"
-            onClick={() => {
-              setFilterCompanyId("");
-              setCadastroSearch("");
-            }}
-            style={{
-              padding: "8px 12px",
-              borderRadius: "8px",
-              border: "1px solid #cbd5e1",
-              background: "#fff",
-              cursor: "pointer",
-              fontSize: "13px"
-            }}
-          >
-            Limpar filtros
-          </button>
-        )}
-      </div>
-
-      {confirmDelete && (
-        <div
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: "rgba(0,0,0,0.5)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: MODAL_Z_INDEX
-          }}
-        >
-          <div
-            style={{
-              background: "#fff",
-              padding: "24px",
-              borderRadius: "16px",
-              width: "100%",
-              maxWidth: "400px"
-            }}
-          >
-            <h3 style={{ margin: "0 0 12px 0", color: "#dc2626" }}>Confirmar exclusao</h3>
-            <p style={{ margin: "0 0 16px 0", fontSize: "14px", color: "#64748b" }}>
-              {buildDeleteConfirmationMessage(confirmDelete)}
-            </p>
-            <p style={{ margin: "0 0 16px 0", fontSize: "13px", color: "#b91c1c" }}>
-              Esta acao nao pode ser desfeita.
-            </p>
-            <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
-              <button
-                type="button"
-                onClick={() => void handleConfirmDelete()}
-                disabled={isDeleting}
-                style={{
-                  flex: 1,
-                  padding: "10px",
-                  borderRadius: "8px",
-                  border: "none",
-                  background: isDeleting ? "#f87171" : "#dc2626",
-                  color: "#fff",
-                  cursor: isDeleting ? "not-allowed" : "pointer",
-                  fontWeight: 700
-                }}
-              >
-                {isDeleting ? "Excluindo..." : "Confirmar exclusao"}
-              </button>
-              <button
-                type="button"
-                onClick={() => setConfirmDelete(null)}
-                disabled={isDeleting}
-                style={{
-                  flex: 1,
-                  padding: "10px",
-                  borderRadius: "8px",
-                  border: "1px solid #cbd5e1",
-                  background: "#fff",
-                  cursor: isDeleting ? "not-allowed" : "pointer"
-                }}
-              >
-                Cancelar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Reset Password Modal */}
-      {resettingPasswordUser && (
-        <div
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: "rgba(0,0,0,0.5)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: MODAL_Z_INDEX
-          }}
-        >
-          <div
-            style={{
-              background: "#fff",
-              padding: "24px",
-              borderRadius: "16px",
-              width: "100%",
-              maxWidth: "420px"
-            }}
-          >
-            <h3 style={{ margin: "0 0 8px 0" }}>Senha de {resettingPasswordUser.name}</h3>
-            <p style={{ margin: "0 0 16px 0", fontSize: "13px", color: "#64748b" }}>
-              {resettingPasswordUser.email}. A senha atual nao pode ser exibida — o Supabase Auth
-              guarda apenas o hash dela. Defina uma nova aqui e repasse ao usuario.
-            </p>
-            <form
-              onSubmit={handleResetPassword}
-              style={{ display: "flex", flexDirection: "column", gap: "12px" }}
-            >
-              <PasswordField
-                name="password"
-                placeholder="Nova senha"
-                required
-                minLength={6}
-                autoFocus
-              />
-              <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
-                <button
-                  type="submit"
-                  style={{
-                    flex: 1,
-                    padding: "10px",
-                    borderRadius: "8px",
-                    border: "none",
-                    background: "#0f172a",
-                    color: "#fff",
-                    cursor: "pointer",
-                    fontWeight: 700
-                  }}
-                >
-                  Salvar senha
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setResettingPasswordUser(null)}
-                  style={{
-                    flex: 1,
-                    padding: "10px",
-                    borderRadius: "8px",
-                    border: "1px solid #cbd5e1",
-                    background: "#fff",
-                    cursor: "pointer"
-                  }}
-                >
-                  Cancelar
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Edit Unit Modal */}
-      {editingUnit && (
-        <div
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: "rgba(0,0,0,0.5)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: MODAL_Z_INDEX
-          }}
-        >
-          <div
-            style={{
-              background: "#fff",
-              padding: "24px",
-              borderRadius: "16px",
-              width: "100%",
-              maxWidth: "400px"
-            }}
-          >
-            <h3 style={{ margin: "0 0 16px 0" }}>Editar Unidade</h3>
-            <form
-              onSubmit={handleUpdateUnit}
-              style={{ display: "flex", flexDirection: "column", gap: "12px" }}
-            >
-              <input
-                name="name"
-                defaultValue={editingUnit.name}
-                placeholder="Nome da unidade"
-                required
-                style={{
-                  padding: "10px",
-                  borderRadius: "8px",
-                  border: "1px solid #cbd5e1"
-                }}
-              />
-              <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
-                <button
-                  type="submit"
-                  style={{
-                    flex: 1,
-                    padding: "10px",
-                    borderRadius: "8px",
-                    border: "none",
-                    background: "#0f172a",
-                    color: "#fff",
-                    cursor: "pointer",
-                    fontWeight: 700
-                  }}
-                >
-                  Salvar
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setEditingUnit(null)}
-                  style={{
-                    flex: 1,
-                    padding: "10px",
-                    borderRadius: "8px",
-                    border: "1px solid #cbd5e1",
-                    background: "#fff",
-                    cursor: "pointer"
-                  }}
-                >
-                  Cancelar
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {isLoading ? (
-        <p>Carregando...</p>
+      {isLoading && companies.length === 0 ? (
+        <Panel>
+          <p className="adm-empty">Carregando cadastros...</p>
+        </Panel>
       ) : (
         <>
-          {activeTab === "companies" && (
-            <section style={{ display: "grid", gridTemplateColumns: TWO_COLUMN_GRID, gap: "24px" }}>
-              {/* Companies List */}
-              <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-                <article style={{ background: "#fff", padding: "24px", borderRadius: "16px" }}>
-                  <h2 style={{ margin: "0 0 16px 0" }}>Empresas</h2>
-                  {filteredCompanies.length === 0 && (
-                    <p style={{ color: "#64748b" }}>Nenhuma empresa cadastrada.</p>
-                  )}
-                  {filteredCompanies.map((company) => (
-                    <div
-                      key={company.id}
-                      style={{ padding: "12px 0", borderBottom: "1px solid #e2e8f0" }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "center"
-                        }}
-                      >
-                        <div>
-                          <strong>{company.name}</strong>
-                          <p style={{ margin: "2px 0 0 0", fontSize: "14px", color: "#64748b" }}>
-                            {company.legalName}
-                          </p>
-                          <p style={{ margin: "2px 0 0 0", fontSize: "12px", color: "#b91c1c" }}>
-                            {company.isActive
-                              ? "Desativar a empresa bloqueia o acesso de todos os desktops."
-                              : "Ativar a empresa libera o acesso de todos os desktops."}
-                          </p>
-                        </div>
-                        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                          <span
-                            style={{
-                              padding: "4px 8px",
-                              borderRadius: "6px",
-                              fontSize: "12px",
-                              background: company.isActive ? "#dcfce7" : "#fee2e2",
-                              color: company.isActive ? "#166534" : "#991b1b"
-                            }}
-                          >
-                            {company.isActive ? "Ativa" : "Inativa"}
-                          </span>
-                          <button
-                            onClick={() => handleToggleCompany(company.id, company.isActive)}
-                            style={{
-                              padding: "6px 12px",
-                              borderRadius: "6px",
-                              border: "1px solid #cbd5e1",
-                              background: "#fff",
-                              cursor: "pointer",
-                              fontSize: "12px"
-                            }}
-                          >
-                            {company.isActive ? "Desativar" : "Ativar"}
-                          </button>
-                          <button
-                            onClick={() => setEditingCompany(company)}
-                            style={{
-                              padding: "6px 12px",
-                              borderRadius: "6px",
-                              border: "1px solid #e2e8f0",
-                              background: "#f8fafc",
-                              cursor: "pointer",
-                              fontSize: "12px"
-                            }}
-                          >
-                            Editar
-                          </button>
-                          <button
-                            onClick={() =>
-                              setConfirmDelete({
-                                type: "company",
-                                id: company.id,
-                                name: company.name
-                              })
-                            }
-                            style={{
-                              padding: "6px 12px",
-                              borderRadius: "6px",
-                              border: "1px solid #fecaca",
-                              background: "#fef2f2",
-                              cursor: "pointer",
-                              fontSize: "12px",
-                              color: "#dc2626"
-                            }}
-                          >
-                            Excluir
-                          </button>
-                        </div>
-                      </div>
-                      <p style={{ margin: "8px 0 0 0", fontSize: "12px", color: "#64748b" }}>
-                        Unidades: {units.filter((u) => u.companyId === company.id).length}
-                      </p>
-                    </div>
-                  ))}
-
-                  {/* Edit Company Modal */}
-                  {editingCompany && (
-                    <div
-                      style={{
-                        position: "fixed",
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        background: "rgba(0,0,0,0.5)",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        zIndex: MODAL_Z_INDEX
-                      }}
-                    >
-                      <div
-                        style={{
-                          background: "#fff",
-                          padding: "24px",
-                          borderRadius: "16px",
-                          width: "100%",
-                          maxWidth: "500px"
-                        }}
-                      >
-                        <h3 style={{ margin: "0 0 16px 0" }}>Editar Pedreira</h3>
-                        <form
-                          onSubmit={handleUpdateCompany}
-                          style={{ display: "flex", flexDirection: "column", gap: "16px" }}
-                        >
-                          <FormSection title="Identificacao">
-                            <LabeledField label="Nome fantasia">
-                              <input
-                                name="name"
-                                defaultValue={editingCompany.name}
-                                required
-                                style={TEXT_INPUT}
-                              />
-                            </LabeledField>
-                            <LabeledField label="Razao social">
-                              <input
-                                name="legalName"
-                                defaultValue={editingCompany.legalName}
-                                required
-                                style={TEXT_INPUT}
-                              />
-                            </LabeledField>
-                            <LabeledField
-                              label="CNPJ"
-                              hint="Usado tambem como padrao do boleto quando o cadastro de cobranca nao tiver documento proprio."
-                            >
-                              <input
-                                name="document"
-                                defaultValue={editingCompany.document}
-                                style={TEXT_INPUT}
-                              />
-                            </LabeledField>
-                          </FormSection>
-
-                          <FormSection title="Integracao OMIE">
-                            {editingCompany.omieAppKeyMasked ? (
-                              <p style={{ margin: 0, fontSize: "12px", color: "#16a34a" }}>
-                                Configurado (App Key: {editingCompany.omieAppKeyMasked})
-                              </p>
-                            ) : (
-                              <p style={{ margin: 0, fontSize: "12px", color: "#d97706" }}>
-                                Nao configurado. Os desktops nao conectam ao OMIE.
-                              </p>
-                            )}
-                            <LabeledField label="App Key" hint="Deixe vazio para manter a atual.">
-                              <input name="omieAppKey" style={TEXT_INPUT} />
-                            </LabeledField>
-                            <LabeledField
-                              label="App Secret"
-                              hint="Deixe vazio para manter. Para limpar a integracao, salve os dois campos vazios."
-                            >
-                              <input name="omieAppSecret" type="password" style={TEXT_INPUT} />
-                            </LabeledField>
-                          </FormSection>
-
-                          <FormSection title="Senha para alterar precos">
-                            <LabeledField
-                              label="Senha de 4 digitos"
-                              hint="Pedida no desktop para alterar precos padrao. Deixe vazio para manter."
-                            >
-                              <PasswordField
-                                name="priceChangePassword"
-                                maxLength={4}
-                                placeholder="0000"
-                              />
-                            </LabeledField>
-                          </FormSection>
-
-                          <p style={{ margin: 0, fontSize: "12px", color: "#64748b" }}>
-                            Valor acertado, data de virada, fechamento, vencimento e os dados do
-                            boleto ficam na aba <strong>Financeiro</strong>.
-                          </p>
-                          <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
-                            <button
-                              type="submit"
-                              style={{
-                                flex: 1,
-                                padding: "10px",
-                                borderRadius: "8px",
-                                border: "none",
-                                background: "#0f172a",
-                                color: "#fff",
-                                cursor: "pointer",
-                                fontWeight: 700
-                              }}
-                            >
-                              Salvar
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setEditingCompany(null)}
-                              style={{
-                                flex: 1,
-                                padding: "10px",
-                                borderRadius: "8px",
-                                border: "1px solid #cbd5e1",
-                                background: "#fff",
-                                cursor: "pointer"
-                              }}
-                            >
-                              Cancelar
-                            </button>
-                          </div>
-                        </form>
-                      </div>
-                    </div>
-                  )}
-                </article>
-
-                {/* Units List */}
-                <article style={{ background: "#fff", padding: "24px", borderRadius: "16px" }}>
-                  <h2 style={{ margin: "0 0 16px 0" }}>Unidades</h2>
-                  {filteredUnits.length === 0 && (
-                    <p style={{ color: "#64748b" }}>
-                      {filterCompanyId
-                        ? "Nenhuma unidade nesta pedreira."
-                        : "Nenhuma unidade cadastrada."}
-                    </p>
-                  )}
-                  {filteredUnits.map((unit) => (
-                    <div
-                      key={unit.id}
-                      style={{ padding: "12px 0", borderBottom: "1px solid #e2e8f0" }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "center",
-                          gap: "8px",
-                          flexWrap: "wrap"
-                        }}
-                      >
-                        <div>
-                          <strong>{unit.name}</strong>
-                          <p style={{ margin: "2px 0 0 0", fontSize: "13px", color: "#64748b" }}>
-                            {companies.find((c) => c.id === unit.companyId)?.name || "N/A"}
-                          </p>
-                        </div>
-                        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                          <span
-                            style={{
-                              padding: "4px 8px",
-                              borderRadius: "6px",
-                              fontSize: "12px",
-                              background: unit.isActive ? "#dcfce7" : "#fee2e2",
-                              color: unit.isActive ? "#166534" : "#991b1b"
-                            }}
-                          >
-                            {unit.isActive ? "Ativa" : "Inativa"}
-                          </span>
-                          <button
-                            onClick={() => setEditingUnit(unit)}
-                            style={{
-                              padding: "6px 12px",
-                              borderRadius: "6px",
-                              border: "1px solid #e2e8f0",
-                              background: "#f8fafc",
-                              cursor: "pointer",
-                              fontSize: "12px"
-                            }}
-                          >
-                            Editar
-                          </button>
-                          <button
-                            onClick={() =>
-                              setConfirmDelete({ type: "unit", id: unit.id, name: unit.name })
-                            }
-                            style={{
-                              padding: "6px 12px",
-                              borderRadius: "6px",
-                              border: "1px solid #fecaca",
-                              background: "#fef2f2",
-                              cursor: "pointer",
-                              fontSize: "12px",
-                              color: "#dc2626"
-                            }}
-                          >
-                            Excluir
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </article>
-              </div>
-
-              {/* Create Forms */}
-              <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-                <article style={{ background: "#fff", padding: "24px", borderRadius: "16px" }}>
-                  <h2 style={{ margin: "0 0 4px 0" }}>Nova Pedreira</h2>
-                  <p style={{ margin: "0 0 16px 0", fontSize: "13px", color: "#64748b" }}>
-                    Depois de criar, configure a mensalidade na aba <strong>Financeiro</strong>.
-                  </p>
-                  <form
-                    onSubmit={handleCreateCompany}
-                    style={{ display: "flex", flexDirection: "column", gap: "12px" }}
-                  >
-                    <LabeledField label="Nome fantasia">
-                      <input name="name" required style={TEXT_INPUT} />
-                    </LabeledField>
-                    <LabeledField label="Razao social">
-                      <input name="legalName" required style={TEXT_INPUT} />
-                    </LabeledField>
-                    <LabeledField label="CNPJ">
-                      <input name="document" style={TEXT_INPUT} />
-                    </LabeledField>
-                    <details style={{ marginTop: "4px" }}>
-                      <summary style={{ cursor: "pointer", color: "#475569", fontSize: "14px" }}>
-                        Token OMIE (opcional)
-                      </summary>
-                      <div
-                        style={{
-                          display: "flex",
-                          flexDirection: "column",
-                          gap: "8px",
-                          marginTop: "8px"
-                        }}
-                      >
-                        <input
-                          name="omieAppKey"
-                          placeholder="App Key OMIE"
-                          style={{
-                            padding: "10px",
-                            borderRadius: "8px",
-                            border: "1px solid #cbd5e1"
-                          }}
-                        />
-                        <input
-                          name="omieAppSecret"
-                          type="password"
-                          placeholder="App Secret OMIE"
-                          style={{
-                            padding: "10px",
-                            borderRadius: "8px",
-                            border: "1px solid #cbd5e1"
-                          }}
-                        />
-                        <small style={{ color: "#64748b" }}>
-                          Quando preenchido, os desktops desta empresa ja conectam ao OMIE
-                          automaticamente.
-                        </small>
-                      </div>
-                    </details>
-                    <button
-                      type="submit"
-                      style={{
-                        padding: "10px",
-                        borderRadius: "8px",
-                        border: "none",
-                        background: "#0f172a",
-                        color: "#fff",
-                        cursor: "pointer",
-                        fontWeight: 700
-                      }}
-                    >
-                      Criar Empresa
-                    </button>
-                  </form>
-                </article>
-
-                <article style={{ background: "#fff", padding: "24px", borderRadius: "16px" }}>
-                  <h2 style={{ margin: "0 0 16px 0" }}>Nova Unidade</h2>
-                  <form
-                    onSubmit={handleCreateUnit}
-                    style={{ display: "flex", flexDirection: "column", gap: "12px" }}
-                  >
-                    <select
-                      name="companyId"
-                      required
-                      style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
-                    >
-                      <option value="">Selecione a empresa</option>
-                      {companies.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      name="name"
-                      placeholder="Nome da unidade"
-                      required
-                      style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
-                    />
-                    <button
-                      type="submit"
-                      style={{
-                        padding: "10px",
-                        borderRadius: "8px",
-                        border: "none",
-                        background: "#0f172a",
-                        color: "#fff",
-                        cursor: "pointer",
-                        fontWeight: 700
-                      }}
-                    >
-                      Criar Unidade
-                    </button>
-                  </form>
-                </article>
-              </div>
-            </section>
+          {section === "companies" && (
+            <>
+              <PageHead
+                title="Pedreiras"
+                description="Empresas clientes da plataforma. Desativar uma pedreira bloqueia o acesso de todos os desktops dela."
+                actions={
+                  <Button variant="primary" onClick={() => setCreating("company")}>
+                    Nova pedreira
+                  </Button>
+                }
+              />
+              <Panel flush toolbar={filterToolbar}>
+                <DataTable
+                  columns={companyColumns}
+                  rows={filteredCompanies}
+                  rowKey={(company) => company.id}
+                  rowClassName={inactiveRow}
+                  empty={
+                    companies.length === 0
+                      ? "Nenhuma pedreira cadastrada."
+                      : "Nenhuma pedreira encontrada com os filtros atuais."
+                  }
+                />
+              </Panel>
+            </>
           )}
 
-          {activeTab === "loaders" && renderUsersTab("loader")}
+          {section === "units" && (
+            <>
+              <PageHead
+                title="Unidades"
+                description="Cada pedreira pode ter mais de uma unidade. A fila do carregador e por unidade."
+                actions={
+                  <Button variant="primary" onClick={() => setCreating("unit")}>
+                    Nova unidade
+                  </Button>
+                }
+              />
+              <Panel flush toolbar={filterToolbar}>
+                <DataTable
+                  columns={unitColumns}
+                  rows={filteredUnits}
+                  rowKey={(unit) => unit.id}
+                  rowClassName={inactiveRow}
+                  empty={
+                    units.length === 0
+                      ? "Nenhuma unidade cadastrada."
+                      : "Nenhuma unidade encontrada com os filtros atuais."
+                  }
+                />
+              </Panel>
+            </>
+          )}
 
-          {activeTab === "comercial" && renderUsersTab("comercial")}
+          {(section === "loaders" || section === "comercial") && (
+            <>
+              <PageHead
+                title={section === "comercial" ? "Usuarios comerciais" : "Carregadores"}
+                description={
+                  section === "comercial"
+                    ? "Acessam os relatorios de venda da pedreira inteira."
+                    : "Acessam a fila de carregamento da unidade a que pertencem."
+                }
+                actions={
+                  <Button
+                    variant="primary"
+                    onClick={() => setCreating(section === "comercial" ? "comercial" : "loader")}
+                  >
+                    {section === "comercial" ? "Novo comercial" : "Novo carregador"}
+                  </Button>
+                }
+              />
+              <Panel flush toolbar={filterToolbar}>
+                <DataTable
+                  columns={userColumns(section === "comercial" ? "comercial" : "loader")}
+                  rows={usersByRole(section === "comercial" ? "comercial" : "loader")}
+                  rowKey={(user) => user.id}
+                  rowClassName={inactiveRow}
+                  empty="Nenhum usuario encontrado."
+                />
+              </Panel>
+            </>
+          )}
 
-          {activeTab === "financeiro" && (
+          {section === "devices" && (
+            <>
+              <PageHead
+                title="Balancas e licencas"
+                description="Desktops ativados e o codigo de ativacao de cada pedreira."
+              />
+              {generatedCode && (
+                <Note tone="ok">
+                  Codigo gerado: <strong className="adm-mono">{generatedCode}</strong>. Envie ao
+                  operador do desktop — ele vale apenas para a ativacao inicial.{" "}
+                  <Button size="sm" onClick={() => setGeneratedCode(null)}>
+                    Fechar
+                  </Button>
+                </Note>
+              )}
+              <Panel title="Desktops ativados" flush toolbar={filterToolbar}>
+                <DataTable
+                  columns={deviceColumns}
+                  rows={filteredDevices}
+                  rowKey={(device) => device.id}
+                  rowClassName={inactiveRow}
+                  empty={
+                    devices.length === 0
+                      ? "Nenhum desktop ativado ainda."
+                      : "Nenhum desktop encontrado com os filtros atuais."
+                  }
+                />
+              </Panel>
+              <Panel
+                title="Codigos de ativacao"
+                description="Um codigo por pedreira. Gerar um novo invalida o anterior."
+                flush
+              >
+                <DataTable
+                  columns={activationColumns}
+                  rows={filteredCompanies}
+                  rowKey={(company) => company.id}
+                  empty="Nenhuma pedreira cadastrada."
+                />
+              </Panel>
+            </>
+          )}
+
+          {section === "financeiro" && (
             <FinancialBackoffice onSessionExpired={() => void logout()} />
           )}
 
-          {activeTab === "ai" && <AiAssistantSettings onSessionExpired={() => void logout()} />}
-
-          {activeTab === "devices" && (
-            <section style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-              {generatedCode !== null ? (
-                <article
-                  style={{
-                    background: "#dcfce7",
-                    padding: "24px",
-                    borderRadius: "16px",
-                    border: "2px solid #15803d"
-                  }}
-                >
-                  <h2 style={{ margin: "0 0 12px 0", color: "#15803d" }}>Codigo Gerado</h2>
-                  <p
-                    style={{
-                      fontSize: "32px",
-                      fontWeight: 700,
-                      letterSpacing: "8px",
-                      fontFamily: "monospace",
-                      margin: "12px 0"
-                    }}
-                  >
-                    {generatedCode}
-                  </p>
-                  <p style={{ color: "#166534", fontSize: "14px" }}>
-                    Copie este codigo e envie para o operador do desktop. Ele sera usado apenas como
-                    ativacao inicial.
-                  </p>
-                  <button
-                    onClick={() => setGeneratedCode(null)}
-                    style={{
-                      padding: "8px 16px",
-                      borderRadius: "8px",
-                      border: "1px solid #15803d",
-                      background: "#fff",
-                      color: "#15803d",
-                      cursor: "pointer",
-                      fontWeight: 700,
-                      fontSize: "14px"
-                    }}
-                  >
-                    Fechar
-                  </button>
-                </article>
-              ) : null}
-
-              <div style={{ display: "grid", gridTemplateColumns: TWO_COLUMN_GRID, gap: "24px" }}>
-                <article style={{ background: "#fff", padding: "24px", borderRadius: "16px" }}>
-                  <h2 style={{ margin: "0 0 16px 0" }}>Desktops Ativados</h2>
-                  {filteredDevices.length === 0 ? (
-                    <p style={{ color: "#64748b" }}>
-                      {filterCompanyId || cadastroSearch
-                        ? "Nenhum desktop encontrado com os filtros atuais."
-                        : "Nenhum desktop ativado ainda."}
-                    </p>
-                  ) : (
-                    filteredDevices.map((device) => {
-                      const unit = units.find((u) => u.id === device.unitId);
-                      const company = companies.find((c) => c.id === device.companyId);
-                      return (
-                        <div
-                          key={device.id}
-                          style={{ padding: "12px 0", borderBottom: "1px solid #e2e8f0" }}
-                        >
-                          <div
-                            style={{
-                              display: "flex",
-                              justifyContent: "space-between",
-                              alignItems: "flex-start"
-                            }}
-                          >
-                            <div>
-                              <strong>{device.name}</strong>
-                              <p
-                                style={{ margin: "2px 0 0 0", fontSize: "13px", color: "#64748b" }}
-                              >
-                                {company?.name} / {unit?.name}
-                              </p>
-                              <p
-                                style={{ margin: "2px 0 0 0", fontSize: "12px", color: "#94a3b8" }}
-                              >
-                                ID: {device.id.slice(0, 8)}... | Ativado em{" "}
-                                {new Date(device.createdAt).toLocaleDateString("pt-BR")}
-                              </p>
-                              {device.lastSeenAt ? (
-                                <p
-                                  style={{
-                                    margin: "2px 0 0 0",
-                                    fontSize: "12px",
-                                    color: "#94a3b8"
-                                  }}
-                                >
-                                  Ultimo visto:{" "}
-                                  {new Date(device.lastSeenAt).toLocaleString("pt-BR")}
-                                </p>
-                              ) : null}
-                              <label
-                                style={{
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: "8px",
-                                  margin: "8px 0 0 0",
-                                  fontSize: "12px",
-                                  color: "#475569"
-                                }}
-                              >
-                                Pedreira:
-                                <select
-                                  value={device.unitId}
-                                  onChange={(e) =>
-                                    void handleChangeDeviceUnit(device.id, e.target.value)
-                                  }
-                                  style={{
-                                    padding: "4px 8px",
-                                    borderRadius: "6px",
-                                    border: "1px solid #cbd5e1",
-                                    fontSize: "12px"
-                                  }}
-                                >
-                                  {units
-                                    .filter((u) => u.companyId === device.companyId)
-                                    .map((u) => (
-                                      <option key={u.id} value={u.id}>
-                                        {u.name}
-                                      </option>
-                                    ))}
-                                </select>
-                              </label>
-                            </div>
-                            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                              <span
-                                style={{
-                                  padding: "4px 8px",
-                                  borderRadius: "6px",
-                                  fontSize: "12px",
-                                  background: device.isActive ? "#dcfce7" : "#fee2e2",
-                                  color: device.isActive ? "#166534" : "#991b1b"
-                                }}
-                              >
-                                {device.isActive ? "Ativo" : "Bloqueado"}
-                              </span>
-                              <button
-                                onClick={() => handleToggleDevice(device.id, device.isActive)}
-                                style={{
-                                  padding: "6px 12px",
-                                  borderRadius: "6px",
-                                  border: "1px solid #cbd5e1",
-                                  background: "#fff",
-                                  cursor: "pointer",
-                                  fontSize: "12px"
-                                }}
-                              >
-                                {device.isActive ? "Bloquear" : "Liberar"}
-                              </button>
-                              <button
-                                onClick={() =>
-                                  setConfirmDelete({
-                                    type: "device",
-                                    id: device.id,
-                                    name: device.name
-                                  })
-                                }
-                                style={{
-                                  padding: "6px 12px",
-                                  borderRadius: "6px",
-                                  border: "1px solid #fecaca",
-                                  background: "#fef2f2",
-                                  cursor: "pointer",
-                                  fontSize: "12px",
-                                  color: "#dc2626"
-                                }}
-                              >
-                                Excluir
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </article>
-
-                <article style={{ background: "#fff", padding: "24px", borderRadius: "16px" }}>
-                  <h2 style={{ margin: "0 0 16px 0" }}>Codigos de Ativacao</h2>
-                  <p style={{ color: "#64748b", fontSize: "14px", marginBottom: "16px" }}>
-                    Cada pedreira possui um unico codigo de ativacao para o desktop da balanca. Ao
-                    gerar um novo, o anterior e invalidado. Usuarios carregadores continuam por
-                    unidade.
-                  </p>
-                  {filteredCompanies.length === 0 ? (
-                    <p style={{ color: "#b91c1c" }}>Nenhuma pedreira cadastrada.</p>
-                  ) : (
-                    <div
-                      style={{ display: "grid", gridTemplateColumns: COMPACT_GRID, gap: "16px" }}
-                    >
-                      {filteredCompanies.map((company) => {
-                        const companyUnits = units.filter((unit) => unit.companyId === company.id);
-                        const hasActiveUnit = companyUnits.some((unit) => unit.isActive);
-                        return (
-                          <div
-                            key={company.id}
-                            style={{
-                              padding: "20px",
-                              borderRadius: "12px",
-                              background: "#f8fafc",
-                              border: "1px solid #e2e8f0",
-                              display: "flex",
-                              flexDirection: "column",
-                              gap: "12px"
-                            }}
-                          >
-                            <div>
-                              <strong style={{ fontSize: "16px", color: "#0f172a" }}>
-                                {company.name}
-                              </strong>
-                              <p
-                                style={{ margin: "4px 0 0 0", fontSize: "13px", color: "#64748b" }}
-                              >
-                                {companyUnits.length} unidade(s) cadastrada(s). Desktop unico por
-                                pedreira.
-                              </p>
-                            </div>
-
-                            {company.desktopActivationCode ? (
-                              <div
-                                style={{
-                                  padding: "12px",
-                                  borderRadius: "10px",
-                                  background: "#dcfce7",
-                                  border: "1px solid #15803d",
-                                  display: "flex",
-                                  flexDirection: "column",
-                                  gap: "8px"
-                                }}
-                              >
-                                <div
-                                  style={{
-                                    display: "flex",
-                                    justifyContent: "space-between",
-                                    alignItems: "center"
-                                  }}
-                                >
-                                  <span
-                                    style={{ fontSize: "11px", color: "#166534", fontWeight: 700 }}
-                                  >
-                                    CODIGO ATIVO
-                                  </span>
-                                  <span style={{ fontSize: "11px", color: "#166534" }}>
-                                    {company.desktopActivationCodeRotatedAt
-                                      ? new Date(
-                                          company.desktopActivationCodeRotatedAt
-                                        ).toLocaleDateString("pt-BR")
-                                      : ""}
-                                  </span>
-                                </div>
-                                <p
-                                  style={{
-                                    margin: 0,
-                                    fontSize: "22px",
-                                    fontWeight: 700,
-                                    letterSpacing: "6px",
-                                    fontFamily: "monospace",
-                                    color: "#15803d",
-                                    textAlign: "center"
-                                  }}
-                                >
-                                  {company.desktopActivationCode}
-                                </p>
-                                <button
-                                  onClick={() =>
-                                    void copyActivationCode(company.desktopActivationCode!)
-                                  }
-                                  style={{
-                                    padding: "6px 12px",
-                                    borderRadius: "6px",
-                                    border: "1px solid #15803d",
-                                    background: "#fff",
-                                    color: "#15803d",
-                                    cursor: "pointer",
-                                    fontWeight: 700,
-                                    fontSize: "12px",
-                                    alignSelf: "center"
-                                  }}
-                                >
-                                  Copiar codigo
-                                </button>
-                              </div>
-                            ) : (
-                              <div
-                                style={{
-                                  padding: "12px",
-                                  borderRadius: "10px",
-                                  background: "#fef2f2",
-                                  border: "1px solid #fecaca",
-                                  textAlign: "center"
-                                }}
-                              >
-                                <p style={{ margin: 0, fontSize: "13px", color: "#b91c1c" }}>
-                                  Nenhum codigo gerado
-                                </p>
-                              </div>
-                            )}
-
-                            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                              <button
-                                onClick={() => handleGenerateActivationCode(company.id)}
-                                disabled={!hasActiveUnit}
-                                style={{
-                                  flex: 1,
-                                  padding: "8px 12px",
-                                  borderRadius: "8px",
-                                  border: "none",
-                                  background: hasActiveUnit ? "#0f172a" : "#94a3b8",
-                                  color: "#fff",
-                                  cursor: hasActiveUnit ? "pointer" : "not-allowed",
-                                  fontWeight: 700,
-                                  fontSize: "12px"
-                                }}
-                                title={
-                                  hasActiveUnit
-                                    ? undefined
-                                    : "Cadastre uma unidade ativa antes de gerar o codigo"
-                                }
-                              >
-                                Gerar novo
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </article>
-              </div>
-            </section>
-          )}
+          {section === "ai" && <AiAssistantSettings onSessionExpired={() => void logout()} />}
         </>
       )}
-    </main>
+
+      {creating === "company" && (
+        <CompanyFormModal
+          title="Nova pedreira"
+          onClose={() => setCreating(null)}
+          onSubmit={async (payload) => {
+            const ok = await run("create_company", payload, "Pedreira criada.");
+            if (ok) setCreating(null);
+          }}
+        />
+      )}
+
+      {editingCompany && (
+        <CompanyFormModal
+          title={`Editar ${editingCompany.name}`}
+          company={editingCompany}
+          onClose={() => setEditingCompany(null)}
+          onSubmit={async (payload, priceChangePassword) => {
+            const ok = await run(
+              "update_company",
+              { companyId: editingCompany.id, ...payload },
+              "Pedreira atualizada."
+            );
+            if (!ok) return;
+            if (priceChangePassword) {
+              await run(
+                "update_company_price_password",
+                { companyId: editingCompany.id, priceChangePassword },
+                "Pedreira e senha de precos atualizadas."
+              );
+            }
+            setEditingCompany(null);
+          }}
+        />
+      )}
+
+      {creating === "unit" && (
+        <UnitFormModal
+          companies={companies}
+          defaultCompanyId={filterCompanyId}
+          onClose={() => setCreating(null)}
+          onSubmit={async (payload) => {
+            const ok = await run("create_unit", payload, "Unidade criada.");
+            if (ok) setCreating(null);
+          }}
+        />
+      )}
+
+      {editingUnit && (
+        <UnitFormModal
+          unit={editingUnit}
+          companies={companies}
+          onClose={() => setEditingUnit(null)}
+          onSubmit={async (payload) => {
+            const ok = await run(
+              "update_unit",
+              { unitId: editingUnit.id, name: payload.name },
+              "Unidade atualizada."
+            );
+            if (ok) setEditingUnit(null);
+          }}
+        />
+      )}
+
+      {(creating === "loader" || creating === "comercial") && (
+        <UserFormModal
+          role={creating}
+          units={units}
+          companies={companies}
+          onClose={() => setCreating(null)}
+          onSubmit={async (payload) => {
+            const ok = await run("create_loader", payload, "Usuario criado.");
+            if (ok) setCreating(null);
+          }}
+        />
+      )}
+
+      {resettingPasswordUser && (
+        <PasswordModal
+          user={resettingPasswordUser}
+          onClose={() => setResettingPasswordUser(null)}
+          onSubmit={async (password) => {
+            const ok = await run(
+              "update_loader_password",
+              { userId: resettingPasswordUser.id, password },
+              "Senha atualizada."
+            );
+            if (ok) setResettingPasswordUser(null);
+          }}
+        />
+      )}
+
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Confirmar exclusao"
+          message={buildDeleteConfirmationMessage(confirmDelete)}
+          confirmLabel="Excluir"
+          busy={isDeleting}
+          onConfirm={() => void handleConfirmDelete()}
+          onCancel={() => setConfirmDelete(null)}
+        />
+      )}
+    </AdminShell>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Modais de cadastro
+// ---------------------------------------------------------------------------
+
+/**
+ * Campo de senha visivel por padrao. O admin cadastra a senha do carregador e
+ * precisa conferir o que digitou antes de repassar — mascarar so gerava senha
+ * errada e usuario sem acesso. O botao esconde quando ha alguem olhando.
+ *
+ * Vale para senha NOVA: o Auth guarda apenas o hash, entao a senha de um
+ * usuario ja cadastrado nao pode ser exibida em lugar nenhum.
+ */
+function PasswordInput({
+  name,
+  required = false,
+  minLength,
+  maxLength,
+  autoFocus = false
+}: {
+  name: string;
+  required?: boolean;
+  minLength?: number;
+  maxLength?: number;
+  autoFocus?: boolean;
+}) {
+  const [visible, setVisible] = useState(true);
+  return (
+    <div className="adm-input-row">
+      <input
+        className="adm-input adm-input-mono"
+        name={name}
+        type={visible ? "text" : "password"}
+        required={required}
+        minLength={minLength}
+        maxLength={maxLength}
+        autoFocus={autoFocus}
+        autoComplete="off"
+      />
+      <Button size="sm" onClick={() => setVisible((value) => !value)}>
+        {visible ? "Ocultar" : "Mostrar"}
+      </Button>
+    </div>
+  );
+}
+
+function CompanyFormModal({
+  title,
+  company,
+  onClose,
+  onSubmit
+}: {
+  title: string;
+  company?: Company;
+  onClose: () => void;
+  onSubmit: (
+    payload: Record<string, unknown>,
+    priceChangePassword?: string
+  ) => void | Promise<void>;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const formId = "company-form";
+
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const priceChangePassword = String(form.get("priceChangePassword") ?? "").trim();
+    if (priceChangePassword && !/^\d{4}$/.test(priceChangePassword)) {
+      setError("A senha para alterar precos deve ter exatamente 4 digitos.");
+      return;
+    }
+    setError(null);
+
+    const payload: Record<string, unknown> = {
+      name: form.get("name"),
+      legalName: form.get("legalName"),
+      document: form.get("document")
+    };
+    const omieAppKey = String(form.get("omieAppKey") ?? "").trim();
+    const omieAppSecret = String(form.get("omieAppSecret") ?? "").trim();
+    if (company) {
+      // Na edicao, campo vazio significa "mantenha o que esta gravado" — o
+      // segredo nunca volta do servidor, entao um submit sem redigitar nao pode
+      // apagar a integracao.
+      if (omieAppKey) payload.omieAppKey = omieAppKey;
+      if (omieAppSecret) payload.omieAppSecret = omieAppSecret;
+    } else {
+      payload.omieAppKey = omieAppKey || null;
+      payload.omieAppSecret = omieAppSecret || null;
+    }
+
+    void onSubmit(payload, priceChangePassword || undefined);
+  }
+
+  return (
+    <Modal
+      title={title}
+      description="Valor acertado, datas do ciclo e dados do boleto ficam na secao Financeiro."
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Cancelar</Button>
+          <Button type="submit" variant="primary" form={formId}>
+            Salvar
+          </Button>
+        </>
+      }
+    >
+      <form id={formId} className="adm-form" onSubmit={handleSubmit}>
+        <Fieldset legend="Identificacao">
+          <div className="adm-grid">
+            <Field label="Nome fantasia">
+              <input className="adm-input" name="name" defaultValue={company?.name} required />
+            </Field>
+            <Field label="Razao social">
+              <input
+                className="adm-input"
+                name="legalName"
+                defaultValue={company?.legalName}
+                required
+              />
+            </Field>
+            <Field
+              label="CNPJ"
+              hint="Serve de padrao para o boleto quando o cadastro de cobranca nao tiver documento proprio."
+            >
+              <input
+                className="adm-input adm-input-mono"
+                name="document"
+                defaultValue={company?.document}
+              />
+            </Field>
+          </div>
+        </Fieldset>
+
+        <Fieldset legend="Integracao OMIE">
+          {company && (
+            <p className="adm-field-hint">
+              {company.omieAppKeyMasked
+                ? `Configurado (App Key ${company.omieAppKeyMasked}). Deixe vazio para manter.`
+                : "Nao configurado. Os desktops desta pedreira nao conectam ao OMIE."}
+            </p>
+          )}
+          <div className="adm-grid">
+            <Field label="App Key">
+              <input className="adm-input adm-input-mono" name="omieAppKey" autoComplete="off" />
+            </Field>
+            <Field
+              label="App Secret"
+              hint={company ? "Vazio mantem; salve os dois vazios para limpar." : undefined}
+            >
+              <input
+                className="adm-input"
+                name="omieAppSecret"
+                type="password"
+                autoComplete="off"
+              />
+            </Field>
+          </div>
+        </Fieldset>
+
+        <Fieldset legend="Senha para alterar precos">
+          <Field
+            label="Senha de 4 digitos"
+            hint="Pedida no desktop para alterar precos padrao. Vazio mantem a atual."
+            error={error}
+          >
+            <PasswordInput name="priceChangePassword" maxLength={4} />
+          </Field>
+        </Fieldset>
+      </form>
+    </Modal>
+  );
+}
+
+function UnitFormModal({
+  unit,
+  companies,
+  defaultCompanyId,
+  onClose,
+  onSubmit
+}: {
+  unit?: Unit;
+  companies: Company[];
+  defaultCompanyId?: string;
+  onClose: () => void;
+  onSubmit: (payload: { companyId?: string; name: string }) => void | Promise<void>;
+}) {
+  const formId = "unit-form";
+  return (
+    <Modal
+      title={unit ? `Editar ${unit.name}` : "Nova unidade"}
+      onClose={onClose}
+      size="sm"
+      footer={
+        <>
+          <Button onClick={onClose}>Cancelar</Button>
+          <Button type="submit" variant="primary" form={formId}>
+            Salvar
+          </Button>
+        </>
+      }
+    >
+      <form
+        id={formId}
+        className="adm-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          void onSubmit({
+            companyId: unit ? undefined : String(form.get("companyId") ?? ""),
+            name: String(form.get("name") ?? "")
+          });
+        }}
+      >
+        {!unit && (
+          <Field label="Pedreira">
+            <select
+              className="adm-select"
+              name="companyId"
+              defaultValue={defaultCompanyId}
+              required
+            >
+              <option value="">Selecione</option>
+              {companies.map((company) => (
+                <option key={company.id} value={company.id}>
+                  {company.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
+        <Field label="Nome da unidade">
+          <input className="adm-input" name="name" defaultValue={unit?.name} required autoFocus />
+        </Field>
+      </form>
+    </Modal>
+  );
+}
+
+function UserFormModal({
+  role,
+  units,
+  companies,
+  onClose,
+  onSubmit
+}: {
+  role: "loader" | "comercial";
+  units: Unit[];
+  companies: Company[];
+  onClose: () => void;
+  onSubmit: (payload: Record<string, unknown>) => void | Promise<void>;
+}) {
+  const formId = "user-form";
+  return (
+    <Modal
+      title={role === "comercial" ? "Novo usuario comercial" : "Novo carregador"}
+      description={
+        role === "comercial"
+          ? "Acessa os relatorios de venda da pedreira."
+          : "Acessa a fila de carregamento da unidade."
+      }
+      onClose={onClose}
+      size="sm"
+      footer={
+        <>
+          <Button onClick={onClose}>Cancelar</Button>
+          <Button type="submit" variant="primary" form={formId}>
+            Criar
+          </Button>
+        </>
+      }
+    >
+      <form
+        id={formId}
+        className="adm-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          void onSubmit({
+            email: form.get("email"),
+            password: form.get("password"),
+            name: form.get("name"),
+            unitId: form.get("unitId"),
+            role
+          });
+        }}
+      >
+        <Field label="Nome completo">
+          <input className="adm-input" name="name" required autoFocus />
+        </Field>
+        <Field label="E-mail">
+          <input className="adm-input" name="email" type="email" required />
+        </Field>
+        <Field label="Senha" hint="Minimo de 6 caracteres. Anote antes de repassar ao usuario.">
+          <PasswordInput name="password" required minLength={6} />
+        </Field>
+        <Field label="Unidade">
+          <select className="adm-select" name="unitId" required>
+            <option value="">Selecione</option>
+            {units
+              .filter((unit) => unit.isActive)
+              .map((unit) => (
+                <option key={unit.id} value={unit.id}>
+                  {unit.name} — {companies.find((c) => c.id === unit.companyId)?.name ?? ""}
+                </option>
+              ))}
+          </select>
+        </Field>
+      </form>
+    </Modal>
+  );
+}
+
+function PasswordModal({
+  user,
+  onClose,
+  onSubmit
+}: {
+  user: LoaderUser;
+  onClose: () => void;
+  onSubmit: (password: string) => void | Promise<void>;
+}) {
+  const formId = "password-form";
+  return (
+    <Modal
+      title={`Senha de ${user.name}`}
+      description={user.email}
+      onClose={onClose}
+      size="sm"
+      footer={
+        <>
+          <Button onClick={onClose}>Cancelar</Button>
+          <Button type="submit" variant="primary" form={formId}>
+            Salvar senha
+          </Button>
+        </>
+      }
+    >
+      <form
+        id={formId}
+        className="adm-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          void onSubmit(String(form.get("password") ?? ""));
+        }}
+      >
+        <Note>
+          A senha atual nao pode ser exibida — o Supabase Auth guarda apenas o hash dela. Defina uma
+          nova aqui e repasse ao usuario.
+        </Note>
+        <Field label="Nova senha">
+          <PasswordInput name="password" required minLength={6} autoFocus />
+        </Field>
+      </form>
+    </Modal>
   );
 }

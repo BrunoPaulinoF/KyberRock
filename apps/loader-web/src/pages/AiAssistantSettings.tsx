@@ -8,6 +8,7 @@ import {
   findAiModelHint,
   isKnownAiModel
 } from "../lib/ai-models";
+import { Button, Field, Note, PageHead, Panel } from "../components/admin";
 
 // ---------------------------------------------------------------------------
 // Configuracao da IA do assistente da documentacao.
@@ -30,40 +31,6 @@ interface AiSettingsView {
   apiKeyPreview: string;
   updatedAt: string | null;
 }
-
-const CARD: React.CSSProperties = {
-  background: "#fff",
-  padding: "24px",
-  borderRadius: "16px",
-  display: "flex",
-  flexDirection: "column",
-  gap: "16px"
-};
-
-const FIELD_LABEL: React.CSSProperties = {
-  display: "block",
-  fontSize: "13px",
-  fontWeight: 700,
-  color: "#0f172a",
-  marginBottom: "6px"
-};
-
-const INPUT: React.CSSProperties = {
-  width: "100%",
-  padding: "10px 12px",
-  borderRadius: "8px",
-  border: "1px solid #cbd5e1",
-  fontSize: "14px",
-  background: "#fff",
-  color: "#0f172a"
-};
-
-const HINT: React.CSSProperties = {
-  margin: "6px 0 0 0",
-  fontSize: "12px",
-  color: "#64748b",
-  lineHeight: 1.5
-};
 
 export function AiAssistantSettings({ onSessionExpired }: { onSessionExpired: () => void }) {
   const [settings, setSettings] = useState<AiSettingsView | null>(null);
@@ -177,165 +144,110 @@ export function AiAssistantSettings({ onSessionExpired }: { onSessionExpired: ()
   }
 
   if (isLoading) {
-    return <p style={{ color: "#64748b" }}>Carregando configuracao da IA...</p>;
+    return (
+      <Panel>
+        <p className="adm-empty">Carregando configuracao da IA...</p>
+      </Panel>
+    );
   }
 
   return (
-    <section style={{ display: "flex", flexDirection: "column", gap: "24px", maxWidth: "720px" }}>
-      <article style={CARD}>
-        <div>
-          <h2 style={{ margin: "0 0 6px 0" }}>Assistente de IA</h2>
-          <p style={{ margin: 0, color: "#64748b", fontSize: "14px", lineHeight: 1.55 }}>
-            Credencial unica usada por <strong>todas as pedreiras</strong>. Ela alimenta o chat da
-            tela de Documentacao do desktop, que responde com base na documentacao instalada e no
-            funcionamento do sistema com o OMIE. Sem chave, o chat continua funcionando apenas com a
-            documentacao local.
-          </p>
-        </div>
+    <>
+      <PageHead
+        title="Assistente de IA"
+        description="Credencial unica usada por todas as pedreiras. Alimenta o chat da tela de Documentacao do desktop, que responde com base na documentacao instalada e no funcionamento do sistema com o OMIE. Sem chave, o chat continua funcionando apenas com a documentacao local."
+      />
 
-        {feedback ? (
-          <p
-            role="status"
-            style={{
-              margin: 0,
-              padding: "10px 12px",
-              borderRadius: "8px",
-              fontSize: "13px",
-              background: feedback.tone === "ok" ? "#dcfce7" : "#fee2e2",
-              color: feedback.tone === "ok" ? "#166534" : "#b91c1c"
-            }}
+      {feedback && <Note tone={feedback.tone === "ok" ? "ok" : "danger"}>{feedback.text}</Note>}
+
+      <Panel
+        title="Credencial e modelo"
+        description={
+          settings?.updatedAt
+            ? `Ultima alteracao: ${new Date(settings.updatedAt).toLocaleString("pt-BR")}`
+            : undefined
+        }
+        actions={
+          <>
+            <Button variant="primary" onClick={() => void save()} disabled={isSaving}>
+              {isSaving ? "Salvando..." : "Salvar configuracao"}
+            </Button>
+            {settings?.hasApiKey && (
+              <Button variant="danger" onClick={() => void removeKey()} disabled={isSaving}>
+                Remover chave
+              </Button>
+            )}
+          </>
+        }
+      >
+        <div className="adm-form">
+          <Field
+            label="Chave da API (OpenAI)"
+            hint="A chave fica somente no servidor: ela nunca volta para esta tela e nunca vai para o computador da balanca. Deixe em branco para manter a que ja esta gravada."
           >
-            {feedback.text}
-          </p>
-        ) : null}
-
-        <div>
-          <label style={FIELD_LABEL} htmlFor="ai-api-key">
-            Chave da API (OpenAI)
-          </label>
-          <input
-            id="ai-api-key"
-            type="password"
-            style={INPUT}
-            value={apiKey}
-            autoComplete="off"
-            placeholder={
-              settings?.hasApiKey
-                ? `Chave configurada (${settings.apiKeyPreview}) — deixe em branco para manter`
-                : "sk-..."
-            }
-            onChange={(event) => setApiKey(event.target.value)}
-          />
-          <p style={HINT}>
-            A chave fica somente no servidor: ela nunca volta para esta tela e nunca vai para o
-            computador da balanca. Deixe o campo em branco para manter a que ja esta gravada.
-          </p>
-        </div>
-
-        <div>
-          <label style={FIELD_LABEL} htmlFor="ai-model">
-            Modelo
-          </label>
-          <select
-            id="ai-model"
-            style={INPUT}
-            value={modelChoice}
-            onChange={(event) => setModelChoice(event.target.value)}
-          >
-            {AI_MODEL_OPTIONS.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label}
-              </option>
-            ))}
-            <option value={AI_MODEL_CUSTOM}>Outro (digitar o nome)</option>
-          </select>
-          {modelChoice === AI_MODEL_CUSTOM ? (
             <input
-              style={{ ...INPUT, marginTop: "8px" }}
-              value={customModel}
-              placeholder="Nome exato do modelo na API"
-              onChange={(event) => setCustomModel(event.target.value)}
+              id="ai-api-key"
+              className="adm-input adm-input-mono"
+              type="password"
+              value={apiKey}
+              autoComplete="off"
+              placeholder={
+                settings?.hasApiKey
+                  ? `Chave configurada (${settings.apiKeyPreview}) — deixe em branco para manter`
+                  : "sk-..."
+              }
+              onChange={(event) => setApiKey(event.target.value)}
             />
-          ) : (
-            <p style={HINT}>{findAiModelHint(modelChoice)}</p>
-          )}
-        </div>
+          </Field>
 
-        <label
-          style={{ display: "flex", alignItems: "flex-start", gap: "10px", cursor: "pointer" }}
-        >
-          <input
-            type="checkbox"
-            checked={isEnabled}
-            style={{ marginTop: "3px" }}
-            onChange={(event) => setIsEnabled(event.target.checked)}
-          />
-          <span>
-            <strong style={{ display: "block", fontSize: "14px" }}>Assistente ativo</strong>
-            <span style={{ fontSize: "12px", color: "#64748b" }}>
-              Desmarque para pausar a IA em todas as pedreiras sem apagar a chave. O chat continua
-              respondendo com a documentacao instalada.
-            </span>
-          </span>
-        </label>
-
-        <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-          <button
-            type="button"
-            onClick={() => void save()}
-            disabled={isSaving}
-            style={{
-              padding: "10px 20px",
-              borderRadius: "8px",
-              border: "none",
-              background: isSaving ? "#94a3b8" : "#0f172a",
-              color: "#fff",
-              fontWeight: 700,
-              fontSize: "14px",
-              cursor: isSaving ? "default" : "pointer"
-            }}
+          <Field
+            label="Modelo"
+            hint={modelChoice === AI_MODEL_CUSTOM ? undefined : findAiModelHint(modelChoice)}
           >
-            {isSaving ? "Salvando..." : "Salvar configuracao"}
-          </button>
-          {settings?.hasApiKey ? (
-            <button
-              type="button"
-              onClick={() => void removeKey()}
-              disabled={isSaving}
-              style={{
-                padding: "10px 20px",
-                borderRadius: "8px",
-                border: "1px solid #b91c1c",
-                background: "#fff",
-                color: "#b91c1c",
-                fontWeight: 700,
-                fontSize: "14px",
-                cursor: isSaving ? "default" : "pointer"
-              }}
+            <select
+              id="ai-model"
+              className="adm-select"
+              value={modelChoice}
+              onChange={(event) => setModelChoice(event.target.value)}
             >
-              Remover chave
-            </button>
-          ) : null}
+              {AI_MODEL_OPTIONS.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+              <option value={AI_MODEL_CUSTOM}>Outro (digitar o nome)</option>
+            </select>
+          </Field>
+
+          {modelChoice === AI_MODEL_CUSTOM && (
+            <Field label="Nome do modelo" hint="Nome exato do modelo na API da OpenAI.">
+              <input
+                className="adm-input adm-input-mono"
+                value={customModel}
+                onChange={(event) => setCustomModel(event.target.value)}
+              />
+            </Field>
+          )}
+
+          <label className="adm-check">
+            <input
+              type="checkbox"
+              checked={isEnabled}
+              onChange={(event) => setIsEnabled(event.target.checked)}
+            />
+            <span>
+              <strong>Assistente ativo</strong>
+              <span className="adm-field-hint" style={{ display: "block" }}>
+                Desmarque para pausar a IA em todas as pedreiras sem apagar a chave. O chat continua
+                respondendo com a documentacao instalada.
+              </span>
+            </span>
+          </label>
         </div>
+      </Panel>
 
-        {settings?.updatedAt ? (
-          <p style={{ ...HINT, marginTop: 0 }}>
-            Ultima alteracao: {new Date(settings.updatedAt).toLocaleString("pt-BR")}
-          </p>
-        ) : null}
-      </article>
-
-      <article style={{ ...CARD, background: "#f8fafc", border: "1px solid #e2e8f0" }}>
-        <h3 style={{ margin: 0, fontSize: "15px" }}>Como o assistente usa isto</h3>
-        <ul
-          style={{
-            margin: 0,
-            paddingLeft: "18px",
-            color: "#475569",
-            fontSize: "13px",
-            lineHeight: 1.7
-          }}
-        >
+      <Panel title="Como o assistente usa isto">
+        <ul className="adm-list">
           <li>
             O desktop procura na documentacao instalada e manda so os trechos relevantes junto com a
             pergunta. Nenhum dado de operacao, cliente ou peso sai do computador da balanca.
@@ -350,8 +262,8 @@ export function AiAssistantSettings({ onSessionExpired }: { onSessionExpired: ()
           </li>
           <li>O que ela nao souber vira orientacao para falar com o suporte, nunca um palpite.</li>
         </ul>
-      </article>
-    </section>
+      </Panel>
+    </>
   );
 }
 

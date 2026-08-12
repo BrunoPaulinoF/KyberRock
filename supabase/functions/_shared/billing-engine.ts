@@ -183,9 +183,9 @@ function nowIso(): string {
  * Configuracao global.
  *
  * Os SEGREDOS (access token do Mercado Pago, segredo do webhook, token da
- * instancia de WhatsApp) nao ficam no banco: a tabela guarda so o NOME da
- * variavel e o valor e lido aqui do secret do Supabase. Ver
- * `billing-secrets.ts` e a migracao 202608120003.
+ * instancia de WhatsApp) nao passam por aqui: o nome de cada variavel e fixo em
+ * `billing-secrets.ts` e o valor vem do secret do Supabase. Nao existe campo
+ * para edita-los — nem o valor, nem o nome.
  *
  * O resto — URL do WhatsApp, padroes do ciclo, emitente, textos — continua na
  * tabela, porque nao e credencial e precisa ser editavel na tela.
@@ -200,7 +200,6 @@ export async function loadBillingSettings(supabase: SupabaseClient): Promise<Bil
   const row = (data ?? {}) as Record<string, unknown>;
 
   const { values, status } = resolveAllBillingSecrets({
-    settingsRow: row,
     readEnv: (name) => Deno.env.get(name)
   });
 

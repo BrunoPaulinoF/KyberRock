@@ -24,7 +24,7 @@ WhatsApp e bloqueio automático por inadimplência.
 | Tela                          | `apps/loader-web/src/pages/FinancialBackoffice.tsx`         | Aba **Financeiro** do painel admin.                                                 |
 | Schema                        | `supabase/migrations/202608120001_financial_backoffice.sql` | Colunas de cobrança + `billing_settings` / `billing_invoices` / `billing_events`.   |
 | Agendamento                   | `supabase/migrations/202608120002_billing_run_cron.sql`     | Job `kyberrock_billing_run`.                                                        |
-| Segredos                      | `supabase/functions/_shared/billing-secrets.ts`             | Resolve cada credencial pelo nome da variável. **Puro e testado.**                  |
+| Segredos                      | `supabase/functions/_shared/billing-secrets.ts`             | Nome fixo de cada credencial + leitura do secret. **Puro e testado.**               |
 
 O painel e o cron chamam **o mesmo motor**: "gerar agora" e "gerar sozinho"
 produzem exatamente a mesma fatura.
@@ -99,8 +99,7 @@ em andamento) sem desligar a cobrança.
 
 ## Configuração (aba Financeiro → Configurações)
 
-- **Credenciais** — ver "Onde moram os segredos" abaixo. A tela guarda apenas o
-  **nome da variável**; o valor fica no secret do Supabase.
+- **Credenciais** — somente leitura; ver "Onde moram os segredos" abaixo.
 - **Segredo de assinatura do webhook** — opcional. Sem ele, o `billing-webhook`
   ainda confirma o pagamento **consultando a API** do Mercado Pago, que é a
   fonte da verdade; a assinatura só evita a consulta desnecessária de um POST
@@ -119,26 +118,23 @@ em andamento) sem desligar a cobrança.
 ## Onde moram os segredos
 
 Nenhuma credencial do financeiro fica no banco, no repositório ou no navegador.
-`billing_settings` guarda só o **nome da variável de ambiente**; o valor vive no
-secret do Supabase e é lido pela Edge Function com `Deno.env.get()`.
+O nome de cada variável é **fixo no código** (`_shared/billing-secrets.ts`) e o
+valor vive no secret do Supabase, lido pela Edge Function com `Deno.env.get()`.
 
-| Segredo                          | Variável padrão               | Sem ele                                                    |
+| Segredo                          | Variável                      | Sem ele                                                    |
 | -------------------------------- | ----------------------------- | ---------------------------------------------------------- |
 | Access token do Mercado Pago     | `MERCADO_PAGO_ACCESS_TOKEN`   | Nenhum boleto é emitido.                                   |
 | Segredo de assinatura do webhook | `MERCADO_PAGO_WEBHOOK_SECRET` | A baixa continua funcionando (o webhook reconsulta a API). |
 | Token da instância de WhatsApp   | `UAZAPI_INSTANCE_TOKEN`       | A fatura é gerada mas não enviada.                         |
 
 Para gravar o valor: **Supabase → Edge Functions → Secrets**, ou
-`supabase secrets set MERCADO_PAGO_ACCESS_TOKEN=...`. A tela mostra, por
-segredo, o nome da variável, se ela foi encontrada e os quatro últimos
-caracteres — o bastante para reconhecer qual credencial está ativa, nunca o
-valor.
+`supabase secrets set MERCADO_PAGO_ACCESS_TOKEN=...`.
 
-O campo de nome aceita um nome diferente do padrão (duas contas do Mercado Pago
-no mesmo projeto, troca de credencial em paralelo); vazio usa o padrão. Colar o
-token nesse campo é recusado com uma mensagem que diz onde o valor deve ir —
-`APP_USR-...` não é nome de variável, e o erro genérico faria a pessoa tentar de
-novo em vez de entender.
+**A tela não tem campo de segredo** — nem para o valor, nem para o nome da
+variável. Ela só exibe, por credencial, o nome da variável, um selo
+Configurado/Pendente e os quatro últimos caracteres, o bastante para reconhecer
+qual credencial está ativa. Campo que não existe é campo onde ninguém cola um
+token por engano; e `admin-billing` nem aceita esses campos no payload.
 
 Trocar uma credencial é trocar o secret no Supabase: sem deploy, sem SQL e sem
 nenhum ponto onde o token possa vazar por descuido. As chaves do próprio
@@ -184,8 +180,10 @@ reemissão cancela o anterior antes de criar o novo.
 
 1. **Aplique as migrações antes de usar a tela.** Migrações não são automáticas
    (ver AGENTS.md § "SQL migrations"): use `apply_migration` ou a CLI.
-   `202608120003` move os segredos para os secrets do Supabase e **remove** as
-   colunas de valor de `billing_settings`.
+   `202608120003` move os segredos para os secrets do Supabase e `202608120004`
+   fixa o nome de cada variável — as duas **removem** colunas de
+   `billing_settings`, de propósito: coluna morta perto de credencial vira, com
+   o tempo, coluna com credencial.
 2. As Edge Functions saem no push para `main` pelo
    `.github/workflows/edge-functions-deploy.yml`. As três novas já estão em
    `supabase/config.toml` com `verify_jwt = false` — função sem bloco lá é
