@@ -13,6 +13,7 @@ import {
   ConfirmDialog,
   CopyButton,
   DataTable,
+  EyeButton,
   Field,
   Fieldset,
   Modal,
@@ -142,6 +143,23 @@ export function matchesCadastroSearch(search: string, fields: Array<string | nul
 
 type Section = "companies" | "units" | "loaders" | "comercial" | "devices" | "financeiro" | "ai";
 
+/** Resposta de `reveal_credentials`. Ver `_shared/admin-credentials.ts`. */
+interface RevealedCredential {
+  label: string;
+  kind: "secret" | "code" | "info";
+  value: string | null;
+  hint?: string;
+  unavailable?: string;
+}
+
+interface CredentialBundle {
+  title: string;
+  subtitle: string;
+  credentials: RevealedCredential[];
+}
+
+type CredentialTarget = { type: "company" | "user" | "device"; id: string };
+
 function formatDate(value: string | null | undefined): string {
   if (!value) return "—";
   const parsed = new Date(value);
@@ -184,6 +202,8 @@ export function AdminDashboard() {
   const [resettingPasswordUser, setResettingPasswordUser] = useState<LoaderUser | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<DeleteTarget | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [credentials, setCredentials] = useState<CredentialBundle | null>(null);
+  const [credentialsLoading, setCredentialsLoading] = useState(false);
 
   // Sessao expirou no meio do uso: desloga (o guard PrivateAdminRoute redireciona para
   // /admin/login quando isAdmin vira false). Sem isto, callAdminFunction lancava e o dashboard
@@ -497,6 +517,10 @@ export function AdminDashboard() {
       actions: true,
       render: (company) => (
         <ButtonGroup>
+          <EyeButton
+            title={`Ver credenciais de ${company.name}`}
+            onClick={() => void handleRevealCredentials({ type: "company", id: company.id })}
+          />
           <Button size="sm" onClick={() => setEditingCompany(company)}>
             Editar
           </Button>
@@ -567,6 +591,10 @@ export function AdminDashboard() {
       actions: true,
       render: (unit) => (
         <ButtonGroup>
+          <EyeButton
+            title={`Ver credenciais da pedreira de ${unit.name}`}
+            onClick={() => void handleRevealCredentials({ type: "company", id: unit.companyId })}
+          />
           <Button size="sm" onClick={() => setEditingUnit(unit)}>
             Editar
           </Button>
@@ -655,6 +683,10 @@ export function AdminDashboard() {
         actions: true,
         render: (user) => (
           <ButtonGroup>
+            <EyeButton
+              title={`Ver credenciais de ${user.name}`}
+              onClick={() => void handleRevealCredentials({ type: "user", id: user.id })}
+            />
             <Button size="sm" onClick={() => setResettingPasswordUser(user)}>
               Senha
             </Button>
@@ -748,6 +780,10 @@ export function AdminDashboard() {
       actions: true,
       render: (device) => (
         <ButtonGroup>
+          <EyeButton
+            title={`Ver credenciais de ${device.name}`}
+            onClick={() => void handleRevealCredentials({ type: "device", id: device.id })}
+          />
           <Button
             size="sm"
             onClick={() =>
@@ -830,6 +866,27 @@ export function AdminDashboard() {
       await loadData();
     } catch (error) {
       handleError(error, "Nao foi possivel gerar o codigo de ativacao.");
+    }
+  }
+
+  /**
+   * Abre as credenciais de um cadastro. A consulta e sob demanda de proposito:
+   * segredo que viaja no carregamento da lista fica em cache de navegador e em
+   * log de proxy, mesmo quando ninguem pediu para ver.
+   */
+  async function handleRevealCredentials(target: CredentialTarget): Promise<void> {
+    setCredentialsLoading(true);
+    setFeedback(null);
+    try {
+      const response = await callAdminFunction<{ bundle: CredentialBundle }>("admin-api", {
+        action: "reveal_credentials",
+        payload: target
+      });
+      setCredentials(response.bundle);
+    } catch (error) {
+      handleError(error, "Nao foi possivel carregar as credenciais.");
+    } finally {
+      setCredentialsLoading(false);
     }
   }
 
@@ -1093,6 +1150,16 @@ export function AdminDashboard() {
         />
       )}
 
+      {credentials && (
+        <CredentialsModal bundle={credentials} onClose={() => setCredentials(null)} />
+      )}
+
+      {credentialsLoading && !credentials && (
+        <Modal title="Credenciais" onClose={() => setCredentialsLoading(false)} size="sm">
+          <p className="adm-empty">Carregando...</p>
+        </Modal>
+      )}
+
       {confirmDelete && (
         <ConfirmDialog
           title="Confirmar exclusao"
@@ -1110,6 +1177,53 @@ export function AdminDashboard() {
 // ---------------------------------------------------------------------------
 // Modais de cadastro
 // ---------------------------------------------------------------------------
+
+/**
+ * Credenciais de um cadastro.
+ *
+ * Mostra o valor de quem guarda em texto e, para quem guarda hash (senha do
+ * usuario, token do desktop), mostra o MOTIVO e o caminho que resolve. Dizer so
+ * "indisponivel" faria o administrador procurar a senha em outro lugar por meia
+ * hora — ela nao existe em lugar nenhum.
+ */
+function CredentialsModal({ bundle, onClose }: { bundle: CredentialBundle; onClose: () => void }) {
+  const hasSecret = bundle.credentials.some(
+    (credential) => credential.kind !== "info" && credential.value !== null
+  );
+
+  return (
+    <Modal
+      title={bundle.title}
+      description={bundle.subtitle}
+      onClose={onClose}
+      footer={<Button onClick={onClose}>Fechar</Button>}
+    >
+      {hasSecret && (
+        <Note tone="warn">
+          Credenciais em texto. Confira quem esta olhando a tela antes de continuar.
+        </Note>
+      )}
+      <div style={{ marginTop: hasSecret ? "16px" : 0 }}>
+        {bundle.credentials.map((credential) => (
+          <div key={credential.label} className="adm-cred">
+            <div className="adm-cred-head">
+              <span className="adm-cred-label">{credential.label}</span>
+              {credential.value && <CopyButton value={credential.value} />}
+            </div>
+            {credential.value ? (
+              <p className="adm-cred-value">{credential.value}</p>
+            ) : (
+              <p className="adm-cred-unavailable">{credential.unavailable}</p>
+            )}
+            {credential.value && credential.hint && (
+              <p className="adm-cred-hint">{credential.hint}</p>
+            )}
+          </div>
+        ))}
+      </div>
+    </Modal>
+  );
+}
 
 /**
  * Campo de senha visivel por padrao. O admin cadastra a senha do carregador e

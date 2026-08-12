@@ -8,6 +8,7 @@ import {
   ButtonGroup,
   ConfirmDialog,
   DataTable,
+  EyeButton,
   Field,
   Fieldset,
   Modal,
@@ -154,5 +155,17 @@ describe("primitivos do console", () => {
     );
     expect(confirm).toContain("A fatura some do historico.");
     expect(confirm).toContain("nao pode ser desfeita");
+  });
+});
+
+describe("botao de olho", () => {
+  it("carrega rotulo acessivel — o icone sozinho nao diz nada a um leitor de tela", () => {
+    const html = renderToStaticMarkup(
+      <EyeButton title="Ver credenciais de Pedreira Serra Azul" onClick={() => {}} />
+    );
+    expect(html).toContain("adm-sr-only");
+    expect(html).toContain("Ver credenciais de Pedreira Serra Azul");
+    expect(html).toContain("<svg");
+    expect(html).toContain('aria-hidden="true"');
   });
 });
