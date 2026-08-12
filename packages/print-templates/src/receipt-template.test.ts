@@ -452,7 +452,9 @@ describe("geometria do papel", () => {
 
   it("nao aumenta um corpo que ja cabe, nem some no papel estreito", () => {
     expect(fitReceiptBodyFontSizePx(7, "monospace", receiptContentWidthMm(80))).toBe(7);
-    expect(fitReceiptBodyFontSizePx(11, "monospace", receiptContentWidthMm(58))).toBeGreaterThanOrEqual(6);
+    expect(
+      fitReceiptBodyFontSizePx(11, "monospace", receiptContentWidthMm(58))
+    ).toBeGreaterThanOrEqual(6);
   });
 
   it("nao mexe nas fontes proporcionais, que nao tem grade de colunas", () => {

@@ -3968,8 +3968,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     />
                     <span style={{ ...styles.muted, fontSize: "11px" }}>
                       Sai no rodape do cupom como "{RECEIPT_CONTACT_LABEL} ...", para o cliente
-                      falar com a pedreira depois de sair da balanca. Em branco, a linha nao
-                      aparece no cupom.
+                      falar com a pedreira depois de sair da balanca. Em branco, a linha nao aparece
+                      no cupom.
                     </span>
                   </label>
                   <div style={{ display: "grid", gap: "10px", margin: "12px 0" }}>

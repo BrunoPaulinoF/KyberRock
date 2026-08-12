@@ -84,7 +84,9 @@ describe("tela de impressao", () => {
   // editor visual, senao quem usa o modelo "Padrao" nem veria o campo.
   it("tem o campo de telefone da pedreira fora do editor visual", () => {
     expect(appSource).toContain("Telefone da pedreira no cupom");
-    expect(appSource).toContain("updateReceiptTemplateConfig({ companyPhone: event.target.value })");
+    expect(appSource).toContain(
+      "updateReceiptTemplateConfig({ companyPhone: event.target.value })"
+    );
 
     const campo = appSource.indexOf("Telefone da pedreira no cupom");
     const editor = appSource.indexOf("Editor visual do cupom");
