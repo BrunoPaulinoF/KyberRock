@@ -56,24 +56,43 @@ describe("buildUserCredentials", () => {
     is_active: true
   };
 
-  it("mostra o e-mail e NUNCA um valor de senha", () => {
-    const bundle = buildUserCredentials(user);
-    expect(bundle.title).toBe("Joao Silva");
-    expect(bundle.subtitle).toBe("Carregador");
+  function passwordOf(bundle: ReturnType<typeof buildUserCredentials>) {
+    return bundle.credentials.find((credential) => credential.label === "Senha");
+  }
 
-    const email = bundle.credentials[0];
-    expect(email.value).toBe("joao@serraazul.com.br");
-
-    const password = bundle.credentials[1];
-    expect(password.label).toBe("Senha");
-    expect(password.value).toBeNull();
-    // O motivo e o caminho que resolve precisam estar no texto: sem eles, o
-    // administrador sai procurando a senha em outro lugar.
-    expect(password.unavailable).toContain("bcrypt");
-    expect(password.unavailable).toContain("definir uma nova");
+  it("mostra a senha quando o cofre a capturou", () => {
+    const bundle = buildUserCredentials(user, {
+      password: "Br1ta@2026",
+      savedAt: "2026-08-12T13:00:00Z",
+      cipherConfigured: true
+    });
+    const password = passwordOf(bundle);
+    expect(password?.value).toBe("Br1ta@2026");
+    expect(password?.unavailable).toBeUndefined();
+    expect(password?.hint).toContain("12/08/2026");
+    // Aviso necessario: trocar a senha por fora do painel deixa o cofre velho.
+    expect(password?.hint).toContain("fora do painel");
+    expect(hasSensitiveValue(bundle)).toBe(true);
   });
 
-  it("nao existe combinacao de entrada que produza uma senha visivel", () => {
+  it("com o cofre ligado e sem senha guardada, manda redefinir", () => {
+    const password = passwordOf(
+      buildUserCredentials(user, { password: null, cipherConfigured: true })
+    );
+    expect(password?.value).toBeNull();
+    expect(password?.unavailable).toContain("bcrypt");
+    expect(password?.unavailable).toContain("defina uma nova");
+  });
+
+  it("com o cofre desligado, ensina a liga-lo", () => {
+    const password = passwordOf(
+      buildUserCredentials(user, { password: null, cipherConfigured: false })
+    );
+    expect(password?.value).toBeNull();
+    expect(password?.unavailable).toContain("KYBERROCK_CREDENTIAL_KEY");
+  });
+
+  it("sem cofre informado, nao inventa senha nenhuma", () => {
     const variants = [
       user,
       { ...user, role: "comercial" },
@@ -83,10 +102,16 @@ describe("buildUserCredentials", () => {
     ];
     for (const variant of variants) {
       const bundle = buildUserCredentials(variant);
-      const password = bundle.credentials.find((credential) => credential.label === "Senha");
-      expect(password?.value).toBeNull();
+      expect(passwordOf(bundle)?.value).toBeNull();
       expect(hasSensitiveValue(bundle)).toBe(false);
     }
+  });
+
+  it("mostra o e-mail", () => {
+    const bundle = buildUserCredentials(user);
+    expect(bundle.title).toBe("Joao Silva");
+    expect(bundle.subtitle).toBe("Carregador");
+    expect(bundle.credentials[0].value).toBe("joao@serraazul.com.br");
   });
 
   it("marca o papel e o bloqueio no subtitulo", () => {

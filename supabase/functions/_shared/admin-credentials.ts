@@ -1,15 +1,18 @@
 // O que o painel consegue MOSTRAR de cada cadastro, e o que nao consegue.
 //
 // O botao de olho do console abre isto. A parte que importa nao e a listagem: e
-// a separacao entre credencial guardada em texto (da para mostrar) e credencial
-// guardada como HASH (nao da, e nenhuma tela vai dar). Sao duas situacoes:
+// de onde cada valor vem, porque sao tres origens diferentes:
 //
 //   - `companies` guarda app key, app secret, senha de precos e codigo de
-//     ativacao em texto, porque o desktop precisa receber esses valores de
-//     volta. O administrador pode ve-los.
-//   - a senha do usuario vive no Supabase Auth (bcrypt) e o token do desktop em
-//     `device_registrations.token_hash` (SHA-256). Nao ha caminho de volta —
-//     nem pelo painel, nem pelo suporte, nem pelo banco.
+//     ativacao em TEXTO, porque o desktop precisa receber esses valores de
+//     volta. Aparecem direto.
+//   - a senha do usuario vive no Supabase Auth como BCRYPT, que nao volta. Ela
+//     so aparece quando foi capturada pelo painel no momento em que foi definida
+//     e guardada no cofre cifrado (`user_password_vault` +
+//     `credential-cipher.ts`). Senha antiga, ou trocada por fora do painel, nao
+//     esta no cofre e continua irrecuperavel.
+//   - o token do desktop e SHA-256 em `device_registrations.token_hash`. Esse
+//     nao tem cofre: o valor em claro so existe na maquina ativada.
 //
 // Por isso `value: null` vem sempre acompanhado de `unavailable`: dizer "nao da
 // para mostrar" sem dizer POR QUE e o que fazer no lugar faz o administrador
@@ -109,12 +112,31 @@ export interface UserCredentialSource {
   is_active?: boolean | null;
 }
 
+/** O que o cofre de senhas tinha para este usuario no momento da consulta. */
+export interface PasswordVaultState {
+  /** Senha decifrada, quando o painel a capturou. */
+  password: string | null;
+  /** Quando essa senha foi definida pelo painel. */
+  savedAt?: string | null;
+  /** `false` quando `KYBERROCK_CREDENTIAL_KEY` nao esta configurada. */
+  cipherConfigured: boolean;
+}
+
 /**
- * Usuario: o e-mail e o que da para mostrar. A senha NAO — o Supabase Auth
- * guarda bcrypt, e bcrypt nao volta. Quem precisa da senha define uma nova.
+ * Usuario: e-mail sempre; senha, quando o cofre a tem.
+ *
+ * As tres saidas do campo Senha correspondem a tres situacoes distintas, e cada
+ * uma pede uma acao diferente do administrador — juntar todas em "indisponivel"
+ * era o que fazia ele procurar a senha onde ela nao existe.
  */
-export function buildUserCredentials(user: UserCredentialSource): CredentialBundle {
+export function buildUserCredentials(
+  user: UserCredentialSource,
+  vault: PasswordVaultState = { password: null, cipherConfigured: false }
+): CredentialBundle {
   const roleLabel = text(user.role) === "comercial" ? "Comercial" : "Carregador";
+  const password = text(vault.password);
+  const savedAt = text(vault.savedAt);
+
   return {
     title: text(user.name) || "Usuario",
     subtitle: `${roleLabel}${user.is_active === false ? " · acesso bloqueado" : ""}`,
@@ -128,12 +150,28 @@ export function buildUserCredentials(user: UserCredentialSource): CredentialBund
       {
         label: "Senha",
         kind: "secret",
-        value: null,
-        unavailable:
-          "O Supabase Auth guarda apenas o hash da senha (bcrypt). Nem o painel nem o suporte conseguem recupera-la — use o botao Senha para definir uma nova e repassar ao usuario."
+        value: password || null,
+        hint: password
+          ? savedAt
+            ? `Definida pelo painel em ${formatSavedAt(savedAt)}. Se alguem trocou a senha por fora do painel, este valor fica desatualizado.`
+            : "Definida pelo painel."
+          : undefined,
+        unavailable: password
+          ? undefined
+          : vault.cipherConfigured
+            ? "Esta senha foi definida antes do cofre existir, ou fora do painel. O Supabase Auth guarda so o hash (bcrypt), que nao volta — defina uma nova pelo botao Senha e ela passa a aparecer aqui."
+            : "O cofre de senhas nao esta ligado. Defina o secret KYBERROCK_CREDENTIAL_KEY em Supabase > Edge Functions > Secrets; a partir dai, toda senha definida pelo painel fica visivel aqui."
       }
     ]
   };
+}
+
+/** "2026-08-12T13:00:00Z" -> "12/08/2026". Data solta e mais legivel que ISO na tela. */
+function formatSavedAt(value: string): string {
+  const date = value.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return value;
+  const [year, month, day] = date.split("-");
+  return `${day}/${month}/${year}`;
 }
 
 export interface DeviceCredentialSource {

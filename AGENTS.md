@@ -197,14 +197,20 @@ offending link of the chain, not above the `return`.
   pega erro de runtime nos componentes sem precisar de jsdom no repositório.
 - **Botão de olho (`reveal_credentials`)**: mostra as credenciais de UM cadastro, sob demanda —
   fora do `list`, porque segredo que viaja em todo carregamento de tela fica em cache de
-  navegador e log de proxy. O que é recuperável e o que não é vive em
-  `_shared/admin-credentials.ts` (puro e testado): `companies` guarda app key, app secret, senha
-  de preços e código de ativação em **texto** (o desktop precisa recebê-los de volta); a senha do
-  usuário é **bcrypt** no Supabase Auth e o token do desktop é **SHA-256** em
-  `device_registrations.token_hash` — não há caminho de volta para nenhum dos dois, e a tela diz
-  isso com o motivo e a saída (definir nova senha / gerar novo código). Cada consulta grava
-  `credentials_revealed` em `audit_logs` **sem o valor**: auditoria que guarda o segredo vira um
-  segundo lugar de onde ele vaza.
+  navegador e log de proxy. De onde vem cada valor está em `_shared/admin-credentials.ts` (puro e
+  testado). Cada consulta grava `credentials_revealed` em `audit_logs` **sem o valor**: auditoria
+  que guarda o segredo vira um segundo lugar de onde ele vaza.
+- **Cofre de senhas** (`_shared/credential-cipher.ts`, `public.user_password_vault`, migração
+  `202608120005`): o Supabase Auth guarda **bcrypt**, que não volta — então o painel captura a
+  senha **no momento em que a define** (`create_loader` / `update_loader_password`) e guarda
+  cifrada em AES-GCM. A chave é o secret `KYBERROCK_CREDENTIAL_KEY`, que vive **fora do banco**:
+  dump de `user_password_vault` sozinho não abre nada. Tabela separada de `user_profiles` de
+  propósito — o `list` faz `select("*")` nos perfis, e uma coluna ali viajaria para o navegador
+  em todo carregamento. A gravação é **best-effort**: cadastro nunca falha porque o cofre falhou.
+  Senha definida antes do cofre, ou trocada fora do painel, continua irrecuperável e a tela manda
+  redefinir. O token do desktop (**SHA-256** em `device_registrations.token_hash`) **não tem
+  cofre**: o valor em claro só existe na máquina ativada, e a saída é gerar novo código de
+  ativação.
 
 ## Backoffice financeiro
 
