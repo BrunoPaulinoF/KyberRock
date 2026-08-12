@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { verifyAdminSession } from "../_shared/admin-session.ts";
 import { deviceUnitAssignment } from "../_shared/device-unit.ts";
@@ -9,8 +10,20 @@ import {
   isEmailAlreadyRegisteredError
 } from "../_shared/admin-users.ts";
 import type { AuthUserGateway } from "../_shared/admin-users.ts";
+import {
+  buildCompanyCredentials,
+  buildDeviceCredentials,
+  buildUserCredentials
+} from "../_shared/admin-credentials.ts";
 
-type SupabaseAdminClient = ReturnType<typeof createClient>;
+/**
+ * Cliente generico do Supabase. Nao usamos `ReturnType<typeof createClient>`
+ * porque, sem um tipo `Database` gerado, o retorno concreto tipa as tabelas como
+ * `never` e todo `.insert()`/`.update()` deste arquivo vira erro de compilacao —
+ * mesmo o payload sendo valido em tempo de execucao. Mesmo motivo do
+ * `admin-billing`.
+ */
+type SupabaseAdminClient = SupabaseClient;
 
 /** Adapta o cliente Supabase ao gateway minimo usado pelos helpers de `_shared/admin-users.ts`. */
 function authUsers(supabase: SupabaseAdminClient): AuthUserGateway {
@@ -65,7 +78,8 @@ type AdminAction =
   | "update_device_unit"
   | "delete_device"
   | "get_ai_settings"
-  | "update_ai_settings";
+  | "update_ai_settings"
+  | "reveal_credentials";
 
 /**
  * Configuracao da IA do assistente da documentacao. E uma linha unica e global:
@@ -502,6 +516,78 @@ Deno.serve(async (req) => {
       }
     }
 
+    /**
+     * Credenciais de UM cadastro, sob demanda (o botao de olho do console).
+     *
+     * Fica fora do `list` de proposito: segredo que viaja em todo carregamento
+     * de tela e segredo em cache de navegador, log de proxy e aba aberta a
+     * tarde inteira. Aqui ele so sai quando alguem pede, para um registro.
+     *
+     * O que nao da para mostrar (senha do usuario, token do desktop) volta com
+     * `value: null` e o motivo — ver `_shared/admin-credentials.ts`.
+     */
+    if (body.action === "reveal_credentials") {
+      const type = String(payload.type ?? "");
+      const id = String(payload.id ?? "");
+      if (!id) return jsonResponse({ error: "Registro nao informado" }, 400);
+
+      if (type === "company") {
+        const { data, error } = await supabase
+          .from("companies")
+          .select(
+            "id, name, legal_name, document, omie_app_key, omie_app_secret, price_change_password, desktop_activation_code, desktop_activation_code_rotated_at"
+          )
+          .eq("id", id)
+          .single();
+        if (error) throw error;
+        await recordCredentialAccess(supabase, {
+          companyId: id,
+          entityType: "company",
+          entityId: id
+        });
+        return jsonResponse({ ok: true, bundle: buildCompanyCredentials(data) });
+      }
+
+      if (type === "user") {
+        const { data, error } = await supabase
+          .from("user_profiles")
+          .select("id, name, email, role, is_active, company_id")
+          .eq("id", id)
+          .single();
+        if (error) throw error;
+        await recordCredentialAccess(supabase, {
+          companyId: (data as { company_id?: string }).company_id ?? null,
+          entityType: "user",
+          entityId: id
+        });
+        return jsonResponse({ ok: true, bundle: buildUserCredentials(data) });
+      }
+
+      if (type === "device") {
+        const { data: device, error: deviceError } = await supabase
+          .from("device_registrations")
+          .select("id, name, company_id, unit_id, is_active, last_seen_at")
+          .eq("id", id)
+          .single();
+        if (deviceError) throw deviceError;
+        const { data: company, error: companyError } = await supabase
+          .from("companies")
+          .select("id, name, desktop_activation_code")
+          .eq("id", (device as { company_id: string }).company_id)
+          .single();
+        if (companyError) throw companyError;
+        await recordCredentialAccess(supabase, {
+          companyId: (device as { company_id?: string }).company_id ?? null,
+          unitId: (device as { unit_id?: string }).unit_id ?? null,
+          entityType: "device",
+          entityId: id
+        });
+        return jsonResponse({ ok: true, bundle: buildDeviceCredentials(device, company) });
+      }
+
+      return jsonResponse({ error: "Tipo de cadastro invalido" }, 400);
+    }
+
     if (body.action === "get_ai_settings") {
       const { data, error } = await supabase
         .from(AI_SETTINGS_TABLE)
@@ -575,6 +661,37 @@ function getErrorMessage(error: unknown): string {
     return String((error as { message?: unknown }).message ?? "Erro inesperado");
   }
   return "Erro inesperado";
+}
+
+/**
+ * Registra QUE alguem abriu as credenciais de um cadastro — nunca o que foi
+ * exibido. A trilha existe para responder "quem viu a app key do OMIE na semana
+ * passada"; gravar o valor junto transformaria a propria auditoria num segundo
+ * lugar de onde o segredo vaza.
+ *
+ * Best-effort: falha de trilha nao pode derrubar a consulta.
+ */
+async function recordCredentialAccess(
+  supabase: SupabaseAdminClient,
+  input: {
+    companyId?: string | null;
+    unitId?: string | null;
+    entityType: string;
+    entityId: string;
+  }
+): Promise<void> {
+  try {
+    await supabase.from("audit_logs").insert({
+      company_id: input.companyId ?? null,
+      unit_id: input.unitId ?? null,
+      entity_type: input.entityType,
+      entity_id: input.entityId,
+      action: "credentials_revealed",
+      reason: "Consulta de credenciais pelo painel administrativo"
+    });
+  } catch {
+    // Trilha e diagnostico, nao pre-requisito.
+  }
 }
 
 function generateSixDigitCode(): string {

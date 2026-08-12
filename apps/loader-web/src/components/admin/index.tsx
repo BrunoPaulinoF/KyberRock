@@ -95,6 +95,46 @@ export function LinkButton({
   );
 }
 
+/**
+ * Olho: acao de "ver credenciais" de um cadastro. Icone em vez de texto porque
+ * ele repete em toda linha da tabela — quatro colunas de acao com rotulo escrito
+ * empurrariam a informacao para fora da tela.
+ */
+export function EyeIcon() {
+  return (
+    <svg
+      width="15"
+      height="15"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+/** Botao de olho com rotulo acessivel — o icone sozinho nao diz nada a um leitor de tela. */
+export function EyeButton({ onClick, title }: { onClick: () => void; title: string }) {
+  return (
+    <button
+      type="button"
+      className="adm-btn adm-btn-sm adm-btn-icon"
+      onClick={onClick}
+      title={title}
+    >
+      <EyeIcon />
+      <span className="adm-sr-only">{title}</span>
+    </button>
+  );
+}
+
 export function ButtonGroup({ children }: { children: ReactNode }) {
   return <div className="adm-btn-group">{children}</div>;
 }

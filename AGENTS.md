@@ -195,6 +195,16 @@ offending link of the chain, not above the `return`.
   listagem ficar com a largura toda.
 - `components/admin/smoke.test.tsx` renderiza os primitivos com `react-dom/server` — é o que
   pega erro de runtime nos componentes sem precisar de jsdom no repositório.
+- **Botão de olho (`reveal_credentials`)**: mostra as credenciais de UM cadastro, sob demanda —
+  fora do `list`, porque segredo que viaja em todo carregamento de tela fica em cache de
+  navegador e log de proxy. O que é recuperável e o que não é vive em
+  `_shared/admin-credentials.ts` (puro e testado): `companies` guarda app key, app secret, senha
+  de preços e código de ativação em **texto** (o desktop precisa recebê-los de volta); a senha do
+  usuário é **bcrypt** no Supabase Auth e o token do desktop é **SHA-256** em
+  `device_registrations.token_hash` — não há caminho de volta para nenhum dos dois, e a tela diz
+  isso com o motivo e a saída (definir nova senha / gerar novo código). Cada consulta grava
+  `credentials_revealed` em `audit_logs` **sem o valor**: auditoria que guarda o segredo vira um
+  segundo lugar de onde ele vaza.
 
 ## Backoffice financeiro
 
