@@ -46,6 +46,29 @@ describe("encodeEscPos", () => {
     expect(encodeEscPos(["CUPOM"], 80, null).equals(encodeEscPos(["CUPOM"], 80))).toBe(true);
   });
 
+  /**
+   * O cupom em texto puro ja centraliza com espacos (e a mesma linha que alimenta o HTML e a
+   * previa). A impressora centraliza de novo pelo ESC a 1, entao os dois recuos se somavam e
+   * empurravam a linha para a direita — o "COD 000123" saia encostado na borda do papel.
+   */
+  it("centraliza a linha pelo comando, sem somar o recuo que ela ja trazia", () => {
+    const recuada = encodeEscPos(["                   COD 000123"], 80);
+    const semRecuo = encodeEscPos(["COD 000123"], 80);
+
+    expect(recuada.equals(semRecuo)).toBe(true);
+    // ESC a 1 (centralizar) seguido do texto, sem espacos entre eles.
+    expect([...recuada].includes(0x01)).toBe(true);
+    expect(recuada.toString("ascii")).toContain("COD 000123");
+    expect(recuada.toString("ascii")).not.toContain(" COD 000123");
+  });
+
+  it("preserva o recuo das linhas que nao sao centralizadas", () => {
+    // Colunas Quantidade/Unitario/Total: o recuo E o alinhamento da coluna.
+    const colunas = "    6,500 TN    120,0000      780,00";
+
+    expect(encodeEscPos([colunas], 80).toString("ascii")).toContain(colunas);
+  });
+
   it("turns transparent pixels into paper instead of a black block", () => {
     const transparent = packRasterImage(bgraPixels(8, 1, [0, 0, 0, 0]), 8, 1);
     const opaque = packRasterImage(bgraPixels(8, 1, [0, 0, 0, 255]), 8, 1);

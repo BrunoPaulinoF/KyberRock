@@ -90,6 +90,12 @@ export interface ReceiptStyle {
 
 export interface ReceiptTemplateConfig extends ReceiptStyle {
   mode: "default" | "custom";
+  /**
+   * Telefone da pedreira, escrito na tela de impressao e impresso no rodape do cupom para
+   * o cliente ligar depois (duvida na carga, segunda via, reclamacao). Vazio: a linha nao
+   * sai. Nao se confunde com `customerPhone`, que e o telefone de QUEM comprou.
+   */
+  companyPhone: string;
   showCompanyHeader: boolean;
   showCopyInfo: boolean;
   showCustomerInfo: boolean;
@@ -125,6 +131,7 @@ export const DEFAULT_RECEIPT_STYLE: ReceiptStyle = {
 export const DEFAULT_RECEIPT_TEMPLATE_CONFIG: ReceiptTemplateConfig = {
   ...DEFAULT_RECEIPT_STYLE,
   mode: "default",
+  companyPhone: "",
   showCompanyHeader: true,
   showCopyInfo: true,
   showCustomerInfo: true,
@@ -162,12 +169,33 @@ function normalizeLogoAlignment(value: unknown): ReceiptLogoAlignment {
   return value === "left" || value === "right" ? value : "center";
 }
 
+/**
+ * Teto do telefone da pedreira: cabe o numero fixo, o celular e um 0800 na mesma linha de
+ * contato (que o cupom quebra em duas, se precisar). Acima disso ja nao e contato, e texto
+ * — e o rodape do cupom nao e lugar para isso.
+ */
+const RECEIPT_PHONE_MAX_LENGTH = 60;
+
+/** Rotulo do telefone da pedreira no cupom. */
+export const RECEIPT_CONTACT_LABEL = "CONTATO:";
+
+/**
+ * Telefone da pedreira como ele e guardado e impresso. Fica em uma unica linha (o operador
+ * pode colar um numero com quebra) e nao tenta reformatar o que foi digitado: cada pedreira
+ * escreve do jeito que quer ser chamada ("(11) 3333-4444 / WhatsApp 99999-8888").
+ */
+export function normalizeReceiptPhone(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value.replace(/\s+/g, " ").trim().slice(0, RECEIPT_PHONE_MAX_LENGTH);
+}
+
 export function normalizeReceiptTemplateConfig(
   config: Partial<ReceiptTemplateConfig> | null | undefined
 ): ReceiptTemplateConfig {
   if (!config) return { ...DEFAULT_RECEIPT_TEMPLATE_CONFIG };
   return {
     mode: config.mode === "custom" ? "custom" : "default",
+    companyPhone: normalizeReceiptPhone(config.companyPhone),
     showCompanyHeader: config.showCompanyHeader ?? true,
     showCopyInfo: config.showCopyInfo ?? true,
     showCustomerInfo: config.showCustomerInfo ?? true,
@@ -212,15 +240,17 @@ export function normalizeReceiptTemplateConfig(
 /**
  * Configuracao que vale de fato na hora de imprimir. No modo "Padrao" toda a
  * personalizacao e ignorada — o cupom sai exatamente no modelo atual, mesmo que o
- * operador tenha mexido nos campos antes de voltar para o padrao. So a logo escapa
- * disso: ela e do cadastro da pedreira, nao um enfeite do modelo, e sempre imprime.
+ * operador tenha mexido nos campos antes de voltar para o padrao. Duas coisas escapam
+ * disso, porque sao DADO da pedreira e nao enfeite do modelo: a logo (que nem mora aqui,
+ * vem do perfil de impressao) e o telefone de contato. Quem digita o telefone quer que ele
+ * saia no cupom; ir para "Padrao" nao pode apagar o numero do papel sem avisar.
  */
 export function resolveReceiptTemplateConfig(
   config: Partial<ReceiptTemplateConfig> | null | undefined
 ): ReceiptTemplateConfig {
   const normalized = normalizeReceiptTemplateConfig(config);
   if (normalized.mode !== "custom") {
-    return { ...DEFAULT_RECEIPT_TEMPLATE_CONFIG };
+    return { ...DEFAULT_RECEIPT_TEMPLATE_CONFIG, companyPhone: normalized.companyPhone };
   }
   return normalized;
 }
@@ -501,6 +531,17 @@ function buildBodyLines(input: ReceiptTemplateInput, config: ReceiptTemplateConf
     lines.push(dashed(), "AGRADECEMOS PELA PREFERENCIA! VOLTE SEMPRE", dashed());
   }
 
+  // Telefone da pedreira, para o cliente falar com quem vendeu depois de sair da balanca.
+  // Sai independente dos blocos do layout (como a observacao do frete): quem preencheu o
+  // numero quer ser encontrado. Vazio, a linha nem existe — nao sobra rotulo solto no papel.
+  const contactPhone = config.companyPhone.trim();
+  if (contactPhone) {
+    // Sem a mensagem de rodape nao ha linha nenhuma separando: o contato colaria no
+    // "Motorista:" da linha de cima.
+    if (!config.showFooter) lines.push(dashed());
+    lines.push(...wrapReceiptText(`${RECEIPT_CONTACT_LABEL} ${contactPhone}`));
+  }
+
   if (config.customFooterText.trim()) {
     lines.push(config.customFooterText.trim().toUpperCase());
   }
@@ -556,6 +597,72 @@ export function buildSampleReceiptInput(printedAt: string): ReceiptTemplateInput
     freightNote: "Entregar na obra do centro - falar com o encarregado",
     totalCents: 78_000
   };
+}
+
+/**
+ * Folga entre a borda do papel e o cupom, em cada lado. O HTML enviado para a impressora e
+ * a previa da tela usam a MESMA folga: e ela que define a faixa util onde as 48 colunas da
+ * linha precisam caber, e uma diferenca aqui faria a previa quebrar linha onde o papel nao
+ * quebra (ou o contrario).
+ */
+export const RECEIPT_PAPER_MARGIN_MM = 4;
+
+/** Faixa util do papel: onde o cupom e desenhado, ja sem as margens das duas bordas. */
+export function receiptContentWidthMm(paperWidthMm: number): number {
+  const usable = paperWidthMm - 2 * RECEIPT_PAPER_MARGIN_MM;
+  return usable >= 20 ? usable : 20;
+}
+
+/**
+ * Avanco de um caractere da fonte monoespacada do cupom, como fracao do corpo. A pilha
+ * comeca na Consolas (`RECEIPT_FONT_STACKS`), que todo Windows tem e cujo avanco e
+ * 1126/2048 = 0,5498 em — e ela que desenha o cupom na impressora e na previa. A Courier
+ * New, usada so se a Consolas faltar, e ~9% mais larga: nesse caso a linha QUEBRA (nada e
+ * perdido), nunca sai cortada.
+ */
+const RECEIPT_MONOSPACE_ADVANCE_EM = 0.55;
+
+/** Pixel de referencia do CSS: 96 px por polegada. */
+const CSS_PX_PER_MM = 96 / 25.4;
+
+/** Piso do corpo: abaixo disso o cupom fica ilegivel — melhor deixar a linha quebrar. */
+const RECEIPT_MIN_BODY_FONT_SIZE_PX = 6;
+
+/**
+ * Linha puramente decorativa que ocupa a largura inteira do papel: o divisor de tracos e a
+ * linha de assinatura. Sao as unicas linhas do cupom que usam as 48 colunas ate o fim, e por
+ * isso as unicas que precisam do tamanho de fonte que caiba na faixa util — o texto do cupom
+ * e mais curto que isso. Reconhecidas pelo conteudo (so tracos, iguais, na largura da linha)
+ * para o renderizador nao precisar saber quem as escreveu.
+ */
+export function isReceiptRuleLine(line: string): boolean {
+  return line.length >= RECEIPT_LINE_WIDTH && /^(-+|_+|=+)$/.test(line);
+}
+
+/**
+ * Corpo do cupom no tamanho que faz as 48 colunas da linha caberem na faixa util do papel.
+ *
+ * O cupom e escrito em colunas fixas (divisores de 48 tracos, blocos
+ * Quantidade/Unitario/Total, linha de assinatura), a mesma largura que a impressora ESC/POS
+ * imprime com a fonte A em 72 mm. No HTML, quem manda na largura e o tamanho da fonte: com
+ * o corpo em 11 px a linha de 48 caracteres passa dos 72 mm e o papel corta o fim de cada
+ * divisor (ou, no melhor caso, quebra em um pedaco solto de tracos). Este teto e o mesmo na
+ * impressao e na previa, entao a tela mostra a quebra que o papel vai ter.
+ *
+ * So vale para a familia monoespacada: nas outras o cupom nao tem grade de colunas para
+ * respeitar, e as fontes proporcionais sao mais estreitas que a grade de qualquer forma.
+ */
+export function fitReceiptBodyFontSizePx(
+  fontSizePx: number,
+  fontFamily: ReceiptFontFamily,
+  contentWidthMm: number
+): number {
+  if (fontFamily !== "monospace") return fontSizePx;
+  const maxPx =
+    (contentWidthMm * CSS_PX_PER_MM) / (RECEIPT_LINE_WIDTH * RECEIPT_MONOSPACE_ADVANCE_EM);
+  // Uma casa decimal: o cupom aproveita o papel inteiro sem depender de arredondamento.
+  const fitted = Math.floor(Math.min(fontSizePx, maxPx) * 10) / 10;
+  return Math.max(RECEIPT_MIN_BODY_FONT_SIZE_PX, fitted);
 }
 
 /** Pilha de fontes de cada familia, compartilhada entre a previa e o HTML de impressao. */
@@ -658,7 +765,7 @@ export function formatReceiptNumber(receiptNumber: number, deviceNumber?: number
 }
 
 /** Largura util do papel de 80 mm, em caracteres — a mesma do divisor. */
-const RECEIPT_LINE_WIDTH = 48;
+export const RECEIPT_LINE_WIDTH = 48;
 
 function divider(): string {
   return "------------------------------------------------";

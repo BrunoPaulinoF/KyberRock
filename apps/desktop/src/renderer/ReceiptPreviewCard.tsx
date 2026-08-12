@@ -3,8 +3,12 @@ import {
   buildReceiptDocument,
   buildSampleReceiptInput,
   DEFAULT_RECEIPT_TEMPLATE_CONFIG,
-  RECEIPT_FONT_STACKS,
+  fitReceiptBodyFontSizePx,
+  isReceiptRuleLine,
+  receiptContentWidthMm,
   receiptOperationCodeLine,
+  RECEIPT_FONT_STACKS,
+  RECEIPT_PAPER_MARGIN_MM,
   type ReceiptTemplateConfig
 } from "@kyberrock/print-templates";
 
@@ -141,6 +145,14 @@ function ReceiptPaper({
   );
   const style = document.style;
   const header = document.header;
+  // Faixa util e tamanho das linhas decorativas saem das MESMAS funcoes do HTML de
+  // impressao: a previa quebra linha (ou nao) exatamente como o papel.
+  const contentWidthMm = receiptContentWidthMm(paperWidthMm);
+  const ruleFontSizePx = fitReceiptBodyFontSizePx(
+    style.fontSizePx,
+    style.fontFamily,
+    contentWidthMm
+  );
   const logoJustify =
     style.logoAlignment === "left"
       ? "flex-start"
@@ -157,11 +169,13 @@ function ReceiptPaper({
         margin: "0 auto",
         background: "#fff",
         color: "#000",
-        padding: "4mm",
+        padding: `${RECEIPT_PAPER_MARGIN_MM}mm`,
         boxShadow: "0 1px 6px rgba(0,0,0,0.25)",
         fontFamily: RECEIPT_FONT_STACKS[style.fontFamily],
         fontSize: `${style.fontSizePx}px`,
-        boxSizing: "border-box"
+        boxSizing: "border-box",
+        // O papel corta o que passa da borda; a previa tem que cortar no mesmo lugar.
+        overflow: "hidden"
       }}
     >
       {/*
@@ -282,17 +296,40 @@ function ReceiptPaper({
           fontWeight: style.boldBody ? 700 : undefined
         }}
       >
-        {renderPreviewBody(document.bodyLines.join("\n"), style.numberFontSizePx, style.fontSizePx)}
+        {renderPreviewBody(document.bodyLines, style, ruleFontSizePx)}
       </pre>
     </div>
   );
 }
 
 /**
+ * Corpo do cupom como o HTML de impressao monta: linha decorativa (divisor, assinatura) no
+ * tamanho que cabe na faixa util do papel e numeros no tamanho configurado para numeros.
+ */
+function renderPreviewBody(
+  bodyLines: string[],
+  style: { numberFontSizePx: number; fontSizePx: number },
+  ruleFontSizePx: number
+): React.ReactNode {
+  return bodyLines.map((line, index) => (
+    <span key={index}>
+      {isReceiptRuleLine(line) ? (
+        // `pre` (nao quebra) e o mesmo comportamento do cupom impresso: o traco que sobrar
+        // e cortado na borda do papel em vez de virar um toco de tracos na linha de baixo.
+        <span style={{ fontSize: `${ruleFontSizePx}px`, whiteSpace: "pre" }}>{line}</span>
+      ) : (
+        renderPreviewLine(line, style.numberFontSizePx, style.fontSizePx)
+      )}
+      {index < bodyLines.length - 1 ? "\n" : null}
+    </span>
+  ));
+}
+
+/**
  * Aplica o tamanho configurado para numeros apenas nos numeros — o mesmo recorte que o
  * HTML de impressao faz com `<span class="num">`.
  */
-function renderPreviewBody(
+function renderPreviewLine(
   text: string,
   numberFontSizePx: number,
   fontSizePx: number

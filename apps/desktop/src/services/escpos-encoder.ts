@@ -67,9 +67,14 @@ export function encodeEscPos(
       continue;
     }
 
-    if (isCenterCandidate(trimmed)) {
+    // A impressora centraliza pelo comando (ESC a 1), entao o recuo que o texto ja trazia
+    // (o cupom em texto puro centraliza com espacos, para o ESC/POS e o HTML lerem a mesma
+    // linha) seria somado ao dela e empurraria a linha para a direita — era assim que o
+    // "COD 000123" saia deslocado, encostando na borda do papel.
+    const centeredText = trimmed.trimStart();
+    if (isCenterCandidate(centeredText)) {
       buffers.push(Buffer.from([ESC, 0x61, 0x01]));
-      buffers.push(Buffer.from(toAsciiSafe(trimmed.slice(0, maxChars)) + "\n", "ascii"));
+      buffers.push(Buffer.from(toAsciiSafe(centeredText.slice(0, maxChars)) + "\n", "ascii"));
       buffers.push(Buffer.from([ESC, 0x61, 0x00]));
       continue;
     }

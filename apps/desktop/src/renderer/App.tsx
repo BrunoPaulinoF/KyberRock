@@ -46,6 +46,7 @@ import {
   DEFAULT_RECEIPT_STYLE,
   DEFAULT_RECEIPT_TEMPLATE_CONFIG,
   formatReceiptNumber,
+  RECEIPT_CONTACT_LABEL,
   type ReceiptFontFamily,
   type ReceiptTemplateConfig
 } from "@kyberrock/print-templates";
@@ -3948,6 +3949,29 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       </label>
                     </div>
                   </div>
+                  {/*
+                    Telefone da pedreira: dado do cadastro, nao enfeite do layout — por isso
+                    fica fora do editor visual e vale nos dois modelos (padrao e
+                    personalizado), como a logo.
+                  */}
+                  <label style={styles.fieldLabel}>
+                    Telefone da pedreira no cupom
+                    <input
+                      type="text"
+                      value={receiptTemplateConfig.companyPhone}
+                      maxLength={60}
+                      placeholder="(11) 3333-4444"
+                      onChange={(event) =>
+                        updateReceiptTemplateConfig({ companyPhone: event.target.value })
+                      }
+                      style={styles.input}
+                    />
+                    <span style={{ ...styles.muted, fontSize: "11px" }}>
+                      Sai no rodape do cupom como "{RECEIPT_CONTACT_LABEL} ...", para o cliente
+                      falar com a pedreira depois de sair da balanca. Em branco, a linha nao aparece
+                      no cupom.
+                    </span>
+                  </label>
                   <div style={{ display: "grid", gap: "10px", margin: "12px 0" }}>
                     <div style={styles.sectionHeader}>
                       <span style={styles.sectionIcon}>N</span>

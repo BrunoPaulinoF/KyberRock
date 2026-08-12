@@ -15,7 +15,7 @@ import type { DesktopDatabase } from "../database/sqlite.js";
 import type { LocalDesktopIdentity } from "./bootstrap.js";
 import { freightValueGoesToInvoice } from "./freight.js";
 import { enqueueSyncJob } from "./sync-queue.js";
-import { isClosedOperationStatus } from "./weighing-operations.js";
+import { isClosedOperationStatus, nextOperationCode } from "./weighing-operations.js";
 
 export type PrintReceiptStatus = "printed" | "failed";
 export type PrinterType = "windows" | "network";
@@ -291,6 +291,8 @@ export async function printWeighingReceipt(
     throw new Error("Only closed operations can be printed.");
   }
 
+  ensureOperationCode(database, operation, now);
+
   const profile = getActiveReceiptPrintProfile(database, input.identity.deviceId);
   const copies = Math.max(profile?.copies ?? 2, 2);
   const receiptNumber = getNextReceiptNumber(database, input.identity.unitId);
@@ -325,6 +327,7 @@ export async function reprintWeighingReceipt(
 ): Promise<PrintReceiptSummary> {
   const originalReceipt = getRequiredPrintReceipt(database, input.receiptId);
   const operation = getOperationForReceipt(database, originalReceipt.operationId);
+  ensureOperationCode(database, operation, now);
   const copyNumber = getNextCopyNumber(database, originalReceipt.operationId);
 
   return writeReceiptAttempt(
@@ -678,6 +681,45 @@ function getOperationForReceipt(
   }
 
   return row;
+}
+
+/**
+ * Garante que a operacao tenha o codigo sequencial que abre o cupom ("COD 000123"). Sem ele
+ * o papel sai sem a linha e o operador nao tem como achar a venda a partir do cupom em maos.
+ *
+ * Toda operacao aberta nesta balanca ja nasce com codigo, mas uma que veio da nuvem pode
+ * chegar sem — a projecao so passou a levar o campo depois de ele existir, e uma balanca em
+ * versao antiga na mesma pedreira continua publicando operacao sem codigo. Em vez de imprimir
+ * um cupom mudo, a operacao entra na sequencia da pedreira aqui, na hora da impressao: o
+ * `updated_at` novo faz a reconciliacao republicar o codigo para as outras maquinas.
+ *
+ * Idempotente: o `WHERE operation_code IS NULL` impede que uma reimpressao renumere um cupom
+ * que ja saiu com codigo.
+ */
+function ensureOperationCode(
+  database: DesktopDatabase,
+  operation: OperationReceiptRow,
+  now: Date
+): void {
+  if (typeof operation.operation_code === "number" && operation.operation_code > 0) {
+    return;
+  }
+
+  const code = nextOperationCode(database, operation.unit_id);
+  const changes = database
+    .prepare(
+      `UPDATE weighing_operations SET operation_code = ?, updated_at = ?
+       WHERE id = ? AND operation_code IS NULL`
+    )
+    .run(code, now.toISOString(), operation.id).changes;
+
+  operation.operation_code =
+    changes > 0
+      ? code
+      : ((database
+          .prepare("SELECT operation_code FROM weighing_operations WHERE id = ?")
+          .pluck()
+          .get(operation.id) as number | null | undefined) ?? null);
 }
 
 /**

@@ -7,8 +7,12 @@ import {
   buildSampleReceiptInput,
   DEFAULT_RECEIPT_STYLE,
   DEFAULT_RECEIPT_TEMPLATE_CONFIG,
+  fitReceiptBodyFontSizePx,
+  isReceiptRuleLine,
   NON_FISCAL_SALE_LABEL,
   normalizeReceiptTemplateConfig,
+  receiptContentWidthMm,
+  RECEIPT_LINE_WIDTH,
   resolveReceiptTemplateConfig
 } from "./receipt-template";
 
@@ -347,6 +351,115 @@ describe("buildReceiptDocument", () => {
       numberFontSizePx: 16,
       showLogo: false
     });
+  });
+});
+
+describe("telefone da pedreira no cupom", () => {
+  it("imprime o contato no rodape quando o numero esta preenchido", () => {
+    const lines = buildReceiptLinesWithConfig(baseInput(), {
+      ...DEFAULT_RECEIPT_TEMPLATE_CONFIG,
+      companyPhone: "(11) 3333-4444"
+    });
+
+    expect(lines).toContain("CONTATO: (11) 3333-4444");
+    // Depois da mensagem de rodape: e a ultima coisa que o cliente le no papel.
+    expect(lines.indexOf("CONTATO: (11) 3333-4444")).toBeGreaterThan(
+      lines.findIndex((line) => line.includes("AGRADECEMOS"))
+    );
+  });
+
+  it("nao deixa rastro no cupom quando o numero esta vazio", () => {
+    const lines = buildReceiptLinesWithConfig(baseInput(), DEFAULT_RECEIPT_TEMPLATE_CONFIG);
+
+    expect(lines.some((line) => line.includes("CONTATO"))).toBe(false);
+  });
+
+  // O telefone e dado da pedreira, nao escolha de layout: quem digitou o numero quer o
+  // numero no papel, mesmo com o modelo em "Padrao" (que zera o resto da personalizacao).
+  it("continua saindo no modelo padrao", () => {
+    const resolved = resolveReceiptTemplateConfig({
+      ...DEFAULT_RECEIPT_TEMPLATE_CONFIG,
+      mode: "default",
+      companyPhone: "(11) 3333-4444",
+      customFooterText: "Texto que nao deve sair"
+    });
+
+    expect(resolved.companyPhone).toBe("(11) 3333-4444");
+    expect(resolved.customFooterText).toBe("");
+    expect(buildReceiptLinesWithConfig(baseInput(), resolved)).toContain("CONTATO: (11) 3333-4444");
+  });
+
+  it("separa o contato do corpo mesmo com a mensagem de rodape desligada", () => {
+    const lines = buildReceiptLinesWithConfig(baseInput(), {
+      ...DEFAULT_RECEIPT_TEMPLATE_CONFIG,
+      mode: "custom",
+      showFooter: false,
+      companyPhone: "(11) 3333-4444"
+    });
+    const contactIndex = lines.indexOf("CONTATO: (11) 3333-4444");
+
+    expect(contactIndex).toBeGreaterThan(0);
+    expect(lines[contactIndex - 1]).toMatch(/^-+$/);
+  });
+
+  it("guarda o numero em uma linha so e com teto de tamanho", () => {
+    const normalized = normalizeReceiptTemplateConfig({
+      mode: "custom",
+      companyPhone: `  (11) 3333-4444 \n / WhatsApp ${"9".repeat(80)}  `
+    });
+
+    expect(normalized.companyPhone.includes("\n")).toBe(false);
+    expect(normalized.companyPhone.length).toBeLessThanOrEqual(60);
+    expect(normalized.companyPhone.startsWith("(11) 3333-4444 / WhatsApp")).toBe(true);
+  });
+
+  it("nao quebra o cupom com um contato mais longo que a linha", () => {
+    const lines = buildReceiptLinesWithConfig(baseInput(), {
+      ...DEFAULT_RECEIPT_TEMPLATE_CONFIG,
+      companyPhone: "(11) 3333-4444 / (11) 98888-7777 / 0800 123456"
+    });
+
+    // Quebrado em palavras, nunca uma linha maior que o papel (que a impressora cortaria).
+    expect(lines.every((line) => line.length <= RECEIPT_LINE_WIDTH)).toBe(true);
+    expect(lines.join(" ")).toContain("0800 123456");
+  });
+});
+
+/**
+ * A largura do cupom impresso nao pode depender do tamanho de pagina que o driver informa
+ * — foi o que fez a logo e o numero do cupom sumirem do papel (ver `buildReceiptHtml`).
+ */
+describe("geometria do papel", () => {
+  it("desconta as duas margens da faixa util", () => {
+    expect(receiptContentWidthMm(80)).toBe(72);
+    expect(receiptContentWidthMm(58)).toBe(50);
+  });
+
+  it("reconhece as linhas decorativas que ocupam a largura inteira", () => {
+    expect(isReceiptRuleLine("-".repeat(RECEIPT_LINE_WIDTH))).toBe(true);
+    expect(isReceiptRuleLine("_".repeat(RECEIPT_LINE_WIDTH))).toBe(true);
+    expect(isReceiptRuleLine("Cliente: Cliente Teste")).toBe(false);
+    expect(isReceiptRuleLine("-".repeat(10))).toBe(false);
+  });
+
+  it("reduz o corpo monoespacado ate as 48 colunas caberem no papel", () => {
+    const fitted = fitReceiptBodyFontSizePx(11, "monospace", receiptContentWidthMm(80));
+
+    expect(fitted).toBeLessThan(11);
+    // 48 colunas da fonte do cupom (Consolas, 0,55 em) dentro dos 72 mm uteis.
+    expect(fitted * RECEIPT_LINE_WIDTH * 0.55).toBeLessThanOrEqual((72 * 96) / 25.4);
+  });
+
+  it("nao aumenta um corpo que ja cabe, nem some no papel estreito", () => {
+    expect(fitReceiptBodyFontSizePx(7, "monospace", receiptContentWidthMm(80))).toBe(7);
+    expect(
+      fitReceiptBodyFontSizePx(11, "monospace", receiptContentWidthMm(58))
+    ).toBeGreaterThanOrEqual(6);
+  });
+
+  it("nao mexe nas fontes proporcionais, que nao tem grade de colunas", () => {
+    expect(fitReceiptBodyFontSizePx(16, "sans", receiptContentWidthMm(80))).toBe(16);
+    expect(fitReceiptBodyFontSizePx(16, "condensed", receiptContentWidthMm(80))).toBe(16);
   });
 });
 
