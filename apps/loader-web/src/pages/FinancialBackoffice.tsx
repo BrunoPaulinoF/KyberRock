@@ -23,69 +23,44 @@ import type {
   BillingSettingsView,
   BillingSummary
 } from "../lib/billing";
+import {
+  Badge,
+  Button,
+  ButtonGroup,
+  Checkbox,
+  ConfirmDialog,
+  CopyButton,
+  DataTable,
+  Field,
+  Fieldset,
+  LinkButton,
+  Modal,
+  Note,
+  PageHead,
+  Panel,
+  Stat,
+  StatGrid
+} from "../components/admin";
+import type { Column } from "../components/admin";
 
 /**
- * Backoffice financeiro — a aba "Financeiro" do painel administrativo.
+ * Backoffice financeiro — secao "Financeiro" do console administrativo.
  *
  * E a cobranca DA PLATAFORMA: a Kybernan fatura cada pedreira pelo valor
  * acertado no cadastro dela. Nada aqui tem relacao com o financeiro das
- * operacoes da balanca (esse vive no OMIE e no relatorio de vendas), e por isso
- * a tela e separada dos cadastros.
+ * operacoes da balanca (esse vive no OMIE e no relatorio de vendas).
  *
  * Toda regra (fechamento, rateio da primeira fatura, vencimento, boleto do
  * Mercado Pago, envio por WhatsApp, bloqueio por inadimplencia) roda na Edge
  * Function `admin-billing`, que compartilha o motor com a passada automatica do
  * `billing-run`. Esta tela dispara acoes e mostra resultado — nunca recalcula
  * data ou valor por conta propria.
+ *
+ * As credenciais NAO sao editaveis aqui: vem sempre dos secrets do Supabase, e
+ * a aba de configuracao apenas exibe a situacao de cada uma.
  */
 
 type FinancialTab = "invoices" | "companies" | "settings";
-
-const CARD: React.CSSProperties = {
-  background: "#fff",
-  padding: "24px",
-  borderRadius: "16px",
-  border: "1px solid #e2e8f0"
-};
-
-const INPUT: React.CSSProperties = {
-  padding: "10px",
-  borderRadius: "8px",
-  border: "1px solid #cbd5e1",
-  width: "100%",
-  boxSizing: "border-box",
-  fontSize: "14px"
-};
-
-const PRIMARY_BUTTON: React.CSSProperties = {
-  padding: "10px 16px",
-  borderRadius: "8px",
-  border: "none",
-  background: "#0f172a",
-  color: "#fff",
-  cursor: "pointer",
-  fontWeight: 700,
-  fontSize: "14px"
-};
-
-const SMALL_BUTTON: React.CSSProperties = {
-  padding: "6px 10px",
-  borderRadius: "6px",
-  border: "1px solid #cbd5e1",
-  background: "#fff",
-  cursor: "pointer",
-  fontSize: "12px",
-  whiteSpace: "nowrap"
-};
-
-const DANGER_BUTTON: React.CSSProperties = {
-  ...SMALL_BUTTON,
-  border: "1px solid #fecaca",
-  background: "#fef2f2",
-  color: "#dc2626"
-};
-
-const MODAL_Z_INDEX = 1300;
 
 interface FinancialData {
   today: string;
@@ -95,19 +70,28 @@ interface FinancialData {
   summary: BillingSummary;
 }
 
+interface ConfirmState {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  onConfirm: () => void;
+}
+
 export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: () => void }) {
-  const [activeTab, setActiveTab] = useState<FinancialTab>("invoices");
+  const [tab, setTab] = useState<FinancialTab>("invoices");
   const [data, setData] = useState<FinancialData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [busyAction, setBusyAction] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<{ tone: "ok" | "danger"; text: string } | null>(null);
 
   const [filterCompanyId, setFilterCompanyId] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
   const [search, setSearch] = useState("");
 
+  const [openInvoiceId, setOpenInvoiceId] = useState<string | null>(null);
   const [editingCompany, setEditingCompany] = useState<BillingCompany | null>(null);
   const [editingInvoice, setEditingInvoice] = useState<BillingInvoice | null>(null);
+  const [confirming, setConfirming] = useState<ConfirmState | null>(null);
 
   const handleError = useCallback(
     (error: unknown, fallback: string) => {
@@ -115,7 +99,7 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
         onSessionExpired();
         return;
       }
-      setFeedback({ tone: "error", text: error instanceof Error ? error.message : fallback });
+      setFeedback({ tone: "danger", text: error instanceof Error ? error.message : fallback });
     },
     [onSessionExpired]
   );
@@ -123,8 +107,7 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
   const load = useCallback(async () => {
     setIsLoading(true);
     try {
-      const response = await callAdminFunction<FinancialData>("admin-billing", { action: "list" });
-      setData(response);
+      setData(await callAdminFunction<FinancialData>("admin-billing", { action: "list" }));
     } catch (error) {
       handleError(error, "Nao foi possivel carregar o financeiro.");
     } finally {
@@ -141,14 +124,14 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
    * o recarregamento a tela mentiria — boleto emitido continuaria "sem boleto"
    * ate alguem apertar F5.
    */
-  const runAction = useCallback(
+  const run = useCallback(
     async (
       key: string,
       action: string,
       payload: Record<string, unknown>,
       successMessage: string
     ): Promise<boolean> => {
-      setBusyAction(key);
+      setBusy(key);
       setFeedback(null);
       try {
         const response = await callAdminFunction<{ warning?: string | null; warnings?: string[] }>(
@@ -159,7 +142,7 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
           (value): value is string => Boolean(value)
         );
         setFeedback({
-          tone: warnings.length > 0 ? "error" : "ok",
+          tone: warnings.length > 0 ? "danger" : "ok",
           text: warnings.length > 0 ? `${successMessage} ${warnings.join(" ")}` : successMessage
         });
         await load();
@@ -168,7 +151,7 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
         handleError(error, "A acao falhou.");
         return false;
       } finally {
-        setBusyAction(null);
+        setBusy(null);
       }
     },
     [handleError, load]
@@ -189,10 +172,17 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
     [data, companiesById, filterCompanyId, filterStatus, search]
   );
 
-  const listTotals = useMemo(() => summarizeInvoiceList(visibleInvoices), [visibleInvoices]);
+  const totals = useMemo(() => summarizeInvoiceList(visibleInvoices), [visibleInvoices]);
 
-  async function handleDownloadPdf(invoice: BillingInvoice): Promise<void> {
-    setBusyAction(`pdf:${invoice.id}`);
+  // O detalhe e resolvido por ID a cada render: guardar o objeto faria o modal
+  // continuar mostrando "sem boleto" logo depois de emitir um.
+  const detailInvoice = useMemo(
+    () => data?.invoices.find((invoice) => invoice.id === openInvoiceId) ?? null,
+    [data, openInvoiceId]
+  );
+
+  async function downloadPdf(invoice: BillingInvoice): Promise<void> {
+    setBusy(`pdf:${invoice.id}`);
     try {
       const response = await callAdminFunction<{ fileName: string; base64: string }>(
         "admin-billing",
@@ -202,349 +192,442 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
     } catch (error) {
       handleError(error, "Nao foi possivel gerar o PDF da fatura.");
     } finally {
-      setBusyAction(null);
+      setBusy(null);
     }
   }
 
   if (isLoading && !data) {
-    return <p style={{ color: "#64748b" }}>Carregando o financeiro...</p>;
+    return (
+      <Panel>
+        <p className="adm-empty">Carregando o financeiro...</p>
+      </Panel>
+    );
   }
   if (!data) {
     return (
-      <div style={CARD}>
-        <p style={{ margin: 0, color: "#b91c1c" }}>
+      <Panel>
+        <Note tone="danger">
           Nao foi possivel carregar o financeiro. Verifique se a Edge Function{" "}
-          <code>admin-billing</code> esta implantada e se a migracao do backoffice financeiro foi
-          aplicada.
-        </p>
-        <button
-          type="button"
-          onClick={() => void load()}
-          style={{ ...PRIMARY_BUTTON, marginTop: "16px" }}
-        >
-          Tentar de novo
-        </button>
-      </div>
+          <code>admin-billing</code> esta implantada e se as migracoes do backoffice foram
+          aplicadas.
+        </Note>
+        <div style={{ marginTop: "16px" }}>
+          <Button variant="primary" onClick={() => void load()}>
+            Tentar de novo
+          </Button>
+        </div>
+      </Panel>
     );
   }
 
-  return (
-    <section style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-      <header
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: "16px",
-          flexWrap: "wrap"
-        }}
-      >
-        <div>
-          <h2 style={{ margin: 0 }}>Financeiro</h2>
-          <p style={{ margin: "4px 0 0 0", fontSize: "13px", color: "#64748b" }}>
-            Mensalidade da plataforma por pedreira: fechamento, fatura, boleto do Mercado Pago,
-            envio por WhatsApp e bloqueio por inadimplencia.
+  const { settings, summary } = data;
+
+  const invoiceColumns: Array<Column<BillingInvoice>> = [
+    {
+      key: "company",
+      header: "Pedreira",
+      render: (invoice) => (
+        <>
+          <span className="adm-cell-primary">
+            {companiesById.get(invoice.company_id) ?? "Pedreira removida"}
+          </span>
+          <p className="adm-cell-sub adm-mono">
+            {invoice.number} · {invoice.reference_label}
           </p>
-        </div>
-        <button
-          type="button"
-          onClick={() =>
-            void runAction(
-              "run-cycle",
-              "run_cycle",
-              {},
-              "Passada de cobranca executada. Confira as faturas abaixo."
-            )
-          }
-          disabled={busyAction === "run-cycle"}
-          style={{ ...PRIMARY_BUTTON, opacity: busyAction === "run-cycle" ? 0.6 : 1 }}
-        >
-          {busyAction === "run-cycle" ? "Processando..." : "Rodar cobranca agora"}
-        </button>
-      </header>
+        </>
+      )
+    },
+    {
+      key: "period",
+      header: "Periodo",
+      render: (invoice) => (
+        <>
+          <span className="adm-mono">
+            {formatDateBr(invoice.period_start)} – {formatDateBr(invoice.period_end)}
+          </span>
+          {invoice.is_prorated && invoice.prorated_days && invoice.full_period_days && (
+            <p className="adm-cell-sub">
+              Proporcional: {invoice.prorated_days}/{invoice.full_period_days} dias
+            </p>
+          )}
+        </>
+      )
+    },
+    {
+      key: "due",
+      header: "Vencimento",
+      render: (invoice) => (
+        <>
+          <span className="adm-mono">{formatDateBr(invoice.due_date)}</span>
+          {invoice.status === "overdue" && (
+            <p className="adm-cell-sub adm-text-danger">
+              {Math.max(0, daysOverdue(invoice.due_date, data.today))} dia(s) de atraso
+            </p>
+          )}
+        </>
+      )
+    },
+    {
+      key: "amount",
+      header: "Valor",
+      numeric: true,
+      render: (invoice) => formatCents(invoice.amount_cents)
+    },
+    {
+      key: "delivery",
+      header: "Boleto / envio",
+      render: (invoice) => (
+        <ButtonGroup>
+          <Badge tone={invoice.boleto_payment_id ? "ok" : "neutral"} dot>
+            {invoice.boleto_payment_id ? "Boleto" : "Sem boleto"}
+          </Badge>
+          <Badge tone={invoice.whatsapp_sent_at ? "ok" : "neutral"} dot>
+            {invoice.whatsapp_sent_at ? "Enviada" : "Nao enviada"}
+          </Badge>
+        </ButtonGroup>
+      )
+    },
+    {
+      key: "status",
+      header: "Situacao",
+      render: (invoice) => (
+        <Badge tone={invoiceStatusTone(invoice.status)} dot>
+          {invoiceStatusLabel(invoice.status)}
+        </Badge>
+      )
+    },
+    {
+      key: "actions",
+      header: "",
+      actions: true,
+      render: (invoice) => (
+        <ButtonGroup>
+          {invoice.boleto_url && (
+            <LinkButton href={invoice.boleto_url} size="sm">
+              Boleto
+            </LinkButton>
+          )}
+          <Button size="sm" onClick={() => setOpenInvoiceId(invoice.id)}>
+            Detalhes
+          </Button>
+        </ButtonGroup>
+      )
+    }
+  ];
 
-      {feedback && (
-        <div
-          role="status"
-          style={{
-            padding: "12px 16px",
-            borderRadius: "12px",
-            fontSize: "14px",
-            background: feedback.tone === "ok" ? "#dcfce7" : "#fef2f2",
-            color: feedback.tone === "ok" ? "#166534" : "#b91c1c",
-            border: `1px solid ${feedback.tone === "ok" ? "#86efac" : "#fecaca"}`
-          }}
-        >
-          {feedback.text}
-        </div>
-      )}
+  const companyColumns: Array<Column<BillingCompany>> = [
+    {
+      key: "name",
+      header: "Pedreira",
+      render: (company) => (
+        <>
+          <span className="adm-cell-primary">{company.name}</span>
+          <p className="adm-cell-sub">{describeNextClosing(company)}</p>
+        </>
+      )
+    },
+    {
+      key: "amount",
+      header: "Valor acertado",
+      numeric: true,
+      render: (company) =>
+        company.billing_monthly_amount_cents
+          ? formatCents(company.billing_monthly_amount_cents)
+          : "—"
+    },
+    {
+      key: "cycle",
+      header: "Ciclo",
+      render: (company) => (
+        <span className="adm-mono">
+          virada {formatDateBr(company.billing_start_date) || "—"} · fecha dia{" "}
+          {company.billing_plan.closingDay} · vence dia {company.billing_plan.dueDay}
+        </span>
+      )
+    },
+    {
+      key: "grace",
+      header: "Bloqueio apos",
+      numeric: true,
+      render: (company) => `${company.billing_plan.graceDays} d`
+    },
+    {
+      key: "status",
+      header: "Situacao",
+      render: (company) => (
+        <ButtonGroup>
+          <Badge tone={company.billing_enabled ? "ok" : "neutral"} dot>
+            {company.billing_enabled ? "Cobranca ativa" : "Sem cobranca"}
+          </Badge>
+          {company.payment_blocked && (
+            <Badge tone="danger" dot>
+              Bloqueada
+            </Badge>
+          )}
+          {company.billing_block_exempt && <Badge tone="warn">Isenta</Badge>}
+          {company.billing_plan.blockers.length > 0 && (
+            <Badge tone="warn">Cadastro incompleto</Badge>
+          )}
+        </ButtonGroup>
+      )
+    },
+    {
+      key: "actions",
+      header: "",
+      actions: true,
+      render: (company) => (
+        <ButtonGroup>
+          <Button size="sm" onClick={() => setEditingCompany(company)}>
+            Cobranca
+          </Button>
+          <Button
+            size="sm"
+            disabled={!company.billing_plan.readyToClose || busy === `gen:${company.id}`}
+            title={
+              company.billing_plan.readyToClose
+                ? undefined
+                : `Pendente: ${company.billing_plan.blockers.join(", ")}`
+            }
+            onClick={() =>
+              void run(
+                `gen:${company.id}`,
+                "generate_invoice",
+                { companyId: company.id },
+                "Fatura gerada, boleto emitido e envio disparado."
+              )
+            }
+          >
+            Faturar
+          </Button>
+          <Button
+            size="sm"
+            variant={company.payment_blocked ? "default" : "danger"}
+            onClick={() =>
+              company.payment_blocked
+                ? void run(
+                    `block:${company.id}`,
+                    "set_payment_block",
+                    { companyId: company.id, blocked: false },
+                    "Acesso liberado."
+                  )
+                : setConfirming({
+                    title: `Bloquear ${company.name}`,
+                    message:
+                      "A balanca desta pedreira para de operar ate a liberacao. O bloqueio manual nao e desfeito pela passada automatica.",
+                    confirmLabel: "Bloquear acesso",
+                    onConfirm: () => {
+                      setConfirming(null);
+                      void run(
+                        `block:${company.id}`,
+                        "set_payment_block",
+                        {
+                          companyId: company.id,
+                          blocked: true,
+                          reason: "Bloqueio manual do financeiro."
+                        },
+                        "Pedreira bloqueada."
+                      );
+                    }
+                  })
+            }
+          >
+            {company.payment_blocked ? "Liberar" : "Bloquear"}
+          </Button>
+        </ButtonGroup>
+      )
+    }
+  ];
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 200px), 1fr))",
-          gap: "12px"
-        }}
-      >
-        <StatCard
-          label="Mensalidade recorrente"
-          value={formatCents(data.summary.monthlyRecurringCents)}
-          hint={`${data.summary.billedCompanies} pedreira(s) com cobranca ativa`}
+  return (
+    <>
+      <PageHead
+        title="Financeiro"
+        description="Mensalidade da plataforma por pedreira: fechamento, fatura, boleto do Mercado Pago, envio por WhatsApp e bloqueio por inadimplencia."
+        actions={
+          <Button
+            variant="primary"
+            disabled={busy === "run-cycle"}
+            onClick={() =>
+              void run(
+                "run-cycle",
+                "run_cycle",
+                {},
+                "Passada de cobranca executada. Confira as faturas."
+              )
+            }
+          >
+            {busy === "run-cycle" ? "Processando..." : "Rodar cobranca agora"}
+          </Button>
+        }
+      />
+
+      {feedback && <Note tone={feedback.tone === "ok" ? "ok" : "danger"}>{feedback.text}</Note>}
+
+      <StatGrid>
+        <Stat
+          label="Recorrencia mensal"
+          value={formatCents(summary.monthlyRecurringCents)}
+          hint={`${summary.billedCompanies} pedreira(s) com cobranca ativa`}
+          tone="accent"
         />
-        <StatCard
+        <Stat
           label="Em aberto"
-          value={formatCents(data.summary.openAmountCents)}
-          hint={`${data.summary.openCount} fatura(s)`}
+          value={formatCents(summary.openAmountCents)}
+          hint={`${summary.openCount} fatura(s)`}
         />
-        <StatCard
+        <Stat
           label="Vencidas"
-          value={formatCents(data.summary.overdueAmountCents)}
-          hint={`${data.summary.overdueCount} fatura(s)`}
-          tone="danger"
+          value={formatCents(summary.overdueAmountCents)}
+          hint={`${summary.overdueCount} fatura(s)`}
+          tone={summary.overdueCount > 0 ? "danger" : "neutral"}
         />
-        <StatCard
+        <Stat
           label="Recebido"
-          value={formatCents(data.summary.paidAmountCents)}
-          hint={`${data.summary.paidCount} fatura(s) paga(s)`}
-          tone="success"
+          value={formatCents(summary.paidAmountCents)}
+          hint={`${summary.paidCount} fatura(s) paga(s)`}
+          tone="ok"
         />
-        <StatCard
+        <Stat
           label="Bloqueadas"
-          value={String(data.summary.blockedCompanies)}
+          value={String(summary.blockedCompanies)}
           hint="Pedreiras sem acesso a balanca"
-          tone={data.summary.blockedCompanies > 0 ? "danger" : "neutral"}
+          tone={summary.blockedCompanies > 0 ? "danger" : "neutral"}
         />
-      </div>
+      </StatGrid>
 
-      <nav style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+      <div className="adm-panel-actions">
         {(
           [
             ["invoices", "Faturas"],
             ["companies", "Cobranca por pedreira"],
             ["settings", "Configuracoes"]
           ] as Array<[FinancialTab, string]>
-        ).map(([tab, label]) => (
-          <button
-            key={tab}
-            type="button"
-            onClick={() => setActiveTab(tab)}
-            style={{
-              padding: "8px 16px",
-              borderRadius: "999px",
-              border: "1px solid #cbd5e1",
-              background: activeTab === tab ? "#0f172a" : "#fff",
-              color: activeTab === tab ? "#fff" : "#334155",
-              cursor: "pointer",
-              fontSize: "13px",
-              fontWeight: 700
-            }}
-          >
+        ).map(([id, label]) => (
+          <Button key={id} variant={tab === id ? "primary" : "default"} onClick={() => setTab(id)}>
             {label}
-          </button>
+          </Button>
         ))}
-      </nav>
+      </div>
 
-      {activeTab === "invoices" && (
-        <article style={CARD}>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 200px), 1fr))",
-              gap: "12px",
-              marginBottom: "16px"
-            }}
-          >
-            <select
-              value={filterCompanyId}
-              onChange={(event) => setFilterCompanyId(event.target.value)}
-              style={INPUT}
-            >
-              <option value="">Todas as pedreiras</option>
-              {data.companies.map((company) => (
-                <option key={company.id} value={company.id}>
-                  {company.name}
-                </option>
-              ))}
-            </select>
-            <select
-              value={filterStatus}
-              onChange={(event) => setFilterStatus(event.target.value)}
-              style={INPUT}
-            >
-              <option value="">Todas as situacoes</option>
-              <option value="open">Em aberto</option>
-              <option value="overdue">Vencidas</option>
-              <option value="paid">Pagas</option>
-              <option value="canceled">Canceladas</option>
-            </select>
-            <input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Buscar por numero, referencia ou pedreira"
-              style={INPUT}
-            />
-          </div>
-
-          {visibleInvoices.length === 0 ? (
-            <p style={{ color: "#64748b", margin: 0 }}>
-              Nenhuma fatura encontrada. Faturas sao geradas no fechamento de cada ciclo — use
-              &quot;Gerar fatura&quot; na aba de cobranca por pedreira para antecipar.
-            </p>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-              {visibleInvoices.map((invoice) => (
-                <InvoiceRow
-                  key={invoice.id}
-                  invoice={invoice}
-                  companyName={companiesById.get(invoice.company_id) ?? "Pedreira removida"}
-                  today={data.today}
-                  busyAction={busyAction}
-                  onIssueBoleto={(reissue) =>
-                    void runAction(
-                      `boleto:${invoice.id}`,
-                      "issue_boleto",
-                      { invoiceId: invoice.id, reissue },
-                      reissue ? "Boleto reemitido." : "Boleto emitido."
-                    )
-                  }
-                  onSend={() =>
-                    void runAction(
-                      `send:${invoice.id}`,
-                      "send_invoice",
-                      { invoiceId: invoice.id },
-                      "Fatura enviada pelo WhatsApp."
-                    )
-                  }
-                  onRefresh={() =>
-                    void runAction(
-                      `refresh:${invoice.id}`,
-                      "refresh_invoice",
-                      { invoiceId: invoice.id },
-                      "Situacao do boleto atualizada."
-                    )
-                  }
-                  onMarkPaid={() => {
-                    if (!confirm(`Confirmar o recebimento da fatura ${invoice.number}?`)) return;
-                    void runAction(
-                      `paid:${invoice.id}`,
-                      "mark_invoice_paid",
-                      { invoiceId: invoice.id },
-                      "Fatura quitada. O acesso e liberado se nao houver outra pendencia."
-                    );
-                  }}
-                  onCancel={() => {
-                    const reason = prompt("Motivo do cancelamento:") ?? "";
-                    if (!reason.trim()) return;
-                    void runAction(
-                      `cancel:${invoice.id}`,
-                      "cancel_invoice",
-                      { invoiceId: invoice.id, reason },
-                      "Fatura cancelada."
-                    );
-                  }}
-                  onDelete={() => {
-                    if (
-                      !confirm(
-                        `Excluir definitivamente a fatura ${invoice.number}? Isso nao pode ser desfeito.`
-                      )
-                    ) {
-                      return;
-                    }
-                    void runAction(
-                      `delete:${invoice.id}`,
-                      "delete_invoice",
-                      { invoiceId: invoice.id },
-                      "Fatura excluida."
-                    );
-                  }}
-                  onEdit={() => setEditingInvoice(invoice)}
-                  onDownloadPdf={() => void handleDownloadPdf(invoice)}
-                />
-              ))}
-            </div>
-          )}
-
-          {visibleInvoices.length > 0 && (
-            <footer
-              style={{
-                marginTop: "16px",
-                paddingTop: "12px",
-                borderTop: "1px solid #e2e8f0",
-                display: "flex",
-                gap: "20px",
-                flexWrap: "wrap",
-                fontSize: "13px",
-                color: "#475569"
-              }}
-            >
-              <span>{listTotals.count} fatura(s) na tela</span>
-              <span>Em aberto: {formatCents(listTotals.openCents)}</span>
-              <span>Vencidas: {formatCents(listTotals.overdueCents)}</span>
-              <span>Recebido: {formatCents(listTotals.paidCents)}</span>
-            </footer>
-          )}
-        </article>
-      )}
-
-      {activeTab === "companies" && (
-        <article style={CARD}>
-          <h3 style={{ margin: "0 0 4px 0" }}>Cobranca por pedreira</h3>
-          <p style={{ margin: "0 0 16px 0", fontSize: "13px", color: "#64748b" }}>
-            Cada pedreira tem o seu valor acertado, a data de virada do sistema e o proprio
-            calendario de fechamento e vencimento.
-          </p>
-          <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-            {data.companies.map((company) => (
-              <CompanyBillingRow
-                key={company.id}
-                company={company}
-                busyAction={busyAction}
-                onEdit={() => setEditingCompany(company)}
-                onGenerate={(force) =>
-                  void runAction(
-                    `generate:${company.id}`,
-                    "generate_invoice",
-                    { companyId: company.id, force },
-                    "Fatura gerada, boleto emitido e envio disparado."
-                  )
-                }
-                onToggleBlock={() => {
-                  const blocked = company.payment_blocked !== true;
-                  const reason = blocked
-                    ? (prompt("Motivo do bloqueio:", "Bloqueio manual do financeiro.") ?? "")
-                    : "";
-                  if (blocked && !reason.trim()) return;
-                  void runAction(
-                    `block:${company.id}`,
-                    "set_payment_block",
-                    { companyId: company.id, blocked, reason },
-                    blocked ? "Pedreira bloqueada." : "Acesso liberado."
-                  );
-                }}
+      {tab === "invoices" && (
+        <Panel
+          flush
+          toolbar={
+            <>
+              <select
+                className="adm-select adm-toolbar-grow"
+                aria-label="Filtrar por pedreira"
+                value={filterCompanyId}
+                onChange={(event) => setFilterCompanyId(event.target.value)}
+              >
+                <option value="">Todas as pedreiras</option>
+                {data.companies.map((company) => (
+                  <option key={company.id} value={company.id}>
+                    {company.name}
+                  </option>
+                ))}
+              </select>
+              <select
+                className="adm-select adm-toolbar-grow"
+                aria-label="Filtrar por situacao"
+                value={filterStatus}
+                onChange={(event) => setFilterStatus(event.target.value)}
+              >
+                <option value="">Todas as situacoes</option>
+                <option value="open">Em aberto</option>
+                <option value="overdue">Vencidas</option>
+                <option value="paid">Pagas</option>
+                <option value="canceled">Canceladas</option>
+              </select>
+              <input
+                className="adm-input adm-toolbar-grow"
+                aria-label="Buscar fatura"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Buscar por numero, referencia ou pedreira"
               />
-            ))}
-          </div>
-        </article>
+            </>
+          }
+          footer={
+            visibleInvoices.length > 0 ? (
+              <>
+                <span>{totals.count} fatura(s)</span>
+                <span>Em aberto: {formatCents(totals.openCents)}</span>
+                <span>Vencidas: {formatCents(totals.overdueCents)}</span>
+                <span>Recebido: {formatCents(totals.paidCents)}</span>
+              </>
+            ) : undefined
+          }
+        >
+          <DataTable
+            columns={invoiceColumns}
+            rows={visibleInvoices}
+            rowKey={(invoice) => invoice.id}
+            rowClassName={(invoice) =>
+              invoice.status === "overdue"
+                ? "adm-row-alert"
+                : invoice.status === "canceled"
+                  ? "adm-row-muted"
+                  : undefined
+            }
+            empty='Nenhuma fatura encontrada. Faturas nascem no fechamento do ciclo — use "Faturar" na aba de cobranca por pedreira para antecipar.'
+          />
+        </Panel>
       )}
 
-      {activeTab === "settings" && (
+      {tab === "companies" && (
+        <Panel
+          title="Cobranca por pedreira"
+          description="Cada pedreira tem o seu valor acertado, a data de virada do sistema e o proprio calendario de fechamento e vencimento."
+          flush
+        >
+          <DataTable
+            columns={companyColumns}
+            rows={data.companies}
+            rowKey={(company) => company.id}
+            rowClassName={(company) => (company.payment_blocked ? "adm-row-alert" : undefined)}
+            empty="Nenhuma pedreira cadastrada."
+          />
+        </Panel>
+      )}
+
+      {tab === "settings" && (
         <BillingSettingsForm
-          settings={data.settings}
-          busy={busyAction === "settings"}
+          settings={settings}
+          busy={busy === "settings"}
           onSave={(payload) =>
-            void runAction("settings", "update_settings", payload, "Configuracao salva.")
+            void run("settings", "update_settings", payload, "Configuracao salva.")
           }
+        />
+      )}
+
+      {detailInvoice && (
+        <InvoiceDetailModal
+          invoice={detailInvoice}
+          companyName={companiesById.get(detailInvoice.company_id) ?? "Pedreira removida"}
+          today={data.today}
+          busy={busy}
+          onClose={() => setOpenInvoiceId(null)}
+          onEdit={() => {
+            setEditingInvoice(detailInvoice);
+            setOpenInvoiceId(null);
+          }}
+          onDownloadPdf={() => void downloadPdf(detailInvoice)}
+          onAction={(action, payload, message) =>
+            void run(`${action}:${detailInvoice.id}`, action, payload, message)
+          }
+          onConfirm={setConfirming}
         />
       )}
 
       {editingCompany && (
         <CompanyBillingModal
           company={editingCompany}
-          settings={data.settings}
-          busy={busyAction === `company:${editingCompany.id}`}
+          settings={settings}
+          busy={busy === `company:${editingCompany.id}`}
           onClose={() => setEditingCompany(null)}
           onSave={async (payload) => {
-            const ok = await runAction(
+            const ok = await run(
               `company:${editingCompany.id}`,
               "update_company_billing",
               { companyId: editingCompany.id, ...payload },
@@ -558,10 +641,10 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
       {editingInvoice && (
         <InvoiceEditModal
           invoice={editingInvoice}
-          busy={busyAction === `edit:${editingInvoice.id}`}
+          busy={busy === `edit:${editingInvoice.id}`}
           onClose={() => setEditingInvoice(null)}
           onSave={async (payload) => {
-            const ok = await runAction(
+            const ok = await run(
               `edit:${editingInvoice.id}`,
               "update_invoice",
               { invoiceId: editingInvoice.id, ...payload },
@@ -571,481 +654,288 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
           }}
         />
       )}
-    </section>
+
+      {confirming && (
+        <ConfirmDialog
+          title={confirming.title}
+          message={confirming.message}
+          confirmLabel={confirming.confirmLabel}
+          onConfirm={confirming.onConfirm}
+          onCancel={() => setConfirming(null)}
+        />
+      )}
+    </>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Blocos da tela
+// Detalhe da fatura
 // ---------------------------------------------------------------------------
 
-function StatCard({
-  label,
-  value,
-  hint,
-  tone = "neutral"
-}: {
-  label: string;
-  value: string;
-  hint: string;
-  tone?: "neutral" | "success" | "danger";
-}) {
-  const color = tone === "danger" ? "#b91c1c" : tone === "success" ? "#166534" : "#0f172a";
-  return (
-    <div style={{ ...CARD, padding: "16px" }}>
-      <p style={{ margin: 0, fontSize: "12px", color: "#64748b", textTransform: "uppercase" }}>
-        {label}
-      </p>
-      <p style={{ margin: "6px 0 2px 0", fontSize: "22px", fontWeight: 700, color }}>{value}</p>
-      <p style={{ margin: 0, fontSize: "12px", color: "#94a3b8" }}>{hint}</p>
-    </div>
-  );
-}
-
-function Badge({ label, tone }: { label: string; tone: { background: string; color: string } }) {
-  return (
-    <span
-      style={{
-        padding: "4px 10px",
-        borderRadius: "999px",
-        fontSize: "12px",
-        fontWeight: 700,
-        background: tone.background,
-        color: tone.color
-      }}
-    >
-      {label}
-    </span>
-  );
-}
-
-function Field({
-  label,
-  hint,
-  children
-}: {
-  label: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "13px" }}>
-      <span style={{ fontWeight: 700, color: "#334155" }}>{label}</span>
-      {children}
-      {hint && <span style={{ fontSize: "12px", color: "#64748b" }}>{hint}</span>}
-    </label>
-  );
-}
-
-function Modal({
-  title,
-  subtitle,
-  children,
-  onClose
-}: {
-  title: string;
-  subtitle?: string;
-  children: React.ReactNode;
-  onClose: () => void;
-}) {
-  return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(15,23,42,0.55)",
-        display: "flex",
-        alignItems: "flex-start",
-        justifyContent: "center",
-        padding: "24px",
-        overflowY: "auto",
-        zIndex: MODAL_Z_INDEX
-      }}
-    >
-      <div
-        style={{
-          background: "#fff",
-          padding: "24px",
-          borderRadius: "16px",
-          width: "100%",
-          maxWidth: "720px"
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "flex-start",
-            gap: "16px"
-          }}
-        >
-          <div>
-            <h3 style={{ margin: 0 }}>{title}</h3>
-            {subtitle && (
-              <p style={{ margin: "4px 0 0 0", fontSize: "13px", color: "#64748b" }}>{subtitle}</p>
-            )}
-          </div>
-          <button type="button" onClick={onClose} style={SMALL_BUTTON}>
-            Fechar
-          </button>
-        </div>
-        <div style={{ marginTop: "20px" }}>{children}</div>
-      </div>
-    </div>
-  );
-}
-
-function InvoiceRow({
+/**
+ * Detalhe + todas as acoes. Existe porque a fatura tem nove acoes possiveis e
+ * espalha-las na linha da tabela deixava a lista ilegivel: na tabela ficam as
+ * duas de uso diario (abrir boleto, abrir detalhe) e o resto vive aqui.
+ */
+function InvoiceDetailModal({
   invoice,
   companyName,
   today,
-  busyAction,
-  onIssueBoleto,
-  onSend,
-  onRefresh,
-  onMarkPaid,
-  onCancel,
-  onDelete,
+  busy,
+  onClose,
   onEdit,
-  onDownloadPdf
+  onDownloadPdf,
+  onAction,
+  onConfirm
 }: {
   invoice: BillingInvoice;
   companyName: string;
   today: string;
-  busyAction: string | null;
-  onIssueBoleto: (reissue: boolean) => void;
-  onSend: () => void;
-  onRefresh: () => void;
-  onMarkPaid: () => void;
-  onCancel: () => void;
-  onDelete: () => void;
+  busy: string | null;
+  onClose: () => void;
   onEdit: () => void;
   onDownloadPdf: () => void;
+  onAction: (action: string, payload: Record<string, unknown>, message: string) => void;
+  onConfirm: (dialog: ConfirmState) => void;
 }) {
-  const isBusy = busyAction?.endsWith(invoice.id) ?? false;
   const isClosed = invoice.status === "paid" || invoice.status === "canceled";
+  const isBusy = Boolean(busy?.endsWith(invoice.id));
 
   return (
-    <div
-      style={{
-        border: "1px solid #e2e8f0",
-        borderRadius: "12px",
-        padding: "16px",
-        background: invoice.status === "overdue" ? "#fffbfb" : "#fff",
-        opacity: isBusy ? 0.6 : 1
-      }}
+    <Modal
+      title={`${invoice.number} — ${companyName}`}
+      description={`Referencia ${invoice.reference_label} · ${formatDateBr(invoice.period_start)} a ${formatDateBr(invoice.period_end)}`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onDownloadPdf} disabled={isBusy}>
+            Baixar PDF
+          </Button>
+          {!isClosed && (
+            <Button onClick={onEdit} disabled={isBusy}>
+              Ajustar
+            </Button>
+          )}
+          {!isClosed && (
+            <Button
+              variant="primary"
+              disabled={isBusy}
+              onClick={() =>
+                onConfirm({
+                  title: `Confirmar recebimento de ${invoice.number}`,
+                  message: `Dar baixa em ${formatCents(invoice.amount_cents)}. Se nao restar fatura vencida, o acesso da pedreira e liberado.`,
+                  confirmLabel: "Confirmar recebimento",
+                  onConfirm: () =>
+                    onAction(
+                      "mark_invoice_paid",
+                      { invoiceId: invoice.id },
+                      "Fatura quitada. O acesso e liberado se nao houver outra pendencia."
+                    )
+                })
+              }
+            >
+              Marcar como paga
+            </Button>
+          )}
+        </>
+      }
     >
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          gap: "12px",
-          flexWrap: "wrap",
-          alignItems: "flex-start"
-        }}
-      >
-        <div>
-          <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
-            <strong style={{ fontSize: "15px" }}>{companyName}</strong>
-            <Badge
-              label={invoiceStatusLabel(invoice.status)}
-              tone={invoiceStatusTone(invoice.status)}
-            />
-            {invoice.is_prorated && (
-              <Badge label="Proporcional" tone={{ background: "#fef3c7", color: "#92400e" }} />
-            )}
-            {invoice.blocked_at && (
-              <Badge label="Gerou bloqueio" tone={{ background: "#fee2e2", color: "#991b1b" }} />
-            )}
+      <div className="adm-form">
+        <dl className="adm-kv">
+          <div className="adm-kv-item">
+            <dt>Situacao</dt>
+            <dd>
+              <Badge tone={invoiceStatusTone(invoice.status)} dot>
+                {invoiceStatusLabel(invoice.status)}
+              </Badge>
+              {invoice.status === "overdue" && (
+                <span className="adm-text-danger" style={{ marginLeft: "8px", fontSize: "12px" }}>
+                  {Math.max(0, daysOverdue(invoice.due_date, today))} dia(s) de atraso
+                </span>
+              )}
+            </dd>
           </div>
-          <p style={{ margin: "6px 0 0 0", fontSize: "13px", color: "#475569" }}>
-            {invoice.number} • Referencia {invoice.reference_label} • Periodo{" "}
-            {formatDateBr(invoice.period_start)} a {formatDateBr(invoice.period_end)}
-          </p>
-          <p style={{ margin: "2px 0 0 0", fontSize: "13px", color: "#475569" }}>
-            Vencimento {formatDateBr(invoice.due_date)}
-            {invoice.status === "overdue" && (
-              <strong style={{ color: "#b91c1c" }}>
-                {" "}
-                — {Math.max(0, daysOverdue(invoice.due_date, today))} dia(s) de atraso
-              </strong>
-            )}
-          </p>
-          {invoice.is_prorated && invoice.prorated_days && invoice.full_period_days && (
-            <p style={{ margin: "2px 0 0 0", fontSize: "12px", color: "#64748b" }}>
-              Primeira fatura: {invoice.prorated_days} de {invoice.full_period_days} dias do ciclo.
-            </p>
-          )}
-        </div>
-        <div style={{ textAlign: "right" }}>
-          <p style={{ margin: 0, fontSize: "20px", fontWeight: 700 }}>
-            {formatCents(invoice.amount_cents)}
-          </p>
-          {invoice.discount_cents > 0 && (
-            <p style={{ margin: 0, fontSize: "12px", color: "#64748b" }}>
-              Desconto {formatCents(invoice.discount_cents)}
-            </p>
-          )}
+          <div className="adm-kv-item">
+            <dt>Valor</dt>
+            <dd className="adm-mono">{formatCents(invoice.amount_cents)}</dd>
+          </div>
+          <div className="adm-kv-item">
+            <dt>Fechamento</dt>
+            <dd className="adm-mono">{formatDateBr(invoice.closing_date)}</dd>
+          </div>
+          <div className="adm-kv-item">
+            <dt>Vencimento</dt>
+            <dd className="adm-mono">{formatDateBr(invoice.due_date)}</dd>
+          </div>
+          <div className="adm-kv-item">
+            <dt>Valor do periodo</dt>
+            <dd className="adm-mono">{formatCents(invoice.base_amount_cents)}</dd>
+          </div>
           {invoice.addition_cents > 0 && (
-            <p style={{ margin: 0, fontSize: "12px", color: "#64748b" }}>
-              Acrescimo {formatCents(invoice.addition_cents)}
-            </p>
+            <div className="adm-kv-item">
+              <dt>Acrescimo</dt>
+              <dd className="adm-mono">{formatCents(invoice.addition_cents)}</dd>
+            </div>
+          )}
+          {invoice.discount_cents > 0 && (
+            <div className="adm-kv-item">
+              <dt>Desconto</dt>
+              <dd className="adm-mono">- {formatCents(invoice.discount_cents)}</dd>
+            </div>
+          )}
+          {invoice.is_prorated && invoice.prorated_days && invoice.full_period_days && (
+            <div className="adm-kv-item">
+              <dt>Rateio</dt>
+              <dd>
+                {invoice.prorated_days} de {invoice.full_period_days} dias do ciclo
+              </dd>
+            </div>
           )}
           {invoice.paid_at && (
-            <p style={{ margin: 0, fontSize: "12px", color: "#166534" }}>
-              Pago em {formatDateTimeBr(invoice.paid_at)}
-            </p>
+            <div className="adm-kv-item">
+              <dt>Pagamento</dt>
+              <dd>
+                {formatDateTimeBr(invoice.paid_at)} · {invoice.payment_method ?? "—"}
+              </dd>
+            </div>
           )}
-        </div>
-      </div>
+        </dl>
 
-      <div
-        style={{
-          marginTop: "12px",
-          display: "flex",
-          gap: "16px",
-          flexWrap: "wrap",
-          fontSize: "12px",
-          color: "#475569"
-        }}
-      >
-        <span>
-          Boleto:{" "}
-          {invoice.boleto_payment_id
-            ? `${invoice.boleto_status ?? "emitido"} (${invoice.boleto_payment_id})`
-            : "nao emitido"}
-        </span>
-        <span>
-          WhatsApp:{" "}
-          {invoice.whatsapp_sent_at
-            ? `enviado em ${formatDateTimeBr(invoice.whatsapp_sent_at)}`
-            : "nao enviado"}
-        </span>
-      </div>
-
-      {invoice.boleto_barcode && (
-        <p
-          style={{
-            margin: "8px 0 0 0",
-            fontFamily: "monospace",
-            fontSize: "12px",
-            color: "#334155",
-            wordBreak: "break-all"
-          }}
-        >
-          {invoice.boleto_barcode}
-        </p>
-      )}
-      {invoice.boleto_error && (
-        <p style={{ margin: "8px 0 0 0", fontSize: "12px", color: "#b91c1c" }}>
-          {invoice.boleto_error}
-        </p>
-      )}
-      {invoice.whatsapp_error && (
-        <p style={{ margin: "4px 0 0 0", fontSize: "12px", color: "#b45309" }}>
-          WhatsApp: {invoice.whatsapp_error}
-        </p>
-      )}
-      {invoice.cancel_reason && (
-        <p style={{ margin: "4px 0 0 0", fontSize: "12px", color: "#64748b" }}>
-          Cancelamento: {invoice.cancel_reason}
-        </p>
-      )}
-
-      <div style={{ marginTop: "12px", display: "flex", gap: "8px", flexWrap: "wrap" }}>
-        {invoice.boleto_url && (
-          <a
-            href={invoice.boleto_url}
-            target="_blank"
-            rel="noreferrer"
-            style={{ ...SMALL_BUTTON, textDecoration: "none", color: "#1d4ed8" }}
-          >
-            Abrir boleto
-          </a>
-        )}
-        {invoice.boleto_barcode && (
-          <button
-            type="button"
-            style={SMALL_BUTTON}
-            onClick={() => void copyToClipboard(invoice.boleto_barcode ?? "")}
-          >
-            Copiar linha digitavel
-          </button>
-        )}
-        {!isClosed && (
-          <button
-            type="button"
-            style={SMALL_BUTTON}
-            onClick={() => onIssueBoleto(Boolean(invoice.boleto_payment_id))}
-          >
-            {invoice.boleto_payment_id ? "Reemitir boleto" : "Emitir boleto"}
-          </button>
-        )}
-        {!isClosed && (
-          <button type="button" style={SMALL_BUTTON} onClick={onSend}>
-            {invoice.whatsapp_sent_at ? "Reenviar WhatsApp" : "Enviar WhatsApp"}
-          </button>
-        )}
-        {invoice.boleto_payment_id && !isClosed && (
-          <button type="button" style={SMALL_BUTTON} onClick={onRefresh}>
-            Atualizar situacao
-          </button>
-        )}
-        <button type="button" style={SMALL_BUTTON} onClick={onDownloadPdf}>
-          Baixar PDF
-        </button>
-        {!isClosed && (
-          <button type="button" style={SMALL_BUTTON} onClick={onEdit}>
-            Ajustar
-          </button>
-        )}
-        {!isClosed && (
-          <button type="button" style={SMALL_BUTTON} onClick={onMarkPaid}>
-            Marcar como paga
-          </button>
-        )}
-        {invoice.status !== "paid" && invoice.status !== "canceled" && (
-          <button type="button" style={DANGER_BUTTON} onClick={onCancel}>
-            Cancelar
-          </button>
-        )}
-        {invoice.status !== "paid" && (
-          <button type="button" style={DANGER_BUTTON} onClick={onDelete}>
-            Excluir
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function CompanyBillingRow({
-  company,
-  busyAction,
-  onEdit,
-  onGenerate,
-  onToggleBlock
-}: {
-  company: BillingCompany;
-  busyAction: string | null;
-  onEdit: () => void;
-  onGenerate: (force: boolean) => void;
-  onToggleBlock: () => void;
-}) {
-  const isBusy = busyAction?.endsWith(company.id) ?? false;
-  const blocked = company.payment_blocked === true;
-
-  return (
-    <div
-      style={{
-        border: "1px solid #e2e8f0",
-        borderRadius: "12px",
-        padding: "16px",
-        opacity: isBusy ? 0.6 : 1
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          gap: "12px",
-          flexWrap: "wrap",
-          alignItems: "flex-start"
-        }}
-      >
-        <div>
-          <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
-            <strong>{company.name}</strong>
-            <Badge
-              label={company.billing_enabled ? "Cobranca ativa" : "Sem cobranca"}
-              tone={
-                company.billing_enabled
-                  ? { background: "#dcfce7", color: "#166534" }
-                  : { background: "#e2e8f0", color: "#475569" }
-              }
-            />
-            {blocked && (
-              <Badge label="Bloqueada" tone={{ background: "#fee2e2", color: "#991b1b" }} />
+        <Fieldset legend="Boleto">
+          <div className="adm-form">
+            <p className="adm-field-hint">
+              {invoice.boleto_payment_id
+                ? `Mercado Pago ${invoice.boleto_payment_id} · situacao "${invoice.boleto_status ?? "emitido"}"`
+                : "Nenhum boleto emitido para esta fatura."}
+            </p>
+            {invoice.boleto_barcode && (
+              <div>
+                <p className="adm-field-label">Linha digitavel</p>
+                <p className="adm-mono adm-barcode">{invoice.boleto_barcode}</p>
+                <CopyButton value={invoice.boleto_barcode} label="Copiar linha digitavel" />
+              </div>
             )}
-            {company.billing_block_exempt && (
-              <Badge
-                label="Isenta de bloqueio"
-                tone={{ background: "#fef3c7", color: "#92400e" }}
-              />
+            {invoice.boleto_error && <Note tone="danger">{invoice.boleto_error}</Note>}
+            {!isClosed && (
+              <ButtonGroup>
+                {invoice.boleto_url && (
+                  <LinkButton href={invoice.boleto_url} size="sm">
+                    Abrir boleto
+                  </LinkButton>
+                )}
+                <Button
+                  size="sm"
+                  disabled={isBusy}
+                  onClick={() =>
+                    onAction(
+                      "issue_boleto",
+                      { invoiceId: invoice.id, reissue: Boolean(invoice.boleto_payment_id) },
+                      invoice.boleto_payment_id ? "Boleto reemitido." : "Boleto emitido."
+                    )
+                  }
+                >
+                  {invoice.boleto_payment_id ? "Reemitir boleto" : "Emitir boleto"}
+                </Button>
+                {invoice.boleto_payment_id && (
+                  <Button
+                    size="sm"
+                    disabled={isBusy}
+                    onClick={() =>
+                      onAction(
+                        "refresh_invoice",
+                        { invoiceId: invoice.id },
+                        "Situacao do boleto atualizada."
+                      )
+                    }
+                  >
+                    Consultar situacao
+                  </Button>
+                )}
+              </ButtonGroup>
             )}
           </div>
-          <p style={{ margin: "6px 0 0 0", fontSize: "13px", color: "#475569" }}>
-            Valor acertado:{" "}
-            <strong>
-              {company.billing_monthly_amount_cents
-                ? formatCents(company.billing_monthly_amount_cents)
-                : "nao informado"}
-            </strong>
-            {" • "}Virada: {formatDateBr(company.billing_start_date) || "nao informada"}
-            {" • "}Fecha dia {company.billing_plan.closingDay}, vence dia{" "}
-            {company.billing_plan.dueDay}
-            {" • "}Bloqueio apos {company.billing_plan.graceDays} dia(s)
-          </p>
-          <p style={{ margin: "2px 0 0 0", fontSize: "13px", color: "#64748b" }}>
-            {describeNextClosing(company)}
-          </p>
-          {blocked && company.payment_blocked_reason && (
-            <p style={{ margin: "4px 0 0 0", fontSize: "12px", color: "#b91c1c" }}>
-              {company.payment_blocked_reason}
+        </Fieldset>
+
+        <Fieldset legend="Envio por WhatsApp">
+          <div className="adm-form">
+            <p className="adm-field-hint">
+              {invoice.whatsapp_sent_at
+                ? `Enviada em ${formatDateTimeBr(invoice.whatsapp_sent_at)} para ${invoice.whatsapp_to ?? "—"}.`
+                : "Ainda nao enviada."}
             </p>
-          )}
-          {company.billing_plan.blockers.length > 0 && (
-            <p style={{ margin: "4px 0 0 0", fontSize: "12px", color: "#b45309" }}>
-              Pendente para faturar: {company.billing_plan.blockers.join(", ")}.
-            </p>
-          )}
-          {company.billing_plan.missing.whatsapp.length > 0 && (
-            <p style={{ margin: "2px 0 0 0", fontSize: "12px", color: "#b45309" }}>
-              Sem WhatsApp de cobranca: a fatura sera gerada, mas nao enviada.
-            </p>
-          )}
-        </div>
-        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-          <button type="button" style={SMALL_BUTTON} onClick={onEdit}>
-            Editar cobranca
-          </button>
-          <button
-            type="button"
-            style={SMALL_BUTTON}
-            disabled={!company.billing_plan.readyToClose}
-            title={
-              company.billing_plan.readyToClose
-                ? undefined
-                : "Complete o cadastro de cobranca antes de faturar"
-            }
-            onClick={() => onGenerate(false)}
-          >
-            Gerar fatura
-          </button>
-          <button
-            type="button"
-            style={SMALL_BUTTON}
-            disabled={!company.billing_plan.readyToClose}
-            title="Fecha o proximo ciclo mesmo antes da data de fechamento"
-            onClick={() => {
-              if (!confirm("Antecipar o fechamento do proximo ciclo desta pedreira?")) return;
-              onGenerate(true);
-            }}
-          >
-            Antecipar fechamento
-          </button>
-          <button
-            type="button"
-            style={blocked ? SMALL_BUTTON : DANGER_BUTTON}
-            onClick={onToggleBlock}
-          >
-            {blocked ? "Liberar acesso" : "Bloquear acesso"}
-          </button>
-        </div>
+            {invoice.whatsapp_error && <Note tone="warn">{invoice.whatsapp_error}</Note>}
+            {!isClosed && (
+              <ButtonGroup>
+                <Button
+                  size="sm"
+                  disabled={isBusy}
+                  onClick={() =>
+                    onAction(
+                      "send_invoice",
+                      { invoiceId: invoice.id },
+                      "Fatura enviada pelo WhatsApp."
+                    )
+                  }
+                >
+                  {invoice.whatsapp_sent_at ? "Reenviar" : "Enviar agora"}
+                </Button>
+              </ButtonGroup>
+            )}
+          </div>
+        </Fieldset>
+
+        {invoice.notes && <Note>{invoice.notes}</Note>}
+        {invoice.cancel_reason && <Note tone="warn">Cancelamento: {invoice.cancel_reason}</Note>}
+
+        {invoice.status !== "paid" && (
+          <Fieldset legend="Zona de risco">
+            <ButtonGroup>
+              {invoice.status !== "canceled" && (
+                <Button
+                  size="sm"
+                  variant="danger"
+                  disabled={isBusy}
+                  onClick={() => {
+                    const reason = prompt("Motivo do cancelamento:") ?? "";
+                    if (!reason.trim()) return;
+                    onAction(
+                      "cancel_invoice",
+                      { invoiceId: invoice.id, reason },
+                      "Fatura cancelada."
+                    );
+                  }}
+                >
+                  Cancelar fatura
+                </Button>
+              )}
+              <Button
+                size="sm"
+                variant="danger"
+                disabled={isBusy}
+                onClick={() =>
+                  onConfirm({
+                    title: `Excluir ${invoice.number}`,
+                    message:
+                      "A fatura some do historico. Para manter o registro e apenas encerra-la, cancele em vez de excluir.",
+                    confirmLabel: "Excluir fatura",
+                    onConfirm: () =>
+                      onAction("delete_invoice", { invoiceId: invoice.id }, "Fatura excluida.")
+                  })
+                }
+              >
+                Excluir fatura
+              </Button>
+            </ButtonGroup>
+          </Fieldset>
+        )}
       </div>
-    </div>
+    </Modal>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Cadastro de cobranca da pedreira
+// ---------------------------------------------------------------------------
 
 function CompanyBillingModal({
   company,
@@ -1064,6 +954,7 @@ function CompanyBillingModal({
     centsToInput(company.billing_monthly_amount_cents)
   );
   const [amountError, setAmountError] = useState<string | null>(null);
+  const formId = "company-billing-form";
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
     event.preventDefault();
@@ -1102,26 +993,37 @@ function CompanyBillingModal({
   return (
     <Modal
       title={`Cobranca — ${company.name}`}
-      subtitle="Valor acertado, calendario do ciclo e os dados que o boleto do Mercado Pago exige."
+      description="Valor acertado, calendario do ciclo e os dados que o boleto do Mercado Pago exige."
       onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Cancelar</Button>
+          <Button type="submit" variant="primary" form={formId} disabled={busy}>
+            {busy ? "Salvando..." : "Salvar cobranca"}
+          </Button>
+        </>
+      }
     >
-      <form
-        onSubmit={handleSubmit}
-        style={{ display: "flex", flexDirection: "column", gap: "20px" }}
-      >
-        <fieldset style={FIELDSET}>
-          <legend style={LEGEND}>Contrato</legend>
-          <div style={GRID_TWO}>
+      <form id={formId} className="adm-form" onSubmit={handleSubmit}>
+        {company.billing_plan.blockers.length > 0 && (
+          <Note tone="warn">
+            Pendente para faturar: {company.billing_plan.blockers.join(", ")}.
+          </Note>
+        )}
+
+        <Fieldset legend="Contrato">
+          <div className="adm-grid">
             <Field
               label="Valor acertado (mensal)"
               hint="Negociado caso a caso. A primeira fatura sai proporcional aos dias usados."
+              error={amountError}
             >
               <input
+                className="adm-input adm-input-mono"
                 value={amountInput}
                 onChange={(event) => setAmountInput(event.target.value)}
                 placeholder="900,00"
                 inputMode="decimal"
-                style={INPUT}
               />
             </Field>
             <Field
@@ -1129,10 +1031,10 @@ function CompanyBillingModal({
               hint="Primeiro dia de uso cobrado; base do rateio da primeira fatura."
             >
               <input
+                className="adm-input"
                 name="billingStartDate"
                 type="date"
                 defaultValue={company.billing_start_date ?? ""}
-                style={INPUT}
               />
             </Field>
             <Field
@@ -1140,12 +1042,12 @@ function CompanyBillingModal({
               hint={`Vazio usa o padrao (${settings.defaultClosingDay}).`}
             >
               <input
+                className="adm-input"
                 name="billingClosingDay"
                 type="number"
                 min={1}
                 max={31}
                 defaultValue={company.billing_closing_day ?? ""}
-                style={INPUT}
               />
             </Field>
             <Field
@@ -1153,12 +1055,12 @@ function CompanyBillingModal({
               hint={`Vazio usa o padrao (${settings.defaultDueDay}).`}
             >
               <input
+                className="adm-input"
                 name="billingDueDay"
                 type="number"
                 min={1}
                 max={31}
                 defaultValue={company.billing_due_day ?? ""}
-                style={INPUT}
               />
             </Field>
             <Field
@@ -1166,19 +1068,16 @@ function CompanyBillingModal({
               hint={`Vazio usa o padrao (${settings.defaultGraceDays}).`}
             >
               <input
+                className="adm-input"
                 name="billingGraceDays"
                 type="number"
                 min={0}
                 max={365}
                 defaultValue={company.billing_grace_days ?? ""}
-                style={INPUT}
               />
             </Field>
           </div>
-          {amountError && (
-            <p style={{ margin: "8px 0 0 0", fontSize: "12px", color: "#b91c1c" }}>{amountError}</p>
-          )}
-          <div style={{ display: "flex", gap: "20px", marginTop: "12px", flexWrap: "wrap" }}>
+          <div className="adm-grid adm-grid-spaced">
             <Checkbox
               name="billingEnabled"
               defaultChecked={company.billing_enabled}
@@ -1190,128 +1089,122 @@ function CompanyBillingModal({
               label="Isenta do bloqueio automatico"
             />
           </div>
-        </fieldset>
+        </Fieldset>
 
-        <fieldset style={FIELDSET}>
-          <legend style={LEGEND}>Dados do boleto</legend>
-          <p style={{ margin: "0 0 12px 0", fontSize: "12px", color: "#64748b" }}>
+        <Fieldset legend="Dados do boleto">
+          <p className="adm-field-hint">
             O Mercado Pago exige documento, e-mail e endereco completo do pagador. Faltando um
             deles, a emissao inteira e recusada.
           </p>
-          <div style={GRID_TWO}>
+          <div className="adm-grid">
             <Field label="Razao social (cobranca)" hint="Vazio usa a razao social do cadastro.">
               <input
+                className="adm-input"
                 name="billingLegalName"
                 defaultValue={company.billing_legal_name ?? ""}
                 placeholder={company.legal_name ?? ""}
-                style={INPUT}
               />
             </Field>
             <Field label="CNPJ/CPF (cobranca)" hint="Vazio usa o documento do cadastro.">
               <input
+                className="adm-input adm-input-mono"
                 name="billingDocument"
                 defaultValue={company.billing_document ?? ""}
                 placeholder={company.document ?? ""}
-                style={INPUT}
               />
             </Field>
             <Field label="E-mail de cobranca">
               <input
+                className="adm-input"
                 name="billingEmail"
                 type="email"
                 defaultValue={company.billing_email ?? ""}
-                style={INPUT}
               />
             </Field>
             <Field label="WhatsApp de cobranca" hint="Para onde a fatura e o boleto sao enviados.">
               <input
+                className="adm-input adm-input-mono"
                 name="billingPhone"
                 defaultValue={company.billing_phone ?? ""}
                 placeholder="(31) 99999-9999"
-                style={INPUT}
               />
             </Field>
             <Field label="Contato do financeiro">
               <input
+                className="adm-input"
                 name="billingContactName"
                 defaultValue={company.billing_contact_name ?? ""}
-                style={INPUT}
               />
             </Field>
             <Field label="CEP">
               <input
+                className="adm-input adm-input-mono"
                 name="billingZipcode"
                 defaultValue={company.billing_zipcode ?? ""}
-                style={INPUT}
               />
             </Field>
             <Field label="Endereco">
               <input
+                className="adm-input"
                 name="billingAddressStreet"
                 defaultValue={company.billing_address_street ?? ""}
-                style={INPUT}
               />
             </Field>
             <Field label="Numero">
               <input
+                className="adm-input"
                 name="billingAddressNumber"
                 defaultValue={company.billing_address_number ?? ""}
-                style={INPUT}
               />
             </Field>
             <Field label="Complemento">
               <input
+                className="adm-input"
                 name="billingAddressComplement"
                 defaultValue={company.billing_address_complement ?? ""}
-                style={INPUT}
               />
             </Field>
             <Field label="Bairro">
               <input
+                className="adm-input"
                 name="billingNeighborhood"
                 defaultValue={company.billing_neighborhood ?? ""}
-                style={INPUT}
               />
             </Field>
             <Field label="Cidade">
-              <input name="billingCity" defaultValue={company.billing_city ?? ""} style={INPUT} />
+              <input
+                className="adm-input"
+                name="billingCity"
+                defaultValue={company.billing_city ?? ""}
+              />
             </Field>
             <Field label="UF">
               <input
+                className="adm-input adm-input-mono"
                 name="billingState"
                 maxLength={2}
                 defaultValue={company.billing_state ?? ""}
-                style={INPUT}
               />
             </Field>
           </div>
-        </fieldset>
+        </Fieldset>
 
         <Field label="Observacoes internas">
           <textarea
+            className="adm-textarea"
             name="billingNotes"
             rows={3}
             defaultValue={company.billing_notes ?? ""}
-            style={{ ...INPUT, resize: "vertical" }}
           />
         </Field>
-
-        <div style={{ display: "flex", gap: "8px" }}>
-          <button
-            type="submit"
-            disabled={busy}
-            style={{ ...PRIMARY_BUTTON, opacity: busy ? 0.6 : 1 }}
-          >
-            {busy ? "Salvando..." : "Salvar cobranca"}
-          </button>
-          <button type="button" onClick={onClose} style={{ ...SMALL_BUTTON, padding: "10px 16px" }}>
-            Cancelar
-          </button>
-        </div>
       </form>
     </Modal>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Ajuste da fatura
+// ---------------------------------------------------------------------------
 
 function InvoiceEditModal({
   invoice,
@@ -1328,6 +1221,7 @@ function InvoiceEditModal({
   const [discount, setDiscount] = useState(centsToInput(invoice.discount_cents));
   const [addition, setAddition] = useState(centsToInput(invoice.addition_cents));
   const [error, setError] = useState<string | null>(null);
+  const formId = "invoice-edit-form";
 
   const preview = useMemo(() => {
     const baseCents = parseMoneyToCents(base) ?? 0;
@@ -1336,98 +1230,129 @@ function InvoiceEditModal({
     return Math.max(0, baseCents + additionCents - discountCents);
   }, [base, discount, addition]);
 
-  function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
-    event.preventDefault();
-    const baseCents = parseMoneyToCents(base);
-    if (baseCents === null) {
-      setError("Valor do periodo invalido.");
-      return;
-    }
-    setError(null);
-    const form = new FormData(event.currentTarget);
-    void onSave({
-      baseAmountCents: baseCents,
-      discountCents: parseMoneyToCents(discount) ?? 0,
-      additionCents: parseMoneyToCents(addition) ?? 0,
-      dueDate: form.get("dueDate"),
-      notes: form.get("notes")
-    });
-  }
-
   return (
     <Modal
-      title={`Ajustar fatura ${invoice.number}`}
-      subtitle={`Referencia ${invoice.reference_label}. O total e sempre valor do periodo + acrescimo - desconto.`}
+      title={`Ajustar ${invoice.number}`}
+      description={`Referencia ${invoice.reference_label}. O total e sempre valor do periodo + acrescimo - desconto.`}
       onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Cancelar</Button>
+          <Button type="submit" variant="primary" form={formId} disabled={busy}>
+            {busy ? "Salvando..." : "Salvar fatura"}
+          </Button>
+        </>
+      }
     >
       <form
-        onSubmit={handleSubmit}
-        style={{ display: "flex", flexDirection: "column", gap: "16px" }}
+        id={formId}
+        className="adm-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const baseCents = parseMoneyToCents(base);
+          if (baseCents === null) {
+            setError("Valor do periodo invalido.");
+            return;
+          }
+          setError(null);
+          const form = new FormData(event.currentTarget);
+          void onSave({
+            baseAmountCents: baseCents,
+            discountCents: parseMoneyToCents(discount) ?? 0,
+            additionCents: parseMoneyToCents(addition) ?? 0,
+            dueDate: form.get("dueDate"),
+            notes: form.get("notes")
+          });
+        }}
       >
-        <div style={GRID_TWO}>
-          <Field label="Valor do periodo">
+        <div className="adm-grid">
+          <Field label="Valor do periodo" error={error}>
             <input
+              className="adm-input adm-input-mono"
               value={base}
-              onChange={(e) => setBase(e.target.value)}
+              onChange={(event) => setBase(event.target.value)}
               inputMode="decimal"
-              style={INPUT}
             />
           </Field>
           <Field label="Acrescimo">
             <input
+              className="adm-input adm-input-mono"
               value={addition}
-              onChange={(e) => setAddition(e.target.value)}
+              onChange={(event) => setAddition(event.target.value)}
               inputMode="decimal"
-              style={INPUT}
             />
           </Field>
           <Field label="Desconto">
             <input
+              className="adm-input adm-input-mono"
               value={discount}
-              onChange={(e) => setDiscount(e.target.value)}
+              onChange={(event) => setDiscount(event.target.value)}
               inputMode="decimal"
-              style={INPUT}
             />
           </Field>
           <Field label="Vencimento">
-            <input name="dueDate" type="date" defaultValue={invoice.due_date} style={INPUT} />
+            <input
+              className="adm-input"
+              name="dueDate"
+              type="date"
+              defaultValue={invoice.due_date}
+            />
           </Field>
         </div>
 
-        <p style={{ margin: 0, fontSize: "16px", fontWeight: 700 }}>
-          Total: {formatCents(preview)}
-        </p>
+        <Note tone="ok">
+          Total: <strong className="adm-mono">{formatCents(preview)}</strong>
+        </Note>
+
         {invoice.boleto_payment_id && (
-          <p style={{ margin: 0, fontSize: "12px", color: "#b45309" }}>
+          <Note tone="warn">
             Ja existe boleto emitido com o valor e o vencimento antigos. Depois de salvar, use
             &quot;Reemitir boleto&quot; — o papel que o cliente recebeu nao muda sozinho.
-          </p>
+          </Note>
         )}
-        {error && <p style={{ margin: 0, fontSize: "12px", color: "#b91c1c" }}>{error}</p>}
 
         <Field label="Observacoes">
           <textarea
+            className="adm-textarea"
             name="notes"
             rows={3}
             defaultValue={invoice.notes ?? ""}
-            style={{ ...INPUT, resize: "vertical" }}
           />
         </Field>
-
-        <div style={{ display: "flex", gap: "8px" }}>
-          <button
-            type="submit"
-            disabled={busy}
-            style={{ ...PRIMARY_BUTTON, opacity: busy ? 0.6 : 1 }}
-          >
-            {busy ? "Salvando..." : "Salvar fatura"}
-          </button>
-          <button type="button" onClick={onClose} style={{ ...SMALL_BUTTON, padding: "10px 16px" }}>
-            Cancelar
-          </button>
-        </div>
       </form>
     </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Configuracoes
+// ---------------------------------------------------------------------------
+
+/**
+ * Um segredo, SOMENTE LEITURA. Nao ha campo para digitar: o valor vem sempre do
+ * secret do Supabase e o nome da variavel e fixo no codigo. Campo que nao existe
+ * e campo onde ninguem cola um token por engano.
+ */
+function SecretStatusRow({ secret }: { secret: BillingSecretStatus }) {
+  return (
+    <div className="adm-secret-row">
+      <div>
+        <div className="adm-secret-title">
+          <strong>{secret.label}</strong>
+          {!secret.required && <span className="adm-field-hint">(opcional)</span>}
+        </div>
+        <p className="adm-field-hint">{secret.purpose}</p>
+        <code className="adm-secret-var">{secret.envVar}</code>
+        {!secret.configured && <p className="adm-field-hint">{secret.missingHint}</p>}
+      </div>
+      <ButtonGroup>
+        {secret.configured && <span className="adm-mono">{secret.preview}</span>}
+        <Badge tone={secret.configured ? "ok" : secret.required ? "danger" : "warn"} dot>
+          {secret.configured ? "Configurado" : "Pendente"}
+        </Badge>
+        <CopyButton value={secret.envVar} label="Copiar nome" />
+      </ButtonGroup>
+    </div>
   );
 }
 
@@ -1440,16 +1365,15 @@ function BillingSettingsForm({
   busy: boolean;
   onSave: (payload: Record<string, unknown>) => void;
 }) {
+  const formId = "billing-settings-form";
+
   function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     onSave({
       mercadoPagoEnvironment: form.get("mercadoPagoEnvironment"),
-      // Vao os NOMES das variaveis, nunca os valores: o segredo mora no secret
-      // do Supabase e este formulario jamais chega a ver o token.
-      mercadoPagoAccessTokenEnv: form.get("mercadoPagoAccessTokenEnv"),
-      mercadoPagoWebhookSecretEnv: form.get("mercadoPagoWebhookSecretEnv"),
-      whatsappInstanceTokenEnv: form.get("whatsappInstanceTokenEnv"),
+      // Segredo nao aparece no payload: nem valor, nem nome de variavel. Eles
+      // vem sempre dos secrets do Supabase e esta tela apenas exibe a situacao.
       whatsappUrl: form.get("whatsappUrl"),
       whatsappInstanceName: form.get("whatsappInstanceName"),
       defaultClosingDay: form.get("defaultClosingDay"),
@@ -1470,76 +1394,67 @@ function BillingSettingsForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-      <article style={CARD}>
-        <h3 style={{ margin: "0 0 4px 0" }}>Mercado Pago</h3>
-        <SecretsNotice />
-        <div style={GRID_TWO}>
-          <SecretField
-            secret={findSecret(settings, "mercadoPagoAccessToken")}
-            name="mercadoPagoAccessTokenEnv"
-          />
+    <form id={formId} className="adm-form" onSubmit={handleSubmit}>
+      <Panel
+        title="Credenciais"
+        description="Vem sempre dos secrets do Supabase — nao ha o que preencher aqui. Grave o valor em Supabase > Edge Functions > Secrets (ou `supabase secrets set NOME=valor`) com o nome indicado."
+      >
+        <SecretStatusRow secret={findSecret(settings, "mercadoPagoAccessToken")} />
+        <SecretStatusRow secret={findSecret(settings, "mercadoPagoWebhookSecret")} />
+        <SecretStatusRow secret={findSecret(settings, "whatsappInstanceToken")} />
+      </Panel>
+
+      <Panel title="Mercado Pago">
+        <div className="adm-grid">
           <Field label="Ambiente">
             <select
+              className="adm-select"
               name="mercadoPagoEnvironment"
               defaultValue={settings.mercadoPagoEnvironment}
-              style={INPUT}
             >
               <option value="production">Producao</option>
               <option value="sandbox">Sandbox (teste)</option>
             </select>
           </Field>
-          <SecretField
-            secret={findSecret(settings, "mercadoPagoWebhookSecret")}
-            name="mercadoPagoWebhookSecretEnv"
-          />
         </div>
-      </article>
+      </Panel>
 
-      <article style={CARD}>
-        <h3 style={{ margin: "0 0 4px 0" }}>WhatsApp da cobranca</h3>
-        <p style={{ margin: "0 0 12px 0", fontSize: "13px", color: "#64748b" }}>
-          Instancia UAZAPI da Kybernan, usada para mandar fatura e boleto a todas as pedreiras. E
-          diferente da instancia que cada pedreira configura para os relatorios dela.
-        </p>
-        <SecretsNotice />
-        <div style={GRID_TWO}>
+      <Panel
+        title="WhatsApp da cobranca"
+        description="Instancia UAZAPI da Kybernan, usada para mandar fatura e boleto a todas as pedreiras. E diferente da instancia que cada pedreira configura para os relatorios dela."
+      >
+        <div className="adm-grid">
           <Field label="URL da instancia">
             <input
+              className="adm-input"
               name="whatsappUrl"
               defaultValue={settings.whatsappUrl}
               placeholder="https://sua-instancia.uazapi.com"
-              style={INPUT}
             />
           </Field>
-          <SecretField
-            secret={findSecret(settings, "whatsappInstanceToken")}
-            name="whatsappInstanceTokenEnv"
-          />
           <Field label="Nome da instancia">
             <input
+              className="adm-input"
               name="whatsappInstanceName"
               defaultValue={settings.whatsappInstanceName}
-              style={INPUT}
             />
           </Field>
         </div>
-      </article>
+      </Panel>
 
-      <article style={CARD}>
-        <h3 style={{ margin: "0 0 4px 0" }}>Padroes do ciclo</h3>
-        <p style={{ margin: "0 0 16px 0", fontSize: "13px", color: "#64748b" }}>
-          Valem para a pedreira que nao definiu o proprio calendario.
-        </p>
-        <div style={GRID_TWO}>
+      <Panel
+        title="Padroes do ciclo"
+        description="Valem para a pedreira que nao definiu o proprio calendario."
+      >
+        <div className="adm-grid">
           <Field label="Dia do fechamento" hint="Meses curtos fecham no ultimo dia.">
             <input
+              className="adm-input"
               name="defaultClosingDay"
               type="number"
               min={1}
               max={31}
               defaultValue={settings.defaultClosingDay}
-              style={INPUT}
             />
           </Field>
           <Field
@@ -1547,12 +1462,12 @@ function BillingSettingsForm({
             hint="Menor ou igual ao fechamento vence no mes seguinte."
           >
             <input
+              className="adm-input"
               name="defaultDueDay"
               type="number"
               min={1}
               max={31}
               defaultValue={settings.defaultDueDay}
-              style={INPUT}
             />
           </Field>
           <Field
@@ -1560,25 +1475,16 @@ function BillingSettingsForm({
             hint="Passados esses dias apos o vencimento, o acesso a balanca e bloqueado automaticamente."
           >
             <input
+              className="adm-input"
               name="defaultGraceDays"
               type="number"
               min={0}
               max={365}
               defaultValue={settings.defaultGraceDays}
-              style={INPUT}
             />
           </Field>
         </div>
-        <div
-          style={{
-            display: "flex",
-            gap: "20px",
-            marginTop: "16px",
-            flexWrap: "wrap",
-            paddingTop: "16px",
-            borderTop: "1px solid #e2e8f0"
-          }}
-        >
+        <div className="adm-grid adm-grid-spaced">
           <Checkbox
             name="autoCloseEnabled"
             defaultChecked={settings.autoCloseEnabled}
@@ -1600,43 +1506,46 @@ function BillingSettingsForm({
             label="Bloquear por inadimplencia"
           />
         </div>
-      </article>
+      </Panel>
 
-      <article style={CARD}>
-        <h3 style={{ margin: "0 0 4px 0" }}>Emitente e textos</h3>
-        <p style={{ margin: "0 0 16px 0", fontSize: "13px", color: "#64748b" }}>
-          Aparecem na fatura em PDF, na descricao do boleto e na mensagem enviada ao cliente.
-        </p>
-        <div style={GRID_TWO}>
+      <Panel
+        title="Emitente e textos"
+        description="Aparecem na fatura em PDF, na descricao do boleto e na mensagem enviada ao cliente."
+      >
+        <div className="adm-grid">
           <Field label="Nome do emitente">
-            <input name="issuerName" defaultValue={settings.issuerName} style={INPUT} />
+            <input className="adm-input" name="issuerName" defaultValue={settings.issuerName} />
           </Field>
           <Field label="CNPJ do emitente">
-            <input name="issuerDocument" defaultValue={settings.issuerDocument} style={INPUT} />
+            <input
+              className="adm-input adm-input-mono"
+              name="issuerDocument"
+              defaultValue={settings.issuerDocument}
+            />
           </Field>
           <Field label="E-mail">
-            <input name="issuerEmail" defaultValue={settings.issuerEmail} style={INPUT} />
+            <input className="adm-input" name="issuerEmail" defaultValue={settings.issuerEmail} />
           </Field>
           <Field label="Telefone de suporte">
-            <input name="issuerPhone" defaultValue={settings.issuerPhone} style={INPUT} />
+            <input className="adm-input" name="issuerPhone" defaultValue={settings.issuerPhone} />
           </Field>
           <Field
             label="Chave PIX"
             hint="Opcional; entra na fatura e na mensagem como alternativa ao boleto."
           >
-            <input name="issuerPixKey" defaultValue={settings.issuerPixKey} style={INPUT} />
+            <input className="adm-input" name="issuerPixKey" defaultValue={settings.issuerPixKey} />
           </Field>
         </div>
-        <div style={{ marginTop: "16px", display: "flex", flexDirection: "column", gap: "16px" }}>
+        <div className="adm-form adm-grid-spaced">
           <Field
             label="Descricao do boleto"
             hint="Marcadores: {emitente} {pedreira} {referencia} {periodo}. Vazio usa o texto padrao."
           >
             <input
+              className="adm-input"
               name="invoiceDescriptionTemplate"
               defaultValue={settings.invoiceDescriptionTemplate}
               placeholder="{emitente} - Mensalidade {referencia} - {pedreira}"
-              style={INPUT}
             />
           </Field>
           <Field
@@ -1644,149 +1553,27 @@ function BillingSettingsForm({
             hint="Marcadores: {pedreira} {numero} {referencia} {valor} {vencimento} {boleto} {linha_digitavel} {pix}. Vazio usa a mensagem padrao."
           >
             <textarea
+              className="adm-textarea"
               name="whatsappMessageTemplate"
               rows={4}
               defaultValue={settings.whatsappMessageTemplate}
-              style={{ ...INPUT, resize: "vertical" }}
             />
           </Field>
         </div>
-      </article>
+      </Panel>
 
       <div>
-        <button
-          type="submit"
-          disabled={busy}
-          style={{ ...PRIMARY_BUTTON, opacity: busy ? 0.6 : 1 }}
-        >
+        <Button type="submit" variant="primary" form={formId} disabled={busy}>
           {busy ? "Salvando..." : "Salvar configuracoes"}
-        </button>
+        </Button>
       </div>
     </form>
   );
 }
-
-/**
- * Explica, uma vez por bloco, onde o valor do segredo realmente mora. Sem este
- * aviso o campo "nome da variavel" parece um campo de senha, e a primeira coisa
- * que alguem faz e colar o token ali.
- */
-function SecretsNotice() {
-  return (
-    <div
-      style={{
-        margin: "0 0 16px 0",
-        padding: "12px 14px",
-        borderRadius: "10px",
-        background: "#f1f5f9",
-        border: "1px solid #cbd5e1",
-        fontSize: "13px",
-        color: "#334155"
-      }}
-    >
-      As credenciais ficam nos <strong>secrets do Supabase</strong>, nunca no banco nem no codigo.
-      Aqui voce informa apenas o <strong>nome da variavel</strong>; o valor e gravado em{" "}
-      <em>Supabase &gt; Edge Functions &gt; Secrets</em> (ou{" "}
-      <code>supabase secrets set NOME=valor</code>) e so a Edge Function o enxerga.
-    </div>
-  );
-}
-
-/**
- * Um segredo: campo com o NOME da variavel e a situacao lida do servidor.
- * Deixar vazio mantem o nome padrao — por isso o placeholder mostra qual e.
- */
-function SecretField({ secret, name }: { secret: BillingSecretStatus; name: string }) {
-  return (
-    <Field
-      label={secret.label}
-      hint={
-        secret.configured
-          ? `Secret ${secret.envVar} encontrado (${secret.preview}).`
-          : `Secret ${secret.envVar} nao encontrado no Supabase. ${secret.missingHint}`
-      }
-    >
-      <input
-        name={name}
-        defaultValue={secret.isCustomEnvVar ? secret.envVar : ""}
-        placeholder={secret.envVar}
-        autoComplete="off"
-        spellCheck={false}
-        style={INPUT}
-      />
-      <span
-        style={{
-          alignSelf: "flex-start",
-          marginTop: "2px",
-          padding: "2px 8px",
-          borderRadius: "999px",
-          fontSize: "11px",
-          fontWeight: 700,
-          background: secret.configured ? "#dcfce7" : "#fef3c7",
-          color: secret.configured ? "#166534" : "#92400e"
-        }}
-      >
-        {secret.configured ? "Configurado no Supabase" : "Pendente no Supabase"}
-      </span>
-    </Field>
-  );
-}
-
-function Checkbox({
-  name,
-  label,
-  defaultChecked
-}: {
-  name: string;
-  label: string;
-  defaultChecked: boolean;
-}) {
-  return (
-    <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px" }}>
-      <input type="checkbox" name={name} defaultChecked={defaultChecked} />
-      {label}
-    </label>
-  );
-}
-
-// ---------------------------------------------------------------------------
-
-const FIELDSET: React.CSSProperties = {
-  border: "1px solid #e2e8f0",
-  borderRadius: "12px",
-  padding: "16px",
-  margin: 0
-};
-
-const LEGEND: React.CSSProperties = {
-  padding: "0 8px",
-  fontSize: "13px",
-  fontWeight: 700,
-  color: "#334155"
-};
-
-const GRID_TWO: React.CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
-  gap: "12px"
-};
 
 function emptyToNull(value: FormDataEntryValue | null): number | null {
   const text = String(value ?? "").trim();
   if (!text) return null;
   const parsed = Number(text);
   return Number.isFinite(parsed) ? parsed : null;
-}
-
-async function copyToClipboard(value: string): Promise<void> {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(value);
-      alert("Linha digitavel copiada!");
-      return;
-    }
-  } catch {
-    // cai para a copia manual abaixo
-  }
-  window.prompt("Copie a linha digitavel:", value);
 }

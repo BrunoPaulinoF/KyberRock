@@ -172,8 +172,9 @@ describe("invoice status labels", () => {
     expect(invoiceStatusLabel("overdue")).toBe("Vencida");
     expect(invoiceStatusLabel("paid")).toBe("Paga");
     expect(invoiceStatusLabel("whatever")).toBe("whatever");
-    expect(invoiceStatusTone("overdue").color).toBe("#991b1b");
-    expect(invoiceStatusTone("whatever")).toEqual(invoiceStatusTone("draft"));
+    expect(invoiceStatusTone("overdue")).toBe("danger");
+    expect(invoiceStatusTone("paid")).toBe("ok");
+    expect(invoiceStatusTone("whatever")).toBe("neutral");
   });
 });
 
@@ -270,9 +271,10 @@ describe("findSecret", () => {
       {
         key: "mercadoPagoAccessToken",
         label: "Access token do Mercado Pago",
+        purpose: "Conta que emite os boletos.",
         missingHint: "Sem ele nenhum boleto e emitido.",
+        required: true,
         envVar: "MERCADO_PAGO_ACCESS_TOKEN",
-        isCustomEnvVar: false,
         configured: true,
         preview: "••••3456"
       }
@@ -288,9 +290,10 @@ describe("findSecret", () => {
     expect(findSecret(settings, "naoExiste")).toEqual({
       key: "naoExiste",
       label: "naoExiste",
+      purpose: "",
       missingHint: "",
+      required: false,
       envVar: "",
-      isCustomEnvVar: false,
       configured: false,
       preview: ""
     });

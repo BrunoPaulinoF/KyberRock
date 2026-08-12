@@ -184,6 +184,18 @@ offending link of the chain, not above the `return`.
 - A credencial da IA do assistente da documentação **não é secret de deploy**: ela é cadastrada no painel administrativo do loader-web (aba **Assistente de IA**) e gravada na tabela singleton `public.ai_assistant_settings` — uma chave e um modelo **globais**, usados por todas as pedreiras. O `admin-api` (`get_ai_settings` / `update_ai_settings`) é o único caminho de escrita; a RLS nega acesso direto de `anon`/`authenticated`, e o `get` devolve só os quatro últimos caracteres da chave — ela nunca volta para a tela nem chega ao desktop. `OPENAI_API_KEY` / `OPENAI_MODEL` continuam existindo como **fallback** de Edge Function para instalações antigas, mas a tabela tem precedência. Sem chave (ou com o assistente desmarcado) a função responde **503** e o desktop cai silenciosamente na resposta local — a ausência da chave desliga a IA, não quebra a tela. A função omite `temperature` e usa `max_completion_tokens` justamente para aceitar qualquer modelo configurado ali; a lista do seletor é só de interface (o backend aceita qualquer texto), então modelo novo da OpenAI não exige deploy.
 - For local dev, copy `.env.example` to `.env` and fill placeholder values; real secrets stay out of Git.
 
+## Painel administrativo (loader-web)
+
+- **Design system em `apps/loader-web/src/admin-ui.css` + `src/components/admin/`.** Tudo abaixo
+  de `.adm`; o `loader-ui.css` continua mandando nas telas do carregador e do comercial. Não
+  acrescente estilo inline nas telas do admin — foi justamente o estilo inline espalhado que
+  fazia uma mudança de espaçamento exigir varrer milhares de linhas de TSX.
+- Formato de **console técnico**: tabela densa (`DataTable`) no lugar de lista em cartão,
+  monoespaçada para id/código/valor, cor reservada para estado. Criar e editar são modal, para a
+  listagem ficar com a largura toda.
+- `components/admin/smoke.test.tsx` renderiza os primitivos com `react-dom/server` — é o que
+  pega erro de runtime nos componentes sem precisar de jsdom no repositório.
+
 ## Backoffice financeiro
 
 Cobrança da plataforma (Kybernan → pedreira). Guia completo em `docs/financeiro.md`.
@@ -199,11 +211,11 @@ Cobrança da plataforma (Kybernan → pedreira). Guia completo em `docs/financei
   notificação do Mercado Pago e **reconsulta a API** antes de dar baixa — o corpo da requisição
   nunca é a fonte da verdade.
 - **Segredos ficam nos secrets do Supabase, não no banco** (`_shared/billing-secrets.ts`,
-  migração `202608120003`). `billing_settings` guarda só o NOME da variável
-  (`MERCADO_PAGO_ACCESS_TOKEN`, `MERCADO_PAGO_WEBHOOK_SECRET`, `UAZAPI_INSTANCE_TOKEN` por
-  padrão) e a Edge Function lê o valor com `Deno.env.get()`. O painel vê nome, situação e os
-  quatro últimos caracteres — nunca o valor. Não reintroduza coluna de valor: as antigas foram
-  removidas de propósito.
+  migrações `202608120003`/`202608120004`). Os nomes são FIXOS no código
+  (`MERCADO_PAGO_ACCESS_TOKEN`, `MERCADO_PAGO_WEBHOOK_SECRET`, `UAZAPI_INSTANCE_TOKEN`) e a Edge
+  Function lê o valor com `Deno.env.get()`. A tela não tem campo de segredo — só exibe nome,
+  situação e os quatro últimos caracteres; `admin-billing` nem aceita esses campos no payload.
+  Não reintroduza coluna nem campo de segredo: os que existiam foram removidos de propósito.
 - Idempotência do boleto: `kyberrock:{companyId}:{invoiceId}:create_boleto` (+ `:{n}` na
   reemissão), mesma convenção do OMIE.
 - **A migração `202608120001_financial_backoffice.sql` precisa ser aplicada à mão** antes de abrir

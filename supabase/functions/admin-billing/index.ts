@@ -47,7 +47,6 @@ import {
 } from "../_shared/billing-cycle.ts";
 import { missingBillingFields, resolveBillingCustomer } from "../_shared/billing-invoice.ts";
 import { cancelPayment } from "../_shared/mercado-pago.ts";
-import { BILLING_SECRETS, describeEnvVarNameError } from "../_shared/billing-secrets.ts";
 
 /**
  * Cliente generico do Supabase. Nao usamos `ReturnType<typeof createClient>`
@@ -301,18 +300,9 @@ async function handleUpdateSettings(
     update.mercado_pago_environment =
       text(payload.mercadoPagoEnvironment) === "sandbox" ? "sandbox" : "production";
   }
-  // Segredo NAO passa por aqui. A tela envia apenas o NOME da variavel de
-  // ambiente; o valor vive no secret do Supabase e e lido pela Edge Function.
-  // Colar o token no campo do nome e o erro provavel, entao ele e recusado com
-  // uma mensagem que diz onde o valor deve ir.
-  for (const definition of BILLING_SECRETS) {
-    const field = `${definition.key}Env`;
-    if (payload[field] === undefined) continue;
-    const name = text(payload[field]);
-    const error = describeEnvVarNameError(name);
-    if (error) return jsonResponse({ error: `${definition.label}: ${error}` }, 400);
-    update[definition.column] = name.length > 0 ? name : null;
-  }
+  // Nenhum segredo passa por aqui — nem o valor, nem o nome da variavel. Os
+  // nomes sao fixos em `_shared/billing-secrets.ts` e os valores vem dos secrets
+  // do Supabase. Campo que nao existe e campo que nao vaza.
 
   if (payload.whatsappUrl !== undefined) update.whatsapp_url = optionalText(payload.whatsappUrl);
   if (payload.whatsappInstanceName !== undefined) {

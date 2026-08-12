@@ -108,16 +108,17 @@ export interface BillingInvoice {
 /**
  * Situacao de um segredo. Repare no que NAO existe aqui: o valor. Ele mora no
  * secret do Supabase, e lido pela Edge Function com `Deno.env.get()` e nunca
- * chega ao navegador — a tela conhece so o nome da variavel, se ela esta
- * preenchida e os quatro ultimos caracteres, o bastante para reconhecer qual
- * credencial esta ativa.
+ * chega ao navegador — a tela conhece so o nome da variavel (fixo no codigo),
+ * se ela esta preenchida e os quatro ultimos caracteres, o bastante para
+ * reconhecer qual credencial esta ativa. A tela EXIBE isso; nao edita.
  */
 export interface BillingSecretStatus {
   key: string;
   label: string;
+  purpose: string;
   missingHint: string;
+  required: boolean;
   envVar: string;
-  isCustomEnvVar: boolean;
   configured: boolean;
   preview: string;
 }
@@ -164,17 +165,15 @@ export const INVOICE_STATUS_LABELS: Record<InvoiceStatus, string> = {
   canceled: "Cancelada"
 };
 
-export interface StatusTone {
-  background: string;
-  color: string;
-}
+/** Nome do tom do `Badge` do design system — nao cor crua. */
+export type StatusTone = "neutral" | "ok" | "warn" | "danger" | "info";
 
 export const INVOICE_STATUS_TONES: Record<InvoiceStatus, StatusTone> = {
-  draft: { background: "#e2e8f0", color: "#334155" },
-  open: { background: "#dbeafe", color: "#1d4ed8" },
-  paid: { background: "#dcfce7", color: "#166534" },
-  overdue: { background: "#fee2e2", color: "#991b1b" },
-  canceled: { background: "#f1f5f9", color: "#64748b" }
+  draft: "neutral",
+  open: "info",
+  paid: "ok",
+  overdue: "danger",
+  canceled: "neutral"
 };
 
 export function invoiceStatusLabel(status: string): string {
@@ -182,7 +181,7 @@ export function invoiceStatusLabel(status: string): string {
 }
 
 export function invoiceStatusTone(status: string): StatusTone {
-  return INVOICE_STATUS_TONES[status as InvoiceStatus] ?? INVOICE_STATUS_TONES.draft;
+  return INVOICE_STATUS_TONES[status as InvoiceStatus] ?? "neutral";
 }
 
 /** Centavos como "R$ 1.234,56". */
@@ -340,9 +339,10 @@ export function findSecret(
     (settings.secrets ?? []).find((secret) => secret.key === key) ?? {
       key,
       label: key,
+      purpose: "",
       missingHint: "",
+      required: false,
       envVar: "",
-      isCustomEnvVar: false,
       configured: false,
       preview: ""
     }
