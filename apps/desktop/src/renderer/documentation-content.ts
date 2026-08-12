@@ -450,6 +450,7 @@ export const documentationSections: DocumentationSection[] = [
       "Instale a impressora no Windows e confirme que ela imprime uma pagina de teste pelo proprio Windows.",
       "No KyberRock, abra a engrenagem e escolha Impressao (ou tecle F7).",
       "Selecione a impressora e salve o perfil de cupom.",
+      "Preencha a logo e o telefone da pedreira: os dois saem no cupom nos dois modelos (padrao e personalizado).",
       "Use o teste de impressao para validar papel, margem e tamanho antes da primeira carga.",
       "Ao fechar a pesagem, o cupom sai sozinho e vai para o motorista.",
       "Precisa de outra via? Use a reimpressao: o cupom sai marcado como copia."
@@ -459,6 +460,7 @@ export const documentationSections: DocumentationSection[] = [
       "O cupom traz o codigo da operacao (COD), dados da pedreira, cliente, produto, pesos de entrada, saida e liquido, valor, frete, veiculo, motorista e assinatura.",
       'A linha "COD" e o codigo da operacao; "COPIA NRO" conta quantas vias ja sairam. Nao confunda os dois.',
       "A logo do cupom e convertida para preto e branco na impressao. Logo muito clara pode sumir no papel — o sistema avisa quando detecta isso.",
+      'O telefone da pedreira e opcional: preenchido, sai no rodape como "CONTATO: ..."; em branco, o cupom nao mostra a linha.',
       "Para relatorios em A4, confira a impressora padrao do Windows: eles usam o caminho de impressao normal, nao a termica."
     ],
     keywords: [
@@ -888,10 +890,33 @@ export const documentationFaqs: DocumentationFaq[] = [
   {
     question: "A logo sumiu no cupom impresso, mas aparece na tela.",
     answer:
-      "A impressora termica imprime em preto e branco puro. Logo em cor clara pode virar papel em branco na conversao. O sistema detecta esse caso e avisa: use uma versao da logo com mais contraste, de preferencia em tracos escuros sobre fundo claro.",
+      "Ate a versao anterior o cupom era montado na largura da pagina que o driver informava, entao a logo, o COD e o COPIA NRO — que saem centralizados — caiam fora da faixa do papel de 80 mm e nao imprimiam. Isso foi corrigido: o cupom agora e montado na largura do papel, sem depender do driver. Se depois de atualizar a logo ainda sair fraca, o motivo e outro: a termica imprime em preto e branco puro e logo de cor clara vira papel em branco. A tela de impressao mostra a previa em preto e branco e avisa quando a logo sairia vazia — nesse caso use uma versao com tracos escuros sobre fundo claro.",
     category: "impressao",
     sectionId: "printing",
-    keywords: ["logo", "logotipo", "logo nao imprime", "logo apagada", "cupom sem logo"]
+    keywords: [
+      "logo",
+      "logotipo",
+      "logo nao imprime",
+      "logo apagada",
+      "cupom sem logo",
+      "cupom sem numero",
+      "cupom cortado"
+    ]
+  },
+  {
+    question: "Como coloco o telefone da pedreira no cupom?",
+    answer:
+      'Em Configuracoes > Impressao (F7) existe o campo "Telefone da pedreira no cupom". O numero digitado sai no rodape como "CONTATO: ...", para o cliente falar com a pedreira depois de sair da balanca. O campo vale nos dois modelos (padrao e personalizado) e, se ficar em branco, o cupom nao mostra nenhuma linha de contato.',
+    category: "impressao",
+    sectionId: "printing",
+    keywords: [
+      "telefone",
+      "telefone no cupom",
+      "contato",
+      "contato no cupom",
+      "numero da pedreira",
+      "whatsapp no cupom"
+    ]
   },
   {
     question: "O que significa COD e COPIA NRO no cupom?",

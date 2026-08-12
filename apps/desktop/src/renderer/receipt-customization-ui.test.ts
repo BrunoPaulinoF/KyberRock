@@ -15,7 +15,7 @@ describe("cupom impresso pela impressora do Windows", () => {
   // aviso "sem valor fiscal" no topo) para o cupom sair picado.
   it("nao corta as linhas do topo por posicao fixa", () => {
     expect(receiptHtmlSource).not.toContain("snapshot.lines.slice(6)");
-    expect(receiptHtmlSource).toContain("snapshot.bodyLines.join");
+    expect(receiptHtmlSource).toContain("renderReceiptBody(snapshot.bodyLines");
     expect(receiptHtmlSource).toContain("const header = snapshot.header;");
   });
 
@@ -29,6 +29,16 @@ describe("cupom impresso pela impressora do Windows", () => {
     expect(receiptHtmlSource).toContain("RECEIPT_FONT_STACKS[style.fontFamily]");
     expect(receiptHtmlSource).toContain("font-size: ${style.fontSizePx}px");
     expect(receiptHtmlSource).toContain("highlightReceiptNumbers(");
+  });
+
+  // A logo e o numero do cupom sumiam do papel porque o cupom ocupava a largura da PAGINA
+  // (A4/Carta, ja que a regra `@page` era invalida): tudo que e centralizado caia fora do
+  // papel de 80 mm. A largura do cupom nao pode voltar a depender da pagina.
+  it("desenha o cupom na faixa util do papel, e nao na largura da pagina", () => {
+    expect(receiptHtmlSource).toContain("receiptContentWidthMm(payload.paperWidthMm)");
+    expect(receiptHtmlSource).toContain(".receipt { width: ${contentWidthMm}mm;");
+    expect(receiptHtmlSource).not.toContain(".receipt { width: 100%; }");
+    expect(receiptHtmlSource).not.toMatch(/size: \$\{payload\.paperWidthMm\}mm auto/);
   });
 });
 
@@ -69,6 +79,18 @@ describe("tela de impressao", () => {
     expect(appSource).toContain("Posicao da logo");
     expect(appSource).toContain("Restaurar aparencia padrao");
   });
+
+  // O telefone e dado da pedreira (como a logo), nao um enfeite do modelo: fica fora do
+  // editor visual, senao quem usa o modelo "Padrao" nem veria o campo.
+  it("tem o campo de telefone da pedreira fora do editor visual", () => {
+    expect(appSource).toContain("Telefone da pedreira no cupom");
+    expect(appSource).toContain("updateReceiptTemplateConfig({ companyPhone: event.target.value })");
+
+    const campo = appSource.indexOf("Telefone da pedreira no cupom");
+    const editor = appSource.indexOf("Editor visual do cupom");
+    expect(campo).toBeGreaterThan(0);
+    expect(campo).toBeLessThan(editor);
+  });
 });
 
 describe("previa do cupom", () => {
@@ -104,6 +126,16 @@ describe("previa do cupom", () => {
 
   it("acompanha a rolagem da tela para configurar e visualizar ao mesmo tempo", () => {
     expect(previewSource).toContain('position: "sticky"');
+  });
+
+  // A previa so vale se quebrar (ou nao quebrar) a linha no mesmo ponto que o papel: as duas
+  // telas medem a faixa util e o tamanho das linhas decorativas pelas MESMAS funcoes.
+  it("mede o papel com as mesmas funcoes do cupom impresso", () => {
+    for (const source of [previewSource, receiptHtmlSource]) {
+      expect(source).toContain("receiptContentWidthMm(");
+      expect(source).toContain("fitReceiptBodyFontSizePx(");
+      expect(source).toContain("isReceiptRuleLine(");
+    }
   });
 });
 

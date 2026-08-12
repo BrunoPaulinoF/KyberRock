@@ -32,7 +32,7 @@ describe("buildReceiptHtml", () => {
       payload({ dataUrl: LOGO_DATA_URL, widthMm: 30, heightMm: 20, fit: "cover" })
     );
 
-    expect(html).toContain("width: 30mm; height: 20mm;");
+    expect(html).toContain("width: 30mm; max-width: 100%; height: 20mm;");
     expect(html).toContain("object-fit: cover;");
   });
 
@@ -48,7 +48,7 @@ describe("buildReceiptHtml", () => {
     expect(html).toContain('<img src="data:image/png;base64,MONO" alt="Logo"');
     // A original nao e o que se IMPRIME — fica so como reserva, se o raster nao carregar.
     expect(html).not.toContain(`<img src="${LOGO_DATA_URL}"`);
-    expect(html).toContain("width: 16mm; height: 16mm;");
+    expect(html).toContain("width: 16mm; max-width: 100%; height: 16mm;");
     expect(html).toContain("object-fit: contain;");
     // Imagem de 1 bit ja no tamanho final: sem suavizacao, os pontos saem nitidos.
     expect(html).toContain("image-rendering: pixelated;");
@@ -148,10 +148,67 @@ describe("buildReceiptHtml", () => {
     expect(html).not.toContain("OPERACAO 000001");
   });
 
-  it("keeps the paper width of the profile in the page size", () => {
-    expect(buildReceiptHtml(payload({ dataUrl: null }, { paperWidthMm: 58 }))).toContain(
-      "size: 58mm auto;"
+  /**
+   * O cupom saia sem logo e sem numero porque `@page { size: 80mm auto }` e CSS invalido:
+   * o navegador jogava a regra fora, diagramava numa pagina A4/Carta e tudo que e
+   * centralizado (logo, COD, COPIA NRO) ia parar no meio de 210 mm — fora do papel de 80.
+   */
+  describe("largura do cupom", () => {
+    it("desenha o cupom na faixa util do papel, e nao na largura da pagina", () => {
+      const html = buildReceiptHtml(payload({ dataUrl: LOGO_DATA_URL }));
+
+      expect(html).toContain(".receipt { width: 72mm; max-width: 100%;");
+      expect(html).not.toContain(".receipt { width: 100%; }");
+    });
+
+    it("acompanha o papel configurado", () => {
+      expect(buildReceiptHtml(payload({ dataUrl: null }, { paperWidthMm: 58 }))).toContain(
+        ".receipt { width: 50mm;"
+      );
+    });
+
+    it("nao deixa a regra de pagina invalida voltar", () => {
+      const html = buildReceiptHtml(payload({ dataUrl: null }));
+
+      // `size` so aceita `auto` sozinho ou medidas: `80mm auto` derruba a regra inteira.
+      expect(html).not.toMatch(/size:\s*\d+mm auto/);
+      expect(html).toContain("@page { margin: 4mm; }");
+    });
+
+    it("mantem a logo dentro do papel quando a caixa e maior que a faixa util", () => {
+      const html = buildReceiptHtml(
+        payload({ dataUrl: LOGO_DATA_URL, widthMm: 60 }, { paperWidthMm: 58 })
+      );
+
+      expect(html).toContain("width: 60mm; max-width: 100%;");
+    });
+
+    // Divisor e linha de assinatura ocupam as 48 colunas ate o fim: sao as unicas linhas
+    // que estouravam a faixa util e deixavam um toco de tracos na linha de baixo.
+    it("imprime as linhas decorativas inteiras, sem quebrar", () => {
+      const html = buildReceiptHtml(payload({ dataUrl: null }));
+
+      expect(html).toContain(`<span class="rule-line">${"-".repeat(48)}</span>`);
+      expect(html).toContain(`<span class="rule-line">${"_".repeat(48)}</span>`);
+      expect(html).toMatch(/\.rule-line \{ font-size: [\d.]+px; white-space: pre; \}/);
+    });
+
+    it("nao mexe no tamanho do texto escolhido pelo operador", () => {
+      const html = buildReceiptHtml(
+        payload({ dataUrl: null }, { config: { mode: "custom", fontSizePx: 14 } })
+      );
+
+      expect(html).toContain("font-size: 14px");
+    });
+  });
+
+  it("imprime o telefone da pedreira configurado no rodape", () => {
+    const html = buildReceiptHtml(
+      payload({ dataUrl: null }, { config: { companyPhone: "(11) 3333-4444" } })
     );
+
+    expect(html).toContain("CONTATO: (11) 3333-4444");
+    expect(buildReceiptHtml(payload({ dataUrl: null }))).not.toContain("CONTATO:");
   });
 });
 

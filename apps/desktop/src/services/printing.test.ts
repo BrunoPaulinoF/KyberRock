@@ -515,6 +515,98 @@ describe("printing", () => {
       database.close();
     }
   });
+
+  it("imprime o telefone da pedreira configurado no perfil", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createIdentity(database);
+      configureReceiptPrintProfile(database, {
+        identity,
+        windowsPrinterName: "TERMICA-80",
+        templateConfig: { companyPhone: "(11) 3333-4444" }
+      });
+      const operation = createClosedOperation(database, identity);
+
+      await printWeighingReceipt(database, { operationId: operation.id, identity }, printer);
+
+      expect(printer.calls[0].lines).toContain("CONTATO: (11) 3333-4444");
+    } finally {
+      database.close();
+    }
+  });
+
+  /**
+   * O cupom sem a linha "COD ..." deixa o operador sem como achar a venda a partir do papel.
+   * Toda operacao aberta nesta balanca ja nasce com codigo; a que chega da nuvem publicada
+   * por uma balanca em versao antiga pode vir sem, e ai o codigo e atribuido na impressao.
+   */
+  it("numera a operacao que chegou sem codigo antes de imprimir", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createIdentity(database);
+      configureReceiptPrintProfile(database, { identity, windowsPrinterName: "TERMICA-80" });
+      const anterior = createClosedOperation(database, identity);
+      const operation = createClosedOperation(database, identity);
+      database
+        .prepare("UPDATE weighing_operations SET operation_code = NULL WHERE id = ?")
+        .run(operation.id);
+
+      await printWeighingReceipt(database, { operationId: operation.id, identity }, printer);
+
+      const codigoAnterior = database
+        .prepare("SELECT operation_code FROM weighing_operations WHERE id = ?")
+        .pluck()
+        .get(anterior.id) as number;
+      const codigo = database
+        .prepare("SELECT operation_code FROM weighing_operations WHERE id = ?")
+        .pluck()
+        .get(operation.id) as number;
+
+      // Segue a sequencia da pedreira, sem repetir o codigo de outra operacao.
+      expect(codigo).toBe(codigoAnterior + 1);
+      expect(printer.calls[0].snapshot.header.operationCodeLabel).toBe(
+        String(codigo).padStart(6, "0")
+      );
+      expect(printer.calls[0].lines.join("\n")).toContain(`COD ${String(codigo).padStart(6, "0")}`);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("nao renumera o cupom ja emitido quando ele e reimpresso", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createIdentity(database);
+      configureReceiptPrintProfile(database, { identity, windowsPrinterName: "TERMICA-80" });
+      const operation = createClosedOperation(database, identity);
+      const codigo = database
+        .prepare("SELECT operation_code FROM weighing_operations WHERE id = ?")
+        .pluck()
+        .get(operation.id) as number;
+
+      const receipt = await printWeighingReceipt(
+        database,
+        { operationId: operation.id, identity },
+        printer
+      );
+      await reprintWeighingReceipt(database, { receiptId: receipt.id, identity }, printer);
+
+      expect(
+        database
+          .prepare("SELECT operation_code FROM weighing_operations WHERE id = ?")
+          .pluck()
+          .get(operation.id)
+      ).toBe(codigo);
+    } finally {
+      database.close();
+    }
+  });
 });
 
 function createDatabase(): DesktopDatabase {
