@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { AdminSessionExpiredError, callAdminFunction } from "../lib/admin-api";
 import { AiAssistantSettings } from "./AiAssistantSettings";
+import { FinancialBackoffice } from "./FinancialBackoffice";
 
 interface Company {
   id: string;
@@ -47,7 +48,7 @@ interface Device {
 
 /** Alvo da exclusao mostrado no modal de confirmacao. */
 export interface DeleteTarget {
-  type: "company" | "unit" | "user";
+  type: "company" | "unit" | "user" | "device";
   id: string;
   name: string;
   /** Preenchido quando type === "user": "Carregador" ou "Comercial". */
@@ -66,6 +67,9 @@ export function buildDeleteConfirmationMessage(target: DeleteTarget): string {
   if (target.type === "unit") {
     return `Tem certeza que deseja excluir a unidade "${target.name}"? Os usuarios e dispositivos vinculados a ela serao excluidos tambem.`;
   }
+  if (target.type === "device") {
+    return `Tem certeza que deseja excluir o desktop "${target.name}"? A ativacao dele e perdida e a balanca precisara ser ativada de novo com o codigo da pedreira.`;
+  }
   const role = target.roleLabel ? `${target.roleLabel.toLowerCase()} ` : "";
   return `Tem certeza que deseja excluir o usuario ${role}"${target.name}"? O acesso dele ao sistema sera removido.`;
 }
@@ -81,8 +85,71 @@ export function buildDeleteRequest(target: DeleteTarget): {
   if (target.type === "unit") {
     return { action: "delete_unit", payload: { unitId: target.id } };
   }
+  if (target.type === "device") {
+    return { action: "delete_device", payload: { deviceId: target.id } };
+  }
   return { action: "delete_loader", payload: { userId: target.id } };
 }
+
+/**
+ * Busca dos cadastros: casa quando TODOS os termos digitados aparecem em algum
+ * dos campos da linha. Buscar por termo (e nao pela frase inteira) e o que faz
+ * "sul joao" achar o carregador Joao da Pedreira Sul — a ordem em que a pessoa
+ * lembra dos dois nao pode importar.
+ */
+export function matchesCadastroSearch(search: string, fields: Array<string | null | undefined>) {
+  const terms = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return true;
+  const haystack = fields
+    .filter((field): field is string => Boolean(field))
+    .join(" ")
+    .toLowerCase();
+  return terms.every((term) => haystack.includes(term));
+}
+
+/**
+ * Campo com rotulo visivel. Os formularios de cadastro usavam so `placeholder`,
+ * que some assim que a pessoa digita: revisar um cadastro preenchido virava
+ * adivinhacao de qual caixa era a razao social e qual era o CNPJ.
+ */
+function LabeledField({
+  label,
+  hint,
+  children
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "13px" }}>
+      <span style={{ fontWeight: 700, color: "#334155" }}>{label}</span>
+      {children}
+      {hint && <span style={{ fontSize: "12px", color: "#64748b" }}>{hint}</span>}
+    </label>
+  );
+}
+
+function FormSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <fieldset
+      style={{ border: "1px solid #e2e8f0", borderRadius: "12px", padding: "16px", margin: 0 }}
+    >
+      <legend style={{ padding: "0 8px", fontSize: "13px", fontWeight: 700, color: "#334155" }}>
+        {title}
+      </legend>
+      <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>{children}</div>
+    </fieldset>
+  );
+}
+
+const TEXT_INPUT: React.CSSProperties = {
+  padding: "10px",
+  borderRadius: "8px",
+  border: "1px solid #cbd5e1",
+  width: "100%",
+  boxSizing: "border-box"
+};
 
 const TWO_COLUMN_GRID = "repeat(auto-fit, minmax(min(100%, 320px), 1fr))";
 const COMPACT_GRID = "repeat(auto-fit, minmax(min(100%, 240px), 1fr))";
@@ -176,8 +243,12 @@ export function AdminDashboard() {
   const [users, setUsers] = useState<LoaderUser[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
   const [activeTab, setActiveTab] = useState<
-    "companies" | "loaders" | "comercial" | "devices" | "ai"
+    "companies" | "loaders" | "comercial" | "devices" | "financeiro" | "ai"
   >("companies");
+  // Busca aplicada as listagens de cadastro (pedreira, unidade, usuario,
+  // dispositivo). Com dezenas de registros, rolar a pagina inteira para achar
+  // um nome era o que mais atrasava uma correcao simples de cadastro.
+  const [cadastroSearch, setCadastroSearch] = useState("");
   // Filtro por pedreira (empresa) aplicado as listagens de todas as abas. "" = todas.
   const [filterCompanyId, setFilterCompanyId] = useState("");
   const [isLoading, setIsLoading] = useState(true);
@@ -568,19 +639,41 @@ export function AdminDashboard() {
     }
   }
 
-  const filteredCompanies = filterCompanyId
-    ? companies.filter((company) => company.id === filterCompanyId)
-    : companies;
-  const filteredUnits = filterCompanyId
-    ? units.filter((unit) => unit.companyId === filterCompanyId)
-    : units;
-  const filteredDevices = filterCompanyId
-    ? devices.filter((device) => device.companyId === filterCompanyId)
-    : devices;
+  function companyNameOf(companyId: string): string {
+    return companies.find((company) => company.id === companyId)?.name ?? "";
+  }
+
+  const filteredCompanies = companies.filter(
+    (company) =>
+      (!filterCompanyId || company.id === filterCompanyId) &&
+      matchesCadastroSearch(cadastroSearch, [company.name, company.legalName, company.document])
+  );
+  const filteredUnits = units.filter(
+    (unit) =>
+      (!filterCompanyId || unit.companyId === filterCompanyId) &&
+      matchesCadastroSearch(cadastroSearch, [unit.name, companyNameOf(unit.companyId)])
+  );
+  const filteredDevices = devices.filter(
+    (device) =>
+      (!filterCompanyId || device.companyId === filterCompanyId) &&
+      matchesCadastroSearch(cadastroSearch, [
+        device.name,
+        device.id,
+        companyNameOf(device.companyId),
+        units.find((unit) => unit.id === device.unitId)?.name
+      ])
+  );
 
   function filteredUsersByRole(role: "loader" | "comercial"): LoaderUser[] {
     return users.filter(
-      (user) => user.role === role && (!filterCompanyId || user.companyId === filterCompanyId)
+      (user) =>
+        user.role === role &&
+        (!filterCompanyId || user.companyId === filterCompanyId) &&
+        matchesCadastroSearch(cadastroSearch, [
+          user.name,
+          user.email,
+          companyNameOf(user.companyId)
+        ])
     );
   }
 
@@ -818,6 +911,12 @@ export function AdminDashboard() {
           Dispositivos e Licencas
         </button>
         <button
+          onClick={() => setActiveTab("financeiro")}
+          className={`admin-tab ${activeTab === "financeiro" ? "admin-tab-active" : ""}`}
+        >
+          Financeiro
+        </button>
+        <button
           onClick={() => setActiveTab("ai")}
           className={`admin-tab ${activeTab === "ai" ? "admin-tab-active" : ""}`}
         >
@@ -825,11 +924,12 @@ export function AdminDashboard() {
         </button>
       </nav>
 
-      {/* A aba de IA usa uma credencial global; um filtro de pedreira ao lado dela
-          sugeriria que cada uma tem a sua chave. */}
+      {/* A aba de IA usa uma credencial global (um filtro de pedreira ao lado dela
+          sugeriria que cada uma tem a sua chave) e a do Financeiro tem os
+          proprios filtros, por pedreira, situacao e busca. */}
       <div
         style={{
-          display: activeTab === "ai" ? "none" : "flex",
+          display: activeTab === "ai" || activeTab === "financeiro" ? "none" : "flex",
           alignItems: "center",
           gap: "10px",
           flexWrap: "wrap",
@@ -861,10 +961,27 @@ export function AdminDashboard() {
             </option>
           ))}
         </select>
-        {filterCompanyId && (
+        <input
+          value={cadastroSearch}
+          onChange={(e) => setCadastroSearch(e.target.value)}
+          placeholder="Buscar por nome, e-mail ou documento"
+          aria-label="Buscar nos cadastros"
+          style={{
+            padding: "8px 12px",
+            borderRadius: "8px",
+            border: "1px solid #cbd5e1",
+            background: "#fff",
+            minWidth: "260px",
+            flex: "1 1 260px"
+          }}
+        />
+        {(filterCompanyId || cadastroSearch) && (
           <button
             type="button"
-            onClick={() => setFilterCompanyId("")}
+            onClick={() => {
+              setFilterCompanyId("");
+              setCadastroSearch("");
+            }}
             style={{
               padding: "8px 12px",
               borderRadius: "8px",
@@ -874,7 +991,7 @@ export function AdminDashboard() {
               fontSize: "13px"
             }}
           >
-            Limpar filtro
+            Limpar filtros
           </button>
         )}
       </div>
@@ -1229,110 +1346,78 @@ export function AdminDashboard() {
                           maxWidth: "500px"
                         }}
                       >
-                        <h3 style={{ margin: "0 0 16px 0" }}>Editar Empresa</h3>
+                        <h3 style={{ margin: "0 0 16px 0" }}>Editar Pedreira</h3>
                         <form
                           onSubmit={handleUpdateCompany}
-                          style={{ display: "flex", flexDirection: "column", gap: "12px" }}
+                          style={{ display: "flex", flexDirection: "column", gap: "16px" }}
                         >
-                          <input
-                            name="name"
-                            defaultValue={editingCompany.name}
-                            placeholder="Nome fantasia"
-                            required
-                            style={{
-                              padding: "10px",
-                              borderRadius: "8px",
-                              border: "1px solid #cbd5e1"
-                            }}
-                          />
-                          <input
-                            name="legalName"
-                            defaultValue={editingCompany.legalName}
-                            placeholder="Razao social"
-                            required
-                            style={{
-                              padding: "10px",
-                              borderRadius: "8px",
-                              border: "1px solid #cbd5e1"
-                            }}
-                          />
-                          <input
-                            name="document"
-                            defaultValue={editingCompany.document}
-                            placeholder="CNPJ"
-                            style={{
-                              padding: "10px",
-                              borderRadius: "8px",
-                              border: "1px solid #cbd5e1"
-                            }}
-                          />
-                          <div
-                            style={{
-                              borderTop: "1px solid #e2e8f0",
-                              paddingTop: "12px",
-                              marginTop: "4px"
-                            }}
-                          >
-                            <strong style={{ fontSize: "13px", color: "#475569" }}>
-                              Token OMIE
-                            </strong>
+                          <FormSection title="Identificacao">
+                            <LabeledField label="Nome fantasia">
+                              <input
+                                name="name"
+                                defaultValue={editingCompany.name}
+                                required
+                                style={TEXT_INPUT}
+                              />
+                            </LabeledField>
+                            <LabeledField label="Razao social">
+                              <input
+                                name="legalName"
+                                defaultValue={editingCompany.legalName}
+                                required
+                                style={TEXT_INPUT}
+                              />
+                            </LabeledField>
+                            <LabeledField
+                              label="CNPJ"
+                              hint="Usado tambem como padrao do boleto quando o cadastro de cobranca nao tiver documento proprio."
+                            >
+                              <input
+                                name="document"
+                                defaultValue={editingCompany.document}
+                                style={TEXT_INPUT}
+                              />
+                            </LabeledField>
+                          </FormSection>
+
+                          <FormSection title="Integracao OMIE">
                             {editingCompany.omieAppKeyMasked ? (
-                              <p style={{ margin: "4px 0", fontSize: "12px", color: "#16a34a" }}>
+                              <p style={{ margin: 0, fontSize: "12px", color: "#16a34a" }}>
                                 Configurado (App Key: {editingCompany.omieAppKeyMasked})
                               </p>
                             ) : (
-                              <p style={{ margin: "4px 0", fontSize: "12px", color: "#d97706" }}>
+                              <p style={{ margin: 0, fontSize: "12px", color: "#d97706" }}>
                                 Nao configurado. Os desktops nao conectam ao OMIE.
                               </p>
                             )}
-                            <input
-                              name="omieAppKey"
-                              placeholder="Novo App Key (deixe vazio para manter)"
-                              style={{
-                                padding: "10px",
-                                borderRadius: "8px",
-                                border: "1px solid #cbd5e1",
-                                marginTop: "8px"
-                              }}
-                            />
-                            <input
-                              name="omieAppSecret"
-                              type="password"
-                              placeholder="Novo App Secret (deixe vazio para manter)"
-                              style={{
-                                padding: "10px",
-                                borderRadius: "8px",
-                                border: "1px solid #cbd5e1",
-                                marginTop: "8px"
-                              }}
-                            />
-                            <small style={{ color: "#64748b" }}>
-                              Ao preencher, o app key/secret e atualizado. Para limpar, salve com
-                              campos vazios.
-                            </small>
-                          </div>
-                          <div
-                            style={{
-                              borderTop: "1px solid #e2e8f0",
-                              paddingTop: "12px",
-                              marginTop: "4px"
-                            }}
-                          >
-                            <strong style={{ fontSize: "13px", color: "#475569" }}>
-                              Senha para alterar precos
-                            </strong>
-                            <p style={{ margin: "4px 0", fontSize: "12px", color: "#64748b" }}>
-                              Senha de 4 digitos que o operador deve informar no desktop para
-                              alterar precos padrao.
-                            </p>
-                            <div style={{ marginTop: "8px" }}>
+                            <LabeledField label="App Key" hint="Deixe vazio para manter a atual.">
+                              <input name="omieAppKey" style={TEXT_INPUT} />
+                            </LabeledField>
+                            <LabeledField
+                              label="App Secret"
+                              hint="Deixe vazio para manter. Para limpar a integracao, salve os dois campos vazios."
+                            >
+                              <input name="omieAppSecret" type="password" style={TEXT_INPUT} />
+                            </LabeledField>
+                          </FormSection>
+
+                          <FormSection title="Senha para alterar precos">
+                            <LabeledField
+                              label="Senha de 4 digitos"
+                              hint="Pedida no desktop para alterar precos padrao. Deixe vazio para manter."
+                            >
                               <PasswordField
                                 name="priceChangePassword"
                                 maxLength={4}
-                                placeholder="0000 (deixe vazio para manter)"
+                                placeholder="0000"
                               />
-                            </div>
-                          </div>
+                            </LabeledField>
+                          </FormSection>
+
+                          <p style={{ margin: 0, fontSize: "12px", color: "#64748b" }}>
+                            Valor acertado, data de virada, fechamento, vencimento e os dados do
+                            boleto ficam na aba <strong>Financeiro</strong>.
+                          </p>
                           <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
                             <button
                               type="submit"
@@ -1451,28 +1536,23 @@ export function AdminDashboard() {
               {/* Create Forms */}
               <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
                 <article style={{ background: "#fff", padding: "24px", borderRadius: "16px" }}>
-                  <h2 style={{ margin: "0 0 16px 0" }}>Nova Empresa</h2>
+                  <h2 style={{ margin: "0 0 4px 0" }}>Nova Pedreira</h2>
+                  <p style={{ margin: "0 0 16px 0", fontSize: "13px", color: "#64748b" }}>
+                    Depois de criar, configure a mensalidade na aba <strong>Financeiro</strong>.
+                  </p>
                   <form
                     onSubmit={handleCreateCompany}
                     style={{ display: "flex", flexDirection: "column", gap: "12px" }}
                   >
-                    <input
-                      name="name"
-                      placeholder="Nome fantasia"
-                      required
-                      style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
-                    />
-                    <input
-                      name="legalName"
-                      placeholder="Razao social"
-                      required
-                      style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
-                    />
-                    <input
-                      name="document"
-                      placeholder="CNPJ"
-                      style={{ padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
-                    />
+                    <LabeledField label="Nome fantasia">
+                      <input name="name" required style={TEXT_INPUT} />
+                    </LabeledField>
+                    <LabeledField label="Razao social">
+                      <input name="legalName" required style={TEXT_INPUT} />
+                    </LabeledField>
+                    <LabeledField label="CNPJ">
+                      <input name="document" style={TEXT_INPUT} />
+                    </LabeledField>
                     <details style={{ marginTop: "4px" }}>
                       <summary style={{ cursor: "pointer", color: "#475569", fontSize: "14px" }}>
                         Token OMIE (opcional)
@@ -1575,6 +1655,10 @@ export function AdminDashboard() {
 
           {activeTab === "comercial" && renderUsersTab("comercial")}
 
+          {activeTab === "financeiro" && (
+            <FinancialBackoffice onSessionExpired={() => void logout()} />
+          )}
+
           {activeTab === "ai" && <AiAssistantSettings onSessionExpired={() => void logout()} />}
 
           {activeTab === "devices" && (
@@ -1626,7 +1710,11 @@ export function AdminDashboard() {
                 <article style={{ background: "#fff", padding: "24px", borderRadius: "16px" }}>
                   <h2 style={{ margin: "0 0 16px 0" }}>Desktops Ativados</h2>
                   {filteredDevices.length === 0 ? (
-                    <p style={{ color: "#64748b" }}>Nenhum desktop ativado ainda.</p>
+                    <p style={{ color: "#64748b" }}>
+                      {filterCompanyId || cadastroSearch
+                        ? "Nenhum desktop encontrado com os filtros atuais."
+                        : "Nenhum desktop ativado ainda."}
+                    </p>
                   ) : (
                     filteredDevices.map((device) => {
                       const unit = units.find((u) => u.id === device.unitId);
@@ -1725,6 +1813,26 @@ export function AdminDashboard() {
                                 }}
                               >
                                 {device.isActive ? "Bloquear" : "Liberar"}
+                              </button>
+                              <button
+                                onClick={() =>
+                                  setConfirmDelete({
+                                    type: "device",
+                                    id: device.id,
+                                    name: device.name
+                                  })
+                                }
+                                style={{
+                                  padding: "6px 12px",
+                                  borderRadius: "6px",
+                                  border: "1px solid #fecaca",
+                                  background: "#fef2f2",
+                                  cursor: "pointer",
+                                  fontSize: "12px",
+                                  color: "#dc2626"
+                                }}
+                              >
+                                Excluir
                               </button>
                             </div>
                           </div>

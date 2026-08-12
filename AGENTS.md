@@ -184,6 +184,28 @@ offending link of the chain, not above the `return`.
 - A credencial da IA do assistente da documentação **não é secret de deploy**: ela é cadastrada no painel administrativo do loader-web (aba **Assistente de IA**) e gravada na tabela singleton `public.ai_assistant_settings` — uma chave e um modelo **globais**, usados por todas as pedreiras. O `admin-api` (`get_ai_settings` / `update_ai_settings`) é o único caminho de escrita; a RLS nega acesso direto de `anon`/`authenticated`, e o `get` devolve só os quatro últimos caracteres da chave — ela nunca volta para a tela nem chega ao desktop. `OPENAI_API_KEY` / `OPENAI_MODEL` continuam existindo como **fallback** de Edge Function para instalações antigas, mas a tabela tem precedência. Sem chave (ou com o assistente desmarcado) a função responde **503** e o desktop cai silenciosamente na resposta local — a ausência da chave desliga a IA, não quebra a tela. A função omite `temperature` e usa `max_completion_tokens` justamente para aceitar qualquer modelo configurado ali; a lista do seletor é só de interface (o backend aceita qualquer texto), então modelo novo da OpenAI não exige deploy.
 - For local dev, copy `.env.example` to `.env` and fill placeholder values; real secrets stay out of Git.
 
+## Backoffice financeiro
+
+Cobrança da plataforma (Kybernan → pedreira). Guia completo em `docs/financeiro.md`.
+
+- **Não é** o financeiro das operações da balança (esse é OMIE + relatório de vendas). A tela é a
+  aba **Financeiro** do painel administrativo, separada dos cadastros.
+- Regras puras e testadas pelo vitest: `_shared/billing-cycle.ts` (virada/fechamento/vencimento/
+  rateio/inadimplência), `_shared/billing-invoice.ts` (textos e campos obrigatórios do boleto) e
+  `_shared/mercado-pago.ts` (`fetch` injetável). O `vitest.config.ts` já inclui
+  `supabase/functions/_shared/*_test.ts`; os três novos entram nesse `include` existente.
+- `_shared/billing-engine.ts` orquestra e é compartilhado por `admin-billing` (painel) e
+  `billing-run` (pg_cron, `202608120002_billing_run_cron.sql`, 2×/dia). `billing-webhook` recebe a
+  notificação do Mercado Pago e **reconsulta a API** antes de dar baixa — o corpo da requisição
+  nunca é a fonte da verdade.
+- Segredos (`billing_settings`): access token do Mercado Pago, segredo do webhook e token da
+  instância UAZAPI. Ficam na tabela, com os envs `MERCADO_PAGO_*` / `UAZAPI_*` como fallback; o
+  painel só vê os quatro últimos caracteres e campo vazio no submit significa "manter".
+- Idempotência do boleto: `kyberrock:{companyId}:{invoiceId}:create_boleto` (+ `:{n}` na
+  reemissão), mesma convenção do OMIE.
+- **A migração `202608120001_financial_backoffice.sql` precisa ser aplicada à mão** antes de abrir
+  a aba — migrações não são automatizadas (ver "SQL migrations" abaixo).
+
 ## OMIE idempotency
 
 Every OMIE call uses a key of the form `kyberrock:{unitId}:{operationId}:{action}` (e.g. `kyberrock:unit_abc:op_123:create_sales_order`). Re-sends must not duplicate orders.

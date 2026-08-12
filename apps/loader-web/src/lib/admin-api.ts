@@ -57,13 +57,13 @@ export function getAdminSessionStatus(): { token: string | null; isExpired: bool
 }
 
 export async function callAdminFunction<TResponse>(
-  functionName: "admin-auth" | "admin-api",
+  functionName: "admin-auth" | "admin-api" | "admin-billing",
   body: unknown,
   sessionToken = getAdminSessionToken()
 ): Promise<TResponse> {
   assertSupabaseConfig();
 
-  if (functionName === "admin-api" && isTokenExpired(sessionToken)) {
+  if (functionName !== "admin-auth" && isTokenExpired(sessionToken)) {
     clearAdminSessionToken();
     throw new AdminSessionExpiredError();
   }

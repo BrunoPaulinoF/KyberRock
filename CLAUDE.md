@@ -82,6 +82,20 @@ These recur across the codebase and are easy to violate accidentally:
 - **Monorepo TS**: root `tsconfig.json` is references-only; each workspace is `composite: true`
   and excludes `**/*.test.ts` from its build — use `import type` for test-only symbols and for
   all type imports (`@typescript-eslint/consistent-type-imports` is an error).
+- **Backoffice financeiro** (`docs/financeiro.md`): é a cobrança **da plataforma** — a Kybernan
+  fatura cada pedreira (`public.companies`) pela mensalidade acertada caso a caso. Nada a ver com
+  o financeiro das operações da balança, que vive no OMIE; por isso a aba **Financeiro** do painel
+  é separada dos cadastros. Três datas por pedreira: **virada** (início do uso, base do rateio da
+  primeira fatura), **fechamento** (gera a fatura) e **vencimento**. Toda a matemática está em
+  `supabase/functions/_shared/billing-cycle.ts` — puro e testado; nem a tela nem as funções
+  recalculam data ou valor por conta própria. O motor (`_shared/billing-engine.ts`) é o **mesmo**
+  para o botão do painel (`admin-billing`) e para a passada do pg_cron (`billing-run`): fechar,
+  emitir boleto no Mercado Pago, enviar por WhatsApp (instância UAZAPI **global**, não a da
+  pedreira) e bloquear por inadimplência via `companies.payment_blocked`, a coluna que o
+  `desktop-status` já consulta. A passada é idempotente — índice único por ciclo, boleto só quando
+  não há `boleto_payment_id`, WhatsApp só quando `whatsapp_sent_at` está vazio — e recupera ciclos
+  pulados em vez de perder o mês. A liberação do bloqueio é conservadora: só desfaz bloqueio que o
+  próprio motor aplicou (`billing_invoices.blocked_at`).
 - **Central de ajuda** (`apps/desktop/src/renderer/documentation-*`): o texto vive em
   `documentation-content.ts` (dados puros), a busca em `documentation-search.ts` e a tela em
   `DocumentationView.tsx` — corrigir uma dúvida operacional não deve tocar o componente. O

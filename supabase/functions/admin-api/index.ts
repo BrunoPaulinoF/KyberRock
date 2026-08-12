@@ -63,6 +63,7 @@ type AdminAction =
   | "delete_loader"
   | "toggle_device"
   | "update_device_unit"
+  | "delete_device"
   | "get_ai_settings"
   | "update_ai_settings";
 
@@ -358,6 +359,24 @@ Deno.serve(async (req) => {
           updated_at: new Date().toISOString()
         })
         .eq("id", String(payload.deviceId));
+      if (error) throw error;
+      return jsonResponse({ ok: true });
+    }
+
+    /**
+     * Apaga o registro de um desktop. Ate aqui so dava para BLOQUEAR: teste,
+     * maquina trocada e ativacao duplicada ficavam para sempre na lista, e o
+     * numero de computador da pedreira (indice unico por unidade) continuava
+     * ocupado por uma balanca que nao existe mais.
+     *
+     * A balanca em si nao e prejudicada de forma irreversivel: ela perde a
+     * ativacao e volta com o codigo da pedreira. As operacoes ja projetadas
+     * ficam (`weighing_operations.device_id` e `on delete set null`).
+     */
+    if (body.action === "delete_device") {
+      const deviceId = String(payload.deviceId ?? "");
+      if (!deviceId) return jsonResponse({ error: "Dispositivo nao informado" }, 400);
+      const { error } = await supabase.from("device_registrations").delete().eq("id", deviceId);
       if (error) throw error;
       return jsonResponse({ ok: true });
     }
